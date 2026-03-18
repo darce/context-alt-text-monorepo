@@ -54,9 +54,12 @@ def pythonpath_env(
 ) -> dict[str, str]:
     """Return an env dict with repo-local MCP, writable temp, and lane runtime hints."""
     env = os.environ.copy()
-    mcp_src = str(orchestrator_root / "packages" / "agent-handoff-mcp" / "src")
+    pythonpath_parts = [
+        str(orchestrator_root / "packages" / "agent-handoff-mcp" / "src"),
+        str(orchestrator_root / "packages" / "codex-subagent-bridge" / "src"),
+    ]
     existing = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = f"{mcp_src}:{existing}" if existing else mcp_src
+    env["PYTHONPATH"] = ":".join([*pythonpath_parts, existing]) if existing else ":".join(pythonpath_parts)
 
     temp_root = orchestrator_root / ".task-state" / "tmp"
     if lane_id:

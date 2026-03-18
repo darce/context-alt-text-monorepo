@@ -98,7 +98,7 @@ def _intake_lane(
             message_id = row.get("id")
             if message_id is None:
                 continue
-            update = _json_load(update_lane_message(int(message_id), "closed"))
+            update = _json_load(update_lane_message(int(message_id), "closed", task_ref=task_ref))
             if update.get("ok") is not True:
                 raise RuntimeError(f"Failed to close dispatch message {message_id} for {lane_id}.")
     except RuntimeError as exc:

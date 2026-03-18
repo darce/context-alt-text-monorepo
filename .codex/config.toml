@@ -1,0 +1,19 @@
+[mcp_servers."altcontext-mcp"]
+command = "python3"
+args = [
+  "/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp_launcher.py",
+  "--workspace-root",
+  "/Users/daniel/Development/context-alt-text-monorepo",
+  "--state-dir",
+  "/Users/daniel/Development/context-alt-text-monorepo/.task-state",
+  "--current-task-path",
+  "/Users/daniel/Development/context-alt-text-monorepo/CURRENT_TASK.md",
+  "--exports-dir",
+  "/Users/daniel/Development/context-alt-text-monorepo/.task-state/exports",
+  "serve-stdio",
+]
+cwd = "/Users/daniel/Development/context-alt-text-monorepo"
+
+[mcp_servers."altcontext-mcp".env]
+PYENV_VERSION = "description-service"
+PYTHONPATH = "/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src:/Users/daniel/Development/context-alt-text-monorepo/packages/codex-subagent-bridge/src"

@@ -30,9 +30,12 @@ ORCHESTRATOR_BRANCH := $(shell git -C "$(ORCHESTRATOR_ROOT)" rev-parse --abbrev-
 IN_ORCHESTRATOR_ROOT := $(if $(filter $(WORKTREE_ROOT_REAL),$(ORCHESTRATOR_ROOT)),1,0)
 
 # --- MCP runtime ---
-LANE_CONFIG_CMD = python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_config.py"
-MCP_PYTHONPATH := $(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
-MCP_CMD = PYTHONPATH="$(MCP_PYTHONPATH)" python3 -m agent_handoff_mcp
+MCP_PYENV_VERSION ?= description-service
+MCP_PYTHON = env PYENV_VERSION="$(MCP_PYENV_VERSION)" python3
+LANE_CONFIG_CMD = $(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_config.py"
+MCP_PYTHONPATH := $(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src:$(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
+WORKTREE_MCP_PYTHONPATH := $(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src:$(WORKTREE_ROOT_REAL)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
+MCP_CMD = PYENV_VERSION="$(MCP_PYENV_VERSION)" PYTHONPATH="$(MCP_PYTHONPATH)" python3 -m agent_handoff_mcp
 MCP_STATE_ARGS = --workspace-root "$(ORCHESTRATOR_ROOT)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports"
 PYTHON ?= python3
 
@@ -286,7 +289,7 @@ test-handoff:
 		echo "Lane worktree detected ($(LANE)); agent-handoff-mcp tests are orchestrator-root tooling tests, so they are skipped here."; \
 		exit 0; \
 	fi; \
-	PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src$${PYTHONPATH:+:$$PYTHONPATH}" \
+	PYTHONPATH="$(MCP_PYTHONPATH)" \
 	$(PYTHON) -m pytest packages/agent-handoff-mcp/tests -q
 
 # Clean all cache files

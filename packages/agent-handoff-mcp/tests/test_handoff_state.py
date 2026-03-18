@@ -1086,6 +1086,123 @@ def test_update_review_finding_cross_task(isolated_handoff: dict) -> None:
     assert reopened["finding"]["status"] == "open"
 
 
+def test_lane_reports_and_messages_accept_explicit_task_ref_cross_task(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="phase-5-a",
+            objective="Task A",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.upsert_worktree_lane(
+            lane_id="backend-domain",
+            worktree_path="/tmp/backend-domain",
+            branch="codex/p5-backend-domain",
+            status="active",
+        )
+    )
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="phase-5-b",
+            objective="Task B",
+            status="in_progress",
+            expected_revision=0,
+        )
+    )
+
+    hidden_report = _parse(
+        mcp_server.record_worker_report(
+            lane_id="backend-domain",
+            session="cross-task",
+            summary="hidden",
+        )
+    )
+    assert hidden_report["ok"] is False
+
+    explicit_report = _parse(
+        mcp_server.record_worker_report(
+            task_ref="phase-5-a",
+            lane_id="backend-domain",
+            session="cross-task",
+            summary="reported to original task",
+        )
+    )
+    assert explicit_report["ok"] is True
+    assert explicit_report["report"]["task_ref"] == "phase-5-a"
+
+    hidden_message = _parse(
+        mcp_server.record_lane_message(
+            lane_id="backend-domain",
+            session="cross-task",
+            direction="worker_to_orchestrator",
+            message="hidden",
+        )
+    )
+    assert hidden_message["ok"] is False
+
+    explicit_message = _parse(
+        mcp_server.record_lane_message(
+            task_ref="phase-5-a",
+            lane_id="backend-domain",
+            session="cross-task",
+            direction="worker_to_orchestrator",
+            message="reported to original task",
+        )
+    )
+    assert explicit_message["ok"] is True
+    assert explicit_message["message"]["task_ref"] == "phase-5-a"
+
+    hidden_update = _parse(
+        mcp_server.update_lane_message(
+            message_id=explicit_message["message"]["id"],
+            status="acknowledged",
+        )
+    )
+    assert hidden_update["ok"] is False
+
+    explicit_update = _parse(
+        mcp_server.update_lane_message(
+            message_id=explicit_message["message"]["id"],
+            status="acknowledged",
+            task_ref="phase-5-a",
+        )
+    )
+    assert explicit_update["ok"] is True
+    assert explicit_update["message"]["status"] == "acknowledged"
+
+
+def test_lane_upsert_accepts_explicit_task_ref_cross_task(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="phase-5-a",
+            objective="Task A",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="phase-5-b",
+            objective="Task B",
+            status="in_progress",
+            expected_revision=0,
+        )
+    )
+
+    explicit_lane = _parse(
+        mcp_server.upsert_worktree_lane(
+            task_ref="phase-5-a",
+            lane_id="backend-domain",
+            worktree_path="/tmp/backend-domain",
+            branch="codex/p5-backend-domain",
+            status="blocked",
+        )
+    )
+    assert explicit_lane["ok"] is True
+    assert explicit_lane["lane"]["task_ref"] == "phase-5-a"
+    assert explicit_lane["lane"]["status"] == "blocked"
+
+
 def test_get_review_findings_summary_counts_and_limits(isolated_handoff: dict) -> None:
     _parse(
         mcp_server.set_handoff_state(

@@ -79,6 +79,7 @@ Choose your domain to load targeted context. **Always load the testing guide** a
 | Detection vs identification boundary | [rules/why-identify-endpoint-exists.md](rules/why-identify-endpoint-exists.md)       |
 | Face/Identity nomenclature (ADR)     | [ADR-001-face-identity-nomenclature.md](ADR-001-face-identity-nomenclature.md)       |
 | MCP tooling / testing commands       | [BOOTSTRAP.md](BOOTSTRAP.md)                                                         |
+| Codex custom MCP attachment          | [codex-custom-mcp-playbook.md](codex-custom-mcp-playbook.md)                         |
 | **Antigravity Agents (`/` cmds)**    | **See `.agent/workflows/` for environment-specific fallbacks and orchestration.**    |
 
 ---

@@ -212,6 +212,8 @@ def _runtime_guidance(
     app_root = str(lane_config.get("app_root") or "").strip()
     non_goals = [str(item).strip() for item in lane_config.get("non_goals", []) if str(item).strip()]
     owned_paths = [str(item).strip() for item in lane_config.get("owned_paths", []) if str(item).strip()]
+    capability_tags = [str(item).strip() for item in lane_config.get("capability_tags", []) if str(item).strip()]
+    preflight_commands = [str(item).strip() for item in lane_config.get("preflight_commands", []) if str(item).strip()]
 
     lines: list[str] = []
 
@@ -254,6 +256,16 @@ def _runtime_guidance(
                 f"- Always `cd {app_dir}` first so imports resolve correctly.",
                 "- A writable lane temp dir is provided under `.task-state/tmp/<lane>`; temp-file failures usually mean the command escaped the managed worker environment.",
                 "- Local reset/bootstrap work depends on backend resources outside the worker sandbox. If PostgreSQL or other local services are unavailable, report `needs_guidance` instead of treating that as a code defect.",
+            ]
+        )
+    if capability_tags or preflight_commands:
+        labels = ", ".join(f"`{tag}`" for tag in capability_tags) if capability_tags else "configured lane requirements"
+        lines.extend(
+            [
+                "",
+                "Lane capability gate:",
+                f"- `make lane-run` and the worker daemon run a preflight before any subagent turn for {labels}.",
+                "- If the preflight fails, the lane auto-handoffs `needs_guidance` instead of spending tokens on a backend run that cannot succeed.",
             ]
         )
     return lines

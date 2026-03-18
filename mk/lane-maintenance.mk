@@ -235,6 +235,6 @@ lane-intake: lane-guard lane-orchestrator-guard
 			fi; \
 		fi; \
 		git merge --ff-only "$$SCRATCH_BRANCH"; \
-		$(MCP_CMD) $(MCP_STATE_ARGS) lane-upsert --lane-id "$(LANE)" --worktree-path "$(LANE_WORKTREE)" --branch "$(LANE_BRANCH)" --status merged --notes "Merged into $(ORCHESTRATOR_BRANCH) via scratch intake."; \
+		$(MCP_CMD) $(MCP_STATE_ARGS) lane-upsert --task-ref "$(TASK)" --lane-id "$(LANE)" --worktree-path "$(LANE_WORKTREE)" --branch "$(LANE_BRANCH)" --status merged --notes "Merged into $(ORCHESTRATOR_BRANCH) via scratch intake."; \
 		echo "Lane $(LANE) intake completed cleanly via scratch worktree."; \
 	fi

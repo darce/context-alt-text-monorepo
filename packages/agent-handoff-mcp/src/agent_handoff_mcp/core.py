@@ -1039,6 +1039,7 @@ def upsert_worktree_lane(
     owner_agent: str | None = None,
     status: str = "planned",
     notes: str | None = None,
+    task_ref: str | None = None,
 ) -> str:
     valid_statuses = {"planned", "active", "blocked", "review", "merged", "closed"}
     normalized_lane_id = _normalize_optional_text(lane_id)
@@ -1053,7 +1054,7 @@ def upsert_worktree_lane(
     if status not in valid_statuses:
         return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(valid_statuses))}"})
     with _get_db_connection() as conn:
-        task_ref = _resolve_task_ref(conn, None)
+        resolved_task_ref = _resolve_task_ref(conn, task_ref)
         conn.execute(
             """
             INSERT INTO worktree_lanes (task_ref, lane_id, title, objective, worktree_path, branch, owner_agent, status, notes, created_at, updated_at)
@@ -1068,10 +1069,10 @@ def upsert_worktree_lane(
                 notes = excluded.notes,
                 updated_at = datetime('now')
             """,
-            (task_ref, normalized_lane_id, title, objective, normalized_path, normalized_branch, owner_agent, status, notes),
+            (resolved_task_ref, normalized_lane_id, title, objective, normalized_path, normalized_branch, owner_agent, status, notes),
         )
-        row = _get_lane_row(conn, task_ref, normalized_lane_id)
-        _write_current_task_md_for_task(conn, task_ref)
+        row = _get_lane_row(conn, resolved_task_ref, normalized_lane_id)
+        _write_current_task_md_for_task(conn, resolved_task_ref)
         return _json_response({"ok": True, "lane": _row_to_dict(row)})
 
 
@@ -1151,6 +1152,7 @@ def record_worker_report(
     blockers: list[str] | None = None,
     merge_ready: bool = False,
     status: str = "submitted",
+    task_ref: str | None = None,
     actor: WriteActor | None = None,
 ) -> str:
     valid_statuses = {"submitted", "acknowledged", "superseded"}
@@ -1160,9 +1162,9 @@ def record_worker_report(
     if status not in valid_statuses:
         return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(valid_statuses))}"})
     with _get_db_connection() as conn:
-        resolved_task_ref = _resolve_task_ref(conn, None)
+        resolved_task_ref = _resolve_task_ref(conn, task_ref)
         if _get_lane_row(conn, resolved_task_ref, normalized_lane_id) is None:
-            return _json_response({"ok": False, "error": "Lane not found for active task."})
+            return _json_response({"ok": False, "error": "Lane not found for task_ref."})
         agent, branch, commit_sha, _actor_lane_id = _resolve_write_actor(conn, actor)
         cur = conn.execute(
             """
@@ -1214,6 +1216,7 @@ def record_lane_message(
     message: str,
     subject: str | None = None,
     status: str = "open",
+    task_ref: str | None = None,
     actor: WriteActor | None = None,
 ) -> str:
     valid_directions = {"orchestrator_to_worker", "worker_to_orchestrator"}
@@ -1226,9 +1229,9 @@ def record_lane_message(
     if status not in valid_statuses:
         return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(valid_statuses))}"})
     with _get_db_connection() as conn:
-        resolved_task_ref = _resolve_task_ref(conn, None)
+        resolved_task_ref = _resolve_task_ref(conn, task_ref)
         if _get_lane_row(conn, resolved_task_ref, normalized_lane_id) is None:
-            return _json_response({"ok": False, "error": "Lane not found for active task."})
+            return _json_response({"ok": False, "error": "Lane not found for task_ref."})
         agent, branch, commit_sha, _actor_lane_id = _resolve_write_actor(conn, actor)
         cur = conn.execute(
             """
@@ -1242,15 +1245,20 @@ def record_lane_message(
         return _json_response({"ok": True, "message": row})
 
 
-def update_lane_message(message_id: int, status: str, actor: WriteActor | None = None) -> str:
+def update_lane_message(
+    message_id: int,
+    status: str,
+    task_ref: str | None = None,
+    actor: WriteActor | None = None,
+) -> str:
     valid_statuses = {"open", "acknowledged", "closed"}
     if status not in valid_statuses:
         return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(valid_statuses))}"})
     with _get_db_connection() as conn:
-        resolved_task_ref = _resolve_task_ref(conn, None)
+        resolved_task_ref = _resolve_task_ref(conn, task_ref)
         row = conn.execute("SELECT * FROM lane_messages WHERE id = ? AND task_ref = ?", (message_id, resolved_task_ref)).fetchone()
         if row is None:
-            return _json_response({"ok": False, "error": "Message not found for active task."})
+            return _json_response({"ok": False, "error": "Message not found for task_ref."})
         agent, branch, commit_sha, _actor_lane_id = _resolve_write_actor(conn, actor)
         conn.execute(
             "UPDATE lane_messages SET status = ?, agent = COALESCE(agent, ?), branch = COALESCE(branch, ?), commit_sha = COALESCE(commit_sha, ?), updated_at = datetime('now') WHERE id = ? AND task_ref = ?",

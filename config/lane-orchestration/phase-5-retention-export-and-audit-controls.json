@@ -105,6 +105,15 @@
         "cd apps/prototype-description-service && PYENV_VERSION=description-service pytest recognition/tests/unit/test_retention_policy.py recognition/tests/unit/test_audit_events.py recognition/tests/unit/test_export_service.py recognition/tests/unit/test_purge_service.py",
         "cd apps/prototype-description-service && PYENV_VERSION=description-service mypy recognition/domain/services recognition/infrastructure/repositories recognition/config/settings.py"
       ],
+      "capability_tags": [
+        "postgres-ready",
+        "reset-bootstrap"
+      ],
+      "preflight_commands": [
+        "cd apps/prototype-description-service && test -f .env && set -a && source .env && set +a && command -v pg_isready >/dev/null && pg_isready -h \"${PGHOST:-localhost}\" -p \"${PGPORT:-5432}\" -U \"${PGUSER:-postgres}\" -d \"${DB_NAME:-postgres}\""
+      ],
+      "preflight_failure_summary": "backend-domain DB preflight failed; local PostgreSQL or environment setup is not ready for this lane.",
+      "preflight_failure_details": "The backend-domain lane is allowed to spend tokens only when the local description-service environment and PostgreSQL reset/bootstrap path are available. Fix the preflight issue below or route the next slice to a non-DB-sensitive lane.",
       "non_goals": [
         "Do not edit HTTP router files.",
         "Do not edit WordPress or frontend files."

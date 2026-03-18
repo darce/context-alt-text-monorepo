@@ -126,25 +126,25 @@ python3 packages/agent-handoff-mcp/src/agent_handoff_mcp_launcher.py \
 
 ## Files to Change
 
-| File | Target | Change |
-| --- | --- | --- |
-| `docs/tasks/6.0/daemon-9-codex-custom-mcp-session-integration-task-plan.md` | new | Track the full task plan, scope, constraints, and checklist for Codex custom-MCP attachment. |
-| `docs/agentic/worktree-codex-playbook.md` | custom MCP section | Add a concrete "attach `agent-handoff-mcp` to Codex" flow and clarify that a fresh session may be required. |
-| `docs/agentic/instructions.md` | operator guidance | Link to the custom-MCP setup path so it is discoverable from the main agentic docs. |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py` | `serve-http` subparser | Add `--host` and `--port` arguments to the `serve-http` subparser. Add help text describing the authoritative-checkout requirement. Pass host/port through to `FastMCP.run()`. |
-| `docs/agentic/BOOTSTRAP.md` | serve-http cold-start section | Add `serve-http` startup, host/port configuration, and readiness verification instructions alongside the existing `serve-stdio` content. |
-| `mk/handoff.mk` or `scripts/mcp/` | new startup wrapper | Add a repo-supported command for launching `serve-http` with the standard runtime arguments. |
-| `packages/agent-handoff-mcp/tests/` | verification coverage | Add or extend tests for the HTTP/CLI readiness path including `--host`/`--port` argument parsing and remote MCP smoke test. |
+| File                                                                        | Target                        | Change                                                                                                                                                                         |
+| --------------------------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `docs/tasks/6.0/daemon-9-codex-custom-mcp-session-integration-task-plan.md` | new                           | Track the full task plan, scope, constraints, and checklist for Codex custom-MCP attachment.                                                                                   |
+| `docs/agentic/worktree-codex-playbook.md`                                   | custom MCP section            | Add a concrete "attach `agent-handoff-mcp` to Codex" flow and clarify that a fresh session may be required.                                                                    |
+| `docs/agentic/instructions.md`                                              | operator guidance             | Link to the custom-MCP setup path so it is discoverable from the main agentic docs.                                                                                            |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py`                   | `serve-http` subparser        | Add `--host` and `--port` arguments to the `serve-http` subparser. Add help text describing the authoritative-checkout requirement. Pass host/port through to `FastMCP.run()`. |
+| `docs/agentic/BOOTSTRAP.md`                                                 | serve-http cold-start section | Add `serve-http` startup, host/port configuration, and readiness verification instructions alongside the existing `serve-stdio` content.                                       |
+| `mk/handoff.mk` or `scripts/mcp/`                                           | new startup wrapper           | Add a repo-supported command for launching `serve-http` with the standard runtime arguments.                                                                                   |
+| `packages/agent-handoff-mcp/tests/`                                         | verification coverage         | Add or extend tests for the HTTP/CLI readiness path including `--host`/`--port` argument parsing and remote MCP smoke test.                                                    |
 
 ## Related Files
 
-| File | Note |
-| --- | --- |
-| [api.py](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py) | Exposes the MCP tools Codex should eventually see as first-class tools. |
-| [cli.py](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py) | Owns `serve-http`, which should remain the custom-MCP transport surface. |
-| [config.py](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp/config.py) | Defines the authoritative runtime paths the remote MCP server binds to. |
+| File                                                                                                                                                                            | Note                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| [api.py](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py)                                                           | Exposes the MCP tools Codex should eventually see as first-class tools.                  |
+| [cli.py](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py)                                                           | Owns `serve-http`, which should remain the custom-MCP transport surface.                 |
+| [config.py](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp/config.py)                                                     | Defines the authoritative runtime paths the remote MCP server binds to.                  |
 | [daemon-8-portable-orchestration-backend-task-plan.md](/Users/daniel/Development/context-alt-text-monorepo/docs/tasks/6.0/daemon-8-portable-orchestration-backend-task-plan.md) | Established the backend registry and orchestration MCP tool surface this task builds on. |
-| [.vscode/mcp.json](/Users/daniel/Development/context-alt-text-monorepo/.vscode/mcp.json) | Useful comparison point, but not the Codex custom-MCP attachment mechanism. |
+| [.vscode/mcp.json](/Users/daniel/Development/context-alt-text-monorepo/.vscode/mcp.json)                                                                                        | Useful comparison point, but not the Codex custom-MCP attachment mechanism.              |
 
 ## Risks
 
@@ -164,12 +164,12 @@ python3 packages/agent-handoff-mcp/src/agent_handoff_mcp_launcher.py \
 
 ## Consolidated Checklist
 
-- [ ] Add `--host` and `--port` arguments to the `serve-http` subparser in `cli.py` (default: `127.0.0.1`, documented port).
-- [ ] Add Codex custom-MCP setup documentation to the repo.
-- [ ] Add a supported authoritative-host launcher for `agent-handoff-mcp serve-http`.
-- [ ] Add or extend verification coverage for the startup and readiness path, including minimum tool set assertion.
-- [ ] Update `BOOTSTRAP.md` with `serve-http` cold-start instructions.
-- [ ] Update the worktree/Codex docs to link the custom-MCP flow.
-- [ ] Document the difference between "MCP server implemented" and "MCP attached to a live Codex session."
-- [ ] Document the security posture: localhost-only default, SSH tunneling for remote, auth deferred.
+- [x] Add `--host` and `--port` arguments to the `serve-http` subparser in `cli.py` (default: `127.0.0.1`, documented port).
+- [x] Add Codex custom-MCP setup documentation to the repo.
+- [x] Add a supported authoritative-host launcher for `agent-handoff-mcp serve-http`.
+- [x] Add or extend verification coverage for the startup and readiness path, including minimum tool set assertion.
+- [x] Update `BOOTSTRAP.md` with `serve-http` cold-start instructions.
+- [x] Update the worktree/Codex docs to link the custom-MCP flow.
+- [x] Document the difference between "MCP server implemented" and "MCP attached to a live Codex session."
+- [x] Document the security posture: localhost-only default, SSH tunneling for remote, auth deferred.
 - [ ] Validate the documented flow end to end with a fresh Codex session.

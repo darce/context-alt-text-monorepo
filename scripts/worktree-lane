@@ -497,7 +497,7 @@ EOF
       exit 0
     fi
 
-    report_args=(lane-report --lane-id "$lane_id" --session "$session" --summary "$summary" --status "$status")
+    report_args=(lane-report --task-ref "$task_ref" --lane-id "$lane_id" --session "$session" --summary "$summary" --status "$status")
     if [ "$merge_ready" -eq 1 ]; then
       report_args+=(--merge-ready)
     fi
@@ -520,6 +520,7 @@ EOF
 
     if [ -n "$lane_state_status" ]; then
       run_mcp "$orchestrator_root" "$worktree_path" lane-upsert \
+        --task-ref "$task_ref" \
         --lane-id "$lane_id" \
         --worktree-path "$worktree_path" \
         --branch "$(git -C "$worktree_path" branch --show-current)" \
@@ -528,7 +529,7 @@ EOF
     fi
 
     if [ -n "$message" ]; then
-      msg_args=(lane-message --lane-id "$lane_id" --session "$session" --direction "$direction" --message "$message" --status open)
+      msg_args=(lane-message --task-ref "$task_ref" --lane-id "$lane_id" --session "$session" --direction "$direction" --message "$message" --status open)
       if [ -n "$subject" ]; then
         msg_args+=(--subject "$subject")
       fi
@@ -541,7 +542,7 @@ EOF
       else
         while IFS= read -r message_id; do
           [ -n "$message_id" ] || continue
-          if ! run_mcp "$orchestrator_root" "$worktree_path" lane-message-update --message-id "$message_id" --status acknowledged >/dev/null; then
+          if ! run_mcp "$orchestrator_root" "$worktree_path" lane-message-update --task-ref "$task_ref" --message-id "$message_id" --status acknowledged >/dev/null; then
             echo "worktree-lane: warning: failed to acknowledge orchestrator message $message_id" >&2
           fi
         done < <(printf '%s' "$open_messages_json" | python3 -c 'import json,sys

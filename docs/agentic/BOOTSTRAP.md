@@ -41,12 +41,14 @@ make fix-php-style                   # Runs plugin PHPCBF fixer
 
 ## MCP Server (Agent Tooling)
 
-The workspace-local MCP adapter now points directly at the installed `agent-handoff-mcp` binary. VS Code manages the server lifecycle automatically.
+The workspace-local MCP adapter now points at the repo-local
+`agent_handoff_mcp_launcher.py` entrypoint. VS Code manages the server lifecycle
+automatically.
 
 ### How It Works
 
-```
-.vscode/mcp.json  →  agent-handoff-mcp --workspace-root <repo> serve-stdio
+```text
+.vscode/mcp.json  →  python3 packages/agent-handoff-mcp/src/agent_handoff_mcp_launcher.py --workspace-root <repo> ... serve-stdio
 ```
 
 The packaged server is handoff-only: task state, review findings, exports/imports, dashboard, and close checks. The old repo-intel helpers remain a separate decomposition task and are not part of this package.
@@ -56,8 +58,9 @@ The packaged server is handoff-only: task state, review findings, exports/import
 - VS Code 1.99+ with Copilot (or other MCP-capable client)
 - `.vscode/mcp.json` already committed to the repo
 - Python 3.11+ environment
-- Preferred: installed `agent-handoff-mcp` binary
-- Fallback for local development: package source at `packages/agent-handoff-mcp/src` available to the launcher
+- Repo-local package source at `packages/agent-handoff-mcp/src`
+- Python resolved through pyenv or another Python 3.11+ environment with the
+  package dependencies installed
 
 ### Install Options
 
@@ -77,7 +80,7 @@ This uses the package [`pyproject.toml`](/Users/daniel/Development/context-alt-t
 
 ### Validation
 
-Command Palette → `MCP: List Servers` → "context-alt-text" should show the registered adapter.
+Command Palette → `MCP: List Servers` → "altcontext-mcp" should show the registered adapter.
 
 ### Available Tools
 
@@ -111,9 +114,40 @@ agent-handoff-mcp --workspace-root "$(pwd)" run-structured-turn \
   --backend codex-subagent
 ```
 
+For Codex app sessions on the same machine, prefer the checked-in project-scoped
+adapter at [`.codex/config.toml`](/Users/daniel/Development/context-alt-text-monorepo/.codex/config.toml),
+which registers the local stdio server as `altcontext-mcp` with the required
+`PYENV_VERSION=description-service` and `PYTHONPATH` overrides for both the
+handoff MCP package and the Codex subagent bridge.
+
 Remote HTTP deployment for Codex custom MCP is intentionally tracked as follow-on
 work in daemon-9. Daemon-8's completed scope is the in-repo MCP tool surface and its
 CLI/stdio exposure.
+
+### HTTP Transport (Codex Custom MCP)
+
+For remote or Codex custom MCP attachment, use `serve-http` instead of `serve-stdio`:
+
+```bash
+make mcp-serve-http                             # localhost:8741
+make mcp-serve-http HOST=0.0.0.0 PORT=9000      # custom bind
+```
+
+Or directly:
+
+```bash
+agent-handoff-mcp --workspace-root "$(pwd)" serve-http --host 127.0.0.1 --port 8741
+```
+
+Verify the endpoint is reachable:
+
+```bash
+curl -s http://127.0.0.1:8741/
+```
+
+The default bind is `127.0.0.1` (localhost only, no auth). For remote access use SSH
+tunneling or a reverse proxy. See [codex-custom-mcp-playbook.md](codex-custom-mcp-playbook.md)
+for the full attach-to-Codex walkthrough.
 
 ### Troubleshooting
 

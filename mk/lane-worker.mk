@@ -45,19 +45,23 @@ lane-check: lane-worker-guard
 
 lane-run: lane-guard
 	@set -eu; \
-	CODEX_CMD="$(CODEX_BIN)"; \
-	if [ -z "$$CODEX_CMD" ] && [ -x "/Applications/Codex.app/Contents/Resources/codex" ]; then \
-		CODEX_CMD="/Applications/Codex.app/Contents/Resources/codex"; \
+	BACKEND_NAME="$(BACKEND)"; \
+	CODEX_CMD=""; \
+	if [ "$$BACKEND_NAME" = "codex-cli" ]; then \
+		CODEX_CMD="$(CODEX_BIN)"; \
+		if [ -z "$$CODEX_CMD" ] && [ -x "/Applications/Codex.app/Contents/Resources/codex" ]; then \
+			CODEX_CMD="/Applications/Codex.app/Contents/Resources/codex"; \
+		fi; \
+		if [ -z "$$CODEX_CMD" ] && [ -x "$$HOME/.local/bin/codex" ]; then \
+			CODEX_CMD="$$HOME/.local/bin/codex"; \
+		fi; \
+		if [ -z "$$CODEX_CMD" ]; then \
+			echo "codex CLI is required for lane-run when BACKEND=codex-cli."; \
+			exit 1; \
+		fi; \
 	fi; \
-	if [ -z "$$CODEX_CMD" ] && [ -x "$$HOME/.local/bin/codex" ]; then \
-		CODEX_CMD="$$HOME/.local/bin/codex"; \
-	fi; \
-	if [ -z "$$CODEX_CMD" ]; then \
-		echo "codex CLI is required for lane-run."; \
-		exit 1; \
-	fi; \
-	PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_prompt.py" \
+	PYTHONPATH="$(MCP_PYTHONPATH)" \
+		$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_prompt.py" \
 			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 			--task-ref "$(TASK)" \
 			--lane-id "$(LANE)" \
@@ -76,18 +80,25 @@ lane-run: lane-guard
 	fi; \
 	RESULT_FILE="$$(mktemp "$${TMPDIR:-/tmp}/lane-result-$(LANE)-XXXXXX.json")"; \
 	trap 'rm -f "$$RESULT_FILE"' EXIT INT TERM; \
-	if PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_exec.py" \
-			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
-			--task-ref "$(TASK)" \
-			--lane-id "$(LANE)" \
-			--session "$(SESSION)" \
-			--worktree-path "$(LANE_WORKTREE_TARGET)" \
-			--output-path "$$RESULT_FILE" \
-			--codex-bin "$$CODEX_CMD" \
-			$(if $(CODEX_ARGS),--codex-args "$(CODEX_ARGS)",) \
-			$(if $(filter 1,$(DRY_RUN)),--dry-run,); then \
-		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_result.py" handoff \
+	set -- $(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_exec.py" \
+		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+		--task-ref "$(TASK)" \
+		--lane-id "$(LANE)" \
+		--session "$(SESSION)" \
+		--worktree-path "$(LANE_WORKTREE_TARGET)" \
+		--output-path "$$RESULT_FILE" \
+		--backend "$$BACKEND_NAME"; \
+	if [ -n "$$CODEX_CMD" ]; then \
+		set -- "$$@" --codex-bin "$$CODEX_CMD"; \
+	fi; \
+	if [ -n "$(CODEX_ARGS)" ]; then \
+		set -- "$$@" --codex-args "$(CODEX_ARGS)"; \
+	fi; \
+	if [ "$(DRY_RUN)" = "1" ]; then \
+		set -- "$$@" --dry-run; \
+	fi; \
+	if PYTHONPATH="$(MCP_PYTHONPATH)" "$$@"; then \
+		$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_result.py" handoff \
 			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 			--task-ref "$(TASK)" \
 			--lane-id "$(LANE)" \

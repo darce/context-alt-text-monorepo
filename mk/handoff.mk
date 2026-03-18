@@ -2,7 +2,7 @@
 # Handoff / Task State / Daemons
 # =============================================================================
 
-.PHONY: task dashboard state list-tasks lane-list handoff-close-check handoff-integrity-check handoff-inbox handoff-dispatch review-dispatch review-run worker-daemon worker-daemon-status worker-daemon-stop worker-daemon-resume worker-daemon-tail orchestrator-daemon daemon-pause daemon-resume daemon-status
+.PHONY: task dashboard state list-tasks lane-list mcp-serve-http handoff-close-check handoff-integrity-check handoff-inbox handoff-dispatch review-dispatch review-run worker-daemon worker-daemon-status worker-daemon-stop worker-daemon-resume worker-daemon-tail orchestrator-daemon daemon-pause daemon-resume daemon-status
 
 # Generate CURRENT_TASK.md from handoff DB
 task:
@@ -19,6 +19,13 @@ state:
 # List all registered worktree lanes and their status
 lane-list:
 	@$(MCP_CMD) $(MCP_STATE_ARGS) lane-list --status all
+
+# Start MCP server over streamable-HTTP for remote attachment (e.g. Codex custom MCP)
+# Usage: make mcp-serve-http [HOST=127.0.0.1] [PORT=8741]
+HOST ?= 127.0.0.1
+PORT ?= 8741
+mcp-serve-http:
+	$(MCP_CMD) $(MCP_STATE_ARGS) serve-http --host "$(HOST)" --port $(PORT)
 
 # List available task manifests
 list-tasks:
@@ -61,8 +68,8 @@ handoff-inbox:
 		--limit 20 | python3 -c 'import json,sys; data=json.load(sys.stdin); reports=[r for r in data.get("reports", []) if r.get("merge_ready")==1 or r.get("status")=="blocked"]; data["reports"]=reports; data["returned"]=len(reports); data["total_matching"]=len(reports); print(json.dumps(data, indent=2))'
 	@echo ""; \
 	echo "Guidance summary:"; \
-	PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src$${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/handoff_guidance_summary.py" \
+	PYTHONPATH="$(MCP_PYTHONPATH)" \
+		$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/handoff_guidance_summary.py" \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		$(if $(LANE),--lane-id "$(LANE)",)
@@ -86,8 +93,8 @@ handoff-dispatch:
 		echo "Supported task manifests: $(SUPPORTED_TASKS)"; \
 		exit 1; \
 	fi
-	@PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/review_dispatch.py" \
+	@PYTHONPATH="$(WORKTREE_MCP_PYTHONPATH)" \
+		$(MCP_PYTHON) "$(WORKTREE_ROOT_REAL)/scripts/mcp/review_dispatch.py" \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
@@ -97,8 +104,8 @@ review-run:
 		echo "review-run requires a lane worktree. Set WORKTREE_PATH or run from a lane."; \
 		exit 1; \
 	fi
-	@PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src$${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/review_runner.py" run \
+	@PYTHONPATH="$(WORKTREE_MCP_PYTHONPATH)" \
+		$(MCP_PYTHON) "$(WORKTREE_ROOT_REAL)/scripts/mcp/review_runner.py" run \
 		--worktree-path "$(or $(WORKTREE_PATH),$(LANE_WORKTREE_TARGET))" \
 		$(if $(LANE),--lane-id "$(LANE)",) \
 		$(if $(TASK),--task-ref "$(TASK)",) \
@@ -113,8 +120,8 @@ review-dispatch: handoff-dispatch
 worker-daemon: lane-guard
 	@set -eu; \
 	SESSION="$(or $(SESSION),$(TASK)-$(LANE))"; \
-	PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src$${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/worker_daemon.py" \
+	PYTHONPATH="$(MCP_PYTHONPATH)" \
+		$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/worker_daemon.py" \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		--lane-id "$(LANE)" \
@@ -129,14 +136,14 @@ worker-daemon: lane-guard
 		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
 
 worker-daemon-status: lane-guard
-	@python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/worker_daemon_ctl.py" status \
+	@$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/worker_daemon_ctl.py" status \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
 		--log-dir "$(ORCHESTRATOR_ROOT)/logs/worker-daemon" \
 		--task-ref "$(TASK)" \
 		--lane-id "$(LANE)"
 
 worker-daemon-stop: lane-guard
-	@python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/worker_daemon_ctl.py" stop \
+	@$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/worker_daemon_ctl.py" stop \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
 		--log-dir "$(ORCHESTRATOR_ROOT)/logs/worker-daemon" \
 		--task-ref "$(TASK)" \
@@ -144,7 +151,7 @@ worker-daemon-stop: lane-guard
 		$(if $(filter 1,$(FORCE)),--force,)
 
 worker-daemon-resume: lane-guard
-	@python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/worker_daemon_ctl.py" resume \
+	@$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/worker_daemon_ctl.py" resume \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
 		--log-dir "$(ORCHESTRATOR_ROOT)/logs/worker-daemon" \
 		--task-ref "$(TASK)" \
@@ -154,8 +161,8 @@ worker-daemon-tail: lane-guard
 	@tail -f "$(ORCHESTRATOR_ROOT)/logs/worker-daemon/worker-$(LANE).jsonl"
 
 orchestrator-daemon: lane-orchestrator-guard
-	@PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src$${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/orchestrator_daemon.py" run \
+	@PYTHONPATH="$(MCP_PYTHONPATH)" \
+		$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/orchestrator_daemon.py" run \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		$(if $(TASK),--task-ref "$(TASK)",) \
 		$(if $(BACKEND),--backend "$(BACKEND)",) \
@@ -164,15 +171,15 @@ orchestrator-daemon: lane-orchestrator-guard
 		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
 
 daemon-pause:
-	@python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/orchestrator_daemon.py" pause \
+	@$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/orchestrator_daemon.py" pause \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state"
 
 daemon-resume:
-	@python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/orchestrator_daemon.py" resume \
+	@$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/orchestrator_daemon.py" resume \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state"
 
 daemon-status:
-	@PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src$${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/orchestrator_daemon.py" status \
+	@PYTHONPATH="$(MCP_PYTHONPATH)" \
+		$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/orchestrator_daemon.py" status \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
 		--log-dir "$(ORCHESTRATOR_ROOT)/logs/daemon"

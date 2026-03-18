@@ -685,5 +685,7 @@ def test_worker_loop_subagent_backend_skips_find_codex_and_threads_backend(tmp_p
 def test_pythonpath_env() -> None:
     mod = _load_module()
     env = mod.pythonpath_env(REPO_ROOT)
-    expected = str(REPO_ROOT / "packages" / "agent-handoff-mcp" / "src")
-    assert expected in env["PYTHONPATH"]
+    expected_mcp = str(REPO_ROOT / "packages" / "agent-handoff-mcp" / "src")
+    expected_bridge = str(REPO_ROOT / "packages" / "codex-subagent-bridge" / "src")
+    assert expected_mcp in env["PYTHONPATH"]
+    assert expected_bridge in env["PYTHONPATH"]

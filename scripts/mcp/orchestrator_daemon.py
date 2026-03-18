@@ -215,6 +215,7 @@ def _dispatch_plan_item(
 
     message_payload = _json_load(
         record_lane_message(
+            task_ref=task_ref,
             lane_id=lane_id,
             session=f"{task_ref}-orchestrator-plan",
             direction="orchestrator_to_worker",

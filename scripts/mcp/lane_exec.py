@@ -28,6 +28,7 @@ from backend_registry import get_backend_choices
 from backend_registry import get_backend_spec
 from backend_registry import resolve_bridge
 from backend_registry import validate_backend
+from lane_manifest import get_lane_config
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +164,94 @@ def _tail_text(text: str | bytes, *, limit: int = 240) -> str:
     if len(value) <= limit:
         return value
     return value[: limit - 3] + "..."
+
+
+def _run_lane_preflight(
+    *,
+    orchestrator_root: Path,
+    task_ref: str,
+    lane_id: str,
+    worktree_path: Path,
+    env: dict[str, str],
+) -> dict[str, Any]:
+    try:
+        lane_config = get_lane_config(task_ref, lane_id, orchestrator_root=str(orchestrator_root)) or {}
+    except FileNotFoundError:
+        return {"ok": True, "commands": [], "capability_tags": []}
+    commands = [str(item).strip() for item in lane_config.get("preflight_commands", []) if str(item).strip()]
+    capability_tags = [str(item).strip() for item in lane_config.get("capability_tags", []) if str(item).strip()]
+    if not commands:
+        return {"ok": True, "commands": [], "capability_tags": capability_tags}
+
+    failures: list[dict[str, Any]] = []
+    for command in commands:
+        completed = subprocess.run(
+            ["/bin/zsh", "-lc", command],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        if completed.returncode == 0:
+            continue
+        failures.append(
+            {
+                "command": command,
+                "exit_code": completed.returncode,
+                "stderr_tail": _tail_text(completed.stderr or ""),
+                "stdout_tail": _tail_text(completed.stdout or ""),
+            }
+        )
+
+    return {
+        "ok": not failures,
+        "commands": commands,
+        "capability_tags": capability_tags,
+        "failures": failures,
+        "failure_summary": str(lane_config.get("preflight_failure_summary") or "").strip(),
+        "failure_details": str(lane_config.get("preflight_failure_details") or "").strip(),
+    }
+
+
+def _preflight_failure_payload(
+    *,
+    lane_id: str,
+    preflight: dict[str, Any],
+) -> dict[str, Any]:
+    commands = [str(item) for item in preflight.get("commands", []) if str(item).strip()]
+    capability_tags = [str(item) for item in preflight.get("capability_tags", []) if str(item).strip()]
+    failures = [item for item in preflight.get("failures", []) if isinstance(item, dict)]
+    summary = str(preflight.get("failure_summary") or "").strip()
+    if not summary:
+        summary = f"Lane preflight failed for {lane_id}; required local capabilities are unavailable."
+
+    default_detail = (
+        f"The lane requires local capabilities ({', '.join(capability_tags)}) before execution."
+        if capability_tags
+        else f"The lane requires local prerequisites before execution."
+    )
+    detail_lines = [str(preflight.get("failure_details") or "").strip() or default_detail, "", "Preflight failures:"]
+    blockers: list[str] = []
+    for failure in failures:
+        command = str(failure.get("command") or "").strip()
+        stderr_tail = str(failure.get("stderr_tail") or "").strip()
+        stdout_tail = str(failure.get("stdout_tail") or "").strip()
+        exit_code = failure.get("exit_code")
+        reason = stderr_tail or stdout_tail or f"exit {exit_code}"
+        detail_lines.append(f"- `{command}` -> {reason}")
+        blockers.append(f"`{command}` failed: {reason}")
+
+    if not blockers:
+        blockers.append("Lane preflight failed before execution.")
+
+    return {
+        "handoff_action": "needs_guidance",
+        "summary": summary,
+        "details": "\n".join(detail_lines).strip(),
+        "tests_run": commands,
+        "blockers": blockers,
+    }
 
 
 def _run_codex_process(
@@ -311,6 +400,19 @@ def run_lane_exec(
     """
     backend_name = validate_backend(backend)
     env = pythonpath_env(orchestrator_root, task_ref=task_ref, lane_id=lane_id)
+
+    if not dry_run:
+        preflight = _run_lane_preflight(
+            orchestrator_root=orchestrator_root,
+            task_ref=task_ref,
+            lane_id=lane_id,
+            worktree_path=worktree_path,
+            env=env,
+        )
+        if not preflight.get("ok", True):
+            out = output_path or _temp_output_path(lane_id=lane_id)
+            out.write_text(json.dumps(_preflight_failure_payload(lane_id=lane_id, preflight=preflight), indent=2))
+            return out
 
     # Build prompt
     if prompt_override:

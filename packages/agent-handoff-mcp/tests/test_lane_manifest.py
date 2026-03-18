@@ -51,6 +51,10 @@ def manifest_module(tmp_path: Path):
                 "owned_paths": ["apps/backend/**", "docs/demo.md"],
                 "required_docs": ["docs/agentic/instructions.md"],
                 "test_commands": ["pytest apps/backend/tests -q"],
+                "capability_tags": ["postgres-ready"],
+                "preflight_commands": ["pg_isready -h localhost -p 5432"],
+                "preflight_failure_summary": "backend preflight failed",
+                "preflight_failure_details": "postgres is unavailable",
                 "non_goals": [],
                 "route_hints": ["backend lane"],
                 "guidance_fallbacks": [
@@ -120,6 +124,8 @@ def test_get_lane_config_expands_worktree_template_and_derives_commit_paths(mani
     assert lane is not None
     assert lane["worktree_path"] == "/tmp/context-alt-text-monorepo-demo-backend"
     assert lane["commit_paths"] == ["apps/backend", "docs/demo.md"]
+    assert lane["capability_tags"] == ["postgres-ready"]
+    assert lane["preflight_commands"] == ["pg_isready -h localhost -p 5432"]
 
 
 def test_route_patterns_derives_from_owned_paths_when_routing_empty(manifest_module) -> None:

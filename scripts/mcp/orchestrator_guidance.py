@@ -338,11 +338,12 @@ def _apply_guidance_resolution(
     if dry_run:
         return resolution
 
-    update_lane_message(resolution.worker_message_id, "closed")
+    update_lane_message(resolution.worker_message_id, "closed", task_ref=task_ref)
     for message_id in resolution.close_dispatch_ids:
-        update_lane_message(message_id, "closed")
+        update_lane_message(message_id, "closed", task_ref=task_ref)
 
     upsert_worktree_lane(
+        task_ref=task_ref,
         lane_id=resolution.lane_id,
         worktree_path=str(lane.get("worktree_path") or ""),
         branch=str(lane.get("branch") or ""),
@@ -362,6 +363,7 @@ def _apply_guidance_resolution(
 
     if resolution.kind == "redispatch" and resolution.dispatch_message:
         record_lane_message(
+            task_ref=task_ref,
             lane_id=resolution.lane_id,
             session=f"{task_ref}-orchestrator-guidance",
             direction="orchestrator_to_worker",

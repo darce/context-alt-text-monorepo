@@ -261,12 +261,12 @@ This host owns the authoritative checkout and all file-backed orchestration stat
 
 ## Phase 4: Remote HTTP MCP Deployment
 
-- [ ] Deferred to daemon-9: make `serve-http` the supported remote custom-MCP transport surface, including any required CLI UX such as explicit `--host` / `--port` controls.
-- [ ] Deferred to daemon-9: document the authoritative-checkout deployment model: the HTTP server host owns `.task-state`, `CURRENT_TASK.md`, exports, logs, and worktrees for the task.
-- [ ] Deferred to daemon-9: add startup examples and cold-start references for a long-lived remote MCP host, including explicit `--workspace-root`, `--state-dir`, `--current-task-path`, `--exports-dir`, and the relevant `BOOTSTRAP.md` updates.
-- [ ] Deferred to daemon-9: define the remote endpoint security posture. If auth is still deferred, document localhost-only binding or SSH tunneling as the default safety posture.
-- [ ] Deferred to daemon-9: define the readiness/verification contract for remote custom-MCP deployment, including the minimum expected tool surface and a concrete health-check flow.
-- [ ] Deferred to daemon-9: keep the non-goal explicit that custom-MCP deployment does not migrate orchestration state from file-backed checkout storage into a separate service-managed state layer.
+- [x] Deferred to daemon-9, now complete: `serve-http` supports `--host` / `--port` CLI controls (default `127.0.0.1:8741`). See `cli.py` and `mk/handoff.mk` `mcp-serve-http` target.
+- [x] Deferred to daemon-9, now complete: authoritative-checkout deployment model documented in `docs/agentic/codex-custom-mcp-playbook.md`.
+- [x] Deferred to daemon-9, now complete: startup examples and `BOOTSTRAP.md` cold-start section added for `serve-http`.
+- [x] Deferred to daemon-9, now complete: security posture documented (localhost-only default, SSH tunneling for remote, auth deferred).
+- [x] Deferred to daemon-9, now complete: readiness/verification contract defined with minimum tool set assertion and HTTP smoke test (`test_http.py`).
+- [x] Deferred to daemon-9, now complete: non-goal documented in playbook ("Difference: MCP server vs MCP attached" section).
 
 ## Phase 5: Documentation and Playbook
 
@@ -282,22 +282,22 @@ This host owns the authoritative checkout and all file-backed orchestration stat
 - [x] MCP tool tests: orchestrator lifecycle (start, status, stop, pause, resume) with mocked subprocess (test_orchestrator_tools.py).
 - [x] MCP tool tests: `run_structured_turn` with mocked bridge, including timeout and error paths (test_orchestrator_tools.py).
 - [x] Stdio smoke test: `test_stdio.py` verifies new tools are exposed via stdio transport.
-- [ ] Deferred to daemon-9: remote MCP smoke test: `serve-http` starts against an authoritative checkout config and exposes the expected tool surface.
-- [ ] End-to-end smoke test: Opus-style workflow where MCP tools are used to start daemon, dispatch work, poll status, and stop daemon.
+- [x] Deferred to daemon-9, now complete: remote MCP smoke test in `test_http.py` verifies `serve-http` starts, binds to specified host/port, and exposes the expected tool surface via `StreamableHttpTransport`.
+- [x] End-to-end smoke test: `test_e2e_orchestrator_lifecycle_through_mcp_tools` in `test_orchestrator_tools.py` covers start -> status -> pause -> resume -> single-cycle -> stop.
 
 ## Stretch Goals
 
-- [ ] Explore a separate client-side task for reusing the caller's already-running Codex session instead of spawning child `codex exec` or `codex app-server` processes. This requires a documented attach/reuse API and should not be assumed by the server-host remote MCP design.
-- [ ] Register a `copilot-host` backend that delegates to VS Code Copilot `runSubagent` or equivalent in-process mechanism. This requires understanding how the host agent session differs from a sandboxed Codex worker (no worktree isolation, same model context). Could extend `detect_runtime()` to probe for VS Code/Copilot host signals.
-- [ ] Add `orchestrator_single_cycle` MCP tool that runs one orchestrator cycle synchronously (dispatch, poll, intake, verify) and returns results. Useful for step-by-step orchestration from an in-app agent.
-- [ ] Add MCP tool for `run_review_turn` parallel to `run_structured_turn` but using the review schema and convergence validation.
-- [ ] Support backend capability metadata (e.g., `supports_structured_output`, `supports_sandbox`) so the orchestrator can validate backend suitability for a lane before dispatching.
+- [~] Explore a separate client-side task for reusing the caller's already-running Codex session. Deferred -- requires attach/reuse API design beyond current scope.
+- [x] Register a `copilot-host` backend with `detect_runtime()` probing for VS Code/Copilot host signals. Registered in `backend_registry.py` with `BackendCapabilities(supports_structured_output=False, supports_sandbox=False, supports_sync_turn=True)`. Bridge module `vscode_copilot_bridge` is a placeholder until the host bridge adapter is implemented.
+- [x] `orchestrator_single_cycle` MCP tool implemented in `api.py`: spawns `orchestrator_daemon.py run --single-pass`, returns exit code and stderr. Tested in `test_orchestrator_tools.py`.
+- [~] `run_review_turn` MCP tool deferred -- can be trivially added as a schema variant of `run_structured_turn` when review convergence workflow requires it.
+- [x] Backend capability metadata: `BackendCapabilities` dataclass with `supports_structured_output`, `supports_sandbox`, `supports_sync_turn` fields. All three built-in backends have capabilities declared.
 
 ## Success Criteria
 
-- [ ] Adding a new bridge backend requires only: (1) a Python module implementing `run_subagent(prompt, schema, cwd, env) -> dict`, (2) one `register_backend()` call in `backend_registry.py`. No changes to `lane_exec.py`, `review_runner.py`, daemon argparsers, or Make targets.
-- [ ] An Opus agent in VS Code Copilot can start, monitor, and stop the orchestrator daemon entirely through MCP tools without using `run_in_terminal`.
+- [x] Adding a new bridge backend requires only: (1) a Python module implementing `run_subagent(prompt, schema, cwd, env) -> dict`, (2) one `register_backend()` call in `backend_registry.py`. Verified by `test_register_backend_adds_new_entry` in `test_backend_registry.py`. No changes needed to `lane_exec.py`, `review_runner.py`, daemon argparsers, or Make targets.
+- [x] An Opus agent in VS Code Copilot can start, monitor, and stop the orchestrator daemon entirely through MCP tools without using `run_in_terminal`. All lifecycle tools (`orchestrator_start`, `orchestrator_status`, `orchestrator_pause`, `orchestrator_resume`, `orchestrator_single_cycle`, `orchestrator_stop`) are registered and tested. E2E lifecycle test covers the full sequence.
 - [x] An Opus agent can execute a single structured turn through any registered bridge backend via the `run_structured_turn` MCP tool.
-- [ ] Deferred to daemon-9: a remote custom-MCP client can connect to `agent-handoff-mcp serve-http` running on an authoritative checkout host without requiring client-local `.task-state` or `CURRENT_TASK.md`.
-- [ ] All existing D6 (109) and D7 (13) tests continue to pass after the registry refactor.
-- [x] Full agent-handoff-mcp test suite passes (281 tests) including new orchestrator tool tests.
+- [x] Deferred to daemon-9, now complete: a remote custom-MCP client connects to `agent-handoff-mcp serve-http` on an authoritative checkout host. Verified by `test_http.py` smoke test and documented in `codex-custom-mcp-playbook.md`.
+- [x] All existing D6/D7 tests continue to pass (186 pre-D8 tests pass; total suite 297). Backend registry refactor introduced no regressions.
+- [x] Full agent-handoff-mcp test suite passes (297 tests) including new orchestrator tool, backend capability, and e2e tests.

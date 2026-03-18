@@ -73,7 +73,7 @@ Expected minimum tool list:
 ## 3. Attach in Codex
 
 For same-machine development, prefer the checked-in project-scoped Codex config in
-[`/Users/daniel/Development/context-alt-text-monorepo/.codex/config.toml`](/Users/daniel/Development/context-alt-text-monorepo/.codex/config.toml).
+[`../../.codex/config.toml`](../../.codex/config.toml).
 It registers the stdio adapter as `altcontext-mcp` and pins the launcher to the
 repo-local workspace state while exposing both the handoff MCP package and the
 Codex subagent bridge on `PYTHONPATH`.

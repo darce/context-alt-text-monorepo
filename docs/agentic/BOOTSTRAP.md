@@ -115,7 +115,7 @@ agent-handoff-mcp --workspace-root "$(pwd)" run-structured-turn \
 ```
 
 For Codex app sessions on the same machine, prefer the checked-in project-scoped
-adapter at [`.codex/config.toml`](/Users/daniel/Development/context-alt-text-monorepo/.codex/config.toml),
+adapter at [`../../.codex/config.toml`](../../.codex/config.toml),
 which registers the local stdio server as `altcontext-mcp` with the required
 `PYENV_VERSION=description-service` and `PYTHONPATH` overrides for both the
 handoff MCP package and the Codex subagent bridge.

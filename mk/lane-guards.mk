@@ -5,12 +5,19 @@
 .PHONY: task-guard lane-guard lane-orchestrator-guard lane-worker-guard lane-manifest-init
 
 task-guard:
-	@if [ -z "$(TASK)" ]; then \
+	@RESOLVED_TASK="$(TASK)"; \
+	if [ -z "$$RESOLVED_TASK" ]; then \
+		RESOLVED_TASK="$$( $(LANE_CONFIG_CMD) choose-task --explicit-task "$(REQUESTED_TASK)" --active-task "$(ACTIVE_TASK)" --sole-task "$(SOLE_TASK)" --branch "$(CURRENT_BRANCH)" --worktree-path "$(WORKTREE_ROOT_REAL)" --orchestrator-root "$(ORCHESTRATOR_ROOT)" $(if $(REQUESTED_LANE),--lane-id "$(REQUESTED_LANE)",) $(if $(filter 1,$(IN_ORCHESTRATOR_ROOT)),--in-orchestrator-root,) )"; \
+	fi; \
+	if [ -z "$$RESOLVED_TASK" ]; then \
 		echo "TASK is required."; \
-		echo "No active task could be inferred from MCP state."; \
+		echo "No supported task could be inferred from branch/worktree/lane context."; \
 		echo "Supported task manifests: $(SUPPORTED_TASKS)"; \
 		echo "Example: make orchestrator-daemon TASK=<task-ref>"; \
 		exit 1; \
+	fi; \
+	if [ "$$RESOLVED_TASK" != "$(TASK)" ]; then \
+		exec $(MAKE) --no-print-directory $(MAKECMDGOALS) TASK="$$RESOLVED_TASK" $(if $(REQUESTED_LANE),LANE="$(REQUESTED_LANE)",); \
 	fi
 	@if [ -z "$(TASK_LANES)" ]; then \
 		echo "Unsupported TASK: $(TASK)"; \

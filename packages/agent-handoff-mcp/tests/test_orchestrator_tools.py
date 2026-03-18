@@ -324,6 +324,18 @@ def test_orchestrator_single_cycle_handles_timeout(tmp_path: Path) -> None:
     assert "timed out" in payload["error"]
 
 
+def test_handoff_pythonpath_points_to_real_repo_sources() -> None:
+    parts = api._handoff_pythonpath().split(":")
+    expected_mcp = str(REPO_ROOT / "packages" / "agent-handoff-mcp" / "src")
+    expected_bridge = str(REPO_ROOT / "packages" / "codex-subagent-bridge" / "src")
+
+    assert expected_mcp in parts
+    assert expected_bridge in parts
+    assert Path(expected_mcp).exists()
+    assert Path(expected_bridge).exists()
+    assert all("/packages/packages/" not in part for part in parts)
+
+
 def _mock_orchestrator_paths(tmp_path: Path) -> dict[str, Path]:
     return {
         "workspace_root": REPO_ROOT,

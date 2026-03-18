@@ -171,7 +171,7 @@ def _import_scripts_mcp_module(name: str) -> Any:
 
 
 def _handoff_pythonpath() -> str:
-    package_root = Path(__file__).resolve().parents[3]
+    package_root = Path(__file__).resolve().parents[4]
     pythonpath_parts = [
         str(package_root / "packages" / "agent-handoff-mcp" / "src"),
         str(package_root / "packages" / "codex-subagent-bridge" / "src"),

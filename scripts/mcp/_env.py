@@ -5,7 +5,15 @@ import re
 from pathlib import Path
 
 
-_PYENV_PATTERN = re.compile(r"\bPYENV_VERSION=([A-Za-z0-9._-]+)")
+PYENV_VERSION_PATTERN = re.compile(r"\bPYENV_VERSION=([A-Za-z0-9._-]+)")
+
+
+def extract_pyenv_version(commands: list[str]) -> str | None:
+    for command in commands:
+        match = PYENV_VERSION_PATTERN.search(str(command))
+        if match:
+            return match.group(1)
+    return None
 
 
 def _lane_runtime_profile(
@@ -27,12 +35,7 @@ def _lane_runtime_profile(
     if not isinstance(lane, dict):
         return None, []
 
-    pyenv_version = None
-    for command in lane.get("test_commands", []):
-        match = _PYENV_PATTERN.search(str(command))
-        if match:
-            pyenv_version = match.group(1)
-            break
+    pyenv_version = extract_pyenv_version([str(command) for command in lane.get("test_commands", [])])
 
     extra_paths: list[str] = []
     if pyenv_version:

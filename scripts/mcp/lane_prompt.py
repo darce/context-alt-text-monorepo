@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -17,6 +16,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from lane_manifest import get_lane_config
+from _env import extract_pyenv_version
 
 
 NO_WORK_MESSAGE = "No actionable lane inbox items."
@@ -31,9 +31,6 @@ ANSI = {
     "cyan": "\033[36m",
     "green": "\033[32m",
 }
-_PYENV_PATTERN = re.compile(r"\bPYENV_VERSION=([A-Za-z0-9._-]+)")
-
-
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render an actionable worker prompt from lane MCP state.")
     parser.add_argument("--orchestrator-root", required=True)
@@ -239,12 +236,7 @@ def _runtime_guidance(
         lines.extend(["", "Verification commands for this lane:"])
         lines.extend(_bullet_lines([f"`{command}`" for command in test_commands]))
 
-    pyenv_version = None
-    for command in test_commands:
-        match = _PYENV_PATTERN.search(command)
-        if match:
-            pyenv_version = match.group(1)
-            break
+    pyenv_version = extract_pyenv_version(test_commands)
     if pyenv_version:
         app_dir = app_root or "the application directory"
         lines.extend(

@@ -31,13 +31,14 @@ IN_ORCHESTRATOR_ROOT := $(if $(filter $(WORKTREE_ROOT_REAL),$(ORCHESTRATOR_ROOT)
 
 # --- MCP runtime ---
 MCP_PYENV_VERSION ?= description-service
-MCP_PYTHON = env PYENV_VERSION="$(MCP_PYENV_VERSION)" python3
+MCP_PYENV_BIN := $(shell command -v pyenv 2>/dev/null || true)
+MCP_PYTHON = $(if $(MCP_PYENV_BIN),env PYENV_VERSION="$(MCP_PYENV_VERSION)" "$(MCP_PYENV_BIN)" exec python3,env PYENV_VERSION="$(MCP_PYENV_VERSION)" python3)
 LANE_CONFIG_CMD = $(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_config.py"
 MCP_PYTHONPATH := $(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src:$(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
 WORKTREE_MCP_PYTHONPATH := $(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src:$(WORKTREE_ROOT_REAL)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
-MCP_CMD = PYENV_VERSION="$(MCP_PYENV_VERSION)" PYTHONPATH="$(MCP_PYTHONPATH)" python3 -m agent_handoff_mcp
+MCP_CMD = PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_handoff_mcp
 MCP_STATE_ARGS = --workspace-root "$(ORCHESTRATOR_ROOT)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports"
-PYTHON ?= python3
+PYTHON ?= $(MCP_PYTHON)
 
 # --- Task / lane inference ---
 _ACTIVE_TASK_CMD = $(shell $(MCP_CMD) $(MCP_STATE_ARGS) state 2>/dev/null | python3 -c 'import sys,json; data=json.load(sys.stdin); print(data.get("task_ref",""))' 2>/dev/null)

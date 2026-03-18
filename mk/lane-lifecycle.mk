@@ -86,8 +86,8 @@ lane-inbox: lane-guard
 		--worktree-path "$$WORKTREE_PATH"; \
 	echo ""; \
 	echo "Worker action summary:"; \
-	PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_prompt.py" \
+	PYTHONPATH="$(MCP_PYTHONPATH)" \
+		$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_prompt.py" \
 			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 			--task-ref "$(TASK)" \
 			--lane-id "$(LANE)" \
@@ -95,8 +95,8 @@ lane-inbox: lane-guard
 			--summary
 
 lane-prompt: lane-guard
-	@PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_prompt.py" \
+	@PYTHONPATH="$(MCP_PYTHONPATH)" \
+		$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_prompt.py" \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		--lane-id "$(LANE)" \
@@ -119,6 +119,7 @@ lane-dispatch: lane-guard lane-orchestrator-guard
 	fi; \
 	$(MCP_CMD) $(MCP_STATE_ARGS) \
 		lane-upsert \
+		--task-ref "$(TASK)" \
 		--lane-id "$(LANE)" \
 		--worktree-path "$(LANE_WORKTREE)" \
 		--branch "$(LANE_BRANCH)" \

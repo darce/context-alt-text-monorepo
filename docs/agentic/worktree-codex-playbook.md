@@ -136,9 +136,9 @@ Important:
 - The MCP daemon controls operate on the authoritative orchestrator checkout, using
   the same lock, pause sentinel, logs, and `.task-state` conventions as the Make
   wrappers.
-- Remote HTTP custom-MCP deployment is documented separately and is being tracked as
-  follow-on work in daemon-9. For daemon-8, treat these tools as part of the MCP
-  surface once the server is already attached to the host app.
+- For remote HTTP custom-MCP attachment (e.g. Codex custom MCP), see
+  [codex-custom-mcp-playbook.md](codex-custom-mcp-playbook.md). Start the server
+  with `make mcp-serve-http`, verify the endpoint, then attach in Codex settings.
 
 ---
 

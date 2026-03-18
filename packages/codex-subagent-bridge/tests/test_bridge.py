@@ -165,6 +165,50 @@ def test_run_subagent_drives_protocol_and_returns_structured_payload() -> None:
     assert fake_proc.stdin.closed is True
 
 
+def test_run_subagent_accepts_agent_message_text_json_payload() -> None:
+    mod = _load_bridge_module()
+    fake_proc = _FakeProcess(
+        [
+            {"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"}},
+            {"jsonrpc": "2.0", "id": 2, "result": {"thread": {"id": "thread-1"}}},
+            {"jsonrpc": "2.0", "id": 3, "result": {"turn": {"id": "turn-1", "status": "inProgress"}}},
+            {
+                "jsonrpc": "2.0",
+                "method": "item/completed",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "item": {
+                        "type": "agentMessage",
+                        "id": "msg-1",
+                        "text": "{\"ok\":true,\"summary\":\"bridge live test passed\"}",
+                        "phase": "final_answer",
+                    },
+                },
+            },
+            {
+                "jsonrpc": "2.0",
+                "method": "turn/completed",
+                "params": {"threadId": "thread-1", "turn": {"id": "turn-1", "status": "completed", "items": []}},
+            },
+        ]
+    )
+    client = mod.AppServerClient(cwd="/tmp/worktree", popen_factory=lambda *args, **kwargs: fake_proc)
+    client.start()
+    try:
+        client.initialize()
+        thread_id = client.start_thread()
+        result = client.run_structured_turn(
+            thread_id=thread_id,
+            prompt="Solve the task.",
+            output_schema={"type": "object"},
+        )
+    finally:
+        client.close()
+
+    assert result == {"ok": True, "summary": "bridge live test passed"}
+
+
 def test_run_subagent_public_entrypoint_launches_client_and_merges_env() -> None:
     mod = _load_bridge_module()
     fake_proc = _FakeProcess(

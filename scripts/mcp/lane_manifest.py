@@ -106,6 +106,24 @@ def validate_manifest(data: dict[str, Any], path: Path) -> dict[str, Any]:
             raise RuntimeError(f"lane '{lane_id}' commit_paths must be a list when present: {path}")
         if "tooling_paths" in lane and not isinstance(lane.get("tooling_paths"), list):
             raise RuntimeError(f"lane '{lane_id}' tooling_paths must be a list when present: {path}")
+        if "capability_tags" in lane and not isinstance(lane.get("capability_tags"), list):
+            raise RuntimeError(f"lane '{lane_id}' capability_tags must be a list when present: {path}")
+        if "preflight_commands" in lane and not isinstance(lane.get("preflight_commands"), list):
+            raise RuntimeError(f"lane '{lane_id}' preflight_commands must be a list when present: {path}")
+        if "preflight_failure_summary" in lane and (
+            not isinstance(lane.get("preflight_failure_summary"), str)
+            or not str(lane.get("preflight_failure_summary")).strip()
+        ):
+            raise RuntimeError(
+                f"lane '{lane_id}' preflight_failure_summary must be a non-empty string when present: {path}"
+            )
+        if "preflight_failure_details" in lane and (
+            not isinstance(lane.get("preflight_failure_details"), str)
+            or not str(lane.get("preflight_failure_details")).strip()
+        ):
+            raise RuntimeError(
+                f"lane '{lane_id}' preflight_failure_details must be a non-empty string when present: {path}"
+            )
         if "guidance_fallbacks" in lane and not isinstance(lane.get("guidance_fallbacks"), list):
             raise RuntimeError(f"lane '{lane_id}' guidance_fallbacks must be a list when present: {path}")
 
@@ -199,6 +217,8 @@ def get_lane_config(task_ref: str, lane_id: str, *, orchestrator_root: str | Non
     if not isinstance(commit_paths, list) or not commit_paths:
         result["commit_paths"] = _derive_commit_paths(owned_paths)
     result.setdefault("tooling_paths", [])
+    result.setdefault("capability_tags", [])
+    result.setdefault("preflight_commands", [])
     result.setdefault("guidance_fallbacks", [])
     if orchestrator_root and isinstance(result.get("worktree_path"), str):
         result["worktree_path"] = expand_path_template(result["worktree_path"], orchestrator_root=orchestrator_root)

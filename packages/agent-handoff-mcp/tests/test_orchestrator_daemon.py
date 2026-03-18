@@ -1609,7 +1609,9 @@ def test_single_pass_guidance_review_closes_message(tmp_path: Path) -> None:
                 single_pass=True,
             )
     assert result == 0
-    mock_ahm.update_lane_message.assert_any_call(10, "closed")
+    mock_ahm.update_lane_message.assert_any_call(
+        10, "closed", task_ref="phase-5-retention-export-and-audit-controls"
+    )
     mock_ahm.upsert_worktree_lane.assert_called()
 
 

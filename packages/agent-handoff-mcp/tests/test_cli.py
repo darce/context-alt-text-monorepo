@@ -138,6 +138,110 @@ def test_lane_cli_smoke(tmp_path: Path, capsys) -> None:
     assert len(activity_payload["reports"]) == 1
 
 
+def test_lane_cli_accepts_explicit_task_ref_for_cross_task_reporting(tmp_path: Path, capsys) -> None:
+    api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
+    json.loads(api.set_handoff_state(task_ref="task-a", objective="lane cli task a"))
+    json.loads(
+        api.upsert_worktree_lane(
+            lane_id="frontend",
+            worktree_path="/tmp/frontend",
+            branch="codex/p5-frontend",
+            status="active",
+        )
+    )
+    json.loads(api.set_handoff_state(task_ref="task-b", objective="lane cli task b", expected_revision=0))
+
+    report_payload = _run_cli(
+        [
+            "agent-handoff-mcp",
+            "--workspace-root",
+            str(tmp_path),
+            "lane-report",
+            "--task-ref",
+            "task-a",
+            "--lane-id",
+            "frontend",
+            "--session",
+            "cli",
+            "--summary",
+            "ready",
+        ],
+        capsys,
+    )
+    assert report_payload["ok"] is True
+    assert report_payload["report"]["task_ref"] == "task-a"
+
+    message_payload = _run_cli(
+        [
+            "agent-handoff-mcp",
+            "--workspace-root",
+            str(tmp_path),
+            "lane-message",
+            "--task-ref",
+            "task-a",
+            "--lane-id",
+            "frontend",
+            "--session",
+            "cli",
+            "--direction",
+            "worker_to_orchestrator",
+            "--message",
+            "please review",
+        ],
+        capsys,
+    )
+    assert message_payload["ok"] is True
+    assert message_payload["message"]["task_ref"] == "task-a"
+
+    updated_payload = _run_cli(
+        [
+            "agent-handoff-mcp",
+            "--workspace-root",
+            str(tmp_path),
+            "lane-message-update",
+            "--task-ref",
+            "task-a",
+            "--message-id",
+            str(message_payload["message"]["id"]),
+            "--status",
+            "acknowledged",
+        ],
+        capsys,
+    )
+    assert updated_payload["ok"] is True
+    assert updated_payload["message"]["status"] == "acknowledged"
+
+
+def test_lane_cli_accepts_explicit_task_ref_for_cross_task_lane_upsert(tmp_path: Path, capsys) -> None:
+    api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
+    json.loads(api.set_handoff_state(task_ref="task-a", objective="lane cli task a"))
+    json.loads(api.set_handoff_state(task_ref="task-b", objective="lane cli task b", expected_revision=0))
+
+    payload = _run_cli(
+        [
+            "agent-handoff-mcp",
+            "--workspace-root",
+            str(tmp_path),
+            "lane-upsert",
+            "--task-ref",
+            "task-a",
+            "--lane-id",
+            "frontend",
+            "--worktree-path",
+            "/tmp/frontend",
+            "--branch",
+            "codex/p5-frontend",
+            "--status",
+            "blocked",
+        ],
+        capsys,
+    )
+
+    assert payload["ok"] is True
+    assert payload["lane"]["task_ref"] == "task-a"
+    assert payload["lane"]["status"] == "blocked"
+
+
 def test_review_update_cli_accepts_explicit_task_ref(tmp_path: Path, capsys) -> None:
     api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
     json.loads(api.set_handoff_state(task_ref="task-a", objective="task a"))
@@ -219,3 +323,18 @@ def test_review_update_cli_accepts_verified_commit_sha(tmp_path: Path, capsys, m
     assert payload["ok"] is True
     assert payload["finding"]["status"] == "fixed"
     assert payload["commit_guard"]["verified_commit_sha"] == "def456"
+
+
+def test_serve_http_parser_defaults() -> None:
+    parser = cli._build_parser()
+    args = parser.parse_args(["serve-http"])
+    assert args.command == "serve-http"
+    assert args.host == "127.0.0.1"
+    assert args.port == 8741
+
+
+def test_serve_http_parser_custom_host_port() -> None:
+    parser = cli._build_parser()
+    args = parser.parse_args(["serve-http", "--host", "0.0.0.0", "--port", "9999"])
+    assert args.host == "0.0.0.0"
+    assert args.port == 9999

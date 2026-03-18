@@ -133,7 +133,9 @@ def test_tail_text_accepts_bytes() -> None:
 
 def test_backend_choices_come_from_registry() -> None:
     mod = _load_module()
-    assert mod.BACKEND_CHOICES == ("codex-cli", "codex-subagent")
+    assert "codex-cli" in mod.BACKEND_CHOICES
+    assert "codex-subagent" in mod.BACKEND_CHOICES
+    assert "copilot-host" in mod.BACKEND_CHOICES
 
 
 # ---------------------------------------------------------------------------
@@ -144,8 +146,10 @@ def test_backend_choices_come_from_registry() -> None:
 def test_pythonpath_env_includes_mcp_src() -> None:
     mod = _load_module()
     env = mod.pythonpath_env(REPO_ROOT, task_ref="phase-5-retention-export-and-audit-controls", lane_id="backend-domain")
-    expected = str(REPO_ROOT / "packages" / "agent-handoff-mcp" / "src")
-    assert expected in env["PYTHONPATH"]
+    expected_mcp = str(REPO_ROOT / "packages" / "agent-handoff-mcp" / "src")
+    expected_bridge = str(REPO_ROOT / "packages" / "codex-subagent-bridge" / "src")
+    assert expected_mcp in env["PYTHONPATH"]
+    assert expected_bridge in env["PYTHONPATH"]
     assert env["PYENV_VERSION"] == "description-service"
     assert env["TMPDIR"].endswith("/.task-state/tmp/backend-domain")
     assert "/.pyenv/versions/description-service/bin" in env["PATH"]
@@ -270,6 +274,57 @@ def test_run_lane_exec_subagent_backend_writes_structured_result(tmp_path: Path)
     assert json.loads(output.read_text()) == subagent_payload
     mock_run_subagent.assert_called_once()
     assert mock_run_subagent.call_args.args[0] == "codex-subagent"
+    mock_find_codex.assert_not_called()
+
+
+def test_run_lane_exec_preflight_failure_returns_needs_guidance_without_running_backend(tmp_path: Path) -> None:
+    mod = _load_module()
+    output = tmp_path / "result.json"
+
+    with (
+        mock.patch.object(
+            mod,
+            "_run_lane_preflight",
+            return_value={
+                "ok": False,
+                "commands": ["pg_isready -h localhost -p 5432"],
+                "capability_tags": ["postgres-ready"],
+                "failures": [
+                    {
+                        "command": "pg_isready -h localhost -p 5432",
+                        "exit_code": 2,
+                        "stderr_tail": "no response",
+                        "stdout_tail": "",
+                    }
+                ],
+                "failure_summary": "backend-domain DB preflight failed",
+                "failure_details": "postgres is unavailable",
+            },
+        ),
+        mock.patch.object(mod, "_render_prompt") as mock_prompt,
+        mock.patch.object(mod, "_render_schema") as mock_schema,
+        mock.patch.object(mod, "_run_subagent") as mock_subagent,
+        mock.patch.object(mod, "find_codex") as mock_find_codex,
+    ):
+        result_path = mod.run_lane_exec(
+            orchestrator_root=REPO_ROOT,
+            task_ref="test-task",
+            lane_id="backend-domain",
+            session="test-task-backend-domain",
+            worktree_path=tmp_path,
+            output_path=output,
+            backend="codex-subagent",
+        )
+
+    assert result_path == output
+    data = json.loads(output.read_text())
+    assert data["handoff_action"] == "needs_guidance"
+    assert data["summary"] == "backend-domain DB preflight failed"
+    assert "postgres is unavailable" in data["details"]
+    assert "pg_isready -h localhost -p 5432" in data["tests_run"]
+    mock_prompt.assert_not_called()
+    mock_schema.assert_not_called()
+    mock_subagent.assert_not_called()
     mock_find_codex.assert_not_called()
 
 

@@ -78,7 +78,9 @@ def test_findings_converged_one_high_fails() -> None:
 
 def test_backend_choices_come_from_registry() -> None:
     module = _load_review_runner_module()
-    assert module.BACKEND_CHOICES == ("codex-cli", "codex-subagent")
+    assert "codex-cli" in module.BACKEND_CHOICES
+    assert "codex-subagent" in module.BACKEND_CHOICES
+    assert "copilot-host" in module.BACKEND_CHOICES
 
 
 # ---------------------------------------------------------------------------

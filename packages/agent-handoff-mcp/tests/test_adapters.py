@@ -4,6 +4,7 @@ import asyncio
 import json
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 from fastmcp.client import Client, PythonStdioTransport
@@ -13,7 +14,7 @@ def test_vscode_adapter_points_to_repo_local_launcher_and_doctor_runs() -> None:
     repo_root = Path(__file__).resolve().parents[3]
     config = json.loads((repo_root / ".vscode" / "mcp.json").read_text())
 
-    server = config["servers"]["context-alt-text"]
+    server = config["servers"]["altcontext-mcp"]
     assert server["command"] == "python3"
     assert server["args"] == [
         "${workspaceFolder}/packages/agent-handoff-mcp/src/agent_handoff_mcp_launcher.py",
@@ -27,6 +28,11 @@ def test_vscode_adapter_points_to_repo_local_launcher_and_doctor_runs() -> None:
         "${workspaceFolder}/.task-state/exports",
         "serve-stdio",
     ]
+    assert server["env"]["PYENV_VERSION"] == "description-service"
+    assert server["env"]["PYTHONPATH"] == (
+        "${workspaceFolder}/packages/agent-handoff-mcp/src:"
+        "${workspaceFolder}/packages/codex-subagent-bridge/src"
+    )
 
     result = subprocess.run(
         ["./scripts/mcp/mcp-server.sh", "doctor"],
@@ -38,6 +44,32 @@ def test_vscode_adapter_points_to_repo_local_launcher_and_doctor_runs() -> None:
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
     assert payload["workspace_root"] == str(repo_root)
+
+
+def test_project_codex_config_registers_local_stdio_adapter() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    config = tomllib.loads((repo_root / ".codex" / "config.toml").read_text())
+
+    server = config["mcp_servers"]["altcontext-mcp"]
+    assert server["command"] == "python3"
+    assert server["cwd"] == str(repo_root)
+    assert server["args"] == [
+        str(repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py"),
+        "--workspace-root",
+        str(repo_root),
+        "--state-dir",
+        str(repo_root / ".task-state"),
+        "--current-task-path",
+        str(repo_root / "CURRENT_TASK.md"),
+        "--exports-dir",
+        str(repo_root / ".task-state" / "exports"),
+        "serve-stdio",
+    ]
+    assert server["env"]["PYENV_VERSION"] == "description-service"
+    assert server["env"]["PYTHONPATH"] == (
+        f"{repo_root / 'packages' / 'agent-handoff-mcp' / 'src'}:"
+        f"{repo_root / 'packages' / 'codex-subagent-bridge' / 'src'}"
+    )
 
 
 def test_generic_stdio_adapter_launches_packaged_server(tmp_path: Path) -> None:

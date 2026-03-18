@@ -100,7 +100,7 @@ Example client adapter:
 
 ```json
 {
-  "name": "agent-handoff",
+  "name": "altcontext-mcp",
   "command": "agent-handoff-mcp",
   "args": ["--workspace-root", "/path/to/repo", "serve-stdio"]
 }
@@ -113,23 +113,56 @@ VS Code workspace adapter:
 ```json
 {
   "servers": {
-    "context-alt-text": {
-      "command": "agent-handoff-mcp",
-      "args": ["--workspace-root", "${workspaceFolder}", "serve-stdio"]
+    "altcontext-mcp": {
+      "command": "python3",
+      "args": [
+        "${workspaceFolder}/packages/agent-handoff-mcp/src/agent_handoff_mcp_launcher.py",
+        "--workspace-root",
+        "${workspaceFolder}",
+        "--state-dir",
+        "${workspaceFolder}/.task-state",
+        "--current-task-path",
+        "${workspaceFolder}/CURRENT_TASK.md",
+        "--exports-dir",
+        "${workspaceFolder}/.task-state/exports",
+        "serve-stdio"
+      ],
+      "env": {
+        "PYENV_VERSION": "description-service",
+        "PYTHONPATH": "${workspaceFolder}/packages/agent-handoff-mcp/src:${workspaceFolder}/packages/codex-subagent-bridge/src"
+      }
     }
   }
 }
 ```
 
-The checked-in VS Code adapter now launches `agent-handoff-mcp` directly. The shell shim remains available only as a local fallback for development and diagnostics.
+The checked-in VS Code adapter now launches the repo-local Python entrypoint so
+workspace state and pyenv selection stay explicit. The shell shim remains
+available only as a local fallback for development and diagnostics.
 
 Codex / generic stdio client:
 
 ```json
 {
-  "name": "agent-handoff",
-  "command": "agent-handoff-mcp",
-  "args": ["--workspace-root", "/path/to/repo", "serve-stdio"]
+  "name": "altcontext-mcp",
+  "command": "python3",
+  "args": [
+    "/path/to/repo/packages/agent-handoff-mcp/src/agent_handoff_mcp_launcher.py",
+    "--workspace-root",
+    "/path/to/repo",
+    "--state-dir",
+    "/path/to/repo/.task-state",
+    "--current-task-path",
+    "/path/to/repo/CURRENT_TASK.md",
+    "--exports-dir",
+    "/path/to/repo/.task-state/exports",
+    "serve-stdio"
+  ],
+  "cwd": "/path/to/repo",
+  "env": {
+    "PYENV_VERSION": "description-service",
+    "PYTHONPATH": "/path/to/repo/packages/agent-handoff-mcp/src:/path/to/repo/packages/codex-subagent-bridge/src"
+  }
 }
 ```
 

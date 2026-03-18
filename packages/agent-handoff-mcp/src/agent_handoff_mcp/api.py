@@ -91,6 +91,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "orchestrator_pause": "Pause the orchestrator daemon by creating the standard pause sentinel on the authoritative host.",
     "orchestrator_resume": "Resume the orchestrator daemon by clearing the standard pause sentinel on the authoritative host.",
     "run_structured_turn": "Execute one synchronous structured bridge turn through a registered non-CLI backend.",
+    "orchestrator_single_cycle": "Run one complete orchestrator cycle synchronously (dispatch, poll, intake, verify) and return the result.",
 }
 
 
@@ -170,9 +171,15 @@ def _import_scripts_mcp_module(name: str) -> Any:
 
 
 def _handoff_pythonpath() -> str:
-    package_src = Path(__file__).resolve().parents[1]
+    package_root = Path(__file__).resolve().parents[3]
+    pythonpath_parts = [
+        str(package_root / "packages" / "agent-handoff-mcp" / "src"),
+        str(package_root / "packages" / "codex-subagent-bridge" / "src"),
+    ]
     existing = os.environ.get("PYTHONPATH")
-    return str(package_src) if not existing else f"{package_src}:{existing}"
+    if existing:
+        pythonpath_parts.append(existing)
+    return ":".join(part for part in pythonpath_parts if part)
 
 
 def _orchestrator_paths() -> dict[str, Path]:
@@ -402,6 +409,63 @@ def orchestrator_stop(force: bool = False, wait_seconds: float = 5.0) -> str:
     )
 
 
+def orchestrator_single_cycle(
+    task_ref: str,
+    backend: str = "codex-cli",
+    dry_run: bool = False,
+    timeout_seconds: float = 300.0,
+) -> str:
+    """Run one orchestrator cycle synchronously (dispatch, poll, intake, verify)."""
+    paths = _orchestrator_paths()
+    try:
+        backend_registry = _import_scripts_mcp_module("backend_registry")
+        backend_name = backend_registry.validate_backend(backend)
+    except RuntimeError as exc:
+        return core._json_response({"ok": False, "error": str(exc)})
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = _handoff_pythonpath()
+    cmd = [
+        sys.executable,
+        str(paths["script_path"]),
+        "run",
+        "--orchestrator-root",
+        str(paths["workspace_root"]),
+        "--task-ref",
+        task_ref,
+        "--backend",
+        backend_name,
+        "--single-pass",
+    ]
+    if dry_run:
+        cmd.append("--dry-run")
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(paths["workspace_root"]),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=max(timeout_seconds, 1.0),
+        )
+    except subprocess.TimeoutExpired:
+        return core._json_response(
+            {
+                "ok": False,
+                "error": f"Orchestrator single cycle timed out after {timeout_seconds} seconds.",
+            }
+        )
+    return core._json_response(
+        {
+            "ok": result.returncode == 0,
+            "exit_code": result.returncode,
+            "backend": backend_name,
+            "dry_run": dry_run,
+            "stderr": result.stderr[-2000:] if result.stderr else "",
+        }
+    )
+
+
 def run_structured_turn(
     prompt: str,
     schema: dict[str, Any],
@@ -528,6 +592,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
         orchestrator_stop,
         orchestrator_pause,
         orchestrator_resume,
+        orchestrator_single_cycle,
         run_structured_turn,
     ]:
         mcp.add_tool(tool)
@@ -564,8 +629,7 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
         stdio_tools = asyncio.run(_list_tools())
 
         cli_env = dict(**os.environ)
-        existing_pythonpath = cli_env.get("PYTHONPATH")
-        cli_env["PYTHONPATH"] = str(package_src) if not existing_pythonpath else f"{package_src}:{existing_pythonpath}"
+        cli_env["PYTHONPATH"] = _handoff_pythonpath()
         cli_probe = subprocess.run(
             [
                 sys.executable,

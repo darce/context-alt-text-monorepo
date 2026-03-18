@@ -21,6 +21,7 @@ from .api import (
     list_worktree_lanes,
     orchestrator_pause,
     orchestrator_resume,
+    orchestrator_single_cycle,
     orchestrator_start,
     orchestrator_status,
     orchestrator_stop,
@@ -58,7 +59,20 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("serve-stdio")
-    subparsers.add_parser("serve-http")
+    http_parser = subparsers.add_parser("serve-http")
+    http_parser.add_argument(
+        "--host", default="127.0.0.1",
+        help="Host address to bind to (default: 127.0.0.1)",
+    )
+    http_parser.add_argument(
+        "--port", type=int, default=8741,
+        help="Port to bind to (default: 8741)",
+    )
+    cycle_parser = subparsers.add_parser("single-cycle")
+    cycle_parser.add_argument("--task-ref", required=True, help="MCP task reference.")
+    cycle_parser.add_argument("--backend", default="codex-cli", help="Execution backend.")
+    cycle_parser.add_argument("--dry-run", action="store_true", help="Skip mutating operations.")
+    cycle_parser.add_argument("--timeout", type=float, default=300.0, help="Timeout in seconds.")
     subparsers.add_parser("doctor")
     subparsers.add_parser("dashboard").add_argument("--limit", type=int, default=20)
 
@@ -85,6 +99,7 @@ def _build_parser() -> argparse.ArgumentParser:
     action_parser.add_argument("--status")
 
     lane_upsert_parser = subparsers.add_parser("lane-upsert")
+    lane_upsert_parser.add_argument("--task-ref")
     lane_upsert_parser.add_argument("--lane-id", required=True)
     lane_upsert_parser.add_argument("--worktree-path", required=True)
     lane_upsert_parser.add_argument("--branch", required=True)
@@ -122,6 +137,7 @@ def _build_parser() -> argparse.ArgumentParser:
     test_parser.add_argument("--exit-code", type=int)
 
     report_parser = subparsers.add_parser("lane-report")
+    report_parser.add_argument("--task-ref")
     report_parser.add_argument("--lane-id", required=True)
     report_parser.add_argument("--session", required=True)
     report_parser.add_argument("--summary", required=True)
@@ -138,6 +154,7 @@ def _build_parser() -> argparse.ArgumentParser:
     report_list_parser.add_argument("--offset", type=int, default=0)
 
     message_parser = subparsers.add_parser("lane-message")
+    message_parser.add_argument("--task-ref")
     message_parser.add_argument("--lane-id", required=True)
     message_parser.add_argument("--session", required=True)
     message_parser.add_argument("--direction", required=True)
@@ -148,6 +165,7 @@ def _build_parser() -> argparse.ArgumentParser:
     message_update_parser = subparsers.add_parser("lane-message-update")
     message_update_parser.add_argument("--message-id", type=int, required=True)
     message_update_parser.add_argument("--status", required=True)
+    message_update_parser.add_argument("--task-ref")
 
     message_list_parser = subparsers.add_parser("lane-message-list")
     message_list_parser.add_argument("--task-ref")
@@ -251,7 +269,17 @@ def main() -> None:
         build_handoff_mcp(config).run(transport="stdio")
         return
     if args.command == "serve-http":
-        build_handoff_mcp(config).run(transport="streamable-http")
+        build_handoff_mcp(config).run(
+            transport="streamable-http", host=args.host, port=args.port,
+        )
+        return
+    if args.command == "single-cycle":
+        _print_json(orchestrator_single_cycle(
+            task_ref=args.task_ref,
+            backend=args.backend,
+            dry_run=args.dry_run,
+            timeout_seconds=args.timeout,
+        ))
         return
     if args.command == "doctor":
         _print_json(run_doctor(config))
@@ -289,6 +317,7 @@ def main() -> None:
     if args.command == "lane-upsert":
         _print_json(
             upsert_worktree_lane(
+                task_ref=args.task_ref,
                 lane_id=args.lane_id,
                 worktree_path=args.worktree_path,
                 branch=args.branch,
@@ -346,6 +375,7 @@ def main() -> None:
     if args.command == "lane-report":
         _print_json(
             record_worker_report(
+                task_ref=args.task_ref,
                 lane_id=args.lane_id,
                 session=args.session,
                 summary=args.summary,
@@ -370,6 +400,7 @@ def main() -> None:
     if args.command == "lane-message":
         _print_json(
             record_lane_message(
+                task_ref=args.task_ref,
                 lane_id=args.lane_id,
                 session=args.session,
                 direction=args.direction,
@@ -380,7 +411,7 @@ def main() -> None:
         )
         return
     if args.command == "lane-message-update":
-        _print_json(update_lane_message(message_id=args.message_id, status=args.status))
+        _print_json(update_lane_message(message_id=args.message_id, status=args.status, task_ref=args.task_ref))
         return
     if args.command == "lane-message-list":
         _print_json(

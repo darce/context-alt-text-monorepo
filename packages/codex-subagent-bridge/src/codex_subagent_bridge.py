@@ -289,6 +289,12 @@ def _find_structured_content(value: Any) -> Any | None:
     if isinstance(value, dict):
         if "structuredContent" in value and value["structuredContent"] is not None:
             return value["structuredContent"]
+        if (
+            value.get("type") == "agentMessage"
+            and isinstance(value.get("text"), str)
+            and value["text"].strip()
+        ):
+            return value["text"]
         for nested in value.values():
             found = _find_structured_content(nested)
             if found is not None:

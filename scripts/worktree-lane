@@ -32,9 +32,26 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
 }
 
+resolve_python_command() {
+  local pyenv_version="${MCP_PYENV_VERSION:-description-service}"
+  if command -v pyenv >/dev/null 2>&1; then
+    PYTHON_CMD=(env "PYENV_VERSION=$pyenv_version" pyenv exec python3)
+    return
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHON_CMD=(python3)
+    return
+  fi
+
+  die "required command not found: pyenv or python3"
+}
+
 resolve_mcp_command() {
-  if [ -f "$REPO_ROOT/packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py" ] && command -v python3 >/dev/null 2>&1; then
-    MCP_CMD=(env "PYTHONPATH=$REPO_ROOT/packages/agent-handoff-mcp/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m agent_handoff_mcp)
+  resolve_python_command
+
+  if [ -f "$REPO_ROOT/packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py" ]; then
+    MCP_CMD=(env "PYTHONPATH=$REPO_ROOT/packages/agent-handoff-mcp/src${PYTHONPATH:+:$PYTHONPATH}" "${PYTHON_CMD[@]}" -m agent_handoff_mcp)
     return
   fi
 
@@ -49,7 +66,7 @@ resolve_mcp_command() {
   fi
 
   if [ -f "$REPO_ROOT/packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py" ]; then
-    die "required command not found: python3"
+    die "required command not found: pyenv or python3"
   fi
 
   die "required command not found: agent-handoff-mcp"
@@ -91,7 +108,7 @@ run_mcp() {
     return 1
   fi
 
-  if ! printf '%s' "$output" | python3 -c 'import json,sys
+  if ! printf '%s' "$output" | "${PYTHON_CMD[@]}" -c 'import json,sys
 text=sys.stdin.read()
 try:
     payload=json.loads(text)

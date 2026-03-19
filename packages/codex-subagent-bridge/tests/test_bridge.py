@@ -244,21 +244,40 @@ def test_run_subagent_public_entrypoint_launches_client_and_merges_env() -> None
 
     mod.AppServerClient = _PatchedClient
     try:
-        result = mod.run_subagent(
-            prompt="Solve the task.",
-            schema={"type": "object"},
-            cwd="/tmp/worktree",
-            env={"TMPDIR": "/tmp/bridge", "PYENV_VERSION": "description-service"},
-        )
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            monkeypatch.setattr(mod, "_resolve_codex_bin", lambda explicit, env: "/resolved/codex")
+            result = mod.run_subagent(
+                prompt="Solve the task.",
+                schema={"type": "object"},
+                cwd="/tmp/worktree",
+                env={"TMPDIR": "/tmp/bridge", "PYENV_VERSION": "description-service"},
+            )
     finally:
         mod.AppServerClient = original_client
 
     assert result == {"ok": True}
-    assert captured["args"][0] == ["codex", "app-server", "--listen", "stdio://"]
+    assert captured["args"][0] == ["/resolved/codex", "app-server", "--listen", "stdio://"]
     assert captured["kwargs"]["cwd"] == "/tmp/worktree"
     assert captured["kwargs"]["env"]["TMPDIR"] == "/tmp/bridge"
     assert captured["kwargs"]["env"]["PYENV_VERSION"] == "description-service"
     assert captured["kwargs"]["env"]["PATH"] == os.environ["PATH"]
+
+
+def test_resolve_codex_bin_prefers_env_override() -> None:
+    mod = _load_bridge_module()
+    assert mod._resolve_codex_bin("codex", {"CODEX_BIN": "/tmp/codex-app"}) == "/tmp/codex-app"
+
+
+def test_resolve_codex_bin_falls_back_to_known_executable_path(tmp_path: Path) -> None:
+    mod = _load_bridge_module()
+    fake_codex = tmp_path / "codex"
+    fake_codex.write_text("#!/bin/sh\n")
+    fake_codex.chmod(0o755)
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(mod.shutil, "which", lambda name, path=None: None)
+        monkeypatch.setattr(mod, "_CODEX_SEARCH_PATHS", (str(fake_codex),))
+        assert mod._resolve_codex_bin("codex", {}) == str(fake_codex)
 
 
 def test_run_structured_turn_fails_when_no_structured_payload_arrives() -> None:

@@ -985,9 +985,21 @@ def test_single_pass_intakes_ready_lane(tmp_path: Path) -> None:
     state_dir.mkdir()
 
     mock_ahm = _make_mock_ahm()
+    mock_ahm.record_lane_brief.return_value = json.dumps({"ok": True})
     mock_ahm.list_worker_reports.side_effect = [
         json.dumps({"ok": True, "reports": [{"merge_ready": 1}]}),
         json.dumps({"ok": True, "reports": []}),
+        json.dumps({
+            "ok": True,
+            "reports": [
+                {
+                    "merge_ready": 1,
+                    "summary": "lane a merged cleanly",
+                    "changed_files": ["apps/prototype-description-service/export_service.py"],
+                    "test_commands": ["pytest recognition/tests/unit/test_export_service.py"],
+                }
+            ],
+        }),
     ]
 
     mock_manifest = mock.MagicMock()

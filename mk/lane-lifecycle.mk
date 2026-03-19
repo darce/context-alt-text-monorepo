@@ -100,7 +100,8 @@ lane-prompt: lane-guard
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		--lane-id "$(LANE)" \
-		--worktree-path "$(LANE_WORKTREE_TARGET)"
+		--worktree-path "$(LANE_WORKTREE_TARGET)" \
+		$(EXTRA_ARGS)
 
 lane-dispatch: lane-guard lane-orchestrator-guard
 	@if [ -z "$(MESSAGE)" ]; then \

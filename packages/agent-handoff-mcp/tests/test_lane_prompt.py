@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 
@@ -51,7 +52,14 @@ def test_build_prompt_includes_messages_actions_and_findings() -> None:
                     "status": "open",
                     "subject": "backend-domain pending next actions",
                     "message": "Pick up action #72.",
-                }
+                },
+                {
+                    "id": 9,
+                    "direction": "orchestrator_to_worker",
+                    "status": "open",
+                    "subject": "brief:api-contract-changed",
+                    "message": "Contract brief for downstream work.",
+                },
             ],
             "actions": [
                 {
@@ -80,9 +88,13 @@ def test_build_prompt_includes_messages_actions_and_findings() -> None:
         orchestrator_root=REPO_ROOT,
     )
 
-    assert "Open orchestrator messages:" in prompt
-    assert "Pending lane actions:" in prompt
-    assert "Open lane review findings:" in prompt
+    assert "Assignment Inbox:" in prompt
+    assert "Context Budget:" in prompt
+    assert "Runtime Guidance:" in prompt
+    assert "Dependency Briefs:" in prompt
+    assert "Reporting Contract:" in prompt
+    assert "Contract brief for downstream work." in prompt
+    assert "Recent lane decisions/tests are omitted by default" in prompt
     assert "Verification commands for this lane:" in prompt
     assert "PYENV_VERSION=description-service" in prompt
     assert "Backend runtime notes:" in prompt
@@ -92,6 +104,171 @@ def test_build_prompt_includes_messages_actions_and_findings() -> None:
     assert "Owned paths" in prompt
     assert "Constraints:" in prompt
     assert "Do not edit HTTP router files." in prompt
+
+
+def test_build_prompt_formats_structured_briefs_compactly() -> None:
+    module = _load_lane_prompt_module()
+
+    prompt = module._build_prompt(
+        {
+            "lane": {"branch": "codex/p5-frontend", "objective": "Frontend slice."},
+            "messages": [
+                {
+                    "id": 9,
+                    "direction": "orchestrator_to_worker",
+                    "status": "open",
+                    "subject": "brief:api-contract-changed",
+                    "message": "Contract brief for downstream work.",
+                    "payload": {
+                        "source_lane": "backend-domain",
+                        "reason": "api-contract-changed",
+                        "summary": "Retention export contract now includes purge eligibility metadata.",
+                        "required_actions": ["Update the typed client.", "Refresh the UI copy."],
+                        "artifacts": ["apps/prototype-description-service/export_service.py"],
+                    },
+                }
+            ],
+            "actions": [],
+            "blockers": [],
+            "findings": [],
+            "reports": [],
+        },
+        task_ref="phase-5-retention-export-and-audit-controls",
+        lane_id="frontend",
+        worktree_path="/tmp/frontend",
+        orchestrator_root=REPO_ROOT,
+    )
+
+    assert "from backend-domain" in prompt
+    assert "Actions: Update the typed client.; Refresh the UI copy." in prompt
+    assert "Artifacts: apps/prototype-description-service/export_service.py" in prompt
+
+
+def test_build_prompt_bounds_assignment_items_for_focus() -> None:
+    module = _load_lane_prompt_module()
+    prompt = module._build_prompt(
+        {
+            "lane": {"branch": "codex/p5-backend-domain", "objective": "Objective"},
+            "messages": [
+                {
+                    "id": idx,
+                    "direction": "orchestrator_to_worker",
+                    "status": "open",
+                    "subject": f"assignment-{idx}",
+                    "message": "Work item.",
+                }
+                for idx in range(20)
+            ],
+            "actions": [],
+            "blockers": [],
+            "findings": [],
+            "reports": [],
+        },
+        task_ref="phase-5-retention-export-and-audit-controls",
+        lane_id="backend-domain",
+        worktree_path="/tmp/backend-domain",
+        orchestrator_root=REPO_ROOT,
+    )
+    assert "additional item(s) omitted to keep the worker prompt focused" in prompt
+
+
+def test_build_prompt_includes_recent_lane_history_only_when_requested() -> None:
+    module = _load_lane_prompt_module()
+    activity = {
+        "lane": {"branch": "codex/p5-backend-domain", "objective": "Objective"},
+        "messages": [
+            {
+                "id": 1,
+                "direction": "orchestrator_to_worker",
+                "status": "open",
+                "subject": "assignment",
+                "message": "Implement the lane slice.",
+            }
+        ],
+        "actions": [],
+        "blockers": [],
+        "findings": [],
+        "decisions": [
+            {"id": 11, "decision": "Use the compact brief path."},
+        ],
+        "tests": [
+            {"id": 22, "passed": 1, "command": "pytest recognition/tests/unit/test_export_service.py"},
+        ],
+        "reports": [],
+    }
+
+    default_prompt = module._build_prompt(
+        activity,
+        task_ref="phase-5-retention-export-and-audit-controls",
+        lane_id="backend-domain",
+        worktree_path="/tmp/backend-domain",
+        orchestrator_root=REPO_ROOT,
+    )
+    expanded_prompt = module._build_prompt(
+        activity,
+        task_ref="phase-5-retention-export-and-audit-controls",
+        lane_id="backend-domain",
+        worktree_path="/tmp/backend-domain",
+        orchestrator_root=REPO_ROOT,
+        include_lane_history=True,
+    )
+
+    assert "Recent Lane History:" not in default_prompt
+    assert "Recent Lane History:" in expanded_prompt
+    assert "Use the compact brief path." in expanded_prompt
+    assert "[pass] pytest recognition/tests/unit/test_export_service.py" in expanded_prompt
+    assert "Escalated lane history is included below" in expanded_prompt
+
+
+def test_build_prompt_includes_global_context_only_when_requested() -> None:
+    module = _load_lane_prompt_module()
+    module.get_handoff_state = lambda **_: json.dumps(  # type: ignore[attr-defined]
+        {
+            "ok": True,
+            "actions_pending": [{"id": 90, "action": "Update the shared rollout checklist.", "lane_id": None}],
+            "blockers_open": [{"id": 91, "description": "Waiting on policy sign-off.", "lane_id": None}],
+            "findings_open": [{"id": 92, "description": "Open cross-lane finding.", "severity": "medium", "lane_id": None}],
+            "decisions_recent": [{"id": 93, "decision": "Use structured briefs for downstream lanes.", "lane_id": None}],
+            "tests_recent": [{"id": 94, "command": "pytest tests/test_cross_lane.py", "passed": 1, "lane_id": None}],
+        }
+    )
+    activity = {
+        "lane": {"branch": "codex/p5-frontend", "objective": "Objective"},
+        "messages": [
+            {
+                "id": 1,
+                "direction": "orchestrator_to_worker",
+                "status": "open",
+                "subject": "assignment",
+                "message": "Implement the lane slice.",
+            }
+        ],
+        "actions": [],
+        "blockers": [],
+        "findings": [],
+        "reports": [],
+    }
+
+    default_prompt = module._build_prompt(
+        activity,
+        task_ref="phase-5-retention-export-and-audit-controls",
+        lane_id="frontend",
+        worktree_path="/tmp/frontend",
+        orchestrator_root=REPO_ROOT,
+    )
+    expanded_prompt = module._build_prompt(
+        activity,
+        task_ref="phase-5-retention-export-and-audit-controls",
+        lane_id="frontend",
+        worktree_path="/tmp/frontend",
+        orchestrator_root=REPO_ROOT,
+        include_global_context=True,
+    )
+
+    assert "Escalated Task Context:" not in default_prompt
+    assert "Escalated Task Context:" in expanded_prompt
+    assert "Update the shared rollout checklist." in expanded_prompt
+    assert "Waiting on policy sign-off." in expanded_prompt
 
 
 def test_build_summary_lines_color_codes_actionable_items() -> None:

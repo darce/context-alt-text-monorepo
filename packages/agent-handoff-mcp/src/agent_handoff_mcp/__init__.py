@@ -14,6 +14,7 @@ from .api import (
     handoff_close_check,
     import_handoff_state,
     list_lane_messages,
+    list_lane_briefs,
     list_next_actions,
     list_plan_cursors,
     list_review_findings,
@@ -26,6 +27,7 @@ from .api import (
     orchestrator_status,
     orchestrator_stop,
     record_lane_message,
+    record_lane_brief,
     record_decision,
     record_review_finding,
     record_test_result,
@@ -42,6 +44,11 @@ from .api import (
     upsert_plan_cursor,
     update_review_finding,
     upsert_worktree_lane,
+    worker_resume,
+    worker_start,
+    worker_start_all,
+    worker_status,
+    worker_stop,
 )
 from .config import RuntimeConfig
 
@@ -62,6 +69,7 @@ __all__ = [
     "handoff_close_check",
     "import_handoff_state",
     "list_lane_messages",
+    "list_lane_briefs",
     "list_next_actions",
     "list_plan_cursors",
     "list_review_findings",
@@ -74,6 +82,7 @@ __all__ = [
     "orchestrator_status",
     "orchestrator_stop",
     "record_lane_message",
+    "record_lane_brief",
     "record_decision",
     "record_review_finding",
     "record_test_result",
@@ -90,4 +99,9 @@ __all__ = [
     "upsert_plan_cursor",
     "update_review_finding",
     "upsert_worktree_lane",
+    "worker_resume",
+    "worker_start",
+    "worker_start_all",
+    "worker_status",
+    "worker_stop",
 ]

@@ -41,6 +41,7 @@ set_handoff_state = core.set_handoff_state
 get_handoff_state = core.get_handoff_state
 get_lane_activity = core.get_lane_activity
 list_lane_messages = core.list_lane_messages
+list_lane_briefs = core.list_lane_briefs
 get_plan_cursor = core.get_plan_cursor
 list_next_actions = core.list_next_actions
 list_plan_cursors = core.list_plan_cursors
@@ -48,6 +49,7 @@ upsert_plan_cursor = core.upsert_plan_cursor
 list_worker_reports = core.list_worker_reports
 list_worktree_lanes = core.list_worktree_lanes
 record_lane_message = core.record_lane_message
+record_lane_brief = core.record_lane_brief
 record_worker_report = core.record_worker_report
 update_lane_message = core.update_lane_message
 upsert_worktree_lane = core.upsert_worktree_lane
@@ -67,8 +69,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "record_worker_report": "Record a structured worker report for a lane, including summary, changed files, blockers, and merge readiness.",
     "list_worker_reports": "List recent worker reports for the active or requested task, optionally scoped to a lane.",
     "record_lane_message": "Create a lane message between orchestrator and worker for the active or requested task.",
+    "record_lane_brief": "Create a structured orchestrator-to-worker brief on top of the lane_messages surface.",
     "update_lane_message": "Update the status of a lane message, such as closing or acknowledging it.",
     "list_lane_messages": "List lane messages for the active or requested task, optionally filtered by lane, direction, or status.",
+    "list_lane_briefs": "List structured orchestrator-to-worker brief messages for the active or requested task.",
     "get_plan_cursor": "Fetch the durable plan-dispatch cursor for a specific task-plan item.",
     "list_plan_cursors": "List durable plan-dispatch cursor rows for the active or requested task, optionally filtered by state or lane.",
     "upsert_plan_cursor": "Create or update a durable task-plan cursor row recording dispatch, completion, skip, or escalation state.",
@@ -90,6 +94,11 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "orchestrator_stop": "Stop the orchestrator daemon with SIGTERM, or SIGKILL when force=true.",
     "orchestrator_pause": "Pause the orchestrator daemon by creating the standard pause sentinel on the authoritative host.",
     "orchestrator_resume": "Resume the orchestrator daemon by clearing the standard pause sentinel on the authoritative host.",
+    "worker_start": "Start a lane worker daemon for a specific task and lane, returning PID, lock path, and log path.",
+    "worker_status": "Return runtime status for a lane worker daemon, including lock/process/log metadata.",
+    "worker_stop": "Stop a lane worker daemon with SIGTERM, or SIGKILL when force=true.",
+    "worker_resume": "Resume a stopped lane worker daemon with SIGCONT.",
+    "worker_start_all": "Start worker daemons for all lanes declared in the task manifest and return per-lane results.",
     "run_structured_turn": "Execute one synchronous structured bridge turn through a registered non-CLI backend.",
     "orchestrator_single_cycle": "Run one complete orchestrator cycle synchronously (dispatch, poll, intake, verify) and return the result.",
 }
@@ -194,6 +203,26 @@ def _orchestrator_paths() -> dict[str, Path]:
         "log_path": config.workspace_root / "logs" / "daemon" / "orchestrator.jsonl",
         "script_path": config.workspace_root / "scripts" / "mcp" / "orchestrator_daemon.py",
     }
+
+
+def _worker_paths() -> dict[str, Path]:
+    config = get_runtime_config()
+    state_dir = config.workspace_root / ".task-state"
+    log_dir = config.workspace_root / "logs" / "worker-daemon"
+    return {
+        "workspace_root": config.workspace_root,
+        "state_dir": state_dir,
+        "log_dir": log_dir,
+        "script_path": config.workspace_root / "scripts" / "mcp" / "worker_daemon.py",
+    }
+
+
+def _worker_lane_config(task_ref: str, lane_id: str) -> dict[str, Any]:
+    lane_manifest = _import_scripts_mcp_module("lane_manifest")
+    lane = lane_manifest.get_lane_config(task_ref, lane_id, orchestrator_root=str(get_runtime_config().workspace_root))
+    if not isinstance(lane, dict):
+        raise RuntimeError(f"Lane '{lane_id}' is not defined in the manifest for task '{task_ref}'.")
+    return lane
 
 
 def _read_lock_pid(lock_path: Path) -> int | None:
@@ -466,6 +495,131 @@ def orchestrator_single_cycle(
     )
 
 
+def worker_start(
+    task_ref: str,
+    lane_id: str,
+    backend: str = "codex-subagent",
+    poll_interval: int = 30,
+    single_pass: bool = False,
+    session: str | None = None,
+) -> str:
+    paths = _worker_paths()
+    try:
+        backend_registry = _import_scripts_mcp_module("backend_registry")
+        backend_name = backend_registry.validate_backend(backend)
+        lane = _worker_lane_config(task_ref, lane_id)
+        worker_daemon_ctl = _import_scripts_mcp_module("worker_daemon_ctl")
+    except RuntimeError as exc:
+        return core._json_response({"ok": False, "error": str(exc)})
+
+    worktree_path = Path(str(lane.get("worktree_path") or "")).expanduser().resolve()
+    if not worktree_path.exists():
+        return core._json_response(
+            {
+                "ok": False,
+                "error": f"Lane worktree does not exist for lane '{lane_id}': {worktree_path}",
+            }
+        )
+
+    payload = worker_daemon_ctl.daemon_start(
+        orchestrator_root=paths["workspace_root"],
+        state_dir=paths["state_dir"],
+        log_dir=paths["log_dir"],
+        task_ref=task_ref,
+        lane_id=lane_id,
+        worktree_path=worktree_path,
+        session=session or f"{task_ref}-{lane_id}",
+        python_executable=sys.executable,
+        pythonpath=_handoff_pythonpath(),
+        backend=backend_name,
+        poll_interval=poll_interval,
+        single_pass=single_pass,
+    )
+    return core._json_response(payload)
+
+
+def worker_status(task_ref: str, lane_id: str) -> str:
+    paths = _worker_paths()
+    worker_daemon_ctl = _import_scripts_mcp_module("worker_daemon_ctl")
+    payload = worker_daemon_ctl.daemon_status(
+        state_dir=paths["state_dir"],
+        log_dir=paths["log_dir"],
+        lane_id=lane_id,
+        task_ref=task_ref,
+    )
+    process = payload.get("process")
+    running = isinstance(process, dict) and isinstance(process.get("pid"), int)
+    payload["running"] = running
+    payload["ok"] = running
+    return core._json_response(payload)
+
+
+def worker_stop(task_ref: str, lane_id: str, force: bool = False) -> str:
+    paths = _worker_paths()
+    worker_daemon_ctl = _import_scripts_mcp_module("worker_daemon_ctl")
+    payload = worker_daemon_ctl.daemon_stop(
+        state_dir=paths["state_dir"],
+        log_dir=paths["log_dir"],
+        lane_id=lane_id,
+        task_ref=task_ref,
+        force=force,
+    )
+    return core._json_response(payload)
+
+
+def worker_resume(task_ref: str, lane_id: str) -> str:
+    paths = _worker_paths()
+    worker_daemon_ctl = _import_scripts_mcp_module("worker_daemon_ctl")
+    payload = worker_daemon_ctl.daemon_resume(
+        state_dir=paths["state_dir"],
+        log_dir=paths["log_dir"],
+        lane_id=lane_id,
+        task_ref=task_ref,
+    )
+    return core._json_response(payload)
+
+
+def worker_start_all(
+    task_ref: str,
+    backend: str = "codex-subagent",
+    poll_interval: int = 30,
+    single_pass: bool = False,
+) -> str:
+    try:
+        lane_manifest = _import_scripts_mcp_module("lane_manifest")
+        lane_ids = lane_manifest.list_lanes(task_ref)
+    except RuntimeError as exc:
+        return core._json_response({"ok": False, "error": str(exc)})
+
+    results: list[dict[str, Any]] = []
+    for lane_id in lane_ids:
+        try:
+            result = json.loads(
+                worker_start(
+                    task_ref=task_ref,
+                    lane_id=lane_id,
+                    backend=backend,
+                    poll_interval=poll_interval,
+                    single_pass=single_pass,
+                )
+            )
+        except Exception as exc:
+            result = {
+                "ok": False,
+                "lane_id": lane_id,
+                "error": f"worker_start raised {type(exc).__name__}: {exc}",
+            }
+        results.append(result)
+    return core._json_response(
+        {
+            "ok": all(bool(item.get("ok")) for item in results),
+            "task_ref": task_ref,
+            "backend": backend,
+            "results": results,
+        }
+    )
+
+
 def run_structured_turn(
     prompt: str,
     schema: dict[str, Any],
@@ -567,10 +721,12 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
         record_test_result,
         report_blocker,
         record_worker_report,
+        record_lane_brief,
         list_worker_reports,
         record_lane_message,
         update_lane_message,
         list_lane_messages,
+        list_lane_briefs,
         get_plan_cursor,
         list_plan_cursors,
         upsert_plan_cursor,
@@ -593,6 +749,11 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
         orchestrator_pause,
         orchestrator_resume,
         orchestrator_single_cycle,
+        worker_start,
+        worker_status,
+        worker_stop,
+        worker_resume,
+        worker_start_all,
         run_structured_turn,
     ]:
         mcp.add_tool(tool)

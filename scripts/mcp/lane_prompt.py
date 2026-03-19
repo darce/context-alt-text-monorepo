@@ -9,6 +9,7 @@ from typing import Any
 
 from agent_handoff_mcp import RuntimeConfig
 from agent_handoff_mcp import configure_runtime
+from agent_handoff_mcp import get_handoff_state
 from agent_handoff_mcp import get_lane_activity
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -23,6 +24,11 @@ NO_WORK_MESSAGE = "No actionable lane inbox items."
 WAITING_MESSAGE = "Open worker handoff already sent; waiting for orchestrator response."
 NO_WORK_EXIT = 3
 WAITING_EXIT = 4
+MAX_ASSIGNMENT_ITEMS = 12
+MAX_BRIEF_ITEMS = 6
+MAX_DECISION_ITEMS = 4
+MAX_TEST_ITEMS = 4
+MAX_GLOBAL_ITEMS = 6
 ANSI = {
     "reset": "\033[0m",
     "red": "\033[31m",
@@ -39,6 +45,16 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--worktree-path", required=True)
     parser.add_argument("--check", action="store_true", help="Exit 0 if actionable work exists, 3 if idle, 4 if waiting for orchestrator.")
     parser.add_argument("--summary", action="store_true", help="Print a color-coded one-line-per-item summary.")
+    parser.add_argument(
+        "--include-lane-history",
+        action="store_true",
+        help="Include recent lane decisions and verification history for manual prompt inspection or escalated context reads.",
+    )
+    parser.add_argument(
+        "--include-global-context",
+        action="store_true",
+        help="Include compact task-wide context that is intentionally omitted from the default lane-scoped prompt.",
+    )
     return parser.parse_args()
 
 
@@ -63,10 +79,40 @@ def _bullet_lines(items: list[str]) -> list[str]:
     return [f"- {item}" for item in items]
 
 
+def _bounded_items(items: list[str], *, limit: int) -> list[str]:
+    if len(items) <= limit:
+        return items
+    hidden = len(items) - limit
+    return [*items[:limit], f"... {hidden} additional item(s) omitted to keep the worker prompt focused."]
+
+
 def _format_message(message: dict[str, Any]) -> str:
     subject = str(message.get("subject") or "lane message").strip()
     body = _line(str(message.get("message") or ""))
     return f"[#{message.get('id')}] {subject}: {body}"
+
+
+def _format_brief_message(message: dict[str, Any]) -> str:
+    payload = message.get("payload")
+    if not isinstance(payload, dict):
+        return _format_message(message)
+    source_lane = str(payload.get("source_lane") or "").strip()
+    summary = _line(str(payload.get("summary") or message.get("message") or ""))
+    reason = str(payload.get("reason") or "").strip()
+    required_actions = [str(item).strip() for item in payload.get("required_actions", []) if str(item).strip()]
+    artifacts = [str(item).strip() for item in payload.get("artifacts", []) if str(item).strip()]
+    parts = [f"[#{message.get('id')}]"]
+    if reason:
+        parts.append(f"brief:{reason}")
+    if source_lane:
+        parts.append(f"from {source_lane}")
+    text = " ".join(parts).strip()
+    detail_parts = [summary]
+    if required_actions:
+        detail_parts.append("Actions: " + "; ".join(required_actions[:2]))
+    if artifacts:
+        detail_parts.append("Artifacts: " + ", ".join(artifacts[:2]))
+    return f"{text}: {' | '.join(part for part in detail_parts if part)}"
 
 
 def _format_action(action: dict[str, Any]) -> str:
@@ -87,6 +133,32 @@ def _format_finding(finding: dict[str, Any]) -> str:
     severity = str(finding.get("severity") or "unknown")
     description = _line(str(finding.get("description") or ""))
     return f"[{finding.get('finding_id')}] [{severity}] {location} - {description}"
+
+
+def _format_decision(decision: dict[str, Any]) -> str:
+    return f"[#{decision.get('id')}] {_line(str(decision.get('decision') or ''))}"
+
+
+def _format_test(test: dict[str, Any]) -> str:
+    passed = test.get("passed")
+    status = "pass" if passed else "fail"
+    command = _line(str(test.get("command") or test.get("test_command") or "verification command"))
+    return f"[#{test.get('id')}] [{status}] {command}"
+
+
+def _format_global_row(kind: str, row: dict[str, Any]) -> str:
+    if kind == "action":
+        return f"[action #{row.get('id')}] {_line(str(row.get('action') or ''))}"
+    if kind == "blocker":
+        return f"[blocker #{row.get('id')}] {_line(str(row.get('description') or ''))}"
+    if kind == "finding":
+        severity = str(row.get("severity") or "unknown")
+        return f"[finding {severity}] {_line(str(row.get('description') or ''))}"
+    if kind == "decision":
+        return f"[decision #{row.get('id')}] {_line(str(row.get('decision') or ''))}"
+    if kind == "test":
+        return _format_test(row)
+    return _line(str(row))
 
 
 def _summary_color(kind: str, *, severity: str = "", priority: int | None = None) -> str:
@@ -198,6 +270,20 @@ def _actionable_state(activity: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _brief_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    briefs: list[dict[str, Any]] = []
+    for message in messages:
+        subject = str(message.get("subject") or "").strip().lower()
+        if subject.startswith("brief:"):
+            briefs.append(message)
+    return briefs
+
+
+def _non_brief_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    briefs = {message.get("id") for message in _brief_messages(messages)}
+    return [message for message in messages if message.get("id") not in briefs]
+
+
 def _runtime_guidance(
     *,
     orchestrator_root: Path,
@@ -263,14 +349,42 @@ def _runtime_guidance(
     return lines
 
 
-def _build_prompt(
+def _render_section(title: str, items: list[str]) -> list[str]:
+    if not items:
+        return []
+    return ["", f"{title}:", *_bullet_lines(items)]
+
+
+def _task_global_context(task_ref: str) -> dict[str, list[dict[str, Any]]]:
+    payload = _json_load(
+        get_handoff_state(
+            task_ref=task_ref,
+            top_n_blockers=MAX_GLOBAL_ITEMS,
+            top_n_actions=MAX_GLOBAL_ITEMS,
+            top_n_decisions=MAX_GLOBAL_ITEMS,
+            top_n_tests=MAX_GLOBAL_ITEMS,
+            top_n_findings=MAX_GLOBAL_ITEMS,
+        )
+    )
+    return {
+        "actions": [row for row in _as_dicts(payload.get("actions_pending")) if row.get("lane_id") in (None, "")],
+        "blockers": [row for row in _as_dicts(payload.get("blockers_open")) if row.get("lane_id") in (None, "")],
+        "findings": [row for row in _as_dicts(payload.get("findings_open")) if row.get("lane_id") in (None, "")],
+        "decisions": [row for row in _as_dicts(payload.get("decisions_recent")) if row.get("lane_id") in (None, "")],
+        "tests": [row for row in _as_dicts(payload.get("tests_recent")) if row.get("lane_id") in (None, "")],
+    }
+
+
+def _build_prompt_sections(
     activity: dict[str, Any],
     task_ref: str,
     lane_id: str,
     worktree_path: str,
     *,
     orchestrator_root: Path,
-) -> str:
+    include_lane_history: bool = False,
+    include_global_context: bool = False,
+) -> dict[str, list[str]]:
     lane = activity.get("lane") if isinstance(activity.get("lane"), dict) else {}
     branch = str(lane.get("branch") or "")
     objective = str(lane.get("objective") or "").strip()
@@ -279,67 +393,140 @@ def _build_prompt(
     actions = state["actions"]
     blockers = state["blockers"]
     findings = state["findings"]
+    brief_messages = _brief_messages(messages)
+    assignment_messages = _non_brief_messages(messages)
     latest_report = _as_dicts(activity.get("reports"))[:1]
-    if state["awaiting_orchestrator"]:
-        return WAITING_MESSAGE
-    if not state["actionable"]:
-        return NO_WORK_MESSAGE
 
-    lines = [
+    header = [
         f"You are the worker agent for lane `{lane_id}` on task `{task_ref}`.",
         f"Worktree: `{worktree_path}`",
     ]
     if branch:
-        lines.append(f"Branch: `{branch}`")
+        header.append(f"Branch: `{branch}`")
     if objective:
-        lines.append(f"Objective: {objective}")
-
-    lines.extend(
+        header.append(f"Objective: {objective}")
+    header.extend(
         [
             "",
             "Operate only within this lane's owned files and do not edit sibling-lane paths.",
         ]
     )
 
-    lines.extend(_runtime_guidance(orchestrator_root=orchestrator_root, task_ref=task_ref, lane_id=lane_id))
-
-    if messages:
-        lines.extend(["", "Open orchestrator messages:"])
-        lines.extend(_bullet_lines([_format_message(message) for message in messages]))
-
-    if actions:
-        lines.extend(["", "Pending lane actions:"])
-        lines.extend(_bullet_lines([_format_action(action) for action in actions]))
-
-    if findings:
-        lines.extend(["", "Open lane review findings:"])
-        lines.extend(_bullet_lines([_format_finding(finding) for finding in findings]))
-
-    if blockers:
-        lines.extend(["", "Open lane blockers already assigned to this lane:"])
-        lines.extend(_bullet_lines([_format_blocker(blocker) for blocker in blockers]))
-
-    if latest_report:
-        report = latest_report[0]
-        lines.extend(
-            [
-                "",
-                "Latest worker report:",
-                f"- [{report.get('status')}] {_line(str(report.get('summary') or ''))}",
-            ]
-        )
-
-    lines.extend(
+    assignment_items = _bounded_items(
         [
-            "",
-            "Next steps:",
-            "- Inspect the referenced files and implement the highest-priority open work in this lane.",
-            "- Run the lane-local tests before handoff.",
-            "- When merge-ready, run `make lane-handoff`.",
-            "- If you need clarification or are blocked, submit a blocked worker report so the orchestrator sees it in `make handoff-inbox`.",
-        ]
+            *[_format_message(message) for message in assignment_messages],
+            *[_format_action(action) for action in actions],
+            *[_format_finding(finding) for finding in findings],
+            *[_format_blocker(blocker) for blocker in blockers],
+        ],
+        limit=MAX_ASSIGNMENT_ITEMS,
+    )
+    brief_items = _bounded_items(
+        [_format_brief_message(message) for message in brief_messages],
+        limit=MAX_BRIEF_ITEMS,
+    )
+    recent_decisions = _bounded_items(
+        [_format_decision(decision) for decision in _as_dicts(activity.get("decisions"))],
+        limit=MAX_DECISION_ITEMS,
+    )
+    recent_tests = _bounded_items(
+        [_format_test(test) for test in _as_dicts(activity.get("tests"))],
+        limit=MAX_TEST_ITEMS,
     )
 
+    latest_report_lines: list[str] = []
+    if latest_report:
+        report = latest_report[0]
+        latest_report_lines = [f"[{report.get('status')}] {_line(str(report.get('summary') or ''))}"]
+
+    reporting_contract = [
+        "Inspect the referenced files and implement the highest-priority open work in this lane.",
+        "Run the lane-local tests before handoff.",
+        "When merge-ready, run `make lane-handoff`.",
+        "If you need clarification or are blocked, submit a blocked worker report so the orchestrator sees it in `make handoff-inbox`.",
+    ]
+    context_budget = [
+        f"Assignment inbox is capped at {MAX_ASSIGNMENT_ITEMS} items.",
+        f"Dependency briefs are capped at {MAX_BRIEF_ITEMS} items.",
+        "Broader task/global context is intentionally excluded from worker prompts; ask the orchestrator for a compact brief instead of replaying full transcripts.",
+    ]
+    if include_lane_history:
+        context_budget.append(
+            "Escalated lane history is included below for this render because `--include-lane-history` was requested."
+        )
+    else:
+        context_budget.append(
+            "Recent lane decisions/tests are omitted by default to preserve tokens; rerun with `--include-lane-history` when manual inspection truly needs them."
+        )
+    if include_global_context:
+        context_budget.append(
+            "Compact task-wide context is included below because `--include-global-context` was requested."
+        )
+    else:
+        context_budget.append(
+            "Broader task/global context is excluded by default; rerun with `--include-global-context` only when lane-local state and briefs are insufficient."
+        )
+
+    sections: dict[str, list[str] | str] = {
+        "header": header,
+        "context_budget": context_budget,
+        "assignment": assignment_items,
+        "runtime_guidance": [line for line in _runtime_guidance(orchestrator_root=orchestrator_root, task_ref=task_ref, lane_id=lane_id) if line],
+        "dependency_briefs": brief_items,
+        "latest_report": latest_report_lines,
+        "reporting_contract": reporting_contract,
+    }
+    if include_lane_history:
+        sections["recent_lane_history"] = [*recent_decisions, *recent_tests]
+    if include_global_context:
+        global_context = _task_global_context(task_ref)
+        global_items = _bounded_items(
+            [
+                *[_format_global_row("action", row) for row in global_context["actions"]],
+                *[_format_global_row("blocker", row) for row in global_context["blockers"]],
+                *[_format_global_row("finding", row) for row in global_context["findings"]],
+                *[_format_global_row("decision", row) for row in global_context["decisions"]],
+                *[_format_global_row("test", row) for row in global_context["tests"]],
+            ],
+            limit=MAX_GLOBAL_ITEMS,
+        )
+        sections["global_context"] = global_items
+    return sections
+
+
+def _build_prompt(
+    activity: dict[str, Any],
+    task_ref: str,
+    lane_id: str,
+    worktree_path: str,
+    *,
+    orchestrator_root: Path,
+    include_lane_history: bool = False,
+    include_global_context: bool = False,
+) -> str:
+    state = _actionable_state(activity)
+    if state["awaiting_orchestrator"]:
+        return WAITING_MESSAGE
+    if not state["actionable"]:
+        return NO_WORK_MESSAGE
+    sections = _build_prompt_sections(
+        activity,
+        task_ref=task_ref,
+        lane_id=lane_id,
+        worktree_path=worktree_path,
+        orchestrator_root=orchestrator_root,
+        include_lane_history=include_lane_history,
+        include_global_context=include_global_context,
+    )
+    lines: list[str] = list(sections["header"])
+    lines.extend(_render_section("Context Budget", list(sections["context_budget"])))
+    lines.extend(_render_section("Assignment Inbox", list(sections["assignment"])))
+    lines.extend(_render_section("Runtime Guidance", list(sections["runtime_guidance"])))
+    lines.extend(_render_section("Dependency Briefs", list(sections["dependency_briefs"])))
+    lines.extend(_render_section("Recent Lane History", list(sections.get("recent_lane_history", []))))
+    lines.extend(_render_section("Escalated Task Context", list(sections.get("global_context", []))))
+    lines.extend(_render_section("Latest Worker Report", list(sections["latest_report"])))
+    lines.extend(_render_section("Reporting Contract", list(sections["reporting_contract"])))
     return "\n".join(lines)
 
 
@@ -354,7 +541,18 @@ def main() -> int:
     )
     configure_runtime(runtime)
 
-    activity = _json_load(get_lane_activity(lane_id=args.lane_id, task_ref=args.task_ref, limit_findings=50, limit_actions=50, limit_blockers=50))
+    history_limit = 20 if args.include_lane_history else 1
+    activity = _json_load(
+        get_lane_activity(
+            lane_id=args.lane_id,
+            task_ref=args.task_ref,
+            limit_decisions=history_limit,
+            limit_tests=history_limit,
+            limit_findings=50,
+            limit_actions=50,
+            limit_blockers=50,
+        )
+    )
     if activity.get("ok") is not True:
         raise RuntimeError(f"Unable to load lane activity: {activity}")
 
@@ -365,6 +563,8 @@ def main() -> int:
         lane_id=args.lane_id,
         worktree_path=args.worktree_path,
         orchestrator_root=orchestrator_root,
+        include_lane_history=args.include_lane_history,
+        include_global_context=args.include_global_context,
     )
     if args.check:
         if state["actionable"]:

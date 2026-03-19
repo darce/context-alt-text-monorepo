@@ -94,3 +94,49 @@ def test_refresh_downstream_reports_success_per_lane(tmp_path: Path) -> None:
         )
 
     assert result == [("frontend", True), ("wp-proxy", False)]
+
+
+def test_record_downstream_briefs_creates_one_brief_per_dependency() -> None:
+    mod = _load_module()
+
+    with (
+        mock.patch("agent_handoff_mcp.list_worker_reports", return_value=json.dumps({
+            "ok": True,
+            "reports": [
+                {
+                    "summary": "Backend domain changes were intaken.",
+                    "changed_files": ["apps/prototype-description-service/export_service.py"],
+                    "test_commands": ["pytest recognition/tests/unit/test_export_service.py"],
+                }
+            ],
+        })),
+        mock.patch("agent_handoff_mcp.record_lane_brief", side_effect=[
+            json.dumps({"ok": True}),
+            json.dumps({"ok": True}),
+        ]) as mock_record,
+    ):
+        result = mod._record_downstream_briefs(
+            "daemon-10",
+            "backend-domain",
+            ["frontend", "wp-proxy"],
+        )
+
+    assert result == [("frontend", True), ("wp-proxy", True)]
+    first_call = mock_record.call_args_list[0].kwargs
+    assert first_call["source_lane"] == "backend-domain"
+    assert first_call["lane_id"] == "frontend"
+    assert first_call["reason"] == "upstream-lane-intake"
+    assert "Refresh your lane" in first_call["required_actions"][0]
+
+
+def test_record_downstream_briefs_returns_false_when_no_report_exists() -> None:
+    mod = _load_module()
+
+    with mock.patch("agent_handoff_mcp.list_worker_reports", return_value=json.dumps({"ok": True, "reports": []})):
+        result = mod._record_downstream_briefs(
+            "daemon-10",
+            "backend-domain",
+            ["frontend"],
+        )
+
+    assert result == [("frontend", False)]

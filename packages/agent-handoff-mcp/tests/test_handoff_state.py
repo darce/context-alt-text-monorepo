@@ -604,6 +604,109 @@ def test_worktree_lane_activity_and_reports_are_recorded_by_lane(isolated_handof
     assert updated_message["message"]["status"] == "acknowledged"
 
 
+def test_lane_briefs_round_trip_with_structured_payload(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="5.1.0",
+            objective="Lane briefs",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.upsert_worktree_lane(
+            lane_id="frontend",
+            worktree_path="/tmp/frontend",
+            branch="codex/p5-frontend",
+            status="active",
+        )
+    )
+
+    brief = _parse(
+        mcp_server.record_lane_brief(
+            task_ref="5.1.0",
+            lane_id="frontend",
+            session="briefs",
+            source_lane="backend-domain",
+            reason="api-contract-changed",
+            summary="Export response now includes purge eligibility metadata.",
+            required_actions=["Update the client contract.", "Refresh the status copy."],
+            artifacts=["apps/prototype-description-service/export_service.py"],
+        )
+    )
+    assert brief["ok"] is True
+    assert brief["message"]["subject"] == "brief:api-contract-changed"
+    assert brief["message"]["payload"]["source_lane"] == "backend-domain"
+
+    listed = _parse(mcp_server.list_lane_briefs(task_ref="5.1.0", lane_id="frontend"))
+    assert listed["ok"] is True
+    assert listed["total_matching"] == 1
+    assert listed["briefs"][0]["payload"]["required_actions"] == [
+        "Update the client contract.",
+        "Refresh the status copy.",
+    ]
+
+    activity = _parse(mcp_server.get_lane_activity(task_ref="5.1.0", lane_id="frontend"))
+    assert activity["messages"][0]["payload"]["summary"] == "Export response now includes purge eligibility metadata."
+
+
+def test_import_handoff_state_prefers_decoded_lane_message_payload(isolated_handoff: dict) -> None:
+    payload_path = isolated_handoff["state_dir"] / "exports" / "payload-precedence.json"
+    payload_path.parent.mkdir(parents=True, exist_ok=True)
+    payload_path.write_text(
+        json.dumps(
+            {
+                "task_ref": "5.1.1",
+                "snapshot": {
+                    "active": {
+                        "task_ref": "5.1.1",
+                        "objective": "payload precedence",
+                        "status": "in_progress",
+                    },
+                    "blockers": [],
+                    "next_actions": [],
+                    "decisions": [],
+                    "verified_tests": [],
+                    "review_findings": [],
+                    "worktree_lanes": [
+                        {
+                            "lane_id": "frontend",
+                            "worktree_path": "/tmp/frontend",
+                            "branch": "codex/p5-frontend",
+                            "status": "active",
+                        }
+                    ],
+                    "worker_reports": [],
+                    "lane_messages": [
+                        {
+                            "lane_id": "frontend",
+                            "session": "import",
+                            "direction": "orchestrator_to_worker",
+                            "subject": "brief:api-contract-changed",
+                            "message": "old payload_json should not win",
+                            "status": "open",
+                            "payload_json": json.dumps({"source_lane": "backend-domain", "summary": "stale"}),
+                            "payload": {"source_lane": "backend-domain", "summary": "fresh"},
+                        }
+                    ],
+                    "plan_cursors": [],
+                },
+            }
+        )
+    )
+
+    response = _parse(
+        mcp_server.import_handoff_state(
+            input_path=str(payload_path),
+            mode="merge",
+            set_active=True,
+        )
+    )
+    assert response["ok"] is True
+
+    listed = _parse(mcp_server.list_lane_briefs(task_ref="5.1.1", lane_id="frontend"))
+    assert listed["briefs"][0]["payload"]["summary"] == "fresh"
+
+
 def test_import_handoff_state_rejects_malformed_snapshot_payload(isolated_handoff: dict) -> None:
     malformed_path = isolated_handoff["state_dir"] / "exports" / "malformed.json"
     malformed_path.parent.mkdir(parents=True, exist_ok=True)

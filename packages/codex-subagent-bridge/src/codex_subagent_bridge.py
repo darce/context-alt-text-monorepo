@@ -3,11 +3,13 @@ from __future__ import annotations
 import atexit
 import json
 import os
+import shutil
 import subprocess
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Mapping
 
 _CLIENT_NAME = "codex-subagent-bridge"
@@ -16,9 +18,14 @@ _DEFAULT_TIMEOUT_SECONDS = 120.0
 _SHUTDOWN_GRACE_SECONDS = 1.0
 _REASONING_EFFORT_KEYS = ("CODEX_REASONING_EFFORT", "REASONING_EFFORT")
 _MODEL_KEYS = ("CODEX_MODEL", "MODEL")
+_CODEX_BIN_KEYS = ("CODEX_BIN", "CODEX_PATH")
 _VALID_REASONING_EFFORTS = {"low", "medium", "high"}
 _SESSION_MODE_KEYS = ("CODEX_SUBAGENT_BRIDGE_SESSION_MODE",)
 _SHARED_SESSION_VALUES = {"shared", "long-lived", "long_lived"}
+_CODEX_SEARCH_PATHS = (
+    "/Applications/Codex.app/Contents/Resources/codex",
+    "{home}/.local/bin/codex",
+)
 _shared_clients_lock = threading.Lock()
 _shared_clients: dict[tuple[str, tuple[tuple[str, str], ...]], "_SharedClientEntry"] = {}
 
@@ -59,9 +66,10 @@ class AppServerClient:
         launch_env = os.environ.copy()
         if self.env:
             launch_env.update({key: str(value) for key, value in self.env.items()})
+        codex_bin = _resolve_codex_bin(self.codex_bin, self.env)
 
         proc = self.popen_factory(
-            [self.codex_bin, "app-server", "--listen", "stdio://"],
+            [codex_bin, "app-server", "--listen", "stdio://"],
             cwd=self.cwd,
             env=launch_env,
             stdin=subprocess.PIPE,
@@ -341,6 +349,34 @@ def _env_lookup(env: Mapping[str, str] | None, keys: tuple[str, ...]) -> str | N
     return None
 
 
+def _resolve_codex_bin(explicit: str | None, env: Mapping[str, str] | None) -> str:
+    explicit_text = str(explicit or "").strip()
+    if explicit_text and explicit_text != "codex":
+        return explicit_text
+
+    env_override = _env_lookup(env, _CODEX_BIN_KEYS)
+    if env_override is not None and env_override.strip():
+        return env_override.strip()
+
+    search_path = None
+    if env and env.get("PATH"):
+        search_path = str(env["PATH"])
+    discovered = shutil.which("codex", path=search_path)
+    if discovered:
+        return discovered
+
+    home = Path.home()
+    for template in _CODEX_SEARCH_PATHS:
+        candidate = Path(template.format(home=home))
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+
+    raise RuntimeError(
+        "codex binary not found for codex-subagent bridge. "
+        "Install Codex, add it to PATH, or set CODEX_BIN."
+    )
+
+
 def _normalize_reasoning_effort(value: str | None) -> str | None:
     if value is None:
         return None
@@ -364,7 +400,7 @@ def _shared_session_requested(env: Mapping[str, str] | None) -> bool:
 def _shared_session_key(cwd: str, env: Mapping[str, str] | None) -> tuple[str, tuple[tuple[str, str], ...]]:
     filtered: dict[str, str] = {}
     if env:
-        for key in (*_MODEL_KEYS, *_REASONING_EFFORT_KEYS, *_SESSION_MODE_KEYS):
+        for key in (*_MODEL_KEYS, *_REASONING_EFFORT_KEYS, *_SESSION_MODE_KEYS, *_CODEX_BIN_KEYS):
             value = env.get(key)
             if value:
                 filtered[key] = str(value)

@@ -62,6 +62,7 @@ from orchestrator_lanes import (  # noqa: F401
     _intake_lane,
     _lane_has_capacity,
     _lane_has_unmerged_commits,
+    _record_downstream_briefs,
     _refresh_downstream,
     _resolve_lane_worktree,
     _run_handoff_dispatch,
@@ -678,6 +679,14 @@ def orchestrator_loop(
 
                 deps = downstream_lanes(task_ref, lane_id)
                 if deps:
+                    log("INFO", "brief_start", lane=lane_id, downstream=deps)
+                    brief_results = _record_downstream_briefs(
+                        task_ref,
+                        lane_id,
+                        deps,
+                        dry_run=dry_run,
+                    )
+                    log("INFO", "brief_complete", lane=lane_id, results=brief_results)
                     log("INFO", "refresh_start", lane=lane_id, downstream=deps)
                     refresh_results = _refresh_downstream(
                         orchestrator_root, task_ref, lane_id, deps, dry_run=dry_run,

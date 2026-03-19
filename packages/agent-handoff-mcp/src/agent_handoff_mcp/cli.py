@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 from .api import (
     archive_task_state,
@@ -16,6 +17,7 @@ from .api import (
     handoff_close_check,
     import_handoff_state,
     list_lane_messages,
+    list_lane_briefs,
     list_review_findings,
     list_worker_reports,
     list_worktree_lanes,
@@ -26,6 +28,7 @@ from .api import (
     orchestrator_status,
     orchestrator_stop,
     record_lane_message,
+    record_lane_brief,
     record_decision,
     record_review_finding,
     record_test_result,
@@ -38,6 +41,11 @@ from .api import (
     update_next_actions,
     update_review_finding,
     upsert_worktree_lane,
+    worker_resume,
+    worker_start,
+    worker_start_all,
+    worker_status,
+    worker_stop,
 )
 from .config import RuntimeConfig
 
@@ -162,6 +170,18 @@ def _build_parser() -> argparse.ArgumentParser:
     message_parser.add_argument("--subject")
     message_parser.add_argument("--status", default="open")
 
+    brief_parser = subparsers.add_parser("lane-brief")
+    brief_parser.add_argument("--task-ref")
+    brief_parser.add_argument("--lane-id", required=True)
+    brief_parser.add_argument("--session", required=True)
+    brief_parser.add_argument("--source-lane", required=True)
+    brief_parser.add_argument("--reason", required=True)
+    brief_parser.add_argument("--summary", required=True)
+    brief_parser.add_argument("--message")
+    brief_parser.add_argument("--required-action", action="append", default=[])
+    brief_parser.add_argument("--artifact", action="append", default=[])
+    brief_parser.add_argument("--status", default="open")
+
     message_update_parser = subparsers.add_parser("lane-message-update")
     message_update_parser.add_argument("--message-id", type=int, required=True)
     message_update_parser.add_argument("--status", required=True)
@@ -173,6 +193,13 @@ def _build_parser() -> argparse.ArgumentParser:
     message_list_parser.add_argument("--status", default="all")
     message_list_parser.add_argument("--limit", type=int, default=20)
     message_list_parser.add_argument("--offset", type=int, default=0)
+
+    brief_list_parser = subparsers.add_parser("lane-brief-list")
+    brief_list_parser.add_argument("--task-ref")
+    brief_list_parser.add_argument("--lane-id")
+    brief_list_parser.add_argument("--status", default="open")
+    brief_list_parser.add_argument("--limit", type=int, default=20)
+    brief_list_parser.add_argument("--offset", type=int, default=0)
 
     review_record_parser = subparsers.add_parser("review-record")
     review_record_parser.add_argument("--session", required=True)
@@ -248,6 +275,33 @@ def _build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("orchestrator-pause")
     subparsers.add_parser("orchestrator-resume")
+
+    worker_start_parser = subparsers.add_parser("worker-start")
+    worker_start_parser.add_argument("--task-ref", required=True)
+    worker_start_parser.add_argument("--lane-id", required=True)
+    worker_start_parser.add_argument("--backend", default="codex-subagent")
+    worker_start_parser.add_argument("--poll-interval", type=int, default=30)
+    worker_start_parser.add_argument("--single-pass", action="store_true")
+    worker_start_parser.add_argument("--session")
+
+    worker_status_parser = subparsers.add_parser("worker-status")
+    worker_status_parser.add_argument("--task-ref", required=True)
+    worker_status_parser.add_argument("--lane-id", required=True)
+
+    worker_stop_parser = subparsers.add_parser("worker-stop")
+    worker_stop_parser.add_argument("--task-ref", required=True)
+    worker_stop_parser.add_argument("--lane-id", required=True)
+    worker_stop_parser.add_argument("--force", action="store_true")
+
+    worker_resume_parser = subparsers.add_parser("worker-resume")
+    worker_resume_parser.add_argument("--task-ref", required=True)
+    worker_resume_parser.add_argument("--lane-id", required=True)
+
+    worker_start_all_parser = subparsers.add_parser("worker-start-all")
+    worker_start_all_parser.add_argument("--task-ref", required=True)
+    worker_start_all_parser.add_argument("--backend", default="codex-subagent")
+    worker_start_all_parser.add_argument("--poll-interval", type=int, default=30)
+    worker_start_all_parser.add_argument("--single-pass", action="store_true")
 
     turn_parser = subparsers.add_parser("run-structured-turn")
     turn_parser.add_argument("--prompt-file", required=True)
@@ -410,12 +464,39 @@ def main() -> None:
             )
         )
         return
+    if args.command == "lane-brief":
+        _print_json(
+            record_lane_brief(
+                task_ref=args.task_ref,
+                lane_id=args.lane_id,
+                session=args.session,
+                source_lane=args.source_lane,
+                reason=args.reason,
+                summary=args.summary,
+                message=args.message,
+                required_actions=args.required_action,
+                artifacts=args.artifact,
+                status=args.status,
+            )
+        )
+        return
     if args.command == "lane-message-update":
         _print_json(update_lane_message(message_id=args.message_id, status=args.status, task_ref=args.task_ref))
         return
     if args.command == "lane-message-list":
         _print_json(
             list_lane_messages(
+                task_ref=args.task_ref,
+                lane_id=args.lane_id,
+                status=args.status,
+                limit=args.limit,
+                offset=args.offset,
+            )
+        )
+        return
+    if args.command == "lane-brief-list":
+        _print_json(
+            list_lane_briefs(
                 task_ref=args.task_ref,
                 lane_id=args.lane_id,
                 status=args.status,
@@ -542,6 +623,37 @@ def main() -> None:
         return
     if args.command == "orchestrator-resume":
         _print_json(orchestrator_resume())
+        return
+    if args.command == "worker-start":
+        _print_json(
+            worker_start(
+                task_ref=args.task_ref,
+                lane_id=args.lane_id,
+                backend=args.backend,
+                poll_interval=args.poll_interval,
+                single_pass=args.single_pass,
+                session=args.session,
+            )
+        )
+        return
+    if args.command == "worker-status":
+        _print_json(worker_status(task_ref=args.task_ref, lane_id=args.lane_id))
+        return
+    if args.command == "worker-stop":
+        _print_json(worker_stop(task_ref=args.task_ref, lane_id=args.lane_id, force=args.force))
+        return
+    if args.command == "worker-resume":
+        _print_json(worker_resume(task_ref=args.task_ref, lane_id=args.lane_id))
+        return
+    if args.command == "worker-start-all":
+        _print_json(
+            worker_start_all(
+                task_ref=args.task_ref,
+                backend=args.backend,
+                poll_interval=args.poll_interval,
+                single_pass=args.single_pass,
+            )
+        )
         return
     if args.command == "run-structured-turn":
         _print_json(

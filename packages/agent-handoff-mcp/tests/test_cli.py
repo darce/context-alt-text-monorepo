@@ -193,6 +193,48 @@ def test_lane_cli_accepts_explicit_task_ref_for_cross_task_reporting(tmp_path: P
     assert message_payload["ok"] is True
     assert message_payload["message"]["task_ref"] == "task-a"
 
+    brief_payload = _run_cli(
+        [
+            "agent-handoff-mcp",
+            "--workspace-root",
+            str(tmp_path),
+            "lane-brief",
+            "--task-ref",
+            "task-a",
+            "--lane-id",
+            "frontend",
+            "--session",
+            "cli",
+            "--source-lane",
+            "backend-domain",
+            "--reason",
+            "api-contract-changed",
+            "--summary",
+            "Retention export contract changed.",
+            "--required-action",
+            "Update the typed client.",
+        ],
+        capsys,
+    )
+    assert brief_payload["ok"] is True
+    assert brief_payload["message"]["payload"]["source_lane"] == "backend-domain"
+
+    brief_list_payload = _run_cli(
+        [
+            "agent-handoff-mcp",
+            "--workspace-root",
+            str(tmp_path),
+            "lane-brief-list",
+            "--task-ref",
+            "task-a",
+            "--lane-id",
+            "frontend",
+        ],
+        capsys,
+    )
+    assert brief_list_payload["ok"] is True
+    assert brief_list_payload["total_matching"] == 1
+
     updated_payload = _run_cli(
         [
             "agent-handoff-mcp",

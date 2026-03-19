@@ -164,6 +164,82 @@ def daemon_status(*, state_dir: Path, log_dir: Path, lane_id: str, task_ref: str
     }
 
 
+def daemon_start(
+    *,
+    orchestrator_root: Path,
+    state_dir: Path,
+    log_dir: Path,
+    task_ref: str,
+    lane_id: str,
+    worktree_path: Path,
+    session: str,
+    python_executable: str,
+    pythonpath: str | None = None,
+    backend: str = "codex-cli",
+    poll_interval: int = 30,
+    single_pass: bool = False,
+) -> dict[str, Any]:
+    status = daemon_status(state_dir=state_dir, log_dir=log_dir, lane_id=lane_id, task_ref=task_ref)
+    process = status.get("process")
+    pid = process.get("pid") if isinstance(process, dict) else None
+    if isinstance(pid, int):
+        return {
+            "ok": False,
+            "message": f"Worker daemon is already running for lane '{lane_id}'.",
+            "pid": pid,
+            "lock_path": str(_lock_path(state_dir, lane_id)),
+            "log_path": str(_log_path(log_dir, lane_id)),
+            "status": status,
+        }
+
+    cmd = [
+        python_executable,
+        str(orchestrator_root / "scripts" / "mcp" / "worker_daemon.py"),
+        "--orchestrator-root",
+        str(orchestrator_root),
+        "--task-ref",
+        task_ref,
+        "--lane-id",
+        lane_id,
+        "--session",
+        session,
+        "--worktree-path",
+        str(worktree_path),
+        "--backend",
+        backend,
+        "--poll-interval",
+        str(poll_interval),
+    ]
+    if single_pass:
+        cmd.append("--single-pass")
+
+    env = dict(os.environ)
+    if pythonpath:
+        env["PYTHONPATH"] = pythonpath
+
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(orchestrator_root),
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return {
+        "ok": True,
+        "pid": proc.pid,
+        "lane_id": lane_id,
+        "task_ref": task_ref,
+        "session": session,
+        "backend": backend,
+        "poll_interval": poll_interval,
+        "single_pass": single_pass,
+        "worktree_path": str(worktree_path),
+        "lock_path": str(_lock_path(state_dir, lane_id)),
+        "log_path": str(_log_path(log_dir, lane_id)),
+    }
+
+
 def daemon_stop(*, state_dir: Path, log_dir: Path, lane_id: str, task_ref: str | None = None, force: bool = False) -> dict[str, Any]:
     status = daemon_status(state_dir=state_dir, log_dir=log_dir, lane_id=lane_id, task_ref=task_ref)
     process = status.get("process")

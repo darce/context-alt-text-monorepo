@@ -28,6 +28,55 @@ def test_daemon_status_empty(tmp_path: Path) -> None:
     assert status["last_event"] is None
 
 
+def test_daemon_start_spawns_worker_when_not_running(tmp_path: Path) -> None:
+    mod = _load_module()
+    orchestrator_root = tmp_path / "repo"
+    orchestrator_root.mkdir()
+    proc = mock.Mock(pid=4567)
+    with (
+        mock.patch.object(mod, "daemon_status", return_value={"process": None}),
+        mock.patch.object(mod.subprocess, "Popen", return_value=proc) as mock_popen,
+    ):
+        result = mod.daemon_start(
+            orchestrator_root=orchestrator_root,
+            state_dir=tmp_path,
+            log_dir=tmp_path,
+            task_ref="phase-5",
+            lane_id="backend-domain",
+            worktree_path=tmp_path / "lane",
+            session="phase-5-backend-domain",
+            python_executable="/usr/bin/python3",
+            pythonpath="/tmp/pythonpath",
+            backend="codex-subagent",
+            poll_interval=15,
+            single_pass=True,
+        )
+    assert result["ok"] is True
+    assert result["pid"] == 4567
+    cmd = mock_popen.call_args.args[0]
+    assert "--task-ref" in cmd
+    assert "phase-5" in cmd
+    assert "--single-pass" in cmd
+    assert mock_popen.call_args.kwargs["env"]["PYTHONPATH"] == "/tmp/pythonpath"
+
+
+def test_daemon_start_refuses_second_running_worker(tmp_path: Path) -> None:
+    mod = _load_module()
+    with mock.patch.object(mod, "daemon_status", return_value={"process": {"pid": 9876}}):
+        result = mod.daemon_start(
+            orchestrator_root=tmp_path,
+            state_dir=tmp_path,
+            log_dir=tmp_path,
+            task_ref="phase-5",
+            lane_id="backend-domain",
+            worktree_path=tmp_path / "lane",
+            session="phase-5-backend-domain",
+            python_executable="/usr/bin/python3",
+        )
+    assert result["ok"] is False
+    assert result["pid"] == 9876
+
+
 def test_daemon_status_reads_lock_and_last_event(tmp_path: Path) -> None:
     mod = _load_module()
     (tmp_path / "worker-backend-domain.lock").write_text(json.dumps({"pid": 1234}))

@@ -135,6 +135,60 @@ def _refresh_downstream(
     return results
 
 
+def _record_downstream_briefs(
+    task_ref: str,
+    lane_id: str,
+    downstream: list[str],
+    *,
+    dry_run: bool = False,
+) -> list[tuple[str, bool]]:
+    """Persist compact downstream briefs derived from the latest source-lane report."""
+    from agent_handoff_mcp import list_worker_reports, record_lane_brief
+
+    if dry_run or not downstream:
+        return [(dep, True) for dep in downstream]
+
+    reports_payload = _json_load(
+        list_worker_reports(task_ref=task_ref, lane_id=lane_id, limit=1)
+    )
+    if reports_payload.get("ok") is not True:
+        raise RuntimeError(f"Failed to list worker reports for {lane_id}.")
+    reports = reports_payload.get("reports", [])
+    latest_report = reports[0] if isinstance(reports, list) and reports and isinstance(reports[0], dict) else None
+    if latest_report is None:
+        return [(dep, False) for dep in downstream]
+
+    summary = str(latest_report.get("summary") or "").strip() or f"{lane_id} produced updates for downstream lanes."
+    changed_files = latest_report.get("changed_files")
+    if not isinstance(changed_files, list):
+        changed_files = latest_report.get("changed_files_json") or []
+    artifacts = [str(item).strip() for item in changed_files if isinstance(item, str) and item.strip()]
+    test_commands = latest_report.get("test_commands")
+    if not isinstance(test_commands, list):
+        test_commands = latest_report.get("test_commands_json") or []
+    required_actions = [f"Refresh your lane against the latest {lane_id} changes before continuing."]
+    if any(isinstance(item, str) and item.strip() for item in test_commands):
+        required_actions.append("Re-run lane-local verification after pulling the refreshed base.")
+
+    results: list[tuple[str, bool]] = []
+    for dep in downstream:
+        payload = _json_load(
+            record_lane_brief(
+                task_ref=task_ref,
+                lane_id=dep,
+                session=f"{task_ref}-orchestrator-brief",
+                source_lane=lane_id,
+                reason="upstream-lane-intake",
+                summary=summary,
+                message=f"Upstream lane `{lane_id}` was intaken. Refresh and continue with the latest integrated state.",
+                required_actions=required_actions,
+                artifacts=artifacts[:5],
+            )
+        )
+        results.append((dep, payload.get("ok") is True))
+    return results
+
+
 def _resolve_lane_worktree(orchestrator_root: Path, task_ref: str, lane_id: str) -> Optional[Path]:
     """Resolve the worktree path for a lane from the manifest."""
     if str(SCRIPT_DIR) not in sys.path:

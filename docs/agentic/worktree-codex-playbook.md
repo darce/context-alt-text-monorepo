@@ -75,6 +75,8 @@ make orchestrator-daemon [TASK=<task>] [BACKEND=codex-cli|codex-subagent]
 ```bash
 make lane-inbox                                                # Poll assignments
 make lane-prompt                                               # Render actionable prompt
+make lane-prompt EXTRA_ARGS=--include-lane-history             # Escalate prompt rendering to include recent lane decisions/tests
+make lane-prompt EXTRA_ARGS=--include-global-context           # Escalate prompt rendering to include compact task-wide context
 make lane-check                                                # Run lane tests
 make worker-daemon TASK=<task> LANE=<lane> [BACKEND=codex-cli|codex-subagent]  # Continuous worker polling loop
 make worker-daemon-status                                      # Inspect lock/PID/log state
@@ -193,6 +195,18 @@ What this does:
 
 The worker sees it the next time they run `make lane-inbox`.
 
+Prompt-shaping note:
+
+- `make lane-prompt` is intentionally narrow by default: it shows the assignment inbox, runtime guidance, compact dependency briefs, and the latest report.
+- Recent lane decisions/tests are omitted unless you explicitly escalate with `EXTRA_ARGS=--include-lane-history`.
+- Broader task-wide context is also omitted unless you explicitly escalate with `EXTRA_ARGS=--include-global-context`.
+- If a lane needs cross-lane or global task context, send a compact orchestrator brief instead of replaying whole transcripts into the worker prompt.
+
+Structured-brief note:
+
+- Orchestrators can now send compact dependency handoffs with `agent-handoff-mcp lane-brief ...` or the MCP tool `record_lane_brief(...)`.
+- Workers can inspect only those dependency briefs with `agent-handoff-mcp lane-brief-list ...` or `list_lane_briefs(...)` instead of scanning the full lane message history.
+
 To preview without writing:
 
 ```bash
@@ -255,12 +269,13 @@ commands.
 Typical flow:
 
 1. Call `orchestrator_start(task_ref="<task-ref>", backend="codex-cli" | "codex-subagent")`.
-2. Poll `orchestrator_status()` until the daemon is running and work begins flowing.
-3. Use `run_structured_turn(...)` when you need one synchronous bridge-backed
+2. Call `worker_start(task_ref="<task-ref>", lane_id="<lane>", backend="codex-subagent")` or `worker_start_all(task_ref="<task-ref>", backend="codex-subagent")` when you want MCP to bring lane workers online without per-lane shell commands.
+3. Poll `orchestrator_status()` / `worker_status(task_ref="<task-ref>", lane_id="<lane>")` until the daemons are running and work begins flowing.
+4. Use `run_structured_turn(...)` when you need one synchronous bridge-backed
    execution turn without starting a worker daemon.
-4. Call `orchestrator_pause()` / `orchestrator_resume()` when the singleton loop
+5. Call `orchestrator_pause()` / `orchestrator_resume()` when the singleton loop
    needs to be temporarily gated.
-5. Call `orchestrator_stop()` when orchestration should exit cleanly.
+6. Call `worker_stop(...)` / `worker_resume(...)` for lane-local control, and `orchestrator_stop()` when orchestration should exit cleanly.
 
 Use Make targets when you are operating from a shell-first workflow. Use MCP tools
 when you are already inside an MCP-capable agent host and want the same control plane
@@ -270,6 +285,7 @@ Notes:
 
 - The foreground terminal now shows `exec_start`, `exec_spawned`, and periodic `exec_heartbeat` markers while `codex exec` is still running.
 - Detailed JSONL progress is still written to `logs/worker-daemon/worker-<lane>.jsonl`.
+- `worker_start_all(...)` uses the checked-in lane manifest order and returns per-lane results, so an MCP-capable orchestrator can fan out worker startup without shell loops.
 - If a second worker daemon is started for the same lane, the per-lane lock will reject it with `Another worker daemon is already running for lane '<lane>'`.
 - Use `make worker-daemon-status` to see the shared-root lock path, current PID/state, and the latest JSONL event. Use `make worker-daemon-stop` or `make worker-daemon-resume` instead of sending manual signals when possible.
 

@@ -172,6 +172,7 @@ CREATE TABLE IF NOT EXISTS lane_messages (
     message       TEXT NOT NULL,
     status        TEXT NOT NULL DEFAULT 'open'
                   CHECK (status IN ('open', 'acknowledged', 'closed')),
+    payload_json  TEXT,
     agent         TEXT,
     branch        TEXT,
     commit_sha    TEXT,
@@ -252,6 +253,14 @@ class ReviewFindingDetails(TypedDict, total=False):
     fix: str
 
 
+class LaneMessagePayload(TypedDict, total=False):
+    source_lane: str
+    reason: str
+    summary: str
+    required_actions: list[str]
+    artifacts: list[str]
+
+
 def _workspace_root() -> Path:
     return get_runtime_config().workspace_root
 
@@ -282,6 +291,54 @@ def _get_db_connection() -> sqlite3.Connection:
 
 def _row_to_dict(row: sqlite3.Row | None) -> dict | None:
     return dict(row) if row is not None else None
+
+
+def _coerce_string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            normalized = item.strip()
+            if normalized:
+                result.append(normalized)
+    return result
+
+
+def _normalize_lane_message_payload(payload: object) -> tuple[dict[str, object] | None, str | None]:
+    if payload is None:
+        return None, None
+    if not isinstance(payload, dict):
+        return None, "lane message payload must be an object when provided."
+    normalized: dict[str, object] = {}
+    source_lane = _normalize_optional_text(payload.get("source_lane"))
+    if source_lane is not None:
+        normalized["source_lane"] = source_lane
+    reason = _normalize_optional_text(payload.get("reason"))
+    if reason is not None:
+        normalized["reason"] = reason
+    summary = _normalize_optional_text(payload.get("summary"))
+    if summary is not None:
+        normalized["summary"] = summary
+    required_actions = _coerce_string_list(payload.get("required_actions"))
+    if required_actions:
+        normalized["required_actions"] = required_actions
+    artifacts = _coerce_string_list(payload.get("artifacts"))
+    if artifacts:
+        normalized["artifacts"] = artifacts
+    return normalized, None
+
+
+def _decode_lane_message_row_dict(row: dict) -> dict:
+    payload_json = row.get("payload_json")
+    if isinstance(payload_json, str) and payload_json.strip():
+        try:
+            payload = json.loads(payload_json)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            row["payload"] = payload
+    return row
 
 
 def _resolve_task_ref(conn: sqlite3.Connection, task_ref: str | None) -> str:
@@ -495,6 +552,8 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
                     updated_at = COALESCE(NULLIF(TRIM(updated_at), ''), resolved_at, created_at, datetime('now'))
                 """
             )
+        if not _has_column(conn, "lane_messages", "payload_json"):
+            conn.execute("ALTER TABLE lane_messages ADD COLUMN payload_json TEXT")
     except sqlite3.OperationalError as exc:
         if "locked" in str(exc).lower():
             import logging
@@ -711,7 +770,10 @@ def _collect_task_snapshot(conn: sqlite3.Connection, task_ref: str) -> dict:
     active = _row_to_dict(active_row) if active_row is not None and active_row["task_ref"] == task_ref else None
 
     def _rows(query: str) -> list[dict]:
-        return [dict(row) for row in conn.execute(query, (task_ref,)).fetchall()]
+        rows = [dict(row) for row in conn.execute(query, (task_ref,)).fetchall()]
+        if "lane_messages" in query:
+            return [_decode_lane_message_row_dict(row) for row in rows]
+        return rows
 
     return {
         "task_ref": task_ref,
@@ -732,7 +794,10 @@ def _collect_task_snapshot(conn: sqlite3.Connection, task_ref: str) -> dict:
 
 def _fetch_handoff_rows(conn: sqlite3.Connection, *, table: str, where_sql: str, order_sql: str, limit: int, params: tuple[object, ...]) -> list[dict]:
     rows = conn.execute(f"SELECT * FROM {table} WHERE {where_sql} ORDER BY {order_sql} LIMIT ?", (*params, limit)).fetchall()
-    return [dict(row) for row in rows]
+    payload = [dict(row) for row in rows]
+    if table == "lane_messages":
+        return [_decode_lane_message_row_dict(row) for row in payload]
+    return payload
 
 
 def _fetch_related_open_findings(task_refs: list[str]) -> dict[str, list[dict]]:
@@ -1216,6 +1281,7 @@ def record_lane_message(
     message: str,
     subject: str | None = None,
     status: str = "open",
+    payload: dict[str, object] | None = None,
     task_ref: str | None = None,
     actor: WriteActor | None = None,
 ) -> str:
@@ -1228,6 +1294,9 @@ def record_lane_message(
         return _json_response({"ok": False, "error": f"Invalid direction. Valid: {', '.join(sorted(valid_directions))}"})
     if status not in valid_statuses:
         return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(valid_statuses))}"})
+    normalized_payload, payload_error = _normalize_lane_message_payload(payload)
+    if payload_error is not None:
+        return _json_response({"ok": False, "error": payload_error})
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         if _get_lane_row(conn, resolved_task_ref, normalized_lane_id) is None:
@@ -1235,14 +1304,72 @@ def record_lane_message(
         agent, branch, commit_sha, _actor_lane_id = _resolve_write_actor(conn, actor)
         cur = conn.execute(
             """
-            INSERT INTO lane_messages (task_ref, lane_id, session, direction, subject, message, status, agent, branch, commit_sha, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            INSERT INTO lane_messages (task_ref, lane_id, session, direction, subject, message, status, payload_json, agent, branch, commit_sha, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
             """,
-            (resolved_task_ref, normalized_lane_id, session, direction, subject, message, status, agent, branch, commit_sha),
+            (
+                resolved_task_ref,
+                normalized_lane_id,
+                session,
+                direction,
+                subject,
+                message,
+                status,
+                json.dumps(normalized_payload, sort_keys=True) if normalized_payload is not None else None,
+                agent,
+                branch,
+                commit_sha,
+            ),
         )
         row = _row_to_dict(conn.execute("SELECT * FROM lane_messages WHERE id = ?", (cur.lastrowid,)).fetchone())
+        if row is not None:
+            row = _decode_lane_message_row_dict(row)
         _write_current_task_md_for_task(conn, resolved_task_ref)
         return _json_response({"ok": True, "message": row})
+
+
+def record_lane_brief(
+    lane_id: str,
+    session: str,
+    source_lane: str,
+    reason: str,
+    summary: str,
+    message: str | None = None,
+    required_actions: list[str] | None = None,
+    artifacts: list[str] | None = None,
+    status: str = "open",
+    task_ref: str | None = None,
+    actor: WriteActor | None = None,
+) -> str:
+    normalized_reason = _normalize_optional_text(reason)
+    normalized_summary = _normalize_optional_text(summary)
+    normalized_source_lane = _normalize_optional_text(source_lane)
+    if normalized_reason is None:
+        return _json_response({"ok": False, "error": "reason is required."})
+    if normalized_summary is None:
+        return _json_response({"ok": False, "error": "summary is required."})
+    if normalized_source_lane is None:
+        return _json_response({"ok": False, "error": "source_lane is required."})
+    payload: LaneMessagePayload = {
+        "source_lane": normalized_source_lane,
+        "reason": normalized_reason,
+        "summary": normalized_summary,
+    }
+    if required_actions:
+        payload["required_actions"] = [item for item in required_actions if isinstance(item, str) and item.strip()]
+    if artifacts:
+        payload["artifacts"] = [item for item in artifacts if isinstance(item, str) and item.strip()]
+    return record_lane_message(
+        lane_id=lane_id,
+        session=session,
+        direction="orchestrator_to_worker",
+        subject=f"brief:{normalized_reason}",
+        message=(message or normalized_summary),
+        status=status,
+        payload=payload,
+        task_ref=task_ref,
+        actor=actor,
+    )
 
 
 def update_lane_message(
@@ -1293,8 +1420,53 @@ def list_lane_messages(task_ref: str | None = None, lane_id: str | None = None, 
             where_sql += " AND status = ?"
             params.append(status)
         total = int(conn.execute(f"SELECT COUNT(*) AS count FROM lane_messages WHERE {where_sql}", tuple(params)).fetchone()["count"])
-        rows = [dict(row) for row in conn.execute(f"SELECT * FROM lane_messages WHERE {where_sql} ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?", (*params, limit, offset)).fetchall()]
+        rows = [
+            _decode_lane_message_row_dict(dict(row))
+            for row in conn.execute(
+                f"SELECT * FROM lane_messages WHERE {where_sql} ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?",
+                (*params, limit, offset),
+            ).fetchall()
+        ]
         return _json_response({"ok": True, "task_ref": resolved_task_ref, "lane_id": normalized_lane_id, "current_lane": inferred_lane, "status": status, "total_matching": total, "returned": len(rows), "has_more": offset + len(rows) < total, "messages": rows})
+
+
+def list_lane_briefs(task_ref: str | None = None, lane_id: str | None = None, status: str = "open", limit: int = 20, offset: int = 0) -> str:
+    valid_statuses = {"all", "open", "acknowledged", "closed"}
+    if status not in valid_statuses:
+        return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(valid_statuses))}"})
+    limit = max(1, limit)
+    offset = max(0, offset)
+    normalized_lane_id = _normalize_optional_text(lane_id)
+    with _get_db_connection() as conn:
+        resolved_task_ref = _resolve_task_ref(conn, task_ref)
+        params: list[object] = [resolved_task_ref, "orchestrator_to_worker", "brief:%"]
+        where_sql = "task_ref = ? AND direction = ? AND subject LIKE ?"
+        if normalized_lane_id is not None:
+            where_sql += " AND lane_id = ?"
+            params.append(normalized_lane_id)
+        if status != "all":
+            where_sql += " AND status = ?"
+            params.append(status)
+        total = int(conn.execute(f"SELECT COUNT(*) AS count FROM lane_messages WHERE {where_sql}", tuple(params)).fetchone()["count"])
+        rows = [
+            _decode_lane_message_row_dict(dict(row))
+            for row in conn.execute(
+                f"SELECT * FROM lane_messages WHERE {where_sql} ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?",
+                (*params, limit, offset),
+            ).fetchall()
+        ]
+        return _json_response(
+            {
+                "ok": True,
+                "task_ref": resolved_task_ref,
+                "lane_id": normalized_lane_id,
+                "status": status,
+                "total_matching": total,
+                "returned": len(rows),
+                "has_more": offset + len(rows) < total,
+                "briefs": rows,
+            }
+        )
 
 
 def upsert_plan_cursor(
@@ -2152,7 +2324,11 @@ def _import_snapshot(conn: sqlite3.Connection, task_ref: str, snapshot: dict, mo
         conn.execute("INSERT INTO worker_reports (task_ref, lane_id, session, summary, changed_files_json, test_commands_json, blockers_json, merge_ready, status, agent, branch, commit_sha, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, row.get("lane_id", ""), row.get("session", "import"), row.get("summary", ""), row.get("changed_files_json") or json.dumps(row.get("changed_files", [])), row.get("test_commands_json") or json.dumps(row.get("test_commands", [])), row.get("blockers_json") or json.dumps(row.get("blockers", [])), 1 if row.get("merge_ready") else 0, row.get("status", "submitted"), agent, branch, commit_sha, row.get("created_at") or now))
     for row in messages:
         agent, branch, commit_sha = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
-        conn.execute("INSERT INTO lane_messages (task_ref, lane_id, session, direction, subject, message, status, agent, branch, commit_sha, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, row.get("lane_id", ""), row.get("session", "import"), row.get("direction", "worker_to_orchestrator"), row.get("subject"), row.get("message", ""), row.get("status", "open"), agent, branch, commit_sha, row.get("created_at") or now, row.get("updated_at") or row.get("created_at") or now))
+        payload_json = row.get("payload_json")
+        payload = row.get("payload")
+        if isinstance(payload, dict):
+            payload_json = json.dumps(payload, sort_keys=True)
+        conn.execute("INSERT INTO lane_messages (task_ref, lane_id, session, direction, subject, message, status, payload_json, agent, branch, commit_sha, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, row.get("lane_id", ""), row.get("session", "import"), row.get("direction", "worker_to_orchestrator"), row.get("subject"), row.get("message", ""), row.get("status", "open"), payload_json, agent, branch, commit_sha, row.get("created_at") or now, row.get("updated_at") or row.get("created_at") or now))
     for row in plan_cursors:
         conn.execute(
             """

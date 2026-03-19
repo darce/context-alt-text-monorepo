@@ -386,6 +386,7 @@ def run_lane_exec(
     worktree_path: Path,
     output_path: Path | None = None,
     backend: str = "codex-cli",
+    session_mode: str = "fresh_turn",
     codex_bin: str | None = None,
     codex_args: list[str] | None = None,
     prompt_override: str | None = None,
@@ -400,6 +401,8 @@ def run_lane_exec(
     """
     backend_name = validate_backend(backend)
     env = pythonpath_env(orchestrator_root, task_ref=task_ref, lane_id=lane_id)
+    if session_mode == "shared_lane":
+        env["CODEX_SUBAGENT_BRIDGE_SESSION_MODE"] = "shared"
 
     if not dry_run:
         preflight = _run_lane_preflight(

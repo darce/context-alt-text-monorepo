@@ -143,7 +143,7 @@ def _record_downstream_briefs(
     dry_run: bool = False,
 ) -> list[tuple[str, bool]]:
     """Persist compact downstream briefs derived from the latest source-lane report."""
-    from agent_handoff_mcp import list_worker_reports, record_lane_brief
+    from agent_handoff_mcp import list_worker_reports, record_decision, record_lane_brief
 
     if dry_run or not downstream:
         return [(dep, True) for dep in downstream]
@@ -156,6 +156,23 @@ def _record_downstream_briefs(
     reports = reports_payload.get("reports", [])
     latest_report = reports[0] if isinstance(reports, list) and reports and isinstance(reports[0], dict) else None
     if latest_report is None:
+        return [(dep, False) for dep in downstream]
+    blockers = latest_report.get("blockers")
+    if not isinstance(blockers, list):
+        blockers = latest_report.get("blockers_json") or []
+    report_status = str(latest_report.get("status") or "").strip()
+    merge_ready = bool(latest_report.get("merge_ready"))
+    if report_status == "blocked" or not merge_ready or any(
+        isinstance(item, str) and item.strip() for item in blockers
+    ):
+        record_decision(
+            session=f"{task_ref}-orchestrator-brief",
+            decision=f"Skipped downstream brief generation for {lane_id}.",
+            rationale=(
+                "Cross-lane briefs are emitted only for merge-ready source-lane reports with no unresolved blockers. "
+                "Blocked or non-merge-ready reports must be handled through orchestrator guidance instead of downstream replay."
+            ),
+        )
         return [(dep, False) for dep in downstream]
 
     summary = str(latest_report.get("summary") or "").strip() or f"{lane_id} produced updates for downstream lanes."

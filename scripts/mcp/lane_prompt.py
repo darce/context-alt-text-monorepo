@@ -355,6 +355,42 @@ def _render_section(title: str, items: list[str]) -> list[str]:
     return ["", f"{title}:", *_bullet_lines(items)]
 
 
+def _approx_chars(items: list[str]) -> int:
+    return sum(len(item) for item in items)
+
+
+def _prompt_budget_section(
+    *,
+    assignment_items: list[str],
+    brief_items: list[str],
+    runtime_guidance: list[str],
+    recent_decisions: list[str],
+    recent_tests: list[str],
+    global_items: list[str],
+    include_lane_history: bool,
+    include_global_context: bool,
+) -> list[str]:
+    lines = [
+        f"Assignment inbox contributes {len(assignment_items)} item(s), about {_approx_chars(assignment_items)} characters.",
+        f"Dependency briefs contribute {len(brief_items)} item(s), about {_approx_chars(brief_items)} characters.",
+        f"Runtime guidance contributes {len(runtime_guidance)} line(s), about {_approx_chars(runtime_guidance)} characters.",
+    ]
+    if include_lane_history:
+        history_items = [*recent_decisions, *recent_tests]
+        lines.append(
+            f"Recent lane history contributes {len(history_items)} item(s), about {_approx_chars(history_items)} characters."
+        )
+    else:
+        lines.append("Recent lane history is omitted from the default prompt budget.")
+    if include_global_context:
+        lines.append(
+            f"Escalated task context contributes {len(global_items)} item(s), about {_approx_chars(global_items)} characters."
+        )
+    else:
+        lines.append("Escalated task context is omitted from the default prompt budget.")
+    return lines
+
+
 def _task_global_context(task_ref: str) -> dict[str, list[dict[str, Any]]]:
     payload = _json_load(
         get_handoff_state(
@@ -433,6 +469,9 @@ def _build_prompt_sections(
         [_format_test(test) for test in _as_dicts(activity.get("tests"))],
         limit=MAX_TEST_ITEMS,
     )
+    runtime_guidance = [
+        line for line in _runtime_guidance(orchestrator_root=orchestrator_root, task_ref=task_ref, lane_id=lane_id) if line
+    ]
 
     latest_report_lines: list[str] = []
     if latest_report:
@@ -467,17 +506,7 @@ def _build_prompt_sections(
             "Broader task/global context is excluded by default; rerun with `--include-global-context` only when lane-local state and briefs are insufficient."
         )
 
-    sections: dict[str, list[str] | str] = {
-        "header": header,
-        "context_budget": context_budget,
-        "assignment": assignment_items,
-        "runtime_guidance": [line for line in _runtime_guidance(orchestrator_root=orchestrator_root, task_ref=task_ref, lane_id=lane_id) if line],
-        "dependency_briefs": brief_items,
-        "latest_report": latest_report_lines,
-        "reporting_contract": reporting_contract,
-    }
-    if include_lane_history:
-        sections["recent_lane_history"] = [*recent_decisions, *recent_tests]
+    global_items: list[str] = []
     if include_global_context:
         global_context = _task_global_context(task_ref)
         global_items = _bounded_items(
@@ -490,6 +519,30 @@ def _build_prompt_sections(
             ],
             limit=MAX_GLOBAL_ITEMS,
         )
+    prompt_budget = _prompt_budget_section(
+        assignment_items=assignment_items,
+        brief_items=brief_items,
+        runtime_guidance=runtime_guidance,
+        recent_decisions=recent_decisions,
+        recent_tests=recent_tests,
+        global_items=global_items,
+        include_lane_history=include_lane_history,
+        include_global_context=include_global_context,
+    )
+
+    sections: dict[str, list[str] | str] = {
+        "header": header,
+        "context_budget": context_budget,
+        "prompt_budget": prompt_budget,
+        "assignment": assignment_items,
+        "runtime_guidance": runtime_guidance,
+        "dependency_briefs": brief_items,
+        "latest_report": latest_report_lines,
+        "reporting_contract": reporting_contract,
+    }
+    if include_lane_history:
+        sections["recent_lane_history"] = [*recent_decisions, *recent_tests]
+    if include_global_context:
         sections["global_context"] = global_items
     return sections
 
@@ -520,6 +573,7 @@ def _build_prompt(
     )
     lines: list[str] = list(sections["header"])
     lines.extend(_render_section("Context Budget", list(sections["context_budget"])))
+    lines.extend(_render_section("Prompt Budget", list(sections["prompt_budget"])))
     lines.extend(_render_section("Assignment Inbox", list(sections["assignment"])))
     lines.extend(_render_section("Runtime Guidance", list(sections["runtime_guidance"])))
     lines.extend(_render_section("Dependency Briefs", list(sections["dependency_briefs"])))

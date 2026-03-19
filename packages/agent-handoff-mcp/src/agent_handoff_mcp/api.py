@@ -288,6 +288,7 @@ def orchestrator_start(
     backend: str = "codex-cli",
     poll_interval: int = 60,
     single_pass: bool = False,
+    worker_start_mode: str = "mcp",
 ) -> str:
     paths = _orchestrator_paths()
     try:
@@ -321,6 +322,8 @@ def orchestrator_start(
         backend_name,
         "--poll-interval",
         str(poll_interval),
+        "--worker-start-mode",
+        worker_start_mode,
     ]
     if single_pass:
         cmd.append("--single-pass")
@@ -339,6 +342,7 @@ def orchestrator_start(
             "lock_path": str(paths["lock_path"]),
             "backend": backend_name,
             "single_pass": single_pass,
+            "worker_start_mode": worker_start_mode,
         }
     )
 
@@ -443,6 +447,7 @@ def orchestrator_single_cycle(
     backend: str = "codex-cli",
     dry_run: bool = False,
     timeout_seconds: float = 300.0,
+    worker_start_mode: str = "mcp",
 ) -> str:
     """Run one orchestrator cycle synchronously (dispatch, poll, intake, verify)."""
     paths = _orchestrator_paths()
@@ -464,6 +469,8 @@ def orchestrator_single_cycle(
         task_ref,
         "--backend",
         backend_name,
+        "--worker-start-mode",
+        worker_start_mode,
         "--single-pass",
     ]
     if dry_run:
@@ -490,6 +497,7 @@ def orchestrator_single_cycle(
             "exit_code": result.returncode,
             "backend": backend_name,
             "dry_run": dry_run,
+            "worker_start_mode": worker_start_mode,
             "stderr": result.stderr[-2000:] if result.stderr else "",
         }
     )
@@ -502,6 +510,7 @@ def worker_start(
     poll_interval: int = 30,
     single_pass: bool = False,
     session: str | None = None,
+    session_mode: str = "fresh_turn",
 ) -> str:
     paths = _worker_paths()
     try:
@@ -532,6 +541,7 @@ def worker_start(
         python_executable=sys.executable,
         pythonpath=_handoff_pythonpath(),
         backend=backend_name,
+        session_mode=session_mode,
         poll_interval=poll_interval,
         single_pass=single_pass,
     )
@@ -550,7 +560,7 @@ def worker_status(task_ref: str, lane_id: str) -> str:
     process = payload.get("process")
     running = isinstance(process, dict) and isinstance(process.get("pid"), int)
     payload["running"] = running
-    payload["ok"] = running
+    payload["ok"] = True
     return core._json_response(payload)
 
 
@@ -584,15 +594,50 @@ def worker_start_all(
     backend: str = "codex-subagent",
     poll_interval: int = 30,
     single_pass: bool = False,
+    session_mode: str = "fresh_turn",
 ) -> str:
     try:
         lane_manifest = _import_scripts_mcp_module("lane_manifest")
-        lane_ids = lane_manifest.list_lanes(task_ref)
+        orchestrator_lanes = _import_scripts_mcp_module("orchestrator_lanes")
+        merge_order_fn = getattr(lane_manifest, "merge_order", None)
+        manifest_order = merge_order_fn(task_ref) if callable(merge_order_fn) else []
+        lane_ids = manifest_order or lane_manifest.list_lanes(task_ref)
     except RuntimeError as exc:
         return core._json_response({"ok": False, "error": str(exc)})
 
     results: list[dict[str, Any]] = []
     for lane_id in lane_ids:
+        blocked_by: list[str] = []
+        if lane_id in manifest_order:
+            lane_index = manifest_order.index(lane_id)
+            dependency_error: dict[str, Any] | None = None
+            for upstream_lane in manifest_order[:lane_index]:
+                try:
+                    has_capacity = bool(orchestrator_lanes._lane_has_capacity(task_ref, upstream_lane))
+                except RuntimeError as exc:
+                    dependency_error = {
+                        "ok": False,
+                        "lane_id": lane_id,
+                        "error": f"dependency check failed for upstream lane '{upstream_lane}': {exc}",
+                    }
+                    break
+                if not has_capacity:
+                    blocked_by.append(upstream_lane)
+            if dependency_error is not None:
+                results.append(dependency_error)
+                continue
+        if blocked_by:
+            results.append(
+                {
+                    "ok": True,
+                    "lane_id": lane_id,
+                    "started": False,
+                    "skipped": True,
+                    "reason": "unresolved_upstream_dependencies",
+                    "blocked_by": blocked_by,
+                }
+            )
+            continue
         try:
             result = json.loads(
                 worker_start(
@@ -601,6 +646,7 @@ def worker_start_all(
                     backend=backend,
                     poll_interval=poll_interval,
                     single_pass=single_pass,
+                    session_mode=session_mode,
                 )
             )
         except Exception as exc:
@@ -615,6 +661,7 @@ def worker_start_all(
             "ok": all(bool(item.get("ok")) for item in results),
             "task_ref": task_ref,
             "backend": backend,
+            "session_mode": session_mode,
             "results": results,
         }
     )

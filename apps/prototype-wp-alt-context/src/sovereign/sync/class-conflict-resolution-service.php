@@ -239,7 +239,7 @@ final class ConflictResolutionService {
 			return false;
 		}
 
-		return $moved_rows > 0;
+		return true;
 	}
 
 	/**

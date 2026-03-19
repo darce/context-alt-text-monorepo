@@ -126,6 +126,12 @@ an orchestration control surface in addition to the existing handoff state tools
 - `orchestrator_stop(force=False)`
 - `orchestrator_pause()`
 - `orchestrator_resume()`
+- `worker_start(task_ref, lane_id, backend, poll_interval, single_pass)`
+- `worker_start(task_ref, lane_id, backend, poll_interval, single_pass, session_mode)`
+- `worker_status(task_ref, lane_id)`
+- `worker_stop(task_ref, lane_id, force=False)`
+- `worker_resume(task_ref, lane_id)`
+- `worker_start_all(task_ref, backend, poll_interval, single_pass, session_mode)`
 - `run_structured_turn(prompt, schema, cwd, backend, env=None, timeout_seconds=120.0)`
 
 Use these when the host agent already has MCP access and you want to avoid driving
@@ -138,6 +144,9 @@ Important:
 - The MCP daemon controls operate on the authoritative orchestrator checkout, using
   the same lock, pause sentinel, logs, and `.task-state` conventions as the Make
   wrappers.
+- `worker_status(...)` exposes durable lane-state hints in addition to PID/log metadata. Use `running`, `worker_state`, `attention_required`, and `state_summary` together. Important states include `idle`, `waiting_for_orchestrator`, `handoff_failed`, `paused`, and `stopped`.
+- Use `session_mode="fresh_turn"` for the default fully isolated turn model, or `session_mode="shared_lane"` when you want repeated worker turns in one lane to reuse the same bridge session without leaking context across lanes.
+- `orchestrator_start(...)` and `single-cycle` default to `worker_start_mode="mcp"`, which lets the orchestrator auto-start missing actionable workers through MCP. Use `worker_start_mode="manual"` when the host should keep worker startup in shell space.
 - For remote HTTP custom-MCP attachment (e.g. Codex custom MCP), see
   [codex-custom-mcp-playbook.md](codex-custom-mcp-playbook.md). Start the server
   with `make mcp-serve-http`, verify the endpoint, then attach in Codex settings.
@@ -198,6 +207,7 @@ The worker sees it the next time they run `make lane-inbox`.
 Prompt-shaping note:
 
 - `make lane-prompt` is intentionally narrow by default: it shows the assignment inbox, runtime guidance, compact dependency briefs, and the latest report.
+- The rendered prompt now also includes a compact "Prompt Budget" section so you can see how much context each prompt section contributes before escalating.
 - Recent lane decisions/tests are omitted unless you explicitly escalate with `EXTRA_ARGS=--include-lane-history`.
 - Broader task-wide context is also omitted unless you explicitly escalate with `EXTRA_ARGS=--include-global-context`.
 - If a lane needs cross-lane or global task context, send a compact orchestrator brief instead of replaying whole transcripts into the worker prompt.
@@ -206,6 +216,7 @@ Structured-brief note:
 
 - Orchestrators can now send compact dependency handoffs with `agent-handoff-mcp lane-brief ...` or the MCP tool `record_lane_brief(...)`.
 - Workers can inspect only those dependency briefs with `agent-handoff-mcp lane-brief-list ...` or `list_lane_briefs(...)` instead of scanning the full lane message history.
+- Only emit downstream briefs when the upstream lane already produced a merge-ready result with no unresolved blockers. If the upstream lane is blocked or the dependency is still ambiguous, escalate with orchestrator guidance instead of replaying partial transcripts downstream.
 
 To preview without writing:
 
@@ -269,13 +280,14 @@ commands.
 Typical flow:
 
 1. Call `orchestrator_start(task_ref="<task-ref>", backend="codex-cli" | "codex-subagent")`.
-2. Call `worker_start(task_ref="<task-ref>", lane_id="<lane>", backend="codex-subagent")` or `worker_start_all(task_ref="<task-ref>", backend="codex-subagent")` when you want MCP to bring lane workers online without per-lane shell commands.
-3. Poll `orchestrator_status()` / `worker_status(task_ref="<task-ref>", lane_id="<lane>")` until the daemons are running and work begins flowing.
+2. Let the default `worker_start_mode="mcp"` bring missing actionable workers online automatically, or use `worker_start(...)` / `worker_start_all(...)` when you want explicit worker control.
+3. Poll `orchestrator_status()` / `worker_status(task_ref="<task-ref>", lane_id="<lane>")` until work begins flowing.
 4. Use `run_structured_turn(...)` when you need one synchronous bridge-backed
    execution turn without starting a worker daemon.
 5. Call `orchestrator_pause()` / `orchestrator_resume()` when the singleton loop
    needs to be temporarily gated.
-6. Call `worker_stop(...)` / `worker_resume(...)` for lane-local control, and `orchestrator_stop()` when orchestration should exit cleanly.
+6. If the host should keep worker startup outside MCP, start the orchestrator with `worker_start_mode="manual"` and use the existing `make worker-daemon ...` shell wrappers as the fallback path.
+7. Call `worker_stop(...)` / `worker_resume(...)` for lane-local control, and `orchestrator_stop()` when orchestration should exit cleanly.
 
 Use Make targets when you are operating from a shell-first workflow. Use MCP tools
 when you are already inside an MCP-capable agent host and want the same control plane
@@ -285,9 +297,11 @@ Notes:
 
 - The foreground terminal now shows `exec_start`, `exec_spawned`, and periodic `exec_heartbeat` markers while `codex exec` is still running.
 - Detailed JSONL progress is still written to `logs/worker-daemon/worker-<lane>.jsonl`.
-- `worker_start_all(...)` uses the checked-in lane manifest order and returns per-lane results, so an MCP-capable orchestrator can fan out worker startup without shell loops.
+- `worker_start_all(...)` uses the checked-in lane manifest order and returns per-lane results. It now skips lanes whose upstream dependencies still have unresolved work, reporting `skipped` results with `blocked_by` details instead of starting every lane indiscriminately.
 - If a second worker daemon is started for the same lane, the per-lane lock will reject it with `Another worker daemon is already running for lane '<lane>'`.
 - Use `make worker-daemon-status` to see the shared-root lock path, current PID/state, and the latest JSONL event. Use `make worker-daemon-stop` or `make worker-daemon-resume` instead of sending manual signals when possible.
+- A `handoff_failed` worker state means the implementation/review turn already completed but the final report handoff did not persist. Fix the MCP/handoff issue first, then retry or restart the worker so it can replay the saved result instead of rerunning the lane assignment.
+- Visible Codex app windows are optional operator UX only. Lane isolation comes from worktree boundaries, lane-scoped prompt construction, and MCP state rehydration rather than from keeping a desktop session open.
 
 ### Recipe: Worker is blocked
 

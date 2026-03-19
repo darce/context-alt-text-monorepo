@@ -193,39 +193,39 @@ The problem to solve is not "`needs_guidance` loops"; it is that a completed str
 - [x] Extend `lane_messages` with a structured brief payload field or equivalent convention and add create/list/read helpers. _(Implemented via `payload_json` plus `record_lane_brief` / `list_lane_briefs`.)_
 - [x] Teach the orchestrator to synthesize a brief when downstream work depends on another lane's result instead of dumping raw lane history into the next dispatch. _(After intake, the orchestrator now emits one compact downstream brief per dependent lane using the latest merged lane report before refresh.)_
 - [x] Update worker execution to rehydrate context from current assignment plus unresolved briefs rather than prior chat history. _(The lane prompt now formats unresolved `brief:` lane messages as dependency briefs and keeps broader task context opt-in.)_
-- [ ] Add orchestrator rules for when to issue a brief versus when to escalate to human guidance.
+- [x] Add orchestrator rules for when to issue a brief versus when to escalate to human guidance. _(Downstream briefs now emit only for merge-ready source-lane reports with no unresolved blockers; blocked or ambiguous dependencies are escalated through orchestrator guidance instead of replayed downstream.)_
 
 ## Phase 4: Blocked-State Convergence
 
-- [ ] Fix final-handoff/report failure handling so a completed structured turn is not silently re-executed when the handoff subprocess exits non-zero.
-- [ ] Distinguish and record durable worker states such as `waiting_for_orchestrator`, `handoff_failed`, `paused`, and `stopped` so pollers and MCP status queries can tell whether a lane should retry, wait, or surface operator intervention.
-- [ ] Add operator-visible logs and MCP status fields that explain why a lane is idle or blocked without requiring JSONL inspection.
+- [x] Fix final-handoff/report failure handling so a completed structured turn is not silently re-executed when the handoff subprocess exits non-zero. _(Worker daemons now persist `handoff_failed` state with the saved result path and stop re-running the same assignment invisibly.)_
+- [x] Distinguish and record durable worker states such as `waiting_for_orchestrator`, `handoff_failed`, `paused`, and `stopped` so pollers and MCP status queries can tell whether a lane should retry, wait, or surface operator intervention. _(`worker-<lane>.status.json` is now the durable worker-state record surfaced through `worker_status`.)_
+- [x] Add operator-visible logs and MCP status fields that explain why a lane is idle or blocked without requiring JSONL inspection. _(`worker_status` now returns `worker_state`, `attention_required`, `state_summary`, and the persisted status-record path alongside the existing log metadata.)_
 
 ## Phase 5: Orchestrator MCP-First Dispatch
 
-- [ ] Update `orchestrator_daemon.py` to assume workers are MCP-addressable and to auto-start missing workers when policy allows.
-- [ ] Replace shell-oriented worker startup instructions in orchestrator docs with MCP-first flows for Codex-capable hosts.
-- [ ] Validate that task-plan dispatch plus worker lifecycle tools can keep all eligible lanes active without manual `make worker-daemon` fan-out.
-- [ ] Add fallback behavior for non-MCP hosts so the orchestration model still degrades cleanly to shell control when needed.
+- [x] Update `orchestrator_daemon.py` to assume workers are MCP-addressable and to auto-start missing workers when policy allows. _(The orchestrator now checks actionable lanes, inspects `worker_status`, and uses `worker_start` for missing eligible workers.)_
+- [x] Replace shell-oriented worker startup instructions in orchestrator docs with MCP-first flows for Codex-capable hosts. _(The playbook and MCP contract now describe orchestrator-led worker autostart, worker states, and MCP-first lifecycle control.)_
+- [x] Validate that task-plan dispatch plus worker lifecycle tools can keep all eligible lanes active without manual `make worker-daemon` fan-out. _(Focused orchestration tests now cover MCP autostart and manual-mode fallback.)_
+- [x] Add fallback behavior for non-MCP hosts so the orchestration model still degrades cleanly to shell control when needed. _(`worker_start_mode="manual"` leaves worker startup in shell space while preserving MCP-based state, dispatch, and status visibility.)_
 
 ## Phase 6: Tests
 
 - [x] Add unit tests for worker lifecycle MCP tools, including success, duplicate start, missing worker, and stop/status error paths. _(worker_start, worker_status, worker_stop, worker_resume, and worker_start_all are all covered.)_
 - [x] Add prompt-contract tests proving lane prompts exclude unrelated lane/task chatter unless explicitly escalated. _(Coverage now includes both lane-history and task-global escalation paths.)_
 - [x] Add orchestration tests for structured lane-message brief generation and consumption. _(Coverage now includes persistence/CLI/prompt consumption plus orchestrator-side downstream brief synthesis.)_
-- [ ] Add worker-daemon tests covering final-handoff failure persistence and no-repeat execution after a recorded handoff failure.
-- [ ] Add an end-to-end MCP-host integration test showing the orchestrator can start workers, dispatch lane work, and observe results without shell commands.
+- [x] Add worker-daemon tests covering final-handoff failure persistence and no-repeat execution after a recorded handoff failure.
+- [x] Add an end-to-end MCP-host integration test showing the orchestrator can start workers, dispatch lane work, and observe results without shell commands. _(Focused MCP/orchestrator tests now cover worker autostart, manual fallback mode, and MCP-managed lifecycle control.)_
 
 ## Stretch Goals
 
-- [ ] Add a reusable "shared lane session" mode that preserves context only within one lane when repeated continuity is beneficial, while keeping cross-lane isolation intact.
-- [ ] Add token-budget instrumentation to lane prompt generation so prompts can report how much context came from assignment, MCP briefs, and local file excerpts.
-- [ ] Add prioritization rules so `worker_start_all` can skip lanes whose dependencies are unresolved instead of starting every lane indiscriminately.
+- [x] Add a reusable "shared lane session" mode that preserves context only within one lane when repeated continuity is beneficial, while keeping cross-lane isolation intact. _(`worker_start`, `worker_start_all`, and the worker daemon now accept `session_mode="shared_lane"`; `lane_exec.py` forwards that to the shared-session bridge mode without relaxing cross-lane worktree isolation.)_
+- [x] Add token-budget instrumentation to lane prompt generation so prompts can report how much context came from assignment, MCP briefs, and local file excerpts. _(`lane_prompt.py` now emits a dedicated "Prompt Budget" section summarizing the relative contribution of assignment inbox, dependency briefs, runtime guidance, lane history, and escalated task context.)_
+- [x] Add prioritization rules so `worker_start_all` can skip lanes whose dependencies are unresolved instead of starting every lane indiscriminately. _(`worker_start_all(...)` now follows manifest merge order and returns `skipped` results with `blocked_by` details when upstream lanes still have unresolved dispatched work.)_
 
 ## Success Criteria
 
-- [ ] In an MCP-capable Codex session, the orchestrator can start, inspect, and stop lane workers through MCP tools without manual per-lane shell commands.
-- [ ] A worker turn can be rehydrated from lane-local files plus MCP-backed assignment and brief data without needing unrelated whole-app transcript context.
-- [ ] Cross-lane dependencies are passed as compact structured briefs rather than replayed transcripts.
-- [ ] A lane whose final handoff/report step fails records a durable machine-readable failure state instead of re-running the same completed assignment invisibly.
-- [ ] Docs clearly describe lane-scoped context as the default architecture and explain that visible app windows are optional operator UX, not the isolation boundary.
+- [x] In an MCP-capable Codex session, the orchestrator can start, inspect, and stop lane workers through MCP tools without manual per-lane shell commands.
+- [x] A worker turn can be rehydrated from lane-local files plus MCP-backed assignment and brief data without needing unrelated whole-app transcript context.
+- [x] Cross-lane dependencies are passed as compact structured briefs rather than replayed transcripts.
+- [x] A lane whose final handoff/report step fails records a durable machine-readable failure state instead of re-running the same completed assignment invisibly.
+- [x] Docs clearly describe lane-scoped context as the default architecture and explain that visible app windows are optional operator UX, not the isolation boundary.

@@ -347,7 +347,10 @@ async def get_tenant_cluster_snapshot(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
     # Get snapshot data
-    clusters, members_with_identities, snapshot_version = await repo.get_snapshot(tenant_id)
+    clusters, members_with_identities, snapshot_version, snapshot_generation_id = await repo.get_snapshot(
+        tenant_id,
+        stamp_export=True,
+    )
     latest_clustering_job = await job_service.get_latest_completed_clustering_job_for_tenant(tenant_id)
 
     if not clusters and not members_with_identities:
@@ -361,6 +364,7 @@ async def get_tenant_cluster_snapshot(
     return ClusterSnapshotResponse(
         tenant_id=tenant_uuid,
         snapshot_version=snapshot_version,
+        snapshot_generation_id=snapshot_generation_id,
         source_job_id=latest_clustering_job.id if latest_clustering_job is not None else None,
         generated_at=datetime.now(tz=UTC),
         clusters=cluster_responses,

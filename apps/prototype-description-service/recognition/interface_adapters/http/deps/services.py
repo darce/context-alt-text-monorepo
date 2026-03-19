@@ -67,6 +67,13 @@ class RetentionPolicyServiceProtocol(Protocol):
 
     async def update_policy(self, tenant_id: str, retention_mode: str, actor: str) -> dict[str, Any]: ...
 
+    async def apply_disposal_after_ack(
+        self,
+        tenant_id: str,
+        snapshot_generation_id: str | None,
+        actor: str,
+    ) -> dict[str, Any]: ...
+
 
 class RetentionExportServiceProtocol(Protocol):
     """Export surface consumed by the retention router."""
@@ -96,6 +103,14 @@ class _NotImplementedRetentionPolicyService:
 
     async def update_policy(self, tenant_id: str, retention_mode: str, actor: str) -> dict[str, Any]:
         raise NotImplementedError(f"Retention policy update is not implemented for tenant {tenant_id}")
+
+    async def apply_disposal_after_ack(
+        self,
+        tenant_id: str,
+        snapshot_generation_id: str | None,
+        actor: str,
+    ) -> dict[str, Any]:
+        raise NotImplementedError(f"Retention disposal is not implemented for tenant {tenant_id}")
 
 
 class _NotImplementedRetentionExportService:
@@ -201,9 +216,11 @@ async def get_media_identity_service(
 
 
 async def get_retention_policy_service(
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession | None = Depends(get_optional_session),
 ) -> RetentionPolicyServiceProtocol:
     """Return the real retention policy service when available."""
+    if session is None:
+        return _NotImplementedRetentionPolicyService()
     try:
         from recognition.domain.services.retention_policy_service import RetentionPolicyService
 

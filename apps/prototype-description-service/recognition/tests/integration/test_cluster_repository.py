@@ -11,6 +11,8 @@ from typing import Protocol
 import numpy as np
 import pytest
 
+from db.models import IdentityCluster as IdentityClusterModel
+from db.models import IdentityClusterRepresentative as IdentityClusterRepresentativeModel
 from db.models import MediaIdentity as MediaIdentityModel
 from db.models import Tenant
 from recognition.domain.cluster import IdentityCluster
@@ -255,6 +257,123 @@ async def test_curriculum_bias_round_trip(db_session, tenant) -> None:
 
     await repo.set_curriculum_t(saved.id, 0.42)
     assert await repo.get_curriculum_t(saved.id) == pytest.approx(0.42, abs=0.0001)
+
+
+@pytest.mark.asyncio
+async def test_get_snapshot_stamps_generation_id_and_excludes_disposed_rows(db_session, tenant: Tenant) -> None:
+    repo = SqlAlchemyClusterRepository(db_session)
+    member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
+
+    active_cluster = await repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label="Active",
+            is_labeled=True,
+            identity_count=1,
+            created_at=datetime.now(tz=UTC),
+        )
+    )
+    disposed_cluster = await repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label="Disposed",
+            is_labeled=True,
+            identity_count=1,
+            created_at=datetime.now(tz=UTC),
+        )
+    )
+
+    active_identity_id = str(uuid.uuid4())
+    disposed_identity_id = str(uuid.uuid4())
+    active_identity_uuid = uuid.UUID(active_identity_id)
+    disposed_identity_uuid = uuid.UUID(disposed_identity_id)
+
+    db_session.add_all(
+        [
+            MediaIdentityModel(
+                id=active_identity_uuid,
+                tenant_id=tenant.id,
+                media_id=111,
+                media_url="http://example.test/active.jpg",
+                bbox_x=0,
+                bbox_y=0,
+                bbox_width=10,
+                bbox_height=10,
+                confidence=0.9,
+                embedding=[0.1] * 512,
+            ),
+            MediaIdentityModel(
+                id=disposed_identity_uuid,
+                tenant_id=tenant.id,
+                media_id=222,
+                media_url="http://example.test/disposed.jpg",
+                bbox_x=0,
+                bbox_y=0,
+                bbox_width=10,
+                bbox_height=10,
+                confidence=0.9,
+                embedding=[0.2] * 512,
+                disposed_at=datetime.now(tz=UTC),
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    await member_repo.add_member(active_cluster.id, identity_id=active_identity_id, similarity=0.95)
+    await member_repo.add_member(disposed_cluster.id, identity_id=disposed_identity_id, similarity=0.85)
+    await db_session.flush()
+
+    active_rep = IdentityClusterRepresentativeModel(
+        tenant_id=tenant.id,
+        cluster_id=uuid.UUID(active_cluster.id),
+        identity_id=active_identity_uuid,
+        embedding=[0.1] * 512,
+        quality_score=0.95,
+    )
+    disposed_rep = IdentityClusterRepresentativeModel(
+        tenant_id=tenant.id,
+        cluster_id=uuid.UUID(disposed_cluster.id),
+        identity_id=disposed_identity_uuid,
+        embedding=[0.2] * 512,
+        quality_score=0.85,
+        disposed_at=datetime.now(tz=UTC),
+    )
+    db_session.add_all([active_rep, disposed_rep])
+    await db_session.flush()
+
+    disposed_cluster_model = await db_session.get(IdentityClusterModel, uuid.UUID(disposed_cluster.id))
+    assert disposed_cluster_model is not None
+    disposed_cluster_model.disposed_at = datetime.now(tz=UTC)
+    await db_session.commit()
+
+    clusters, members, _snapshot_version, snapshot_generation_id = await repo.get_snapshot(
+        str(tenant.id),
+        stamp_export=True,
+    )
+
+    assert snapshot_generation_id is not None
+    assert uuid.UUID(snapshot_generation_id)
+    assert [cluster.id for cluster in clusters] == [active_cluster.id]
+    assert [member.identity_id for member, _identity in members] == [active_identity_id]
+
+    refreshed_active_cluster = await db_session.get(IdentityClusterModel, uuid.UUID(active_cluster.id))
+    refreshed_active_identity = await db_session.get(MediaIdentityModel, active_identity_uuid)
+    refreshed_active_rep = await db_session.get(IdentityClusterRepresentativeModel, active_rep.id)
+    refreshed_disposed_identity = await db_session.get(MediaIdentityModel, disposed_identity_uuid)
+    refreshed_disposed_cluster = await db_session.get(IdentityClusterModel, uuid.UUID(disposed_cluster.id))
+
+    assert refreshed_active_cluster is not None
+    assert refreshed_active_identity is not None
+    assert refreshed_active_rep is not None
+    assert str(refreshed_active_cluster.last_exported_snapshot_id) == snapshot_generation_id
+    assert str(refreshed_active_identity.last_exported_snapshot_id) == snapshot_generation_id
+    assert str(refreshed_active_rep.last_exported_snapshot_id) == snapshot_generation_id
+    assert refreshed_disposed_identity is not None
+    assert refreshed_disposed_cluster is not None
+    assert refreshed_disposed_identity.last_exported_snapshot_id is None
+    assert refreshed_disposed_cluster.last_exported_snapshot_id is None
 
 
 @pytest.mark.asyncio

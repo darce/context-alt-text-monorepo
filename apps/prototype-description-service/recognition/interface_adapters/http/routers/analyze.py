@@ -30,9 +30,11 @@ from recognition.interface_adapters.http.dependencies import (
     get_job_repo,
     get_job_service_dependency,
     get_optional_session,
+    get_retention_policy_service,
     get_scan_queue_repo,
     get_scan_queue_service_factory,
     get_scan_queue_service_optional,
+    RetentionPolicyServiceProtocol,
     get_shared_insightface_adapter,
     require_auth,
     require_write_access,
@@ -273,6 +275,7 @@ async def acknowledge_projection(
     tenant_id: str = Header(alias="X-Tenant-ID"),
     auth=Depends(require_write_access),
     session=Depends(get_optional_session),
+    retention_policy_service: RetentionPolicyServiceProtocol = Depends(get_retention_policy_service),
 ) -> dict[str, int | str]:
     """Record that WordPress projected the provided snapshot version for the pipeline job."""
     if session is None:
@@ -289,6 +292,14 @@ async def acknowledge_projection(
     if projection.snapshot_version != request.snapshot_version:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="snapshot_version does not match job")
     if projection.acknowledged_at is None:
+        try:
+            await retention_policy_service.apply_disposal_after_ack(
+                tenant_id=tenant_id,
+                snapshot_generation_id=request.snapshot_generation_id,
+                actor=f"tenant:{tenant_id}",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
         await repo.record_projection_acknowledgement(
             job_id=job_id,
             tenant_id=tenant_id,

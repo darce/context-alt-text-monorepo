@@ -308,18 +308,19 @@ class ClusterRepository(Protocol):
         ...
 
     async def get_snapshot(
-        self, tenant_id: str
-    ) -> tuple[list[IdentityCluster], list[tuple[IdentityMember, MediaIdentity]], int]:
+        self, tenant_id: str, *, stamp_export: bool = False
+    ) -> tuple[list[IdentityCluster], list[tuple[IdentityMember, MediaIdentity]], int, str | None]:
         """Get complete cluster snapshot for tenant projection.
 
         Args:
             tenant_id: Tenant UUID string.
 
         Returns:
-            Tuple of (clusters, member_tuples, snapshot_version) where:
+            Tuple of (clusters, member_tuples, snapshot_version, snapshot_generation_id) where:
             - clusters: All clusters for the tenant
             - member_tuples: List of (IdentityMember, MediaIdentity) pairs
             - snapshot_version: Monotonic version number (unix timestamp of max cluster updated_at)
+            - snapshot_generation_id: Stable UUID associated with the exported snapshot when stamping is enabled
         """
         ...
 

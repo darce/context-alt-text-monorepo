@@ -510,6 +510,7 @@ class ClusterSnapshotResponse(BaseModel):
 
     tenant_id: str
     snapshot_version: int
+    snapshot_generation_id: str | None = None
     source_job_id: str | None = None
     generated_at: datetime
     clusters: list[ClusterSnapshotClusterResponse]

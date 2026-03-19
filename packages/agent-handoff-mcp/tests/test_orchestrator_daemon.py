@@ -498,6 +498,10 @@ def _make_mock_ahm(*, ready_to_close: bool = False) -> mock.MagicMock:
     mock_ahm.record_lane_message.return_value = json.dumps({"ok": True})
     mock_ahm.upsert_worktree_lane.return_value = json.dumps({"ok": True})
     mock_ahm.update_next_actions.return_value = json.dumps({"ok": True})
+    mock_ahm.worker_status.return_value = json.dumps(
+        {"ok": True, "running": False, "worker_state": "stopped", "attention_required": False}
+    )
+    mock_ahm.worker_start.return_value = json.dumps({"ok": True, "pid": 1234})
     return mock_ahm
 
 
@@ -892,6 +896,8 @@ def test_parse_args_run_accepts_optional_task_ref_and_backend() -> None:
         "/tmp/orchestrator-root",
         "--backend",
         "codex-subagent",
+        "--worker-start-mode",
+        "manual",
         "--single-pass",
     ]
     with mock.patch.object(sys, "argv", argv):
@@ -899,6 +905,7 @@ def test_parse_args_run_accepts_optional_task_ref_and_backend() -> None:
     assert args.command == "run"
     assert args.task_ref is None
     assert args.backend == "codex-subagent"
+    assert args.worker_start_mode == "manual"
     assert args.single_pass is True
 
 
@@ -929,6 +936,7 @@ def test_main_run_threads_backend_to_orchestrator_loop(tmp_path: Path) -> None:
         poll_interval=15,
         single_pass=True,
         backend="codex-subagent",
+        worker_start_mode="manual",
         dry_run=True,
     )
     mock_lock = mock.Mock()
@@ -944,9 +952,76 @@ def test_main_run_threads_backend_to_orchestrator_loop(tmp_path: Path) -> None:
         poll_interval=15,
         single_pass=True,
         backend="codex-subagent",
+        worker_start_mode="manual",
         dry_run=True,
     )
     mock_lock.release.assert_called_once()
+
+
+def test_single_pass_autostarts_actionable_worker_via_mcp(tmp_path: Path) -> None:
+    mod = _load_module()
+    state_dir = tmp_path / ".task-state"
+    state_dir.mkdir()
+    lane_wt = tmp_path / "backend-domain"
+    lane_wt.mkdir()
+
+    mock_ahm = _make_mock_ahm()
+    mock_ahm.list_worker_reports.return_value = json.dumps({"ok": True, "reports": []})
+    mock_ahm.worker_status.return_value = json.dumps(
+        {"ok": True, "lane_id": "backend-domain", "running": False, "worker_state": "stopped", "attention_required": False}
+    )
+    mock_ahm.worker_start.return_value = json.dumps({"ok": True, "pid": 1234, "lane_id": "backend-domain"})
+
+    mock_manifest = mock.MagicMock()
+    mock_manifest.merge_order.return_value = ["backend-domain"]
+    mock_manifest.downstream_lanes.return_value = []
+
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "lane_manifest": mock_manifest}):
+        with mock.patch.object(mod, "_resolve_lane_worktree", return_value=lane_wt):
+            with mock.patch("worker_daemon.poll_lane_state", return_value="actionable"):
+                with mock.patch.object(mod.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=json.dumps({"ok": True}), stderr="")):
+                    result = mod.orchestrator_loop(
+                        orchestrator_root=tmp_path,
+                        task_ref="test-task",
+                        single_pass=True,
+                        backend="codex-subagent",
+                    )
+
+    assert result == 0
+    mock_ahm.worker_start.assert_called_once()
+
+
+def test_single_pass_manual_worker_mode_skips_mcp_autostart(tmp_path: Path) -> None:
+    mod = _load_module()
+    state_dir = tmp_path / ".task-state"
+    state_dir.mkdir()
+    lane_wt = tmp_path / "backend-domain"
+    lane_wt.mkdir()
+
+    mock_ahm = _make_mock_ahm()
+    mock_ahm.list_worker_reports.return_value = json.dumps({"ok": True, "reports": []})
+    mock_ahm.worker_status.return_value = json.dumps(
+        {"ok": True, "lane_id": "backend-domain", "running": False, "worker_state": "stopped", "attention_required": False}
+    )
+
+    mock_manifest = mock.MagicMock()
+    mock_manifest.merge_order.return_value = ["backend-domain"]
+    mock_manifest.downstream_lanes.return_value = []
+
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "lane_manifest": mock_manifest}):
+        with mock.patch.object(mod, "_resolve_lane_worktree", return_value=lane_wt):
+            with mock.patch("worker_daemon.poll_lane_state", return_value="actionable"):
+                with mock.patch.object(mod.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=json.dumps({"ok": True}), stderr="")):
+                    result = mod.orchestrator_loop(
+                        orchestrator_root=tmp_path,
+                        task_ref="test-task",
+                        single_pass=True,
+                        backend="codex-subagent",
+                        worker_start_mode="manual",
+                    )
+
+    assert result == 0
+    mock_ahm.worker_start.assert_not_called()
 
 
 def test_single_pass_logs_lanes_discovered(tmp_path: Path) -> None:

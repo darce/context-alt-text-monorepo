@@ -104,12 +104,14 @@ def test_record_downstream_briefs_creates_one_brief_per_dependency() -> None:
             "ok": True,
             "reports": [
                 {
+                    "merge_ready": 1,
                     "summary": "Backend domain changes were intaken.",
                     "changed_files": ["apps/prototype-description-service/export_service.py"],
                     "test_commands": ["pytest recognition/tests/unit/test_export_service.py"],
                 }
             ],
         })),
+        mock.patch("agent_handoff_mcp.record_decision", return_value=json.dumps({"ok": True})),
         mock.patch("agent_handoff_mcp.record_lane_brief", side_effect=[
             json.dumps({"ok": True}),
             json.dumps({"ok": True}),
@@ -140,3 +142,32 @@ def test_record_downstream_briefs_returns_false_when_no_report_exists() -> None:
         )
 
     assert result == [("frontend", False)]
+
+
+def test_record_downstream_briefs_escalates_blocked_reports_instead_of_briefing() -> None:
+    mod = _load_module()
+
+    with (
+        mock.patch("agent_handoff_mcp.list_worker_reports", return_value=json.dumps({
+            "ok": True,
+            "reports": [
+                {
+                    "merge_ready": 0,
+                    "status": "blocked",
+                    "summary": "Blocked on credentials.",
+                    "blockers": ["No access"],
+                }
+            ],
+        })),
+        mock.patch("agent_handoff_mcp.record_lane_brief") as mock_brief,
+        mock.patch("agent_handoff_mcp.record_decision", return_value=json.dumps({"ok": True})) as mock_decision,
+    ):
+        result = mod._record_downstream_briefs(
+            "daemon-10",
+            "backend-domain",
+            ["frontend"],
+        )
+
+    assert result == [("frontend", False)]
+    mock_brief.assert_not_called()
+    mock_decision.assert_called_once()

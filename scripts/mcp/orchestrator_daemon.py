@@ -98,6 +98,134 @@ def _poll_merge_ready_lanes(
     return ready
 
 
+def _manual_worker_command(task_ref: str, lane_id: str, backend: str) -> str:
+    return f"make worker-daemon TASK={task_ref} LANE={lane_id} BACKEND={backend}"
+
+
+def _ensure_lane_workers(
+    orchestrator_root: Path,
+    task_ref: str,
+    lane_ids: list[str],
+    *,
+    backend: str,
+    worker_start_mode: str,
+    dry_run: bool = False,
+    log: Any | None = None,
+) -> list[dict[str, Any]]:
+    from agent_handoff_mcp import worker_start, worker_status
+    from worker_daemon import poll_lane_state
+
+    results: list[dict[str, Any]] = []
+    for lane_id in lane_ids:
+        worktree_path = _resolve_lane_worktree(orchestrator_root, task_ref, lane_id)
+        if worktree_path is None or not worktree_path.is_dir():
+            result = {
+                "lane_id": lane_id,
+                "action": "skip",
+                "reason": "missing_worktree",
+            }
+            results.append(result)
+            if callable(log):
+                log("WARN", "worker_autostart_skipped", **result)
+            continue
+
+        try:
+            lane_state = poll_lane_state(
+                orchestrator_root=orchestrator_root,
+                task_ref=task_ref,
+                lane_id=lane_id,
+                worktree_path=worktree_path,
+            )
+        except RuntimeError as exc:
+            result = {
+                "lane_id": lane_id,
+                "action": "skip",
+                "reason": "poll_error",
+                "error": str(exc),
+            }
+            results.append(result)
+            if callable(log):
+                log("WARN", "worker_autostart_skipped", **result)
+            continue
+
+        status_payload = _json_load(worker_status(task_ref=task_ref, lane_id=lane_id))
+        running = bool(status_payload.get("running"))
+        worker_state = str(status_payload.get("worker_state") or "")
+        attention_required = bool(status_payload.get("attention_required"))
+
+        if running or lane_state != "actionable":
+            results.append(
+                {
+                    "lane_id": lane_id,
+                    "action": "noop",
+                    "lane_state": lane_state,
+                    "worker_state": worker_state,
+                    "running": running,
+                }
+            )
+            continue
+
+        if attention_required:
+            result = {
+                "lane_id": lane_id,
+                "action": "skip",
+                "reason": "attention_required",
+                "worker_state": worker_state,
+            }
+            results.append(result)
+            if callable(log):
+                log("WARN", "worker_autostart_skipped", **result)
+            continue
+
+        manual_command = _manual_worker_command(task_ref, lane_id, backend)
+        if worker_start_mode != "mcp":
+            result = {
+                "lane_id": lane_id,
+                "action": "manual",
+                "reason": "worker_start_mode_manual",
+                "manual_command": manual_command,
+            }
+            results.append(result)
+            if callable(log):
+                log("INFO", "worker_autostart_manual", **result)
+            continue
+
+        if dry_run:
+            result = {
+                "lane_id": lane_id,
+                "action": "start",
+                "dry_run": True,
+            }
+            results.append(result)
+            if callable(log):
+                log("INFO", "worker_autostart_planned", **result)
+            continue
+
+        start_payload = _json_load(
+            worker_start(
+                task_ref=task_ref,
+                lane_id=lane_id,
+                backend=backend,
+            )
+        )
+        result = {
+            "lane_id": lane_id,
+            "action": "start",
+            "ok": bool(start_payload.get("ok")),
+            "pid": start_payload.get("pid"),
+        }
+        if start_payload.get("ok") is not True:
+            result["reason"] = "worker_start_failed"
+            result["error"] = start_payload.get("error") or start_payload.get("message")
+            result["manual_command"] = manual_command
+            if callable(log):
+                log("WARN", "worker_autostart_failed", **result)
+        elif callable(log):
+            log("INFO", "worker_autostarted", **result)
+        results.append(result)
+    return results
+
+
 def _run_cross_lane_verify(
     orchestrator_root: Path, task_ref: str, lane_id: str, *, dry_run: bool = False,
 ) -> bool:
@@ -541,6 +669,7 @@ def orchestrator_loop(
     poll_interval: int = 60,
     single_pass: bool = False,
     backend: str = "codex-cli",
+    worker_start_mode: str = "mcp",
     dry_run: bool = False,
 ) -> int:
     """Main daemon loop.  Returns 0 on clean exit, 1 on failure."""
@@ -645,6 +774,22 @@ def orchestrator_loop(
             )
             if plan_dispatch is not None:
                 log("INFO", "task_plan_dispatch", **plan_dispatch)
+
+            autostart_results = _ensure_lane_workers(
+                orchestrator_root,
+                task_ref,
+                m_order,
+                backend=backend,
+                worker_start_mode=worker_start_mode,
+                dry_run=dry_run,
+                log=log,
+            )
+            started_workers = [
+                row for row in autostart_results
+                if row.get("action") in {"start", "manual"} or row.get("reason") == "attention_required"
+            ]
+            if started_workers:
+                log("INFO", "worker_pool_checked", results=started_workers)
 
             # Step 4: Poll for merge-ready lanes
             ready_lanes = _poll_merge_ready_lanes(orchestrator_root, task_ref, m_order)
@@ -785,6 +930,8 @@ def _parse_args() -> argparse.Namespace:
     run_parser.add_argument("--backend", default="codex-cli",
                             choices=backend_choices,
                             help="Execution backend to use for orchestrator-invoked operations (default: codex-cli).")
+    run_parser.add_argument("--worker-start-mode", default="mcp", choices=("mcp", "manual"),
+                            help="Use MCP worker lifecycle tools by default, or leave worker startup in manual shell mode.")
     run_parser.add_argument("--dry-run", action="store_true",
                             help="Skip mutating operations.")
 
@@ -849,6 +996,7 @@ def main() -> int:
                 poll_interval=args.poll_interval,
                 single_pass=args.single_pass,
                 backend=args.backend,
+                worker_start_mode=args.worker_start_mode,
                 dry_run=args.dry_run,
             )
         finally:

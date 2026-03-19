@@ -79,6 +79,7 @@ def _build_parser() -> argparse.ArgumentParser:
     cycle_parser = subparsers.add_parser("single-cycle")
     cycle_parser.add_argument("--task-ref", required=True, help="MCP task reference.")
     cycle_parser.add_argument("--backend", default="codex-cli", help="Execution backend.")
+    cycle_parser.add_argument("--worker-start-mode", default="mcp", choices=("mcp", "manual"))
     cycle_parser.add_argument("--dry-run", action="store_true", help="Skip mutating operations.")
     cycle_parser.add_argument("--timeout", type=float, default=300.0, help="Timeout in seconds.")
     subparsers.add_parser("doctor")
@@ -266,6 +267,7 @@ def _build_parser() -> argparse.ArgumentParser:
     orchestrator_start_parser.add_argument("--task-ref", required=True)
     orchestrator_start_parser.add_argument("--backend", default="codex-cli")
     orchestrator_start_parser.add_argument("--poll-interval", type=int, default=60)
+    orchestrator_start_parser.add_argument("--worker-start-mode", default="mcp", choices=("mcp", "manual"))
     orchestrator_start_parser.add_argument("--single-pass", action="store_true")
 
     subparsers.add_parser("orchestrator-status")
@@ -283,6 +285,7 @@ def _build_parser() -> argparse.ArgumentParser:
     worker_start_parser.add_argument("--poll-interval", type=int, default=30)
     worker_start_parser.add_argument("--single-pass", action="store_true")
     worker_start_parser.add_argument("--session")
+    worker_start_parser.add_argument("--session-mode", default="fresh_turn", choices=("fresh_turn", "shared_lane"))
 
     worker_status_parser = subparsers.add_parser("worker-status")
     worker_status_parser.add_argument("--task-ref", required=True)
@@ -302,6 +305,7 @@ def _build_parser() -> argparse.ArgumentParser:
     worker_start_all_parser.add_argument("--backend", default="codex-subagent")
     worker_start_all_parser.add_argument("--poll-interval", type=int, default=30)
     worker_start_all_parser.add_argument("--single-pass", action="store_true")
+    worker_start_all_parser.add_argument("--session-mode", default="fresh_turn", choices=("fresh_turn", "shared_lane"))
 
     turn_parser = subparsers.add_parser("run-structured-turn")
     turn_parser.add_argument("--prompt-file", required=True)
@@ -333,6 +337,7 @@ def main() -> None:
             backend=args.backend,
             dry_run=args.dry_run,
             timeout_seconds=args.timeout,
+            worker_start_mode=args.worker_start_mode,
         ))
         return
     if args.command == "doctor":
@@ -608,6 +613,7 @@ def main() -> None:
                 task_ref=args.task_ref,
                 backend=args.backend,
                 poll_interval=args.poll_interval,
+                worker_start_mode=args.worker_start_mode,
                 single_pass=args.single_pass,
             )
         )
@@ -633,6 +639,7 @@ def main() -> None:
                 poll_interval=args.poll_interval,
                 single_pass=args.single_pass,
                 session=args.session,
+                session_mode=args.session_mode,
             )
         )
         return
@@ -652,6 +659,7 @@ def main() -> None:
                 backend=args.backend,
                 poll_interval=args.poll_interval,
                 single_pass=args.single_pass,
+                session_mode=args.session_mode,
             )
         )
         return

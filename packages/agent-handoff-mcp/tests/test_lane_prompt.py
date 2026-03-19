@@ -90,6 +90,7 @@ def test_build_prompt_includes_messages_actions_and_findings() -> None:
 
     assert "Assignment Inbox:" in prompt
     assert "Context Budget:" in prompt
+    assert "Prompt Budget:" in prompt
     assert "Runtime Guidance:" in prompt
     assert "Dependency Briefs:" in prompt
     assert "Reporting Contract:" in prompt
@@ -104,6 +105,8 @@ def test_build_prompt_includes_messages_actions_and_findings() -> None:
     assert "Owned paths" in prompt
     assert "Constraints:" in prompt
     assert "Do not edit HTTP router files." in prompt
+    assert "Assignment inbox contributes" in prompt
+    assert "Recent lane history is omitted from the default prompt budget." in prompt
 
 
 def test_build_prompt_formats_structured_briefs_compactly() -> None:
@@ -269,6 +272,49 @@ def test_build_prompt_includes_global_context_only_when_requested() -> None:
     assert "Escalated Task Context:" in expanded_prompt
     assert "Update the shared rollout checklist." in expanded_prompt
     assert "Waiting on policy sign-off." in expanded_prompt
+
+
+def test_build_prompt_reports_prompt_budget_for_optional_context_sections() -> None:
+    module = _load_lane_prompt_module()
+    module.get_handoff_state = lambda **_: json.dumps(  # type: ignore[attr-defined]
+        {
+            "ok": True,
+            "actions_pending": [{"id": 90, "action": "Update the shared rollout checklist.", "lane_id": None}],
+            "blockers_open": [],
+            "findings_open": [],
+            "decisions_recent": [],
+            "tests_recent": [],
+        }
+    )
+    prompt = module._build_prompt(
+        {
+            "lane": {"branch": "codex/p5-frontend", "objective": "Objective"},
+            "messages": [
+                {
+                    "id": 1,
+                    "direction": "orchestrator_to_worker",
+                    "status": "open",
+                    "subject": "assignment",
+                    "message": "Implement the lane slice.",
+                }
+            ],
+            "actions": [],
+            "blockers": [],
+            "findings": [],
+            "decisions": [{"id": 11, "decision": "Use the compact brief path."}],
+            "tests": [{"id": 22, "passed": 1, "command": "pytest tests/test_cross_lane.py"}],
+            "reports": [],
+        },
+        task_ref="phase-5-retention-export-and-audit-controls",
+        lane_id="frontend",
+        worktree_path="/tmp/frontend",
+        orchestrator_root=REPO_ROOT,
+        include_lane_history=True,
+        include_global_context=True,
+    )
+
+    assert "Recent lane history contributes 2 item(s)" in prompt
+    assert "Escalated task context contributes 1 item(s)" in prompt
 
 
 def test_build_summary_lines_color_codes_actionable_items() -> None:

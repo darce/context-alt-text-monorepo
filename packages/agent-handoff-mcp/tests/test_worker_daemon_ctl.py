@@ -25,6 +25,7 @@ def test_daemon_status_empty(tmp_path: Path) -> None:
     assert status["lane_id"] == "definitely-no-such-lane"
     assert status["lock"]["held"] is False
     assert status["process"] is None
+    assert status["worker_state"] == "stopped"
     assert status["last_event"] is None
 
 
@@ -80,6 +81,7 @@ def test_daemon_start_refuses_second_running_worker(tmp_path: Path) -> None:
 def test_daemon_status_reads_lock_and_last_event(tmp_path: Path) -> None:
     mod = _load_module()
     (tmp_path / "worker-backend-domain.lock").write_text(json.dumps({"pid": 1234}))
+    (tmp_path / "worker-backend-domain.status.json").write_text(json.dumps({"state": "idle", "summary": "No work."}))
     (tmp_path / "worker-backend-domain.jsonl").write_text(
         json.dumps({"event": "poll_sleep", "interval": 30}) + "\n"
     )
@@ -87,6 +89,7 @@ def test_daemon_status_reads_lock_and_last_event(tmp_path: Path) -> None:
         status = mod.daemon_status(state_dir=tmp_path, log_dir=tmp_path, lane_id="backend-domain")
     assert status["lock"]["pid"] == 1234
     assert status["process"]["pid"] == 1234
+    assert status["worker_state"] == "idle"
     assert status["last_event"]["event"] == "poll_sleep"
 
 
@@ -96,6 +99,7 @@ def test_daemon_status_marks_stale_lock(tmp_path: Path) -> None:
     with mock.patch.object(mod, "_ps_info", return_value=None):
         status = mod.daemon_status(state_dir=tmp_path, log_dir=tmp_path, lane_id="backend-domain")
     assert status["stale_lock"] is True
+    assert status["attention_required"] is True
 
 
 def test_daemon_status_falls_back_to_process_scan(tmp_path: Path) -> None:
@@ -115,6 +119,32 @@ def test_daemon_status_falls_back_to_process_scan(tmp_path: Path) -> None:
     assert status["process"]["pid_source"] == "process_scan"
 
 
+def test_daemon_status_reports_handoff_failed_from_status_file(tmp_path: Path) -> None:
+    mod = _load_module()
+    (tmp_path / "worker-backend-domain.status.json").write_text(
+        json.dumps(
+            {
+                "state": "handoff_failed",
+                "summary": "Final handoff failed.",
+                "result_path": "/tmp/result.json",
+            }
+        )
+    )
+    status = mod.daemon_status(state_dir=tmp_path, log_dir=tmp_path, lane_id="backend-domain")
+    assert status["worker_state"] == "handoff_failed"
+    assert status["attention_required"] is True
+    assert status["state_summary"] == "Final handoff failed."
+
+
+def test_daemon_status_reports_paused_when_process_is_stopped(tmp_path: Path) -> None:
+    mod = _load_module()
+    (tmp_path / "worker-backend-domain.lock").write_text(json.dumps({"pid": 1234}))
+    with mock.patch.object(mod, "_ps_info", return_value={"pid": 1234, "stat": "T", "command": "python", "stopped": True}):
+        status = mod.daemon_status(state_dir=tmp_path, log_dir=tmp_path, lane_id="backend-domain")
+    assert status["worker_state"] == "paused"
+    assert status["attention_required"] is False
+
+
 def test_daemon_stop_signals_tree(tmp_path: Path) -> None:
     mod = _load_module()
     (tmp_path / "worker-backend-domain.lock").write_text(json.dumps({"pid": 1234}))
@@ -125,6 +155,8 @@ def test_daemon_stop_signals_tree(tmp_path: Path) -> None:
         result = mod.daemon_stop(state_dir=tmp_path, log_dir=tmp_path, lane_id="backend-domain")
     assert result["ok"] is True
     mock_signal.assert_called_once()
+    status_payload = json.loads((tmp_path / "worker-backend-domain.status.json").read_text())
+    assert status_payload["state"] == "stopped"
 
 
 def test_daemon_resume_signals_tree(tmp_path: Path) -> None:

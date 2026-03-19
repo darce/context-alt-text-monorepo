@@ -52,6 +52,7 @@ def test_orchestrator_start_returns_pid_and_lock_path(tmp_path: Path) -> None:
     assert payload["ok"] is True
     assert payload["pid"] == 43210
     assert payload["backend"] == "codex-subagent"
+    assert payload["worker_start_mode"] == "mcp"
     assert payload["lock_path"].endswith("/.task-state/orchestrator.lock")
     cmd = mock_popen.call_args.args[0]
     assert "--task-ref" in cmd
@@ -126,6 +127,35 @@ def test_worker_start_returns_pid_and_paths(tmp_path: Path) -> None:
     assert kwargs["task_ref"] == "daemon-10"
     assert kwargs["lane_id"] == "backend-domain"
     assert kwargs["backend"] == "codex-subagent"
+    assert kwargs["session_mode"] == "fresh_turn"
+
+
+def test_worker_start_passes_shared_lane_session_mode(tmp_path: Path) -> None:
+    _configure_runtime(tmp_path)
+    fake_registry = mock.Mock()
+    fake_registry.validate_backend.return_value = "codex-subagent"
+    fake_lane_manifest = mock.Mock()
+    fake_lane_manifest.get_lane_config.return_value = {
+        "worktree_path": str(tmp_path / "frontend"),
+    }
+    fake_ctl = mock.Mock()
+    fake_ctl.daemon_start.return_value = {"ok": True, "pid": 6789}
+    (tmp_path / "frontend").mkdir()
+
+    def _import(name: str):
+        if name == "backend_registry":
+            return fake_registry
+        if name == "lane_manifest":
+            return fake_lane_manifest
+        if name == "worker_daemon_ctl":
+            return fake_ctl
+        raise AssertionError(name)
+
+    with mock.patch.object(api, "_import_scripts_mcp_module", side_effect=_import):
+        payload = _parse(api.worker_start(task_ref="daemon-10", lane_id="frontend", session_mode="shared_lane"))
+
+    assert payload["ok"] is True
+    assert fake_ctl.daemon_start.call_args.kwargs["session_mode"] == "shared_lane"
 
 
 def test_worker_status_delegates_to_control_module(tmp_path: Path) -> None:
@@ -136,7 +166,7 @@ def test_worker_status_delegates_to_control_module(tmp_path: Path) -> None:
     with mock.patch.object(api, "_import_scripts_mcp_module", return_value=fake_ctl):
         payload = _parse(api.worker_status(task_ref="daemon-10", lane_id="frontend"))
 
-    assert payload["ok"] is False
+    assert payload["ok"] is True
     assert payload["running"] is False
     assert payload["lane_id"] == "frontend"
     fake_ctl.daemon_status.assert_called_once()
@@ -158,10 +188,13 @@ def test_worker_stop_delegates_force_flag(tmp_path: Path) -> None:
 def test_worker_start_all_aggregates_lane_results(tmp_path: Path) -> None:
     _configure_runtime(tmp_path)
     fake_manifest = mock.Mock()
+    fake_manifest.merge_order.return_value = ["backend-domain", "frontend"]
     fake_manifest.list_lanes.return_value = ["backend-domain", "frontend"]
+    fake_orchestrator_lanes = mock.Mock()
+    fake_orchestrator_lanes._lane_has_capacity.return_value = True
 
     with (
-        mock.patch.object(api, "_import_scripts_mcp_module", return_value=fake_manifest),
+        mock.patch.object(api, "_import_scripts_mcp_module", side_effect=[fake_manifest, fake_orchestrator_lanes]),
         mock.patch.object(api, "worker_start", side_effect=[
             json.dumps({"ok": True, "lane_id": "backend-domain"}),
             json.dumps({"ok": True, "lane_id": "frontend"}),
@@ -171,15 +204,19 @@ def test_worker_start_all_aggregates_lane_results(tmp_path: Path) -> None:
 
     assert payload["ok"] is True
     assert [item["lane_id"] for item in payload["results"]] == ["backend-domain", "frontend"]
+    assert fake_orchestrator_lanes._lane_has_capacity.call_args_list[0].args == ("daemon-10", "backend-domain")
 
 
 def test_worker_start_all_isolates_per_lane_exceptions(tmp_path: Path) -> None:
     _configure_runtime(tmp_path)
     fake_manifest = mock.Mock()
+    fake_manifest.merge_order.return_value = ["backend-domain", "frontend"]
     fake_manifest.list_lanes.return_value = ["backend-domain", "frontend"]
+    fake_orchestrator_lanes = mock.Mock()
+    fake_orchestrator_lanes._lane_has_capacity.return_value = True
 
     with (
-        mock.patch.object(api, "_import_scripts_mcp_module", return_value=fake_manifest),
+        mock.patch.object(api, "_import_scripts_mcp_module", side_effect=[fake_manifest, fake_orchestrator_lanes]),
         mock.patch.object(api, "worker_start", side_effect=[
             json.dumps({"ok": True, "lane_id": "backend-domain"}),
             RuntimeError("boom"),
@@ -192,6 +229,38 @@ def test_worker_start_all_isolates_per_lane_exceptions(tmp_path: Path) -> None:
     assert payload["results"][1]["ok"] is False
     assert payload["results"][1]["lane_id"] == "frontend"
     assert "boom" in payload["results"][1]["error"]
+
+
+def test_worker_start_all_skips_lanes_with_unresolved_upstream_dependencies(tmp_path: Path) -> None:
+    _configure_runtime(tmp_path)
+    fake_manifest = mock.Mock()
+    fake_manifest.merge_order.return_value = ["backend-domain", "frontend", "docs"]
+    fake_manifest.list_lanes.return_value = ["backend-domain", "frontend", "docs"]
+    fake_orchestrator_lanes = mock.Mock()
+    fake_orchestrator_lanes._lane_has_capacity.side_effect = [False, False, True]
+
+    with (
+        mock.patch.object(api, "_import_scripts_mcp_module", side_effect=[fake_manifest, fake_orchestrator_lanes]),
+        mock.patch.object(api, "worker_start", return_value=json.dumps({"ok": True, "lane_id": "backend-domain"})) as mock_worker_start,
+    ):
+        payload = _parse(api.worker_start_all(task_ref="daemon-10", session_mode="shared_lane"))
+
+    assert payload["ok"] is True
+    assert payload["session_mode"] == "shared_lane"
+    assert payload["results"][0] == {"ok": True, "lane_id": "backend-domain"}
+    assert payload["results"][1]["skipped"] is True
+    assert payload["results"][1]["reason"] == "unresolved_upstream_dependencies"
+    assert payload["results"][1]["blocked_by"] == ["backend-domain"]
+    assert payload["results"][2]["skipped"] is True
+    assert payload["results"][2]["blocked_by"] == ["backend-domain"]
+    mock_worker_start.assert_called_once_with(
+        task_ref="daemon-10",
+        lane_id="backend-domain",
+        backend="codex-subagent",
+        poll_interval=30,
+        single_pass=False,
+        session_mode="shared_lane",
+    )
 
 
 def test_worker_resume_delegates_to_control_module(tmp_path: Path) -> None:
@@ -375,6 +444,7 @@ def test_orchestrator_single_cycle_returns_exit_code(tmp_path: Path) -> None:
     assert payload["exit_code"] == 0
     assert payload["backend"] == "codex-cli"
     assert payload["dry_run"] is True
+    assert payload["worker_start_mode"] == "mcp"
     cmd = mock_run.call_args.args[0]
     assert "--single-pass" in cmd
     assert "--dry-run" in cmd

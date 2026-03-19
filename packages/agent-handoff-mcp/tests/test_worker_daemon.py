@@ -267,6 +267,16 @@ def test_patch_result(tmp_path: Path) -> None:
     assert data["summary"] == "done"  # preserved
 
 
+def test_read_worker_status_tolerates_invalid_bytes(tmp_path: Path) -> None:
+    mod = _load_module()
+    status_dir = tmp_path / ".task-state"
+    status_dir.mkdir()
+    status_path = status_dir / "worker-test-lane.status.json"
+    status_path.write_bytes(b"{\xff}")
+
+    assert mod._read_worker_status(status_dir, "test-lane") is None
+
+
 # ---------------------------------------------------------------------------
 # _run_final_handoff subprocess call shape
 # ---------------------------------------------------------------------------
@@ -627,6 +637,104 @@ def test_worker_loop_logs_fix_prompt_failure(tmp_path: Path) -> None:
         )
 
     assert any(call.args[3] == "fix_prompt_failed" for call in mock_log.call_args_list)
+
+
+def test_worker_loop_persists_handoff_failure_without_rerunning_assignment(tmp_path: Path) -> None:
+    mod = _load_module()
+    if str(SCRIPT_DIR) not in sys.path:
+        sys.path.insert(0, str(SCRIPT_DIR))
+
+    result_file = tmp_path / "result.json"
+    result_file.write_text(json.dumps({
+        "handoff_action": "merge_ready",
+        "summary": "Feature implemented.",
+        "details": "Implemented the router.",
+        "tests_run": ["make test"],
+        "blockers": [],
+    }))
+
+    review_result: dict[str, Any] = {
+        "findings": [],
+        "summary": "No serious issues.",
+        "converged": True,
+        "changed_files": ["src/foo.py"],
+        "stack_guides": [],
+    }
+
+    with (
+        mock.patch.object(mod, "poll_lane_state", return_value="actionable"),
+        mock.patch("lane_exec.find_codex", return_value="/usr/bin/codex"),
+        mock.patch("lane_exec.run_lane_exec", return_value=result_file) as mock_exec,
+        mock.patch("review_runner.run_review", return_value=review_result),
+        mock.patch("review_runner.findings_converged", return_value=True),
+        mock.patch.object(mod, "_run_final_handoff", return_value=1),
+        mock.patch("time.sleep", side_effect=[None, KeyboardInterrupt()]),
+    ):
+        with pytest.raises(KeyboardInterrupt):
+            mod.worker_loop(
+                orchestrator_root=tmp_path,
+                task_ref="task",
+                lane_id="test-lane",
+                session="task-test-lane",
+                worktree_path=tmp_path,
+                single_pass=False,
+                dry_run=True,
+            )
+
+    assert mock_exec.call_count == 1
+    status_payload = json.loads((tmp_path / ".task-state" / "worker-test-lane.status.json").read_text())
+    assert status_payload["state"] == "handoff_failed"
+    assert status_payload["failure_stage"] == "final_handoff"
+    assert status_payload["result_path"] == str(result_file)
+
+
+def test_worker_loop_retries_persisted_handoff_failure_without_reexecuting(tmp_path: Path) -> None:
+    mod = _load_module()
+    if str(SCRIPT_DIR) not in sys.path:
+        sys.path.insert(0, str(SCRIPT_DIR))
+
+    status_dir = tmp_path / ".task-state"
+    status_dir.mkdir(exist_ok=True)
+    result_file = tmp_path / "result.json"
+    result_file.write_text(json.dumps({
+        "handoff_action": "merge_ready",
+        "summary": "Feature implemented.",
+    }))
+    (status_dir / "worker-test-lane.status.json").write_text(
+        json.dumps(
+            {
+                "lane_id": "test-lane",
+                "task_ref": "task",
+                "session": "task-test-lane",
+                "state": "handoff_failed",
+                "summary": "Retry me.",
+                "result_path": str(result_file),
+            }
+        )
+    )
+
+    with (
+        mock.patch("lane_exec.find_codex", return_value="/usr/bin/codex"),
+        mock.patch("lane_exec.run_lane_exec") as mock_exec,
+        mock.patch.object(mod, "_run_final_handoff", return_value=0) as mock_handoff,
+    ):
+        rc = mod.worker_loop(
+            orchestrator_root=tmp_path,
+            task_ref="task",
+            lane_id="test-lane",
+            session="task-test-lane",
+            worktree_path=tmp_path,
+            single_pass=True,
+            dry_run=True,
+        )
+
+    assert rc == 0
+    mock_exec.assert_not_called()
+    mock_handoff.assert_called_once()
+    assert not result_file.exists()
+    status_payload = json.loads((status_dir / "worker-test-lane.status.json").read_text())
+    assert status_payload["state"] == "waiting_for_orchestrator"
+    assert "result_path" not in status_payload
 
 
 def test_worker_loop_subagent_backend_skips_find_codex_and_threads_backend(tmp_path: Path) -> None:

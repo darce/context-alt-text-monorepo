@@ -400,7 +400,7 @@ export interface PurgeResponse {
 
 - [x] Implement `AuditEvent` SQLAlchemy model with tenant FK, indexes on `(tenant_id, event_type)` and `(tenant_id, created_at DESC)`.
 - [x] Implement tenant policy columns with server defaults (`retention_mode='retain_all'`).
-- [ ] Verify the squashed baseline schema boots cleanly in the greenfield reset flow (`reset_dev_db.sh` / fresh local bootstrap). No already-migrated upgrade-path verification is required for this project.
+- [x] Verify the squashed baseline schema boots cleanly in the greenfield reset flow (`reset_dev_db.sh` / fresh local bootstrap). No already-migrated upgrade-path verification is required for this project.
 - [x] Add RLS policy on `audit_events` table matching existing tenant-scoped table pattern.
 - [x] Implement `AuditRepository.create_event()`: insert within caller's session (no separate commit -- the caller controls the transaction boundary).
 - [x] Implement `AuditRepository.list_events(tenant_id, limit, offset)`: paginated query ordered by `created_at DESC`.
@@ -409,29 +409,29 @@ export interface PurgeResponse {
 - [x] Implement `RetentionPolicyService.update_policy(tenant_id, retention_mode, actor)`: validate `retention_mode` is one of the allowed values, update tenant row, record `policy_updated` audit event atomically (same transaction).
 - [x] Implement `AuditService.record_event(session, tenant_id, event_type, actor, scope, payload, result_status)`: creates `AuditEvent` within the given session. Used by all lifecycle services to ensure audit events are transactional.
 - [x] Add `default_retention_mode` to `RecognitionSettings` with default `retain_all`.
-- [ ] Add pytest tests: tenant policy CRUD, audit event recording and querying, policy update emits audit event, invalid retention_mode is rejected, RLS isolation.
+- [x] Add pytest tests: tenant policy CRUD, audit event recording and querying, policy update emits audit event, invalid retention_mode is rejected, RLS isolation.
 
 ## Phase 2: Backend -- Export and Purge Service Layer
 
 - [x] Implement `TenantExportService.export_tenant_data(tenant_id, actor)`: query clusters (with representatives including `is_user_selected`), members (with identity metadata excluding raw embedding vectors), detection records (bbox, confidence, media refs, similarity), and scan job summaries. Build portable JSON payload. Record `export_started` and `export_completed` audit events. Update `tenant.last_export_at`. All within one transaction.
 - [x] Define export payload schema: `{ tenant_id, exported_at, schema_version, clusters: [...], members: [...], identities: [...], representatives: [...], scan_jobs: [...] }`. Each entity includes its UUID, timestamps, and human-readable fields but NOT raw float32 embedding arrays.
-- [ ] Implement `TenantPurgeService.purge_tenant_data(tenant_id, actor, scope)`:
+- [x] Implement `TenantPurgeService.purge_tenant_data(tenant_id, actor, scope)`:
   - `scope='disposed'`: delete rows where a disposal marker is set (requires disposal marking to be implemented first -- see Phase 2 disposal marking below).
   - `scope='all'`: cascade-delete ALL machine-derived state in dependency order using the real table names from `db/models/`: `identity_suggestions` -> `cluster_merge_suggestions` -> `identity_cluster_blocks` -> `identity_constraints` -> `recognition_events` -> `recognition_runs` -> `clustering_feedback` -> `assignment_decisions` -> `clustering_job_reports` -> `identity_scan_job_items` -> `identity_scan_jobs` -> `identity_clustering_jobs` -> `identity_cluster_representatives` -> `identity_members` -> `identity_clusters` -> `curation_replay_records` -> `media_identities`. Batch deletions per table (e.g. 1000 rows per batch) with a transaction-per-batch pattern rather than one mega-transaction. Accumulate `deleted_counts` across batches. Preserve the `tenant` row itself, `api_keys`, and `audit_events` (the audit trail must survive purge).
   - After source table deletions (for **both** `scope='disposed'` and `scope='all'`), refresh the `mv_identity_cluster_centroids` materialized view (`REFRESH MATERIALIZED VIEW CONCURRENTLY`). The view is a derived surface, not a tenant-owned source table.
   - Record `purge_started` and `purge_completed` audit events with deletion counts.
   - Update `tenant.last_purge_at`.
-- [ ] Implement snapshot provenance tracking: add `last_exported_snapshot_id` (UUID, nullable) column to `media_identities`, `identity_clusters`, and `identity_cluster_representatives`. `get_snapshot()` generates a `snapshot_generation_id` per call and stamps it on each exported row. The snapshot response envelope includes `snapshot_generation_id` so the WP projector echoes it back during acknowledgement.
-- [ ] Implement disposal marking: add `disposed_at` column to `media_identities`, `identity_clusters`, and `identity_cluster_representatives`. When `retention_mode='dispose_after_ack'` and a projection acknowledgement is received with a valid `snapshot_generation_id`, mark rows where `last_exported_snapshot_id = :snapshot_generation_id` as disposed. Wire the disposal check into the `acknowledge-projection` handler in `analyze.py` (or its backing domain service) so `dispose_after_ack` mode has a concrete activation mechanism. Reject the acknowledgement with HTTP 422 only when `retention_mode='dispose_after_ack'` and `snapshot_generation_id` is absent or not a valid UUID format (the dispose contract requires provenance). When the `snapshot_generation_id` is format-valid but matches zero rows, succeed as a no-op disposal (the acknowledgement proceeds normally -- this handles cases where rows were re-stamped by a newer snapshot export). When `retention_mode` is not `dispose_after_ack`, accept the acknowledgement regardless of whether `snapshot_generation_id` is present, preserving backward compatibility with older WP clients during rollout.
-- [ ] Update `get_snapshot()` to exclude disposed rows (`WHERE disposed_at IS NULL` on `media_identities`, `identity_clusters`, and `identity_cluster_representatives`). The export service must apply the same filter to avoid including disposed rows in tenant exports.
-- [ ] Add pytest tests: export produces valid payload with expected structure and no embedding vectors; purge with `scope='all'` removes all machine state and emits correct audit events; purge with `scope='disposed'` only deletes disposed rows and refreshes materialized view; disposal marking after projection acknowledgement; disposed rows are excluded from `get_snapshot()` results; purge counts are accurate; export and purge update tenant timestamps; `audit_events` survive purge.
+- [x] Implement snapshot provenance tracking: add `last_exported_snapshot_id` (UUID, nullable) column to `media_identities`, `identity_clusters`, and `identity_cluster_representatives`. `get_snapshot()` generates a `snapshot_generation_id` per call and stamps it on each exported row. The snapshot response envelope includes `snapshot_generation_id` so the WP projector echoes it back during acknowledgement.
+- [x] Implement disposal marking: add `disposed_at` column to `media_identities`, `identity_clusters`, and `identity_cluster_representatives`. When `retention_mode='dispose_after_ack'` and a projection acknowledgement is received with a valid `snapshot_generation_id`, mark rows where `last_exported_snapshot_id = :snapshot_generation_id` as disposed. Wire the disposal check into the `acknowledge-projection` handler in `analyze.py` (or its backing domain service) so `dispose_after_ack` mode has a concrete activation mechanism. Reject the acknowledgement with HTTP 422 only when `retention_mode='dispose_after_ack'` and `snapshot_generation_id` is absent or not a valid UUID format (the dispose contract requires provenance). When the `snapshot_generation_id` is format-valid but matches zero rows, succeed as a no-op disposal (the acknowledgement proceeds normally -- this handles cases where rows were re-stamped by a newer snapshot export). When `retention_mode` is not `dispose_after_ack`, accept the acknowledgement regardless of whether `snapshot_generation_id` is present, preserving backward compatibility with older WP clients during rollout.
+- [x] Update `get_snapshot()` to exclude disposed rows (`WHERE disposed_at IS NULL` on `media_identities`, `identity_clusters`, and `identity_cluster_representatives`). The export service must apply the same filter to avoid including disposed rows in tenant exports.
+- [x] Add pytest tests: export produces valid payload with expected structure and no embedding vectors; purge with `scope='all'` removes all machine state and emits correct audit events; purge with `scope='disposed'` only deletes disposed rows and refreshes materialized view; disposal marking after projection acknowledgement; disposed rows are excluded from `get_snapshot()` results; purge counts are accurate; export and purge update tenant timestamps; `audit_events` survive purge.
 
 ## Phase 3: Backend -- Policy, Export, Purge, and Audit HTTP Endpoints
 
 - [x] Implement `GET /retention/policy`: returns `RetentionPolicyResponse` with `retention_mode`, `last_export_at`, `last_purge_at`, `retention_updated_at`.
 - [x] Implement `PATCH /retention/policy`: accepts `UpdateRetentionPolicyRequest(retention_mode)`, validates mode, calls `RetentionPolicyService.update_policy()`, returns updated policy.
 - [x] Implement `POST /retention/export`: calls `TenantExportService.export_tenant_data()`, returns `ExportResponse` with inline JSON payload and summary counts. For MVP, the export is synchronous and returned inline. Async/file-based export is a stretch goal.
-- [ ] Add export size guard: before building the full payload, query the count of exportable identities. If the count exceeds a configurable threshold (e.g. 50k), return HTTP 413 with an advisory message pointing to the async export stretch goal. This keeps the MVP export honest without requiring the full async pipeline.
+- [x] Add export size guard: before building the full payload, query the count of exportable identities. If the count exceeds a configurable threshold (e.g. 50k), return HTTP 413 with an advisory message pointing to the async export stretch goal. This keeps the MVP export honest without requiring the full async pipeline.
 - [x] Implement `POST /retention/purge`: accepts `PurgeRequest(scope, confirm)` where `confirm` must be `true` (prevents accidental purge). Calls `TenantPurgeService.purge_tenant_data()`, returns `PurgeResponse` with deleted counts. Returns `422` if `confirm` is not `true`. Returns `400` if `scope` is invalid.
 - [x] Implement `GET /retention/audit`: returns `AuditEventListResponse` with paginated audit events (limit/offset query params), ordered newest first.
 - [x] All endpoints derive tenant via `get_authenticated_tenant_id` (a new shared dependency that extracts tenant_id from the authenticated API key's `tenant_claim`, not from `get_tenant_id`). This eliminates the header-vs-query-param cross-check gap in `get_tenant_id` for high-sensitivity retention operations. Admin keys (no `tenant_claim`) fall back to `X-Tenant-ID` header only. Mutating endpoints (`PATCH /policy`, `POST /export`, `POST /purge`) additionally depend on `require_write_access`.
@@ -490,10 +490,10 @@ Tracked in: [Sovereign Sync Expansion + Workbench UX Continuation](../../epics/v
 
 ## Phase 6: Integration Tests
 
-- [ ] Backend integration test: create tenant, set retention policy, export data, verify export payload structure, purge with `scope='all'`, verify all machine state deleted, verify audit events recorded for each action.
-- [ ] Backend integration test: `dispose_after_ack` mode marks data as disposed after projection acknowledgement; purge with `scope='disposed'` deletes only disposed rows.
-- [ ] PHP integration test: retention status endpoint proxies backend policy and caches correctly.
-- [ ] Vitest integration test: retention page end-to-end flow with mocked API responses.
+- [x] Backend integration test: create tenant, set retention policy, export data, verify export payload structure, purge with `scope='all'`, verify all machine state deleted, verify audit events recorded for each action.
+- [x] Backend integration test: `dispose_after_ack` mode marks data as disposed after projection acknowledgement; purge with `scope='disposed'` deletes only disposed rows.
+- [x] PHP integration test: retention status endpoint proxies backend policy and caches correctly.
+- [x] Vitest integration test: retention page end-to-end flow with mocked API responses.
 - [ ] All backend pytest, PHP PHPUnit/PHPStan, TypeScript type checks, and Vitest/ESLint checks pass.
 
 ## Stretch Goals
@@ -508,9 +508,9 @@ Tracked in: [Sovereign Sync Expansion + Workbench UX Continuation](../../epics/v
 ## Success Criteria
 
 - [x] Operators can read and update the tenant retention policy (`retain_all`, `dispose_after_ack`, `purge_on_demand`) from the admin UI without database access.
-- [ ] Operators can trigger a tenant data export that produces a portable JSON payload covering clusters, members, detection metadata, and representative info (no raw embeddings).
-- [ ] Operators can trigger a purge of machine-derived state with explicit confirmation, and the system records the action in the audit log.
-- [ ] Every retention lifecycle action (policy change, export, purge, disposal) produces an auditable event visible to the operator.
+- [x] Operators can trigger a tenant data export that produces a portable JSON payload covering clusters, members, detection metadata, and representative info (no raw embeddings).
+- [x] Operators can trigger a purge of machine-derived state with explicit confirmation, and the system records the action in the audit log.
+- [x] Every retention lifecycle action (policy change, export, purge, disposal) produces an auditable event visible to the operator.
 - [x] The retention mode is visible in the sync status area and dashboard so operators understand the data governance posture at a glance.
 - [ ] The MVP can credibly claim privacy-minimized retention and auditable handling of machine-derived biometric state.
 - [ ] All backend pytest, PHP PHPUnit/PHPStan, TypeScript type checks, and Vitest/ESLint checks pass.

@@ -57,6 +57,17 @@ Review findings:
 
 Lifecycle:
 
+- `orchestrator_start`
+- `orchestrator_status`
+- `orchestrator_stop`
+- `orchestrator_pause`
+- `orchestrator_resume`
+- `worker_start`
+- `worker_status`
+- `worker_stop`
+- `worker_resume`
+- `worker_start_all`
+- `run_structured_turn`
 - `handoff_close_check`
 - `generate_current_task_md`
 - `export_handoff_state`
@@ -80,6 +91,11 @@ Lifecycle:
 - `record_lane_message` / `update_lane_message` model orchestrator-to-worker and worker-to-orchestrator communication without relying on direct session chat.
 - `record_lane_brief` / `list_lane_briefs` are the structured-brief helpers built on top of `lane_messages`; they persist an open `orchestrator_to_worker` message with a `brief:<reason>` subject plus a compact JSON payload (`source_lane`, `reason`, `summary`, optional `required_actions`, optional `artifacts`).
 - `get_lane_activity` is the lane-scoped query surface for decisions, tests, blockers, actions, findings, worker reports, and lane messages.
+- `worker_status` should be treated as an inspection tool, not a boolean health check. Use `running`, `worker_state`, `attention_required`, and `state_summary` together. Current durable worker states include `idle`, `waiting_for_orchestrator`, `handoff_failed`, `paused`, and `stopped`.
+- `worker_start` and `worker_start_all` accept `session_mode`. Use `fresh_turn` for the default one-turn-per-session isolation, or `shared_lane` to reuse context only within the same lane worker session when repeated continuity is worth the extra retained context.
+- `worker_start_all` is dependency-aware when a manifest merge order exists. Lanes whose upstream dependencies still have unresolved dispatched work are returned as clean `skipped` results with `reason="unresolved_upstream_dependencies"` and a `blocked_by` lane list instead of being started prematurely.
+- `orchestrator_start` / `single-cycle` support `worker_start_mode`. Use `mcp` for the default MCP-first worker pool behavior, or `manual` when the host should keep worker startup in shell space.
+- A recorded `handoff_failed` worker state means the implementation/review turn already completed and the saved result must be retried or inspected without silently rerunning the same lane assignment.
 
 ## CLI Fallback
 
@@ -156,7 +172,9 @@ Use the new lane tools when a task is intentionally split across Git worktrees o
 - Workers should hand back one or more `worker_reports` as merge checkpoints instead of relying on free-form chat only.
 - `lane_messages` provide an explicit mailbox for orchestrator briefs, worker questions, and acknowledgements when clients cannot directly message one another.
 - Structured dependency briefs should ride on `lane_messages` rather than a parallel storage surface. The recommended convention is an open `orchestrator_to_worker` message whose subject starts with `brief:` and whose body stays compact enough to be injected into the next lane prompt without replaying full transcripts.
+- Emit downstream briefs only for merge-ready source-lane reports with no unresolved blockers. If the source lane is blocked, non-merge-ready, or ambiguous, escalate through orchestrator guidance instead of replaying partial dependency state into downstream lanes.
 - Lane prompt rendering is lane-scoped by default. `scripts/mcp/lane_prompt.py` should prioritize open assignment items plus compact `brief:` messages, cap those sections to a fixed budget, and omit deeper lane history unless an explicit inspection/escalation flag such as `--include-lane-history` is requested.
+- Lane prompt renders should also expose a compact "Prompt Budget" summary so operators can see how much of the worker prompt came from assignment, dependency briefs, runtime guidance, lane history, and optional task-wide escalation before deciding to widen context further.
 - Broader task-wide context is also opt-in. Use `--include-global-context` only when lane-local state and structured briefs are insufficient; default worker prompts should continue to rehydrate from the lane inbox, lane runtime guidance, unresolved briefs, and the latest lane report.
 - Export/import and archive flows now include lane records, worker reports, and lane messages so delegated task history survives workspace migration.
 - Lane verification should be recorded into MCP with `record_test_result`, not left as terminal-only output, so `get_lane_activity` remains the durable verification ledger for each lane.
@@ -170,5 +188,6 @@ Shared-state rule for sibling worktrees:
 - Worker daemons should be started from the worker worktree root against the shared orchestrator state, for example `make worker-daemon TASK=<task-ref> LANE=<lane>` from the lane checkout. If launched from an app subdirectory, callers should either use a forwarding app Makefile that supports `worker-daemon` or invoke the top-level Makefile explicitly with `make -C "$(git rev-parse --show-toplevel)" worker-daemon ...`.
 - In MCP-capable hosts, the preferred worker lifecycle surface is now `worker_start`, `worker_status`, `worker_stop`, `worker_resume`, and `worker_start_all`. Shell `make worker-daemon*` commands remain the fallback/wrapper layer for non-MCP environments and manual operator workflows.
 - Worker daemon execution should expose live progress. Operators should expect terminal lifecycle markers plus periodic `exec_heartbeat` output while `codex exec` is still running, with the full JSONL trail under `logs/worker-daemon/worker-<lane>.jsonl`.
+- Worker state is also persisted outside the JSONL stream at `.task-state/worker-<lane>.status.json` so MCP status queries can explain why a lane is idle, waiting, paused, stopped, or blocked on final handoff without requiring log inspection.
 - Continuous orchestrator polling is a separate concern from dispatch-only routing. `make orchestrator-daemon` is allowed to intake merge-ready lanes, while `make handoff-dispatch` is the safe root command when the operator wants to fan out open work without starting merge automation.
 - Backend Python lane verification should not depend on interactive shell activation. Prefer `PYENV_VERSION=description-service ...` in lane test commands over `pyenv activate description-service`, because `pyenv activate` requires shell init hooks that may not exist in daemon subprocesses.

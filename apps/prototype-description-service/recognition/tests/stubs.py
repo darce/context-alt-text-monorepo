@@ -268,13 +268,14 @@ class NullClusterRepository(ClusterRepository):
         ]
 
     async def get_snapshot(
-        self, tenant_id: str
-    ) -> tuple[list[IdentityCluster], list[tuple[IdentityMember, MediaIdentity]], int]:
+        self, tenant_id: str, *, stamp_export: bool = False
+    ) -> tuple[list[IdentityCluster], list[tuple[IdentityMember, MediaIdentity]], int, str | None]:
         """Get snapshot data for tests from configured cluster/member fixtures."""
         clusters = [cluster for cluster in self._clusters_by_id.values() if cluster.tenant_id == tenant_id]
         members = await self.get_members_by_cluster_ids(tenant_id, [cluster.id for cluster in clusters if cluster.id])
         snapshot_version = await self.get_snapshot_version(tenant_id)
-        return (clusters, members, snapshot_version)
+        snapshot_generation_id = "00000000-0000-0000-0000-000000000001" if stamp_export else None
+        return (clusters, members, snapshot_version, snapshot_generation_id)
 
     async def get_members_by_cluster_ids(
         self, tenant_id: str, cluster_ids: Sequence[str]

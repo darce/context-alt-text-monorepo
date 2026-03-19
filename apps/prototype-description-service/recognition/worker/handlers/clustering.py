@@ -85,7 +85,9 @@ class ClusteringJobHandler(JobHandler[IdentityClusteringJob]):
             commit=False,
         )
         await session.flush()
-        _, _, snapshot_version = await cluster_service.cluster_repository.get_snapshot(str(job.tenant_id))
+        _, _, snapshot_version, _snapshot_generation_id = await cluster_service.cluster_repository.get_snapshot(
+            str(job.tenant_id)
+        )
 
         await ensure_job_context(session=session, job=job)
         job.processed_identities = result.completed

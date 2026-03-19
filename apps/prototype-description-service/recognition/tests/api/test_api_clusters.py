@@ -636,6 +636,9 @@ def test_get_tenant_snapshot_returns_correct_shape(
     assert body["tenant_id"] == tenant_id
     assert "snapshot_version" in body
     assert isinstance(body["snapshot_version"], int)
+    assert "snapshot_generation_id" in body
+    assert isinstance(body["snapshot_generation_id"], str)
+    assert uuid.UUID(body["snapshot_generation_id"])
     assert body["source_job_id"] == latest_job.id
     assert "generated_at" in body
     assert "clusters" in body

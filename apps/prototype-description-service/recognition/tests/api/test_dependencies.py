@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -120,3 +121,13 @@ def test_clusters_router_does_not_resolve_scan_service_for_clustering_jobs(tenan
     resp = client.post("/recognition/clustering/jobs", json={"tenant_id": tenant_id, "mode": "sync"})
 
     assert resp.status_code == 202
+
+
+@pytest.mark.asyncio
+async def test_retention_policy_service_factory_uses_provided_optional_session() -> None:
+    session = FakeSession()
+
+    service = await dependencies.get_retention_policy_service(session=session)
+
+    assert service.__class__.__name__ == "RetentionPolicyService"
+    assert getattr(service, "_session") is session

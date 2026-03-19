@@ -24,7 +24,7 @@ class _FakeClusterRepository:
 
     async def get_snapshot(self, tenant_id: str):
         self.snapshot_calls.append(tenant_id)
-        return ([], [], self.snapshot_version)
+        return ([], [], self.snapshot_version, None)
 
 
 class _FakeClusterService:

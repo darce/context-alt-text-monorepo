@@ -211,8 +211,8 @@ class FakeClusterRepository:
         return True
 
     async def get_snapshot(
-        self, tenant_id: str
-    ) -> tuple[list[IdentityCluster], list[tuple[IdentityMember, MediaIdentity]], int]:
+        self, tenant_id: str, *, stamp_export: bool = False
+    ) -> tuple[list[IdentityCluster], list[tuple[IdentityMember, MediaIdentity]], int, str | None]:
         # Filter clusters by tenant_id and convert to IdentityCluster domain objects
         clusters_for_tenant = [c for c in self.clusters.values() if c.tenant_id == tenant_id]
         identity_clusters = [
@@ -231,7 +231,8 @@ class FakeClusterRepository:
         ]
         snapshot_version = await self.get_snapshot_version(tenant_id)
         members = await self.get_members_by_cluster_ids(tenant_id, list(self.clusters.keys()))
-        return (identity_clusters, members, snapshot_version)
+        snapshot_generation_id = str(uuid.uuid4()) if stamp_export else None
+        return (identity_clusters, members, snapshot_version, snapshot_generation_id)
 
     async def get_members_by_cluster_ids(
         self, tenant_id: str, cluster_ids: Sequence[str]

@@ -931,6 +931,8 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                         filled_buckets.add((int(pitch // bucket_size), int(yaw // bucket_size)))
 
             for rep in model_reps:
+                if rep.disposed_at is not None:
+                    continue
                 # Extract debug metrics from identity if loaded
                 rep_state = instance_state(rep)
                 debug_metrics = None
@@ -989,6 +991,8 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                         rep.id,
                         identity_loaded,
                     )
+                if identity_loaded and identity is not None and identity.disposed_at is not None:
+                    continue
                 domain_reps.append(
                     ClusterRepresentative(
                         id=str(rep.id),
@@ -1034,17 +1038,20 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         )
 
     async def get_snapshot(
-        self, tenant_id: str
-    ) -> tuple[list[IdentityCluster], list[tuple[DomainMember, DomainIdentity]], int]:
+        self, tenant_id: str, *, stamp_export: bool = False
+    ) -> tuple[list[IdentityCluster], list[tuple[DomainMember, DomainIdentity]], int, str | None]:
         """Get complete cluster snapshot for tenant projection."""
         tenant_uuid = _coerce_uuid(tenant_id)
         if tenant_uuid is None:
-            return ([], [], 0)
+            return ([], [], 0, None)
+
+        snapshot_generation_id = str(uuid.uuid4()) if stamp_export else None
 
         # Fetch all clusters
         clusters_stmt: Select[tuple[ClusterModel]] = (
             select(ClusterModel)
             .where(ClusterModel.tenant_id == tenant_uuid)
+            .where(ClusterModel.disposed_at.is_(None))
             .options(selectinload(ClusterModel.representatives).selectinload(IdentityClusterRepresentative.identity))
             .order_by(ClusterModel.created_at)
         )
@@ -1062,10 +1069,33 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .join(MediaIdentity, IdentityMemberModel.identity_id == MediaIdentity.id)
             .join(ClusterModel, IdentityMemberModel.cluster_id == ClusterModel.id)
             .where(ClusterModel.tenant_id == tenant_uuid)
+            .where(ClusterModel.disposed_at.is_(None))
+            .where(MediaIdentity.disposed_at.is_(None))
             .order_by(IdentityMemberModel.cluster_id, IdentityMemberModel.assigned_at)
         )
         members_result = await self._session.execute(members_stmt)
         member_rows = list(members_result.all())
+
+        if snapshot_generation_id is not None:
+            snapshot_generation_uuid = uuid.UUID(snapshot_generation_id)
+            for cluster_model in cluster_models:
+                cluster_model.last_exported_snapshot_id = snapshot_generation_uuid
+                for representative in cluster_model.representatives:
+                    if representative.disposed_at is not None:
+                        continue
+                    if representative.identity is not None and representative.identity.disposed_at is not None:
+                        continue
+                    representative.last_exported_snapshot_id = snapshot_generation_uuid
+
+            seen_identity_ids: set[uuid.UUID] = set()
+            for _member_model, identity_model in member_rows:
+                if identity_model.id in seen_identity_ids:
+                    continue
+                identity_model.last_exported_snapshot_id = snapshot_generation_uuid
+                seen_identity_ids.add(identity_model.id)
+
+            if cluster_models or seen_identity_ids:
+                await self._session.flush()
 
         # Convert to domain objects
         clusters = [self._to_domain(model) for model in cluster_models]
@@ -1083,7 +1113,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             domain_identity = self._to_domain_identity(identity_model, cluster_id=str(member_model.cluster_id))
             members_with_identities.append((domain_member, domain_identity))
 
-        return (clusters, members_with_identities, snapshot_version)
+        return (clusters, members_with_identities, snapshot_version, snapshot_generation_id)
 
     async def get_members_by_cluster_ids(
         self, tenant_id: str, cluster_ids: Sequence[str]

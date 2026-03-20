@@ -81,7 +81,15 @@ def test_daemon_start_refuses_second_running_worker(tmp_path: Path) -> None:
 def test_daemon_status_reads_lock_and_last_event(tmp_path: Path) -> None:
     mod = _load_module()
     (tmp_path / "worker-backend-domain.lock").write_text(json.dumps({"pid": 1234}))
-    (tmp_path / "worker-backend-domain.status.json").write_text(json.dumps({"state": "idle", "summary": "No work."}))
+    (tmp_path / "worker-backend-domain.status.json").write_text(
+        json.dumps(
+            {
+                "state": "idle",
+                "summary": "No work.",
+                "observability": {"latest": {"phase": "execution", "turn_id": "turn-1"}},
+            }
+        )
+    )
     (tmp_path / "worker-backend-domain.jsonl").write_text(
         json.dumps({"event": "poll_sleep", "interval": 30}) + "\n"
     )
@@ -90,6 +98,7 @@ def test_daemon_status_reads_lock_and_last_event(tmp_path: Path) -> None:
     assert status["lock"]["pid"] == 1234
     assert status["process"]["pid"] == 1234
     assert status["worker_state"] == "idle"
+    assert status["observability"]["latest"]["turn_id"] == "turn-1"
     assert status["last_event"]["event"] == "poll_sleep"
 
 
@@ -184,3 +193,65 @@ def test_find_worker_process_prefers_python_over_shell() -> None:
         result = mod._find_worker_process(task_ref="phase-5", lane_id="backend-domain")
     assert result is not None
     assert result["pid"] == 222
+
+
+def test_daemon_event_history_reads_recent_filtered_events(tmp_path: Path) -> None:
+    mod = _load_module()
+    (tmp_path / "worker-backend-domain.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"event": "exec_start", "cycle": 0}),
+                json.dumps(
+                    {
+                        "event": "subagent_turn_observed",
+                        "cycle": 0,
+                        "phase": "execution",
+                        "requested_reasoning_effort": "auto",
+                        "effective_reasoning_effort": "high",
+                        "token_usage_totals": {"total_tokens": 50, "reasoning_output_tokens": 40},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "event": "subagent_turn_observed",
+                        "cycle": 0,
+                        "phase": "review",
+                        "requested_reasoning_effort": "auto",
+                        "effective_reasoning_effort": "medium",
+                        "token_usage": {
+                            "last": {
+                                "cached_input_tokens": 1,
+                                "input_tokens": 2,
+                                "output_tokens": 3,
+                                "reasoning_output_tokens": 4,
+                                "total_tokens": 5,
+                            },
+                            "total": {
+                                "cached_input_tokens": 10,
+                                "input_tokens": 20,
+                                "output_tokens": 30,
+                                "reasoning_output_tokens": 41,
+                                "total_tokens": 51,
+                            },
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+
+    history = mod.daemon_event_history(
+        state_dir=tmp_path,
+        log_dir=tmp_path,
+        lane_id="backend-domain",
+        task_ref="phase-5",
+        limit=2,
+        event_name="subagent_turn_observed",
+    )
+
+    assert history["returned"] == 2
+    assert [item["phase"] for item in history["events"]] == ["review", "execution"]
+    assert history["events"][0]["effective_reasoning_effort"] == "medium"
+    assert history["events"][0]["token_usage"]["total"]["reasoning_output_tokens"] == 41
+    assert history["events"][1]["token_usage_totals"]["total_tokens"] == 50

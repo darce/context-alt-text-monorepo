@@ -411,12 +411,14 @@ def test_run_review_subagent_backend_passes_runtime_env(tmp_path: Path) -> None:
             task_ref="phase-5-retention-export-and-audit-controls",
             orchestrator_root=REPO_ROOT,
             backend="codex-subagent",
+            reasoning_effort="xhigh",
         )
 
     assert mock_subagent_exec.call_args.args[0] == "codex-subagent"
     env = mock_subagent_exec.call_args.kwargs["env"]
     assert env["TMPDIR"].endswith("/.task-state/tmp/backend-domain")
     assert env["PYENV_VERSION"] == "description-service"
+    assert env["CODEX_REASONING_EFFORT"] == "xhigh"
 
 
 def test_subagent_exec_falls_back_when_bridge_does_not_accept_env(tmp_path: Path) -> None:

@@ -149,6 +149,34 @@ def _last_log_event(path: Path) -> dict[str, Any] | None:
     return None
 
 
+def _read_log_events(path: Path, *, limit: int = 50, event_name: str | None = None) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        raw_lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return []
+
+    events: list[dict[str, Any]] = []
+    normalized_limit = max(limit, 0)
+    for line in reversed(raw_lines):
+        if normalized_limit and len(events) >= normalized_limit:
+            break
+        text = line.strip()
+        if not text:
+            continue
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if event_name and payload.get("event") != event_name:
+            continue
+        events.append(payload)
+    return events
+
+
 def _read_status_file(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
@@ -227,10 +255,31 @@ def daemon_status(*, state_dir: Path, log_dir: Path, lane_id: str, task_ref: str
         "log_path": str(_log_path(log_dir, lane_id)),
         "status_path": str(_status_path(state_dir, lane_id)),
         "status_record": status_record,
+        "observability": status_record.get("observability") if isinstance(status_record, dict) else None,
         "worker_state": worker_state,
         "state_summary": state_summary,
         "attention_required": attention_required,
         "last_event": _last_log_event(_log_path(log_dir, lane_id)),
+    }
+
+
+def daemon_event_history(
+    *,
+    state_dir: Path,
+    log_dir: Path,
+    lane_id: str,
+    task_ref: str | None = None,
+    limit: int = 50,
+    event_name: str | None = None,
+) -> dict[str, Any]:
+    status = daemon_status(state_dir=state_dir, log_dir=log_dir, lane_id=lane_id, task_ref=task_ref)
+    log_path = _log_path(log_dir, lane_id)
+    events = _read_log_events(log_path, limit=limit, event_name=event_name)
+    return {
+        **status,
+        "event_filter": event_name,
+        "events": events,
+        "returned": len(events),
     }
 
 
@@ -247,6 +296,7 @@ def daemon_start(
     pythonpath: str | None = None,
     backend: str = "codex-cli",
     session_mode: str = "fresh_turn",
+    reasoning_effort: str = "inherit",
     poll_interval: int = 30,
     single_pass: bool = False,
 ) -> dict[str, Any]:
@@ -280,6 +330,8 @@ def daemon_start(
         backend,
         "--session-mode",
         session_mode,
+        "--reasoning-effort",
+        reasoning_effort,
         "--poll-interval",
         str(poll_interval),
     ]
@@ -306,6 +358,7 @@ def daemon_start(
         "session": session,
         "backend": backend,
         "session_mode": session_mode,
+        "reasoning_effort": reasoning_effort,
         "poll_interval": poll_interval,
         "single_pass": single_pass,
         "worktree_path": str(worktree_path),

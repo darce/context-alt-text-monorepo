@@ -32,6 +32,7 @@ def test_stdio_server_lists_handoff_tools(tmp_path: Path) -> None:
     assert "orchestrator_single_cycle" in tool_names
     assert "worker_start" in tool_names
     assert "worker_status" in tool_names
+    assert "worker_event_history" in tool_names
     assert "worker_resume" in tool_names
     assert "worker_stop" in tool_names
     assert "worker_start_all" in tool_names

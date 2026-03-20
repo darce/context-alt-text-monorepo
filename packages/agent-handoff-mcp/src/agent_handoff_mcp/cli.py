@@ -44,10 +44,13 @@ from .api import (
     worker_resume,
     worker_start,
     worker_start_all,
+    worker_event_history,
     worker_status,
     worker_stop,
 )
 from .config import RuntimeConfig
+
+WORKER_REASONING_EFFORT_CHOICES = ("inherit", "auto", "low", "medium", "high", "xhigh")
 
 
 def _print_json(payload: str | dict) -> None:
@@ -80,6 +83,11 @@ def _build_parser() -> argparse.ArgumentParser:
     cycle_parser.add_argument("--task-ref", required=True, help="MCP task reference.")
     cycle_parser.add_argument("--backend", default="codex-cli", help="Execution backend.")
     cycle_parser.add_argument("--worker-start-mode", default="mcp", choices=("mcp", "manual"))
+    cycle_parser.add_argument(
+        "--worker-reasoning-effort",
+        default="auto",
+        choices=WORKER_REASONING_EFFORT_CHOICES,
+    )
     cycle_parser.add_argument("--dry-run", action="store_true", help="Skip mutating operations.")
     cycle_parser.add_argument("--timeout", type=float, default=300.0, help="Timeout in seconds.")
     subparsers.add_parser("doctor")
@@ -268,6 +276,11 @@ def _build_parser() -> argparse.ArgumentParser:
     orchestrator_start_parser.add_argument("--backend", default="codex-cli")
     orchestrator_start_parser.add_argument("--poll-interval", type=int, default=60)
     orchestrator_start_parser.add_argument("--worker-start-mode", default="mcp", choices=("mcp", "manual"))
+    orchestrator_start_parser.add_argument(
+        "--worker-reasoning-effort",
+        default="auto",
+        choices=WORKER_REASONING_EFFORT_CHOICES,
+    )
     orchestrator_start_parser.add_argument("--single-pass", action="store_true")
 
     subparsers.add_parser("orchestrator-status")
@@ -286,10 +299,21 @@ def _build_parser() -> argparse.ArgumentParser:
     worker_start_parser.add_argument("--single-pass", action="store_true")
     worker_start_parser.add_argument("--session")
     worker_start_parser.add_argument("--session-mode", default="fresh_turn", choices=("fresh_turn", "shared_lane"))
+    worker_start_parser.add_argument(
+        "--reasoning-effort",
+        default="inherit",
+        choices=WORKER_REASONING_EFFORT_CHOICES,
+    )
 
     worker_status_parser = subparsers.add_parser("worker-status")
     worker_status_parser.add_argument("--task-ref", required=True)
     worker_status_parser.add_argument("--lane-id", required=True)
+
+    worker_history_parser = subparsers.add_parser("worker-event-history")
+    worker_history_parser.add_argument("--task-ref", required=True)
+    worker_history_parser.add_argument("--lane-id", required=True)
+    worker_history_parser.add_argument("--limit", type=int, default=50)
+    worker_history_parser.add_argument("--event-name")
 
     worker_stop_parser = subparsers.add_parser("worker-stop")
     worker_stop_parser.add_argument("--task-ref", required=True)
@@ -306,6 +330,11 @@ def _build_parser() -> argparse.ArgumentParser:
     worker_start_all_parser.add_argument("--poll-interval", type=int, default=30)
     worker_start_all_parser.add_argument("--single-pass", action="store_true")
     worker_start_all_parser.add_argument("--session-mode", default="fresh_turn", choices=("fresh_turn", "shared_lane"))
+    worker_start_all_parser.add_argument(
+        "--reasoning-effort",
+        default="inherit",
+        choices=WORKER_REASONING_EFFORT_CHOICES,
+    )
 
     turn_parser = subparsers.add_parser("run-structured-turn")
     turn_parser.add_argument("--prompt-file", required=True)
@@ -338,6 +367,7 @@ def main() -> None:
             dry_run=args.dry_run,
             timeout_seconds=args.timeout,
             worker_start_mode=args.worker_start_mode,
+            worker_reasoning_effort=args.worker_reasoning_effort,
         ))
         return
     if args.command == "doctor":
@@ -614,6 +644,7 @@ def main() -> None:
                 backend=args.backend,
                 poll_interval=args.poll_interval,
                 worker_start_mode=args.worker_start_mode,
+                worker_reasoning_effort=args.worker_reasoning_effort,
                 single_pass=args.single_pass,
             )
         )
@@ -640,11 +671,22 @@ def main() -> None:
                 single_pass=args.single_pass,
                 session=args.session,
                 session_mode=args.session_mode,
+                reasoning_effort=args.reasoning_effort,
             )
         )
         return
     if args.command == "worker-status":
         _print_json(worker_status(task_ref=args.task_ref, lane_id=args.lane_id))
+        return
+    if args.command == "worker-event-history":
+        _print_json(
+            worker_event_history(
+                task_ref=args.task_ref,
+                lane_id=args.lane_id,
+                limit=args.limit,
+                event_name=args.event_name,
+            )
+        )
         return
     if args.command == "worker-stop":
         _print_json(worker_stop(task_ref=args.task_ref, lane_id=args.lane_id, force=args.force))
@@ -660,6 +702,7 @@ def main() -> None:
                 poll_interval=args.poll_interval,
                 single_pass=args.single_pass,
                 session_mode=args.session_mode,
+                reasoning_effort=args.reasoning_effort,
             )
         )
         return

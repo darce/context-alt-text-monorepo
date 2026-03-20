@@ -277,6 +277,38 @@ def test_run_lane_exec_subagent_backend_writes_structured_result(tmp_path: Path)
     mock_find_codex.assert_not_called()
 
 
+def test_run_lane_exec_subagent_backend_passes_reasoning_effort_env(tmp_path: Path) -> None:
+    mod = _load_module()
+    output = tmp_path / "result.json"
+    schema_json = json.dumps({"type": "object", "properties": {}})
+    subagent_payload = {
+        "handoff_action": "merge_ready",
+        "summary": "Done.",
+        "details": "Implemented the slice.",
+        "tests_run": [],
+        "blockers": [],
+    }
+
+    with (
+        mock.patch.object(mod, "_render_prompt", return_value="Test prompt"),
+        mock.patch.object(mod, "_render_schema", return_value=schema_json),
+        mock.patch.object(mod, "_run_subagent", return_value=subagent_payload) as mock_run_subagent,
+    ):
+        mod.run_lane_exec(
+            orchestrator_root=REPO_ROOT,
+            task_ref="test-task",
+            lane_id="test-lane",
+            session="test-task-test-lane",
+            worktree_path=tmp_path,
+            output_path=output,
+            backend="codex-subagent",
+            reasoning_effort="high",
+        )
+
+    env = mock_run_subagent.call_args.kwargs["env"]
+    assert env["CODEX_REASONING_EFFORT"] == "high"
+
+
 def test_run_lane_exec_preflight_failure_returns_needs_guidance_without_running_backend(tmp_path: Path) -> None:
     mod = _load_module()
     output = tmp_path / "result.json"

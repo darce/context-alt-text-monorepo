@@ -31,6 +31,13 @@ Review the planning document against:
 
 The goal is to catch stale assumptions, impossible scope, contradictory sequencing, and unnecessary complexity before implementation starts.
 
+Project-wide constraint to apply during review:
+
+- This repo is currently treated as a greenfield project unless a task explicitly documents an exception.
+- Plans should prefer clean rewrites over backward-compatibility shims.
+- Schema changes should target the baseline migration file rather than adding follow-on migrations unless an exception is documented.
+- Storage migration/preservation work should be treated as suspect by default because there is no production data to preserve.
+
 ### Agent Procedure
 
 1. Read the planning document.
@@ -75,6 +82,7 @@ Hard rule for agent responses:
 - [ ] Proposed conflict/version semantics match the current storage model.
 - [ ] Multi-entity operations define which entity/version drives conflict detection.
 - [ ] Schema changes are sufficient for the reporting/metrics the plan promises.
+- [ ] Migration strategy matches the repo's greenfield policy: baseline schema edits, no preservation-only data migrations, and no backward-compatibility shims unless the task explicitly justifies an exception.
 
 ### Interface and API Realism
 
@@ -97,6 +105,16 @@ Hard rule for agent responses:
 - [ ] New abstractions are justified by real seams, not hypothetical future flexibility.
 - [ ] Scope is minimal for the stated phase goal.
 - [ ] Stretch work is truly optional and not required for the phase to be honestly complete.
+
+### Tech Debt Awareness
+
+These items prevent plans from compounding known structural debt documented in `docs/tasks/tech-debt/refactoring-*.md`.
+
+- [ ] **God-object growth budgeted.** If the plan adds logic to a class/component already exceeding ~400 lines (e.g., `cluster_repository.py`, `ClusterMutationsController.php`, `SyncStatusIndicator.tsx`), it must either (a) include extraction work to keep the file under threshold, or (b) explicitly note the debt increase with a follow-up reference.
+- [ ] **New domain concepts typed, not stringly.** Plans introducing new status values, operation types, or domain identifiers must define them as enums / value objects / `as const` types, not raw strings. If the plan's pseudocode uses bare string comparisons, flag it.
+- [ ] **Transaction/boilerplate duplication avoided.** Plans adding new PHP mutation endpoints must specify using the shared `run_transactional()` wrapper, not inlining transaction management.
+- [ ] **Hook/component decomposition considered.** Plans adding significant UI logic to a single component or hook should verify the target is not already flagged as a god component; if so, the plan should scope the new logic into a focused sub-hook or sub-component.
+- [ ] **Design token surfaces used.** Plans specifying new UI elements with explicit visual properties (colors, shadows, font sizes, radii) must reference `--acx-*` design tokens, not raw values. If the plan invents a new visual property, it should include adding the token to the shared surface.
 
 ---
 
@@ -142,8 +160,9 @@ Prioritize findings in this order:
 
 1. obsolete assumptions
 2. architecture/ownership mistakes
-3. contract gaps
+3. greenfield-policy violations (unnecessary migrations, compatibility shims, preservation work)
 4. contradictory scope or checklist logic
-5. unnecessary complexity
+5. contract gaps
+6. unnecessary complexity
 
 Do not spend review time on prose polish unless it affects implementation correctness.

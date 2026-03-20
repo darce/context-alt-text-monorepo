@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -209,6 +208,101 @@ def test_run_subagent_accepts_agent_message_text_json_payload() -> None:
     assert result == {"ok": True, "summary": "bridge live test passed"}
 
 
+def test_run_structured_turn_reports_token_usage_telemetry() -> None:
+    mod = _load_bridge_module()
+    fake_proc = _FakeProcess(
+        [
+            {"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"}},
+            {"jsonrpc": "2.0", "id": 2, "result": {"thread": {"id": "thread-1"}}},
+            {"jsonrpc": "2.0", "id": 3, "result": {"turn": {"id": "turn-1", "status": "inProgress"}}},
+            {
+                "jsonrpc": "2.0",
+                "method": "thread/tokenUsage/updated",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "tokenUsage": {
+                        "last": {
+                            "cachedInputTokens": 10,
+                            "inputTokens": 20,
+                            "outputTokens": 30,
+                            "reasoningOutputTokens": 7,
+                            "totalTokens": 50,
+                        },
+                        "total": {
+                            "cachedInputTokens": 10,
+                            "inputTokens": 20,
+                            "outputTokens": 30,
+                            "reasoningOutputTokens": 7,
+                            "totalTokens": 50,
+                        },
+                        "modelContextWindow": 200000,
+                    },
+                },
+            },
+            {
+                "jsonrpc": "2.0",
+                "method": "item/completed",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "item": {"type": "assistant_message", "structuredContent": {"summary": "done", "ok": True}},
+                },
+            },
+            {
+                "jsonrpc": "2.0",
+                "method": "turn/completed",
+                "params": {"threadId": "thread-1", "turn": {"id": "turn-1", "status": "completed", "items": []}},
+            },
+        ]
+    )
+
+    telemetry: list[dict[str, Any]] = []
+    client = mod.AppServerClient(
+        cwd="/tmp/worktree",
+        env={"CODEX_REASONING_EFFORT": "high"},
+        popen_factory=lambda *args, **kwargs: fake_proc,
+    )
+    client.start()
+    try:
+        client.initialize()
+        thread_id = client.start_thread()
+        result = client.run_structured_turn(
+            thread_id=thread_id,
+            prompt="Solve the task.",
+            output_schema={"type": "object"},
+            telemetry_callback=telemetry.append,
+        )
+    finally:
+        client.close()
+
+    assert result == {"summary": "done", "ok": True}
+    assert telemetry == [
+        {
+            "thread_id": "thread-1",
+            "turn_id": "turn-1",
+            "requested_reasoning_effort": "high",
+            "token_usage": {
+                "last": {
+                    "cached_input_tokens": 10,
+                    "input_tokens": 20,
+                    "output_tokens": 30,
+                    "reasoning_output_tokens": 7,
+                    "total_tokens": 50,
+                },
+                "total": {
+                    "cached_input_tokens": 10,
+                    "input_tokens": 20,
+                    "output_tokens": 30,
+                    "reasoning_output_tokens": 7,
+                    "total_tokens": 50,
+                },
+                "model_context_window": 200000,
+            },
+        }
+    ]
+
+
 def test_run_subagent_public_entrypoint_launches_client_and_merges_env() -> None:
     mod = _load_bridge_module()
     fake_proc = _FakeProcess(
@@ -383,6 +477,11 @@ def test_invalid_reasoning_effort_fails_loudly() -> None:
         mod._normalize_reasoning_effort("extreme")
 
 
+def test_normalize_reasoning_effort_accepts_xhigh() -> None:
+    mod = _load_bridge_module()
+    assert mod._normalize_reasoning_effort("xhigh") == "xhigh"
+
+
 def test_shared_session_mode_reuses_initialized_client_for_multiple_calls() -> None:
     mod = _load_bridge_module()
     procs = [
@@ -423,8 +522,6 @@ def test_shared_session_mode_reuses_initialized_client_for_multiple_calls() -> N
         return procs[0]
 
     original_client = mod.AppServerClient
-    original_close = mod.close_shared_clients
-
     class _PatchedClient(original_client):
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             kwargs["popen_factory"] = _fake_popen

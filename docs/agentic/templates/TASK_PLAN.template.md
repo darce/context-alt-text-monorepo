@@ -58,6 +58,38 @@
 | --- | --- |
 | `path/to/related.py` | [Why this file is relevant but not directly changed] |
 
+## Lane Decomposition (Multi-Agent)
+
+> Include this section when the task naturally splits into independent backend/frontend/PHP lanes.
+> Omit for single-lane tasks that one agent can complete in a single session.
+> See `docs/agentic/worktree-codex-playbook.md` for the full operational playbook and `docs/agentic/lane-scoped-context.md` for prompt budget rules.
+
+### Lanes
+
+| Lane ID | Owned Paths | Upstream Dependencies | Required Tests |
+| --- | --- | --- | --- |
+| `backend-domain` | `apps/prototype-description-service/db/**`, `apps/prototype-description-service/recognition/domain/**` | None | `PYENV_VERSION=description-service pytest recognition/tests/unit/` |
+| `backend-http` | `apps/prototype-description-service/recognition/interface_adapters/http/**` | `backend-domain` | `PYENV_VERSION=description-service pytest recognition/tests/unit/` |
+| `wp-proxy` | `apps/prototype-wp-alt-context/src/**` | `backend-http` (contract only) | `composer phpunit` |
+| `frontend` | `apps/prototype-wp-alt-context/js/**` | `wp-proxy` (contract only) | `npm run test -- --run` |
+
+### Merge Order
+
+[List lanes in dependency order: schema/domain before HTTP, backend contract before WordPress proxy, proxy before frontend.]
+
+### Manifest
+
+Initialize the lane manifest for this task:
+
+```bash
+make lane-manifest-init TASK=<task-ref> LANE_IDS='backend-domain backend-http wp-proxy frontend' TASK_PLAN=docs/tasks/<version>/<this-file>.md
+```
+
+### Orchestration Mode
+
+- **Codex subagent (preferred when available)**: Use MCP worker lifecycle tools (`worker_start_all`, `worker_status`, `worker_stop`) with `backend="codex-subagent"`. The orchestrator daemon dispatches work, intakes merge-ready lanes, and refreshes downstream dependents automatically.
+- **Shell fallback**: Use `make lane-open`, `make lane-run`, `make lane-handoff`, and `make lane-intake` from the orchestrator root.
+
 ---
 
 # Consolidated Checklist

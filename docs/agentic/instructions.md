@@ -4,7 +4,7 @@
 
 > **On first load / cold start**: also read [BOOTSTRAP.md](BOOTSTRAP.md) for testing commands, MCP server setup, and handoff state defaults.
 
-**Epic**: `docs/epics/v0.2.0/recognition-ux-and-ergonomics-epic.md` · **Roadmap**: `docs/roadmaps/roadmap-v4.md`
+**Epic**: `docs/epics/v0.2.0/remaining-sync-workbench-and-retention-epic.md` · **Roadmap**: `docs/roadmaps/roadmap-v4.md`
 
 ---
 
@@ -142,6 +142,43 @@ Hard guardrails from real failures in this project:
 8. **Config files: validate at load time.** JSON/YAML config consumed by multiple modules must be structurally validated at load time. Fail fast on missing or malformed required keys instead of silently returning empty defaults.
 9. **No task-specific logic in generic modules.** If a generic utility contains `if task_ref == "some-task"` or hardcoded domain strings for a specific task, extract that logic to a config-driven policy module or the task's manifest. It becomes dead code once the task is done.
 10. **IDE tool output may be stale after external writes.** Editor-integrated `read_file` and `grep_search` tools read from the IDE's in-memory file model, not from disk. After git operations (rebase, cherry-pick, merge, worktree intake) or edits by other agents/terminals, the model can lag behind the filesystem. When a review finding seems surprising, cross-check with a terminal command (`grep -n`, `wc -l`, `sed -n`) before recording it. This caused an entire review cycle of false positives against `scripts/mcp/orchestrator_daemon.py` (IDE showed ~700 lines, disk had 850).
+11. **Merge-ready requires lint/format gates, not just tests.** Before reporting `merge_ready=1` (or equivalent), run the touched stack's lint + format checks (or `make check-all` when cross-stack). We hit a real regression where tests passed but import-order/format gates failed later in `check-all`.
+12. **Lane dispatch must use branch-local reality, not root-branch memory.** A worker worktree only sees files on its own branch. If contracts, stubs, or manifests were added or salvaged on the orchestrator/root branch but not propagated into the lane worktree, treat "missing file / missing surface" reports as real branch-state blockers. Refresh the lane or hold downstream dispatch; do not ask the worker to guess against stale branch state.
+13. **Default to worktree-lane codex-subagent orchestration for implementation.** When a task has a lane manifest and the work can be partitioned, start from MCP-orchestrated `codex-subagent` workers in task worktree lanes instead of root-branch solo editing. Use the orchestrator/root checkout for intake, verification, and cross-lane coordination; do not bypass lanes unless the task is lane-ineligible or lane setup is the blocker. See [worktree-codex-playbook.md](worktree-codex-playbook.md) for the operational flow.
+
+### Tool Selection Discipline
+
+Agents in this project run in two environments with different tool surfaces. Using the wrong tool for the environment wastes tokens and causes retries. This section exists because repeated terminal-output bloat (16 KB+ of stale scrollback per command) caused entire review sessions to choke on scope discovery that native tools could have resolved in one call.
+
+**VS Code agents** (GitHub Copilot, Copilot Chat, VS Code extensions) have native tools that bypass the terminal entirely:
+
+| Task                            | Use this                                              | Not this                            |
+| ------------------------------- | ----------------------------------------------------- | ----------------------------------- |
+| List changed files / read diffs | `get_changed_files` (VS Code SCM)                     | `git diff` in terminal              |
+| Read file contents              | `read_file`                                           | `cat` / `sed -n` in terminal        |
+| Search code                     | `grep_search` / `semantic_search` / `search_subagent` | `grep -rn` in terminal              |
+| Lint / type errors              | `get_errors`                                          | `npm run lint` / `mypy` in terminal |
+| Multi-file exploration          | `Explore` subagent                                    | Sequential terminal commands        |
+
+Reserve terminal for operations with no native-tool equivalent: test execution, `make` targets, `pyenv` commands, `git commit`/`push`/`rebase`.
+
+**Codex agents** (OpenAI Codex harness, `codex exec`, `codex-subagent-bridge`) run in sandboxed Linux containers with terminal + filesystem + MCP only. They do **not** have VS Code extension tools (`get_changed_files`, `get_errors`, `grep_search`, `semantic_search`, `read_file` as a VS Code API). Codex agents must use terminal equivalents with output discipline:
+
+| Task               | Codex equivalent                                | Output discipline                      |
+| ------------------ | ----------------------------------------------- | -------------------------------------- |
+| List changed files | `git diff --name-only HEAD`                     | Pipe through `head -50` if large       |
+| Read diffs         | `git diff HEAD -- <path>`                       | Target specific files, not whole-tree  |
+| Read file contents | `cat <file>` or `sed -n '<range>p' <file>`      | Read targeted ranges, not entire files |
+| Search code        | `grep -rn '<pattern>' <path>`                   | Scope to directory, limit with `head`  |
+| Lint / type errors | `PYENV_VERSION=description-service mypy <path>` | Filter to errors only                  |
+| Diff stats         | `git diff --shortstat HEAD`                     | One-line output                        |
+
+**Terminal output discipline** (both environments, when terminal is required):
+
+- Always pipe through `tail -n 30`, `head -n 50`, or `grep -E '<pattern>'` for commands that may produce unbounded output.
+- For test runs: `<test command> 2>&1 | tail -n 30` or filter to summary lines.
+- If output exceeds expectations, redirect to `/tmp/<descriptive-name>.txt` and read with `read_file` (VS Code) or `sed -n` (Codex); do not re-run the command.
+- Long-lived terminal sessions accumulate scrollback. A new `run_in_terminal` call in a polluted session can return 16 KB+ of stale output from prior commands. Prefer short, filtered commands over long pipelines.
 
 ### Task Document Rules
 

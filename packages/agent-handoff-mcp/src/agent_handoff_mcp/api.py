@@ -96,6 +96,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "orchestrator_resume": "Resume the orchestrator daemon by clearing the standard pause sentinel on the authoritative host.",
     "worker_start": "Start a lane worker daemon for a specific task and lane, returning PID, lock path, and log path.",
     "worker_status": "Return runtime status for a lane worker daemon, including lock/process/log metadata.",
+    "worker_event_history": "Return recent worker-daemon JSONL events for a lane, with optional event-name filtering.",
     "worker_stop": "Stop a lane worker daemon with SIGTERM, or SIGKILL when force=true.",
     "worker_resume": "Resume a stopped lane worker daemon with SIGCONT.",
     "worker_start_all": "Start worker daemons for all lanes declared in the task manifest and return per-lane results.",
@@ -289,6 +290,7 @@ def orchestrator_start(
     poll_interval: int = 60,
     single_pass: bool = False,
     worker_start_mode: str = "mcp",
+    worker_reasoning_effort: str = "auto",
 ) -> str:
     paths = _orchestrator_paths()
     try:
@@ -324,6 +326,8 @@ def orchestrator_start(
         str(poll_interval),
         "--worker-start-mode",
         worker_start_mode,
+        "--worker-reasoning-effort",
+        worker_reasoning_effort,
     ]
     if single_pass:
         cmd.append("--single-pass")
@@ -343,6 +347,7 @@ def orchestrator_start(
             "backend": backend_name,
             "single_pass": single_pass,
             "worker_start_mode": worker_start_mode,
+            "worker_reasoning_effort": worker_reasoning_effort,
         }
     )
 
@@ -448,6 +453,7 @@ def orchestrator_single_cycle(
     dry_run: bool = False,
     timeout_seconds: float = 300.0,
     worker_start_mode: str = "mcp",
+    worker_reasoning_effort: str = "auto",
 ) -> str:
     """Run one orchestrator cycle synchronously (dispatch, poll, intake, verify)."""
     paths = _orchestrator_paths()
@@ -471,6 +477,8 @@ def orchestrator_single_cycle(
         backend_name,
         "--worker-start-mode",
         worker_start_mode,
+        "--worker-reasoning-effort",
+        worker_reasoning_effort,
         "--single-pass",
     ]
     if dry_run:
@@ -498,6 +506,7 @@ def orchestrator_single_cycle(
             "backend": backend_name,
             "dry_run": dry_run,
             "worker_start_mode": worker_start_mode,
+            "worker_reasoning_effort": worker_reasoning_effort,
             "stderr": result.stderr[-2000:] if result.stderr else "",
         }
     )
@@ -511,6 +520,7 @@ def worker_start(
     single_pass: bool = False,
     session: str | None = None,
     session_mode: str = "fresh_turn",
+    reasoning_effort: str = "inherit",
 ) -> str:
     paths = _worker_paths()
     try:
@@ -542,6 +552,7 @@ def worker_start(
         pythonpath=_handoff_pythonpath(),
         backend=backend_name,
         session_mode=session_mode,
+        reasoning_effort=reasoning_effort,
         poll_interval=poll_interval,
         single_pass=single_pass,
     )
@@ -560,6 +571,28 @@ def worker_status(task_ref: str, lane_id: str) -> str:
     process = payload.get("process")
     running = isinstance(process, dict) and isinstance(process.get("pid"), int)
     payload["running"] = running
+    payload["ok"] = True
+    return core._json_response(payload)
+
+
+def worker_event_history(
+    task_ref: str,
+    lane_id: str,
+    limit: int = 50,
+    event_name: str | None = None,
+) -> str:
+    paths = _worker_paths()
+    worker_daemon_ctl = _import_scripts_mcp_module("worker_daemon_ctl")
+    payload = worker_daemon_ctl.daemon_event_history(
+        state_dir=paths["state_dir"],
+        log_dir=paths["log_dir"],
+        lane_id=lane_id,
+        task_ref=task_ref,
+        limit=limit,
+        event_name=event_name,
+    )
+    process = payload.get("process")
+    payload["running"] = isinstance(process, dict) and isinstance(process.get("pid"), int)
     payload["ok"] = True
     return core._json_response(payload)
 
@@ -595,6 +628,7 @@ def worker_start_all(
     poll_interval: int = 30,
     single_pass: bool = False,
     session_mode: str = "fresh_turn",
+    reasoning_effort: str = "inherit",
 ) -> str:
     try:
         lane_manifest = _import_scripts_mcp_module("lane_manifest")
@@ -647,6 +681,7 @@ def worker_start_all(
                     poll_interval=poll_interval,
                     single_pass=single_pass,
                     session_mode=session_mode,
+                    reasoning_effort=reasoning_effort,
                 )
             )
         except Exception as exc:
@@ -662,6 +697,7 @@ def worker_start_all(
             "task_ref": task_ref,
             "backend": backend,
             "session_mode": session_mode,
+            "reasoning_effort": reasoning_effort,
             "results": results,
         }
     )
@@ -798,6 +834,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
         orchestrator_single_cycle,
         worker_start,
         worker_status,
+        worker_event_history,
         worker_stop,
         worker_resume,
         worker_start_all,

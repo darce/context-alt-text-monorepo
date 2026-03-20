@@ -37,6 +37,7 @@ The reviewer can be human or agentic. When an agent performs the review:
 5. If the task is split into worktrees, have the orchestrator run `make handoff-dispatch TASK=<task-ref>` after findings are logged so open issues are stamped to the correct lane and delivered through MCP lane messages.
 
 Hard rule for agent responses:
+
 - Do not present a finding in chat unless it has already been recorded in MCP with a stable `finding_id`.
 - If a finding is discussed before recording, immediately record it and then reference its `finding_id`.
 
@@ -107,6 +108,41 @@ These items apply regardless of language. Stack-specific items are in the langua
 - [ ] **Docstrings complete** — no empty `Raises:` or `Returns:` sections.
 - [ ] **Function-level imports justified** — standard deps at module scope unless genuine cold-start reason.
 
+### Code Health (Tech Debt Prevention)
+
+These items prevent the accumulation of structural debt documented in `docs/tasks/tech-debt/refactoring-*.md`.
+
+**Size and responsibility boundaries:**
+
+- [ ] **No god classes/components** -- a single class or component file should not exceed ~400 lines. If a new feature pushes an existing file past this threshold, budget extraction work in the same PR or file a follow-up.
+- [ ] **No god components mixing concerns** -- a React component must not combine API fetching, domain logic derivation, and rendering in one body. Extract presentation hooks (`useXPresentation`) and delegate rendering to focused sub-components.
+- [ ] **Hook/function parameter count** -- hooks and functions with >8 destructured parameters must group them into typed option objects (`state`, `actions`, `mutations`). Do not add a 9th param to an already-long signature.
+
+**Primitive obsession and enum discipline:**
+
+- [ ] **Domain concepts as types, not raw strings** -- recurring domain values (status, operation type, curation state) must use enums / `as const` objects / PHP backed enums, not inline string literals. New comparisons against string literals (`=== 'completed'`) are only acceptable when imported from a canonical definition.
+- [ ] **No duplicate status definitions** -- a single type definition or enum must be the sole source of truth. Do not re-declare equivalent string unions in multiple files.
+
+**Structural duplication:**
+
+- [ ] **Transaction boilerplate not inlined** -- PHP mutation handlers must use `run_transactional(callable)` or equivalent wrapper; do not duplicate START TRANSACTION / COMMIT / ROLLBACK inline.
+- [ ] **Transform loops not duplicated** -- if two functions differ only in the transform applied to a loop, extract a shared pipeline or generic builder.
+
+**Conditional complexity:**
+
+- [ ] **Nesting depth <= 3** -- if a conditional block exceeds 3 nesting levels, refactor to guard clauses (fail fast / return early).
+- [ ] **Wordy conditionals named** -- boolean expressions with 4+ parts must be extracted into named boolean variables (e.g., `const hasUnresolvedWork = ...`).
+- [ ] **No null sentinels for flow control** -- do not use `null` to mean both "no selection" and "dialog closed." Use an explicit boolean or the Null Object / Special Case pattern.
+
+**Design token discipline (CSS/SCSS):**
+
+- [ ] **No ad-hoc font-size literals** -- use `--acx-text-*` scale tokens. If a new size is genuinely needed, add it to `_typography.scss`.
+- [ ] **No hardcoded hex gray values** -- use `--acx-gray-*` scale or semantic tokens (`--acx-color-text-muted`, `--acx-color-border`).
+- [ ] **No ad-hoc box-shadow** -- use `--acx-shadow-*` elevation tokens. Map component purpose to elevation level (cards = xs, dropdowns = md, toasts = lg, dialogs = xl).
+- [ ] **No hardcoded border-radius** -- use `--acx-radius-*` tokens.
+- [ ] **Focus rings use shared tokens** -- `--acx-focus-ring` and `--acx-focus-offset`. Do not mix hardcoded outlines with token-based ones across components.
+- [ ] **Status indicators pair color with icon** -- color-only status differentiation fails for colorblind users. Every status color (success/error/warning/info) must be accompanied by a distinguishing icon.
+
 ### Bug-Finding Heuristics (Universal)
 
 **Variable identity after normalization:** When a function normalizes an input early, trace every subsequent reference to verify the normalized variable is used, never the original.
@@ -139,6 +175,7 @@ These items apply regardless of language. Stack-specific items are in the langua
 - [ ] Plan documents updated alongside bulk closures are cross-checked against the actual code to prevent circular false claims.
 
 The `update_review_finding` MCP tool enforces two structural guards automatically:
+
 1. **Reopen escalation:** Findings reopened >= 2 times cannot be marked `fixed` without a `verification_evidence` parameter containing proof the fix exists.
 2. **Batch-close detection:** When 2+ findings for the same task have been fixed within the last 60 seconds, subsequent closures require `verification_evidence`.
 
@@ -148,22 +185,22 @@ Both guards can be satisfied by providing `--verification-evidence` (CLI) or `ve
 
 ## Finding Categories
 
-| Category        | Icon          | Description                                                              |
-| --------------- | ------------- | ------------------------------------------------------------------------ |
-| **ANTIPATTERN** | :warning:     | Works but violates patterns, creating maintenance risk                   |
-| **DEAD_CODE**   | :wastebasket: | Unreachable code, unused params, duplicate declarations, skipped tests   |
-| **COMPLEXITY**  | :tangled:     | Unnecessary duplication, overly complex functions, missing abstractions  |
-| **GAP**         | :hole:        | Missing functionality, incomplete contracts, missing tests               |
+| Category        | Icon          | Description                                                             |
+| --------------- | ------------- | ----------------------------------------------------------------------- |
+| **ANTIPATTERN** | :warning:     | Works but violates patterns, creating maintenance risk                  |
+| **DEAD_CODE**   | :wastebasket: | Unreachable code, unused params, duplicate declarations, skipped tests  |
+| **COMPLEXITY**  | :tangled:     | Unnecessary duplication, overly complex functions, missing abstractions |
+| **GAP**         | :hole:        | Missing functionality, incomplete contracts, missing tests              |
 
 ---
 
 ## Severity Classification
 
-| Severity   | Criteria                                                                                         | Action                                            |
-| ---------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
-| **HIGH**   | Incorrect behavior, data corruption, type unsafety, or >200 lines unnecessary duplication        | Must fix before merge                             |
-| **MEDIUM** | Architecture violations, maintenance burden, defeated type checking, reduced test reliability     | Should fix; defer only with justification          |
-| **LOW**    | Style, minor cleanup, small duplications                                                         | Fix if easy; otherwise next pass                  |
+| Severity   | Criteria                                                                                      | Action                                    |
+| ---------- | --------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| **HIGH**   | Incorrect behavior, data corruption, type unsafety, or >200 lines unnecessary duplication     | Must fix before merge                     |
+| **MEDIUM** | Architecture violations, maintenance burden, defeated type checking, reduced test reliability | Should fix; defer only with justification |
+| **LOW**    | Style, minor cleanup, small duplications                                                      | Fix if easy; otherwise next pass          |
 
 ---
 
@@ -211,15 +248,15 @@ PYTHONPATH="packages/agent-handoff-mcp/src" python3 -m agent_handoff_mcp \
 
 Call `review-record` / `record_review_finding` with:
 
-| Parameter      | Value                                                           |
-| -------------- | --------------------------------------------------------------- |
-| `session`      | Current session identifier (e.g., `2026-02-20-copilot-review`)  |
-| `finding_id`   | Short ID matching the report (e.g., `H-1`, `M-2`, `L-3`)       |
-| `severity`     | `high`, `medium`, or `low`                                      |
-| `file_path`    | Relative path from monorepo root                                |
-| `description`  | One-paragraph description with code references                  |
-| `details`      | Optional object: `{ "line_start"?: int, "line_end"?: int, "fix"?: str }` |
-| `actor`        | Optional object: `{ "agent"?: str, "branch"?: str, "commit_sha"?: str }` |
+| Parameter     | Value                                                                    |
+| ------------- | ------------------------------------------------------------------------ |
+| `session`     | Current session identifier (e.g., `2026-02-20-copilot-review`)           |
+| `finding_id`  | Short ID matching the report (e.g., `H-1`, `M-2`, `L-3`)                 |
+| `severity`    | `high`, `medium`, or `low`                                               |
+| `file_path`   | Relative path from monorepo root                                         |
+| `description` | One-paragraph description with code references                           |
+| `details`     | Optional object: `{ "line_start"?: int, "line_end"?: int, "fix"?: str }` |
+| `actor`       | Optional object: `{ "agent"?: str, "branch"?: str, "commit_sha"?: str }` |
 
 ### After All Findings Recorded
 

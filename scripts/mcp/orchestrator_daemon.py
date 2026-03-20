@@ -22,6 +22,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from _env import WORKER_REASONING_EFFORT_CHOICES
 from backend_registry import get_backend_choices
 
 # ---------------------------------------------------------------------------
@@ -98,8 +99,14 @@ def _poll_merge_ready_lanes(
     return ready
 
 
-def _manual_worker_command(task_ref: str, lane_id: str, backend: str) -> str:
-    return f"make worker-daemon TASK={task_ref} LANE={lane_id} BACKEND={backend}"
+def _manual_worker_command(
+    task_ref: str,
+    lane_id: str,
+    backend: str,
+    reasoning_effort: str = "inherit",
+) -> str:
+    effort_suffix = "" if reasoning_effort == "inherit" else f" REASONING_EFFORT={reasoning_effort}"
+    return f"make worker-daemon TASK={task_ref} LANE={lane_id} BACKEND={backend}{effort_suffix}"
 
 
 def _ensure_lane_workers(
@@ -109,6 +116,7 @@ def _ensure_lane_workers(
     *,
     backend: str,
     worker_start_mode: str,
+    worker_reasoning_effort: str,
     dry_run: bool = False,
     log: Any | None = None,
 ) -> list[dict[str, Any]]:
@@ -177,7 +185,7 @@ def _ensure_lane_workers(
                 log("WARN", "worker_autostart_skipped", **result)
             continue
 
-        manual_command = _manual_worker_command(task_ref, lane_id, backend)
+        manual_command = _manual_worker_command(task_ref, lane_id, backend, worker_reasoning_effort)
         if worker_start_mode != "mcp":
             result = {
                 "lane_id": lane_id,
@@ -206,6 +214,7 @@ def _ensure_lane_workers(
                 task_ref=task_ref,
                 lane_id=lane_id,
                 backend=backend,
+                reasoning_effort=worker_reasoning_effort,
             )
         )
         result = {
@@ -670,6 +679,7 @@ def orchestrator_loop(
     single_pass: bool = False,
     backend: str = "codex-cli",
     worker_start_mode: str = "mcp",
+    worker_reasoning_effort: str = "auto",
     dry_run: bool = False,
 ) -> int:
     """Main daemon loop.  Returns 0 on clean exit, 1 on failure."""
@@ -697,7 +707,8 @@ def orchestrator_loop(
     )
     configure_runtime(runtime)
 
-    log("INFO", "daemon_start", task_ref=task_ref, single_pass=single_pass, backend=backend)
+    log("INFO", "daemon_start", task_ref=task_ref, single_pass=single_pass, backend=backend,
+        worker_reasoning_effort=worker_reasoning_effort)
 
     m_order = manifest_merge_order(task_ref)
     log("INFO", "manifest_loaded", merge_order=m_order)
@@ -781,6 +792,7 @@ def orchestrator_loop(
                 m_order,
                 backend=backend,
                 worker_start_mode=worker_start_mode,
+                worker_reasoning_effort=worker_reasoning_effort,
                 dry_run=dry_run,
                 log=log,
             )
@@ -932,6 +944,9 @@ def _parse_args() -> argparse.Namespace:
                             help="Execution backend to use for orchestrator-invoked operations (default: codex-cli).")
     run_parser.add_argument("--worker-start-mode", default="mcp", choices=("mcp", "manual"),
                             help="Use MCP worker lifecycle tools by default, or leave worker startup in manual shell mode.")
+    run_parser.add_argument("--worker-reasoning-effort", default="auto",
+                            choices=WORKER_REASONING_EFFORT_CHOICES,
+                            help="Reasoning mode for orchestrator-started codex workers.")
     run_parser.add_argument("--dry-run", action="store_true",
                             help="Skip mutating operations.")
 
@@ -997,6 +1012,7 @@ def main() -> int:
                 single_pass=args.single_pass,
                 backend=args.backend,
                 worker_start_mode=args.worker_start_mode,
+                worker_reasoning_effort=args.worker_reasoning_effort,
                 dry_run=args.dry_run,
             )
         finally:

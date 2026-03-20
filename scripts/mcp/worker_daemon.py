@@ -24,13 +24,43 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from _env import WORKER_REASONING_EFFORT_CHOICES
 from _env import pythonpath_env
 from backend_registry import get_backend_choices
 
 _MAX_LOG_BYTES = 1_000_000
 _STATUS_FILE_VERSION = 1
+_OBSERVABILITY_HISTORY_LIMIT = 20
 BACKEND_CHOICES = get_backend_choices()
 SESSION_MODE_CHOICES = ("fresh_turn", "shared_lane")
+_AUTO_HIGH_MARKERS = (
+    "agent-handoff-mcp",
+    "backend-domain",
+    "backend-http",
+    "conflict",
+    "db/",
+    "migrations",
+    "orchestrator",
+    "repository",
+    "retention",
+    "schema",
+    "scripts/mcp",
+    "sync",
+)
+_AUTO_MEDIUM_MARKERS = (
+    "api/",
+    "composer phpunit",
+    "controller",
+    "dashboard",
+    "frontend",
+    "js/admin",
+    "npm run test",
+    "phpunit",
+    "react",
+    "tsx",
+    "vitest",
+    "workbench",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +313,7 @@ def _write_worker_status(
     cycle: int | None = None,
     handoff_action: str | None = None,
     attention_required: bool = False,
+    observability: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     state_dir.mkdir(parents=True, exist_ok=True)
     previous = _read_worker_status(state_dir, lane_id) or {}
@@ -309,8 +340,131 @@ def _write_worker_status(
         payload["cycle"] = cycle
     if handoff_action is not None:
         payload["handoff_action"] = handoff_action
+    if observability is not None:
+        payload["observability"] = observability
+    elif isinstance(previous.get("observability"), dict):
+        payload["observability"] = previous["observability"]
     _status_path(state_dir, lane_id).write_text(json.dumps(payload, indent=2, sort_keys=True))
     return payload
+
+
+def _observability_entry(
+    *,
+    task_ref: str,
+    lane_id: str,
+    cycle: int,
+    phase: str,
+    backend: str,
+    requested_reasoning_effort: str,
+    effective_reasoning_effort: str,
+    telemetry: dict[str, Any],
+) -> dict[str, Any]:
+    token_usage = telemetry.get("token_usage")
+    total_usage = token_usage.get("total") if isinstance(token_usage, dict) else None
+    return {
+        "recorded_at": _utcnow_iso(),
+        "task_ref": task_ref,
+        "lane_id": lane_id,
+        "cycle": cycle,
+        "phase": phase,
+        "backend": backend,
+        "requested_reasoning_effort": requested_reasoning_effort,
+        "effective_reasoning_effort": effective_reasoning_effort,
+        "thread_id": telemetry.get("thread_id"),
+        "turn_id": telemetry.get("turn_id"),
+        "token_usage": token_usage,
+        "token_usage_totals": {
+            "total_tokens": total_usage.get("total_tokens") if isinstance(total_usage, dict) else None,
+            "reasoning_output_tokens": (
+                total_usage.get("reasoning_output_tokens") if isinstance(total_usage, dict) else None
+            ),
+        },
+    }
+
+
+def _merge_observability(
+    existing: dict[str, Any] | None,
+    *,
+    entry: dict[str, Any],
+) -> dict[str, Any]:
+    history = list(existing.get("history", [])) if isinstance(existing, dict) and isinstance(existing.get("history"), list) else []
+    history.append(entry)
+    if len(history) > _OBSERVABILITY_HISTORY_LIMIT:
+        history = history[-_OBSERVABILITY_HISTORY_LIMIT:]
+    by_phase = dict(existing.get("by_phase", {})) if isinstance(existing, dict) and isinstance(existing.get("by_phase"), dict) else {}
+    phase = str(entry.get("phase") or "").strip()
+    if phase:
+        by_phase[phase] = entry
+    return {
+        "latest": entry,
+        "by_phase": by_phase,
+        "history": history,
+    }
+
+
+def _record_observability(
+    *,
+    orchestrator_root: Path,
+    task_ref: str,
+    lane_id: str,
+    session: str,
+    cycle: int,
+    phase: str,
+    backend: str,
+    requested_reasoning_effort: str,
+    effective_reasoning_effort: str,
+    telemetry: dict[str, Any],
+    state: str,
+    summary: str,
+    result_path: Path | None = None,
+    handoff_action: str | None = None,
+    attention_required: bool = False,
+) -> dict[str, Any]:
+    state_dir = orchestrator_root / ".task-state"
+    log_dir = orchestrator_root / "logs" / "worker-daemon"
+    previous = _read_worker_status(state_dir, lane_id) or {}
+    entry = _observability_entry(
+        task_ref=task_ref,
+        lane_id=lane_id,
+        cycle=cycle,
+        phase=phase,
+        backend=backend,
+        requested_reasoning_effort=requested_reasoning_effort,
+        effective_reasoning_effort=effective_reasoning_effort,
+        telemetry=telemetry,
+    )
+    observability = _merge_observability(previous.get("observability"), entry=entry)
+    _write_worker_status(
+        state_dir,
+        lane_id,
+        task_ref=task_ref,
+        session=session,
+        state=state,
+        summary=summary,
+        result_path=result_path,
+        cycle=cycle,
+        handoff_action=handoff_action,
+        attention_required=attention_required,
+        observability=observability,
+    )
+    _log(
+        lane_id,
+        log_dir,
+        "INFO",
+        "subagent_turn_observed",
+        cycle=cycle,
+        phase=phase,
+        backend=backend,
+        requested_reasoning_effort=requested_reasoning_effort,
+        effective_reasoning_effort=effective_reasoning_effort,
+        token_usage=entry["token_usage"],
+        token_usage_totals=entry["token_usage_totals"],
+        total_tokens=entry["token_usage_totals"]["total_tokens"],
+        reasoning_output_tokens=entry["token_usage_totals"]["reasoning_output_tokens"],
+        thread_id=entry.get("thread_id"),
+        turn_id=entry.get("turn_id"),
+    )
+    return entry
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +484,61 @@ def _patch_result(path: Path, overrides: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, indent=2))
 
 
+def _resolve_reasoning_effort(
+    *,
+    orchestrator_root: Path,
+    task_ref: str,
+    lane_id: str,
+    requested: str,
+    cycle: int,
+    prompt_override: str | None,
+) -> tuple[str | None, list[str]]:
+    normalized = str(requested or "inherit").strip().lower()
+    if normalized in {"inherit", ""}:
+        return None, ["inherit existing Codex/default reasoning effort"]
+    if normalized != "auto":
+        return normalized, [f"explicit override: {normalized}"]
+
+    score = 0
+    reasons: list[str] = []
+    if cycle > 0:
+        score += 2
+        reasons.append("follow-up review/fix cycle")
+    if prompt_override:
+        score += 2
+        reasons.append("fix prompt active")
+
+    try:
+        from lane_manifest import get_lane_config
+
+        lane = get_lane_config(task_ref, lane_id, orchestrator_root=str(orchestrator_root)) or {}
+    except Exception:
+        lane = {}
+
+    objective = str(lane.get("objective") or "").strip().lower()
+    owned_paths = [str(item).strip().lower() for item in lane.get("owned_paths", []) if str(item).strip()]
+    test_commands = [str(item).strip().lower() for item in lane.get("test_commands", []) if str(item).strip()]
+    haystack = "\n".join([lane_id.lower(), objective, *owned_paths, *test_commands])
+
+    if any(marker in haystack for marker in _AUTO_HIGH_MARKERS):
+        score += 2
+        reasons.append("backend/orchestration-heavy lane")
+    elif any(marker in haystack for marker in _AUTO_MEDIUM_MARKERS):
+        score += 1
+        reasons.append("application-layer implementation lane")
+
+    docs_only = bool(owned_paths) and all(path.startswith("docs/") for path in owned_paths)
+    if docs_only:
+        score -= 1
+        reasons.append("docs-only scope")
+
+    if score >= 2:
+        return "high", reasons or ["auto-selected high"]
+    if score <= 0:
+        return "low", reasons or ["auto-selected low"]
+    return "medium", reasons or ["auto-selected medium"]
+
+
 # ---------------------------------------------------------------------------
 # Worker loop
 # ---------------------------------------------------------------------------
@@ -347,6 +556,7 @@ def worker_loop(
     single_pass: bool = False,
     backend: str = "codex-cli",
     session_mode: str = "fresh_turn",
+    reasoning_effort: str = "inherit",
     codex_bin: str | None = None,
     codex_args: list[str] | None = None,
     dry_run: bool = False,
@@ -359,11 +569,13 @@ def worker_loop(
 
     log_dir = orchestrator_root / "logs" / "worker-daemon"
     state_dir = orchestrator_root / ".task-state"
-    log = lambda level, event, **kw: _log(lane_id, log_dir, level, event, **kw)
+    def log(level: str, event: str, **kw: Any) -> None:
+        _log(lane_id, log_dir, level, event, **kw)
     existing_status = _read_worker_status(state_dir, lane_id) or {}
 
     log("INFO", "daemon_start", task_ref=task_ref, single_pass=single_pass,
-        max_review_cycles=max_review_cycles, backend=backend, session_mode=session_mode)
+        max_review_cycles=max_review_cycles, backend=backend, session_mode=session_mode,
+        reasoning_effort=reasoning_effort)
     if existing_status.get("state") != "handoff_failed":
         _write_worker_status(
             state_dir,
@@ -523,6 +735,47 @@ def worker_loop(
                         error=(base_result.stderr or base_result.stdout or "").strip()[:200],
                     )
 
+            cycle_reasoning_effort, effort_reasons = _resolve_reasoning_effort(
+                orchestrator_root=orchestrator_root,
+                task_ref=task_ref,
+                lane_id=lane_id,
+                requested=reasoning_effort,
+                cycle=cycle,
+                prompt_override=prompt_override,
+            )
+            log(
+                "INFO",
+                "reasoning_effort_selected",
+                cycle=cycle,
+                requested_reasoning_effort=reasoning_effort,
+                effective_reasoning_effort=cycle_reasoning_effort or "inherit",
+                reasons="; ".join(effort_reasons),
+            )
+            execution_requested_effort = str(reasoning_effort or "inherit")
+            execution_effective_effort = cycle_reasoning_effort or "inherit"
+
+            def _worker_progress(event: str, **kw: Any) -> None:
+                if event == "subagent_turn_complete":
+                    phase = str(kw.get("phase") or "execution")
+                    phase_state = "reviewing" if phase == "review" else "executing"
+                    _record_observability(
+                        orchestrator_root=orchestrator_root,
+                        task_ref=task_ref,
+                        lane_id=lane_id,
+                        session=session,
+                        cycle=cycle,
+                        phase=phase,
+                        backend=str(kw.get("backend") or backend),
+                        requested_reasoning_effort=execution_requested_effort,
+                        effective_reasoning_effort=execution_effective_effort,
+                        telemetry=kw,
+                        state=phase_state,
+                        summary=f"Worker {phase} telemetry captured for cycle {cycle + 1}.",
+                        result_path=final_result_path,
+                    )
+                else:
+                    log("INFO", event, cycle=cycle, **kw)
+
             try:
                 log("INFO", "exec_start", cycle=cycle, worktree_path=str(worktree_path))
                 final_result_path = run_lane_exec(
@@ -533,10 +786,11 @@ def worker_loop(
                     worktree_path=worktree_path,
                     backend=backend,
                     session_mode=session_mode,
+                    reasoning_effort=cycle_reasoning_effort,
                     codex_bin=codex,
                     codex_args=codex_args,
                     prompt_override=prompt_override,
-                    progress_callback=lambda event, **kw: log("INFO", event, cycle=cycle, **kw),
+                    progress_callback=_worker_progress,
                     dry_run=dry_run,
                 )
             except RuntimeError as exc:
@@ -621,8 +875,10 @@ def worker_loop(
                     session=session,
                     orchestrator_root=orchestrator_root,
                     backend=backend,
+                    reasoning_effort=cycle_reasoning_effort,
                     record_findings=True,
                     dry_run=dry_run,
+                    progress_callback=_worker_progress,
                 )
             except RuntimeError as exc:
                 log("ERROR", "review_failed", error=str(exc), cycle=cycle)
@@ -816,6 +1072,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--session-mode", default="fresh_turn",
                         choices=SESSION_MODE_CHOICES,
                         help="Use a fresh backend session per turn, or preserve continuity within this lane only.")
+    parser.add_argument("--reasoning-effort", default="inherit",
+                        choices=WORKER_REASONING_EFFORT_CHOICES,
+                        help="Worker reasoning mode: inherit existing defaults, auto-tune per cycle, or force a specific effort.")
     parser.add_argument("--codex-bin", default=None,
                         help="Explicit path to the codex binary.")
     parser.add_argument("--codex-args", default=None,
@@ -856,6 +1115,7 @@ def main() -> int:
             single_pass=args.single_pass,
             backend=args.backend,
             session_mode=args.session_mode,
+            reasoning_effort=args.reasoning_effort,
             codex_bin=args.codex_bin,
             codex_args=codex_args,
             dry_run=args.dry_run,

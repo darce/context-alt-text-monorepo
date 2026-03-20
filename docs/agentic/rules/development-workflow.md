@@ -82,6 +82,49 @@ This ensures:
 
 ---
 
+## Orchestrated Task Execution
+
+When a task plan includes a "Lane Decomposition" section, use the multi-agent orchestration workflow. The orchestrator agent decomposes work into lanes, and worker agents implement each lane in isolated worktrees.
+
+### Choosing the Execution Path
+
+| Condition | Execution path |
+| --- | --- |
+| Codex harness detected + `codex-subagent-bridge` available | MCP worker lifecycle tools with `backend="codex-subagent"` |
+| Shell-only + worktrees available | `make lane-open` / `make lane-run` / `make lane-handoff` |
+| Single-agent, no decomposition needed | Standard slice checklist above (no lanes) |
+
+### Orchestrator Responsibilities
+
+1. Initialize MCP task state (`set_handoff_state`).
+2. Create the lane manifest (`make lane-manifest-init`).
+3. Create worktree lanes and dispatch assignments via `make lane-dispatch` or MCP lane messages.
+4. When using Codex subagents, start workers with `worker_start_all(task_ref, backend="codex-subagent")` and monitor with `worker_status`.
+5. Review worker handoffs, intake merge-ready lanes in dependency order, and refresh downstream lanes.
+6. If work was salvaged or added on the orchestrator/root branch outside a lane branch, propagate or refresh it before dispatching dependent lanes. A worker reporting "missing contract/stub surface" from its own worktree is a valid branch-state blocker, not noise.
+7. Cross-lane briefs go through `record_lane_brief` (MCP) or `make lane-dispatch` (shell); never rely on chat memory alone.
+
+### Worker Responsibilities
+
+1. Poll `make lane-inbox` (or `make lane-prompt` for a generated prompt) to discover current assignment.
+2. Implement only within owned paths.
+3. Record test results, decisions, and blockers in MCP with `actor.lane_id`.
+4. Hand back via `make lane-handoff` or, if blocked, report with `STATUS=blocked`.
+
+Operational notes:
+
+- `handoff_failed` after completed execution is an orchestration-state issue, not a signal to redo the same slice. Intake or salvage the saved result, then restart the worker for the next assignment.
+- Downstream lanes should be held when their branch-local worktree is missing upstream contracts or scaffold surfaces, even if those files exist on the orchestrator/root branch.
+
+### References
+
+- Full playbook: [../worktree-codex-playbook.md](../worktree-codex-playbook.md)
+- Lane-scoped context and prompt budgets: [../lane-scoped-context.md](../lane-scoped-context.md)
+- Worker lifecycle MCP tools: [../contracts/agent-handoff-mcp.md](../contracts/agent-handoff-mcp.md)
+- Lane brief template: [../templates/WORKTREE_LANE_BRIEF.template.md](../templates/WORKTREE_LANE_BRIEF.template.md)
+
+---
+
 ## Conventional Commits
 
 ```text

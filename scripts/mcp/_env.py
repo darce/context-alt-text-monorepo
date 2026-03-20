@@ -6,6 +6,8 @@ from pathlib import Path
 
 
 PYENV_VERSION_PATTERN = re.compile(r"\bPYENV_VERSION=([A-Za-z0-9._-]+)")
+CODEX_REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
+WORKER_REASONING_EFFORT_CHOICES = ("inherit", "auto", *CODEX_REASONING_EFFORTS)
 
 
 def extract_pyenv_version(commands: list[str]) -> str | None:
@@ -83,4 +85,23 @@ def pythonpath_env(
     if extra_paths:
         current_path = env.get("PATH", "")
         env["PATH"] = ":".join([*extra_paths, current_path]) if current_path else ":".join(extra_paths)
+    return env
+
+
+def apply_codex_runtime_hints(
+    env: dict[str, str],
+    *,
+    reasoning_effort: str | None = None,
+    session_mode: str | None = None,
+) -> dict[str, str]:
+    """Apply Codex-specific runtime hints to an existing environment mapping."""
+    normalized_effort = str(reasoning_effort or "").strip().lower()
+    if normalized_effort in CODEX_REASONING_EFFORTS:
+        env["CODEX_REASONING_EFFORT"] = normalized_effort
+
+    normalized_session_mode = str(session_mode or "").strip().lower()
+    if normalized_session_mode == "shared_lane":
+        env["CODEX_SUBAGENT_BRIDGE_SESSION_MODE"] = "shared"
+    elif normalized_session_mode == "fresh_turn":
+        env.pop("CODEX_SUBAGENT_BRIDGE_SESSION_MODE", None)
     return env

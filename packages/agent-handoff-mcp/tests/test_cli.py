@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from unittest import mock
 
 from agent_handoff_mcp import api
 from agent_handoff_mcp import cli
@@ -122,20 +123,36 @@ def test_lane_cli_smoke(tmp_path: Path, capsys) -> None:
     )
     assert report_payload["ok"] is True
 
-    activity_payload = _run_cli(
-        [
-            "agent-handoff-mcp",
-            "--workspace-root",
-            str(tmp_path),
-            "lane-activity",
-            "--lane-id",
-            "frontend",
-        ],
-        capsys,
-    )
-    assert activity_payload["ok"] is True
-    assert activity_payload["lane"]["lane_id"] == "frontend"
-    assert len(activity_payload["reports"]) == 1
+
+def test_worker_event_history_cli_smoke(tmp_path: Path, capsys) -> None:
+    api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
+    fake_ctl = mock.Mock()
+    fake_ctl.daemon_event_history.return_value = {
+        "lane_id": "frontend",
+        "process": None,
+        "events": [{"event": "subagent_turn_observed"}],
+        "returned": 1,
+    }
+
+    with mock.patch.object(api, "_import_scripts_mcp_module", return_value=fake_ctl):
+        payload = _run_cli(
+            [
+                "agent-handoff-mcp",
+                "--workspace-root",
+                str(tmp_path),
+                "worker-event-history",
+                "--task-ref",
+                "task-1",
+                "--lane-id",
+                "frontend",
+                "--event-name",
+                "subagent_turn_observed",
+            ],
+            capsys,
+        )
+
+    assert payload["ok"] is True
+    assert payload["returned"] == 1
 
 
 def test_lane_cli_accepts_explicit_task_ref_for_cross_task_reporting(tmp_path: Path, capsys) -> None:

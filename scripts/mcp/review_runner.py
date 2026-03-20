@@ -46,7 +46,12 @@ REVIEW_OUTPUT_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["severity", "category", "file_path", "description"],
+                "required": [
+                    "severity",
+                    "category",
+                    "file_path",
+                    "description",
+                ],
                 "properties": {
                     "severity": {"type": "string", "enum": ["high", "medium", "low"]},
                     "category": {
@@ -54,10 +59,10 @@ REVIEW_OUTPUT_SCHEMA: dict[str, Any] = {
                         "enum": ["ANTIPATTERN", "DEAD_CODE", "COMPLEXITY", "GAP"],
                     },
                     "file_path": {"type": "string"},
-                    "line_start": {"type": "integer"},
-                    "line_end": {"type": "integer"},
+                    "line_start": {"type": ["integer", "null"]},
+                    "line_end": {"type": ["integer", "null"]},
                     "description": {"type": "string", "minLength": 1},
-                    "fix": {"type": "string"},
+                    "fix": {"type": ["string", "null"]},
                 },
             },
         },

@@ -418,8 +418,8 @@
   ],
   "lanes": {
     "backend-domain": {
-      "branch": "codex/rswr-backend-domain",
-      "worktree_path": "{orchestrator_root}-rswr-backend-domain",
+      "branch": "codex/rswr2-backend-domain",
+      "worktree_path": "{orchestrator_root}-rswr2-backend-domain",
       "title": "Backend domain",
       "objective": "Backend schema, domain-service, contracts, and orchestration-tooling slice for remaining sync/workbench/retention work.",
       "owned_paths": [
@@ -487,8 +487,8 @@
       ]
     },
     "backend-http": {
-      "branch": "codex/rswr-backend-http",
-      "worktree_path": "{orchestrator_root}-rswr-backend-http",
+      "branch": "codex/rswr2-backend-http",
+      "worktree_path": "{orchestrator_root}-rswr2-backend-http",
       "title": "Backend HTTP",
       "objective": "Backend HTTP router, schema, and API-test slice for remaining sync/workbench/retention work.",
       "app_root": "apps/prototype-description-service",
@@ -527,8 +527,8 @@
       ]
     },
     "wp-proxy": {
-      "branch": "codex/rswr-wp-proxy",
-      "worktree_path": "{orchestrator_root}-rswr-wp-proxy",
+      "branch": "codex/rswr2-wp-proxy",
+      "worktree_path": "{orchestrator_root}-rswr2-wp-proxy",
       "title": "WP proxy",
       "objective": "WordPress proxy, sync-projection, and PHP unit-test slice for remaining sync/workbench/retention work.",
       "app_root": "apps/prototype-wp-alt-context",
@@ -567,8 +567,8 @@
       ]
     },
     "frontend": {
-      "branch": "codex/rswr-frontend",
-      "worktree_path": "{orchestrator_root}-rswr-frontend",
+      "branch": "codex/rswr2-frontend",
+      "worktree_path": "{orchestrator_root}-rswr2-frontend",
       "title": "Frontend",
       "objective": "React admin UI, hooks, and TypeScript test slice for remaining sync/workbench/retention work.",
       "app_root": "apps/prototype-wp-alt-context",

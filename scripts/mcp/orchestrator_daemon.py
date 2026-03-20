@@ -255,6 +255,20 @@ def _run_cross_lane_verify(
     return result.returncode == 0
 
 
+def _lane_work_in_flight(autostart_results: list[dict[str, Any]]) -> bool:
+    """Return True when at least one lane already has active worker progress."""
+    for row in autostart_results:
+        if not isinstance(row, dict):
+            continue
+        if row.get("action") in {"start", "manual"}:
+            return True
+        if row.get("reason") == "attention_required":
+            return True
+        if bool(row.get("running")):
+            return True
+    return False
+
+
 def _has_open_plan_action(task_ref: str, plan_item_id: str) -> bool:
     from agent_handoff_mcp import list_next_actions
 
@@ -719,6 +733,7 @@ def orchestrator_loop(
     guidance_stalls: dict[str, tuple[int, int]] = {}
 
     while True:
+        had_guidance_failure = False
         if _is_paused(state_dir):
             log("INFO", "daemon_paused")
             if single_pass:
@@ -764,9 +779,10 @@ def orchestrator_loop(
                         error=resolution.error,
                         stall_count=stall_count,
                     )
-                    if single_pass or stall_count >= GUIDANCE_STALL_THRESHOLD:
+                    if stall_count >= GUIDANCE_STALL_THRESHOLD:
                         log("ERROR", "terminal_error", lane=resolution.lane_id, reason="guidance_stall")
                         return 1
+                    had_guidance_failure = True
                     continue
                 guidance_stalls.pop(resolution.lane_id, None)
                 event_name = "guidance_resolved"
@@ -807,6 +823,7 @@ def orchestrator_loop(
             ready_lanes = _poll_merge_ready_lanes(orchestrator_root, task_ref, m_order)
             ordered_ready = _sort_by_manifest_merge_order(ready_lanes, m_order)
             log("INFO", "poll_complete", ready_lanes=ordered_ready)
+            workers_in_flight = _lane_work_in_flight(autostart_results)
 
             # Step 5: Intake and refresh
             for lane_id in ordered_ready:
@@ -883,6 +900,7 @@ def orchestrator_loop(
                 and not active_plan_dispatches
                 and not ordered_ready
                 and not guidance_results
+                and not workers_in_flight
             )
             if plan_stalled:
                 plan_stall_count += 1
@@ -912,7 +930,7 @@ def orchestrator_loop(
             log("INFO", "task_close_blocked_by_plan", remaining=len(remaining_plan_items))
 
         if single_pass:
-            return 0
+            return 1 if had_guidance_failure else 0
 
         log("INFO", "poll_sleep", interval=poll_interval)
         time.sleep(poll_interval)

@@ -14,6 +14,7 @@ import datetime
 import fcntl
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -108,6 +109,18 @@ def _log(lane_id: str, log_dir: Path, level: str, event: str, **extra: Any) -> N
 
 
 # ---------------------------------------------------------------------------
+# Graceful shutdown flag (set by SIGTERM handler)
+# ---------------------------------------------------------------------------
+
+_shutdown_requested: bool = False
+
+
+def _handle_sigterm(signum: int, frame: object) -> None:
+    global _shutdown_requested
+    _shutdown_requested = True
+
+
+# ---------------------------------------------------------------------------
 # Exclusive per-lane lock
 # ---------------------------------------------------------------------------
 
@@ -142,6 +155,10 @@ class WorkerLock:
         except Exception:
             pass
         self._fh = None
+        try:
+            self._lock_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +278,15 @@ def _run_final_handoff(
     ]
     if dry_run:
         cmd.append("--dry-run")
-    result = subprocess.run(cmd, check=False)
+    result = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    if result.returncode != 0:
+        stderr_tail = (result.stderr or "")[-500:]
+        stdout_tail = (result.stdout or "")[-500:]
+        log_dir = orchestrator_root / "logs" / "worker-daemon"
+        _log(lane_id, log_dir, "ERROR", "handoff_subprocess_failed",
+             exit_code=result.returncode,
+             stderr_tail=stderr_tail,
+             stdout_tail=stdout_tail)
     return result.returncode
 
 
@@ -591,15 +616,22 @@ def worker_loop(
         codex = find_codex(codex_bin)
         log("INFO", "codex_found", codex_bin=codex)
     dormant_state: str | None = None
-    handoff_failure_seen_in_process = False
+    MAX_HANDOFF_RETRIES = 3
+    handoff_retry_count = 0
 
     while True:
+        if _shutdown_requested:
+            log("INFO", "daemon_stop", reason="sigterm")
+            return 0
         persisted_status = _read_worker_status(state_dir, lane_id) or {}
         if persisted_status.get("state") == "handoff_failed":
             result_path_raw = str(persisted_status.get("result_path") or "").strip()
             result_path = Path(result_path_raw) if result_path_raw else None
-            if result_path is not None and result_path.exists() and not handoff_failure_seen_in_process:
-                log("INFO", "handoff_retry_start", result_path=str(result_path))
+            if result_path is not None and result_path.exists() and handoff_retry_count < MAX_HANDOFF_RETRIES:
+                backoff = min(poll_interval * (2 ** handoff_retry_count), 300)
+                if handoff_retry_count > 0:
+                    time.sleep(backoff)
+                log("INFO", "handoff_retry_start", result_path=str(result_path), retry=handoff_retry_count + 1)
                 retry_exit = _run_final_handoff(
                     orchestrator_root=orchestrator_root,
                     task_ref=task_ref,
@@ -609,7 +641,7 @@ def worker_loop(
                     result_path=result_path,
                     dry_run=dry_run,
                 )
-                handoff_failure_seen_in_process = True
+                handoff_retry_count += 1
                 if retry_exit == 0:
                     _cleanup_result_file(result_path)
                     _write_worker_status(
@@ -628,7 +660,7 @@ def worker_loop(
                     continue
                 log("ERROR", "handoff_retry_failed", result_path=str(result_path))
             if dormant_state != "handoff_failed":
-                log("ERROR", "dormant_entered", state="handoff_failed", interval=poll_interval)
+                log("ERROR", "dormant_entered", state="handoff_failed", interval=poll_interval, retry_count=handoff_retry_count)
                 dormant_state = "handoff_failed"
             if single_pass:
                 return 1
@@ -793,7 +825,7 @@ def worker_loop(
                     progress_callback=_worker_progress,
                     dry_run=dry_run,
                 )
-            except RuntimeError as exc:
+            except Exception as exc:
                 log("ERROR", "exec_failed", error=str(exc), cycle=cycle)
                 break
 
@@ -836,7 +868,6 @@ def worker_loop(
                         clear_result_path=True,
                     )
                 else:
-                    handoff_failure_seen_in_process = True
                     _write_worker_status(
                         state_dir,
                         lane_id,
@@ -880,7 +911,7 @@ def worker_loop(
                     dry_run=dry_run,
                     progress_callback=_worker_progress,
                 )
-            except RuntimeError as exc:
+            except Exception as exc:
                 log("ERROR", "review_failed", error=str(exc), cycle=cycle)
                 break
 
@@ -956,7 +987,6 @@ def worker_loop(
                         clear_result_path=True,
                     )
                 else:
-                    handoff_failure_seen_in_process = True
                     _write_worker_status(
                         state_dir,
                         lane_id,
@@ -1019,7 +1049,6 @@ def worker_loop(
                         clear_result_path=True,
                     )
                 else:
-                    handoff_failure_seen_in_process = True
                     _write_worker_status(
                         state_dir,
                         lane_id,
@@ -1103,6 +1132,7 @@ def main() -> int:
         print(f"Another worker daemon is already running for lane '{args.lane_id}'.", file=sys.stderr)
         return 1
 
+    signal.signal(signal.SIGTERM, _handle_sigterm)
     try:
         return worker_loop(
             orchestrator_root=orchestrator_root,

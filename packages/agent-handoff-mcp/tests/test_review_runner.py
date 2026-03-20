@@ -33,10 +33,26 @@ def test_schema_is_valid_json_schema_object() -> None:
     assert set(schema["required"]) == {"findings", "summary"}
 
 
-def test_schema_findings_items_require_severity_category_file_description() -> None:
+def test_schema_findings_items_require_all_declared_properties() -> None:
     module = _load_review_runner_module()
     items_schema = module.REVIEW_OUTPUT_SCHEMA["properties"]["findings"]["items"]
-    assert set(items_schema["required"]) == {"severity", "category", "file_path", "description"}
+    assert set(items_schema["required"]) == {
+        "severity",
+        "category",
+        "file_path",
+        "line_start",
+        "line_end",
+        "description",
+        "fix",
+    }
+
+
+def test_schema_optional_finding_fields_are_nullable() -> None:
+    module = _load_review_runner_module()
+    items_schema = module.REVIEW_OUTPUT_SCHEMA["properties"]["findings"]["items"]["properties"]
+    assert items_schema["line_start"]["type"] == ["integer", "null"]
+    assert items_schema["line_end"]["type"] == ["integer", "null"]
+    assert items_schema["fix"]["type"] == ["string", "null"]
 
 
 def test_schema_serializes_to_valid_json() -> None:

@@ -65,6 +65,14 @@ class SyncPullJob implements SyncPullJobInterface {
 	}
 
 	private function do_sync( string $tenant_id, string $transient_key ): SyncPullResult {
+		$last_snapshot_version = max( 0, $this->sync_state_repository->get_snapshot_version( $tenant_id ) );
+		if ( $last_snapshot_version > 0 ) {
+			$delta_result = $this->try_delta_sync( $tenant_id, $last_snapshot_version );
+			if ( $delta_result instanceof SyncPullResult ) {
+				return $delta_result;
+			}
+		}
+
 		$snapshot = $this->client->fetch_snapshot( $tenant_id );
 		if ( is_wp_error( $snapshot ) ) {
 			$this->sync_state_repository->set_last_sync_result( $tenant_id, SyncPullResult::UNREACHABLE );
@@ -103,6 +111,47 @@ class SyncPullJob implements SyncPullJobInterface {
 			);
 		}
 
+		return SyncPullResult::ok();
+	}
+
+	/**
+	 * Attempt delta projection first when the tenant already has a local snapshot version.
+	 *
+	 * Returns `null` to signal snapshot fallback.
+	 */
+	private function try_delta_sync( string $tenant_id, int $since_version ): ?SyncPullResult {
+		$delta = $this->client->fetch_delta( $tenant_id, $since_version );
+		if ( is_wp_error( $delta ) ) {
+			do_action(
+				'acx_sync_pull_failed',
+				array(
+					'tenant_id' => $tenant_id,
+					'context' => 'delta_fetch_failed',
+					'message' => $delta->get_error_message(),
+				)
+			);
+			return null;
+		}
+
+		if ( true === ( $delta['fallback_to_snapshot'] ?? false ) ) {
+			return null;
+		}
+
+		try {
+			$this->projector->project_delta( $tenant_id, $delta );
+		} catch ( Throwable $throwable ) {
+			do_action(
+				'acx_sync_pull_failed',
+				array(
+					'tenant_id' => $tenant_id,
+					'context' => 'delta_projection_failed',
+					'message' => $throwable->getMessage(),
+				)
+			);
+			return null;
+		}
+
+		$this->sync_state_repository->set_last_sync_result( $tenant_id, SyncPullResult::OK );
 		return SyncPullResult::ok();
 	}
 

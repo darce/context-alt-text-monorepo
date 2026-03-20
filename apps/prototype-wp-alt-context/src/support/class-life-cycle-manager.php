@@ -287,6 +287,8 @@ class LifecycleManager {
 			curation_state varchar(20) NOT NULL,
 			person_id bigint(20) unsigned DEFAULT NULL,
 			representative_thumb_path text NULL,
+			representative_id varchar(64) DEFAULT NULL,
+			is_pinned tinyint(1) NOT NULL DEFAULT 0,
 			identity_count int(11) unsigned NOT NULL DEFAULT 0,
 			snapshot_version bigint(20) unsigned NOT NULL,
 			is_user_confirmed tinyint(1) NOT NULL DEFAULT 0,
@@ -297,6 +299,7 @@ class LifecycleManager {
 			PRIMARY KEY  (cluster_uuid),
 			KEY tenant_snapshot (tenant_id, snapshot_version),
 			KEY tenant_confirmed (tenant_id, is_user_confirmed),
+			KEY tenant_representative (tenant_id, representative_id),
 			KEY tenant_revision (tenant_id, local_revision)
 		) {$charset_collate};";
 
@@ -391,6 +394,7 @@ class LifecycleManager {
 			backend_version bigint(20) unsigned NOT NULL DEFAULT 0,
 			local_revision bigint(20) unsigned NOT NULL DEFAULT 0,
 			conflict_code varchar(64) NOT NULL,
+			backend_proposed_value text DEFAULT NULL,
 			machine_payload longtext NOT NULL,
 			local_payload longtext NOT NULL,
 			resolution_status varchar(20) NOT NULL DEFAULT 'open',

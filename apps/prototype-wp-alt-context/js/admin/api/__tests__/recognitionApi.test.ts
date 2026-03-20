@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import * as httpModule from '../../utils/http';
 import {
@@ -14,6 +14,7 @@ import {
   assignOutlierToCluster,
   mergeCluster,
   purgeTenantData,
+  pinRepresentative,
   revertMergeCluster,
   acknowledgeProjection,
   cancelScanJob,
@@ -23,6 +24,9 @@ import {
   undismissCluster,
   updateRetentionPolicy,
   updateClusterLabel,
+  type BulkAcceptRequest,
+  type BulkAcceptResponse,
+  type PendingNameSuggestion,
 } from '../recognition';
 
 const mockConfig = {
@@ -159,6 +163,19 @@ describe('recognitionApi', () => {
     });
   });
 
+  it('posts representative pin state to the representative pin endpoint', async () => {
+    fetchApiMock.mockResolvedValue({});
+
+    await pinRepresentative('cluster-1', 'identity-77', true);
+
+    expect(fetchApiMock).toHaveBeenCalledWith(expect.stringContaining('/cluster-1/representatives/identity-77/pin'), {
+      method: 'PATCH',
+      body: { is_pinned: true },
+      restNonce: 'nonce-123',
+      signal: undefined,
+    });
+  });
+
   it('returns job response from backend', async () => {
     const mockResponse = {
       id: 'job-1',
@@ -202,6 +219,38 @@ describe('recognitionApi', () => {
       expect.stringContaining('/retentionExport'),
       expect.objectContaining({ method: 'POST', restNonce: 'nonce-123' }),
     );
+  });
+
+  it('exports the phase-0 suggestion stub types through the recognition barrel', () => {
+    const pendingNameSuggestion = {
+      id: 'name-suggestion-1',
+      cluster_id: 'cluster-1',
+      suggested_name: 'Taylor',
+      confidence_score: 0.88,
+      source: 'roster',
+      created_at: '2026-03-19T12:00:00Z',
+      expires_at: null,
+      representatives: [],
+    } satisfies PendingNameSuggestion;
+    const bulkAcceptRequest = {
+      suggestion_type: 'name',
+      min_confidence: 0.75,
+    } satisfies BulkAcceptRequest;
+    const bulkAcceptResponse = {
+      accepted_count: 2,
+      skipped_count: 1,
+    } satisfies BulkAcceptResponse;
+
+    const representatives: PendingNameSuggestion['representatives'] = pendingNameSuggestion.representatives;
+
+    expectTypeOf(bulkAcceptRequest.min_confidence).toMatchTypeOf<BulkAcceptRequest['min_confidence']>();
+    expectTypeOf(bulkAcceptResponse.accepted_count).toMatchTypeOf<BulkAcceptResponse['accepted_count']>();
+
+    expect(pendingNameSuggestion.id).toBe('name-suggestion-1');
+    expect(representatives).toEqual([]);
+    expect(bulkAcceptRequest.suggestion_type).toBe('name');
+    expect(bulkAcceptResponse.accepted_count).toBe(2);
+    expect(bulkAcceptResponse.skipped_count).toBe(1);
   });
 
   it('returns the proxied retention policy payload from updateRetentionPolicy', async () => {

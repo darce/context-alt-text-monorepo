@@ -32,6 +32,8 @@ class ClustersRepositoryTest extends TestCase
                     'is_user_confirmed' => true,
                     'identity_count' => 4,
                     'representative_media_id' => 1001,
+                    'representative_id' => 'identity-1',
+                    'is_pinned' => true,
                 ],
                 [
                     'cluster_uuid' => 'cluster-2',
@@ -59,6 +61,8 @@ class ClustersRepositoryTest extends TestCase
         $this->assertStringContainsString('curation_state = IF(is_user_confirmed = 1, curation_state, VALUES(curation_state))', $mergedSql);
         $this->assertStringContainsString('person_id = IF(is_user_confirmed = 1, person_id, person_id)', $mergedSql);
         $this->assertStringContainsString('local_revision = IF(is_user_confirmed = 1, local_revision, local_revision)', $mergedSql);
+        $this->assertStringContainsString('representative_id = VALUES(representative_id)', $mergedSql);
+        $this->assertStringContainsString('is_pinned = VALUES(is_pinned)', $mergedSql);
         $this->assertStringContainsString('snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version))', $mergedSql);
     }
 

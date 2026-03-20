@@ -12,10 +12,16 @@ use Throwable;
 
 use function do_action;
 use function function_exists;
+use function is_int;
 use function is_array;
 use function is_object;
 use function method_exists;
+use function json_decode;
 use function trim;
+use function array_values;
+use function array_fill_keys;
+use function array_key_exists;
+use function count;
 
 class SnapshotProjector implements SnapshotProjectorInterface {
 	private ClustersRepositoryInterface $clusters_repository;
@@ -85,6 +91,275 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 			$wpdb->query( 'ROLLBACK' );
 			throw $throwable;
 		}
+	}
+
+	/**
+	 * @param array<string,mixed> $delta
+	 * @throws RuntimeException When transaction support is unavailable or commit fails.
+	 * @throws Throwable When downstream projection or repository writes fail after the transaction starts.
+	 */
+	public function project_delta( string $tenant_id, array $delta ): void {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard();
+			return;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
+			throw new RuntimeException( 'Snapshot projection requires $wpdb query support.' );
+		}
+
+		$started = false !== $wpdb->query( 'START TRANSACTION' );
+		if ( ! $started ) {
+			throw new RuntimeException( 'Snapshot projection requires transaction support.' );
+		}
+
+		try {
+			$snapshot_version = (int) ( $delta['snapshot_version'] ?? 0 );
+			$clusters         = is_array( $delta['clusters'] ?? null ) ? $delta['clusters'] : array();
+			$members          = is_array( $delta['members'] ?? null ) ? $delta['members'] : array();
+
+			if ( ! empty( $clusters ) || ! empty( $members ) ) {
+				$snapshot_clusters = $this->build_delta_cluster_snapshot_payload( $normalized_tenant_id, $clusters );
+				$snapshot_members  = $this->build_delta_member_snapshot_payload( $normalized_tenant_id, $snapshot_clusters, $clusters, $members );
+				$pre_projection_conflict_count = $this->sync_state_repository->get_conflict_count( $normalized_tenant_id );
+
+				$this->clusters_repository->merge_snapshot_for_tenant( $normalized_tenant_id, $snapshot_clusters, $snapshot_version );
+				$this->members_repository->merge_snapshot_for_tenant( $normalized_tenant_id, $snapshot_members, $snapshot_version );
+				$this->sync_state_repository->upsert_snapshot_version( $normalized_tenant_id, $snapshot_version );
+				$this->sync_state_repository->refresh_curation_metrics( $normalized_tenant_id );
+				$post_projection_conflict_count = $this->sync_state_repository->get_conflict_count( $normalized_tenant_id );
+				$conflicts_generated            = max( 0, $post_projection_conflict_count - $pre_projection_conflict_count );
+
+				if ( $conflicts_generated > 0 && function_exists( 'do_action' ) ) {
+					do_action( 'acx_projection_conflicts_detected', $conflicts_generated, $normalized_tenant_id );
+				}
+			} else {
+				$this->sync_state_repository->upsert_snapshot_version( $normalized_tenant_id, $snapshot_version );
+				$this->sync_state_repository->refresh_curation_metrics( $normalized_tenant_id );
+			}
+
+			$committed = false !== $wpdb->query( 'COMMIT' );
+			if ( ! $committed ) {
+				throw new RuntimeException( 'Snapshot projection failed to commit transaction.' );
+			}
+		} catch ( Throwable $throwable ) {
+			$wpdb->query( 'ROLLBACK' );
+			throw $throwable;
+		}
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $changed_clusters
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function build_delta_cluster_snapshot_payload( string $tenant_id, array $changed_clusters ): array {
+		$existing_clusters = $this->list_all_clusters_for_tenant( $tenant_id );
+		$changed_by_id     = array();
+
+		foreach ( $changed_clusters as $cluster ) {
+			if ( ! is_array( $cluster ) ) {
+				continue;
+			}
+
+			$cluster_uuid = trim( (string) ( $cluster['cluster_uuid'] ?? '' ) );
+			if ( '' === $cluster_uuid ) {
+				continue;
+			}
+
+			$changed_by_id[ $cluster_uuid ] = $cluster;
+		}
+
+		$payload = array();
+		foreach ( $existing_clusters as $cluster ) {
+			if ( ! is_array( $cluster ) ) {
+				continue;
+			}
+
+			$cluster_uuid = trim( (string) ( $cluster['cluster_uuid'] ?? '' ) );
+			if ( '' === $cluster_uuid ) {
+				continue;
+			}
+
+			if ( isset( $changed_by_id[ $cluster_uuid ] ) ) {
+				$payload[] = $changed_by_id[ $cluster_uuid ];
+				unset( $changed_by_id[ $cluster_uuid ] );
+				continue;
+			}
+
+			$payload[] = $cluster;
+		}
+
+		foreach ( $changed_by_id as $cluster ) {
+			$payload[] = $cluster;
+		}
+
+		return $payload;
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $snapshot_clusters
+	 * @param array<int,array<string,mixed>> $changed_clusters
+	 * @param array<int,array<string,mixed>> $changed_members
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function build_delta_member_snapshot_payload( string $tenant_id, array $snapshot_clusters, array $changed_clusters, array $changed_members ): array {
+		$cluster_ids = array();
+		foreach ( $snapshot_clusters as $cluster ) {
+			if ( ! is_array( $cluster ) ) {
+				continue;
+			}
+
+			$cluster_uuid = trim( (string) ( $cluster['cluster_uuid'] ?? '' ) );
+			if ( '' !== $cluster_uuid ) {
+				$cluster_ids[] = $cluster_uuid;
+			}
+		}
+
+		$existing_members_by_cluster = $this->list_all_members_by_cluster( $tenant_id, $cluster_ids );
+		$changed_cluster_ids         = array_fill_keys( $this->extract_cluster_ids( $changed_clusters ), true );
+		$changed_members_by_cluster  = array();
+
+		foreach ( $changed_members as $member ) {
+			if ( ! is_array( $member ) ) {
+				continue;
+			}
+
+			$cluster_uuid = trim( (string) ( $member['cluster_uuid'] ?? '' ) );
+			if ( '' === $cluster_uuid ) {
+				continue;
+			}
+
+			if ( ! isset( $changed_members_by_cluster[ $cluster_uuid ] ) ) {
+				$changed_members_by_cluster[ $cluster_uuid ] = array();
+			}
+
+			$changed_members_by_cluster[ $cluster_uuid ][] = $member;
+		}
+
+		$payload = array();
+		foreach ( $cluster_ids as $cluster_uuid ) {
+			if ( isset( $changed_cluster_ids[ $cluster_uuid ] ) ) {
+				foreach ( $changed_members_by_cluster[ $cluster_uuid ] ?? array() as $member ) {
+					$payload[] = $member;
+				}
+				continue;
+			}
+
+			foreach ( $existing_members_by_cluster[ $cluster_uuid ] ?? array() as $member ) {
+				if ( is_array( $member ) ) {
+					$payload[] = $this->hydrate_existing_member_snapshot_row( $member );
+				}
+			}
+		}
+
+		return $payload;
+	}
+
+	/**
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function list_all_clusters_for_tenant( string $tenant_id ): array {
+		$offset   = 0;
+		$page_size = 5000;
+		$clusters = array();
+
+		do {
+			$page = $this->clusters_repository->list_for_tenant( $tenant_id, $page_size, $offset );
+			foreach ( $page as $cluster ) {
+				if ( is_array( $cluster ) ) {
+					$clusters[] = $cluster;
+				}
+			}
+
+			$page_count = count( $page );
+			$offset    += $page_count;
+		} while ( $page_count === $page_size );
+
+		return $clusters;
+	}
+
+	/**
+	 * @param string[] $cluster_ids
+	 * @return array<string,array<int,array<string,mixed>>>
+	 */
+	private function list_all_members_by_cluster( string $tenant_id, array $cluster_ids ): array {
+		$members_by_cluster = array();
+
+		foreach ( $cluster_ids as $cluster_id ) {
+			$offset    = 0;
+			$page_size = 500;
+			$members   = array();
+
+			do {
+				$page = $this->members_repository->list_for_cluster( $cluster_id, $page_size, $offset, $tenant_id );
+				foreach ( $page as $member ) {
+					if ( is_array( $member ) ) {
+						$members[] = $member;
+					}
+				}
+
+				$page_count = count( $page );
+				$offset    += $page_count;
+			} while ( $page_count === $page_size );
+
+			$members_by_cluster[ $cluster_id ] = $members;
+		}
+
+		return $members_by_cluster;
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $clusters
+	 * @return string[]
+	 */
+	private function extract_cluster_ids( array $clusters ): array {
+		$cluster_ids = array();
+		foreach ( $clusters as $cluster ) {
+			if ( ! is_array( $cluster ) ) {
+				continue;
+			}
+
+			$cluster_uuid = trim( (string) ( $cluster['cluster_uuid'] ?? '' ) );
+			if ( '' !== $cluster_uuid ) {
+				$cluster_ids[] = $cluster_uuid;
+			}
+		}
+
+		return array_values( array_unique( $cluster_ids ) );
+	}
+
+	/**
+	 * @param array<string,mixed> $member
+	 * @return array<string,mixed>
+	 */
+	private function hydrate_existing_member_snapshot_row( array $member ): array {
+		$row = array(
+			'identity_uuid' => trim( (string) ( $member['identity_uuid'] ?? '' ) ),
+			'cluster_uuid'  => trim( (string) ( $member['cluster_uuid'] ?? '' ) ),
+			'attachment_id' => (int) ( $member['attachment_id'] ?? 0 ),
+			'thumb_path'    => trim( (string) ( $member['thumb_path'] ?? '' ) ),
+			'similarity'    => $member['similarity'] ?? null,
+		);
+
+		$bbox_json = $member['bbox_json'] ?? null;
+		if ( is_string( $bbox_json ) && '' !== trim( $bbox_json ) ) {
+			$decoded_bbox = json_decode( $bbox_json, true );
+			if ( is_array( $decoded_bbox ) ) {
+				$row['bbox'] = $decoded_bbox;
+			}
+		}
+
+		if ( array_key_exists( 'image_width', $member ) && is_int( $member['image_width'] ) ) {
+			$row['image_width'] = $member['image_width'];
+		}
+		if ( array_key_exists( 'image_height', $member ) && is_int( $member['image_height'] ) ) {
+			$row['image_height'] = $member['image_height'];
+		}
+
+		return $row;
 	}
 
 	/**

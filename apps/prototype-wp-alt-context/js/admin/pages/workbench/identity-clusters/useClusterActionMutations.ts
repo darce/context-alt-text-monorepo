@@ -8,6 +8,7 @@ import { useMutation } from '@tanstack/react-query';
 import {
   createClusterForIdentity,
   fetchScanStatus,
+  pinRepresentative,
   reassignClusterIdentity,
   rejectSuggestion,
   splitCluster,
@@ -168,6 +169,36 @@ export const useClusterActionMutations = ({
     },
   });
 
+  const pinRepresentativeMutation = useMutation({
+    mutationKey: ['pin-representative', clusterId],
+    mutationFn: async ({
+      representativeId,
+      isPinned,
+      signal,
+    }: {
+      representativeId: string;
+      isPinned: boolean;
+      signal?: AbortSignal;
+    }) => {
+      if (!clusterId) {
+        throw new Error(__('Cannot pin representative: no cluster ID', 'alt-context'));
+      }
+      await pinRepresentative(clusterId, representativeId, isPinned, signal);
+    },
+    retry: false,
+    onSuccess: () => {
+      invalidateQueries();
+    },
+    onError: (err: unknown) => {
+      if (isAbortError(err)) {
+        onAbort?.();
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      onError?.(message);
+    },
+  });
+
   return {
     reassign: reassignMutation.mutate,
     assignToCluster: (identityId: string, targetClusterId: string, signal?: AbortSignal) =>
@@ -177,10 +208,13 @@ export const useClusterActionMutations = ({
     split: (clusterId: string, nClusters = 2, anchorIdentityId?: string) =>
       splitMutation.mutate({ clusterId, nClusters, anchorIdentityId }),
     rejectSuggestion: (suggestionId: string) => rejectSuggestionMutation.mutate(suggestionId),
+    pinRepresentative: (representativeId: string, isPinned: boolean, signal?: AbortSignal) =>
+      pinRepresentativeMutation.mutate({ representativeId, isPinned, signal }),
     isReassigning: reassignMutation.isPending,
     isAssigning: assignToClusterMutation.isPending,
     isCreatingCluster: createClusterMutation.isPending,
     isSplitting: splitMutation.isPending,
     isRejectingSuggestion: rejectSuggestionMutation.isPending,
+    isPinningRepresentative: pinRepresentativeMutation.isPending,
   };
 };

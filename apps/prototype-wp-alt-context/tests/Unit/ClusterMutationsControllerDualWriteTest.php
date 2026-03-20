@@ -32,6 +32,48 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->controller = new ClusterMutationsController($this->repository, $this->syncStateRepository, $this->membersRepository, null, $this->topologyCommandRepository);
     }
 
+    public function testRegisterRoutesIncludesRepresentativePinEndpoint(): void
+    {
+        $this->controller->register_routes();
+
+        $routes = array_map(
+            static fn (array $definition): string => $definition['route'],
+            $GLOBALS['__ac_rest_routes']
+        );
+
+        $this->assertContains(
+            '/recognition/clusters/(?P<cluster_id>[a-f0-9-]+)/representatives/(?P<representative_id>[a-f0-9-]+)/pin',
+            $routes
+        );
+    }
+
+    public function testPinRepresentativeQueuesReplayOperationInsideTransaction(): void
+    {
+        $request = new \WP_REST_Request('PATCH', '/recognition/clusters/cluster-xyz/representatives/identity-77/pin', [
+            'cluster_id' => 'cluster-xyz',
+            'representative_id' => 'identity-77',
+            'is_pinned' => true,
+        ]);
+
+        $response = $this->controller->pin_representative($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertContains('START TRANSACTION', $GLOBALS['wpdb']->queries);
+        $this->assertContains('COMMIT', $GLOBALS['wpdb']->queries);
+        $this->assertSame('cluster-xyz', $this->repository->lastRepresentativeClusterId);
+        $this->assertSame('identity-77', $this->repository->lastRepresentativeId);
+        $this->assertTrue($this->repository->lastRepresentativePinned);
+        $this->assertSame(md5((string) get_site_url()), $this->syncStateRepository->lastTouchedTenantId);
+
+        $outboxInsert = $this->findQueryContaining($GLOBALS['wpdb']->queries, 'INSERT INTO wp_acx_sync_outbox');
+        $this->assertStringContainsString("'representative_pin_updated'", $outboxInsert);
+        $this->assertStringContainsString("'cluster-xyz'", $outboxInsert);
+        $this->assertStringContainsString('identity-77', $outboxInsert);
+        $this->assertStringContainsString('is_pinned', $outboxInsert);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
     public function testDismissQueuesReplayOperationInsideTransaction(): void
     {
         global $wpdb;
@@ -477,6 +519,9 @@ class ClusterMutationsRepositorySpy extends NullClustersRepository
     public string $undismissedClusterId = '';
     public string $updatedLabelClusterId = '';
     public string $updatedLabel = '';
+    public string $lastRepresentativeClusterId = '';
+    public ?string $lastRepresentativeId = null;
+    public bool $lastRepresentativePinned = false;
     public string $createdLocalClusterId = '';
     public int $nextDismissRows = 1;
     public int $nextUndismissRows = 1;
@@ -519,6 +564,18 @@ class ClusterMutationsRepositorySpy extends NullClustersRepository
     public function update_identity_count(string $cluster_uuid, int $identity_count): int
     {
         $this->identityCountUpdates[] = [$cluster_uuid, $identity_count];
+        return 1;
+    }
+
+    public function update_representative_state(string $cluster_uuid, ?string $representative_id, bool $is_pinned, bool $is_local_curation = true): int
+    {
+        $this->lastRepresentativeClusterId = $cluster_uuid;
+        $this->lastRepresentativeId = $representative_id;
+        $this->lastRepresentativePinned = $is_pinned;
+        if (isset($this->localClusterRows[$cluster_uuid])) {
+            $this->localClusterRows[$cluster_uuid]['representative_id'] = $representative_id;
+            $this->localClusterRows[$cluster_uuid]['is_pinned'] = $is_pinned ? 1 : 0;
+        }
         return 1;
     }
 

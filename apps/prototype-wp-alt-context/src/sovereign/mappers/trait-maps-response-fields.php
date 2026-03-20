@@ -6,10 +6,13 @@ namespace AltContext\Sovereign\Mappers;
 
 use function absint;
 use function is_array;
+use function is_bool;
 use function is_numeric;
 use function is_string;
+use function in_array;
 use function json_decode;
 use function strpos;
+use function strtolower;
 use function trim;
 use function wp_get_attachment_url;
 
@@ -105,5 +108,24 @@ trait MapsResponseFields {
 		}
 
 		return (float) $value;
+	}
+
+	private function normalize_boolean_value( mixed $value ): bool {
+		if ( is_bool( $value ) ) {
+			return $value;
+		}
+
+		if ( is_numeric( $value ) ) {
+			return 0 !== (int) $value;
+		}
+
+		if ( is_string( $value ) ) {
+			$normalized = strtolower( trim( $value ) );
+			if ( in_array( $normalized, array( '1', 'true', 'yes', 'on' ), true ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 }

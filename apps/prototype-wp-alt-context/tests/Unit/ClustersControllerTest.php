@@ -543,6 +543,12 @@ class ClustersControllerTest extends TestCase
 
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'fallback_to_snapshot' => true,
+            ]),
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
             'body' => '"invalid"',
         ]);
 
@@ -555,8 +561,10 @@ class ClustersControllerTest extends TestCase
         $this->assertSame('cluster-no-sync', $data[0]['id']);
 
         $calls = $this->getHttpCalls();
-        $this->assertCount(1, $calls);
+        $this->assertCount(2, $calls);
         $this->assertStringContainsString('/recognition/tenants/', $calls[0]['url']);
+        $this->assertStringContainsString('/clusters/delta', $calls[0]['url']);
+        $this->assertStringContainsString('/clusters/snapshot', $calls[1]['url']);
     }
 }
 

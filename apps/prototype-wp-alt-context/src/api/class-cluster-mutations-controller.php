@@ -175,6 +175,16 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
 			)
 		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/clusters/(?P<cluster_id>[a-f0-9-]+)/representatives/(?P<representative_id>[a-f0-9-]+)/pin',
+			array(
+				'methods'             => 'PATCH',
+				'callback'            => array( $this, 'pin_representative' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
 	}
 
 	public function cluster_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -877,6 +887,72 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 				'identity_id' => $identity_id,
 				'source_cluster_id' => $source_cluster_id,
 				'target_cluster_id' => $cluster_id,
+				'synced' => false,
+				'status' => $affected_rows > 0 ? 'pending' : 'acknowledged',
+			),
+			200
+		);
+	}
+
+	public function pin_representative( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		global $wpdb;
+
+		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
+		if ( '' === $cluster_id ) {
+			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
+		}
+
+		$representative_id = sanitize_text_field( (string) $request->get_param( 'representative_id' ) );
+		if ( '' === $representative_id ) {
+			return new WP_Error( 'missing_representative_id', 'Representative ID is required.', array( 'status' => 400 ) );
+		}
+
+		$is_pinned = $request->get_param( 'is_pinned' );
+		$desired_is_pinned = null === $is_pinned ? true : rest_sanitize_boolean( $is_pinned );
+		$cluster = $this->clusters_repository->find_by_uuid( $cluster_id );
+		if ( ! is_array( $cluster ) ) {
+			return new WP_Error( 'cluster_not_found', 'Cluster not found.', array( 'status' => 404 ) );
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
+			return new WP_Error( 'acx_db_error', 'Database access is unavailable.', array( 'status' => 500 ) );
+		}
+
+		$payload = array(
+			'tenant_id' => $this->get_tenant_id(),
+			'cluster_uuid' => $cluster_id,
+			'representative_id' => $representative_id,
+			'is_pinned' => $desired_is_pinned,
+		);
+
+		if ( false === $wpdb->query( 'START TRANSACTION' ) ) {
+			return new WP_Error( 'acx_db_error', 'Could not start local transaction.', array( 'status' => 500 ) );
+		}
+
+		$affected_rows = $this->clusters_repository->update_representative_state( $cluster_id, $representative_id, $desired_is_pinned );
+		if ( $affected_rows > 0 && ! $this->enqueue_curation_operation( 'representative_pin_updated', $cluster_id, $cluster, $payload ) ) {
+			$wpdb->query( 'ROLLBACK' );
+			return new WP_Error( 'acx_db_error', 'Could not queue representative pin replay operation.', array( 'status' => 500 ) );
+		}
+
+		if ( $affected_rows > 0 ) {
+			$this->sync_state_repository->touch_local_curation_marker( $this->get_tenant_id() );
+		}
+
+		if ( false === $wpdb->query( 'COMMIT' ) ) {
+			$wpdb->query( 'ROLLBACK' );
+			return new WP_Error( 'acx_db_error', 'Could not commit local transaction.', array( 'status' => 500 ) );
+		}
+
+		if ( $affected_rows > 0 ) {
+			$this->trigger_xmp_refresh_for_cluster_ids( array( $cluster_id ), 'cluster-pin-representative' );
+		}
+
+		return new WP_REST_Response(
+			array(
+				'cluster_id' => $cluster_id,
+				'representative_id' => $representative_id,
+				'is_pinned' => $desired_is_pinned,
 				'synced' => false,
 				'status' => $affected_rows > 0 ? 'pending' : 'acknowledged',
 			),

@@ -13,14 +13,28 @@ interface ClusterPreviewProps {
   representative: DetectedIdentity | undefined;
   /** Total number of members in the cluster */
   memberCount: number;
+  /** Called when the representative pin state should be toggled */
+  onTogglePin?: (representative: DetectedIdentity, nextPinned: boolean) => void;
+  /** Whether the pin toggle is currently in flight */
+  isPinning?: boolean;
 }
 
 /**
  * Displays the cluster's representative thumbnail with an optional count badge.
  * The thumbnail shows the face cropped from the original image using InsightFace bbox.
  */
-export const ClusterPreview = ({ representative, memberCount }: ClusterPreviewProps): React.JSX.Element => {
+export const ClusterPreview = ({
+  representative,
+  memberCount,
+  onTogglePin,
+  isPinning = false,
+}: ClusterPreviewProps): React.JSX.Element => {
   const hasValidThumbnail = representative?.media_url && representative?.bbox;
+  const representativeId = representative?.representative_id ?? representative?.identity_id ?? null;
+  const isPinned = Boolean(representative?.is_pinned);
+  const toggleLabel = isPinned
+    ? __('Unpin representative', 'alt-context')
+    : __('Pin representative', 'alt-context');
 
   return (
     <div className="acx-identity-cluster__preview">
@@ -36,6 +50,20 @@ export const ClusterPreview = ({ representative, memberCount }: ClusterPreviewPr
         <span className="acx-identity-cluster__thumb acx-identity-cluster__thumb--placeholder" />
       )}
       {memberCount > 1 && <span className="acx-identity-cluster__count">+{memberCount - 1}</span>}
+      {representative && representativeId && onTogglePin && (
+        <button
+          type="button"
+          className={`button button-small acx-identity-cluster__pin-toggle${
+            isPinned ? ' acx-identity-cluster__pin-toggle--pinned' : ''
+          }`}
+          onClick={() => onTogglePin(representative, !isPinned)}
+          disabled={isPinning}
+          aria-label={toggleLabel}
+          title={toggleLabel}
+        >
+          {isPinned ? __('Pinned', 'alt-context') : __('Pin', 'alt-context')}
+        </button>
+      )}
     </div>
   );
 };

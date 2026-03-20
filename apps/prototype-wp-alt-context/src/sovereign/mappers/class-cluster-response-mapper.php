@@ -84,7 +84,7 @@ class ClusterResponseMapper {
 
 			$representatives = array();
 			foreach ( array_slice( $members, 0, 4 ) as $member_row ) {
-				$representatives[] = $this->map_top_unlabeled_representative( $member_row );
+				$representatives[] = $this->map_top_unlabeled_representative( $row, $member_row );
 			}
 
 			$label = $this->normalize_label( $row );
@@ -169,15 +169,22 @@ class ClusterResponseMapper {
 	 * @param array<string,mixed> $member_row
 	 * @return array<string,mixed>
 	 */
-	private function map_top_unlabeled_representative( array $member_row ): array {
+	private function map_top_unlabeled_representative( array $cluster_row, array $member_row ): array {
 		$media_id = absint( $member_row['attachment_id'] ?? $member_row['media_id'] ?? 0 );
+		$representative_id = trim( (string) ( $cluster_row['representative_id'] ?? '' ) );
+		$member_identity_id = trim( (string) ( $member_row['identity_uuid'] ?? '' ) );
+		$is_pinned = $this->normalize_boolean_value( $member_row['is_pinned'] ?? false );
+		if ( ! $is_pinned && '' !== $representative_id && $representative_id === $member_identity_id ) {
+			$is_pinned = $this->normalize_boolean_value( $cluster_row['is_pinned'] ?? false );
+		}
+
 		return array(
-			'id' => trim( (string) ( $member_row['identity_uuid'] ?? '' ) ),
+			'id' => $member_identity_id,
 			'media_id' => $media_id,
 			'thumb_url' => $this->resolve_thumb_url( $member_row, $media_id ),
 			'media_url' => $this->resolve_media_url( $media_id ),
 			'bbox' => $this->extract_bbox_pixels( $member_row['bbox_json'] ?? null ),
-			'is_pinned' => false,
+			'is_pinned' => $is_pinned,
 		);
 	}
 

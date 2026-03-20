@@ -20,6 +20,35 @@ class ClusterResponseMapperTest extends TestCase
         $this->mapper = new ClusterResponseMapper();
     }
 
+    public function testMapTopUnlabeledClustersPreservesPinnedRepresentatives(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][99] = 'http://example.test/media/99.jpg';
+
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-top',
+                'label' => '',
+                'identity_count' => 1,
+                'is_user_confirmed' => 0,
+            ],
+        ];
+
+        $members = [
+            'cluster-top' => [
+                [
+                    'identity_uuid' => 'identity-99',
+                    'attachment_id' => 99,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
+                    'is_pinned' => 1,
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters($clusters, $members, 'tenant-1');
+
+        $this->assertTrue($payload[0]['representatives'][0]['is_pinned']);
+    }
+
     public function testMapClusterListUsesMemberRowsForSamples(): void
     {
         $GLOBALS['__ac_attachment_urls'][12] = 'http://example.test/media/12.jpg';
@@ -78,5 +107,34 @@ class ClusterResponseMapperTest extends TestCase
         $this->assertSame('cluster-top', $payload[0]['id']);
         $this->assertFalse($payload[0]['is_labeled']);
         $this->assertSame('http://example.test/media/99.jpg', $payload[0]['representatives'][0]['thumb_url']);
+        $this->assertFalse($payload[0]['representatives'][0]['is_pinned']);
+    }
+
+    public function testMapTopUnlabeledClustersFallsBackToClusterRepresentativeMetadata(): void
+    {
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-top',
+                'label' => '',
+                'identity_count' => 2,
+                'is_user_confirmed' => 0,
+                'representative_id' => 'identity-99',
+                'is_pinned' => 1,
+            ],
+        ];
+
+        $members = [
+            'cluster-top' => [
+                [
+                    'identity_uuid' => 'identity-99',
+                    'attachment_id' => 99,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters($clusters, $members, 'tenant-1');
+
+        $this->assertTrue($payload[0]['representatives'][0]['is_pinned']);
     }
 }

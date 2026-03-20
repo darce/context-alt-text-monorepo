@@ -8,6 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from recognition.domain.services.retention_policy_service import RetentionPolicyService
 from recognition.interface_adapters.http import dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.tests.api.conftest import FakeSession
@@ -129,5 +130,5 @@ async def test_retention_policy_service_factory_uses_provided_optional_session()
 
     service = await dependencies.get_retention_policy_service(session=session)
 
-    assert service.__class__.__name__ == "RetentionPolicyService"
-    assert getattr(service, "_session") is session
+    assert isinstance(service, RetentionPolicyService)
+    assert getattr(service, "_session", None) is session

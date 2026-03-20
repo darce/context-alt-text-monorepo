@@ -15,9 +15,9 @@ from sqlalchemy import select
 from db.models import AuditEvent, IdentityCluster, IdentityClusterRepresentative, MediaIdentity, Tenant
 from db.models.jobs import IdentityClusteringJob, IdentityScanJob
 from recognition.domain.job import Job, JobStatus, JobType, ProjectionStatus
+from recognition.domain.services.retention_policy_service import RetentionPolicyService
 from recognition.interface_adapters.http import dependencies
 from recognition.interface_adapters.http import router as recognition_router
-from recognition.domain.services.retention_policy_service import RetentionPolicyService
 from recognition.tests.api.conftest import FakeSession
 
 
@@ -510,7 +510,9 @@ async def test_apply_disposal_after_acknowledgement_is_noop_for_retain_all(db_se
 
 
 @pytest.mark.asyncio
-async def test_apply_disposal_after_acknowledgement_succeeds_with_zero_matching_rows(db_session, tenant: Tenant) -> None:
+async def test_apply_disposal_after_acknowledgement_succeeds_with_zero_matching_rows(
+    db_session, tenant: Tenant
+) -> None:
     tenant.retention_mode = "dispose_after_ack"
     await db_session.commit()
 

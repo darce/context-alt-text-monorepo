@@ -10,6 +10,7 @@ export {
   assignOutlierToCluster,
   reassignClusterIdentity,
   revertMergeCluster,
+  pinRepresentative,
   splitCluster,
   createClusterForIdentity,
   dismissCluster,

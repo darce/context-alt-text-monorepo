@@ -90,8 +90,8 @@ class SplitTopologyCommandDrainTest extends TestCase
         $this->assertCount(1, $repository->dispatchResults);
         $this->assertSame('remote-command-1', $repository->dispatchResults[0]['command_id']);
         $this->assertCount(1, $repository->reconciled);
-        $this->assertSame([['tenant-test', 'cluster-new-1', '', 1, 44, 'thumb-2.jpg'], ['tenant-test', 'cluster-new-2', '', 1, 44, 'thumb-3.jpg']], $clustersRepository->upsertedProjectionClusters);
-        $this->assertSame([['cluster-source', 1, 44, 'thumb-1.jpg']], $clustersRepository->updatedProjectionClusters);
+        $this->assertSame([['tenant-test', 'cluster-new-1', '', 1, 44, 'thumb-2.jpg', null, false], ['tenant-test', 'cluster-new-2', '', 1, 44, 'thumb-3.jpg', null, false]], $clustersRepository->upsertedProjectionClusters);
+        $this->assertSame([['cluster-source', 1, 44, 'thumb-1.jpg', null, false]], $clustersRepository->updatedProjectionClusters);
         $this->assertSame([['identity-2', 'cluster-new-1', 44], ['identity-3', 'cluster-new-2', 44]], $membersRepository->projectionAssignments);
         $this->assertSame([['tenant-test', 44]], $syncStateRepository->snapshotUpserts);
         $this->assertSame([], $projector->projectCalls);
@@ -158,8 +158,8 @@ class SplitTopologyCommandDrainTest extends TestCase
 
         $this->assertCount(1, $repository->dispatchResults);
         $this->assertCount(1, $repository->reconciled);
-        $this->assertSame([['tenant-test', 'cluster-new-1', '', 2, 55, 'thumb-2.jpg']], $clustersRepository->upsertedProjectionClusters);
-        $this->assertSame([['cluster-source', 1, 55, 'thumb-1.jpg']], $clustersRepository->updatedProjectionClusters);
+        $this->assertSame([['tenant-test', 'cluster-new-1', '', 2, 55, 'thumb-2.jpg', null, false]], $clustersRepository->upsertedProjectionClusters);
+        $this->assertSame([['cluster-source', 1, 55, 'thumb-1.jpg', null, false]], $clustersRepository->updatedProjectionClusters);
         $this->assertSame([['identity-2', 'cluster-new-1', 55], ['identity-3', 'cluster-new-1', 55]], $membersRepository->projectionAssignments);
         $this->assertSame([], $projector->projectCalls);
         $this->assertSame([], $snapshotClient->fetchCalls);
@@ -394,8 +394,8 @@ class SplitTopologyCommandDrainTest extends TestCase
         $this->assertSame([], $transport->requests);
         $this->assertCount(1, $repository->reconciled);
         $this->assertSame([['tenant-test', ['cluster-new-1', 'cluster-source']]], $snapshotClient->targetedFetchCalls);
-        $this->assertSame([['tenant-test', 'cluster-new-1', '', 2, 78, 'thumb-2.jpg']], $clustersRepository->upsertedProjectionClusters);
-        $this->assertSame([['cluster-source', 1, 78, 'thumb-1.jpg']], $clustersRepository->updatedProjectionClusters);
+        $this->assertSame([['tenant-test', 'cluster-new-1', '', 2, 78, 'thumb-2.jpg', null, false]], $clustersRepository->upsertedProjectionClusters);
+        $this->assertSame([['cluster-source', 1, 78, 'thumb-1.jpg', null, false]], $clustersRepository->updatedProjectionClusters);
     }
 
     public function testDrainUsesTargetedSnapshotBeforeFullSnapshotRepairFallback(): void
@@ -872,6 +872,11 @@ class SnapshotProjectorFake implements SnapshotProjectorInterface
     {
         $this->projectCalls[] = [$tenant_id, $snapshot];
     }
+
+    public function project_delta(string $tenant_id, array $delta): void
+    {
+        $this->projectCalls[] = [$tenant_id, $delta];
+    }
 }
 
 class SplitClustersRepositoryFake extends NullClustersRepository
@@ -884,9 +889,9 @@ class SplitClustersRepositoryFake extends NullClustersRepository
             'label' => 'Source',
         ],
     ];
-    /** @var array<int,array{0:string,1:string,2:string,3:int,4:int,5:?string}> */
+    /** @var array<int,array{0:string,1:string,2:string,3:int,4:int,5:?string,6:?string,7:bool}> */
     public array $upsertedProjectionClusters = [];
-    /** @var array<int,array{0:string,1:int,2:int,3:?string}> */
+    /** @var array<int,array{0:string,1:int,2:int,3:?string,4:?string,5:bool}> */
     public array $updatedProjectionClusters = [];
 
     public function find_by_uuid(string $cluster_uuid): ?array
@@ -894,15 +899,15 @@ class SplitClustersRepositoryFake extends NullClustersRepository
         return $this->clustersByUuid[$cluster_uuid] ?? null;
     }
 
-    public function upsert_projection_cluster(string $tenant_id, string $cluster_uuid, string $label, int $identity_count, int $snapshot_version, ?string $representative_thumb_path = null): int
+    public function upsert_projection_cluster(string $tenant_id, string $cluster_uuid, string $label, int $identity_count, int $snapshot_version, ?string $representative_thumb_path = null, ?string $representative_id = null, bool $is_pinned = false): int
     {
-        $this->upsertedProjectionClusters[] = [$tenant_id, $cluster_uuid, $label, $identity_count, $snapshot_version, $representative_thumb_path];
+        $this->upsertedProjectionClusters[] = [$tenant_id, $cluster_uuid, $label, $identity_count, $snapshot_version, $representative_thumb_path, $representative_id, $is_pinned];
         return 1;
     }
 
-    public function update_projection_cluster(string $cluster_uuid, int $identity_count, int $snapshot_version, ?string $representative_thumb_path = null): int
+    public function update_projection_cluster(string $cluster_uuid, int $identity_count, int $snapshot_version, ?string $representative_thumb_path = null, ?string $representative_id = null, bool $is_pinned = false): int
     {
-        $this->updatedProjectionClusters[] = [$cluster_uuid, $identity_count, $snapshot_version, $representative_thumb_path];
+        $this->updatedProjectionClusters[] = [$cluster_uuid, $identity_count, $snapshot_version, $representative_thumb_path, $representative_id, $is_pinned];
         return 1;
     }
 }

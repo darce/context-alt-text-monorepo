@@ -38,6 +38,7 @@ class MemberResponseMapperTest extends TestCase
         $this->assertSame('identity-50', $payload[0]['identity_id']);
         $this->assertSame('http://example.test/media/50.jpg', $payload[0]['thumb_url']);
         $this->assertSame('http://example.test/media/50.jpg', $payload[0]['media_url']);
+        $this->assertFalse($payload[0]['is_pinned']);
     }
 
     public function testMapMediaIdentitiesGroupsByMediaId(): void
@@ -47,6 +48,7 @@ class MemberResponseMapperTest extends TestCase
                 'identity_uuid' => 'identity-1',
                 'attachment_id' => 101,
                 'bbox_json' => '{"pixels":{"x":1,"y":1,"width":1,"height":1}}',
+                'is_pinned' => 'true',
             ],
         ];
 
@@ -54,5 +56,24 @@ class MemberResponseMapperTest extends TestCase
 
         $this->assertArrayHasKey('101', $payload);
         $this->assertSame('identity-1', $payload['101'][0]['identity_id']);
+        $this->assertTrue($payload['101'][0]['is_pinned']);
+    }
+
+    public function testMapMediaIdentitiesFallsBackToClusterRepresentativeMetadata(): void
+    {
+        $rows = [
+            [
+                'identity_uuid' => 'identity-2',
+                'attachment_id' => 202,
+                'bbox_json' => '{"pixels":{"x":1,"y":1,"width":1,"height":1}}',
+                'representative_id' => 'identity-2',
+                'is_pinned' => 1,
+            ],
+        ];
+
+        $payload = $this->mapper->map_media_identities($rows);
+
+        $this->assertSame('identity-2', $payload['202'][0]['representative_id']);
+        $this->assertTrue($payload['202'][0]['is_pinned']);
     }
 }

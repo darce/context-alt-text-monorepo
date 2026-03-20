@@ -148,6 +148,28 @@ class SnapshotClientTest extends TestCase
         $this->assertTrue($result['empty']);
     }
 
+    public function testFetchDeltaUsesDeltaEndpointWithSinceVersion(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'snapshot_version' => 44,
+                'clusters' => [],
+                'members' => [],
+            ]),
+        ]);
+
+        $result = $this->client->fetch_delta('tenant-delta', 44);
+
+        $this->assertIsArray($result);
+        $this->assertSame(44, $result['snapshot_version']);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('/recognition/tenants/tenant-delta/clusters/delta', $calls[0]['url']);
+        $this->assertStringContainsString('since_version=44', $calls[0]['url']);
+    }
+
     public function testAcknowledgeProjectionPostsJobScopedPayload(): void
     {
         $this->queueHttpResponse([

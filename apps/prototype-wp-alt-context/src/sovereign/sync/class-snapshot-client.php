@@ -77,6 +77,48 @@ class SnapshotClient implements SnapshotClientInterface {
 		return $data;
 	}
 
+	public function fetch_delta( string $tenant_id, int $since_version ): array|WP_Error {
+		$normalized_tenant_id = $this->normalize_tenant_id_for_path( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			return new WP_Error( 'invalid_tenant_id', 'Tenant ID is required for delta fetch.', array( 'status' => 400 ) );
+		}
+
+		if ( $since_version < 0 ) {
+			return new WP_Error( 'invalid_since_version', 'Delta fetch requires a non-negative since_version.', array( 'status' => 400 ) );
+		}
+
+		$path = sprintf( '/recognition/tenants/%s/clusters/delta', rawurlencode( $normalized_tenant_id ) );
+		$response = $this->transport->request(
+			'GET',
+			$path,
+			array(),
+			array(
+				'since_version' => $since_version,
+			)
+		);
+		if ( ! ( $response instanceof WP_REST_Response ) ) {
+			return $response;
+		}
+
+		if ( $response->get_status() >= 400 ) {
+			return new WP_Error(
+				'snapshot_delta_fetch_failed',
+				'Delta endpoint returned an error status.',
+				array(
+					'status'   => $response->get_status(),
+					'response' => $response->get_data(),
+				)
+			);
+		}
+
+		$data = $response->get_data();
+		if ( ! is_array( $data ) ) {
+			return new WP_Error( 'invalid_snapshot_delta_payload', 'Delta payload must be an object.', array( 'status' => 502 ) );
+		}
+
+		return $data;
+	}
+
 	/**
 	 * @param string[] $cluster_ids
 	 */

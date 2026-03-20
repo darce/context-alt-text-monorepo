@@ -139,6 +139,7 @@ export const useClusterMutations = ({
     createClusterForIdentity: actionMutations.createClusterForIdentity,
     split: actionMutations.split,
     rejectSuggestion: actionMutations.rejectSuggestion,
+    pinRepresentative: actionMutations.pinRepresentative,
 
     // Loading states
     isPending,
@@ -150,5 +151,6 @@ export const useClusterMutations = ({
     isCreatingCluster: actionMutations.isCreatingCluster,
     isSplitting: actionMutations.isSplitting,
     isRejectingSuggestion: actionMutations.isRejectingSuggestion,
+    isPinningRepresentative: actionMutations.isPinningRepresentative,
   };
 };

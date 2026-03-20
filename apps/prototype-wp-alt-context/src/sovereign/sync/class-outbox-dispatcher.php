@@ -65,6 +65,9 @@ class OutboxDispatcher {
 		if ( isset( self::TOPOLOGY_ROUTES[ $operation_type ] ) ) {
 			return $this->dispatch_topology_operation( $operation );
 		}
+		if ( 'representative_pin_updated' === $operation_type ) {
+			return $this->dispatch_representative_pin_operation( $operation );
+		}
 
 		$results = $this->dispatch_batch( array( $operation ) );
 		return $results[0] ?? array(
@@ -94,6 +97,10 @@ class OutboxDispatcher {
 			$operation_type = $this->normalize_text( $operation['operation_type'] ?? '', '' );
 			if ( isset( self::TOPOLOGY_ROUTES[ $operation_type ] ) ) {
 				$results[ $index ] = $this->dispatch_topology_operation( $operation );
+				continue;
+			}
+			if ( 'representative_pin_updated' === $operation_type ) {
+				$results[ $index ] = $this->dispatch_representative_pin_operation( $operation );
 				continue;
 			}
 
@@ -280,6 +287,60 @@ class OutboxDispatcher {
 			'retryable' => $retryable,
 			'http_status' => $status,
 		);
+	}
+
+	/**
+	 * @param array<string,mixed> $operation
+	 * @return array<string,mixed>
+	 */
+	private function dispatch_representative_pin_operation( array $operation ): array {
+		$payload = is_array( $operation['payload'] ?? null ) ? $operation['payload'] : array();
+		$cluster_id = $this->normalize_text( $payload['cluster_uuid'] ?? $operation['entity_key'] ?? '', '' );
+		$representative_id = $this->normalize_text( $payload['representative_id'] ?? '', '' );
+		$tenant_id = $this->transport->tenant_id();
+
+		if ( '' === trim( $tenant_id ) || '' === $cluster_id || '' === $representative_id ) {
+			return array(
+				'status' => 'failed',
+				'error_code' => 'invalid_payload',
+				'error_message' => 'Representative pin operation is missing required fields.',
+				'retryable' => false,
+			);
+		}
+
+		$response = $this->transport->request(
+			'PATCH',
+			sprintf(
+				'/recognition/clusters/%s/representatives/%s/pin',
+				rawurlencode( $cluster_id ),
+				rawurlencode( $representative_id )
+			),
+			array(
+				'tenant_id' => $tenant_id,
+				'is_pinned' => (bool) ( $payload['is_pinned'] ?? false ),
+			),
+			array()
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return array(
+				'status' => 'failed',
+				'error_code' => $this->normalize_text( $response->get_error_code(), 'transport_error' ),
+				'error_message' => $this->normalize_text( $response->get_error_message(), 'Remote transport failed.' ),
+				'retryable' => true,
+			);
+		}
+
+		if ( ! ( $response instanceof WP_REST_Response ) ) {
+			return array(
+				'status' => 'failed',
+				'error_code' => 'unexpected_response',
+				'error_message' => 'Remote transport returned an unexpected response type.',
+				'retryable' => true,
+			);
+		}
+
+		return $this->normalize_single_response( $response );
 	}
 
 	/**

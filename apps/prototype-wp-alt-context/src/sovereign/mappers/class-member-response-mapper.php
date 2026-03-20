@@ -57,9 +57,15 @@ class MemberResponseMapper {
 	 */
 	private function map_cluster_identity( array $member_row ): array {
 		$media_id = absint( $member_row['attachment_id'] ?? $member_row['media_id'] ?? 0 );
+		$representative_id = trim( (string) ( $member_row['representative_id'] ?? '' ) );
+		$identity_id = trim( (string) ( $member_row['identity_uuid'] ?? '' ) );
+		$is_pinned = $this->normalize_boolean_value( $member_row['is_pinned'] ?? false );
+		if ( ! $is_pinned && '' !== $representative_id && $representative_id === $identity_id ) {
+			$is_pinned = true;
+		}
 
 		return array(
-			'identity_id' => trim( (string) ( $member_row['identity_uuid'] ?? '' ) ),
+			'identity_id' => $identity_id,
 			'media_id' => $media_id,
 			'similarity' => $this->normalize_similarity_value( $member_row ),
 			'confidence' => $this->normalize_confidence_value( $member_row ),
@@ -70,9 +76,9 @@ class MemberResponseMapper {
 			'cluster_id' => $this->normalize_cluster_id( $member_row ),
 			'cluster_label' => $this->normalize_cluster_label( $member_row ),
 			'is_auto_label' => false,
-			'is_pinned' => false,
+			'is_pinned' => $is_pinned,
 			'detected_at' => null,
-			'representative_id' => null,
+			'representative_id' => '' !== $representative_id ? $representative_id : null,
 			'debug_metrics' => null,
 		);
 	}

@@ -224,6 +224,41 @@ class OutboxDispatcherTest extends TestCase
         $this->assertStringContainsString('"idempotency_key":"idem-bind"', $stateBody);
     }
 
+    public function testDispatchRoutesRepresentativePinOperationsToRecognitionEndpoint(): void
+    {
+        $this->setOption('acx_recognition_url', 'http://localhost:8000');
+        $this->queueHttpResponse([
+            'response' => ['code' => 204, 'message' => 'No Content'],
+            'body' => '',
+        ]);
+
+        $dispatcher = new OutboxDispatcher();
+        $result = $dispatcher->dispatch([
+            'operation_type' => 'representative_pin_updated',
+            'entity_type' => 'cluster',
+            'entity_key' => 'cluster-source',
+            'idempotency_key' => 'idem-pin',
+            'expected_base_version' => 27,
+            'local_revision' => 5,
+            'payload' => [
+                'cluster_uuid' => 'cluster-source',
+                'representative_id' => 'identity-77',
+                'is_pinned' => true,
+            ],
+        ]);
+
+        $this->assertSame('acknowledged', $result['status']);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertSame('PATCH', $calls[0]['method']);
+        $this->assertStringContainsString('/recognition/clusters/cluster-source/representatives/identity-77/pin', $calls[0]['url']);
+
+        $body = (string) ($calls[0]['body'] ?? '');
+        $this->assertStringContainsString('"tenant_id"', $body);
+        $this->assertStringContainsString('"is_pinned":true', $body);
+    }
+
     public function testDispatchBatchKeepsValidStateOperationsWhenAnotherStatePayloadIsInvalid(): void
     {
         $this->setOption('acx_recognition_url', 'http://localhost:8000');

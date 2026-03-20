@@ -200,6 +200,242 @@ class SnapshotProjectorTest extends TestCase
 
         $this->assertSame([[2, 'tenant-member-conflicts']], $hookCalls);
     }
+
+    public function testProjectDeltaCommitsWhenPayloadHasNoChangedRows(): void
+    {
+        global $wpdb;
+
+        $syncRepo = new SnapshotProjectorSyncStateSpy();
+        $projector = new SnapshotProjector(
+            new SnapshotProjectorClustersSpy(),
+            new SnapshotProjectorMembersSpy(),
+            $syncRepo
+        );
+
+        $projector->project_delta('tenant-delta', [
+            'snapshot_version' => 21,
+            'clusters' => [],
+            'members' => [],
+        ]);
+
+        $this->assertContains('START TRANSACTION', $wpdb->queries);
+        $this->assertContains('COMMIT', $wpdb->queries);
+        $this->assertNotContains('ROLLBACK', $wpdb->queries);
+        $this->assertSame(21, $syncRepo->snapshotVersion);
+        $this->assertSame('tenant-delta', $syncRepo->refreshedTenantId);
+    }
+
+    public function testProjectDeltaThrowsWhenChangedRowsNeedReplacementSetProjection(): void
+    {
+        global $wpdb;
+
+        $clustersRepo = new SnapshotProjectorClustersSpy([
+            'cluster-stable' => [
+                'cluster_uuid' => 'cluster-stable',
+                'tenant_id' => 'tenant-delta',
+                'label' => 'Stable',
+                'identity_count' => 1,
+                'snapshot_version' => 20,
+            ],
+            'cluster-changed' => [
+                'cluster_uuid' => 'cluster-changed',
+                'tenant_id' => 'tenant-delta',
+                'label' => 'Old label',
+                'identity_count' => 1,
+                'snapshot_version' => 20,
+            ],
+        ]);
+        $membersRepo = new SnapshotProjectorMembersSpy([
+            'cluster-stable' => [
+                [
+                    'identity_uuid' => 'identity-stable',
+                    'cluster_uuid' => 'cluster-stable',
+                    'attachment_id' => 101,
+                    'thumb_path' => 'acx://identity/identity-stable/attachment/101',
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4},"normalized":{"x":0.1,"y":0.2,"width":0.3,"height":0.4},"coordinate_space":"original_image"}',
+                ],
+            ],
+            'cluster-changed' => [
+                [
+                    'identity_uuid' => 'identity-old',
+                    'cluster_uuid' => 'cluster-changed',
+                    'attachment_id' => 202,
+                    'thumb_path' => 'acx://identity/identity-old/attachment/202',
+                    'bbox_json' => '{"pixels":{"x":5,"y":6,"width":7,"height":8},"normalized":{"x":0.5,"y":0.6,"width":0.7,"height":0.8},"coordinate_space":"original_image"}',
+                ],
+            ],
+        ]);
+        $syncRepo = new SnapshotProjectorSyncStateSpy();
+        $projector = new SnapshotProjector(
+            $clustersRepo,
+            $membersRepo,
+            $syncRepo
+        );
+
+        $projector->project_delta('tenant-delta', [
+            'snapshot_version' => 21,
+            'clusters' => [
+                [
+                    'cluster_uuid' => 'cluster-changed',
+                    'label' => 'New label',
+                    'identity_count' => 1,
+                    'representative_thumb_path' => 'acx://cluster/cluster-changed/media/303',
+                ],
+            ],
+            'members' => [
+                [
+                    'identity_uuid' => 'identity-new',
+                    'cluster_uuid' => 'cluster-changed',
+                    'attachment_id' => 303,
+                    'thumb_path' => 'acx://identity/identity-new/attachment/303',
+                    'similarity' => 0.97,
+                    'bbox' => [
+                        'x' => 9,
+                        'y' => 10,
+                        'width' => 11,
+                        'height' => 12,
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->assertContains('START TRANSACTION', $wpdb->queries);
+        $this->assertContains('COMMIT', $wpdb->queries);
+        $this->assertSame(21, $syncRepo->snapshotVersion);
+        $this->assertSame('tenant-delta', $syncRepo->refreshedTenantId);
+
+        $this->assertCount(2, $clustersRepo->mergedClusters);
+        $this->assertSame(['cluster-stable', 'cluster-changed'], array_column($clustersRepo->mergedClusters, 'cluster_uuid'));
+        $this->assertSame('New label', $clustersRepo->mergedClusters[1]['label']);
+
+        $this->assertCount(2, $membersRepo->mergedMembers);
+        $this->assertSame(['identity-stable', 'identity-new'], array_column($membersRepo->mergedMembers, 'identity_uuid'));
+        $this->assertArrayHasKey('bbox', $membersRepo->mergedMembers[0]);
+        $this->assertSame(1, $membersRepo->mergedMembers[0]['bbox']['pixels']['x']);
+        $this->assertSame('cluster-changed', $membersRepo->mergedMembers[1]['cluster_uuid']);
+    }
+
+    public function testProjectDeltaPaginatesExistingProjectionRows(): void
+    {
+        global $wpdb;
+
+        $clustersRepo = new SnapshotProjectorClustersSpy([
+            'cluster-page-1' => [
+                'cluster_uuid' => 'cluster-page-1',
+                'tenant_id' => 'tenant-delta',
+                'label' => 'Page 1',
+                'identity_count' => 1,
+                'snapshot_version' => 20,
+            ],
+            'cluster-page-2' => [
+                'cluster_uuid' => 'cluster-page-2',
+                'tenant_id' => 'tenant-delta',
+                'label' => 'Page 2',
+                'identity_count' => 1,
+                'snapshot_version' => 20,
+            ],
+            'cluster-changed' => [
+                'cluster_uuid' => 'cluster-changed',
+                'tenant_id' => 'tenant-delta',
+                'label' => 'Old label',
+                'identity_count' => 1,
+                'snapshot_version' => 20,
+            ],
+        ]);
+        $clustersRepo->tenantPageSize = 2;
+
+        $membersRepo = new SnapshotProjectorMembersSpy([
+            'cluster-page-1' => [
+                [
+                    'identity_uuid' => 'identity-page-1',
+                    'cluster_uuid' => 'cluster-page-1',
+                    'attachment_id' => 101,
+                    'thumb_path' => 'acx://identity/identity-page-1/attachment/101',
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4},"normalized":{"x":0.1,"y":0.2,"width":0.3,"height":0.4},"coordinate_space":"original_image"}',
+                ],
+            ],
+            'cluster-page-2' => [
+                [
+                    'identity_uuid' => 'identity-page-2',
+                    'cluster_uuid' => 'cluster-page-2',
+                    'attachment_id' => 202,
+                    'thumb_path' => 'acx://identity/identity-page-2/attachment/202',
+                    'bbox_json' => '{"pixels":{"x":5,"y":6,"width":7,"height":8},"normalized":{"x":0.5,"y":0.6,"width":0.7,"height":0.8},"coordinate_space":"original_image"}',
+                ],
+            ],
+            'cluster-changed' => [
+                [
+                    'identity_uuid' => 'identity-old',
+                    'cluster_uuid' => 'cluster-changed',
+                    'attachment_id' => 303,
+                    'thumb_path' => 'acx://identity/identity-old/attachment/303',
+                    'bbox_json' => '{"pixels":{"x":9,"y":10,"width":11,"height":12},"normalized":{"x":0.9,"y":1.0,"width":1.1,"height":1.2},"coordinate_space":"original_image"}',
+                ],
+                [
+                    'identity_uuid' => 'identity-new',
+                    'cluster_uuid' => 'cluster-changed',
+                    'attachment_id' => 404,
+                    'thumb_path' => 'acx://identity/identity-new/attachment/404',
+                    'bbox_json' => '{"pixels":{"x":13,"y":14,"width":15,"height":16},"normalized":{"x":1.3,"y":1.4,"width":1.5,"height":1.6},"coordinate_space":"original_image"}',
+                ],
+            ],
+        ]);
+        $membersRepo->memberPageSize = 1;
+
+        $syncRepo = new SnapshotProjectorSyncStateSpy();
+        $projector = new SnapshotProjector(
+            $clustersRepo,
+            $membersRepo,
+            $syncRepo
+        );
+
+        $projector->project_delta('tenant-delta', [
+            'snapshot_version' => 22,
+            'clusters' => [
+                [
+                    'cluster_uuid' => 'cluster-changed',
+                    'label' => 'New label',
+                    'identity_count' => 2,
+                    'representative_thumb_path' => 'acx://cluster/cluster-changed/media/404',
+                ],
+            ],
+            'members' => [
+                [
+                    'identity_uuid' => 'identity-old',
+                    'cluster_uuid' => 'cluster-changed',
+                    'attachment_id' => 303,
+                    'thumb_path' => 'acx://identity/identity-old/attachment/303',
+                    'similarity' => 0.91,
+                    'bbox' => [
+                        'x' => 9,
+                        'y' => 10,
+                        'width' => 11,
+                        'height' => 12,
+                    ],
+                ],
+                [
+                    'identity_uuid' => 'identity-new',
+                    'cluster_uuid' => 'cluster-changed',
+                    'attachment_id' => 404,
+                    'thumb_path' => 'acx://identity/identity-new/attachment/404',
+                    'similarity' => 0.92,
+                    'bbox' => [
+                        'x' => 13,
+                        'y' => 14,
+                        'width' => 15,
+                        'height' => 16,
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->assertContains('COMMIT', $wpdb->queries);
+        $this->assertSame(['cluster-page-1', 'cluster-page-2', 'cluster-changed'], array_column($clustersRepo->mergedClusters, 'cluster_uuid'));
+        $this->assertSame(
+            ['identity-page-1', 'identity-page-2', 'identity-old', 'identity-new'],
+            array_column($membersRepo->mergedMembers, 'identity_uuid')
+        );
+    }
 }
 
 class SnapshotProjectorClustersSpy extends NullClustersRepository
@@ -207,7 +443,9 @@ class SnapshotProjectorClustersSpy extends NullClustersRepository
     public string $tenantId = '';
     public int $snapshotVersion = 0;
     public array $clusters = [];
+    public array $mergedClusters = [];
     public bool $shouldThrow = false;
+    public int $tenantPageSize = 0;
     /** @var array<string,array<string,mixed>> */
     private array $curatedClusters;
 
@@ -227,7 +465,18 @@ class SnapshotProjectorClustersSpy extends NullClustersRepository
 
         $this->tenantId = $tenant_id;
         $this->clusters = $clusters;
+        $this->mergedClusters = $clusters;
         $this->snapshotVersion = $snapshot_version;
+    }
+
+    public function list_for_tenant(string $tenant_id, int $limit = 50, int $offset = 0, array $filters = array()): array
+    {
+        $clusters = array_values($this->curatedClusters);
+        if ($this->tenantPageSize > 0) {
+            return array_slice($clusters, $offset, min($limit, $this->tenantPageSize));
+        }
+
+        return $clusters;
     }
 
     public function get_curated_clusters_for_tenant(string $tenant_id): array
@@ -239,10 +488,42 @@ class SnapshotProjectorClustersSpy extends NullClustersRepository
 class SnapshotProjectorMembersSpy extends NullIdentityMembersRepository
 {
     public array $members = [];
+    public array $mergedMembers = [];
+    public int $memberPageSize = 0;
+    /** @var array<string,array<int,array<string,mixed>>> */
+    private array $membersByCluster;
+
+    /**
+     * @param array<string,array<int,array<string,mixed>>> $membersByCluster
+     */
+    public function __construct(array $membersByCluster = [])
+    {
+        $this->membersByCluster = $membersByCluster;
+    }
 
     public function merge_snapshot_for_tenant(string $tenant_id, array $members, int $snapshot_version): void
     {
         $this->members = $members;
+        $this->mergedMembers = $members;
+    }
+
+    public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+    {
+        $result = [];
+        foreach ($cluster_uuids as $clusterUuid) {
+            $result[$clusterUuid] = $this->membersByCluster[$clusterUuid] ?? [];
+        }
+        return $result;
+    }
+
+    public function list_for_cluster(string $cluster_uuid, int $limit = 500, int $offset = 0, ?string $tenant_id = null): array
+    {
+        $members = $this->membersByCluster[$cluster_uuid] ?? [];
+        if ($this->memberPageSize > 0) {
+            return array_slice($members, $offset, min($limit, $this->memberPageSize));
+        }
+
+        return array_slice($members, $offset, $limit);
     }
 }
 

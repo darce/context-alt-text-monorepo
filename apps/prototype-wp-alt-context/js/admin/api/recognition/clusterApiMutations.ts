@@ -90,6 +90,22 @@ export const assignOutlierToCluster = async (
   });
 };
 
+export const pinRepresentative = async (
+  clusterId: string,
+  representativeId: string,
+  isPinned = true,
+  signal?: AbortSignal,
+): Promise<void> => {
+  const base = getEndpoint('recognitionClusters');
+  const url = `${stripTrailingSlash(base)}/${clusterId}/representatives/${representativeId}/pin`;
+  await fetchApi(url, {
+    method: 'PATCH',
+    body: { is_pinned: isPinned },
+    restNonce: getConfig().nonce,
+    signal,
+  });
+};
+
 export const splitCluster = async (
   clusterId: string,
   request: SplitClusterRequest = {},

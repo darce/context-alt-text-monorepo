@@ -38,8 +38,11 @@ export type {
   // Suggestion types
   PendingSuggestion,
   PendingSuggestionsResponse,
+  PendingNameSuggestion,
   PendingMergeSuggestion,
   PendingMergeSuggestionsResponse,
+  BulkAcceptRequest,
+  BulkAcceptResponse,
   SuggestionActionResponse,
   SyncHealth,
   SyncStatusResponse,
@@ -67,7 +70,14 @@ export type {
 export type { ConflictListParams, FailedOutboxListParams, OutboxListParams } from './conflictApi';
 
 // Scan operations
-export { scanFaces, scanFacesBatched, fetchScanStatus, cancelScanJob, clusterFaces, acknowledgeProjection } from './scanApi';
+export {
+  scanFaces,
+  scanFacesBatched,
+  fetchScanStatus,
+  cancelScanJob,
+  clusterFaces,
+  acknowledgeProjection,
+} from './scanApi';
 
 // Cluster operations
 export {
@@ -78,6 +88,7 @@ export {
   getRecognitionCluster,
   reassignClusterIdentity,
   revertMergeCluster,
+  pinRepresentative,
   splitCluster,
   createClusterForIdentity,
   dismissCluster,

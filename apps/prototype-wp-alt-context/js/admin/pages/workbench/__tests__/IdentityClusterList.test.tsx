@@ -88,6 +88,7 @@ vi.mock('../../../api/recognition', () => ({
   revertMergeCluster: vi.fn(),
   reassignClusterIdentity: vi.fn(),
   splitCluster: vi.fn(),
+  pinRepresentative: vi.fn(),
 }));
 
 // Track active query client for cleanup
@@ -115,10 +116,12 @@ const setMediaIdentitiesCache = (client: QueryClient, data: MediaIdentitiesRespo
 
 const baseIdentity = {
   identity_id: 'identity-1',
+  representative_id: 'rep-1',
   media_id: 1,
   cluster_id: 'cluster-1',
   cluster_label: 'Cluster 1',
   is_auto_label: false,
+  is_pinned: false,
   bbox: { x: 0, y: 0, width: 10, height: 10 },
   confidence: 0.9,
   similarity: 0.9,
@@ -233,6 +236,64 @@ describe('IdentityClusterList', () => {
     await renderWithClient(<IdentityClusterList identities={[]} />);
     expect(screen.getByText(/No identities detected yet/i)).toBeInTheDocument();
     expect(MockEventSource.instances).toBe(0);
+  });
+
+  it('pins and unpins the representative from the cluster preview', async () => {
+    const pinRepresentativeMock = vi.mocked(api.pinRepresentative);
+    pinRepresentativeMock.mockResolvedValue(undefined);
+
+    const { client, user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
+
+    const cacheData: MediaIdentitiesResponse = {
+      identities_by_media: {
+        '1': [
+          {
+            ...baseIdentity,
+          },
+        ],
+      },
+    };
+    await actFlow(async () => {
+      setMediaIdentitiesCache(client, cacheData);
+    });
+
+    const pinButton = await screen.findByRole('button', { name: /pin representative/i });
+    await actFlow(async () => {
+      await user.click(pinButton);
+    });
+
+    await waitFor(() => {
+      expect(pinRepresentativeMock).toHaveBeenCalledWith('cluster-1', 'rep-1', true, undefined);
+    });
+  });
+
+  it('shows an unpin action when the representative is already pinned', async () => {
+    const pinRepresentativeMock = vi.mocked(api.pinRepresentative);
+    pinRepresentativeMock.mockResolvedValue(undefined);
+    const pinnedIdentity = {
+      ...baseIdentity,
+      is_pinned: true,
+    };
+
+    const { client, user } = await renderWithClient(<IdentityClusterList identities={[pinnedIdentity]} />);
+
+    const cacheData: MediaIdentitiesResponse = {
+      identities_by_media: {
+        '1': [pinnedIdentity],
+      },
+    };
+    await actFlow(async () => {
+      setMediaIdentitiesCache(client, cacheData);
+    });
+
+    const unpinButton = await screen.findByRole('button', { name: /unpin representative/i });
+    await actFlow(async () => {
+      await user.click(unpinButton);
+    });
+
+    await waitFor(() => {
+      expect(pinRepresentativeMock).toHaveBeenCalledWith('cluster-1', 'rep-1', false, undefined);
+    });
   });
 
   it('allows renaming a manually labeled cluster', async () => {

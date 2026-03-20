@@ -173,7 +173,8 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 		// When tenant_id is provided, JOIN to clusters table for defense-in-depth
 		if ( null !== $tenant_id && '' !== trim( $tenant_id ) ) {
 			$sql = $this->prepare_query(
-				'SELECT m.* FROM %i m
+				'SELECT m.*, c.label AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
+				FROM %i m
 				INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 				WHERE m.cluster_uuid = %s AND c.tenant_id = %s
 				ORDER BY m.updated_at DESC LIMIT %d OFFSET %d',
@@ -189,9 +190,14 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 		} else {
 			// Legacy path: UUID-only filtering (relies on UUID uniqueness)
 			$sql = $this->prepare_query(
-				'SELECT * FROM %i WHERE cluster_uuid = %s ORDER BY updated_at DESC LIMIT %d OFFSET %d',
+				'SELECT m.*, c.label AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
+				FROM %i m
+				LEFT JOIN %i c ON c.cluster_uuid = m.cluster_uuid
+				WHERE m.cluster_uuid = %s
+				ORDER BY m.updated_at DESC LIMIT %d OFFSET %d',
 				array(
 					$this->members_table_name,
+					$this->clusters_table_name,
 					$normalized_cluster_uuid,
 					$normalized_limit,
 					$normalized_offset,
@@ -245,12 +251,13 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 		// Use ROW_NUMBER() window function to limit results per cluster
 		$sql = $this->prepare_query(
 			"SELECT * FROM (
-				SELECT *, ROW_NUMBER() OVER (PARTITION BY cluster_uuid ORDER BY updated_at DESC) as rn
-				FROM %i
-				WHERE cluster_uuid IN ($placeholders)
+				SELECT m.*, c.label AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned, ROW_NUMBER() OVER (PARTITION BY m.cluster_uuid ORDER BY m.updated_at DESC) as rn
+				FROM %i m
+				LEFT JOIN %i c ON c.cluster_uuid = m.cluster_uuid
+				WHERE m.cluster_uuid IN ($placeholders)
 			) subquery WHERE rn <= %d",
 			array_merge(
-				array( $this->members_table_name ),
+				array( $this->members_table_name, $this->clusters_table_name ),
 				$normalized_uuids,
 				array( $normalized_limit )
 			)
@@ -327,7 +334,7 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 
 		$placeholders = implode( ', ', array_fill( 0, count( $normalized_ids ), '%d' ) );
 		$sql          = $this->prepare_query(
-			"SELECT m.*, c.label AS cluster_label, c.curation_state, c.is_user_confirmed
+			"SELECT m.*, c.label AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
 			FROM %i m
 			INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 			WHERE c.tenant_id = %s AND m.attachment_id IN ($placeholders)

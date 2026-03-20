@@ -59,7 +59,9 @@ Timeout expectations:
       "curation_state": "confirmed",
       "is_user_confirmed": true,
       "identity_count": 5,
-      "representative_thumb_path": "acx://cluster/b43c2ab2-8d4f-42a8-9b2d-7f1d2e5a9b7a/media/101"
+      "representative_thumb_path": "acx://cluster/b43c2ab2-8d4f-42a8-9b2d-7f1d2e5a9b7a/media/101",
+      "representative_id": "0a7b8331-bb7f-40c1-8f24-8c7e2b2d7c4f",
+      "is_pinned": true
     }
   ],
   "members": [
@@ -90,6 +92,10 @@ Timeout expectations:
   - existing `wp_acx_clusters.is_user_confirmed = 1` rows are authoritative for `label`, `curation_state`, `is_user_confirmed`
   - non-authoritative fields (`identity_count`, `representative_thumb_path`, `snapshot_version`, `last_synced_at`) may refresh
 - Plugin stale-row cleanup deletes only non-curated rows absent from incoming snapshot.
+- Representative metadata semantics:
+  - `representative_id` identifies the currently selected backend representative for the cluster.
+  - `is_pinned=true` means that representative was explicitly user-selected upstream.
+  - Plugin projection should persist both values on the cluster row and reflect them in representative-facing UI and replay paths.
 
 ### Projection Conflict Detection
 

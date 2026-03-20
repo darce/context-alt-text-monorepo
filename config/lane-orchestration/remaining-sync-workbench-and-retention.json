@@ -1,0 +1,623 @@
+{
+  "task_ref": "remaining-sync-workbench-and-retention",
+  "task_plan_path": "docs/tasks/7.0/remaining-sync-workbench-and-retention-task-plan.md",
+  "default_done_definition": "Ready for orchestrator branch review with lane-local verification complete.",
+  "merge_order": [
+    "backend-domain",
+    "backend-http",
+    "wp-proxy",
+    "frontend"
+  ],
+  "heading_to_lane": {
+    "Phase 4: Workbench Information Architecture": "frontend",
+    "Phase 7: Lane Lifecycle Tooling": "backend-domain"
+  },
+  "plan_routing_hints": [
+    {
+      "heading": "Phase 0: Contracts and Scaffolding",
+      "contains": "ClusterRepositoryProtocol",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 0: Contracts and Scaffolding",
+      "contains": "SuggestionExtensionService",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 0: Contracts and Scaffolding",
+      "contains": "SnapshotClientInterface",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 0: Contracts and Scaffolding",
+      "contains": "SnapshotProjectorInterface",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 0: Contracts and Scaffolding",
+      "contains": "TypeScript type stubs",
+      "lane": "frontend"
+    },
+    {
+      "heading": "Phase 1: Delta Ingest and Drift Reconciliation",
+      "contains": "get_delta()",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 1: Delta Ingest and Drift Reconciliation",
+      "contains": "clusters router",
+      "lane": "backend-http"
+    },
+    {
+      "heading": "Phase 1: Delta Ingest and Drift Reconciliation",
+      "contains": "SnapshotClient",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 1: Delta Ingest and Drift Reconciliation",
+      "contains": "SnapshotProjector",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 1: Delta Ingest and Drift Reconciliation",
+      "contains": "SyncPullJob",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 1: Delta Ingest and Drift Reconciliation",
+      "contains": "ConflictResolutionService",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 1: Delta Ingest and Drift Reconciliation",
+      "text_prefix": "Backend unit tests:",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 1: Delta Ingest and Drift Reconciliation",
+      "text_prefix": "PHP unit tests:",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 1: Delta Ingest and Drift Reconciliation",
+      "text_prefix": "Frontend:",
+      "lane": "frontend"
+    },
+    {
+      "heading": "Phase 2: Topology Completion",
+      "contains": "ClusterSnapshotClusterResponse",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 2: Topology Completion",
+      "contains": "backend snapshot query",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 2: Topology Completion",
+      "contains": "MediaIdentity",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 2: Topology Completion",
+      "contains": "merge acceptance logic",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 2: Topology Completion",
+      "contains": "wp_acx_clusters",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 2: Topology Completion",
+      "contains": "SnapshotProjector",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 2: Topology Completion",
+      "contains": "OutboxWriter",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 2: Topology Completion",
+      "contains": "OutboxDispatcher",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 2: Topology Completion",
+      "contains": "class-cluster-mutations-controller.php",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 2: Topology Completion",
+      "contains": "ClusterResponseMapper",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 2: Topology Completion",
+      "contains": "MemberResponseMapper",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 2: Topology Completion",
+      "contains": "pinRepresentative()",
+      "lane": "frontend"
+    },
+    {
+      "heading": "Phase 2: Topology Completion",
+      "contains": "React Query",
+      "lane": "frontend"
+    },
+    {
+      "heading": "Phase 2: Topology Completion",
+      "contains": "pin/unpin toggle UI",
+      "lane": "frontend"
+    },
+    {
+      "heading": "Phase 2: Topology Completion",
+      "text_prefix": "Backend unit tests:",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 2: Topology Completion",
+      "text_prefix": "PHP unit tests:",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 2: Topology Completion",
+      "text_prefix": "Frontend tests:",
+      "lane": "frontend"
+    },
+    {
+      "heading": "Phase 3: Bidirectional Conflict Resolution",
+      "contains": "wp_acx_sync_conflicts",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 3: Bidirectional Conflict Resolution",
+      "contains": "projection conflict detection",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 3: Bidirectional Conflict Resolution",
+      "contains": "ConflictResolutionService",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 3: Bidirectional Conflict Resolution",
+      "contains": "ConflictController",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 3: Bidirectional Conflict Resolution",
+      "contains": "outbox contract",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 3: Bidirectional Conflict Resolution",
+      "text_prefix": "PHP unit tests:",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 3: Bidirectional Conflict Resolution",
+      "contains": "ConflictInbox",
+      "lane": "frontend"
+    },
+    {
+      "heading": "Phase 3: Bidirectional Conflict Resolution",
+      "contains": "resolution UI",
+      "lane": "frontend"
+    },
+    {
+      "heading": "Phase 3: Bidirectional Conflict Resolution",
+      "text_prefix": "Frontend tests:",
+      "lane": "frontend"
+    },
+    {
+      "heading": "Phase 5: Machine Proposals via Suggestion Extension",
+      "contains": "recognition/domain/suggestion.py",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 5: Machine Proposals via Suggestion Extension",
+      "contains": "db/models/constraints.py",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 5: Machine Proposals via Suggestion Extension",
+      "contains": "001_identity_schema.py",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 5: Machine Proposals via Suggestion Extension",
+      "contains": "SuggestionExtensionService",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 5: Machine Proposals via Suggestion Extension",
+      "contains": "acceptance side effects",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 5: Machine Proposals via Suggestion Extension",
+      "contains": "suggestions router",
+      "lane": "backend-http"
+    },
+    {
+      "heading": "Phase 5: Machine Proposals via Suggestion Extension",
+      "contains": "min_confidence",
+      "lane": "backend-http"
+    },
+    {
+      "heading": "Phase 5: Machine Proposals via Suggestion Extension",
+      "contains": "SuggestionsController",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 5: Machine Proposals via Suggestion Extension",
+      "text_prefix": "PHP unit tests:",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 5: Machine Proposals via Suggestion Extension",
+      "contains": "TypeScript types",
+      "lane": "frontend"
+    },
+    {
+      "heading": "Phase 5: Machine Proposals via Suggestion Extension",
+      "contains": "SuggestionReviewPanel",
+      "lane": "frontend"
+    },
+    {
+      "heading": "Phase 5: Machine Proposals via Suggestion Extension",
+      "text_prefix": "Backend unit tests:",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 5: Machine Proposals via Suggestion Extension",
+      "text_prefix": "Frontend tests:",
+      "lane": "frontend"
+    },
+    {
+      "heading": "Phase 6: Retention Stretch Goals",
+      "contains": "ExportJob",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 6: Retention Stretch Goals",
+      "contains": "export_jobs table",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 6: Retention Stretch Goals",
+      "contains": "export service",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 6: Retention Stretch Goals",
+      "contains": "purge service",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 6: Retention Stretch Goals",
+      "contains": "retention policy presets",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 6: Retention Stretch Goals",
+      "contains": "import service",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 6: Retention Stretch Goals",
+      "contains": "retention/export/{job_id}/status",
+      "lane": "backend-http"
+    },
+    {
+      "heading": "Phase 6: Retention Stretch Goals",
+      "contains": "retention/export/{job_id}/download",
+      "lane": "backend-http"
+    },
+    {
+      "heading": "Phase 6: Retention Stretch Goals",
+      "contains": "POST /retention/import",
+      "lane": "backend-http"
+    },
+    {
+      "heading": "Phase 6: Retention Stretch Goals",
+      "text_prefix": "PHP proxy:",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 6: Retention Stretch Goals",
+      "contains": "Frontend: export job polling",
+      "lane": "frontend"
+    },
+    {
+      "heading": "Phase 6: Retention Stretch Goals",
+      "contains": "Frontend: paginated audit log",
+      "lane": "frontend"
+    },
+    {
+      "heading": "Phase 6: Retention Stretch Goals",
+      "text_prefix": "Backend unit tests:",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 6: Retention Stretch Goals",
+      "text_prefix": "PHP unit tests:",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 6: Retention Stretch Goals",
+      "text_prefix": "Frontend tests:",
+      "lane": "frontend"
+    }
+  ],
+  "routing": [
+    {
+      "prefix": "apps/prototype-description-service/db/",
+      "lane": "backend-domain"
+    },
+    {
+      "prefix": "apps/prototype-description-service/recognition/domain/",
+      "lane": "backend-domain"
+    },
+    {
+      "prefix": "apps/prototype-description-service/recognition/infrastructure/",
+      "lane": "backend-domain"
+    },
+    {
+      "prefix": "apps/prototype-description-service/recognition/tests/unit/",
+      "lane": "backend-domain"
+    },
+    {
+      "prefix": "docs/agentic/contracts/",
+      "lane": "backend-domain"
+    },
+    {
+      "prefix": "docs/tasks/7.0/remaining-sync-workbench-and-retention-task-plan.md",
+      "lane": "backend-domain"
+    },
+    {
+      "prefix": "mk/lane-maintenance.mk",
+      "lane": "backend-domain"
+    },
+    {
+      "prefix": "scripts/worktree-lane",
+      "lane": "backend-domain"
+    },
+    {
+      "prefix": "scripts/mcp/",
+      "lane": "backend-domain"
+    },
+    {
+      "prefix": "packages/agent-handoff-mcp/",
+      "lane": "backend-domain"
+    },
+    {
+      "prefix": "apps/prototype-description-service/recognition/interface_adapters/http/",
+      "lane": "backend-http"
+    },
+    {
+      "prefix": "apps/prototype-description-service/recognition/tests/api/",
+      "lane": "backend-http"
+    },
+    {
+      "prefix": "apps/prototype-wp-alt-context/src/",
+      "lane": "wp-proxy"
+    },
+    {
+      "prefix": "apps/prototype-wp-alt-context/tests/Unit/",
+      "lane": "wp-proxy"
+    },
+    {
+      "prefix": "apps/prototype-wp-alt-context/js/",
+      "lane": "frontend"
+    }
+  ],
+  "lanes": {
+    "backend-domain": {
+      "branch": "codex/rswr-backend-domain",
+      "worktree_path": "{orchestrator_root}-rswr-backend-domain",
+      "title": "Backend domain",
+      "objective": "Backend schema, domain-service, contracts, and orchestration-tooling slice for remaining sync/workbench/retention work.",
+      "owned_paths": [
+        "apps/prototype-description-service/db/**",
+        "apps/prototype-description-service/recognition/domain/**",
+        "apps/prototype-description-service/recognition/infrastructure/**",
+        "apps/prototype-description-service/recognition/tests/unit/**",
+        "docs/agentic/contracts/**",
+        "docs/tasks/7.0/remaining-sync-workbench-and-retention-task-plan.md",
+        "mk/lane-maintenance.mk",
+        "scripts/worktree-lane",
+        "scripts/mcp/**",
+        "packages/agent-handoff-mcp/**"
+      ],
+      "required_docs": [
+        "docs/agentic/instructions.md",
+        "docs/agentic/rules/backend-python-guidelines.md",
+        "docs/agentic/rules/testing-python.md",
+        "docs/agentic/rules/development-workflow.md",
+        "docs/tasks/7.0/remaining-sync-workbench-and-retention-task-plan.md"
+      ],
+      "test_commands": [
+        "cd apps/prototype-description-service && PYENV_VERSION=description-service pytest recognition/tests/unit/",
+        "cd apps/prototype-description-service && PYENV_VERSION=description-service pytest recognition/tests/integration/test_retention_lifecycle.py",
+        "cd apps/prototype-description-service && PYENV_VERSION=description-service mypy recognition/domain recognition/infrastructure",
+        "PYENV_VERSION=description-service pytest packages/agent-handoff-mcp/tests/test_orchestrator_tools.py packages/agent-handoff-mcp/tests/test_worker_daemon.py packages/agent-handoff-mcp/tests/test_lane_exec.py packages/agent-handoff-mcp/tests/test_review_runner.py packages/codex-subagent-bridge/tests/test_bridge.py"
+      ],
+      "capability_tags": [
+        "postgres-ready",
+        "reset-bootstrap"
+      ],
+      "preflight_commands": [
+        "command -v pyenv >/dev/null || command -v python3 >/dev/null"
+      ],
+      "preflight_failure_summary": "backend-domain runtime preflight failed; local description-service tooling is not ready for this lane.",
+      "preflight_failure_details": "This lane owns both DB-sensitive and non-DB work. Phase 0 contracts, Python stubs, and orchestration tooling should still proceed when PostgreSQL is unavailable, but a Python-capable local backend environment is required. If later DB-specific verification is blocked, report that blocker in the lane handoff instead of failing preflight up front.",
+      "non_goals": [
+        "Do not edit WordPress PHP files under apps/prototype-wp-alt-context/src/.",
+        "Do not edit frontend React/TypeScript files under apps/prototype-wp-alt-context/js/."
+      ],
+      "commit_paths": [
+        "apps/prototype-description-service/db",
+        "apps/prototype-description-service/recognition/domain",
+        "apps/prototype-description-service/recognition/infrastructure",
+        "apps/prototype-description-service/recognition/tests/unit",
+        "docs/agentic/contracts",
+        "docs/tasks/7.0/remaining-sync-workbench-and-retention-task-plan.md",
+        "mk/lane-maintenance.mk",
+        "scripts/worktree-lane",
+        "scripts/mcp",
+        "packages/agent-handoff-mcp"
+      ],
+      "commit_subject": "update sync/retention backend domain and tooling",
+      "route_hints": [
+        "backend-domain",
+        "backend domain",
+        "domain/schema lane",
+        "contracts lane",
+        "tooling lane"
+      ],
+      "guidance_fallbacks": [],
+      "tooling_paths": [
+        "apps/prototype-description-service/Makefile",
+        "Makefile"
+      ]
+    },
+    "backend-http": {
+      "branch": "codex/rswr-backend-http",
+      "worktree_path": "{orchestrator_root}-rswr-backend-http",
+      "title": "Backend HTTP",
+      "objective": "Backend HTTP router, schema, and API-test slice for remaining sync/workbench/retention work.",
+      "app_root": "apps/prototype-description-service",
+      "owned_paths": [
+        "apps/prototype-description-service/recognition/interface_adapters/http/**",
+        "apps/prototype-description-service/recognition/tests/api/**"
+      ],
+      "required_docs": [
+        "docs/agentic/instructions.md",
+        "docs/agentic/rules/backend-python-guidelines.md",
+        "docs/agentic/rules/testing-python.md",
+        "docs/tasks/7.0/remaining-sync-workbench-and-retention-task-plan.md"
+      ],
+      "test_commands": [
+        "cd apps/prototype-description-service && PYENV_VERSION=description-service pytest recognition/tests/api/",
+        "cd apps/prototype-description-service && PYENV_VERSION=description-service mypy recognition/interface_adapters/http"
+      ],
+      "non_goals": [
+        "Do not edit backend domain or repository files outside the HTTP layer.",
+        "Do not edit WordPress or frontend files."
+      ],
+      "commit_paths": [
+        "apps/prototype-description-service/recognition/interface_adapters/http",
+        "apps/prototype-description-service/recognition/tests/api"
+      ],
+      "commit_subject": "update sync/retention backend HTTP routes",
+      "route_hints": [
+        "backend-http",
+        "backend http",
+        "http lane",
+        "router lane"
+      ],
+      "guidance_fallbacks": [],
+      "tooling_paths": [
+        "apps/prototype-description-service/Makefile"
+      ]
+    },
+    "wp-proxy": {
+      "branch": "codex/rswr-wp-proxy",
+      "worktree_path": "{orchestrator_root}-rswr-wp-proxy",
+      "title": "WP proxy",
+      "objective": "WordPress proxy, sync-projection, and PHP unit-test slice for remaining sync/workbench/retention work.",
+      "app_root": "apps/prototype-wp-alt-context",
+      "owned_paths": [
+        "apps/prototype-wp-alt-context/src/**",
+        "apps/prototype-wp-alt-context/tests/Unit/**"
+      ],
+      "required_docs": [
+        "docs/agentic/instructions.md",
+        "docs/agentic/rules/backend-php-guidelines.md",
+        "docs/agentic/rules/testing-php.md",
+        "docs/tasks/7.0/remaining-sync-workbench-and-retention-task-plan.md"
+      ],
+      "test_commands": [
+        "cd apps/prototype-wp-alt-context && vendor/bin/phpunit",
+        "cd apps/prototype-wp-alt-context && composer phpstan"
+      ],
+      "non_goals": [
+        "Do not edit frontend React/TypeScript files under apps/prototype-wp-alt-context/js/.",
+        "Do not edit backend Python files."
+      ],
+      "commit_paths": [
+        "apps/prototype-wp-alt-context/src",
+        "apps/prototype-wp-alt-context/tests/Unit"
+      ],
+      "commit_subject": "update sync/retention WP proxy",
+      "route_hints": [
+        "wp-proxy",
+        "wp proxy",
+        "wordpress proxy",
+        "projection lane"
+      ],
+      "guidance_fallbacks": [],
+      "tooling_paths": [
+        "apps/prototype-wp-alt-context/composer.json"
+      ]
+    },
+    "frontend": {
+      "branch": "codex/rswr-frontend",
+      "worktree_path": "{orchestrator_root}-rswr-frontend",
+      "title": "Frontend",
+      "objective": "React admin UI, hooks, and TypeScript test slice for remaining sync/workbench/retention work.",
+      "app_root": "apps/prototype-wp-alt-context",
+      "owned_paths": [
+        "apps/prototype-wp-alt-context/js/**"
+      ],
+      "required_docs": [
+        "docs/agentic/instructions.md",
+        "docs/agentic/rules/frontend-guidelines.md",
+        "docs/agentic/rules/testing-typescript.md",
+        "docs/tasks/7.0/remaining-sync-workbench-and-retention-task-plan.md"
+      ],
+      "test_commands": [
+        "cd apps/prototype-wp-alt-context && npm run test -- --run",
+        "cd apps/prototype-wp-alt-context && npm run typecheck"
+      ],
+      "non_goals": [
+        "Do not edit PHP or Python files.",
+        "Do not edit shared task docs unless explicitly assigned."
+      ],
+      "commit_paths": [
+        "apps/prototype-wp-alt-context/js"
+      ],
+      "commit_subject": "update sync/retention admin UI",
+      "route_hints": [
+        "frontend",
+        "frontend lane",
+        "ui lane",
+        "react lane"
+      ],
+      "guidance_fallbacks": [],
+      "tooling_paths": [
+        "apps/prototype-wp-alt-context/package.json"
+      ]
+    }
+  },
+  "downstream": {
+    "backend-domain": [
+      "backend-http",
+      "wp-proxy",
+      "frontend"
+    ],
+    "backend-http": [
+      "wp-proxy",
+      "frontend"
+    ],
+    "wp-proxy": [
+      "frontend"
+    ],
+    "frontend": []
+  }
+}

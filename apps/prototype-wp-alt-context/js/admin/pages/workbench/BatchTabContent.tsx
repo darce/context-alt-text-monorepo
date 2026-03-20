@@ -1,23 +1,28 @@
 import { __ } from '@wordpress/i18n';
-import { BatchPanel, RecentJobsPanel } from './Panels';
+import { RecentJobsPanel } from './Panels';
 import { useWorkbenchContext } from './WorkbenchContext';
 
 export const BatchTabContent = (): React.JSX.Element => {
-  const { selectedMedia, jobHistory, jobStatuses, jobId, handleSelectJobFromHistory, clearHistory } =
-    useWorkbenchContext();
+  const { jobHistory, jobStatuses, jobId, handleSelectJobFromHistory, clearHistory } = useWorkbenchContext();
   return (
     <>
-      {selectedMedia.length === 0 ? (
-        <div className="acx-apply-panel acx-apply-panel--empty">
-          <h3>{__('No media selected for batch analysis', 'alt-context')}</h3>
-          <p>{__('Go to the Scan tab to select media items you want to analyze together.', 'alt-context')}</p>
-          <a href="#/workbench?tab=scan" className="acx-button acx-button--secondary">
-            {__('Go to Scan tab', 'alt-context')}
+      <div className="acx-apply-panel acx-apply-panel--empty">
+        <h3>{__('Batch operations moved to Dashboard', 'alt-context')}</h3>
+        <p>
+          {__(
+            'Start new recognition batches from the Dashboard. Come back to Workbench to inspect the scan queue or confirm the latest results.',
+            'alt-context',
+          )}
+        </p>
+        <div className="acx-dashboard__actions">
+          <a href="#/dashboard" className="acx-button">
+            {__('Open Dashboard', 'alt-context')}
+          </a>
+          <a href="#/workbench?tab=confirm" className="acx-button acx-button--secondary">
+            {__('Go to Confirm tab', 'alt-context')}
           </a>
         </div>
-      ) : (
-        <BatchPanel items={selectedMedia} />
-      )}
+      </div>
 
       <RecentJobsPanel
         jobs={jobHistory}

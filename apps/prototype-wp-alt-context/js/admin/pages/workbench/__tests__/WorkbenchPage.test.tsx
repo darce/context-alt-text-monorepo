@@ -538,4 +538,12 @@ describe('WorkbenchPage', () => {
       expect(screen.queryByRole('heading', { name: 'Dead-Letter Queue' })).not.toBeInTheDocument();
     });
   });
+
+  it('falls back to the scan tab when the removed batch tab is requested', () => {
+    renderWorkbench(undefined, ['/workbench?tab=batch']);
+
+    expect(screen.getByRole('heading', { name: 'Scan Media Queue' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Batch' })).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Scan Media Queue' })).toHaveAttribute('data-state', 'active');
+  });
 });

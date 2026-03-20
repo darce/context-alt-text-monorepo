@@ -4,7 +4,6 @@ import { __ } from '@wordpress/i18n';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { SyncStatusIndicator } from './workbench/SyncStatusIndicator';
 import { ScanTabContent } from './workbench/ScanTabContent';
-import { BatchTabContent } from './workbench/BatchTabContent';
 import { ConfirmTabContent } from './workbench/ConfirmTabContent';
 import { ConflictInbox } from './workbench/ConflictInbox';
 import { DeadLetterPanel } from './workbench/DeadLetterPanel';
@@ -26,12 +25,6 @@ const WORKBENCH_SECTIONS: WorkbenchSection[] = [
       'Scan your library for images that still need descriptive metadata, filtering by status or search term.',
       'alt-context',
     ),
-  },
-  {
-    id: TAB_IDS.batch,
-    label: __('Batch', 'alt-context'),
-    title: __('Batch Operations', 'alt-context'),
-    body: __('Group the selected media, run recognition jobs, and prep face scans before publishing.', 'alt-context'),
   },
   {
     id: TAB_IDS.confirm,
@@ -64,8 +57,7 @@ const WorkbenchPageContent = (): React.JSX.Element => {
   } = useWorkbenchContext();
 
   const scanSection = WORKBENCH_SECTIONS[0];
-  const batchSection = WORKBENCH_SECTIONS[1];
-  const confirmSection = WORKBENCH_SECTIONS[2];
+  const confirmSection = WORKBENCH_SECTIONS[1];
 
   return (
     <section className="acx-workbench" aria-labelledby="acx-workbench-title">
@@ -142,17 +134,6 @@ const WorkbenchPageContent = (): React.JSX.Element => {
             <p>{scanSection.body}</p>
 
             <ScanTabContent />
-          </TabsContent>
-
-          <TabsContent
-            value={TAB_IDS.batch}
-            className="acx-workbench__panel"
-            aria-live="polite"
-            aria-labelledby="acx-workbench-section-batch"
-          >
-            <h2 id="acx-workbench-section-batch">{batchSection.title}</h2>
-            <p>{batchSection.body}</p>
-            <BatchTabContent />
           </TabsContent>
 
           <TabsContent

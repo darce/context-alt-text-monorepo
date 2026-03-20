@@ -301,6 +301,47 @@ describe('DashboardPage', () => {
     expect(screen.getByRole('link', { name: /Open Retention Controls/ })).toHaveAttribute('href', '#/retention');
   });
 
+  it('surfaces batch operations from the dashboard with latest-job follow-up', () => {
+    mockedUseRecognitionJobHistory.mockReturnValue({
+      jobHistory: ['job-batch-9'],
+      jobStatuses: { 'job-batch-9': 'completed' },
+      jobDetails: {},
+      jobId: 'job-batch-9',
+      rememberJob: vi.fn(),
+      selectJob: vi.fn(),
+      clearHistory: vi.fn(),
+    });
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText('Batch Operations')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Start new recognition batches from Dashboard, then jump back into scan, review, or roster cleanup from the same landing page.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Most recent batch job: job-batch-9')).toBeInTheDocument();
+    expect(screen.getByText('Latest batch status: completed')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'View latest results' })).toHaveAttribute(
+      'href',
+      '#/workbench?tab=confirm&jobId=job-batch-9',
+    );
+    expect(screen.getByRole('link', { name: /Analysis Queue/ })).toHaveAttribute('href', '#/workbench?tab=scan');
+    expect(screen.getByRole('link', { name: /Review Hub/ })).toHaveAttribute('href', '#/workbench?tab=confirm');
+  });
+
   it('shows retention unavailable copy when the retention proxy is degraded', () => {
     mockedUseRetentionStatus.mockReturnValue(
       createMockQuery({

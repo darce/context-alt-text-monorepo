@@ -16,7 +16,6 @@ import type { ProjectionSyncState } from '../../hooks/useJobStateMachineEffects'
 
 export const TAB_IDS = {
   scan: 'scan',
-  batch: 'batch',
   confirm: 'confirm',
 } as const;
 
@@ -120,7 +119,6 @@ const WorkbenchContext = createContext<WorkbenchContextValue | null>(null);
 export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [activeSection, setActiveSection] = useTabParam<WorkbenchTab>('tab', TAB_IDS.scan, [
     TAB_IDS.scan,
-    TAB_IDS.batch,
     TAB_IDS.confirm,
   ]);
   const [activeOverlay, setActiveOverlay] = useOverlayParam<Exclude<WorkbenchOverlay, null>>('panel', [

@@ -194,18 +194,25 @@ class ClusterResponseMapper {
 	 * @return array<string,mixed>
 	 */
 	private function map_representative_identity( array $cluster_row, array $member_rows ): array {
-		$representative = $member_rows[0] ?? array();
-		$media_id       = absint( $representative['attachment_id'] ?? $representative['media_id'] ?? 0 );
-		$bbox           = $this->extract_bbox_pixels( $representative['bbox_json'] ?? null );
+		$representative      = $member_rows[0] ?? array();
+		$media_id            = absint( $representative['attachment_id'] ?? $representative['media_id'] ?? 0 );
+		$bbox                = $this->extract_bbox_pixels( $representative['bbox_json'] ?? null );
+		$representative_id   = trim( (string) ( $cluster_row['representative_id'] ?? '' ) );
+		$member_identity_id  = trim( (string) ( $representative['identity_uuid'] ?? '' ) );
+		$is_pinned           = $this->normalize_boolean_value( $representative['is_pinned'] ?? false );
 
 		$thumb_media_id = $this->extract_media_id_from_thumb_path( $cluster_row['representative_thumb_path'] ?? '' );
 		if ( $media_id <= 0 && $thumb_media_id > 0 ) {
 			$media_id = $thumb_media_id;
 		}
+		if ( ! $is_pinned && ( array() === $representative || ( '' !== $representative_id && $representative_id === $member_identity_id ) ) ) {
+			$is_pinned = $this->normalize_boolean_value( $cluster_row['is_pinned'] ?? false );
+		}
 
 		return array(
 			'media_id' => $media_id > 0 ? $media_id : null,
 			'bbox' => $bbox,
+			'is_pinned' => $is_pinned,
 		);
 	}
 

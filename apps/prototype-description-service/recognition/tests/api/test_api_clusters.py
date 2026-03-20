@@ -771,6 +771,28 @@ def test_get_tenant_snapshot_returns_correct_shape(
     assert "is_pinned" in unlabeled_cluster
 
 
+def test_get_tenant_snapshot_prefers_pinned_representative_when_order_is_unsorted(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository
+) -> None:
+    cluster = seed_cluster(
+        fake_cluster_service, tenant_id, label="Alice", fake_cluster_repository=fake_cluster_repository
+    )
+    unpinned_representative_id = str(uuid.uuid4())
+    pinned_representative_id = str(uuid.uuid4())
+    fake_cluster_repository.clusters[cluster.id].representatives = [
+        SimpleNamespace(identity_id=unpinned_representative_id, media_id="101", is_user_selected=False),
+        SimpleNamespace(identity_id=pinned_representative_id, media_id="202", is_user_selected=True),
+    ]
+
+    resp = api_client.get(f"/recognition/tenants/{tenant_id}/clusters/snapshot")
+
+    assert resp.status_code == 200
+    cluster_body = next(c for c in resp.json()["clusters"] if c["cluster_uuid"] == cluster.id)
+    assert cluster_body["representative_id"] == pinned_representative_id
+    assert cluster_body["representative_thumb_path"] == f"acx://cluster/{cluster.id}/media/202"
+    assert cluster_body["is_pinned"] is True
+
+
 def test_get_tenant_snapshot_includes_members(
     api_client, tenant_id, fake_cluster_service, fake_cluster_repository
 ) -> None:

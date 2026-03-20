@@ -180,10 +180,10 @@ async def post_merge_retry_matching(
                 bbox_y=int(model.bbox_y),
                 pose_pitch=float(model.pose_pitch) if model.pose_pitch is not None else None,
                 pose_yaw=float(model.pose_yaw) if model.pose_yaw is not None else None,
-            pose_roll=float(model.pose_roll) if model.pose_roll is not None else None,
-            image_phash=model.image_phash,
-            moved_by_merge_id=str(model.moved_by_merge_id) if getattr(model, "moved_by_merge_id", None) else None,
-        )
+                pose_roll=float(model.pose_roll) if model.pose_roll is not None else None,
+                image_phash=model.image_phash,
+                moved_by_merge_id=str(model.moved_by_merge_id) if getattr(model, "moved_by_merge_id", None) else None,
+            )
             face_vec = normalize_face_embedding(identity.embedding)
             best_sim = max(float(np.dot(face_vec, rep_vec)) for rep_vec in rep_face_vecs)
             if best_sim < min_similarity_for_unclustered:

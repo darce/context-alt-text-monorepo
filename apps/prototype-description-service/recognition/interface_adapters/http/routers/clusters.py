@@ -274,7 +274,10 @@ def _build_cluster_responses(
         representative_id = None
         is_pinned = False
         if cluster.representatives and len(cluster.representatives) > 0:
-            rep = cluster.representatives[0]
+            rep = next(
+                (candidate for candidate in cluster.representatives if candidate.is_user_selected),
+                cluster.representatives[0],
+            )
             if rep.identity_id:
                 representative_id = str(rep.identity_id)
                 is_pinned = bool(rep.is_user_selected)

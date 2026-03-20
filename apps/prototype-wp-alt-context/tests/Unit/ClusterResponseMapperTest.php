@@ -79,6 +79,59 @@ class ClusterResponseMapperTest extends TestCase
         $this->assertSame('http://example.test/media/12.jpg', $payload[0]['sample_identities'][0]['thumb_url']);
     }
 
+    public function testMapClusterListIncludesPinnedRepresentativeState(): void
+    {
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Alice',
+                'identity_count' => 1,
+            ],
+        ];
+
+        $members = [
+            'cluster-1' => [
+                [
+                    'identity_uuid' => 'identity-1',
+                    'attachment_id' => 12,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
+                    'is_pinned' => 1,
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, $members);
+
+        $this->assertTrue($payload[0]['representative_identity']['is_pinned']);
+    }
+
+    public function testMapClusterListFallsBackToClusterPinnedRepresentativeState(): void
+    {
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Alice',
+                'identity_count' => 1,
+                'representative_id' => 'identity-1',
+                'is_pinned' => 1,
+            ],
+        ];
+
+        $members = [
+            'cluster-1' => [
+                [
+                    'identity_uuid' => 'identity-1',
+                    'attachment_id' => 12,
+                    'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
+                ],
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, $members);
+
+        $this->assertTrue($payload[0]['representative_identity']['is_pinned']);
+    }
+
     public function testMapTopUnlabeledClustersIncludesRepresentatives(): void
     {
         $GLOBALS['__ac_attachment_urls'][99] = 'http://example.test/media/99.jpg';

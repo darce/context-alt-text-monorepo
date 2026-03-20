@@ -5,7 +5,8 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from db.models import IdentityMember, MediaIdentity as MediaIdentityModel, Tenant
+from db.models import IdentityMember, Tenant
+from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.orchestration.cluster_service import ClusterService
 from recognition.application.scan.service import ScanService
 from recognition.domain.cluster import IdentityCluster

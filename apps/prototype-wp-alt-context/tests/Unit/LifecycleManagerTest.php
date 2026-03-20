@@ -88,6 +88,8 @@ class LifecycleManagerTest extends TestCase
 
         $this->assertStringContainsString('CREATE TABLE wp_acx_clusters', $clustersSql);
         $this->assertStringContainsString('representative_thumb_path', $clustersSql);
+        $this->assertStringContainsString('representative_id', $clustersSql);
+        $this->assertStringContainsString('is_pinned', $clustersSql);
         $this->assertStringContainsString('identity_count', $clustersSql);
         $this->assertStringContainsString('created_at', $clustersSql);
         $this->assertStringContainsString('updated_at', $clustersSql);
@@ -120,6 +122,7 @@ class LifecycleManagerTest extends TestCase
 
         $this->assertStringContainsString('CREATE TABLE wp_acx_sync_conflicts', $conflictsSql);
         $this->assertStringContainsString('conflict_code', $conflictsSql);
+        $this->assertStringContainsString('backend_proposed_value', $conflictsSql);
         $this->assertStringContainsString('resolution_status', $conflictsSql);
         $this->assertStringContainsString('UNIQUE KEY uq_projection_conflict', $conflictsSql);
     }

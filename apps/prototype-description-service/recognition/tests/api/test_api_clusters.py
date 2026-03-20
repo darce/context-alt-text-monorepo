@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
@@ -117,6 +118,12 @@ def test_merge_cluster_relabels_target(api_client, tenant_id, fake_cluster_servi
     assert resp.status_code == 200
     body = resp.json()
     assert body["label"] == "merged"
+
+    merge_calls = [call for call in fake_cluster_service.calls if call.get("method") == "merge_cluster"]
+    assert merge_calls
+    assert merge_calls[-1]["defer_recompute"] is True
+    assert merge_calls[-1]["moved_by_merge_id"] is not None
+    uuid.UUID(str(merge_calls[-1]["moved_by_merge_id"]))
 
     # Source cluster should NOT be deleted immediately (deferred)
     assert any(c.id == source.id for c in fake_cluster_service.clusters)
@@ -253,6 +260,100 @@ def test_targeted_snapshot_returns_only_requested_clusters(
     body = resp.json()
     assert [cluster["cluster_uuid"] for cluster in body["clusters"]] == [requested.id]
     assert {member["cluster_uuid"] for member in body["members"]} == {requested.id}
+
+
+def test_cluster_delta_returns_only_changed_clusters(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository, monkeypatch
+) -> None:
+    changed = seed_cluster(
+        fake_cluster_service, tenant_id, label="changed", fake_cluster_repository=fake_cluster_repository
+    )
+    unchanged = seed_cluster(
+        fake_cluster_service, tenant_id, label="unchanged", fake_cluster_repository=fake_cluster_repository
+    )
+    changed_identity_id = str(uuid.uuid4())
+    fake_cluster_repository.seed_member(
+        tenant_id=tenant_id,
+        cluster_id=changed.id,
+        identity_id=changed_identity_id,
+        media_id="101",
+    )
+    fake_cluster_repository.seed_member(
+        tenant_id=tenant_id,
+        cluster_id=unchanged.id,
+        identity_id=str(uuid.uuid4()),
+        media_id="202",
+    )
+    fake_cluster_repository.clusters[changed.id].representatives = [
+        SimpleNamespace(identity_id=changed_identity_id, media_id="101", is_user_selected=True)
+    ]
+    snapshot_version = fake_cluster_repository._snapshot_version
+
+    async def _fake_get_delta(request_tenant_id: str, *, since_version: int):
+        assert request_tenant_id == tenant_id
+        assert since_version == snapshot_version - 1
+        return (
+            await fake_cluster_repository.get_clusters_by_ids(tenant_id, [changed.id]),
+            await fake_cluster_repository.get_members_by_cluster_ids(tenant_id, [changed.id]),
+            snapshot_version,
+        )
+
+    monkeypatch.setattr(fake_cluster_repository, "get_delta", _fake_get_delta)
+
+    resp = api_client.get(
+        f"/recognition/tenants/{tenant_id}/clusters/delta",
+        params={"since_version": snapshot_version - 1},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["tenant_id"] == tenant_id
+    assert body["snapshot_version"] == snapshot_version
+    assert [cluster["cluster_uuid"] for cluster in body["clusters"]] == [changed.id]
+    assert body["clusters"][0]["representative_id"] == changed_identity_id
+    assert body["clusters"][0]["is_pinned"] is True
+    assert {member["cluster_uuid"] for member in body["members"]} == {changed.id}
+    assert [member["identity_uuid"] for member in body["members"]] == [changed_identity_id]
+
+
+def test_cluster_delta_returns_empty_payload_when_no_clusters_changed(
+    api_client, tenant_id, fake_cluster_repository, monkeypatch
+) -> None:
+    async def _fake_get_delta(request_tenant_id: str, *, since_version: int):
+        assert request_tenant_id == tenant_id
+        assert since_version == 7
+        return ([], [], 9)
+
+    monkeypatch.setattr(fake_cluster_repository, "get_delta", _fake_get_delta)
+
+    resp = api_client.get(
+        f"/recognition/tenants/{tenant_id}/clusters/delta",
+        params={"since_version": 7},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["clusters"] == []
+    assert resp.json()["members"] == []
+    assert resp.json()["snapshot_version"] == 9
+
+
+def test_cluster_delta_returns_404_for_unknown_tenant(
+    api_client, tenant_id, fake_cluster_repository, monkeypatch
+) -> None:
+    async def _fake_get_delta(request_tenant_id: str, *, since_version: int):
+        assert request_tenant_id == tenant_id
+        assert since_version == 0
+        return ([], [], 0)
+
+    monkeypatch.setattr(fake_cluster_repository, "get_delta", _fake_get_delta)
+
+    resp = api_client.get(
+        f"/recognition/tenants/{tenant_id}/clusters/delta",
+        params={"since_version": 0},
+    )
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "No clusters found for tenant"
 
 
 def test_split_topology_command_honors_fixed_count_desired_cluster_ids(
@@ -614,6 +715,10 @@ def test_get_tenant_snapshot_returns_correct_shape(
     cluster2 = seed_cluster(
         fake_cluster_service, tenant_id, label=None, fake_cluster_repository=fake_cluster_repository
     )
+    representative_id = str(uuid.uuid4())
+    fake_cluster_repository.clusters[cluster1.id].representatives = [
+        SimpleNamespace(identity_id=representative_id, media_id="101", is_user_selected=True)
+    ]
     latest_job = Job(
         id=str(uuid.uuid4()),
         type=JobType.CLUSTERING,
@@ -655,11 +760,15 @@ def test_get_tenant_snapshot_returns_correct_shape(
     assert "is_user_confirmed" in alice_cluster
     assert "curation_state" in alice_cluster
     assert "identity_count" in alice_cluster
+    assert alice_cluster["representative_id"] == representative_id
+    assert alice_cluster["is_pinned"] is True
 
     unlabeled_cluster = next((c for c in body["clusters"] if c["cluster_uuid"] == cluster2.id), None)
     assert unlabeled_cluster is not None
     assert "is_user_confirmed" in unlabeled_cluster
     assert "curation_state" in unlabeled_cluster
+    assert "representative_id" in unlabeled_cluster
+    assert "is_pinned" in unlabeled_cluster
 
 
 def test_get_tenant_snapshot_includes_members(

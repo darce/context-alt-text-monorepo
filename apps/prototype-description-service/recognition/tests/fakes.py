@@ -164,6 +164,7 @@ class FakeClusterRepository:
                 image_phash=identity.image_phash,
                 metadata=dict(identity.metadata),
                 cluster_id=new_cluster_id,
+                moved_by_merge_id=identity.moved_by_merge_id,
             )
             self.members_by_cluster.setdefault(new_cluster_id, []).append((moved_member, moved_identity))
 
@@ -233,6 +234,18 @@ class FakeClusterRepository:
         members = await self.get_members_by_cluster_ids(tenant_id, list(self.clusters.keys()))
         snapshot_generation_id = str(uuid.uuid4()) if stamp_export else None
         return (identity_clusters, members, snapshot_version, snapshot_generation_id)
+
+    async def get_delta(
+        self,
+        tenant_id: str,
+        *,
+        since_version: int,
+    ) -> tuple[list[IdentityCluster], list[tuple[IdentityMember, MediaIdentity]], int]:
+        snapshot_version = await self.get_snapshot_version(tenant_id)
+        if since_version >= snapshot_version:
+            return ([], [], snapshot_version)
+        clusters, members, _snapshot_version, _generation_id = await self.get_snapshot(tenant_id)
+        return (clusters, members, snapshot_version)
 
     async def get_members_by_cluster_ids(
         self, tenant_id: str, cluster_ids: Sequence[str]
@@ -540,7 +553,19 @@ class FakeClusterService:
         target_cluster_id: str,
         target_label: str | None,
         defer_recompute: bool = False,
+        moved_by_merge_id: str | None = None,
     ) -> ClusterResponse | None:
+        self.calls.append(
+            {
+                "method": "merge_cluster",
+                "source_cluster_id": source_cluster_id,
+                "tenant_id": tenant_id,
+                "target_cluster_id": target_cluster_id,
+                "target_label": target_label,
+                "defer_recompute": defer_recompute,
+                "moved_by_merge_id": moved_by_merge_id,
+            }
+        )
         source = next((c for c in self.clusters if c.id == source_cluster_id and c.tenant_id == tenant_id), None)
         target = next((c for c in self.clusters if c.id == target_cluster_id and c.tenant_id == tenant_id), None)
         if not source or not target:

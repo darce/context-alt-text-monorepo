@@ -37,9 +37,29 @@ from recognition.shared.db.helpers import execute_dml, get_rowcount
 _DB_SETTINGS = get_database_settings()
 logger = logging.getLogger(__name__)
 _TOP_UNLABELED_FALLBACK_REP_LIMIT = 4
+_SNAPSHOT_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 if TYPE_CHECKING:
     from recognition.application.settings.clustering import MaturitySettings
+
+
+def _snapshot_version_to_datetime(snapshot_version: int) -> datetime:
+    """Decode a microsecond Unix timestamp without float precision loss."""
+    normalized_version = max(snapshot_version, 0)
+    seconds, micros = divmod(normalized_version, 1_000_000)
+    return _SNAPSHOT_EPOCH + timedelta(seconds=seconds, microseconds=micros)
+
+
+def _datetime_to_snapshot_version(value: datetime | None) -> int:
+    """Encode an aware timestamp as a microsecond Unix timestamp."""
+    if not isinstance(value, datetime):
+        value = _SNAPSHOT_EPOCH
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    else:
+        value = value.astimezone(UTC)
+    delta = value - _SNAPSHOT_EPOCH
+    return ((delta.days * 86_400) + delta.seconds) * 1_000_000 + delta.microseconds
 
 
 class SqlAlchemyClusterRepository(ClusterRepository):
@@ -1060,8 +1080,8 @@ class SqlAlchemyClusterRepository(ClusterRepository):
 
         # Compute snapshot_version from max updated_at with microsecond precision so
         # curation replay can detect multiple mutations within the same second.
-        max_updated_at = max((c.updated_at for c in cluster_models), default=datetime(1970, 1, 1, tzinfo=UTC))
-        snapshot_version = int(max_updated_at.timestamp() * 1_000_000)
+        max_updated_at = max((c.updated_at for c in cluster_models), default=_SNAPSHOT_EPOCH)
+        snapshot_version = _datetime_to_snapshot_version(max_updated_at)
 
         # Fetch all members with identity data
         members_stmt = (
@@ -1114,6 +1134,69 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             members_with_identities.append((domain_member, domain_identity))
 
         return (clusters, members_with_identities, snapshot_version, snapshot_generation_id)
+
+    async def get_delta(
+        self,
+        tenant_id: str,
+        *,
+        since_version: int,
+    ) -> tuple[list[IdentityCluster], list[tuple[DomainMember, DomainIdentity]], int]:
+        """Get the current state for clusters changed since a prior snapshot version.
+
+        v0 delta reads return full cluster/member state for clusters whose
+        `updated_at` exceeds `since_version`. Destructive changes that remove an
+        entire cluster still require higher-layer fallback to a full snapshot
+        until tombstone semantics are added to the HTTP contract.
+        """
+        tenant_uuid = _coerce_uuid(tenant_id)
+        if tenant_uuid is None:
+            return ([], [], 0)
+
+        since_updated_at = _snapshot_version_to_datetime(since_version)
+        snapshot_version = await self.get_snapshot_version(tenant_id)
+
+        clusters_stmt: Select[tuple[ClusterModel]] = (
+            select(ClusterModel)
+            .where(ClusterModel.tenant_id == tenant_uuid)
+            .where(ClusterModel.disposed_at.is_(None))
+            .where(ClusterModel.updated_at > since_updated_at)
+            .options(selectinload(ClusterModel.representatives).selectinload(IdentityClusterRepresentative.identity))
+            .order_by(ClusterModel.updated_at.asc(), ClusterModel.created_at.asc())
+        )
+        clusters_result = await self._session.execute(clusters_stmt)
+        cluster_models = list(clusters_result.scalars().all())
+        if not cluster_models:
+            return ([], [], snapshot_version)
+
+        cluster_ids = [model.id for model in cluster_models if model.id is not None]
+        members_stmt = (
+            select(IdentityMemberModel, MediaIdentity)
+            .join(MediaIdentity, IdentityMemberModel.identity_id == MediaIdentity.id)
+            .join(ClusterModel, IdentityMemberModel.cluster_id == ClusterModel.id)
+            .where(ClusterModel.tenant_id == tenant_uuid)
+            .where(ClusterModel.disposed_at.is_(None))
+            .where(IdentityMemberModel.cluster_id.in_(cluster_ids))
+            .where(MediaIdentity.disposed_at.is_(None))
+            .order_by(IdentityMemberModel.cluster_id, IdentityMemberModel.assigned_at)
+        )
+        members_result = await self._session.execute(members_stmt)
+        member_rows = list(members_result.all())
+
+        clusters = [self._to_domain(model) for model in cluster_models]
+        members_with_identities: list[tuple[DomainMember, DomainIdentity]] = []
+        for member_model, identity_model in member_rows:
+            domain_member = DomainMember(
+                id=str(member_model.id),
+                cluster_id=str(member_model.cluster_id),
+                identity_id=str(member_model.identity_id),
+                similarity=float(member_model.similarity),
+                tenant_id=str(member_model.tenant_id) if member_model.tenant_id else None,
+                assigned_at=member_model.assigned_at if isinstance(member_model.assigned_at, datetime) else None,
+            )
+            domain_identity = self._to_domain_identity(identity_model, cluster_id=str(member_model.cluster_id))
+            members_with_identities.append((domain_member, domain_identity))
+
+        return (clusters, members_with_identities, snapshot_version)
 
     async def get_members_by_cluster_ids(
         self, tenant_id: str, cluster_ids: Sequence[str]
@@ -1195,9 +1278,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         stmt = select(func.max(ClusterModel.updated_at)).where(ClusterModel.tenant_id == tenant_uuid)
         result = await self._session.execute(stmt)
         max_updated_at = result.scalar_one_or_none()
-        if not isinstance(max_updated_at, datetime):
-            max_updated_at = datetime(1970, 1, 1, tzinfo=UTC)
-        return int(max_updated_at.timestamp() * 1_000_000)
+        return _datetime_to_snapshot_version(max_updated_at)
 
     def _to_domain_identity(self, model: MediaIdentity, *, cluster_id: str | None = None) -> DomainIdentity:
         """Convert MediaIdentity ORM model to domain representation."""
@@ -1216,6 +1297,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             pose_roll=float(model.pose_roll) if model.pose_roll is not None else None,
             image_phash=model.image_phash,
             cluster_id=cluster_id,
+            moved_by_merge_id=str(model.moved_by_merge_id) if getattr(model, "moved_by_merge_id", None) else None,
         )
 
     def _to_model(self, cluster: IdentityCluster) -> ClusterModel:

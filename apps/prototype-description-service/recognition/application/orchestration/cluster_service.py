@@ -342,6 +342,7 @@ class ClusterService:
         target_label: str | None = None,
         *,
         defer_recompute: bool = False,
+        moved_by_merge_id: str | None = None,
     ) -> IdentityCluster | None:
         """Merge a source cluster into a target cluster by reassigning members."""
         # Session is already managed by the caller (FastAPI dependency)
@@ -358,6 +359,7 @@ class ClusterService:
             clustering_logger=self.logger,
             session=self._session,
             defer_recompute=defer_recompute,
+            moved_by_merge_id=moved_by_merge_id,
         )
 
     async def retry_matching(self, target_cluster_id: str, tenant_id: str) -> None:

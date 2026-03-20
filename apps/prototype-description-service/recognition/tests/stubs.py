@@ -310,3 +310,19 @@ class NullClusterRepository(ClusterRepository):
     async def get_snapshot_version(self, tenant_id: str) -> int:
         _ = tenant_id
         return 1
+
+    async def get_delta(
+        self,
+        tenant_id: str,
+        *,
+        since_version: int,
+    ) -> tuple[list[IdentityCluster], list[tuple[IdentityMember, MediaIdentity]], int]:
+        snapshot_version = await self.get_snapshot_version(tenant_id)
+        if since_version >= snapshot_version:
+            return ([], [], snapshot_version)
+        clusters = [cluster for cluster in self._clusters_by_id.values() if cluster.tenant_id == tenant_id]
+        members = await self.get_members_by_cluster_ids(
+            tenant_id,
+            [cluster.id for cluster in clusters if cluster.id is not None],
+        )
+        return (clusters, members, snapshot_version)

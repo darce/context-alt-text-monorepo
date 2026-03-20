@@ -21,6 +21,7 @@ from recognition.config import get_settings as get_recognition_settings
 from recognition.config.security import get_security_settings
 from recognition.domain.constraints import ConstraintSource, ConstraintType
 from recognition.domain.job import JobType, SplitJobPayload
+from recognition.domain.repositories import ClusterRepository
 from recognition.domain.suggestion import SuggestionRefreshReason
 from recognition.infrastructure.repositories import (
     SqlAlchemyConstraintRepository,
@@ -56,6 +57,7 @@ from recognition.interface_adapters.http.schemas.requests import (
 )
 from recognition.interface_adapters.http.schemas.responses import (
     AsyncSplitClusterResponse,
+    ClusterDeltaResponse,
     ClusteringJobStatusResponse,
     ClusterMemberResponse,
     ClusterResponse,
@@ -269,9 +271,13 @@ def _build_cluster_responses(
 
         # Get representative thumb path
         representative_thumb_path = None
+        representative_id = None
+        is_pinned = False
         if cluster.representatives and len(cluster.representatives) > 0:
             rep = cluster.representatives[0]
             if rep.identity_id:
+                representative_id = str(rep.identity_id)
+                is_pinned = bool(rep.is_user_selected)
                 # Format: acx://cluster/{cluster_uuid}/media/{media_id}
                 representative_thumb_path = f"acx://cluster/{cluster.id}/media/{rep.media_id}"
 
@@ -283,6 +289,8 @@ def _build_cluster_responses(
                 is_user_confirmed=cluster.user_confirmed,
                 identity_count=cluster.identity_count,
                 representative_thumb_path=representative_thumb_path,
+                representative_id=representative_id,
+                is_pinned=is_pinned,
             )
         )
     return responses
@@ -402,6 +410,33 @@ async def get_tenant_targeted_cluster_snapshot(
         tenant_id=tenant_uuid,
         snapshot_version=snapshot_version,
         source_job_id=latest_clustering_job.id if latest_clustering_job is not None else None,
+        generated_at=datetime.now(tz=UTC),
+        clusters=_build_cluster_responses(clusters),
+        members=_build_member_responses(members_with_identities),
+    )
+
+
+@router.get("/tenants/{tenant_uuid}/clusters/delta", response_model=ClusterDeltaResponse)
+async def get_tenant_cluster_delta(
+    tenant_uuid: str,
+    since_version: int = Query(..., ge=0),
+    auth=Depends(require_auth),
+    repo: ClusterRepository = Depends(get_cluster_repository),
+) -> ClusterDeltaResponse:
+    """Get version-filtered cluster updates for incremental projection sync."""
+    tenant_id = tenant_uuid
+
+    if auth and auth.tenant_claim and auth.tenant_claim != tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
+    clusters, members_with_identities, snapshot_version = await repo.get_delta(tenant_id, since_version=since_version)
+
+    if snapshot_version <= 0 and not clusters and not members_with_identities:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No clusters found for tenant")
+
+    return ClusterDeltaResponse(
+        tenant_id=tenant_uuid,
+        snapshot_version=snapshot_version,
         generated_at=datetime.now(tz=UTC),
         clusters=_build_cluster_responses(clusters),
         members=_build_member_responses(members_with_identities),
@@ -728,6 +763,7 @@ async def merge_cluster(
         target_cluster_id=request.target_cluster_id,
         target_label=request.target_label,
         defer_recompute=True,
+        moved_by_merge_id=str(generate_id()),
     )
     if not cluster:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found")

@@ -65,6 +65,7 @@ class MediaIdentity(Base):
     gender: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 0=female, 1=male
     image_phash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_exported_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    moved_by_merge_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     disposed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())

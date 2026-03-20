@@ -441,24 +441,28 @@ export interface PurgeResponse {
 
 Tracked in: [Sovereign Sync Expansion + Workbench UX Continuation](../../epics/v0.2.0/sovereign-sync-and-workbench-ux-epic.md)
 
-- [ ] Add `representative_id varchar(36) NULL` and `is_representative_pinned tinyint(1) NOT NULL DEFAULT 0` columns to `acx_clusters` in `LifeCycleManager`.
-- [ ] Extend `ClustersRepository::merge_snapshot_for_tenant()` to write `representative_id` and `is_representative_pinned` from the snapshot `representative_id` and `representative_is_pinned` fields. These columns follow the optimistic-write guard: skip overwriting when a pending or conflicted outbox row targets the same cluster's representative pin (`operation_type IN ('representative_pinned', 'representative_unpinned')` with matching `entity_key`). Once the outbox operation is acknowledged or discarded, subsequent projections overwrite freely.
-- [ ] Extend `SnapshotProjector` to pass `representative_id` and `representative_is_pinned` from the snapshot response through to `merge_snapshot_for_tenant()`.
-- [ ] Extend `ClusterResponseMapper` to include `representative_id` and `is_representative_pinned` in cluster responses. Update `TopUnlabeledRepresentative` to use the projected `is_pinned` value.
-- [ ] Add `ClustersRepository::pin_representative(cluster_uuid, representative_id, is_pinned, tenant_id)`: update local `representative_id` and `is_representative_pinned` columns. Used for immediate local feedback when the operator pins/unpins.
-- [ ] Add `POST /acx/v1/recognition/clusters/{uuid}/pin-representative` endpoint in `ClusterMutationsController`: accepts `{ representative_id, is_pinned }`, updates local state via `pin_representative()`, enqueues outbox operation (`representative_pinned` or `representative_unpinned`), returns updated cluster data. Permission: `manage_options`.
-- [ ] Add outbox operation type handling in `OutboxDispatcher`: add a dedicated dispatch branch (or multi-segment path support) for `representative_pinned` and `representative_unpinned` that reads `representative_id` from the outbox payload and formats both `cluster_id` (from `entity_key`) and `representative_id` into `PATCH /recognition/clusters/{cluster_id}/representatives/{representative_id}/pin` with `{ is_pinned: true/false }` body. The existing single-`%s` route table interpolation is insufficient for this two-parameter path. The backend pin endpoint returns HTTP 204 (No Content) with no response body -- the dispatcher must treat status 204 as a success case without attempting to parse a response body (do not pass through `normalize_single_response()`).
-- [ ] Add PHPUnit tests: snapshot projection writes `representative_id` and `is_representative_pinned`; pin-representative endpoint updates local state and enqueues outbox operation; outbox dispatcher maps pin operations to correct backend endpoint; pending outbox pin operation guards local pin columns from snapshot overwrite; once outbox is acknowledged/discarded, snapshot projection overwrites pin columns freely.
+These items are explicitly deferred to the follow-on epic and are not blockers for Phase 5 completion.
+
+- Deferred: add `representative_id varchar(36) NULL` and `is_representative_pinned tinyint(1) NOT NULL DEFAULT 0` columns to `acx_clusters` in `LifeCycleManager`.
+- Deferred: extend `ClustersRepository::merge_snapshot_for_tenant()` to write `representative_id` and `is_representative_pinned` from the snapshot `representative_id` and `representative_is_pinned` fields. These columns follow the optimistic-write guard: skip overwriting when a pending or conflicted outbox row targets the same cluster's representative pin (`operation_type IN ('representative_pinned', 'representative_unpinned')` with matching `entity_key`). Once the outbox operation is acknowledged or discarded, subsequent projections overwrite freely.
+- Deferred: extend `SnapshotProjector` to pass `representative_id` and `representative_is_pinned` from the snapshot response through to `merge_snapshot_for_tenant()`.
+- Deferred: extend `ClusterResponseMapper` to include `representative_id` and `is_representative_pinned` in cluster responses. Update `TopUnlabeledRepresentative` to use the projected `is_pinned` value.
+- Deferred: add `ClustersRepository::pin_representative(cluster_uuid, representative_id, is_pinned, tenant_id)`: update local `representative_id` and `is_representative_pinned` columns. Used for immediate local feedback when the operator pins/unpins.
+- Deferred: add `POST /acx/v1/recognition/clusters/{uuid}/pin-representative` endpoint in `ClusterMutationsController`: accepts `{ representative_id, is_pinned }`, updates local state via `pin_representative()`, enqueues outbox operation (`representative_pinned` or `representative_unpinned`), returns updated cluster data. Permission: `manage_options`.
+- Deferred: add outbox operation type handling in `OutboxDispatcher`: add a dedicated dispatch branch (or multi-segment path support) for `representative_pinned` and `representative_unpinned` that reads `representative_id` from the outbox payload and formats both `cluster_id` (from `entity_key`) and `representative_id` into `PATCH /recognition/clusters/{cluster_id}/representatives/{representative_id}/pin` with `{ is_pinned: true/false }` body. The existing single-`%s` route table interpolation is insufficient for this two-parameter path. The backend pin endpoint returns HTTP 204 (No Content) with no response body -- the dispatcher must treat status 204 as a success case without attempting to parse a response body (do not pass through `normalize_single_response()`).
+- Deferred: add PHPUnit tests: snapshot projection writes `representative_id` and `is_representative_pinned`; pin-representative endpoint updates local state and enqueues outbox operation; outbox dispatcher maps pin operations to correct backend endpoint; pending outbox pin operation guards local pin columns from snapshot overwrite; once outbox is acknowledged/discarded, snapshot projection overwrites pin columns freely.
 
 ## Moved Out: Complete Deferred Compound Topology Acceptance
 
 Tracked in: [Sovereign Sync Expansion + Workbench UX Continuation](../../epics/v0.2.0/sovereign-sync-and-workbench-ux-epic.md)
 
-- [ ] Enrich `ClusterMutationsController::merge_clusters()` outbox payload with `moved_member_uuids` (or equivalent member UUID provenance) alongside the existing `target_cluster_id`. Capture the moved member UUIDs from the same local rows being reassigned so the payload remains authoritative for later conflict resolution.
-- [ ] Extend `ConflictResolutionService` so `cluster_merged` conflicts can support `accepted` once the payload carries moved-member provenance. The accept-machine path must move only the recorded members back to the source cluster (`entity_key`), restore source/target `identity_count`, un-dismiss the source cluster, clear cluster curation guards on both affected clusters, discard the outbox row, and mark the conflict resolved inside one transaction.
-- [ ] Extend `ConflictController::determine_allowed_resolutions()` so `cluster_merged` advertises `['accepted', 'dismissed']` only when the enriched payload is present and complete. Incomplete or legacy payloads remain dismiss-only.
-- [ ] Update `ConflictInbox` preview/confirmation copy for `cluster_merged` so operators see which members will be moved back and which local cluster state will be restored before confirming acceptance.
-- [ ] Add PHPUnit and Vitest coverage for the enriched payload, successful revert, stale-member abort, `allowed_resolutions` upgrade, and `cluster_merged` preview/confirmation UX.
+These items are explicitly deferred to the follow-on epic and are not blockers for Phase 5 completion.
+
+- Deferred: enrich `ClusterMutationsController::merge_clusters()` outbox payload with `moved_member_uuids` (or equivalent member UUID provenance) alongside the existing `target_cluster_id`. Capture the moved member UUIDs from the same local rows being reassigned so the payload remains authoritative for later conflict resolution.
+- Deferred: extend `ConflictResolutionService` so `cluster_merged` conflicts can support `accepted` once the payload carries moved-member provenance. The accept-machine path must move only the recorded members back to the source cluster (`entity_key`), restore source/target `identity_count`, un-dismiss the source cluster, clear cluster curation guards on both affected clusters, discard the outbox row, and mark the conflict resolved inside one transaction.
+- Deferred: extend `ConflictController::determine_allowed_resolutions()` so `cluster_merged` advertises `['accepted', 'dismissed']` only when the enriched payload is present and complete. Incomplete or legacy payloads remain dismiss-only.
+- Deferred: update `ConflictInbox` preview/confirmation copy for `cluster_merged` so operators see which members will be moved back and which local cluster state will be restored before confirming acceptance.
+- Deferred: add PHPUnit and Vitest coverage for the enriched payload, successful revert, stale-member abort, `allowed_resolutions` upgrade, and `cluster_merged` preview/confirmation UX.
 
 ## Phase 4: Plugin -- Retention Status Proxy and Admin Surface
 
@@ -494,16 +498,18 @@ Tracked in: [Sovereign Sync Expansion + Workbench UX Continuation](../../epics/v
 - [x] Backend integration test: `dispose_after_ack` mode marks data as disposed after projection acknowledgement; purge with `scope='disposed'` deletes only disposed rows.
 - [x] PHP integration test: retention status endpoint proxies backend policy and caches correctly.
 - [x] Vitest integration test: retention page end-to-end flow with mocked API responses.
-- [ ] All backend pytest, PHP PHPUnit/PHPStan, TypeScript type checks, and Vitest/ESLint checks pass.
+- [x] All backend pytest, PHP PHPUnit/PHPStan, TypeScript type checks, and Vitest/ESLint checks pass.
 
 ## Stretch Goals
 
-- [ ] Async/file-based export for large tenants (export returns a job ID, status polled separately, download URL when ready).
-- [ ] Paginated full audit event log page with filtering by event type.
-- [ ] Scheduled disposal worker that automatically purges disposed state on a configurable interval.
-- [ ] Export format versioning and import capability for cross-site migration.
-- [ ] Embedding-level disposal tracking (dispose individual identity embeddings vs. entire clusters).
-- [ ] Retention policy presets (e.g., "GDPR mode" = `dispose_after_ack` + auto-purge after 30 days).
+These are optional follow-ups and are not part of the Phase 5 done definition or exit criteria.
+
+- Deferred stretch goal: async/file-based export for large tenants (export returns a job ID, status polled separately, download URL when ready).
+- Deferred stretch goal: paginated full audit event log page with filtering by event type.
+- Deferred stretch goal: scheduled disposal worker that automatically purges disposed state on a configurable interval.
+- Deferred stretch goal: export format versioning and import capability for cross-site migration.
+- Deferred stretch goal: embedding-level disposal tracking (dispose individual identity embeddings vs. entire clusters).
+- Deferred stretch goal: retention policy presets (e.g., "GDPR mode" = `dispose_after_ack` + auto-purge after 30 days).
 
 ## Success Criteria
 
@@ -512,8 +518,8 @@ Tracked in: [Sovereign Sync Expansion + Workbench UX Continuation](../../epics/v
 - [x] Operators can trigger a purge of machine-derived state with explicit confirmation, and the system records the action in the audit log.
 - [x] Every retention lifecycle action (policy change, export, purge, disposal) produces an auditable event visible to the operator.
 - [x] The retention mode is visible in the sync status area and dashboard so operators understand the data governance posture at a glance.
-- [ ] The MVP can credibly claim privacy-minimized retention and auditable handling of machine-derived biometric state.
-- [ ] All backend pytest, PHP PHPUnit/PHPStan, TypeScript type checks, and Vitest/ESLint checks pass.
+- [x] The MVP can credibly claim privacy-minimized retention and auditable handling of machine-derived biometric state.
+- [x] All backend pytest, PHP PHPUnit/PHPStan, TypeScript type checks, and Vitest/ESLint checks pass.
 
 ## Out of Scope
 

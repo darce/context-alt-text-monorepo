@@ -38,6 +38,8 @@ export const DashboardPage = (): React.JSX.Element => {
   } = useIdentityStats();
 
   const coveragePercent = Math.round(stats.coverage);
+  const latestRecognitionJobId = jobHistory[0] ?? null;
+  const latestRecognitionJobStatus = latestRecognitionJobId ? jobStatuses[latestRecognitionJobId] : null;
   const pendingReplayCount = normalizeCount(syncStatus?.pending_curation_operations);
   const conflictCount = normalizeCount(syncStatus?.conflict_count);
   const failedReplayCount = normalizeCount(syncStatus?.failed_curation_operations);
@@ -284,15 +286,36 @@ export const DashboardPage = (): React.JSX.Element => {
         </section>
 
         <section className="acx-dashboard__panel">
-          <h2>{__('Quick Actions', 'alt-context')}</h2>
+          <h2>{__('Batch Operations', 'alt-context')}</h2>
+          <p>
+            {__(
+              'Start new recognition batches from Dashboard, then jump back into scan, review, or roster cleanup from the same landing page.',
+              'alt-context',
+            )}
+          </p>
+          {latestRecognitionJobId ? (
+            <>
+              <p>
+                {sprintf(__('Most recent batch job: %s', 'alt-context'), latestRecognitionJobId)}{' '}
+                <a href={`#/workbench?tab=confirm&jobId=${latestRecognitionJobId}`} className="acx-link-button">
+                  {__('View latest results', 'alt-context')}
+                </a>
+              </p>
+              {latestRecognitionJobStatus ? (
+                <p>{sprintf(__('Latest batch status: %s', 'alt-context'), latestRecognitionJobStatus)}</p>
+              ) : null}
+            </>
+          ) : (
+            <p>{__('No recent recognition batches yet. Start from the analysis queue when you are ready.', 'alt-context')}</p>
+          )}
           <div className="acx-dashboard__actions">
             <a href="#/workbench?tab=scan" className="acx-dashboard__action-card">
               <h3>{__('Analysis Queue', 'alt-context')}</h3>
-              <p>{__('Scan your library for faces and identities.', 'alt-context')}</p>
+              <p>{__('Select media and launch a new recognition batch.', 'alt-context')}</p>
             </a>
             <a href="#/workbench?tab=confirm" className="acx-dashboard__action-card">
               <h3>{__('Review Hub', 'alt-context')}</h3>
-              <p>{__('Cluster detected embeddings into known identities.', 'alt-context')}</p>
+              <p>{__('Inspect recent jobs and cluster the latest results.', 'alt-context')}</p>
             </a>
             <a href={rosterClustersUrl()} className="acx-dashboard__action-card">
               <h3>{__('Managed Identities', 'alt-context')}</h3>

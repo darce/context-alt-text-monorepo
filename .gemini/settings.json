@@ -1,10 +1,23 @@
 {
   "mcpServers": {
-    "context-alt-text-handoff": {
-      "command": "/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/mcp-server.sh",
+    "altcontext-mcp": {
+      "command": "python3",
       "args": [
-        "run"
-      ]
+        "/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp_launcher.py",
+        "--workspace-root",
+        "/Users/daniel/Development/context-alt-text-monorepo",
+        "--state-dir",
+        "/Users/daniel/Development/context-alt-text-monorepo/.task-state",
+        "--current-task-path",
+        "/Users/daniel/Development/context-alt-text-monorepo/CURRENT_TASK.md",
+        "--exports-dir",
+        "/Users/daniel/Development/context-alt-text-monorepo/.task-state/exports",
+        "serve-stdio"
+      ],
+      "env": {
+        "PYENV_VERSION": "description-service",
+        "PYTHONPATH": "/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src:/Users/daniel/Development/context-alt-text-monorepo/packages/codex-subagent-bridge/src"
+      }
     }
   }
 }

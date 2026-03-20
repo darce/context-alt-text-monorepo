@@ -74,8 +74,10 @@ class IdentitySuggestion(Base):
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     refreshed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    source_job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     source: Mapped[str | None] = mapped_column(String(50))
 
     # Resolution status
@@ -138,10 +140,13 @@ class ClusterMergeSuggestion(Base):
     )
 
     similarity: Mapped[float] = mapped_column(Float, nullable=False)
+    confidence_score: Mapped[float | None] = mapped_column(Float)
 
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     refreshed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    source_job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     source: Mapped[str | None] = mapped_column(String(50))
 
     resolution: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'pending'"))
@@ -152,6 +157,10 @@ class ClusterMergeSuggestion(Base):
 
     __table_args__ = (
         CheckConstraint("similarity >= 0 AND similarity <= 1", name="cluster_merge_similarity_range"),
+        CheckConstraint(
+            "confidence_score IS NULL OR (confidence_score >= 0 AND confidence_score <= 1)",
+            name="cluster_merge_confidence_score_range",
+        ),
         CheckConstraint(
             "resolution IN ('pending', 'accepted', 'rejected', 'expired')",
             name="cluster_merge_valid_resolution",
@@ -164,7 +173,51 @@ class ClusterMergeSuggestion(Base):
         Index(
             "idx_cluster_merge_suggestions_pending",
             "tenant_id",
-            "similarity",
+            "confidence_score",
+            postgresql_where=text("resolution = 'pending'"),
+        ),
+    )
+
+
+class NameSuggestion(Base):
+    """Proposed cluster label awaiting operator review."""
+
+    __tablename__ = "name_suggestions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    cluster_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("identity_clusters.id", ondelete="CASCADE"), nullable=False
+    )
+    suggested_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    confidence_score: Mapped[float | None] = mapped_column(Float)
+    source: Mapped[str] = mapped_column(String(50), nullable=False, server_default=text("'identity'"))
+    resolution: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'pending'"))
+    source_job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+    tenant: Mapped[Tenant] = relationship()
+    cluster: Mapped[IdentityCluster] = relationship()
+
+    __table_args__ = (
+        CheckConstraint(
+            "confidence_score IS NULL OR (confidence_score >= 0 AND confidence_score <= 1)",
+            name="name_suggestion_confidence_score_range",
+        ),
+        CheckConstraint(
+            "resolution IN ('pending', 'accepted', 'rejected', 'expired')",
+            name="name_suggestion_valid_resolution",
+        ),
+        Index("idx_name_suggestions_tenant", "tenant_id"),
+        Index("idx_name_suggestions_cluster", "cluster_id"),
+        Index(
+            "idx_name_suggestions_pending",
+            "tenant_id",
+            "confidence_score",
             postgresql_where=text("resolution = 'pending'"),
         ),
     )
@@ -231,6 +284,7 @@ class IdentityConstraint(Base):
 __all__ = [
     "IdentitySuggestion",
     "ClusterMergeSuggestion",
+    "NameSuggestion",
     "IdentityClusterBlock",
     "IdentityConstraint",
 ]

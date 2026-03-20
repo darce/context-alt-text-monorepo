@@ -25,6 +25,7 @@ TENANT_TABLES = [
     "identity_clustering_jobs",
     "identity_suggestions",
     "cluster_merge_suggestions",
+    "name_suggestions",
     "identity_cluster_blocks",
     "identity_constraints",
     "recognition_runs",
@@ -430,8 +431,10 @@ def upgrade() -> None:
         sa.Column("evidence_generation", sa.Integer(), nullable=False, server_default=sa.text("0")),
         # Timestamps
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("resolved_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("refreshed_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("source_job_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("source", sa.String(length=50), nullable=True),
         # Resolution status: 'pending', 'accepted', 'rejected', 'expired'
         sa.Column(
@@ -491,9 +494,12 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("similarity", sa.Float(), nullable=False),
+        sa.Column("confidence_score", sa.Float(), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("resolved_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("refreshed_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("source_job_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("source", sa.String(length=50), nullable=True),
         sa.Column(
             "resolution",
@@ -506,6 +512,10 @@ def upgrade() -> None:
             name="cluster_merge_similarity_range",
         ),
         sa.CheckConstraint(
+            "confidence_score IS NULL OR (confidence_score >= 0 AND confidence_score <= 1)",
+            name="cluster_merge_confidence_score_range",
+        ),
+        sa.CheckConstraint(
             "resolution IN ('pending', 'accepted', 'rejected', 'expired')",
             name="cluster_merge_valid_resolution",
         ),
@@ -514,6 +524,44 @@ def upgrade() -> None:
             "cluster_a_id",
             "cluster_b_id",
             name="unique_cluster_merge_suggestion",
+        ),
+    )
+
+    op.create_table(
+        "name_suggestions",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "cluster_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("identity_clusters.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("suggested_name", sa.String(length=255), nullable=False),
+        sa.Column("confidence_score", sa.Float(), nullable=True),
+        sa.Column("source", sa.String(length=50), nullable=False, server_default=sa.text("'identity'")),
+        sa.Column(
+            "resolution",
+            sa.String(length=20),
+            nullable=False,
+            server_default=sa.text("'pending'"),
+        ),
+        sa.Column("source_job_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("resolved_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.CheckConstraint(
+            "confidence_score IS NULL OR (confidence_score >= 0 AND confidence_score <= 1)",
+            name="name_suggestion_confidence_score_range",
+        ),
+        sa.CheckConstraint(
+            "resolution IN ('pending', 'accepted', 'rejected', 'expired')",
+            name="name_suggestion_valid_resolution",
         ),
     )
 
@@ -887,7 +935,23 @@ def upgrade() -> None:
     op.create_index(
         "idx_cluster_merge_suggestions_pending",
         "cluster_merge_suggestions",
-        ["tenant_id", "similarity"],
+        ["tenant_id", "confidence_score"],
+        postgresql_where=sa.text("resolution = 'pending'"),
+    )
+    op.create_index(
+        "idx_name_suggestions_tenant",
+        "name_suggestions",
+        ["tenant_id"],
+    )
+    op.create_index(
+        "idx_name_suggestions_cluster",
+        "name_suggestions",
+        ["cluster_id"],
+    )
+    op.create_index(
+        "idx_name_suggestions_pending",
+        "name_suggestions",
+        ["tenant_id", "confidence_score"],
         postgresql_where=sa.text("resolution = 'pending'"),
     )
     op.create_index(
@@ -1146,6 +1210,9 @@ def downgrade() -> None:
     op.drop_index("idx_cluster_merge_suggestions_cluster_b", table_name="cluster_merge_suggestions")
     op.drop_index("idx_cluster_merge_suggestions_cluster_a", table_name="cluster_merge_suggestions")
     op.drop_index("idx_cluster_merge_suggestions_tenant", table_name="cluster_merge_suggestions")
+    op.drop_index("idx_name_suggestions_pending", table_name="name_suggestions")
+    op.drop_index("idx_name_suggestions_cluster", table_name="name_suggestions")
+    op.drop_index("idx_name_suggestions_tenant", table_name="name_suggestions")
     op.drop_index("idx_identity_cluster_blocks_cluster", table_name="identity_cluster_blocks")
     op.drop_index("idx_identity_cluster_blocks_identity", table_name="identity_cluster_blocks")
     op.drop_index("idx_recognition_events_cluster", table_name="recognition_events")
@@ -1172,6 +1239,7 @@ def downgrade() -> None:
     op.drop_table("recognition_events")
     op.drop_table("recognition_runs")
     op.drop_table("identity_cluster_blocks")
+    op.drop_table("name_suggestions")
     op.drop_table("cluster_merge_suggestions")
     op.drop_table("identity_suggestions")
     op.drop_table("identity_scan_job_items")

@@ -17,9 +17,23 @@ def _log(log_dir: Path, level: str, event: str, **extra: Any) -> None:
         **extra,
     }
     path = log_dir / "orchestrator.jsonl"
+    rotate_jsonl_if_needed(path, 1_000_000)
     with path.open("a") as fh:
         fh.write(json.dumps(entry, default=str) + "\n")
     print(f"[{level}] {event}", flush=True)
+
+
+def rotate_jsonl_if_needed(path: Path, max_bytes: int) -> None:
+    if not path.exists():
+        return
+    try:
+        if path.stat().st_size >= max_bytes:
+            rotated = path.with_suffix(path.suffix + ".1")
+            if rotated.exists():
+                rotated.unlink()
+            path.replace(rotated)
+    except OSError:
+        pass
 
 
 def _json_load(payload: str) -> dict[str, Any]:

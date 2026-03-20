@@ -14,7 +14,7 @@ Log analysis from the `remaining-sync-workbench-and-retention` task across `back
 
 **Symptom:** `review_failed` with HTTP 400: `"'required' is required to be supplied and to be an array including every key in properties. Missing 'line_start'."`
 
-**Root cause:** `REVIEW_OUTPUT_SCHEMA` in `review_runner.py` lists `line_start`, `line_end`, and `fix` as `required` but defines them as nullable types (`["integer", "null"]` and `["string", "null"]` respectively). OpenAI structured outputs require that all properties in `required` be non-nullable; nullable fields must be omitted from `required`.
+**Root cause:** `REVIEW_OUTPUT_SCHEMA` in `review_runner.py` defines `line_start`, `line_end`, and `fix` as nullable types (`["integer", "null"]` and `["string", "null"]` respectively). OpenAI structured outputs require that ALL keys listed in `properties` also appear in `required`, even when their types are nullable. The original plan incorrectly advised removing these nullable fields from `required`; the correct fix is to keep them in `required`.
 
 **Impact:** Every review turn fails on first API call. Workers that complete execution and enter review immediately crash, wasting the entire execution token budget (150k-350k tokens per turn).
 
@@ -82,9 +82,10 @@ Fix in 4 phases. Each phase is independently shippable and testable.
 
 **1a. Fix review output schema (ORD-001)**
 
-In `review_runner.py REVIEW_OUTPUT_SCHEMA`: remove `line_start`, `line_end`, and `fix` from the `required` array in the `findings.items` object. These fields are nullable; OpenAI structured outputs require nullable fields to not appear in `required`.
+In `review_runner.py REVIEW_OUTPUT_SCHEMA`: ensure `line_start`, `line_end`, and `fix` are present in the `required` array in the `findings.items` object. OpenAI structured outputs require all keys in `properties` to appear in `required`, even when nullable. These fields use nullable types (`["integer", "null"]` / `["string", "null"]`).
 
 Functions to change:
+
 - `review_runner.py`: `REVIEW_OUTPUT_SCHEMA` constant
 
 **1b. Capture subprocess diagnostics in handoff (ORD-002)**
@@ -92,6 +93,7 @@ Functions to change:
 In `worker_daemon.py _run_final_handoff()`: pass `capture_output=True` to the `subprocess.run()` call. On non-zero exit, log the stderr/stdout tail (truncated to 500 chars) alongside the `handoff_failed` event.
 
 Functions to change:
+
 - `worker_daemon.py`: `_run_final_handoff()`
 
 ### Phase 2: Worker Retry and Dormancy (unblocks recovery without restart)
@@ -103,6 +105,7 @@ Replace `handoff_failure_seen_in_process: bool` with `handoff_retry_count: int` 
 The boolean is used at 6 sites in `worker_loop()`: initialized (line 611), guarded (line 621), and set to `True` at 4 independent handoff-failure branches (lines 632, 859, 979, 1042). All 6 sites must be updated.
 
 Functions to change:
+
 - `worker_daemon.py`: `worker_loop()` -- replace boolean `handoff_failure_seen_in_process` at all 6 usage sites with bounded retry counter
 
 ### Phase 3: Guidance Resilience (unblocks orchestrator cycle completion)
@@ -112,6 +115,7 @@ Functions to change:
 In `orchestrator_guidance.py _classify_guidance()`: change the final `fatal_error` fallback to `blocked` when the combined guidance text is non-empty but unclassifiable. Add missing common markers to `_ENV_BLOCKER_MARKERS`: "vendor/bin/phpunit", "vendor/bin/phpstan", "composer install", "npm install", "node_modules", "command not found", "exit with code 127". Add to `_RESOLVED_MARKERS`: "no code changes were needed", "already fixed", "work already done", "verification passed".
 
 Functions to change:
+
 - `orchestrator_guidance.py`: `_classify_guidance()`, `_ENV_BLOCKER_MARKERS`, `_RESOLVED_MARKERS`
 
 **3b. Let single_pass complete remaining cycle steps after guidance failure (ORD-005)**
@@ -119,6 +123,7 @@ Functions to change:
 In `orchestrator_daemon.py orchestrator_loop()`: remove the `single_pass or` prefix from the guidance stall check. In single_pass mode, log the guidance failure but do not return early; let the cycle continue through task plan dispatch, merge polling, intake, and close check. Set a `had_guidance_failure` flag and return 1 at the end of the cycle if the flag is set.
 
 Functions to change:
+
 - `orchestrator_daemon.py`: `orchestrator_loop()` guidance stall check block
 
 ### Phase 4: Environment and Observability
@@ -130,6 +135,7 @@ Implement the dependency bootstrap in `mk/lane-lifecycle.mk` `lane-open`, which 
 After `lane-open` creates or reuses the worktree, provision the lane environment for the lane-owned stack. For each owned PHP app path containing `composer.json`, either install dependencies in place or attach the shared dependency directory used by local worktrees. For each owned frontend path containing `package.json`, either install dependencies in place or attach the shared `node_modules` directory. Any shared dependency directories must remain ignored via local exclude config so they never appear in review or staging output. Log the bootstrap step as part of lane-open output so operators can distinguish provisioning failures from worker-code failures.
 
 Functions to change:
+
 - `mk/lane-lifecycle.mk`: `lane-open` target
 
 **4b. Add shared log rotation (ORD-007)**
@@ -137,6 +143,7 @@ Functions to change:
 Extract the rotation logic from `worker_daemon.py _log()` into a shared helper `_rotate_jsonl_if_needed(path: Path, max_bytes: int)` in `orchestrator_helpers.py`. Call it from both `orchestrator_helpers.py _log()` and `worker_daemon.py _log()` (replacing the inline copy). This avoids maintaining two copies of the same rotation code.
 
 Functions to change:
+
 - `orchestrator_helpers.py`: add `_rotate_jsonl_if_needed()`, call it from `_log()`
 - `worker_daemon.py`: replace inline rotation in `_log()` with import of shared helper
 
@@ -145,6 +152,7 @@ Functions to change:
 Generate a `uuid4` run_id at daemon startup. Include it in every log entry as a top-level field via the existing `**extra` kwargs (no `_log()` signature change needed). Emit `run_id` in the `daemon_start` event for explicit correlation.
 
 Functions to change:
+
 - `orchestrator_daemon.py`: `main()` and `orchestrator_loop()` (generate run_id, pass as kwarg to every `log()` call)
 - `worker_daemon.py`: `main()` and `worker_loop()` (generate run_id, pass as kwarg to every `log()` call)
 
@@ -228,20 +236,24 @@ return GuidanceResolution(kind="fatal_error", ...)
 ## Verification
 
 ### Phase 1
+
 - Run a real `review_runner.py` structured-output turn via the codex-subagent bridge with a nullable `line_start` / `line_end` / `fix` finding payload and confirm the request no longer fails with HTTP 400
-- Optionally serialize the emitted schema and assert the nullable fields are absent from the inner `required` list as a cheap unit-level regression guard
+- Optionally serialize the emitted schema and assert the nullable fields are present in the inner `required` list as a cheap unit-level regression guard
 - Trigger a `needs_guidance` handoff failure and confirm stderr appears in the log
 
 ### Phase 2
+
 - Start a worker with a pre-seeded `handoff_failed` status file; confirm it retries up to 3 times with increasing intervals
 - Confirm dormant is entered only after max retries
 
 ### Phase 3
+
 - Send a worker guidance message containing "vendor/bin/phpunit is missing"; confirm it classifies as `blocked` not `fatal_error`
 - Send a message with no known markers; confirm it classifies as `blocked` (fallback) not `fatal_error`
 - Run orchestrator in single_pass with one blocked lane and one ready lane; confirm the ready lane is still intaked
 
 ### Phase 4
+
 - Run `make lane-open TASK=<task-ref> LANE=wp-proxy ENTER_SHELL=0`; confirm the lane's declared PHP test command is runnable immediately afterward without manual dependency repair
 - Run `make lane-open TASK=<task-ref> LANE=frontend ENTER_SHELL=0`; confirm the lane's declared frontend test command is runnable immediately afterward without manual dependency repair
 - Write 1MB+ to orchestrator.jsonl; confirm rotation kicks in on next log write
@@ -249,7 +261,7 @@ return GuidanceResolution(kind="fatal_error", ...)
 
 ## Checklist
 
-- [ ] Phase 1a: Remove nullable fields from review schema `required` array
+- [ ] Phase 1a: Ensure nullable fields remain in review schema `required` array
 - [ ] Phase 1b: Add `capture_output=True` and diagnostic logging to `_run_final_handoff()`
 - [ ] Phase 2a: Replace boolean handoff flag with bounded retry counter and backoff
 - [ ] Phase 3a: Widen marker lists and add `blocked` fallback to `_classify_guidance()`

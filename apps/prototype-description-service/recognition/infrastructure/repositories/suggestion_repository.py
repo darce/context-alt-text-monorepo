@@ -331,6 +331,8 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
                 existing_suggestion.representative_similarity = _clamp_similarity(payload.representative_similarity)
                 existing_suggestion.avg_member_similarity = _clamp_similarity(payload.member_similarity)
                 existing_suggestion.confidence_score = _clamp_similarity(payload.confidence_score)
+                existing_suggestion.expires_at = payload.expires_at
+                existing_suggestion.source_job_id = _coerce_uuid(payload.source_job_id) if payload.source_job_id else None
                 if touch_refreshed_at_on_update:
                     existing_suggestion.refreshed_at = payload.refreshed_at or datetime.now(tz=UTC)
                 elif payload.refreshed_at is not None:
@@ -360,7 +362,9 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
                     avg_member_similarity=_clamp_similarity(payload.member_similarity),
                     confidence_score=_clamp_similarity(payload.confidence_score),
                     resolution=SuggestionStatus.PENDING.value,
+                    expires_at=payload.expires_at,
                     refreshed_at=payload.refreshed_at,
+                    source_job_id=_coerce_uuid(payload.source_job_id) if payload.source_job_id else None,
                     source=payload.source or "backfill_new_evidence",
                     evidence_generation=next_generation,
                 )
@@ -379,7 +383,9 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
             avg_member_similarity=_clamp_similarity(payload.member_similarity),
             confidence_score=_clamp_similarity(payload.confidence_score),
             resolution=SuggestionStatus.PENDING.value,
+            expires_at=payload.expires_at,
             refreshed_at=payload.refreshed_at,
+            source_job_id=_coerce_uuid(payload.source_job_id) if payload.source_job_id else None,
             source=payload.source,
             evidence_generation=0,
         )
@@ -398,7 +404,13 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
             member_similarity=model.avg_member_similarity,
             status=SuggestionStatus(model.resolution),
             evidence_generation=int(getattr(model, "evidence_generation", 0) or 0),
+            confidence_score=float(model.confidence_score) if model.confidence_score is not None else None,
+            expires_at=model.expires_at,
+            source_job_id=str(model.source_job_id) if model.source_job_id is not None else None,
             created_at=model.created_at,
+            resolved_at=model.resolved_at,
+            refreshed_at=model.refreshed_at,
+            source=model.source,
         )
 
     async def _next_evidence_generation(

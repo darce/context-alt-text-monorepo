@@ -1737,7 +1737,7 @@ def test_single_pass_guidance_review_closes_message(tmp_path: Path) -> None:
     mock_ahm.upsert_worktree_lane.assert_called()
 
 
-def test_single_pass_guidance_fatal_returns_error(tmp_path: Path) -> None:
+def test_single_pass_guidance_blocked_fallback_returns_error(tmp_path: Path) -> None:
     mod = _load_module()
     (tmp_path / ".task-state").mkdir()
     mock_ahm = _make_mock_ahm()
@@ -1747,7 +1747,7 @@ def test_single_pass_guidance_fatal_returns_error(tmp_path: Path) -> None:
             "messages": [
                 {
                     "id": 10,
-                    "lane_id": "frontend",
+                    "lane_id": "unknown-lane",
                     "direction": "worker_to_orchestrator",
                     "session": "s",
                     "message": "Need a decision.",
@@ -1940,3 +1940,72 @@ def test_downstream_lanes_unknown_lane() -> None:
     task_ref = "phase-5-retention-export-and-audit-controls"
     deps = manifest_mod.downstream_lanes(task_ref, "nonexistent-lane")
     assert deps == []
+
+
+# ---------------------------------------------------------------------------
+# attention stall tracking
+# ---------------------------------------------------------------------------
+
+
+def test_lane_work_in_flight_excludes_stale_attention_lanes() -> None:
+    """Stale attention_required lanes should not count as work in flight."""
+    mod = _load_module()
+    rows = [
+        {"lane_id": "frontend", "action": "skip", "reason": "attention_required"},
+        {"lane_id": "backend-domain", "action": "skip", "reason": "attention_required"},
+    ]
+    # Without stale set, attention_required counts as in-flight
+    assert mod._lane_work_in_flight(rows) is True
+
+    # With all lanes marked stale, nothing is in-flight
+    assert mod._lane_work_in_flight(rows, stale_attention_lanes={"frontend", "backend-domain"}) is False
+
+    # With only one stale, the other still counts
+    assert mod._lane_work_in_flight(rows, stale_attention_lanes={"frontend"}) is True
+
+
+def test_lane_work_in_flight_stale_does_not_affect_running() -> None:
+    """Running workers are never suppressed by the stale set."""
+    mod = _load_module()
+    rows = [
+        {"lane_id": "frontend", "action": "skip", "reason": "attention_required"},
+        {"lane_id": "backend-domain", "running": True},
+    ]
+    assert mod._lane_work_in_flight(rows, stale_attention_lanes={"frontend"}) is True
+
+
+def test_long_running_attention_stall_triggers_plan_stall(tmp_path: Path) -> None:
+    """After ATTENTION_STALL_THRESHOLD cycles, stale attention lanes no longer
+    suppress the plan stall detector, causing the loop to eventually exit."""
+    mod = _load_module()
+    (tmp_path / ".task-state").mkdir()
+    mock_ahm = _make_mock_ahm(ready_to_close=False)
+    mock_ahm.list_worker_reports.return_value = json.dumps({"ok": True, "reports": []})
+
+    mock_manifest = mock.MagicMock()
+    mock_manifest.merge_order.return_value = ["frontend"]
+    mock_manifest.downstream_lanes.return_value = []
+
+    attention_row = {
+        "lane_id": "frontend",
+        "action": "skip",
+        "reason": "attention_required",
+        "worker_state": "attention_required",
+    }
+
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "lane_manifest": mock_manifest}):
+        with mock.patch.object(mod, "_run_handoff_dispatch", return_value={"ok": True}):
+            with mock.patch.object(mod, "_resolve_guidance_cycle", return_value=[]):
+                with mock.patch.object(mod, "_ensure_lane_workers", return_value=[attention_row]):
+                    with mock.patch.object(mod, "_poll_merge_ready_lanes", return_value=[]):
+                        with mock.patch.object(mod, "_remaining_plan_work", return_value=[{"plan_item_id": "p1", "cursor_state": "", "lane_id": "frontend"}]):
+                            with mock.patch.object(mod, "_dispatch_from_task_plan", return_value=None):
+                                with mock.patch.object(mod.time, "sleep", return_value=None):
+                                    result = mod.orchestrator_loop(
+                                        orchestrator_root=tmp_path,
+                                        task_ref="phase-5-retention-export-and-audit-controls",
+                                        single_pass=False,
+                                        poll_interval=0,
+                                    )
+    # Should exit with error (plan stall after attention stall threshold exceeded)
+    assert result == 1

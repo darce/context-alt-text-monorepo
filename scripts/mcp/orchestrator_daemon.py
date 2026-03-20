@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +75,8 @@ from orchestrator_lanes import (  # noqa: F401
 # ---------------------------------------------------------------------------
 # Orchestration-level lane queries (stay here so tests can patch siblings)
 # ---------------------------------------------------------------------------
+ATTENTION_STALL_THRESHOLD = 5
+
 
 
 def _poll_merge_ready_lanes(
@@ -255,7 +258,10 @@ def _run_cross_lane_verify(
     return result.returncode == 0
 
 
-def _lane_work_in_flight(autostart_results: list[dict[str, Any]]) -> bool:
+def _lane_work_in_flight(
+    autostart_results: list[dict[str, Any]],
+    stale_attention_lanes: set[str] | None = None,
+) -> bool:
     """Return True when at least one lane already has active worker progress."""
     for row in autostart_results:
         if not isinstance(row, dict):
@@ -263,6 +269,9 @@ def _lane_work_in_flight(autostart_results: list[dict[str, Any]]) -> bool:
         if row.get("action") in {"start", "manual"}:
             return True
         if row.get("reason") == "attention_required":
+            lane_id = row.get("lane_id", "")
+            if stale_attention_lanes and lane_id in stale_attention_lanes:
+                continue
             return True
         if bool(row.get("running")):
             return True
@@ -710,7 +719,8 @@ def orchestrator_loop(
 
     state_dir = orchestrator_root / ".task-state"
     log_dir = orchestrator_root / "logs" / "daemon"
-    log = lambda level, event, **kw: _log(log_dir, level, event, **kw)
+    run_id = str(uuid.uuid4())
+    log = lambda level, event, **kw: _log(log_dir, level, event, run_id=run_id, **kw)
 
     # Configure MCP runtime
     runtime = RuntimeConfig.for_workspace(
@@ -731,6 +741,7 @@ def orchestrator_loop(
     runtime_failure_count = 0
     plan_stall_count = 0
     guidance_stalls: dict[str, tuple[int, int]] = {}
+    attention_stalls: dict[str, int] = {}
 
     while True:
         had_guidance_failure = False
@@ -781,8 +792,9 @@ def orchestrator_loop(
                     )
                     if stall_count >= GUIDANCE_STALL_THRESHOLD:
                         log("ERROR", "terminal_error", lane=resolution.lane_id, reason="guidance_stall")
-                        return 1
-                    had_guidance_failure = True
+                        # Do not return 1 immediately; let the cycle continue to other steps.
+                        had_guidance_failure = True
+                        continue
                     continue
                 guidance_stalls.pop(resolution.lane_id, None)
                 event_name = "guidance_resolved"
@@ -823,7 +835,23 @@ def orchestrator_loop(
             ready_lanes = _poll_merge_ready_lanes(orchestrator_root, task_ref, m_order)
             ordered_ready = _sort_by_manifest_merge_order(ready_lanes, m_order)
             log("INFO", "poll_complete", ready_lanes=ordered_ready)
-            workers_in_flight = _lane_work_in_flight(autostart_results)
+            # Track attention_required stall cycles per lane
+            attention_lanes = {
+                row["lane_id"] for row in autostart_results
+                if isinstance(row, dict) and row.get("reason") == "attention_required"
+            }
+            for lane_id in list(attention_stalls):
+                if lane_id not in attention_lanes:
+                    del attention_stalls[lane_id]
+            for lane_id in attention_lanes:
+                attention_stalls[lane_id] = attention_stalls.get(lane_id, 0) + 1
+                if attention_stalls[lane_id] >= ATTENTION_STALL_THRESHOLD:
+                    log("ERROR", "attention_stall_escalated", lane=lane_id, cycles=attention_stalls[lane_id])
+            stale_attn = {
+                lid for lid, count in attention_stalls.items()
+                if count >= ATTENTION_STALL_THRESHOLD
+            }
+            workers_in_flight = _lane_work_in_flight(autostart_results, stale_attn)
 
             # Step 5: Intake and refresh
             for lane_id in ordered_ready:
@@ -929,7 +957,7 @@ def orchestrator_loop(
         if ready_to_close and remaining_plan_items:
             log("INFO", "task_close_blocked_by_plan", remaining=len(remaining_plan_items))
 
-        if single_pass:
+        if single_pass or had_guidance_failure:
             return 1 if had_guidance_failure else 0
 
         log("INFO", "poll_sleep", interval=poll_interval)

@@ -18,6 +18,7 @@ import signal
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,7 @@ if str(SCRIPT_DIR) not in sys.path:
 from _env import WORKER_REASONING_EFFORT_CHOICES
 from _env import pythonpath_env
 from backend_registry import get_backend_choices
+from orchestrator_helpers import rotate_jsonl_if_needed, _combined_text, _json_load, _normalize_text
 
 _MAX_LOG_BYTES = 1_000_000
 _STATUS_FILE_VERSION = 1
@@ -80,15 +82,7 @@ def _log(lane_id: str, log_dir: Path, level: str, event: str, **extra: Any) -> N
         **extra,
     }
     path = log_dir / f"worker-{lane_id}.jsonl"
-    if path.exists():
-        try:
-            if path.stat().st_size >= _MAX_LOG_BYTES:
-                rotated = path.with_suffix(path.suffix + ".1")
-                if rotated.exists():
-                    rotated.unlink()
-                path.replace(rotated)
-        except OSError:
-            pass
+    rotate_jsonl_if_needed(path, _MAX_LOG_BYTES)
     with path.open("a") as fh:
         fh.write(json.dumps(entry, default=str) + "\n")
     # Also print for interactive visibility.
@@ -263,6 +257,7 @@ def _run_final_handoff(
     worktree_path: Path,
     result_path: Path,
     dry_run: bool = False,
+    run_id: str | None = None,
 ) -> int:
     """Call ``lane_result.py handoff`` for the one final report."""
     cmd = [
@@ -285,6 +280,7 @@ def _run_final_handoff(
         log_dir = orchestrator_root / "logs" / "worker-daemon"
         _log(lane_id, log_dir, "ERROR", "handoff_subprocess_failed",
              exit_code=result.returncode,
+             run_id=run_id,
              stderr_tail=stderr_tail,
              stdout_tail=stdout_tail)
     return result.returncode
@@ -594,8 +590,9 @@ def worker_loop(
 
     log_dir = orchestrator_root / "logs" / "worker-daemon"
     state_dir = orchestrator_root / ".task-state"
+    run_id = str(uuid.uuid4())
     def log(level: str, event: str, **kw: Any) -> None:
-        _log(lane_id, log_dir, level, event, **kw)
+        _log(lane_id, log_dir, level, event, run_id=run_id, **kw)
     existing_status = _read_worker_status(state_dir, lane_id) or {}
 
     log("INFO", "daemon_start", task_ref=task_ref, single_pass=single_pass,
@@ -640,6 +637,7 @@ def worker_loop(
                     worktree_path=worktree_path,
                     result_path=result_path,
                     dry_run=dry_run,
+                    run_id=run_id,
                 )
                 handoff_retry_count += 1
                 if retry_exit == 0:
@@ -714,6 +712,7 @@ def worker_loop(
             log("INFO", "dormant_exited", previous_state=dormant_state, reason=wake_reason)
             dormant_state = None
 
+        handoff_retry_count = 0
         log("INFO", "work_detected")
         _write_worker_status(
             state_dir,
@@ -854,6 +853,7 @@ def worker_loop(
                     worktree_path=worktree_path,
                     result_path=final_result_path,
                     dry_run=dry_run,
+                    run_id=run_id,
                 )
                 if handoff_exit == 0:
                     _cleanup_result_file(final_result_path)
@@ -973,6 +973,7 @@ def worker_loop(
                     worktree_path=worktree_path,
                     result_path=final_result_path,
                     dry_run=dry_run,
+                    run_id=run_id,
                 )
                 if handoff_exit == 0:
                     _cleanup_result_file(final_result_path)
@@ -1035,6 +1036,7 @@ def worker_loop(
                     worktree_path=worktree_path,
                     result_path=final_result_path,
                     dry_run=dry_run,
+                    run_id=run_id,
                 )
                 if handoff_exit == 0:
                     _cleanup_result_file(final_result_path)

@@ -85,6 +85,7 @@ def test_build_make_command_for_guidance_without_commits() -> None:
     assert report_critical is True
     assert report_cmd[:2] == ["/repo/scripts/worktree-lane", "report"]
     assert "--guidance-request" in report_cmd
+    assert "--allow-dirty" in report_cmd
     assert "--status" not in report_cmd
     assert report_cmd.count("--test-command") == 1
     assert "pg_isready -h localhost -p 5432" in report_cmd

@@ -459,6 +459,8 @@ class SuggestionCreateData:
     representative_similarity: float
     member_similarity: float
     confidence_score: float
+    expires_at: datetime | None = None
+    source_job_id: str | None = None
     source: str | None = None
     refreshed_at: datetime | None = None
 
@@ -544,6 +546,9 @@ class MergeSuggestionCreateData:
     cluster_a_id: str
     cluster_b_id: str
     similarity: float
+    confidence_score: float | None = None
+    expires_at: datetime | None = None
+    source_job_id: str | None = None
     source: str | None = None
     refreshed_at: datetime | None = None
 

@@ -1,6 +1,4 @@
-"""
-Assignment suggestion domain model for human-in-the-loop review.
-"""
+"""Suggestion domain models for human-in-the-loop review."""
 
 from __future__ import annotations
 
@@ -56,7 +54,13 @@ class AssignmentSuggestion:
     member_similarity: float
     status: SuggestionStatus
     evidence_generation: int = 0
+    confidence_score: float | None = None
+    expires_at: datetime | None = None
+    source_job_id: str | None = None
     created_at: datetime | None = None
+    resolved_at: datetime | None = None
+    refreshed_at: datetime | None = None
+    source: str | None = None
 
 
 @dataclass
@@ -68,7 +72,34 @@ class MergeSuggestion:
     cluster_b_id: str
     similarity: float
     status: SuggestionStatus
+    confidence_score: float | None = None
     created_at: datetime | None = None
+    expires_at: datetime | None = None
+    source_job_id: str | None = None
     resolved_at: datetime | None = None
     refreshed_at: datetime | None = None
     source: str | None = None
+
+
+@dataclass
+class NameSuggestion:
+    """Represents a proposed cluster label awaiting review."""
+
+    id: str
+    cluster_id: str
+    suggested_name: str
+    confidence_score: float | None
+    source: SuggestedLabelSource
+    status: SuggestionStatus
+    created_at: datetime | None = None
+    expires_at: datetime | None = None
+    source_job_id: str | None = None
+    resolved_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class BulkAcceptResult:
+    """Summary of a bulk-accept operation across suggestion types."""
+
+    accepted_count: int
+    skipped_count: int

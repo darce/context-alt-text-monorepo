@@ -324,6 +324,15 @@ class ClusterRepository(Protocol):
         """
         ...
 
+    async def get_delta(
+        self,
+        tenant_id: str,
+        *,
+        since_version: int,
+    ) -> tuple[list[IdentityCluster], list[tuple[IdentityMember, MediaIdentity]], int]:
+        """Get a version-filtered cluster delta for tenant projection."""
+        ...
+
     async def get_members_by_cluster_ids(
         self, tenant_id: str, cluster_ids: Sequence[str]
     ) -> list[tuple[IdentityMember, MediaIdentity]]:

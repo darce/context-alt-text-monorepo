@@ -500,6 +500,8 @@ class ClusterSnapshotClusterResponse(BaseModel):
     is_user_confirmed: bool
     identity_count: int
     representative_thumb_path: str | None = None
+    representative_id: str | None = None
+    is_pinned: bool = False
 
 
 class ClusterSnapshotResponse(BaseModel):
@@ -517,8 +519,19 @@ class ClusterSnapshotResponse(BaseModel):
     members: list[ClusterSnapshotMemberResponse]
 
 
+class ClusterDeltaResponse(BaseModel):
+    """Version-filtered cluster payload for incremental projection sync."""
+
+    tenant_id: str
+    snapshot_version: int
+    generated_at: datetime
+    clusters: list[ClusterSnapshotClusterResponse]
+    members: list[ClusterSnapshotMemberResponse]
+
+
 __all__ = [
     "BboxResponse",
+    "ClusterDeltaResponse",
     "ClusterResponse",
     "ClusterMemberResponse",
     "ClusterSuggestionMatch",

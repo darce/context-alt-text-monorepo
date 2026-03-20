@@ -29,6 +29,7 @@ class MediaIdentity:
     image_phash: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     cluster_id: str | None = None
+    moved_by_merge_id: str | None = None
 
     def extract_face_embedding(self) -> np.ndarray:
         """Return the face-only portion of the extended embedding vector.

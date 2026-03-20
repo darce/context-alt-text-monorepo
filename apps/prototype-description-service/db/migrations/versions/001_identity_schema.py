@@ -92,6 +92,7 @@ def upgrade() -> None:
         sa.Column("quality_score", sa.Float(), nullable=True),
         sa.Column("image_phash", sa.String(length=64), nullable=True),
         sa.Column("last_exported_snapshot_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column("moved_by_merge_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("disposed_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()),
         sa.Column(

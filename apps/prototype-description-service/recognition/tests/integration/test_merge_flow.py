@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from sqlalchemy import select
 
-from db.models import IdentityMember, Tenant
+from db.models import IdentityMember, MediaIdentity as MediaIdentityModel, Tenant
 from recognition.application.orchestration.cluster_service import ClusterService
 from recognition.application.scan.service import ScanService
+from recognition.domain.cluster import IdentityCluster
 from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
 from recognition.infrastructure.repositories.member_repository import SqlAlchemyMemberRepository
 
@@ -75,6 +78,73 @@ async def test_merge_and_retry_flow(
     # 3. Retry Matching
     # This just ensures no crash
     await cluster_service.retry_matching(str(c2.id), tenant_id)
+
+
+@pytest.mark.asyncio
+async def test_merge_flow_records_moved_member_provenance(
+    db_session,
+    tenant: Tenant,
+    cluster_service: ClusterService,
+    cluster_repository: SqlAlchemyClusterRepository,
+    member_repository: SqlAlchemyMemberRepository,
+) -> None:
+    """Accepted merges should stamp moved identities with the merge provenance UUID."""
+
+    tenant_id = str(tenant.id)
+    source = await cluster_repository.save(
+        IdentityCluster(
+            tenant_id=tenant_id,
+            label="Source",
+            is_labeled=True,
+            identity_count=1,
+        )
+    )
+    target = await cluster_repository.save(
+        IdentityCluster(
+            tenant_id=tenant_id,
+            label="Target",
+            is_labeled=True,
+            identity_count=0,
+        )
+    )
+
+    identity_id = uuid.uuid4()
+    db_session.add(
+        MediaIdentityModel(
+            id=identity_id,
+            tenant_id=tenant.id,
+            media_id=9991,
+            media_url="http://example.test/source.jpg",
+            bbox_x=0,
+            bbox_y=0,
+            bbox_width=12,
+            bbox_height=12,
+            confidence=0.97,
+            embedding=[0.1] * 512,
+        )
+    )
+    await db_session.flush()
+    await member_repository.add_member(source.id, identity_id=str(identity_id), similarity=0.94)
+
+    moved_by_merge_id = str(uuid.uuid4())
+    merged = await cluster_service.merge_cluster(
+        source_cluster_id=source.id,
+        tenant_id=tenant_id,
+        target_cluster_id=target.id,
+        target_label="Merged Target",
+        defer_recompute=True,
+        moved_by_merge_id=moved_by_merge_id,
+    )
+
+    assert merged is not None
+    assert merged.id == target.id
+
+    refreshed_identity = await db_session.get(MediaIdentityModel, identity_id)
+    assert refreshed_identity is not None
+    assert refreshed_identity.moved_by_merge_id == uuid.UUID(moved_by_merge_id)
+
+    moved_members = await member_repository.get_by_cluster(target.id)
+    assert [member.identity_id for member in moved_members] == [str(identity_id)]
 
 
 @pytest.mark.asyncio

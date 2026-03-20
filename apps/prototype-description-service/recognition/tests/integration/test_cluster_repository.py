@@ -64,6 +64,14 @@ class DummyClusterRepository(ClusterRepository):
     async def get_singleton_identities(self, tenant_id: str, *, limit: int | None = None):
         raise NotImplementedError
 
+    async def get_delta(
+        self,
+        tenant_id: str,
+        *,
+        since_version: int,
+    ) -> tuple[list[IdentityCluster], list[tuple[IdentityMember, MediaIdentity]], int]:
+        raise NotImplementedError
+
     async def get_curriculum_t(self, cluster_id: str) -> float | None:
         raise NotImplementedError
 

@@ -104,6 +104,7 @@ class SuggestionRefreshService:
             pose_yaw=float(model.pose_yaw) if model.pose_yaw is not None else None,
             pose_roll=float(model.pose_roll) if model.pose_roll is not None else None,
             image_phash=str(model.image_phash) if model.image_phash is not None else None,
+            moved_by_merge_id=str(model.moved_by_merge_id) if getattr(model, "moved_by_merge_id", None) else None,
         )
 
     async def _find_best_cluster_match(

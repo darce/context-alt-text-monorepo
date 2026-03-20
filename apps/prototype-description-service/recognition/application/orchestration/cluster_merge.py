@@ -12,7 +12,7 @@ import uuid
 from typing import cast
 
 import numpy as np
-from sqlalchemy import Select, exists, select
+from sqlalchemy import Select, exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityMember as MemberModel
@@ -106,6 +106,7 @@ async def post_merge_retry_matching(
             pose_yaw=float(model.pose_yaw) if model.pose_yaw is not None else None,
             pose_roll=float(model.pose_roll) if model.pose_roll is not None else None,
             image_phash=model.image_phash,
+            moved_by_merge_id=str(model.moved_by_merge_id) if getattr(model, "moved_by_merge_id", None) else None,
         )
         face_vec = normalize_face_embedding(identity.embedding)
         best_sim = max(float(np.dot(face_vec, rep_vec)) for rep_vec in rep_face_vecs)
@@ -179,9 +180,10 @@ async def post_merge_retry_matching(
                 bbox_y=int(model.bbox_y),
                 pose_pitch=float(model.pose_pitch) if model.pose_pitch is not None else None,
                 pose_yaw=float(model.pose_yaw) if model.pose_yaw is not None else None,
-                pose_roll=float(model.pose_roll) if model.pose_roll is not None else None,
-                image_phash=model.image_phash,
-            )
+            pose_roll=float(model.pose_roll) if model.pose_roll is not None else None,
+            image_phash=model.image_phash,
+            moved_by_merge_id=str(model.moved_by_merge_id) if getattr(model, "moved_by_merge_id", None) else None,
+        )
             face_vec = normalize_face_embedding(identity.embedding)
             best_sim = max(float(np.dot(face_vec, rep_vec)) for rep_vec in rep_face_vecs)
             if best_sim < min_similarity_for_unclustered:
@@ -229,6 +231,7 @@ async def merge_cluster(
     clustering_logger: ClusteringLogger | None = None,
     session: AsyncSession | None = None,
     defer_recompute: bool = False,
+    moved_by_merge_id: str | None = None,
 ) -> IdentityCluster | None:
     """Merge a source cluster into a target cluster by reassigning members."""
     cluster_repo: ClusterRepository = assignment_writer.cluster_repository
@@ -252,7 +255,29 @@ async def merge_cluster(
             clustering_logger=clustering_logger,
         )
 
+    moved_identity_ids: list[uuid.UUID] = []
+    if moved_by_merge_id and session is not None:
+        source_members = await member_repo.get_by_cluster(source_cluster_id)
+        for member in source_members:
+            try:
+                moved_identity_ids.append(uuid.UUID(str(member.identity_id)))
+            except ValueError:
+                continue
+
     moved = await member_repo.move_members(source_cluster_id, target_cluster_id)
+    if moved_by_merge_id and session is not None and moved_identity_ids:
+        try:
+            provenance_uuid = uuid.UUID(str(moved_by_merge_id))
+        except ValueError:
+            provenance_uuid = None
+        if provenance_uuid is not None:
+            await session.execute(
+                update(MediaIdentityModel)
+                .where(MediaIdentityModel.id.in_(moved_identity_ids))
+                .values(moved_by_merge_id=provenance_uuid)
+            )
+            await session.flush()
+
     target.identity_count = (target.identity_count or 0) + moved
     target.label = target_label or target.label
     target.is_labeled = bool(target.label)

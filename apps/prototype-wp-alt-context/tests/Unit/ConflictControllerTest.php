@@ -72,6 +72,7 @@ class ConflictControllerTest extends TestCase
         $this->assertSame(44, $data['items'][0]['outbox_id']);
         $this->assertSame('cluster-outbox', $data['items'][0]['entity_key']);
         $this->assertSame(['accepted', 'dismissed'], $data['items'][0]['allowed_resolutions']);
+        $this->assertSame('Remote label', $data['items'][0]['backend_proposed_value']);
         $this->assertSame(0, $data['items'][1]['outbox_id']);
         $this->assertSame(['accepted', 'dismissed'], $data['items'][1]['allowed_resolutions']);
         $this->assertSame(1, $outboxDrain->findByIdsCalls);
@@ -296,6 +297,7 @@ class ConflictControllerTest extends TestCase
                     'backend_version' => 8,
                     'local_revision' => 2,
                     'conflict_code' => 'version_conflict',
+                    'backend_proposed_value' => 'Remote label',
                     'machine_payload' => ['label' => 'Remote label'],
                     'local_payload' => ['label' => 'Local label'],
                     'resolution_status' => 'open',
@@ -337,6 +339,7 @@ class ConflictControllerTest extends TestCase
         $this->assertSame(55, $data['conflict']['id']);
         $this->assertSame(55, $data['conflict']['outbox_id']);
         $this->assertSame(['label' => 'Remote label'], $data['conflict']['machine_payload']);
+        $this->assertSame('Remote label', $data['conflict']['backend_proposed_value']);
         $this->assertSame(['label' => 'Local label'], $data['conflict']['local_payload']);
         $this->assertSame(['accepted', 'dismissed'], $data['conflict']['allowed_resolutions']);
     }
@@ -1045,6 +1048,7 @@ class ConflictControllerTest extends TestCase
             'backend_version' => 5,
             'local_revision' => 2,
             'conflict_code' => 'version_conflict',
+            'backend_proposed_value' => 'Remote label',
             'machine_payload' => ['label' => 'Remote'],
             'local_payload' => ['label' => 'Local'],
             'resolution_status' => 'open',

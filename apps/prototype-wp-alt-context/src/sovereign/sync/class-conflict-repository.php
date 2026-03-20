@@ -58,6 +58,7 @@ class ConflictRepository {
 
 		$machine_payload = is_array( $result['machine_payload'] ?? null ) ? $result['machine_payload'] : array();
 		$local_payload = is_array( $operation['payload'] ?? null ) ? $operation['payload'] : array();
+		$backend_proposed_value = $this->normalize_optional_text( $result['backend_proposed_value'] ?? null );
 		$machine_payload_json = wp_json_encode( $machine_payload );
 		$local_payload_json = wp_json_encode( $local_payload );
 
@@ -80,12 +81,13 @@ class ConflictRepository {
 				'backend_version' => max( 0, (int) ( $result['backend_version'] ?? 0 ) ),
 				'local_revision' => max( 0, (int) ( $operation['local_revision'] ?? 0 ) ),
 				'conflict_code' => trim( (string) ( $result['conflict_code'] ?? 'version_conflict' ) ),
+				'backend_proposed_value' => $backend_proposed_value,
 				'machine_payload' => $machine_payload_json,
 				'local_payload' => $local_payload_json,
 				'resolution_status' => 'open',
 				'created_at' => current_time( 'mysql' ),
 			),
-			array( '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%s', '%s' )
+			array( '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s' )
 		);
 
 		if ( false === $inserted ) {
@@ -142,6 +144,7 @@ class ConflictRepository {
 
 		$machine_payload_json = $this->encode_payload_json( $machine_payload );
 		$local_payload_json   = $this->encode_payload_json( $local_payload );
+		$backend_proposed_value = $this->normalize_optional_text( $machine_payload['proposed_value'] ?? null );
 		$created_at           = current_time( 'mysql' );
 
 		if ( is_array( $existing_open_conflict ) ) {
@@ -151,11 +154,12 @@ class ConflictRepository {
 					'expected_base_version' => max( 0, $expected_base_version ),
 					'backend_version' => max( 0, $backend_version ),
 					'local_revision' => max( 0, $local_revision ),
+					'backend_proposed_value' => $backend_proposed_value,
 					'machine_payload' => $machine_payload_json,
 					'local_payload' => $local_payload_json,
 				),
 				array( 'id' => max( 0, (int) ( $existing_open_conflict['id'] ?? 0 ) ) ),
-				array( '%d', '%d', '%d', '%s', '%s' ),
+				array( '%d', '%d', '%d', '%s', '%s', '%s' ),
 				array( '%d' )
 			);
 
@@ -168,9 +172,10 @@ class ConflictRepository {
 
 		$sql = $this->prepare_query(
 			"INSERT INTO %i
-				(tenant_id, entity_type, entity_key, outbox_id, expected_base_version, backend_version, local_revision, conflict_code, machine_payload, local_payload, resolution_status, created_at)
-			VALUES (%s, %s, %s, %d, %d, %d, %d, %s, %s, %s, %s, %s)
+				(tenant_id, entity_type, entity_key, outbox_id, expected_base_version, backend_version, local_revision, conflict_code, backend_proposed_value, machine_payload, local_payload, resolution_status, created_at)
+			VALUES (%s, %s, %s, %d, %d, %d, %d, %s, %s, %s, %s, %s, %s)
 			ON DUPLICATE KEY UPDATE
+				backend_proposed_value = VALUES(backend_proposed_value),
 				machine_payload = VALUES(machine_payload),
 				local_payload = VALUES(local_payload),
 				backend_version = VALUES(backend_version),
@@ -186,6 +191,7 @@ class ConflictRepository {
 				max( 0, $backend_version ),
 				max( 0, $local_revision ),
 				$normalized_conflict_code,
+				$backend_proposed_value,
 				$machine_payload_json,
 				$local_payload_json,
 				'open',
@@ -226,7 +232,7 @@ class ConflictRepository {
 		}
 
 		$sql = $this->prepare_query(
-			'SELECT id, tenant_id, entity_type, entity_key, outbox_id, expected_base_version, backend_version, local_revision, conflict_code, machine_payload, local_payload, resolution_status, resolved_at, created_at
+			'SELECT id, tenant_id, entity_type, entity_key, outbox_id, expected_base_version, backend_version, local_revision, conflict_code, backend_proposed_value, machine_payload, local_payload, resolution_status, resolved_at, created_at
 			FROM %i
 			WHERE tenant_id = %s AND resolution_status = %s
 			ORDER BY created_at DESC, id DESC
@@ -276,7 +282,7 @@ class ConflictRepository {
 		}
 
 		$sql = $this->prepare_query(
-			'SELECT id, tenant_id, entity_type, entity_key, outbox_id, expected_base_version, backend_version, local_revision, conflict_code, machine_payload, local_payload, resolution_status, resolved_at, created_at
+			'SELECT id, tenant_id, entity_type, entity_key, outbox_id, expected_base_version, backend_version, local_revision, conflict_code, backend_proposed_value, machine_payload, local_payload, resolution_status, resolved_at, created_at
 			FROM %i
 			WHERE id = %d AND tenant_id = %s
 			LIMIT 1',
@@ -391,6 +397,11 @@ class ConflictRepository {
 		}
 
 		return $row;
+	}
+
+	private function normalize_optional_text( mixed $value ): ?string {
+		$normalized = trim( (string) $value );
+		return '' !== $normalized ? $normalized : null;
 	}
 
 	/**

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import * as CheckboxPrimitive from '@radix-ui/react-checkbox';
 
 interface CheckboxProps {
   checked: boolean | 'indeterminate';
@@ -10,18 +11,16 @@ interface CheckboxProps {
 
 export const Checkbox = React.forwardRef<HTMLButtonElement, CheckboxProps>(
   ({ checked, onCheckedChange, ariaLabel, disabled, className }, ref) => (
-    <button
+    <CheckboxPrimitive.Root
       ref={ref}
-      type="button"
-      role="checkbox"
-      aria-checked={checked === 'indeterminate' ? 'mixed' : checked}
+      checked={checked}
       aria-label={ariaLabel}
       disabled={disabled}
       className={`acx-checkbox ${className ?? ''}${checked === true ? ' is-checked' : ''}${checked === 'indeterminate' ? ' is-indeterminate' : ''}`}
-      onClick={() => onCheckedChange(checked !== true)}
+      onCheckedChange={(nextChecked) => onCheckedChange(nextChecked === true)}
     >
       <span aria-hidden="true" className="acx-checkbox__box" />
-    </button>
+    </CheckboxPrimitive.Root>
   ),
 );
 

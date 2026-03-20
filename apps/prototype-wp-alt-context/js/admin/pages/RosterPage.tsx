@@ -156,6 +156,13 @@ export const RosterPage = (): React.JSX.Element => {
   );
 
   const selectAllState = selection.isAllSelected(clusterIds) ? true : selection.count > 0 ? 'indeterminate' : false;
+  const handleSelectAllClusters = React.useCallback(() => {
+    if (selection.isAllSelected(clusterIds)) {
+      selection.clear();
+      return;
+    }
+    selection.selectAll(clusterIds);
+  }, [clusterIds, selection]);
 
   const confirmDialogCopy =
     confirmAction === 'merge'
@@ -222,13 +229,7 @@ export const RosterPage = (): React.JSX.Element => {
             <div className="acx-roster__tab-header-main">
               <Checkbox
                 checked={selectAllState}
-                onCheckedChange={() => {
-                  if (selection.isAllSelected(clusterIds)) {
-                    selection.clear();
-                    return;
-                  }
-                  selection.selectAll(clusterIds);
-                }}
+                onCheckedChange={handleSelectAllClusters}
                 ariaLabel={__('Select all clusters', 'alt-context')}
               />
               <h2>{ROSTER_TABS.clusters.label}</h2>

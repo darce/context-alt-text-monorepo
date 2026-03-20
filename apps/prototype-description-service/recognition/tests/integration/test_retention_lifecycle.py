@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
-
 import pytest
+from sqlalchemy import select
 
 from db.models import (
     AuditEvent,
@@ -276,9 +275,12 @@ async def test_dispose_after_ack_then_purge_disposed_only_removes_acknowledged_s
     assert await db_session.get(MediaIdentity, surviving_identity.id) is not None
     assert await db_session.get(IdentityCluster, surviving_cluster.id) is not None
 
-    current_clusters, current_members, _current_snapshot_version, current_snapshot_generation_id = await repository.get_snapshot(
-        str(tenant.id)
-    )
+    (
+        current_clusters,
+        current_members,
+        _current_snapshot_version,
+        current_snapshot_generation_id,
+    ) = await repository.get_snapshot(str(tenant.id))
     assert current_snapshot_generation_id is None
     assert len(current_clusters) == 1
     assert len(current_members) == 1

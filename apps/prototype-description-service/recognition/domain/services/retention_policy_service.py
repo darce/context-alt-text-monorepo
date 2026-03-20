@@ -71,29 +71,41 @@ class RetentionPolicyService:
 
         disposed_at = datetime.now(tz=UTC)
         identity_rows = (
-            await self._session.execute(
-                select(MediaIdentity)
-                .where(MediaIdentity.tenant_id == tenant.id)
-                .where(MediaIdentity.last_exported_snapshot_id == snapshot_uuid)
-                .where(MediaIdentity.disposed_at.is_(None))
+            (
+                await self._session.execute(
+                    select(MediaIdentity)
+                    .where(MediaIdentity.tenant_id == tenant.id)
+                    .where(MediaIdentity.last_exported_snapshot_id == snapshot_uuid)
+                    .where(MediaIdentity.disposed_at.is_(None))
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         cluster_rows = (
-            await self._session.execute(
-                select(IdentityCluster)
-                .where(IdentityCluster.tenant_id == tenant.id)
-                .where(IdentityCluster.last_exported_snapshot_id == snapshot_uuid)
-                .where(IdentityCluster.disposed_at.is_(None))
+            (
+                await self._session.execute(
+                    select(IdentityCluster)
+                    .where(IdentityCluster.tenant_id == tenant.id)
+                    .where(IdentityCluster.last_exported_snapshot_id == snapshot_uuid)
+                    .where(IdentityCluster.disposed_at.is_(None))
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         representative_rows = (
-            await self._session.execute(
-                select(IdentityClusterRepresentative)
-                .where(IdentityClusterRepresentative.tenant_id == tenant.id)
-                .where(IdentityClusterRepresentative.last_exported_snapshot_id == snapshot_uuid)
-                .where(IdentityClusterRepresentative.disposed_at.is_(None))
+            (
+                await self._session.execute(
+                    select(IdentityClusterRepresentative)
+                    .where(IdentityClusterRepresentative.tenant_id == tenant.id)
+                    .where(IdentityClusterRepresentative.last_exported_snapshot_id == snapshot_uuid)
+                    .where(IdentityClusterRepresentative.disposed_at.is_(None))
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
         for identity in identity_rows:
             identity.disposed_at = disposed_at

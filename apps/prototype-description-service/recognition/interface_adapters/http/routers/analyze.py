@@ -27,6 +27,7 @@ from recognition.application.tasks.scan import (
 from recognition.domain.job import Job, JobStatus, JobType
 from recognition.domain.repositories import JobRepository
 from recognition.interface_adapters.http.dependencies import (
+    RetentionPolicyServiceProtocol,
     get_job_repo,
     get_job_service_dependency,
     get_optional_session,
@@ -34,7 +35,6 @@ from recognition.interface_adapters.http.dependencies import (
     get_scan_queue_repo,
     get_scan_queue_service_factory,
     get_scan_queue_service_optional,
-    RetentionPolicyServiceProtocol,
     get_shared_insightface_adapter,
     require_auth,
     require_write_access,

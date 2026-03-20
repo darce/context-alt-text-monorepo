@@ -204,6 +204,7 @@ async def accept_merge_suggestion(
         request.tenant_id,
         target_cluster_id,
         target_label=target_label,
+        moved_by_merge_id=str(suggestion.id),
     )
     if merged is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Merge failed")

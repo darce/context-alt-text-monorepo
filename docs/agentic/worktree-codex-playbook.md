@@ -147,6 +147,8 @@ Important:
 - `worker_status(...)` exposes durable lane-state hints in addition to PID/log metadata. Use `running`, `worker_state`, `attention_required`, and `state_summary` together. Important states include `idle`, `waiting_for_orchestrator`, `handoff_failed`, `paused`, and `stopped`.
 - Use `session_mode="fresh_turn"` for the default fully isolated turn model, or `session_mode="shared_lane"` when you want repeated worker turns in one lane to reuse the same bridge session without leaking context across lanes.
 - `orchestrator_start(...)` and `single-cycle` default to `worker_start_mode="mcp"`, which lets the orchestrator auto-start missing actionable workers through MCP. Use `worker_start_mode="manual"` when the host should keep worker startup in shell space.
+- Treat lane worktrees as branch-local truth. If the orchestrator/root branch has uncommitted or manually salvaged scaffolding that has not been propagated into the lane branch, the worker cannot see it. Before dispatching a dependent slice, verify required contract/stub files exist in the worker worktree or explicitly hold that lane.
+- `handoff_failed` is sticky. If a worker completed execution but remains in `handoff_failed`, salvage/intake the saved result first, then recycle the daemon with `worker_stop(..., force=True)` plus `worker_start(...)` for the next assignment. A fresh lane message by itself does not reliably clear the old saved-result state.
 - For remote HTTP custom-MCP attachment (e.g. Codex custom MCP), see
   [codex-custom-mcp-playbook.md](codex-custom-mcp-playbook.md). Start the server
   with `make mcp-serve-http`, verify the endpoint, then attach in Codex settings.
@@ -211,6 +213,7 @@ Prompt-shaping note:
 - Recent lane decisions/tests are omitted unless you explicitly escalate with `EXTRA_ARGS=--include-lane-history`.
 - Broader task-wide context is also omitted unless you explicitly escalate with `EXTRA_ARGS=--include-global-context`.
 - If a lane needs cross-lane or global task context, send a compact orchestrator brief instead of replaying whole transcripts into the worker prompt.
+- Before dispatching a dependent lane, check the actual worker worktree for required files or branch-local scaffolding. Root-branch changes do not magically appear in sibling lane branches. If the worker reports missing contracts or repository surfaces, prefer a hold/re-refresh over speculative implementation.
 
 Structured-brief note:
 
@@ -250,6 +253,7 @@ make lane-handoff
 Notes:
 
 - `make lane-check` runs the lane's configured test commands (`LANE_TEST_CMD_1`, `LANE_TEST_CMD_2`) in the current worktree and records each result into MCP, so lane activity keeps a durable verification trail. Run it before `make lane-handoff` to catch failures early.
+- `make lane-check` is not a full lint/format gate. Before submitting `merge_ready=1`, run lint + format checks for touched stacks (or `make check-all` if your slice spans multiple stacks). This prevents "tests green, check-all red" handoffs caused by formatter/import-order regressions.
 - `make lane-handoff` will refuse to proceed if there are no unique lane commits or if out-of-scope files are present.
 - If you need a custom commit message: `make lane-handoff COMMIT_MSG="implement retention policy service"`.
 - For backend Python lanes, prefer commands that embed `PYENV_VERSION=description-service` instead of relying on `pyenv activate description-service` in subprocesses. If you need an interactive shell activation, load pyenv first with `eval "$$(pyenv init -)"` and `eval "$$(pyenv virtualenv-init -)"`.

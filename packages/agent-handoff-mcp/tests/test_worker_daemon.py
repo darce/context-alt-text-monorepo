@@ -3,9 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
 import sys
-import tempfile
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -131,6 +129,52 @@ def test_pythonpath_env_sets_lane_tempdir_and_backend_pyenv() -> None:
     assert env["TMPDIR"].endswith("/.task-state/tmp/backend-domain")
     assert env["TMP"] == env["TMPDIR"]
     assert env["TEMP"] == env["TMPDIR"]
+
+
+def test_resolve_reasoning_effort_auto_prefers_high_for_backend_lane() -> None:
+    mod = _load_module()
+    fake_lane_manifest = mock.Mock()
+    fake_lane_manifest.get_lane_config.return_value = {
+        "objective": "Implement schema and repository changes.",
+        "owned_paths": ["apps/prototype-description-service/db/**"],
+        "test_commands": ["PYENV_VERSION=description-service pytest recognition/tests/unit/"],
+    }
+
+    with mock.patch.dict(sys.modules, {"lane_manifest": fake_lane_manifest}):
+        effort, reasons = mod._resolve_reasoning_effort(
+            orchestrator_root=REPO_ROOT,
+            task_ref="task",
+            lane_id="backend-domain",
+            requested="auto",
+            cycle=0,
+            prompt_override=None,
+        )
+
+    assert effort == "high"
+    assert any("backend/orchestration-heavy lane" in reason for reason in reasons)
+
+
+def test_resolve_reasoning_effort_auto_prefers_low_for_docs_only_lane() -> None:
+    mod = _load_module()
+    fake_lane_manifest = mock.Mock()
+    fake_lane_manifest.get_lane_config.return_value = {
+        "objective": "Update task-plan docs.",
+        "owned_paths": ["docs/tasks/**"],
+        "test_commands": [],
+    }
+
+    with mock.patch.dict(sys.modules, {"lane_manifest": fake_lane_manifest}):
+        effort, reasons = mod._resolve_reasoning_effort(
+            orchestrator_root=REPO_ROOT,
+            task_ref="task",
+            lane_id="docs",
+            requested="auto",
+            cycle=0,
+            prompt_override=None,
+        )
+
+    assert effort == "low"
+    assert any("docs-only scope" in reason for reason in reasons)
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +319,77 @@ def test_read_worker_status_tolerates_invalid_bytes(tmp_path: Path) -> None:
     status_path.write_bytes(b"{\xff}")
 
     assert mod._read_worker_status(status_dir, "test-lane") is None
+
+
+def test_record_observability_persists_latest_and_history(tmp_path: Path) -> None:
+    mod = _load_module()
+    orchestrator_root = tmp_path
+    (orchestrator_root / ".task-state").mkdir()
+    (orchestrator_root / "logs" / "worker-daemon").mkdir(parents=True)
+
+    first = mod._record_observability(
+        orchestrator_root=orchestrator_root,
+        task_ref="task",
+        lane_id="test-lane",
+        session="task-test-lane",
+        cycle=0,
+        phase="execution",
+        backend="codex-subagent",
+        requested_reasoning_effort="auto",
+        effective_reasoning_effort="high",
+        telemetry={
+            "thread_id": "thread-1",
+            "turn_id": "turn-1",
+            "token_usage": {
+                "last": {"cached_input_tokens": 1, "input_tokens": 2, "output_tokens": 3, "reasoning_output_tokens": 4, "total_tokens": 5},
+                "total": {"cached_input_tokens": 10, "input_tokens": 20, "output_tokens": 30, "reasoning_output_tokens": 40, "total_tokens": 50},
+                "model_context_window": 200000,
+            },
+        },
+        state="executing",
+        summary="Execution telemetry captured.",
+    )
+    second = mod._record_observability(
+        orchestrator_root=orchestrator_root,
+        task_ref="task",
+        lane_id="test-lane",
+        session="task-test-lane",
+        cycle=0,
+        phase="review",
+        backend="codex-subagent",
+        requested_reasoning_effort="auto",
+        effective_reasoning_effort="high",
+        telemetry={
+            "thread_id": "thread-2",
+            "turn_id": "turn-2",
+            "token_usage": {
+                "last": {"cached_input_tokens": 2, "input_tokens": 3, "output_tokens": 4, "reasoning_output_tokens": 5, "total_tokens": 6},
+                "total": {"cached_input_tokens": 11, "input_tokens": 21, "output_tokens": 31, "reasoning_output_tokens": 41, "total_tokens": 51},
+                "model_context_window": 200000,
+            },
+        },
+        state="reviewing",
+        summary="Review telemetry captured.",
+    )
+
+    assert first["token_usage_totals"]["total_tokens"] == 50
+    assert second["token_usage_totals"]["reasoning_output_tokens"] == 41
+
+    status = mod._read_worker_status(orchestrator_root / ".task-state", "test-lane")
+    assert status is not None
+    observability = status["observability"]
+    assert observability["latest"]["phase"] == "review"
+    assert observability["by_phase"]["execution"]["turn_id"] == "turn-1"
+    assert observability["by_phase"]["review"]["turn_id"] == "turn-2"
+    assert len(observability["history"]) == 2
+
+    log_path = orchestrator_root / "logs" / "worker-daemon" / "worker-test-lane.jsonl"
+    lines = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
+    observed = [line for line in lines if line.get("event") == "subagent_turn_observed"]
+    assert len(observed) == 2
+    assert observed[-1]["effective_reasoning_effort"] == "high"
+    assert observed[-1]["token_usage"]["total"]["reasoning_output_tokens"] == 41
+    assert observed[-1]["token_usage_totals"]["total_tokens"] == 51
 
 
 # ---------------------------------------------------------------------------
@@ -781,7 +896,9 @@ def test_worker_loop_subagent_backend_skips_find_codex_and_threads_backend(tmp_p
     assert rc == 0
     mock_find_codex.assert_not_called()
     assert mock_run_lane_exec.call_args.kwargs["backend"] == "codex-subagent"
+    assert mock_run_lane_exec.call_args.kwargs["reasoning_effort"] is None
     assert mock_run_review.call_args.kwargs["backend"] == "codex-subagent"
+    assert mock_run_review.call_args.kwargs["reasoning_effort"] is None
     mock_handoff.assert_called_once()
 
 

@@ -937,6 +937,7 @@ def test_main_run_threads_backend_to_orchestrator_loop(tmp_path: Path) -> None:
         single_pass=True,
         backend="codex-subagent",
         worker_start_mode="manual",
+        worker_reasoning_effort="auto",
         dry_run=True,
     )
     mock_lock = mock.Mock()
@@ -953,6 +954,7 @@ def test_main_run_threads_backend_to_orchestrator_loop(tmp_path: Path) -> None:
         single_pass=True,
         backend="codex-subagent",
         worker_start_mode="manual",
+        worker_reasoning_effort="auto",
         dry_run=True,
     )
     mock_lock.release.assert_called_once()

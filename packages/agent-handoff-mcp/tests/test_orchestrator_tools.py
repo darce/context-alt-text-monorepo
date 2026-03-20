@@ -53,6 +53,7 @@ def test_orchestrator_start_returns_pid_and_lock_path(tmp_path: Path) -> None:
     assert payload["pid"] == 43210
     assert payload["backend"] == "codex-subagent"
     assert payload["worker_start_mode"] == "mcp"
+    assert payload["worker_reasoning_effort"] == "auto"
     assert payload["lock_path"].endswith("/.task-state/orchestrator.lock")
     cmd = mock_popen.call_args.args[0]
     assert "--task-ref" in cmd
@@ -128,6 +129,7 @@ def test_worker_start_returns_pid_and_paths(tmp_path: Path) -> None:
     assert kwargs["lane_id"] == "backend-domain"
     assert kwargs["backend"] == "codex-subagent"
     assert kwargs["session_mode"] == "fresh_turn"
+    assert kwargs["reasoning_effort"] == "inherit"
 
 
 def test_worker_start_passes_shared_lane_session_mode(tmp_path: Path) -> None:
@@ -158,6 +160,40 @@ def test_worker_start_passes_shared_lane_session_mode(tmp_path: Path) -> None:
     assert fake_ctl.daemon_start.call_args.kwargs["session_mode"] == "shared_lane"
 
 
+def test_worker_start_passes_reasoning_effort(tmp_path: Path) -> None:
+    _configure_runtime(tmp_path)
+    fake_registry = mock.Mock()
+    fake_registry.validate_backend.return_value = "codex-subagent"
+    fake_lane_manifest = mock.Mock()
+    fake_lane_manifest.get_lane_config.return_value = {
+        "worktree_path": str(tmp_path / "frontend"),
+    }
+    fake_ctl = mock.Mock()
+    fake_ctl.daemon_start.return_value = {"ok": True, "pid": 6789}
+    (tmp_path / "frontend").mkdir()
+
+    def _import(name: str):
+        if name == "backend_registry":
+            return fake_registry
+        if name == "lane_manifest":
+            return fake_lane_manifest
+        if name == "worker_daemon_ctl":
+            return fake_ctl
+        raise AssertionError(name)
+
+    with mock.patch.object(api, "_import_scripts_mcp_module", side_effect=_import):
+        payload = _parse(
+            api.worker_start(
+                task_ref="daemon-10",
+                lane_id="frontend",
+                reasoning_effort="xhigh",
+            )
+        )
+
+    assert payload["ok"] is True
+    assert fake_ctl.daemon_start.call_args.kwargs["reasoning_effort"] == "xhigh"
+
+
 def test_worker_status_delegates_to_control_module(tmp_path: Path) -> None:
     _configure_runtime(tmp_path)
     fake_ctl = mock.Mock()
@@ -170,6 +206,32 @@ def test_worker_status_delegates_to_control_module(tmp_path: Path) -> None:
     assert payload["running"] is False
     assert payload["lane_id"] == "frontend"
     fake_ctl.daemon_status.assert_called_once()
+
+
+def test_worker_event_history_delegates_to_control_module(tmp_path: Path) -> None:
+    _configure_runtime(tmp_path)
+    fake_ctl = mock.Mock()
+    fake_ctl.daemon_event_history.return_value = {
+        "lane_id": "frontend",
+        "process": None,
+        "events": [{"event": "subagent_turn_observed"}],
+        "returned": 1,
+    }
+
+    with mock.patch.object(api, "_import_scripts_mcp_module", return_value=fake_ctl):
+        payload = _parse(
+            api.worker_event_history(
+                task_ref="daemon-10",
+                lane_id="frontend",
+                limit=10,
+                event_name="subagent_turn_observed",
+            )
+        )
+
+    assert payload["ok"] is True
+    assert payload["returned"] == 1
+    assert payload["events"][0]["event"] == "subagent_turn_observed"
+    fake_ctl.daemon_event_history.assert_called_once()
 
 
 def test_worker_stop_delegates_force_flag(tmp_path: Path) -> None:
@@ -260,6 +322,7 @@ def test_worker_start_all_skips_lanes_with_unresolved_upstream_dependencies(tmp_
         poll_interval=30,
         single_pass=False,
         session_mode="shared_lane",
+        reasoning_effort="inherit",
     )
 
 

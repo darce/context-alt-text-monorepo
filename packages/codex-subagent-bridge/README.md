@@ -16,7 +16,7 @@ and returns the final structured payload as a Python `dict`.
 
 - The bridge keeps the existing daemon seam: `prompt + schema + cwd + optional env -> dict`
 - `env` values are treated as local runtime hints only and become subprocess/session context for `codex app-server`
-- `CODEX_REASONING_EFFORT` or `REASONING_EFFORT` map to `turn/start.effort` when set to `low`, `medium`, or `high`
+- `CODEX_REASONING_EFFORT` or `REASONING_EFFORT` map to `turn/start.effort` when set to `low`, `medium`, `high`, or `xhigh`
 - MCP endpoints and credentials are not forwarded through the bridge
 - Build and test commands must still be discoverable from the worktree instruction surface or included in the rendered prompt
 - `run_subagent()` is concurrency-safe for parallel calls because each invocation launches and tears down its own app-server process

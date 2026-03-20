@@ -23,6 +23,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from _env import WORKER_REASONING_EFFORT_CHOICES
+from _env import apply_codex_runtime_hints
 from _env import pythonpath_env
 from backend_registry import get_backend_choices
 from backend_registry import get_backend_spec
@@ -229,7 +231,7 @@ def _preflight_failure_payload(
     default_detail = (
         f"The lane requires local capabilities ({', '.join(capability_tags)}) before execution."
         if capability_tags
-        else f"The lane requires local prerequisites before execution."
+        else "The lane requires local prerequisites before execution."
     )
     detail_lines = [str(preflight.get("failure_details") or "").strip() or default_detail, "", "Preflight failures:"]
     blockers: list[str] = []
@@ -316,13 +318,30 @@ def _run_subagent(
     }
     if env is not None:
         runner_kwargs["env"] = env
+    if progress_callback is not None:
+        runner_kwargs["telemetry_callback"] = lambda telemetry: progress_callback(
+            "subagent_turn_complete",
+            backend=backend_name,
+            phase="execution",
+            **telemetry,
+        )
     try:
         payload = runner(**runner_kwargs)
     except TypeError as exc:
-        if env is None or "env" not in str(exc):
-            raise
-        runner_kwargs.pop("env", None)
-        payload = runner(**runner_kwargs)
+        if "telemetry_callback" in runner_kwargs and "telemetry_callback" in str(exc):
+            runner_kwargs.pop("telemetry_callback", None)
+            try:
+                payload = runner(**runner_kwargs)
+            except TypeError as inner_exc:
+                if env is None or "env" not in str(inner_exc):
+                    raise
+                runner_kwargs.pop("env", None)
+                payload = runner(**runner_kwargs)
+        else:
+            if env is None or "env" not in str(exc):
+                raise
+            runner_kwargs.pop("env", None)
+            payload = runner(**runner_kwargs)
 
     if isinstance(payload, str):
         try:
@@ -387,6 +406,7 @@ def run_lane_exec(
     output_path: Path | None = None,
     backend: str = "codex-cli",
     session_mode: str = "fresh_turn",
+    reasoning_effort: str | None = None,
     codex_bin: str | None = None,
     codex_args: list[str] | None = None,
     prompt_override: str | None = None,
@@ -401,8 +421,11 @@ def run_lane_exec(
     """
     backend_name = validate_backend(backend)
     env = pythonpath_env(orchestrator_root, task_ref=task_ref, lane_id=lane_id)
-    if session_mode == "shared_lane":
-        env["CODEX_SUBAGENT_BRIDGE_SESSION_MODE"] = "shared"
+    apply_codex_runtime_hints(
+        env,
+        reasoning_effort=reasoning_effort,
+        session_mode=session_mode,
+    )
 
     if not dry_run:
         preflight = _run_lane_preflight(
@@ -530,6 +553,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output-path", help="Where to write the result JSON. Defaults to a temp file.")
     parser.add_argument("--backend", default="codex-cli", choices=BACKEND_CHOICES,
                         help="Execution backend to use (default: codex-cli).")
+    parser.add_argument(
+        "--reasoning-effort",
+        choices=WORKER_REASONING_EFFORT_CHOICES,
+        help="Optional reasoning effort hint for codex-subagent turns.",
+    )
     parser.add_argument("--codex-bin", help="Explicit path to the codex binary.")
     parser.add_argument("--codex-args", help="Extra args for codex exec (space-separated).")
     parser.add_argument("--prompt-file", help="Override the lane prompt with contents of this file.")
@@ -557,6 +585,7 @@ def main() -> int:
         worktree_path=worktree_path,
         output_path=output_path,
         backend=args.backend,
+        reasoning_effort=args.reasoning_effort,
         codex_bin=args.codex_bin,
         codex_args=codex_args,
         prompt_override=prompt_override,

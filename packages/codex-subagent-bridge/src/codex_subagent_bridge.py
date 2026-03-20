@@ -10,7 +10,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 _CLIENT_NAME = "codex-subagent-bridge"
 _CLIENT_VERSION = "0.1.0"
@@ -19,7 +19,7 @@ _SHUTDOWN_GRACE_SECONDS = 1.0
 _REASONING_EFFORT_KEYS = ("CODEX_REASONING_EFFORT", "REASONING_EFFORT")
 _MODEL_KEYS = ("CODEX_MODEL", "MODEL")
 _CODEX_BIN_KEYS = ("CODEX_BIN", "CODEX_PATH")
-_VALID_REASONING_EFFORTS = {"low", "medium", "high"}
+_VALID_REASONING_EFFORTS = {"low", "medium", "high", "xhigh"}
 _SESSION_MODE_KEYS = ("CODEX_SUBAGENT_BRIDGE_SESSION_MODE",)
 _SHARED_SESSION_VALUES = {"shared", "long-lived", "long_lived"}
 _CODEX_SEARCH_PATHS = (
@@ -30,17 +30,34 @@ _shared_clients_lock = threading.Lock()
 _shared_clients: dict[tuple[str, tuple[tuple[str, str], ...]], "_SharedClientEntry"] = {}
 
 
-def run_subagent(prompt: str, schema: dict[str, Any], cwd: str, env: dict[str, str] | None = None) -> dict[str, Any]:
+def run_subagent(
+    prompt: str,
+    schema: dict[str, Any],
+    cwd: str,
+    env: dict[str, str] | None = None,
+    telemetry_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
     """Run one structured Codex turn in ``cwd`` and return the final JSON object."""
     if _shared_session_requested(env):
-        return _run_subagent_shared(prompt=prompt, schema=schema, cwd=cwd, env=env)
+        return _run_subagent_shared(
+            prompt=prompt,
+            schema=schema,
+            cwd=cwd,
+            env=env,
+            telemetry_callback=telemetry_callback,
+        )
 
     client = AppServerClient(cwd=cwd, env=env)
     try:
         client.start()
         client.initialize()
         thread_id = client.start_thread()
-        return client.run_structured_turn(thread_id=thread_id, prompt=prompt, output_schema=schema)
+        return client.run_structured_turn(
+            thread_id=thread_id,
+            prompt=prompt,
+            output_schema=schema,
+            telemetry_callback=telemetry_callback,
+        )
     finally:
         client.close()
 
@@ -152,9 +169,18 @@ class AppServerClient:
             raise RuntimeError("codex app-server turn/start response did not include turn.id.")
         return turn_id
 
-    def run_structured_turn(self, *, thread_id: str, prompt: str, output_schema: dict[str, Any]) -> dict[str, Any]:
+    def run_structured_turn(
+        self,
+        *,
+        thread_id: str,
+        prompt: str,
+        output_schema: dict[str, Any],
+        telemetry_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
         turn_id = self.start_turn(thread_id=thread_id, prompt=prompt, output_schema=output_schema)
         structured_payload: Any | None = None
+        latest_token_usage: dict[str, Any] | None = None
+        requested_effort = _normalize_reasoning_effort(_env_lookup(self.env, _REASONING_EFFORT_KEYS))
 
         for notification in self.stream_until_completed(turn_id):
             method = notification.get("method")
@@ -163,6 +189,9 @@ class AppServerClient:
                 candidate = _find_structured_content(params.get("item"))
                 if candidate is not None:
                     structured_payload = candidate
+            elif method == "thread/tokenUsage/updated" and isinstance(params, dict):
+                if params.get("threadId") == thread_id and params.get("turnId") == turn_id:
+                    latest_token_usage = _normalize_thread_token_usage(params.get("tokenUsage"))
             elif method == "turn/completed" and isinstance(params, dict):
                 turn = params.get("turn")
                 if not isinstance(turn, dict):
@@ -175,6 +204,16 @@ class AppServerClient:
 
         if structured_payload is None:
             raise RuntimeError("codex app-server completed the turn without emitting structured output.")
+
+        if telemetry_callback is not None:
+            telemetry_callback(
+                {
+                    "thread_id": thread_id,
+                    "turn_id": turn_id,
+                    "requested_reasoning_effort": requested_effort or "inherit",
+                    "token_usage": latest_token_usage,
+                }
+            )
 
         return _normalize_structured_payload(structured_payload)
 
@@ -315,6 +354,42 @@ def _find_structured_content(value: Any) -> Any | None:
     return None
 
 
+def _normalize_token_usage_breakdown(value: Any) -> dict[str, int] | None:
+    if not isinstance(value, dict):
+        return None
+    normalized: dict[str, int] = {}
+    mapping = {
+        "cached_input_tokens": "cachedInputTokens",
+        "input_tokens": "inputTokens",
+        "output_tokens": "outputTokens",
+        "reasoning_output_tokens": "reasoningOutputTokens",
+        "total_tokens": "totalTokens",
+    }
+    for target, source in mapping.items():
+        candidate = value.get(source)
+        if not isinstance(candidate, int):
+            return None
+        normalized[target] = candidate
+    return normalized
+
+
+def _normalize_thread_token_usage(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    last = _normalize_token_usage_breakdown(value.get("last"))
+    total = _normalize_token_usage_breakdown(value.get("total"))
+    if last is None or total is None:
+        return None
+    model_context_window = value.get("modelContextWindow")
+    if model_context_window is not None and not isinstance(model_context_window, int):
+        model_context_window = None
+    return {
+        "last": last,
+        "total": total,
+        "model_context_window": model_context_window,
+    }
+
+
 def _extract_nested_string(value: Any, path: tuple[str, ...]) -> str | None:
     current = value
     for segment in path:
@@ -385,7 +460,7 @@ def _normalize_reasoning_effort(value: str | None) -> str | None:
         return None
     if normalized not in _VALID_REASONING_EFFORTS:
         raise RuntimeError(
-            f"Unsupported reasoning effort '{value}'. Valid values: low, medium, high."
+            f"Unsupported reasoning effort '{value}'. Valid values: low, medium, high, xhigh."
         )
     return normalized
 
@@ -407,7 +482,13 @@ def _shared_session_key(cwd: str, env: Mapping[str, str] | None) -> tuple[str, t
     return (cwd, tuple(sorted(filtered.items())))
 
 
-def _run_subagent_shared(prompt: str, schema: dict[str, Any], cwd: str, env: dict[str, str] | None) -> dict[str, Any]:
+def _run_subagent_shared(
+    prompt: str,
+    schema: dict[str, Any],
+    cwd: str,
+    env: dict[str, str] | None,
+    telemetry_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
     entry = _get_or_create_shared_client(cwd=cwd, env=env)
     try:
         with entry.lock:
@@ -416,6 +497,7 @@ def _run_subagent_shared(prompt: str, schema: dict[str, Any], cwd: str, env: dic
                 thread_id=thread_id,
                 prompt=prompt,
                 output_schema=schema,
+                telemetry_callback=telemetry_callback,
             )
     except Exception:
         _discard_shared_client(cwd=cwd, env=env, entry=entry)

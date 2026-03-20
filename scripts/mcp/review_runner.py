@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -19,6 +18,8 @@ from backend_registry import get_backend_choices
 from backend_registry import get_backend_spec
 from backend_registry import resolve_bridge
 from backend_registry import validate_backend
+from _env import WORKER_REASONING_EFFORT_CHOICES
+from _env import apply_codex_runtime_hints
 
 REPO_ROOT = SCRIPT_DIR.parents[1]
 RULES_DIR = REPO_ROOT / "docs" / "agentic" / "rules"
@@ -288,6 +289,7 @@ def _subagent_exec(
     worktree_path: Path,
     *,
     env: dict[str, str] | None = None,
+    telemetry_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Execute the optional host-provided Codex subagent bridge for review."""
     runner = resolve_bridge(backend_name)
@@ -299,12 +301,23 @@ def _subagent_exec(
     }
     if env is not None:
         runner_kwargs["env"] = env
+    if telemetry_callback is not None:
+        runner_kwargs["telemetry_callback"] = telemetry_callback
     try:
         payload = runner(**runner_kwargs)
     except TypeError as exc:
-        if env is None or "env" not in str(exc):
-            raise
-        payload = runner(prompt=prompt, schema=REVIEW_OUTPUT_SCHEMA, cwd=str(worktree_path))
+        if "telemetry_callback" in runner_kwargs and "telemetry_callback" in str(exc):
+            runner_kwargs.pop("telemetry_callback", None)
+            try:
+                payload = runner(**runner_kwargs)
+            except TypeError as inner_exc:
+                if env is None or "env" not in str(inner_exc):
+                    raise
+                payload = runner(prompt=prompt, schema=REVIEW_OUTPUT_SCHEMA, cwd=str(worktree_path))
+        else:
+            if env is None or "env" not in str(exc):
+                raise
+            payload = runner(prompt=prompt, schema=REVIEW_OUTPUT_SCHEMA, cwd=str(worktree_path))
     if isinstance(payload, str):
         try:
             payload = json.loads(payload)
@@ -433,8 +446,10 @@ def run_review(
     session: str | None = None,
     orchestrator_root: Path | None = None,
     backend: str = "codex-cli",
+    reasoning_effort: str | None = None,
     record_findings: bool = False,
     dry_run: bool = False,
+    progress_callback: Callable[..., None] | None = None,
 ) -> dict[str, Any]:
     """Run a full review cycle: discover changes, build prompt, execute Codex, validate, optionally record."""
     backend_name = validate_backend(backend)
@@ -443,6 +458,10 @@ def run_review(
         from _env import pythonpath_env
 
         env = pythonpath_env(orchestrator_root, task_ref=task_ref, lane_id=lane_id)
+    elif reasoning_effort:
+        env = {}
+    if env is not None:
+        apply_codex_runtime_hints(env, reasoning_effort=reasoning_effort)
     changed = _changed_files(worktree_path)
     stat = _diff_stat(worktree_path)
     guides = _detect_stack_guides(changed)
@@ -466,7 +485,22 @@ def run_review(
         }
 
     if get_backend_spec(backend_name).kind == "bridge":
-        raw_result = _subagent_exec(backend_name, prompt, worktree_path, env=env)
+        telemetry_callback = None
+        if progress_callback is not None:
+            def telemetry_callback(telemetry: dict[str, Any]) -> None:
+                progress_callback(
+                    "subagent_turn_complete",
+                    backend=backend_name,
+                    phase="review",
+                    **telemetry,
+                )
+        raw_result = _subagent_exec(
+            backend_name,
+            prompt,
+            worktree_path,
+            env=env,
+            telemetry_callback=telemetry_callback,
+        )
     else:
         raw_result = _codex_exec(prompt, worktree_path)
     validated = _validate_review_result(raw_result)
@@ -524,6 +558,11 @@ def _parse_args() -> argparse.Namespace:
         help="Execution backend to use (default: codex-cli).",
     )
     run_parser.add_argument(
+        "--reasoning-effort",
+        choices=WORKER_REASONING_EFFORT_CHOICES,
+        help="Optional reasoning effort hint for codex-subagent review turns.",
+    )
+    run_parser.add_argument(
         "--record-findings",
         action="store_true",
         help="Record findings into MCP before returning.",
@@ -558,6 +597,7 @@ def main() -> int:
         session=args.session,
         orchestrator_root=orchestrator_root,
         backend=args.backend,
+        reasoning_effort=args.reasoning_effort,
         record_findings=args.record_findings,
         dry_run=args.dry_run,
     )

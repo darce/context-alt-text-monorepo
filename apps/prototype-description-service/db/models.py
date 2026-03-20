@@ -32,6 +32,7 @@ from db.models import (
     IdentityScanJobItem,
     IdentitySuggestion,
     MediaIdentity,
+    NameSuggestion,
     RecognitionEvent,
     RecognitionRun,
     Tenant,
@@ -55,6 +56,7 @@ __all__ = [
     "ClusteringFeedback",
     "IdentitySuggestion",
     "ClusterMergeSuggestion",
+    "NameSuggestion",
     "IdentityClusterBlock",
     "IdentityConstraint",
 ]

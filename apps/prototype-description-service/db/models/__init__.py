@@ -13,6 +13,7 @@ from db.models.constraints import (
     IdentityClusterBlock,
     IdentityConstraint,
     IdentitySuggestion,
+    NameSuggestion,
 )
 from db.models.identity import (
     ClusterCentroid,
@@ -62,6 +63,7 @@ __all__ = [
     # Constraints
     "IdentitySuggestion",
     "ClusterMergeSuggestion",
+    "NameSuggestion",
     "IdentityClusterBlock",
     "IdentityConstraint",
 ]

@@ -1,8 +1,8 @@
 # =============================================================================
-# Lane Maintenance (reset, refresh, clean, path, commits, intake)
+# Lane Maintenance (reset, refresh, clean, close, prune, path, commits, intake)
 # =============================================================================
 
-.PHONY: lane-reset lane-refresh lane-clean lane-path lane-commits lane-intake
+.PHONY: lane-reset lane-refresh lane-clean lane-close lane-prune lane-path lane-commits lane-intake
 
 lane-reset: lane-guard
 	@if [ -z "$(REF)" ]; then \
@@ -133,6 +133,69 @@ lane-clean: lane-guard
 		fi; \
 		git -C "$$TARGET_WORKTREE" clean -fd -- docs/agentic/templates scripts/worktree-lane 2>/dev/null || true; \
 		git -C "$$TARGET_WORKTREE" status -sb; \
+	fi
+
+lane-close: lane-guard lane-orchestrator-guard
+	@set -eu; \
+	LANE_JSON="$$( $(MCP_CMD) $(MCP_STATE_ARGS) lane-list --task-ref "$(TASK)" --status all --limit 200 )"; \
+	LANE_FIELDS="$$(printf '%s' "$$LANE_JSON" | python3 -c 'import json,sys; data=json.load(sys.stdin); lane_id=sys.argv[1]; row=next((lane for lane in data.get("lanes", []) if lane.get("lane_id") == lane_id), None); sys.exit(1) if row is None else None; print("\t".join([str(row.get("status", "") or ""), str(row.get("worktree_path", "") or ""), str(row.get("branch", "") or "")]))' "$(LANE)")" || { \
+		echo "Lane $(LANE) is not registered for task $(TASK)."; \
+		exit 1; \
+	}; \
+	IFS="$(printf '\t')" read -r LANE_STATUS LANE_WORKTREE LANE_BRANCH <<< "$$LANE_FIELDS"; \
+	if [ -z "$$LANE_WORKTREE" ]; then LANE_WORKTREE="$(LANE_WORKTREE)"; fi; \
+	if [ -z "$$LANE_BRANCH" ]; then LANE_BRANCH="$(LANE_BRANCH)"; fi; \
+	if [ "$$LANE_STATUS" != "merged" ] && [ "$$LANE_STATUS" != "closed" ] && [ "$(FORCE)" != "1" ]; then \
+		echo "Lane $(LANE) must be merged or closed before cleanup (current status: $$LANE_STATUS)."; \
+		exit 1; \
+	fi; \
+	is_git_repo=0; \
+	if [ -d "$$LANE_WORKTREE/.git" ] || [ -f "$$LANE_WORKTREE/.git" ]; then \
+		is_git_repo=1; \
+	fi; \
+	if [ "$$is_git_repo" -eq 1 ] && [ "$(FORCE)" != "1" ]; then \
+		DIRTY_STATE="$$(git -C "$$LANE_WORKTREE" status --porcelain=v1 --untracked-files=all 2>/dev/null || true)"; \
+		if [ -n "$$DIRTY_STATE" ]; then \
+			echo "Lane worktree is dirty. Commit or stash it before closing $(LANE)."; \
+			printf '%s\n' "$$DIRTY_STATE"; \
+			exit 1; \
+		fi; \
+	fi; \
+	if [ "$(DRY_RUN)" = "1" ]; then \
+		if [ "$(FORCE)" = "1" ]; then \
+			echo "[dry-run] git -C \"$(ORCHESTRATOR_ROOT)\" worktree remove --force \"$$LANE_WORKTREE\""; \
+			echo "[dry-run] git -C \"$(ORCHESTRATOR_ROOT)\" branch -D \"$$LANE_BRANCH\""; \
+		else \
+			echo "[dry-run] git -C \"$(ORCHESTRATOR_ROOT)\" worktree remove \"$$LANE_WORKTREE\""; \
+			echo "[dry-run] git -C \"$(ORCHESTRATOR_ROOT)\" branch -d \"$$LANE_BRANCH\""; \
+		fi; \
+		echo "[dry-run] $(ORCHESTRATOR_ROOT)/scripts/worktree-lane close --orchestrator-root $(ORCHESTRATOR_ROOT) --task-ref $(TASK) --lane-id $(LANE) --worktree-path \"$$LANE_WORKTREE\" --branch \"$$LANE_BRANCH\""; \
+		exit 0; \
+	fi; \
+	"$(ORCHESTRATOR_ROOT)/scripts/worktree-lane" close \
+		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+		--task-ref "$(TASK)" \
+		--lane-id "$(LANE)" \
+		--worktree-path "$$LANE_WORKTREE" \
+		--branch "$$LANE_BRANCH" \
+		$(if $(filter 1,$(FORCE)),--force,)
+
+lane-prune: lane-orchestrator-guard
+	@set -eu; \
+	LANES_JSON="$$( $(MCP_CMD) $(MCP_STATE_ARGS) lane-list --task-ref "$(TASK)" --status all --limit 200 )"; \
+	LANES_TO_PRUNE="$$(printf '%s' "$$LANES_JSON" | python3 -c 'import json,sys; data=json.load(sys.stdin); lanes=[lane.get("lane_id", "") for lane in data.get("lanes", []) if lane.get("status") in {"merged", "closed"}]; print("\n".join([lane for lane in lanes if lane]))')"; \
+	if [ -z "$$LANES_TO_PRUNE" ]; then \
+		echo "No merged or closed lanes found for $(TASK)."; \
+	else \
+		while IFS= read -r lane_id; do \
+			[ -n "$$lane_id" ] || continue; \
+			$(MAKE) --no-print-directory lane-close TASK="$(TASK)" LANE="$$lane_id" DRY_RUN="$(DRY_RUN)" FORCE="$(FORCE)"; \
+		done <<< "$$LANES_TO_PRUNE"; \
+	fi; \
+	if [ "$(DRY_RUN)" = "1" ]; then \
+		echo "[dry-run] git -C \"$(ORCHESTRATOR_ROOT)\" worktree prune"; \
+	else \
+		git -C "$(ORCHESTRATOR_ROOT)" worktree prune; \
 	fi
 
 lane-path: lane-guard

@@ -38,6 +38,13 @@ lane-open: lane-guard
 	git -C "$(LANE_WORKTREE)" status -sb; \
 	if [ "$(DRY_RUN)" != "1" ]; then \
 		echo ""; \
+		echo "Bootstrapping lane dependencies..."; \
+		PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/bootstrap_lane.py" \
+			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+			--task-ref "$(TASK)" \
+			--lane-id "$(LANE)" \
+			--worktree-path "$(LANE_WORKTREE)"; \
+		echo ""; \
 		echo "Initial lane inbox:"; \
 		$(MAKE) --no-print-directory lane-inbox TASK="$(TASK)" LANE="$(LANE)"; \
 	fi; \

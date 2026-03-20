@@ -126,6 +126,10 @@ def _build_report_command(
         return report_cmd
     if action == "needs_guidance":
         report_cmd.append("--guidance-request")
+        # Guidance requests may describe already-present lane-local state or
+        # verification on top of uncommitted files, so they must not hard-fail
+        # on a dirty worktree before the orchestrator can intake the report.
+        report_cmd.append("--allow-dirty")
         for blocker in blockers:
             report_cmd.extend(["--blocker", blocker])
         return report_cmd

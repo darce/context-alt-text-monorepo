@@ -1,8 +1,8 @@
-"""Phase 0 scaffold for suggestion-system extensions."""
+"""Phase 5 scaffold for suggestion-system extensions."""
 
 from __future__ import annotations
 
-from typing import Any
+from recognition.domain.suggestion import BulkAcceptResult, NameSuggestion
 
 
 class SuggestionExtensionService:
@@ -15,13 +15,13 @@ class SuggestionExtensionService:
         min_confidence: float | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> list[dict[str, Any]]:
+    ) -> list[NameSuggestion]:
         raise NotImplementedError("Name suggestion listing is not implemented yet.")
 
-    async def accept_name_suggestion(self, tenant_id: str, suggestion_id: str) -> dict[str, Any]:
+    async def accept_name_suggestion(self, tenant_id: str, suggestion_id: str) -> NameSuggestion:
         raise NotImplementedError("Name suggestion acceptance is not implemented yet.")
 
-    async def reject_name_suggestion(self, tenant_id: str, suggestion_id: str) -> dict[str, Any]:
+    async def reject_name_suggestion(self, tenant_id: str, suggestion_id: str) -> NameSuggestion:
         raise NotImplementedError("Name suggestion rejection is not implemented yet.")
 
     async def bulk_accept(
@@ -30,7 +30,7 @@ class SuggestionExtensionService:
         *,
         suggestion_type: str,
         min_confidence: float,
-    ) -> dict[str, Any]:
+    ) -> BulkAcceptResult:
         raise NotImplementedError("Bulk suggestion acceptance is not implemented yet.")
 
     async def expire_stale(self, tenant_id: str) -> int:

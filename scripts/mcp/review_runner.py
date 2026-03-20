@@ -50,7 +50,10 @@ REVIEW_OUTPUT_SCHEMA: dict[str, Any] = {
                     "severity",
                     "category",
                     "file_path",
+                    "line_start",
+                    "line_end",
                     "description",
+                    "fix",
                 ],
                 "properties": {
                     "severity": {"type": "string", "enum": ["high", "medium", "low"]},

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
 import type { OutboxOperation } from '../../api/recognition';
@@ -27,6 +27,54 @@ const OPERATION_LABELS: Record<string, string> = {
   revert_merge_cluster: __('Cluster merge revert', 'alt-context'),
   assign_outlier_to_cluster: __('Assign outlier to cluster', 'alt-context'),
   cluster_created_for_identity: __('Create cluster for identity', 'alt-context'),
+};
+
+interface DeadLetterPanelState {
+  offset: number;
+  timelineOffset: number;
+  timelineStatus: TimelineStatusFilter;
+  pendingDiscardId: number | null;
+  notice: string | null;
+  mutationError: string | null;
+}
+
+type DeadLetterPanelAction =
+  | { type: 'setOffset'; offset: number }
+  | { type: 'setTimelineOffset'; offset: number }
+  | { type: 'setTimelineStatus'; status: TimelineStatusFilter }
+  | { type: 'setPendingDiscardId'; id: number | null }
+  | { type: 'setNotice'; notice: string | null }
+  | { type: 'setMutationError'; error: string | null };
+
+const INITIAL_STATE: DeadLetterPanelState = {
+  offset: 0,
+  timelineOffset: 0,
+  timelineStatus: 'all',
+  pendingDiscardId: null,
+  notice: null,
+  mutationError: null,
+};
+
+const deadLetterPanelReducer = (
+  state: DeadLetterPanelState,
+  action: DeadLetterPanelAction,
+): DeadLetterPanelState => {
+  switch (action.type) {
+    case 'setOffset':
+      return { ...state, offset: action.offset };
+    case 'setTimelineOffset':
+      return { ...state, timelineOffset: action.offset };
+    case 'setTimelineStatus':
+      return { ...state, timelineStatus: action.status };
+    case 'setPendingDiscardId':
+      return { ...state, pendingDiscardId: action.id };
+    case 'setNotice':
+      return { ...state, notice: action.notice };
+    case 'setMutationError':
+      return { ...state, mutationError: action.error };
+    default:
+      return state;
+  }
 };
 
 const formatOperationType = (operationType: string): string =>
@@ -80,12 +128,8 @@ const formatPayloadSummary = (payload: Record<string, unknown> | undefined): str
 };
 
 export const DeadLetterPanel = (): React.JSX.Element => {
-  const [offset, setOffset] = useState(0);
-  const [timelineOffset, setTimelineOffset] = useState(0);
-  const [timelineStatus, setTimelineStatus] = useState<TimelineStatusFilter>('all');
-  const [pendingDiscardId, setPendingDiscardId] = useState<number | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [mutationError, setMutationError] = useState<string | null>(null);
+  const [state, dispatch] = React.useReducer(deadLetterPanelReducer, INITIAL_STATE);
+  const { offset, timelineOffset, timelineStatus, pendingDiscardId, notice, mutationError } = state;
 
   const operationsQuery = useDeadLetterOperations({ limit: PAGE_SIZE, offset });
   const timelineQuery = useOutboxOperations({
@@ -100,31 +144,36 @@ export const DeadLetterPanel = (): React.JSX.Element => {
   const handleRetry = async (id: number): Promise<void> => {
     try {
       await retryMutation.mutateAsync(id);
-      setPendingDiscardId(null);
-      setMutationError(null);
-      setNotice(__('Operation moved back to pending replay.', 'alt-context'));
+      dispatch({ type: 'setPendingDiscardId', id: null });
+      dispatch({ type: 'setMutationError', error: null });
+      dispatch({ type: 'setNotice', notice: __('Operation moved back to pending replay.', 'alt-context') });
     } catch {
-      setNotice(null);
-      setMutationError(__('Unable to retry this operation. Please try again.', 'alt-context'));
+      dispatch({ type: 'setNotice', notice: null });
+      dispatch({ type: 'setMutationError', error: __('Unable to retry this operation. Please try again.', 'alt-context') });
     }
   };
 
   const handleDiscard = async (id: number): Promise<void> => {
     if (pendingDiscardId !== id) {
-      setMutationError(null);
-      setPendingDiscardId(id);
+      dispatch({ type: 'setMutationError', error: null });
+      dispatch({ type: 'setPendingDiscardId', id });
       return;
     }
 
     try {
       await discardMutation.mutateAsync(id);
-      setPendingDiscardId(null);
-      setMutationError(null);
-      setNotice(__('Operation discarded from dead-letter queue.', 'alt-context'));
+      dispatch({ type: 'setPendingDiscardId', id: null });
+      dispatch({ type: 'setMutationError', error: null });
+      dispatch({ type: 'setNotice', notice: __('Operation discarded from dead-letter queue.', 'alt-context') });
     } catch {
-      setNotice(null);
-      setMutationError(__('Unable to discard this operation. Please try again.', 'alt-context'));
+      dispatch({ type: 'setNotice', notice: null });
+      dispatch({ type: 'setMutationError', error: __('Unable to discard this operation. Please try again.', 'alt-context') });
     }
+  };
+
+  const handleTimelineStatusChange = (status: TimelineStatusFilter): void => {
+    dispatch({ type: 'setTimelineStatus', status });
+    dispatch({ type: 'setTimelineOffset', offset: 0 });
   };
 
   if (operationsQuery.isLoading) {
@@ -196,10 +245,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
               key={status}
               type="button"
               className="button button-secondary"
-              onClick={() => {
-                setTimelineStatus(status);
-                setTimelineOffset(0);
-              }}
+              onClick={() => handleTimelineStatusChange(status)}
               disabled={timelineStatus === status}
             >
               {status === 'all' ? __('All', 'alt-context') : formatStatusLabel(status)}
@@ -245,7 +291,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
                   <button
                     type="button"
                     className="button button-secondary"
-                    onClick={() => setTimelineOffset(timelineOffset - TIMELINE_PAGE_SIZE)}
+                    onClick={() => dispatch({ type: 'setTimelineOffset', offset: timelineOffset - TIMELINE_PAGE_SIZE })}
                     disabled={timelineOffset === 0}
                   >
                     {__('Previous timeline page', 'alt-context')}
@@ -253,7 +299,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
                   <button
                     type="button"
                     className="button button-secondary"
-                    onClick={() => setTimelineOffset(timelineOffset + TIMELINE_PAGE_SIZE)}
+                    onClick={() => dispatch({ type: 'setTimelineOffset', offset: timelineOffset + TIMELINE_PAGE_SIZE })}
                     disabled={timelineOffset + timelineQuery.data.items.length >= timelineQuery.data.total}
                   >
                     {__('Next timeline page', 'alt-context')}
@@ -313,7 +359,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
             <button
               type="button"
               className="button button-secondary"
-              onClick={() => setOffset(offset - limit)}
+              onClick={() => dispatch({ type: 'setOffset', offset: offset - limit })}
               disabled={!canPageBack}
             >
               {__('Previous', 'alt-context')}
@@ -321,7 +367,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
             <button
               type="button"
               className="button button-secondary"
-              onClick={() => setOffset(offset + limit)}
+              onClick={() => dispatch({ type: 'setOffset', offset: offset + limit })}
               disabled={!canPageForward}
             >
               {__('Next', 'alt-context')}

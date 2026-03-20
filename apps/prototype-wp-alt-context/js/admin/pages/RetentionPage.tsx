@@ -9,6 +9,7 @@ import {
   DialogRoot,
   DialogTitle,
 } from '../../components/ui/dialog';
+import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group';
 import type { AuditEvent, RetentionExportResponse, RetentionMode } from '../api/recognition';
 import {
   useExportTenantData,
@@ -35,6 +36,19 @@ const RETENTION_OPTIONS: { value: RetentionMode; label: string; description: str
     value: 'purge_on_demand',
     label: __('Purge on demand', 'alt-context'),
     description: __('Retain state until an operator triggers a purge action from this page.', 'alt-context'),
+  },
+];
+
+const PURGE_SCOPE_OPTIONS: { value: 'disposed' | 'all'; label: string; description: string }[] = [
+  {
+    value: 'disposed',
+    label: __('Disposed only', 'alt-context'),
+    description: __('Delete rows already marked disposed after acknowledgement.', 'alt-context'),
+  },
+  {
+    value: 'all',
+    label: __('All machine data', 'alt-context'),
+    description: __('Delete all tenant embeddings, clusters, representatives, and related machine state.', 'alt-context'),
   },
 ];
 
@@ -184,24 +198,22 @@ export const RetentionPage = (): React.JSX.Element => {
       <div className="acx-retention__grid">
         <section className="acx-dashboard__panel acx-retention__panel">
           <h2>{__('Retention mode', 'alt-context')}</h2>
-          <fieldset className="acx-retention__options">
-            <legend className="screen-reader-text">{__('Retention mode', 'alt-context')}</legend>
+          <RadioGroup
+            className="acx-retention__options"
+            aria-label={__('Retention mode', 'alt-context')}
+            value={selectedMode}
+            onValueChange={(value) => setDraftMode(value as RetentionMode)}
+          >
             {RETENTION_OPTIONS.map((option) => (
               <label key={option.value} className="acx-retention__option">
-                <input
-                  type="radio"
-                  name="retention_mode"
-                  value={option.value}
-                  checked={selectedMode === option.value}
-                  onChange={() => setDraftMode(option.value)}
-                />
+                <RadioGroupItem value={option.value} aria-label={option.label} />
                 <span>
                   <strong>{option.label}</strong>
                   <small>{option.description}</small>
                 </span>
               </label>
             ))}
-          </fieldset>
+          </RadioGroup>
           <p className="acx-retention__detail">{modeDescription}</p>
           <p className="acx-retention__detail">
             {sprintf(__('Last policy update: %s', 'alt-context'), formatTimestamp(policy.retention_updated_at))}
@@ -308,35 +320,22 @@ export const RetentionPage = (): React.JSX.Element => {
             <DialogDescription>
               {__('Choose whether to purge only disposed state or all machine-derived tenant data. This cannot be undone.', 'alt-context')}
             </DialogDescription>
-            <fieldset className="acx-retention__dialog-fieldset">
-              <legend>{__('Purge scope', 'alt-context')}</legend>
-              <label className="acx-retention__option">
-                <input
-                  type="radio"
-                  name="purge_scope"
-                  value="disposed"
-                  checked={purgeScope === 'disposed'}
-                  onChange={() => setPurgeScope('disposed')}
-                />
-                <span>
-                  <strong>{__('Disposed only', 'alt-context')}</strong>
-                  <small>{__('Delete rows already marked disposed after acknowledgement.', 'alt-context')}</small>
-                </span>
-              </label>
-              <label className="acx-retention__option">
-                <input
-                  type="radio"
-                  name="purge_scope"
-                  value="all"
-                  checked={purgeScope === 'all'}
-                  onChange={() => setPurgeScope('all')}
-                />
-                <span>
-                  <strong>{__('All machine data', 'alt-context')}</strong>
-                  <small>{__('Delete all tenant embeddings, clusters, representatives, and related machine state.', 'alt-context')}</small>
-                </span>
-              </label>
-            </fieldset>
+            <RadioGroup
+              className="acx-retention__dialog-fieldset"
+              aria-label={__('Purge scope', 'alt-context')}
+              value={purgeScope}
+              onValueChange={(value) => setPurgeScope(value as 'disposed' | 'all')}
+            >
+              {PURGE_SCOPE_OPTIONS.map((option) => (
+                <label key={option.value} className="acx-retention__option">
+                  <RadioGroupItem value={option.value} aria-label={option.label} />
+                  <span>
+                    <strong>{option.label}</strong>
+                    <small>{option.description}</small>
+                  </span>
+                </label>
+              ))}
+            </RadioGroup>
             <label className="acx-retention__confirm-input">
               <span>
                 {sprintf(__('Type %s to confirm this purge.', 'alt-context'), RETENTION_CONFIRM_PHRASE)}

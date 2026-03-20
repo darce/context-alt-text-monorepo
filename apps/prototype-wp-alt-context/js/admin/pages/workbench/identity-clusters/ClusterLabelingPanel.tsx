@@ -186,6 +186,14 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     }
   };
 
+  const handleSelectPerson = (personId: string): void => {
+    const matched = personOptions.find((option) => option.value === personId);
+    if (!matched) {
+      return;
+    }
+    setLabelValue(matched.label);
+  };
+
   return (
     <div className="acx-cluster-labeling-panel">
       <div className="acx-cluster-labeling-panel__header">
@@ -228,13 +236,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
               id="cluster-label-input"
               options={personOptions}
               value={labelInput}
-              onSelect={(personId) => {
-                const matched = personOptions.find((option) => option.value === personId);
-                if (!matched) {
-                  return;
-                }
-                setLabelValue(matched.label);
-              }}
+              onSelect={handleSelectPerson}
               onValueChange={(value) => {
                 setLabelValue(value);
               }}

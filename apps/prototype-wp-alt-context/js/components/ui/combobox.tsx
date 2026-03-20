@@ -82,6 +82,9 @@ interface ComboboxProps {
   portalContainer?: HTMLElement | null;
 }
 
+const filterCommandOption = (value: string, search: string): number =>
+  value.toLowerCase().includes(search.toLowerCase()) ? 1 : 0;
+
 export const Combobox = ({
   options,
   value,
@@ -170,6 +173,13 @@ export const Combobox = ({
     },
     [onSelect, onValueChange, value],
   );
+  const handleCreateOption = React.useCallback(() => {
+    if (!onCreate) {
+      return;
+    }
+    onCreate(inputValue);
+    setOpen(false);
+  }, [inputValue, onCreate]);
   const triggerLabel = selectedOption?.label ?? (value && value.length > 0 ? value : placeholder);
 
   return (
@@ -190,14 +200,7 @@ export const Combobox = ({
       </PopoverPrimitive.Trigger>
       <PopoverPrimitive.Portal container={portalContainer ?? undefined}>
         <PopoverPrimitive.Content className="acx-combobox__content" align="start">
-          <Command
-            filter={(value, search) => {
-              if (value.toLowerCase().includes(search.toLowerCase())) {
-                return 1;
-              }
-              return 0;
-            }}
-          >
+          <Command filter={filterCommandOption}>
             <CommandInput
               placeholder={searchPlaceholder ?? placeholder}
               value={inputValue}
@@ -212,10 +215,7 @@ export const Combobox = ({
                     <button
                       type="button"
                       className="acx-button acx-button--small"
-                      onClick={() => {
-                        onCreate(inputValue);
-                        setOpen(false);
-                      }}
+                      onClick={handleCreateOption}
                     >
                       {sprintf(__('Create "%s"', 'alt-context'), inputValue)}
                     </button>

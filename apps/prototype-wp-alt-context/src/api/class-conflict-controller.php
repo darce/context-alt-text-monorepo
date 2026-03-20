@@ -318,6 +318,7 @@ class ConflictController extends AbstractRecognitionProxyController {
 			'backend_version' => absint( $conflict['backend_version'] ?? 0 ),
 			'local_revision' => absint( $conflict['local_revision'] ?? 0 ),
 			'conflict_code' => (string) ( $conflict['conflict_code'] ?? '' ),
+			'backend_proposed_value' => is_string( $conflict['backend_proposed_value'] ?? null ) ? $conflict['backend_proposed_value'] : null,
 			'machine_payload' => $conflict['machine_payload'] ?? array(),
 			'local_payload' => $conflict['local_payload'] ?? array(),
 			'resolution_status' => (string) ( $conflict['resolution_status'] ?? 'open' ),

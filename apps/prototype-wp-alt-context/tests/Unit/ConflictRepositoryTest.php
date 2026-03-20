@@ -27,6 +27,7 @@ class ConflictRepositoryTest extends TestCase
 			[
 				'conflict_code' => 'version_conflict',
 				'backend_version' => 22,
+				'backend_proposed_value' => 'Remote label',
 				'machine_payload' => ['cluster_uuid' => 'cluster-7', 'person_uuid' => 'person-remote'],
 			]
 		);
@@ -36,6 +37,7 @@ class ConflictRepositoryTest extends TestCase
 		$insertQuery = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_conflicts');
 		$this->assertStringContainsString("'tenant-test-123'", $insertQuery);
 		$this->assertStringContainsString("'version_conflict'", $insertQuery);
+		$this->assertStringContainsString("'Remote label'", $insertQuery);
 		$this->assertStringContainsString("'open'", $insertQuery);
 	}
 
@@ -52,7 +54,7 @@ class ConflictRepositoryTest extends TestCase
 			54,
 			33,
 			9,
-			['cluster_uuid' => 'cluster-remote'],
+			['cluster_uuid' => 'cluster-remote', 'proposed_value' => 'Remote cluster'],
 			['cluster_uuid' => 'cluster-local']
 		);
 
@@ -61,7 +63,9 @@ class ConflictRepositoryTest extends TestCase
 		$insertQuery = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_sync_conflicts`');
 		$this->assertStringContainsString("'tenant-projection'", $insertQuery);
 		$this->assertStringContainsString("'member_cluster_reassignment'", $insertQuery);
+		$this->assertStringContainsString("'Remote cluster'", $insertQuery);
 		$this->assertStringContainsString('ON DUPLICATE KEY UPDATE', $insertQuery);
+		$this->assertStringContainsString('backend_proposed_value = VALUES(backend_proposed_value)', $insertQuery);
 		$this->assertStringContainsString('machine_payload = VALUES(machine_payload)', $insertQuery);
 		$this->assertStringContainsString('local_payload = VALUES(local_payload)', $insertQuery);
 		$this->assertStringNotContainsString('resolution_status = VALUES(resolution_status)', $insertQuery);

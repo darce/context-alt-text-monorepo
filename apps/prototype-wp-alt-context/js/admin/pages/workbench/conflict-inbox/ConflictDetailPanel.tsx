@@ -1,0 +1,121 @@
+import React from 'react';
+import { __, sprintf } from '@wordpress/i18n';
+
+import type { ConflictResolutionChoice } from '../../../api/recognition';
+import { useConflictDetail } from '../../../hooks/useConflictDetail';
+import {
+  formatConflictCode,
+  formatEntityLabel,
+  formatTimestamp,
+  getAcceptMachinePreview,
+  getDifferenceEntries,
+  getResolutionButtonLabel,
+  getResolutionConfirmation,
+  getUnsupportedExplanation,
+} from './conflictInboxUtils';
+
+interface ConflictDetailPanelProps {
+  conflictId: number | null;
+  pendingChoice: ConflictResolutionChoice | null;
+  onRequestResolve: (choice: ConflictResolutionChoice) => void;
+  isResolving: boolean;
+}
+
+export const ConflictDetailPanel = ({
+  conflictId,
+  pendingChoice,
+  onRequestResolve,
+  isResolving,
+}: ConflictDetailPanelProps): React.JSX.Element | null => {
+  const detailQuery = useConflictDetail(conflictId);
+
+  if (conflictId === null) {
+    return null;
+  }
+
+  if (detailQuery.isLoading) {
+    return <p>{__('Loading conflict detail…', 'alt-context')}</p>;
+  }
+
+  if (detailQuery.isError || !detailQuery.data) {
+    return (
+      <div className="acx-error-state">
+        <p>{__('Unable to load conflict detail.', 'alt-context')}</p>
+      </div>
+    );
+  }
+
+  const { conflict } = detailQuery.data;
+  const unsupportedExplanation = getUnsupportedExplanation(conflict);
+  const differences = getDifferenceEntries(conflict);
+  const acceptPreview = getAcceptMachinePreview(conflict);
+
+  return (
+    <div className="acx-workbench__panel">
+      <h3>{__('Conflict Detail', 'alt-context')}</h3>
+      <p>{formatConflictCode(conflict.conflict_code)}</p>
+      <p>
+        {sprintf(
+          __('Entity: %1$s · Type: %2$s · Logged: %3$s', 'alt-context'),
+          formatEntityLabel(conflict),
+          conflict.entity_type,
+          formatTimestamp(conflict.created_at),
+        )}
+      </p>
+      {unsupportedExplanation ? <p>{unsupportedExplanation}</p> : null}
+      {differences.length > 0 ? (
+        <div>
+          <h4>{__('Differing fields', 'alt-context')}</h4>
+          <ul className="acx-dashboard__activity-list">
+            {differences.map((difference) => (
+              <li key={difference.key} className="acx-dashboard__activity-item">
+                <div>
+                  <strong>{difference.key}</strong>
+                  <p>{sprintf(__('Machine: %s', 'alt-context'), difference.machineValue)}</p>
+                  <p>{sprintf(__('Local: %s', 'alt-context'), difference.localValue)}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {acceptPreview ? (
+        <div>
+          <h4>{__('Accept machine preview', 'alt-context')}</h4>
+          <p>{acceptPreview.summary}</p>
+          {acceptPreview.payload ? <pre>{JSON.stringify(acceptPreview.payload, null, 2)}</pre> : null}
+        </div>
+      ) : null}
+      <div className="acx-workbench__layout">
+        <section aria-label={__('Machine payload', 'alt-context')}>
+          <h4>{__('Machine payload', 'alt-context')}</h4>
+          <pre>{JSON.stringify(conflict.machine_payload, null, 2)}</pre>
+        </section>
+        <section aria-label={__('Local payload', 'alt-context')}>
+          <h4>{__('Local payload', 'alt-context')}</h4>
+          <pre>{JSON.stringify(conflict.local_payload, null, 2)}</pre>
+        </section>
+      </div>
+      {conflict.allowed_resolutions.length > 0 ? (
+        <div className="acx-dashboard__actions">
+          {conflict.allowed_resolutions.map((choice) => (
+            <button
+              key={choice}
+              type="button"
+              className="button button-secondary"
+              onClick={() => {
+                void onRequestResolve(choice);
+              }}
+              disabled={isResolving}
+            >
+              {pendingChoice === choice ? __('Confirm', 'alt-context') : getResolutionButtonLabel(choice)}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p>{__('No resolution actions are available for this conflict.', 'alt-context')}</p>
+      )}
+      {pendingChoice ? <p>{getResolutionConfirmation(conflict, pendingChoice)}</p> : null}
+    </div>
+  );
+};

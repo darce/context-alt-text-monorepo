@@ -116,9 +116,6 @@ def _apply_tool_descriptions() -> None:
         tool.__doc__ = description
 
 
-_apply_tool_descriptions()
-
-
 def generate_current_task_md(
     task_ref: str | None = None,
     write_file: bool = True,
@@ -331,14 +328,21 @@ def orchestrator_start(
     ]
     if single_pass:
         cmd.append("--single-pass")
-    proc = subprocess.Popen(
-        cmd,
-        cwd=str(paths["workspace_root"]),
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    log_dir = paths["log_dir"]
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stderr_fh = (log_dir / "orchestrator.stderr").open("a")
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(paths["workspace_root"]),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr_fh,
+            start_new_session=True,
+        )
+    finally:
+        stderr_fh.close()
     return core._json_response(
         {
             "ok": True,
@@ -792,6 +796,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
             "Use these tools for task state, review findings, exports, and close checks."
         ),
     )
+    _apply_tool_descriptions()
     for tool in [
         set_handoff_state,
         get_handoff_state,

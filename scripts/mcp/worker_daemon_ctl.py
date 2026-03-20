@@ -313,6 +313,14 @@ def daemon_start(
             "status": status,
         }
 
+    # Remove any stale lock left by a previously crashed daemon instance.
+    stale_lock = _lock_path(state_dir, lane_id)
+    if stale_lock.exists():
+        try:
+            stale_lock.unlink()
+        except OSError:
+            pass
+
     cmd = [
         python_executable,
         str(orchestrator_root / "scripts" / "mcp" / "worker_daemon.py"),
@@ -342,14 +350,20 @@ def daemon_start(
     if pythonpath:
         env["PYTHONPATH"] = pythonpath
 
-    proc = subprocess.Popen(
-        cmd,
-        cwd=str(orchestrator_root),
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stderr_fh = (log_dir / f"worker-{lane_id}.stderr").open("a")
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(orchestrator_root),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr_fh,
+            start_new_session=True,
+        )
+    finally:
+        stderr_fh.close()
     return {
         "ok": True,
         "pid": proc.pid,

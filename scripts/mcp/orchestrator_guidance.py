@@ -35,6 +35,10 @@ _RESOLVED_MARKERS = (
     "work appears present already",
     "existing coverage",
     "substantially covered",
+    "no code changes were needed",
+    "already fixed",
+    "work already done",
+    "verification passed",
 )
 
 _REMAINING_WORK_MARKERS = (
@@ -58,6 +62,13 @@ _ENV_BLOCKER_MARKERS = (
     "permissionerror",
     "vendor is a symlink",
     "duplicate altcontext",
+    "vendor/bin/phpunit",
+    "vendor/bin/phpstan",
+    "composer install",
+    "npm install",
+    "node_modules",
+    "command not found",
+    "exit with code 127",
 )
 
 GUIDANCE_STALL_THRESHOLD = 3
@@ -305,6 +316,22 @@ def _classify_guidance(
             lane_status="blocked",
             lane_notes="Worker needs a writable or better-provisioned environment before the next lane step can continue.",
             close_dispatch_ids=close_dispatch_ids,
+        )
+
+    if combined.strip():
+        return GuidanceResolution(
+            kind="blocked",
+            lane_id=lane_id,
+            worker_message_id=worker_message_id,
+            latest_report_id=latest_report_id,
+            decision=f"Classified unrecognized worker guidance for {lane_id} as blocked (fallback).",
+            rationale="Guidance text present but did not match known resolved, redispatch, or environment-blocked patterns.",
+            lane_status="blocked",
+            lane_notes="Unclassifiable guidance; marked blocked for operator review.",
+            dispatch_subject=None,
+            dispatch_message=None,
+            close_dispatch_ids=close_dispatch_ids,
+            error=None,
         )
 
     return GuidanceResolution(

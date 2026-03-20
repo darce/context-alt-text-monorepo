@@ -993,6 +993,39 @@ def test_single_pass_autostarts_actionable_worker_via_mcp(tmp_path: Path) -> Non
     mock_ahm.worker_start.assert_called_once()
 
 
+def test_single_pass_running_worker_prevents_plan_stall(tmp_path: Path) -> None:
+    mod = _load_module()
+    state_dir = tmp_path / ".task-state"
+    state_dir.mkdir()
+    lane_wt = tmp_path / "backend-domain"
+    lane_wt.mkdir()
+
+    mock_ahm = _make_mock_ahm()
+    mock_ahm.list_worker_reports.return_value = json.dumps({"ok": True, "reports": []})
+    mock_ahm.worker_status.return_value = json.dumps(
+        {"ok": True, "lane_id": "backend-domain", "running": True, "worker_state": "executing", "attention_required": False}
+    )
+
+    mock_manifest = mock.MagicMock()
+    mock_manifest.merge_order.return_value = ["backend-domain"]
+    mock_manifest.downstream_lanes.return_value = []
+
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "lane_manifest": mock_manifest}):
+        with mock.patch.object(mod, "_resolve_lane_worktree", return_value=lane_wt):
+            with mock.patch("worker_daemon.poll_lane_state", return_value="actionable"):
+                with mock.patch.object(mod, "_remaining_plan_work", return_value=[{"plan_item_id": "p1", "cursor_state": "", "lane_id": "backend-domain"}]):
+                    with mock.patch.object(mod.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=json.dumps({"ok": True}), stderr="")):
+                        result = mod.orchestrator_loop(
+                            orchestrator_root=tmp_path,
+                            task_ref="test-task",
+                            single_pass=True,
+                            backend="codex-subagent",
+                        )
+
+    assert result == 0
+    mock_ahm.worker_start.assert_not_called()
+
+
 def test_single_pass_manual_worker_mode_skips_mcp_autostart(tmp_path: Path) -> None:
     mod = _load_module()
     state_dir = tmp_path / ".task-state"

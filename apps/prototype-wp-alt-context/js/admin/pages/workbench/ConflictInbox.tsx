@@ -179,7 +179,7 @@ export const ConflictInbox = (): React.JSX.Element => {
               type="button"
               className="button button-secondary"
               onClick={() => {
-                void handleBatchResolve(batchAcceptBackendChoice!);
+                void handleBatchResolve(batchAcceptBackendChoice);
               }}
               disabled={resolveMutation.isPending}
             >

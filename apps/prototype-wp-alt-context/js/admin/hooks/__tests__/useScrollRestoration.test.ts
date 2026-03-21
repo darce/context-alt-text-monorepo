@@ -9,6 +9,17 @@ vi.mock('react-router-dom', () => ({
 
 describe('useScrollRestoration', () => {
   const originalScrollY = window.scrollY;
+  const buildLocation = (
+    overrides: Partial<ReturnType<typeof useLocation>> = {}
+  ): ReturnType<typeof useLocation> =>
+    ({
+      pathname: '/test-route',
+      search: '?tab=scan',
+      hash: '',
+      state: null,
+      key: 'test-key',
+      ...overrides,
+    }) as ReturnType<typeof useLocation>;
 
   beforeEach(() => {
     sessionStorage.clear();
@@ -34,13 +45,7 @@ describe('useScrollRestoration', () => {
       return 1;
     });
 
-    vi.mocked(useLocation).mockReturnValue({
-      pathname: '/test-route',
-      search: '?tab=scan',
-      hash: '',
-      state: null,
-      key: 'test-key',
-    });
+    vi.mocked(useLocation).mockReturnValue(buildLocation());
   });
 
   afterEach(() => {
@@ -80,13 +85,13 @@ describe('useScrollRestoration', () => {
     window.scrollY = 200;
 
     // Change location simulate
-    vi.mocked(useLocation).mockReturnValue({
-      pathname: '/new-route',
-      search: '',
-      hash: '',
-      state: null,
-      key: 'test-key-2',
-    });
+    vi.mocked(useLocation).mockReturnValue(
+      buildLocation({
+        pathname: '/new-route',
+        search: '',
+        key: 'test-key-2',
+      })
+    );
 
     // Re-render
     rerender();

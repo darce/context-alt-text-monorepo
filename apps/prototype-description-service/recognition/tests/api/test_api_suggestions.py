@@ -159,7 +159,9 @@ async def test_merge_suggestions_apply_min_confidence_before_paging(api_client, 
         return rows[offset : offset + limit]
 
     tenant_id_fixture = tenant_id
-    monkeypatch.setattr(SqlAlchemyMergeSuggestionRepository, "list_pending_with_details", fake_list_pending_with_details)
+    monkeypatch.setattr(
+        SqlAlchemyMergeSuggestionRepository, "list_pending_with_details", fake_list_pending_with_details
+    )
 
     resp = api_client.get(
         "/recognition/suggestions/merge",

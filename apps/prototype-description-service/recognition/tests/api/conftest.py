@@ -333,18 +333,18 @@ class FakeSuggestionExtensionService:
         accepted = 0
         skipped = 0
         now = datetime.now(tz=UTC)
-        for suggestion in self.suggestion_service.suggestions.values():
-            if not isinstance(suggestion, FakeSuggestion):
+        for merge_suggestion in self.suggestion_service.suggestions.values():
+            if not isinstance(merge_suggestion, FakeSuggestion):
                 continue
-            if suggestion.status.value != "pending":
+            if merge_suggestion.status.value != "pending":
                 continue
-            if suggestion.expires_at is not None and suggestion.expires_at <= now:
+            if merge_suggestion.expires_at is not None and merge_suggestion.expires_at <= now:
                 skipped += 1
                 continue
-            if suggestion.confidence_score is None or suggestion.confidence_score < min_confidence:
+            if merge_suggestion.confidence_score is None or merge_suggestion.confidence_score < min_confidence:
                 skipped += 1
                 continue
-            suggestion.status = FakeSuggestionStatus("accepted")
+            merge_suggestion.status = FakeSuggestionStatus("accepted")
             accepted += 1
         return {"accepted_count": accepted, "skipped_count": skipped}
 

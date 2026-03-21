@@ -83,7 +83,9 @@ async def list_pending_merge_suggestions(
     repo = SqlAlchemyMergeSuggestionRepository(session)
     if min_confidence is not None:
         suggestions = await _collect_min_confidence_page(
-            lambda batch_limit, batch_offset: repo.list_pending_with_details(_tenant_id, limit=batch_limit, offset=batch_offset),
+            lambda batch_limit, batch_offset: repo.list_pending_with_details(
+                _tenant_id, limit=batch_limit, offset=batch_offset
+            ),
             limit=limit,
             offset=offset,
             min_confidence=min_confidence,
@@ -457,7 +459,7 @@ def _meets_min_confidence(suggestion: object, min_confidence: float) -> bool:
     return confidence is not None and confidence >= min_confidence
 
 
-async def _collect_min_confidence_page(
+async def _collect_min_confidence_page[T_Suggestion](
     fetch_page: Callable[[int, int], Awaitable[Sequence[T_Suggestion]]],
     *,
     limit: int,

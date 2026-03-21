@@ -332,7 +332,9 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
                 existing_suggestion.avg_member_similarity = _clamp_similarity(payload.member_similarity)
                 existing_suggestion.confidence_score = _clamp_similarity(payload.confidence_score)
                 existing_suggestion.expires_at = payload.expires_at
-                existing_suggestion.source_job_id = _coerce_uuid(payload.source_job_id) if payload.source_job_id else None
+                existing_suggestion.source_job_id = (
+                    _coerce_uuid(payload.source_job_id) if payload.source_job_id else None
+                )
                 if touch_refreshed_at_on_update:
                     existing_suggestion.refreshed_at = payload.refreshed_at or datetime.now(tz=UTC)
                 elif payload.refreshed_at is not None:

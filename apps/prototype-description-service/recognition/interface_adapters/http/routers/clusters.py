@@ -274,9 +274,12 @@ def _build_cluster_responses(
         representative_id = None
         is_pinned = False
         if cluster.representatives and len(cluster.representatives) > 0:
+            # Sort by id for stable fallback if no user-selected representative exists
+            # ( mitigates RSWR-IMPL-007: non-deterministic collection ordering )
+            reps = sorted(cluster.representatives, key=lambda r: str(r.id))
             rep = next(
-                (candidate for candidate in cluster.representatives if candidate.is_user_selected),
-                cluster.representatives[0],
+                (candidate for candidate in reps if candidate.is_user_selected),
+                reps[0],
             )
             if rep.identity_id:
                 representative_id = str(rep.identity_id)

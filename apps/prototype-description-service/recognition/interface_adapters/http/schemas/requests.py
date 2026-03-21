@@ -133,6 +133,19 @@ class SuggestionActionRequest(BaseModel):
         return _validate_uuid(v)
 
 
+class BulkAcceptSuggestionsRequest(BaseModel):
+    """Request to bulk-accept suggestions by type and confidence threshold."""
+
+    tenant_id: str
+    suggestion_type: Literal["assignment", "merge", "name"]
+    min_confidence: float = Field(ge=0.0, le=1.0)
+
+    @field_validator("tenant_id")
+    @classmethod
+    def validate_tenant_id(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+
 class UpdateRetentionPolicyRequest(BaseModel):
     """Request to update the tenant retention mode."""
 

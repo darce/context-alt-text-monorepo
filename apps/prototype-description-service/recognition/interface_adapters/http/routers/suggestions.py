@@ -4,6 +4,9 @@ Suggestion management routes.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Sequence
+from typing import TypeVar
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from recognition.config.security import get_security_settings
@@ -18,17 +21,20 @@ from recognition.interface_adapters.http.dependencies import (
     get_cluster_repository,
     get_cluster_service_builder,
     get_session,
+    get_suggestion_extension_service,
     get_suggestion_service,
     require_auth,
     require_write_access,
 )
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id
-from recognition.interface_adapters.http.schemas.requests import SuggestionActionRequest
+from recognition.interface_adapters.http.schemas.requests import BulkAcceptSuggestionsRequest, SuggestionActionRequest
 from recognition.interface_adapters.http.schemas.responses import (
+    BulkAcceptResponse,
     ClusterSuggestionMatch,
     FaceBoxResponse,
     IdentitySuggestionsResponse,
     MergeSuggestionResponse,
+    NameSuggestionResponse,
     SuggestionResponse,
 )
 from recognition.interface_adapters.http.validation import validate_entity_id, validate_paging
@@ -36,18 +42,30 @@ from recognition.interface_adapters.schemas.suggestion_details import MergeSugge
 
 router = APIRouter(tags=["suggestions"], dependencies=[Depends(require_auth)])
 
+T_Suggestion = TypeVar("T_Suggestion")
+
 
 @router.get("/suggestions", response_model=list[SuggestionResponse])
 async def list_pending_suggestions(
     _tenant_id: str = Depends(get_tenant_id),
     limit: int = Query(default=50),
     offset: int = Query(default=0),
+    min_confidence: float | None = Query(default=None, ge=0.0, le=1.0),
     suggestion_service=Depends(get_suggestion_service),
 ) -> list[SuggestionResponse]:
     """List pending suggestions for a tenant."""
     settings = get_security_settings()
     validate_paging(limit, offset, settings.max_page_size)
-    suggestions = await suggestion_service.list_pending(limit=limit, offset=offset)
+    if min_confidence is not None:
+        suggestions = await _collect_min_confidence_page(
+            suggestion_service.list_pending,
+            limit=limit,
+            offset=offset,
+            min_confidence=min_confidence,
+            batch_size=settings.max_page_size,
+        )
+    else:
+        suggestions = await suggestion_service.list_pending(limit=limit, offset=offset)
     return [_to_response_with_details(s) for s in suggestions]
 
 
@@ -56,13 +74,23 @@ async def list_pending_merge_suggestions(
     _tenant_id: str = Depends(get_tenant_id),
     limit: int = Query(default=50),
     offset: int = Query(default=0),
+    min_confidence: float | None = Query(default=None, ge=0.0, le=1.0),
     session=Depends(get_session),
 ) -> list[MergeSuggestionResponse]:
     """List pending cluster merge suggestions for a tenant."""
     settings = get_security_settings()
     validate_paging(limit, offset, settings.max_page_size)
     repo = SqlAlchemyMergeSuggestionRepository(session)
-    suggestions = await repo.list_pending_with_details(_tenant_id, limit=limit, offset=offset)
+    if min_confidence is not None:
+        suggestions = await _collect_min_confidence_page(
+            lambda batch_limit, batch_offset: repo.list_pending_with_details(_tenant_id, limit=batch_limit, offset=batch_offset),
+            limit=limit,
+            offset=offset,
+            min_confidence=min_confidence,
+            batch_size=settings.max_page_size,
+        )
+    else:
+        suggestions = await repo.list_pending_with_details(_tenant_id, limit=limit, offset=offset)
     return [_to_merge_response(s) for s in suggestions]
 
 
@@ -70,6 +98,7 @@ async def list_pending_merge_suggestions(
 async def list_suggestions(
     identity_id: str,
     _tenant_id: str = Depends(get_tenant_id),
+    min_confidence: float | None = Query(default=None, ge=0.0, le=1.0),
     suggestion_service=Depends(get_suggestion_service),
     cluster_repo=Depends(get_cluster_repository),
 ) -> IdentitySuggestionsResponse:
@@ -81,6 +110,8 @@ async def list_suggestions(
     """
     validate_entity_id(identity_id, field_name="identity_id")
     suggestions = await suggestion_service.list_for_identity(identity_id)
+    if min_confidence is not None:
+        suggestions = [suggestion for suggestion in suggestions if _meets_min_confidence(suggestion, min_confidence)]
 
     # Enrich suggestions with cluster details - only include labeled clusters
     matches: list[ClusterSuggestionMatch] = []
@@ -103,6 +134,26 @@ async def list_suggestions(
     matches.sort(key=lambda m: m.similarity, reverse=True)
 
     return IdentitySuggestionsResponse(matches=matches)
+
+
+@router.get("/suggestions/name", response_model=list[NameSuggestionResponse])
+async def list_name_suggestions(
+    _tenant_id: str = Depends(get_tenant_id),
+    limit: int = Query(default=50),
+    offset: int = Query(default=0),
+    min_confidence: float | None = Query(default=None, ge=0.0, le=1.0),
+    suggestion_extension_service=Depends(get_suggestion_extension_service),
+) -> list[NameSuggestionResponse]:
+    """List pending name suggestions for a tenant."""
+    settings = get_security_settings()
+    validate_paging(limit, offset, settings.max_page_size)
+    suggestions = await suggestion_extension_service.list_name_suggestions(
+        _tenant_id,
+        min_confidence=min_confidence,
+        limit=limit,
+        offset=offset,
+    )
+    return [_to_name_response(s) for s in suggestions]
 
 
 @router.post("/suggestions/{suggestion_id}/accept", response_model=SuggestionResponse)
@@ -148,6 +199,50 @@ async def accept_suggestion(
     return _to_response(suggestion)
 
 
+@router.post("/suggestions/name/{suggestion_id}/accept", response_model=NameSuggestionResponse)
+async def accept_name_suggestion(
+    suggestion_id: str,
+    request: SuggestionActionRequest,
+    auth=Depends(require_write_access),
+    session=Depends(get_session),
+    suggestion_extension_service=Depends(get_suggestion_extension_service),
+) -> NameSuggestionResponse:
+    """Accept a name suggestion and apply the label to the target cluster."""
+    validate_entity_id(suggestion_id, field_name="suggestion_id")
+    if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
+    try:
+        suggestion = await suggestion_extension_service.accept_name_suggestion(request.tenant_id, suggestion_id)
+    except LookupError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Name suggestion not found") from None
+
+    await session.commit()
+    return _to_name_response(suggestion)
+
+
+@router.post("/suggestions/name/{suggestion_id}/reject", response_model=NameSuggestionResponse)
+async def reject_name_suggestion(
+    suggestion_id: str,
+    request: SuggestionActionRequest,
+    auth=Depends(require_write_access),
+    session=Depends(get_session),
+    suggestion_extension_service=Depends(get_suggestion_extension_service),
+) -> NameSuggestionResponse:
+    """Reject a name suggestion."""
+    validate_entity_id(suggestion_id, field_name="suggestion_id")
+    if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
+    try:
+        suggestion = await suggestion_extension_service.reject_name_suggestion(request.tenant_id, suggestion_id)
+    except LookupError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Name suggestion not found") from None
+
+    await session.commit()
+    return _to_name_response(suggestion)
+
+
 @router.post("/suggestions/{suggestion_id}/reject", response_model=SuggestionResponse)
 async def reject_suggestion(
     suggestion_id: str,
@@ -169,6 +264,26 @@ async def reject_suggestion(
     await session.commit()
 
     return _to_response(suggestion)
+
+
+@router.post("/suggestions/bulk-accept", response_model=BulkAcceptResponse)
+async def bulk_accept_suggestions(
+    request: BulkAcceptSuggestionsRequest,
+    auth=Depends(require_write_access),
+    session=Depends(get_session),
+    suggestion_extension_service=Depends(get_suggestion_extension_service),
+) -> BulkAcceptResponse:
+    """Bulk-accept suggestions by type and confidence threshold."""
+    if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
+    result = await suggestion_extension_service.bulk_accept(
+        request.tenant_id,
+        suggestion_type=request.suggestion_type,
+        min_confidence=request.min_confidence,
+    )
+    await session.commit()
+    return BulkAcceptResponse(**result)
 
 
 @router.post("/suggestions/merge/{suggestion_id}/accept", response_model=MergeSuggestionResponse)
@@ -301,10 +416,76 @@ def _to_response_with_details(suggestion: SuggestionDetails) -> SuggestionRespon
     )
 
 
+def _to_name_response(suggestion: object) -> NameSuggestionResponse:
+    """Convert a name suggestion to the API response model."""
+    source = getattr(suggestion, "source", None)
+    status = getattr(suggestion, "status", None)
+    source_value = source.value if hasattr(source, "value") else source
+    status_value = status.value if hasattr(status, "value") else status
+    return NameSuggestionResponse(
+        id=suggestion.id,
+        cluster_id=suggestion.cluster_id,
+        suggested_name=suggestion.suggested_name,
+        source=source_value,
+        status=status_value,
+        confidence_score=getattr(suggestion, "confidence_score", None),
+        source_job_id=getattr(suggestion, "source_job_id", None),
+        created_at=getattr(suggestion, "created_at", None),
+        expires_at=getattr(suggestion, "expires_at", None),
+        resolved_at=getattr(suggestion, "resolved_at", None),
+    )
+
+
 def _is_meaningful_label(label: str | None) -> bool:
     if not label:
         return False
     return not str(label).startswith("cluster-")
+
+
+def _suggestion_confidence(suggestion: object) -> float | None:
+    confidence = getattr(suggestion, "confidence_score", None)
+    if confidence is None:
+        confidence = getattr(suggestion, "suggested_label_confidence", None)
+    try:
+        return None if confidence is None else float(confidence)
+    except (TypeError, ValueError):
+        return None
+
+
+def _meets_min_confidence(suggestion: object, min_confidence: float) -> bool:
+    confidence = _suggestion_confidence(suggestion)
+    return confidence is not None and confidence >= min_confidence
+
+
+async def _collect_min_confidence_page(
+    fetch_page: Callable[[int, int], Awaitable[Sequence[T_Suggestion]]],
+    *,
+    limit: int,
+    offset: int,
+    min_confidence: float,
+    batch_size: int,
+) -> list[T_Suggestion]:
+    """Filter pending results before applying paging semantics.
+
+    The underlying suggestion endpoints only expose offset/limit paging, so we
+    walk the unfiltered result set in batches, filter each batch, and then apply
+    the requested paging window to the filtered sequence.
+    """
+    filtered: list[T_Suggestion] = []
+    page_offset = 0
+    target_count = offset + limit
+
+    while len(filtered) < target_count:
+        page = list(await fetch_page(batch_size, page_offset))
+        if not page:
+            break
+
+        filtered.extend(item for item in page if _meets_min_confidence(item, min_confidence))
+        if len(page) < batch_size:
+            break
+        page_offset += batch_size
+
+    return filtered[offset:target_count]
 
 
 def _select_merge_target(cluster_a: IdentityCluster, cluster_b: IdentityCluster) -> tuple[str, str, str | None]:

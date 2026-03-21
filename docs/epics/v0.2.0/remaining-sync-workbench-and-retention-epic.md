@@ -280,16 +280,16 @@ These items from the reconciliation epic are explicitly scoped out. They represe
 
 ### Phase 3: Bidirectional Conflict Resolution
 
-- [ ] Extend conflict record schema for backend-proposed values.
-- [ ] Implement conflict resolution UI in conflict inbox for person-name edits.
-- [ ] Wire resolution actions through the outbox/replay contract.
-- [ ] Add tests for accept, reject, and re-conflict scenarios.
+- [x] Extend conflict record schema for backend-proposed values.
+- [x] Implement conflict resolution UI in conflict inbox for person-name edits.
+- [x] Wire resolution actions through the outbox/replay contract.
+- [x] Add tests for accept, reject, and re-conflict scenarios.
 
 ### Phase 4: Workbench Information Architecture
 
-- [ ] Migrate Batch tab content from Workbench to Dashboard.
-- [ ] Remove Batch tab from Workbench (Scan + Confirm only).
-- [ ] Verify Batch workflows function from their Dashboard location.
+- [x] Migrate Batch tab content from Workbench to Dashboard.
+- [x] Remove Batch tab from Workbench (Scan + Confirm only).
+- [x] Verify Batch workflows function from their Dashboard location.
 
 ### Phase 5: Machine Proposals Infrastructure
 

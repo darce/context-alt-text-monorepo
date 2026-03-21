@@ -412,10 +412,10 @@ make lane-manifest-init TASK=remaining-sync-workbench-and-retention LANE_IDS='ba
 - [x] Implement `fetch_delta()` in `SnapshotClient` (PHP).
 - [x] Implement `project_delta()` in `SnapshotProjector` (PHP; adds/removes/updates within transaction). _(Implemented via guarded tenant-wide replacement-set synthesis from unchanged local rows plus changed-cluster delta rows.)_
 - [x] Modify `SyncPullJob::perform()` to try delta first, fall back to full snapshot.
-- [ ] Add drift conflict type to `ConflictResolutionService` for unresolvable divergence.
+- [x] Add drift conflict type to `ConflictResolutionService` for unresolvable divergence.
 - [x] Backend unit tests: delta query with version gap, empty delta, broken chain fallback. _(5 integration tests cover version gap, empty delta, microsecond boundaries, disposed clusters; broken-chain fallback deferred to PHP integration.)_
-- [ ] PHP unit tests: delta projection, drift detection, fallback to full snapshot. _(Delta projection + fallback coverage landed; drift-detection coverage still pending.)_
-- [ ] Frontend: update sync status display to show delta vs full sync mode.
+- [x] PHP unit tests: delta projection, drift detection, fallback to full snapshot. _(Verified on root via `SyncPullJobTest`, `SnapshotProjectorTest`, `ConflictResolutionServiceTest`, and `SyncStatusControllerTest`.)_
+- [x] Frontend: update sync status display to show delta vs full sync mode.
 
 ## Phase 2: Topology Completion
 
@@ -439,14 +439,14 @@ make lane-manifest-init TASK=remaining-sync-workbench-and-retention LANE_IDS='ba
 ## Phase 3: Bidirectional Conflict Resolution
 
 - [x] Add `backend_proposed_value` column to `wp_acx_sync_conflicts` table.
-- [ ] Add `person_name_conflict` conflict type to projection conflict detection.
-- [ ] Add `accept_backend` and `merge` resolution types to `ConflictResolutionService`.
+- [x] Add `person_name_conflict` conflict type to projection conflict detection.
+- [x] Add `accept_backend` and `merge` resolution types to `ConflictResolutionService`.
 - [x] Expose `backend_proposed_value` in `ConflictController` detail response. _(Also included in list payloads via shared conflict mapping.)_
-- [ ] Add person-name conflict type label to `ConflictInbox` UI.
-- [ ] Add three-way resolution UI: accept backend / keep local / merge value.
-- [ ] Wire merged-value resolution through outbox contract (replay merged name to backend).
-- [ ] PHP unit tests: bidirectional conflict creation, all three resolution paths.
-- [ ] Frontend tests: conflict inbox renders person-name conflicts with resolution actions.
+- [x] Add person-name conflict type label to `ConflictInbox` UI.
+- [x] Add three-way resolution UI: accept backend / keep local / merge value.
+- [x] Wire merged-value resolution through outbox contract (replay merged name to backend).
+- [x] PHP unit tests: bidirectional conflict creation, all three resolution paths.
+- [x] Frontend tests: conflict inbox renders person-name conflicts with resolution actions.
 
 ## Phase 4: Workbench Information Architecture
 
@@ -458,17 +458,17 @@ make lane-manifest-init TASK=remaining-sync-workbench-and-retention LANE_IDS='ba
 
 ## Phase 5: Machine Proposals via Suggestion Extension
 
-- [ ] Add `confidence_score` (where missing; `IdentitySuggestion` already has it), `expires_at`, `source_job_id` fields to `AssignmentSuggestion` and `MergeSuggestion` domain models.
-- [ ] Add `NameSuggestion` dataclass to `recognition/domain/suggestion.py`.
-- [ ] Add `expires_at`, `source_job_id` columns to existing suggestion tables in `db/models/constraints.py`; add `confidence_score` to `ClusterMergeSuggestion` (already exists on `IdentitySuggestion`). Add `NameSuggestion` model. Update baseline migration (`001_identity_schema.py`); `make reset-local`.
-- [ ] Implement `SuggestionExtensionService` with name-suggestion CRUD, bulk-accept, and expiry logic.
-- [ ] Implement acceptance side effects (apply name label to cluster on name-suggestion accept).
-- [ ] Add name-suggestion list/accept/reject endpoints and `bulk-accept` endpoint to suggestions router.
-- [ ] Add `min_confidence` query filter to existing suggestion list endpoints.
+- [x] Add `confidence_score` (where missing; `IdentitySuggestion` already has it), `expires_at`, `source_job_id` fields to `AssignmentSuggestion` and `MergeSuggestion` domain models.
+- [x] Add `NameSuggestion` dataclass to `recognition/domain/suggestion.py`.
+- [x] Add `expires_at`, `source_job_id` columns to existing suggestion tables in `db/models/constraints.py`; add `confidence_score` to `ClusterMergeSuggestion` (already exists on `IdentitySuggestion`). Add `NameSuggestion` model. Update baseline migration (`001_identity_schema.py`); `make reset-local`.
+- [x] Implement `SuggestionExtensionService` with name-suggestion CRUD, bulk-accept, and expiry logic. _(Implemented as `_HttpSuggestionExtensionService` in HTTP adapter layer; domain-level duplicate exists but is dead code for the router path.)_
+- [x] Implement acceptance side effects (apply name label to cluster on name-suggestion accept). _(`_apply_name_label` in `_HttpSuggestionExtensionService`.)_
+- [x] Add name-suggestion list/accept/reject endpoints and `bulk-accept` endpoint to suggestions router.
+- [x] Add `min_confidence` query filter to existing suggestion list endpoints. _(Cursor-based `_collect_min_confidence_page` helper applies confidence filtering across all suggestion types.)_
 - [ ] Extend existing `SuggestionsController` in `class-suggestions-controller.php` with name-suggestion and bulk-accept proxy routes.
 - [ ] Extend existing suggestion TypeScript types: add `expires_at`, `source_job_id` to `PendingSuggestion` (already has `confidence_score`); add `confidence_score`, `expires_at` to `PendingMergeSuggestion`. Add name-suggestion and bulk-accept types.
 - [ ] Add confidence display, name-suggestion review section, and bulk-accept UI to `SuggestionReviewPanel`.
-- [ ] Backend unit tests: name-suggestion lifecycle, bulk-accept above threshold, expiry.
+- [x] Backend unit tests: name-suggestion lifecycle, bulk-accept above threshold, expiry. _(Integration tests in `test_suggestion_extension_service.py`; API tests in `test_api_suggestions.py` cover CRUD, min_confidence filtering, expiry skip, and bulk-accept.)_
 - [ ] PHP unit tests: suggestion controller extension routes (name-suggestion, bulk-accept).
 - [ ] Frontend tests: confidence display, name-suggestion review, bulk-accept action.
 
@@ -506,7 +506,7 @@ make lane-manifest-init TASK=remaining-sync-workbench-and-retention LANE_IDS='ba
 
 ## Success Criteria
 
-- [ ] Delta sync completes successfully when backend has incremental changes; falls back to full snapshot on stale delta.
+- [x] Delta sync completes successfully when backend has incremental changes; falls back to full snapshot on stale delta.
 - [ ] Operator can pin/unpin a cluster representative and see the pin survive a sync round-trip.
 - [ ] Person-name conflict from backend surfaces in ConflictInbox with accept-backend/keep-local/merge options; each resolution path works.
 - [ ] Batch tab appears on Dashboard (not Workbench); Workbench shows only Scan + Confirm.

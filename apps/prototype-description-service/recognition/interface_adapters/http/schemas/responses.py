@@ -179,6 +179,13 @@ class SuggestionResponse(BaseModel):
         return _validate_uuid(v)
 
 
+class BulkAcceptResponse(BaseModel):
+    """Result returned by the bulk accept endpoint."""
+
+    accepted_count: int
+    skipped_count: int
+
+
 class MergeSuggestionResponse(BaseModel):
     """Merge suggestion details."""
 
@@ -199,6 +206,26 @@ class MergeSuggestionResponse(BaseModel):
     cluster_b_representative_bbox: FaceBoxResponse | None = None
 
     @field_validator("id", "cluster_a_id", "cluster_b_id")
+    @classmethod
+    def validate_ids(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+
+class NameSuggestionResponse(BaseModel):
+    """Name suggestion details."""
+
+    id: str
+    cluster_id: str
+    suggested_name: str
+    source: Literal["identity", "roster", "similar_cluster", "none"]
+    status: Literal["pending", "accepted", "rejected", "expired"]
+    confidence_score: float | None = None
+    source_job_id: str | None = None
+    created_at: datetime | None = None
+    expires_at: datetime | None = None
+    resolved_at: datetime | None = None
+
+    @field_validator("id", "cluster_id")
     @classmethod
     def validate_ids(cls, v: str) -> str:
         return _validate_uuid(v)

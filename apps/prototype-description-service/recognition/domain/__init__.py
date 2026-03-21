@@ -31,17 +31,10 @@ See Also:
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.representative import ClusterRepresentative
-from recognition.domain.suggestion import (
-    AssignmentSuggestion,
-    BulkAcceptResult,
-    MergeSuggestion,
-    NameSuggestion,
-    SuggestionStatus,
-)
+from recognition.domain.suggestion import AssignmentSuggestion, MergeSuggestion, NameSuggestion, SuggestionStatus
 
 __all__ = [
     "AssignmentSuggestion",
-    "BulkAcceptResult",
     "ClusterRepresentative",
     "IdentityCluster",
     "MergeSuggestion",

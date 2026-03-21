@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import Select, and_, exists, func, or_, select, update
+from sqlalchemy import Select, and_, exists, func, nulls_last, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -125,6 +125,9 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
             representative_similarity=float(model.representative_similarity),
             member_similarity=float(model.avg_member_similarity),
             status=str(model.resolution),
+            confidence_score=float(model.confidence_score) if model.confidence_score is not None else None,
+            expires_at=model.expires_at,
+            source_job_id=str(model.source_job_id) if model.source_job_id is not None else None,
             cluster_label=cluster.label if cluster else None,
             cluster_identity_count=int(cluster.identity_count)
             if cluster and cluster.identity_count is not None
@@ -218,7 +221,7 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
             .where(IdentityCluster.user_confirmed.is_(True))
             .where(IdentityCluster.label.is_not(None))
             .where(~IdentityCluster.label.startswith("cluster-"))
-            .order_by(SuggestionModel.confidence_score.desc(), SuggestionModel.created_at.desc())
+            .order_by(nulls_last(SuggestionModel.confidence_score.desc()), SuggestionModel.created_at.desc())
             .offset(offset)
             .limit(limit)
             .options(
@@ -331,14 +334,14 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
                 existing_suggestion.representative_similarity = _clamp_similarity(payload.representative_similarity)
                 existing_suggestion.avg_member_similarity = _clamp_similarity(payload.member_similarity)
                 existing_suggestion.confidence_score = _clamp_similarity(payload.confidence_score)
-                existing_suggestion.expires_at = payload.expires_at
-                existing_suggestion.source_job_id = (
-                    _coerce_uuid(payload.source_job_id) if payload.source_job_id else None
-                )
                 if touch_refreshed_at_on_update:
                     existing_suggestion.refreshed_at = payload.refreshed_at or datetime.now(tz=UTC)
                 elif payload.refreshed_at is not None:
                     existing_suggestion.refreshed_at = payload.refreshed_at
+                if payload.expires_at is not None:
+                    existing_suggestion.expires_at = payload.expires_at
+                if payload.source_job_id is not None:
+                    existing_suggestion.source_job_id = _coerce_uuid(payload.source_job_id)
                 if payload.source:
                     existing_suggestion.source = payload.source
                 await self._session.flush()
@@ -364,9 +367,9 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
                     avg_member_similarity=_clamp_similarity(payload.member_similarity),
                     confidence_score=_clamp_similarity(payload.confidence_score),
                     resolution=SuggestionStatus.PENDING.value,
-                    expires_at=payload.expires_at,
                     refreshed_at=payload.refreshed_at,
-                    source_job_id=_coerce_uuid(payload.source_job_id) if payload.source_job_id else None,
+                    expires_at=payload.expires_at,
+                    source_job_id=_coerce_uuid(payload.source_job_id),
                     source=payload.source or "backfill_new_evidence",
                     evidence_generation=next_generation,
                 )
@@ -385,9 +388,9 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
             avg_member_similarity=_clamp_similarity(payload.member_similarity),
             confidence_score=_clamp_similarity(payload.confidence_score),
             resolution=SuggestionStatus.PENDING.value,
-            expires_at=payload.expires_at,
             refreshed_at=payload.refreshed_at,
-            source_job_id=_coerce_uuid(payload.source_job_id) if payload.source_job_id else None,
+            expires_at=payload.expires_at,
+            source_job_id=_coerce_uuid(payload.source_job_id),
             source=payload.source,
             evidence_generation=0,
         )
@@ -407,12 +410,9 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
             status=SuggestionStatus(model.resolution),
             evidence_generation=int(getattr(model, "evidence_generation", 0) or 0),
             confidence_score=float(model.confidence_score) if model.confidence_score is not None else None,
+            created_at=model.created_at,
             expires_at=model.expires_at,
             source_job_id=str(model.source_job_id) if model.source_job_id is not None else None,
-            created_at=model.created_at,
-            resolved_at=model.resolved_at,
-            refreshed_at=model.refreshed_at,
-            source=model.source,
         )
 
     async def _next_evidence_generation(

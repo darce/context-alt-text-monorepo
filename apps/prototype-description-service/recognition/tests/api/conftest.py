@@ -195,9 +195,11 @@ class FakeSuggestion:
         representative_media_id: int | None = None,
         representative_media_url: str | None = None,
         representative_bbox: FakeFaceBox | None = None,
+        confidence_score: float | None = None,
         suggested_label: str | None = None,
         suggested_label_source: str | None = None,
         suggested_label_confidence: float | None = None,
+        expires_at=None,  # noqa: ANN001
     ) -> None:
         self.id = str(uuid.uuid4())
         self.identity_id = identity_id
@@ -213,9 +215,11 @@ class FakeSuggestion:
         self.representative_media_id = representative_media_id
         self.representative_media_url = representative_media_url
         self.representative_bbox = representative_bbox
+        self.confidence_score = confidence_score
         self.suggested_label = suggested_label
         self.suggested_label_source = suggested_label_source
         self.suggested_label_confidence = suggested_label_confidence
+        self.expires_at = expires_at
 
     def as_details(self) -> SimpleNamespace:
         """Return a detail-shaped suggestion with string status."""
@@ -234,10 +238,115 @@ class FakeSuggestion:
             representative_media_id=self.representative_media_id,
             representative_media_url=self.representative_media_url,
             representative_bbox=self.representative_bbox,
+            confidence_score=self.confidence_score,
             suggested_label=self.suggested_label,
             suggested_label_source=self.suggested_label_source,
             suggested_label_confidence=self.suggested_label_confidence,
         )
+
+
+class FakeNameSuggestion:
+    """Name suggestion record with API-facing fields."""
+
+    def __init__(
+        self,
+        cluster_id: str,
+        suggested_name: str,
+        *,
+        source: str = "identity",
+        confidence_score: float | None = None,
+        status: str = "pending",
+        source_job_id: str | None = None,
+        created_at=None,  # noqa: ANN001
+        expires_at=None,  # noqa: ANN001
+        resolved_at=None,  # noqa: ANN001
+    ) -> None:
+        self.id = str(uuid.uuid4())
+        self.cluster_id = cluster_id
+        self.suggested_name = suggested_name
+        self.source = source
+        self.status = status
+        self.confidence_score = confidence_score
+        self.source_job_id = source_job_id
+        self.created_at = created_at
+        self.expires_at = expires_at
+        self.resolved_at = resolved_at
+
+
+class FakeSuggestionExtensionService:
+    """In-memory name-suggestion and bulk-accept service used by API tests."""
+
+    def __init__(self, suggestion_service: FakeSuggestionService) -> None:
+        self.suggestion_service = suggestion_service
+        self.name_suggestions: dict[str, FakeNameSuggestion] = {}
+
+    async def list_name_suggestions(
+        self,
+        tenant_id: str,
+        *,
+        min_confidence: float | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[FakeNameSuggestion]:
+        suggestions = list(self.name_suggestions.values())
+        suggestions.sort(key=lambda item: ((item.confidence_score is None), -(item.confidence_score or 0.0)))
+        if min_confidence is not None:
+            suggestions = [
+                suggestion
+                for suggestion in suggestions
+                if suggestion.confidence_score is not None and suggestion.confidence_score >= min_confidence
+            ]
+        return suggestions[offset : offset + limit]
+
+    async def accept_name_suggestion(self, tenant_id: str, suggestion_id: str) -> FakeNameSuggestion | None:
+        suggestion = self.name_suggestions.get(suggestion_id)
+        if suggestion is None:
+            return None
+        suggestion.status = "accepted"
+        return suggestion
+
+    async def reject_name_suggestion(self, tenant_id: str, suggestion_id: str) -> FakeNameSuggestion | None:
+        suggestion = self.name_suggestions.get(suggestion_id)
+        if suggestion is None:
+            return None
+        suggestion.status = "rejected"
+        return suggestion
+
+    async def bulk_accept(self, tenant_id: str, *, suggestion_type: str, min_confidence: float) -> dict[str, int]:
+        if suggestion_type == "name":
+            accepted = 0
+            skipped = 0
+            now = datetime.now(tz=UTC)
+            for suggestion in self.name_suggestions.values():
+                if suggestion.status != "pending":
+                    continue
+                if suggestion.expires_at is not None and suggestion.expires_at <= now:
+                    skipped += 1
+                    continue
+                if suggestion.confidence_score is None or suggestion.confidence_score < min_confidence:
+                    skipped += 1
+                    continue
+                suggestion.status = "accepted"
+                accepted += 1
+            return {"accepted_count": accepted, "skipped_count": skipped}
+
+        accepted = 0
+        skipped = 0
+        now = datetime.now(tz=UTC)
+        for suggestion in self.suggestion_service.suggestions.values():
+            if not isinstance(suggestion, FakeSuggestion):
+                continue
+            if suggestion.status.value != "pending":
+                continue
+            if suggestion.expires_at is not None and suggestion.expires_at <= now:
+                skipped += 1
+                continue
+            if suggestion.confidence_score is None or suggestion.confidence_score < min_confidence:
+                skipped += 1
+                continue
+            suggestion.status = FakeSuggestionStatus("accepted")
+            accepted += 1
+        return {"accepted_count": accepted, "skipped_count": skipped}
 
 
 class FakeSuggestionService:
@@ -440,6 +549,11 @@ def fake_suggestion_service() -> FakeSuggestionService:
 
 
 @pytest.fixture
+def fake_suggestion_extension_service(fake_suggestion_service: FakeSuggestionService) -> FakeSuggestionExtensionService:
+    return FakeSuggestionExtensionService(fake_suggestion_service)
+
+
+@pytest.fixture
 def fake_suggestion_refresh_service() -> FakeSuggestionRefreshService:
     return FakeSuggestionRefreshService()
 
@@ -473,6 +587,7 @@ def api_client(
     fake_cluster_repository: FakeClusterRepository,
     fake_job_service: FakeJobService,
     fake_suggestion_service: FakeSuggestionService,
+    fake_suggestion_extension_service: FakeSuggestionExtensionService,
     fake_suggestion_refresh_service: FakeSuggestionRefreshService,
     fake_scan_service: FakeScanService,
     fake_scan_queue_service: FakeScanQueueService,
@@ -513,6 +628,9 @@ def api_client(
     async def _fake_suggestion_refresh_service(session=None, tenant_id=None):  # noqa: ANN001
         return fake_suggestion_refresh_service
 
+    async def _fake_suggestion_extension_service(session=None):  # noqa: ANN001
+        return fake_suggestion_extension_service
+
     app.dependency_overrides[dependencies.get_session] = _no_session
     app.dependency_overrides[dependencies.get_optional_session] = _no_session
     app.dependency_overrides[dependencies.get_cluster_service_builder] = cluster_builder
@@ -522,6 +640,7 @@ def api_client(
     app.dependency_overrides[dependencies.get_persisted_job_service] = job_service_dep
     app.dependency_overrides[dependencies.get_observability_repository] = _no_observability_repo
     app.dependency_overrides[dependencies.get_suggestion_service] = _fake_suggestion_service
+    app.dependency_overrides[dependencies.get_suggestion_extension_service] = _fake_suggestion_extension_service
     app.dependency_overrides[dependencies.get_suggestion_refresh_service] = _fake_suggestion_refresh_service
     app.dependency_overrides[get_tenant_id] = lambda: tenant_id
     app.dependency_overrides[dependencies.get_scan_queue_service] = lambda: fake_scan_queue_service

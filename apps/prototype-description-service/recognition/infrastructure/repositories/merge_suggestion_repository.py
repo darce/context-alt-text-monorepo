@@ -57,10 +57,12 @@ class SqlAlchemyMergeSuggestionRepository(MergeSuggestionRepository):
             if existing.resolution == SuggestionStatus.PENDING.value:
                 existing.similarity = _clamp_similarity(payload.similarity)
                 existing.confidence_score = payload.confidence_score
-                existing.expires_at = payload.expires_at
-                existing.source_job_id = _coerce_uuid(payload.source_job_id) if payload.source_job_id else None
                 if payload.refreshed_at:
                     existing.refreshed_at = payload.refreshed_at
+                if payload.expires_at is not None:
+                    existing.expires_at = payload.expires_at
+                if payload.source_job_id is not None:
+                    existing.source_job_id = _coerce_uuid(payload.source_job_id)
                 if payload.source:
                     existing.source = payload.source
                 await self._session.flush()
@@ -74,9 +76,9 @@ class SqlAlchemyMergeSuggestionRepository(MergeSuggestionRepository):
             similarity=_clamp_similarity(payload.similarity),
             confidence_score=payload.confidence_score,
             resolution=SuggestionStatus.PENDING.value,
-            expires_at=payload.expires_at,
             refreshed_at=payload.refreshed_at,
-            source_job_id=_coerce_uuid(payload.source_job_id) if payload.source_job_id else None,
+            expires_at=payload.expires_at,
+            source_job_id=_coerce_uuid(payload.source_job_id),
             source=payload.source,
         )
         self._session.add(model)
@@ -216,7 +218,10 @@ class SqlAlchemyMergeSuggestionRepository(MergeSuggestionRepository):
             cluster_b_id=str(model.cluster_b_id),
             similarity=float(model.similarity),
             status=str(model.resolution),
+            confidence_score=float(model.confidence_score) if model.confidence_score is not None else None,
             created_at=model.created_at,
+            expires_at=model.expires_at,
+            source_job_id=str(model.source_job_id) if model.source_job_id is not None else None,
             cluster_a_label=details_a["label"],
             cluster_b_label=details_b["label"],
             cluster_a_identity_count=details_a["identity_count"],

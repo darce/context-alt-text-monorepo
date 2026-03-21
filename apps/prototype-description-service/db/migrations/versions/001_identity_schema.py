@@ -431,10 +431,15 @@ def upgrade() -> None:
         sa.Column("evidence_generation", sa.Integer(), nullable=False, server_default=sa.text("0")),
         # Timestamps
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("resolved_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("refreshed_at", sa.TIMESTAMP(timezone=True), nullable=True),
-        sa.Column("source_job_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column(
+            "source_job_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("identity_clustering_jobs.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
         sa.Column("source", sa.String(length=50), nullable=True),
         # Resolution status: 'pending', 'accepted', 'rejected', 'expired'
         sa.Column(
@@ -496,10 +501,15 @@ def upgrade() -> None:
         sa.Column("similarity", sa.Float(), nullable=False),
         sa.Column("confidence_score", sa.Float(), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("resolved_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("refreshed_at", sa.TIMESTAMP(timezone=True), nullable=True),
-        sa.Column("source_job_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column(
+            "source_job_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("identity_clustering_jobs.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
         sa.Column("source", sa.String(length=50), nullable=True),
         sa.Column(
             "resolution",
@@ -544,20 +554,24 @@ def upgrade() -> None:
         ),
         sa.Column("suggested_name", sa.String(length=255), nullable=False),
         sa.Column("confidence_score", sa.Float(), nullable=True),
-        sa.Column("source", sa.String(length=50), nullable=False, server_default=sa.text("'identity'")),
+        sa.Column("source", sa.String(length=20), nullable=False, server_default=sa.text("'none'")),
         sa.Column(
-            "resolution",
-            sa.String(length=20),
-            nullable=False,
-            server_default=sa.text("'pending'"),
+            "source_job_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("identity_clustering_jobs.id", ondelete="SET NULL"),
+            nullable=True,
         ),
-        sa.Column("source_job_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("resolved_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("resolution", sa.String(length=20), nullable=False, server_default=sa.text("'pending'")),
         sa.CheckConstraint(
             "confidence_score IS NULL OR (confidence_score >= 0 AND confidence_score <= 1)",
             name="name_suggestion_confidence_score_range",
+        ),
+        sa.CheckConstraint(
+            "source IN ('identity', 'roster', 'similar_cluster', 'none')",
+            name="name_suggestion_valid_source",
         ),
         sa.CheckConstraint(
             "resolution IN ('pending', 'accepted', 'rejected', 'expired')",

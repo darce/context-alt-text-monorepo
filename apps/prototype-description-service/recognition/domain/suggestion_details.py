@@ -26,6 +26,9 @@ class SuggestionDetails:
     representative_similarity: float
     member_similarity: float
     status: str
+    confidence_score: float | None = None
+    expires_at: datetime | None = None
+    source_job_id: str | None = None
     cluster_label: str | None = None
     cluster_identity_count: int | None = None
     identity_media_id: int | None = None
@@ -48,7 +51,10 @@ class MergeSuggestionDetails:
     cluster_b_id: str
     similarity: float
     status: str
+    confidence_score: float | None = None
     created_at: datetime | None = None
+    expires_at: datetime | None = None
+    source_job_id: str | None = None
     cluster_a_label: str | None = None
     cluster_b_label: str | None = None
     cluster_a_identity_count: int | None = None

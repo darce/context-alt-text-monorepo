@@ -264,8 +264,11 @@ class TenantExportService:
             "priority": suggestion.priority,
             "resolution": suggestion.resolution,
             "source": suggestion.source,
+            "source_job_id": _serialize_uuid(suggestion.source_job_id),
             "created_at": _serialize_timestamp(suggestion.created_at),
+            "expires_at": _serialize_timestamp(suggestion.expires_at),
             "resolved_at": _serialize_timestamp(suggestion.resolved_at),
+            "refreshed_at": _serialize_timestamp(suggestion.refreshed_at),
         }
 
     def _serialize_merge_suggestion(self, suggestion: ClusterMergeSuggestion) -> dict[str, object]:
@@ -274,10 +277,14 @@ class TenantExportService:
             "cluster_a_id": str(suggestion.cluster_a_id),
             "cluster_b_id": str(suggestion.cluster_b_id),
             "similarity": suggestion.similarity,
+            "confidence_score": suggestion.confidence_score,
             "resolution": suggestion.resolution,
             "source": suggestion.source,
+            "source_job_id": _serialize_uuid(suggestion.source_job_id),
             "created_at": _serialize_timestamp(suggestion.created_at),
+            "expires_at": _serialize_timestamp(suggestion.expires_at),
             "resolved_at": _serialize_timestamp(suggestion.resolved_at),
+            "refreshed_at": _serialize_timestamp(suggestion.refreshed_at),
         }
 
     def _serialize_scan_job(self, job: IdentityScanJob) -> dict[str, object]:

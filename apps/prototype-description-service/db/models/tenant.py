@@ -26,6 +26,7 @@ if TYPE_CHECKING:
         ClusterMergeSuggestion,
         IdentityClusterBlock,
         IdentitySuggestion,
+        NameSuggestion,
     )
     from db.models.identity import (
         IdentityCluster,
@@ -58,6 +59,7 @@ class Tenant(Base):
     cluster_merge_suggestions: Mapped[list[ClusterMergeSuggestion]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
     )
+    name_suggestions: Mapped[list[NameSuggestion]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
     identity_cluster_blocks: Mapped[list[IdentityClusterBlock]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
     )

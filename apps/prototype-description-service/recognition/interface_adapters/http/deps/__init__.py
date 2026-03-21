@@ -34,6 +34,7 @@ from recognition.interface_adapters.http.deps.services import (
     get_scan_service_builder,
     get_settings,
     get_shared_insightface_adapter,
+    get_suggestion_extension_service,
     get_suggestion_service,
 )
 from recognition.interface_adapters.http.deps.session import (
@@ -65,6 +66,7 @@ __all__ = [
     # Services
     "get_settings",
     "get_shared_insightface_adapter",
+    "get_suggestion_extension_service",
     "get_suggestion_service",
     "get_cluster_repository",
     "get_observability_repository",

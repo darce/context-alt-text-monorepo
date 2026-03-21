@@ -74,10 +74,13 @@ class IdentitySuggestion(Base):
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
-    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     refreshed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
-    source_job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    source_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("identity_clustering_jobs.id", ondelete="SET NULL"),
+    )
     source: Mapped[str | None] = mapped_column(String(50))
 
     # Resolution status
@@ -143,10 +146,13 @@ class ClusterMergeSuggestion(Base):
     confidence_score: Mapped[float | None] = mapped_column(Float)
 
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
-    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     refreshed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
-    source_job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    source_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("identity_clustering_jobs.id", ondelete="SET NULL"),
+    )
     source: Mapped[str | None] = mapped_column(String(50))
 
     resolution: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'pending'"))
@@ -180,7 +186,7 @@ class ClusterMergeSuggestion(Base):
 
 
 class NameSuggestion(Base):
-    """Proposed cluster label awaiting operator review."""
+    """Proposed cluster label awaiting human review."""
 
     __tablename__ = "name_suggestions"
 
@@ -193,20 +199,27 @@ class NameSuggestion(Base):
     )
     suggested_name: Mapped[str] = mapped_column(String(255), nullable=False)
     confidence_score: Mapped[float | None] = mapped_column(Float)
-    source: Mapped[str] = mapped_column(String(50), nullable=False, server_default=text("'identity'"))
-    resolution: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'pending'"))
-    source_job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    source: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'none'"))
+    source_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("identity_clustering_jobs.id", ondelete="SET NULL"),
+    )
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    resolution: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'pending'"))
 
-    tenant: Mapped[Tenant] = relationship()
+    tenant: Mapped[Tenant] = relationship(back_populates="name_suggestions")
     cluster: Mapped[IdentityCluster] = relationship()
 
     __table_args__ = (
         CheckConstraint(
             "confidence_score IS NULL OR (confidence_score >= 0 AND confidence_score <= 1)",
             name="name_suggestion_confidence_score_range",
+        ),
+        CheckConstraint(
+            "source IN ('identity', 'roster', 'similar_cluster', 'none')",
+            name="name_suggestion_valid_source",
         ),
         CheckConstraint(
             "resolution IN ('pending', 'accepted', 'rejected', 'expired')",

@@ -14,6 +14,66 @@ if str(SCRIPT_DIR) not in sys.path:
 from lane_manifest import get_lane_config
 
 
+def _normalize_owned_path(path: str) -> str:
+    value = str(path).strip()
+    if not value:
+        return ""
+    while value.endswith("/**") or value.endswith("/*"):
+        value = value.rsplit("/", 1)[0]
+    return value.rstrip("/")
+
+
+def _candidate_app_roots(
+    lane_cfg: dict[str, object],
+    *,
+    worktree_path: str | Path,
+) -> list[Path]:
+    worktree_root = Path(worktree_path).resolve()
+    candidates: list[Path] = []
+
+    def add_candidate(relative_path: str) -> None:
+        normalized = _normalize_owned_path(relative_path)
+        if not normalized:
+            return
+        full_path = (worktree_root / normalized).resolve()
+        probe = full_path if full_path.is_dir() else full_path.parent
+        if probe == worktree_root.parent and not probe.exists():
+            return
+
+        search_path = probe
+        while search_path != worktree_root and worktree_root not in search_path.parents:
+            search_path = search_path.parent
+
+        for candidate in [search_path, *search_path.parents]:
+            if candidate == worktree_root.parent:
+                break
+            if candidate == worktree_root or worktree_root in candidate.parents:
+                if (candidate / "composer.json").is_file() or (candidate / "package.json").is_file():
+                    candidates.append(candidate)
+
+    for relative_path in lane_cfg.get("owned_paths", []) if isinstance(lane_cfg.get("owned_paths"), list) else []:
+        add_candidate(str(relative_path))
+
+    app_root = lane_cfg.get("app_root")
+    if isinstance(app_root, str) and app_root.strip():
+        add_candidate(app_root)
+
+    tooling_paths = lane_cfg.get("tooling_paths")
+    if isinstance(tooling_paths, list):
+        for tooling_path in tooling_paths:
+            tooling_str = str(tooling_path).strip()
+            if tooling_str:
+                add_candidate(str(Path(tooling_str).parent))
+
+    unique_candidates: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate not in seen:
+            unique_candidates.append(candidate)
+            seen.add(candidate)
+    return unique_candidates
+
+
 def _bootstrap(
     orchestrator_root: str | Path,
     task_ref: str,
@@ -28,12 +88,14 @@ def _bootstrap(
     if "owned_paths" not in lane_cfg:
         print(f"Warning: 'owned_paths' not found in lane config for {lane_id}.")
 
-    owned_paths = [str(p).strip() for p in lane_cfg.get("owned_paths", []) if str(p).strip()]
-    
-    for relative_path in owned_paths:
-        full_path = Path(worktree_path) / relative_path
-        if not full_path.is_dir():
-            continue
+    app_roots = _candidate_app_roots(lane_cfg, worktree_path=worktree_path)
+    if not app_roots:
+        return 0
+
+    worktree_root = Path(worktree_path).resolve()
+
+    for full_path in app_roots:
+        relative_path = str(full_path.relative_to(worktree_root))
 
         # PHP Bootstrap
         if (full_path / "composer.json").is_file():

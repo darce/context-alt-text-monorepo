@@ -101,27 +101,27 @@ except ImportError as exc:
 
 ## Functions to Change
 
-| File | Target | Change |
-| --- | --- | --- |
-| `packages/codex-subagent-bridge/pyproject.toml` | new package metadata | Create an optional installable package for the bridge so the orchestration core does not gain a hard dependency on app-server transport code. Use `py-modules = ["codex_subagent_bridge"]` since the bridge is a single flat module under `src/`, not a package directory. |
-| `packages/codex-subagent-bridge/src/codex_subagent_bridge.py` | `run_subagent` | Implement the public bridge contract currently expected by `lane_exec.py` and `review_runner.py`. |
-| `packages/codex-subagent-bridge/src/codex_subagent_bridge.py` | `AppServerClient` | Add a small stdio client that launches `codex app-server`, sends initialize/thread/start/turn/start messages, streams events, and extracts structured output. |
-| `packages/codex-subagent-bridge/src/codex_subagent_bridge.py` | protocol helpers | Add request id management, JSON line parsing, timeout/error handling, and process cleanup helpers. |
-| `packages/codex-subagent-bridge/tests/test_bridge.py` | new tests | Add unit coverage for startup, lifecycle sequencing, structured output extraction, invalid payload errors, and process cleanup. |
-| `packages/codex-subagent-bridge/tests/test_bridge_contract.py` | integration-style contract tests | Verify the bridge returns objects compatible with the existing `lane_exec.py` and `review_runner.py` expectations using mocked app-server streams. |
-| `docs/agentic/worktree-codex-playbook.md` | backend provisioning section | Document how to install or inject the optional bridge package and what runtime guarantees the bridge provides. |
-| `docs/tasks/6.0/daemon-6-autonomous-orchestrator-task-plan.md` | Phase 5 bridge notes | Update the bridge wording to point at this task as the concrete implementation plan for the app-server-backed adapter. |
+| File                                                           | Target                           | Change                                                                                                                                                                                                                                                                     |
+| -------------------------------------------------------------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/codex-subagent-bridge/pyproject.toml`                | new package metadata             | Create an optional installable package for the bridge so the orchestration core does not gain a hard dependency on app-server transport code. Use `py-modules = ["codex_subagent_bridge"]` since the bridge is a single flat module under `src/`, not a package directory. |
+| `packages/codex-subagent-bridge/src/codex_subagent_bridge.py`  | `run_subagent`                   | Implement the public bridge contract currently expected by `lane_exec.py` and `review_runner.py`.                                                                                                                                                                          |
+| `packages/codex-subagent-bridge/src/codex_subagent_bridge.py`  | `AppServerClient`                | Add a small stdio client that launches `codex app-server`, sends initialize/thread/start/turn/start messages, streams events, and extracts structured output.                                                                                                              |
+| `packages/codex-subagent-bridge/src/codex_subagent_bridge.py`  | protocol helpers                 | Add request id management, JSON line parsing, timeout/error handling, and process cleanup helpers.                                                                                                                                                                         |
+| `packages/codex-subagent-bridge/tests/test_bridge.py`          | new tests                        | Add unit coverage for startup, lifecycle sequencing, structured output extraction, invalid payload errors, and process cleanup.                                                                                                                                            |
+| `packages/codex-subagent-bridge/tests/test_bridge_contract.py` | integration-style contract tests | Verify the bridge returns objects compatible with the existing `lane_exec.py` and `review_runner.py` expectations using mocked app-server streams.                                                                                                                         |
+| `docs/agentic/worktree-codex-playbook.md`                      | backend provisioning section     | Document how to install or inject the optional bridge package and what runtime guarantees the bridge provides.                                                                                                                                                             |
+| `docs/tasks/6.0/daemon-6-autonomous-orchestrator-task-plan.md` | Phase 5 bridge notes             | Update the bridge wording to point at this task as the concrete implementation plan for the app-server-backed adapter.                                                                                                                                                     |
 
 ## Related Files
 
-| File | Note |
-| --- | --- |
-| `scripts/mcp/lane_exec.py` | Already contains the `codex-subagent` backend seam and lane-result validation. |
-| `scripts/mcp/review_runner.py` | Already contains the review-side bridge seam and output validation. |
-| `packages/agent-handoff-mcp/tests/test_lane_exec.py` | Existing subagent-backend tests should remain green once the real bridge package is provisioned. |
-| `packages/agent-handoff-mcp/tests/test_review_runner.py` | Existing review backend tests define the contract the bridge must satisfy. |
-| `docs/tasks/6.0/daemon-6-autonomous-orchestrator-task-plan.md` | Defines why the backend seam exists and why worktree orchestration stays unchanged. |
-| `docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md` | One concrete beneficiary once `BACKEND=codex-subagent` becomes operational. |
+| File                                                                      | Note                                                                                             |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `scripts/mcp/lane_exec.py`                                                | Already contains the `codex-subagent` backend seam and lane-result validation.                   |
+| `scripts/mcp/review_runner.py`                                            | Already contains the review-side bridge seam and output validation.                              |
+| `packages/agent-handoff-mcp/tests/test_lane_exec.py`                      | Existing subagent-backend tests should remain green once the real bridge package is provisioned. |
+| `packages/agent-handoff-mcp/tests/test_review_runner.py`                  | Existing review backend tests define the contract the bridge must satisfy.                       |
+| `docs/tasks/6.0/daemon-6-autonomous-orchestrator-task-plan.md`            | Defines why the backend seam exists and why worktree orchestration stays unchanged.              |
+| `docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md` | One concrete beneficiary once `BACKEND=codex-subagent` becomes operational.                      |
 
 ---
 

@@ -135,6 +135,9 @@ CREATE TABLE IF NOT EXISTS worktree_lanes (
     worktree_path TEXT NOT NULL,
     branch        TEXT NOT NULL,
     owner_agent   TEXT,
+    model         TEXT,
+    backend       TEXT,
+    reasoning_effort TEXT,
     status        TEXT NOT NULL DEFAULT 'planned'
                   CHECK (status IN ('planned', 'active', 'blocked', 'review', 'merged', 'closed')),
     notes         TEXT,
@@ -554,6 +557,10 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
             )
         if not _has_column(conn, "lane_messages", "payload_json"):
             conn.execute("ALTER TABLE lane_messages ADD COLUMN payload_json TEXT")
+        # worktree_lanes extra columns for per-dispatch control
+        for column in ("model", "backend", "reasoning_effort"):
+            if not _has_column(conn, "worktree_lanes", column):
+                conn.execute(f"ALTER TABLE worktree_lanes ADD COLUMN {column} TEXT")
     except sqlite3.OperationalError as exc:
         if "locked" in str(exc).lower():
             import logging
@@ -1102,6 +1109,9 @@ def upsert_worktree_lane(
     title: str | None = None,
     objective: str | None = None,
     owner_agent: str | None = None,
+    model: str | None = None,
+    backend: str | None = None,
+    reasoning_effort: str | None = None,
     status: str = "planned",
     notes: str | None = None,
     task_ref: str | None = None,
@@ -1122,19 +1132,30 @@ def upsert_worktree_lane(
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         conn.execute(
             """
-            INSERT INTO worktree_lanes (task_ref, lane_id, title, objective, worktree_path, branch, owner_agent, status, notes, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            INSERT INTO worktree_lanes (
+                task_ref, lane_id, title, objective, worktree_path, branch, 
+                owner_agent, model, backend, reasoning_effort, status, notes, 
+                created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
             ON CONFLICT(task_ref, lane_id) DO UPDATE SET
                 title = excluded.title,
                 objective = excluded.objective,
                 worktree_path = excluded.worktree_path,
                 branch = excluded.branch,
                 owner_agent = excluded.owner_agent,
+                model = COALESCE(excluded.model, worktree_lanes.model),
+                backend = COALESCE(excluded.backend, worktree_lanes.backend),
+                reasoning_effort = COALESCE(excluded.reasoning_effort, worktree_lanes.reasoning_effort),
                 status = excluded.status,
                 notes = excluded.notes,
                 updated_at = datetime('now')
             """,
-            (resolved_task_ref, normalized_lane_id, title, objective, normalized_path, normalized_branch, owner_agent, status, notes),
+            (
+                resolved_task_ref, normalized_lane_id, title, objective, 
+                normalized_path, normalized_branch, owner_agent, model, 
+                backend, reasoning_effort, status, notes
+            ),
         )
         row = _get_lane_row(conn, resolved_task_ref, normalized_lane_id)
         _write_current_task_md_for_task(conn, resolved_task_ref)
@@ -2433,6 +2454,83 @@ def archive_task_state(task_ref: str | None = None, notes: str | None = None, ar
                 conn.execute(f"DELETE FROM {table} WHERE task_ref = ?", (resolved_task_ref,))
             pruned = True
     return _json_response({"ok": True, "task_ref": resolved_task_ref, "active_cleared": active_cleared, "pruned_working_rows": pruned, "allow_destructive_clear": allow_destructive_clear})
+
+
+def switch_task(task_ref: str, objective: str | None = None, status: str = "in_progress", actor: WriteActor | None = None) -> str:
+    """Switch the active task, archiving the current one if different.
+
+    If the target task was previously archived, its objective is restored
+    automatically.  Pass *objective* explicitly to override.
+    """
+    if status not in HANDOFF_ACTIVE_STATUSES:
+        return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(HANDOFF_ACTIVE_STATUSES))}"})
+
+    with _get_db_connection() as conn:
+        agent, branch, commit_sha, _lane_id = _resolve_write_actor(conn, actor)
+        current = conn.execute("SELECT task_ref, objective, revision FROM handoff_state WHERE id = 1").fetchone()
+
+        # Already active; nothing to do.
+        if current is not None and str(current["task_ref"]) == task_ref:
+            active = _row_to_dict(conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone())
+            return _json_response({"ok": True, "already_active": True, "active": active})
+
+        # Resolve objective for the target task.
+        resolved_objective = objective
+        if resolved_objective is None:
+            archive_row = conn.execute("SELECT snapshot_json FROM task_archives WHERE task_ref = ?", (task_ref,)).fetchone()
+            if archive_row is not None:
+                try:
+                    snapshot = json.loads(archive_row["snapshot_json"])
+                    active_block = snapshot.get("active")
+                    if isinstance(active_block, dict) and active_block.get("objective"):
+                        resolved_objective = active_block["objective"]
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        if resolved_objective is None:
+            return _json_response({"ok": False, "error": "Cannot determine objective for the target task. Pass --objective explicitly or archive the current task first."})
+
+        # Archive the outgoing task so it can be restored later.
+        archived_previous = False
+        previous_task_ref = None
+        if current is not None:
+            previous_task_ref = str(current["task_ref"])
+            snapshot = _collect_task_snapshot(conn, previous_task_ref)
+            conn.execute(
+                """
+                INSERT INTO task_archives (task_ref, archived_at, archived_by, archived_branch, archived_commit_sha, notes, snapshot_json)
+                VALUES (?, datetime('now'), ?, ?, ?, ?, ?)
+                ON CONFLICT(task_ref) DO UPDATE SET
+                    archived_at = datetime('now'),
+                    archived_by = excluded.archived_by,
+                    archived_branch = excluded.archived_branch,
+                    archived_commit_sha = excluded.archived_commit_sha,
+                    notes = excluded.notes,
+                    snapshot_json = excluded.snapshot_json
+                """,
+                (previous_task_ref, agent, branch, commit_sha, f"Auto-archived by switch_task to {task_ref}", json.dumps(snapshot, sort_keys=True)),
+            )
+            archived_previous = True
+
+        # Upsert the singleton to point at the target task.
+        if current is None:
+            conn.execute(
+                "INSERT INTO handoff_state (id, task_ref, objective, status, revision, updated_at, updated_by, updated_branch, updated_commit_sha) VALUES (1, ?, ?, ?, 0, datetime('now'), ?, ?, ?)",
+                (task_ref, resolved_objective, status, agent, branch, commit_sha),
+            )
+        else:
+            conn.execute(
+                "UPDATE handoff_state SET task_ref = ?, objective = ?, status = ?, revision = revision + 1, updated_at = datetime('now'), updated_by = ?, updated_branch = ?, updated_commit_sha = ? WHERE id = 1",
+                (task_ref, resolved_objective, status, agent, branch, commit_sha),
+            )
+
+        active = _row_to_dict(conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone())
+        return _json_response({
+            "ok": True,
+            "switched": True,
+            "active": active,
+            "archived_previous": archived_previous,
+            "previous_task_ref": previous_task_ref,
+        })
 
 
 def get_handoff_dashboard(limit: int = 20, include_archived: bool = True) -> str:

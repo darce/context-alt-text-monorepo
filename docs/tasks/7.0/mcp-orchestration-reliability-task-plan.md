@@ -120,11 +120,11 @@ Functions to change:
 
 **3b. Let single_pass complete remaining cycle steps after guidance failure (ORD-005)**
 
-In `orchestrator_daemon.py orchestrator_loop()`: remove the `single_pass or` prefix from the guidance stall check. In single_pass mode, log the guidance failure but do not return early; let the cycle continue through task plan dispatch, merge polling, intake, and close check. Set a `had_guidance_failure` flag and return 1 at the end of the cycle if the flag is set.
+In `orchestrator_daemon.py orchestrator_loop()`: do not return early when guidance resolution fails. Keep the guidance-stall threshold for repeated `fatal_error` resolutions, but let the cycle continue through task plan dispatch, merge polling, intake, and close check even when a guidance failure is encountered. Set a `had_guidance_failure` flag and return 1 at the end of the cycle if the run saw a terminal guidance condition.
 
 Functions to change:
 
-- `orchestrator_daemon.py`: `orchestrator_loop()` guidance stall check block
+- `orchestrator_daemon.py`: `orchestrator_loop()` guidance stall handling / end-of-cycle return path
 
 ### Phase 4: Environment and Observability
 
@@ -261,11 +261,11 @@ return GuidanceResolution(kind="fatal_error", ...)
 
 ## Checklist
 
-- [ ] Phase 1a: Ensure nullable fields remain in review schema `required` array
-- [ ] Phase 1b: Add `capture_output=True` and diagnostic logging to `_run_final_handoff()`
-- [ ] Phase 2a: Replace boolean handoff flag with bounded retry counter and backoff
-- [ ] Phase 3a: Widen marker lists and add `blocked` fallback to `_classify_guidance()`
-- [ ] Phase 3b: Remove `single_pass or` short-circuit from guidance stall check
-- [ ] Phase 4a: Bootstrap lane dependencies via `lane-open` using lane-manifest context
-- [ ] Phase 4b: Add log rotation to `orchestrator_helpers.py _log()`
-- [ ] Phase 4c: Add `run_id` to both daemon log closures
+- [x] Phase 1a: Ensure nullable fields remain in review schema `required` array
+- [x] Phase 1b: Add `capture_output=True` and diagnostic logging to `_run_final_handoff()`
+- [x] Phase 2a: Replace boolean handoff flag with bounded retry counter and backoff
+- [x] Phase 3a: Widen marker lists and add `blocked` fallback to `_classify_guidance()`
+- [x] Phase 3b: Let guidance failure complete the rest of the cycle before returning non-zero
+- [x] Phase 4a: Bootstrap lane dependencies via `lane-open` using lane-manifest context
+- [x] Phase 4b: Add log rotation to `orchestrator_helpers.py _log()`
+- [x] Phase 4c: Add `run_id` to both daemon log closures

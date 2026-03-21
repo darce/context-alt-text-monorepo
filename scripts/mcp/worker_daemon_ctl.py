@@ -297,6 +297,7 @@ def daemon_start(
     backend: str = "codex-cli",
     session_mode: str = "fresh_turn",
     reasoning_effort: str = "inherit",
+    model: str | None = None,
     poll_interval: int = 30,
     single_pass: bool = False,
 ) -> dict[str, Any]:
@@ -343,6 +344,8 @@ def daemon_start(
         "--poll-interval",
         str(poll_interval),
     ]
+    if model:
+        cmd.extend(["--model", model])
     if single_pass:
         cmd.append("--single-pass")
 
@@ -373,6 +376,7 @@ def daemon_start(
         "backend": backend,
         "session_mode": session_mode,
         "reasoning_effort": reasoning_effort,
+        "model": model,
         "poll_interval": poll_interval,
         "single_pass": single_pass,
         "worktree_path": str(worktree_path),

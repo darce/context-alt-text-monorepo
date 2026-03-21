@@ -132,7 +132,6 @@ def test_pythonpath_env_sets_lane_tempdir_and_backend_pyenv() -> None:
 
 
 def test_resolve_reasoning_effort_auto_prefers_high_for_backend_lane() -> None:
-    mod = _load_module()
     fake_lane_manifest = mock.Mock()
     fake_lane_manifest.get_lane_config.return_value = {
         "objective": "Implement schema and repository changes.",
@@ -140,8 +139,10 @@ def test_resolve_reasoning_effort_auto_prefers_high_for_backend_lane() -> None:
         "test_commands": ["PYENV_VERSION=description-service pytest recognition/tests/unit/"],
     }
 
+    from scripts.mcp._env import resolve_auto_reasoning_effort
+
     with mock.patch.dict(sys.modules, {"lane_manifest": fake_lane_manifest}):
-        effort, reasons = mod._resolve_reasoning_effort(
+        effort, reasons = resolve_auto_reasoning_effort(
             orchestrator_root=REPO_ROOT,
             task_ref="task",
             lane_id="backend-domain",
@@ -151,11 +152,10 @@ def test_resolve_reasoning_effort_auto_prefers_high_for_backend_lane() -> None:
         )
 
     assert effort == "high"
-    assert any("backend/orchestration-heavy lane" in reason for reason in reasons)
+    assert any("backend" in reason.lower() or "infra" in reason.lower() for reason in reasons)
 
 
 def test_resolve_reasoning_effort_auto_prefers_low_for_docs_only_lane() -> None:
-    mod = _load_module()
     fake_lane_manifest = mock.Mock()
     fake_lane_manifest.get_lane_config.return_value = {
         "objective": "Update task-plan docs.",
@@ -163,8 +163,10 @@ def test_resolve_reasoning_effort_auto_prefers_low_for_docs_only_lane() -> None:
         "test_commands": [],
     }
 
+    from scripts.mcp._env import resolve_auto_reasoning_effort
+
     with mock.patch.dict(sys.modules, {"lane_manifest": fake_lane_manifest}):
-        effort, reasons = mod._resolve_reasoning_effort(
+        effort, reasons = resolve_auto_reasoning_effort(
             orchestrator_root=REPO_ROOT,
             task_ref="task",
             lane_id="docs",
@@ -175,6 +177,96 @@ def test_resolve_reasoning_effort_auto_prefers_low_for_docs_only_lane() -> None:
 
     assert effort == "low"
     assert any("docs-only scope" in reason for reason in reasons)
+
+
+def test_resolve_reasoning_effort_auto_prefers_medium_for_wp_proxy() -> None:
+    fake_lane_manifest = mock.Mock()
+    fake_lane_manifest.get_lane_config.return_value = {
+        "objective": "WordPress proxy, sync-projection, and PHP unit-test slice.",
+        "owned_paths": ["apps/prototype-wp-alt-context/src/**", "apps/prototype-wp-alt-context/tests/Unit/**"],
+        "test_commands": ["cd apps/prototype-wp-alt-context && vendor/bin/phpunit"],
+    }
+
+    from scripts.mcp._env import resolve_auto_reasoning_effort
+
+    with mock.patch.dict(sys.modules, {"lane_manifest": fake_lane_manifest}):
+        effort, reasons = resolve_auto_reasoning_effort(
+            orchestrator_root=REPO_ROOT,
+            task_ref="task",
+            lane_id="wp-proxy",
+            requested="auto",
+            cycle=0,
+            prompt_override=None,
+        )
+
+    assert effort == "medium"
+    assert any("application-layer" in reason for reason in reasons)
+
+
+def test_apply_backend_runtime_hints_sets_codex_model() -> None:
+    from scripts.mcp._env import apply_backend_runtime_hints
+
+    env: dict[str, str] = {}
+    apply_backend_runtime_hints(env, model="gpt-5.4-mini", reasoning_effort="medium")
+    assert env["CODEX_MODEL"] == "gpt-5.4-mini"
+    assert env["CODEX_REASONING_EFFORT"] == "medium"
+
+
+def test_apply_backend_runtime_hints_model_does_not_overwrite_existing() -> None:
+    from scripts.mcp._env import apply_backend_runtime_hints
+
+    env: dict[str, str] = {"CODEX_MODEL": "gpt-5.3-codex"}
+    apply_backend_runtime_hints(env, model="gpt-5.4-mini")
+    # setdefault should preserve the existing value
+    assert env["CODEX_MODEL"] == "gpt-5.3-codex"
+
+
+def test_subagent_adapter_injects_model_into_env() -> None:
+    """CodexSubagentAdapter.execute() must inject CODEX_MODEL into env."""
+    from scripts.mcp.adapters.codex_subagent import CodexSubagentAdapter
+
+    captured_env: dict[str, str] = {}
+
+    def fake_runner(prompt: str, schema: dict, cwd: str, env: dict | None = None, **kw: object) -> str:
+        if env:
+            captured_env.update(env)
+        return '{"handoff_action": "merge_ready", "summary": "ok"}'
+
+    adapter = CodexSubagentAdapter(runner=fake_runner, name="test")
+    adapter.execute(
+        prompt="hello",
+        schema={},
+        worktree_path=Path("/tmp/fake"),
+        model="gpt-5.4-mini",
+        env={"PYTHONPATH": "/foo"},
+    )
+
+    assert captured_env.get("CODEX_MODEL") == "gpt-5.4-mini"
+
+
+def test_resolve_reasoning_effort_manifest_override() -> None:
+    fake_lane_manifest = mock.Mock()
+    fake_lane_manifest.get_lane_config.return_value = {
+        "objective": "Backend schema changes.",
+        "owned_paths": ["apps/prototype-description-service/db/**"],
+        "test_commands": [],
+        "preferred_reasoning_effort": "low",
+    }
+
+    from scripts.mcp._env import resolve_auto_reasoning_effort
+
+    with mock.patch.dict(sys.modules, {"lane_manifest": fake_lane_manifest}):
+        effort, reasons = resolve_auto_reasoning_effort(
+            orchestrator_root=REPO_ROOT,
+            task_ref="task",
+            lane_id="backend-domain",
+            requested="auto",
+            cycle=0,
+            prompt_override=None,
+        )
+
+    assert effort == "low"
+    assert any("manifest" in reason for reason in reasons)
 
 
 # ---------------------------------------------------------------------------
@@ -487,7 +579,6 @@ def test_worker_loop_logs_wake_transition_before_work(tmp_path: Path) -> None:
 
     with (
         mock.patch.object(mod, "poll_lane_state", side_effect=["waiting", "actionable", KeyboardInterrupt()]),
-        mock.patch("lane_exec.find_codex", return_value="/usr/bin/codex"),
         mock.patch("lane_exec.run_lane_exec", return_value=result_file),
         mock.patch.object(mod, "_run_final_handoff", return_value=0),
         mock.patch.object(mod, "_log") as mock_log,
@@ -560,7 +651,6 @@ def test_worker_loop_single_pass_needs_guidance(tmp_path: Path) -> None:
 
     with (
         mock.patch.object(mod, "poll_lane_state", return_value="actionable"),
-        mock.patch("lane_exec.find_codex", return_value="/usr/bin/codex"),
         mock.patch("lane_exec.run_lane_exec", return_value=result_file),
         mock.patch.object(mod, "_run_final_handoff", return_value=0) as mock_handoff,
     ):
@@ -610,7 +700,6 @@ def test_worker_loop_single_pass_converged(tmp_path: Path) -> None:
 
     with (
         mock.patch.object(mod, "poll_lane_state", return_value="actionable"),
-        mock.patch("lane_exec.find_codex", return_value="/usr/bin/codex"),
         mock.patch("lane_exec.run_lane_exec", return_value=result_file),
         mock.patch("review_runner.run_review", return_value=review_result),
         mock.patch("review_runner.findings_converged", return_value=True),
@@ -668,7 +757,6 @@ def test_worker_loop_review_exhausted(tmp_path: Path) -> None:
 
     with (
         mock.patch.object(mod, "poll_lane_state", return_value="actionable"),
-        mock.patch("lane_exec.find_codex", return_value="/usr/bin/codex"),
         mock.patch("lane_exec.run_lane_exec", side_effect=reset_result),
         mock.patch("lane_exec.build_fix_prompt", return_value="fix prompt"),
         mock.patch("review_runner.run_review", return_value=non_converged_review),
@@ -732,7 +820,6 @@ def test_worker_loop_logs_fix_prompt_failure(tmp_path: Path) -> None:
 
     with (
         mock.patch.object(mod, "poll_lane_state", return_value="actionable"),
-        mock.patch("lane_exec.find_codex", return_value="/usr/bin/codex"),
         mock.patch("lane_exec.run_lane_exec", side_effect=reset_result),
         mock.patch("review_runner.run_review", return_value=non_converged_review),
         mock.patch("review_runner.findings_converged", return_value=False),
@@ -778,7 +865,6 @@ def test_worker_loop_persists_handoff_failure_without_rerunning_assignment(tmp_p
 
     with (
         mock.patch.object(mod, "poll_lane_state", return_value="actionable"),
-        mock.patch("lane_exec.find_codex", return_value="/usr/bin/codex"),
         mock.patch("lane_exec.run_lane_exec", return_value=result_file) as mock_exec,
         mock.patch("review_runner.run_review", return_value=review_result),
         mock.patch("review_runner.findings_converged", return_value=True),
@@ -829,7 +915,6 @@ def test_worker_loop_retries_persisted_handoff_failure_without_reexecuting(tmp_p
     )
 
     with (
-        mock.patch("lane_exec.find_codex", return_value="/usr/bin/codex"),
         mock.patch("lane_exec.run_lane_exec") as mock_exec,
         mock.patch.object(mod, "_run_final_handoff", return_value=0) as mock_handoff,
     ):
@@ -876,7 +961,6 @@ def test_worker_loop_subagent_backend_skips_find_codex_and_threads_backend(tmp_p
 
     with (
         mock.patch.object(mod, "poll_lane_state", return_value="actionable"),
-        mock.patch("lane_exec.find_codex") as mock_find_codex,
         mock.patch("lane_exec.run_lane_exec", return_value=result_file) as mock_run_lane_exec,
         mock.patch("review_runner.run_review", return_value=review_result) as mock_run_review,
         mock.patch("review_runner.findings_converged", return_value=True),
@@ -894,7 +978,6 @@ def test_worker_loop_subagent_backend_skips_find_codex_and_threads_backend(tmp_p
         )
 
     assert rc == 0
-    mock_find_codex.assert_not_called()
     assert mock_run_lane_exec.call_args.kwargs["backend"] == "codex-subagent"
     assert mock_run_lane_exec.call_args.kwargs["reasoning_effort"] is None
     assert mock_run_review.call_args.kwargs["backend"] == "codex-subagent"

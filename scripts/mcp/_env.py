@@ -88,20 +88,134 @@ def pythonpath_env(
     return env
 
 
-def apply_codex_runtime_hints(
+def apply_backend_runtime_hints(
     env: dict[str, str],
     *,
     reasoning_effort: str | None = None,
+    model: str | None = None,
     session_mode: str | None = None,
+    backend: str | None = None,
 ) -> dict[str, str]:
-    """Apply Codex-specific runtime hints to an existing environment mapping."""
+    """Apply backend-specific runtime hints to an existing environment mapping."""
+    is_codex = backend in {"codex-cli", "codex-subagent"} or (not backend and model and ("CODEX" in str(model).upper() or "GPT" in str(model).upper()))
+    
+    if model and is_codex:
+        env.setdefault("CODEX_MODEL", model)
+
     normalized_effort = str(reasoning_effort or "").strip().lower()
-    if normalized_effort in CODEX_REASONING_EFFORTS:
+    if normalized_effort in CODEX_REASONING_EFFORTS and is_codex:
         env["CODEX_REASONING_EFFORT"] = normalized_effort
 
     normalized_session_mode = str(session_mode or "").strip().lower()
-    if normalized_session_mode == "shared_lane":
+    if normalized_session_mode == "shared_lane" and is_codex:
         env["CODEX_SUBAGENT_BRIDGE_SESSION_MODE"] = "shared"
     elif normalized_session_mode == "fresh_turn":
         env.pop("CODEX_SUBAGENT_BRIDGE_SESSION_MODE", None)
     return env
+
+
+# ---------------------------------------------------------------------------
+# Shared auto-reasoning effort resolution
+# ---------------------------------------------------------------------------
+
+# Markers matched against owned_paths and test_commands only (NOT objectives,
+# which contain domain terms like "sync"/"retention" that leak across all lanes).
+_AUTO_HIGH_PATH_MARKERS = (
+    "agent-handoff-mcp",
+    "db/",
+    "migrations",
+    "scripts/mcp",
+)
+
+# Markers matched against lane_id (structural identity of the lane).
+_AUTO_HIGH_LANE_ID_MARKERS = (
+    "backend-domain",
+    "backend-http",
+)
+
+_AUTO_MEDIUM_PATH_MARKERS = (
+    "api/",
+    "composer phpunit",
+    "controller",
+    "js/admin",
+    "npm run test",
+    "phpunit",
+    "src/",
+    "vitest",
+)
+
+_AUTO_MEDIUM_LANE_ID_MARKERS = (
+    "frontend",
+    "wp-proxy",
+)
+
+
+def resolve_auto_reasoning_effort(
+    *,
+    orchestrator_root: Path,
+    task_ref: str,
+    lane_id: str,
+    requested: str,
+    cycle: int,
+    prompt_override: str | None,
+) -> tuple[str | None, list[str]]:
+    """Shared reasoning-effort resolver used by all backend adapters.
+
+    Priority: explicit override > manifest preferred_reasoning_effort > auto scoring.
+    """
+    normalized = str(requested or "inherit").strip().lower()
+    if normalized in {"inherit", ""}:
+        return None, ["inherit existing Codex/default reasoning effort"]
+    if normalized != "auto":
+        return normalized, [f"explicit override: {normalized}"]
+
+    # Load lane manifest
+    try:
+        from lane_manifest import get_lane_config
+        lane = get_lane_config(task_ref, lane_id, orchestrator_root=str(orchestrator_root)) or {}
+    except Exception:
+        lane = {}
+
+    # Check manifest-level preference first
+    manifest_effort = str(lane.get("preferred_reasoning_effort") or "").strip().lower()
+    if manifest_effort in CODEX_REASONING_EFFORTS:
+        return manifest_effort, [f"manifest preferred_reasoning_effort: {manifest_effort}"]
+
+    # Auto-scoring based on lane structure (not domain objectives)
+    score = 0
+    reasons: list[str] = []
+    if cycle > 0:
+        score += 2
+        reasons.append("follow-up review/fix cycle")
+    if prompt_override:
+        score += 2
+        reasons.append("fix prompt active")
+
+    lid = lane_id.lower()
+    owned_paths = [str(item).strip().lower() for item in lane.get("owned_paths", []) if str(item).strip()]
+    test_commands = [str(item).strip().lower() for item in lane.get("test_commands", []) if str(item).strip()]
+    path_haystack = "\n".join([*owned_paths, *test_commands])
+
+    if any(marker in lid for marker in _AUTO_HIGH_LANE_ID_MARKERS):
+        score += 2
+        reasons.append("backend/infra lane id")
+    elif any(marker in path_haystack for marker in _AUTO_HIGH_PATH_MARKERS):
+        score += 2
+        reasons.append("backend/infra owned paths")
+    elif any(marker in lid for marker in _AUTO_MEDIUM_LANE_ID_MARKERS):
+        score += 1
+        reasons.append("application-layer lane id")
+    elif any(marker in path_haystack for marker in _AUTO_MEDIUM_PATH_MARKERS):
+        score += 1
+        reasons.append("application-layer owned paths")
+
+    docs_only = bool(owned_paths) and all(path.startswith("docs/") for path in owned_paths)
+    if docs_only:
+        score -= 1
+        reasons.append("docs-only scope")
+
+    if score >= 2:
+        return "high", reasons or ["auto-selected high"]
+    if score <= 0:
+        return "low", reasons or ["auto-selected low"]
+    return "medium", reasons or ["auto-selected medium"]

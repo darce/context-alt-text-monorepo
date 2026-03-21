@@ -49,6 +49,7 @@ def test_daemon_start_spawns_worker_when_not_running(tmp_path: Path) -> None:
             python_executable="/usr/bin/python3",
             pythonpath="/tmp/pythonpath",
             backend="codex-subagent",
+            model="gpt-5.4-mini",
             poll_interval=15,
             single_pass=True,
         )
@@ -57,7 +58,10 @@ def test_daemon_start_spawns_worker_when_not_running(tmp_path: Path) -> None:
     cmd = mock_popen.call_args.args[0]
     assert "--task-ref" in cmd
     assert "phase-5" in cmd
+    assert "--model" in cmd
+    assert "gpt-5.4-mini" in cmd
     assert "--single-pass" in cmd
+    assert result["model"] == "gpt-5.4-mini"
     assert mock_popen.call_args.kwargs["env"]["PYTHONPATH"] == "/tmp/pythonpath"
 
 

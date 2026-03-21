@@ -86,6 +86,7 @@ agent-handoff-mcp --workspace-root /path/to/repo doctor
 agent-handoff-mcp --workspace-root /path/to/repo state
 agent-handoff-mcp --workspace-root /path/to/repo review-list
 agent-handoff-mcp --workspace-root /path/to/repo lane-list
+agent-handoff-mcp --workspace-root /path/to/repo switch <task_ref>
 ```
 
 Repo-local development without installing still works:
@@ -230,3 +231,4 @@ Additional lane/worktree CLI commands:
 - `lane-message`
 - `lane-message-update`
 - `lane-message-list`
+- `switch` -- atomically archive the current task and activate a different one

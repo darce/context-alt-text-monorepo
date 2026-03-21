@@ -29,7 +29,6 @@ def test_stdio_server_lists_handoff_tools(tmp_path: Path) -> None:
     assert "list_lane_briefs" in tool_names
     assert "orchestrator_start" in tool_names
     assert "orchestrator_status" in tool_names
-    assert "orchestrator_single_cycle" in tool_names
     assert "worker_start" in tool_names
     assert "worker_status" in tool_names
     assert "worker_event_history" in tool_names

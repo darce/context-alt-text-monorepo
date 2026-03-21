@@ -133,6 +133,7 @@ worker-daemon: lane-guard
 		$(if $(filter 1,$(SINGLE_PASS)),--single-pass,) \
 		$(if $(CODEX_BIN),--codex-bin "$(CODEX_BIN)",) \
 		$(if $(CODEX_ARGS),--codex-args "$(CODEX_ARGS)",) \
+		$(if $(MODEL),--model "$(MODEL)",) \
 		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
 
 worker-daemon-status: lane-guard
@@ -166,6 +167,7 @@ orchestrator-daemon: lane-orchestrator-guard
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		$(if $(TASK),--task-ref "$(TASK)",) \
 		$(if $(BACKEND),--backend "$(BACKEND)",) \
+		$(if $(MODEL),--model "$(MODEL)",) \
 		$(if $(POLL_INTERVAL),--poll-interval "$(POLL_INTERVAL)",) \
 		$(if $(filter 1,$(SINGLE_PASS)),--single-pass,) \
 		$(if $(filter 1,$(DRY_RUN)),--dry-run,)

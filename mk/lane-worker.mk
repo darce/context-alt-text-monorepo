@@ -94,6 +94,9 @@ lane-run: lane-guard
 	if [ -n "$(CODEX_ARGS)" ]; then \
 		set -- "$$@" --codex-args "$(CODEX_ARGS)"; \
 	fi; \
+	if [ -n "$(MODEL)" ]; then \
+		set -- "$$@" --model "$(MODEL)"; \
+	fi; \
 	if [ "$(DRY_RUN)" = "1" ]; then \
 		set -- "$$@" --dry-run; \
 	fi; \

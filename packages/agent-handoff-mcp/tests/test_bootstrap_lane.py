@@ -174,3 +174,39 @@ def test_bootstrap_install_js_deps_failure_propagates(tmp_path: Path) -> None:
             result = bootstrap_lane._bootstrap(orch_root, "1.0", "l", wt_path)
             
     assert result == 127
+
+
+def test_bootstrap_resolves_app_root_from_globbed_owned_paths(tmp_path: Path) -> None:
+    orch_root = tmp_path / "root"
+    wt_path = tmp_path / "wt"
+    app_path_rel = Path("apps/prototype-wp-alt-context")
+
+    orch_app = orch_root / app_path_rel
+    wt_app = wt_path / app_path_rel
+
+    (orch_app / "vendor").mkdir(parents=True)
+    (orch_app / "node_modules").mkdir()
+
+    (wt_app / "src").mkdir(parents=True)
+    (wt_app / "tests" / "Unit").mkdir(parents=True)
+    (wt_app / "composer.json").touch()
+    (wt_app / "package.json").touch()
+
+    lane_cfg = {
+        "owned_paths": [
+            "apps/prototype-wp-alt-context/src/**",
+            "apps/prototype-wp-alt-context/tests/Unit/**",
+        ],
+        "tooling_paths": ["apps/prototype-wp-alt-context/composer.json"],
+    }
+
+    with mock.patch("bootstrap_lane.get_lane_config", return_value=lane_cfg):
+        with mock.patch("subprocess.run") as mock_run:
+            result = bootstrap_lane._bootstrap(orch_root, "1.0", "wp-proxy", wt_path)
+
+    assert result == 0
+    mock_run.assert_not_called()
+    assert (wt_app / "vendor").is_symlink()
+    assert (wt_app / "vendor").resolve() == orch_app / "vendor"
+    assert (wt_app / "node_modules").is_symlink()
+    assert (wt_app / "node_modules").resolve() == orch_app / "node_modules"

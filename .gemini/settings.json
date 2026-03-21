@@ -15,6 +15,8 @@
         "serve-stdio"
       ],
       "env": {
+        "PATH": "/Users/daniel/.pyenv/bin:/Users/daniel/.pyenv/shims:/usr/local/bin:/usr/bin:/bin",
+        "PYENV_ROOT": "/Users/daniel/.pyenv",
         "PYENV_VERSION": "description-service",
         "PYTHONPATH": "/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src:/Users/daniel/Development/context-alt-text-monorepo/packages/codex-subagent-bridge/src"
       }

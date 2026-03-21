@@ -498,11 +498,11 @@ make lane-manifest-init TASK=remaining-sync-workbench-and-retention LANE_IDS='ba
 
 ## Phase 7: Lane Lifecycle Tooling
 
-- [ ] Add `close` subcommand to `scripts/worktree-lane` (remove worktree + delete branch + MCP status update).
-- [ ] Add `lane-close` Makefile target with merged/closed status guard and dirty-state check.
-- [ ] Add `lane-prune` Makefile target for batch cleanup of all merged/closed lanes + `git worktree prune`.
-- [ ] Optionally add `close_worktree_lane` MCP tool in `agent-handoff-mcp`.
-- [ ] Optionally integrate auto-close into orchestrator daemon post-intake path.
+- [x] Add `close` subcommand to `scripts/worktree-lane` (remove worktree + delete branch + MCP status update). _(Implemented at line 416; validates lane status, checks dirty state, removes worktree, deletes branch, updates MCP.)_
+- [x] Add `lane-close` Makefile target with merged/closed status guard and dirty-state check. _(Defined in `mk/lane-maintenance.mk` line 138; dry-run verified.)_
+- [x] Add `lane-prune` Makefile target for batch cleanup of all merged/closed lanes + `git worktree prune`. _(Defined in `mk/lane-maintenance.mk` line 183; iterates lanes and calls `lane-close`; dry-run verified.)_
+- [ ] Optionally add `close_worktree_lane` MCP tool in `agent-handoff-mcp`. _(Not implemented; lane closure uses shell + Makefile path only.)_
+- [ ] Optionally integrate auto-close into orchestrator daemon post-intake path. _(Not implemented.)_
 
 ## Success Criteria
 

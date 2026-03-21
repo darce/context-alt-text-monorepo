@@ -69,8 +69,6 @@ def _intake_lane(
     orchestrator_root: Path, task_ref: str, lane_id: str, *, dry_run: bool = False,
 ) -> bool:
     """Run ``make lane-intake`` for a single lane.  Returns True on success."""
-    from agent_handoff_mcp import list_lane_messages, update_lane_message
-
     cmd = [
         "make", "lane-intake",
         f"TASK={task_ref}",
@@ -81,32 +79,7 @@ def _intake_lane(
     result = subprocess.run(
         cmd, cwd=orchestrator_root, capture_output=True, text=True, check=False,
     )
-    if result.returncode != 0:
-        return False
-    if dry_run:
-        return True
-
-    try:
-        payload = _json_load(
-            list_lane_messages(task_ref=task_ref, lane_id=lane_id, status="open", limit=200)
-        )
-        if payload.get("ok") is not True:
-            raise RuntimeError(f"Failed to list lane messages for {lane_id}.")
-        for row in payload.get("messages", []):
-            if not isinstance(row, dict) or row.get("direction") != "orchestrator_to_worker":
-                continue
-            message_id = row.get("id")
-            if message_id is None:
-                continue
-            update = _json_load(update_lane_message(int(message_id), "closed", task_ref=task_ref))
-            if update.get("ok") is not True:
-                raise RuntimeError(f"Failed to close dispatch message {message_id} for {lane_id}.")
-    except RuntimeError as exc:
-        print(
-            f"warning: lane intake succeeded but dispatch-message cleanup failed for {lane_id}: {exc}",
-            file=sys.stderr,
-        )
-    return True
+    return result.returncode == 0
 
 
 # ---------------------------------------------------------------------------
@@ -132,77 +105,6 @@ def _refresh_downstream(
             cmd, cwd=orchestrator_root, capture_output=True, text=True, check=False,
         )
         results.append((dep, r.returncode == 0))
-    return results
-
-
-def _record_downstream_briefs(
-    task_ref: str,
-    lane_id: str,
-    downstream: list[str],
-    *,
-    dry_run: bool = False,
-) -> list[tuple[str, bool]]:
-    """Persist compact downstream briefs derived from the latest source-lane report."""
-    from agent_handoff_mcp import list_worker_reports, record_decision, record_lane_brief
-
-    if dry_run or not downstream:
-        return [(dep, True) for dep in downstream]
-
-    reports_payload = _json_load(
-        list_worker_reports(task_ref=task_ref, lane_id=lane_id, limit=1)
-    )
-    if reports_payload.get("ok") is not True:
-        raise RuntimeError(f"Failed to list worker reports for {lane_id}.")
-    reports = reports_payload.get("reports", [])
-    latest_report = reports[0] if isinstance(reports, list) and reports and isinstance(reports[0], dict) else None
-    if latest_report is None:
-        return [(dep, False) for dep in downstream]
-    blockers = latest_report.get("blockers")
-    if not isinstance(blockers, list):
-        blockers = latest_report.get("blockers_json") or []
-    report_status = str(latest_report.get("status") or "").strip()
-    merge_ready = bool(latest_report.get("merge_ready"))
-    if report_status == "blocked" or not merge_ready or any(
-        isinstance(item, str) and item.strip() for item in blockers
-    ):
-        record_decision(
-            session=f"{task_ref}-orchestrator-brief",
-            decision=f"Skipped downstream brief generation for {lane_id}.",
-            rationale=(
-                "Cross-lane briefs are emitted only for merge-ready source-lane reports with no unresolved blockers. "
-                "Blocked or non-merge-ready reports must be handled through orchestrator guidance instead of downstream replay."
-            ),
-        )
-        return [(dep, False) for dep in downstream]
-
-    summary = str(latest_report.get("summary") or "").strip() or f"{lane_id} produced updates for downstream lanes."
-    changed_files = latest_report.get("changed_files")
-    if not isinstance(changed_files, list):
-        changed_files = latest_report.get("changed_files_json") or []
-    artifacts = [str(item).strip() for item in changed_files if isinstance(item, str) and item.strip()]
-    test_commands = latest_report.get("test_commands")
-    if not isinstance(test_commands, list):
-        test_commands = latest_report.get("test_commands_json") or []
-    required_actions = [f"Refresh your lane against the latest {lane_id} changes before continuing."]
-    if any(isinstance(item, str) and item.strip() for item in test_commands):
-        required_actions.append("Re-run lane-local verification after pulling the refreshed base.")
-
-    results: list[tuple[str, bool]] = []
-    for dep in downstream:
-        payload = _json_load(
-            record_lane_brief(
-                task_ref=task_ref,
-                lane_id=dep,
-                session=f"{task_ref}-orchestrator-brief",
-                source_lane=lane_id,
-                reason="upstream-lane-intake",
-                summary=summary,
-                message=f"Upstream lane `{lane_id}` was intaken. Refresh and continue with the latest integrated state.",
-                required_actions=required_actions,
-                artifacts=artifacts[:5],
-            )
-        )
-        results.append((dep, payload.get("ok") is True))
     return results
 
 

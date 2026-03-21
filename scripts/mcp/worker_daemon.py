@@ -36,34 +36,6 @@ _STATUS_FILE_VERSION = 1
 _OBSERVABILITY_HISTORY_LIMIT = 20
 BACKEND_CHOICES = get_backend_choices()
 SESSION_MODE_CHOICES = ("fresh_turn", "shared_lane")
-_AUTO_HIGH_MARKERS = (
-    "agent-handoff-mcp",
-    "backend-domain",
-    "backend-http",
-    "conflict",
-    "db/",
-    "migrations",
-    "orchestrator",
-    "repository",
-    "retention",
-    "schema",
-    "scripts/mcp",
-    "sync",
-)
-_AUTO_MEDIUM_MARKERS = (
-    "api/",
-    "composer phpunit",
-    "controller",
-    "dashboard",
-    "frontend",
-    "js/admin",
-    "npm run test",
-    "phpunit",
-    "react",
-    "tsx",
-    "vitest",
-    "workbench",
-)
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +172,34 @@ def poll_lane_state(
         f"lane_prompt.py --check failed (exit {result.returncode}):\n"
         f"{result.stderr.strip()}"
     )
+
+
+def _fetch_mcp_lane_params(orchestrator_root: Path, task_ref: str, lane_id: str) -> dict[str, Any]:
+    """Fetch dynamic lane parameters (model, backend, reasoning_effort) from MCP."""
+    try:
+        # Avoid circular or heavy imports at module level
+        from agent_handoff_mcp import api
+        from agent_handoff_mcp.config import RuntimeConfig
+        
+        config = RuntimeConfig(workspace_root=orchestrator_root)
+        api.configure_runtime(config)
+        
+        res = api.list_worktree_lanes(task_ref=task_ref)
+        data = json.loads(res)
+        if not data.get("ok"):
+            return {}
+            
+        lanes = data.get("lanes", [])
+        for lane in lanes:
+            if lane.get("lane_id") == lane_id:
+                return {
+                    "model": lane.get("model"),
+                    "backend": lane.get("backend"),
+                    "reasoning_effort": lane.get("reasoning_effort"),
+                }
+    except Exception:
+        pass
+    return {}
 
 
 def has_actionable_work(
@@ -376,6 +376,7 @@ def _observability_entry(
     cycle: int,
     phase: str,
     backend: str,
+    model: str | None = None,
     requested_reasoning_effort: str,
     effective_reasoning_effort: str,
     telemetry: dict[str, Any],
@@ -389,6 +390,7 @@ def _observability_entry(
         "cycle": cycle,
         "phase": phase,
         "backend": backend,
+        "model": model,
         "requested_reasoning_effort": requested_reasoning_effort,
         "effective_reasoning_effort": effective_reasoning_effort,
         "thread_id": telemetry.get("thread_id"),
@@ -432,6 +434,7 @@ def _record_observability(
     cycle: int,
     phase: str,
     backend: str,
+    model: str | None = None,
     requested_reasoning_effort: str,
     effective_reasoning_effort: str,
     telemetry: dict[str, Any],
@@ -450,6 +453,7 @@ def _record_observability(
         cycle=cycle,
         phase=phase,
         backend=backend,
+        model=model,
         requested_reasoning_effort=requested_reasoning_effort,
         effective_reasoning_effort=effective_reasoning_effort,
         telemetry=telemetry,
@@ -476,6 +480,7 @@ def _record_observability(
         cycle=cycle,
         phase=phase,
         backend=backend,
+        model=model,
         requested_reasoning_effort=requested_reasoning_effort,
         effective_reasoning_effort=effective_reasoning_effort,
         token_usage=entry["token_usage"],
@@ -505,59 +510,6 @@ def _patch_result(path: Path, overrides: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, indent=2))
 
 
-def _resolve_reasoning_effort(
-    *,
-    orchestrator_root: Path,
-    task_ref: str,
-    lane_id: str,
-    requested: str,
-    cycle: int,
-    prompt_override: str | None,
-) -> tuple[str | None, list[str]]:
-    normalized = str(requested or "inherit").strip().lower()
-    if normalized in {"inherit", ""}:
-        return None, ["inherit existing Codex/default reasoning effort"]
-    if normalized != "auto":
-        return normalized, [f"explicit override: {normalized}"]
-
-    score = 0
-    reasons: list[str] = []
-    if cycle > 0:
-        score += 2
-        reasons.append("follow-up review/fix cycle")
-    if prompt_override:
-        score += 2
-        reasons.append("fix prompt active")
-
-    try:
-        from lane_manifest import get_lane_config
-
-        lane = get_lane_config(task_ref, lane_id, orchestrator_root=str(orchestrator_root)) or {}
-    except Exception:
-        lane = {}
-
-    objective = str(lane.get("objective") or "").strip().lower()
-    owned_paths = [str(item).strip().lower() for item in lane.get("owned_paths", []) if str(item).strip()]
-    test_commands = [str(item).strip().lower() for item in lane.get("test_commands", []) if str(item).strip()]
-    haystack = "\n".join([lane_id.lower(), objective, *owned_paths, *test_commands])
-
-    if any(marker in haystack for marker in _AUTO_HIGH_MARKERS):
-        score += 2
-        reasons.append("backend/orchestration-heavy lane")
-    elif any(marker in haystack for marker in _AUTO_MEDIUM_MARKERS):
-        score += 1
-        reasons.append("application-layer implementation lane")
-
-    docs_only = bool(owned_paths) and all(path.startswith("docs/") for path in owned_paths)
-    if docs_only:
-        score -= 1
-        reasons.append("docs-only scope")
-
-    if score >= 2:
-        return "high", reasons or ["auto-selected high"]
-    if score <= 0:
-        return "low", reasons or ["auto-selected low"]
-    return "medium", reasons or ["auto-selected medium"]
 
 
 # ---------------------------------------------------------------------------
@@ -578,6 +530,7 @@ def worker_loop(
     backend: str = "codex-cli",
     session_mode: str = "fresh_turn",
     reasoning_effort: str = "inherit",
+    model: str | None = None,
     codex_bin: str | None = None,
     codex_args: list[str] | None = None,
     dry_run: bool = False,
@@ -585,7 +538,7 @@ def worker_loop(
     """Main daemon loop.  Returns 0 on clean handoff, 1 on failure."""
     # Lazy-import lane_exec and review_runner to keep module importable
     # without heavy deps at test time.
-    from lane_exec import build_fix_prompt, find_codex, run_lane_exec
+    from lane_exec import build_fix_prompt, run_lane_exec
     from review_runner import run_review
 
     log_dir = orchestrator_root / "logs" / "worker-daemon"
@@ -597,7 +550,7 @@ def worker_loop(
 
     log("INFO", "daemon_start", task_ref=task_ref, single_pass=single_pass,
         max_review_cycles=max_review_cycles, backend=backend, session_mode=session_mode,
-        reasoning_effort=reasoning_effort)
+        reasoning_effort=reasoning_effort, model=model)
     if existing_status.get("state") != "handoff_failed":
         _write_worker_status(
             state_dir,
@@ -608,10 +561,8 @@ def worker_loop(
             summary="Worker daemon started and is preparing its lane-scoped runtime.",
         )
 
-    codex = None
-    if backend == "codex-cli":
-        codex = find_codex(codex_bin)
-        log("INFO", "codex_found", codex_bin=codex)
+    # Note: codex_bin discovery is now handled by the BackendAdapter.
+    # We pass codex_bin through to run_lane_exec if provided.
     dormant_state: str | None = None
     MAX_HANDOFF_RETRIES = 3
     handoff_retry_count = 0
@@ -712,22 +663,23 @@ def worker_loop(
             log("INFO", "dormant_exited", previous_state=dormant_state, reason=wake_reason)
             dormant_state = None
 
-        handoff_retry_count = 0
-        log("INFO", "work_detected")
-        _write_worker_status(
-            state_dir,
-            lane_id,
-            task_ref=task_ref,
-            session=session,
-            state="executing",
-            summary="Worker accepted actionable lane work and is preparing execution.",
-        )
-
         final_result_path = None
         handoff_exit = 1
         last_findings: list[dict[str, Any]] = []
 
         for cycle in range(max_review_cycles):
+            # M-3: Fetch dynamic overrides from MCP at the START of each cycle
+            mcp_params = _fetch_mcp_lane_params(orchestrator_root, task_ref, lane_id)
+            if mcp_params.get("backend"):
+                log("INFO", "mcp_backend_override", old=backend, new=mcp_params["backend"])
+                backend = str(mcp_params["backend"])
+            if mcp_params.get("model"):
+                log("INFO", "mcp_model_override", old=model, new=mcp_params["model"])
+                model = str(mcp_params["model"])
+            if mcp_params.get("reasoning_effort"):
+                log("INFO", "mcp_effort_override", old=reasoning_effort, new=mcp_params["reasoning_effort"])
+                reasoning_effort = str(mcp_params["reasoning_effort"])
+
             log("INFO", "cycle_start", cycle=cycle)
             _write_worker_status(
                 state_dir,
@@ -766,7 +718,14 @@ def worker_loop(
                         error=(base_result.stderr or base_result.stdout or "").strip()[:200],
                     )
 
-            cycle_reasoning_effort, effort_reasons = _resolve_reasoning_effort(
+            # M-4: Use adapter to resolve reasoning effort (backend-agnostic)
+            from backend_registry import get_adapter
+            adapter_kwargs = {}
+            if backend == "codex-cli":
+                adapter_kwargs = {"codex_bin": codex_bin, "codex_args": codex_args}
+            
+            adapter = get_adapter(backend, **adapter_kwargs)
+            cycle_reasoning_effort, effort_reasons = adapter.resolve_reasoning_effort(
                 orchestrator_root=orchestrator_root,
                 task_ref=task_ref,
                 lane_id=lane_id,
@@ -797,6 +756,7 @@ def worker_loop(
                         cycle=cycle,
                         phase=phase,
                         backend=str(kw.get("backend") or backend),
+                        model=model,
                         requested_reasoning_effort=execution_requested_effort,
                         effective_reasoning_effort=execution_effective_effort,
                         telemetry=kw,
@@ -818,7 +778,8 @@ def worker_loop(
                     backend=backend,
                     session_mode=session_mode,
                     reasoning_effort=cycle_reasoning_effort,
-                    codex_bin=codex,
+                    model=model,
+                    codex_bin=codex_bin,
                     codex_args=codex_args,
                     prompt_override=prompt_override,
                     progress_callback=_worker_progress,
@@ -907,6 +868,7 @@ def worker_loop(
                     orchestrator_root=orchestrator_root,
                     backend=backend,
                     reasoning_effort=cycle_reasoning_effort,
+                    model=model,
                     record_findings=True,
                     dry_run=dry_run,
                     progress_callback=_worker_progress,
@@ -1110,6 +1072,8 @@ def _parse_args() -> argparse.Namespace:
                         help="Explicit path to the codex binary.")
     parser.add_argument("--codex-args", default=None,
                         help="Extra args for codex exec (space-separated).")
+    parser.add_argument("--model", default=None,
+                        help="Explicit model to use (e.g. gpt-5.4-mini).")
     parser.add_argument("--dry-run", action="store_true",
                         help="Skip Codex execution and simulate results.")
     return parser.parse_args()
@@ -1148,6 +1112,7 @@ def main() -> int:
             backend=args.backend,
             session_mode=args.session_mode,
             reasoning_effort=args.reasoning_effort,
+            model=args.model,
             codex_bin=args.codex_bin,
             codex_args=codex_args,
             dry_run=args.dry_run,

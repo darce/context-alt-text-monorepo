@@ -14,12 +14,13 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from backend_registry import get_adapter
 from backend_registry import get_backend_choices
 from backend_registry import get_backend_spec
-from backend_registry import resolve_bridge
 from backend_registry import validate_backend
 from _env import WORKER_REASONING_EFFORT_CHOICES
-from _env import apply_codex_runtime_hints
+from _env import apply_backend_runtime_hints
+from lane_manifest import get_lane_config
 
 REPO_ROOT = SCRIPT_DIR.parents[1]
 RULES_DIR = REPO_ROOT / "docs" / "agentic" / "rules"
@@ -237,113 +238,8 @@ def _generate_finding_id(lane_id: str | None, index: int, finding: dict[str, Any
 # ---------------------------------------------------------------------------
 
 
-def _codex_exec(prompt: str, worktree_path: Path) -> dict[str, Any]:
-    """Execute codex with the review prompt and output schema, return parsed JSON."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        schema_file = Path(tmpdir) / "review_schema.json"
-        result_file = Path(tmpdir) / "review_result.json"
-        prompt_file = Path(tmpdir) / "review_prompt.md"
-
-        schema_file.write_text(json.dumps(REVIEW_OUTPUT_SCHEMA, indent=2))
-        prompt_file.write_text(prompt)
-
-        codex_path = _find_codex_path()
-        cmd = [
-            codex_path,
-            "exec",
-            "-C",
-            str(worktree_path),
-            "--output-schema",
-            str(schema_file),
-            "-o",
-            str(result_file),
-            "-",
-        ]
-
-        with prompt_file.open("r") as stdin_fh:
-            completed = subprocess.run(
-                cmd,
-                stdin=stdin_fh,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-
-        if completed.returncode != 0:
-            raise RuntimeError(
-                f"codex exec failed (exit {completed.returncode}):\n"
-                f"stderr: {completed.stderr.strip()}\n"
-                f"stdout: {completed.stdout.strip()}"
-            )
-
-        if not result_file.is_file():
-            raise RuntimeError("codex exec did not produce a result file.")
-
-        raw = result_file.read_text()
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"codex exec produced invalid JSON: {exc}\nRaw output: {raw[:500]}") from exc
-
-        if not isinstance(payload, dict):
-            raise RuntimeError(f"codex exec returned non-object JSON: {type(payload).__name__}")
-
-        return payload
 
 
-def _subagent_exec(
-    backend_name: str,
-    prompt: str,
-    worktree_path: Path,
-    *,
-    env: dict[str, str] | None = None,
-    telemetry_callback: Callable[[dict[str, Any]], None] | None = None,
-) -> dict[str, Any]:
-    """Execute the optional host-provided Codex subagent bridge for review."""
-    runner = resolve_bridge(backend_name)
-
-    runner_kwargs: dict[str, Any] = {
-        "prompt": prompt,
-        "schema": REVIEW_OUTPUT_SCHEMA,
-        "cwd": str(worktree_path),
-    }
-    if env is not None:
-        runner_kwargs["env"] = env
-    if telemetry_callback is not None:
-        runner_kwargs["telemetry_callback"] = telemetry_callback
-    try:
-        payload = runner(**runner_kwargs)
-    except TypeError as exc:
-        if "telemetry_callback" in runner_kwargs and "telemetry_callback" in str(exc):
-            runner_kwargs.pop("telemetry_callback", None)
-            try:
-                payload = runner(**runner_kwargs)
-            except TypeError as inner_exc:
-                if env is None or "env" not in str(inner_exc):
-                    raise
-                payload = runner(prompt=prompt, schema=REVIEW_OUTPUT_SCHEMA, cwd=str(worktree_path))
-        else:
-            if env is None or "env" not in str(exc):
-                raise
-            payload = runner(prompt=prompt, schema=REVIEW_OUTPUT_SCHEMA, cwd=str(worktree_path))
-    if isinstance(payload, str):
-        try:
-            payload = json.loads(payload)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"{backend_name} backend returned invalid JSON: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise RuntimeError(
-            f"{backend_name} backend returned non-object payload: {type(payload).__name__}"
-        )
-    return payload
-
-
-def _find_codex_path() -> str:
-    """Locate the codex binary via the canonical :func:`lane_exec.find_codex`."""
-    if str(SCRIPT_DIR) not in sys.path:
-        sys.path.insert(0, str(SCRIPT_DIR))
-    from lane_exec import find_codex
-    return find_codex()
 
 # ---------------------------------------------------------------------------
 # Result validation
@@ -455,12 +351,25 @@ def run_review(
     orchestrator_root: Path | None = None,
     backend: str = "codex-cli",
     reasoning_effort: str | None = None,
+    model: str | None = None,
     record_findings: bool = False,
     dry_run: bool = False,
     progress_callback: Callable[..., None] | None = None,
 ) -> dict[str, Any]:
     """Run a full review cycle: discover changes, build prompt, execute Codex, validate, optionally record."""
-    backend_name = validate_backend(backend)
+    # 1. Load manifest for overrides
+    lane_cfg = {}
+    if task_ref and lane_id:
+        lane_cfg = get_lane_config(task_ref, lane_id, orchestrator_root=str(orchestrator_root) if orchestrator_root else None) or {}
+
+    # Priority: CLI > Manifest > Default
+    backend_name = backend
+    if backend_name == "codex-cli" and lane_cfg.get("preferred_backend"):
+        backend_name = str(lane_cfg["preferred_backend"])
+    backend_name = validate_backend(backend_name)
+
+    model_name = model or lane_cfg.get("preferred_model")
+
     env = None
     if orchestrator_root is not None:
         from _env import pythonpath_env
@@ -469,7 +378,7 @@ def run_review(
     elif reasoning_effort:
         env = {}
     if env is not None:
-        apply_codex_runtime_hints(env, reasoning_effort=reasoning_effort)
+        apply_backend_runtime_hints(env, reasoning_effort=reasoning_effort)
     changed = _changed_files(worktree_path)
     stat = _diff_stat(worktree_path)
     guides = _detect_stack_guides(changed)
@@ -492,25 +401,18 @@ def run_review(
             "stack_guides": guides,
         }
 
-    if get_backend_spec(backend_name).kind == "bridge":
-        telemetry_callback = None
-        if progress_callback is not None:
-            def telemetry_callback(telemetry: dict[str, Any]) -> None:
-                progress_callback(
-                    "subagent_turn_complete",
-                    backend=backend_name,
-                    phase="review",
-                    **telemetry,
-                )
-        raw_result = _subagent_exec(
-            backend_name,
-            prompt,
-            worktree_path,
-            env=env,
-            telemetry_callback=telemetry_callback,
-        )
-    else:
-        raw_result = _codex_exec(prompt, worktree_path)
+    # Get adapter and execute
+    adapter = get_adapter(backend_name)
+    result = adapter.execute(
+        prompt=prompt,
+        schema=REVIEW_OUTPUT_SCHEMA,
+        worktree_path=worktree_path,
+        model=model_name,
+        reasoning_effort=reasoning_effort,
+        env=env,
+        progress_callback=progress_callback,
+    )
+    raw_result = result.raw_payload
     validated = _validate_review_result(raw_result)
 
     output: dict[str, Any] = {
@@ -570,6 +472,7 @@ def _parse_args() -> argparse.Namespace:
         choices=WORKER_REASONING_EFFORT_CHOICES,
         help="Optional reasoning effort hint for codex-subagent review turns.",
     )
+    run_parser.add_argument("--model", help="Explicit model to use (e.g. gpt-5.4-mini).")
     run_parser.add_argument(
         "--record-findings",
         action="store_true",
@@ -606,6 +509,7 @@ def main() -> int:
         orchestrator_root=orchestrator_root,
         backend=args.backend,
         reasoning_effort=args.reasoning_effort,
+        model=args.model,
         record_findings=args.record_findings,
         dry_run=args.dry_run,
     )

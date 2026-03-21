@@ -8,6 +8,7 @@ from .api import (
     archive_task_state,
     build_handoff_mcp,
     configure_runtime,
+    dispatch_lane_work,
     export_handoff_state,
     generate_current_task_md,
     get_handoff_dashboard,
@@ -37,6 +38,7 @@ from .api import (
     run_structured_turn,
     run_doctor,
     set_handoff_state,
+    switch_task,
     update_lane_message,
     update_next_actions,
     update_review_finding,
@@ -124,6 +126,9 @@ def _build_parser() -> argparse.ArgumentParser:
     lane_upsert_parser.add_argument("--objective")
     lane_upsert_parser.add_argument("--owner-agent")
     lane_upsert_parser.add_argument("--status", default="planned")
+    lane_upsert_parser.add_argument("--model")
+    lane_upsert_parser.add_argument("--backend")
+    lane_upsert_parser.add_argument("--reasoning-effort", choices=WORKER_REASONING_EFFORT_CHOICES)
     lane_upsert_parser.add_argument("--notes")
 
     lane_list_parser = subparsers.add_parser("lane-list")
@@ -258,6 +263,13 @@ def _build_parser() -> argparse.ArgumentParser:
     export_parser.add_argument("--output-path")
     export_parser.add_argument("--no-markdown", action="store_true")
 
+    dispatch_parser = subparsers.add_parser("dispatch-lane-work")
+    dispatch_parser.add_argument("--task-ref")
+    dispatch_parser.add_argument("--lane-id", required=True)
+    dispatch_parser.add_argument("--model")
+    dispatch_parser.add_argument("--backend")
+    dispatch_parser.add_argument("--reasoning-effort", choices=WORKER_REASONING_EFFORT_CHOICES)
+
     import_parser = subparsers.add_parser("import")
     import_parser.add_argument("--input-path", required=True)
     import_parser.add_argument("--mode", default="merge")
@@ -270,6 +282,11 @@ def _build_parser() -> argparse.ArgumentParser:
     archive_parser.add_argument("--clear-active-if-matches", action="store_true")
     archive_parser.add_argument("--prune-working-rows", action="store_true")
     archive_parser.add_argument("--allow-destructive-clear", action="store_true")
+
+    switch_parser = subparsers.add_parser("switch", help="Switch active task (auto-archives the outgoing task).")
+    switch_parser.add_argument("task_ref", help="Task reference to activate.")
+    switch_parser.add_argument("--objective", help="Override objective (auto-resolved from archive if omitted).")
+    switch_parser.add_argument("--status", default="in_progress")
 
     orchestrator_start_parser = subparsers.add_parser("orchestrator-start")
     orchestrator_start_parser.add_argument("--task-ref", required=True)
@@ -295,6 +312,7 @@ def _build_parser() -> argparse.ArgumentParser:
     worker_start_parser.add_argument("--task-ref", required=True)
     worker_start_parser.add_argument("--lane-id", required=True)
     worker_start_parser.add_argument("--backend", default="codex-subagent")
+    worker_start_parser.add_argument("--model")
     worker_start_parser.add_argument("--poll-interval", type=int, default=30)
     worker_start_parser.add_argument("--single-pass", action="store_true")
     worker_start_parser.add_argument("--session")
@@ -327,6 +345,7 @@ def _build_parser() -> argparse.ArgumentParser:
     worker_start_all_parser = subparsers.add_parser("worker-start-all")
     worker_start_all_parser.add_argument("--task-ref", required=True)
     worker_start_all_parser.add_argument("--backend", default="codex-subagent")
+    worker_start_all_parser.add_argument("--model")
     worker_start_all_parser.add_argument("--poll-interval", type=int, default=30)
     worker_start_all_parser.add_argument("--single-pass", action="store_true")
     worker_start_all_parser.add_argument("--session-mode", default="fresh_turn", choices=("fresh_turn", "shared_lane"))
@@ -414,6 +433,9 @@ def main() -> None:
                 objective=args.objective,
                 owner_agent=args.owner_agent,
                 status=args.status,
+                model=args.model,
+                backend=args.backend,
+                reasoning_effort=args.reasoning_effort,
                 notes=args.notes,
             )
         )
@@ -626,6 +648,17 @@ def main() -> None:
             )
         )
         return
+    if args.command == "dispatch-lane-work":
+        _print_json(
+            dispatch_lane_work(
+                task_ref=args.task_ref,
+                lane_id=args.lane_id,
+                model=args.model,
+                backend=args.backend,
+                reasoning_effort=args.reasoning_effort,
+            )
+        )
+        return
     if args.command == "archive":
         _print_json(
             archive_task_state(
@@ -634,6 +667,15 @@ def main() -> None:
                 clear_active_if_matches=args.clear_active_if_matches,
                 prune_working_rows=args.prune_working_rows,
                 allow_destructive_clear=args.allow_destructive_clear,
+            )
+        )
+        return
+    if args.command == "switch":
+        _print_json(
+            switch_task(
+                task_ref=args.task_ref,
+                objective=args.objective,
+                status=args.status,
             )
         )
         return
@@ -672,6 +714,7 @@ def main() -> None:
                 session=args.session,
                 session_mode=args.session_mode,
                 reasoning_effort=args.reasoning_effort,
+                model=args.model,
             )
         )
         return
@@ -703,6 +746,7 @@ def main() -> None:
                 single_pass=args.single_pass,
                 session_mode=args.session_mode,
                 reasoning_effort=args.reasoning_effort,
+                model=args.model,
             )
         )
         return

@@ -57,28 +57,40 @@ Review findings:
 
 Lifecycle:
 
-- `orchestrator_start`
+- `orchestrator_start` (with optional `model`, `backend`)
 - `orchestrator_status`
 - `orchestrator_stop`
 - `orchestrator_pause`
 - `orchestrator_resume`
-- `worker_start`
+- `orchestrator_single_cycle`
+- `worker_start` (with optional `model`, `backend`, `reasoning_effort`)
 - `worker_status`
 - `worker_stop`
 - `worker_resume`
-- `worker_start_all`
+- `worker_event_history`
+- `worker_start_all` (with optional `model`, `backend`)
 - `run_structured_turn`
+- `dispatch_lane_work` (new: assign `model`, `backend`, `reasoning_effort` to a lane)
+- `list_available_backends` (new: list registered execution backends)
 - `handoff_close_check`
 - `generate_current_task_md`
 - `export_handoff_state`
 - `import_handoff_state`
 - `archive_task_state`
+- `switch_task`
 - `get_handoff_dashboard`
+
+Plan cursors:
+
+- `get_plan_cursor`
+- `list_plan_cursors`
+- `upsert_plan_cursor`
 
 ## Request Shape Notes
 
 - Write tools target the active task only.
-- To write against a different task, switch active state first with `set_handoff_state(...)`.
+- To switch between tasks, use `switch_task(task_ref)`. It auto-archives the outgoing task (full snapshot) and activates the target, restoring the objective from its archive when not provided. Idempotent if the target is already active.
+- For in-place updates to the *current* task (status, objective change), use `set_handoff_state(...)` directly.
 - `set_handoff_state` requires `expected_revision` for updates.
 - The shared actor shape may include `lane_id` in addition to `agent`, `branch`, and `commit_sha`. When present, lane-aware write tools persist it on decisions, tests, blockers, actions, and review findings.
 - `record_review_finding` accepts optional `details={ line_start?, line_end?, fix? }`.
@@ -97,6 +109,22 @@ Lifecycle:
 - `orchestrator_start` / `single-cycle` support `worker_start_mode`. Use `mcp` for the default MCP-first worker pool behavior, or `manual` when the host should keep worker startup in shell space.
 - A recorded `handoff_failed` worker state means the implementation/review turn already completed and the saved result must be retried or inspected without silently rerunning the same lane assignment.
 
+### BackendAdapter Protocol
+
+All execution backends MUST implement the `BackendAdapter` protocol defined in `scripts/mcp/backend_adapter.py`. This ensures consistent handling of `execute()` and `resolve_reasoning_effort()` across Codex, Claude, and local models.
+
+### Tool Signatures (Implementation Details)
+
+- `switch_task(task_ref: string, objective: string = None, status: string = "in_progress", actor: object = None)` -> auto-archives outgoing task, activates target, restores objective from archive
+- `orchestrator_start(task_ref: string, backend: string, poll_interval: float, single_pass: bool, model: string = None)`
+- `orchestrator_single_cycle(task_ref: string, backend: string, model: string = None, worker_start_mode: string = "mcp")` -> runs one dispatch+poll+intake+verify cycle
+- `worker_start(task_ref: string, lane_id: string, backend: string, poll_interval: float, single_pass: bool, session_mode: string, model: string = None, reasoning_effort: string = None)`
+- `worker_event_history(task_ref: string, lane_id: string, limit: int = 20)` -> recent worker lifecycle events
+- `worker_start_all(task_ref: string, backend: string, poll_interval: float, single_pass: bool, session_mode: string, model: string = None)`
+- `run_structured_turn(prompt: string, schema: object, cwd: string, backend: string, env: dict = None, model: string = None, reasoning_effort: string = None, timeout_seconds: float = 120.0)`
+- `dispatch_lane_work(task_ref: string, lane_id: string, model: string = None, backend: string = None, reasoning_effort: string = None)`
+- `list_available_backends()` -> `list<string>`
+
 ## CLI Fallback
 
 Primary entrypoints:
@@ -110,11 +138,14 @@ Fallback subcommands:
 - `state`
 - `dashboard`
 - `set`
+- `switch`
 - `decision`
 - `action`
 - `lane-upsert`
 - `lane-list`
 - `lane-activity`
+- `lane-brief`
+- `lane-brief-list`
 - `blocker`
 - `test`
 - `lane-report`
@@ -131,6 +162,12 @@ Fallback subcommands:
 - `export`
 - `import`
 - `archive`
+- `dispatch-lane-work`
+- `single-cycle`
+- `orchestrator-start`, `orchestrator-status`, `orchestrator-stop`, `orchestrator-pause`, `orchestrator-resume`
+- `worker-start`, `worker-status`, `worker-stop`, `worker-resume`, `worker-start-all`
+- `worker-event-history`
+- `run-structured-turn`
 
 ## HTTP Transport
 

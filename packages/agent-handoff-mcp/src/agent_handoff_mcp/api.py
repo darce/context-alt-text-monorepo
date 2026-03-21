@@ -36,6 +36,7 @@ handoff_close_check = core.handoff_close_check
 export_handoff_state = core.export_handoff_state
 import_handoff_state = core.import_handoff_state
 archive_task_state = core.archive_task_state
+switch_task = core.switch_task
 get_handoff_dashboard = core.get_handoff_dashboard
 set_handoff_state = core.set_handoff_state
 get_handoff_state = core.get_handoff_state
@@ -88,6 +89,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "export_handoff_state": "Export the task handoff state to a portable JSON snapshot.",
     "import_handoff_state": "Import a previously exported handoff state snapshot into the local database.",
     "archive_task_state": "Archive completed task state from the live handoff tables into archive storage.",
+    "switch_task": "Switch the active task in one step: auto-archives the outgoing task and activates the target, restoring its objective from the archive if available.",
     "get_handoff_dashboard": "Return a broader handoff dashboard view across task state, lanes, findings, blockers, and reports.",
     "orchestrator_start": "Start the orchestrator daemon for the authoritative checkout and return its PID and lock path.",
     "orchestrator_status": "Return orchestrator daemon runtime status, including pause state, PID, last event, and cycle count.",
@@ -102,6 +104,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "worker_start_all": "Start worker daemons for all lanes declared in the task manifest and return per-lane results.",
     "run_structured_turn": "Execute one synchronous structured bridge turn through a registered non-CLI backend.",
     "orchestrator_single_cycle": "Run one complete orchestrator cycle synchronously (dispatch, poll, intake, verify) and return the result.",
+    "dispatch_lane_work": "Update lane dispatch parameters (model, backend, effort) for the next execution cycle.",
+    "list_available_backends": "List supported execution backends and their capabilities.",
 }
 
 
@@ -288,6 +292,7 @@ def orchestrator_start(
     single_pass: bool = False,
     worker_start_mode: str = "mcp",
     worker_reasoning_effort: str = "auto",
+    model: str | None = None,
 ) -> str:
     paths = _orchestrator_paths()
     try:
@@ -326,6 +331,8 @@ def orchestrator_start(
         "--worker-reasoning-effort",
         worker_reasoning_effort,
     ]
+    if model:
+        cmd.extend(["--model", model])
     if single_pass:
         cmd.append("--single-pass")
     log_dir = paths["log_dir"]
@@ -458,6 +465,7 @@ def orchestrator_single_cycle(
     timeout_seconds: float = 300.0,
     worker_start_mode: str = "mcp",
     worker_reasoning_effort: str = "auto",
+    model: str | None = None,
 ) -> str:
     """Run one orchestrator cycle synchronously (dispatch, poll, intake, verify)."""
     paths = _orchestrator_paths()
@@ -485,6 +493,8 @@ def orchestrator_single_cycle(
         worker_reasoning_effort,
         "--single-pass",
     ]
+    if model:
+        cmd.extend(["--model", model])
     if dry_run:
         cmd.append("--dry-run")
     try:
@@ -525,6 +535,7 @@ def worker_start(
     session: str | None = None,
     session_mode: str = "fresh_turn",
     reasoning_effort: str = "inherit",
+    model: str | None = None,
 ) -> str:
     paths = _worker_paths()
     try:
@@ -557,6 +568,7 @@ def worker_start(
         backend=backend_name,
         session_mode=session_mode,
         reasoning_effort=reasoning_effort,
+        model=model,
         poll_interval=poll_interval,
         single_pass=single_pass,
     )
@@ -633,6 +645,7 @@ def worker_start_all(
     single_pass: bool = False,
     session_mode: str = "fresh_turn",
     reasoning_effort: str = "inherit",
+    model: str | None = None,
 ) -> str:
     try:
         lane_manifest = _import_scripts_mcp_module("lane_manifest")
@@ -686,6 +699,7 @@ def worker_start_all(
                     single_pass=single_pass,
                     session_mode=session_mode,
                     reasoning_effort=reasoning_effort,
+                    model=model,
                 )
             )
         except Exception as exc:
@@ -787,6 +801,61 @@ def run_structured_turn(
     return core._json_response({"ok": True, "backend": backend_name, "result": payload})
 
 
+def dispatch_lane_work(
+    lane_id: str,
+    model: str | None = None,
+    backend: str | None = None,
+    reasoning_effort: str | None = None,
+    task_ref: str | None = None,
+    start_worker: bool = False,
+) -> str:
+    with core._get_db_connection() as conn:
+        resolved_task_ref = core._resolve_task_ref(conn, task_ref)
+        lane_row = core._get_lane_row(conn, resolved_task_ref, lane_id)
+        if lane_row is None:
+            return core._json_response({"ok": False, "error": f"Lane '{lane_id}' not found."})
+
+        result = core.upsert_worktree_lane(
+            lane_id=lane_id,
+            worktree_path=lane_row["worktree_path"],
+            branch=lane_row["branch"],
+            title=lane_row["title"],
+            objective=lane_row["objective"],
+            owner_agent=lane_row["owner_agent"],
+            model=model,
+            backend=backend,
+            reasoning_effort=reasoning_effort,
+            status=lane_row["status"],
+            notes=lane_row["notes"],
+            task_ref=resolved_task_ref,
+        )
+        if start_worker:
+            worker_start(
+                task_ref=resolved_task_ref,
+                lane_id=lane_id,
+                backend=backend or lane_row["backend"] or "codex-subagent",
+                model=model or lane_row["model"],
+                reasoning_effort=reasoning_effort or lane_row["reasoning_effort"] or "inherit",
+            )
+        return result
+
+
+def list_available_backends() -> str:
+    try:
+        backend_registry = _import_scripts_mcp_module("backend_registry")
+        backends = {}
+        for name, spec in backend_registry.BACKENDS.items():
+            backends[name] = {
+                "kind": spec.kind,
+                "description": spec.description,
+                "supports_reasoning_effort": spec.capabilities.supports_reasoning_effort,
+                "supports_sync_turn": spec.capabilities.supports_sync_turn,
+            }
+        return core._json_response({"ok": True, "backends": backends})
+    except Exception as exc:
+        return core._json_response({"ok": False, "error": str(exc)})
+
+
 def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
     configure_runtime(config)
     mcp = FastMCP(
@@ -830,6 +899,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
         export_handoff_state,
         import_handoff_state,
         archive_task_state,
+        switch_task,
         get_handoff_dashboard,
         orchestrator_start,
         orchestrator_status,
@@ -844,6 +914,8 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
         worker_resume,
         worker_start_all,
         run_structured_turn,
+        dispatch_lane_work,
+        list_available_backends,
     ]:
         mcp.add_tool(tool)
     return mcp

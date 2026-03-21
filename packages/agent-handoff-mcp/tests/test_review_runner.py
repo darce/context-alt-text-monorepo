@@ -96,7 +96,6 @@ def test_backend_choices_come_from_registry() -> None:
     module = _load_review_runner_module()
     assert "codex-cli" in module.BACKEND_CHOICES
     assert "codex-subagent" in module.BACKEND_CHOICES
-    assert "copilot-host" in module.BACKEND_CHOICES
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +314,8 @@ def test_run_review_dry_run_returns_full_shape(tmp_path: Path) -> None:
 
     with mock.patch.object(module, "_changed_files", return_value=["a.py"]), \
          mock.patch.object(module, "_diff_stat", return_value="1 file changed"), \
-         mock.patch.object(module, "_detect_stack_guides", return_value=["rules/testing-python.md"]):
+         mock.patch.object(module, "_detect_stack_guides", return_value=["rules/testing-python.md"]), \
+         mock.patch.object(module, "get_lane_config", return_value={}):
         result = module.run_review(
             worktree_path=tmp_path,
             lane_id="test-lane",
@@ -329,6 +329,38 @@ def test_run_review_dry_run_returns_full_shape(tmp_path: Path) -> None:
     assert "prompt" in result
     assert result["changed_files"] == ["a.py"]
     assert result["stack_guides"] == ["rules/testing-python.md"]
+
+
+def test_run_review_delegates_to_adapter(tmp_path: Path) -> None:
+    module = _load_review_runner_module()
+    import unittest.mock as mock
+
+    raw_result = {
+        "findings": [],
+        "summary": "Clean review.",
+    }
+    mock_result = mock.Mock()
+    mock_result.to_dict.return_value = raw_result
+    mock_result.raw_payload = raw_result
+    mock_adapter = mock.Mock()
+    mock_adapter.execute.return_value = mock_result
+
+    with (
+        mock.patch.object(module, "_changed_files", return_value=["src/main.py"]),
+        mock.patch.object(module, "_diff_stat", return_value="1 file changed"),
+        mock.patch.object(module, "_detect_stack_guides", return_value=["branch-review-python.md"]),
+        mock.patch.object(module, "get_adapter", return_value=mock_adapter),
+        mock.patch.object(module, "get_lane_config", return_value={}),
+    ):
+        result = module.run_review(
+            worktree_path=tmp_path,
+            lane_id="backend-domain",
+            backend="codex-cli",
+        )
+
+    assert result["summary"] == "Clean review."
+    assert result["converged"] is True
+    mock_adapter.execute.assert_called_once()
 
 
 def test_run_review_record_findings_records_ids_and_line_refs(tmp_path: Path) -> None:
@@ -354,11 +386,17 @@ def test_run_review_record_findings_records_ids_and_line_refs(tmp_path: Path) ->
         ],
         "summary": "One medium finding.",
     }
+    mock_result = mock.Mock()
+    mock_result.to_dict.return_value = raw_result
+    mock_result.raw_payload = raw_result
+    mock_adapter = mock.Mock()
+    mock_adapter.execute.return_value = mock_result
 
     with mock.patch.object(module, "_changed_files", return_value=["src/main.py"]), \
          mock.patch.object(module, "_diff_stat", return_value="1 file changed"), \
          mock.patch.object(module, "_detect_stack_guides", return_value=["branch-review-python.md"]), \
-         mock.patch.object(module, "_codex_exec", return_value=raw_result), \
+         mock.patch.object(module, "get_adapter", return_value=mock_adapter), \
+         mock.patch.object(module, "get_lane_config", return_value={}), \
          mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}):
         result = module.run_review(
             worktree_path=tmp_path,
@@ -375,80 +413,3 @@ def test_run_review_record_findings_records_ids_and_line_refs(tmp_path: Path) ->
     assert kwargs["details"]["line_start"] == 10
     assert kwargs["details"]["line_end"] == 12
     assert kwargs["details"]["fix"] == "Validate the payload before use."
-
-
-def test_run_review_subagent_backend_uses_subagent_exec(tmp_path: Path) -> None:
-    module = _load_review_runner_module()
-    import unittest.mock as mock
-
-    raw_result = {
-        "findings": [],
-        "summary": "Clean review.",
-    }
-
-    with (
-        mock.patch.object(module, "_changed_files", return_value=["src/main.py"]),
-        mock.patch.object(module, "_diff_stat", return_value="1 file changed"),
-        mock.patch.object(module, "_detect_stack_guides", return_value=["branch-review-python.md"]),
-        mock.patch.object(module, "_subagent_exec", return_value=raw_result) as mock_subagent_exec,
-        mock.patch.object(module, "_codex_exec") as mock_codex_exec,
-    ):
-        result = module.run_review(
-            worktree_path=tmp_path,
-            lane_id="backend-domain",
-            backend="codex-subagent",
-        )
-
-    assert result["summary"] == "Clean review."
-    assert result["converged"] is True
-    mock_subagent_exec.assert_called_once()
-    assert mock_subagent_exec.call_args.args[0] == "codex-subagent"
-    mock_codex_exec.assert_not_called()
-
-
-def test_run_review_subagent_backend_passes_runtime_env(tmp_path: Path) -> None:
-    module = _load_review_runner_module()
-    import unittest.mock as mock
-
-    raw_result = {
-        "findings": [],
-        "summary": "Clean review.",
-    }
-
-    with (
-        mock.patch.object(module, "_changed_files", return_value=["src/main.py"]),
-        mock.patch.object(module, "_diff_stat", return_value="1 file changed"),
-        mock.patch.object(module, "_detect_stack_guides", return_value=["branch-review-python.md"]),
-        mock.patch.object(module, "_subagent_exec", return_value=raw_result) as mock_subagent_exec,
-    ):
-        module.run_review(
-            worktree_path=tmp_path,
-            lane_id="backend-domain",
-            task_ref="phase-5-retention-export-and-audit-controls",
-            orchestrator_root=REPO_ROOT,
-            backend="codex-subagent",
-            reasoning_effort="xhigh",
-        )
-
-    assert mock_subagent_exec.call_args.args[0] == "codex-subagent"
-    env = mock_subagent_exec.call_args.kwargs["env"]
-    assert env["TMPDIR"].endswith("/.task-state/tmp/backend-domain")
-    assert env["PYENV_VERSION"] == "description-service"
-    assert env["CODEX_REASONING_EFFORT"] == "xhigh"
-
-
-def test_subagent_exec_falls_back_when_bridge_does_not_accept_env(tmp_path: Path) -> None:
-    module = _load_review_runner_module()
-    import unittest.mock as mock
-
-    def legacy_runner(*, prompt: str, schema: dict[str, Any], cwd: str) -> dict[str, Any]:
-        return {"findings": [], "summary": "Clean review."}
-
-    fake_runner = mock.Mock(side_effect=legacy_runner)
-
-    with mock.patch.object(module, "resolve_bridge", return_value=fake_runner):
-        result = module._subagent_exec("codex-subagent", "Prompt", tmp_path, env={"TMPDIR": "/tmp/lane"})
-
-    assert result == {"findings": [], "summary": "Clean review."}
-    assert fake_runner.call_count == 2
-    assert "env" not in fake_runner.call_args.kwargs

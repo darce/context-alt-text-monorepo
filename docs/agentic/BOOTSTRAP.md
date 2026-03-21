@@ -93,7 +93,14 @@ Daemon-8 extended that surface with orchestration controls:
 - `orchestrator_stop`
 - `orchestrator_pause`
 - `orchestrator_resume`
+- `worker_start` (with optional `model`, `backend`, `reasoning_effort`)
+- `worker_start_all` (with optional `model`, `backend`)
+- `worker_status`
+- `worker_stop`
+- `worker_resume`
 - `run_structured_turn`
+- `dispatch_lane_work`
+- `list_available_backends`
 
 These tools are intended for in-app agents that already have MCP access to the
 authoritative checkout. `run_structured_turn` is bridge-only and rejects
@@ -102,7 +109,7 @@ authoritative checkout. `run_structured_turn` is bridge-only and rejects
 Example CLI equivalents:
 
 ```bash
-agent-handoff-mcp --workspace-root "$(pwd)" orchestrator-start --task-ref <task-ref> --backend codex-cli
+105: agent-handoff-mcp --workspace-root "$(pwd)" orchestrator-start --task-ref <task-ref> --backend codex-cli --model o3-mini
 agent-handoff-mcp --workspace-root "$(pwd)" orchestrator-status
 agent-handoff-mcp --workspace-root "$(pwd)" orchestrator-pause
 agent-handoff-mcp --workspace-root "$(pwd)" orchestrator-resume
@@ -111,7 +118,8 @@ agent-handoff-mcp --workspace-root "$(pwd)" run-structured-turn \
   --prompt-file /tmp/prompt.md \
   --schema-file /tmp/schema.json \
   --cwd /absolute/path/to/worktree \
-  --backend codex-subagent
+  --backend codex-subagent \
+  --model gpt-5.4-mini
 ```
 
 For Codex app sessions on the same machine, prefer the checked-in project-scoped
@@ -163,6 +171,16 @@ Handoff guard commands:
 - `make handoff-close-check` runs `handoff_close_check(enforce=True)` for the active task.
 - `make handoff-integrity-check` runs the CLI parser/lifecycle guard used by CI.
 
+### Phase 5 Lifecycle
+
+Phase 5 (Verification & Handoff) follows implementation:
+
+1. **5.1 Cross-Lane Verification**: `make check-all` from the root.
+2. **5.2 Documentation Audit**: Verify `docs/`, `CURRENT_TASK.md`, and `CHANGELOG`.
+3. **5.3 Handoff Closure**: `agent-handoff-mcp handoff-close-check --task-ref <task>`.
+
+174: **BackendAdapter Protocol**: Handled in `scripts/mcp/backend_adapter.py`. All backends (Codex, Claude, Local) must implement this protocol for `execute()` and reasoning effort resolution. The `adapters/` directory contains specific implementations (e.g., `claude_code.py`).
+
 ### Handoff State Defaults
 
 - SQLite path: `.task-state/handoff.db` (local workspace state; authoritative source of truth)
@@ -173,7 +191,8 @@ Handoff guard commands:
   - tests: `3`
   - findings: `10`
 - Write tools (`record_decision`, `update_next_actions`, `record_test_result`, `report_blocker`, `record_review_finding`, `update_review_finding`, `reopen_review_finding`) target the active task only.
-- To write to a different task, switch active state first with `set_handoff_state(...)`.
+- To switch between tasks, use `switch_task(task_ref)`. It auto-archives the outgoing task and restores the target's objective from its archive. This replaces the multi-step `archive_task_state` + `set_handoff_state` workflow.
+- For in-place updates to the *current* task (status, objective change), use `set_handoff_state(...)` directly.
 - Optional write provenance is passed as `actor={ "agent"?: str, "branch"?: str, "commit_sha"?: str }`.
 - Optional review finding details are passed as `details={ "line_start"?: int, "line_end"?: int, "fix"?: str }`.
 - `record_review_finding` is unique per `(task_ref, finding_id)`; re-recording the same logical finding updates the existing row and reopens it.

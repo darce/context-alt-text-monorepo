@@ -369,6 +369,22 @@ def _apply_guidance_resolution(
     for message_id in resolution.close_dispatch_ids:
         update_lane_message(message_id, "closed", task_ref=task_ref)
 
+    from lane_manifest import get_lane_config
+    lane_cfg = get_lane_config(task_ref, resolution.lane_id) or {}
+    
+    # Derive owner_agent from backend if not already set in DB
+    existing_owner = _normalize_text(lane.get("owner_agent"))
+    backend = _normalize_text(lane_cfg.get("preferred_backend"))
+    
+    owner_agent = existing_owner
+    if not owner_agent:
+        if backend and "claude" in backend.lower():
+            owner_agent = "claude"
+        elif backend and "codex" in backend.lower():
+            owner_agent = "codex"
+        else:
+            owner_agent = backend or "codex-subagent"
+
     upsert_worktree_lane(
         task_ref=task_ref,
         lane_id=resolution.lane_id,
@@ -376,7 +392,7 @@ def _apply_guidance_resolution(
         branch=str(lane.get("branch") or ""),
         title=_normalize_text(lane.get("title")) or None,
         objective=_normalize_text(lane.get("objective")) or None,
-        owner_agent=_normalize_text(lane.get("owner_agent")) or "codex",
+        owner_agent=owner_agent,
         status=resolution.lane_status,
         notes=resolution.lane_notes,
     )

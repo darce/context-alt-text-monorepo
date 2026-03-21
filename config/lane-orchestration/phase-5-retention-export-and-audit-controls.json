@@ -2,12 +2,7 @@
   "task_ref": "phase-5-retention-export-and-audit-controls",
   "task_plan_path": "docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md",
   "default_done_definition": "Ready for orchestrator branch review with lane-local verification complete.",
-  "merge_order": [
-    "backend-domain",
-    "backend-http",
-    "wp-proxy",
-    "frontend"
-  ],
+  "merge_order": ["backend-domain", "backend-http", "wp-proxy", "frontend"],
   "heading_to_lane": {
     "Phase 1: Backend -- Tenant Policy Model and Audit Event Storage": "backend-domain",
     "Phase 2: Backend -- Export and Purge Service Layer": "backend-domain",
@@ -105,10 +100,7 @@
         "cd apps/prototype-description-service && PYENV_VERSION=description-service pytest recognition/tests/unit/test_retention_policy.py recognition/tests/unit/test_audit_events.py recognition/tests/unit/test_export_service.py recognition/tests/unit/test_purge_service.py",
         "cd apps/prototype-description-service && PYENV_VERSION=description-service mypy recognition/domain/services recognition/infrastructure/repositories recognition/config/settings.py"
       ],
-      "capability_tags": [
-        "postgres-ready",
-        "reset-bootstrap"
-      ],
+      "capability_tags": ["postgres-ready", "reset-bootstrap"],
       "preflight_commands": [
         "cd apps/prototype-description-service && test -f .env && set -a && source .env && set +a && command -v pg_isready >/dev/null && pg_isready -h \"${PGHOST:-localhost}\" -p \"${PGPORT:-5432}\" -U \"${PGUSER:-postgres}\" -d \"${DB_NAME:-postgres}\""
       ],
@@ -127,11 +119,7 @@
         "docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md"
       ],
       "commit_subject": "update retention domain services",
-      "route_hints": [
-        "backend-domain",
-        "backend domain",
-        "domain/schema lane"
-      ],
+      "route_hints": ["backend-domain", "backend domain", "domain/schema lane"],
       "guidance_fallbacks": [
         {
           "match_any": [
@@ -143,9 +131,7 @@
           "message": "Implement the backend-domain snapshot provenance/disposal slice in apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py and related backend-domain-owned tests/services. Add snapshot_generation_id stamping/return for get_snapshot(), exclude disposed rows from snapshot reads, and keep HTTP analyze.py changes out of this lane."
         }
       ],
-      "tooling_paths": [
-        "apps/prototype-description-service/Makefile"
-      ]
+      "tooling_paths": ["apps/prototype-description-service/Makefile"]
     },
     "backend-http": {
       "branch": "codex/p5-backend-http",
@@ -176,15 +162,9 @@
         "apps/prototype-description-service/recognition/tests/api/test_retention_api.py"
       ],
       "commit_subject": "update retention HTTP routes",
-      "route_hints": [
-        "backend-http",
-        "backend http",
-        "http lane"
-      ],
+      "route_hints": ["backend-http", "backend http", "http lane"],
       "guidance_fallbacks": [],
-      "tooling_paths": [
-        "apps/prototype-description-service/Makefile"
-      ]
+      "tooling_paths": ["apps/prototype-description-service/Makefile"]
     },
     "wp-proxy": {
       "branch": "codex/p5-wp-proxy",
@@ -211,12 +191,7 @@
         "apps/prototype-wp-alt-context/tests/Unit"
       ],
       "commit_subject": "update retention proxy",
-      "route_hints": [
-        "wp-proxy",
-        "wp proxy",
-        "wordpress proxy",
-        "proxy lane"
-      ],
+      "route_hints": ["wp-proxy", "wp proxy", "wordpress proxy", "proxy lane"],
       "guidance_fallbacks": [],
       "tooling_paths": []
     },
@@ -225,9 +200,7 @@
       "worktree_path": "{orchestrator_root}-p5-frontend",
       "title": "Frontend",
       "objective": "Phase 5 retention admin UI slice.",
-      "owned_paths": [
-        "apps/prototype-wp-alt-context/js/**"
-      ],
+      "owned_paths": ["apps/prototype-wp-alt-context/js/**"],
       "required_docs": [
         "docs/agentic/instructions.md",
         "docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md"
@@ -240,15 +213,9 @@
         "Do not edit PHP or Python files.",
         "Do not edit shared task docs unless explicitly assigned."
       ],
-      "commit_paths": [
-        "apps/prototype-wp-alt-context/js"
-      ],
+      "commit_paths": ["apps/prototype-wp-alt-context/js"],
       "commit_subject": "update retention admin UI",
-      "route_hints": [
-        "frontend",
-        "frontend lane",
-        "ui lane"
-      ],
+      "route_hints": ["frontend", "frontend lane", "ui lane"],
       "guidance_fallbacks": [],
       "tooling_paths": []
     }

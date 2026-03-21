@@ -422,6 +422,8 @@
       "worktree_path": "{orchestrator_root}-rswr2-backend-domain",
       "title": "Backend domain",
       "objective": "Backend schema, domain-service, contracts, and orchestration-tooling slice for remaining sync/workbench/retention work.",
+      "preferred_model": "gpt-5.3-codex",
+      "preferred_reasoning_effort": "medium",
       "owned_paths": [
         "apps/prototype-description-service/db/**",
         "apps/prototype-description-service/recognition/domain/**",
@@ -491,6 +493,8 @@
       "worktree_path": "{orchestrator_root}-rswr2-backend-http",
       "title": "Backend HTTP",
       "objective": "Backend HTTP router, schema, and API-test slice for remaining sync/workbench/retention work.",
+      "preferred_model": "gpt-5.4-mini",
+      "preferred_reasoning_effort": "medium",
       "app_root": "apps/prototype-description-service",
       "owned_paths": [
         "apps/prototype-description-service/recognition/interface_adapters/http/**",
@@ -531,6 +535,8 @@
       "worktree_path": "{orchestrator_root}-rswr2-wp-proxy",
       "title": "WP proxy",
       "objective": "WordPress proxy, sync-projection, and PHP unit-test slice for remaining sync/workbench/retention work.",
+      "preferred_model": "gpt-5.4-mini",
+      "preferred_reasoning_effort": "medium",
       "app_root": "apps/prototype-wp-alt-context",
       "owned_paths": [
         "apps/prototype-wp-alt-context/src/**",
@@ -571,6 +577,8 @@
       "worktree_path": "{orchestrator_root}-rswr2-frontend",
       "title": "Frontend",
       "objective": "React admin UI, hooks, and TypeScript test slice for remaining sync/workbench/retention work.",
+      "preferred_model": "gpt-5.4-mini",
+      "preferred_reasoning_effort": "low",
       "app_root": "apps/prototype-wp-alt-context",
       "owned_paths": [
         "apps/prototype-wp-alt-context/js/**"

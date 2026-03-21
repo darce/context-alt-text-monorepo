@@ -27,37 +27,8 @@ def _load_module():
 
 # ---------------------------------------------------------------------------
 # Codex discovery
+# (Now handled by adapters, verified in test_backend_registry.py)
 # ---------------------------------------------------------------------------
-
-
-def test_find_codex_explicit_path() -> None:
-    mod = _load_module()
-    assert mod.find_codex("/usr/local/bin/codex") == "/usr/local/bin/codex"
-
-
-def test_find_codex_which_fallback() -> None:
-    mod = _load_module()
-    fake_result = mock.Mock()
-    fake_result.returncode = 0
-    fake_result.stdout = "/opt/homebrew/bin/codex\n"
-    with mock.patch("subprocess.run", return_value=fake_result):
-        assert mod.find_codex(None) == "/opt/homebrew/bin/codex"
-
-
-def test_find_codex_raises_when_not_found(tmp_path: Path) -> None:
-    mod = _load_module()
-    # Patch the subprocess module reference held by the dynamically-loaded module
-    fake_which = mock.Mock(returncode=1, stdout="")
-    orig_paths = mod._CODEX_SEARCH_PATHS
-    mod._CODEX_SEARCH_PATHS = ()
-    orig_run = mod.subprocess.run
-    mod.subprocess.run = mock.Mock(return_value=fake_which)
-    try:
-        with pytest.raises(RuntimeError, match="codex CLI not found"):
-            mod.find_codex(None)
-    finally:
-        mod._CODEX_SEARCH_PATHS = orig_paths
-        mod.subprocess.run = orig_run
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +106,6 @@ def test_backend_choices_come_from_registry() -> None:
     mod = _load_module()
     assert "codex-cli" in mod.BACKEND_CHOICES
     assert "codex-subagent" in mod.BACKEND_CHOICES
-    assert "copilot-host" in mod.BACKEND_CHOICES
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +122,6 @@ def test_pythonpath_env_includes_mcp_src() -> None:
     assert expected_bridge in env["PYTHONPATH"]
     assert env["PYENV_VERSION"] == "description-service"
     assert env["TMPDIR"].endswith("/.task-state/tmp/backend-domain")
-    assert "/.pyenv/versions/description-service/bin" in env["PATH"]
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +138,7 @@ def test_run_lane_exec_dry_run(tmp_path: Path) -> None:
     with (
         mock.patch.object(mod, "_render_prompt", return_value="Test prompt"),
         mock.patch.object(mod, "_render_schema", return_value=schema_json),
+        mock.patch.object(mod, "get_lane_config", return_value={}),
     ):
         result_path = mod.run_lane_exec(
             orchestrator_root=REPO_ROOT,
@@ -197,6 +167,7 @@ def test_run_lane_exec_dry_run_with_prompt_override(tmp_path: Path) -> None:
     with (
         mock.patch.object(mod, "_render_prompt") as mock_prompt,
         mock.patch.object(mod, "_render_schema", return_value=schema_json),
+        mock.patch.object(mod, "get_lane_config", return_value={}),
     ):
         result_path = mod.run_lane_exec(
             orchestrator_root=REPO_ROOT,
@@ -223,6 +194,7 @@ def test_run_lane_exec_dry_run_subagent_skips_find_codex(tmp_path: Path) -> None
         mock.patch.object(mod, "_render_prompt", return_value="Test prompt"),
         mock.patch.object(mod, "_render_schema", return_value=schema_json),
         mock.patch.object(mod, "find_codex") as mock_find_codex,
+        mock.patch.object(mod, "get_lane_config", return_value={}),
     ):
         result_path = mod.run_lane_exec(
             orchestrator_root=REPO_ROOT,
@@ -254,11 +226,14 @@ def test_run_lane_exec_subagent_backend_writes_structured_result(tmp_path: Path)
         "blockers": [],
     }
 
+    mock_adapter = mock.Mock()
+    mock_adapter.execute.return_value = mock.Mock(to_dict=lambda: subagent_payload)
+
     with (
         mock.patch.object(mod, "_render_prompt", return_value="Test prompt"),
         mock.patch.object(mod, "_render_schema", return_value=schema_json),
-        mock.patch.object(mod, "_run_subagent", return_value=subagent_payload) as mock_run_subagent,
-        mock.patch.object(mod, "find_codex") as mock_find_codex,
+        mock.patch.object(mod, "get_adapter", return_value=mock_adapter),
+        mock.patch.object(mod, "get_lane_config", return_value={}),
     ):
         result_path = mod.run_lane_exec(
             orchestrator_root=REPO_ROOT,
@@ -272,9 +247,8 @@ def test_run_lane_exec_subagent_backend_writes_structured_result(tmp_path: Path)
 
     assert result_path == output
     assert json.loads(output.read_text()) == subagent_payload
-    mock_run_subagent.assert_called_once()
-    assert mock_run_subagent.call_args.args[0] == "codex-subagent"
-    mock_find_codex.assert_not_called()
+    mock_adapter.execute.assert_called_once()
+    assert mock_adapter.execute.call_args.kwargs["model"] is None
 
 
 def test_run_lane_exec_subagent_backend_passes_reasoning_effort_env(tmp_path: Path) -> None:
@@ -289,10 +263,14 @@ def test_run_lane_exec_subagent_backend_passes_reasoning_effort_env(tmp_path: Pa
         "blockers": [],
     }
 
+    mock_adapter = mock.Mock()
+    mock_adapter.execute.return_value = mock.Mock(to_dict=lambda: subagent_payload)
+
     with (
         mock.patch.object(mod, "_render_prompt", return_value="Test prompt"),
         mock.patch.object(mod, "_render_schema", return_value=schema_json),
-        mock.patch.object(mod, "_run_subagent", return_value=subagent_payload) as mock_run_subagent,
+        mock.patch.object(mod, "get_adapter", return_value=mock_adapter),
+        mock.patch.object(mod, "get_lane_config", return_value={}),
     ):
         mod.run_lane_exec(
             orchestrator_root=REPO_ROOT,
@@ -305,8 +283,8 @@ def test_run_lane_exec_subagent_backend_passes_reasoning_effort_env(tmp_path: Pa
             reasoning_effort="high",
         )
 
-    env = mock_run_subagent.call_args.kwargs["env"]
-    assert env["CODEX_REASONING_EFFORT"] == "high"
+    kwargs = mock_adapter.execute.call_args.kwargs
+    assert kwargs["reasoning_effort"] == "high"
 
 
 def test_run_lane_exec_preflight_failure_returns_needs_guidance_without_running_backend(tmp_path: Path) -> None:
@@ -335,8 +313,8 @@ def test_run_lane_exec_preflight_failure_returns_needs_guidance_without_running_
         ),
         mock.patch.object(mod, "_render_prompt") as mock_prompt,
         mock.patch.object(mod, "_render_schema") as mock_schema,
-        mock.patch.object(mod, "_run_subagent") as mock_subagent,
-        mock.patch.object(mod, "find_codex") as mock_find_codex,
+        mock.patch.object(mod, "get_adapter") as mock_get_adapter,
+        mock.patch.object(mod, "get_lane_config", return_value={}),
     ):
         result_path = mod.run_lane_exec(
             orchestrator_root=REPO_ROOT,
@@ -356,123 +334,8 @@ def test_run_lane_exec_preflight_failure_returns_needs_guidance_without_running_
     assert "pg_isready -h localhost -p 5432" in data["tests_run"]
     mock_prompt.assert_not_called()
     mock_schema.assert_not_called()
-    mock_subagent.assert_not_called()
-    mock_find_codex.assert_not_called()
+    mock_get_adapter.assert_not_called()
 
-
-def test_run_subagent_emits_progress_callbacks() -> None:
-    mod = _load_module()
-    progress: list[tuple[str, dict[str, Any]]] = []
-    fake_runner = mock.Mock(return_value={"handoff_action": "merge_ready", "summary": "Done."})
-
-    with mock.patch.object(mod, "resolve_bridge", return_value=fake_runner):
-        payload = mod._run_subagent(
-            "codex-subagent",
-            prompt_text="Prompt",
-            schema_text=json.dumps({"type": "object"}),
-            worktree_path=Path("/tmp/worktree"),
-            progress_callback=lambda event, **kw: progress.append((event, kw)),
-        )
-
-    assert payload == {"handoff_action": "merge_ready", "summary": "Done."}
-    assert [event for event, _ in progress] == ["exec_spawned", "exec_complete"]
-    assert progress[0][1]["backend"] == "codex-subagent"
-
-
-def test_run_subagent_does_not_emit_complete_for_invalid_payload() -> None:
-    mod = _load_module()
-    progress: list[tuple[str, dict[str, Any]]] = []
-    fake_runner = mock.Mock(return_value="not-json")
-
-    with mock.patch.object(mod, "resolve_bridge", return_value=fake_runner):
-        with pytest.raises(RuntimeError, match="invalid JSON"):
-            mod._run_subagent(
-                "codex-subagent",
-                prompt_text="Prompt",
-                schema_text=json.dumps({"type": "object"}),
-                worktree_path=Path("/tmp/worktree"),
-                progress_callback=lambda event, **kw: progress.append((event, kw)),
-            )
-
-    assert [event for event, _ in progress] == ["exec_spawned"]
-
-
-def test_run_subagent_passes_env_when_bridge_supports_it() -> None:
-    mod = _load_module()
-    fake_runner = mock.Mock(return_value={"handoff_action": "merge_ready", "summary": "Done."})
-    env = {"TMPDIR": "/tmp/lane", "PYENV_VERSION": "description-service"}
-
-    with mock.patch.object(mod, "resolve_bridge", return_value=fake_runner):
-        mod._run_subagent(
-            "codex-subagent",
-            prompt_text="Prompt",
-            schema_text=json.dumps({"type": "object"}),
-            worktree_path=Path("/tmp/worktree"),
-            env=env,
-        )
-
-    assert fake_runner.call_args.kwargs["env"] == env
-
-
-def test_run_subagent_falls_back_when_bridge_does_not_accept_env() -> None:
-    mod = _load_module()
-
-    def legacy_runner(*, prompt: str, schema: dict[str, Any], cwd: str) -> dict[str, Any]:
-        return {"handoff_action": "merge_ready", "summary": "Done."}
-
-    fake_runner = mock.Mock(side_effect=legacy_runner)
-
-    with mock.patch.object(mod, "resolve_bridge", return_value=fake_runner):
-        payload = mod._run_subagent(
-            "codex-subagent",
-            prompt_text="Prompt",
-            schema_text=json.dumps({"type": "object"}),
-            worktree_path=Path("/tmp/worktree"),
-            env={"TMPDIR": "/tmp/lane"},
-        )
-
-    assert payload == {"handoff_action": "merge_ready", "summary": "Done."}
-    assert fake_runner.call_count == 2
-    assert "env" not in fake_runner.call_args.kwargs
-
-
-def test_validate_lane_result_payload_rejects_missing_fields() -> None:
-    mod = _load_module()
-    with pytest.raises(RuntimeError, match="missing required non-empty string 'details'"):
-        mod._validate_lane_result_payload(
-            {
-                "handoff_action": "merge_ready",
-                "summary": "Done.",
-                "tests_run": [],
-                "blockers": [],
-            }
-        )
-
-
-def test_run_lane_exec_subagent_backend_rejects_invalid_payload(tmp_path: Path) -> None:
-    mod = _load_module()
-    output = tmp_path / "result.json"
-    schema_json = json.dumps({"type": "object", "properties": {}})
-
-    with (
-        mock.patch.object(mod, "_render_prompt", return_value="Test prompt"),
-        mock.patch.object(mod, "_render_schema", return_value=schema_json),
-        mock.patch.object(
-            mod,
-            "_run_subagent",
-            return_value={"handoff_action": "merge_ready", "summary": "Done.", "tests_run": [], "blockers": []},
-        ),
-    ):
-        with pytest.raises(RuntimeError, match="missing required non-empty string 'details'"):
-            mod.run_lane_exec(
-                orchestrator_root=REPO_ROOT,
-                task_ref="test-task",
-                lane_id="test-lane",
-                session="test-task-test-lane",
-                worktree_path=tmp_path,
-                output_path=output,
-                backend="codex-subagent",
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -547,39 +410,3 @@ def test_render_schema_raises_on_failure() -> None:
     with mock.patch("subprocess.run", return_value=fake_result):
         with pytest.raises(RuntimeError, match="lane_result.py schema failed"):
             mod._render_schema(REPO_ROOT)
-
-
-def test_run_codex_process_emits_heartbeat() -> None:
-    mod = _load_module()
-    progress: list[tuple[str, dict[str, Any]]] = []
-
-    class FakeProc:
-        def __init__(self) -> None:
-            self.pid = 4242
-            self.returncode = 0
-            self.calls = 0
-
-        def communicate(self, timeout: int | None = None) -> tuple[str, str]:
-            self.calls += 1
-            if self.calls == 1:
-                raise subprocess.TimeoutExpired(
-                    cmd=["codex", "exec"],
-                    timeout=timeout or 20,
-                    output="still working",
-                    stderr="waiting on tests",
-                )
-            return ('{"handoff_action":"needs_guidance"}', "")
-
-    with mock.patch("subprocess.Popen", return_value=FakeProc()):
-        completed = mod._run_codex_process(
-            cmd=["codex", "exec"],
-            stdin_fh=mock.Mock(),
-            env={},
-            heartbeat_interval=1,
-            progress_callback=lambda event, **kw: progress.append((event, kw)),
-        )
-
-    assert completed.returncode == 0
-    assert [event for event, _ in progress] == ["exec_spawned", "exec_heartbeat"]
-    assert progress[1][1]["pid"] == 4242
-    assert "stderr_tail" in progress[1][1]

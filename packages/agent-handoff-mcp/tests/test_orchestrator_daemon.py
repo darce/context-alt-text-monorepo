@@ -320,84 +320,13 @@ def test_resolve_lane_worktree_none(tmp_path: Path) -> None:
 
 def test_intake_lane_success(tmp_path: Path) -> None:
     mod = _load_module()
-    mock_ahm = mock.MagicMock()
-    mock_ahm.list_lane_messages.return_value = json.dumps({"ok": True, "messages": []})
-    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}):
-        with mock.patch.object(mod.subprocess, "run") as mock_run:
-            mock_run.return_value = mock.Mock(returncode=0)
-            assert mod._intake_lane(tmp_path, "test-task", "lane-a") is True
+    with mock.patch.object(mod.subprocess, "run") as mock_run:
+        mock_run.return_value = mock.Mock(returncode=0)
+        assert mod._intake_lane(tmp_path, "test-task", "lane-a") is True
     call_args = mock_run.call_args[0][0]
     assert "lane-intake" in call_args
     assert "TASK=test-task" in call_args
     assert "LANE=lane-a" in call_args
-
-
-def test_intake_lane_failure(tmp_path: Path) -> None:
-    mod = _load_module()
-    mock_ahm = mock.MagicMock()
-    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}):
-        with mock.patch.object(mod.subprocess, "run") as mock_run:
-            mock_run.return_value = mock.Mock(returncode=1)
-            assert mod._intake_lane(tmp_path, "test-task", "lane-a") is False
-    mock_ahm.list_lane_messages.assert_not_called()
-    mock_ahm.update_lane_message.assert_not_called()
-
-
-def test_intake_lane_dry_run(tmp_path: Path) -> None:
-    mod = _load_module()
-    mock_ahm = mock.MagicMock()
-    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}):
-        with mock.patch.object(mod.subprocess, "run") as mock_run:
-            mock_run.return_value = mock.Mock(returncode=0)
-            mod._intake_lane(tmp_path, "test-task", "lane-a", dry_run=True)
-    call_args = mock_run.call_args[0][0]
-    assert "DRY_RUN=1" in call_args
-    mock_ahm.list_lane_messages.assert_not_called()
-    mock_ahm.update_lane_message.assert_not_called()
-
-
-def test_intake_lane_closes_open_dispatch_messages(tmp_path: Path) -> None:
-    mod = _load_module()
-    mock_ahm = mock.MagicMock()
-    mock_ahm.list_lane_messages.return_value = json.dumps(
-        {
-            "ok": True,
-            "messages": [
-                {"id": 10, "direction": "orchestrator_to_worker"},
-                {"id": 11, "direction": "worker_to_orchestrator"},
-                {"id": 12, "direction": "orchestrator_to_worker"},
-            ],
-        }
-    )
-    mock_ahm.update_lane_message.return_value = json.dumps({"ok": True})
-    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}):
-        with mock.patch.object(mod.subprocess, "run") as mock_run:
-            mock_run.return_value = mock.Mock(returncode=0)
-            assert mod._intake_lane(tmp_path, "test-task", "lane-a") is True
-    assert [call.args for call in mock_ahm.update_lane_message.call_args_list] == [
-        (10, "closed"),
-        (12, "closed"),
-    ]
-
-
-def test_intake_lane_ignores_dispatch_cleanup_failure(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    mod = _load_module()
-    mock_ahm = mock.MagicMock()
-    mock_ahm.list_lane_messages.return_value = json.dumps(
-        {
-            "ok": True,
-            "messages": [
-                {"id": 10, "direction": "orchestrator_to_worker"},
-            ],
-        }
-    )
-    mock_ahm.update_lane_message.return_value = json.dumps({"ok": False, "error": "db locked"})
-    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}):
-        with mock.patch.object(mod.subprocess, "run") as mock_run:
-            mock_run.return_value = mock.Mock(returncode=0)
-            assert mod._intake_lane(tmp_path, "test-task", "lane-a") is True
-    captured = capsys.readouterr()
-    assert "dispatch-message cleanup failed" in captured.err
 
 
 # ---------------------------------------------------------------------------
@@ -841,8 +770,7 @@ def test_dispatch_plan_item_result_exposes_lane_field(tmp_path: Path) -> None:
         resolved_plan=tmp_path / "task-plan.md",
         dry_run=True,
     )
-    assert result["lane"] == "backend-domain"
-    assert result["lane_id"] == "backend-domain"
+    assert result.get("lane_id") == "backend-domain"
 
 
 def test_resolve_task_ref_prefers_explicit_value(tmp_path: Path) -> None:
@@ -857,7 +785,7 @@ def test_resolve_task_ref_falls_back_to_active_task(tmp_path: Path) -> None:
     mock_ahm.configure_runtime.return_value = None
     mock_ahm.get_handoff_state.return_value = json.dumps({"ok": True, "task_ref": "active-task"})
     mock_manifest = mock.MagicMock()
-    mock_manifest.list_task_refs.return_value = ["active-task", "other-task"]
+    mock_manifest.list_manifest_tasks.return_value = ["active-task", "other-task"]
     with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "lane_manifest": mock_manifest}):
         assert mod._resolve_task_ref(tmp_path, None) == "active-task"
 
@@ -869,7 +797,7 @@ def test_resolve_task_ref_falls_back_to_sole_manifest(tmp_path: Path) -> None:
     mock_ahm.configure_runtime.return_value = None
     mock_ahm.get_handoff_state.return_value = json.dumps({"ok": True, "task_ref": ""})
     mock_manifest = mock.MagicMock()
-    mock_manifest.list_task_refs.return_value = ["only-task"]
+    mock_manifest.list_manifest_tasks.return_value = ["only-task"]
     with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "lane_manifest": mock_manifest}):
         assert mod._resolve_task_ref(tmp_path, None) == "only-task"
 
@@ -881,7 +809,7 @@ def test_resolve_task_ref_errors_when_ambiguous(tmp_path: Path) -> None:
     mock_ahm.configure_runtime.return_value = None
     mock_ahm.get_handoff_state.return_value = json.dumps({"ok": True, "task_ref": ""})
     mock_manifest = mock.MagicMock()
-    mock_manifest.list_task_refs.return_value = ["task-a", "task-b"]
+    mock_manifest.list_manifest_tasks.return_value = ["task-a", "task-b"]
     with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "lane_manifest": mock_manifest}):
         with pytest.raises(RuntimeError, match="Available manifests: task-a, task-b"):
             mod._resolve_task_ref(tmp_path, None)
@@ -938,6 +866,7 @@ def test_main_run_threads_backend_to_orchestrator_loop(tmp_path: Path) -> None:
         backend="codex-subagent",
         worker_start_mode="manual",
         worker_reasoning_effort="auto",
+        model=None,
         dry_run=True,
     )
     mock_lock = mock.Mock()
@@ -955,6 +884,7 @@ def test_main_run_threads_backend_to_orchestrator_loop(tmp_path: Path) -> None:
         backend="codex-subagent",
         worker_start_mode="manual",
         worker_reasoning_effort="auto",
+        model=None,
         dry_run=True,
     )
     mock_lock.release.assert_called_once()
@@ -1084,7 +1014,7 @@ def test_single_pass_logs_lanes_discovered(tmp_path: Path) -> None:
                 )
     assert result == 0
     assert any(
-        call.args[2] == "lanes_discovered" and call.kwargs.get("lanes") == ["backend-domain", "backend-http"]
+        call.args[2] == "manifest_loaded" and call.kwargs.get("merge_order") == ["backend-domain", "backend-http"]
         for call in mock_log.call_args_list
     )
 

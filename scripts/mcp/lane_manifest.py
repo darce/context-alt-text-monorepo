@@ -110,6 +110,17 @@ def validate_manifest(data: dict[str, Any], path: Path) -> dict[str, Any]:
             raise RuntimeError(f"lane '{lane_id}' capability_tags must be a list when present: {path}")
         if "preflight_commands" in lane and not isinstance(lane.get("preflight_commands"), list):
             raise RuntimeError(f"lane '{lane_id}' preflight_commands must be a list when present: {path}")
+        if "preferred_model" in lane and (not isinstance(lane.get("preferred_model"), str) or not str(lane.get("preferred_model")).strip()):
+            raise RuntimeError(f"lane '{lane_id}' preferred_model must be a non-empty string when present: {path}")
+        if "preferred_backend" in lane and (not isinstance(lane.get("preferred_backend"), str) or not str(lane.get("preferred_backend")).strip()):
+            raise RuntimeError(f"lane '{lane_id}' preferred_backend must be a non-empty string when present: {path}")
+        if "preferred_reasoning_effort" in lane:
+            from _env import CODEX_REASONING_EFFORTS
+            effort_val = lane.get("preferred_reasoning_effort")
+            if not isinstance(effort_val, str) or effort_val.strip().lower() not in CODEX_REASONING_EFFORTS:
+                raise RuntimeError(
+                    f"lane '{lane_id}' preferred_reasoning_effort must be one of {CODEX_REASONING_EFFORTS} when present: {path}"
+                )
         if "preflight_failure_summary" in lane and (
             not isinstance(lane.get("preflight_failure_summary"), str)
             or not str(lane.get("preflight_failure_summary")).strip()
@@ -220,6 +231,9 @@ def get_lane_config(task_ref: str, lane_id: str, *, orchestrator_root: str | Non
     result.setdefault("capability_tags", [])
     result.setdefault("preflight_commands", [])
     result.setdefault("guidance_fallbacks", [])
+    result.setdefault("preferred_model", None)
+    result.setdefault("preferred_backend", None)
+    result.setdefault("preferred_reasoning_effort", None)
     if orchestrator_root and isinstance(result.get("worktree_path"), str):
         result["worktree_path"] = expand_path_template(result["worktree_path"], orchestrator_root=orchestrator_root)
     return result

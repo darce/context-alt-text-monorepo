@@ -323,6 +323,7 @@ def test_worker_start_all_skips_lanes_with_unresolved_upstream_dependencies(tmp_
         single_pass=False,
         session_mode="shared_lane",
         reasoning_effort="inherit",
+        model=None,
     )
 
 

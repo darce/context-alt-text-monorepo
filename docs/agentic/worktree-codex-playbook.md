@@ -67,7 +67,7 @@ make lane-refresh TASK=<task> LANE=<lane>                      # Sync lane to ro
 make lane-list                                                 # List all lanes
 make state                                                     # Full MCP state
 make dashboard                                                 # MCP dashboard
-make orchestrator-daemon [TASK=<task>] [BACKEND=codex-cli|codex-subagent]
+make orchestrator-daemon [TASK=<task>] [BACKEND=codex-cli|codex-subagent] [MODEL=gpt-5.4-mini]
 ```
 
 ### Worker one-liners (run from worker worktree)
@@ -78,7 +78,7 @@ make lane-prompt                                               # Render actionab
 make lane-prompt EXTRA_ARGS=--include-lane-history             # Escalate prompt rendering to include recent lane decisions/tests
 make lane-prompt EXTRA_ARGS=--include-global-context           # Escalate prompt rendering to include compact task-wide context
 make lane-check                                                # Run lane tests
-make worker-daemon TASK=<task> LANE=<lane> [BACKEND=codex-cli|codex-subagent]  # Continuous worker polling loop
+make worker-daemon TASK=<task> LANE=<lane> [BACKEND=codex-cli|codex-subagent] [MODEL=gpt-5.4-mini]  # Continuous worker polling loop
 make worker-daemon-status                                      # Inspect lock/PID/log state
 make worker-daemon-stop                                        # Stop the lane daemon
 make worker-daemon-resume                                      # Resume a stopped lane daemon
@@ -95,6 +95,8 @@ Both daemons default to `BACKEND=codex-cli`.
 
 - `BACKEND=codex-cli`: runs the normal `codex exec` subprocess flow.
 - `BACKEND=codex-subagent`: uses the host-provided `codex_subagent_bridge` module instead of spawning `codex exec`.
+- `BACKEND=claude-code`: uses the `claude` CLI (Anthropic) for execution.
+- `BACKEND=local-model-openai`: uses a generic OpenAI-compatible local model API (Ollama, vLLM).
 
 Backend dispatch is now registry-based, not duplicated per caller. The shared
 registry lives at
@@ -102,6 +104,32 @@ registry lives at
 `lane_exec.py`, `review_runner.py`, and the daemon CLI surfaces all read backend
 choices from that registry. New bridge backends should be added there instead of
 editing `if backend == ...` branches in multiple files.
+
+### Model & Reasoning Effort
+
+The orchestrator can control the execution model and reasoning effort for each lane:
+
+- `model`: Explicitly set the LLM to use (e.g. `o3-mini`, `gpt-4o`, `claude-3-5-sonnet`).
+- `reasoning_effort`: Controls the "thinking" budget for supported models. Choices: `low`, `medium`, `high`, or `auto` (default). `auto` uses internal heuristics (e.g., follow-up cycles or backend-heavy tasks escalate to `high`).
+
+These are typically set in the lane manifest but can be overridden via MCP:
+```bash
+agent-handoff-mcp dispatch_lane_work --task-ref <task> --lane-id <lane> --model o3-mini --reasoning-effort high
+```
+
+### Cost-Sensitive Lane Guidance
+
+When dispatching to model-backed lanes (especially high-reasoning ones), provide narrow, actionable briefs to minimize token waste. If a lane is stalled, escalate to an operator instead of re-running expensive high-reasoning turns with the same prompt.
+
+Workers synchronize their internal state with these authoritative MCP values at the start of each execution cycle.
+
+### Agent Configuration Utility
+
+Use `scripts/mcp/generate_agent_config.py` to initialize a worktree with settings derived from the lane manifest:
+
+```bash
+python3 scripts/mcp/generate_agent_config.py --task-ref <task> --lane-id <lane> --output .agent/config.json
+```
 
 Important:
 
@@ -116,23 +144,38 @@ Important:
 - Build and test commands still need to be discoverable by the spawned agent. In practice that means keeping them in the repo instruction surface or rendering them directly into the lane/review prompt.
 - The reference bridge is safe for parallel daemon calls because each `run_subagent()` invocation starts its own short-lived `codex app-server` process; there is no shared in-process session state.
 
-### MCP orchestration commands
+146: 
+147: ### Model Selection Guidance
+148: 
+149: | Backend | Supported Models | Reasoning Effort Support |
+150: | --- | --- | --- |
+151: | `codex-cli` | `gpt-4o`, `gpt-4o-mini`, `o1-preview` | `low`, `medium`, `high` |
+152: | `codex-subagent` | `gpt-4o`, `o1-mini`, `o3-mini` | `low`, `medium`, `high`, `xhigh` |
+153: | `claude-code` | `claude-3-5-sonnet` (default) | Not applicable (model-driven) |
+154: 
+155: **Note:** `xhigh` effort is only supported by the `codex-subagent` bridge today. Using `xhigh` with `codex-cli` will fall back to `high`.
+156: 
+157: ### MCP orchestration commands
 
 For in-app agents that can call MCP tools directly, `agent-handoff-mcp` now exposes
 an orchestration control surface in addition to the existing handoff state tools.
 
-- `orchestrator_start(task_ref, backend, poll_interval, single_pass)`
+- `orchestrator_start(task_ref, backend, poll_interval, single_pass, model=None)`
 - `orchestrator_status()`
 - `orchestrator_stop(force=False)`
 - `orchestrator_pause()`
 - `orchestrator_resume()`
-- `worker_start(task_ref, lane_id, backend, poll_interval, single_pass)`
-- `worker_start(task_ref, lane_id, backend, poll_interval, single_pass, session_mode)`
+- `orchestrator_single_cycle(task_ref, backend, model=None, worker_start_mode="mcp")`
+- `worker_start(task_ref, lane_id, backend, poll_interval, single_pass, session_mode, model=None, reasoning_effort=None)`
 - `worker_status(task_ref, lane_id)`
 - `worker_stop(task_ref, lane_id, force=False)`
 - `worker_resume(task_ref, lane_id)`
-- `worker_start_all(task_ref, backend, poll_interval, single_pass, session_mode)`
-- `run_structured_turn(prompt, schema, cwd, backend, env=None, timeout_seconds=120.0)`
+- `worker_event_history(task_ref, lane_id, limit=20)`
+- `worker_start_all(task_ref, backend, poll_interval, single_pass, session_mode, model=None)`
+- `run_structured_turn(prompt, schema, cwd, backend, env=None, model=None, reasoning_effort=None, timeout_seconds=120.0)`
+- `dispatch_lane_work(task_ref, lane_id, model=None, backend=None, reasoning_effort=None)`
+- `list_available_backends()`
+- `switch_task(task_ref, objective=None, status="in_progress", actor=None)` -- atomically archive+switch active task
 
 Use these when the host agent already has MCP access and you want to avoid driving
 daemon lifecycle through a shell or `run_in_terminal`.
@@ -163,7 +206,7 @@ Important:
 
 ```bash
 cd /Users/daniel/Development/context-alt-text-monorepo
-make lane-open TASK=<task-ref> LANE=<lane>
+MODEL=o3-mini make lane-open TASK=<task-ref> LANE=<lane>
 ```
 
 What this does:
@@ -186,7 +229,7 @@ make lane-inbox           # should show any open dispatches
 To stay in the orchestrator root instead of opening a subshell:
 
 ```bash
-make lane-open TASK=<task-ref> LANE=<lane> ENTER_SHELL=0
+MODEL=o3-mini make lane-open TASK=<task-ref> LANE=<lane> ENTER_SHELL=0
 cd "$(make lane-path TASK=<task-ref> LANE=<lane>)"
 ```
 
@@ -274,6 +317,14 @@ What this does:
 2. Runs `codex exec` with the rendered lane prompt.
 3. Submits the final handoff automatically.
 4. Repeats until stopped.
+
+### Phase 5: Verification & Handoff
+
+Phase 5 represents the final delivery and audit stage:
+
+1. **Sub-Phase 5.1: Cross-Lane Verification.** Once all lanes are merged, run full integration tests (`make check-all`) in the orchestrator root.
+2. **Sub-Phase 5.2: Documentation Audit.** Verify all `docs/`, `CURRENT_TASK.md`, and `CHANGELOG` are consistent with the implemented reality.
+3. **Sub-Phase 5.3: Handoff Closure.** Perform a final `agent-handoff-mcp handoff-close-check --task-ref <task>` to ensure all findings are resolved and provenance is complete.
 
 ### Recipe: In-app orchestration via MCP
 
@@ -535,6 +586,26 @@ make lane-clean TASK=<task-ref> LANE=backend-domain
 
 Restores tooling files (`Makefile`, `scripts/worktree-lane`, templates) to their committed state without touching lane-owned product files.
 
+### Recipe: Codex CLI setup
+
+**Who:** Developer. **When:** First-time setup or on a new machine.
+
+1. **Install globally**: `npm i -g @openai/codex@latest`
+2. **Authenticate**: `codex login`
+3. **Verify status**: `codex login status` (should exit 0)
+4. **Configure profiles**: Edit `~/.codex/config.toml`:
+   ```toml
+   model = "gpt-5.4"
+
+   [profile.mini]
+   model = "gpt-5.4-mini"
+
+   [profile.full]
+   model = "gpt-5.4"
+   ```
+5. **Verify model access**: `codex exec -m gpt-5.4-mini "echo hello"`
+
+
 ### Recipe: Automated worker run (Codex CLI)
 
 **Who:** Orchestrator. **When:** Running a worker non-interactively via `codex exec`.
@@ -555,7 +626,7 @@ What this does:
 To pass extra arguments to `codex exec`:
 
 ```bash
-make lane-run TASK=<task-ref> LANE=frontend CODEX_ARGS='--model o3'
+make lane-run TASK=<task-ref> LANE=frontend MODEL=o3
 ```
 
 ---

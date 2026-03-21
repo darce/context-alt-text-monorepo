@@ -63,25 +63,25 @@ Choose your domain to load targeted context. **Always load the testing guide** a
 
 ### Additional Routing
 
-| Working on...                        | Load                                                                                 |
-| ------------------------------------ | ------------------------------------------------------------------------------------ |
-| Writing tests (any language)         | [rules/testing-principles.md](rules/testing-principles.md) + language-specific guide |
-| React/TypeScript tests (Vitest)      | [rules/testing-typescript.md](rules/testing-typescript.md)                           |
-| Python tests (pytest)                | [rules/testing-python.md](rules/testing-python.md)                                   |
-| PHP tests (PHPUnit)                  | [rules/testing-php.md](rules/testing-php.md)                                         |
-| Workflow, commits, scaffolding       | [rules/development-workflow.md](rules/development-workflow.md)                       |
-| Worktree codex orchestration         | [worktree-codex-playbook.md](worktree-codex-playbook.md)                             |
-| Branch review                        | [rules/branch-review-guide.md](rules/branch-review-guide.md)                         |
-| Planning document review             | [rules/planning-review-guide.md](rules/planning-review-guide.md)                     |
-| Component architecture patterns      | [rules/component-architecture-patterns.md](rules/component-architecture-patterns.md) |
-| Radix UI / accessibility primitives  | [rules/RADIX_UI_COMPONENT_GUIDE.md](rules/RADIX_UI_COMPONENT_GUIDE.md)               |
-| Roster auto-resolve vs pending       | [rules/roster_auto_resolve_behavior.md](rules/roster_auto_resolve_behavior.md)       |
-| Embedding search evolution           | [rules/search_optimizations.md](rules/search_optimizations.md)                       |
-| Detection vs identification boundary | [rules/why-identify-endpoint-exists.md](rules/why-identify-endpoint-exists.md)       |
-| Face/Identity nomenclature (ADR)     | [ADR-001-face-identity-nomenclature.md](ADR-001-face-identity-nomenclature.md)       |
-| MCP tooling / testing commands       | [BOOTSTRAP.md](BOOTSTRAP.md)                                                         |
-| Codex custom MCP attachment          | [codex-custom-mcp-playbook.md](codex-custom-mcp-playbook.md)                         |
-| **Antigravity Agents (`/` cmds)**    | **See `.agent/workflows/` for environment-specific fallbacks and orchestration.**    |
+| Working on...                        | Load                                                                                                        |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| Writing tests (any language)         | [rules/testing-principles.md](rules/testing-principles.md) + language-specific guide                        |
+| React/TypeScript tests (Vitest)      | [rules/testing-typescript.md](rules/testing-typescript.md)                                                  |
+| Python tests (pytest)                | [rules/testing-python.md](rules/testing-python.md)                                                          |
+| PHP tests (PHPUnit)                  | [rules/testing-php.md](rules/testing-php.md)                                                                |
+| Workflow, commits, scaffolding       | [rules/development-workflow.md](rules/development-workflow.md)                                              |
+| Branch review                        | [rules/branch-review-guide.md](rules/branch-review-guide.md)                                                |
+| Planning document review             | [rules/planning-review-guide.md](rules/planning-review-guide.md)                                            |
+| Component architecture patterns      | [rules/component-architecture-patterns.md](rules/component-architecture-patterns.md)                        |
+| Radix UI / accessibility primitives  | [rules/RADIX_UI_COMPONENT_GUIDE.md](rules/RADIX_UI_COMPONENT_GUIDE.md)                                      |
+| Roster auto-resolve vs pending       | [rules/roster_auto_resolve_behavior.md](rules/roster_auto_resolve_behavior.md)                              |
+| Embedding search evolution           | [rules/search_optimizations.md](rules/search_optimizations.md)                                              |
+| Detection vs identification boundary | [rules/why-identify-endpoint-exists.md](rules/why-identify-endpoint-exists.md)                              |
+| Face/Identity nomenclature (ADR)     | [ADR-001-face-identity-nomenclature.md](ADR-001-face-identity-nomenclature.md)                              |
+| MCP tooling / testing commands       | [BOOTSTRAP.md](BOOTSTRAP.md)                                                                                |
+| Codex custom MCP attachment          | [codex-custom-mcp-playbook.md](codex-custom-mcp-playbook.md)                                                |
+| Lane decomposition / orchestration   | [worktree-codex-playbook.md](worktree-codex-playbook.md) + [lane-scoped-context.md](lane-scoped-context.md) |
+| **Antigravity Agents (`/` cmds)**    | **See `.agent/workflows/` for environment-specific fallbacks and orchestration.**                           |
 
 ---
 
@@ -124,9 +124,12 @@ If a task seems to require external changes, STOP and propose an alternative wit
 - Do not relax compliance/lint scripts to silence violations. Fix the offending code.
 - Every `composer`/`npm` gate script must succeed on invocation, not just be defined.
 - **npm** for Node.js (not pnpm). **Composer** for PHP.
-- When editing CSS/SCSS, use existing design tokens or `--acx-*` CSS custom properties for colors instead of raw hex literals. If a needed color token does not exist, add it to the shared token surface first.
+- When editing CSS/SCSS, use existing design tokens (`--acx-*` custom properties) for colors, typography, elevation, radius, and font-weight instead of raw literals. If a needed token does not exist, add it to the shared token surface first. Specifically: `--acx-color-*` or `--acx-gray-*` for colors (no hex literals); `--acx-text-*` for font sizes; `--acx-shadow-*` for box-shadows; `--acx-radius-*` for border-radius; `--acx-font-weight-*` for font weights. Status indicators must pair color with an icon; do not rely on color alone.
 - In TypeScript, use assertion helpers (`asserts value is ...`) for internal invariants and unreachable branches instead of `console.assert` or non-null assertions on API data. Do not use assertion helpers for request/input validation; validate boundary data explicitly.
 - In Python, use `assert` only for narrow internal invariants during development and tests. Do not use `assert` for request validation, external data checks, or behavior that must always execute in production; raise explicit exceptions or HTTP errors instead.
+- Centralize domain status values as enums or `as const` objects (TypeScript), PHP backed enums, or Python `StrEnum`/`IntEnum`. Do not scatter magic string comparisons (`=== 'completed'`, `=== 'clustering'`) across files; import from a single canonical definition and use exhaustive switches where applicable.
+- When a hook, function, or constructor takes more than 8 destructured parameters, group them into 2-3 cohesive typed objects (e.g., state, actions, mutations). This prevents the "parameter slippery slope" that compounds with each new feature.
+- PHP controller methods that run transactions must use a shared `run_transactional(callable)` wrapper instead of inlining START TRANSACTION / COMMIT / ROLLBACK boilerplate.
 - For a full local-only development reset of both databases, use `make reset-local WP_PATH="<wordpress>/app/public" CONFIRM_LOCAL_RESET="RESET"` from the repo root. `WP_PATH` must point to the WordPress directory containing `wp-load.php` (for LocalWP here, typically `/Users/daniel/Development/wp-context-alt-text/app/public`). Never use this against non-local environments.
 
 ### Cross-Branch Regression Guards
@@ -143,9 +146,6 @@ Hard guardrails from real failures in this project:
 8. **Config files: validate at load time.** JSON/YAML config consumed by multiple modules must be structurally validated at load time. Fail fast on missing or malformed required keys instead of silently returning empty defaults.
 9. **No task-specific logic in generic modules.** If a generic utility contains `if task_ref == "some-task"` or hardcoded domain strings for a specific task, extract that logic to a config-driven policy module or the task's manifest. It becomes dead code once the task is done.
 10. **IDE tool output may be stale after external writes.** Editor-integrated `read_file` and `grep_search` tools read from the IDE's in-memory file model, not from disk. After git operations (rebase, cherry-pick, merge, worktree intake) or edits by other agents/terminals, the model can lag behind the filesystem. When a review finding seems surprising, cross-check with a terminal command (`grep -n`, `wc -l`, `sed -n`) before recording it. This caused an entire review cycle of false positives against `scripts/mcp/orchestrator_daemon.py` (IDE showed ~700 lines, disk had 850).
-11. **Merge-ready requires lint/format gates, not just tests.** Before reporting `merge_ready=1` (or equivalent), run the touched stack's lint + format checks (or `make check-all` when cross-stack). We hit a real regression where tests passed but import-order/format gates failed later in `check-all`.
-12. **Lane dispatch must use branch-local reality, not root-branch memory.** A worker worktree only sees files on its own branch. If contracts, stubs, or manifests were added or salvaged on the orchestrator/root branch but not propagated into the lane worktree, treat "missing file / missing surface" reports as real branch-state blockers. Refresh the lane or hold downstream dispatch; do not ask the worker to guess against stale branch state.
-13. **Always try worktree-lane codex-subagent orchestration first for implementation.** Before doing root-branch solo implementation, check whether the task already has a lane manifest or can be lane-scaffolded cheaply. If yes, use MCP-orchestrated `codex-subagent` workers in task worktree lanes as the default execution path. Keep the orchestrator/root checkout for manifest setup, dispatch, intake, verification, and cross-lane coordination. Stay on the root branch only when the task is lane-ineligible, lane setup itself is the blocker, or the user explicitly asks for single-branch work. See [worktree-codex-playbook.md](worktree-codex-playbook.md) for the operational flow.
 
 ### Tool Selection Discipline
 
@@ -222,6 +222,7 @@ Primary binary shape:
 - `agent-handoff-mcp --workspace-root <repo> doctor`
 - `agent-handoff-mcp --workspace-root <repo> state`
 - `agent-handoff-mcp --workspace-root <repo> task <task_ref>`
+- `agent-handoff-mcp --workspace-root <repo> switch <task_ref>`
 
 Before any code exploration:
 
@@ -242,7 +243,8 @@ During work:
 Write-tool targeting rule:
 
 - Write tools target the **active task only** by default.
-- To write against a different task, switch active state first via `set_handoff_state(...)`.
+- To switch between tasks, use `switch_task(task_ref)`. It auto-archives the outgoing task and restores the target's objective from its archive. This replaces the multi-step `archive_task_state` + `set_handoff_state` workflow.
+- For in-place updates to the *current* task (status, objective change), use `set_handoff_state(...)` directly.
 - **Exception — review finding tools**: `update_review_finding`, `reopen_review_finding`, `get_review_finding`, `list_review_findings`, and `get_review_findings_summary` accept an optional `task_ref` parameter. Pass it explicitly to read or write findings on a non-active task without switching active state. This avoids the disruptive active-task switching that multi-task verification workflows otherwise require.
 
 Before final response:
@@ -421,10 +423,10 @@ make lane-clean TASK=phase-5-retention-export-and-audit-controls LANE=backend-ht
 - `make lane-commit` still ignores those tooling paths during its out-of-scope guard so older lane refreshes do not block product commits.
 - `make lane-inbox` is the worker polling command. It reads open `orchestrator_to_worker` lane messages from MCP, then shows the latest worker report, recent lane activity, and git status.
 - `make lane-prompt` renders the actionable lane inbox as a deterministic worker prompt. Use it when starting or re-starting a worker session from current MCP state.
-- `make lane-run` launches a fresh `codex exec` in the lane worktree using that generated prompt. It now expects a structured final handoff payload from the worker and auto-submits either `make lane-handoff` or a blocked `make lane-report` based on that result. This is the robust automation path because it avoids trying to inject text into an already-running interactive session and avoids hand-copying blocked-report text.
-- `make worker-daemon` is the continuous worker-side polling loop. Run it from the worker worktree root with `make worker-daemon TASK=<task-ref> LANE=<lane>`. Set `BACKEND=codex-subagent` to switch execution transport without changing the handoff/worktree model. If you are inside an app subdirectory and that checkout has not yet refreshed a forwarding `worker-daemon` target, use `make -C "$$(git rev-parse --show-toplevel)" worker-daemon TASK=<task-ref> LANE=<lane>` instead.
+- `make lane-run` launches a fresh `codex exec` in the lane worktree using that generated prompt. It now expects a structured final handoff payload from the worker and auto-submits either `make lane-handoff` or a blocked `make lane-report` based on that result. This is the robust automation path because it avoids trying to inject text into an already-running interactive session and avoids hand-copying blocked-report text. Set `BACKEND=codex-subagent` and `MODEL=gpt-5.4-mini` to control execution backend and model.
+- `make worker-daemon` is the continuous worker-side polling loop. Run it from the worker worktree root with `make worker-daemon TASK=<task-ref> LANE=<lane>`. Set `BACKEND=codex-subagent` to switch execution transport without changing the handoff/worktree model. Set `MODEL=gpt-5.4-mini` to override the lane manifest's `preferred_model`. If you are inside an app subdirectory and that checkout has not yet refreshed a forwarding `worker-daemon` target, use `make -C "$$(git rev-parse --show-toplevel)" worker-daemon TASK=<task-ref> LANE=<lane>` instead.
 - `make worker-daemon-status`, `make worker-daemon-stop [FORCE=1]`, `make worker-daemon-resume`, and `make worker-daemon-tail` are the lane-local management commands. They look in the shared orchestrator root for the lock and JSONL log, so you do not need to guess the correct `.task-state` path from inside a worktree.
-- `make orchestrator-daemon` is the shared singleton root-side loop. It does more than polling: it dispatches open handoff items, polls merge-ready reports, intakes eligible lanes, refreshes downstream lanes, and runs verification. Start it from any worktree and it still resolves the same shared orchestrator root state. Use `make handoff-dispatch` when you only want to fan out open work without triggering intake behavior. Set `BACKEND=codex-subagent` to change only the execution backend seam.
+- `make orchestrator-daemon` is the shared singleton root-side loop. It does more than polling: it dispatches open handoff items, polls merge-ready reports, intakes eligible lanes, refreshes downstream lanes, and runs verification. Start it from any worktree and it still resolves the same shared orchestrator root state. Use `make handoff-dispatch` when you only want to fan out open work without triggering intake behavior. Set `BACKEND=codex-subagent` and `MODEL=gpt-5.4-mini` to control the execution backend and model.
 - `make daemon-pause`, `make daemon-resume`, and `make daemon-status` all operate on that same singleton orchestrator state under `$(git rev-parse --git-common-dir)/..`. `make daemon-status` reports the shared state/log paths so you can see exactly which orchestrator root owns the daemon.
 - In MCP-capable hosts, `agent-handoff-mcp` now exposes orchestration commands as an alternative to shell-first Make targets: `orchestrator_start`, `orchestrator_status`, `orchestrator_stop`, `orchestrator_pause`, `orchestrator_resume`, and `run_structured_turn`. Use those when an in-app agent already has MCP access and should control orchestration without `run_in_terminal`. `run_structured_turn` is bridge-only and is not a synchronous wrapper for `codex exec`.
 - Worker daemon progress after `cycle_start` is written to `logs/worker-daemon/worker-<lane>.jsonl`. The foreground terminal now also shows `exec_start`, `exec_spawned`, and periodic `exec_heartbeat` lines so operators can tell a long-running worker is still alive without tailing logs.
@@ -481,8 +483,21 @@ Current `agent-handoff-mcp` capabilities that support this workflow:
 
 Still-useful future `agent-handoff-mcp` improvements:
 
-- a first-class orchestrator brief artifact so worker prompts can be generated and tracked without manual copy/paste
 - lane-scoped dashboard rollups and close-check rules for tasks that intentionally stay split across multiple long-lived worktrees
+
+### Automated Orchestration via Codex Subagents
+
+When the Codex harness is detected (i.e. `agent-handoff-mcp` is running in an MCP-capable host with `codex-subagent-bridge` available), orchestration should prefer MCP worker lifecycle tools over manual shell commands:
+
+1. **Start workers through MCP**: Use `worker_start(task_ref, lane_id, backend="codex-subagent", model="gpt-5.4-mini")` or `worker_start_all(task_ref, backend="codex-subagent", model="gpt-5.4-mini")` instead of `make worker-daemon`. The MCP tools return pid, lock path, and log path for inspection.
+2. **Monitor through MCP**: Use `worker_status(task_ref, lane_id)` instead of `make worker-daemon-status`. Use `orchestrator_status()` instead of `make daemon-status`.
+3. **Control through MCP**: Use `worker_stop(task_ref, lane_id)`, `orchestrator_pause()`, `orchestrator_resume()` instead of Make targets.
+4. **Structured turns**: Use `run_structured_turn(task_ref, lane_id, prompt, backend, model)` for one-shot lane execution when a full daemon loop is not needed.
+5. **Cross-lane briefs**: Use `record_lane_brief(lane_id, subject, payload)` to pass structured dependency summaries between lanes instead of free-form lane messages.
+
+The Make targets remain as fallbacks for shell-only environments and human operators. MCP tools are preferred when the agent has MCP access because they avoid terminal output pollution and keep state changes atomic.
+
+For lane-scoped context construction and prompt budgets, see [lane-scoped-context.md](lane-scoped-context.md). For the full operational playbook, see [worktree-codex-playbook.md](worktree-codex-playbook.md).
 
 ### Branch Review Trigger (MANDATORY)
 

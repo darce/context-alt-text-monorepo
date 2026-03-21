@@ -208,29 +208,29 @@ This task targets the seam, not a specific transport implementation. In other wo
 
 ## Functions to Change
 
-| File                                 | Target                                         | Change                                                                                       | Phase |
-| ------------------------------------ | ---------------------------------------------- | -------------------------------------------------------------------------------------------- | ----- |
-| `mk/lane-guards.mk`                  | `task-guard`                                   | New guard: validates TASK + TASK_LANES only                                                  | 1     |
-| `mk/lane-guards.mk`                  | `lane-orchestrator-guard`                      | Depend on `task-guard` instead of `lane-guard`                                               | 1     |
-| `mk/handoff.mk`                      | `orchestrator-daemon`                          | Omit `--task-ref` when `TASK` is empty so CLI inference can run; no `LANE` requirement       | 2     |
-| `mk/handoff.mk`                      | `daemon-pause`                                 | Use `ORCHESTRATOR_ROOT` consistently under global singleton semantics                        | 3     |
-| `mk/handoff.mk`                      | `daemon-resume`                                | Use `ORCHESTRATOR_ROOT` consistently under global singleton semantics                        | 3     |
-| `mk/handoff.mk`                      | `daemon-status`                                | Use `ORCHESTRATOR_ROOT` consistently under global singleton semantics                        | 3     |
-| `mk/handoff.mk`                      | `list-tasks`                                   | New target: prints `SUPPORTED_TASKS`                                                         | 2     |
-| `Makefile`                           | TASK inference                                 | Add sole-manifest fallback (`SOLE_TASK`) after `ACTIVE_TASK`                                 | 2     |
-| `scripts/mcp/orchestrator_daemon.py` | `_parse_args`                                  | Make `--task-ref` optional; add fallback chain                                               | 2     |
-| `scripts/mcp/orchestrator_daemon.py` | `_resolve_task_ref`                            | New function: CLI arg, then MCP active task, then sole manifest, then fail with listing      | 2     |
-| `scripts/mcp/orchestrator_daemon.py` | `orchestrator_loop`                            | Log discovered lanes at startup                                                              | 4     |
-| `scripts/mcp/orchestrator_daemon.py` | `_dispatch_plan_item`                          | Include `lane` field in dispatch result dict                                                 | 4     |
-| `scripts/mcp/orchestrator_lanes.py`  | `_intake_lane`                                 | After successful intake, close open `orchestrator_to_worker` dispatch messages for that lane | 4     |
-| `scripts/mcp/worker_daemon.py`       | `_cleanup_result_file`                         | New function: delete consumed result JSON after successful handoff                           | 4     |
-| `scripts/mcp/worker_daemon.py`       | `worker_loop`                                  | Call `_cleanup_result_file` after `_run_final_handoff()` returns 0                           | 4     |
-| `mk/lane-lifecycle.mk`               | `lane-dispatch`                                | Add `lane-guard` prerequisite alongside `lane-orchestrator-guard`                            | 1     |
-| `mk/lane-maintenance.mk`             | `lane-commits`, `lane-intake`                  | Add `lane-guard` prerequisite alongside `lane-orchestrator-guard`                            | 1     |
-| `scripts/mcp/lane_exec.py`           | `run_lane_exec`                                | Add `backend` parameter (`codex-cli` / `codex-subagent`); new `_run_subagent()` code path    | 5     |
-| `scripts/mcp/review_runner.py`       | `run_review`                                   | Add `backend` parameter mirroring `lane_exec.py` contract                                    | 5     |
-| `scripts/mcp/worker_daemon.py`       | `_parse_args`, `worker_loop`                   | Thread `--backend` flag through to `run_lane_exec` and `run_review`                          | 5     |
-| `scripts/mcp/orchestrator_daemon.py` | `_parse_args`, `main`                          | Thread `--backend` flag for orchestrator-invoked review/execution                            | 5     |
+| File                                 | Target                        | Change                                                                                       | Phase |
+| ------------------------------------ | ----------------------------- | -------------------------------------------------------------------------------------------- | ----- |
+| `mk/lane-guards.mk`                  | `task-guard`                  | New guard: validates TASK + TASK_LANES only                                                  | 1     |
+| `mk/lane-guards.mk`                  | `lane-orchestrator-guard`     | Depend on `task-guard` instead of `lane-guard`                                               | 1     |
+| `mk/handoff.mk`                      | `orchestrator-daemon`         | Omit `--task-ref` when `TASK` is empty so CLI inference can run; no `LANE` requirement       | 2     |
+| `mk/handoff.mk`                      | `daemon-pause`                | Use `ORCHESTRATOR_ROOT` consistently under global singleton semantics                        | 3     |
+| `mk/handoff.mk`                      | `daemon-resume`               | Use `ORCHESTRATOR_ROOT` consistently under global singleton semantics                        | 3     |
+| `mk/handoff.mk`                      | `daemon-status`               | Use `ORCHESTRATOR_ROOT` consistently under global singleton semantics                        | 3     |
+| `mk/handoff.mk`                      | `list-tasks`                  | New target: prints `SUPPORTED_TASKS`                                                         | 2     |
+| `Makefile`                           | TASK inference                | Add sole-manifest fallback (`SOLE_TASK`) after `ACTIVE_TASK`                                 | 2     |
+| `scripts/mcp/orchestrator_daemon.py` | `_parse_args`                 | Make `--task-ref` optional; add fallback chain                                               | 2     |
+| `scripts/mcp/orchestrator_daemon.py` | `_resolve_task_ref`           | New function: CLI arg, then MCP active task, then sole manifest, then fail with listing      | 2     |
+| `scripts/mcp/orchestrator_daemon.py` | `orchestrator_loop`           | Log discovered lanes at startup                                                              | 4     |
+| `scripts/mcp/orchestrator_daemon.py` | `_dispatch_plan_item`         | Include `lane` field in dispatch result dict                                                 | 4     |
+| `scripts/mcp/orchestrator_lanes.py`  | `_intake_lane`                | After successful intake, close open `orchestrator_to_worker` dispatch messages for that lane | 4     |
+| `scripts/mcp/worker_daemon.py`       | `_cleanup_result_file`        | New function: delete consumed result JSON after successful handoff                           | 4     |
+| `scripts/mcp/worker_daemon.py`       | `worker_loop`                 | Call `_cleanup_result_file` after `_run_final_handoff()` returns 0                           | 4     |
+| `mk/lane-lifecycle.mk`               | `lane-dispatch`               | Add `lane-guard` prerequisite alongside `lane-orchestrator-guard`                            | 1     |
+| `mk/lane-maintenance.mk`             | `lane-commits`, `lane-intake` | Add `lane-guard` prerequisite alongside `lane-orchestrator-guard`                            | 1     |
+| `scripts/mcp/lane_exec.py`           | `run_lane_exec`               | Add `backend` parameter (`codex-cli` / `codex-subagent`); new `_run_subagent()` code path    | 5     |
+| `scripts/mcp/review_runner.py`       | `run_review`                  | Add `backend` parameter mirroring `lane_exec.py` contract                                    | 5     |
+| `scripts/mcp/worker_daemon.py`       | `_parse_args`, `worker_loop`  | Thread `--backend` flag through to `run_lane_exec` and `run_review`                          | 5     |
+| `scripts/mcp/orchestrator_daemon.py` | `_parse_args`, `main`         | Thread `--backend` flag for orchestrator-invoked review/execution                            | 5     |
 
 ## Related Files (reference, no changes expected)
 

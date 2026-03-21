@@ -144,7 +144,6 @@ def _artifact_context_section(
 | `scripts/mcp/orchestrator_daemon.py` | TBD | Allow orchestrator guidance and downstream brief generation to attach artifact references when evidence is too large for inline messages. |
 | `mk/lane-worker.mk` | TBD | Add make targets for artifact search/debug helpers if operator workflows need shell fallbacks. |
 | `docs/agentic/contracts/agent-handoff-mcp.md` | TBD | Document the new artifact tool surface, sidecar semantics, and prompt-budget expectations. |
-| `docs/tasks/8.0/orchestration-context-retrieval-task-plan.md` | new | Track the implementation plan and rollout checklist for this retrieval layer. |
 
 ## Related Files
 
@@ -248,11 +247,6 @@ make lane-manifest-init TASK=orchestration-context-retrieval LANE_IDS='mcp-artif
 - [ ] Integration test artifact MCP tools against temporary sidecar DBs from both orchestrator-root and lane-worktree entrypoints.
 - [ ] Integration test `lane_prompt.py` artifact retrieval with safe and over-budget prompt scenarios.
 - [ ] Smoke test a real `apps/` lane workflow where large pytest or HTTP output is indexed and later retrieved without direct prompt injection.
-
-### Deferred from Orchestration Hardening
-
-- [ ] Integration test: full daemon cycle with scope violation injected, verify review is skipped and event emitted. _(Requires mocking the full `run_worker_daemon()` monolith; individual scope gate behavior is verified by unit tests TestCheckScopeViolations + TestScopeViolationEventName in `test_hardening.py`.)_
-- [ ] Integration test: full daemon cycle exhausting 3 times, verify streak tracking and auto-pause. _(Same reason; exhaustion behavior is verified by TestExhaustionStreak + TestExhaustionStreakEvent + TestEnsureLaneWorkersExhaustionGate in `test_hardening.py`.)_
 
 ## Stretch Goals
 

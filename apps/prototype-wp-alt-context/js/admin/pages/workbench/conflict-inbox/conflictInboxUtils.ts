@@ -6,7 +6,9 @@ const CONFLICT_LABELS: Record<string, string> = {
   curated_cluster_deleted: __('Curated cluster deleted remotely', 'alt-context'),
   curated_member_deleted: __('Curated member deleted remotely', 'alt-context'),
   member_cluster_reassignment: __('Member moved to another cluster remotely', 'alt-context'),
+  person_name_conflict: __('Person name conflict', 'alt-context'),
   version_conflict: __('Version conflict', 'alt-context'),
+  drift_conflict: __('Projection drift', 'alt-context'),
 };
 
 export interface DifferenceEntry {
@@ -35,6 +37,19 @@ export const formatTimestamp = (value: string | null): string => {
 
 export const formatConflictCode = (code: string): string => CONFLICT_LABELS[code] ?? code.replaceAll('_', ' ');
 
+export const getConflictTypeLabel = (conflict: ConflictRecord): string => {
+  const conflictLabel = CONFLICT_LABELS[conflict.conflict_code];
+  if (conflictLabel) {
+    return conflictLabel;
+  }
+
+  if (conflict.entity_type === 'person') {
+    return __('Person name conflict', 'alt-context');
+  }
+
+  return formatConflictCode(conflict.conflict_code);
+};
+
 const getPayloadLabel = (payload: Record<string, unknown>): string | null => {
   if (typeof payload.label === 'string' && payload.label.trim() !== '') {
     return payload.label;
@@ -53,7 +68,7 @@ export const formatEntityLabel = (conflict: ConflictRecord): string => {
 };
 
 export const getUnsupportedExplanation = (conflict: ConflictRecord): string | null => {
-  if (conflict.allowed_resolutions.includes('accepted')) {
+  if (conflict.allowed_resolutions.includes('accepted') || conflict.allowed_resolutions.includes('accept_backend')) {
     return null;
   }
 
@@ -70,8 +85,17 @@ export const getUnsupportedExplanation = (conflict: ConflictRecord): string | nu
   );
 };
 
-export const getResolutionButtonLabel = (choice: ConflictResolutionChoice): string =>
-  choice === 'accepted' ? __('Accept machine version', 'alt-context') : __('Keep local version', 'alt-context');
+export const getResolutionButtonLabel = (choice: ConflictResolutionChoice): string => {
+  switch (choice) {
+    case 'accepted':
+    case 'accept_backend':
+      return __('Accept backend version', 'alt-context');
+    case 'dismissed':
+      return __('Keep local version', 'alt-context');
+    case 'merge':
+      return __('Merge versions', 'alt-context');
+  }
+};
 
 const getAffectedMemberCount = (conflict: ConflictRecord): number | null => {
   const countKeys = ['member_count', 'attached_member_count'];
@@ -101,7 +125,11 @@ const getAffectedMemberCount = (conflict: ConflictRecord): number | null => {
 };
 
 export const getResolutionConfirmation = (conflict: ConflictRecord, choice: ConflictResolutionChoice): string => {
-  if (choice === 'accepted' && conflict.conflict_code === 'curated_cluster_deleted') {
+  if (choice === 'merge') {
+    return __('Merge the backend and local versions for this conflict?', 'alt-context');
+  }
+
+  if ((choice === 'accepted' || choice === 'accept_backend') && conflict.conflict_code === 'curated_cluster_deleted') {
     const memberCount = getAffectedMemberCount(conflict);
 
     return memberCount !== null
@@ -118,7 +146,7 @@ export const getResolutionConfirmation = (conflict: ConflictRecord, choice: Conf
         );
   }
 
-  if (choice === 'accepted' && conflict.outbox_id > 0 && conflict.entity_type === 'cluster') {
+  if ((choice === 'accepted' || choice === 'accept_backend') && conflict.outbox_id > 0 && conflict.entity_type === 'cluster') {
     if (typeof conflict.local_payload.target_cluster_id === 'string') {
       return __(
         'Accepting the machine version removes the temporary restored cluster, reassigns the listed members back to the machine target cluster, and discards the local revert operation.',
@@ -132,7 +160,7 @@ export const getResolutionConfirmation = (conflict: ConflictRecord, choice: Conf
     );
   }
 
-  if (choice === 'accepted' && conflict.outbox_id > 0 && conflict.entity_type === 'member') {
+  if ((choice === 'accepted' || choice === 'accept_backend') && conflict.outbox_id > 0 && conflict.entity_type === 'member') {
     if (typeof conflict.local_payload.desired_cluster_id === 'string') {
       return __(
         'Accepting the machine version moves this identity back to the backend-selected cluster, removes the locally created cluster, and discards the local topology operation.',
@@ -146,8 +174,8 @@ export const getResolutionConfirmation = (conflict: ConflictRecord, choice: Conf
     );
   }
 
-  return choice === 'accepted'
-    ? __('Accept the machine version for this conflict?', 'alt-context')
+  return choice === 'accepted' || choice === 'accept_backend'
+    ? __('Accept the backend version for this conflict?', 'alt-context')
     : __('Keep the local version for this conflict?', 'alt-context');
 };
 
@@ -181,8 +209,8 @@ export const getDifferenceEntries = (conflict: ConflictRecord): DifferenceEntry[
     }));
 };
 
-export const getAcceptMachinePreview = (conflict: ConflictRecord): AcceptPreview | null => {
-  if (!conflict.allowed_resolutions.includes('accepted')) {
+export const getAcceptBackendPreview = (conflict: ConflictRecord): AcceptPreview | null => {
+  if (!conflict.allowed_resolutions.includes('accepted') && !conflict.allowed_resolutions.includes('accept_backend')) {
     return null;
   }
 

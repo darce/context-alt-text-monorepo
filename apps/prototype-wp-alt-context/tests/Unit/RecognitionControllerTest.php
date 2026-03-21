@@ -635,7 +635,7 @@ class RecognitionControllerClusterMutationsRepositorySpy extends NullClustersRep
         ];
     }
 
-    public function update_label(string $cluster_uuid, string $label): int
+    public function update_label(string $cluster_uuid, string $label, bool $mark_user_confirmed = true): int
     {
         if (!isset($this->localClusterRows[$cluster_uuid])) {
             return 0;

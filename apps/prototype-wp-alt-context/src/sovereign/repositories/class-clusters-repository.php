@@ -324,7 +324,7 @@ class ClustersRepository implements ClustersRepositoryInterface {
 		return is_array( $row ) ? $row : null;
 	}
 
-	public function update_label( string $cluster_uuid, string $label ): int {
+	public function update_label( string $cluster_uuid, string $label, bool $mark_user_confirmed = true ): int {
 		global $wpdb;
 
 		$normalized_cluster_uuid = trim( $cluster_uuid );
@@ -339,10 +339,11 @@ class ClustersRepository implements ClustersRepositoryInterface {
 
 		$now_utc = gmdate( 'Y-m-d H:i:s' );
 		$sql     = $this->prepare_query(
-			'UPDATE %i SET label = %s, is_user_confirmed = 1, local_revision = local_revision + 1, updated_at = %s WHERE cluster_uuid = %s',
+			'UPDATE %i SET label = %s, is_user_confirmed = %d, local_revision = local_revision + 1, updated_at = %s WHERE cluster_uuid = %s',
 			array(
 				$this->table_name,
 				$normalized_label,
+				$mark_user_confirmed ? 1 : 0,
 				$now_utc,
 				$normalized_cluster_uuid,
 			)

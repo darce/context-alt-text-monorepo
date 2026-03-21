@@ -42,9 +42,11 @@ interface ClustersRepositoryInterface {
 	public function find_by_uuid( string $cluster_uuid ): ?array;
 
 	/**
-	 * Update the label for a single cluster and mark it as user confirmed.
+	 * Update the label for a single cluster.
+	 *
+	 * When `$mark_user_confirmed` is true, the update is treated as user curation.
 	 */
-	public function update_label( string $cluster_uuid, string $label ): int;
+	public function update_label( string $cluster_uuid, string $label, bool $mark_user_confirmed = true ): int;
 
 	/**
 	 * Mark a cluster as dismissed and user confirmed.

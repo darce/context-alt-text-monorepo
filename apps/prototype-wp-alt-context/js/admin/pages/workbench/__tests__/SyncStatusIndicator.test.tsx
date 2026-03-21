@@ -159,6 +159,30 @@ describe('SyncStatusIndicator', () => {
     expect(screen.getByRole('link', { name: 'Retention: Dispose after ack' })).toHaveAttribute('href', '#/retention');
   });
 
+  it('renders delta sync mode when provided', () => {
+    mockReturn.data = buildSyncStatus({
+      last_snapshot_version: 5,
+      last_synced_at: '2026-02-14 12:00:00',
+      sync_mode: 'delta',
+    });
+
+    render(<SyncStatusIndicator />);
+
+    expect(screen.getByText('Delta sync')).toBeInTheDocument();
+  });
+
+  it('renders full sync mode when provided', () => {
+    mockReturn.data = buildSyncStatus({
+      last_snapshot_version: 5,
+      last_synced_at: '2026-02-14 12:00:00',
+      sync_mode: 'full',
+    });
+
+    render(<SyncStatusIndicator />);
+
+    expect(screen.getByText('Full sync')).toBeInTheDocument();
+  });
+
   it('shows the purge-on-demand retention badge label when configured', () => {
     mockReturn.data = buildSyncStatus({ last_snapshot_version: 5, last_synced_at: '2026-02-14 12:00:00' });
     retentionQueryState.data = {

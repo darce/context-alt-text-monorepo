@@ -4,10 +4,10 @@ import { __, sprintf } from '@wordpress/i18n';
 import type { ConflictResolutionChoice } from '../../../api/recognition';
 import { useConflictDetail } from '../../../hooks/useConflictDetail';
 import {
-  formatConflictCode,
   formatEntityLabel,
   formatTimestamp,
-  getAcceptMachinePreview,
+  getConflictTypeLabel,
+  getAcceptBackendPreview,
   getDifferenceEntries,
   getResolutionButtonLabel,
   getResolutionConfirmation,
@@ -48,12 +48,12 @@ export const ConflictDetailPanel = ({
   const { conflict } = detailQuery.data;
   const unsupportedExplanation = getUnsupportedExplanation(conflict);
   const differences = getDifferenceEntries(conflict);
-  const acceptPreview = getAcceptMachinePreview(conflict);
+  const acceptPreview = getAcceptBackendPreview(conflict);
 
   return (
     <div className="acx-workbench__panel">
       <h3>{__('Conflict Detail', 'alt-context')}</h3>
-      <p>{formatConflictCode(conflict.conflict_code)}</p>
+      <p>{getConflictTypeLabel(conflict)}</p>
       <p>
         {sprintf(
           __('Entity: %1$s · Type: %2$s · Logged: %3$s', 'alt-context'),
@@ -81,7 +81,7 @@ export const ConflictDetailPanel = ({
       ) : null}
       {acceptPreview ? (
         <div>
-          <h4>{__('Accept machine preview', 'alt-context')}</h4>
+          <h4>{__('Accept backend preview', 'alt-context')}</h4>
           <p>{acceptPreview.summary}</p>
           {acceptPreview.payload ? <pre>{JSON.stringify(acceptPreview.payload, null, 2)}</pre> : null}
         </div>

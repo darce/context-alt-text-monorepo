@@ -33,6 +33,7 @@ class SyncStatusControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame(12, $data['last_snapshot_version']);
         $this->assertIsString($data['last_synced_at']);
+        $this->assertSame('delta', $data['sync_mode']);
         $this->assertSame('healthy', $data['sync_health']);
         $this->assertSame('ok', $data['last_sync_result']);
         $this->assertSame(0, $data['pending_curation_operations']);
@@ -144,6 +145,7 @@ class SyncStatusControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame('stale', $data['sync_health']);
         $this->assertTrue($data['is_stale'], 'Projection should be stale when updated_at is older than threshold');
+        $this->assertSame('delta', $data['sync_mode']);
     }
 
     public function testGetSyncStatusReturnsStaleFalseWhenRecent(): void
@@ -168,6 +170,7 @@ class SyncStatusControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame('healthy', $data['sync_health']);
         $this->assertFalse($data['is_stale'], 'Projection should not be stale when updated_at is recent');
+        $this->assertSame('delta', $data['sync_mode']);
     }
 
     public function testGetSyncStatusReturnsQueuedWhenPendingOperationsExist(): void
@@ -222,6 +225,7 @@ class SyncStatusControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame('stale', $data['sync_health']);
         $this->assertTrue($data['is_stale'], 'Projection should be stale when updated_at is null');
+        $this->assertSame('full', $data['sync_mode']);
     }
 
     public function testTriggerSyncBuildsLazySyncJobWhenNoSyncPullJobInjected(): void
@@ -292,6 +296,7 @@ class SyncStatusControllerTest extends TestCase
         $this->assertSame('ok', $data['reason']);
         $this->assertSame('healthy', $data['sync_health']);
         $this->assertSame('ok', $data['last_sync_result']);
+        $this->assertSame('delta', $data['sync_mode']);
         $this->assertSame(3, $data['last_snapshot_version']);
         $this->assertSame($recentTimestamp, $data['last_synced_at']);
         $this->assertFalse($data['is_stale']);
@@ -501,5 +506,6 @@ class SyncStatusControllerTest extends TestCase
         $this->assertSame('no_remote_data', $data['reason']);
         $this->assertSame('stale', $data['sync_health']);
         $this->assertSame(0, $data['last_snapshot_version']);
+        $this->assertSame('full', $data['sync_mode']);
     }
 }

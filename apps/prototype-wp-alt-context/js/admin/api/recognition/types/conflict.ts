@@ -1,9 +1,12 @@
-export type ConflictResolutionStatus = 'open' | 'accepted' | 'dismissed';
-export type ConflictResolutionChoice = 'accepted' | 'dismissed';
+export type ConflictResolutionStatus = 'open' | 'accepted' | 'dismissed' | 'merged';
+export type ConflictResolutionChoice = 'accepted' | 'dismissed' | 'accept_backend' | 'merge';
 export type ProjectionConflictCode =
   | 'curated_cluster_deleted'
   | 'curated_member_deleted'
-  | 'member_cluster_reassignment';
+  | 'member_cluster_reassignment'
+  | 'person_name_conflict'
+  | 'version_conflict'
+  | 'drift_conflict';
 
 export interface ConflictRecord {
   id: number;

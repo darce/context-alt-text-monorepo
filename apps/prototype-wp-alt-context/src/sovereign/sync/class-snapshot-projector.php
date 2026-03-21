@@ -70,6 +70,7 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 			$members          = is_array( $snapshot['members'] ?? null ) ? $snapshot['members'] : array();
 			$pre_projection_conflict_count = $this->sync_state_repository->get_conflict_count( $normalized_tenant_id );
 
+			$this->record_person_name_conflicts( $normalized_tenant_id, $clusters, $snapshot_version );
 			$this->record_curated_cluster_deletion_conflicts( $normalized_tenant_id, $clusters, $snapshot_version );
 
 			$this->clusters_repository->merge_snapshot_for_tenant( $normalized_tenant_id, $clusters, $snapshot_version );
@@ -403,6 +404,70 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 				array(
 					'cluster_uuid' => (string) $cluster_uuid,
 					'label' => $cluster['label'] ?? null,
+					'person_id' => $cluster['person_id'] ?? null,
+					'curation_state' => $cluster['curation_state'] ?? null,
+				)
+			);
+		}
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $incoming_clusters
+	 */
+	private function record_person_name_conflicts( string $tenant_id, array $incoming_clusters, int $snapshot_version ): void {
+		$curated_clusters = $this->clusters_repository->get_curated_clusters_for_tenant( $tenant_id );
+		if ( empty( $curated_clusters ) ) {
+			return;
+		}
+
+		$incoming_clusters_by_id = array();
+		foreach ( $incoming_clusters as $cluster ) {
+			if ( ! is_array( $cluster ) ) {
+				continue;
+			}
+
+			$cluster_uuid = trim( (string) ( $cluster['cluster_uuid'] ?? '' ) );
+			if ( '' === $cluster_uuid ) {
+				continue;
+			}
+
+			$incoming_clusters_by_id[ $cluster_uuid ] = $cluster;
+		}
+
+		foreach ( $curated_clusters as $cluster_uuid => $cluster ) {
+			if ( ! is_array( $cluster ) ) {
+				continue;
+			}
+
+			$incoming_cluster = $incoming_clusters_by_id[ $cluster_uuid ] ?? null;
+			if ( ! is_array( $incoming_cluster ) ) {
+				continue;
+			}
+
+			$incoming_label = trim( (string) ( $incoming_cluster['label'] ?? $incoming_cluster['cluster_label'] ?? '' ) );
+			$current_label = trim( (string) ( $cluster['label'] ?? $cluster['cluster_label'] ?? '' ) );
+			$person_id = trim( (string) ( $cluster['person_id'] ?? '' ) );
+
+			if ( '' === $person_id || '' === $incoming_label || '' === $current_label || $incoming_label === $current_label ) {
+				continue;
+			}
+
+			$this->conflict_repository->record_projection_conflict(
+				$tenant_id,
+				'cluster',
+				(string) $cluster_uuid,
+				'person_name_conflict',
+				$snapshot_version,
+				max( 0, (int) ( $cluster['snapshot_version'] ?? 0 ) ),
+				max( 0, (int) ( $cluster['local_revision'] ?? 0 ) ),
+				array(
+					'cluster_uuid' => (string) $cluster_uuid,
+					'proposed_value' => $incoming_label,
+					'status' => 'name_changed_from_snapshot',
+				),
+				array(
+					'cluster_uuid' => (string) $cluster_uuid,
+					'label' => $current_label,
 					'person_id' => $cluster['person_id'] ?? null,
 					'curation_state' => $cluster['curation_state'] ?? null,
 				)

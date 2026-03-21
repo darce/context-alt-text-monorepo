@@ -18,6 +18,8 @@ use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 
 use function in_array;
 use function is_array;
+use function is_string;
+use function trim;
 
 final class ConflictResolutionService {
 	public const ACCEPT_MACHINE_OUTBOX_OPERATIONS = array(
@@ -55,7 +57,7 @@ final class ConflictResolutionService {
 	/**
 	 * @return array{ok:bool, reason:'success'|'not_found'|'already_resolved'|'resolution_not_allowed'|'entity_mutation_failed'|'conflict_update_failed', metrics_refreshed:bool}
 	 */
-	public function resolve( int $conflict_id, string $resolution, string $tenant_id ): array {
+	public function resolve( int $conflict_id, string $resolution, string $tenant_id, ?string $merged_value = null ): array {
 		global $wpdb;
 
 		$conflict = $this->conflict_repository->find_conflict_by_id( $conflict_id, $tenant_id );
@@ -67,7 +69,7 @@ final class ConflictResolutionService {
 			);
 		}
 
-		if ( ! in_array( $resolution, array( 'accepted', 'dismissed' ), true ) ) {
+		if ( ! in_array( $resolution, array( 'accepted', 'dismissed', 'accept_backend', 'merge' ), true ) ) {
 			return array(
 				'ok' => false,
 				'reason' => 'resolution_not_allowed',
@@ -103,7 +105,7 @@ final class ConflictResolutionService {
 		$mutation_ok = true;
 		$metrics_refreshed = false;
 
-		if ( 'accepted' === $resolution ) {
+		if ( 'accepted' === $resolution || 'accept_backend' === $resolution ) {
 			if ( $has_outbox_conflict ) {
 				$operation = $this->outbox_drain->find_operation_by_id( (int) $conflict['outbox_id'], $tenant_id );
 				$operation_type = is_array( $operation ) ? (string) ( $operation['operation_type'] ?? '' ) : '';
@@ -134,6 +136,28 @@ final class ConflictResolutionService {
 				}
 			} else {
 				$mutation_ok = $this->resolve_projection_acceptance( $conflict, $tenant_id );
+			}
+		} elseif ( 'merge' === $resolution ) {
+			$normalized_merged_value = is_string( $merged_value ) ? trim( $merged_value ) : '';
+			if ( '' === $normalized_merged_value ) {
+				$wpdb->query( 'ROLLBACK' );
+				return array(
+					'ok' => false,
+					'reason' => 'resolution_not_allowed',
+					'metrics_refreshed' => false,
+				);
+			}
+
+			$mutation_ok = $this->resolve_merge_acceptance( $conflict, $tenant_id, $normalized_merged_value );
+			$metrics_refreshed = $mutation_ok;
+			if ( $mutation_ok && $has_outbox_conflict ) {
+				$mutation_ok = $this->outbox_drain->re_enqueue_with_current_base(
+					(int) $conflict['outbox_id'],
+					(int) ( $conflict['backend_version'] ?? 0 ),
+					$tenant_id,
+					$normalized_merged_value
+				);
+				$metrics_refreshed = $mutation_ok;
 			}
 		} elseif ( $has_outbox_conflict ) {
 			$mutation_ok = $this->outbox_drain->re_enqueue_with_current_base(
@@ -322,6 +346,77 @@ final class ConflictResolutionService {
 			return $this->members_repository->accept_machine_cluster_assignment( $entity_key, $cluster_uuid, $tenant_id ) > 0;
 		}
 
+		if ( 'drift_conflict' === $conflict_code ) {
+			return $this->clear_curation_for_entity(
+				(string) ( $conflict['entity_type'] ?? '' ),
+				$entity_key,
+				$tenant_id
+			) > 0;
+		}
+
+		if ( 'person_name_conflict' === $conflict_code ) {
+			return $this->accept_backend_person_name_conflict( $conflict, $tenant_id );
+		}
+
 		return false;
+	}
+
+	/**
+	 * @param array<string,mixed> $conflict
+	 */
+	private function resolve_merge_acceptance( array $conflict, string $tenant_id, string $merged_value ): bool {
+		$conflict_code = (string) ( $conflict['conflict_code'] ?? '' );
+		if ( 'person_name_conflict' === $conflict_code ) {
+			return $this->clusters_repository->update_label( (string) ( $conflict['entity_key'] ?? '' ), $merged_value, true ) > 0;
+		}
+
+		if ( 'drift_conflict' === $conflict_code ) {
+			return $this->clear_curation_for_entity(
+				(string) ( $conflict['entity_type'] ?? '' ),
+				(string) ( $conflict['entity_key'] ?? '' ),
+				$tenant_id
+			) > 0;
+		}
+
+		return false;
+	}
+
+	/**
+	 * @param array<string,mixed> $conflict
+	 */
+	private function accept_backend_person_name_conflict( array $conflict, string $tenant_id ): bool {
+		$entity_key = (string) ( $conflict['entity_key'] ?? '' );
+		$backend_value = $this->resolve_backend_value( $conflict );
+		if ( '' === $entity_key || '' === $backend_value ) {
+			return false;
+		}
+
+		if ( 'cluster' !== (string) ( $conflict['entity_type'] ?? '' ) ) {
+			return false;
+		}
+
+		return $this->clusters_repository->update_label( $entity_key, $backend_value, false ) > 0;
+	}
+
+	/**
+	 * @param array<string,mixed> $conflict
+	 */
+	private function resolve_backend_value( array $conflict ): string {
+		$backend_value = trim( (string) ( $conflict['backend_proposed_value'] ?? '' ) );
+		if ( '' !== $backend_value ) {
+			return $backend_value;
+		}
+
+		$machine_payload = $conflict['machine_payload'] ?? array();
+		if ( is_array( $machine_payload ) ) {
+			foreach ( array( 'merged_value', 'label', 'name', 'proposed_value' ) as $key ) {
+				$value = trim( (string) ( $machine_payload[ $key ] ?? '' ) );
+				if ( '' !== $value ) {
+					return $value;
+				}
+			}
+		}
+
+		return '';
 	}
 }

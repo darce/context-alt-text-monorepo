@@ -285,7 +285,12 @@ def test_cluster_delta_returns_only_changed_clusters(
         media_id="202",
     )
     fake_cluster_repository.clusters[changed.id].representatives = [
-        SimpleNamespace(identity_id=changed_identity_id, media_id="101", is_user_selected=True)
+        SimpleNamespace(
+            id=str(uuid.uuid4()),
+            identity_id=changed_identity_id,
+            media_id="101",
+            is_user_selected=True,
+        )
     ]
     snapshot_version = fake_cluster_repository._snapshot_version
 
@@ -717,7 +722,12 @@ def test_get_tenant_snapshot_returns_correct_shape(
     )
     representative_id = str(uuid.uuid4())
     fake_cluster_repository.clusters[cluster1.id].representatives = [
-        SimpleNamespace(identity_id=representative_id, media_id="101", is_user_selected=True)
+        SimpleNamespace(
+            id=str(uuid.uuid4()),
+            identity_id=representative_id,
+            media_id="101",
+            is_user_selected=True,
+        )
     ]
     latest_job = Job(
         id=str(uuid.uuid4()),
@@ -780,8 +790,18 @@ def test_get_tenant_snapshot_prefers_pinned_representative_when_order_is_unsorte
     unpinned_representative_id = str(uuid.uuid4())
     pinned_representative_id = str(uuid.uuid4())
     fake_cluster_repository.clusters[cluster.id].representatives = [
-        SimpleNamespace(identity_id=unpinned_representative_id, media_id="101", is_user_selected=False),
-        SimpleNamespace(identity_id=pinned_representative_id, media_id="202", is_user_selected=True),
+        SimpleNamespace(
+            id=str(uuid.uuid4()),
+            identity_id=unpinned_representative_id,
+            media_id="101",
+            is_user_selected=False,
+        ),
+        SimpleNamespace(
+            id=str(uuid.uuid4()),
+            identity_id=pinned_representative_id,
+            media_id="202",
+            is_user_selected=True,
+        ),
     ]
 
     resp = api_client.get(f"/recognition/tenants/{tenant_id}/clusters/snapshot")

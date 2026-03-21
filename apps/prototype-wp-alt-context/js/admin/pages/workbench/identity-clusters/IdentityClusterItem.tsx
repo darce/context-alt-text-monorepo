@@ -250,7 +250,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
       }
       mutations.split(cluster.clusterId, 2, selectedIdentityId);
     },
-    [cluster.clusterId, mutations],
+    [cluster, mutations],
   );
 
   const handleToggleRepresentativePin = React.useCallback(
@@ -261,7 +261,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
       }
       mutations.pinRepresentative(representativeId, nextPinned);
     },
-    [cluster.clusterId, mutations],
+    [cluster, mutations],
   );
 
   const saveLabel = React.useMemo(() => {

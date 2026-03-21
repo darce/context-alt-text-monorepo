@@ -162,6 +162,7 @@ class ClusterResponseMapper {
 			'bbox' => $bbox,
 			'thumb_url' => $this->resolve_thumb_url( $member_row, $media_id ),
 			'media_url' => $this->resolve_media_url( $media_id ),
+			'is_pinned' => $this->normalize_boolean_value( $member_row['is_pinned'] ?? false ),
 		);
 	}
 

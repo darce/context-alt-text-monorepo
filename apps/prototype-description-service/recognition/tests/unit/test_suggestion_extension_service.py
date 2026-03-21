@@ -8,11 +8,18 @@ from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import Table
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import ClusterMergeSuggestion, IdentityCluster, IdentityClusteringJob, IdentitySuggestion, MediaIdentity
+from db.models import (
+    ClusterMergeSuggestion,
+    IdentityCluster,
+    IdentityClusteringJob,
+    IdentitySuggestion,
+    MediaIdentity,
+    Tenant,
+)
 from db.models import NameSuggestion as NameSuggestionModel
-from db.models import Tenant
 from recognition.domain.services.suggestion_extension_service import SuggestionExtensionService
 from recognition.domain.suggestion import SuggestedLabelSource, SuggestionStatus
 from recognition.infrastructure.repositories.merge_suggestion_repository import SqlAlchemyMergeSuggestionRepository
@@ -25,7 +32,9 @@ def _unit_embedding() -> list[float]:
 
 async def _create_name_suggestions_table(db_session: AsyncSession) -> None:
     await db_session.run_sync(
-        lambda sync_session: NameSuggestionModel.__table__.create(bind=sync_session.connection(), checkfirst=True)
+        lambda sync_session: cast(Table, NameSuggestionModel.__table__).create(
+            bind=sync_session.connection(), checkfirst=True
+        )
     )
 
 
@@ -49,7 +58,9 @@ async def _create_cluster(
     return cluster
 
 
-async def _create_identity(db_session: AsyncSession, tenant: Tenant, *, identity_id: UUID | None = None) -> MediaIdentity:
+async def _create_identity(
+    db_session: AsyncSession, tenant: Tenant, *, identity_id: UUID | None = None
+) -> MediaIdentity:
     identity = MediaIdentity(
         id=identity_id or uuid4(),
         tenant_id=tenant.id,
@@ -175,7 +186,9 @@ async def test_accept_name_suggestion_applies_cluster_label(db_session: AsyncSes
 
 
 @pytest.mark.asyncio
-async def test_bulk_accept_and_expire_stale_cover_assignment_and_merge(db_session: AsyncSession, tenant: Tenant) -> None:
+async def test_bulk_accept_and_expire_stale_cover_assignment_and_merge(
+    db_session: AsyncSession, tenant: Tenant
+) -> None:
     await _create_name_suggestions_table(db_session)
     identity = await _create_identity(db_session, tenant)
     cluster_a_id, cluster_b_id = sorted([uuid4(), uuid4()], key=str)

@@ -10,8 +10,8 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from functools import lru_cache
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -19,6 +19,9 @@ from fastapi import Depends
 from sqlalchemy import nulls_last, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.models.constraints import ClusterMergeSuggestion, IdentitySuggestion
+from db.models.constraints import NameSuggestion as NameSuggestionModel
+from db.models.identity import IdentityCluster
 from db.tenant_context import ensure_tenant_exists, set_tenant_context
 from recognition.application.assignment import AssignmentGate
 from recognition.application.discovery import CentroidDiscovery, GraphDiscovery, RepresentativeDiscovery
@@ -29,10 +32,10 @@ from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.scan.service import ScanService
 from recognition.application.settings import ClusteringSettings
 from recognition.application.suggestions.merge_suggestions import MergeSuggestionService
-from recognition.domain.suggestion import NameSuggestion, SuggestedLabelSource, SuggestionStatus
 from recognition.application.suggestions.refresh_service import SuggestionRefreshService
 from recognition.application.suggestions.service import SuggestionService
 from recognition.config import get_settings as get_recognition_settings
+from recognition.domain.suggestion import NameSuggestion, SuggestedLabelSource, SuggestionStatus
 from recognition.infrastructure.embeddings import get_shared_insightface_adapter
 from recognition.infrastructure.repositories import (
     SqlAlchemyClusterRepository,
@@ -44,8 +47,6 @@ from recognition.infrastructure.repositories import (
     SqlAlchemyScanQueueRepository,
     SqlAlchemySuggestionRepository,
 )
-from db.models.constraints import ClusterMergeSuggestion, IdentitySuggestion, NameSuggestion as NameSuggestionModel
-from db.models.identity import IdentityCluster
 from recognition.interface_adapters.http.deps.session import (
     get_observability_session,
     get_optional_session,

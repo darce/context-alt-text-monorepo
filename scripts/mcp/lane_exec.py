@@ -57,8 +57,8 @@ def _render_prompt(
     task_ref: str,
     lane_id: str,
     worktree_path: Path,
-) -> str:
-    """Call ``lane_prompt.py`` and return the rendered prompt text."""
+) -> tuple[str, dict[str, Any]]:
+    """Call ``lane_prompt.py`` and return ``(rendered_prompt, context_utilization_metrics)``."""
     cmd = [
         sys.executable,
         str(SCRIPT_DIR / "lane_prompt.py"),
@@ -73,7 +73,19 @@ def _render_prompt(
         raise RuntimeError(
             f"lane_prompt.py failed (exit {completed.returncode}):\n{completed.stderr.strip()}"
         )
-    return completed.stdout
+    ctx_metrics: dict[str, Any] = {}
+    for line in completed.stderr.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+            if isinstance(parsed, dict) and "context_utilization" in parsed:
+                ctx_metrics = parsed["context_utilization"]
+                break
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return completed.stdout, ctx_metrics
 
 
 def _render_schema(orchestrator_root: Path) -> str:
@@ -237,6 +249,113 @@ def _preflight_failure_payload(
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Scope-violation helpers
+# ---------------------------------------------------------------------------
+
+
+def _matches_any_owned_path(file_path: str, owned_paths: list[str]) -> bool:
+    """Return True if file_path falls under one of the owned glob patterns."""
+    import fnmatch
+    normalized = file_path.lstrip("/")
+    for pattern in owned_paths:
+        pat = pattern.rstrip("/")
+        # Direct prefix match (handles "apps/foo/**" style)
+        stripped = pat.rstrip("*").rstrip("/")
+        prefix = stripped.lstrip("/")
+        if prefix and (normalized.startswith(prefix + "/") or normalized == prefix):
+            return True
+        if fnmatch.fnmatch(normalized, pat):
+            return True
+    return False
+
+
+def _check_scope_violations(
+    worktree_path: Path,
+    owned_paths: list[str],
+) -> list[str]:
+    """Return paths that were modified outside the lane's owned_paths.
+
+    Uses ``git diff --name-only`` (staged + unstaged) and ``git ls-files --others``
+    so newly created untracked files are also checked.
+    """
+    if not owned_paths:
+        # No owned_paths defined; skip violation check.
+        return []
+    changed: list[str] = []
+    for git_args in (
+        ["git", "-C", str(worktree_path), "diff", "--name-only", "HEAD"],
+        ["git", "-C", str(worktree_path), "ls-files", "--others", "--exclude-standard"],
+    ):
+        try:
+            out = subprocess.run(
+                git_args, capture_output=True, text=True, check=False, timeout=15
+            )
+            for line in (out.stdout or "").splitlines():
+                f = line.strip()
+                if f:
+                    changed.append(f)
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+    violations = [
+        f for f in sorted(set(changed)) if not _matches_any_owned_path(f, owned_paths)
+    ]
+    return violations
+
+
+def _get_effective_owned_paths(
+    task_ref: str,
+    lane_id: str,
+    owned_paths: list[str],
+    orchestrator_root: Path,
+) -> list[str]:
+    """Return owned_paths, optionally overridden by an MCP lane message artifact.
+
+    Looks for the most recent ``orchestrator_to_worker`` lane message that carries
+    an ``owned_paths_override`` artifact.  Falls back to the manifest list.
+    """
+    try:
+        import subprocess as _sp
+        cmd = [
+            sys.executable,
+            str(SCRIPT_DIR / "lane_activity.py"),
+            "--orchestrator-root", str(orchestrator_root),
+            "--task-ref", task_ref,
+            "--lane-id", lane_id,
+            "--format", "json",
+        ]
+        result = _sp.run(cmd, capture_output=True, text=True, check=False, timeout=10)
+        if result.returncode == 0 and result.stdout.strip():
+            activity = json.loads(result.stdout)
+            messages = activity.get("messages") or []
+            for msg in reversed(messages):
+                if not isinstance(msg, dict):
+                    continue
+                if msg.get("direction") != "orchestrator_to_worker":
+                    continue
+                payload = msg.get("payload")
+                if isinstance(payload, dict):
+                    override = payload.get("owned_paths_override")
+                    if isinstance(override, list) and override:
+                        return [str(p) for p in override if str(p).strip()]
+                artifacts = msg.get("artifacts")
+                if isinstance(artifacts, list):
+                    for art in artifacts:
+                        # MCP normalizer preserves string items; parse JSON-encoded overrides
+                        if isinstance(art, str):
+                            try:
+                                art = json.loads(art)
+                            except (json.JSONDecodeError, ValueError):
+                                continue
+                        if isinstance(art, dict) and art.get("type") == "owned_paths_override":
+                            paths = art.get("paths")
+                            if isinstance(paths, list) and paths:
+                                return [str(p) for p in paths if str(p).strip()]
+    except Exception:  # noqa: BLE001
+        pass
+    return owned_paths
+
+
 # Temp-file helpers
 # ---------------------------------------------------------------------------
 
@@ -320,10 +439,11 @@ def run_lane_exec(
             return out
 
     # Build prompt
+    ctx_metrics: dict[str, Any] = {}
     if prompt_override:
         prompt_text = prompt_override
     else:
-        prompt_text = _render_prompt(
+        prompt_text, ctx_metrics = _render_prompt(
             orchestrator_root=orchestrator_root,
             task_ref=task_ref,
             lane_id=lane_id,
@@ -375,6 +495,27 @@ def run_lane_exec(
 
     out = output_path or _temp_output_path(lane_id=lane_id)
     out.write_text(json.dumps(result.to_dict(), indent=2))
+
+    # Patch result JSON with context_utilization and scope violations in one read-write pass
+    result_data = json.loads(out.read_text())
+    if ctx_metrics:
+        result_data["context_utilization"] = ctx_metrics
+    # Scope violation check: flag files modified outside owned_paths
+    owned_paths_manifest = [str(item) for item in lane_cfg.get("owned_paths", []) if str(item).strip()]
+    effective_paths = _get_effective_owned_paths(
+        task_ref, lane_id,
+        owned_paths=owned_paths_manifest,
+        orchestrator_root=orchestrator_root,
+    )
+    violations = _check_scope_violations(
+        worktree_path, owned_paths=effective_paths
+    )
+    if violations:
+        result_data["scope_violation"] = True
+        result_data["scope_violations"] = violations
+    if ctx_metrics or violations:
+        out.write_text(json.dumps(result_data, indent=2))
+
     return out
 
 

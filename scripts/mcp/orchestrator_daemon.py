@@ -74,6 +74,7 @@ from orchestrator_lanes import (  # noqa: F401
     _intake_lane,
     _lane_has_capacity,
     _lane_has_unmerged_commits,
+    _provision_fresh_worktree,
     _refresh_downstream,
     _resolve_lane_worktree,
     _run_handoff_dispatch,
@@ -205,6 +206,7 @@ def _dispatch_plan_item(
     summary: str,
     heading: str,
     resolved_plan: Path,
+    owned_paths_override: list[str] | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     from agent_handoff_mcp import record_decision, record_lane_message, update_next_actions, upsert_plan_cursor
@@ -240,6 +242,7 @@ def _dispatch_plan_item(
             subject=f"{lane_id} plan assignment",
             message=f"{marker} {summary}",
             status="open",
+            payload={"owned_paths_override": owned_paths_override} if owned_paths_override else None,
         )
     )
     if message_payload.get("ok") is not True:
@@ -340,6 +343,129 @@ def _dispatch_from_task_plan(
         result["line_start"] = normalized.line_start
         return result
     return None
+
+
+# ---------------------------------------------------------------------------
+# salvage_and_close_lane: freeze a failed lane and classify its changed files
+# ---------------------------------------------------------------------------
+
+
+def salvage_and_close_lane(
+    orchestrator_root: Path,
+    task_ref: str,
+    lane_id: str,
+    *,
+    dry_run: bool = False,
+    log: Any | None = None,
+) -> dict[str, Any]:
+    """Freeze a failed lane, classify its changed files by ownership, and close it.
+
+    Returns a dict with keys:
+    - ``lane_id``: the lane that was closed
+    - ``this_lane``: files in the lane's own owned_paths
+    - ``other_lanes``: dict mapping lane IDs to files belonging to those lanes
+    - ``unclassified``: files that don't match any lane's owned_paths
+    - ``worktree_preserved``: str path to the preserved worktree
+    - ``dry_run``: whether mutation was skipped
+    """
+    if str(SCRIPT_DIR) not in sys.path:
+        sys.path.insert(0, str(SCRIPT_DIR))
+
+    from lane_exec import _matches_any_owned_path
+    from lane_manifest import load_manifest
+
+    worktree = _resolve_lane_worktree(orchestrator_root, task_ref, lane_id)
+
+    # Collect all changed + untracked files in the lane's worktree
+    changed: list[str] = []
+    if worktree is not None and worktree.is_dir():
+        for git_args in (
+            ["git", "-C", str(worktree), "diff", "--name-only", "HEAD"],
+            ["git", "-C", str(worktree), "ls-files", "--others", "--exclude-standard"],
+        ):
+            try:
+                result = subprocess.run(
+                    git_args, capture_output=True, text=True, check=False, timeout=15
+                )
+                for line in (result.stdout or "").splitlines():
+                    f = line.strip()
+                    if f:
+                        changed.append(f)
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+
+    # Load manifest to retrieve owned_paths for every lane
+    manifest = load_manifest(task_ref)
+    all_lanes: dict[str, Any] = manifest.get("lanes", {}) if isinstance(manifest, dict) else {}
+
+    this_owned: list[str] = []
+    if isinstance(all_lanes.get(lane_id), dict):
+        this_owned = list(all_lanes[lane_id].get("owned_paths") or [])
+
+    # Classify each changed file
+    this_lane_files: list[str] = []
+    other_lane_files: dict[str, list[str]] = {}
+    unclassified: list[str] = []
+
+    for f in sorted(set(changed)):
+        if _matches_any_owned_path(f, this_owned):
+            this_lane_files.append(f)
+            continue
+        matched_lanes = [
+            lid for lid, cfg in all_lanes.items()
+            if lid != lane_id
+            and isinstance(cfg, dict)
+            and _matches_any_owned_path(f, list(cfg.get("owned_paths") or []))
+        ]
+        if matched_lanes:
+            for m in matched_lanes:
+                other_lane_files.setdefault(m, []).append(f)
+        else:
+            unclassified.append(f)
+
+    salvage: dict[str, Any] = {
+        "lane_id": lane_id,
+        "this_lane": this_lane_files,
+        "other_lanes": other_lane_files,
+        "unclassified": unclassified,
+        "worktree_preserved": str(worktree) if worktree else None,
+        "dry_run": dry_run,
+    }
+
+    if not dry_run:
+        from agent_handoff_mcp import record_decision, upsert_worktree_lane
+
+        # Resolve branch name from manifest
+        lane_cfg = all_lanes.get(lane_id)
+        branch = (lane_cfg.get("branch") or "") if isinstance(lane_cfg, dict) else ""
+
+        _json_load(
+            upsert_worktree_lane(
+                lane_id=lane_id,
+                worktree_path=str(worktree) if worktree else "",
+                branch=branch,
+                status="closed",
+                task_ref=task_ref,
+                notes=(
+                    f"salvage_and_close: {len(this_lane_files)} owned files preserved; "
+                    f"{len(unclassified)} unclassified."
+                ),
+            )
+        )
+        record_decision(
+            session=f"{task_ref}-orchestrator-daemon",
+            decision=f"salvage_and_close: lane {lane_id} closed. Worktree preserved at {worktree}.",
+            rationale=json.dumps(salvage, indent=2, default=str),
+        )
+
+    if callable(log):
+        log("INFO", "salvage_and_close_complete", lane_id=lane_id,
+            this_lane_count=len(this_lane_files),
+            other_lanes_count=sum(len(v) for v in other_lane_files.values()),
+            unclassified_count=len(unclassified),
+            dry_run=dry_run)
+
+    return salvage
 
 
 # ---------------------------------------------------------------------------
@@ -508,6 +634,46 @@ def _remaining_plan_work(task_ref: str) -> list[dict[str, Any]]:
     return []
 
 
+def _check_lane_health(status: dict[str, Any]) -> tuple[str, str | None]:
+    """Compute health from a worker status dict.
+
+    Returns ``(health, recommended_action)`` where *health* is one of
+    ``"healthy"``, ``"degraded"``, or ``"unhealthy"`` and *recommended_action*
+    is an operator hint string or ``None``.
+    """
+    attention = bool(status.get("attention_required"))
+    worker_state = status.get("worker_state")
+
+    status_record = status.get("status_record") or {}
+    streak_info = status_record.get("exhaustion_streak")
+    streak = int(streak_info.get("count") or 0) if isinstance(streak_info, dict) else 0
+
+    obs = status.get("observability") or {}
+    history = obs.get("history") or []
+    scope_violations = sum(
+        1 for e in history if isinstance(e, dict) and e.get("phase") == "scope_check"
+    )
+
+    latest_obs = obs.get("latest") or {}
+    ctx = status.get("context_utilization_latest") or latest_obs.get("context_utilization") or {}
+    pressure = str(ctx.get("pressure") or "normal")
+
+    if worker_state == "unhealthy" or streak >= 2 or attention:
+        action: str | None = "promote_model" if streak >= 2 else "close_lane"
+        return "unhealthy", action
+
+    if scope_violations > 0:
+        return "degraded", "fresh_worktree"
+
+    if pressure == "high":
+        return "degraded", "split_lane"
+
+    if pressure == "elevated":
+        return "degraded", None
+
+    return "healthy", None
+
+
 def _ensure_lane_workers(
     orchestrator_root: Path,
     task_ref: str,
@@ -518,6 +684,8 @@ def _ensure_lane_workers(
     worker_reasoning_effort: str = "auto",
     model: str | None = None,
     dry_run: bool = False,
+    log: Any = None,
+    prev_health: "dict[str, str] | None" = None,
 ) -> list[dict[str, Any]]:
     """Status all lanes and optionally start missing workers via MCP."""
     from agent_handoff_mcp import worker_start, worker_status
@@ -527,14 +695,69 @@ def _ensure_lane_workers(
         status_payload = _json_load(worker_status(task_ref=task_ref, lane_id=lane_id))
         if status_payload.get("ok") is not True:
             continue
-        
+
         # Merge with lane identity
         status_payload["lane_id"] = lane_id
-        
+
         if status_payload.get("running"):
             rows.append(status_payload)
+            if prev_health is not None:
+                prev_health[lane_id] = "healthy"
             continue
-        
+
+        # Gate: skip lanes that are unhealthy
+        health, recommended_action = _check_lane_health(status_payload)
+
+        # Emit lane_health_changed when health transitions between cycles.
+        if prev_health is not None:
+            previous = prev_health.get(lane_id)
+            if previous is not None and previous != health and log is not None:
+                log(
+                    "INFO",
+                    "lane_health_changed",
+                    lane_id=lane_id,
+                    previous=previous,
+                    current=health,
+                    recommended_action=recommended_action,
+                )
+            prev_health[lane_id] = health
+
+        if health == "unhealthy":
+            status_payload["worker_state"] = "unhealthy"
+            status_payload["reason"] = "attention_required"
+            if log is not None:
+                status_record = status_payload.get("status_record") or {}
+                streak_info = status_record.get("exhaustion_streak")
+                streak = (
+                    int(streak_info.get("count") or 0)
+                    if isinstance(streak_info, dict)
+                    else 0
+                )
+                log(
+                    "WARNING",
+                    "lane_unhealthy",
+                    lane_id=lane_id,
+                    exhaustion_streak=streak,
+                    attention_required=bool(status_payload.get("attention_required")),
+                    recommended_action=recommended_action,
+                )
+            rows.append(status_payload)
+            continue
+
+        # Provision a fresh worktree when health is degraded by scope violations
+        if recommended_action == "fresh_worktree":
+            from lane_manifest import get_lane_config
+            lane_cfg = get_lane_config(task_ref, lane_id, orchestrator_root=str(orchestrator_root))
+            if isinstance(lane_cfg, dict) and lane_cfg.get("redispatch_mode") == "fresh_worktree":
+                fresh_path = _provision_fresh_worktree(
+                    orchestrator_root, task_ref, lane_id, dry_run=dry_run
+                )
+                if fresh_path is not None and log is not None:
+                    log("INFO", "fresh_worktree_provisioned",
+                        lane_id=lane_id, worktree_path=str(fresh_path))
+                elif log is not None:
+                    log("WARNING", "fresh_worktree_provision_failed", lane_id=lane_id)
+
         # Decide if we should start it
         if worker_start_mode == "mcp" and not dry_run:
             start_payload = _json_load(
@@ -607,6 +830,7 @@ def orchestrator_loop(
     plan_stall_count = 0
     guidance_stalls: dict[str, tuple[int, int]] = {}
     attention_stalls: dict[str, int] = {}
+    lane_health_prev: dict[str, str] = {}
 
     while True:
         if _shutdown_requested:
@@ -691,6 +915,8 @@ def orchestrator_loop(
                 worker_reasoning_effort=worker_reasoning_effort,
                 model=model,
                 dry_run=dry_run,
+                log=log,
+                prev_health=lane_health_prev,
             )
             for row in autostart_results:
                 if isinstance(row, dict) and row.get("reason") == "attention_required":
@@ -841,6 +1067,19 @@ def _parse_args() -> argparse.Namespace:
     status_parser.add_argument("--log-dir", default=None,
                                help="Log directory. Defaults to <state-dir>/../logs/daemon.")
 
+    salvage_parser = sub.add_parser(
+        "salvage-and-close",
+        help="Freeze a failed lane, classify its changed files, and close it.",
+    )
+    salvage_parser.add_argument("--orchestrator-root", required=True,
+                                help="Absolute path to the monorepo root.")
+    salvage_parser.add_argument("--task-ref", required=True,
+                                help="MCP task reference.")
+    salvage_parser.add_argument("--lane-id", required=True,
+                                help="Lane to salvage and close.")
+    salvage_parser.add_argument("--dry-run", action="store_true",
+                                help="Print salvage groups without mutating MCP state.")
+
     return parser.parse_args()
 
 
@@ -868,6 +1107,26 @@ def main() -> int:
         )
         status = daemon_status(state_dir, log_dir)
         print(json.dumps(status, indent=2, default=str))
+        return 0
+
+    if args.command == "salvage-and-close":
+        orchestrator_root = Path(args.orchestrator_root).expanduser().resolve()
+        state_dir = orchestrator_root / ".task-state"
+        from agent_handoff_mcp import RuntimeConfig, configure_runtime
+        runtime = RuntimeConfig.for_workspace(
+            orchestrator_root,
+            state_dir=state_dir,
+            current_task_path=orchestrator_root / "CURRENT_TASK.md",
+            exports_dir=state_dir / "exports",
+        )
+        configure_runtime(runtime)
+        result = salvage_and_close_lane(
+            orchestrator_root,
+            args.task_ref,
+            args.lane_id,
+            dry_run=args.dry_run,
+        )
+        print(json.dumps(result, indent=2, default=str))
         return 0
 
     if args.command == "run":

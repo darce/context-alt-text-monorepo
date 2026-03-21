@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import signal
@@ -385,6 +386,32 @@ def daemon_start(
     }
 
 
+def _cleanup_lock(state_dir: Path, lane_id: str) -> None:
+    """Delete the worker lock file, ignoring missing-file errors."""
+    lock = _lock_path(state_dir, lane_id)
+    try:
+        lock.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _emit_stopped_event(log_dir: Path, lane_id: str) -> None:
+    """Append a ``worker_stopped`` JSONL event to the worker's log file."""
+    log_dir.mkdir(parents=True, exist_ok=True)
+    entry: dict = {
+        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "lane": lane_id,
+        "level": "INFO",
+        "event": "worker_stopped",
+    }
+    log_path = log_dir / f"worker-{lane_id}.jsonl"
+    try:
+        with log_path.open("a") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass
+
+
 def daemon_stop(*, state_dir: Path, log_dir: Path, lane_id: str, task_ref: str | None = None, force: bool = False) -> dict[str, Any]:
     status = daemon_status(state_dir=state_dir, log_dir=log_dir, lane_id=lane_id, task_ref=task_ref)
     process = status.get("process")
@@ -405,6 +432,8 @@ def daemon_stop(*, state_dir: Path, log_dir: Path, lane_id: str, task_ref: str |
         }
     )
     _write_status_file(_status_path(state_dir, lane_id), base_payload)
+    _cleanup_lock(state_dir, lane_id)
+    _emit_stopped_event(log_dir, lane_id)
     return {"ok": True, "message": f"Sent {sig.name} to worker daemon lane '{lane_id}'.", "signaled": signaled}
 
 

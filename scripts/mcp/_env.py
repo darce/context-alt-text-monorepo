@@ -7,7 +7,20 @@ from pathlib import Path
 
 PYENV_VERSION_PATTERN = re.compile(r"\bPYENV_VERSION=([A-Za-z0-9._-]+)")
 CODEX_REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
+EFFORT_LADDER = ("low", "medium", "high", "xhigh")
 WORKER_REASONING_EFFORT_CHOICES = ("inherit", "auto", *CODEX_REASONING_EFFORTS)
+
+
+def _escalate_effort(current: str) -> str | None:
+    """Return the next higher effort level, or None if already at the ceiling."""
+    normalized = str(current or "").strip().lower()
+    try:
+        idx = EFFORT_LADDER.index(normalized)
+    except ValueError:
+        return None
+    if idx + 1 >= len(EFFORT_LADDER):
+        return None
+    return EFFORT_LADDER[idx + 1]
 
 
 def extract_pyenv_version(commands: list[str]) -> str | None:
@@ -158,6 +171,7 @@ def resolve_auto_reasoning_effort(
     requested: str,
     cycle: int,
     prompt_override: str | None,
+    previous_run_exhausted: bool = False,
 ) -> tuple[str | None, list[str]]:
     """Shared reasoning-effort resolver used by all backend adapters.
 
@@ -215,7 +229,16 @@ def resolve_auto_reasoning_effort(
         reasons.append("docs-only scope")
 
     if score >= 2:
-        return "high", reasons or ["auto-selected high"]
-    if score <= 0:
-        return "low", reasons or ["auto-selected low"]
-    return "medium", reasons or ["auto-selected medium"]
+        effort = "high"
+    elif score <= 0:
+        effort = "low"
+    else:
+        effort = "medium"
+
+    if previous_run_exhausted:
+        escalated = _escalate_effort(effort)
+        if escalated is not None:
+            reasons.append(f"escalated after exhaustion: {effort} -> {escalated}")
+            effort = escalated
+
+    return effort, reasons or [f"auto-selected {effort}"]

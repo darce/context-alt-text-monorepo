@@ -104,10 +104,46 @@ Plan cursors:
 - `record_lane_brief` / `list_lane_briefs` are the structured-brief helpers built on top of `lane_messages`; they persist an open `orchestrator_to_worker` message with a `brief:<reason>` subject plus a compact JSON payload (`source_lane`, `reason`, `summary`, optional `required_actions`, optional `artifacts`).
 - `get_lane_activity` is the lane-scoped query surface for decisions, tests, blockers, actions, findings, worker reports, and lane messages.
 - `worker_status` should be treated as an inspection tool, not a boolean health check. Use `running`, `worker_state`, `attention_required`, and `state_summary` together. Current durable worker states include `idle`, `waiting_for_orchestrator`, `handoff_failed`, `paused`, and `stopped`.
+- `worker_status` also exposes hardening signals: `exhaustion_streak` (consecutive non-converged cycles), `cumulative_tokens` (session token spend), `health` (`healthy` / `degraded` / `unhealthy`), and a `context_utilization` sub-dict with `utilization_ratio`, `domain_signal_ratio`, and `pressure` (`normal` / `elevated` / `high`). Use these alongside `attention_required` to assess lane health.
+- `worker_stop` now performs authoritative lock cleanup. After stop, the lock file is deleted and a `worker_stopped` JSONL event is emitted. `daemon_status()` reports `lock.held: false` consistently; no contradictory state artifacts remain.
 - `worker_start` and `worker_start_all` accept `session_mode`. Use `fresh_turn` for the default one-turn-per-session isolation, or `shared_lane` to reuse context only within the same lane worker session when repeated continuity is worth the extra retained context.
 - `worker_start_all` is dependency-aware when a manifest merge order exists. Lanes whose upstream dependencies still have unresolved dispatched work are returned as clean `skipped` results with `reason="unresolved_upstream_dependencies"` and a `blocked_by` lane list instead of being started prematurely.
 - `orchestrator_start` / `single-cycle` support `worker_start_mode`. Use `mcp` for the default MCP-first worker pool behavior, or `manual` when the host should keep worker startup in shell space.
 - A recorded `handoff_failed` worker state means the implementation/review turn already completed and the saved result must be retried or inspected without silently rerunning the same lane assignment.
+
+### Scope Enforcement and Effective Owned Paths
+
+Scope enforcement is a runtime gate in `lane_exec.py`. After worker execution completes, the worktree diff is validated against `effective_owned_paths`. If violations are found, review is skipped and a `scope_violation` event is emitted.
+
+- The orchestrator can narrow scope for a specific dispatch by embedding `effective_owned_paths` as a JSON-encoded string in the `artifacts` list of the dispatch lane message: `artifacts=[json.dumps({"type": "owned_paths_override", "paths": [...]})]`.
+- The `artifacts` field accepts `list[str]`; the normalizer's `_coerce_string_list()` preserves strings but silently drops non-string items, so the override dict must be serialized before dispatch.
+- `lane_exec.py` reads the override from the most recent `orchestrator_to_worker` message via `list_lane_messages`, iterating `artifacts` and attempting `json.loads()` on each string to find the entry with `type == "owned_paths_override"`. Non-parseable strings are skipped.
+
+### Lane Health Scoring
+
+The orchestrator daemon computes per-lane health via `_check_lane_health()` based on exhaustion streak, scope violation history, token burn, and context pressure.
+
+- Health enum: `healthy` / `degraded` / `unhealthy`.
+- The daemon skips auto-start for lanes with `exhaustion_streak >= 2` and emits `lane_unhealthy`. Unhealthy lanes require an explicit orchestrator decision (e.g., `promote_model`, `split_lane`, `close_lane`, `fresh_worktree`).
+- Health transitions emit `lane_health_changed` events.
+
+### Worker Daemon JSONL Events
+
+The worker daemon emits structured JSONL events to `logs/worker-daemon/worker-<lane>.jsonl`:
+
+- `scope_violation`: files modified outside owned_paths; turn rejected before review.
+- `exhaustion_streak`: consecutive non-converged review cycles; includes streak count, run_id, lane_id.
+- `token_burn_warning`: cumulative session token spend exceeds `token_burn_threshold` (default 2M).
+- `worker_stopped`: clean daemon shutdown with lock cleanup.
+- `context_pressure`: prompt consuming an unsafe fraction of the model's context window.
+- `lane_health_changed`: health state transition (e.g., `healthy` -> `degraded`).
+
+### Lane Manifest Configuration
+
+Lane manifests at `config/lane-orchestration/<task-ref>.json` support these hardening-related fields:
+
+- `token_burn_threshold`: cumulative token spend threshold per session before emitting a warning (default: `2000000`).
+- `model_context_window`: model context window size for context utilization measurement (default: `128000`).
 
 ### BackendAdapter Protocol
 

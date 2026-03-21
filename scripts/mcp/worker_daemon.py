@@ -335,6 +335,7 @@ def _write_worker_status(
     handoff_action: str | None = None,
     attention_required: bool = False,
     observability: dict[str, Any] | None = None,
+    context_utilization: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     state_dir.mkdir(parents=True, exist_ok=True)
     previous = _read_worker_status(state_dir, lane_id) or {}
@@ -365,6 +366,10 @@ def _write_worker_status(
         payload["observability"] = observability
     elif isinstance(previous.get("observability"), dict):
         payload["observability"] = previous["observability"]
+    if context_utilization is not None:
+        payload["context_utilization_latest"] = context_utilization
+    elif isinstance(previous.get("context_utilization_latest"), dict):
+        payload["context_utilization_latest"] = previous["context_utilization_latest"]
     _status_path(state_dir, lane_id).write_text(json.dumps(payload, indent=2, sort_keys=True))
     return payload
 
@@ -380,10 +385,11 @@ def _observability_entry(
     requested_reasoning_effort: str,
     effective_reasoning_effort: str,
     telemetry: dict[str, Any],
+    context_utilization: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     token_usage = telemetry.get("token_usage")
     total_usage = token_usage.get("total") if isinstance(token_usage, dict) else None
-    return {
+    entry: dict[str, Any] = {
         "recorded_at": _utcnow_iso(),
         "task_ref": task_ref,
         "lane_id": lane_id,
@@ -403,6 +409,9 @@ def _observability_entry(
             ),
         },
     }
+    if context_utilization is not None:
+        entry["context_utilization"] = context_utilization
+    return entry
 
 
 def _merge_observability(
@@ -443,6 +452,7 @@ def _record_observability(
     result_path: Path | None = None,
     handoff_action: str | None = None,
     attention_required: bool = False,
+    context_utilization: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     state_dir = orchestrator_root / ".task-state"
     log_dir = orchestrator_root / "logs" / "worker-daemon"
@@ -457,6 +467,7 @@ def _record_observability(
         requested_reasoning_effort=requested_reasoning_effort,
         effective_reasoning_effort=effective_reasoning_effort,
         telemetry=telemetry,
+        context_utilization=context_utilization,
     )
     observability = _merge_observability(previous.get("observability"), entry=entry)
     _write_worker_status(
@@ -510,6 +521,111 @@ def _patch_result(path: Path, overrides: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, indent=2))
 
 
+# ---------------------------------------------------------------------------
+# Per-session hardening helpers
+# ---------------------------------------------------------------------------
+
+
+def _finding_stable_id(finding: dict[str, Any]) -> str:
+    """Derive a stable ID for a review finding to track recurrence across cycles."""
+    return (
+        f"{finding.get('severity', '')}:"
+        f"{finding.get('category', '')}:"
+        f"{finding.get('file_path', '')}:"
+        f"{finding.get('line_start', 0)}"
+    )
+
+
+def _compute_finding_diff(
+    prev_finding_ids: set[str],
+    current_findings: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Compare current findings against a previous set of stable IDs.
+
+    Returns a dict with three keys:
+    - ``new``: findings not present in ``prev_finding_ids``
+    - ``recurring``: findings that were already in ``prev_finding_ids``
+    - ``resolved_count``: number of IDs from ``prev_finding_ids`` not re-found
+    """
+    current_ids = {_finding_stable_id(f) for f in current_findings}
+    new_findings = [f for f in current_findings if _finding_stable_id(f) not in prev_finding_ids]
+    recurring = [f for f in current_findings if _finding_stable_id(f) in prev_finding_ids]
+    resolved_count = len(prev_finding_ids - current_ids)
+    return {
+        "new": new_findings,
+        "recurring": recurring,
+        "resolved_count": resolved_count,
+    }
+
+
+def _update_exhaustion_streak(state_dir: Path, lane_id: str, run_id: str) -> int:
+    """Increment and return the exhaustion streak counter for the current daemon session.
+
+    The counter is scoped to ``run_id`` so a fresh daemon session always
+    starts from zero even if the status file persists from a previous run.
+    """
+    status = _read_worker_status(state_dir, lane_id) or {}
+    streak_info = status.get("exhaustion_streak")
+    if not isinstance(streak_info, dict) or streak_info.get("run_id") != run_id:
+        streak_info = {"run_id": run_id, "count": 0}
+    streak_info["count"] = int(streak_info.get("count") or 0) + 1
+    status["exhaustion_streak"] = streak_info
+    _status_path(state_dir, lane_id).parent.mkdir(parents=True, exist_ok=True)
+    _status_path(state_dir, lane_id).write_text(json.dumps(status, indent=2, sort_keys=True))
+    return streak_info["count"]
+
+
+def _reset_exhaustion_streak(state_dir: Path, lane_id: str, run_id: str) -> None:
+    """Reset exhaustion streak to zero after successful review convergence."""
+    status = _read_worker_status(state_dir, lane_id) or {}
+    status["exhaustion_streak"] = {"run_id": run_id, "count": 0}
+    _status_path(state_dir, lane_id).parent.mkdir(parents=True, exist_ok=True)
+    _status_path(state_dir, lane_id).write_text(json.dumps(status, indent=2, sort_keys=True))
+
+
+def _check_token_burn(
+    *,
+    state_dir: Path,
+    lane_id: str,
+    run_id: str,
+    threshold: int,
+    log_dir: Path,
+) -> bool:
+    """Emit a ``token_burn_warning`` event if cumulative token usage exceeds threshold.
+
+    Returns True if the threshold was exceeded.
+    """
+    status = _read_worker_status(state_dir, lane_id) or {}
+    obs = status.get("observability") or {}
+    history = obs.get("history") if isinstance(obs, dict) else None
+    if not isinstance(history, list):
+        return False
+    cumulative = sum(
+        int((entry.get("token_usage_totals") or {}).get("total_tokens") or 0)
+        for entry in history
+        if isinstance(entry, dict)
+    )
+    if cumulative < threshold:
+        return False
+    entry: dict[str, Any] = {
+        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "lane": lane_id,
+        "level": "WARNING",
+        "event": "token_burn_warning",
+        "run_id": run_id,
+        "cumulative_tokens": cumulative,
+        "threshold": threshold,
+    }
+    log_dir.mkdir(parents=True, exist_ok=True)
+    path = log_dir / f"worker-{lane_id}.jsonl"
+    rotate_jsonl_if_needed(path, _MAX_LOG_BYTES)
+    with path.open("a") as fh:
+        fh.write(json.dumps(entry, default=str) + "\n")
+    print(
+        f"[WARNING] token_burn_warning cumulative_tokens={cumulative} threshold={threshold}",
+        flush=True,
+    )
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -547,6 +663,16 @@ def worker_loop(
     def log(level: str, event: str, **kw: Any) -> None:
         _log(lane_id, log_dir, level, event, run_id=run_id, **kw)
     existing_status = _read_worker_status(state_dir, lane_id) or {}
+
+    # Load daemon-level config once (token burn gate, etc.)
+    try:
+        from lane_manifest import get_lane_config as _get_lane_config
+        _lane_cfg = _get_lane_config(task_ref, lane_id, orchestrator_root=str(orchestrator_root)) or {}
+    except Exception:
+        _lane_cfg = {}
+    token_burn_threshold = int(_lane_cfg.get("token_burn_threshold") or 2_000_000)
+
+    previous_run_exhausted = False
 
     log("INFO", "daemon_start", task_ref=task_ref, single_pass=single_pass,
         max_review_cycles=max_review_cycles, backend=backend, session_mode=session_mode,
@@ -666,6 +792,7 @@ def worker_loop(
         final_result_path = None
         handoff_exit = 1
         last_findings: list[dict[str, Any]] = []
+        prev_finding_ids: set[str] = set()
 
         for cycle in range(max_review_cycles):
             # M-3: Fetch dynamic overrides from MCP at the START of each cycle
@@ -732,6 +859,7 @@ def worker_loop(
                 requested=reasoning_effort,
                 cycle=cycle,
                 prompt_override=prompt_override,
+                previous_run_exhausted=previous_run_exhausted,
             )
             log(
                 "INFO",
@@ -764,6 +892,28 @@ def worker_loop(
                         summary=f"Worker {phase} telemetry captured for cycle {cycle + 1}.",
                         result_path=final_result_path,
                     )
+                    exceeded = _check_token_burn(
+                        state_dir=state_dir,
+                        lane_id=lane_id,
+                        run_id=run_id,
+                        threshold=token_burn_threshold,
+                        log_dir=log_dir,
+                    )
+                    if exceeded:
+                        _write_worker_status(
+                            state_dir,
+                            lane_id,
+                            task_ref=task_ref,
+                            session=session,
+                            state=phase_state,
+                            summary=(
+                                f"Token burn threshold ({token_burn_threshold:,} tokens) exceeded;"
+                                " manual attention may be required."
+                            ),
+                            result_path=final_result_path,
+                            cycle=cycle,
+                            attention_required=True,
+                        )
                 else:
                     log("INFO", event, cycle=cycle, **kw)
 
@@ -791,8 +941,50 @@ def worker_loop(
 
             log("INFO", "exec_complete", result_path=str(final_result_path), cycle=cycle)
 
-            # Check for needs_guidance
+            # Emit context_pressure event when the prompt was under elevated or high pressure
             result = _load_result(final_result_path)
+            _ctx_util = result.get("context_utilization")
+            if isinstance(_ctx_util, dict):
+                _pressure = str(_ctx_util.get("pressure") or "normal")
+                if _pressure in ("elevated", "high"):
+                    log("WARNING", "context_pressure",
+                        cycle=cycle,
+                        pressure=_pressure,
+                        utilization_ratio=_ctx_util.get("utilization_ratio"),
+                        domain_signal_ratio=_ctx_util.get("domain_signal_ratio"),
+                        prompt_tokens_approx=_ctx_util.get("prompt_tokens_approx"),
+                    )
+                    _write_worker_status(
+                        state_dir,
+                        lane_id,
+                        task_ref=task_ref,
+                        session=session,
+                        state="executing",
+                        summary=f"Context pressure is {_pressure}; utilization={_ctx_util.get('utilization_ratio')}.",
+                        cycle=cycle,
+                        context_utilization=_ctx_util,
+                    )
+                # Record context_utilization in the observability entry so it appears
+                # in observability.latest and history regardless of pressure level.
+                _record_observability(
+                    orchestrator_root=orchestrator_root,
+                    task_ref=task_ref,
+                    lane_id=lane_id,
+                    session=session,
+                    cycle=cycle,
+                    phase="context_freshness",
+                    backend=backend,
+                    model=model,
+                    requested_reasoning_effort=execution_requested_effort,
+                    effective_reasoning_effort=execution_effective_effort,
+                    telemetry={},
+                    state="executing",
+                    summary=f"Context-freshness metrics recorded for cycle {cycle + 1}.",
+                    result_path=final_result_path,
+                    context_utilization=_ctx_util,
+                )
+
+            # Check for needs_guidance
             if result.get("handoff_action") == "needs_guidance":
                 log("INFO", "needs_guidance", cycle=cycle)
                 _write_worker_status(
@@ -847,6 +1039,89 @@ def worker_loop(
                     return handoff_exit
                 break
 
+            # --- Scope violation gate ---
+            if result.get("scope_violation"):
+                scope_violations = result.get("scope_violations", [])
+                log("WARNING", "scope_violation", cycle=cycle, violations=scope_violations)
+                _record_observability(
+                    orchestrator_root=orchestrator_root,
+                    task_ref=task_ref,
+                    lane_id=lane_id,
+                    session=session,
+                    cycle=cycle,
+                    phase="scope_check",
+                    backend=backend,
+                    model=model or "unknown",
+                    requested_reasoning_effort=execution_requested_effort,
+                    effective_reasoning_effort=execution_effective_effort,
+                    telemetry={"scope_violations": scope_violations},
+                    state="scope_violation",
+                    summary=f"Scope violation: {len(scope_violations)} file(s) outside owned_paths.",
+                    result_path=final_result_path,
+                )
+                _patch_result(final_result_path, {
+                    "handoff_action": "needs_guidance",
+                    "blockers": [
+                        f"Scope violation: {len(scope_violations)} file(s) modified outside owned_paths: "
+                        + str(scope_violations[:5])
+                    ],
+                })
+                _write_worker_status(
+                    state_dir,
+                    lane_id,
+                    task_ref=task_ref,
+                    session=session,
+                    state="handoff",
+                    summary=(
+                        f"Scope violation detected ({len(scope_violations)} file(s));"
+                        " handing blocked result back to orchestrator."
+                    ),
+                    result_path=final_result_path,
+                    cycle=cycle,
+                    handoff_action="needs_guidance",
+                    attention_required=True,
+                )
+                handoff_exit = _run_final_handoff(
+                    orchestrator_root=orchestrator_root,
+                    task_ref=task_ref,
+                    lane_id=lane_id,
+                    session=session,
+                    worktree_path=worktree_path,
+                    result_path=final_result_path,
+                    dry_run=dry_run,
+                    run_id=run_id,
+                )
+                if handoff_exit == 0:
+                    _cleanup_result_file(final_result_path)
+                    _write_worker_status(
+                        state_dir,
+                        lane_id,
+                        task_ref=task_ref,
+                        session=session,
+                        state="waiting_for_orchestrator",
+                        summary="Scope-violation blocked handoff submitted; waiting for orchestrator guidance.",
+                        handoff_action="needs_guidance",
+                        clear_result_path=True,
+                    )
+                else:
+                    _write_worker_status(
+                        state_dir,
+                        lane_id,
+                        task_ref=task_ref,
+                        session=session,
+                        state="handoff_failed",
+                        summary="Scope-violation handoff failed; saved result must be retried.",
+                        result_path=final_result_path,
+                        failure_stage="final_handoff",
+                        cycle=cycle,
+                        handoff_action="needs_guidance",
+                        attention_required=True,
+                    )
+                    log("ERROR", "handoff_failed", cycle=cycle, result_path=str(final_result_path))
+                if single_pass:
+                    return handoff_exit
+                break
+
             # --- Self-review pass ---
             log("INFO", "review_start", cycle=cycle)
             _write_worker_status(
@@ -882,11 +1157,22 @@ def worker_loop(
             log("INFO", "review_complete", cycle=cycle, converged=converged,
                 finding_count=len(findings))
 
+            # Compute finding diff before updating prev_finding_ids
+            if prev_finding_ids or findings:
+                diff = _compute_finding_diff(prev_finding_ids, findings)
+                log("INFO", "finding_diff", cycle=cycle,
+                    new_count=len(diff["new"]),
+                    recurring_count=len(diff["recurring"]),
+                    resolved_count=diff["resolved_count"])
+
             # Stash findings for next fix cycle
             last_findings = findings
+            prev_finding_ids = {_finding_stable_id(f) for f in findings}
 
             if converged:
                 # --- Verification ---
+                _reset_exhaustion_streak(state_dir, lane_id, run_id)
+                previous_run_exhausted = False
                 log("INFO", "verification_start")
                 _write_worker_status(
                     state_dir,
@@ -973,6 +1259,11 @@ def worker_loop(
         else:
             # Exhausted review cycles
             log("WARNING", "review_exhausted", max_cycles=max_review_cycles)
+            previous_run_exhausted = True
+            exhaustion_streak = _update_exhaustion_streak(state_dir, lane_id, run_id)
+            log("WARNING", "exhaustion_streak", streak=exhaustion_streak, run_id=run_id, lane=lane_id)
+            if exhaustion_streak >= 3:
+                log("WARNING", "lane_exhaustion_forced_stop", streak=exhaustion_streak)
             if final_result_path:
                 _patch_result(final_result_path, {
                     "handoff_action": "needs_guidance",
@@ -989,6 +1280,7 @@ def worker_loop(
                     summary="Worker review did not converge; handing the blocked result back to the orchestrator.",
                     result_path=final_result_path,
                     handoff_action="needs_guidance",
+                    attention_required=exhaustion_streak >= 2,
                 )
                 handoff_exit = _run_final_handoff(
                     orchestrator_root=orchestrator_root,

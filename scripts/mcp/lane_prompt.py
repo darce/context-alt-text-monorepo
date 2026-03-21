@@ -359,6 +359,57 @@ def _approx_chars(items: list[str]) -> int:
     return sum(len(item) for item in items)
 
 
+_CHARS_PER_TOKEN_APPROX = 4
+
+
+def _measure_context_utilization(
+    rendered_prompt: str,
+    model_context_window: int,
+    section_sizes: dict[str, int],
+) -> dict:
+    """Compute prompt context utilization metrics for a rendered prompt.
+
+    Args:
+        rendered_prompt: The fully rendered prompt text.
+        model_context_window: Target model context window in tokens.
+        section_sizes: Mapping of section name to character count.
+
+    Returns:
+        A dict with keys:
+        - ``prompt_chars``: total character count of the rendered prompt
+        - ``prompt_tokens_approx``: approximate token count (chars / 4)
+        - ``utilization_ratio``: prompt_tokens_approx / model_context_window
+        - ``domain_signal_ratio``: fraction of chars that are domain-signal
+          sections (assignment, runtime_guidance, dependency_briefs)
+        - ``pressure``: "high", "medium", or "low" pressure indicator
+    """
+    prompt_chars = len(rendered_prompt)
+    prompt_tokens_approx = prompt_chars // _CHARS_PER_TOKEN_APPROX
+    utilization_ratio = (
+        prompt_tokens_approx / model_context_window if model_context_window > 0 else 0.0
+    )
+
+    domain_keys = {"assignment", "runtime_guidance", "dependency_briefs"}
+    domain_chars = sum(v for k, v in section_sizes.items() if k in domain_keys)
+    total_chars = sum(section_sizes.values()) if section_sizes else 0
+    domain_signal_ratio = domain_chars / total_chars if total_chars > 0 else 0.0
+
+    if utilization_ratio > 0.4 and domain_signal_ratio < 0.5:
+        pressure = "high"
+    elif utilization_ratio > 0.3:
+        pressure = "elevated"
+    else:
+        pressure = "normal"
+
+    return {
+        "prompt_chars": prompt_chars,
+        "prompt_tokens_approx": prompt_tokens_approx,
+        "utilization_ratio": round(utilization_ratio, 4),
+        "domain_signal_ratio": round(domain_signal_ratio, 4),
+        "pressure": pressure,
+    }
+
+
 def _prompt_budget_section(
     *,
     assignment_items: list[str],
@@ -556,12 +607,14 @@ def _build_prompt(
     orchestrator_root: Path,
     include_lane_history: bool = False,
     include_global_context: bool = False,
-) -> str:
+    model_context_window: int = 128_000,
+) -> tuple[str, dict[str, Any]]:
+    """Return ``(rendered_prompt, context_utilization_metrics)``."""
     state = _actionable_state(activity)
     if state["awaiting_orchestrator"]:
-        return WAITING_MESSAGE
+        return WAITING_MESSAGE, {}
     if not state["actionable"]:
-        return NO_WORK_MESSAGE
+        return NO_WORK_MESSAGE, {}
     sections = _build_prompt_sections(
         activity,
         task_ref=task_ref,
@@ -581,7 +634,14 @@ def _build_prompt(
     lines.extend(_render_section("Escalated Task Context", list(sections.get("global_context", []))))
     lines.extend(_render_section("Latest Worker Report", list(sections["latest_report"])))
     lines.extend(_render_section("Reporting Contract", list(sections["reporting_contract"])))
-    return "\n".join(lines)
+    rendered = "\n".join(lines)
+    section_sizes = {
+        k: sum(len(line) for line in v)
+        for k, v in sections.items()
+        if isinstance(v, list)
+    }
+    ctx_metrics = _measure_context_utilization(rendered, model_context_window, section_sizes)
+    return rendered, ctx_metrics
 
 
 def main() -> int:
@@ -610,8 +670,17 @@ def main() -> int:
     if activity.get("ok") is not True:
         raise RuntimeError(f"Unable to load lane activity: {activity}")
 
+    # Load model_context_window from manifest (fall back to default)
+    model_context_window = 128_000
+    try:
+        from lane_manifest import get_lane_config as _get_lane_cfg
+        _lcfg = _get_lane_cfg(args.task_ref, args.lane_id)
+        model_context_window = int(_lcfg.get("model_context_window") or model_context_window)
+    except Exception:  # noqa: BLE001
+        pass
+
     state = _actionable_state(activity)
-    prompt = _build_prompt(
+    prompt, ctx_metrics = _build_prompt(
         activity,
         task_ref=args.task_ref,
         lane_id=args.lane_id,
@@ -619,7 +688,13 @@ def main() -> int:
         orchestrator_root=orchestrator_root,
         include_lane_history=args.include_lane_history,
         include_global_context=args.include_global_context,
+        model_context_window=model_context_window,
     )
+    # Emit context utilization metrics to stderr so callers can capture without
+    # polluting the prompt text that goes to stdout.
+    if ctx_metrics:
+        import json as _json
+        print(_json.dumps({"context_utilization": ctx_metrics}), file=sys.stderr)
     if args.check:
         if state["actionable"]:
             return 0

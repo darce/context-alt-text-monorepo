@@ -128,6 +128,96 @@ def test_get_lane_config_expands_worktree_template_and_derives_commit_paths(mani
     assert lane["preflight_commands"] == ["pg_isready -h localhost -p 5432"]
 
 
+def test_normalize_owned_path_strips_glob_suffixes() -> None:
+    module = _load_lane_manifest_module()
+
+    assert module._normalize_owned_path("apps/backend/**/*") == "apps/backend"
+    assert module._normalize_owned_path("apps/backend/**") == "apps/backend"
+    assert module._normalize_owned_path("apps/backend/*") == "apps/backend"
+
+
+def test_candidate_runtime_roots_prefers_nearest_match(tmp_path: Path) -> None:
+    module = _load_lane_manifest_module()
+    root = tmp_path / "repo"
+    app_root = root / "apps" / "demo"
+    nested_root = app_root / "nested"
+    nested_root.mkdir(parents=True)
+    (root / "composer.json").write_text("{}")
+    (app_root / "package.json").write_text("{}")
+
+    lane = {
+        "app_root": "apps/demo/nested",
+        "owned_paths": ["apps/demo/nested/src/**/*"],
+        "tooling_paths": [],
+    }
+
+    roots = module._candidate_runtime_roots(lane, orchestrator_root=str(root))
+    assert roots == [app_root]
+
+
+def test_derive_runtime_preflight_uses_lane_local_commands(tmp_path: Path) -> None:
+    module = _load_lane_manifest_module()
+    root = tmp_path / "repo"
+    app_root = root / "apps" / "demo"
+    app_root.mkdir(parents=True)
+    (app_root / "composer.json").write_text("{}")
+    (app_root / "package.json").write_text("{}")
+
+    lane = {
+        "app_root": "apps/demo",
+        "owned_paths": ["apps/demo/src/**/*"],
+        "tooling_paths": [],
+    }
+
+    derived = module._derive_runtime_preflight(lane, orchestrator_root=str(root))
+    assert derived["capability_tags"] == ["php-tooling-ready", "node-tooling-ready"]
+    assert derived["preflight_commands"] == [
+        "cd apps/demo && test -f vendor/autoload.php",
+        "cd apps/demo && test -d node_modules",
+    ]
+
+
+def test_get_lane_config_uses_derived_preflight_when_explicit_config_missing(tmp_path: Path) -> None:
+    module = _load_lane_manifest_module()
+    manifest_dir = tmp_path / "lane-orchestration"
+    manifest_dir.mkdir()
+    repo_root = tmp_path / "repo"
+    app_root = repo_root / "apps" / "demo"
+    app_root.mkdir(parents=True)
+    (app_root / "composer.json").write_text("{}")
+    (app_root / "package.json").write_text("{}")
+    (manifest_dir / "demo-task.json").write_text(
+        json.dumps(
+            {
+                "task_ref": "demo-task",
+                "merge_order": ["backend"],
+                "lanes": {
+                    "backend": {
+                        "branch": "codex/demo-backend",
+                        "worktree_path": "{orchestrator_root}/worktrees/demo-backend",
+                        "owned_paths": ["apps/demo/src/**/*"],
+                        "test_commands": [],
+                    }
+                },
+                "downstream": {"backend": []},
+            }
+        )
+    )
+
+    original_dir = module.MANIFEST_DIR
+    module.MANIFEST_DIR = manifest_dir
+    try:
+        lane = module.get_lane_config("demo-task", "backend", orchestrator_root=str(repo_root))
+    finally:
+        module.MANIFEST_DIR = original_dir
+
+    assert lane is not None
+    assert lane["preflight_commands"] == [
+        "cd apps/demo && test -f vendor/autoload.php",
+        "cd apps/demo && test -d node_modules",
+    ]
+
+
 def test_route_patterns_derives_from_owned_paths_when_routing_empty(manifest_module) -> None:
     patterns = manifest_module.route_patterns("demo-task")
     assert ("apps/backend/", "backend") in patterns

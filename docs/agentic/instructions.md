@@ -244,7 +244,7 @@ Write-tool targeting rule:
 
 - Write tools target the **active task only** by default.
 - To switch between tasks, use `switch_task(task_ref)`. It auto-archives the outgoing task and restores the target's objective from its archive. This replaces the multi-step `archive_task_state` + `set_handoff_state` workflow.
-- For in-place updates to the *current* task (status, objective change), use `set_handoff_state(...)` directly.
+- For in-place updates to the _current_ task (status, objective change), use `set_handoff_state(...)` directly.
 - **Exception — review finding tools**: `update_review_finding`, `reopen_review_finding`, `get_review_finding`, `list_review_findings`, and `get_review_findings_summary` accept an optional `task_ref` parameter. Pass it explicitly to read or write findings on a non-active task without switching active state. This avoids the disruptive active-task switching that multi-task verification workflows otherwise require.
 
 Before final response:

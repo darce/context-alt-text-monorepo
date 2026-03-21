@@ -90,7 +90,7 @@ Plan cursors:
 
 - Write tools target the active task only.
 - To switch between tasks, use `switch_task(task_ref)`. It auto-archives the outgoing task (full snapshot) and activates the target, restoring the objective from its archive when not provided. Idempotent if the target is already active.
-- For in-place updates to the *current* task (status, objective change), use `set_handoff_state(...)` directly.
+- For in-place updates to the _current_ task (status, objective change), use `set_handoff_state(...)` directly.
 - `set_handoff_state` requires `expected_revision` for updates.
 - The shared actor shape may include `lane_id` in addition to `agent`, `branch`, and `commit_sha`. When present, lane-aware write tools persist it on decisions, tests, blockers, actions, and review findings.
 - `record_review_finding` accepts optional `details={ line_start?, line_end?, fix? }`.
@@ -203,6 +203,7 @@ Operational notes:
 Use the new lane tools when a task is intentionally split across Git worktrees or parallel agent sessions.
 
 - Task-aware worktree automation should be driven by a checked-in manifest at `config/lane-orchestration/<task-ref>.json`. That manifest is the source of truth for lane ids, branch names, worktree paths, owned paths, test commands, merge order, and dispatch routing hints.
+- Manifests should also identify runtime roots through `app_root` and/or `tooling_paths` when a lane depends on `composer.json` or `package.json`. The lane runtime uses those paths to bootstrap dependencies and derive default preflight checks when a manifest does not define explicit `preflight_commands`.
 - Manifest creation must be generic, not task-specific. Use `make lane-manifest-init TASK=<task-ref> LANE_IDS='lane-a lane-b' [TASK_PLAN=docs/tasks/...md]` to scaffold a new manifest for any task, then fill in lane ownership and verification details.
 - The orchestrator should register one `worktree_lane` per worker branch/worktree.
 - Workers should write with `actor.lane_id` so decisions, tests, blockers, actions, and findings can be queried by lane.

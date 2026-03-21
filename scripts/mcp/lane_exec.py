@@ -32,6 +32,7 @@ from backend_registry import get_backend_choices
 from backend_registry import get_backend_spec
 from backend_registry import resolve_bridge
 from backend_registry import validate_backend
+from bootstrap_lane import _bootstrap as bootstrap_lane
 from lane_manifest import get_lane_config
 
 
@@ -297,6 +298,15 @@ def run_lane_exec(
     )
 
     if not dry_run:
+        bootstrap_result = bootstrap_lane(
+            orchestrator_root=orchestrator_root,
+            task_ref=task_ref,
+            lane_id=lane_id,
+            worktree_path=worktree_path,
+        )
+        if bootstrap_result != 0:
+            raise RuntimeError(f"lane bootstrap failed for {lane_id} with exit code {bootstrap_result}")
+
         preflight = _run_lane_preflight(
             orchestrator_root=orchestrator_root,
             task_ref=task_ref,

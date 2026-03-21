@@ -63,6 +63,8 @@ def build_manifest(
             "owned_paths": [],
             "required_docs": required_docs,
             "test_commands": [],
+            "capability_tags": [],
+            "preflight_commands": [],
             "non_goals": [],
             "commit_paths": [],
             "commit_subject": f"update {lane_id}",

@@ -24,6 +24,11 @@ That manifest is the source of truth for:
 - required docs and verification commands
 - merge order and dispatch routing hints
 
+When a lane declares `app_root`, `owned_paths`, or `tooling_paths` that resolve to
+an app with `composer.json` or `package.json`, the lane runtime now treats that as
+bootstrap/preflight metadata too. New lanes inherit default dependency checks from
+those paths even when a manifest does not manually spell out `preflight_commands`.
+
 To add lane automation for a new task, add a new manifest first. The root `Makefile`, `review_dispatch.py`, and the worker helpers read from that manifest instead of from task-specific hardcoded tables.
 
 ## Terminology
@@ -113,6 +118,7 @@ The orchestrator can control the execution model and reasoning effort for each l
 - `reasoning_effort`: Controls the "thinking" budget for supported models. Choices: `low`, `medium`, `high`, or `auto` (default). `auto` uses internal heuristics (e.g., follow-up cycles or backend-heavy tasks escalate to `high`).
 
 These are typically set in the lane manifest but can be overridden via MCP:
+
 ```bash
 agent-handoff-mcp dispatch_lane_work --task-ref <task> --lane-id <lane> --model o3-mini --reasoning-effort high
 ```
@@ -144,17 +150,17 @@ Important:
 - Build and test commands still need to be discoverable by the spawned agent. In practice that means keeping them in the repo instruction surface or rendering them directly into the lane/review prompt.
 - The reference bridge is safe for parallel daemon calls because each `run_subagent()` invocation starts its own short-lived `codex app-server` process; there is no shared in-process session state.
 
-146: 
+146:
 147: ### Model Selection Guidance
-148: 
+148:
 149: | Backend | Supported Models | Reasoning Effort Support |
 150: | --- | --- | --- |
 151: | `codex-cli` | `gpt-4o`, `gpt-4o-mini`, `o1-preview` | `low`, `medium`, `high` |
 152: | `codex-subagent` | `gpt-4o`, `o1-mini`, `o3-mini` | `low`, `medium`, `high`, `xhigh` |
 153: | `claude-code` | `claude-3-5-sonnet` (default) | Not applicable (model-driven) |
-154: 
+154:
 155: **Note:** `xhigh` effort is only supported by the `codex-subagent` bridge today. Using `xhigh` with `codex-cli` will fall back to `high`.
-156: 
+156:
 157: ### MCP orchestration commands
 
 For in-app agents that can call MCP tools directly, `agent-handoff-mcp` now exposes
@@ -594,6 +600,7 @@ Restores tooling files (`Makefile`, `scripts/worktree-lane`, templates) to their
 2. **Authenticate**: `codex login`
 3. **Verify status**: `codex login status` (should exit 0)
 4. **Configure profiles**: Edit `~/.codex/config.toml`:
+
    ```toml
    model = "gpt-5.4"
 
@@ -603,8 +610,8 @@ Restores tooling files (`Makefile`, `scripts/worktree-lane`, templates) to their
    [profile.full]
    model = "gpt-5.4"
    ```
-5. **Verify model access**: `codex exec -m gpt-5.4-mini "echo hello"`
 
+5. **Verify model access**: `codex exec -m gpt-5.4-mini "echo hello"`
 
 ### Recipe: Automated worker run (Codex CLI)
 

@@ -1,7 +1,7 @@
 {
   "servers": {
     "altcontext-mcp": {
-      "command": "python3",
+      "command": "${env:HOME}/.pyenv/versions/description-service/bin/python3",
       "args": [
         "${workspaceFolder}/packages/agent-handoff-mcp/src/agent_handoff_mcp_launcher.py",
         "--workspace-root",

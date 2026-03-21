@@ -2,7 +2,7 @@
 # Lane Worker Operations (check, run, report, commit, handoff)
 # =============================================================================
 
-.PHONY: lane-check lane-run lane-report lane-commit lane-handoff
+.PHONY: lane-check lane-run lane-report lane-commit lane-handoff dashboard-live dashboard-tui
 
 lane-check: lane-worker-guard
 	@set -eu; \
@@ -214,3 +214,19 @@ lane-handoff: lane-worker-guard
 	$(MAKE) lane-status TASK="$(TASK)" LANE="$(LANE)"; \
 	echo ""; \
 	$(MAKE) lane-report TASK="$(TASK)" LANE="$(LANE)" SESSION="$(SESSION)" SUMMARY="$(SUMMARY)" STATUS="$(STATUS)" MERGE_READY="$(MERGE_READY)" DRY_RUN="$(DRY_RUN)" MESSAGE="$(MESSAGE)"
+
+dashboard-live:
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/dashboard_live.py" \
+		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+		--task-ref "$(TASK)" \
+		$(if $(LANES),$(addprefix --lanes ,$(LANES)),) \
+		--interval "$(or $(INTERVAL),10)" \
+		$(if $(filter 1,$(ONCE)),--once,)
+
+dashboard-tui:
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/dashboard_tui.py" \
+		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+		--task-ref "$(TASK)" \
+		$(if $(LANES),$(addprefix --lanes ,$(LANES)),) \
+		--interval "$(or $(INTERVAL),10)" \
+		$(if $(filter 1,$(ONCE)),--once,)

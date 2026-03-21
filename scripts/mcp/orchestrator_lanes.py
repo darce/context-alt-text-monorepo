@@ -180,3 +180,55 @@ def _complete_lane_plan_cursor(task_ref: str, lane_id: str, *, worker_message_id
         raise RuntimeError(f"Failed to complete plan cursor for {lane_id}.")
     cursor = update.get("cursor")
     return cursor if isinstance(cursor, dict) else None
+
+
+# ---------------------------------------------------------------------------
+# fresh_worktree provisioning (redispatch_mode: fresh_worktree)
+# ---------------------------------------------------------------------------
+
+
+def _provision_fresh_worktree(
+    orchestrator_root: Path,
+    task_ref: str,
+    lane_id: str,
+    *,
+    dry_run: bool = False,
+) -> Optional[Path]:
+    """Create a clean sibling worktree for a lane branched from the orchestrator HEAD.
+
+    Returns the new worktree path, or ``None`` if provisioning failed or was skipped.
+    The new worktree is created as a sibling of *orchestrator_root* with a
+    timestamped suffix so concurrent lanes never collide.
+    """
+    import datetime as _dt
+
+    from lane_manifest import get_lane_config
+
+    config = get_lane_config(task_ref, lane_id, orchestrator_root=str(orchestrator_root))
+    if not config:
+        return None
+
+    # Resolve the base branch (current HEAD of the orchestrator root)
+    head_result = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=orchestrator_root,
+        capture_output=True, text=True, check=False,
+    )
+    base_branch = head_result.stdout.strip() or "main"
+
+    timestamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
+    fresh_branch = f"codex/{task_ref}-{lane_id}-fresh-{timestamp}"
+    fresh_wt = orchestrator_root.parent / f"{orchestrator_root.name}-{lane_id}-fresh-{timestamp}"
+
+    if dry_run:
+        return fresh_wt
+
+    result = subprocess.run(
+        ["git", "worktree", "add", "-b", fresh_branch, str(fresh_wt), base_branch],
+        cwd=orchestrator_root,
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        return None
+
+    return fresh_wt

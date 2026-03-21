@@ -329,6 +329,12 @@ def _normalize_lane_message_payload(payload: object) -> tuple[dict[str, object] 
     artifacts = _coerce_string_list(payload.get("artifacts"))
     if artifacts:
         normalized["artifacts"] = artifacts
+    _raw_override = payload.get("owned_paths_override")
+    if isinstance(_raw_override, str):
+        _raw_override = [_raw_override]
+    owned_paths_override = _coerce_string_list(_raw_override)
+    if owned_paths_override:
+        normalized["owned_paths_override"] = owned_paths_override
     return normalized, None
 
 

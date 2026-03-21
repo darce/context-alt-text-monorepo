@@ -146,6 +146,8 @@ Hard guardrails from real failures in this project:
 8. **Config files: validate at load time.** JSON/YAML config consumed by multiple modules must be structurally validated at load time. Fail fast on missing or malformed required keys instead of silently returning empty defaults.
 9. **No task-specific logic in generic modules.** If a generic utility contains `if task_ref == "some-task"` or hardcoded domain strings for a specific task, extract that logic to a config-driven policy module or the task's manifest. It becomes dead code once the task is done.
 10. **IDE tool output may be stale after external writes.** Editor-integrated `read_file` and `grep_search` tools read from the IDE's in-memory file model, not from disk. After git operations (rebase, cherry-pick, merge, worktree intake) or edits by other agents/terminals, the model can lag behind the filesystem. When a review finding seems surprising, cross-check with a terminal command (`grep -n`, `wc -l`, `sed -n`) before recording it. This caused an entire review cycle of false positives against `scripts/mcp/orchestrator_daemon.py` (IDE showed ~700 lines, disk had 850).
+11. **Effort goes up on failure, not down.** If a worker run exhausts at a given reasoning effort, the next attempt must escalate one level (low->medium->high->xhigh), never decrease. The backend-domain lane was auto-lowered from medium to low after exhaustion, causing 7M+ tokens burned in non-converging loops. The `_escalate_effort()` ladder in `_env.py` enforces this; do not override it with manual effort lowering after exhaustion.
+12. **Scope enforcement is a runtime gate, not advisory.** `lane_exec.py` validates the worktree diff against `effective_owned_paths` after execution, before review. A scope violation skips review entirely and emits a `scope_violation` event. This prevents contaminated worktrees from poisoning subsequent cycles. Commit-time scope checking in `mk/lane-worker.mk` remains as a secondary guard.
 
 ### Tool Selection Discipline
 
@@ -326,11 +328,12 @@ Required domain boundaries per default Phase 5 lane split:
 
 Domain guardrails for worker lanes:
 
-1. Workers may edit only files inside their lane's owned paths.
+1. Workers may edit only files inside their lane's owned paths. Scope enforcement is now a **runtime gate**: `lane_exec.py` validates the worktree diff against `effective_owned_paths` (or manifest `owned_paths`) after execution, before review. A scope violation rejects the turn immediately.
 2. If a required fix falls outside the lane's owned paths, record a blocker or lane message for the orchestrator instead of editing another domain.
 3. Workers must not "helpfully" patch sibling-lane files, shared contracts, or checklist truth unless explicitly assigned.
 4. Before handoff, workers should verify changed files with `git diff --name-only` from their worktree and confirm the list stays inside lane scope.
 5. Orchestrators should reject or selectively intake any out-of-scope file changes during merge review.
+6. The orchestrator can narrow scope for a specific dispatch by embedding `effective_owned_paths` as a JSON-encoded string in the `artifacts` list of the dispatch lane message (e.g., `artifacts=[json.dumps({"type": "owned_paths_override", "paths": [...]})]`). `lane_exec.py` reads this override from the most recent `orchestrator_to_worker` message and prefers it over the manifest `owned_paths`.
 6. Merge-ready worker handoff must be commit-based. Dirty worktrees are not a valid handoff artifact; commit or stash lane work before reporting it.
 7. If a lane needs to catch up with orchestrator changes, use `make lane-refresh` instead of copying files across worktrees.
 8. `make lane-refresh` now updates worker lanes from committed orchestrator branch state only. If root workflow tooling is still uncommitted, commit it on the orchestrator branch before refreshing workers.
@@ -386,6 +389,9 @@ How the orchestrator should monitor and delegate:
 8. After each accepted lane, regenerate `CURRENT_TASK.md` so the next worker sees current state without reading every branch diff.
 9. Keep the orchestrator root clean. If `git status` is dirty, do not intake. Stash or commit root-local work first.
 10. If a lane becomes stale, refresh the whole lane with `make lane-refresh` instead of manually copying individual files into the worktree.
+11. Use `make dashboard-live` (or `worker_status` via MCP) for live per-lane health monitoring. The dashboard shows composite state, token burn, exhaustion streak, context pressure, and attention flags. Use `make dashboard-tui` for a full interactive Textual TUI when available.
+12. The orchestrator daemon now skips auto-start for lanes with `exhaustion_streak >= 2` and emits `lane_unhealthy`. Lanes in this state require an explicit orchestrator decision (e.g., `promote_model`, `split_lane`, `close_lane`, `fresh_worktree`) before work resumes.
+13. Lane health is scored as `healthy` / `degraded` / `unhealthy` by `_check_lane_health()` in `orchestrator_daemon.py`, based on exhaustion streak, scope violation history, token burn, and context pressure. Health transitions emit `lane_health_changed` events.
 
 How to merge worker worktree changes into the current branch:
 
@@ -430,6 +436,9 @@ make lane-clean TASK=phase-5-retention-export-and-audit-controls LANE=backend-ht
 - `make daemon-pause`, `make daemon-resume`, and `make daemon-status` all operate on that same singleton orchestrator state under `$(git rev-parse --git-common-dir)/..`. `make daemon-status` reports the shared state/log paths so you can see exactly which orchestrator root owns the daemon.
 - In MCP-capable hosts, `agent-handoff-mcp` now exposes orchestration commands as an alternative to shell-first Make targets: `orchestrator_start`, `orchestrator_status`, `orchestrator_stop`, `orchestrator_pause`, `orchestrator_resume`, and `run_structured_turn`. Use those when an in-app agent already has MCP access and should control orchestration without `run_in_terminal`. `run_structured_turn` is bridge-only and is not a synchronous wrapper for `codex exec`.
 - Worker daemon progress after `cycle_start` is written to `logs/worker-daemon/worker-<lane>.jsonl`. The foreground terminal now also shows `exec_start`, `exec_spawned`, and periodic `exec_heartbeat` lines so operators can tell a long-running worker is still alive without tailing logs.
+- The worker daemon emits structured JSONL events for health-relevant conditions: `scope_violation` (files outside owned_paths), `exhaustion_streak` (consecutive non-converged review cycles), `token_burn_warning` (cumulative tokens exceed threshold), `worker_stopped` (clean shutdown with lock cleanup), `context_pressure` (prompt consuming unsafe fraction of context window), and `lane_health_changed` (health state transition).
+- `worker_stop` now cleans up the lock file and emits a `worker_stopped` event. After stop, `daemon_status()` reports `lock.held: false` consistently. No contradictory state artifacts remain.
+- `make dashboard-live` is the polling dashboard for live lane health. It queries `worker_status` per lane via MCP CLI and prints a formatted table with composite state, health, token burn, exhaustion streak, context pressure, cycle count, model, and effort. `make dashboard-tui` is the interactive Textual TUI variant.
 - `make handoff-inbox` is the orchestrator polling command. It reads open `worker_to_orchestrator` lane messages from MCP and the latest merge-ready or blocked worker reports across lanes.
 - `make lane-dispatch` is the orchestrator assignment command. It writes an open lane message for a specific worker lane and regenerates `CURRENT_TASK.md` so the dispatch is mirrored for humans.
 - `make handoff-dispatch` is the orchestrator handoff-routing command. It reads open handoff review findings, blockers, and next actions from the root, stamps any routeable unassigned items onto the owning lane, and sends lane messages so the correct worktree sees the queue in `make lane-inbox`.

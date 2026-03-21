@@ -32,6 +32,7 @@ class ClaudeCodeAdapter(BackendAdapter):
         requested: str,
         cycle: int,
         prompt_override: str | None,
+        previous_run_exhausted: bool = False,
     ) -> tuple[str | None, list[str]]:
         """Claude Code currently handles effort via model selection; return default."""
         return None, ["Claude Code uses model-level reasoning controls"]

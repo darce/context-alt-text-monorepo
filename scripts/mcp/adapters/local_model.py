@@ -40,6 +40,7 @@ class LocalModelAdapter(BackendAdapter):
         requested: str,
         cycle: int,
         prompt_override: str | None = None,
+        previous_run_exhausted: bool = False,
     ) -> tuple[str | None, list[str]]:
         """Resolve reasoning effort using shared auto-scoring logic."""
         return resolve_auto_reasoning_effort(
@@ -49,6 +50,7 @@ class LocalModelAdapter(BackendAdapter):
             requested=requested,
             cycle=cycle,
             prompt_override=prompt_override,
+            previous_run_exhausted=previous_run_exhausted,
         )
 
     def execute(

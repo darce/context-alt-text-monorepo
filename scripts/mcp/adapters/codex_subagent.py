@@ -4,12 +4,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-import sys as _sys
-_PARENT = str(Path(__file__).resolve().parent.parent)
-if _PARENT not in _sys.path:
-    _sys.path.insert(0, _PARENT)
-
-from backend_adapter import BackendAdapter, BackendResult
+from scripts.mcp.backend_adapter import BackendAdapter, BackendResult
 
 
 class CodexSubagentAdapter(BackendAdapter):
@@ -28,8 +23,9 @@ class CodexSubagentAdapter(BackendAdapter):
         requested: str,
         cycle: int,
         prompt_override: str | None,
+        previous_run_exhausted: bool = False,
     ) -> tuple[str | None, list[str]]:
-        from _env import resolve_auto_reasoning_effort
+        from scripts.mcp._env import resolve_auto_reasoning_effort
 
         return resolve_auto_reasoning_effort(
             orchestrator_root=orchestrator_root,
@@ -38,6 +34,7 @@ class CodexSubagentAdapter(BackendAdapter):
             requested=requested,
             cycle=cycle,
             prompt_override=prompt_override,
+            previous_run_exhausted=previous_run_exhausted,
         )
 
     def execute(

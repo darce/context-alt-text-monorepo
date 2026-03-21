@@ -57,6 +57,7 @@ class BackendAdapter(Protocol):
         requested: str,
         cycle: int,
         prompt_override: str | None,
+        previous_run_exhausted: bool = False,
     ) -> tuple[str | None, list[str]]:
         """Resolve the effective reasoning effort for this cycle.
 
@@ -67,6 +68,7 @@ class BackendAdapter(Protocol):
             requested: The requested effort strategy (e.g. 'auto', 'high', 'inherit').
             cycle: The current execution cycle number.
             prompt_override: The fix prompt if this is a fix cycle, else None.
+            previous_run_exhausted: If True, escalate effort one level above auto-selected.
 
         Returns:
             A tuple of (effective_effort, list_of_reasons_for_decision).

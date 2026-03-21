@@ -339,6 +339,8 @@ def get_lane_config(task_ref: str, lane_id: str, *, orchestrator_root: str | Non
     result.setdefault("preferred_model", None)
     result.setdefault("preferred_backend", None)
     result.setdefault("preferred_reasoning_effort", None)
+    result.setdefault("token_burn_threshold", 2_000_000)
+    result.setdefault("model_context_window", 128_000)
     if orchestrator_root:
         derived_preflight = _derive_runtime_preflight(result, orchestrator_root=orchestrator_root)
         if not result.get("capability_tags"):

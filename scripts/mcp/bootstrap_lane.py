@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -102,9 +103,14 @@ def _bootstrap(
             print(f"Bootstrapping PHP/Composer dependencies in {relative_path}...")
             root_vendor = Path(orchestrator_root) / relative_path / "vendor"
             lane_vendor = full_path / "vendor"
-            if root_vendor.is_dir() and not lane_vendor.exists():
-                print(f"  Symlinking vendor from orchestrator root: {root_vendor}")
-                lane_vendor.symlink_to(root_vendor, target_is_directory=True)
+            vendor_points_outside_lane = lane_vendor.is_symlink() and full_path not in lane_vendor.resolve().parents
+            if vendor_points_outside_lane:
+                print(f"  Replacing shared vendor symlink with lane-local vendor: {lane_vendor.resolve()}")
+                lane_vendor.unlink()
+
+            if not lane_vendor.exists() and root_vendor.is_dir():
+                print(f"  Copying vendor from orchestrator root: {root_vendor}")
+                shutil.copytree(root_vendor, lane_vendor, symlinks=True)
             elif not lane_vendor.exists():
                 print(f"  Running composer install in {relative_path}")
                 result = subprocess.run(
@@ -122,9 +128,14 @@ def _bootstrap(
             print(f"Bootstrapping NPM dependencies in {relative_path}...")
             root_nm = Path(orchestrator_root) / relative_path / "node_modules"
             lane_nm = full_path / "node_modules"
-            if root_nm.is_dir() and not lane_nm.exists():
-                print(f"  Symlinking node_modules from orchestrator root: {root_nm}")
-                lane_nm.symlink_to(root_nm, target_is_directory=True)
+            node_modules_points_outside_lane = lane_nm.is_symlink() and full_path not in lane_nm.resolve().parents
+            if node_modules_points_outside_lane:
+                print(f"  Replacing shared node_modules symlink with lane-local node_modules: {lane_nm.resolve()}")
+                lane_nm.unlink()
+
+            if not lane_nm.exists() and root_nm.is_dir():
+                print(f"  Copying node_modules from orchestrator root: {root_nm}")
+                shutil.copytree(root_nm, lane_nm, symlinks=True)
             elif not lane_nm.exists():
                 print(f"  Running npm install in {relative_path}")
                 result = subprocess.run(

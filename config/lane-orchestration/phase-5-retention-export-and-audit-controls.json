@@ -182,6 +182,14 @@
       "test_commands": [
         "cd apps/prototype-wp-alt-context && ./vendor/bin/phpunit tests/Unit/RetentionControllerTest.php tests/Unit/RecognitionControllerTest.php tests/Unit/SnapshotClientTest.php tests/Unit/SyncPullJobTest.php tests/Unit/AdminTest.php"
       ],
+      "capability_tags": [
+        "php-tooling-ready"
+      ],
+      "preflight_commands": [
+        "cd apps/prototype-wp-alt-context && test -f vendor/autoload.php"
+      ],
+      "preflight_failure_summary": "wp-proxy runtime preflight failed; lane-local PHP dependencies are not ready.",
+      "preflight_failure_details": "This lane depends on a lane-local Composer runtime. Lane bootstrap should provision vendor/autoload.php before the worker spends a turn on PHP implementation or verification.",
       "non_goals": [
         "Do not edit frontend React/TypeScript files.",
         "Do not edit backend Python files."
@@ -209,6 +217,14 @@
         "cd apps/prototype-wp-alt-context && npm run test -- --run js/admin/api/__tests__/recognitionApi.test.ts js/admin/pages/__tests__/RetentionPage.test.tsx js/admin/pages/__tests__/DashboardPage.test.tsx js/admin/pages/workbench/__tests__/SyncStatusIndicator.test.tsx js/admin/__tests__/routeHelpers.test.ts",
         "cd apps/prototype-wp-alt-context && npm run typecheck"
       ],
+      "capability_tags": [
+        "node-tooling-ready"
+      ],
+      "preflight_commands": [
+        "cd apps/prototype-wp-alt-context && test -d node_modules"
+      ],
+      "preflight_failure_summary": "frontend runtime preflight failed; lane-local Node dependencies are not ready.",
+      "preflight_failure_details": "This lane depends on a lane-local Node runtime. Lane bootstrap should provision node_modules before the worker spends a turn on frontend implementation or verification.",
       "non_goals": [
         "Do not edit PHP or Python files.",
         "Do not edit shared task docs unless explicitly assigned."

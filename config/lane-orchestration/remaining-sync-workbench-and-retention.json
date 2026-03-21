@@ -552,6 +552,16 @@
         "cd apps/prototype-wp-alt-context && vendor/bin/phpunit",
         "cd apps/prototype-wp-alt-context && composer phpstan"
       ],
+      "capability_tags": [
+        "php-tooling-ready",
+        "lane-local-autoload"
+      ],
+      "preflight_commands": [
+        "cd apps/prototype-wp-alt-context && test -x vendor/bin/phpunit && test -x vendor/bin/phpstan",
+        "cd apps/prototype-wp-alt-context && php -r 'require \"vendor/autoload.php\"; $r=new ReflectionClass(\"AltContext\\\\Sovereign\\\\Sync\\\\ConflictRepository\"); $cwd=getcwd(); $path=$r->getFileName(); if (0 !== strpos($path, $cwd)) { fwrite(STDERR, $path); exit(1); }'"
+      ],
+      "preflight_failure_summary": "wp-proxy runtime preflight failed; lane-local PHP tooling or autoload isolation is not ready.",
+      "preflight_failure_details": "This lane requires a lane-local Composer runtime before execution. Missing PHPUnit/PHPStan binaries or autoloads resolving back to the orchestrator root should be fixed in bootstrap instead of spending a model turn on PHP work that cannot verify cleanly.",
       "non_goals": [
         "Do not edit frontend React/TypeScript files under apps/prototype-wp-alt-context/js/.",
         "Do not edit backend Python files."
@@ -593,6 +603,14 @@
         "cd apps/prototype-wp-alt-context && npm run test -- --run",
         "cd apps/prototype-wp-alt-context && npm run typecheck"
       ],
+      "capability_tags": [
+        "node-tooling-ready"
+      ],
+      "preflight_commands": [
+        "cd apps/prototype-wp-alt-context && test -x node_modules/.bin/vitest && test -x node_modules/.bin/tsc"
+      ],
+      "preflight_failure_summary": "frontend runtime preflight failed; lane-local Node tooling is not ready.",
+      "preflight_failure_details": "This lane should not spend tokens until Vitest and TypeScript binaries are available in the worktree. Re-run lane bootstrap or install dependencies before dispatching a new frontend worker turn.",
       "non_goals": [
         "Do not edit PHP or Python files.",
         "Do not edit shared task docs unless explicitly assigned."

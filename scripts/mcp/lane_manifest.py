@@ -41,6 +41,111 @@ def _derive_commit_paths(owned_paths: list[str]) -> list[str]:
     return list(dict.fromkeys(item for item in derived if item))
 
 
+def _normalize_owned_path(path: str) -> str:
+    value = str(path).strip()
+    if not value:
+        return ""
+    while value.endswith("/**") or value.endswith("/*"):
+        value = value.rsplit("/", 1)[0]
+    return value.rstrip("/")
+
+
+def _candidate_runtime_roots(
+    lane: dict[str, Any],
+    *,
+    orchestrator_root: str,
+) -> list[Path]:
+    root = Path(orchestrator_root).expanduser().resolve()
+    candidates: list[Path] = []
+
+    def add_candidate(relative_path: str) -> None:
+        normalized = _normalize_owned_path(relative_path)
+        if not normalized:
+            return
+        full_path = (root / normalized).resolve()
+        probe = full_path if full_path.is_dir() else full_path.parent
+        for candidate in [probe, *probe.parents]:
+            if candidate == root.parent:
+                break
+            if candidate == root or root in candidate.parents:
+                if (candidate / "composer.json").is_file() or (candidate / "package.json").is_file():
+                    candidates.append(candidate)
+                    break
+
+    app_root = lane.get("app_root")
+    if isinstance(app_root, str) and app_root.strip():
+        add_candidate(app_root)
+
+    owned_paths = lane.get("owned_paths", [])
+    if isinstance(owned_paths, list):
+        for owned_path in owned_paths:
+            add_candidate(str(owned_path))
+
+    tooling_paths = lane.get("tooling_paths", [])
+    if isinstance(tooling_paths, list):
+        for tooling_path in tooling_paths:
+            tooling_str = str(tooling_path).strip()
+            if tooling_str:
+                add_candidate(str(Path(tooling_str).parent))
+
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate not in seen:
+            unique.append(candidate)
+            seen.add(candidate)
+    return unique
+
+
+def _derive_runtime_preflight(
+    lane: dict[str, Any],
+    *,
+    orchestrator_root: str,
+) -> dict[str, Any]:
+    roots = _candidate_runtime_roots(lane, orchestrator_root=orchestrator_root)
+    if not roots:
+        return {
+            "capability_tags": [],
+            "preflight_commands": [],
+            "preflight_failure_summary": None,
+            "preflight_failure_details": None,
+        }
+
+    root = Path(orchestrator_root).expanduser().resolve()
+    capability_tags: list[str] = []
+    commands: list[str] = []
+    for runtime_root in roots:
+        relative_root = str(runtime_root.relative_to(root))
+        if (runtime_root / "composer.json").is_file():
+            capability_tags.append("php-tooling-ready")
+            commands.append(f"cd {relative_root} && test -f vendor/autoload.php")
+        if (runtime_root / "package.json").is_file():
+            capability_tags.append("node-tooling-ready")
+            commands.append(f"cd {relative_root} && test -d node_modules")
+
+    unique_tags = list(dict.fromkeys(tag for tag in capability_tags if tag))
+    unique_commands = list(dict.fromkeys(command for command in commands if command))
+    if not unique_commands:
+        return {
+            "capability_tags": unique_tags,
+            "preflight_commands": [],
+            "preflight_failure_summary": None,
+            "preflight_failure_details": None,
+        }
+
+    return {
+        "capability_tags": unique_tags,
+        "preflight_commands": unique_commands,
+        "preflight_failure_summary": "lane runtime preflight failed; lane-local dependencies are not ready.",
+        "preflight_failure_details": (
+            "This lane references package-managed application roots. Lane bootstrap should provision "
+            "lane-local Composer vendor directories and any required Node dependencies before worker "
+            "execution. If these prerequisites are still missing, fix bootstrap or install dependencies "
+            "before dispatching a model turn."
+        ),
+    }
+
+
 def _derive_routing_from_owned_paths(lanes: dict[str, Any]) -> list[tuple[str, str]]:
     derived: list[tuple[str, str]] = []
     for lane_id, lane in lanes.items():
@@ -234,6 +339,16 @@ def get_lane_config(task_ref: str, lane_id: str, *, orchestrator_root: str | Non
     result.setdefault("preferred_model", None)
     result.setdefault("preferred_backend", None)
     result.setdefault("preferred_reasoning_effort", None)
+    if orchestrator_root:
+        derived_preflight = _derive_runtime_preflight(result, orchestrator_root=orchestrator_root)
+        if not result.get("capability_tags"):
+            result["capability_tags"] = derived_preflight["capability_tags"]
+        if not result.get("preflight_commands"):
+            result["preflight_commands"] = derived_preflight["preflight_commands"]
+        if not result.get("preflight_failure_summary") and derived_preflight["preflight_failure_summary"]:
+            result["preflight_failure_summary"] = derived_preflight["preflight_failure_summary"]
+        if not result.get("preflight_failure_details") and derived_preflight["preflight_failure_details"]:
+            result["preflight_failure_details"] = derived_preflight["preflight_failure_details"]
     if orchestrator_root and isinstance(result.get("worktree_path"), str):
         result["worktree_path"] = expand_path_template(result["worktree_path"], orchestrator_root=orchestrator_root)
     return result

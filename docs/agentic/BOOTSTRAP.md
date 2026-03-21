@@ -192,7 +192,7 @@ Phase 5 (Verification & Handoff) follows implementation:
   - findings: `10`
 - Write tools (`record_decision`, `update_next_actions`, `record_test_result`, `report_blocker`, `record_review_finding`, `update_review_finding`, `reopen_review_finding`) target the active task only.
 - To switch between tasks, use `switch_task(task_ref)`. It auto-archives the outgoing task and restores the target's objective from its archive. This replaces the multi-step `archive_task_state` + `set_handoff_state` workflow.
-- For in-place updates to the *current* task (status, objective change), use `set_handoff_state(...)` directly.
+- For in-place updates to the _current_ task (status, objective change), use `set_handoff_state(...)` directly.
 - Optional write provenance is passed as `actor={ "agent"?: str, "branch"?: str, "commit_sha"?: str }`.
 - Optional review finding details are passed as `details={ "line_start"?: int, "line_end"?: int, "fix"?: str }`.
 - `record_review_finding` is unique per `(task_ref, finding_id)`; re-recording the same logical finding updates the existing row and reopens it.

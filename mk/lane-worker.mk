@@ -6,6 +6,13 @@
 
 lane-check: lane-worker-guard
 	@set -eu; \
+	echo "Ensuring lane dependencies are bootstrapped..."; \
+	PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/bootstrap_lane.py" \
+		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+		--task-ref "$(TASK)" \
+		--lane-id "$(LANE)" \
+		--worktree-path "$(LANE_WORKTREE_TARGET)"; \
+	echo ""; \
 	record_test_result() { \
 		command_text="$$1"; \
 		step_label="$$2"; \

@@ -23,6 +23,7 @@ use function absint;
 use function is_array;
 use function is_string;
 use function sanitize_key;
+use function sanitize_text_field;
 use function trim;
 
 class ConflictController extends AbstractRecognitionProxyController {
@@ -164,6 +165,7 @@ class ConflictController extends AbstractRecognitionProxyController {
 		$tenant_id = $this->get_tenant_id();
 		$conflict_id = absint( $request->get_param( 'id' ) );
 		$resolution_status = sanitize_key( (string) ( $request->get_param( 'resolution_status' ) ?? '' ) );
+		$merged_value = sanitize_text_field( (string) ( $request->get_param( 'merged_value' ) ?? '' ) );
 		$conflict = $this->conflict_repository->find_conflict_by_id( $conflict_id, $tenant_id );
 		if ( ! is_array( $conflict ) ) {
 			return new WP_Error( 'conflict_not_found', 'Conflict not found.', array( 'status' => 404 ) );
@@ -174,7 +176,12 @@ class ConflictController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'resolution_not_allowed', 'Resolution is not allowed for this conflict.', array( 'status' => 422 ) );
 		}
 
-		$result = $this->conflict_resolution_service->resolve( $conflict_id, $resolution_status, $tenant_id );
+		$result = $this->conflict_resolution_service->resolve(
+			$conflict_id,
+			$resolution_status,
+			$tenant_id,
+			'' !== $merged_value ? $merged_value : null
+		);
 		if ( ! (bool) ( $result['ok'] ?? false ) ) {
 			return $this->map_resolution_error( (string) ( $result['reason'] ?? 'conflict_update_failed' ) );
 		}
@@ -359,6 +366,15 @@ class ConflictController extends AbstractRecognitionProxyController {
 	 */
 	private function determine_allowed_resolutions( array $conflict, string $tenant_id, array $outbox_operations = array() ): array {
 		$outbox_id = absint( $conflict['outbox_id'] ?? 0 );
+		$conflict_code = trim( (string) ( $conflict['conflict_code'] ?? '' ) );
+		if ( 'person_name_conflict' === $conflict_code ) {
+			return array( 'accept_backend', 'merge', 'dismissed' );
+		}
+
+		if ( 'drift_conflict' === $conflict_code ) {
+			return array( 'accept_backend', 'dismissed' );
+		}
+
 		if ( 0 === $outbox_id ) {
 			return array( 'accepted', 'dismissed' );
 		}

@@ -167,6 +167,61 @@ class SnapshotProjectorTest extends TestCase
         $this->assertSame([[1, 'tenant-conflicts']], $hookCalls);
     }
 
+    public function testProjectRecordsPersonNameConflictsForCuratedClustersWithDivergentLabels(): void
+    {
+        global $wpdb;
+
+        $syncRepo = new SnapshotProjectorSyncStateSpy();
+        $syncRepo->postRefreshConflictCount = 1;
+        $projector = new SnapshotProjector(
+            new SnapshotProjectorClustersSpy([
+                'cluster-person' => [
+                    'cluster_uuid' => 'cluster-person',
+                    'label' => 'Local Name',
+                    'person_id' => 31,
+                    'curation_state' => 'confirmed',
+                    'snapshot_version' => 12,
+                    'local_revision' => 5,
+                ],
+            ]),
+            new SnapshotProjectorMembersSpy(),
+            $syncRepo,
+            new ConflictRepository()
+        );
+
+        $hookCalls = [];
+        add_action(
+            'acx_projection_conflicts_detected',
+            static function (int $count, string $tenantId) use (&$hookCalls): void {
+                $hookCalls[] = [$count, $tenantId];
+            },
+            10,
+            2
+        );
+
+        $projector->project(
+            'tenant-person-conflicts',
+            [
+                'snapshot_version' => 20,
+                'clusters' => [
+                    [
+                        'cluster_uuid' => 'cluster-person',
+                        'label' => 'Backend Name',
+                        'identity_count' => 1,
+                    ],
+                ],
+                'members' => [],
+            ]
+        );
+
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('INSERT INTO `wp_acx_sync_conflicts`', $sql);
+        $this->assertStringContainsString("'person_name_conflict'", $sql);
+        $this->assertStringContainsString("'Backend Name'", $sql);
+        $this->assertSame('tenant-person-conflicts', $syncRepo->refreshedTenantId);
+        $this->assertSame([[1, 'tenant-person-conflicts']], $hookCalls);
+    }
+
     public function testProjectEmitsConflictHookForMemberConflictsAfterMetricsRefresh(): void
     {
         $syncRepo = new SnapshotProjectorSyncStateSpy();

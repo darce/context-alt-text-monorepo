@@ -14,6 +14,7 @@ export interface SyncStatusResponse {
   is_stale: boolean;
   sync_health: SyncHealth;
   last_sync_result: 'ok' | 'failed' | 'unreachable';
+  sync_mode?: 'delta' | 'full';
   pending_curation_operations?: number;
   failed_curation_operations?: number;
   conflict_count?: number;

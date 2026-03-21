@@ -285,6 +285,36 @@ class OutboxDrainTest extends TestCase
 		$this->assertStringContainsString("status = 'conflict'", $updateQuery);
 	}
 
+	public function testReEnqueueWithCurrentBaseCanPersistMergedValueInPayload(): void
+	{
+		global $wpdb;
+		$wpdb->mockRow = [
+			'id' => 51,
+			'tenant_id' => 'tenant-test-123',
+			'operation_type' => 'cluster_label_updated',
+			'entity_type' => 'cluster',
+			'entity_key' => 'cluster-51',
+			'status' => 'conflict',
+			'attempts' => 2,
+			'expected_base_version' => 9,
+			'local_revision' => 4,
+			'payload' => '{"label":"Local Name"}',
+			'created_at' => '2026-03-11 10:00:00',
+			'last_attempted_at' => null,
+			'acknowledged_at' => null,
+		];
+
+		$drain = new OutboxDrain();
+		$result = $drain->re_enqueue_with_current_base(51, 13, 'tenant-test-123', 'Merged Name');
+
+		$this->assertTrue($result);
+		$updateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET');
+		$this->assertStringContainsString("status = 'pending'", $updateQuery);
+		$this->assertStringContainsString('expected_base_version = 13', $updateQuery);
+		$this->assertStringContainsString('\"merged_value\":\"Merged Name\"', $updateQuery);
+		$this->assertStringContainsString('payload =', $updateQuery);
+	}
+
 	public function testDrainDispatchesAssignOutlierTopologyOperationAndMarksAcknowledged(): void
 	{
 		global $wpdb;

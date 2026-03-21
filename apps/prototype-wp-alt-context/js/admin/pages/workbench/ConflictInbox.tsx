@@ -7,7 +7,7 @@ import { useConflicts } from '../../hooks/useConflicts';
 import { useResolveConflict } from '../../hooks/useResolveConflict';
 import { useSyncTrigger } from '../../hooks/useSyncTrigger';
 import { ConflictDetailPanel } from './conflict-inbox/ConflictDetailPanel';
-import { formatConflictCode, formatEntityLabel, formatTimestamp } from './conflict-inbox/conflictInboxUtils';
+import { formatEntityLabel, formatTimestamp, getConflictTypeLabel } from './conflict-inbox/conflictInboxUtils';
 import { useConflictInboxState } from './conflict-inbox/useConflictInboxState';
 
 const PAGE_SIZE = 20;
@@ -90,9 +90,14 @@ export const ConflictInbox = (): React.JSX.Element => {
     selectedConflicts.length > 0
       ? selectedConflicts.reduce<ConflictResolutionChoice[]>(
           (allowed, conflict) => allowed.filter((choice) => conflict.allowed_resolutions.includes(choice)),
-          ['accepted', 'dismissed'],
+          ['accepted', 'dismissed', 'accept_backend', 'merge'],
         )
       : [];
+  const batchAcceptBackendChoice = batchAllowedResolutions.includes('accepted')
+    ? 'accepted'
+    : batchAllowedResolutions.includes('accept_backend')
+      ? 'accept_backend'
+      : null;
 
   const handleToggleSelectAll = (): void => {
     dispatch({ type: 'setPendingBatchResolution', value: null });
@@ -169,18 +174,18 @@ export const ConflictInbox = (): React.JSX.Element => {
           {selectedConflicts.length > 0 ? (
             <span>{sprintf(__('%d selected', 'alt-context'), selectedConflicts.length)}</span>
           ) : null}
-          {batchAllowedResolutions.includes('accepted') ? (
+          {batchAcceptBackendChoice ? (
             <button
               type="button"
               className="button button-secondary"
               onClick={() => {
-                void handleBatchResolve('accepted');
+                void handleBatchResolve(batchAcceptBackendChoice!);
               }}
               disabled={resolveMutation.isPending}
             >
-              {pendingBatchResolution === 'accepted'
-                ? __('Confirm accept selected', 'alt-context')
-                : __('Accept machine for selected', 'alt-context')}
+              {pendingBatchResolution === batchAcceptBackendChoice
+                ? __('Confirm accept backend selected', 'alt-context')
+                : __('Accept backend for selected', 'alt-context')}
             </button>
           ) : null}
           {batchAllowedResolutions.includes('dismissed') ? (
@@ -195,6 +200,20 @@ export const ConflictInbox = (): React.JSX.Element => {
               {pendingBatchResolution === 'dismissed'
                 ? __('Confirm keep local for selected', 'alt-context')
                 : __('Keep local for selected', 'alt-context')}
+            </button>
+          ) : null}
+          {batchAllowedResolutions.includes('merge') ? (
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => {
+                void handleBatchResolve('merge');
+              }}
+              disabled={resolveMutation.isPending}
+            >
+              {pendingBatchResolution === 'merge'
+                ? __('Confirm merge selected', 'alt-context')
+                : __('Merge selected', 'alt-context')}
             </button>
           ) : null}
         </div>
@@ -237,8 +256,8 @@ export const ConflictInbox = (): React.JSX.Element => {
                       <span>{__('Select conflict', 'alt-context')}</span>
                     </div>
                     <strong>{formatEntityLabel(conflict)}</strong>
-                    <p>{sprintf(__('Type: %s', 'alt-context'), conflict.entity_type)}</p>
-                    <p>{formatConflictCode(conflict.conflict_code)}</p>
+                    <p>{sprintf(__('Type: %s', 'alt-context'), getConflictTypeLabel(conflict))}</p>
+                    <p>{conflict.conflict_code}</p>
                     <p>{formatTimestamp(conflict.created_at)}</p>
                   </div>
                   <button

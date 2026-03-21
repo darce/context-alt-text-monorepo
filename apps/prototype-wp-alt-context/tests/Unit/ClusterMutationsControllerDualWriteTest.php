@@ -584,7 +584,7 @@ class ClusterMutationsRepositorySpy extends NullClustersRepository
         return $this->localClusterRows[$cluster_uuid] ?? null;
     }
 
-    public function update_label(string $cluster_uuid, string $label): int
+    public function update_label(string $cluster_uuid, string $label, bool $mark_user_confirmed = true): int
     {
         $this->updatedLabelClusterId = $cluster_uuid;
         $this->updatedLabel = $label;

@@ -29,6 +29,7 @@ use function max;
 use function method_exists;
 use function time;
 use function trim;
+use function wp_json_encode;
 use function wp_clear_scheduled_hook;
 use function wp_next_scheduled;
 use function wp_schedule_single_event;
@@ -314,19 +315,47 @@ class OutboxDrain {
 		return true;
 	}
 
-	public function re_enqueue_with_current_base( int $outbox_id, int $backend_version, string $tenant_id ): bool {
+	public function re_enqueue_with_current_base( int $outbox_id, int $backend_version, string $tenant_id, ?string $merged_value = null ): bool {
+		$data = array(
+			'status' => 'pending',
+			'attempts' => 0,
+			'expected_base_version' => max( 0, $backend_version ),
+			'last_error_code' => null,
+			'last_error_message' => null,
+		);
+		$format = array( '%s', '%d', '%d', '%s', '%s' );
+
+		$normalized_merged_value = is_string( $merged_value ) ? trim( $merged_value ) : '';
+		if ( '' !== $normalized_merged_value ) {
+			$operation = $this->find_operation_by_id( $outbox_id, $tenant_id );
+			if ( is_array( $operation ) ) {
+				$payload = is_array( $operation['payload'] ?? null ) ? $operation['payload'] : array();
+				$payload['merged_value'] = $normalized_merged_value;
+
+				if ( '' === trim( (string) ( $payload['label'] ?? '' ) ) ) {
+					$payload['label'] = $normalized_merged_value;
+				}
+
+				if ( '' === trim( (string) ( $payload['name'] ?? '' ) ) ) {
+					$payload['name'] = $normalized_merged_value;
+				}
+
+				$payload_json = wp_json_encode( $payload );
+				if ( ! is_string( $payload_json ) || '' === $payload_json ) {
+					$payload_json = '{}';
+				}
+
+				$data['payload'] = $payload_json;
+				$format[] = '%s';
+			}
+		}
+
 		$updated = $this->update_operation_status(
 			$outbox_id,
 			$tenant_id,
 			'conflict',
-			array(
-				'status' => 'pending',
-				'attempts' => 0,
-				'expected_base_version' => max( 0, $backend_version ),
-				'last_error_code' => null,
-				'last_error_message' => null,
-			),
-			array( '%s', '%d', '%d', '%s', '%s' )
+			$data,
+			$format
 		);
 		if ( ! $updated ) {
 			return false;

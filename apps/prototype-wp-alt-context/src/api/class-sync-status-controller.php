@@ -220,11 +220,13 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 	 */
 	private function build_sync_status_payload( int $version, ?string $updated, array $curation_state, string $last_sync_result ): array {
 		$is_stale = $this->is_projection_stale( $updated );
+		$sync_mode = $version > 0 ? 'delta' : 'full';
 
 		return array(
 			'last_snapshot_version' => $version,
 			'last_synced_at' => $updated,
 			'is_stale' => $is_stale,
+			'sync_mode' => $sync_mode,
 			'sync_health' => $this->classify_sync_health( $curation_state, $is_stale, $last_sync_result ),
 			'last_sync_result' => $last_sync_result,
 			'pending_curation_operations' => $curation_state['pending_curation_operations'],

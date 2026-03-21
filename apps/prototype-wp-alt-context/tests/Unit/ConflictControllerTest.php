@@ -162,6 +162,62 @@ class ConflictControllerTest extends TestCase
         $this->assertSame(['accepted', 'dismissed'], $data['items'][0]['allowed_resolutions']);
     }
 
+    public function testListConflictsReturnsAcceptBackendMergeAndDismissedForPersonNameConflict(): void
+    {
+        $tenantId = md5((string) \get_site_url());
+        $repository = new InMemoryConflictRepository([
+            $this->buildConflictRecord([
+                'id' => 18,
+                'tenant_id' => $tenantId,
+                'entity_type' => 'cluster',
+                'entity_key' => 'cluster-person',
+                'conflict_code' => 'person_name_conflict',
+                'backend_proposed_value' => 'Backend Name',
+                'machine_payload' => ['proposed_value' => 'Backend Name'],
+                'local_payload' => ['label' => 'Local Name'],
+            ]),
+        ]);
+
+        $controller = new ConflictController(
+            $repository,
+            new ConflictResolutionService(),
+            new InMemoryOutboxDrain()
+        );
+
+        $response = $controller->list_conflicts(new WP_REST_Request('GET', '/acx/v1/recognition/conflicts'));
+        $data = $response->get_data();
+
+        $this->assertSame(['accept_backend', 'merge', 'dismissed'], $data['items'][0]['allowed_resolutions']);
+    }
+
+    public function testListConflictsReturnsAcceptBackendAndDismissedForDriftConflict(): void
+    {
+        $tenantId = md5((string) \get_site_url());
+        $repository = new InMemoryConflictRepository([
+            $this->buildConflictRecord([
+                'id' => 19,
+                'tenant_id' => $tenantId,
+                'entity_type' => 'cluster',
+                'entity_key' => 'cluster-drift',
+                'conflict_code' => 'drift_conflict',
+                'backend_proposed_value' => 'Backend Name',
+                'machine_payload' => ['proposed_value' => 'Backend Name'],
+                'local_payload' => ['label' => 'Local Name'],
+            ]),
+        ]);
+
+        $controller = new ConflictController(
+            $repository,
+            new ConflictResolutionService(),
+            new InMemoryOutboxDrain()
+        );
+
+        $response = $controller->list_conflicts(new WP_REST_Request('GET', '/acx/v1/recognition/conflicts'));
+        $data = $response->get_data();
+
+        $this->assertSame(['accept_backend', 'dismissed'], $data['items'][0]['allowed_resolutions']);
+    }
+
     public function testListConflictsReturnsAcceptedAndDismissedForAssignOutlierWhenMachineClusterIsKnown(): void
     {
         $tenantId = md5((string) \get_site_url());
@@ -626,6 +682,101 @@ class ConflictControllerTest extends TestCase
         $this->assertTrue(is_wp_error($response));
         $this->assertSame('conflict_already_resolved', $response->get_error_code());
         $this->assertSame(409, $response->get_error_data()['status']);
+    }
+
+    public function testResolveConflictPassesMergedValueToServiceForMergeResolution(): void
+    {
+        $repository = new class() extends ConflictRepository {
+            public bool $resolved = false;
+
+            public function find_conflict_by_id(int $conflict_id, string $tenant_id): ?array
+            {
+                return [
+                    'id' => $conflict_id,
+                    'tenant_id' => $tenant_id,
+                    'entity_type' => 'cluster',
+                    'entity_key' => 'cluster-person',
+                    'outbox_id' => 55,
+                    'expected_base_version' => 0,
+                    'backend_version' => 12,
+                    'local_revision' => 1,
+                    'conflict_code' => 'person_name_conflict',
+                    'backend_proposed_value' => 'Backend Name',
+                    'machine_payload' => ['proposed_value' => 'Backend Name'],
+                    'local_payload' => ['label' => 'Local Name'],
+                    'resolution_status' => $this->resolved ? 'merge' : 'open',
+                    'resolved_at' => $this->resolved ? '2026-03-11 10:05:00' : null,
+                    'created_at' => '2026-03-11 10:00:00',
+                ];
+            }
+
+            public function mark_resolved(int $conflict_id, string $resolution_status, string $tenant_id): bool
+            {
+                $this->resolved = true;
+                return true;
+            }
+        };
+
+        $outboxDrain = new class() extends OutboxDrain {
+            public array $reenqueued = [];
+
+            public function find_operation_by_id(int $outbox_id, string $tenant_id): ?array
+            {
+                return [
+                    'id' => $outbox_id,
+                    'tenant_id' => $tenant_id,
+                    'operation_type' => 'cluster_label_updated',
+                    'entity_type' => 'cluster',
+                    'entity_key' => 'cluster-person',
+                    'status' => 'conflict',
+                    'attempts' => 1,
+                    'expected_base_version' => 0,
+                    'local_revision' => 1,
+                    'payload' => ['label' => 'Local Name'],
+                    'created_at' => '2026-03-11 10:00:00',
+                ];
+            }
+
+            public function re_enqueue_with_current_base(int $outbox_id, int $backend_version, string $tenant_id, ?string $merged_value = null): bool
+            {
+                $this->reenqueued[] = [$outbox_id, $backend_version, $tenant_id, $merged_value];
+                return true;
+            }
+        };
+
+        $clustersRepository = new class() extends \AltContext\Tests\Stubs\NullClustersRepository {
+            public array $updatedLabels = [];
+
+            public function update_label(string $cluster_uuid, string $label, bool $mark_user_confirmed = true): int
+            {
+                $this->updatedLabels[] = [$cluster_uuid, $label];
+                return 1;
+            }
+        };
+
+        $service = new ConflictResolutionService(
+            $repository,
+            $outboxDrain,
+            $clustersRepository,
+            new \AltContext\Tests\Stubs\NullIdentityMembersRepository()
+        );
+
+        $controller = new ConflictController(
+            $repository,
+            $service,
+            $outboxDrain
+        );
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/conflicts/42/resolve');
+        $request->set_param('id', 42);
+        $request->set_param('resolution_status', 'merge');
+        $request->set_param('merged_value', 'Merged Name');
+
+        $response = $controller->resolve_conflict($request);
+
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame([[55, 12, md5((string) \get_site_url()), 'Merged Name']], $outboxDrain->reenqueued);
+        $this->assertSame([['cluster-person', 'Merged Name']], $clustersRepository->updatedLabels);
     }
 
     public function testResolveConflictReturns500OnMutationFailure(): void

@@ -39,6 +39,9 @@ const formatRetentionMode = (mode: string): string => {
   }
 };
 
+const formatSyncMode = (mode: 'delta' | 'full'): string =>
+  mode === 'delta' ? __('Delta sync', 'alt-context') : __('Full sync', 'alt-context');
+
 interface SyncStatusIndicatorProps {
   activeSection?: WorkbenchTab;
   pipelinePhase?: PipelinePhase;
@@ -149,6 +152,7 @@ export const SyncStatusIndicator = ({
   const conflictHref = buildWorkbenchHref(activeSection, 'conflicts');
   const deadLetterHref = buildWorkbenchHref(activeSection, 'dead-letter');
   const retentionMode = retentionStatus.data?.available ? retentionStatus.data.policy?.retention_mode : null;
+  const syncMode = data.sync_mode ? formatSyncMode(data.sync_mode) : null;
   const retentionDetails =
     retentionMode && retentionMode !== 'retain_all' ? (
       <div className="acx-sync-status__meta" aria-label={__('Retention details', 'alt-context')}>
@@ -157,6 +161,11 @@ export const SyncStatusIndicator = ({
         </a>
       </div>
     ) : null;
+  const syncModeDetails = syncMode ? (
+    <div className="acx-sync-status__meta" aria-label={__('Sync mode details', 'alt-context')}>
+      <span className="acx-sync-status__badge">{syncMode}</span>
+    </div>
+  ) : null;
 
   const curationDetails =
     pendingCuration > 0 || failedCuration > 0 || conflictCount > 0 || acknowledgedAt || conflictAt || failedAt ? (
@@ -222,6 +231,7 @@ export const SyncStatusIndicator = ({
         >
           {__('Retry sync', 'alt-context')}
         </button>
+        {syncModeDetails}
         {retentionDetails}
         {curationDetails}
         {topologyDetails}
@@ -237,6 +247,7 @@ export const SyncStatusIndicator = ({
             : __('Syncing results…', 'alt-context')}
         </span>
         <span className="acx-sync-status__badge">{__('In Progress', 'alt-context')}</span>
+        {syncModeDetails}
         {retentionDetails}
         {curationDetails}
         {topologyDetails}
@@ -249,6 +260,7 @@ export const SyncStatusIndicator = ({
       <div className="acx-sync-status acx-sync-status--syncing">
         <span className="acx-sync-status__label">{__('Syncing…', 'alt-context')}</span>
         <span className="acx-sync-status__badge">{__('In Progress', 'alt-context')}</span>
+        {syncModeDetails}
         {retentionDetails}
         {curationDetails}
         {topologyDetails}
@@ -260,6 +272,7 @@ export const SyncStatusIndicator = ({
     return (
       <div className="acx-sync-status acx-sync-status--info">
         <span className="acx-sync-status__label">{__('Service connected — no clusters yet', 'alt-context')}</span>
+        {syncModeDetails}
         {retentionDetails}
         {curationDetails}
         {topologyDetails}
@@ -275,6 +288,7 @@ export const SyncStatusIndicator = ({
           {syncedAt ? sprintf(__('Sync completed: %s', 'alt-context'), syncedAt) : __('Sync completed', 'alt-context')}
         </span>
         <span className="acx-sync-status__badge acx-sync-status__badge--ok">{__('Fresh', 'alt-context')}</span>
+        {syncModeDetails}
         {retentionDetails}
         {curationDetails}
         {topologyDetails}
@@ -294,6 +308,7 @@ export const SyncStatusIndicator = ({
         >
           {__('Retry', 'alt-context')}
         </button>
+        {syncModeDetails}
         {retentionDetails}
         {curationDetails}
         {topologyDetails}
@@ -320,6 +335,7 @@ export const SyncStatusIndicator = ({
           {idleState.badge}
         </span>
       )}
+      {syncModeDetails}
       {retentionDetails}
       {idleState.actionLabel ? (
         <button

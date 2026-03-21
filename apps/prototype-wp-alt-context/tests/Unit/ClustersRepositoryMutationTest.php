@@ -35,6 +35,20 @@ class ClustersRepositoryMutationTest extends TestCase
         $this->assertSame(1, $result);
     }
 
+    public function testUpdateLabelCanSkipUserConfirmation(): void
+    {
+        global $wpdb;
+        $wpdb->defaultQueryResult = 1;
+
+        $result = $this->repository->update_label('cluster-123', 'Ada Lovelace', false);
+
+        $this->assertCount(1, $wpdb->queries);
+        $query = $wpdb->queries[0];
+        $this->assertStringContainsString("UPDATE `wp_acx_clusters` SET label = 'Ada Lovelace', is_user_confirmed = 0", $query);
+        $this->assertStringContainsString("WHERE cluster_uuid = 'cluster-123'", $query);
+        $this->assertSame(1, $result);
+    }
+
     public function testDismissScaffold(): void
     {
         global $wpdb;

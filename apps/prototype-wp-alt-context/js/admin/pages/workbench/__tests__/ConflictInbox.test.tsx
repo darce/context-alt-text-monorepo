@@ -96,7 +96,11 @@ describe('ConflictInbox', () => {
       }),
     );
     mockedUseResolveConflict.mockReturnValue(
-      createMockMutation<ResolveConflictResponse, Error, { id: number; request: { resolution_status: 'accepted' | 'dismissed' } }>({
+      createMockMutation<
+        ResolveConflictResponse,
+        Error,
+        { id: number; request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' } }
+      >({
         mutateAsync: vi.fn().mockResolvedValue({ conflict: null }),
       }),
     );
@@ -165,7 +169,7 @@ describe('ConflictInbox', () => {
 
     expect(screen.getByText('Showing 1-2 of 24 open conflicts.')).toBeInTheDocument();
     expect(screen.getByText('cluster-1 (Local)')).toBeInTheDocument();
-    expect(screen.getAllByText('Type: cluster')).toHaveLength(2);
+    expect(screen.getAllByText('Type: Version conflict')).toHaveLength(2);
     expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
   });
 
@@ -183,12 +187,12 @@ describe('ConflictInbox', () => {
 
     expect(screen.getByText('Conflict Detail')).toBeInTheDocument();
     expect(screen.getByText('Differing fields')).toBeInTheDocument();
-    expect(screen.getByText('Accept machine preview')).toBeInTheDocument();
+    expect(screen.getByText('Accept backend preview')).toBeInTheDocument();
     expect(screen.getByText('Accepting the machine version resets the cluster to backend state and clears local curation guards.')).toBeInTheDocument();
     expect(screen.getByText('confidence')).toBeInTheDocument();
     expect(screen.getByText('Machine: 0.91')).toBeInTheDocument();
     expect(screen.getByText('Local: 0.63')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Accept machine version' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Accept backend version' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Keep local version' })).toBeInTheDocument();
     expect(screen.getByText(/"label": "Remote"/)).toBeInTheDocument();
     expect(screen.getByText(/"label": "Local"/)).toBeInTheDocument();
@@ -214,7 +218,7 @@ describe('ConflictInbox', () => {
 
     renderInbox();
     fireEvent.click(screen.getByRole('button', { name: 'Review conflict' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Accept machine version' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Accept backend version' }));
 
     expect(
       screen.getByText(
@@ -294,7 +298,7 @@ describe('ConflictInbox', () => {
 
     renderInbox();
     fireEvent.click(screen.getByRole('button', { name: 'Review conflict' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Accept machine version' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Accept backend version' }));
 
     expect(
       screen.getByText(
@@ -326,7 +330,7 @@ describe('ConflictInbox', () => {
 
     renderInbox();
     fireEvent.click(screen.getByRole('button', { name: 'Review conflict' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Accept machine version' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Accept backend version' }));
 
     expect(
       screen.getByText(
@@ -359,7 +363,7 @@ describe('ConflictInbox', () => {
 
     renderInbox();
     fireEvent.click(screen.getByRole('button', { name: 'Review conflict' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Accept machine version' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Accept backend version' }));
 
     expect(
       screen.getByText(
@@ -411,7 +415,7 @@ describe('ConflictInbox', () => {
         'This person-side conflict only supports keeping the local version in Phase 4. Re-enqueue and retry remain available for the underlying outbox operation.',
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Accept machine version' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Accept backend version' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Keep local version' })).toBeInTheDocument();
   });
 
@@ -431,7 +435,11 @@ describe('ConflictInbox', () => {
       }),
     );
     mockedUseResolveConflict.mockReturnValue(
-      createMockMutation<ResolveConflictResponse, Error, { id: number; request: { resolution_status: 'accepted' | 'dismissed' } }>({
+      createMockMutation<
+        ResolveConflictResponse,
+        Error,
+        { id: number; request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' } }
+      >({
         mutateAsync,
       }),
     );
@@ -441,8 +449,8 @@ describe('ConflictInbox', () => {
     fireEvent.click(screen.getAllByRole('checkbox', { name: 'Select conflict' })[1]);
 
     expect(screen.getByText('2 selected')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Accept machine for selected' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm accept selected' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Accept backend for selected' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm accept backend selected' }));
 
     await waitFor(() => {
       expect(mutateAsync).toHaveBeenNthCalledWith(1, {
@@ -484,8 +492,43 @@ describe('ConflictInbox', () => {
     fireEvent.click(screen.getAllByRole('checkbox', { name: 'Select conflict' })[0]);
     fireEvent.click(screen.getAllByRole('checkbox', { name: 'Select conflict' })[1]);
 
-    expect(screen.queryByRole('button', { name: 'Accept machine for selected' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Accept backend for selected' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Keep local for selected' })).toBeInTheDocument();
+  });
+
+  it('shows person name conflict labeling and merge action', () => {
+    const personConflict = buildConflict({
+      entity_type: 'person',
+      entity_key: 'person-22',
+      conflict_code: 'person_name_conflict',
+      machine_payload: { name: 'Backend Name' },
+      local_payload: { name: 'Local Name' },
+      allowed_resolutions: ['accept_backend', 'dismissed', 'merge'],
+    });
+
+    mockedUseConflicts.mockReturnValue(
+      createMockQuery<ConflictListResponse>({
+        data: {
+          items: [personConflict],
+          total: 1,
+          limit: 20,
+          offset: 0,
+        },
+      }),
+    );
+    mockedUseConflictDetail.mockReturnValue(
+      createMockQuery<ConflictDetailResponse>({
+        data: {
+          conflict: personConflict,
+        },
+      }),
+    );
+
+    renderInbox();
+    fireEvent.click(screen.getByRole('button', { name: 'Review conflict' }));
+
+    expect(screen.getByText('Person name conflict')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Merge versions' })).toBeInTheDocument();
   });
 
   it('shows detail error state when the selected conflict cannot be loaded', () => {
@@ -515,7 +558,11 @@ describe('ConflictInbox', () => {
       }),
     );
     mockedUseResolveConflict.mockReturnValue(
-      createMockMutation<ResolveConflictResponse, Error, { id: number; request: { resolution_status: 'accepted' | 'dismissed' } }>({
+      createMockMutation<
+        ResolveConflictResponse,
+        Error,
+        { id: number; request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' } }
+      >({
         mutateAsync,
       }),
     );
@@ -527,7 +574,7 @@ describe('ConflictInbox', () => {
 
     renderInbox();
     fireEvent.click(screen.getByRole('button', { name: 'Review conflict' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Accept machine version' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Accept backend version' }));
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
 
     await waitFor(() => {

@@ -941,8 +941,18 @@ def worker_loop(
 
             log("INFO", "exec_complete", result_path=str(final_result_path), cycle=cycle)
 
-            # Emit context_pressure event when the prompt was under elevated or high pressure
+            # Emit artifact_indexed event when lane_exec compressed a large details field
             result = _load_result(final_result_path)
+            _details_ref = result.get("details_artifact_ref")
+            if _details_ref is not None:
+                log("INFO", "artifact_indexed",
+                    cycle=cycle,
+                    details_artifact_ref=_details_ref,
+                    lane_id=lane_id,
+                    task_ref=task_ref,
+                )
+
+            # Emit context_pressure event when the prompt was under elevated or high pressure
             _ctx_util = result.get("context_utilization")
             if isinstance(_ctx_util, dict):
                 _pressure = str(_ctx_util.get("pressure") or "normal")
@@ -1261,7 +1271,7 @@ def worker_loop(
             log("WARNING", "review_exhausted", max_cycles=max_review_cycles)
             previous_run_exhausted = True
             exhaustion_streak = _update_exhaustion_streak(state_dir, lane_id, run_id)
-            log("WARNING", "exhaustion_streak", streak=exhaustion_streak, run_id=run_id, lane=lane_id)
+            log("WARNING", "exhaustion_streak", streak=exhaustion_streak, lane=lane_id)
             if exhaustion_streak >= 3:
                 log("WARNING", "lane_exhaustion_forced_stop", streak=exhaustion_streak)
             if final_result_path:

@@ -12,6 +12,7 @@ from threading import Thread
 from typing import Protocol, TypedDict, runtime_checkable
 
 from .runtime import get_runtime_config
+from . import artifact_index as artifact_index
 
 
 HANDOFF_SCHEMA_SQL = """
@@ -1233,6 +1234,193 @@ def get_lane_activity(
                 "messages": _fetch_handoff_rows(conn, table="lane_messages", where_sql="task_ref = ? AND lane_id = ?", order_sql="updated_at DESC, id DESC", limit=20, params=(resolved_task_ref, normalized_lane_id)),
             }
         )
+
+
+def record_artifact(
+    source_kind: str,
+    source_label: str,
+    content: str,
+    task_ref: str | None = None,
+    lane_id: str | None = None,
+    app_root: str | None = None,
+    content_type: str = "text/plain",
+    summary: str | None = None,
+    metadata: dict | None = None,
+) -> str:
+    """Index an artifact source (log, doc, payload, output) in the sidecar artifact database.
+
+    Large artifacts are chunked and indexed with FTS5/BM25 so they can later be
+    retrieved by scoped keyword search without being replayed into the prompt.
+    """
+    config = get_runtime_config()
+    sk = _normalize_optional_text(source_kind)
+    sl = _normalize_optional_text(source_label)
+    if sk is None:
+        return _json_response({"ok": False, "error": "source_kind is required."})
+    if sl is None:
+        return _json_response({"ok": False, "error": "source_label is required."})
+    if not content:
+        return _json_response({"ok": False, "error": "content is required."})
+
+    with _get_db_connection() as conn:
+        resolved_task_ref = _resolve_task_ref(conn, task_ref)
+
+    try:
+        result = artifact_index.upsert_source(
+            task_ref=resolved_task_ref,
+            lane_id=_normalize_optional_text(lane_id),
+            app_root=_normalize_optional_text(app_root),
+            source_kind=sk,
+            source_label=sl,
+            content_type=content_type or "text/plain",
+            summary=_normalize_optional_text(summary),
+            content=content,
+            metadata=metadata,
+            artifact_db_path=config.artifact_db_path,
+        )
+        return _json_response({"ok": True, **result})
+    except RuntimeError as exc:
+        return _json_response({"ok": False, "error": str(exc)})
+
+
+def search_artifacts(
+    queries: list[str],
+    task_ref: str | None = None,
+    lane_id: str | None = None,
+    app_root: str | None = None,
+    source_kind: str | None = None,
+    content_type: str | None = None,
+    limit: int = 10,
+) -> str:
+    """Search indexed artifact chunks by relevance with optional scope filters.
+
+    Returns ranked results with task/lane/source metadata, chunk title, and
+    a compact highlighted snippet for each match.
+    """
+    config = get_runtime_config()
+    if not isinstance(queries, list) or not queries:
+        return _json_response({"ok": False, "error": "queries must be a non-empty list of strings."})
+
+    scope: dict[str, str | None] = {}
+    if task_ref:
+        with _get_db_connection() as conn:
+            scope["task_ref"] = _resolve_task_ref(conn, task_ref)
+    else:
+        scope["task_ref"] = None
+
+    try:
+        hits = artifact_index.search_artifacts(
+            queries=queries,
+            task_ref=scope["task_ref"],
+            lane_id=_normalize_optional_text(lane_id),
+            app_root=_normalize_optional_text(app_root),
+            source_kind=_normalize_optional_text(source_kind),
+            content_type=_normalize_optional_text(content_type),
+            limit=max(1, int(limit)),
+            artifact_db_path=config.artifact_db_path,
+        )
+        return _json_response({"ok": True, "total": len(hits), "hits": hits})
+    except RuntimeError as exc:
+        return _json_response({"ok": False, "error": str(exc)})
+
+
+def get_artifact_source(
+    source_id: int | None = None,
+    task_ref: str | None = None,
+    source_label: str | None = None,
+) -> str:
+    """Return the full artifact source record for exact inspection.
+
+    Lookup priority: *source_id* > (*task_ref* + *source_label*).
+    """
+    config = get_runtime_config()
+    if source_id is None and not (task_ref and source_label):
+        return _json_response(
+            {"ok": False, "error": "Provide source_id or both task_ref and source_label."}
+        )
+
+    resolved_task_ref: str | None = None
+    if task_ref:
+        with _get_db_connection() as conn:
+            resolved_task_ref = _resolve_task_ref(conn, task_ref)
+
+    try:
+        source = artifact_index.get_artifact_source(
+            source_id=source_id,
+            task_ref=resolved_task_ref,
+            source_label=_normalize_optional_text(source_label),
+            artifact_db_path=config.artifact_db_path,
+        )
+        if source is None:
+            return _json_response({"ok": False, "error": "Artifact source not found."})
+        return _json_response({"ok": True, "source": source})
+    except RuntimeError as exc:
+        return _json_response({"ok": False, "error": str(exc)})
+
+
+def list_artifact_sources(
+    task_ref: str | None = None,
+    lane_id: str | None = None,
+    app_root: str | None = None,
+    source_kind: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> str:
+    """List indexed artifact sources so operators and prompts can discover available evidence.
+
+    Returns source metadata without raw content bodies.
+    """
+    config = get_runtime_config()
+    resolved_task_ref: str | None = None
+    if task_ref:
+        with _get_db_connection() as conn:
+            resolved_task_ref = _resolve_task_ref(conn, task_ref)
+
+    try:
+        rows = artifact_index.list_artifact_sources(
+            task_ref=resolved_task_ref,
+            lane_id=_normalize_optional_text(lane_id),
+            app_root=_normalize_optional_text(app_root),
+            source_kind=_normalize_optional_text(source_kind),
+            limit=max(1, int(limit)),
+            offset=max(0, int(offset)),
+            artifact_db_path=config.artifact_db_path,
+        )
+        return _json_response({"ok": True, "total": len(rows), "sources": rows})
+    except RuntimeError as exc:
+        return _json_response({"ok": False, "error": str(exc)})
+
+
+def purge_artifacts(
+    task_ref: str | None = None,
+    older_than_days: int | None = None,
+) -> str:
+    """Delete artifact sources and their FTS chunks to keep the sidecar database bounded.
+
+    *task_ref*: delete all sources for that task (e.g. after archival).
+    *older_than_days*: delete sources whose last update is older than N days.
+    Both conditions are ANDed when provided; at least one is required.
+    """
+    config = get_runtime_config()
+    resolved_task_ref: str | None = None
+    if task_ref:
+        with _get_db_connection() as conn:
+            resolved_task_ref = _resolve_task_ref(conn, task_ref)
+
+    if resolved_task_ref is None and older_than_days is None:
+        return _json_response(
+            {"ok": False, "error": "Provide task_ref, older_than_days, or both."}
+        )
+
+    try:
+        result = artifact_index.purge_artifacts(
+            task_ref=resolved_task_ref,
+            older_than_days=older_than_days,
+            artifact_db_path=config.artifact_db_path,
+        )
+        return _json_response(result)
+    except RuntimeError as exc:
+        return _json_response({"ok": False, "error": str(exc)})
 
 
 def record_worker_report(

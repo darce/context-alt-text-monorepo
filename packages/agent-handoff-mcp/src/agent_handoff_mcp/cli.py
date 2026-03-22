@@ -11,12 +11,14 @@ from .api import (
     dispatch_lane_work,
     export_handoff_state,
     generate_current_task_md,
+    get_artifact_source,
     get_handoff_dashboard,
     get_handoff_state,
     get_lane_activity,
     get_review_findings_summary,
     handoff_close_check,
     import_handoff_state,
+    list_artifact_sources,
     list_lane_messages,
     list_lane_briefs,
     list_review_findings,
@@ -28,6 +30,8 @@ from .api import (
     orchestrator_start,
     orchestrator_status,
     orchestrator_stop,
+    purge_artifacts,
+    record_artifact,
     record_lane_message,
     record_lane_brief,
     record_decision,
@@ -37,6 +41,7 @@ from .api import (
     report_blocker,
     run_structured_turn,
     run_doctor,
+    search_artifacts,
     set_handoff_state,
     switch_task,
     update_lane_message,
@@ -183,6 +188,7 @@ def _build_parser() -> argparse.ArgumentParser:
     message_parser.add_argument("--message", required=True)
     message_parser.add_argument("--subject")
     message_parser.add_argument("--status", default="open")
+    message_parser.add_argument("--artifact", action="append", default=[])
 
     brief_parser = subparsers.add_parser("lane-brief")
     brief_parser.add_argument("--task-ref")
@@ -362,6 +368,49 @@ def _build_parser() -> argparse.ArgumentParser:
     turn_parser.add_argument("--backend", default="codex-subagent")
     turn_parser.add_argument("--timeout-seconds", type=float, default=120.0)
 
+    artifact_record_parser = subparsers.add_parser("artifact-record")
+    artifact_record_parser.add_argument("--task-ref")
+    artifact_record_parser.add_argument("--lane-id")
+    artifact_record_parser.add_argument("--app-root")
+    artifact_record_parser.add_argument("--source-kind", required=True)
+    artifact_record_parser.add_argument("--source-label", required=True)
+    artifact_record_parser.add_argument("--content-type", default="text/plain")
+    artifact_record_parser.add_argument("--summary")
+    artifact_record_parser.add_argument(
+        "--content-file",
+        help="Path to a file whose contents will be used as the artifact content.",
+    )
+    artifact_record_parser.add_argument(
+        "--content",
+        help="Artifact content as a string (use --content-file for large inputs).",
+    )
+
+    artifact_search_parser = subparsers.add_parser("artifact-search")
+    artifact_search_parser.add_argument("--query", dest="queries", action="append", required=True)
+    artifact_search_parser.add_argument("--task-ref")
+    artifact_search_parser.add_argument("--lane-id")
+    artifact_search_parser.add_argument("--app-root")
+    artifact_search_parser.add_argument("--source-kind")
+    artifact_search_parser.add_argument("--content-type")
+    artifact_search_parser.add_argument("--limit", type=int, default=10)
+
+    artifact_list_parser = subparsers.add_parser("artifact-list")
+    artifact_list_parser.add_argument("--task-ref")
+    artifact_list_parser.add_argument("--lane-id")
+    artifact_list_parser.add_argument("--app-root")
+    artifact_list_parser.add_argument("--source-kind")
+    artifact_list_parser.add_argument("--limit", type=int, default=50)
+    artifact_list_parser.add_argument("--offset", type=int, default=0)
+
+    artifact_get_parser = subparsers.add_parser("artifact-get")
+    artifact_get_parser.add_argument("--source-id", type=int)
+    artifact_get_parser.add_argument("--task-ref")
+    artifact_get_parser.add_argument("--source-label")
+
+    artifact_purge_parser = subparsers.add_parser("artifact-purge")
+    artifact_purge_parser.add_argument("--task-ref")
+    artifact_purge_parser.add_argument("--older-than-days", type=int)
+
     return parser
 
 
@@ -518,6 +567,7 @@ def main() -> None:
                 message=args.message,
                 subject=args.subject,
                 status=args.status,
+                payload={"artifacts": args.artifact} if args.artifact else None,
             )
         )
         return
@@ -758,6 +808,65 @@ def main() -> None:
                 cwd=args.cwd,
                 backend=args.backend,
                 timeout_seconds=args.timeout_seconds,
+            )
+        )
+        return
+    if args.command == "artifact-record":
+        content = args.content
+        if content is None and args.content_file:
+            content = Path(args.content_file).read_text()
+        _print_json(
+            record_artifact(
+                task_ref=args.task_ref,
+                lane_id=args.lane_id,
+                app_root=args.app_root,
+                source_kind=args.source_kind,
+                source_label=args.source_label,
+                content=content or "",
+                content_type=args.content_type,
+                summary=args.summary,
+            )
+        )
+        return
+    if args.command == "artifact-search":
+        _print_json(
+            search_artifacts(
+                queries=args.queries,
+                task_ref=args.task_ref,
+                lane_id=args.lane_id,
+                app_root=args.app_root,
+                source_kind=args.source_kind,
+                content_type=args.content_type,
+                limit=args.limit,
+            )
+        )
+        return
+    if args.command == "artifact-list":
+        _print_json(
+            list_artifact_sources(
+                task_ref=args.task_ref,
+                lane_id=args.lane_id,
+                app_root=args.app_root,
+                source_kind=args.source_kind,
+                limit=args.limit,
+                offset=args.offset,
+            )
+        )
+        return
+    if args.command == "artifact-get":
+        _print_json(
+            get_artifact_source(
+                source_id=args.source_id,
+                task_ref=args.task_ref,
+                source_label=args.source_label,
+            )
+        )
+        return
+    if args.command == "artifact-purge":
+        _print_json(
+            purge_artifacts(
+                task_ref=args.task_ref,
+                older_than_days=args.older_than_days,
             )
         )
         return

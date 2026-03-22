@@ -12,6 +12,13 @@ from agent_handoff_mcp import configure_runtime
 from agent_handoff_mcp import get_handoff_state
 from agent_handoff_mcp import get_lane_activity
 
+try:
+    from agent_handoff_mcp import search_artifacts as _mcp_search_artifacts
+    from agent_handoff_mcp import get_artifact_source as _mcp_get_artifact_source
+    _ARTIFACT_SEARCH_AVAILABLE = True
+except ImportError:  # noqa: BLE001
+    _ARTIFACT_SEARCH_AVAILABLE = False
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
@@ -290,7 +297,10 @@ def _runtime_guidance(
     task_ref: str,
     lane_id: str,
 ) -> list[str]:
-    lane_config = get_lane_config(task_ref, lane_id, orchestrator_root=str(orchestrator_root)) or {}
+    try:
+        lane_config = get_lane_config(task_ref, lane_id, orchestrator_root=str(orchestrator_root)) or {}
+    except FileNotFoundError:
+        return []
     test_commands = [str(item).strip() for item in lane_config.get("test_commands", []) if str(item).strip()]
     app_root = str(lane_config.get("app_root") or "").strip()
     non_goals = [str(item).strip() for item in lane_config.get("non_goals", []) if str(item).strip()]
@@ -357,6 +367,185 @@ def _render_section(title: str, items: list[str]) -> list[str]:
 
 def _approx_chars(items: list[str]) -> int:
     return sum(len(item) for item in items)
+
+
+def _discover_artifact_refs(activity: dict[str, Any]) -> list[int]:
+    """Extract explicitly referenced artifact source_ids from activity data.
+
+    Sources checked in priority order:
+    1. Lane-message payloads (includes briefs, which are messages with ``subject``
+       starting with ``"brief:"`` and may carry ``payload.artifacts``)
+    2. Latest worker report payload (forward-compatible: currently a no-op since
+       worker_reports do not yet have a payload column, but makes the scan explicit
+       so future additions are automatically picked up)
+
+    Returns a deduplicated list of integer source IDs in discovery order.
+    """
+    seen: set[int] = set()
+    refs: list[int] = []
+
+    def _collect(raw_payload: Any) -> None:
+        payload = raw_payload
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (ValueError, TypeError):
+                return
+        if not isinstance(payload, dict):
+            return
+        for raw_id in payload.get("artifacts", []):
+            try:
+                sid = int(raw_id)
+            except (ValueError, TypeError):
+                continue
+            if sid not in seen:
+                seen.add(sid)
+                refs.append(sid)
+
+    # Phase 1: all lane messages (includes briefs stored as messages)
+    for message in _as_dicts(activity.get("messages", [])):
+        _collect(message.get("payload"))
+
+    # Phase 2: latest worker report (forward-compatible scan; no-op with current schema)
+    for report in _as_dicts(activity.get("reports", []))[:1]:
+        _collect(report.get("payload") or report.get("payload_json"))
+
+    return refs
+
+
+def _build_artifact_queries(activity: dict[str, Any]) -> list[str]:
+    """Extract search query terms from assignment messages, blockers, findings, brief summaries, and latest report.
+
+    Priority: assignment message bodies > brief payload summaries/reasons >
+    blocker descriptions > finding descriptions > latest report summary.
+    Capped at 4 queries so FTS search stays focused.
+    """
+    queries: list[str] = []
+
+    # Assignment message bodies (non-brief messages)
+    for message in _as_dicts(activity.get("messages", [])):
+        subject = str(message.get("subject") or "").strip().lower()
+        if subject.startswith("brief:"):
+            continue  # briefs handled separately below
+        body = _line(str(message.get("message") or "")).strip()
+        if body:
+            queries.append(body[:120])
+
+    # Brief payload summaries and reasons (highest-signal source for orchestrator briefs)
+    for message in _as_dicts(activity.get("messages", [])):
+        subject = str(message.get("subject") or "").strip().lower()
+        if not subject.startswith("brief:"):
+            continue
+        payload = message.get("payload")
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (ValueError, TypeError):
+                payload = {}
+        if isinstance(payload, dict):
+            brief_summary = _line(str(payload.get("summary") or "")).strip()
+            brief_reason = _line(str(payload.get("reason") or "")).strip()
+            if brief_summary:
+                queries.append(brief_summary[:120])
+            elif brief_reason:
+                queries.append(brief_reason[:120])
+
+    for blocker in _as_dicts(activity.get("blockers", [])):
+        desc = _line(str(blocker.get("description") or "")).strip()
+        if desc:
+            queries.append(desc[:120])
+    for finding in _as_dicts(activity.get("findings", [])):
+        desc = _line(str(finding.get("description") or "")).strip()
+        if desc:
+            queries.append(desc[:120])
+
+    # Latest worker report summary as a fallback when messages are sparse
+    for report in _as_dicts(activity.get("reports", []))[:1]:
+        report_summary = _line(str(report.get("summary") or "")).strip()
+        if report_summary:
+            queries.append(report_summary[:120])
+
+    return queries[:4]
+
+
+def _artifact_context_section(
+    *,
+    task_ref: str,
+    lane_id: str,
+    activity: dict[str, Any],
+    budget_chars: int,
+) -> list[str]:
+    """Retrieve artifact snippets that fit within *budget_chars*.
+
+    Returns compact rendered lines of the form ``[source_label] title: snippet``.
+    Skips retrieval when the budget is exhausted or the search tool is unavailable.
+
+    Strategy:
+    1. Retrieve explicitly pinned artifacts (from ``payload.artifacts`` on lane messages)
+       by source ID first — these are deterministic and highest-priority.
+    2. Fall back to lexical FTS search with the remaining budget, skipping already-rendered
+       source IDs so pinned refs are never duplicated.
+    """
+    if not _ARTIFACT_SEARCH_AVAILABLE or budget_chars <= 0:
+        return []
+    lines: list[str] = []
+    used = 0
+    rendered_ids: set[int] = set()
+
+    # Phase 1: pinned artifact refs from message payloads
+    pinned_ids = _discover_artifact_refs(activity)
+    for sid in pinned_ids:
+        if used >= budget_chars:
+            break
+        try:
+            raw = _mcp_get_artifact_source(source_id=sid)
+            data = json.loads(raw)
+            source = data.get("source") if isinstance(data, dict) and data.get("ok") else None
+            if not source:
+                continue
+            label = str(source.get("source_label") or "artifact")
+            summary = str(source.get("summary") or "").strip()
+            if not summary:
+                chunks = source.get("chunks") or []
+                summary = str(chunks[0].get("body") or "") if chunks else ""
+            snippet = summary[:200].rstrip()
+            rendered = f"[{label}] {snippet}"
+            if used + len(rendered) > budget_chars:
+                break
+            lines.append(rendered)
+            used += len(rendered)
+            rendered_ids.add(sid)
+        except Exception:  # noqa: BLE001
+            continue
+
+    # Phase 2: lexical FTS search with remaining budget
+    remaining = budget_chars - used
+    if remaining <= 0:
+        return lines
+    queries = _build_artifact_queries(activity)
+    if not queries:
+        return lines
+    try:
+        raw = _mcp_search_artifacts(queries=queries, task_ref=task_ref, lane_id=lane_id, limit=4)
+        data = json.loads(raw)
+        hits = data.get("hits") if isinstance(data, dict) else []
+        if not isinstance(hits, list) or not hits:
+            return lines
+    except Exception:  # noqa: BLE001
+        return lines
+    for hit in hits:
+        sid = hit.get("source_id")
+        if sid is not None and int(sid) in rendered_ids:
+            continue
+        label = str(hit.get("source_label") or "artifact")
+        title = str(hit.get("title") or "")
+        snippet = str(hit.get("snippet") or "")
+        rendered = f"[{label}] {title}: {snippet}" if title else f"[{label}] {snippet}"
+        if used + len(rendered) > budget_chars:
+            break
+        lines.append(rendered)
+        used += len(rendered)
+    return lines
 
 
 _CHARS_PER_TOKEN_APPROX = 4
@@ -641,6 +830,24 @@ def _build_prompt(
         if isinstance(v, list)
     }
     ctx_metrics = _measure_context_utilization(rendered, model_context_window, section_sizes)
+
+    # Budget-aware artifact retrieval: skip when context is already elevated
+    artifact_context: list[str] = []
+    if ctx_metrics.get("pressure") not in ("elevated", "high"):
+        # Remaining char budget = total window minus what the base prompt already uses
+        budget_chars = max(0, model_context_window * _CHARS_PER_TOKEN_APPROX - len(rendered))
+        artifact_context = _artifact_context_section(
+            task_ref=task_ref,
+            lane_id=lane_id,
+            activity=activity,
+            budget_chars=budget_chars,
+        )
+    if artifact_context:
+        lines.extend(_render_section("Relevant Artifacts", artifact_context))
+        rendered = "\n".join(lines)
+        section_sizes["artifact_context"] = sum(len(line) for line in artifact_context)
+        ctx_metrics = _measure_context_utilization(rendered, model_context_window, section_sizes)
+
     return rendered, ctx_metrics
 
 

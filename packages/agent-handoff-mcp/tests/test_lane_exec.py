@@ -136,7 +136,7 @@ def test_run_lane_exec_dry_run(tmp_path: Path) -> None:
     schema_json = json.dumps({"type": "object", "properties": {}})
 
     with (
-        mock.patch.object(mod, "_render_prompt", return_value="Test prompt"),
+        mock.patch.object(mod, "_render_prompt", return_value=("Test prompt", {})),
         mock.patch.object(mod, "_render_schema", return_value=schema_json),
         mock.patch.object(mod, "get_lane_config", return_value={}),
     ):
@@ -191,7 +191,7 @@ def test_run_lane_exec_dry_run_subagent_skips_find_codex(tmp_path: Path) -> None
     schema_json = json.dumps({"type": "object", "properties": {}})
 
     with (
-        mock.patch.object(mod, "_render_prompt", return_value="Test prompt"),
+        mock.patch.object(mod, "_render_prompt", return_value=("Test prompt", {})),
         mock.patch.object(mod, "_render_schema", return_value=schema_json),
         mock.patch.object(mod, "find_codex") as mock_find_codex,
         mock.patch.object(mod, "get_lane_config", return_value={}),
@@ -230,9 +230,10 @@ def test_run_lane_exec_subagent_backend_writes_structured_result(tmp_path: Path)
     mock_adapter.execute.return_value = mock.Mock(to_dict=lambda: subagent_payload)
 
     with (
-        mock.patch.object(mod, "_render_prompt", return_value="Test prompt"),
+        mock.patch.object(mod, "_render_prompt", return_value=("Test prompt", {})),
         mock.patch.object(mod, "_render_schema", return_value=schema_json),
         mock.patch.object(mod, "get_adapter", return_value=mock_adapter),
+        mock.patch.object(mod, "bootstrap_lane", return_value=0),
         mock.patch.object(mod, "get_lane_config", return_value={}),
     ):
         result_path = mod.run_lane_exec(
@@ -267,9 +268,10 @@ def test_run_lane_exec_subagent_backend_passes_reasoning_effort_env(tmp_path: Pa
     mock_adapter.execute.return_value = mock.Mock(to_dict=lambda: subagent_payload)
 
     with (
-        mock.patch.object(mod, "_render_prompt", return_value="Test prompt"),
+        mock.patch.object(mod, "_render_prompt", return_value=("Test prompt", {})),
         mock.patch.object(mod, "_render_schema", return_value=schema_json),
         mock.patch.object(mod, "get_adapter", return_value=mock_adapter),
+        mock.patch.object(mod, "bootstrap_lane", return_value=0),
         mock.patch.object(mod, "get_lane_config", return_value={}),
     ):
         mod.run_lane_exec(
@@ -314,6 +316,7 @@ def test_run_lane_exec_preflight_failure_returns_needs_guidance_without_running_
         mock.patch.object(mod, "_render_prompt") as mock_prompt,
         mock.patch.object(mod, "_render_schema") as mock_schema,
         mock.patch.object(mod, "get_adapter") as mock_get_adapter,
+        mock.patch.object(mod, "bootstrap_lane", return_value=0),
         mock.patch.object(mod, "get_lane_config", return_value={}),
     ):
         result_path = mod.run_lane_exec(
@@ -348,6 +351,7 @@ def test_render_prompt_calls_lane_prompt(tmp_path: Path) -> None:
     fake_result = mock.Mock()
     fake_result.returncode = 0
     fake_result.stdout = "rendered prompt text"
+    fake_result.stderr = ""
 
     with mock.patch("subprocess.run", return_value=fake_result) as mock_run:
         result = mod._render_prompt(
@@ -357,7 +361,7 @@ def test_render_prompt_calls_lane_prompt(tmp_path: Path) -> None:
             worktree_path=tmp_path,
         )
 
-    assert result == "rendered prompt text"
+    assert result == ("rendered prompt text", {})
     call_args = mock_run.call_args
     cmd = call_args[0][0]
     assert "lane_prompt.py" in cmd[1]

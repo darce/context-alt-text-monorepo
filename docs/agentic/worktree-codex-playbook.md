@@ -23,6 +23,8 @@ That manifest is the source of truth for:
 - owned paths and commit scope
 - required docs and verification commands
 - merge order and dispatch routing hints
+- `token_burn_threshold` (default 2000000): cumulative token ceiling before `token_burn_warning` events fire
+- `model_context_window` (default 128000): model context window size used for context utilization scoring
 
 When a lane declares `app_root`, `owned_paths`, or `tooling_paths` that resolve to
 an app with `composer.json` or `package.json`, the lane runtime now treats that as
@@ -64,8 +66,8 @@ Current lane examples:
 make lane-open TASK=<task> LANE=<lane>                         # Create/open a lane
 make lane-manifest-init TASK=<task> LANE_IDS='lane-a lane-b'   # Scaffold a task manifest
 make lane-dispatch TASK=<task> LANE=<lane> MESSAGE="..."       # Assign work
+make handoff-dispatch TASK=<task>                              # Route findings / blockers / next actions to lanes
 make handoff-inbox TASK=<task>                                 # Poll worker handoffs
-make handoff-dispatch TASK=<task>                              # Route findings to lanes
 make lane-commits TASK=<task> LANE=<lane>                      # Preview intake
 make lane-intake TASK=<task> LANE=<lane>                       # Merge a lane
 make lane-refresh TASK=<task> LANE=<lane>                      # Sync lane to root
@@ -73,6 +75,8 @@ make lane-list                                                 # List all lanes
 make state                                                     # Full MCP state
 make dashboard                                                 # MCP dashboard
 make orchestrator-daemon [TASK=<task>] [BACKEND=codex-cli|codex-subagent] [MODEL=gpt-5.4-mini]
+make artifact-list TASK=<task> [LANE=<lane>]                  # List indexed evidence
+make artifact-search TASK=<task> QUERY="schema missing"       # Search indexed evidence
 ```
 
 ### Worker one-liners (run from worker worktree)
@@ -93,6 +97,32 @@ make lane-report STATUS=blocked MERGE_READY=0 SUMMARY="..." MESSAGE="..."  # Blo
 ```
 
 All `lane-*` commands work from the repo root and from the app directories that ship forwarding Makefiles. The app-level Makefiles use a `lane-%:` pattern rule that auto-forwards any `lane-*` target to the root Makefile, so new lane targets never need to be registered in the app Makefiles. `worker-daemon` should be launched from the worker worktree root. If you are already in an app subdirectory and that checkout does not yet forward `worker-daemon`, use `make -C "$$(git rev-parse --show-toplevel)" worker-daemon ...`.
+
+## Bootstrap and Install
+
+Bootstrap these pieces before relying on daemon-based orchestration or artifact retrieval:
+
+```bash
+cd /Users/daniel/Development/context-alt-text-monorepo
+
+# MCP server package
+uv tool install ./packages/agent-handoff-mcp
+
+# Codex app-server bridge used by BACKEND=codex-subagent
+python3 -m pip install -e packages/codex-subagent-bridge
+
+# Optional dashboard dependencies for richer monitoring UI
+PYENV_VERSION=description-service python3 -m pip install -e "apps/prototype-description-service[dashboard,dev]"
+
+# Verify writable state dirs, bridge import paths, and SQLite FTS5 support
+agent-handoff-mcp --workspace-root "$(pwd)" doctor
+```
+
+Notes:
+
+- `dashboard-live` works without optional UI packages. `dashboard-tui` uses Textual when installed, falls back to `rich.live` when only `rich` is available, and finally to plain text.
+- If you are running from repo source instead of an installed `agent-handoff-mcp` binary, use `PYTHONPATH="packages/agent-handoff-mcp/src:packages/codex-subagent-bridge/src" python3 -m agent_handoff_mcp ...`.
+- Artifact retrieval requires SQLite FTS5. Treat a failing `doctor` as a blocker before starting continuous orchestration.
 
 ### Execution backends
 
@@ -116,6 +146,7 @@ The orchestrator can control the execution model and reasoning effort for each l
 
 - `model`: Explicitly set the LLM to use (e.g. `o3-mini`, `gpt-4o`, `claude-3-5-sonnet`).
 - `reasoning_effort`: Controls the "thinking" budget for supported models. Choices: `low`, `medium`, `high`, or `auto` (default). `auto` uses internal heuristics (e.g., follow-up cycles or backend-heavy tasks escalate to `high`).
+- **Effort escalation after exhaustion:** The `_escalate_effort()` ladder in `_env.py` enforces `low -> medium -> high -> xhigh` after each exhaustion. Effort MUST go up on failure, never down. A real failure in this project (backend-domain auto-lowered from medium to low after exhaustion) caused 7M+ tokens burned in non-converging loops.
 
 These are typically set in the lane manifest but can be overridden via MCP:
 
@@ -126,6 +157,10 @@ agent-handoff-mcp dispatch_lane_work --task-ref <task> --lane-id <lane> --model 
 ### Cost-Sensitive Lane Guidance
 
 When dispatching to model-backed lanes (especially high-reasoning ones), provide narrow, actionable briefs to minimize token waste. If a lane is stalled, escalate to an operator instead of re-running expensive high-reasoning turns with the same prompt.
+
+- If a lane has `exhaustion_streak >= 2`, the orchestrator daemon auto-gates it (`lane_unhealthy`) and skips auto-start. Do not redispatch until an explicit operator decision (e.g., `promote_model`, `split_lane`, `close_lane`, `fresh_worktree`).
+- Cumulative tokens exceeding the lane's `token_burn_threshold` (default 2M) trigger a `token_burn_warning` event and set `attention_required` on the lane.
+- Use `preferred_model` and `preferred_reasoning_effort` in the manifest for the default lane posture, then override per-lane with `dispatch_lane_work(...)` only when the current slice truly needs a different model size or effort level.
 
 Workers synchronize their internal state with these authoritative MCP values at the start of each execution cycle.
 
@@ -198,6 +233,54 @@ Important:
 - `orchestrator_start(...)` and `single-cycle` default to `worker_start_mode="mcp"`, which lets the orchestrator auto-start missing actionable workers through MCP. Use `worker_start_mode="manual"` when the host should keep worker startup in shell space.
 - Treat lane worktrees as branch-local truth. If the orchestrator/root branch has uncommitted or manually salvaged scaffolding that has not been propagated into the lane branch, the worker cannot see it. Before dispatching a dependent slice, verify required contract/stub files exist in the worker worktree or explicitly hold that lane.
 - `handoff_failed` is sticky. If a worker completed execution but remains in `handoff_failed`, salvage/intake the saved result first, then recycle the daemon with `worker_stop(..., force=True)` plus `worker_start(...)` for the next assignment. A fresh lane message by itself does not reliably clear the old saved-result state.
+- `worker_stop(...)` now cleans up the lock file and emits a `worker_stopped` event. After stop, `worker_status(...)` reports `lock.held: false` consistently with no stale artifacts.
+- `worker_status(...)` now includes hardening signals: `exhaustion_streak` (int), `cumulative_tokens` (int), `health` (`healthy` / `degraded` / `unhealthy`), and a `context_utilization` sub-dict with `utilization_ratio`, `domain_signal_ratio`, and `pressure` (`normal` / `elevated` / `high`).
+
+### Scope Enforcement
+
+Scope enforcement is a **runtime gate**, not advisory. After each worker execution turn, `lane_exec.py` validates the worktree diff against the lane's `effective_owned_paths` (or manifest `owned_paths`) before submitting the turn for review. A scope violation skips review entirely and emits a `scope_violation` JSONL event.
+
+- The orchestrator can narrow scope for a specific dispatch by embedding `effective_owned_paths` as a JSON-encoded string in the `artifacts` list of a dispatch lane message (e.g., `artifacts=[json.dumps({"type": "owned_paths_override", "paths": [...]})]`). `lane_exec.py` reads from the most recent `orchestrator_to_worker` message and prefers the override over manifest `owned_paths`.
+- Workers that detect out-of-scope needs should record a blocker or lane message for the orchestrator instead of editing files outside their lane.
+
+### Lane Health Scoring
+
+`_check_lane_health()` in `orchestrator_daemon.py` scores each lane as `healthy`, `degraded`, or `unhealthy` based on:
+
+- Exhaustion streak (consecutive non-converged review cycles)
+- Scope violation history
+- Cumulative token burn relative to `token_burn_threshold`
+- Context pressure from `_measure_context_utilization()`
+
+Health transitions emit `lane_health_changed` JSONL events. Lanes scored `unhealthy` (`exhaustion_streak >= 2`) are auto-gated by the orchestrator daemon; they require an explicit operator decision before work resumes.
+
+Recommended actions for unhealthy lanes: `promote_model`, `split_lane`, `close_lane`, or `fresh_worktree`.
+
+### Context Freshness
+
+`_measure_context_utilization()` in `lane_prompt.py` computes:
+
+- `utilization_ratio`: prompt tokens / `model_context_window` (from manifest, default 128K)
+- `domain_signal_ratio`: domain-relevant content / total prompt content
+- `pressure`: `normal` (< 0.6), `elevated` (0.6-0.8), or `high` (> 0.8)
+
+Context pressure is reported in `worker_status(...)` and emitted as a `context_pressure` JSONL event when elevated or high. Elevated pressure suggests trimming non-essential prompt sections; high pressure risks truncation.
+
+### Worker Daemon JSONL Events
+
+The worker daemon emits structured JSONL events to `logs/worker-daemon/worker-<lane>.jsonl` for health-relevant conditions:
+
+| Event | Trigger |
+| --- | --- |
+| `scope_violation` | Files outside `owned_paths` detected post-execution |
+| `exhaustion_streak` | Consecutive non-converged review cycles |
+| `token_burn_warning` | Cumulative tokens exceed `token_burn_threshold` |
+| `worker_stopped` | Clean shutdown with lock cleanup |
+| `context_pressure` | Prompt consuming unsafe fraction of context window |
+| `lane_health_changed` | Health state transition (healthy/degraded/unhealthy) |
+
+Use `worker_event_history(task_ref, lane_id, limit=20)` via MCP to query recent events without tailing log files.
+
 - For remote HTTP custom-MCP attachment (e.g. Codex custom MCP), see
   [codex-custom-mcp-playbook.md](codex-custom-mcp-playbook.md). Start the server
   with `make mcp-serve-http`, verify the endpoint, then attach in Codex settings.
@@ -276,6 +359,35 @@ To preview without writing:
 make lane-dispatch TASK=<task-ref> LANE=<lane> MESSAGE="..." DRY_RUN=1
 ```
 
+### Recipe: Dispatch lanes from a task plan
+
+**Who:** Orchestrator. **When:** Turning a reviewed task plan into concrete worker lanes.
+
+```bash
+make lane-manifest-init TASK=<task-ref> \
+  LANE_IDS='lane-a lane-b lane-c' \
+  TASK_PLAN=docs/tasks/8.0/<task-plan>.md
+```
+
+Then fill the manifest from the task plan's lane table:
+
+1. Copy lane ids, owned paths, and required tests from the plan into `config/lane-orchestration/<task-ref>.json`.
+2. Set runtime defaults per lane: `preferred_model`, `preferred_reasoning_effort`, `token_burn_threshold`, and `model_context_window`.
+3. Open or refresh each lane with `make lane-open TASK=<task-ref> LANE=<lane>`.
+4. Use `agent-handoff-mcp dispatch-lane-work --task-ref <task-ref> --lane-id <lane> --backend codex-subagent --model gpt-5.4-mini --reasoning-effort auto` to set execution posture for that lane.
+5. Send the human-readable assignment with `make lane-dispatch ...` or a structured dependency summary with `agent-handoff-mcp lane-brief ...`.
+
+Dispatch content should come from the task plan, not from ad-hoc chat memory:
+
+- objective for that lane
+- owned paths / scope boundaries
+- required verification commands
+- explicit non-goals
+- upstream dependency notes
+- artifact refs for bulky evidence instead of pasted logs
+
+If the plan defines merge order, respect it in `worker_start_all(...)` or `make orchestrator-daemon`; upstream incomplete lanes should block downstream auto-starts.
+
 ### Recipe: Worker implements a slice
 
 **Who:** Worker (agent or human). **When:** After receiving a dispatch.
@@ -324,6 +436,14 @@ What this does:
 3. Submits the final handoff automatically.
 4. Repeats until stopped.
 
+Hardening behavior:
+
+- **Scope enforcement:** After each execution turn, the daemon validates the worktree diff against `effective_owned_paths`. A scope violation skips review, emits a `scope_violation` event, and marks the turn as failed.
+- **Exhaustion tracking:** Consecutive non-converged review cycles increment `exhaustion_streak`. After each exhaustion, reasoning effort auto-escalates one level (never decreases). At streak >= 2, the lane is marked `unhealthy` and the orchestrator daemon gates further auto-starts.
+- **Token burn:** Cumulative tokens are tracked per lane. Exceeding `token_burn_threshold` (default 2M, configurable in manifest) fires a `token_burn_warning` event.
+- **Context pressure:** Each cycle measures prompt utilization against `model_context_window`. Elevated or high pressure emits a `context_pressure` event.
+- **Artifact indexing:** Large execution `details` payloads are indexed into `.task-state/mcp-artifacts.db` and replaced inline with a compact excerpt plus `details_artifact_ref`.
+
 ### Phase 5: Verification & Handoff
 
 Phase 5 represents the final delivery and audit stage:
@@ -363,6 +483,46 @@ Notes:
 - Use `make worker-daemon-status` to see the shared-root lock path, current PID/state, and the latest JSONL event. Use `make worker-daemon-stop` or `make worker-daemon-resume` instead of sending manual signals when possible.
 - A `handoff_failed` worker state means the implementation/review turn already completed but the final report handoff did not persist. Fix the MCP/handoff issue first, then retry or restart the worker so it can replay the saved result instead of rerunning the lane assignment.
 - Visible Codex app windows are optional operator UX only. Lane isolation comes from worktree boundaries, lane-scoped prompt construction, and MCP state rehydration rather than from keeping a desktop session open.
+- `worker_status(...)` is the primary telemetry surface for both humans and agents. Inspect model, requested/effective reasoning effort, cumulative token totals, health, and `context_utilization.pressure` before redispatching or promoting a lane.
+
+### Recipe: Monitor lane health with the dashboard
+
+**Who:** Orchestrator. **When:** Monitoring active lanes for health, token burn, exhaustion, and context pressure.
+
+```bash
+# Polling dashboard (refreshes every 10s by default)
+make dashboard-live
+
+# Interactive Textual TUI (requires dashboard optional deps)
+make dashboard-tui
+```
+
+The dashboard shows per-lane: composite state, health (`healthy` / `degraded` / `unhealthy`), cycle count, model, effort, cumulative tokens, context pressure, and exhaustion streak.
+
+Use `worker_status(task_ref, lane_id)` via MCP for programmatic access to the same signals.
+
+When a lane is flagged `unhealthy`, the orchestrator daemon skips auto-start and emits `lane_unhealthy`. The operator must decide on an explicit recovery action (`promote_model`, `split_lane`, `close_lane`, or `fresh_worktree`) before work resumes.
+
+### Recipe: Retrieve large evidence without prompt bloat
+
+**Who:** Orchestrator or worker. **When:** Logs, test output, or copied docs are too large to paste into a lane message or prompt.
+
+```bash
+# Search the artifact sidecar
+make artifact-search TASK=<task-ref> QUERY="column missing" [LANE=<lane-id>]
+
+# List available indexed sources
+make artifact-list TASK=<task-ref> [LANE=<lane-id>]
+
+# Full-fidelity readback by source id
+agent-handoff-mcp --workspace-root "$(pwd)" artifact-get --source-id <id>
+```
+
+Operational guidance:
+
+- Attach artifact refs to lane messages with `agent-handoff-mcp lane-message --artifact <id> ...` when you want the next worker prompt to prioritize exact evidence.
+- `lane_prompt.py` currently consumes pinned artifact refs from lane-message payloads first, then falls back to scoped FTS search by lane message text, blockers, and findings.
+- Use `artifact-purge` or `purge_artifacts(...)` for retention cleanup after archival or when the cache grows too large.
 
 ### Recipe: Worker is blocked
 

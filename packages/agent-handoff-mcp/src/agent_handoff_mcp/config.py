@@ -12,6 +12,9 @@ class RuntimeConfig:
     db_path: Path
     current_task_path: Path
     exports_dir: Path
+    artifact_db_path: Path
+    artifact_index_min_bytes: int = 4096
+    artifact_index_min_lines: int = 80
 
     @classmethod
     def for_workspace(
@@ -44,6 +47,7 @@ class RuntimeConfig:
             db_path=resolved_state_dir / "handoff.db",
             current_task_path=resolved_current_task_path,
             exports_dir=resolved_exports_dir,
+            artifact_db_path=resolved_state_dir / "mcp-artifacts.db",
         )
 
     @classmethod

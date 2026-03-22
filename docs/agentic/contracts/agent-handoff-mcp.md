@@ -21,8 +21,33 @@ Supported config inputs:
 Default workspace-owned state:
 
 - DB: `.task-state/handoff.db`
+- artifact DB: `.task-state/mcp-artifacts.db`
 - exports: `.task-state/exports/`
 - generated markdown: `CURRENT_TASK.md`
+
+Runtime bootstrap:
+
+```bash
+cd /Users/daniel/Development/context-alt-text-monorepo
+
+# Packaged MCP server
+uv tool install ./packages/agent-handoff-mcp
+
+# Codex subagent bridge for BACKEND=codex-subagent
+python3 -m pip install -e packages/codex-subagent-bridge
+
+# Optional monitoring UI packages for dashboard-tui / rich.live fallback
+PYENV_VERSION=description-service python3 -m pip install -e "apps/prototype-description-service[dashboard,dev]"
+
+# Validate runtime wiring, writable state dirs, and FTS5 support
+agent-handoff-mcp --workspace-root "$(pwd)" doctor
+```
+
+Notes:
+
+- `doctor` hard-fails when the local SQLite build lacks FTS5; artifact indexing depends on it.
+- When running from repo source instead of an installed binary, use `PYTHONPATH="packages/agent-handoff-mcp/src:packages/codex-subagent-bridge/src" python3 -m agent_handoff_mcp ...`.
+- `dashboard-live` does not require optional UI packages. `dashboard-tui` uses Textual when installed, then `rich.live`, then plain text.
 
 ## MCP Tool Surface
 
@@ -86,6 +111,14 @@ Plan cursors:
 - `list_plan_cursors`
 - `upsert_plan_cursor`
 
+Artifact retrieval sidecar:
+
+- `record_artifact`
+- `search_artifacts`
+- `get_artifact_source`
+- `list_artifact_sources`
+- `purge_artifacts`
+
 ## Request Shape Notes
 
 - Write tools target the active task only.
@@ -101,15 +134,18 @@ Plan cursors:
 - `upsert_worktree_lane` is the canonical way to register a delegated worker lane with `lane_id`, `worktree_path`, `branch`, ownership, and status.
 - `record_worker_report` stores a structured worker handback for one lane: summary, changed files, test commands, blockers, and merge-readiness.
 - `record_lane_message` / `update_lane_message` model orchestrator-to-worker and worker-to-orchestrator communication without relying on direct session chat.
+- `record_lane_message` accepts artifact refs in its payload; the CLI fallback exposes this as repeated `--artifact <source-id>` flags.
 - `record_lane_brief` / `list_lane_briefs` are the structured-brief helpers built on top of `lane_messages`; they persist an open `orchestrator_to_worker` message with a `brief:<reason>` subject plus a compact JSON payload (`source_lane`, `reason`, `summary`, optional `required_actions`, optional `artifacts`).
 - `get_lane_activity` is the lane-scoped query surface for decisions, tests, blockers, actions, findings, worker reports, and lane messages.
 - `worker_status` should be treated as an inspection tool, not a boolean health check. Use `running`, `worker_state`, `attention_required`, and `state_summary` together. Current durable worker states include `idle`, `waiting_for_orchestrator`, `handoff_failed`, `paused`, and `stopped`.
 - `worker_status` also exposes hardening signals: `exhaustion_streak` (consecutive non-converged cycles), `cumulative_tokens` (session token spend), `health` (`healthy` / `degraded` / `unhealthy`), and a `context_utilization` sub-dict with `utilization_ratio`, `domain_signal_ratio`, and `pressure` (`normal` / `elevated` / `high`). Use these alongside `attention_required` to assess lane health.
+- `worker_status` and dashboard surfaces should be treated as the authoritative runtime view for model size, requested/effective reasoning effort, token burn, and context pressure. Use them before redispatching or promoting a lane.
 - `worker_stop` now performs authoritative lock cleanup. After stop, the lock file is deleted and a `worker_stopped` JSONL event is emitted. `daemon_status()` reports `lock.held: false` consistently; no contradictory state artifacts remain.
 - `worker_start` and `worker_start_all` accept `session_mode`. Use `fresh_turn` for the default one-turn-per-session isolation, or `shared_lane` to reuse context only within the same lane worker session when repeated continuity is worth the extra retained context.
 - `worker_start_all` is dependency-aware when a manifest merge order exists. Lanes whose upstream dependencies still have unresolved dispatched work are returned as clean `skipped` results with `reason="unresolved_upstream_dependencies"` and a `blocked_by` lane list instead of being started prematurely.
 - `orchestrator_start` / `single-cycle` support `worker_start_mode`. Use `mcp` for the default MCP-first worker pool behavior, or `manual` when the host should keep worker startup in shell space.
 - A recorded `handoff_failed` worker state means the implementation/review turn already completed and the saved result must be retried or inspected without silently rerunning the same lane assignment.
+- For task-plan-driven orchestration, treat the checked-in lane manifest as the executable version of the task plan. `dispatch_lane_work` controls backend/model/reasoning effort; `record_lane_message` and `record_lane_brief` carry the human-readable slice assignment and dependency context.
 
 ### Scope Enforcement and Effective Owned Paths
 
@@ -136,6 +172,7 @@ The worker daemon emits structured JSONL events to `logs/worker-daemon/worker-<l
 - `token_burn_warning`: cumulative session token spend exceeds `token_burn_threshold` (default 2M).
 - `worker_stopped`: clean daemon shutdown with lock cleanup.
 - `context_pressure`: prompt consuming an unsafe fraction of the model's context window.
+- `artifact_indexed`: large execution details were indexed into the artifact sidecar and referenced by `details_artifact_ref`.
 - `lane_health_changed`: health state transition (e.g., `healthy` -> `degraded`).
 
 ### Lane Manifest Configuration
@@ -204,6 +241,11 @@ Fallback subcommands:
 - `worker-start`, `worker-status`, `worker-stop`, `worker-resume`, `worker-start-all`
 - `worker-event-history`
 - `run-structured-turn`
+- `artifact-record`
+- `artifact-search`
+- `artifact-list`
+- `artifact-get`
+- `artifact-purge`
 
 ## HTTP Transport
 
@@ -265,3 +307,105 @@ Shared-state rule for sibling worktrees:
 - Worker state is also persisted outside the JSONL stream at `.task-state/worker-<lane>.status.json` so MCP status queries can explain why a lane is idle, waiting, paused, stopped, or blocked on final handoff without requiring log inspection.
 - Continuous orchestrator polling is a separate concern from dispatch-only routing. `make orchestrator-daemon` is allowed to intake merge-ready lanes, while `make handoff-dispatch` is the safe root command when the operator wants to fan out open work without starting merge automation.
 - Backend Python lane verification should not depend on interactive shell activation. Prefer `PYENV_VERSION=description-service ...` in lane test commands over `pyenv activate description-service`, because `pyenv activate` requires shell init hooks that may not exist in daemon subprocesses.
+
+## Artifact Retrieval Sidecar
+
+The artifact retrieval sidecar extends `agent-handoff-mcp` with a content-indexed store for large agent outputs, execution logs, guidance briefs, and other bulky payloads that would otherwise inflate prompt context or be silently truncated.
+
+### Sidecar Database
+
+Artifacts are stored in a **separate** SQLite database at `.task-state/mcp-artifacts.db`. This file is:
+
+- Not included in `export_handoff_state` / `import_handoff_state` payloads.
+- Not rendered into `CURRENT_TASK.md`.
+- Not queried by the primary handoff tools (`get_handoff_state`, `get_lane_activity`, etc.).
+
+The sidecar tables use SQLite's FTS5 (Full-Text Search) extension. `run-doctor` checks FTS5 availability at startup and exits with an actionable error if it is unavailable.
+
+### Thresholds
+
+Controlled via `RuntimeConfig`. Contract-frozen defaults:
+
+- `artifact_index_min_bytes = 4096` (approximately 4 KB)
+- `artifact_index_min_lines = 80`
+
+`maybe_record_artifact()` skips indexing when content falls below **both** thresholds and returns `None`. Callers must not add artifact refs to messages or prompts when `None` is returned.
+
+### MCP Tool Signatures
+
+- `record_artifact(task_ref=None, lane_id=None, app_root=None, source_kind, source_label, content_type="text/plain", summary=None, content)` -> `{ ok, source_id, source_label, was_updated, chunk_count }`
+- `search_artifacts(queries: list<string>, task_ref=None, lane_id=None, app_root=None, source_kind=None, content_type=None, limit=10)` -> `{ ok, total, hits: list<{ source_id, source_label, source_summary, task_ref, lane_id, app_root, source_kind, content_type, title, snippet, rank }> }`
+- `get_artifact_source(source_id=None, task_ref=None, source_label=None)` -> `{ ok, source }` where `source` includes source metadata plus `chunks: list<{ chunk_order, title, body }>`
+- `list_artifact_sources(task_ref=None, lane_id=None, app_root=None, source_kind=None, limit=50, offset=0)` -> `{ ok, total, sources: list<SourceSummary> }`
+- `purge_artifacts(task_ref=None, older_than_days=None)` -> `{ ok, purged_sources }` — at least one of `task_ref` or `older_than_days` is required
+
+### Chunking Strategy
+
+Content is chunked by `content_type` before FTS5 indexing:
+
+| `content_type`       | Strategy                                                      |
+| -------------------- | ------------------------------------------------------------- |
+| `text/markdown`      | Split at H1/H2/H3 headings; heading text becomes chunk title  |
+| `text/plain`         | Fixed groups of 50 lines; no title                            |
+| `application/json`   | Top-level keys (object) or top-level list elements (array)    |
+
+### Deduplication
+
+`maybe_record_artifact()` computes a SHA-256 hash of the content before indexing. If a source with the same `(source_label, task_ref, lane_id, source_kind)` identity already exists with an identical hash, indexing is skipped and the call returns `None` to the caller or `was_updated: false` through the MCP write surface. Callers must not add new artifact refs to messages or prompts on a duplicate/no-op path.
+
+### Prompt-Budget Integration
+
+`scripts/mcp/lane_prompt.py` appends retrieved artifact snippets to worker prompts when context budget allows:
+
+1. After the base sections are rendered, `_measure_context_utilization()` produces a `pressure` value.
+2. If `pressure` is `"elevated"` or `"high"`, artifact retrieval is skipped entirely to protect required assignment content.
+3. Otherwise, `_artifact_context_section()` receives a `budget_chars` equal to the remaining estimated char budget.
+4. Pinned artifact refs from lane-message payloads (`payload.artifacts`) are loaded first with `get_artifact_source()`.
+5. Remaining budget is filled by `search_artifacts()` queries derived from open lane-message bodies, blocker descriptions, and open finding descriptions.
+6. Retrieved snippets are appended as a "Relevant Artifacts" section and context metrics are recomputed after appending the section.
+
+This integration is purely additive. When `agent_handoff_mcp` is not importable, a module-level import guard (`_ARTIFACT_SEARCH_AVAILABLE = False`) silently disables retrieval.
+
+### Ingestion Gates
+
+`scripts/mcp/lane_exec.py` applies `_compress_large_result_details()` after worker execution:
+
+- If the `details` field of the structured result JSON exceeds the configured `RuntimeConfig.artifact_index_min_bytes` / `artifact_index_min_lines` threshold, the full body is indexed as an `"execution-output"` artifact.
+- The inline `details` is replaced with the first 500 chars plus a truncation marker: `... [truncated — full output indexed as artifact:<source_id>]`.
+- The result JSON gains a `details_artifact_ref` integer field.
+- `scripts/mcp/worker_daemon.py` reads `details_artifact_ref` after `exec_complete` and emits an `artifact_indexed` JSONL event when present.
+- `scripts/mcp/lane_result.py` can attach that artifact ref to the follow-up `worker_to_orchestrator` lane message payload so operators have an inspectable evidence handle without replaying the full log.
+
+`scripts/mcp/orchestrator_guidance.py` indexes redispatch message bodies:
+
+- When `_apply_guidance_resolution()` emits a `redispatch` lane message and the body exceeds the configured threshold, it is indexed as a `"guidance-redispatch"` artifact.
+- The `payload["artifacts"]` list on the lane message receives the corresponding `source_id` string.
+- Workers polling `make lane-inbox` see the artifact ref in the message payload and can retrieve the full brief via `get_artifact_source` or `make artifact-list`.
+
+### Make Targets
+
+```bash
+make artifact-search QUERY="<text>" [TASK=<task-ref>] [LANE=<lane-id>] [LIMIT=10]
+make artifact-list [TASK=<task-ref>] [LANE=<lane-id>] [LIMIT=20]
+```
+
+Both targets are defined in `mk/lane-worker.mk`. `QUERY` is required for `artifact-search`. They operate against the shared sidecar database at `.task-state/mcp-artifacts.db`.
+
+### CLI Subcommands
+
+```bash
+agent-handoff-mcp --workspace-root <repo> artifact-record --source-kind log --source-label pytest-output --content-file /tmp/output.txt [--task-ref ...] [--lane-id ...]
+agent-handoff-mcp --workspace-root <repo> artifact-search --query "..." [--task-ref ...] [--lane-id ...] [--limit 10]
+agent-handoff-mcp --workspace-root <repo> artifact-list [--task-ref ...] [--lane-id ...] [--limit 20]
+agent-handoff-mcp --workspace-root <repo> artifact-get --source-id <source-id>
+agent-handoff-mcp --workspace-root <repo> artifact-purge [--task-ref ...] [--older-than-days ...]
+```
+
+### Retention
+
+Call `purge_artifacts` periodically to reclaim disk space:
+
+- Per-task purge on final archive: `purge_artifacts(task_ref=<completed_task>)`.
+- Global age-based purge: `purge_artifacts(older_than_days=30)`.
+
+The sidecar database is not included in `archive_task_state` and must be backed up separately if artifact content needs to survive workspace migration.

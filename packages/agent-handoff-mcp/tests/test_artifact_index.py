@@ -17,6 +17,7 @@ from agent_handoff_mcp.artifact_index import (
     chunk_plaintext,
     get_artifact_db_connection,
     get_artifact_source,
+    get_distinctive_terms,
     list_artifact_sources,
     maybe_record_artifact,
     purge_artifacts,
@@ -637,3 +638,144 @@ def test_schema_bootstrap_is_idempotent(artifact_db: Path) -> None:
     }
     conn2.close()
     assert "artifact_sources" in tables
+
+
+# ---------------------------------------------------------------------------
+# get_distinctive_terms
+# ---------------------------------------------------------------------------
+
+
+def test_get_distinctive_terms_returns_top_words(artifact_db: Path) -> None:
+    content = "\n".join(["authentication token validation security policy"] * 30)
+    result = upsert_source(
+        task_ref="task-terms",
+        lane_id=None,
+        app_root=None,
+        source_kind="log",
+        source_label="auth-log",
+        content_type="text/plain",
+        summary=None,
+        content=content,
+        artifact_db_path=artifact_db,
+    )
+    terms = get_distinctive_terms(
+        source_id=result["source_id"],
+        artifact_db_path=artifact_db,
+        top_n=5,
+    )
+    assert isinstance(terms, list)
+    assert len(terms) <= 5
+    # Domain words should appear in the top terms
+    assert any(t in ("authentication", "token", "validation", "security", "policy") for t in terms)
+
+
+def test_get_distinctive_terms_excludes_stopwords(artifact_db: Path) -> None:
+    content = "\n".join(["the is and or for authentication security policy"] * 30)
+    result = upsert_source(
+        task_ref="task-stopwords",
+        lane_id=None,
+        app_root=None,
+        source_kind="log",
+        source_label="stopword-log",
+        content_type="text/plain",
+        summary=None,
+        content=content,
+        artifact_db_path=artifact_db,
+    )
+    terms = get_distinctive_terms(
+        source_id=result["source_id"],
+        artifact_db_path=artifact_db,
+        top_n=10,
+    )
+    for stopword in ("the", "and", "or", "for", "is"):
+        assert stopword not in terms, f"stopword '{stopword}' should not appear in term hints"
+
+
+def test_get_distinctive_terms_empty_for_missing_source(artifact_db: Path) -> None:
+    terms = get_distinctive_terms(
+        source_id=99999,
+        artifact_db_path=artifact_db,
+    )
+    assert terms == []
+
+
+# ---------------------------------------------------------------------------
+# purge_artifacts with lane_id and app_root filters
+# ---------------------------------------------------------------------------
+
+
+def _seed_source(artifact_db: Path, task_ref: str, lane_id: str | None, app_root: str | None, label: str) -> None:
+    content = "Sample content for purge testing\n" * 90
+    upsert_source(
+        task_ref=task_ref,
+        lane_id=lane_id,
+        app_root=app_root,
+        source_kind="log",
+        source_label=label,
+        content_type="text/plain",
+        summary=None,
+        content=content,
+        artifact_db_path=artifact_db,
+    )
+
+
+def test_purge_artifacts_by_lane_id(artifact_db: Path) -> None:
+    _seed_source(artifact_db, "task-purge", "lane-a", None, "log-a1")
+    _seed_source(artifact_db, "task-purge", "lane-a", None, "log-a2")
+    _seed_source(artifact_db, "task-purge", "lane-b", None, "log-b1")
+
+    result = purge_artifacts(
+        lane_id="lane-a",
+        artifact_db_path=artifact_db,
+    )
+
+    assert result["ok"] is True
+    assert result["purged_sources"] == 2
+
+    remaining = list_artifact_sources(task_ref="task-purge", artifact_db_path=artifact_db)
+    assert len(remaining) == 1
+    assert remaining[0]["lane_id"] == "lane-b"
+
+
+def test_purge_artifacts_by_app_root(artifact_db: Path) -> None:
+    _seed_source(artifact_db, "task-app-purge", None, "/apps/service-a", "svc-a-log")
+    _seed_source(artifact_db, "task-app-purge", None, "/apps/service-b", "svc-b-log")
+
+    result = purge_artifacts(
+        app_root="/apps/service-a",
+        artifact_db_path=artifact_db,
+    )
+
+    assert result["ok"] is True
+    assert result["purged_sources"] == 1
+
+    remaining = list_artifact_sources(task_ref="task-app-purge", artifact_db_path=artifact_db)
+    assert len(remaining) == 1
+    assert remaining[0]["app_root"] == "/apps/service-b"
+
+
+def test_purge_artifacts_combined_task_and_lane(artifact_db: Path) -> None:
+    _seed_source(artifact_db, "task-combo", "lane-keep", None, "keep-log")
+    _seed_source(artifact_db, "task-combo", "lane-del", None, "del-log")
+    _seed_source(artifact_db, "other-task", "lane-del", None, "other-log")
+
+    result = purge_artifacts(
+        task_ref="task-combo",
+        lane_id="lane-del",
+        artifact_db_path=artifact_db,
+    )
+
+    assert result["ok"] is True
+    assert result["purged_sources"] == 1
+
+    all_remaining = list_artifact_sources(artifact_db_path=artifact_db)
+    labels = [r["source_label"] for r in all_remaining]
+    assert "del-log" not in labels
+    assert "keep-log" in labels
+    assert "other-log" in labels
+
+
+def test_purge_artifacts_empty_without_filters(artifact_db: Path) -> None:
+    result = purge_artifacts(artifact_db_path=artifact_db)
+    assert result["ok"] is True
+    assert result["purged_sources"] == 0

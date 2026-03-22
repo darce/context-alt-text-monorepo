@@ -12,6 +12,7 @@ from .api import (
     export_handoff_state,
     generate_current_task_md,
     get_artifact_source,
+    get_artifact_terms,
     get_handoff_dashboard,
     get_handoff_state,
     get_lane_activity,
@@ -407,8 +408,16 @@ def _build_parser() -> argparse.ArgumentParser:
     artifact_get_parser.add_argument("--task-ref")
     artifact_get_parser.add_argument("--source-label")
 
+    artifact_terms_parser = subparsers.add_parser("artifact-terms")
+    artifact_terms_parser.add_argument("--source-id", type=int)
+    artifact_terms_parser.add_argument("--task-ref")
+    artifact_terms_parser.add_argument("--source-label")
+    artifact_terms_parser.add_argument("--top-n", type=int, default=10)
+
     artifact_purge_parser = subparsers.add_parser("artifact-purge")
     artifact_purge_parser.add_argument("--task-ref")
+    artifact_purge_parser.add_argument("--lane-id")
+    artifact_purge_parser.add_argument("--app-root")
     artifact_purge_parser.add_argument("--older-than-days", type=int)
 
     return parser
@@ -862,10 +871,22 @@ def main() -> None:
             )
         )
         return
+    if args.command == "artifact-terms":
+        _print_json(
+            get_artifact_terms(
+                source_id=args.source_id,
+                task_ref=args.task_ref,
+                source_label=args.source_label,
+                top_n=args.top_n,
+            )
+        )
+        return
     if args.command == "artifact-purge":
         _print_json(
             purge_artifacts(
                 task_ref=args.task_ref,
+                lane_id=args.lane_id,
+                app_root=args.app_root,
                 older_than_days=args.older_than_days,
             )
         )

@@ -58,6 +58,7 @@ upsert_worktree_lane = core.upsert_worktree_lane
 record_artifact = core.record_artifact
 search_artifacts = core.search_artifacts
 get_artifact_source = core.get_artifact_source
+get_artifact_terms = core.get_artifact_terms
 list_artifact_sources = core.list_artifact_sources
 purge_artifacts = core.purge_artifacts
 
@@ -115,8 +116,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "record_artifact": "Index a large artifact (log, doc, payload, output) in the sidecar FTS5 database for later scoped retrieval.",
     "search_artifacts": "Search indexed artifact chunks by relevance with optional task/lane/app/source filters and BM25 ranking.",
     "get_artifact_source": "Return the full artifact source record for exact inspection by source_id or task_ref+source_label.",
+    "get_artifact_terms": "Return suggested retrieval query terms for a freshly indexed artifact source by extracting its most distinctive words.",
     "list_artifact_sources": "List indexed artifact sources so operators and prompts can discover available evidence without reading raw content.",
-    "purge_artifacts": "Delete artifact sources and their FTS chunks to keep the sidecar database bounded after task archival or age-based expiry.",
+    "purge_artifacts": "Delete artifact sources and their FTS chunks to keep the sidecar database bounded after task archival, lane closure, or age-based expiry.",
 }
 
 
@@ -930,6 +932,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
         record_artifact,
         search_artifacts,
         get_artifact_source,
+        get_artifact_terms,
         list_artifact_sources,
         purge_artifacts,
     ]:

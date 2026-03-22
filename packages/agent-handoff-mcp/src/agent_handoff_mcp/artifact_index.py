@@ -11,6 +11,7 @@ import hashlib
 import json as _json
 import re
 import sqlite3
+from collections import Counter
 from pathlib import Path
 
 
@@ -208,6 +209,62 @@ def chunk_content(
 
 def _content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()[:32]
+
+
+# ---------------------------------------------------------------------------
+# Term extraction
+# ---------------------------------------------------------------------------
+
+_STOPWORDS: frozenset[str] = frozenset({
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+    "of", "with", "by", "from", "up", "about", "into", "through", "during",
+    "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+    "do", "does", "did", "will", "would", "could", "should", "may", "might",
+    "must", "shall", "can", "this", "that", "these", "those", "its",
+    "he", "she", "they", "we", "you", "me", "him", "her", "us", "them",
+    "what", "which", "who", "when", "where", "why", "how", "all", "each",
+    "every", "both", "few", "more", "most", "other", "some", "such",
+    "not", "only", "same", "so", "than", "too", "very", "as",
+    "if", "then", "else", "while", "after", "before", "since", "because",
+    "return", "def", "class", "import", "none", "true", "false",
+    "self", "test", "var", "let", "const", "get", "set",
+})
+
+_WORD_RE: re.Pattern[str] = re.compile(r"\b[a-zA-Z][a-zA-Z0-9_-]{2,}\b")
+
+
+def get_distinctive_terms(
+    *,
+    source_id: int,
+    artifact_db_path: Path,
+    top_n: int = 10,
+) -> list[str]:
+    """Return the most distinctive terms from an indexed artifact source.
+
+    Extracts top-N words by frequency from the source's FTS5 chunks, after
+    filtering stopwords and short tokens.  Useful as suggested retrieval
+    queries for freshly indexed artifacts.
+    """
+    conn = get_artifact_db_connection(artifact_db_path)
+    try:
+        rows = conn.execute(
+            "SELECT title, body FROM artifact_chunks_fts WHERE source_id = ? ORDER BY rowid",
+            [str(source_id)],
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return []
+
+    combined = " ".join(f"{r['title']} {r['body']}" for r in rows)
+    words = [
+        w.lower()
+        for w in _WORD_RE.findall(combined)
+        if w.lower() not in _STOPWORDS
+    ]
+    counts = Counter(words)
+    return [term for term, _ in counts.most_common(top_n)]
 
 
 # ---------------------------------------------------------------------------
@@ -530,20 +587,30 @@ def list_artifact_sources(
 def purge_artifacts(
     *,
     task_ref: str | None = None,
+    lane_id: str | None = None,
+    app_root: str | None = None,
     older_than_days: int | None = None,
     artifact_db_path: Path,
 ) -> dict:
     """Delete artifact sources and their FTS chunks.
 
     *task_ref*: delete all sources for that task.
+    *lane_id*: delete all sources for that lane (e.g. after lane closure).
+    *app_root*: delete all sources for that app root.
     *older_than_days*: delete sources whose ``updated_at`` is older than N days.
-    Both conditions are ANDed when provided. At least one must be given.
+    Conditions are ANDed when multiple are provided. At least one must be given.
     """
     conditions: list[str] = []
     params: list[object] = []
     if task_ref:
         conditions.append("task_ref = ?")
         params.append(task_ref)
+    if lane_id:
+        conditions.append("lane_id = ?")
+        params.append(lane_id)
+    if app_root:
+        conditions.append("app_root = ?")
+        params.append(app_root)
     if older_than_days is not None:
         conditions.append("updated_at < datetime('now', ?)")
         params.append(f"-{older_than_days} days")

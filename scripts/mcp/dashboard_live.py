@@ -36,9 +36,11 @@ def _mcp_worker_status(
     orchestrator_root: Path,
     task_ref: str,
     lane_id: str,
+    *,
+    state_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Return daemon_status dict for a lane by calling worker_daemon_ctl.py."""
-    state_dir = orchestrator_root / ".task-state"
+    state_dir = state_dir if state_dir is not None else orchestrator_root / ".task-state"
     log_dir = orchestrator_root / "logs" / "worker-daemon"
     cmd = [
         sys.executable,
@@ -58,6 +60,26 @@ def _mcp_worker_status(
     except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
         pass
     return {"lane_id": lane_id, "worker_state": "unknown", "state_summary": "Could not retrieve status."}
+
+
+def _get_artifact_count(state_dir: Path, task_ref: str, lane_id: str) -> int | None:
+    """Return number of indexed artifact sources for this lane, or None if unavailable."""
+    artifact_db_path = state_dir / "mcp-artifacts.db"
+    if not artifact_db_path.exists():
+        return 0
+    try:
+        import sqlite3 as _sqlite3
+        conn = _sqlite3.connect(str(artifact_db_path))
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM artifact_sources WHERE task_ref = ? AND lane_id = ?",
+                [task_ref, lane_id],
+            ).fetchone()
+            return int(row[0]) if row else 0
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -190,8 +212,8 @@ def _format_table(
         f"--- dashboard-live  task={task_ref}  {ts} ---",
         f"{'LANE':<{col_lane}}  {'STATE':<{col_state}}  {'HEALTH':<{col_health}}  "
         f"{'PID':>6}  {'TOKENS':>8}  {'STK':>3}  {'CYC':>3}  {'PRES':<8}  "
-        f"{'EFFORT':<8}  {'MODEL':<{col_model}}  SUMMARY",
-        "-" * (col_lane + col_state + col_health + col_model + 64),
+        f"{'ARTF':>5}  {'EFFORT':<8}  {'MODEL':<{col_model}}  SUMMARY",
+        "-" * (col_lane + col_state + col_health + col_model + 70),
     ]
     for lane_id, info in rows:
         attn = "!" if info["attention"] else " "
@@ -199,16 +221,18 @@ def _format_table(
         tok_str = f"{info['cumulative_tokens']:,}" if info["cumulative_tokens"] else "-"
         streak_str = str(info["exhaustion_streak"]) if info["exhaustion_streak"] > 0 else "-"
         cycle_str = str(info.get("cycle") or 0)
-        stale_mark = "[STALE-LOCK]" if info.get("stale_lock") else ""
+        stale_mark = "[STALE-LOCK] " if info.get("stale_lock") else ""
         pressure_display = str(info.get("pressure") or "normal")
         effort_display = str(info.get("effort") or "-")[:8]
         health_display = str(info.get("health") or "ok")
         model_display = str(info.get("model") or "-")[:col_model]
+        artf_count = info.get("artifact_count")
+        artf_str = str(artf_count) if artf_count is not None else "-"
         lines.append(
             f"{lane_id:<{col_lane}}{attn} {info['symbol']:<{col_state}}  "
             f"{health_display:<{col_health}}  "
             f"{pid_str:>6}  {tok_str:>8}  {streak_str:>3}  {cycle_str:>3}  "
-            f"{pressure_display:<8}  {effort_display:<8}  "
+            f"{pressure_display:<8}  {artf_str:>5}  {effort_display:<8}  "
             f"{model_display:<{col_model}}  "
             f"{stale_mark}{info['summary']}"
         )
@@ -229,15 +253,19 @@ def poll_lane_status(
     lane_ids: list[str],
     interval: int,
     once: bool,
+    state_dir: Path | None = None,
 ) -> None:
     """Continuously poll and display lane worker status."""
+    resolved_state_dir = state_dir if state_dir is not None else orchestrator_root / ".task-state"
     while True:
         import datetime
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         rows: list[tuple[str, dict[str, Any]]] = []
         for lane_id in lane_ids:
-            status = _mcp_worker_status(orchestrator_root, task_ref, lane_id)
-            rows.append((lane_id, _summarize(status)))
+            status = _mcp_worker_status(orchestrator_root, task_ref, lane_id, state_dir=resolved_state_dir)
+            info = _summarize(status)
+            info["artifact_count"] = _get_artifact_count(resolved_state_dir, task_ref, lane_id)
+            rows.append((lane_id, info))
         table = _format_table(task_ref, rows, now)
         # Clear screen (ANSI) then print
         print("\033[2J\033[H" + table, flush=True)
@@ -271,6 +299,11 @@ def _parse_args() -> argparse.Namespace:
         "--once", action="store_true",
         help="Print once and exit instead of polling continuously.",
     )
+    parser.add_argument(
+        "--state-dir",
+        default=None,
+        help="Path to the task-state directory (default: <orchestrator-root>/.task-state).",
+    )
     return parser.parse_args()
 
 
@@ -295,6 +328,10 @@ def main() -> int:
 
     interval = max(1, int(args.interval or 10))
 
+    state_dir: Path | None = None
+    if getattr(args, "state_dir", None):
+        state_dir = Path(args.state_dir).expanduser().resolve()
+
     try:
         poll_lane_status(
             orchestrator_root=orchestrator_root,
@@ -302,6 +339,7 @@ def main() -> int:
             lane_ids=lane_ids,
             interval=interval,
             once=args.once,
+            state_dir=state_dir,
         )
     except KeyboardInterrupt:
         print("\ndashboard-live interrupted.", flush=True)

@@ -1393,13 +1393,17 @@ def list_artifact_sources(
 
 def purge_artifacts(
     task_ref: str | None = None,
+    lane_id: str | None = None,
+    app_root: str | None = None,
     older_than_days: int | None = None,
 ) -> str:
     """Delete artifact sources and their FTS chunks to keep the sidecar database bounded.
 
     *task_ref*: delete all sources for that task (e.g. after archival).
+    *lane_id*: delete all sources for that lane (e.g. after lane closure).
+    *app_root*: delete all sources for that app root.
     *older_than_days*: delete sources whose last update is older than N days.
-    Both conditions are ANDed when provided; at least one is required.
+    Conditions are ANDed when multiple are provided; at least one is required.
     """
     config = get_runtime_config()
     resolved_task_ref: str | None = None
@@ -1407,18 +1411,62 @@ def purge_artifacts(
         with _get_db_connection() as conn:
             resolved_task_ref = _resolve_task_ref(conn, task_ref)
 
-    if resolved_task_ref is None and older_than_days is None:
+    if resolved_task_ref is None and lane_id is None and app_root is None and older_than_days is None:
         return _json_response(
-            {"ok": False, "error": "Provide task_ref, older_than_days, or both."}
+            {"ok": False, "error": "Provide task_ref, lane_id, app_root, older_than_days, or a combination."}
         )
 
     try:
         result = artifact_index.purge_artifacts(
             task_ref=resolved_task_ref,
+            lane_id=_normalize_optional_text(lane_id),
+            app_root=_normalize_optional_text(app_root),
             older_than_days=older_than_days,
             artifact_db_path=config.artifact_db_path,
         )
         return _json_response(result)
+    except RuntimeError as exc:
+        return _json_response({"ok": False, "error": str(exc)})
+
+
+def get_artifact_terms(
+    source_id: int | None = None,
+    task_ref: str | None = None,
+    source_label: str | None = None,
+    top_n: int = 10,
+) -> str:
+    """Return suggested retrieval query terms for a freshly indexed artifact source.
+
+    Extracts the most distinctive words from the artifact's indexed chunks,
+    useful as hints when building future search queries.
+    Lookup priority: *source_id* > (*task_ref* + *source_label*).
+    """
+    config = get_runtime_config()
+    resolved_source_id = source_id
+    if resolved_source_id is None:
+        if task_ref is None or not source_label:
+            return _json_response(
+                {"ok": False, "error": "Provide source_id or both task_ref and source_label."}
+            )
+        resolved_task_ref: str | None = None
+        with _get_db_connection() as conn:
+            resolved_task_ref = _resolve_task_ref(conn, task_ref)
+        source = artifact_index.get_artifact_source(
+            task_ref=resolved_task_ref,
+            source_label=_normalize_optional_text(source_label),
+            artifact_db_path=config.artifact_db_path,
+        )
+        if source is None:
+            return _json_response({"ok": False, "error": "Artifact source not found."})
+        resolved_source_id = source["id"]
+
+    try:
+        terms = artifact_index.get_distinctive_terms(
+            source_id=resolved_source_id,
+            artifact_db_path=config.artifact_db_path,
+            top_n=max(1, int(top_n)),
+        )
+        return _json_response({"ok": True, "source_id": resolved_source_id, "terms": terms})
     except RuntimeError as exc:
         return _json_response({"ok": False, "error": str(exc)})
 

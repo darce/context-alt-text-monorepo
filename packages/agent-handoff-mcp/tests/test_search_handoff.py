@@ -377,3 +377,66 @@ def test_backfill_indexes_pre_trigger_rows(isolated_env: dict) -> None:
     assert result["ok"] is True
     assert result["results"], "Backfill must have re-indexed the pre-existing decision row."
     assert any(r["record_type"] == "decision" for r in result["results"])
+
+
+# ---------------------------------------------------------------------------
+# P-FTS-SANITIZE-01: query sanitization
+# ---------------------------------------------------------------------------
+
+
+def test_search_query_with_double_quote_does_not_error(isolated_env: dict) -> None:
+    """A double-quote inside a query term must not produce an FTS5 parse error."""
+    handoff_core.record_decision(session="s1", decision='the foo"bar pattern is discouraged')
+    result = _parse(
+        handoff_core.search_handoff(queries=['foo"bar'], record_types=["decision"])
+    )
+    # Must return ok (not an FTS5 OperationalError).
+    assert result["ok"] is True
+
+
+def test_search_query_with_colon_does_not_activate_column_filter(isolated_env: dict) -> None:
+    """A colon in a query must be treated as a literal, not FTS5 column-filter syntax."""
+    handoff_core.record_decision(session="s1", decision="leader:election protocol design")
+    result = _parse(
+        handoff_core.search_handoff(queries=["leader:election"], record_types=["decision"])
+    )
+    assert result["ok"] is True
+    assert result["results"], "Colon must not prevent matching; row must be returned."
+
+
+def test_search_query_with_hyphen_does_not_activate_not_operator(isolated_env: dict) -> None:
+    """A hyphen prefix in a query must not activate FTS5 NOT semantics."""
+    handoff_core.record_decision(session="s1", decision="retry-policy exponential backoff")
+    result = _parse(
+        handoff_core.search_handoff(queries=["retry-policy"], record_types=["decision"])
+    )
+    assert result["ok"] is True
+    assert result["results"], "Hyphen must not suppress the matching row via NOT."
+
+
+# ---------------------------------------------------------------------------
+# P-TASK-SCOPE-DEFAULT-01: active-task default scope
+# ---------------------------------------------------------------------------
+
+
+def test_search_defaults_to_active_task_excludes_other_tasks(isolated_env: dict) -> None:
+    """Omitting task_ref must scope to the active task, not all tasks."""
+    # Insert a record against the active task ("test-task") via the normal API.
+    handoff_core.record_decision(session="s1", decision="zeta scopetest uniquekeyword active")
+
+    # Insert a record for a different task directly (bypassing active-task resolution).
+    with handoff_core._get_db_connection() as conn:
+        conn.execute(
+            "INSERT INTO decisions (task_ref, session, decision, created_at) "
+            "VALUES ('other-task', 's1', 'zeta scopetest uniquekeyword other', datetime('now'))"
+        )
+
+    result = _parse(
+        handoff_core.search_handoff(queries=["zeta scopetest uniquekeyword"], record_types=["decision"])
+    )
+    assert result["ok"] is True
+    assert result["results"], "Must return at least the active-task record."
+    assert all(r["task_ref"] == "test-task" for r in result["results"]), (
+        "Cross-task leakage: results must not include records from 'other-task'."
+    )
+

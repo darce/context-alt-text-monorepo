@@ -43,6 +43,7 @@ from .api import (
     run_structured_turn,
     run_doctor,
     search_artifacts,
+    search_handoff,
     set_handoff_state,
     switch_task,
     update_lane_message,
@@ -419,6 +420,28 @@ def _build_parser() -> argparse.ArgumentParser:
     artifact_purge_parser.add_argument("--lane-id")
     artifact_purge_parser.add_argument("--app-root")
     artifact_purge_parser.add_argument("--older-than-days", type=int)
+
+    handoff_search_parser = subparsers.add_parser(
+        "handoff-search",
+        help="Search canonical handoff records (decisions, findings, blockers, actions) by keyword (BM25/FTS5).",
+    )
+    handoff_search_parser.add_argument(
+        "--query",
+        action="append",
+        dest="queries",
+        metavar="TERM",
+        help="Search term (repeatable; multiple terms are OR-joined). At least one required.",
+    )
+    handoff_search_parser.add_argument("--task-ref", help="Scope results to a specific task.")
+    handoff_search_parser.add_argument("--lane-id", help="Scope results to a specific lane.")
+    handoff_search_parser.add_argument(
+        "--record-types",
+        nargs="+",
+        choices=["decision", "finding", "blocker", "action"],
+        metavar="TYPE",
+        help="Limit search to these record types (decision, finding, blocker, action).",
+    )
+    handoff_search_parser.add_argument("--limit", type=int, default=20, help="Max results (default 20, max 100).")
 
     return parser
 
@@ -888,6 +911,17 @@ def main() -> None:
                 lane_id=args.lane_id,
                 app_root=args.app_root,
                 older_than_days=args.older_than_days,
+            )
+        )
+        return
+    if args.command == "handoff-search":
+        _print_json(
+            search_handoff(
+                queries=args.queries,
+                task_ref=getattr(args, "task_ref", None),
+                lane_id=getattr(args, "lane_id", None),
+                record_types=getattr(args, "record_types", None),
+                limit=getattr(args, "limit", 20),
             )
         )
         return

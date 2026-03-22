@@ -149,50 +149,50 @@ before tests) and the owned file set is entirely within `packages/agent-handoff-
 
 ### Phase 0: Scaffolding
 
-- [ ] Add FTS5 virtual table definitions for decisions, findings, blockers, actions to the
+- [x] Add FTS5 virtual table definitions for decisions, findings, blockers, actions to the
       existing handoff.db schema migration path.
-- [ ] Add backfill logic that populates FTS tables from canonical rows when first created.
-- [ ] Add stub `search_handoff` tool (returns empty results) so MCP API surface is visible.
-- [ ] Add test scaffolds covering schema idempotency and empty-result roundtrip.
+- [x] Add backfill logic that populates FTS tables from canonical rows when first created.
+- [x] Add stub `search_handoff` tool (returns empty results) so MCP API surface is visible.
+- [x] Add test scaffolds covering schema idempotency and empty-result roundtrip.
 
 ### Phase 1: Index Maintenance
 
-- [ ] Implement insert triggers for each FTS table (decisions, findings, blockers, actions).
-- [ ] Implement update triggers to keep FTS bodies in sync on record edits.
-- [ ] Verify existing `record_decision`, `record_review_finding`, `report_blocker`, and
+- [x] Implement insert triggers for each FTS table (decisions, findings, blockers, actions).
+- [x] Implement update triggers to keep FTS bodies in sync on record edits.
+- [x] Verify existing `record_decision`, `record_review_finding`, `report_blocker`, and
       `update_next_actions` write paths populate FTS tables correctly via trigger.
-- [ ] Ensure backfill runs at startup via `configure_runtime` migration guard.
+- [x] Ensure backfill runs at startup via `_ensure_handoff_fts` called from `_get_db_connection`.
 
 ### Phase 2: Search Implementation
 
-- [ ] Implement `search_handoff` with multi-query OR join, scope filters (task_ref, lane_id,
+- [x] Implement `search_handoff` with multi-query OR join, scope filters (task_ref, lane_id,
       record_types), BM25 ranking, and compact snippets.
-- [ ] Return `record_type`, `record_id`, `task_ref`, `lane_id`, `status`, and `snippet` per hit.
-- [ ] Add CLI `handoff-search` subcommand with `--query`, `--task-ref`, `--lane-id`,
+- [x] Return `record_type`, `record_id`, `task_ref`, `lane_id`, `status`, and `snippet` per hit.
+- [x] Add CLI `handoff-search` subcommand with `--query`, `--task-ref`, `--lane-id`,
       `--record-types`, `--limit`.
 
 ### Phase 3: Tests
 
-- [ ] Unit test FTS5 trigger correctness: insert a decision, verify it appears in FTS; update
+- [x] Unit test FTS5 trigger correctness: insert a decision, verify it appears in FTS; update
       it, verify FTS body updates.
-- [ ] Unit test scoped search: results respect task_ref and lane_id filters.
-- [ ] Integration test `search_handoff` tool against a real handoff.db with seeded decisions and
+- [x] Unit test scoped search: results respect task_ref and lane_id filters.
+- [x] Integration test `search_handoff` tool against a real handoff.db with seeded decisions and
       findings.
-- [ ] Test backfill: pre-seed rows before FTS tables exist, apply migration, verify rows are
+- [x] Test backfill: pre-seed rows before FTS tables exist, apply migration, verify rows are
       searchable.
 
 ### Phase 4: Docs and Contract Update
 
-- [ ] Update `docs/agentic/contracts/agent-handoff-mcp.md` with `search_handoff` surface,
+- [x] Update `docs/agentic/contracts/agent-handoff-mcp.md` with `search_handoff` surface,
       FTS5 shadow table semantics, trigger maintenance rules, and scope filter behaviour.
 - [ ] Update `CLAUDE.md` or `BOOTSTRAP.md` if search tooling changes any operator command
       surfaces.
 
 ## Success Criteria
 
-- [ ] An agent can search decisions, findings, blockers, and actions with `search_handoff` and
+- [x] An agent can search decisions, findings, blockers, and actions with `search_handoff` and
       receive ranked, scoped results without reading the full task snapshot.
-- [ ] FTS5 index stays consistent with canonical table state across insert, update, and
+- [x] FTS5 index stays consistent with canonical table state across insert, update, and
       `switch_task` / `archive_task_state` lifecycle operations.
-- [ ] All existing handoff tests continue to pass after schema extension.
+- [x] All existing handoff tests continue to pass after schema extension.
 - [ ] `run_doctor()` reports FTS5 availability and structured-index status.

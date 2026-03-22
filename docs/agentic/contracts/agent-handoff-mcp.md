@@ -118,6 +118,111 @@ Artifact retrieval sidecar:
 - `get_artifact_source`
 - `list_artifact_sources`
 - `purge_artifacts`
+- `get_artifact_terms`
+
+Structured handoff search:
+
+- `search_handoff`
+
+## Structured Handoff Search (`search_handoff`)
+
+`search_handoff` provides BM25/FTS5 full-text search over the four canonical handoff record
+tables (decisions, review findings, blockers, and next actions) stored in `handoff.db`.
+
+### FTS5 Shadow Tables
+
+Four FTS5 virtual tables are maintained in `handoff.db` alongside the canonical tables:
+
+| FTS table | Source table | Indexed body | Status column |
+|---|---|---|---|
+| `decisions_fts` | `decisions` | `decision || ' ' || COALESCE(rationale, '')` | no |
+| `findings_fts` | `review_findings` | `description || ' ' || COALESCE(fix, '')` | yes |
+| `blockers_fts` | `blockers` | `description` | yes |
+| `actions_fts` | `next_actions` | `action` | yes |
+
+All tables use `tokenize='porter unicode61'`, `record_id UNINDEXED`, `task_ref UNINDEXED`, and
+`lane_id UNINDEXED` so that scope filters (`task_ref`, `lane_id`) are fast equality lookups
+without touching FTS ranking.
+
+### Trigger Maintenance
+
+Twelve SQL triggers (INSERT / UPDATE / DELETE for each source table) keep FTS tables in sync
+automatically. UPDATE triggers follow the DELETE-then-INSERT pattern to prevent stale rows. All
+triggers use `CREATE TRIGGER IF NOT EXISTS` so they are schema-idempotent.
+
+`_ensure_handoff_fts(conn)` is called on every `_get_db_connection()` call. It:
+1. Probes FTS5 availability (CREATE/DROP `_fts5_handoff_probe`); silently returns on failure.
+2. Creates the four FTS5 virtual tables if not already present.
+3. Creates the twelve triggers if not already present.
+4. Runs `_backfill_handoff_fts(conn)`: for each source/FTS pair, if source has rows but FTS is
+   empty, bulk-inserts all source rows into the FTS table (handles cold-start upgrades).
+
+FTS5 unavailability degrades silently so existing handoff operations are never blocked. Call
+`agent-handoff-mcp doctor` to verify FTS5 is available.
+
+### Tool Signature
+
+```python
+search_handoff(
+    queries: list[str],
+    task_ref: str | None = None,
+    lane_id: str | None = None,
+    record_types: list[str] | None = None,  # subset of ["decision", "finding", "blocker", "action"]
+    limit: int = 20,                         # max 200
+) -> str:
+```
+
+- **queries**: One or more search terms. Multiple terms are OR-joined. Multi-word terms are
+  automatically phrase-quoted (`"term with spaces"`) for precise adjacency matching.
+- **record_types**: Defaults to all four types when omitted.
+- **limit**: Clamped to [1, 200]. Results across all searched types are merged and re-ranked.
+
+### Response Shape
+
+```json
+{
+  "ok": true,
+  "results": [
+    {
+      "record_type": "decision",
+      "record_id": 42,
+      "task_ref": "my-task",
+      "lane_id": "backend-domain",
+      "status": null,
+      "snippet": "...exponential backoff retry policy..."
+    }
+  ],
+  "total": 1,
+  "query": "\"exponential backoff\"",
+  "record_types_searched": ["action", "blocker", "decision", "finding"]
+}
+```
+
+- `status` is `null` for decisions (no status column); `open` / `fixed` / etc. for others.
+- `snippet` uses FTS5 `snippet()` with a 12-token window; result is compact, not full body.
+- Results are sorted by BM25 rank (best match first); ties break by insertion order.
+
+### CLI Subcommand
+
+```bash
+agent-handoff-mcp --workspace-root <repo> handoff-search \
+    --query "retry policy" \
+    --query "circuit breaker" \
+    --task-ref my-task \
+    --lane-id backend-domain \
+    --record-types decision finding \
+    --limit 10
+```
+
+`--query` is repeatable; multiple `--query` flags are OR-joined.
+
+### Error Cases
+
+- `queries` is `None` or all strings are blank: returns `{"ok": false, "error": "..."}`.
+- Any `record_types` entry is not in `["decision", "finding", "blocker", "action"]`: returns error.
+- FTS5 tables not initialized (FTS5 unavailable): returns `{"ok": false, "error": "..."}`. Run
+  `doctor` to diagnose.
+
 
 ## Request Shape Notes
 

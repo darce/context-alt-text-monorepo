@@ -61,6 +61,7 @@ get_artifact_source = core.get_artifact_source
 get_artifact_terms = core.get_artifact_terms
 list_artifact_sources = core.list_artifact_sources
 purge_artifacts = core.purge_artifacts
+search_handoff = core.search_handoff
 
 
 TOOL_DESCRIPTIONS: dict[str, str] = {
@@ -119,6 +120,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "get_artifact_terms": "Return suggested retrieval query terms for a freshly indexed artifact source by extracting its most distinctive words.",
     "list_artifact_sources": "List indexed artifact sources so operators and prompts can discover available evidence without reading raw content.",
     "purge_artifacts": "Delete artifact sources and their FTS chunks to keep the sidecar database bounded after task archival, lane closure, or age-based expiry.",
+    "search_handoff": "Search canonical handoff records (decisions, findings, blockers, actions) by keyword with BM25 ranking and optional task/lane/type scope filters.",
 }
 
 
@@ -935,6 +937,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
         get_artifact_terms,
         list_artifact_sources,
         purge_artifacts,
+        search_handoff,
     ]:
         mcp.add_tool(tool)
     return mcp

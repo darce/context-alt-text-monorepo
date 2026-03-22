@@ -102,6 +102,12 @@ Daemon-8 extended that surface with orchestration controls:
 - `dispatch_lane_work`
 - `list_available_backends`
 
+Task 8.0 (structured-memory search) added `search_handoff` for BM25/FTS5 search over canonical
+handoff records (decisions, findings, blockers, actions) without reading the full snapshot:
+
+- `search_handoff` -- keyword search scoped by `task_ref`, `lane_id`, and `record_types`; returns
+  `record_type`, `record_id`, `task_ref`, `lane_id`, `status`, and a ranked snippet per hit.
+
 These tools are intended for in-app agents that already have MCP access to the
 authoritative checkout. `run_structured_turn` is bridge-only and rejects
 `codex-cli`.
@@ -203,6 +209,27 @@ Phase 5 (Verification & Handoff) follows implementation:
 - Review finding write operations auto-refresh `CURRENT_TASK.md`.
 - `CURRENT_TASK.md` is a generated view only; if drift is detected, regenerate from DB state.
 - For finding verification/history, use `get_review_findings_summary` or `list_review_findings` instead of direct SQLite queries.
+
+### Structured Handoff Search
+
+`search_handoff` (MCP) and the `handoff-search` CLI subcommand provide BM25/FTS5 keyword search
+over canonical handoff records without reading the full task snapshot.
+
+```bash
+# CLI: search all record types for a keyword, scoped to a task
+agent-handoff-mcp --workspace-root "$(pwd)" handoff-search \
+  --query "retry policy" --task-ref <task-ref>
+
+# CLI: narrow to decisions and blockers, multiple OR terms
+agent-handoff-mcp --workspace-root "$(pwd)" handoff-search \
+  --query "retry" --query "timeout" \
+  --record-types decision --record-types blocker \
+  --task-ref <task-ref> --limit 10
+```
+
+`run_doctor()` now includes a `checks.handoff_fts_index` entry that reports the presence and row
+count of each FTS5 shadow table (`decisions_fts`, `findings_fts`, `blockers_fts`, `actions_fts`).
+A count of `-1` for any table means the table is absent and structured search is degraded.
 
 ### Lane Run Pipeline
 

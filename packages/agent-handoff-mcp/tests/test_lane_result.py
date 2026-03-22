@@ -5,8 +5,8 @@ from pathlib import Path
 
 
 def _load_lane_result_module():
-    repo_root = Path(__file__).resolve().parents[3]
-    module_path = repo_root / "scripts" / "mcp" / "lane_result.py"
+    _orchestration_dir = Path(__file__).resolve().parents[1] / "src" / "agent_handoff_mcp" / "orchestration"
+    module_path = _orchestration_dir / "lane_result.py"
     spec = importlib.util.spec_from_file_location("lane_result", module_path)
     assert spec is not None
     assert spec.loader is not None

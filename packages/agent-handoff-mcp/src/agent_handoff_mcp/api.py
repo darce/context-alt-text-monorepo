@@ -970,8 +970,29 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
     writable_probe = config.state_dir / ".write-test"
     writable_probe.write_text("ok")
     writable_probe.unlink()
+    _FTS_TABLES = ("decisions_fts", "findings_fts", "blockers_fts", "actions_fts")
+    handoff_fts_check: dict[str, Any] = {}
     with core._get_db_connection() as conn:
         conn.execute("SELECT 1").fetchone()
+        existing = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN (?,?,?,?)",
+                _FTS_TABLES,
+            ).fetchall()
+        }
+        table_counts: dict[str, int] = {}
+        for tbl in _FTS_TABLES:
+            if tbl in existing:
+                count = conn.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()[0]  # noqa: S608
+                table_counts[tbl] = count
+            else:
+                table_counts[tbl] = -1  # -1 signals table missing
+
+        handoff_fts_check = {
+            "ok": all(v >= 0 for v in table_counts.values()),
+            "tables": table_counts,
+        }
 
     package_src = Path(__file__).resolve().parents[1]
     launcher = package_src / "agent_handoff_mcp_launcher.py"
@@ -1023,6 +1044,7 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
             "sqlite": True,
             "fts5_available": True,
             "state_dir_writable": True,
+            "handoff_fts_index": handoff_fts_check,
             "stdio_startup": {
                 "ok": True,
                 "tool_count": len(stdio_tools),

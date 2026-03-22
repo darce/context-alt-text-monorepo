@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT_PATH = REPO_ROOT / "scripts" / "mcp" / "review_runner.py"
+ORCHESTRATION_DIR = Path(__file__).resolve().parents[1] / "src" / "agent_handoff_mcp" / "orchestration"
+SCRIPT_PATH = ORCHESTRATION_DIR / "review_runner.py"
 
 
 def _load_review_runner_module():

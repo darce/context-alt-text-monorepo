@@ -5,8 +5,9 @@ from unittest import mock
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT_PATH = REPO_ROOT / "scripts" / "mcp" / "worker_daemon.py"
-SCRIPT_DIR = REPO_ROOT / "scripts" / "mcp"
+ORCHESTRATION_DIR = Path(__file__).resolve().parents[1] / "src" / "agent_handoff_mcp" / "orchestration"
+SCRIPT_PATH = ORCHESTRATION_DIR / "worker_daemon.py"
+SCRIPT_DIR = ORCHESTRATION_DIR
 
 def _load_module():
     import importlib.util

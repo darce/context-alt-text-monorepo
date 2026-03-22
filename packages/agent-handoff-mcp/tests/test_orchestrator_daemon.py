@@ -15,8 +15,9 @@ from agent_handoff_mcp import api as mcp_api
 from agent_handoff_mcp.config import RuntimeConfig
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT_PATH = REPO_ROOT / "scripts" / "mcp" / "orchestrator_daemon.py"
-SCRIPT_DIR = REPO_ROOT / "scripts" / "mcp"
+ORCHESTRATION_DIR = Path(__file__).resolve().parents[1] / "src" / "agent_handoff_mcp" / "orchestration"
+SCRIPT_PATH = ORCHESTRATION_DIR / "orchestrator_daemon.py"
+SCRIPT_DIR = ORCHESTRATION_DIR
 
 
 def _load_module():
@@ -1837,7 +1838,7 @@ def test_long_running_plan_stall_exits_after_threshold(tmp_path: Path) -> None:
 
 def test_downstream_lanes_accessor() -> None:
     """Verify the downstream_lanes function reads from the manifest."""
-    manifest_mod_path = REPO_ROOT / "scripts" / "mcp" / "lane_manifest.py"
+    manifest_mod_path = ORCHESTRATION_DIR / "lane_manifest.py"
     spec = importlib.util.spec_from_file_location("lane_manifest", manifest_mod_path)
     assert spec is not None and spec.loader is not None
     manifest_mod = importlib.util.module_from_spec(spec)
@@ -1849,7 +1850,7 @@ def test_downstream_lanes_accessor() -> None:
 
 
 def test_downstream_lanes_empty() -> None:
-    manifest_mod_path = REPO_ROOT / "scripts" / "mcp" / "lane_manifest.py"
+    manifest_mod_path = ORCHESTRATION_DIR / "lane_manifest.py"
     spec = importlib.util.spec_from_file_location("lane_manifest", manifest_mod_path)
     assert spec is not None and spec.loader is not None
     manifest_mod = importlib.util.module_from_spec(spec)
@@ -1861,7 +1862,7 @@ def test_downstream_lanes_empty() -> None:
 
 
 def test_downstream_lanes_unknown_lane() -> None:
-    manifest_mod_path = REPO_ROOT / "scripts" / "mcp" / "lane_manifest.py"
+    manifest_mod_path = ORCHESTRATION_DIR / "lane_manifest.py"
     spec = importlib.util.spec_from_file_location("lane_manifest", manifest_mod_path)
     assert spec is not None and spec.loader is not None
     manifest_mod = importlib.util.module_from_spec(spec)

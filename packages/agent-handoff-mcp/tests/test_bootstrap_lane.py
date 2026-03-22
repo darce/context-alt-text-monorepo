@@ -7,9 +7,9 @@ from unittest import mock
 
 import pytest
 
-SCRIPT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "scripts" / "mcp"
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
+ORCHESTRATION_DIR = Path(__file__).resolve().parents[1] / "src" / "agent_handoff_mcp" / "orchestration"
+if str(ORCHESTRATION_DIR) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATION_DIR))
 
 import bootstrap_lane
 

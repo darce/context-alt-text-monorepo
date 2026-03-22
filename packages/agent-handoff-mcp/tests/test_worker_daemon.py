@@ -11,8 +11,15 @@ from unittest import mock
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT_PATH = REPO_ROOT / "scripts" / "mcp" / "worker_daemon.py"
-SCRIPT_DIR = REPO_ROOT / "scripts" / "mcp"
+ORCHESTRATION_DIR = Path(__file__).resolve().parents[1] / "src" / "agent_handoff_mcp" / "orchestration"
+SCRIPT_PATH = ORCHESTRATION_DIR / "worker_daemon.py"
+SCRIPT_DIR = ORCHESTRATION_DIR
+
+# Ensure orchestration modules and codex-subagent-bridge are importable
+_BRIDGE_SRC = REPO_ROOT / "packages" / "codex-subagent-bridge" / "src"
+for _p in (str(ORCHESTRATION_DIR), str(_BRIDGE_SRC)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 
 def _load_module():
@@ -139,7 +146,7 @@ def test_resolve_reasoning_effort_auto_prefers_high_for_backend_lane() -> None:
         "test_commands": ["PYENV_VERSION=description-service pytest recognition/tests/unit/"],
     }
 
-    from scripts.mcp._env import resolve_auto_reasoning_effort
+    from _env import resolve_auto_reasoning_effort
 
     with mock.patch.dict(sys.modules, {"lane_manifest": fake_lane_manifest}):
         effort, reasons = resolve_auto_reasoning_effort(
@@ -163,7 +170,7 @@ def test_resolve_reasoning_effort_auto_prefers_low_for_docs_only_lane() -> None:
         "test_commands": [],
     }
 
-    from scripts.mcp._env import resolve_auto_reasoning_effort
+    from _env import resolve_auto_reasoning_effort
 
     with mock.patch.dict(sys.modules, {"lane_manifest": fake_lane_manifest}):
         effort, reasons = resolve_auto_reasoning_effort(
@@ -187,7 +194,7 @@ def test_resolve_reasoning_effort_auto_prefers_medium_for_wp_proxy() -> None:
         "test_commands": ["cd apps/prototype-wp-alt-context && vendor/bin/phpunit"],
     }
 
-    from scripts.mcp._env import resolve_auto_reasoning_effort
+    from _env import resolve_auto_reasoning_effort
 
     with mock.patch.dict(sys.modules, {"lane_manifest": fake_lane_manifest}):
         effort, reasons = resolve_auto_reasoning_effort(
@@ -204,7 +211,7 @@ def test_resolve_reasoning_effort_auto_prefers_medium_for_wp_proxy() -> None:
 
 
 def test_apply_backend_runtime_hints_sets_codex_model() -> None:
-    from scripts.mcp._env import apply_backend_runtime_hints
+    from _env import apply_backend_runtime_hints
 
     env: dict[str, str] = {}
     apply_backend_runtime_hints(env, model="gpt-5.4-mini", reasoning_effort="medium")
@@ -213,7 +220,7 @@ def test_apply_backend_runtime_hints_sets_codex_model() -> None:
 
 
 def test_apply_backend_runtime_hints_model_does_not_overwrite_existing() -> None:
-    from scripts.mcp._env import apply_backend_runtime_hints
+    from _env import apply_backend_runtime_hints
 
     env: dict[str, str] = {"CODEX_MODEL": "gpt-5.3-codex"}
     apply_backend_runtime_hints(env, model="gpt-5.4-mini")
@@ -223,7 +230,7 @@ def test_apply_backend_runtime_hints_model_does_not_overwrite_existing() -> None
 
 def test_subagent_adapter_injects_model_into_env() -> None:
     """CodexSubagentAdapter.execute() must inject CODEX_MODEL into env."""
-    from scripts.mcp.adapters.codex_subagent import CodexSubagentAdapter
+    from adapters.codex_subagent import CodexSubagentAdapter
 
     captured_env: dict[str, str] = {}
 
@@ -253,7 +260,7 @@ def test_resolve_reasoning_effort_manifest_override() -> None:
         "preferred_reasoning_effort": "low",
     }
 
-    from scripts.mcp._env import resolve_auto_reasoning_effort
+    from _env import resolve_auto_reasoning_effort
 
     with mock.patch.dict(sys.modules, {"lane_manifest": fake_lane_manifest}):
         effort, reasons = resolve_auto_reasoning_effort(

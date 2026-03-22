@@ -15,7 +15,7 @@ def test_vscode_adapter_points_to_repo_local_launcher_and_doctor_runs() -> None:
     config = json.loads((repo_root / ".vscode" / "mcp.json").read_text())
 
     server = config["servers"]["altcontext-mcp"]
-    assert server["command"] == "python3"
+    assert server["command"] == "${env:HOME}/.pyenv/versions/description-service/bin/python3"
     assert server["args"] == [
         "${workspaceFolder}/packages/agent-handoff-mcp/src/agent_handoff_mcp_launcher.py",
         "--workspace-root",

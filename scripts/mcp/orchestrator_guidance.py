@@ -405,6 +405,28 @@ def _apply_guidance_resolution(
             update_next_actions(operation="update", action_id=int(action_id), status="done")
 
     if resolution.kind == "redispatch" and resolution.dispatch_message:
+        _dispatch_payload: dict | None = None
+        try:
+            from agent_handoff_mcp import artifact_index as _art_idx
+            from agent_handoff_mcp.config import RuntimeConfig as _ArtCfg
+            _art_config = _ArtCfg.for_workspace(orchestrator_root)
+            _art_ref = _art_idx.maybe_record_artifact(
+                task_ref=task_ref,
+                lane_id=resolution.lane_id,
+                app_root=None,
+                source_kind="guidance-redispatch",
+                source_label=f"{resolution.lane_id}-guidance",
+                content_type="text/plain",
+                summary=str(resolution.dispatch_subject or f"{resolution.lane_id} next assignment"),
+                content=resolution.dispatch_message,
+                artifact_db_path=_art_config.artifact_db_path,
+                min_bytes=_art_config.artifact_index_min_bytes,
+                min_lines=_art_config.artifact_index_min_lines,
+            )
+            if _art_ref is not None:
+                _dispatch_payload = {"artifacts": [str(_art_ref["source_id"])]}
+        except Exception:  # noqa: BLE001
+            pass
         record_lane_message(
             task_ref=task_ref,
             lane_id=resolution.lane_id,
@@ -413,6 +435,7 @@ def _apply_guidance_resolution(
             subject=resolution.dispatch_subject,
             message=resolution.dispatch_message,
             status="open",
+            payload=_dispatch_payload,
         )
 
     record_decision(

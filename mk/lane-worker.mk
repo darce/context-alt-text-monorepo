@@ -2,7 +2,7 @@
 # Lane Worker Operations (check, run, report, commit, handoff)
 # =============================================================================
 
-.PHONY: lane-check lane-run lane-report lane-commit lane-handoff dashboard-live dashboard-tui
+.PHONY: lane-check lane-run lane-report lane-commit lane-handoff dashboard-live dashboard-tui artifact-search artifact-list
 
 lane-check: lane-worker-guard
 	@set -eu; \
@@ -230,3 +230,25 @@ dashboard-tui:
 		$(if $(LANES),$(addprefix --lanes ,$(LANES)),) \
 		--interval "$(or $(INTERVAL),10)" \
 		$(if $(filter 1,$(ONCE)),--once,)
+
+# Search indexed artifacts by keyword (QUERY variable required, optionally LANE=<id>)
+# Usage: make artifact-search TASK=<task> QUERY="schema missing" [LANE=<lane-id>]
+artifact-search:
+	@$(if $(QUERY),,$(error QUERY is required: make artifact-search TASK=<task> QUERY="..."))
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py" \
+		--workspace-root "$(ORCHESTRATOR_ROOT)" \
+		artifact-search \
+		--query "$(QUERY)" \
+		$(if $(TASK),--task-ref "$(TASK)",) \
+		$(if $(LANE),--lane-id "$(LANE)",) \
+		--limit "$(or $(LIMIT),10)"
+
+# List indexed artifact sources for the current task/lane
+# Usage: make artifact-list TASK=<task> [LANE=<lane-id>]
+artifact-list:
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py" \
+		--workspace-root "$(ORCHESTRATOR_ROOT)" \
+		artifact-list \
+		$(if $(TASK),--task-ref "$(TASK)",) \
+		$(if $(LANE),--lane-id "$(LANE)",) \
+		--limit "$(or $(LIMIT),20)"

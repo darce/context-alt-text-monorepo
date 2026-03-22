@@ -8,6 +8,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
+try:
+    from agent_handoff_mcp.api import configure_runtime as _configure_runtime
+    from agent_handoff_mcp.config import RuntimeConfig as _RuntimeConfig
+    from agent_handoff_mcp.core import record_lane_message as _record_lane_message
+    _LANE_MSG_AVAILABLE = True
+except ImportError:
+    _LANE_MSG_AVAILABLE = False
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Handle structured lane run results.")
@@ -201,6 +209,27 @@ def main() -> int:
             if critical:
                 return completed.returncode
             print(f"lane-result: non-critical step failed (exit {completed.returncode}), continuing")
+
+    artifact_ref = result.get("details_artifact_ref")
+    if artifact_ref is not None and _LANE_MSG_AVAILABLE:
+        action = _normalize_text(result.get("handoff_action"))
+        details = _normalize_text(result.get("details"))
+        try:
+            _configure_runtime(_RuntimeConfig.for_workspace(
+                Path(args.orchestrator_root).expanduser().resolve()
+            ))
+            _record_lane_message(
+                task_ref=args.task_ref,
+                lane_id=args.lane_id,
+                session=args.session,
+                direction="worker_to_orchestrator",
+                message=details,
+                subject=f"{args.lane_id} handoff",
+                status="open",
+                payload={"artifacts": [str(artifact_ref)]},
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"lane-result: warning: artifact-carrying lane message failed: {exc}", file=sys.stderr)
     return 0
 
 

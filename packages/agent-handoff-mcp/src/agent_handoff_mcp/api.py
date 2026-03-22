@@ -55,6 +55,12 @@ record_worker_report = core.record_worker_report
 update_lane_message = core.update_lane_message
 upsert_worktree_lane = core.upsert_worktree_lane
 
+record_artifact = core.record_artifact
+search_artifacts = core.search_artifacts
+get_artifact_source = core.get_artifact_source
+list_artifact_sources = core.list_artifact_sources
+purge_artifacts = core.purge_artifacts
+
 
 TOOL_DESCRIPTIONS: dict[str, str] = {
     "set_handoff_state": "Set or update the active handoff task state with optimistic revision protection.",
@@ -106,6 +112,11 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "orchestrator_single_cycle": "Run one complete orchestrator cycle synchronously (dispatch, poll, intake, verify) and return the result.",
     "dispatch_lane_work": "Update lane dispatch parameters (model, backend, effort) for the next execution cycle.",
     "list_available_backends": "List supported execution backends and their capabilities.",
+    "record_artifact": "Index a large artifact (log, doc, payload, output) in the sidecar FTS5 database for later scoped retrieval.",
+    "search_artifacts": "Search indexed artifact chunks by relevance with optional task/lane/app/source filters and BM25 ranking.",
+    "get_artifact_source": "Return the full artifact source record for exact inspection by source_id or task_ref+source_label.",
+    "list_artifact_sources": "List indexed artifact sources so operators and prompts can discover available evidence without reading raw content.",
+    "purge_artifacts": "Delete artifact sources and their FTS chunks to keep the sidecar database bounded after task archival or age-based expiry.",
 }
 
 
@@ -916,6 +927,11 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
         run_structured_turn,
         dispatch_lane_work,
         list_available_backends,
+        record_artifact,
+        search_artifacts,
+        get_artifact_source,
+        list_artifact_sources,
+        purge_artifacts,
     ]:
         mcp.add_tool(tool)
     return mcp
@@ -925,6 +941,26 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
     configure_runtime(config)
     config.state_dir.mkdir(parents=True, exist_ok=True)
     config.exports_dir.mkdir(parents=True, exist_ok=True)
+
+    # FTS5 availability check - hard requirement for artifact indexing
+    import sqlite3 as _sqlite3
+    with _sqlite3.connect(":memory:") as _fts5_probe:
+        try:
+            _fts5_probe.execute(
+                "CREATE VIRTUAL TABLE _fts5_test USING fts5(body)"
+            )
+            _fts5_probe.execute("DROP TABLE IF EXISTS _fts5_test")
+            fts5_available = True
+        except _sqlite3.OperationalError:
+            fts5_available = False
+    if not fts5_available:
+        raise RuntimeError(
+            "SQLite FTS5 extension is not available on this system. "
+            "agent-handoff-mcp artifact indexing requires FTS5. "
+            "Rebuild SQLite with SQLITE_ENABLE_FTS5 or use a Python distribution "
+            "that bundles FTS5 (e.g. system Python on macOS 10.15+ or major Linux distros)."
+        )
+
     writable_probe = config.state_dir / ".write-test"
     writable_probe.write_text("ok")
     writable_probe.unlink()
@@ -974,10 +1010,12 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
         "workspace_root": str(config.workspace_root),
         "state_dir": str(config.state_dir),
         "db_path": str(config.db_path),
+        "artifact_db_path": str(config.artifact_db_path),
         "current_task_path": str(config.current_task_path),
         "exports_dir": str(config.exports_dir),
         "checks": {
             "sqlite": True,
+            "fts5_available": True,
             "state_dir_writable": True,
             "stdio_startup": {
                 "ok": True,

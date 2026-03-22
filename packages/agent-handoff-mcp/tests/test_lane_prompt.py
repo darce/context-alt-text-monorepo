@@ -21,7 +21,7 @@ def _load_lane_prompt_module():
 def test_build_prompt_returns_no_work_message_when_lane_is_idle() -> None:
     module = _load_lane_prompt_module()
 
-    prompt = module._build_prompt(
+    prompt, _ = module._build_prompt(
         {
             "lane": {"branch": "codex/p5-backend-domain", "objective": "Objective"},
             "messages": [],
@@ -42,7 +42,7 @@ def test_build_prompt_returns_no_work_message_when_lane_is_idle() -> None:
 def test_build_prompt_includes_messages_actions_and_findings() -> None:
     module = _load_lane_prompt_module()
 
-    prompt = module._build_prompt(
+    prompt, _ = module._build_prompt(
         {
             "lane": {"branch": "codex/p5-backend-domain", "objective": "Phase 5 backend-domain slice."},
             "messages": [
@@ -112,7 +112,7 @@ def test_build_prompt_includes_messages_actions_and_findings() -> None:
 def test_build_prompt_formats_structured_briefs_compactly() -> None:
     module = _load_lane_prompt_module()
 
-    prompt = module._build_prompt(
+    prompt, _ = module._build_prompt(
         {
             "lane": {"branch": "codex/p5-frontend", "objective": "Frontend slice."},
             "messages": [
@@ -149,7 +149,7 @@ def test_build_prompt_formats_structured_briefs_compactly() -> None:
 
 def test_build_prompt_bounds_assignment_items_for_focus() -> None:
     module = _load_lane_prompt_module()
-    prompt = module._build_prompt(
+    prompt, _ = module._build_prompt(
         {
             "lane": {"branch": "codex/p5-backend-domain", "objective": "Objective"},
             "messages": [
@@ -200,14 +200,14 @@ def test_build_prompt_includes_recent_lane_history_only_when_requested() -> None
         "reports": [],
     }
 
-    default_prompt = module._build_prompt(
+    default_prompt, _ = module._build_prompt(
         activity,
         task_ref="phase-5-retention-export-and-audit-controls",
         lane_id="backend-domain",
         worktree_path="/tmp/backend-domain",
         orchestrator_root=REPO_ROOT,
     )
-    expanded_prompt = module._build_prompt(
+    expanded_prompt, _ = module._build_prompt(
         activity,
         task_ref="phase-5-retention-export-and-audit-controls",
         lane_id="backend-domain",
@@ -252,14 +252,14 @@ def test_build_prompt_includes_global_context_only_when_requested() -> None:
         "reports": [],
     }
 
-    default_prompt = module._build_prompt(
+    default_prompt, _ = module._build_prompt(
         activity,
         task_ref="phase-5-retention-export-and-audit-controls",
         lane_id="frontend",
         worktree_path="/tmp/frontend",
         orchestrator_root=REPO_ROOT,
     )
-    expanded_prompt = module._build_prompt(
+    expanded_prompt, _ = module._build_prompt(
         activity,
         task_ref="phase-5-retention-export-and-audit-controls",
         lane_id="frontend",
@@ -286,7 +286,7 @@ def test_build_prompt_reports_prompt_budget_for_optional_context_sections() -> N
             "tests_recent": [],
         }
     )
-    prompt = module._build_prompt(
+    prompt, _ = module._build_prompt(
         {
             "lane": {"branch": "codex/p5-frontend", "objective": "Objective"},
             "messages": [
@@ -365,7 +365,7 @@ def test_build_summary_lines_idle_message() -> None:
 def test_build_prompt_waits_when_worker_handoff_is_newer_than_open_work() -> None:
     module = _load_lane_prompt_module()
 
-    prompt = module._build_prompt(
+    prompt, _ = module._build_prompt(
         {
             "lane": {"branch": "codex/p5-backend-domain", "objective": "Objective"},
             "messages": [

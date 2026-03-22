@@ -218,6 +218,29 @@ Canonical handoff runtime:
 - Do not use handoff tools or CLI subcommands from `scripts/mcp/unified_server.py`; they are deprecated and fail by design.
 - The legacy unified server is now repo-intel-only.
 
+Bootstrap for local orchestration and retrieval:
+
+```bash
+# Install the packaged MCP server
+uv tool install ./packages/agent-handoff-mcp
+
+# Or install/editably expose the bridge used by BACKEND=codex-subagent
+python3 -m pip install -e packages/codex-subagent-bridge
+
+# Optional dashboard dependencies for dashboard-tui / rich.live rendering
+PYENV_VERSION=description-service python3 -m pip install -e "apps/prototype-description-service[dashboard,dev]"
+
+# Verify SQLite FTS5, writable state dirs, and MCP runtime wiring
+agent-handoff-mcp --workspace-root "$(pwd)" doctor
+```
+
+If you are running from repo source instead of an installed binary, prefer:
+
+```bash
+PYTHONPATH="packages/agent-handoff-mcp/src:packages/codex-subagent-bridge/src" \
+python3 -m agent_handoff_mcp --workspace-root "$(pwd)" doctor
+```
+
 Primary binary shape:
 
 - `agent-handoff-mcp --workspace-root <repo> serve-stdio`
@@ -241,6 +264,7 @@ During work:
 5. Record/code-review findings with `record_review_finding(..., details={ line_start?, line_end?, fix? }, actor={ ... })`.
 6. Update finding status with `update_review_finding(..., actor={ ... })`.
 7. Validate review state using `get_review_findings_summary(...)` and `list_review_findings(...)` (not direct `sqlite3` queries).
+8. For bulky logs, HTTP payloads, grep output, or copied docs, prefer the artifact sidecar: `record_artifact`, `search_artifacts`, `get_artifact_source`, `list_artifact_sources`, and `purge_artifacts` instead of pasting raw evidence into prompts or lane messages.
 
 Write-tool targeting rule:
 
@@ -295,6 +319,14 @@ Decomposition rules for the orchestrating agent:
 7. Define task-aware lane orchestration in `config/lane-orchestration/<task-ref>.json`. Do not hardcode new task routing tables into the Makefile or dispatch scripts. Start from `make lane-manifest-init TASK=<task-ref> LANE_IDS='lane-a lane-b' [TASK_PLAN=docs/tasks/...md]` so the manifest creation path stays generic across tasks.
 8. Manifest scaffolds must emit every field the runtime reads, even if initially empty (e.g., `guidance_fallbacks`, `tooling_paths`). An omitted field is invisible to operators and silently breaks runtime consumers.
 9. Derive computable manifest fields at load time instead of requiring manual duplication. `commit_paths` is derived from `owned_paths` (strip `/**` suffixes); `routing` is derived from `owned_paths` (strip `**`, ensure trailing `/`). Maintaining both independently invites drift.
+
+Task-plan-to-lane dispatch rules:
+
+1. Start from the task plan's lane decomposition, owned paths, required tests, and merge order. The plan is the orchestration source of truth; do not invent extra worker lanes or silently collapse distinct lanes without an explicit decision.
+2. Materialize that plan into `config/lane-orchestration/<task-ref>.json` with `make lane-manifest-init ...`, then fill in `owned_paths`, `app_root`, `preferred_model`, `preferred_reasoning_effort`, `token_burn_threshold`, `model_context_window`, and required docs/tests from the plan.
+3. Use `dispatch_lane_work(...)` or `agent-handoff-mcp dispatch-lane-work ...` to set backend/model/reasoning effort per lane, then send the human-readable assignment with `make lane-dispatch ...` or `record_lane_brief(...)`.
+4. Dispatch messages should include the concrete slice from the task plan: objective, owned paths, required verification, explicit non-goals, and any downstream dependency brief. Do not forward full transcripts when a compact brief or artifact ref will do.
+5. For large supporting evidence, index it once and attach the resulting artifact refs to lane messages (`record_lane_message(..., payload={"artifacts": [...]})` or CLI `--artifact`) so workers can rehydrate exact context on demand.
 
 Worktree setup and switching:
 
@@ -376,6 +408,7 @@ How workers communicate with the orchestrator:
 12. Workers do not close the overall implementation task unless they are explicitly acting as the orchestrator. They close only their assigned actions/findings.
 13. When a worker receives review work through MCP, the open lane message is the assignment and the lane-stamped open review findings are the actionable checklist. Fix or disposition those findings in-lane before handing work back.
 14. `make lane-check` is the preferred verification command because it records each configured test command into MCP with lane attribution, not just into terminal scrollback.
+15. Workers should treat `make lane-prompt` or `get_lane_activity(...)` as the authoritative prompt surface. Current prompt retrieval can consume pinned artifact refs from lane-message payloads and fall back to scoped artifact search; workers should not paste full logs back into the prompt manually.
 
 How the orchestrator should monitor and delegate:
 
@@ -392,6 +425,11 @@ How the orchestrator should monitor and delegate:
 11. Use `make dashboard-live` (or `worker_status` via MCP) for live per-lane health monitoring. The dashboard shows composite state, token burn, exhaustion streak, context pressure, and attention flags. Use `make dashboard-tui` for a full interactive Textual TUI when available.
 12. The orchestrator daemon now skips auto-start for lanes with `exhaustion_streak >= 2` and emits `lane_unhealthy`. Lanes in this state require an explicit orchestrator decision (e.g., `promote_model`, `split_lane`, `close_lane`, `fresh_worktree`) before work resumes.
 13. Lane health is scored as `healthy` / `degraded` / `unhealthy` by `_check_lane_health()` in `orchestrator_daemon.py`, based on exhaustion streak, scope violation history, token burn, and context pressure. Health transitions emit `lane_health_changed` events.
+14. Surface model selection and reasoning effort explicitly during triage. `worker_status(...)` and the dashboards expose the current model, requested/effective reasoning effort, cumulative token usage, and `context_utilization.pressure`; use those signals before redispatching a stalled lane.
+15. For continuous operation, prefer one of two control planes and stay consistent:
+    - Shell-first: `make orchestrator-daemon ...`, `make worker-daemon ...`, `make dashboard-live`, `make artifact-list`, `make artifact-search`
+    - MCP-first: `orchestrator_start(...)`, `worker_start(...)`, `worker_status(...)`, `worker_event_history(...)`, `list_artifact_sources(...)`, `search_artifacts(...)`
+16. When evidence is too large for inline dispatch, index it once and route the lane with an artifact ref. This keeps prompt pressure down while preserving full-fidelity inspection through `get_artifact_source(...)`.
 
 How to merge worker worktree changes into the current branch:
 
@@ -489,6 +527,9 @@ Current `agent-handoff-mcp` capabilities that support this workflow:
 - worker reports that link changed files, test commands, blockers, and merge readiness to a specific lane
 - lane-scoped activity queries so the orchestrator can inspect one worker lane without sifting the full task history
 - explicit lane messages for orchestrator-to-worker and worker-to-orchestrator communication when sessions cannot chat directly
+- orchestration lifecycle controls (`orchestrator_start`, `worker_start`, `dispatch_lane_work`, `worker_event_history`) so in-app agents can run the same control plane without shell wrappers
+- artifact retrieval sidecar tools for large evidence (`record_artifact`, `search_artifacts`, `get_artifact_source`, `list_artifact_sources`, `purge_artifacts`)
+- health and telemetry surfaces that expose lane model, reasoning effort, cumulative token burn, and context pressure through `worker_status` and the live dashboards
 
 Still-useful future `agent-handoff-mcp` improvements:
 

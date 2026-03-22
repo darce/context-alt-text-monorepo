@@ -130,44 +130,44 @@ def _artifact_context_section(
 
 ## Functions to Change
 
-| File | Target | Change |
-| --- | --- | --- |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/artifact_index.py` | new module | Add the sidecar SQLite/FTS5 runtime, chunkers, upsert logic, and scoped search helpers. |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/config.py` | artifact retrieval settings | Add runtime config for artifact DB location, retention settings, and configurable ingestion thresholds. |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py` | after `get_lane_activity()` | Add artifact record/search/read/list/purge tool implementations. |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py` | tool export map | Export new artifact tools through the MCP API surface and tool description map. |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py` | artifact subcommands | Add fallback CLI commands for artifact indexing and search. |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/runtime.py` | runtime path resolution | Ensure sidecar DB paths resolve correctly for shared orchestrator state across worktrees. |
-| `packages/agent-handoff-mcp/tests/test_artifact_index.py` | new test module | Add unit tests for chunking, dedupe-on-reindex, scoped search, and snippet rendering. |
-| `packages/agent-handoff-mcp/tests/test_artifact_tools.py` | new test module | Add integration tests for MCP tool behavior against temporary sidecar DBs. |
-| `scripts/mcp/lane_prompt.py` | after `_measure_context_utilization()` | Add artifact-ref discovery, retrieval-budget accounting, and optional artifact-context rendering. |
-| `scripts/mcp/lane_exec.py` | `run_lane_exec()` | Index large backend outputs/details and attach artifact references instead of replaying bulky payloads. |
-| `scripts/mcp/worker_daemon.py` | `_record_observability()` and handoff/report paths | Thread artifact references into worker status/observability and avoid duplicating raw evidence in daemon summaries. |
-| `scripts/mcp/orchestrator_daemon.py` | guidance/brief generation flow | Allow orchestrator guidance and downstream brief generation to attach artifact references when evidence is too large for inline messages. |
-| `mk/lane-worker.mk` | artifact helper targets | Add make targets for artifact search/debug helpers if operator workflows need shell fallbacks. |
-| `docs/agentic/contracts/agent-handoff-mcp.md` | artifact retrieval contract section | Document the new artifact tool surface, sidecar semantics, FTS5 requirement, threshold settings, and prompt-budget expectations. |
+| File                                                                 | Target                                             | Change                                                                                                                                    |
+| -------------------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/artifact_index.py` | new module                                         | Add the sidecar SQLite/FTS5 runtime, chunkers, upsert logic, and scoped search helpers.                                                   |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/config.py`         | artifact retrieval settings                        | Add runtime config for artifact DB location, retention settings, and configurable ingestion thresholds.                                   |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py`           | after `get_lane_activity()`                        | Add artifact record/search/read/list/purge tool implementations.                                                                          |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py`            | tool export map                                    | Export new artifact tools through the MCP API surface and tool description map.                                                           |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py`            | artifact subcommands                               | Add fallback CLI commands for artifact indexing and search.                                                                               |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/runtime.py`        | runtime path resolution                            | Ensure sidecar DB paths resolve correctly for shared orchestrator state across worktrees.                                                 |
+| `packages/agent-handoff-mcp/tests/test_artifact_index.py`            | new test module                                    | Add unit tests for chunking, dedupe-on-reindex, scoped search, and snippet rendering.                                                     |
+| `packages/agent-handoff-mcp/tests/test_artifact_tools.py`            | new test module                                    | Add integration tests for MCP tool behavior against temporary sidecar DBs.                                                                |
+| `scripts/mcp/lane_prompt.py`                                         | after `_measure_context_utilization()`             | Add artifact-ref discovery, retrieval-budget accounting, and optional artifact-context rendering.                                         |
+| `scripts/mcp/lane_exec.py`                                           | `run_lane_exec()`                                  | Index large backend outputs/details and attach artifact references instead of replaying bulky payloads.                                   |
+| `scripts/mcp/worker_daemon.py`                                       | `_record_observability()` and handoff/report paths | Thread artifact references into worker status/observability and avoid duplicating raw evidence in daemon summaries.                       |
+| `scripts/mcp/orchestrator_daemon.py`                                 | guidance/brief generation flow                     | Allow orchestrator guidance and downstream brief generation to attach artifact references when evidence is too large for inline messages. |
+| `mk/lane-worker.mk`                                                  | artifact helper targets                            | Add make targets for artifact search/debug helpers if operator workflows need shell fallbacks.                                            |
+| `docs/agentic/contracts/agent-handoff-mcp.md`                        | artifact retrieval contract section                | Document the new artifact tool surface, sidecar semantics, FTS5 requirement, threshold settings, and prompt-budget expectations.          |
 
 ## Related Files
 
-| File | Note |
-| --- | --- |
-| [docs/tasks/8.0/orchestration-hardening-task-plan.md](/Users/daniel/Development/context-alt-text-monorepo/docs/tasks/8.0/orchestration-hardening-task-plan.md) | Assumed complete; provides the context-pressure and prompt-budget baseline this task builds on. |
-| [scripts/mcp/lane_prompt.py](/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/lane_prompt.py) | Existing lane-scoped prompt renderer and context utilization calculator. |
-| [scripts/mcp/lane_exec.py](/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/lane_exec.py) | Worker execution path where large results can be summarized and indexed. |
-| [scripts/mcp/worker_daemon.py](/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/worker_daemon.py) | Worker lifecycle and observability path that should surface artifact refs rather than raw evidence blobs. |
-| [packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py) | Canonical MCP runtime where artifact tools should live. |
-| [docs/agentic/contracts/agent-handoff-mcp.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/contracts/agent-handoff-mcp.md) | Contract doc that must explain new artifact behavior and sidecar boundaries. |
-| [docs/tasks/8.0/orchestration-tui-monitoring-task-plan.md](/Users/daniel/Development/context-alt-text-monorepo/docs/tasks/8.0/orchestration-tui-monitoring-task-plan.md) | Future monitoring surface that can later expose artifact-search telemetry and ref counts. |
+| File                                                                                                                                                                     | Note                                                                                                      |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| [docs/tasks/8.0/orchestration-hardening-task-plan.md](/Users/daniel/Development/context-alt-text-monorepo/docs/tasks/8.0/orchestration-hardening-task-plan.md)           | Assumed complete; provides the context-pressure and prompt-budget baseline this task builds on.           |
+| [scripts/mcp/lane_prompt.py](/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/lane_prompt.py)                                                             | Existing lane-scoped prompt renderer and context utilization calculator.                                  |
+| [scripts/mcp/lane_exec.py](/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/lane_exec.py)                                                                 | Worker execution path where large results can be summarized and indexed.                                  |
+| [scripts/mcp/worker_daemon.py](/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/worker_daemon.py)                                                         | Worker lifecycle and observability path that should surface artifact refs rather than raw evidence blobs. |
+| [packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py) | Canonical MCP runtime where artifact tools should live.                                                   |
+| [docs/agentic/contracts/agent-handoff-mcp.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/contracts/agent-handoff-mcp.md)                           | Contract doc that must explain new artifact behavior and sidecar boundaries.                              |
+| [docs/tasks/8.0/orchestration-tui-monitoring-task-plan.md](/Users/daniel/Development/context-alt-text-monorepo/docs/tasks/8.0/orchestration-tui-monitoring-task-plan.md) | Future monitoring surface that can later expose artifact-search telemetry and ref counts.                 |
 
 ## Lane Decomposition (Multi-Agent)
 
 ### Lanes
 
-| Lane ID | Owned Paths | Upstream Dependencies | Required Tests |
-| --- | --- | --- | --- |
-| `mcp-artifact-runtime` | `packages/agent-handoff-mcp/**` | None | `PYENV_VERSION=description-service pytest packages/agent-handoff-mcp/tests/` |
-| `worker-retrieval` | `scripts/mcp/lane_prompt.py`, `scripts/mcp/lane_exec.py`, `scripts/mcp/worker_daemon.py`, `scripts/mcp/orchestrator_daemon.py`, `mk/lane-worker.mk` | `mcp-artifact-runtime` | `PYENV_VERSION=description-service pytest scripts/mcp/tests/ packages/agent-handoff-mcp/tests/` |
-| `docs-contracts` | `docs/agentic/contracts/**`, `docs/tasks/8.0/**` | `worker-retrieval` (behavior only) | docs review |
+| Lane ID                | Owned Paths                                                                                                                                         | Upstream Dependencies              | Required Tests                                                                                  |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `mcp-artifact-runtime` | `packages/agent-handoff-mcp/**`                                                                                                                     | None                               | `PYENV_VERSION=description-service pytest packages/agent-handoff-mcp/tests/`                    |
+| `worker-retrieval`     | `scripts/mcp/lane_prompt.py`, `scripts/mcp/lane_exec.py`, `scripts/mcp/worker_daemon.py`, `scripts/mcp/orchestrator_daemon.py`, `mk/lane-worker.mk` | `mcp-artifact-runtime`             | `PYENV_VERSION=description-service pytest scripts/mcp/tests/ packages/agent-handoff-mcp/tests/` |
+| `docs-contracts`       | `docs/agentic/contracts/**`, `docs/tasks/8.0/**`                                                                                                    | `worker-retrieval` (behavior only) | docs review                                                                                     |
 
 ### Merge Order
 
@@ -194,55 +194,57 @@ make lane-manifest-init TASK=orchestration-context-retrieval LANE_IDS='mcp-artif
 
 - [x] Orchestration hardening has already delivered lane-scoped prompt caps, context-utilization measurement, and daemon-side context-pressure events.
 - [x] Worker execution already runs against shared orchestration state and fresh-turn worker sessions, so the remaining context problem is retrieval, not thread-history carry-over.
+- [x] The sidecar artifact runtime, MCP/CLI tool surface, and contract docs now exist in the working tree for v1 retrieval.
+- [x] Targeted artifact runtime tests currently pass (`PYENV_VERSION=description-service pytest packages/agent-handoff-mcp/tests/test_artifact_index.py packages/agent-handoff-mcp/tests/test_artifact_tools.py`).
 
 ## Phase 0: Scaffolding
 
-- [ ] Add sidecar artifact-index module(s) and runtime config without changing existing handoff-state semantics.
-- [ ] Add MCP API/CLI stubs for recording, searching, listing, and reading artifacts.
-- [ ] Add test scaffolds for artifact chunking, indexing, and prompt-integration behavior.
-- [ ] Update `docs/agentic/contracts/agent-handoff-mcp.md` with provisional tool signatures and sidecar rules.
-- [ ] Add an FTS5 availability check to the `agent-handoff-mcp` doctor path and fail with an actionable message if the local SQLite build lacks FTS5 support.
-- [ ] Verify scaffolds import cleanly and doctor/tests cover the FTS5 requirement.
+- [x] Add sidecar artifact-index module(s) and runtime config without changing existing handoff-state semantics.
+- [x] Add MCP API/CLI stubs for recording, searching, listing, and reading artifacts.
+- [x] Add test scaffolds for artifact chunking, indexing, and prompt-integration behavior.
+- [x] Update `docs/agentic/contracts/agent-handoff-mcp.md` with provisional tool signatures and sidecar rules.
+- [x] Add an FTS5 availability check to the `agent-handoff-mcp` doctor path and fail with an actionable message if the local SQLite build lacks FTS5 support.
+- [x] Verify scaffolds import cleanly and doctor/tests cover the FTS5 requirement.
 
 ## Phase 1: Sidecar Storage and Chunking
 
-- [ ] Create `.task-state/mcp-artifacts.db` path resolution that works from orchestrator and lane worktrees.
-- [ ] Implement artifact source metadata tables plus FTS5 chunk tables.
-- [ ] Implement markdown chunking by headings, plaintext chunking by line groups, and JSON chunking by key path.
-- [ ] Implement dedupe-on-reindex for stable `source_label` updates so iterative runs do not accumulate stale chunks.
-- [ ] Add retention/purge helpers keyed by age, task archival, or source replacement.
+- [x] Create `.task-state/mcp-artifacts.db` path resolution that works from orchestrator and lane worktrees.
+- [x] Implement artifact source metadata tables plus FTS5 chunk tables.
+- [x] Implement markdown chunking by headings, plaintext chunking by line groups, and JSON chunking by key path.
+- [x] Implement dedupe-on-reindex for stable `source_label` updates so iterative runs do not accumulate stale chunks.
+- [x] Add retention/purge helpers keyed by age, task archival, or source replacement.
 
 ## Phase 2: Retrieval Tools
 
-- [ ] Implement `record_artifact` with task/lane/app/source metadata and content hashing.
-- [ ] Implement `search_artifacts` with `task_ref`, `lane_id`, `app_root`, `source_kind`, and `content_type` filters plus BM25 ranking and compact snippets.
-- [ ] Implement `get_artifact_source` or equivalent readback for exact source inspection when a search hit needs full fidelity.
-- [ ] Implement `list_artifact_sources` so operators and prompts can discover available evidence without reading raw content.
-- [ ] Keep v1 search simple and deterministic; defer trigram, RRF, or fuzzy correction until the base workflow lands.
+- [x] Implement `record_artifact` with task/lane/app/source metadata and content hashing.
+- [x] Implement `search_artifacts` with `task_ref`, `lane_id`, `app_root`, `source_kind`, and `content_type` filters plus BM25 ranking and compact snippets.
+- [x] Implement `get_artifact_source` or equivalent readback for exact source inspection when a search hit needs full fidelity.
+- [x] Implement `list_artifact_sources` so operators and prompts can discover available evidence without reading raw content.
+- [x] Keep v1 search simple and deterministic; defer trigram, RRF, or fuzzy correction until the base workflow lands.
 
 ## Phase 3: Worker and Orchestrator Integration
 
-- [ ] Add ingestion gates in `lane_exec.py` so large execution outputs are indexed and replaced with summaries plus artifact refs.
-- [ ] Update worker handoff/report paths to store artifact refs in message payloads or artifact lists instead of embedding bulky evidence.
-- [ ] Let orchestrator guidance and downstream briefs attach artifact refs when the evidence exceeds prompt-safe limits.
-- [ ] Ensure `CURRENT_TASK.md`, export/import, and archive flows do not inline or duplicate artifact bodies.
-- [ ] Preserve a clear operator path to inspect exact artifact content outside the worker prompt.
+- [x] Add ingestion gates in `lane_exec.py` so large execution outputs are indexed and replaced with summaries plus artifact refs.
+- [x] Update worker handoff/report paths to store artifact refs in message payloads or artifact lists instead of embedding bulky evidence.
+- [x] Let orchestrator guidance and downstream briefs attach artifact refs when the evidence exceeds prompt-safe limits.
+- [x] Ensure `CURRENT_TASK.md`, export/import, and archive flows do not inline or duplicate artifact bodies.
+- [x] Preserve a clear operator path to inspect exact artifact content outside the worker prompt.
 
 ## Phase 4: Prompt Retrieval Integration
 
-- [ ] Teach `lane_prompt.py` to discover open artifact refs from lane messages, briefs, and the latest relevant worker report.
-- [ ] Add a retrieval-budget calculation so artifact snippets compete only for the prompt space left after required assignment sections.
-- [ ] Build retrieval queries from the active assignment, brief summary, blocker text, and finding descriptions rather than naive recency.
-- [ ] Render compact artifact snippets with source labels and references, not full bodies.
-- [ ] Skip retrieval when prompt pressure is already elevated unless an explicit inspection flag is requested.
+- [x] Teach `lane_prompt.py` to discover open artifact refs from lane messages, briefs, and the latest relevant worker report.
+- [x] Add a retrieval-budget calculation so artifact snippets compete only for the prompt space left after required assignment sections.
+- [x] Build retrieval queries from the active assignment, brief summary, blocker text, and finding descriptions rather than naive recency.
+- [x] Render compact artifact snippets with source labels and references, not full bodies.
+- [x] Skip retrieval when prompt pressure is already elevated unless an explicit inspection flag is requested.
 
 ## Phase 5: Tests
 
-- [ ] Unit test chunking rules for markdown, plaintext, and JSON inputs.
-- [ ] Unit test scoped BM25 search, snippet generation, and dedupe-on-reindex behavior.
-- [ ] Integration test artifact MCP tools against temporary sidecar DBs from both orchestrator-root and lane-worktree entrypoints.
-- [ ] Integration test `lane_prompt.py` artifact retrieval with safe and over-budget prompt scenarios.
-- [ ] Smoke test a real `apps/` lane workflow where large pytest or HTTP output is indexed and later retrieved without direct prompt injection.
+- [x] Unit test chunking rules for markdown, plaintext, and JSON inputs.
+- [x] Unit test scoped BM25 search, snippet generation, and dedupe-on-reindex behavior.
+- [x] Integration test artifact MCP tools against temporary sidecar DBs from both orchestrator-root and lane-worktree entrypoints.
+- [x] Integration test `lane_prompt.py` artifact retrieval with safe and over-budget prompt scenarios.
+- [x] Smoke test a real `apps/` lane workflow where large pytest or HTTP output is indexed and later retrieved without direct prompt injection.
 
 ## Stretch Goals
 
@@ -254,8 +256,8 @@ make lane-manifest-init TASK=orchestration-context-retrieval LANE_IDS='mcp-artif
 
 ## Success Criteria
 
-- [ ] A worker can index large logs, JSON payloads, docs, or command output once and later retrieve only the relevant chunks by scoped search.
-- [ ] Lane prompts for `apps/` tasks include summaries plus artifact refs/snippets instead of replaying raw bulky MCP output.
-- [ ] Context-pressure metrics remain stable or improve on representative high-evidence tasks because retrieval respects prompt budgets.
-- [ ] Handoff export/import and `CURRENT_TASK.md` remain compact because artifact bodies stay in the sidecar cache rather than the canonical handoff snapshot.
-- [ ] Sidecar database growth stays bounded by documented retention/purge rules; after task archival, associated artifact sources are purged or reported clearly by doctor tooling.
+- [x] A worker can index large logs, JSON payloads, docs, or command output once and later retrieve only the relevant chunks by scoped search.
+- [x] Lane prompts for `apps/` tasks include summaries plus artifact refs/snippets instead of replaying raw bulky MCP output.
+- [x] Context-pressure metrics remain stable or improve on representative high-evidence tasks because retrieval respects prompt budgets.
+- [x] Handoff export/import and `CURRENT_TASK.md` remain compact because artifact bodies stay in the sidecar cache rather than the canonical handoff snapshot.
+- [x] Sidecar database growth stays bounded by documented retention/purge rules; after task archival, associated artifact sources are purged or reported clearly by doctor tooling.

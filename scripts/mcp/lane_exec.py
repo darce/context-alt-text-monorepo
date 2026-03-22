@@ -35,15 +35,15 @@ from backend_registry import validate_backend
 from bootstrap_lane import _bootstrap as bootstrap_lane
 from lane_manifest import get_lane_config
 
+try:
+    from agent_handoff_mcp import artifact_index as _artifact_index
+    from agent_handoff_mcp.config import RuntimeConfig as _ArtifactRuntimeConfig
+    _ARTIFACT_INDEX_AVAILABLE = True
+except ImportError:  # noqa: BLE001
+    _ARTIFACT_INDEX_AVAILABLE = False
+
 
 BACKEND_CHOICES = get_backend_choices()
-
-
-# ---------------------------------------------------------------------------
-# Prompt / schema helpers
-# ---------------------------------------------------------------------------
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +356,68 @@ def _get_effective_owned_paths(
     return owned_paths
 
 
+# Artifact helpers
+# ---------------------------------------------------------------------------
+
+_ARTIFACT_INLINE_CHARS = 500
+
+
+def _compress_large_result_details(
+    result_data: dict[str, Any],
+    *,
+    task_ref: str,
+    lane_id: str,
+    orchestrator_root: Path,
+) -> dict[str, Any]:
+    """Index large ``details`` fields and replace inline body with an artifact ref.
+
+    When a result's ``details`` field exceeds the threshold bytes, the full text
+    is indexed into the sidecar FTS5 cache and the inline body is replaced with a
+    compact excerpt plus a ``details_artifact_ref`` field so callers can retrieve
+    the full content on demand.  Non-fatal; returns the original dict on any error.
+    """
+    if not _ARTIFACT_INDEX_AVAILABLE:
+        return result_data
+    details = result_data.get("details") or ""
+    if not isinstance(details, str):
+        return result_data
+    try:
+        art_config = _ArtifactRuntimeConfig.for_workspace(orchestrator_root)
+        artifact_db_path = art_config.artifact_db_path
+        min_bytes = art_config.artifact_index_min_bytes
+        min_lines = art_config.artifact_index_min_lines
+    except Exception:  # noqa: BLE001
+        artifact_db_path = orchestrator_root / ".task-state" / "mcp-artifacts.db"
+        min_bytes = 4096
+        min_lines = 80
+    if len(details.encode("utf-8")) < min_bytes:
+        return result_data
+    source_label = f"{lane_id}-exec-details"
+    try:
+        index_result = _artifact_index.maybe_record_artifact(
+            task_ref=task_ref,
+            lane_id=lane_id,
+            app_root=None,
+            source_kind="execution-output",
+            source_label=source_label,
+            content_type="text/plain",
+            summary=f"Execution details for lane {lane_id}",
+            content=details,
+            artifact_db_path=artifact_db_path,
+            min_bytes=min_bytes,
+            min_lines=min_lines,
+        )
+        if index_result is not None:
+            source_id = index_result["source_id"]
+            inline = details[:_ARTIFACT_INLINE_CHARS].rstrip()
+            if len(details) > _ARTIFACT_INLINE_CHARS:
+                inline += f"\n... [truncated — full output indexed as artifact:{source_id}]"
+            return {**result_data, "details": inline, "details_artifact_ref": source_id}
+    except Exception:  # noqa: BLE001
+        pass
+    return result_data
+
+
 # Temp-file helpers
 # ---------------------------------------------------------------------------
 
@@ -513,7 +575,14 @@ def run_lane_exec(
     if violations:
         result_data["scope_violation"] = True
         result_data["scope_violations"] = violations
-    if ctx_metrics or violations:
+    # Compress large details fields: index via FTS5 sidecar and replace inline body
+    result_data = _compress_large_result_details(
+        result_data,
+        task_ref=task_ref,
+        lane_id=lane_id,
+        orchestrator_root=orchestrator_root,
+    )
+    if ctx_metrics or violations or "details_artifact_ref" in result_data:
         out.write_text(json.dumps(result_data, indent=2))
 
     return out

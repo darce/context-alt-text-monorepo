@@ -325,7 +325,7 @@ def daemon_start(
 
     cmd = [
         python_executable,
-        str(orchestrator_root / "scripts" / "mcp" / "worker_daemon.py"),
+        str(Path(__file__).resolve().parent / "worker_daemon.py"),
         "--orchestrator-root",
         str(orchestrator_root),
         "--task-ref",

@@ -186,7 +186,7 @@ def generate_current_task_md(
 
 
 def _scripts_mcp_dir() -> Path:
-    return get_runtime_config().workspace_root / "scripts" / "mcp"
+    return Path(__file__).resolve().parent / "orchestration"
 
 
 def _import_scripts_mcp_module(name: str) -> Any:
@@ -218,7 +218,7 @@ def _orchestrator_paths() -> dict[str, Path]:
         "pause_path": state_dir / "daemon-paused",
         "log_dir": config.workspace_root / "logs" / "daemon",
         "log_path": config.workspace_root / "logs" / "daemon" / "orchestrator.jsonl",
-        "script_path": config.workspace_root / "scripts" / "mcp" / "orchestrator_daemon.py",
+        "script_path": Path(__file__).resolve().parent / "orchestration" / "orchestrator_daemon.py",
     }
 
 
@@ -230,7 +230,7 @@ def _worker_paths() -> dict[str, Path]:
         "workspace_root": config.workspace_root,
         "state_dir": state_dir,
         "log_dir": log_dir,
-        "script_path": config.workspace_root / "scripts" / "mcp" / "worker_daemon.py",
+        "script_path": Path(__file__).resolve().parent / "orchestration" / "worker_daemon.py",
     }
 
 

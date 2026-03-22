@@ -39,7 +39,7 @@ lane-open: lane-guard
 	if [ "$(DRY_RUN)" != "1" ]; then \
 		echo ""; \
 		echo "Bootstrapping lane dependencies..."; \
-		PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/bootstrap_lane.py" \
+		PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) "$(ORCHESTRATION_DIR)/bootstrap_lane.py" \
 			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 			--task-ref "$(TASK)" \
 			--lane-id "$(LANE)" \
@@ -94,7 +94,7 @@ lane-inbox: lane-guard
 	echo ""; \
 	echo "Worker action summary:"; \
 	PYTHONPATH="$(MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_prompt.py" \
+		$(MCP_PYTHON) "$(ORCHESTRATION_DIR)/lane_prompt.py" \
 			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 			--task-ref "$(TASK)" \
 			--lane-id "$(LANE)" \
@@ -103,7 +103,7 @@ lane-inbox: lane-guard
 
 lane-prompt: lane-guard
 	@PYTHONPATH="$(MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_prompt.py" \
+		$(MCP_PYTHON) "$(ORCHESTRATION_DIR)/lane_prompt.py" \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		--lane-id "$(LANE)" \

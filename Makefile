@@ -33,7 +33,9 @@ IN_ORCHESTRATOR_ROOT := $(if $(filter $(WORKTREE_ROOT_REAL),$(ORCHESTRATOR_ROOT)
 MCP_PYENV_VERSION ?= description-service
 MCP_PYENV_BIN := $(shell command -v pyenv 2>/dev/null || true)
 MCP_PYTHON = $(if $(MCP_PYENV_BIN),env PYENV_VERSION="$(MCP_PYENV_VERSION)" "$(MCP_PYENV_BIN)" exec python3,env PYENV_VERSION="$(MCP_PYENV_VERSION)" python3)
-LANE_CONFIG_CMD = $(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_config.py"
+ORCHESTRATION_DIR := $(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration
+WORKTREE_ORCHESTRATION_DIR := $(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration
+LANE_CONFIG_CMD = $(MCP_PYTHON) "$(ORCHESTRATION_DIR)/lane_config.py"
 MCP_PYTHONPATH := $(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src:$(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
 WORKTREE_MCP_PYTHONPATH := $(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src:$(WORKTREE_ROOT_REAL)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
 MCP_CMD = PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_handoff_mcp

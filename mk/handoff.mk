@@ -37,7 +37,7 @@ handoff-close-check:
 
 # CI/local guard for parser + lifecycle + close-check integrity
 handoff-integrity-check:
-	@$(PYTHON) scripts/mcp/handoff_integrity_guard.py
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(PYTHON) "$(ORCHESTRATION_DIR)/handoff_integrity_guard.py"
 
 handoff-inbox:
 	@if [ "$(IN_ORCHESTRATOR_ROOT)" != "1" ]; then \
@@ -69,7 +69,7 @@ handoff-inbox:
 	@echo ""; \
 	echo "Guidance summary:"; \
 	PYTHONPATH="$(MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/handoff_guidance_summary.py" \
+		$(MCP_PYTHON) "$(ORCHESTRATION_DIR)/handoff_guidance_summary.py" \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		$(if $(LANE),--lane-id "$(LANE)",)
@@ -94,7 +94,7 @@ handoff-dispatch:
 		exit 1; \
 	fi
 	@PYTHONPATH="$(WORKTREE_MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) "$(WORKTREE_ROOT_REAL)/scripts/mcp/review_dispatch.py" \
+		$(MCP_PYTHON) "$(WORKTREE_ORCHESTRATION_DIR)/review_dispatch.py" \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
@@ -105,7 +105,7 @@ review-run:
 		exit 1; \
 	fi
 	@PYTHONPATH="$(WORKTREE_MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) "$(WORKTREE_ROOT_REAL)/scripts/mcp/review_runner.py" run \
+		$(MCP_PYTHON) "$(WORKTREE_ORCHESTRATION_DIR)/review_runner.py" run \
 		--worktree-path "$(or $(WORKTREE_PATH),$(LANE_WORKTREE_TARGET))" \
 		$(if $(LANE),--lane-id "$(LANE)",) \
 		$(if $(TASK),--task-ref "$(TASK)",) \
@@ -121,7 +121,7 @@ worker-daemon: lane-guard
 	@set -eu; \
 	SESSION="$(or $(SESSION),$(TASK)-$(LANE))"; \
 	PYTHONPATH="$(MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/worker_daemon.py" \
+		$(MCP_PYTHON) "$(ORCHESTRATION_DIR)/worker_daemon.py" \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		--lane-id "$(LANE)" \
@@ -137,14 +137,14 @@ worker-daemon: lane-guard
 		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
 
 worker-daemon-status: lane-guard
-	@$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/worker_daemon_ctl.py" status \
+	@$(MCP_PYTHON) "$(ORCHESTRATION_DIR)/worker_daemon_ctl.py" status \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
 		--log-dir "$(ORCHESTRATOR_ROOT)/logs/worker-daemon" \
 		--task-ref "$(TASK)" \
 		--lane-id "$(LANE)"
 
 worker-daemon-stop: lane-guard
-	@$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/worker_daemon_ctl.py" stop \
+	@$(MCP_PYTHON) "$(ORCHESTRATION_DIR)/worker_daemon_ctl.py" stop \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
 		--log-dir "$(ORCHESTRATOR_ROOT)/logs/worker-daemon" \
 		--task-ref "$(TASK)" \
@@ -152,7 +152,7 @@ worker-daemon-stop: lane-guard
 		$(if $(filter 1,$(FORCE)),--force,)
 
 worker-daemon-resume: lane-guard
-	@$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/worker_daemon_ctl.py" resume \
+	@$(MCP_PYTHON) "$(ORCHESTRATION_DIR)/worker_daemon_ctl.py" resume \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
 		--log-dir "$(ORCHESTRATOR_ROOT)/logs/worker-daemon" \
 		--task-ref "$(TASK)" \
@@ -163,7 +163,7 @@ worker-daemon-tail: lane-guard
 
 orchestrator-daemon: lane-orchestrator-guard
 	@PYTHONPATH="$(MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/orchestrator_daemon.py" run \
+		$(MCP_PYTHON) "$(ORCHESTRATION_DIR)/orchestrator_daemon.py" run \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		$(if $(TASK),--task-ref "$(TASK)",) \
 		$(if $(BACKEND),--backend "$(BACKEND)",) \
@@ -173,15 +173,15 @@ orchestrator-daemon: lane-orchestrator-guard
 		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
 
 daemon-pause:
-	@$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/orchestrator_daemon.py" pause \
+	@$(MCP_PYTHON) "$(ORCHESTRATION_DIR)/orchestrator_daemon.py" pause \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state"
 
 daemon-resume:
-	@$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/orchestrator_daemon.py" resume \
+	@$(MCP_PYTHON) "$(ORCHESTRATION_DIR)/orchestrator_daemon.py" resume \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state"
 
 daemon-status:
 	@PYTHONPATH="$(MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/scripts/mcp/orchestrator_daemon.py" status \
+		$(MCP_PYTHON) "$(ORCHESTRATION_DIR)/orchestrator_daemon.py" status \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
 		--log-dir "$(ORCHESTRATOR_ROOT)/logs/daemon"

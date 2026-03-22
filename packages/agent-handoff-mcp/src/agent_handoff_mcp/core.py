@@ -277,6 +277,186 @@ def _exports_dir() -> Path:
     return get_runtime_config().exports_dir
 
 
+HANDOFF_FTS_SCHEMA_SQL = """
+CREATE VIRTUAL TABLE IF NOT EXISTS decisions_fts USING fts5(
+    body,
+    record_id UNINDEXED,
+    task_ref  UNINDEXED,
+    lane_id   UNINDEXED,
+    tokenize='porter unicode61'
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS findings_fts USING fts5(
+    body,
+    record_id UNINDEXED,
+    task_ref  UNINDEXED,
+    lane_id   UNINDEXED,
+    status    UNINDEXED,
+    tokenize='porter unicode61'
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS blockers_fts USING fts5(
+    body,
+    record_id UNINDEXED,
+    task_ref  UNINDEXED,
+    lane_id   UNINDEXED,
+    status    UNINDEXED,
+    tokenize='porter unicode61'
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS actions_fts USING fts5(
+    body,
+    record_id UNINDEXED,
+    task_ref  UNINDEXED,
+    lane_id   UNINDEXED,
+    status    UNINDEXED,
+    tokenize='porter unicode61'
+);
+"""
+
+_HANDOFF_FTS_TRIGGERS_SQL = """
+-- decisions triggers
+CREATE TRIGGER IF NOT EXISTS decisions_fts_insert AFTER INSERT ON decisions BEGIN
+    INSERT INTO decisions_fts(rowid, body, record_id, task_ref, lane_id)
+    VALUES (new.id,
+            new.decision || ' ' || COALESCE(new.rationale, ''),
+            new.id, new.task_ref, new.lane_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS decisions_fts_update AFTER UPDATE ON decisions BEGIN
+    DELETE FROM decisions_fts WHERE rowid = old.id;
+    INSERT INTO decisions_fts(rowid, body, record_id, task_ref, lane_id)
+    VALUES (new.id,
+            new.decision || ' ' || COALESCE(new.rationale, ''),
+            new.id, new.task_ref, new.lane_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS decisions_fts_delete AFTER DELETE ON decisions BEGIN
+    DELETE FROM decisions_fts WHERE rowid = old.id;
+END;
+
+-- review_findings triggers
+CREATE TRIGGER IF NOT EXISTS findings_fts_insert AFTER INSERT ON review_findings BEGIN
+    INSERT INTO findings_fts(rowid, body, record_id, task_ref, lane_id, status)
+    VALUES (new.id,
+            new.description || ' ' || COALESCE(new.fix, ''),
+            new.id, new.task_ref, new.lane_id, new.status);
+END;
+
+CREATE TRIGGER IF NOT EXISTS findings_fts_update AFTER UPDATE ON review_findings BEGIN
+    DELETE FROM findings_fts WHERE rowid = old.id;
+    INSERT INTO findings_fts(rowid, body, record_id, task_ref, lane_id, status)
+    VALUES (new.id,
+            new.description || ' ' || COALESCE(new.fix, ''),
+            new.id, new.task_ref, new.lane_id, new.status);
+END;
+
+CREATE TRIGGER IF NOT EXISTS findings_fts_delete AFTER DELETE ON review_findings BEGIN
+    DELETE FROM findings_fts WHERE rowid = old.id;
+END;
+
+-- blockers triggers
+CREATE TRIGGER IF NOT EXISTS blockers_fts_insert AFTER INSERT ON blockers BEGIN
+    INSERT INTO blockers_fts(rowid, body, record_id, task_ref, lane_id, status)
+    VALUES (new.id, new.description, new.id, new.task_ref, new.lane_id, new.status);
+END;
+
+CREATE TRIGGER IF NOT EXISTS blockers_fts_update AFTER UPDATE ON blockers BEGIN
+    DELETE FROM blockers_fts WHERE rowid = old.id;
+    INSERT INTO blockers_fts(rowid, body, record_id, task_ref, lane_id, status)
+    VALUES (new.id, new.description, new.id, new.task_ref, new.lane_id, new.status);
+END;
+
+CREATE TRIGGER IF NOT EXISTS blockers_fts_delete AFTER DELETE ON blockers BEGIN
+    DELETE FROM blockers_fts WHERE rowid = old.id;
+END;
+
+-- next_actions triggers
+CREATE TRIGGER IF NOT EXISTS actions_fts_insert AFTER INSERT ON next_actions BEGIN
+    INSERT INTO actions_fts(rowid, body, record_id, task_ref, lane_id, status)
+    VALUES (new.id, new.action, new.id, new.task_ref, new.lane_id, new.status);
+END;
+
+CREATE TRIGGER IF NOT EXISTS actions_fts_update AFTER UPDATE ON next_actions BEGIN
+    DELETE FROM actions_fts WHERE rowid = old.id;
+    INSERT INTO actions_fts(rowid, body, record_id, task_ref, lane_id, status)
+    VALUES (new.id, new.action, new.id, new.task_ref, new.lane_id, new.status);
+END;
+
+CREATE TRIGGER IF NOT EXISTS actions_fts_delete AFTER DELETE ON next_actions BEGIN
+    DELETE FROM actions_fts WHERE rowid = old.id;
+END;
+"""
+
+
+def _backfill_handoff_fts(conn: sqlite3.Connection) -> None:
+    """Populate FTS tables for rows that existed before triggers were created.
+
+    Only inserts when the source table has rows but the FTS table is empty.
+    This is safe to call on every connection because the count checks are O(1).
+    """
+    pairs: list[tuple[str, str, str]] = [
+        (
+            "decisions",
+            "decisions_fts",
+            "INSERT INTO decisions_fts(rowid, body, record_id, task_ref, lane_id) "
+            "SELECT id, decision || ' ' || COALESCE(rationale, ''), id, task_ref, lane_id "
+            "FROM decisions",
+        ),
+        (
+            "review_findings",
+            "findings_fts",
+            "INSERT INTO findings_fts(rowid, body, record_id, task_ref, lane_id, status) "
+            "SELECT id, description || ' ' || COALESCE(fix, ''), id, task_ref, lane_id, status "
+            "FROM review_findings",
+        ),
+        (
+            "blockers",
+            "blockers_fts",
+            "INSERT INTO blockers_fts(rowid, body, record_id, task_ref, lane_id, status) "
+            "SELECT id, description, id, task_ref, lane_id, status FROM blockers",
+        ),
+        (
+            "next_actions",
+            "actions_fts",
+            "INSERT INTO actions_fts(rowid, body, record_id, task_ref, lane_id, status) "
+            "SELECT id, action, id, task_ref, lane_id, status FROM next_actions",
+        ),
+    ]
+    for source_table, fts_table, backfill_sql in pairs:
+        src_count = conn.execute(f"SELECT COUNT(*) FROM {source_table}").fetchone()[0]
+        if src_count > 0:
+            fts_count = conn.execute(f"SELECT COUNT(*) FROM {fts_table}").fetchone()[0]
+            if fts_count == 0:
+                conn.execute(backfill_sql)
+
+
+def _ensure_handoff_fts(conn: sqlite3.Connection) -> None:
+    """Create FTS5 virtual tables, insert/update/delete triggers, and backfill existing rows.
+
+    Silently no-ops when FTS5 is unavailable or a transient DB lock occurs so
+    that existing handoff operations are never blocked by FTS setup.
+    """
+    import logging as _logging
+    _log = _logging.getLogger("agent_handoff_mcp")
+    try:
+        # Probe FTS5 availability without affecting the main schema.
+        conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_handoff_probe USING fts5(body)")
+        conn.execute("DROP TABLE IF EXISTS _fts5_handoff_probe")
+    except sqlite3.OperationalError:
+        _log.debug("Handoff FTS5 unavailable on this SQLite build; structured search disabled.")
+        return
+    try:
+        conn.executescript(HANDOFF_FTS_SCHEMA_SQL)
+        conn.executescript(_HANDOFF_FTS_TRIGGERS_SQL)
+        _backfill_handoff_fts(conn)
+    except sqlite3.OperationalError as exc:
+        if "locked" in str(exc).lower():
+            _log.warning("Handoff FTS setup skipped due to DB lock; will retry on next connection.")
+        else:
+            raise
+
+
 def _get_db_connection() -> sqlite3.Connection:
     config = get_runtime_config()
     config.state_dir.mkdir(parents=True, exist_ok=True)
@@ -287,6 +467,7 @@ def _get_db_connection() -> sqlite3.Connection:
         conn.execute("PRAGMA busy_timeout=5000;")
         conn.executescript(HANDOFF_SCHEMA_SQL)
         _apply_handoff_migrations(conn)
+        _ensure_handoff_fts(conn)
     except Exception:
         conn.close()
         raise
@@ -1469,6 +1650,135 @@ def get_artifact_terms(
         return _json_response({"ok": True, "source_id": resolved_source_id, "terms": terms})
     except RuntimeError as exc:
         return _json_response({"ok": False, "error": str(exc)})
+
+
+# ---------------------------------------------------------------------------
+# Structured handoff search
+# ---------------------------------------------------------------------------
+
+_VALID_RECORD_TYPES: frozenset[str] = frozenset({"decision", "finding", "blocker", "action"})
+
+# Maps record_type -> (fts_table_name, has_status_column)
+_RECORD_TYPE_FTS_MAP: dict[str, tuple[str, bool]] = {
+    "decision": ("decisions_fts", False),
+    "finding":  ("findings_fts",  True),
+    "blocker":  ("blockers_fts",  True),
+    "action":   ("actions_fts",   True),
+}
+
+
+def search_handoff(
+    queries: list[str] | None = None,
+    task_ref: str | None = None,
+    lane_id: str | None = None,
+    record_types: list[str] | None = None,
+    limit: int = 20,
+) -> str:
+    """Search canonical handoff records by keyword with optional scope filters.
+
+    Uses FTS5 BM25 ranking over decisions, review findings, blockers, and next actions.
+    Returns ranked results with record_type, record_id, task_ref, lane_id, status, and
+    a compact highlighted snippet for each match.
+
+    *queries*: one or more search terms; multiple terms are OR-ed.
+    *record_types*: subset of ['decision', 'finding', 'blocker', 'action']; default: all.
+    *limit*: maximum results across all searched record types (default 20, max 200).
+    """
+    if not queries:
+        return _json_response({"ok": False, "error": "queries must be a non-empty list of search terms."})
+
+    validated_types: list[str]
+    if record_types is None:
+        validated_types = sorted(_VALID_RECORD_TYPES)
+    else:
+        invalid = set(record_types) - _VALID_RECORD_TYPES
+        if invalid:
+            return _json_response({
+                "ok": False,
+                "error": f"Invalid record_types: {sorted(invalid)}. Valid: {sorted(_VALID_RECORD_TYPES)}.",
+            })
+        validated_types = list(dict.fromkeys(record_types))  # dedupe, preserve order
+
+    clamped_limit = max(1, min(int(limit), 200))
+
+    # Build FTS5 match expression: phrase-quote multi-word terms, OR-join the list.
+    fts_terms: list[str] = []
+    for q in queries:
+        stripped = q.strip()
+        if stripped:
+            fts_terms.append(f'"{stripped}"' if " " in stripped else stripped)
+    if not fts_terms:
+        return _json_response({"ok": False, "error": "All query strings are empty after stripping."})
+    fts_query = " OR ".join(fts_terms)
+
+    results: list[dict] = []
+    with _get_db_connection() as conn:
+        # Verify FTS5 tables exist (unavailable if FTS5 build flag not set).
+        tables_exist = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('table','shadow') AND name = 'decisions_fts'",
+        ).fetchone()[0] > 0
+        if not tables_exist:
+            return _json_response({
+                "ok": False,
+                "error": "Structured FTS index is unavailable (FTS5 not enabled). Run 'agent-handoff-mcp doctor' to verify.",
+            })
+
+        for rtype in validated_types:
+            fts_table, has_status = _RECORD_TYPE_FTS_MAP[rtype]
+            status_col = "status" if has_status else "NULL AS status"
+
+            where_parts = [f"{fts_table} MATCH ?"]
+            params: list[object] = [fts_query]
+
+            if task_ref:
+                where_parts.append("task_ref = ?")
+                params.append(task_ref)
+            if lane_id:
+                where_parts.append("lane_id = ?")
+                params.append(lane_id)
+
+            where_sql = " AND ".join(where_parts)
+
+            try:
+                rows = conn.execute(
+                    f"""
+                    SELECT record_id, task_ref, lane_id, {status_col},
+                           snippet({fts_table}, 0, '', '', '...', 12) AS snippet,
+                           rank
+                    FROM {fts_table}
+                    WHERE {where_sql}
+                    ORDER BY rank
+                    LIMIT ?
+                    """,
+                    (*params, clamped_limit),
+                ).fetchall()
+            except sqlite3.OperationalError as exc:
+                # Malformed FTS query or other transient issue; surface as error.
+                return _json_response({"ok": False, "error": f"FTS5 query error: {exc}"})
+
+            for row in rows:
+                results.append({
+                    "record_type": rtype,
+                    "record_id": int(row["record_id"]),
+                    "task_ref": row["task_ref"],
+                    "lane_id": row["lane_id"],
+                    "status": row["status"],
+                    "snippet": (row["snippet"] or "").strip(),
+                    "_rank": float(row["rank"] or 0.0),
+                })
+
+    # BM25 rank in FTS5 is negative; lower = better match.  Sort ascending.
+    results.sort(key=lambda r: r["_rank"])
+    for r in results:
+        r.pop("_rank")
+
+    return _json_response({
+        "ok": True,
+        "results": results[:clamped_limit],
+        "total": len(results),
+        "query": fts_query,
+        "record_types_searched": validated_types,
+    })
 
 
 def record_worker_report(

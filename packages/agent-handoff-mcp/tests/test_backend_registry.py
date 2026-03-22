@@ -8,9 +8,10 @@ from unittest import mock
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT_PATH = REPO_ROOT / "scripts" / "mcp" / "backend_registry.py"
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+ORCHESTRATION_DIR = Path(__file__).resolve().parents[1] / "src" / "agent_handoff_mcp" / "orchestration"
+SCRIPT_PATH = ORCHESTRATION_DIR / "backend_registry.py"
+if str(ORCHESTRATION_DIR) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATION_DIR))
 
 def _load_module():
     spec = importlib.util.spec_from_file_location("backend_registry", SCRIPT_PATH)

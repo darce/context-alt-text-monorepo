@@ -3,14 +3,14 @@
 ## Problem Statement
 
 The artifact sidecar introduced in the orchestration-context-retrieval task covers large,
-unstructured evidence blobs (logs, HTTP payloads, grep output, docs). What it does *not* cover
+unstructured evidence blobs (logs, HTTP payloads, grep output, docs). What it does _not_ cover
 is structured retrieval over the canonical handoff tables themselves: decisions, review findings,
 blocker history, next-action descriptions, lane messages, and worker report summaries.
 
 Today an agent that wants to know "what decisions were made about the retry policy?" must either
 read the full `get_handoff_state` snapshot (which truncates history) or call `list_review_findings`
 / `list_worker_reports` and do keyword matching client-side. Neither path scales as task history
-grows. This task adds BM25 full-text search over the *structured* handoff tables so agents can
+grows. This task adds BM25 full-text search over the _structured_ handoff tables so agents can
 retrieve the most relevant decisions, findings, blockers, and actions by keyword without reading
 the full table.
 
@@ -120,24 +120,24 @@ def search_handoff(
 
 ## Functions to Change
 
-| File | Target | Change |
-|------|--------|--------|
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/schema.py` | new or extended module | Add FTS5 table definitions and backfill migration for decisions, findings, blockers, actions. |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/adapters.py` | schema migration | Ensure handoff.db migration applies new FTS tables on `configure_runtime` if missing. |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py` | after `purge_artifacts` | Add `search_handoff` tool implementation. |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py` | tool export map | Export `search_handoff` in MCP API surface and TOOL_DESCRIPTIONS. |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py` | search subcommand | Add `search` or `handoff-search` CLI subcommand. |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/__init__.py` | exports | Export `search_handoff`. |
-| `packages/agent-handoff-mcp/tests/test_search_handoff.py` | new test module | Unit + integration tests for FTS5 indexing, backfill, scoped search, and snippet rendering. |
-| `docs/agentic/contracts/agent-handoff-mcp.md` | structured search section | Document `search_handoff` surface, FTS5 shadow table semantics, and trigger maintenance rules. |
+| File                                                           | Target                    | Change                                                                                         |
+| -------------------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------- |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/schema.py`   | new or extended module    | Add FTS5 table definitions and backfill migration for decisions, findings, blockers, actions.  |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/adapters.py` | schema migration          | Ensure handoff.db migration applies new FTS tables on `configure_runtime` if missing.          |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py`     | after `purge_artifacts`   | Add `search_handoff` tool implementation.                                                      |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py`      | tool export map           | Export `search_handoff` in MCP API surface and TOOL_DESCRIPTIONS.                              |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py`      | search subcommand         | Add `search` or `handoff-search` CLI subcommand.                                               |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/__init__.py` | exports                   | Export `search_handoff`.                                                                       |
+| `packages/agent-handoff-mcp/tests/test_search_handoff.py`      | new test module           | Unit + integration tests for FTS5 indexing, backfill, scoped search, and snippet rendering.    |
+| `docs/agentic/contracts/agent-handoff-mcp.md`                  | structured search section | Document `search_handoff` surface, FTS5 shadow table semantics, and trigger maintenance rules. |
 
 ## Related Files
 
-| File | Note |
-|------|------|
+| File                                                                                                                                              | Note                                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | [packages/agent-handoff-mcp/src/agent_handoff_mcp/artifact_index.py](../../../packages/agent-handoff-mcp/src/agent_handoff_mcp/artifact_index.py) | Reference implementation pattern for FTS5 chunking and scoped search; adapt trigger approach from here. |
-| [docs/tasks/8.0/orchestration-context-retrieval-task-plan.md](orchestration-context-retrieval-task-plan.md) | Parent task that introduced the artifact sidecar; this task is its structured-table complement. |
-| [packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py](../../../packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py) | Existing tool implementations to follow as patterns. |
+| [docs/tasks/8.0/orchestration-context-retrieval-task-plan.md](orchestration-context-retrieval-task-plan.md)                                       | Parent task that introduced the artifact sidecar; this task is its structured-table complement.         |
+| [packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py](../../../packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py)                     | Existing tool implementations to follow as patterns.                                                    |
 
 ## Lane Decomposition
 
@@ -185,7 +185,7 @@ before tests) and the owned file set is entirely within `packages/agent-handoff-
 
 - [x] Update `docs/agentic/contracts/agent-handoff-mcp.md` with `search_handoff` surface,
       FTS5 shadow table semantics, trigger maintenance rules, and scope filter behaviour.
-- [ ] Update `CLAUDE.md` or `BOOTSTRAP.md` if search tooling changes any operator command
+- [x] Update `CLAUDE.md` or `BOOTSTRAP.md` if search tooling changes any operator command
       surfaces.
 
 ## Success Criteria
@@ -195,4 +195,4 @@ before tests) and the owned file set is entirely within `packages/agent-handoff-
 - [x] FTS5 index stays consistent with canonical table state across insert, update, and
       `switch_task` / `archive_task_state` lifecycle operations.
 - [x] All existing handoff tests continue to pass after schema extension.
-- [ ] `run_doctor()` reports FTS5 availability and structured-index status.
+- [x] `run_doctor()` reports FTS5 availability and structured-index status.

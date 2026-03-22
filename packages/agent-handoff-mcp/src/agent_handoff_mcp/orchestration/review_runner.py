@@ -22,7 +22,7 @@ from _env import WORKER_REASONING_EFFORT_CHOICES
 from _env import apply_backend_runtime_hints
 from lane_manifest import get_lane_config
 
-REPO_ROOT = SCRIPT_DIR.parents[1]
+REPO_ROOT = SCRIPT_DIR.parents[4]
 RULES_DIR = REPO_ROOT / "docs" / "agentic" / "rules"
 
 BACKEND_CHOICES = get_backend_choices()

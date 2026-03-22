@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from unittest import mock
 
 import pytest
 
-from scripts.mcp.backend_adapter import BackendResult
-from scripts.mcp.adapters.codex_cli import CodexCliAdapter
-from scripts.mcp.adapters.codex_subagent import CodexSubagentAdapter
+_ORCHESTRATION_DIR = Path(__file__).resolve().parents[1] / "src" / "agent_handoff_mcp" / "orchestration"
+if str(_ORCHESTRATION_DIR) not in sys.path:
+    sys.path.insert(0, str(_ORCHESTRATION_DIR))
+
+from backend_adapter import BackendResult  # noqa: E402
+from adapters.codex_cli import CodexCliAdapter  # noqa: E402
+from adapters.codex_subagent import CodexSubagentAdapter  # noqa: E402
 
 
 def test_backend_result_serialization() -> None:

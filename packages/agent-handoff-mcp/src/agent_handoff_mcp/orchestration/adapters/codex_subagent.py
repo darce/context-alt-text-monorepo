@@ -4,7 +4,10 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from scripts.mcp.backend_adapter import BackendAdapter, BackendResult
+try:
+    from scripts.mcp.backend_adapter import BackendAdapter, BackendResult
+except ModuleNotFoundError:  # pragma: no cover - compatibility for script-style test loaders
+    from backend_adapter import BackendAdapter, BackendResult
 
 
 class CodexSubagentAdapter(BackendAdapter):
@@ -25,7 +28,10 @@ class CodexSubagentAdapter(BackendAdapter):
         prompt_override: str | None,
         previous_run_exhausted: bool = False,
     ) -> tuple[str | None, list[str]]:
-        from scripts.mcp._env import resolve_auto_reasoning_effort
+        try:
+            from scripts.mcp._env import resolve_auto_reasoning_effort
+        except ModuleNotFoundError:  # pragma: no cover - compatibility for script-style test loaders
+            from _env import resolve_auto_reasoning_effort
 
         return resolve_auto_reasoning_effort(
             orchestrator_root=orchestrator_root,

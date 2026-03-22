@@ -8,7 +8,8 @@ from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT_PATH = REPO_ROOT / "scripts" / "mcp" / "generate_lane_manifest.py"
+ORCHESTRATION_DIR = Path(__file__).resolve().parents[1] / "src" / "agent_handoff_mcp" / "orchestration"
+SCRIPT_PATH = ORCHESTRATION_DIR / "generate_lane_manifest.py"
 
 
 def _load_module():

@@ -14,7 +14,7 @@ from typing import Any
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent.parent
+REPO_ROOT = SCRIPT_DIR.parents[4]
 DEFAULT_DONE = "Ready for orchestrator branch review with lane-local verification complete."
 
 

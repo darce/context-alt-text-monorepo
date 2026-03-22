@@ -463,11 +463,27 @@ Content is chunked by `content_type` before FTS5 indexing:
 `scripts/mcp/lane_prompt.py` appends retrieved artifact snippets to worker prompts when context budget allows:
 
 1. After the base sections are rendered, `_measure_context_utilization()` produces a `pressure` value.
+   Pressure is classified using a char-per-token approximation of 4 (`prompt_tokens_approx = prompt_chars // 4`):
+   - `"high"`: `utilization_ratio > 0.40` AND `domain_signal_ratio < 0.50` — prompt is large relative to context window and less than half consists of domain-task content (assignment, runtime guidance, dependency briefs).
+   - `"elevated"`: `utilization_ratio > 0.30` — prompt uses more than 30% of the configured context window.
+   - `"normal"`: otherwise.
 2. If `pressure` is `"elevated"` or `"high"`, artifact retrieval is skipped entirely to protect required assignment content.
 3. Otherwise, `_artifact_context_section()` receives a `budget_chars` equal to the remaining estimated char budget.
 4. Pinned artifact refs from lane-message payloads (`payload.artifacts`) are loaded first with `get_artifact_source()`.
 5. Remaining budget is filled by `search_artifacts()` queries derived from open lane-message bodies, blocker descriptions, and open finding descriptions.
 6. Retrieved snippets are appended as a "Relevant Artifacts" section and context metrics are recomputed after appending the section.
+
+Base prompt sections are subject to per-section item caps (hardcoded in `lane_prompt.py`):
+
+| Section | Default cap | Requires flag |
+|---|---|---|
+| Assignment items (open actions, briefs) | 12 | — |
+| Dependency brief items | 6 | — |
+| Lane decision items | 4 | `--include-lane-history` |
+| Lane test result items | 4 | `--include-lane-history` |
+| Global / task-wide context items | 6 | `--include-global-context` |
+
+`--include-lane-history` and `--include-global-context` are both off by default. When omitted, the rendered prompt includes a "Context Budget" section that tells the model explicitly why those sections are absent (to preserve tokens), and how to request them if manual inspection is needed.
 
 This integration is purely additive. When `agent_handoff_mcp` is not importable, a module-level import guard (`_ARTIFACT_SEARCH_AVAILABLE = False`) silently disables retrieval.
 

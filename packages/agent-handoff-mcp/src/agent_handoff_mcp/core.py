@@ -1701,12 +1701,15 @@ def search_handoff(
 
     clamped_limit = max(1, min(int(limit), 200))
 
-    # Build FTS5 match expression: phrase-quote multi-word terms, OR-join the list.
+    # Build FTS5 match expression: always phrase-quote every term so that punctuation
+    # and special characters (internal quotes, colons, hyphens, etc.) are treated as
+    # plain text and cannot activate FTS5 column-filter, NOT, or auxiliary-function
+    # syntax.  Escape internal double-quotes by doubling them (FTS5 phrase literal rule).
     fts_terms: list[str] = []
     for q in queries:
         stripped = q.strip()
         if stripped:
-            fts_terms.append(f'"{stripped}"' if " " in stripped else stripped)
+            fts_terms.append('"' + stripped.replace('"', '""') + '"')
     if not fts_terms:
         return _json_response({"ok": False, "error": "All query strings are empty after stripping."})
     fts_query = " OR ".join(fts_terms)
@@ -1723,6 +1726,15 @@ def search_handoff(
                 "error": "Structured FTS index is unavailable (FTS5 not enabled). Run 'agent-handoff-mcp doctor' to verify.",
             })
 
+        # Default task_ref to the active task when not explicitly scoped, to prevent
+        # cross-task context leakage into agent results.
+        effective_task_ref: str | None = task_ref
+        if effective_task_ref is None:
+            _active = conn.execute(
+                "SELECT task_ref FROM handoff_state WHERE id = 1"
+            ).fetchone()
+            effective_task_ref = str(_active["task_ref"]) if _active else None
+
         for rtype in validated_types:
             fts_table, has_status = _RECORD_TYPE_FTS_MAP[rtype]
             status_col = "status" if has_status else "NULL AS status"
@@ -1730,9 +1742,9 @@ def search_handoff(
             where_parts = [f"{fts_table} MATCH ?"]
             params: list[object] = [fts_query]
 
-            if task_ref:
+            if effective_task_ref:
                 where_parts.append("task_ref = ?")
-                params.append(task_ref)
+                params.append(effective_task_ref)
             if lane_id:
                 where_parts.append("lane_id = ?")
                 params.append(lane_id)

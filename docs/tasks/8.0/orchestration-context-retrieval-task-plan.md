@@ -248,11 +248,11 @@ make lane-manifest-init TASK=orchestration-context-retrieval LANE_IDS='mcp-artif
 
 ## Stretch Goals
 
-- [ ] Add a follow-on task for structured-memory search over canonical handoff tables instead of expanding this task's core scope.
-- [ ] Add trigram fallback, reciprocal-rank fusion, and fuzzy correction after v1 search quality is validated.
-- [ ] Surface artifact search telemetry and indexed-source counts in the orchestration TUI/dashboard.
-- [ ] Add suggested-query generation or distinctive-term hints for freshly indexed artifacts.
-- [ ] Add lane- or app-root-specific retention policies so long-lived tasks can keep durable evidence while ephemeral traces expire quickly.
+- [x] Add a follow-on task for structured-memory search over canonical handoff tables instead of expanding this task's core scope. (Created: `docs/tasks/8.0/structured-memory-search-task-plan.md`)
+- [ ] Add trigram fallback, reciprocal-rank fusion, and fuzzy correction after v1 search quality is validated on real `apps/` tasks. (Deferred; tracked in `structured-memory-search-task-plan.md` for after v1 baseline is measured.)
+- [x] Surface indexed-source counts per lane in the orchestration TUI/dashboard. (Implemented: `dashboard_live.py` now shows an ARTF column with per-lane artifact-source counts via a configurable state-dir path. Search telemetry such as call counts, hit rates, and last-query metadata is out of scope for this task; tracked as a stretch item in `structured-memory-search-task-plan.md` if needed.)
+- [x] Add suggested-query generation or distinctive-term hints for freshly indexed artifacts. (Implemented: `get_distinctive_terms()` in `artifact_index.py`; exposed as `get_artifact_terms` MCP tool and CLI subcommand `artifact-terms`.)
+- [x] Add lane- and app-root-scoped purge selectors to `purge_artifacts` so operators can manually clean up artifacts for a specific lane or app root. (Implemented: `purge_artifacts` now accepts `lane_id` and `app_root` filter params in the core function, MCP tool, and CLI `artifact-purge`. Full policy-driven retention with automatic expiry by scope is out of scope for this task; tracked as a follow-on if needed.)
 
 ## Success Criteria
 

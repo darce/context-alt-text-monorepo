@@ -413,3 +413,119 @@ def test_run_doctor_includes_fts5_check(tmp_path: Path) -> None:
     assert result["ok"] is True
     assert result["checks"]["fts5_available"] is True
     assert "artifact_db_path" in result
+
+
+# ---------------------------------------------------------------------------
+# get_artifact_terms
+# ---------------------------------------------------------------------------
+
+
+def test_get_artifact_terms_returns_distinctive_words(isolated_env: dict) -> None:
+    content = "\n".join(["authentication token validation security policy"] * 30)
+    rec = _parse(handoff_core.record_artifact(
+        source_kind="log",
+        source_label="auth-policy-log",
+        content=content,
+        content_type="text/plain",
+    ))
+    assert rec["ok"] is True
+    source_id = rec["source_id"]
+
+    result = _parse(handoff_core.get_artifact_terms(source_id=source_id))
+    assert result["ok"] is True
+    assert result["source_id"] == source_id
+    assert isinstance(result["terms"], list)
+    assert len(result["terms"]) > 0
+    # At least one domain word should appear
+    assert any(t in ("authentication", "token", "validation", "security", "policy") for t in result["terms"])
+
+
+def test_get_artifact_terms_lookup_by_label(isolated_env: dict) -> None:
+    content = "\n".join(["database migration schema upgrade rollback"] * 30)
+    handoff_core.record_artifact(
+        source_kind="migration-log",
+        source_label="db-upgrade-log",
+        content=content,
+        content_type="text/plain",
+    )
+
+    result = _parse(handoff_core.get_artifact_terms(
+        task_ref="test-task",
+        source_label="db-upgrade-log",
+    ))
+    assert result["ok"] is True
+    assert isinstance(result["terms"], list)
+    assert any(t in ("database", "migration", "schema", "upgrade", "rollback") for t in result["terms"])
+
+
+def test_get_artifact_terms_returns_error_for_missing_source(isolated_env: dict) -> None:
+    result = _parse(handoff_core.get_artifact_terms(source_id=99999))
+    # Missing source_id returns empty terms rather than an error
+    # (get_distinctive_terms returns [] for missing source_id)
+    assert isinstance(result.get("terms"), list)
+    assert result.get("terms") == []
+
+
+def test_get_artifact_terms_requires_source_id_or_label(isolated_env: dict) -> None:
+    result = _parse(handoff_core.get_artifact_terms())
+    assert result["ok"] is False
+    assert "source_id" in result["error"] or "source_label" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# purge_artifacts with lane_id and app_root
+# ---------------------------------------------------------------------------
+
+
+_PURGEABLE_CONTENT = "log line for purge testing\n" * 200
+
+
+def _record(env: dict, source_kind: str, label: str, lane_id: str | None = None, app_root: str | None = None) -> None:
+    handoff_core.record_artifact(
+        source_kind=source_kind,
+        source_label=label,
+        content=_PURGEABLE_CONTENT,
+        lane_id=lane_id,
+        app_root=app_root,
+    )
+
+
+def test_purge_artifacts_by_lane_id_via_tool(isolated_env: dict) -> None:
+    _record(isolated_env, "log", "log-lane-a-1", lane_id="lane-a")
+    _record(isolated_env, "log", "log-lane-a-2", lane_id="lane-a")
+    _record(isolated_env, "log", "log-lane-b-1", lane_id="lane-b")
+
+    result = _parse(handoff_core.purge_artifacts(lane_id="lane-a"))
+    assert result["ok"] is True
+    assert result["purged_sources"] == 2
+
+    remaining = _parse(handoff_core.list_artifact_sources(task_ref="test-task"))
+    assert remaining["total"] == 1
+    assert remaining["sources"][0]["lane_id"] == "lane-b"
+
+
+def test_purge_artifacts_by_app_root_via_tool(isolated_env: dict) -> None:
+    _record(isolated_env, "log", "svc-a-out", app_root="/apps/svc-a")
+    _record(isolated_env, "log", "svc-b-out", app_root="/apps/svc-b")
+
+    result = _parse(handoff_core.purge_artifacts(app_root="/apps/svc-a"))
+    assert result["ok"] is True
+    assert result["purged_sources"] == 1
+
+    remaining = _parse(handoff_core.list_artifact_sources(task_ref="test-task"))
+    assert remaining["total"] == 1
+    assert remaining["sources"][0]["app_root"] == "/apps/svc-b"
+
+
+def test_purge_artifacts_combined_filters_via_tool(isolated_env: dict) -> None:
+    _record(isolated_env, "log", "keep-this", lane_id="lane-keep")
+    _record(isolated_env, "log", "del-this", lane_id="lane-del")
+
+    result = _parse(handoff_core.purge_artifacts(task_ref="test-task", lane_id="lane-del"))
+    assert result["ok"] is True
+    assert result["purged_sources"] == 1
+
+    remaining = _parse(handoff_core.list_artifact_sources(task_ref="test-task"))
+    labels = [s["source_label"] for s in remaining["sources"]]
+    assert "keep-this" in labels
+    assert "del-this" not in labels

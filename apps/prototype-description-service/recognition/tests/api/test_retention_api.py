@@ -11,6 +11,7 @@ import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
+from recognition.domain.services.export_service import EXPORT_SCHEMA_VERSION
 from recognition.interface_adapters.http import dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.services import (
@@ -64,7 +65,7 @@ class FakeRetentionExportService:
         return {
             "tenant_id": tenant_id,
             "exported_at": datetime.now(tz=UTC),
-            "schema_version": 1,
+            "schema_version": EXPORT_SCHEMA_VERSION,
             "counts": {"clusters": 2, "members": 3},
             "data": {"clusters": [{"id": str(uuid.uuid4())}]},
         }
@@ -297,6 +298,7 @@ def test_export_returns_inline_payload(monkeypatch) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["tenant_id"] == tenant_id
+    assert body["schema_version"] == EXPORT_SCHEMA_VERSION
     assert body["counts"] == {"clusters": 2, "members": 3}
     assert export_service.calls == [(tenant_id, "api_key:api-key-id")]
 
@@ -308,7 +310,7 @@ def test_coerce_export_response_preserves_real_service_shape() -> None:
         {
             "tenant_id": tenant_id,
             "exported_at": datetime.now(tz=UTC).isoformat(),
-            "schema_version": 1,
+            "schema_version": EXPORT_SCHEMA_VERSION,
             "clusters": [{"id": "cluster-1"}],
             "media_identities": [{"id": "identity-1"}],
             "identity_suggestions": [],
@@ -320,6 +322,7 @@ def test_coerce_export_response_preserves_real_service_shape() -> None:
 
     assert response.data["clusters"] == [{"id": "cluster-1"}]
     assert response.data["media_identities"] == [{"id": "identity-1"}]
+    assert response.schema_version == EXPORT_SCHEMA_VERSION
     assert response.counts == {
         "clusters": 1,
         "media_identities": 1,

@@ -1,24 +1,24 @@
-"""Domain service scaffold for suggestion-system extensions."""
+"""Infrastructure service for suggestion-system extensions."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import cast
+from typing import TypeAlias, cast
 from uuid import UUID
 
-from sqlalchemy import nulls_last, or_, select
+from sqlalchemy import func, nulls_last, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import ClusterMergeSuggestion, IdentityCluster, IdentitySuggestion
 from db.models import NameSuggestion as NameSuggestionModel
-from recognition.domain.suggestion import NameSuggestion, SuggestedLabelSource, SuggestionStatus
+from recognition.domain.suggestion import BulkAcceptResult, NameSuggestion, SuggestedLabelSource, SuggestionStatus
 from recognition.infrastructure.repositories._helpers import coerce_uuid
 
-type SuggestionModelRecord = IdentitySuggestion | ClusterMergeSuggestion | NameSuggestionModel
+SuggestionModelRecord: TypeAlias = IdentitySuggestion | ClusterMergeSuggestion | NameSuggestionModel
 
 
 class SuggestionExtensionService:
-    """Backend-domain contract for name suggestions, expiry, and bulk accept flows."""
+    """Infrastructure service for name suggestions, expiry, and bulk accept flows."""
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -38,8 +38,11 @@ class SuggestionExtensionService:
         now = datetime.now(tz=UTC)
         stmt = (
             select(NameSuggestionModel)
+            .join(IdentityCluster, IdentityCluster.id == NameSuggestionModel.cluster_id)
             .where(NameSuggestionModel.tenant_id == tenant_uuid)
             .where(NameSuggestionModel.resolution == SuggestionStatus.PENDING.value)
+            .where(NameSuggestionModel.disposed_at.is_(None))
+            .where(IdentityCluster.disposed_at.is_(None))
             .where(self._active_expiry_clause(NameSuggestionModel, now))
             .order_by(nulls_last(NameSuggestionModel.confidence_score.desc()), NameSuggestionModel.created_at.desc())
             .offset(offset)
@@ -68,6 +71,10 @@ class SuggestionExtensionService:
         cluster = await self._session.get(IdentityCluster, suggestion.cluster_id)
         if cluster is None or cluster.tenant_id != tenant_uuid:
             raise LookupError(f"cluster not found for suggestion {suggestion_id}")
+        if cluster.disposed_at is not None:
+            raise LookupError(f"cluster not found for suggestion {suggestion_id}")
+        if not self._can_apply_name_label(cluster, suggestion.suggested_name):
+            return self._to_name_suggestion(suggestion)
 
         resolved_at = datetime.now(tz=UTC)
         self._apply_name_label(cluster, suggestion.suggested_name)
@@ -96,17 +103,22 @@ class SuggestionExtensionService:
         *,
         suggestion_type: str,
         min_confidence: float,
-    ) -> dict[str, int]:
+    ) -> BulkAcceptResult:
         tenant_uuid = self._require_uuid(tenant_id, field_name="tenant_id")
         if not 0.0 <= min_confidence <= 1.0:
             raise ValueError("min_confidence must be between 0.0 and 1.0")
 
         if suggestion_type == "assignment":
             accepted = await self._bulk_accept_rows(tenant_uuid, IdentitySuggestion, min_confidence)
-            return {"accepted_count": accepted, "skipped_count": 0}
+            return BulkAcceptResult(accepted_count=accepted, skipped_count=0)
         if suggestion_type == "merge":
-            accepted = await self._bulk_accept_rows(tenant_uuid, ClusterMergeSuggestion, min_confidence)
-            return {"accepted_count": accepted, "skipped_count": 0}
+            accepted = await self._bulk_accept_rows(
+                tenant_uuid,
+                ClusterMergeSuggestion,
+                min_confidence,
+                allow_similarity_fallback=True,
+            )
+            return BulkAcceptResult(accepted_count=accepted, skipped_count=0)
         if suggestion_type == "name":
             return await self._bulk_accept_name_suggestions(tenant_uuid, min_confidence)
         raise ValueError("suggestion_type must be one of: assignment, merge, name")
@@ -127,6 +139,8 @@ class SuggestionExtensionService:
         tenant_uuid: UUID,
         model_type: type[IdentitySuggestion] | type[ClusterMergeSuggestion],
         min_confidence: float,
+        *,
+        allow_similarity_fallback: bool = False,
     ) -> int:
         resolved_at = datetime.now(tz=UTC)
         stmt = (
@@ -134,12 +148,17 @@ class SuggestionExtensionService:
             .where(model_type.tenant_id == tenant_uuid)
             .where(model_type.resolution == SuggestionStatus.PENDING.value)
             .where(self._active_expiry_clause(model_type, resolved_at))
-            .where(model_type.confidence_score.is_not(None))
-            .where(model_type.confidence_score >= min_confidence)
         )
-        rows = cast(
-            list[IdentitySuggestion | ClusterMergeSuggestion], (await self._session.execute(stmt)).scalars().all()
-        )
+        if allow_similarity_fallback:
+            merge_model = cast(type[ClusterMergeSuggestion], model_type)
+            stmt = stmt.where(
+                func.coalesce(merge_model.confidence_score, merge_model.similarity) >= min_confidence
+            )
+        else:
+            stmt = stmt.where(model_type.confidence_score.is_not(None)).where(
+                model_type.confidence_score >= min_confidence
+            )
+        rows = cast(list[IdentitySuggestion | ClusterMergeSuggestion], (await self._session.execute(stmt)).scalars().all())
         for row in rows:
             row.resolution = SuggestionStatus.ACCEPTED.value
             row.resolved_at = resolved_at
@@ -147,33 +166,41 @@ class SuggestionExtensionService:
             await self._session.flush()
         return len(rows)
 
-    async def _bulk_accept_name_suggestions(self, tenant_uuid: UUID, min_confidence: float) -> dict[str, int]:
+    async def _bulk_accept_name_suggestions(self, tenant_uuid: UUID, min_confidence: float) -> BulkAcceptResult:
         resolved_at = datetime.now(tz=UTC)
         stmt = (
             select(NameSuggestionModel)
             .where(NameSuggestionModel.tenant_id == tenant_uuid)
             .where(NameSuggestionModel.resolution == SuggestionStatus.PENDING.value)
+            .where(NameSuggestionModel.disposed_at.is_(None))
             .where(self._active_expiry_clause(NameSuggestionModel, resolved_at))
             .where(NameSuggestionModel.confidence_score.is_not(None))
             .where(NameSuggestionModel.confidence_score >= min_confidence)
             .order_by(NameSuggestionModel.confidence_score.desc(), NameSuggestionModel.created_at.asc())
         )
         suggestions = (await self._session.execute(stmt)).scalars().all()
+        if not suggestions:
+            return BulkAcceptResult(accepted_count=0, skipped_count=0)
+
+        cluster_ids = {suggestion.cluster_id for suggestion in suggestions}
+        clusters_result = await self._session.execute(
+            select(IdentityCluster).where(IdentityCluster.id.in_(cluster_ids)).where(IdentityCluster.disposed_at.is_(None))
+        )
+        clusters = {cluster.id: cluster for cluster in clusters_result.scalars().all()}
 
         accepted_count = 0
         skipped_count = 0
-        seen_cluster_ids: set[str] = set()
+        seen_cluster_ids: set[UUID] = set()
         for suggestion in suggestions:
-            cluster_key = str(suggestion.cluster_id)
-            if cluster_key in seen_cluster_ids:
+            if suggestion.cluster_id in seen_cluster_ids:
                 skipped_count += 1
                 continue
 
-            cluster = await self._session.get(IdentityCluster, suggestion.cluster_id)
+            cluster = clusters.get(suggestion.cluster_id)
             if cluster is None or cluster.tenant_id != tenant_uuid:
                 skipped_count += 1
                 continue
-            if cluster.user_confirmed and cluster.label and cluster.label != suggestion.suggested_name:
+            if not self._can_apply_name_label(cluster, suggestion.suggested_name):
                 skipped_count += 1
                 continue
 
@@ -181,11 +208,11 @@ class SuggestionExtensionService:
             suggestion.resolution = SuggestionStatus.ACCEPTED.value
             suggestion.resolved_at = resolved_at
             accepted_count += 1
-            seen_cluster_ids.add(cluster_key)
+            seen_cluster_ids.add(suggestion.cluster_id)
 
         if accepted_count:
             await self._session.flush()
-        return {"accepted_count": accepted_count, "skipped_count": skipped_count}
+        return BulkAcceptResult(accepted_count=accepted_count, skipped_count=skipped_count)
 
     async def _expire_rows(
         self,
@@ -200,6 +227,8 @@ class SuggestionExtensionService:
             .where(model_type.expires_at.is_not(None))
             .where(model_type.expires_at <= resolved_at)
         )
+        if model_type is NameSuggestionModel:
+            stmt = stmt.where(NameSuggestionModel.disposed_at.is_(None))
         rows = cast(list[SuggestionModelRecord], (await self._session.execute(stmt)).scalars().all())
         for row in rows:
             self._mark_expired(row, resolved_at=resolved_at)
@@ -210,6 +239,7 @@ class SuggestionExtensionService:
         stmt = (
             select(NameSuggestionModel)
             .where(NameSuggestionModel.tenant_id == tenant_uuid)
+            .where(NameSuggestionModel.disposed_at.is_(None))
             .where(NameSuggestionModel.id == suggestion_uuid)
         )
         suggestion = (await self._session.execute(stmt)).scalar_one_or_none()
@@ -231,6 +261,10 @@ class SuggestionExtensionService:
         cluster.confirmation_count = int(cluster.confirmation_count or 0) + 1
         cluster.confirmation_source = "label"
         cluster.dismissed_at = None
+
+    @staticmethod
+    def _can_apply_name_label(cluster: IdentityCluster, suggested_name: str) -> bool:
+        return not (cluster.user_confirmed and cluster.label and cluster.label != suggested_name)
 
     @staticmethod
     def _is_expired(suggestion: NameSuggestionModel) -> bool:

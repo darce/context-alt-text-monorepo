@@ -133,6 +133,9 @@ class ClusterResponse(BaseModel):
     suggested_label: str | None = None
     suggested_label_source: Literal["identity", "roster", "similar_cluster", "none"] | None = None
     suggested_label_confidence: float | None = None
+    confidence_score: float | None = None
+    expires_at: datetime | None = None
+    source_job_id: str | None = None
     suggested_target_cluster_id: str | None = None
     backend_version: int | None = None
 
@@ -204,6 +207,9 @@ class MergeSuggestionResponse(BaseModel):
     cluster_b_representative_media_id: int | None = None
     cluster_b_representative_media_url: str | None = None
     cluster_b_representative_bbox: FaceBoxResponse | None = None
+    confidence_score: float | None = None
+    expires_at: datetime | None = None
+    source_job_id: str | None = None
 
     @field_validator("id", "cluster_a_id", "cluster_b_id")
     @classmethod
@@ -286,7 +292,7 @@ class ExportResponse(BaseModel):
 
     tenant_id: str
     exported_at: datetime
-    schema_version: int = 1
+    schema_version: int = 2
     counts: dict[str, int] = Field(default_factory=dict)
     data: dict[str, Any] = Field(default_factory=dict)
 

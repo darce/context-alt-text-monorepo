@@ -80,6 +80,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
             Table("identity_scan_jobs", Base.metadata),
             Table("identity_scan_job_items", Base.metadata),
             Table("identity_suggestions", Base.metadata),
+            Table("name_suggestions", Base.metadata),
             Table("recognition_runs", Base.metadata),
             Table("recognition_events", Base.metadata),
             Table("audit_events", Base.metadata),

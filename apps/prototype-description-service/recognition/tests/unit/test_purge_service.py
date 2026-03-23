@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -26,10 +26,12 @@ from db.models import (
     IdentityScanJobItem,
     IdentitySuggestion,
     MediaIdentity,
+    NameSuggestion,
     RecognitionEvent,
     RecognitionRun,
     Tenant,
 )
+from recognition.domain.suggestion import SuggestedLabelSource
 from recognition.domain.services.purge_service import TenantPurgeService
 
 
@@ -111,6 +113,12 @@ async def test_purge_service_deletes_disposed_state_only(db_session, tenant: Ten
         avg_member_similarity=0.72,
         confidence_score=0.71,
     )
+    name_suggestion = NameSuggestion(
+        tenant_id=tenant.id,
+        cluster_id=disposed_cluster.id,
+        suggested_name="Disposed Cluster",
+        confidence_score=0.89,
+    )
     merge_suggestion = ClusterMergeSuggestion(
         tenant_id=tenant.id,
         cluster_a_id=min(disposed_cluster.id, active_cluster.id),
@@ -137,6 +145,7 @@ async def test_purge_service_deletes_disposed_state_only(db_session, tenant: Ten
             disposed_rep,
             active_rep,
             suggestion,
+            name_suggestion,
             merge_suggestion,
             block,
             constraint,
@@ -159,8 +168,10 @@ async def test_purge_service_deletes_disposed_state_only(db_session, tenant: Ten
     assert result["scope"] == "disposed"
     assert result["deleted_counts"]["media_identities"] == 1
     assert result["deleted_counts"]["identity_clusters"] == 1
+    assert result["deleted_counts"]["name_suggestions"] == 1
     assert await db_session.get(MediaIdentity, disposed_identity.id) is None
     assert await db_session.get(IdentityCluster, disposed_cluster.id) is None
+    assert await db_session.get(NameSuggestion, name_suggestion.id) is None
     assert await db_session.get(MediaIdentity, active_identity.id) is not None
     assert await db_session.get(IdentityCluster, active_cluster.id) is not None
     centroid_rows = (
@@ -181,6 +192,35 @@ async def test_purge_service_deletes_disposed_state_only(db_session, tenant: Ten
         .all()
     )
     assert [event.event_type for event in events] == ["purge_started", "purge_completed"]
+
+
+@pytest.mark.asyncio
+async def test_purge_service_disposed_scope_skips_name_suggestions_without_disposed_clusters(
+    db_session, tenant: Tenant
+) -> None:
+    cluster = IdentityCluster(
+        tenant_id=tenant.id,
+        label="Active",
+        identity_count=1,
+    )
+    db_session.add(cluster)
+    await db_session.flush()
+    suggestion = NameSuggestion(
+        tenant_id=tenant.id,
+        cluster_id=cluster.id,
+        suggested_name="Orphan",
+        source=SuggestedLabelSource.IDENTITY.value,
+        confidence_score=0.9,
+        expires_at=datetime.now(tz=UTC) + timedelta(days=1),
+    )
+    db_session.add(suggestion)
+    await db_session.flush()
+
+    service = TenantPurgeService(db_session)
+    result = await service.purge_tenant_data(str(tenant.id), "api_key:test", scope="disposed")
+
+    assert result["deleted_counts"]["name_suggestions"] == 0
+    assert await db_session.get(NameSuggestion, suggestion.id) is not None
 
 
 @pytest.mark.asyncio
@@ -240,6 +280,12 @@ async def test_purge_service_all_scope_deletes_all_machine_state(db_session, ten
                 avg_member_similarity=0.81,
                 confidence_score=0.82,
             ),
+            NameSuggestion(
+                tenant_id=tenant.id,
+                cluster_id=cluster.id,
+                suggested_name="All Scope Cluster",
+                confidence_score=0.83,
+            ),
             IdentityScanJobItem(
                 job_id=job.id,
                 tenant_id=tenant.id,
@@ -295,6 +341,7 @@ async def test_purge_service_all_scope_deletes_all_machine_state(db_session, ten
     assert result["deleted_counts"]["assignment_decisions"] == 1
     assert result["deleted_counts"]["clustering_job_reports"] == 1
     assert result["deleted_counts"]["curation_replay_records"] == 1
+    assert result["deleted_counts"]["name_suggestions"] == 1
     assert await db_session.get(MediaIdentity, identity.id) is None
     assert await db_session.get(IdentityCluster, cluster.id) is None
     assert await db_session.get(RecognitionRun, recognition_run.id) is None

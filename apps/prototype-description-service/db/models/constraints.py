@@ -120,6 +120,7 @@ class IdentitySuggestion(Base):
         Index(
             "idx_identity_suggestions_pending",
             "tenant_id",
+            "priority",
             "confidence_score",
             postgresql_where=text("resolution = 'pending'"),
         ),
@@ -205,6 +206,8 @@ class NameSuggestion(Base):
         ForeignKey("identity_clustering_jobs.id", ondelete="SET NULL"),
     )
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    last_exported_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    disposed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     resolution: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'pending'"))

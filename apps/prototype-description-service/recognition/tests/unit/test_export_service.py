@@ -19,6 +19,7 @@ from db.models import (
     IdentityScanJobItem,
     IdentitySuggestion,
     MediaIdentity,
+    NameSuggestion as NameSuggestionModel,
     Tenant,
 )
 from recognition.domain.services.export_service import EXPORT_SCHEMA_VERSION, TenantExportService
@@ -107,6 +108,21 @@ async def test_export_service_returns_portable_payload_and_records_audit_events(
         cluster_b_id=cluster_b_id,
         similarity=0.81,
     )
+    name_suggestion = NameSuggestionModel(
+        tenant_id=tenant.id,
+        cluster_id=cluster_a_id,
+        suggested_name="Cluster A",
+        confidence_score=0.77,
+        source="identity",
+        last_exported_snapshot_id=uuid4(),
+    )
+    disposed_name_suggestion = NameSuggestionModel(
+        tenant_id=tenant.id,
+        cluster_id=cluster_c_id,
+        suggested_name="Disposed Cluster",
+        confidence_score=0.79,
+        source="identity",
+    )
     disposed_merge_suggestion = ClusterMergeSuggestion(
         tenant_id=tenant.id,
         cluster_a_id=min(cluster_a_id, cluster_c_id),
@@ -129,6 +145,8 @@ async def test_export_service_returns_portable_payload_and_records_audit_events(
             peer_cluster,
             disposed_cluster,
             suggestion,
+            name_suggestion,
+            disposed_name_suggestion,
             disposed_suggestion,
             merge_suggestion,
             disposed_merge_suggestion,
@@ -183,6 +201,7 @@ async def test_export_service_returns_portable_payload_and_records_audit_events(
     clusters = cast(list[dict[str, Any]], payload["clusters"])
     media_identities = cast(list[dict[str, Any]], payload["media_identities"])
     identity_suggestions = cast(list[dict[str, Any]], payload["identity_suggestions"])
+    name_suggestions = cast(list[dict[str, Any]], payload["name_suggestions"])
     scan_jobs = cast(list[dict[str, Any]], payload["scan_jobs"])
 
     assert payload["tenant_id"] == str(tenant.id)
@@ -201,6 +220,11 @@ async def test_export_service_returns_portable_payload_and_records_audit_events(
     assert media_identities[0]["id"] == str(identity_id)
     assert identity_suggestions[0]["confidence_score"] == pytest.approx(0.85)
     assert len(identity_suggestions) == 1
+    assert len(name_suggestions) == 1
+    assert name_suggestions[0]["suggested_name"] == "Cluster A"
+    assert name_suggestions[0]["resolution"] == "pending"
+    assert name_suggestions[0]["last_exported_snapshot_id"] is not None
+    assert name_suggestions[0]["disposed_at"] is None
     assert len(cast(list[dict[str, Any]], payload["cluster_merge_suggestions"])) == 1
     assert len(scan_jobs[0]["items"]) == 1
 
@@ -220,6 +244,7 @@ async def test_export_service_returns_portable_payload_and_records_audit_events(
     assert [event.event_type for event in events] == ["export_started", "export_completed"]
     assert events[1].payload["cluster_count"] == 2
     assert events[1].payload["identity_count"] == 1
+    assert events[1].payload["name_suggestion_count"] == 1
 
 
 @pytest.mark.asyncio

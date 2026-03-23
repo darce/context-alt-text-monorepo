@@ -27,6 +27,14 @@ class SuggestedLabelSource(str, Enum):
     NONE = "none"
 
 
+@dataclass(frozen=True)
+class BulkAcceptResult:
+    """Typed count payload for bulk suggestion acceptance."""
+
+    accepted_count: int
+    skipped_count: int = 0
+
+
 class SuggestionRefreshReason(str, Enum):
     """Reason code for refreshing suggestion candidates."""
 
@@ -48,7 +56,11 @@ class SuggestedLabel:
 
 @dataclass
 class AssignmentSuggestion:
-    """Represents a proposed identity-to-cluster assignment awaiting review."""
+    """Represents a proposed identity-to-cluster assignment awaiting review.
+
+    This intentionally carries a smaller payload than merge/name suggestions because
+    the assignment flow only needs the active review state plus the similarity scores.
+    """
 
     id: str
     identity_id: str

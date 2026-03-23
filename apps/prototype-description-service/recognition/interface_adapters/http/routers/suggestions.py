@@ -415,6 +415,9 @@ def _to_response_with_details(suggestion: SuggestionDetails) -> SuggestionRespon
         suggested_label=suggestion.suggested_label,
         suggested_label_source=suggestion.suggested_label_source.value if suggestion.suggested_label_source else None,
         suggested_label_confidence=suggestion.suggested_label_confidence,
+        confidence_score=suggestion.confidence_score,
+        expires_at=suggestion.expires_at,
+        source_job_id=suggestion.source_job_id,
     )
 
 
@@ -544,4 +547,7 @@ def _to_merge_response(suggestion: MergeSuggestion | MergeSuggestionDetails) -> 
         )
         if cluster_b_bbox
         else None,
+        confidence_score=getattr(suggestion, "confidence_score", None),
+        expires_at=getattr(suggestion, "expires_at", None),
+        source_job_id=getattr(suggestion, "source_job_id", None),
     )

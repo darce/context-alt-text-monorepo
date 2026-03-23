@@ -8,34 +8,19 @@ from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import Table
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import (
-    ClusterMergeSuggestion,
-    IdentityCluster,
-    IdentityClusteringJob,
-    IdentitySuggestion,
-    MediaIdentity,
-    Tenant,
-)
+from db.models import ClusterMergeSuggestion, IdentityCluster, IdentityClusteringJob, IdentitySuggestion, MediaIdentity
 from db.models import NameSuggestion as NameSuggestionModel
-from recognition.domain.services.suggestion_extension_service import SuggestionExtensionService
-from recognition.domain.suggestion import SuggestedLabelSource, SuggestionStatus
+from db.models import Tenant
+from recognition.domain.suggestion import BulkAcceptResult, SuggestedLabelSource, SuggestionStatus
+from recognition.infrastructure.services.suggestion_extension_service import SuggestionExtensionService
 from recognition.infrastructure.repositories.merge_suggestion_repository import SqlAlchemyMergeSuggestionRepository
 from recognition.infrastructure.repositories.suggestion_repository import SqlAlchemySuggestionRepository
 
 
 def _unit_embedding() -> list[float]:
     return [1.0] + [0.0] * 511
-
-
-async def _create_name_suggestions_table(db_session: AsyncSession) -> None:
-    await db_session.run_sync(
-        lambda sync_session: cast(Table, NameSuggestionModel.__table__).create(
-            bind=sync_session.connection(), checkfirst=True
-        )
-    )
 
 
 async def _create_cluster(
@@ -58,9 +43,7 @@ async def _create_cluster(
     return cluster
 
 
-async def _create_identity(
-    db_session: AsyncSession, tenant: Tenant, *, identity_id: UUID | None = None
-) -> MediaIdentity:
+async def _create_identity(db_session: AsyncSession, tenant: Tenant, *, identity_id: UUID | None = None) -> MediaIdentity:
     identity = MediaIdentity(
         id=identity_id or uuid4(),
         tenant_id=tenant.id,
@@ -80,7 +63,6 @@ async def _create_identity(
 
 @pytest.mark.asyncio
 async def test_list_name_suggestions_filters_expired_and_confidence(db_session: AsyncSession, tenant: Tenant) -> None:
-    await _create_name_suggestions_table(db_session)
     cluster = await _create_cluster(db_session, tenant)
     job = IdentityClusteringJob(tenant_id=tenant.id, status="completed", progress=1.0)
     db_session.add(job)
@@ -125,7 +107,6 @@ async def test_list_name_suggestions_filters_expired_and_confidence(db_session: 
 
 @pytest.mark.asyncio
 async def test_list_name_suggestions_orders_null_confidence_last(db_session: AsyncSession, tenant: Tenant) -> None:
-    await _create_name_suggestions_table(db_session)
     cluster = await _create_cluster(db_session, tenant)
 
     db_session.add_all(
@@ -157,8 +138,72 @@ async def test_list_name_suggestions_orders_null_confidence_last(db_session: Asy
 
 
 @pytest.mark.asyncio
+async def test_name_suggestions_skip_disposed_rows(db_session: AsyncSession, tenant: Tenant) -> None:
+    cluster = await _create_cluster(db_session, tenant)
+    active = NameSuggestionModel(
+        tenant_id=tenant.id,
+        cluster_id=cluster.id,
+        suggested_name="Active",
+        confidence_score=0.88,
+        source=SuggestedLabelSource.IDENTITY.value,
+        expires_at=datetime.now(tz=UTC) + timedelta(days=1),
+    )
+    disposed = NameSuggestionModel(
+        tenant_id=tenant.id,
+        cluster_id=cluster.id,
+        suggested_name="Disposed",
+        confidence_score=0.99,
+        source=SuggestedLabelSource.IDENTITY.value,
+        expires_at=datetime.now(tz=UTC) + timedelta(days=1),
+        disposed_at=datetime.now(tz=UTC),
+    )
+    db_session.add_all([active, disposed])
+    await db_session.commit()
+
+    service = SuggestionExtensionService(db_session)
+
+    suggestions = await service.list_name_suggestions(str(tenant.id))
+    assert [item.suggested_name for item in suggestions] == ["Active"]
+
+    with pytest.raises(LookupError, match="name suggestion not found"):
+        await service.accept_name_suggestion(str(tenant.id), str(disposed.id))
+
+
+@pytest.mark.asyncio
+async def test_name_suggestions_skip_disposed_clusters(db_session: AsyncSession, tenant: Tenant) -> None:
+    active_cluster = await _create_cluster(db_session, tenant)
+    disposed_cluster = await _create_cluster(db_session, tenant)
+    disposed_cluster.disposed_at = datetime.now(tz=UTC)
+    active = NameSuggestionModel(
+        tenant_id=tenant.id,
+        cluster_id=active_cluster.id,
+        suggested_name="Active",
+        confidence_score=0.88,
+        source=SuggestedLabelSource.IDENTITY.value,
+        expires_at=datetime.now(tz=UTC) + timedelta(days=1),
+    )
+    disposed = NameSuggestionModel(
+        tenant_id=tenant.id,
+        cluster_id=disposed_cluster.id,
+        suggested_name="Disposed Cluster",
+        confidence_score=0.99,
+        source=SuggestedLabelSource.IDENTITY.value,
+        expires_at=datetime.now(tz=UTC) + timedelta(days=1),
+    )
+    db_session.add_all([active, disposed])
+    await db_session.commit()
+
+    service = SuggestionExtensionService(db_session)
+
+    suggestions = await service.list_name_suggestions(str(tenant.id))
+    assert [item.suggested_name for item in suggestions] == ["Active"]
+
+    with pytest.raises(LookupError, match="cluster not found for suggestion"):
+        await service.accept_name_suggestion(str(tenant.id), str(disposed.id))
+
+
+@pytest.mark.asyncio
 async def test_accept_name_suggestion_applies_cluster_label(db_session: AsyncSession, tenant: Tenant) -> None:
-    await _create_name_suggestions_table(db_session)
     cluster = await _create_cluster(db_session, tenant, label=None, user_confirmed=False)
     suggestion = NameSuggestionModel(
         tenant_id=tenant.id,
@@ -186,10 +231,145 @@ async def test_accept_name_suggestion_applies_cluster_label(db_session: AsyncSes
 
 
 @pytest.mark.asyncio
-async def test_bulk_accept_and_expire_stale_cover_assignment_and_merge(
+async def test_accept_name_suggestion_ignores_stale_conflicting_label(
     db_session: AsyncSession, tenant: Tenant
 ) -> None:
-    await _create_name_suggestions_table(db_session)
+    cluster = await _create_cluster(db_session, tenant, label="Confirmed Name", user_confirmed=True)
+    cluster.confirmation_count = 2
+    suggestion = NameSuggestionModel(
+        tenant_id=tenant.id,
+        cluster_id=cluster.id,
+        suggested_name="Stale Name",
+        confidence_score=0.88,
+        source=SuggestedLabelSource.IDENTITY.value,
+        expires_at=datetime.now(tz=UTC) + timedelta(days=1),
+    )
+    db_session.add(suggestion)
+    await db_session.commit()
+
+    service = SuggestionExtensionService(db_session)
+    accepted = await service.accept_name_suggestion(str(tenant.id), str(suggestion.id))
+
+    await db_session.refresh(cluster)
+    await db_session.refresh(suggestion)
+
+    assert accepted.status is SuggestionStatus.PENDING
+    assert cluster.label == "Confirmed Name"
+    assert cluster.user_confirmed is True
+    assert cluster.confirmation_count == 2
+    assert suggestion.resolution == SuggestionStatus.PENDING.value
+
+
+@pytest.mark.asyncio
+async def test_reject_name_suggestion_marks_row_rejected_without_changing_cluster(db_session: AsyncSession, tenant: Tenant) -> None:
+    cluster = await _create_cluster(db_session, tenant, label="Before", user_confirmed=False)
+    suggestion = NameSuggestionModel(
+        tenant_id=tenant.id,
+        cluster_id=cluster.id,
+        suggested_name="After",
+        confidence_score=0.84,
+        source=SuggestedLabelSource.IDENTITY.value,
+        expires_at=datetime.now(tz=UTC) + timedelta(days=1),
+    )
+    db_session.add(suggestion)
+    await db_session.commit()
+
+    service = SuggestionExtensionService(db_session)
+    rejected = await service.reject_name_suggestion(str(tenant.id), str(suggestion.id))
+
+    await db_session.refresh(cluster)
+    await db_session.refresh(suggestion)
+
+    assert rejected.status is SuggestionStatus.REJECTED
+    assert cluster.label == "Before"
+    assert cluster.user_confirmed is False
+    assert suggestion.resolution == SuggestionStatus.REJECTED.value
+
+
+@pytest.mark.asyncio
+async def test_bulk_accept_name_suggestions_deduplicates_cluster_updates(
+    db_session: AsyncSession, tenant: Tenant
+) -> None:
+    cluster = await _create_cluster(db_session, tenant, label=None, user_confirmed=False)
+    now = datetime.now(tz=UTC)
+    db_session.add_all(
+        [
+            NameSuggestionModel(
+                tenant_id=tenant.id,
+                cluster_id=cluster.id,
+                suggested_name="Primary Name",
+                confidence_score=0.96,
+                source=SuggestedLabelSource.IDENTITY.value,
+                expires_at=now + timedelta(days=1),
+            ),
+            NameSuggestionModel(
+                tenant_id=tenant.id,
+                cluster_id=cluster.id,
+                suggested_name="Secondary Name",
+                confidence_score=0.91,
+                source=SuggestedLabelSource.ROSTER.value,
+                expires_at=now + timedelta(days=1),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    service = SuggestionExtensionService(db_session)
+    result = await service.bulk_accept(str(tenant.id), suggestion_type="name", min_confidence=0.8)
+
+    await db_session.refresh(cluster)
+
+    assert isinstance(result, BulkAcceptResult)
+    assert result.accepted_count == 1
+    assert result.skipped_count == 1
+    assert cluster.label == "Primary Name"
+    assert cluster.user_confirmed is True
+
+
+@pytest.mark.asyncio
+async def test_bulk_accept_name_suggestions_skips_disposed_clusters(
+    db_session: AsyncSession, tenant: Tenant
+) -> None:
+    active_cluster = await _create_cluster(db_session, tenant, label=None, user_confirmed=False)
+    disposed_cluster = await _create_cluster(db_session, tenant, label=None, user_confirmed=False)
+    disposed_cluster.disposed_at = datetime.now(tz=UTC)
+    now = datetime.now(tz=UTC)
+    db_session.add_all(
+        [
+            NameSuggestionModel(
+                tenant_id=tenant.id,
+                cluster_id=active_cluster.id,
+                suggested_name="Active Name",
+                confidence_score=0.96,
+                source=SuggestedLabelSource.IDENTITY.value,
+                expires_at=now + timedelta(days=1),
+            ),
+            NameSuggestionModel(
+                tenant_id=tenant.id,
+                cluster_id=disposed_cluster.id,
+                suggested_name="Disposed Name",
+                confidence_score=0.99,
+                source=SuggestedLabelSource.ROSTER.value,
+                expires_at=now + timedelta(days=1),
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    service = SuggestionExtensionService(db_session)
+    result = await service.bulk_accept(str(tenant.id), suggestion_type="name", min_confidence=0.8)
+
+    await db_session.refresh(active_cluster)
+    await db_session.refresh(disposed_cluster)
+
+    assert result.accepted_count == 1
+    assert result.skipped_count == 1
+    assert active_cluster.label == "Active Name"
+    assert disposed_cluster.label is None
+
+
+@pytest.mark.asyncio
+async def test_bulk_accept_and_expire_stale_cover_assignment_and_merge(db_session: AsyncSession, tenant: Tenant) -> None:
     identity = await _create_identity(db_session, tenant)
     cluster_a_id, cluster_b_id = sorted([uuid4(), uuid4()], key=str)
     cluster_a = await _create_cluster(db_session, tenant, cluster_id=cluster_a_id)
@@ -220,7 +400,7 @@ async def test_bulk_accept_and_expire_stale_cover_assignment_and_merge(
         cluster_a_id=cluster_a.id,
         cluster_b_id=cluster_b.id,
         similarity=0.86,
-        confidence_score=0.87,
+        confidence_score=None,
         expires_at=now + timedelta(days=1),
     )
     stale_name = NameSuggestionModel(
@@ -237,6 +417,8 @@ async def test_bulk_accept_and_expire_stale_cover_assignment_and_merge(
     service = SuggestionExtensionService(db_session)
     assignment_result = await service.bulk_accept(str(tenant.id), suggestion_type="assignment", min_confidence=0.9)
     merge_result = await service.bulk_accept(str(tenant.id), suggestion_type="merge", min_confidence=0.8)
+    assert isinstance(assignment_result, BulkAcceptResult)
+    assert isinstance(merge_result, BulkAcceptResult)
     expired_count = await service.expire_stale(str(tenant.id))
     await db_session.commit()
 
@@ -245,8 +427,10 @@ async def test_bulk_accept_and_expire_stale_cover_assignment_and_merge(
     refreshed_stale_assignment = await db_session.get(IdentitySuggestion, stale_assignment.id)
     refreshed_stale_name = await db_session.get(NameSuggestionModel, stale_name.id)
 
-    assert assignment_result == {"accepted_count": 1, "skipped_count": 0}
-    assert merge_result == {"accepted_count": 1, "skipped_count": 0}
+    assert assignment_result.accepted_count == 1
+    assert assignment_result.skipped_count == 0
+    assert merge_result.accepted_count == 1
+    assert merge_result.skipped_count == 0
     assert expired_count == 2
     assert refreshed_assignment is not None
     assert refreshed_assignment.resolution == SuggestionStatus.ACCEPTED.value

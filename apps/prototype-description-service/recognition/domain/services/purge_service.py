@@ -27,6 +27,7 @@ from db.models import (
     IdentityScanJobItem,
     IdentitySuggestion,
     MediaIdentity,
+    NameSuggestion,
     RecognitionEvent,
     RecognitionRun,
     Tenant,
@@ -140,6 +141,7 @@ class TenantPurgeService:
                 "identity_scan_job_items": 0,
                 "identity_scan_jobs": 0,
                 "identity_clustering_jobs": 0,
+                "name_suggestions": 0,
             }
 
         return {
@@ -207,6 +209,12 @@ class TenantPurgeService:
                 self._identity_suggestion_predicate(scope_ids),
             ),
             (
+                "name_suggestions",
+                NameSuggestion,
+                NameSuggestion.tenant_id == tenant_id,
+                self._name_suggestion_predicate(scope_ids, scope),
+            ),
+            (
                 "cluster_merge_suggestions",
                 ClusterMergeSuggestion,
                 ClusterMergeSuggestion.tenant_id == tenant_id,
@@ -266,6 +274,13 @@ class TenantPurgeService:
             IdentitySuggestion.identity_id.in_(scope_ids.identity_ids),
             IdentitySuggestion.suggested_cluster_id.in_(scope_ids.cluster_ids),
         )
+
+    def _name_suggestion_predicate(self, scope_ids: PurgeScopeIds, scope: str) -> Any:
+        if scope != "disposed":
+            return None
+        if not scope_ids.cluster_ids:
+            return False
+        return NameSuggestion.cluster_id.in_(scope_ids.cluster_ids)
 
     def _merge_suggestion_predicate(self, cluster_ids: list[UUID]) -> Any:
         if not cluster_ids:

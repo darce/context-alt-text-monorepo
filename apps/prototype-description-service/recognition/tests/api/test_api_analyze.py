@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from db.models import AuditEvent, IdentityCluster, IdentityClusterRepresentative, MediaIdentity, Tenant
+from db.models import AuditEvent, IdentityCluster, IdentityClusterRepresentative, MediaIdentity, NameSuggestion, Tenant
 from db.models.jobs import IdentityClusteringJob, IdentityScanJob
 from recognition.domain.job import Job, JobStatus, JobType, ProjectionStatus
 from recognition.domain.services.retention_policy_service import RetentionPolicyService
@@ -415,7 +415,14 @@ async def test_apply_disposal_after_acknowledgement_marks_snapshot_rows(db_sessi
         quality_score=0.9,
         last_exported_snapshot_id=snapshot_generation_id,
     )
-    db_session.add(representative)
+    name_suggestion = NameSuggestion(
+        tenant_id=tenant.id,
+        cluster_id=cluster.id,
+        suggested_name="Dispose me",
+        confidence_score=0.88,
+        last_exported_snapshot_id=snapshot_generation_id,
+    )
+    db_session.add_all([representative, name_suggestion])
     await db_session.commit()
 
     service = RetentionPolicyService(db_session)
@@ -429,6 +436,7 @@ async def test_apply_disposal_after_acknowledgement_marks_snapshot_rows(db_sessi
     refreshed_identity = await db_session.get(MediaIdentity, identity.id)
     refreshed_cluster = await db_session.get(IdentityCluster, cluster.id)
     refreshed_rep = await db_session.get(IdentityClusterRepresentative, representative.id)
+    refreshed_name_suggestion = await db_session.get(NameSuggestion, name_suggestion.id)
     events = (
         await db_session.execute(
             select(AuditEvent).where(AuditEvent.tenant_id == tenant.id).order_by(AuditEvent.created_at.asc())
@@ -438,6 +446,7 @@ async def test_apply_disposal_after_acknowledgement_marks_snapshot_rows(db_sessi
     assert refreshed_identity is not None and refreshed_identity.disposed_at is not None
     assert refreshed_cluster is not None and refreshed_cluster.disposed_at is not None
     assert refreshed_rep is not None and refreshed_rep.disposed_at is not None
+    assert refreshed_name_suggestion is not None and refreshed_name_suggestion.disposed_at is not None
     event_list = list(events)
     assert [event.event_type for event in event_list] == ["disposal_completed"]
     assert event_list[0].payload["snapshot_generation_id"] == str(snapshot_generation_id)
@@ -445,6 +454,7 @@ async def test_apply_disposal_after_acknowledgement_marks_snapshot_rows(db_sessi
         "media_identities": 1,
         "identity_clusters": 1,
         "identity_cluster_representatives": 1,
+        "name_suggestions": 1,
     }
 
 
@@ -506,6 +516,7 @@ async def test_apply_disposal_after_acknowledgement_is_noop_for_retain_all(db_se
         "media_identities": 0,
         "identity_clusters": 0,
         "identity_cluster_representatives": 0,
+        "name_suggestions": 0,
     }
 
 
@@ -526,6 +537,7 @@ async def test_apply_disposal_after_acknowledgement_succeeds_with_zero_matching_
         "media_identities": 0,
         "identity_clusters": 0,
         "identity_cluster_representatives": 0,
+        "name_suggestions": 0,
     }
 
 

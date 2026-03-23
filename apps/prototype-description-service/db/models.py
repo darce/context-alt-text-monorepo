@@ -31,6 +31,7 @@ from db.models import (
     IdentityScanJob,
     IdentityScanJobItem,
     IdentitySuggestion,
+    NameSuggestion,
     MediaIdentity,
     NameSuggestion,
     RecognitionEvent,

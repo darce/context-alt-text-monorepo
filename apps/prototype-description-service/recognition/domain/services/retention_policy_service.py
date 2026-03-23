@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import IdentityCluster, IdentityClusterRepresentative, MediaIdentity, Tenant
+from db.models import IdentityCluster, IdentityClusterRepresentative, MediaIdentity, NameSuggestion, Tenant
 from recognition.domain.services.audit_service import AuditService
 from recognition.infrastructure.repositories._helpers import coerce_uuid
 
@@ -106,6 +106,18 @@ class RetentionPolicyService:
             .scalars()
             .all()
         )
+        name_suggestion_rows = (
+            (
+                await self._session.execute(
+                    select(NameSuggestion)
+                    .where(NameSuggestion.tenant_id == tenant.id)
+                    .where(NameSuggestion.last_exported_snapshot_id == snapshot_uuid)
+                    .where(NameSuggestion.disposed_at.is_(None))
+                )
+            )
+            .scalars()
+            .all()
+        )
 
         for identity in identity_rows:
             identity.disposed_at = disposed_at
@@ -113,11 +125,14 @@ class RetentionPolicyService:
             cluster.disposed_at = disposed_at
         for representative in representative_rows:
             representative.disposed_at = disposed_at
+        for suggestion in name_suggestion_rows:
+            suggestion.disposed_at = disposed_at
 
         disposed_counts = {
             "media_identities": len(identity_rows),
             "identity_clusters": len(cluster_rows),
             "identity_cluster_representatives": len(representative_rows),
+            "name_suggestions": len(name_suggestion_rows),
         }
 
         await self._session.flush()
@@ -167,4 +182,5 @@ class RetentionPolicyService:
             "media_identities": 0,
             "identity_clusters": 0,
             "identity_cluster_representatives": 0,
+            "name_suggestions": 0,
         }

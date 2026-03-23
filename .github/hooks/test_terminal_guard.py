@@ -144,6 +144,7 @@ def test_default_deny_unknown_commands(command: str) -> None:
         "git branch -d old-branch",
         "git tag v1.0.0",
         "git add .",
+        "git rm path/to/file.py",
         "git reset HEAD~1",
         # git diff: metadata forms only
         "git diff --name-only HEAD",
@@ -159,6 +160,11 @@ def test_default_deny_unknown_commands(command: str) -> None:
         # Env-var prefixed commands
         "PYENV_VERSION=description-service pytest tests/ -x",
         "export PYTHONPATH=pkg/src && pytest tests/",
+        # git ls-files: read-only file listing
+        "git ls-files --others --exclude-standard -- apps/prototype-description-service/",
+        # Read-only measurement
+        "wc -l /tmp/bd_product_diff.patch",
+        "wc -lw apps/prototype-description-service/recognition/domain/suggestion.py",
         # Pipe output-control patterns
         "pytest tests/ | tail -n 40",
         "make test 2>&1 | tail -n 30",

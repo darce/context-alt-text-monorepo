@@ -741,6 +741,14 @@ def _ensure_lane_workers(
                     attention_required=bool(status_payload.get("attention_required")),
                     recommended_action=recommended_action,
                 )
+            if recommended_action == "close_lane":
+                salvage_and_close_lane(
+                    orchestrator_root,
+                    task_ref,
+                    lane_id,
+                    dry_run=dry_run,
+                    log=log,
+                )
             rows.append(status_payload)
             continue
 

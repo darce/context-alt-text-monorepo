@@ -31,8 +31,8 @@ from db.models import (
     RecognitionRun,
     Tenant,
 )
-from recognition.domain.suggestion import SuggestedLabelSource
 from recognition.domain.services.purge_service import TenantPurgeService
+from recognition.domain.suggestion import SuggestedLabelSource
 
 
 def _unit_embedding() -> list[float]:

@@ -317,7 +317,6 @@ class TenantExportService:
             "created_at": _serialize_timestamp(suggestion.created_at),
             "expires_at": _serialize_timestamp(suggestion.expires_at),
             "resolved_at": _serialize_timestamp(suggestion.resolved_at),
-            "refreshed_at": _serialize_timestamp(suggestion.refreshed_at),
         }
 
     def _serialize_scan_job(self, job: IdentityScanJob) -> dict[str, object]:

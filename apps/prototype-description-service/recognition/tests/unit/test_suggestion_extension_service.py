@@ -10,13 +10,19 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import ClusterMergeSuggestion, IdentityCluster, IdentityClusteringJob, IdentitySuggestion, MediaIdentity
+from db.models import (
+    ClusterMergeSuggestion,
+    IdentityCluster,
+    IdentityClusteringJob,
+    IdentitySuggestion,
+    MediaIdentity,
+    Tenant,
+)
 from db.models import NameSuggestion as NameSuggestionModel
-from db.models import Tenant
 from recognition.domain.suggestion import BulkAcceptResult, SuggestedLabelSource, SuggestionStatus
-from recognition.infrastructure.services.suggestion_extension_service import SuggestionExtensionService
 from recognition.infrastructure.repositories.merge_suggestion_repository import SqlAlchemyMergeSuggestionRepository
 from recognition.infrastructure.repositories.suggestion_repository import SqlAlchemySuggestionRepository
+from recognition.infrastructure.services.suggestion_extension_service import SuggestionExtensionService
 
 
 def _unit_embedding() -> list[float]:
@@ -43,7 +49,9 @@ async def _create_cluster(
     return cluster
 
 
-async def _create_identity(db_session: AsyncSession, tenant: Tenant, *, identity_id: UUID | None = None) -> MediaIdentity:
+async def _create_identity(
+    db_session: AsyncSession, tenant: Tenant, *, identity_id: UUID | None = None
+) -> MediaIdentity:
     identity = MediaIdentity(
         id=identity_id or uuid4(),
         tenant_id=tenant.id,
@@ -231,9 +239,7 @@ async def test_accept_name_suggestion_applies_cluster_label(db_session: AsyncSes
 
 
 @pytest.mark.asyncio
-async def test_accept_name_suggestion_ignores_stale_conflicting_label(
-    db_session: AsyncSession, tenant: Tenant
-) -> None:
+async def test_accept_name_suggestion_ignores_stale_conflicting_label(db_session: AsyncSession, tenant: Tenant) -> None:
     cluster = await _create_cluster(db_session, tenant, label="Confirmed Name", user_confirmed=True)
     cluster.confirmation_count = 2
     suggestion = NameSuggestionModel(
@@ -261,7 +267,9 @@ async def test_accept_name_suggestion_ignores_stale_conflicting_label(
 
 
 @pytest.mark.asyncio
-async def test_reject_name_suggestion_marks_row_rejected_without_changing_cluster(db_session: AsyncSession, tenant: Tenant) -> None:
+async def test_reject_name_suggestion_marks_row_rejected_without_changing_cluster(
+    db_session: AsyncSession, tenant: Tenant
+) -> None:
     cluster = await _create_cluster(db_session, tenant, label="Before", user_confirmed=False)
     suggestion = NameSuggestionModel(
         tenant_id=tenant.id,
@@ -327,9 +335,7 @@ async def test_bulk_accept_name_suggestions_deduplicates_cluster_updates(
 
 
 @pytest.mark.asyncio
-async def test_bulk_accept_name_suggestions_skips_disposed_clusters(
-    db_session: AsyncSession, tenant: Tenant
-) -> None:
+async def test_bulk_accept_name_suggestions_skips_disposed_clusters(db_session: AsyncSession, tenant: Tenant) -> None:
     active_cluster = await _create_cluster(db_session, tenant, label=None, user_confirmed=False)
     disposed_cluster = await _create_cluster(db_session, tenant, label=None, user_confirmed=False)
     disposed_cluster.disposed_at = datetime.now(tz=UTC)
@@ -369,7 +375,9 @@ async def test_bulk_accept_name_suggestions_skips_disposed_clusters(
 
 
 @pytest.mark.asyncio
-async def test_bulk_accept_and_expire_stale_cover_assignment_and_merge(db_session: AsyncSession, tenant: Tenant) -> None:
+async def test_bulk_accept_and_expire_stale_cover_assignment_and_merge(
+    db_session: AsyncSession, tenant: Tenant
+) -> None:
     identity = await _create_identity(db_session, tenant)
     cluster_a_id, cluster_b_id = sorted([uuid4(), uuid4()], key=str)
     cluster_a = await _create_cluster(db_session, tenant, cluster_id=cluster_a_id)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TypeAlias, cast
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import func, nulls_last, or_, select
@@ -14,7 +14,7 @@ from db.models import NameSuggestion as NameSuggestionModel
 from recognition.domain.suggestion import BulkAcceptResult, NameSuggestion, SuggestedLabelSource, SuggestionStatus
 from recognition.infrastructure.repositories._helpers import coerce_uuid
 
-SuggestionModelRecord: TypeAlias = IdentitySuggestion | ClusterMergeSuggestion | NameSuggestionModel
+type SuggestionModelRecord = IdentitySuggestion | ClusterMergeSuggestion | NameSuggestionModel
 
 
 class SuggestionExtensionService:
@@ -151,14 +151,14 @@ class SuggestionExtensionService:
         )
         if allow_similarity_fallback:
             merge_model = cast(type[ClusterMergeSuggestion], model_type)
-            stmt = stmt.where(
-                func.coalesce(merge_model.confidence_score, merge_model.similarity) >= min_confidence
-            )
+            stmt = stmt.where(func.coalesce(merge_model.confidence_score, merge_model.similarity) >= min_confidence)
         else:
             stmt = stmt.where(model_type.confidence_score.is_not(None)).where(
                 model_type.confidence_score >= min_confidence
             )
-        rows = cast(list[IdentitySuggestion | ClusterMergeSuggestion], (await self._session.execute(stmt)).scalars().all())
+        rows = cast(
+            list[IdentitySuggestion | ClusterMergeSuggestion], (await self._session.execute(stmt)).scalars().all()
+        )
         for row in rows:
             row.resolution = SuggestionStatus.ACCEPTED.value
             row.resolved_at = resolved_at
@@ -184,7 +184,9 @@ class SuggestionExtensionService:
 
         cluster_ids = {suggestion.cluster_id for suggestion in suggestions}
         clusters_result = await self._session.execute(
-            select(IdentityCluster).where(IdentityCluster.id.in_(cluster_ids)).where(IdentityCluster.disposed_at.is_(None))
+            select(IdentityCluster)
+            .where(IdentityCluster.id.in_(cluster_ids))
+            .where(IdentityCluster.disposed_at.is_(None))
         )
         clusters = {cluster.id: cluster for cluster in clusters_result.scalars().all()}
 
@@ -288,6 +290,10 @@ class SuggestionExtensionService:
             created_at=model.created_at,
             expires_at=model.expires_at,
             resolved_at=model.resolved_at,
+            last_exported_snapshot_id=str(model.last_exported_snapshot_id)
+            if model.last_exported_snapshot_id is not None
+            else None,
+            disposed_at=model.disposed_at,
         )
 
     @staticmethod

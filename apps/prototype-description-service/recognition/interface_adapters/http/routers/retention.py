@@ -67,7 +67,7 @@ def _coerce_export_response(result: dict[str, Any], tenant_id: str) -> ExportRes
     counts = result.get("counts")
     if not isinstance(counts, dict):
         counts = {str(key): len(value) for key, value in data.items() if isinstance(value, list)}
-    schema_version = result.get("schema_version", 1)
+    schema_version = result.get("schema_version", 2)
     return ExportResponse(
         tenant_id=str(result.get("tenant_id", tenant_id)),
         exported_at=exported_at,

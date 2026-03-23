@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import func, select
 
-from db.models import IdentityClusterRepresentative, IdentityMember, MediaIdentity, Tenant
+from db.models import IdentityClusterRepresentative, IdentityClusteringJob, IdentityMember, MediaIdentity, Tenant
 from db.models.constraints import IdentitySuggestion
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.repositories import SuggestionCreateData
@@ -373,6 +373,10 @@ async def test_upsert_updates_pending_and_skips_resolved(db_session, tenant) -> 
     )
     repo = SqlAlchemySuggestionRepository(db_session)
     identity_id = str(uuid.uuid4())
+    source_job = IdentityClusteringJob(tenant_id=tenant.id, status="completed", progress=1.0)
+    updated_source_job = IdentityClusteringJob(tenant_id=tenant.id, status="completed", progress=1.0)
+    db_session.add_all([source_job, updated_source_job])
+    await db_session.flush()
 
     pending = await repo.create(
         str(tenant.id),
@@ -382,8 +386,11 @@ async def test_upsert_updates_pending_and_skips_resolved(db_session, tenant) -> 
             representative_similarity=0.9,
             member_similarity=0.85,
             confidence_score=0.87,
+            source_job_id=str(source_job.id),
         ),
     )
+    original_source_job_id = pending.source_job_id
+    assert original_source_job_id is not None
 
     updated = await repo.upsert_by_identity_cluster(
         str(tenant.id),
@@ -393,12 +400,14 @@ async def test_upsert_updates_pending_and_skips_resolved(db_session, tenant) -> 
             representative_similarity=0.7,
             member_similarity=0.65,
             confidence_score=0.68,
+            source_job_id=str(updated_source_job.id),
         ),
     )
 
     assert updated.id == pending.id
     assert updated.representative_similarity == pytest.approx(0.7)
     assert updated.member_similarity == pytest.approx(0.65)
+    assert updated.source_job_id == original_source_job_id
 
     resolved = await repo.update_status(str(tenant.id), pending.id, SuggestionStatus.ACCEPTED)
     assert resolved.status is SuggestionStatus.ACCEPTED

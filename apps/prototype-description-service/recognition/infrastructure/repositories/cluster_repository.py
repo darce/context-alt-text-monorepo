@@ -22,6 +22,7 @@ from sqlalchemy.orm.attributes import instance_state
 from db.models import IdentityCluster as ClusterModel
 from db.models import IdentityClusterRepresentative, IdentitySuggestion, MediaIdentity
 from db.models import IdentityMember as IdentityMemberModel
+from db.models import NameSuggestion as NameSuggestionModel
 from db.settings import get_database_settings
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity as DomainIdentity
@@ -1095,6 +1096,19 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         )
         members_result = await self._session.execute(members_stmt)
         member_rows = list(members_result.all())
+        name_suggestion_rows = []
+        if snapshot_generation_id is not None:
+            name_suggestion_stmt = (
+                select(NameSuggestionModel)
+                .join(ClusterModel, NameSuggestionModel.cluster_id == ClusterModel.id)
+                .where(NameSuggestionModel.tenant_id == tenant_uuid)
+                .where(NameSuggestionModel.resolution == "pending")
+                .where(NameSuggestionModel.disposed_at.is_(None))
+                .where(ClusterModel.disposed_at.is_(None))
+                .order_by(NameSuggestionModel.created_at, NameSuggestionModel.id)
+            )
+            name_suggestion_result = await self._session.execute(name_suggestion_stmt)
+            name_suggestion_rows = list(name_suggestion_result.scalars().all())
 
         if snapshot_generation_id is not None:
             snapshot_generation_uuid = uuid.UUID(snapshot_generation_id)
@@ -1114,7 +1128,10 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                 identity_model.last_exported_snapshot_id = snapshot_generation_uuid
                 seen_identity_ids.add(identity_model.id)
 
-            if cluster_models or seen_identity_ids:
+            for suggestion in name_suggestion_rows:
+                suggestion.last_exported_snapshot_id = snapshot_generation_uuid
+
+            if cluster_models or seen_identity_ids or name_suggestion_rows:
                 await self._session.flush()
 
         # Convert to domain objects

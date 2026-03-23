@@ -18,12 +18,13 @@ from db.models import (
     IdentityScanJobItem,
     IdentitySuggestion,
     MediaIdentity,
+    NameSuggestion,
     Tenant,
 )
 from recognition.domain.services.audit_service import AuditService
 from recognition.infrastructure.repositories._helpers import coerce_uuid
 
-EXPORT_SCHEMA_VERSION = 1
+EXPORT_SCHEMA_VERSION = 2
 
 
 def _serialize_timestamp(value: datetime | None) -> str | None:
@@ -57,6 +58,7 @@ class TenantExportService:
         clusters = await self._list_clusters(tenant.id)
         identities = await self._list_identities(tenant.id)
         suggestions = await self._list_suggestions(tenant.id)
+        name_suggestions = await self._list_name_suggestions(tenant.id)
         merge_suggestions = await self._list_merge_suggestions(tenant.id)
         scan_jobs = await self._list_scan_jobs(tenant.id)
 
@@ -73,6 +75,7 @@ class TenantExportService:
                 "cluster_count": len(clusters),
                 "identity_count": len(identities),
                 "suggestion_count": len(suggestions),
+                "name_suggestion_count": len(name_suggestions),
                 "merge_suggestion_count": len(merge_suggestions),
                 "scan_job_count": len(scan_jobs),
                 "exported_at": exported_at.isoformat(),
@@ -89,6 +92,7 @@ class TenantExportService:
             "clusters": [self._serialize_cluster(cluster) for cluster in clusters],
             "media_identities": [self._serialize_identity(identity) for identity in identities],
             "identity_suggestions": [self._serialize_suggestion(item) for item in suggestions],
+            "name_suggestions": [self._serialize_name_suggestion(item) for item in name_suggestions],
             "cluster_merge_suggestions": [self._serialize_merge_suggestion(item) for item in merge_suggestions],
             "scan_jobs": [self._serialize_scan_job(job) for job in scan_jobs],
         }
@@ -136,6 +140,18 @@ class TenantExportService:
             .where(MediaIdentity.disposed_at.is_(None))
             .where(IdentityCluster.disposed_at.is_(None))
             .order_by(IdentitySuggestion.created_at.asc(), IdentitySuggestion.id.asc())
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def _list_name_suggestions(self, tenant_id: UUID) -> list[NameSuggestion]:
+        stmt = (
+            select(NameSuggestion)
+            .join(IdentityCluster, NameSuggestion.cluster_id == IdentityCluster.id)
+            .where(NameSuggestion.tenant_id == tenant_id)
+            .where(IdentityCluster.disposed_at.is_(None))
+            .where(NameSuggestion.disposed_at.is_(None))
+            .order_by(NameSuggestion.created_at.asc(), NameSuggestion.id.asc())
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
@@ -281,6 +297,23 @@ class TenantExportService:
             "resolution": suggestion.resolution,
             "source": suggestion.source,
             "source_job_id": _serialize_uuid(suggestion.source_job_id),
+            "created_at": _serialize_timestamp(suggestion.created_at),
+            "expires_at": _serialize_timestamp(suggestion.expires_at),
+            "resolved_at": _serialize_timestamp(suggestion.resolved_at),
+            "refreshed_at": _serialize_timestamp(suggestion.refreshed_at),
+        }
+
+    def _serialize_name_suggestion(self, suggestion: NameSuggestion) -> dict[str, object]:
+        return {
+            "id": str(suggestion.id),
+            "cluster_id": str(suggestion.cluster_id),
+            "suggested_name": suggestion.suggested_name,
+            "confidence_score": suggestion.confidence_score,
+            "source": suggestion.source,
+            "source_job_id": _serialize_uuid(suggestion.source_job_id),
+            "resolution": suggestion.resolution,
+            "last_exported_snapshot_id": _serialize_uuid(suggestion.last_exported_snapshot_id),
+            "disposed_at": _serialize_timestamp(suggestion.disposed_at),
             "created_at": _serialize_timestamp(suggestion.created_at),
             "expires_at": _serialize_timestamp(suggestion.expires_at),
             "resolved_at": _serialize_timestamp(suggestion.resolved_at),

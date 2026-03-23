@@ -13,6 +13,7 @@ from db.models import (
     IdentityScanJob,
     IdentityScanJobItem,
     MediaIdentity,
+    NameSuggestion,
     Tenant,
 )
 from recognition.domain.services.export_service import EXPORT_SCHEMA_VERSION, TenantExportService
@@ -80,6 +81,12 @@ async def test_retention_export_then_purge_all_records_audit_and_clears_machine_
                 quality_score=0.96,
                 is_user_selected=True,
             ),
+            NameSuggestion(
+                tenant_id=tenant.id,
+                cluster_id=cluster.id,
+                suggested_name="Retention export cluster",
+                confidence_score=0.84,
+            ),
             IdentityScanJobItem(
                 job_id=job.id,
                 tenant_id=tenant.id,
@@ -112,6 +119,7 @@ async def test_retention_export_then_purge_all_records_audit_and_clears_machine_
     assert purge_result["deleted_counts"]["identity_clusters"] == 1
     assert purge_result["deleted_counts"]["identity_scan_jobs"] == 1
     assert purge_result["deleted_counts"]["identity_scan_job_items"] == 1
+    assert purge_result["deleted_counts"]["name_suggestions"] == 1
     assert await db_session.get(MediaIdentity, identity.id) is None
     assert await db_session.get(IdentityCluster, cluster.id) is None
     assert await db_session.get(IdentityScanJob, job.id) is None
@@ -181,6 +189,12 @@ async def test_dispose_after_ack_then_purge_disposed_only_removes_acknowledged_s
                 embedding=_unit_embedding(),
                 quality_score=0.95,
             ),
+            NameSuggestion(
+                tenant_id=tenant.id,
+                cluster_id=exported_cluster.id,
+                suggested_name="Exported cluster",
+                confidence_score=0.84,
+            ),
         ]
     )
     await db_session.commit()
@@ -206,10 +220,19 @@ async def test_dispose_after_ack_then_purge_disposed_only_removes_acknowledged_s
         "media_identities": 1,
         "identity_clusters": 1,
         "identity_cluster_representatives": 1,
+        "name_suggestions": 1,
     }
 
     exported_identity_refreshed = await db_session.get(MediaIdentity, exported_identity.id)
     exported_cluster_refreshed = await db_session.get(IdentityCluster, exported_cluster.id)
+    exported_name_suggestion_refreshed = (
+        await db_session.execute(
+            select(NameSuggestion).where(
+                NameSuggestion.tenant_id == tenant.id,
+                NameSuggestion.cluster_id == exported_cluster.id,
+            )
+        )
+    ).scalar_one()
     exported_rep_refreshed = (
         await db_session.execute(
             select(IdentityClusterRepresentative).where(
@@ -220,6 +243,7 @@ async def test_dispose_after_ack_then_purge_disposed_only_removes_acknowledged_s
     ).scalar_one()
     assert exported_identity_refreshed is not None and exported_identity_refreshed.disposed_at is not None
     assert exported_cluster_refreshed is not None and exported_cluster_refreshed.disposed_at is not None
+    assert exported_name_suggestion_refreshed.disposed_at is not None
     assert exported_rep_refreshed.disposed_at is not None
 
     surviving_identity = MediaIdentity(

@@ -54,6 +54,7 @@ record_lane_brief = core.record_lane_brief
 record_worker_report = core.record_worker_report
 update_lane_message = core.update_lane_message
 upsert_worktree_lane = core.upsert_worktree_lane
+close_worktree_lane = core.close_worktree_lane
 
 record_artifact = core.record_artifact
 search_artifacts = core.search_artifacts
@@ -68,6 +69,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "set_handoff_state": "Set or update the active handoff task state with optimistic revision protection.",
     "get_handoff_state": "Read the active or requested task handoff summary, including blockers, actions, tests, and findings.",
     "upsert_worktree_lane": "Create or update worktree lane metadata for a task, including branch, status, and worktree path.",
+    "close_worktree_lane": "Transition a worktree lane to merged or closed status. Accepts lane_id, optional status (merged|closed, default closed), optional notes, and optional task_ref.",
     "list_worktree_lanes": "List registered worktree lanes for the active or requested task.",
     "get_lane_activity": "Read the current activity summary for a lane, including blockers, actions, findings, messages, and tests.",
     "list_next_actions": "List next-action rows for the active or requested task, optionally filtered by lane or status.",

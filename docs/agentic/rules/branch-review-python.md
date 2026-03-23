@@ -7,10 +7,12 @@
 
 ## Automated Checks
 
+Backend review commands must run inside the `description-service` pyenv. For non-interactive commands, prefer `PYENV_VERSION=description-service <command>` instead of relying on `pyenv activate`, because subprocess shells may not have pyenv init hooks loaded.
+
 | Check                    | Command                                                      |
 | ------------------------ | ------------------------------------------------------------ |
-| Lint + types + tests     | `cd apps/prototype-description-service && make check`        |
-| Cyclomatic complexity    | `python -m radon cc --min C --show-complexity --average recognition/` |
+| Lint + types + tests     | `cd apps/prototype-description-service && PYENV_VERSION=description-service make check`        |
+| Cyclomatic complexity    | `cd apps/prototype-description-service && PYENV_VERSION=description-service python -m radon cc --min C --show-complexity --average recognition/` |
 
 ---
 

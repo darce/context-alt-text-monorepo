@@ -55,8 +55,11 @@ _ALLOWLIST: list[re.Pattern[str]] = [
         r"^npm\s+test\b",
         r"^npm\s+run\s+test\b",
         r"^vitest\b",
+        r"^npx\s+vitest\b",
         r"^playwright\b",
         r"^phpunit\b",
+        r"^\./vendor/bin/phpunit\b",
+        r"^vendor/bin/phpunit\b",
         # Build
         r"^make\b",
         # pyenv

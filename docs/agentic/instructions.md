@@ -167,7 +167,6 @@ If a task seems to require external changes, STOP and propose an alternative wit
 - [rg-010] helpful=1 harmful=0 :: **IDE tool output may be stale after external writes.** Editor-integrated `read_file` and `grep_search` tools read from the IDE's in-memory file model, not from disk. After git operations (rebase, cherry-pick, merge, worktree intake) or edits by other agents/terminals, the model can lag behind the filesystem. When a review finding seems surprising, cross-check with a terminal command (`grep -n`, `wc -l`, `sed -n`) before recording it. This caused an entire review cycle of false positives against `scripts/mcp/orchestrator_daemon.py` (IDE showed ~700 lines, disk had 850).
 - [rg-013] helpful=1 harmful=0 :: **core.py must remain pure handoff-state CRUD.** No orchestration imports, no subprocess calls, no lock management. Enforce during code review.
 - [rg-014] helpful=1 harmful=0 :: **Orchestration modules must use late-binding imports** (function-level) for `agent_handoff_mcp` symbols to preserve the clean split seam and avoid load-time coupling.
-- [sr-011] helpful=0 harmful=4 :: **VS Code native tools over terminal.** In VS Code: use `read_file` (not `cat`/`sed`), `grep_search` or `search_subagent` (not `grep -rn`), `get_changed_files` (not `git diff`/`git status`), `get_errors` (not `npm run lint`/`mypy`). Terminal is only for tests, `make`, `pyenv`, and `git commit`/`push`/`rebase`/`cherry-pick`/`worktree`. Terminal output accumulates stale scrollback; native tools read live IDE state. **Enforcement**: `.github/copilot-instructions.md` (auto-injected every session) + `.github/hooks/terminal-guard.py` (PreToolUse hook).
 
 ### Tool Selection Discipline
 
@@ -201,9 +200,15 @@ Reserve terminal for operations with no native-tool equivalent: test execution, 
 **Terminal output discipline** (both environments, when terminal is required):
 
 - Always pipe through `tail -n 30`, `head -n 50`, or `grep -E '<pattern>'` for commands that may produce unbounded output.
-- For test runs: `<test command> 2>&1 | tail -n 30` or filter to summary lines.
+- **Test runs (MANDATORY pattern):** Always use `tee` to capture output to a deterministic `/tmp/` path, then read the file with `read_file`. This avoids stale-scrollback pollution entirely. Do NOT rely on terminal output alone for test results.
+  - Python: `cd <app-dir> && pyenv exec python -m pytest <path> -q 2>&1 | tee /tmp/pytest_<suite>.txt`
+  - Vitest: `cd <app-dir> && npx vitest run <path> 2>&1 | tee /tmp/vitest_<suite>.txt`
+  - PHP: `cd <app-dir> && vendor/bin/phpunit <path> 2>&1 | tee /tmp/phpunit_<suite>.txt`
+  - Then immediately: `read_file("/tmp/pytest_<suite>.txt")` to get clean output. Never `cat` the file in terminal.
+  - If initial terminal output looks truncated or polluted, skip re-running; just `read_file` the `/tmp/` capture.
 - If output exceeds expectations, redirect to `/tmp/<descriptive-name>.txt` and read with `read_file` (VS Code) or `sed -n` (Codex); do not re-run the command.
 - Long-lived terminal sessions accumulate scrollback. A new `run_in_terminal` call in a polluted session can return 16 KB+ of stale output from prior commands. Prefer short, filtered commands over long pipelines.
+- **Background terminals lack pyenv virtualenv activation.** Only use the foreground terminal (or a terminal where `pyenv activate` has been run) for Python test commands. If the foreground session has stale scrollback, the `tee /tmp/` pattern above solves it without needing a new terminal.
 
 ### Task Document Rules
 
@@ -275,7 +280,28 @@ Write-tool targeting rule:
 Before final response:
 
 1. Mark completed/skipped actions via `update_next_actions(...)`.
-2. Record a **slice completion summary** via `record_decision(decision="slice_complete_<short_label>", rationale=<summary>, actor={ ... })`. The rationale must include: (a) what this coding slice accomplished (files changed, features added, bugs fixed); (b) verification performed (tests run, commands executed); (c) any open threads or follow-ups the next agent should pick up. This is the canonical artifact for multi-turn task continuation; a future agent told to "review the last N slices" will read these decisions in reverse chronological order.
+2. Record a **slice completion summary** via `record_decision(decision="slice_complete_<short_label>", rationale=<summary>, actor={ ... })`. The rationale is the canonical artifact for multi-turn task continuation; a future agent told to "review the last N slices" will read these decisions in reverse chronological order. Use this structured format:
+
+   ```
+   ## Changes
+   - <file_path>: <function_or_class_name> ; <what changed>
+   - <file_path>: <route_or_endpoint> ; <what changed>
+
+   ## Verification
+   - pytest <path>: <N> passed
+   - vitest <path>: <N> passed
+   - mypy: <N> source files clean
+
+   ## Schema / Contract Changes
+   - <table.column> added/removed/renamed
+   - <REST route> added/removed ; <method> <path>
+   - <TypeScript type> field added: <field_name>: <type>
+
+   ## Open Threads
+   - <what the next agent should pick up>
+   ```
+
+   Rules: (a) list every changed file with the specific function, class, route, or hook that was modified; (b) include concrete test counts, not just "tests pass"; (c) list schema column names, REST routes, TypeScript type changes, and PHP hook names explicitly so downstream agents can grep for them; (d) note any open threads or follow-ups.
 3. Update singleton state via `set_handoff_state(..., expected_revision=<current>, actor={ ... })`.
 4. Regenerate `CURRENT_TASK.md` using `generate_current_task_md(...)`.
 5. Include a one-line status marker in the response: `Handoff updated: yes`.
@@ -386,9 +412,10 @@ How workers communicate with the orchestrator:
 4. Agents performing review should do it from the orchestrator root, record findings in MCP handoff, and let the orchestrator route them with `make handoff-dispatch` so the owning worker lane sees both the dispatch message and the lane-stamped findings. The same command also stamps routeable open blockers and pending next actions onto their owning lanes.
 5. At worker start, record a decision noting lane ownership and actor metadata (`agent`, `branch`, `commit_sha` when available). If the orchestrator assigned next actions, do not rewrite sibling lanes.
 6. During work, record blockers, targeted test results, and review findings in MCP as they occur. Workers should report lane-local facts only; the orchestrator synthesizes cross-lane conclusions.
-7. Before handing work back, record one decision using the slice completion summary format (`decision="slice_complete_<short_label>"`) summarizing:
-   - files changed
-   - tests run
+7. Before handing work back, record one decision using the slice completion summary format (`decision="slice_complete_<short_label>"`) with the structured rationale template (see "Before final response" section above). Include:
+   - files changed (with function/class/route names)
+   - test counts per suite
+   - schema or contract changes (column names, REST routes, TypeScript types)
    - assumptions made
    - blockers or follow-ups
    - whether the lane is merge-ready

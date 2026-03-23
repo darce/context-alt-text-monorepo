@@ -1363,6 +1363,43 @@ def upsert_worktree_lane(
         return _json_response({"ok": True, "lane": _row_to_dict(row)})
 
 
+def close_worktree_lane(
+    lane_id: str,
+    status: str = "closed",
+    notes: str | None = None,
+    task_ref: str | None = None,
+) -> str:
+    """Transition a worktree lane to closed or merged status in the handoff database."""
+    valid_close_statuses = {"merged", "closed"}
+    normalized_lane_id = _normalize_optional_text(lane_id)
+    if normalized_lane_id is None:
+        return _json_response({"ok": False, "error": "lane_id is required."})
+    if status not in valid_close_statuses:
+        return _json_response(
+            {"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(valid_close_statuses))}"}
+        )
+    with _get_db_connection() as conn:
+        resolved_task_ref = _resolve_task_ref(conn, task_ref)
+        existing = _get_lane_row(conn, resolved_task_ref, normalized_lane_id)
+        if existing is None:
+            return _json_response(
+                {"ok": False, "error": f"Lane '{normalized_lane_id}' not found for task '{resolved_task_ref}'."}
+            )
+        conn.execute(
+            """
+            UPDATE worktree_lanes
+            SET status = ?,
+                notes = COALESCE(?, notes),
+                updated_at = datetime('now')
+            WHERE task_ref = ? AND lane_id = ?
+            """,
+            (status, notes, resolved_task_ref, normalized_lane_id),
+        )
+        row = _get_lane_row(conn, resolved_task_ref, normalized_lane_id)
+        _write_current_task_md_for_task(conn, resolved_task_ref)
+        return _json_response({"ok": True, "lane": _row_to_dict(row)})
+
+
 def list_worktree_lanes(task_ref: str | None = None, status: str = "all", limit: int = 100, offset: int = 0) -> str:
     limit = max(1, limit)
     offset = max(0, offset)

@@ -16,6 +16,7 @@ from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id
 from recognition.interface_adapters.http.routers import media as media_router
 from recognition.interface_adapters.http.schemas.responses import ClusterResponse
+from recognition.domain.suggestion import BulkAcceptResult, SuggestedLabelSource, SuggestionStatus
 from recognition.shared.ids import generate_id
 from recognition.tests.fakes import FakeClusterRepository, FakeClusterService, FakeJobService
 
@@ -266,8 +267,8 @@ class FakeNameSuggestion:
         self.id = str(uuid.uuid4())
         self.cluster_id = cluster_id
         self.suggested_name = suggested_name
-        self.source = source
-        self.status = status
+        self.source = SuggestedLabelSource(source)
+        self.status = SuggestionStatus(status)
         self.confidence_score = confidence_score
         self.source_job_id = source_job_id
         self.created_at = created_at
@@ -304,23 +305,23 @@ class FakeSuggestionExtensionService:
         suggestion = self.name_suggestions.get(suggestion_id)
         if suggestion is None:
             raise LookupError(f"name suggestion not found: {suggestion_id}")
-        suggestion.status = "accepted"
+        suggestion.status = SuggestionStatus.ACCEPTED
         return suggestion
 
     async def reject_name_suggestion(self, tenant_id: str, suggestion_id: str) -> FakeNameSuggestion:
         suggestion = self.name_suggestions.get(suggestion_id)
         if suggestion is None:
             raise LookupError(f"name suggestion not found: {suggestion_id}")
-        suggestion.status = "rejected"
+        suggestion.status = SuggestionStatus.REJECTED
         return suggestion
 
-    async def bulk_accept(self, tenant_id: str, *, suggestion_type: str, min_confidence: float) -> dict[str, int]:
+    async def bulk_accept(self, tenant_id: str, *, suggestion_type: str, min_confidence: float) -> BulkAcceptResult:
         if suggestion_type == "name":
             accepted = 0
             skipped = 0
             now = datetime.now(tz=UTC)
             for suggestion in self.name_suggestions.values():
-                if suggestion.status != "pending":
+                if suggestion.status != SuggestionStatus.PENDING:
                     continue
                 if suggestion.expires_at is not None and suggestion.expires_at <= now:
                     skipped += 1
@@ -328,9 +329,9 @@ class FakeSuggestionExtensionService:
                 if suggestion.confidence_score is None or suggestion.confidence_score < min_confidence:
                     skipped += 1
                     continue
-                suggestion.status = "accepted"
+                suggestion.status = SuggestionStatus.ACCEPTED
                 accepted += 1
-            return {"accepted_count": accepted, "skipped_count": skipped}
+            return BulkAcceptResult(accepted_count=accepted, skipped_count=skipped)
 
         accepted = 0
         skipped = 0
@@ -348,7 +349,7 @@ class FakeSuggestionExtensionService:
                 continue
             merge_suggestion.status = FakeSuggestionStatus("accepted")
             accepted += 1
-        return {"accepted_count": accepted, "skipped_count": skipped}
+        return BulkAcceptResult(accepted_count=accepted, skipped_count=skipped)
 
 
 class FakeSuggestionService:

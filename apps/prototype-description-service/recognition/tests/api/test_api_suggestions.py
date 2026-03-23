@@ -10,9 +10,8 @@ import pytest
 
 from recognition.domain.suggestion import SuggestedLabelSource
 from recognition.infrastructure.repositories.merge_suggestion_repository import SqlAlchemyMergeSuggestionRepository
-from recognition.interface_adapters.http.deps.services import _HttpSuggestionExtensionService
 from recognition.interface_adapters.http.schemas.responses import ClusterResponse
-from recognition.tests.api.conftest import FakeNameSuggestion, FakeSession, FakeSuggestion
+from recognition.tests.api.conftest import FakeNameSuggestion, FakeSuggestion
 
 
 def test_list_suggestions_empty_by_default(api_client, tenant_id) -> None:
@@ -213,35 +212,6 @@ async def test_name_suggestions_apply_min_confidence_before_paging(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("suggestion_type", ["assignment", "merge"])
-async def test_http_bulk_accept_skips_expired_rows(suggestion_type: str) -> None:
-    session = FakeSession()
-    service = _HttpSuggestionExtensionService(session)
-    now = datetime.now(tz=UTC)
-    active = SimpleNamespace(
-        expires_at=now + timedelta(hours=1),
-        resolution="pending",
-        confidence_score=0.95,
-        resolved_at=None,
-    )
-    expired = SimpleNamespace(
-        expires_at=now - timedelta(minutes=1),
-        resolution="pending",
-        confidence_score=0.97,
-        resolved_at=None,
-    )
-    session.queue_execute_result(all_rows=[active, expired])
-
-    result = await service.bulk_accept(str(uuid.uuid4()), suggestion_type=suggestion_type, min_confidence=0.8)
-
-    assert result == {"accepted_count": 1, "skipped_count": 1}
-    assert active.resolution == "accepted"
-    assert active.resolved_at is not None
-    assert expired.resolution == "pending"
-    assert expired.resolved_at is None
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("suggestion_type", ["assignment", "merge"])
 async def test_bulk_accept_endpoint_skips_expired_pending_suggestions(
     api_client, tenant_id, fake_suggestion_service, suggestion_type: str
 ) -> None:
@@ -432,7 +402,7 @@ def test_name_suggestion_list_accept_reject_and_bulk_accept(
     )
     assert bulk_resp.status_code == 200
     assert bulk_resp.json() == {"accepted_count": 1, "skipped_count": 0}
-    assert fake_suggestion_extension_service.name_suggestions[low.id].status == "accepted"
+    assert fake_suggestion_extension_service.name_suggestions[low.id].status.value == "accepted"
 
 
 def test_accept_name_suggestion_returns_404_when_not_found(

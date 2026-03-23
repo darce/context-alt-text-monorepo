@@ -16,12 +16,9 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from fastapi import Depends
-from sqlalchemy import nulls_last, or_, select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models.constraints import ClusterMergeSuggestion, IdentitySuggestion
-from db.models.constraints import NameSuggestion as NameSuggestionModel
-from db.models.identity import IdentityCluster
 from db.tenant_context import ensure_tenant_exists, set_tenant_context
 from recognition.application.assignment import AssignmentGate
 from recognition.application.discovery import CentroidDiscovery, GraphDiscovery, RepresentativeDiscovery
@@ -35,8 +32,8 @@ from recognition.application.suggestions.merge_suggestions import MergeSuggestio
 from recognition.application.suggestions.refresh_service import SuggestionRefreshService
 from recognition.application.suggestions.service import SuggestionService
 from recognition.config import get_settings as get_recognition_settings
-from recognition.domain.suggestion import NameSuggestion, SuggestedLabelSource, SuggestionStatus
 from recognition.infrastructure.embeddings import get_shared_insightface_adapter
+from recognition.infrastructure.services import SuggestionExtensionService
 from recognition.infrastructure.repositories import (
     SqlAlchemyClusterRepository,
     SqlAlchemyConstraintRepository,
@@ -139,219 +136,6 @@ class _NotImplementedAuditRepository:
         raise NotImplementedError(f"Audit repository is not implemented for tenant {tenant_id}")
 
 
-class _HttpSuggestionExtensionService:
-    """HTTP-layer implementation for name suggestion and bulk-accept flows."""
-
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
-    async def list_name_suggestions(
-        self,
-        tenant_id: str,
-        *,
-        min_confidence: float | None = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> list[NameSuggestion]:
-        tenant_uuid = self._require_uuid(tenant_id, field_name="tenant_id")
-        if min_confidence is not None and not 0.0 <= min_confidence <= 1.0:
-            raise ValueError("min_confidence must be between 0.0 and 1.0")
-
-        now = datetime.now(tz=UTC)
-        stmt = (
-            select(NameSuggestionModel)
-            .where(NameSuggestionModel.tenant_id == tenant_uuid)
-            .where(NameSuggestionModel.resolution == SuggestionStatus.PENDING.value)
-            .where(or_(NameSuggestionModel.expires_at.is_(None), NameSuggestionModel.expires_at > now))
-            .order_by(nulls_last(NameSuggestionModel.confidence_score.desc()), NameSuggestionModel.created_at.desc())
-        )
-        if min_confidence is not None:
-            stmt = stmt.where(NameSuggestionModel.confidence_score.is_not(None)).where(
-                NameSuggestionModel.confidence_score >= min_confidence
-            )
-        stmt = stmt.offset(offset).limit(limit)
-
-        result = await self._session.execute(stmt)
-        return [self._to_name_suggestion(model) for model in result.scalars().all()]
-
-    async def accept_name_suggestion(self, tenant_id: str, suggestion_id: str) -> NameSuggestion:
-        tenant_uuid = self._require_uuid(tenant_id, field_name="tenant_id")
-        suggestion = await self._get_name_suggestion(tenant_uuid=tenant_uuid, suggestion_id=suggestion_id)
-        if suggestion.resolution != SuggestionStatus.PENDING.value:
-            return self._to_name_suggestion(suggestion)
-
-        if self._is_expired(suggestion):
-            self._mark_expired(suggestion, resolved_at=datetime.now(tz=UTC))
-            await self._session.flush()
-            await self._session.refresh(suggestion)
-            return self._to_name_suggestion(suggestion)
-
-        cluster = await self._session.get(IdentityCluster, suggestion.cluster_id)
-        if cluster is None or cluster.tenant_id != tenant_uuid:
-            raise LookupError(f"cluster not found for suggestion {suggestion_id}")
-
-        resolved_at = datetime.now(tz=UTC)
-        self._apply_name_label(cluster, suggestion.suggested_name)
-        suggestion.resolution = SuggestionStatus.ACCEPTED.value
-        suggestion.resolved_at = resolved_at
-        await self._session.flush()
-        await self._session.refresh(suggestion)
-        return self._to_name_suggestion(suggestion)
-
-    async def reject_name_suggestion(self, tenant_id: str, suggestion_id: str) -> NameSuggestion:
-        tenant_uuid = self._require_uuid(tenant_id, field_name="tenant_id")
-        suggestion = await self._get_name_suggestion(tenant_uuid=tenant_uuid, suggestion_id=suggestion_id)
-        if suggestion.resolution == SuggestionStatus.PENDING.value:
-            if self._is_expired(suggestion):
-                self._mark_expired(suggestion, resolved_at=datetime.now(tz=UTC))
-            else:
-                suggestion.resolution = SuggestionStatus.REJECTED.value
-                suggestion.resolved_at = datetime.now(tz=UTC)
-            await self._session.flush()
-            await self._session.refresh(suggestion)
-        return self._to_name_suggestion(suggestion)
-
-    async def bulk_accept(
-        self,
-        tenant_id: str,
-        *,
-        suggestion_type: str,
-        min_confidence: float,
-    ) -> dict[str, int]:
-        tenant_uuid = self._require_uuid(tenant_id, field_name="tenant_id")
-        if not 0.0 <= min_confidence <= 1.0:
-            raise ValueError("min_confidence must be between 0.0 and 1.0")
-
-        if suggestion_type == "name":
-            return await self._bulk_accept_name_suggestions(tenant_uuid, min_confidence)
-        if suggestion_type == "assignment":
-            return await self._bulk_accept_rows(tenant_uuid, IdentitySuggestion, min_confidence)
-        if suggestion_type == "merge":
-            return await self._bulk_accept_rows(tenant_uuid, ClusterMergeSuggestion, min_confidence)
-        raise ValueError("suggestion_type must be one of: assignment, merge, name")
-
-    async def _bulk_accept_rows(
-        self,
-        tenant_uuid: uuid.UUID,
-        model_type: type[IdentitySuggestion] | type[ClusterMergeSuggestion],
-        min_confidence: float,
-    ) -> dict[str, int]:
-        resolved_at = datetime.now(tz=UTC)
-        stmt = (
-            select(model_type)
-            .where(model_type.tenant_id == tenant_uuid)
-            .where(model_type.resolution == SuggestionStatus.PENDING.value)
-            .where(or_(model_type.expires_at.is_(None), model_type.expires_at > resolved_at))
-            .where(model_type.confidence_score.is_not(None))
-            .where(model_type.confidence_score >= min_confidence)
-        )
-        rows = (await self._session.execute(stmt)).scalars().all()
-        accepted_count = 0
-        skipped_count = 0
-        for row in rows:
-            expires_at = getattr(row, "expires_at", None)
-            if expires_at is not None and expires_at <= resolved_at:
-                skipped_count += 1
-                continue
-            row.resolution = SuggestionStatus.ACCEPTED.value
-            row.resolved_at = resolved_at
-            accepted_count += 1
-        if accepted_count:
-            await self._session.flush()
-        return {"accepted_count": accepted_count, "skipped_count": skipped_count}
-
-    async def _bulk_accept_name_suggestions(self, tenant_uuid: uuid.UUID, min_confidence: float) -> dict[str, int]:
-        resolved_at = datetime.now(tz=UTC)
-        stmt = (
-            select(NameSuggestionModel)
-            .where(NameSuggestionModel.tenant_id == tenant_uuid)
-            .where(NameSuggestionModel.resolution == SuggestionStatus.PENDING.value)
-            .where(or_(NameSuggestionModel.expires_at.is_(None), NameSuggestionModel.expires_at > resolved_at))
-            .where(NameSuggestionModel.confidence_score.is_not(None))
-            .where(NameSuggestionModel.confidence_score >= min_confidence)
-            .order_by(NameSuggestionModel.confidence_score.desc(), NameSuggestionModel.created_at.asc())
-        )
-        suggestions = (await self._session.execute(stmt)).scalars().all()
-
-        accepted_count = 0
-        skipped_count = 0
-        seen_cluster_ids: set[str] = set()
-        for suggestion in suggestions:
-            cluster_key = str(suggestion.cluster_id)
-            if cluster_key in seen_cluster_ids:
-                skipped_count += 1
-                continue
-
-            cluster = await self._session.get(IdentityCluster, suggestion.cluster_id)
-            if cluster is None or cluster.tenant_id != tenant_uuid:
-                skipped_count += 1
-                continue
-            if cluster.user_confirmed and cluster.label and cluster.label != suggestion.suggested_name:
-                skipped_count += 1
-                continue
-
-            self._apply_name_label(cluster, suggestion.suggested_name)
-            suggestion.resolution = SuggestionStatus.ACCEPTED.value
-            suggestion.resolved_at = resolved_at
-            accepted_count += 1
-            seen_cluster_ids.add(cluster_key)
-
-        if accepted_count:
-            await self._session.flush()
-        return {"accepted_count": accepted_count, "skipped_count": skipped_count}
-
-    async def _get_name_suggestion(self, *, tenant_uuid: uuid.UUID, suggestion_id: str) -> NameSuggestionModel:
-        suggestion_uuid = self._require_uuid(suggestion_id, field_name="suggestion_id")
-        stmt = (
-            select(NameSuggestionModel)
-            .where(NameSuggestionModel.tenant_id == tenant_uuid)
-            .where(NameSuggestionModel.id == suggestion_uuid)
-        )
-        suggestion = (await self._session.execute(stmt)).scalar_one_or_none()
-        if suggestion is None:
-            raise LookupError(f"name suggestion not found: {suggestion_id}")
-        return suggestion
-
-    @staticmethod
-    def _apply_name_label(cluster: IdentityCluster, suggested_name: str) -> None:
-        cluster.label = suggested_name
-        cluster.user_confirmed = True
-        cluster.confirmation_count = int(cluster.confirmation_count or 0) + 1
-        cluster.confirmation_source = "label"
-        cluster.dismissed_at = None
-
-    @staticmethod
-    def _is_expired(suggestion: NameSuggestionModel) -> bool:
-        return suggestion.expires_at is not None and suggestion.expires_at <= datetime.now(tz=UTC)
-
-    @staticmethod
-    def _mark_expired(suggestion: NameSuggestionModel, *, resolved_at: datetime) -> None:
-        suggestion.resolution = SuggestionStatus.EXPIRED.value
-        suggestion.resolved_at = resolved_at
-
-    @staticmethod
-    def _to_name_suggestion(model: NameSuggestionModel) -> NameSuggestion:
-        return NameSuggestion(
-            id=str(model.id),
-            cluster_id=str(model.cluster_id),
-            suggested_name=model.suggested_name,
-            source=SuggestedLabelSource(model.source),
-            status=SuggestionStatus(model.resolution),
-            confidence_score=float(model.confidence_score) if model.confidence_score is not None else None,
-            source_job_id=str(model.source_job_id) if model.source_job_id is not None else None,
-            created_at=model.created_at,
-            expires_at=model.expires_at,
-            resolved_at=model.resolved_at,
-        )
-
-    @staticmethod
-    def _require_uuid(value: str, *, field_name: str) -> uuid.UUID:
-        try:
-            return uuid.UUID(str(value))
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{field_name} must be a valid UUID") from exc
-
-
 @lru_cache
 def get_settings() -> ClusteringSettings:
     """Provide clustering settings from the recognition config."""
@@ -380,9 +164,9 @@ async def get_suggestion_service(
 
 async def get_suggestion_extension_service(
     session: AsyncSession = Depends(get_session),
-) -> _HttpSuggestionExtensionService:
-    """Domain contract service for name suggestions and bulk accept flows."""
-    return _HttpSuggestionExtensionService(session)
+) -> SuggestionExtensionService:
+    """Infrastructure service for name suggestions and bulk accept flows."""
+    return SuggestionExtensionService(session)
 
 
 async def get_suggestion_refresh_service(

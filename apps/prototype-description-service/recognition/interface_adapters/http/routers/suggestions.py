@@ -14,6 +14,7 @@ from recognition.domain.cluster import IdentityCluster
 from recognition.domain.suggestion import (
     AssignmentSuggestion,
     MergeSuggestion,
+    NameSuggestion,
     SuggestionStatus,
 )
 from recognition.infrastructure.repositories import SqlAlchemyMergeSuggestionRepository
@@ -287,7 +288,7 @@ async def bulk_accept_suggestions(
         min_confidence=request.min_confidence,
     )
     await session.commit()
-    return BulkAcceptResponse(**result)
+    return BulkAcceptResponse(accepted_count=result.accepted_count, skipped_count=result.skipped_count)
 
 
 @router.post("/suggestions/merge/{suggestion_id}/accept", response_model=MergeSuggestionResponse)
@@ -423,23 +424,19 @@ def _to_response_with_details(suggestion: SuggestionDetails) -> SuggestionRespon
     )
 
 
-def _to_name_response(suggestion: object) -> NameSuggestionResponse:
+def _to_name_response(suggestion: NameSuggestion) -> NameSuggestionResponse:
     """Convert a name suggestion to the API response model."""
-    source = getattr(suggestion, "source", None)
-    status = getattr(suggestion, "status", None)
-    source_value = source.value if hasattr(source, "value") else source
-    status_value = status.value if hasattr(status, "value") else status
     return NameSuggestionResponse(
         id=suggestion.id,
         cluster_id=suggestion.cluster_id,
         suggested_name=suggestion.suggested_name,
-        source=source_value,
-        status=status_value,
-        confidence_score=getattr(suggestion, "confidence_score", None),
-        source_job_id=getattr(suggestion, "source_job_id", None),
-        created_at=getattr(suggestion, "created_at", None),
-        expires_at=getattr(suggestion, "expires_at", None),
-        resolved_at=getattr(suggestion, "resolved_at", None),
+        source=suggestion.source.value,
+        status=suggestion.status.value,
+        confidence_score=suggestion.confidence_score,
+        source_job_id=suggestion.source_job_id,
+        created_at=suggestion.created_at,
+        expires_at=suggestion.expires_at,
+        resolved_at=suggestion.resolved_at,
     )
 
 

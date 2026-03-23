@@ -85,6 +85,12 @@ _ALLOWLIST: list[re.Pattern[str]] = [
         r"^git\s+status\s+-sb\b",
         # git ls-files: read-only file listing
         r"^git\s+ls-files\b",
+        # git log: read-only history queries
+        r"^git\s+log\b",
+        r"^git\s+-C\s+\S+\s+log\b",
+        # git rev-parse: read-only SHA / path resolution
+        r"^git\s+rev-parse\b",
+        r"^git\s+-C\s+\S+\s+rev-parse\b",
         # Read-only measurement
         r"^wc\b",
     ]

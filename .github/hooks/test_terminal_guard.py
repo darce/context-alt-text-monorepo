@@ -162,6 +162,14 @@ def test_default_deny_unknown_commands(command: str) -> None:
         "export PYTHONPATH=pkg/src && pytest tests/",
         # git ls-files: read-only file listing
         "git ls-files --others --exclude-standard -- apps/prototype-description-service/",
+        # git log: read-only history queries
+        "git log --oneline -n 5",
+        "git log --format='%H %s' -n 4 | head -n 4",
+        "git -C /Users/daniel/Development/context-alt-text-monorepo log --oneline -n 5",
+        # git rev-parse: read-only SHA / path resolution
+        "git rev-parse HEAD",
+        "git rev-parse --show-toplevel",
+        "git -C /Users/daniel/Development/context-alt-text-monorepo rev-parse HEAD",
         # Read-only measurement
         "wc -l /tmp/bd_product_diff.patch",
         "wc -lw apps/prototype-description-service/recognition/domain/suggestion.py",

@@ -74,7 +74,9 @@ class SuggestionExtensionService:
         if cluster.disposed_at is not None:
             raise LookupError(f"cluster not found for suggestion {suggestion_id}")
         if not self._can_apply_name_label(cluster, suggestion.suggested_name):
-            return self._to_name_suggestion(suggestion)
+            raise ValueError(
+                f"Name label conflict: cluster already has a confirmed label that blocks suggestion {suggestion_id}"
+            )
 
         resolved_at = datetime.now(tz=UTC)
         self._apply_name_label(cluster, suggestion.suggested_name)

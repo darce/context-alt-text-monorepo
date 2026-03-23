@@ -175,6 +175,9 @@ class SuggestionResponse(BaseModel):
     suggested_label: str | None = None
     suggested_label_source: Literal["identity", "roster", "similar_cluster", "none"] | None = None
     suggested_label_confidence: float | None = None
+    confidence_score: float | None = None
+    expires_at: datetime | None = None
+    source_job_id: str | None = None
 
     @field_validator("id", "identity_id", "cluster_id")
     @classmethod

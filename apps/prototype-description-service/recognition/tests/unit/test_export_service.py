@@ -19,8 +19,10 @@ from db.models import (
     IdentityScanJobItem,
     IdentitySuggestion,
     MediaIdentity,
-    NameSuggestion as NameSuggestionModel,
     Tenant,
+)
+from db.models import (
+    NameSuggestion as NameSuggestionModel,
 )
 from recognition.domain.services.export_service import EXPORT_SCHEMA_VERSION, TenantExportService
 

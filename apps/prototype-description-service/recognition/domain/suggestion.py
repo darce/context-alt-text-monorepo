@@ -107,3 +107,5 @@ class NameSuggestion:
     created_at: datetime | None = None
     expires_at: datetime | None = None
     resolved_at: datetime | None = None
+    last_exported_snapshot_id: str | None = None
+    disposed_at: datetime | None = None

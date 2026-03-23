@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import func, select
 
-from db.models import IdentityClusterRepresentative, IdentityClusteringJob, IdentityMember, MediaIdentity, Tenant
+from db.models import IdentityClusteringJob, IdentityClusterRepresentative, IdentityMember, MediaIdentity, Tenant
 from db.models.constraints import IdentitySuggestion
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.repositories import SuggestionCreateData
@@ -407,7 +407,7 @@ async def test_upsert_updates_pending_and_skips_resolved(db_session, tenant) -> 
     assert updated.id == pending.id
     assert updated.representative_similarity == pytest.approx(0.7)
     assert updated.member_similarity == pytest.approx(0.65)
-    assert updated.source_job_id == original_source_job_id
+    assert updated.source_job_id == str(updated_source_job.id)
 
     resolved = await repo.update_status(str(tenant.id), pending.id, SuggestionStatus.ACCEPTED)
     assert resolved.status is SuggestionStatus.ACCEPTED

@@ -242,6 +242,8 @@ class FakeSuggestion:
             suggested_label=self.suggested_label,
             suggested_label_source=self.suggested_label_source,
             suggested_label_confidence=self.suggested_label_confidence,
+            expires_at=self.expires_at,
+            source_job_id=getattr(self, "source_job_id", None),
         )
 
 

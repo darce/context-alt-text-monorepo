@@ -435,6 +435,30 @@ def test_name_suggestion_list_accept_reject_and_bulk_accept(
     assert fake_suggestion_extension_service.name_suggestions[low.id].status == "accepted"
 
 
+def test_accept_name_suggestion_returns_404_when_not_found(
+    api_client, tenant_id, fake_suggestion_extension_service
+) -> None:
+    missing_id = str(uuid.uuid4())
+    resp = api_client.post(
+        f"/recognition/suggestions/name/{missing_id}/accept",
+        headers={"X-Tenant-ID": tenant_id},
+        json={"tenant_id": tenant_id},
+    )
+    assert resp.status_code == 404
+
+
+def test_reject_name_suggestion_returns_404_when_not_found(
+    api_client, tenant_id, fake_suggestion_extension_service
+) -> None:
+    missing_id = str(uuid.uuid4())
+    resp = api_client.post(
+        f"/recognition/suggestions/name/{missing_id}/reject",
+        headers={"X-Tenant-ID": tenant_id},
+        json={"tenant_id": tenant_id},
+    )
+    assert resp.status_code == 404
+
+
 @pytest.mark.asyncio
 async def test_accept_rejects_other_pending_suggestions(
     api_client, tenant_id, fake_suggestion_service, fake_cluster_service

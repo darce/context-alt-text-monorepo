@@ -300,17 +300,17 @@ class FakeSuggestionExtensionService:
             ]
         return suggestions[offset : offset + limit]
 
-    async def accept_name_suggestion(self, tenant_id: str, suggestion_id: str) -> FakeNameSuggestion | None:
+    async def accept_name_suggestion(self, tenant_id: str, suggestion_id: str) -> FakeNameSuggestion:
         suggestion = self.name_suggestions.get(suggestion_id)
         if suggestion is None:
-            return None
+            raise LookupError(f"name suggestion not found: {suggestion_id}")
         suggestion.status = "accepted"
         return suggestion
 
-    async def reject_name_suggestion(self, tenant_id: str, suggestion_id: str) -> FakeNameSuggestion | None:
+    async def reject_name_suggestion(self, tenant_id: str, suggestion_id: str) -> FakeNameSuggestion:
         suggestion = self.name_suggestions.get(suggestion_id)
         if suggestion is None:
-            return None
+            raise LookupError(f"name suggestion not found: {suggestion_id}")
         suggestion.status = "rejected"
         return suggestion
 

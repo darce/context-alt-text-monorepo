@@ -239,7 +239,7 @@ async def test_accept_name_suggestion_applies_cluster_label(db_session: AsyncSes
 
 
 @pytest.mark.asyncio
-async def test_accept_name_suggestion_ignores_stale_conflicting_label(db_session: AsyncSession, tenant: Tenant) -> None:
+async def test_accept_name_suggestion_raises_on_label_conflict(db_session: AsyncSession, tenant: Tenant) -> None:
     cluster = await _create_cluster(db_session, tenant, label="Confirmed Name", user_confirmed=True)
     cluster.confirmation_count = 2
     suggestion = NameSuggestionModel(
@@ -254,16 +254,9 @@ async def test_accept_name_suggestion_ignores_stale_conflicting_label(db_session
     await db_session.commit()
 
     service = SuggestionExtensionService(db_session)
-    accepted = await service.accept_name_suggestion(str(tenant.id), str(suggestion.id))
 
-    await db_session.refresh(cluster)
-    await db_session.refresh(suggestion)
-
-    assert accepted.status is SuggestionStatus.PENDING
-    assert cluster.label == "Confirmed Name"
-    assert cluster.user_confirmed is True
-    assert cluster.confirmation_count == 2
-    assert suggestion.resolution == SuggestionStatus.PENDING.value
+    with pytest.raises(ValueError, match="label conflict"):
+        await service.accept_name_suggestion(str(tenant.id), str(suggestion.id))
 
 
 @pytest.mark.asyncio
@@ -292,6 +285,59 @@ async def test_reject_name_suggestion_marks_row_rejected_without_changing_cluste
     assert cluster.label == "Before"
     assert cluster.user_confirmed is False
     assert suggestion.resolution == SuggestionStatus.REJECTED.value
+
+
+@pytest.mark.asyncio
+async def test_reject_name_suggestion_returns_expired_on_expired_suggestion(
+    db_session: AsyncSession, tenant: Tenant
+) -> None:
+    cluster = await _create_cluster(db_session, tenant, label="Before", user_confirmed=False)
+    suggestion = NameSuggestionModel(
+        tenant_id=tenant.id,
+        cluster_id=cluster.id,
+        suggested_name="After",
+        confidence_score=0.84,
+        source=SuggestedLabelSource.IDENTITY.value,
+        expires_at=datetime.now(tz=UTC) - timedelta(hours=1),
+    )
+    db_session.add(suggestion)
+    await db_session.commit()
+
+    service = SuggestionExtensionService(db_session)
+    result = await service.reject_name_suggestion(str(tenant.id), str(suggestion.id))
+
+    await db_session.refresh(suggestion)
+
+    assert result.status is SuggestionStatus.EXPIRED
+    assert suggestion.resolution == SuggestionStatus.EXPIRED.value
+
+
+@pytest.mark.asyncio
+async def test_reject_name_suggestion_returns_unchanged_on_already_resolved(
+    db_session: AsyncSession, tenant: Tenant
+) -> None:
+    cluster = await _create_cluster(db_session, tenant, label="Before", user_confirmed=False)
+    now = datetime.now(tz=UTC)
+    suggestion = NameSuggestionModel(
+        tenant_id=tenant.id,
+        cluster_id=cluster.id,
+        suggested_name="After",
+        confidence_score=0.84,
+        source=SuggestedLabelSource.IDENTITY.value,
+        expires_at=now + timedelta(days=1),
+        resolution=SuggestionStatus.ACCEPTED.value,
+        resolved_at=now - timedelta(hours=1),
+    )
+    db_session.add(suggestion)
+    await db_session.commit()
+
+    service = SuggestionExtensionService(db_session)
+    result = await service.reject_name_suggestion(str(tenant.id), str(suggestion.id))
+
+    await db_session.refresh(suggestion)
+
+    assert result.status is SuggestionStatus.ACCEPTED
+    assert suggestion.resolution == SuggestionStatus.ACCEPTED.value
 
 
 @pytest.mark.asyncio
@@ -372,6 +418,35 @@ async def test_bulk_accept_name_suggestions_skips_disposed_clusters(db_session: 
     assert result.skipped_count == 1
     assert active_cluster.label == "Active Name"
     assert disposed_cluster.label is None
+
+
+@pytest.mark.asyncio
+async def test_bulk_accept_name_skips_confirmed_cluster_with_conflicting_label(
+    db_session: AsyncSession, tenant: Tenant
+) -> None:
+    cluster = await _create_cluster(db_session, tenant, label="Official Name", user_confirmed=True)
+    now = datetime.now(tz=UTC)
+    suggestion = NameSuggestionModel(
+        tenant_id=tenant.id,
+        cluster_id=cluster.id,
+        suggested_name="Different Name",
+        confidence_score=0.96,
+        source=SuggestedLabelSource.IDENTITY.value,
+        expires_at=now + timedelta(days=1),
+    )
+    db_session.add(suggestion)
+    await db_session.commit()
+
+    service = SuggestionExtensionService(db_session)
+    result = await service.bulk_accept(str(tenant.id), suggestion_type="name", min_confidence=0.8)
+
+    await db_session.refresh(cluster)
+    await db_session.refresh(suggestion)
+
+    assert result.accepted_count == 0
+    assert result.skipped_count == 1
+    assert cluster.label == "Official Name"
+    assert suggestion.resolution == SuggestionStatus.PENDING.value
 
 
 @pytest.mark.asyncio

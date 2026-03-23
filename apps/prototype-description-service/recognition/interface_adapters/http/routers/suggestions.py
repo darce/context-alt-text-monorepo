@@ -218,6 +218,8 @@ async def accept_name_suggestion(
         suggestion = await suggestion_extension_service.accept_name_suggestion(request.tenant_id, suggestion_id)
     except LookupError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Name suggestion not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from None
 
     await session.commit()
     return _to_name_response(suggestion)
@@ -479,8 +481,13 @@ async def _collect_min_confidence_page[T_Suggestion](
     filtered: list[T_Suggestion] = []
     page_offset = 0
     target_count = offset + limit
+    max_batches = 10
+    batch_count = 0
 
     while len(filtered) < target_count:
+        if batch_count >= max_batches:
+            break
+        batch_count += 1
         page = list(await fetch_page(batch_size, page_offset))
         if not page:
             break

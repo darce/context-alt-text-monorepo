@@ -53,6 +53,8 @@ async def build_scan_progress_snapshot(
         phase = JobPhase.QUEUED
     elif status is JobStatus.RUNNING:
         phase = JobPhase.DETECTING
+    elif status is JobStatus.FAILED:
+        phase = JobPhase.FAILED
     else:
         phase = JobPhase.COMPLETE
 

@@ -18,11 +18,11 @@ from recognition.interface_adapters.http.job_utils import build_job_progress_res
         (JobType.ANALYZE, JobStatus.PENDING, JobPhase.QUEUED),
         (JobType.ANALYZE, JobStatus.RUNNING, JobPhase.DETECTING),
         (JobType.ANALYZE, JobStatus.COMPLETED, JobPhase.COMPLETE),
-        (JobType.ANALYZE, JobStatus.FAILED, JobPhase.COMPLETE),
+        (JobType.ANALYZE, JobStatus.FAILED, JobPhase.FAILED),
         (JobType.CLUSTERING, JobStatus.PENDING, JobPhase.QUEUED),
         (JobType.CLUSTERING, JobStatus.RUNNING, JobPhase.CLUSTERING),
         (JobType.CLUSTERING, JobStatus.COMPLETED, JobPhase.COMPLETE),
-        (JobType.CLUSTERING, JobStatus.FAILED, JobPhase.COMPLETE),
+        (JobType.CLUSTERING, JobStatus.FAILED, JobPhase.FAILED),
     ],
 )
 @pytest.mark.asyncio
@@ -96,3 +96,19 @@ async def test_build_job_progress_response_includes_clusters_created_for_cluster
     assert progress is not None
     assert progress.phase == JobPhase.CLUSTERING.value
     assert progress.clusters_created == 3
+
+
+@pytest.mark.asyncio
+async def test_build_job_progress_response_marks_failed_jobs_failed() -> None:
+    job = Job(
+        id=str(uuid.uuid4()),
+        type=JobType.CLUSTERING,
+        tenant_id="tenant",
+        status=JobStatus.FAILED,
+        progress_completed=50,
+        progress_total=194,
+    )
+
+    progress = await build_job_progress_response(job=job, scan_repo=None)
+    assert progress is not None
+    assert progress.phase == JobPhase.FAILED.value

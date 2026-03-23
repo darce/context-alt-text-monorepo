@@ -147,8 +147,37 @@ class IdentityClusteringJob(Base):
     )
 
 
+class ExportJob(Base):
+    """Tracks async tenant data export jobs."""
+
+    __tablename__ = "export_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'pending'"))
+    data_json: Mapped[dict[str, object] | None] = mapped_column(JSONB().with_variant(JSON(), "sqlite"), nullable=True)
+    file_size: Mapped[int | None] = mapped_column(BigInteger)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("2"))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    created_by_actor: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'running', 'completed', 'failed')",
+            name="valid_export_job_status",
+        ),
+        Index("idx_export_jobs_tenant", "tenant_id"),
+    )
+
+
 __all__ = [
     "IdentityScanJob",
     "IdentityScanJobItem",
     "IdentityClusteringJob",
+    "ExportJob",
 ]

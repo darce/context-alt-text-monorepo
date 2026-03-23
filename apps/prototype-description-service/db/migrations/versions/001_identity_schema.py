@@ -33,6 +33,7 @@ TENANT_TABLES = [
     "clustering_feedback",
     "audit_events",
     "curation_replay_records",
+    "export_jobs",
 ]
 
 
@@ -998,6 +999,31 @@ def upgrade() -> None:
     op.create_index("idx_audit_events_tenant_event", "audit_events", ["tenant_id", "event_type"])
     op.create_index("idx_audit_events_tenant_created", "audit_events", ["tenant_id", "created_at"])
 
+    op.create_table(
+        "export_jobs",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("status", sa.String(length=20), nullable=False, server_default=sa.text("'pending'")),
+        sa.Column("data_json", sa.dialects.postgresql.JSONB(), nullable=True),
+        sa.Column("file_size", sa.BigInteger(), nullable=True),
+        sa.Column("schema_version", sa.Integer(), nullable=False, server_default=sa.text("2")),
+        sa.Column("error_message", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("completed_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("created_by_actor", sa.Text(), nullable=True),
+        sa.CheckConstraint(
+            "status IN ('pending', 'running', 'completed', 'failed')",
+            name="valid_export_job_status",
+        ),
+    )
+    op.create_index("idx_export_jobs_tenant", "export_jobs", ["tenant_id"])
+
     for table in TENANT_TABLES:
         op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
         op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
@@ -1242,7 +1268,7 @@ def downgrade() -> None:
     op.drop_index("idx_clustering_feedback_tenant", table_name="clustering_feedback")
     op.drop_index("idx_audit_events_tenant_created", table_name="audit_events")
     op.drop_index("idx_audit_events_tenant_event", table_name="audit_events")
-    op.drop_index("idx_recognition_runs_clustering_job", table_name="recognition_runs")
+    op.drop_index("idx_export_jobs_tenant", table_name="export_jobs")
     op.drop_index("idx_recognition_runs_scan_job", table_name="recognition_runs")
     op.drop_index("idx_recognition_runs_status", table_name="recognition_runs")
     op.drop_index("idx_recognition_runs_tenant", table_name="recognition_runs")
@@ -1252,6 +1278,7 @@ def downgrade() -> None:
         op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
     op.drop_table("audit_events")
     op.drop_table("clustering_feedback")
+    op.drop_table("export_jobs")
     op.drop_table("recognition_events")
     op.drop_table("recognition_runs")
     op.drop_table("identity_cluster_blocks")

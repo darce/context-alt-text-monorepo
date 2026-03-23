@@ -24,6 +24,7 @@ from db.models.identity import (
     MediaIdentity,
 )
 from db.models.jobs import (
+    ExportJob,
     IdentityClusteringJob,
     IdentityScanJob,
     IdentityScanJobItem,
@@ -53,6 +54,7 @@ __all__ = [
     "IdentityScanJob",
     "IdentityScanJobItem",
     "IdentityClusteringJob",
+    "ExportJob",
     # Observability
     "RecognitionRun",
     "RecognitionEvent",

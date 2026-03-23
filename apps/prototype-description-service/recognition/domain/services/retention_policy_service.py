@@ -14,6 +14,13 @@ from recognition.infrastructure.repositories._helpers import coerce_uuid
 
 ALLOWED_RETENTION_MODES = ("retain_all", "dispose_after_ack", "purge_on_demand")
 
+RETENTION_PRESETS: dict[str, dict[str, str]] = {
+    "gdpr": {
+        "retention_mode": "dispose_after_ack",
+        "description": "Automatically dispose machine-derived data after WordPress acknowledgement.",
+    },
+}
+
 
 class RetentionPolicyService:
     """Reads and mutates tenant retention policy."""
@@ -175,6 +182,31 @@ class RetentionPolicyService:
             "last_purge_at": tenant.last_purge_at,
             "retention_updated_at": tenant.retention_updated_at,
         }
+
+    async def apply_preset(self, tenant_id: str, preset_name: str, actor: str) -> dict[str, object]:
+        if preset_name not in RETENTION_PRESETS:
+            raise ValueError(f"invalid preset: {preset_name!r}")
+        preset = RETENTION_PRESETS[preset_name]
+        retention_mode = preset["retention_mode"]
+
+        tenant = await self._get_tenant(tenant_id)
+        previous_mode = tenant.retention_mode
+        tenant.retention_mode = retention_mode
+        tenant.retention_updated_at = datetime.now(tz=UTC)
+        await self._session.flush()
+
+        await self._audit_service.record_event(
+            self._session,
+            tenant_id=str(tenant.id),
+            event_type="preset_applied",
+            actor=actor,
+            scope="tenant",
+            payload={"preset": preset_name, "retention_mode": retention_mode, "previous": previous_mode},
+            result_status="success",
+        )
+        await self._session.commit()
+        await self._session.refresh(tenant)
+        return {**self._serialize_policy(tenant), "preset": preset_name}
 
     @staticmethod
     def _empty_disposed_counts() -> dict[str, int]:

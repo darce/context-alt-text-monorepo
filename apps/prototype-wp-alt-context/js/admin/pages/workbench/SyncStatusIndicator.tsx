@@ -228,14 +228,14 @@ export const SyncStatusIndicator = ({
             className="button button-link"
             onClick={() => onRetryProjection?.()}
             disabled={!onRetryProjection}
-        >
-          {__('Retry sync', 'alt-context')}
-        </button>
-        {syncModeDetails}
-        {retentionDetails}
-        {curationDetails}
-        {topologyDetails}
-      </div>
+          >
+            {__('Retry sync', 'alt-context')}
+          </button>
+          {syncModeDetails}
+          {retentionDetails}
+          {curationDetails}
+          {topologyDetails}
+        </div>
       );
     }
 

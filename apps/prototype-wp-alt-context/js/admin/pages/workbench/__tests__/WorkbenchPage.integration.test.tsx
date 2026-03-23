@@ -399,50 +399,48 @@ describe('WorkbenchPage (integration-lite)', () => {
       linkName: null,
       linkHref: null,
     },
-  ])('renders sync health state $name with real sync-status data and stable panel links', async ({
-    syncStatus,
-    expectedText,
-    linkName,
-    linkHref,
-  }) => {
-    vi.mocked(recognitionApi.fetchMediaIdentities).mockResolvedValue({
-      identities_by_media: { '11': [] },
-    });
-    vi.mocked(recognitionApi.fetchPendingSuggestions).mockResolvedValue({
-      suggestions: [],
-      total: 0,
-      limit: 10,
-      offset: 0,
-    });
+  ])(
+    'renders sync health state $name with real sync-status data and stable panel links',
+    async ({ syncStatus, expectedText, linkName, linkHref }) => {
+      vi.mocked(recognitionApi.fetchMediaIdentities).mockResolvedValue({
+        identities_by_media: { '11': [] },
+      });
+      vi.mocked(recognitionApi.fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [],
+        total: 0,
+        limit: 10,
+        offset: 0,
+      });
 
-    const client = new QueryClient({
-      defaultOptions: {
-        queries: {
-          retry: false,
-          staleTime: Infinity,
-          refetchOnMount: false,
-          refetchOnWindowFocus: false,
-          refetchOnReconnect: false,
+      const client = new QueryClient({
+        defaultOptions: {
+          queries: {
+            retry: false,
+            staleTime: Infinity,
+            refetchOnMount: false,
+            refetchOnWindowFocus: false,
+            refetchOnReconnect: false,
+          },
         },
-      },
-    });
-    client.setQueryData(
-      queryKeys.media.workbenchPage({ page: 1, perPage: 10, search: '', status: 'all' }),
-      baseMediaResponse,
-    );
-    client.setQueryData(queryKeys.sync.status(), syncStatus);
-    client.setQueryData(queryKeys.media.identitiesByIds([11]), {
-      identities_by_media: { '11': [] },
-    });
+      });
+      client.setQueryData(
+        queryKeys.media.workbenchPage({ page: 1, perPage: 10, search: '', status: 'all' }),
+        baseMediaResponse,
+      );
+      client.setQueryData(queryKeys.sync.status(), syncStatus);
+      client.setQueryData(queryKeys.media.identitiesByIds([11]), {
+        identities_by_media: { '11': [] },
+      });
 
-    renderWithClient(client);
+      renderWithClient(client);
 
-    expect(await screen.findByText(expectedText)).toBeInTheDocument();
+      expect(await screen.findByText(expectedText)).toBeInTheDocument();
 
-    if (linkName && linkHref) {
-      expect(screen.getByRole('link', { name: linkName })).toHaveAttribute('href', linkHref);
-    }
-  });
+      if (linkName && linkHref) {
+        expect(screen.getByRole('link', { name: linkName })).toHaveAttribute('href', linkHref);
+      }
+    },
+  );
 
   it('renders page 2 media when the queue has multiple pages', async () => {
     const pageOneResponse = {

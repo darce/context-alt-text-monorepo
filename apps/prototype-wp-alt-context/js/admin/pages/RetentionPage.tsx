@@ -1,157 +1,35 @@
-import React, { useMemo, useState } from 'react';
+import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
-import {
-  DialogContent,
-  DialogDescription,
-  DialogOverlay,
-  DialogPortal,
-  DialogRoot,
-  DialogTitle,
-} from '../../components/ui/dialog';
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group';
-import type { AuditEvent, RetentionExportResponse, RetentionMode } from '../api/recognition';
-import {
-  useExportTenantData,
-  usePurgeTenantData,
-  useRetentionStatus,
-  useUpdateRetentionPolicy,
-} from '../hooks/useRetentionStatus';
-import { useToast } from '../context/ToastContext';
-
-const RETENTION_CONFIRM_PHRASE = 'PURGE';
-
-const RETENTION_OPTIONS: { value: RetentionMode; label: string; description: string }[] = [
-  {
-    value: 'retain_all',
-    label: __('Retain all', 'alt-context'),
-    description: __('Keep embeddings and clustering state until an operator explicitly changes policy.', 'alt-context'),
-  },
-  {
-    value: 'dispose_after_ack',
-    label: __('Dispose after acknowledgement', 'alt-context'),
-    description: __('Mark machine-derived working state for disposal once WordPress acknowledges projection.', 'alt-context'),
-  },
-  {
-    value: 'purge_on_demand',
-    label: __('Purge on demand', 'alt-context'),
-    description: __('Retain state until an operator triggers a purge action from this page.', 'alt-context'),
-  },
-];
-
-const PURGE_SCOPE_OPTIONS: { value: 'disposed' | 'all'; label: string; description: string }[] = [
-  {
-    value: 'disposed',
-    label: __('Disposed only', 'alt-context'),
-    description: __('Delete rows already marked disposed after acknowledgement.', 'alt-context'),
-  },
-  {
-    value: 'all',
-    label: __('All machine data', 'alt-context'),
-    description: __('Delete all tenant embeddings, clusters, representatives, and related machine state.', 'alt-context'),
-  },
-];
-
-const formatTimestamp = (value: string | null | undefined): string =>
-  value ? new Date(value).toLocaleString() : __('Never', 'alt-context');
-
-const summarizeAuditPayload = (event: AuditEvent): string => {
-  const entries = Object.entries(event.payload ?? {}).filter(([, value]) => value !== null && value !== '');
-  if (entries.length === 0) {
-    return __('No payload details recorded.', 'alt-context');
-  }
-
-  return entries
-    .slice(0, 3)
-    .map(([key, value]) => `${key}: ${String(value)}`)
-    .join(' · ');
-};
-
-const downloadExportPayload = (response: RetentionExportResponse): void => {
-  const exportDocument = {
-    ...(response.tenant_id ? { tenant_id: response.tenant_id } : {}),
-    ...(response.exported_at ? { exported_at: response.exported_at } : {}),
-    ...(typeof response.schema_version === 'number' ? { schema_version: response.schema_version } : {}),
-    counts: response.summary,
-    data: response.payload,
-  };
-  const blob = new Blob([JSON.stringify(exportDocument, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = `alt-context-retention-export-${new Date().toISOString()}.json`;
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-};
+import type { RetentionMode } from '../api/recognition';
+import { useRetentionPageState, RETENTION_OPTIONS } from './retention/useRetentionPageState';
+import { ExportDialog, PurgeDialog, ImportDialog } from './retention/RetentionDialogs';
+import { RecentAuditEvents, FullAuditLog, formatTimestamp } from './retention/AuditTimeline';
 
 export const RetentionPage = (): React.JSX.Element => {
-  const { success, error: showError } = useToast();
-  const retentionQuery = useRetentionStatus();
-  const updatePolicy = useUpdateRetentionPolicy();
-  const exportMutation = useExportTenantData();
-  const purgeMutation = usePurgeTenantData();
-
-  const [draftMode, setDraftMode] = useState<RetentionMode | null>(null);
-  const [isExportDialogOpen, setExportDialogOpen] = useState(false);
-  const [isPurgeDialogOpen, setPurgeDialogOpen] = useState(false);
-  const [purgeScope, setPurgeScope] = useState<'disposed' | 'all'>('disposed');
-  const [purgeConfirmation, setPurgeConfirmation] = useState('');
-
-  const status = retentionQuery.data;
-  const policy = status?.policy ?? null;
-  const selectedMode = draftMode ?? policy?.retention_mode ?? 'retain_all';
-  const isPolicyDirty = Boolean(policy && selectedMode !== policy.retention_mode);
-  const auditEvents = status?.recent_audit_events ?? [];
-
-  const modeDescription = useMemo(
-    () => RETENTION_OPTIONS.find((option) => option.value === selectedMode)?.description ?? '',
-    [selectedMode],
-  );
-
-  const savePolicy = async (): Promise<void> => {
-    if (!policy || !isPolicyDirty) {
-      return;
-    }
-
-    try {
-      await updatePolicy.mutateAsync({ retention_mode: selectedMode });
-      setDraftMode(null);
-      success(__('Retention policy updated.', 'alt-context'));
-    } catch (error) {
-      showError(error instanceof Error ? error.message : __('Unable to update retention policy.', 'alt-context'));
-    }
-  };
-
-  const confirmExport = async (): Promise<void> => {
-    try {
-      const response = await exportMutation.mutateAsync();
-      downloadExportPayload(response);
-      setExportDialogOpen(false);
-      success(__('Tenant export generated and downloaded.', 'alt-context'));
-    } catch (error) {
-      showError(error instanceof Error ? error.message : __('Unable to export tenant data.', 'alt-context'));
-    }
-  };
-
-  const confirmPurge = async (): Promise<void> => {
-    try {
-      await purgeMutation.mutateAsync({ scope: purgeScope, confirm: true });
-      setPurgeDialogOpen(false);
-      setPurgeConfirmation('');
-      setPurgeScope('disposed');
-      success(__('Tenant purge completed.', 'alt-context'));
-    } catch (error) {
-      showError(error instanceof Error ? error.message : __('Unable to purge tenant data.', 'alt-context'));
-    }
-  };
+  const {
+    state,
+    dispatch,
+    importFileRef,
+    retentionQuery,
+    auditQuery,
+    exportJobStatus,
+    status,
+    policy,
+    selectedMode,
+    isPolicyDirty,
+    auditEvents,
+    modeDescription,
+    pending,
+    actions,
+  } = useRetentionPageState();
 
   if (retentionQuery.isLoading) {
     return (
       <section className="acx-retention" aria-labelledby="acx-retention-title">
         <h1 id="acx-retention-title">{__('Retention & Audit Controls', 'alt-context')}</h1>
-        <p>{__('Loading retention status…', 'alt-context')}</p>
+        <p>{__('Loading retention status\u2026', 'alt-context')}</p>
       </section>
     );
   }
@@ -170,7 +48,7 @@ export const RetentionPage = (): React.JSX.Element => {
         </header>
         <section className="acx-dashboard__panel acx-retention__panel">
           <h2>{__('Backend unavailable', 'alt-context')}</h2>
-          <p>{__('Backend unavailable — retention status cannot be loaded.', 'alt-context')}</p>
+          <p>{__('Backend unavailable \u2014 retention status cannot be loaded.', 'alt-context')}</p>
           <button
             type="button"
             className="acx-button acx-button--secondary"
@@ -202,7 +80,7 @@ export const RetentionPage = (): React.JSX.Element => {
             className="acx-retention__options"
             aria-label={__('Retention mode', 'alt-context')}
             value={selectedMode}
-            onValueChange={(value) => setDraftMode(value as RetentionMode)}
+            onValueChange={(value) => dispatch({ type: 'SET_DRAFT_MODE', mode: value as RetentionMode })}
           >
             {RETENTION_OPTIONS.map((option) => (
               <label key={option.value} className="acx-retention__option">
@@ -221,152 +99,140 @@ export const RetentionPage = (): React.JSX.Element => {
           <button
             type="button"
             className="acx-button acx-button--primary"
-            disabled={!isPolicyDirty || updatePolicy.isPending}
-            onClick={() => void savePolicy()}
+            disabled={!isPolicyDirty || pending.updatePolicy}
+            onClick={() => void actions.savePolicy()}
           >
-            {updatePolicy.isPending ? __('Saving…', 'alt-context') : __('Save policy', 'alt-context')}
+            {pending.updatePolicy ? __('Saving\u2026', 'alt-context') : __('Save policy', 'alt-context')}
           </button>
         </section>
 
         <section className="acx-dashboard__panel acx-retention__panel">
+          <h2>{__('Compliance presets', 'alt-context')}</h2>
+          <p>
+            {__(
+              'Apply a preset to configure recommended retention settings for common compliance scenarios.',
+              'alt-context',
+            )}
+          </p>
+          <div className="acx-retention__presets">
+            <div className="acx-retention__preset-card">
+              <strong>{__('GDPR mode', 'alt-context')}</strong>
+              <p>
+                {__(
+                  'Sets retention mode to \u201cDispose after acknowledgement\u201d, automatically disposing machine-derived data after WordPress acknowledges projection.',
+                  'alt-context',
+                )}
+              </p>
+              <button
+                type="button"
+                className="acx-button acx-button--secondary"
+                disabled={pending.applyPreset}
+                onClick={() => void actions.applyGdprPreset()}
+              >
+                {pending.applyPreset
+                  ? __('Applying\u2026', 'alt-context')
+                  : __('Apply GDPR preset', 'alt-context')}
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section className="acx-dashboard__panel acx-retention__panel">
           <h2>{__('Export controls', 'alt-context')}</h2>
-          <p>{__('Export clusters, members, detection metadata, and representative details as portable JSON.', 'alt-context')}</p>
+          <p>
+            {__(
+              'Export clusters, members, detection metadata, and representative details as portable JSON.',
+              'alt-context',
+            )}
+          </p>
           <p className="acx-retention__detail">
             {sprintf(__('Last export: %s', 'alt-context'), formatTimestamp(policy.last_export_at))}
           </p>
           <p className="acx-retention__note">
             {__('Raw embedding vectors are excluded from exports.', 'alt-context')}
           </p>
-          <button type="button" className="acx-button acx-button--secondary" onClick={() => setExportDialogOpen(true)}>
+          <button
+            type="button"
+            className="acx-button acx-button--secondary"
+            onClick={() => dispatch({ type: 'OPEN_EXPORT_DIALOG' })}
+          >
             {__('Export data', 'alt-context')}
           </button>
         </section>
 
         <section className="acx-dashboard__panel acx-retention__panel">
           <h2>{__('Purge controls', 'alt-context')}</h2>
-          <p>{__('Purge permanently deletes disposed state or all machine-derived tenant data from the backend.', 'alt-context')}</p>
+          <p>
+            {__(
+              'Purge permanently deletes disposed state or all machine-derived tenant data from the backend.',
+              'alt-context',
+            )}
+          </p>
           <p className="acx-retention__detail">
             {sprintf(__('Last purge: %s', 'alt-context'), formatTimestamp(policy.last_purge_at))}
           </p>
           <p className="acx-retention__note acx-retention__note--danger">
             {__('This action is irreversible and should be used carefully.', 'alt-context')}
           </p>
-          <button type="button" className="acx-button acx-button--danger" onClick={() => setPurgeDialogOpen(true)}>
+          <button
+            type="button"
+            className="acx-button acx-button--danger"
+            onClick={() => dispatch({ type: 'OPEN_PURGE_DIALOG' })}
+          >
             {__('Purge data', 'alt-context')}
           </button>
         </section>
 
-        <section className="acx-dashboard__panel acx-retention__panel acx-retention__panel--wide">
-          <div className="acx-retention__panel-header">
-            <h2 id="retention-audit-history">{__('Recent audit events', 'alt-context')}</h2>
-            <span className="acx-retention__detail">
-              {__('Showing the five most recent audit events.', 'alt-context')}
-            </span>
-          </div>
-          {auditEvents.length === 0 ? (
-            <p>{__('No audit events recorded yet.', 'alt-context')}</p>
-          ) : (
-            <ol className="acx-retention__timeline">
-              {auditEvents.map((event) => (
-                <li key={event.id} className="acx-retention__timeline-item">
-                  <div className="acx-retention__timeline-heading">
-                    <strong>{event.event_type}</strong>
-                    <span>{formatTimestamp(event.created_at)}</span>
-                  </div>
-                  <p>{sprintf(__('Actor: %1$s · Result: %2$s', 'alt-context'), event.actor, event.result_status)}</p>
-                  <p>{summarizeAuditPayload(event)}</p>
-                </li>
-              ))}
-            </ol>
-          )}
+        <section className="acx-dashboard__panel acx-retention__panel">
+          <h2>{__('Import controls', 'alt-context')}</h2>
+          <p>
+            {__(
+              'Restore tenant state from a previously exported JSON file. The import validates schema compatibility and records a lifecycle audit event.',
+              'alt-context',
+            )}
+          </p>
+          <p className="acx-retention__note">
+            {__('Raw embedding vectors are not included in exports and will not be restored.', 'alt-context')}
+          </p>
+          <button
+            type="button"
+            className="acx-button acx-button--secondary"
+            onClick={() => dispatch({ type: 'OPEN_IMPORT_DIALOG' })}
+          >
+            {__('Import data', 'alt-context')}
+          </button>
         </section>
+
+        <RecentAuditEvents events={auditEvents} />
+        <FullAuditLog auditQuery={auditQuery} auditPage={state.auditPage} dispatch={dispatch} />
       </div>
 
-      <DialogRoot open={isExportDialogOpen} onOpenChange={setExportDialogOpen}>
-        <DialogPortal>
-          <DialogOverlay />
-          <DialogContent>
-            <DialogTitle>{__('Export tenant data', 'alt-context')}</DialogTitle>
-            <DialogDescription>
-              {__('This export includes clusters, members, detection metadata, and representative details. Raw embedding vectors are excluded.', 'alt-context')}
-            </DialogDescription>
-            <div className="acx-dialog__actions">
-              <button
-                type="button"
-                className="acx-button acx-button--secondary"
-                onClick={() => setExportDialogOpen(false)}
-                disabled={exportMutation.isPending}
-              >
-                {__('Cancel', 'alt-context')}
-              </button>
-              <button
-                type="button"
-                className="acx-button acx-button--primary"
-                onClick={() => void confirmExport()}
-                disabled={exportMutation.isPending}
-              >
-                {exportMutation.isPending ? __('Exporting…', 'alt-context') : __('Download export', 'alt-context')}
-              </button>
-            </div>
-          </DialogContent>
-        </DialogPortal>
-      </DialogRoot>
-
-      <DialogRoot open={isPurgeDialogOpen} onOpenChange={setPurgeDialogOpen}>
-        <DialogPortal>
-          <DialogOverlay />
-          <DialogContent>
-            <DialogTitle>{__('Purge tenant data', 'alt-context')}</DialogTitle>
-            <DialogDescription>
-              {__('Choose whether to purge only disposed state or all machine-derived tenant data. This cannot be undone.', 'alt-context')}
-            </DialogDescription>
-            <RadioGroup
-              className="acx-retention__dialog-fieldset"
-              aria-label={__('Purge scope', 'alt-context')}
-              value={purgeScope}
-              onValueChange={(value) => setPurgeScope(value as 'disposed' | 'all')}
-            >
-              {PURGE_SCOPE_OPTIONS.map((option) => (
-                <label key={option.value} className="acx-retention__option">
-                  <RadioGroupItem value={option.value} aria-label={option.label} />
-                  <span>
-                    <strong>{option.label}</strong>
-                    <small>{option.description}</small>
-                  </span>
-                </label>
-              ))}
-            </RadioGroup>
-            <label className="acx-retention__confirm-input">
-              <span>
-                {sprintf(__('Type %s to confirm this purge.', 'alt-context'), RETENTION_CONFIRM_PHRASE)}
-              </span>
-              <input
-                type="text"
-                value={purgeConfirmation}
-                onChange={(event) => setPurgeConfirmation(event.target.value)}
-              />
-            </label>
-            <div className="acx-dialog__actions">
-              <button
-                type="button"
-                className="acx-button acx-button--secondary"
-                onClick={() => setPurgeDialogOpen(false)}
-                disabled={purgeMutation.isPending}
-              >
-                {__('Cancel', 'alt-context')}
-              </button>
-              <button
-                type="button"
-                className="acx-button acx-button--danger"
-                onClick={() => void confirmPurge()}
-                disabled={purgeMutation.isPending || purgeConfirmation !== RETENTION_CONFIRM_PHRASE}
-              >
-                {purgeMutation.isPending ? __('Purging…', 'alt-context') : __('Confirm purge', 'alt-context')}
-              </button>
-            </div>
-          </DialogContent>
-        </DialogPortal>
-      </DialogRoot>
+      <ExportDialog
+        open={state.isExportDialogOpen}
+        dispatch={dispatch}
+        exportJobId={state.exportJobId}
+        exportJobStatus={exportJobStatus}
+        isExportPending={pending.export}
+        isDownloadPending={pending.download}
+        onStartExport={() => void actions.confirmExport()}
+        onDownloadExport={() => void actions.downloadExport()}
+      />
+      <PurgeDialog
+        open={state.isPurgeDialogOpen}
+        dispatch={dispatch}
+        purgeScope={state.purgeScope}
+        purgeConfirmation={state.purgeConfirmation}
+        isPurgePending={pending.purge}
+        onConfirmPurge={() => void actions.confirmPurge()}
+      />
+      <ImportDialog
+        open={state.isImportDialogOpen}
+        dispatch={dispatch}
+        importFile={state.importFile}
+        importFileRef={importFileRef}
+        isImportPending={pending.import}
+        onConfirmImport={() => void actions.confirmImport()}
+      />
     </section>
   );
 };

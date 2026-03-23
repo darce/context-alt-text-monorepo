@@ -18,6 +18,8 @@ export interface PendingSuggestion {
   representative_similarity: number;
   avg_member_similarity?: number;
   confidence_score?: number;
+  expires_at?: string | null;
+  source_job_id?: string | null;
   resolution?: string;
   created_at?: string;
   resolved_at?: string | null;
@@ -82,6 +84,9 @@ export interface PendingMergeSuggestion {
   cluster_b_id: string;
   similarity: number;
   status: string;
+  confidence_score?: number | null;
+  expires_at?: string | null;
+  source_job_id?: string | null;
   cluster_a_label?: string | null;
   cluster_b_label?: string | null;
   cluster_a_identity_count?: number | null;

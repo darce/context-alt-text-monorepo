@@ -307,6 +307,181 @@ class RetentionControllerTest extends TestCase
         $this->assertSame('retention_sync_refresh_failed', $response->get_error_code());
         $this->assertSame('failed', $response->get_error_data()['sync_status'] ?? null);
     }
+
+    public function testTriggerImportRejectsMissingDataField(): void
+    {
+        $controller = new RetentionController();
+        $request = new WP_REST_Request('POST', '/acx/v1/retention/import');
+        $request->set_body_params(['not_data' => []]);
+
+        $response = $controller->trigger_import($request);
+
+        $this->assertTrue(is_wp_error($response));
+        $this->assertSame('retention_import_invalid_body', $response->get_error_code());
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testTriggerImportRejectsNonArrayDataField(): void
+    {
+        $controller = new RetentionController();
+        $request = new WP_REST_Request('POST', '/acx/v1/retention/import');
+        $request->set_body_params(['data' => 'not-an-array']);
+
+        $response = $controller->trigger_import($request);
+
+        $this->assertTrue(is_wp_error($response));
+        $this->assertSame('retention_import_invalid_body', $response->get_error_code());
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testTriggerImportProxiesDataToBackend(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => 'abc123',
+                'schema_version' => 2,
+                'imported_at' => '2026-03-23T10:00:00Z',
+                'counts' => ['clusters' => 1],
+            ]),
+        ]);
+
+        $controller = new RetentionController();
+        $request = new WP_REST_Request('POST', '/acx/v1/retention/import');
+        $request->set_body_params(['data' => ['schema_version' => 2, 'clusters' => []]]);
+
+        $response = $controller->trigger_import($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('/retention/import', $calls[0]['url']);
+        $this->assertSame(
+            json_encode(['data' => ['schema_version' => 2, 'clusters' => []]]),
+            $calls[0]['args']['body']
+        );
+    }
+
+    public function testTriggerImportInvalidatesCacheAfterSuccess(): void
+    {
+        $tenantId = md5((string) \get_site_url());
+        set_transient('acx_retention_status_' . $tenantId, ['available' => true], 60);
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'tenant_id' => 'abc123',
+                'schema_version' => 2,
+                'imported_at' => '2026-03-23T10:00:00Z',
+                'counts' => [],
+            ]),
+        ]);
+
+        $controller = new RetentionController();
+        $request = new WP_REST_Request('POST', '/acx/v1/retention/import');
+        $request->set_body_params(['data' => ['schema_version' => 2]]);
+
+        $controller->trigger_import($request);
+
+        $this->assertFalse(isset($GLOBALS['__ac_transients']['acx_retention_status_' . $tenantId]));
+    }
+
+    public function testListAuditEventsForwardsLimitOffsetAndEventType(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode(['items' => [], 'total' => 0, 'limit' => 10, 'offset' => 5]),
+        ]);
+
+        $controller = new RetentionController();
+        $request = new WP_REST_Request('GET', '/acx/v1/retention/audit');
+        $request->set_param('limit', '10');
+        $request->set_param('offset', '5');
+        $request->set_param('event_type', 'export_completed');
+
+        $response = $controller->list_audit_events($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('/retention/audit', $calls[0]['url']);
+        $this->assertStringContainsString('limit=10', $calls[0]['url']);
+        $this->assertStringContainsString('offset=5', $calls[0]['url']);
+        $this->assertStringContainsString('event_type=export_completed', $calls[0]['url']);
+    }
+
+    public function testListAuditEventsOmitsUnsetOptionalParams(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode(['items' => [], 'total' => 0, 'limit' => 20, 'offset' => 0]),
+        ]);
+
+        $controller = new RetentionController();
+        $request = new WP_REST_Request('GET', '/acx/v1/retention/audit');
+
+        $response = $controller->list_audit_events($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $url = $this->getHttpCalls()[0]['url'];
+        $this->assertStringNotContainsString('event_type', $url);
+    }
+
+    public function testApplyPresetRejectsMissingPresetField(): void
+    {
+        $controller = new RetentionController();
+        $request = new WP_REST_Request('POST', '/acx/v1/retention/policy/preset');
+        $request->set_body_params(['preset' => '']);
+
+        $response = $controller->apply_preset($request);
+
+        $this->assertInstanceOf(WP_Error::class, $response);
+        $this->assertSame('missing_preset', $response->get_error_code());
+    }
+
+    public function testApplyPresetProxiesPresetToBackend(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'retention_mode' => 'dispose_after_ack',
+                'preset'         => 'gdpr',
+            ]),
+        ]);
+
+        $controller = new RetentionController();
+        $request = new WP_REST_Request('POST', '/acx/v1/retention/policy/preset');
+        $request->set_body_params(['preset' => 'gdpr']);
+
+        $response = $controller->apply_preset($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('/retention/policy/preset', $calls[0]['url']);
+        $this->assertSame('POST', $calls[0]['args']['method']);
+        $this->assertSame('{"preset":"gdpr"}', $calls[0]['args']['body']);
+    }
+
+    public function testApplyPresetInvalidatesCacheAfterSuccess(): void
+    {
+        $tenantId = md5((string) \get_site_url());
+        set_transient('acx_retention_status_' . $tenantId, ['available' => true], 60);
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode(['retention_mode' => 'dispose_after_ack', 'preset' => 'gdpr']),
+        ]);
+
+        $controller = new RetentionController();
+        $request = new WP_REST_Request('POST', '/acx/v1/retention/policy/preset');
+        $request->set_body_params(['preset' => 'gdpr']);
+
+        $controller->apply_preset($request);
+
+        $this->assertFalse(isset($GLOBALS['__ac_transients']['acx_retention_status_' . $tenantId]));
+    }
 }
 
 class RetentionControllerSyncPullJobSpy implements SyncPullJobInterface

@@ -70,7 +70,10 @@ export const fetchConflictDetail = async (id: number): Promise<ConflictDetailRes
   });
 };
 
-export const resolveConflict = async (id: number, request: ResolveConflictRequest): Promise<ResolveConflictResponse> => {
+export const resolveConflict = async (
+  id: number,
+  request: ResolveConflictRequest,
+): Promise<ResolveConflictResponse> => {
   const endpoint = buildResourceEndpoint(getEndpoint('recognitionConflicts'), id, 'resolve');
   return fetchRequiredApi<ResolveConflictResponse>(endpoint, {
     method: 'POST',
@@ -80,9 +83,7 @@ export const resolveConflict = async (id: number, request: ResolveConflictReques
   });
 };
 
-export const fetchFailedOutboxOperations = async (
-  params: FailedOutboxListParams = {},
-): Promise<OutboxListResponse> => {
+export const fetchFailedOutboxOperations = async (params: FailedOutboxListParams = {}): Promise<OutboxListResponse> => {
   const endpoint = withQuery(getEndpoint('recognitionFailedOutbox'), {
     limit: params.limit,
     offset: params.offset,

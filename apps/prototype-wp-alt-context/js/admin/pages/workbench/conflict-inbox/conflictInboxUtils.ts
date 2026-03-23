@@ -146,7 +146,11 @@ export const getResolutionConfirmation = (conflict: ConflictRecord, choice: Conf
         );
   }
 
-  if ((choice === 'accepted' || choice === 'accept_backend') && conflict.outbox_id > 0 && conflict.entity_type === 'cluster') {
+  if (
+    (choice === 'accepted' || choice === 'accept_backend') &&
+    conflict.outbox_id > 0 &&
+    conflict.entity_type === 'cluster'
+  ) {
     if (typeof conflict.local_payload.target_cluster_id === 'string') {
       return __(
         'Accepting the machine version removes the temporary restored cluster, reassigns the listed members back to the machine target cluster, and discards the local revert operation.',
@@ -160,7 +164,11 @@ export const getResolutionConfirmation = (conflict: ConflictRecord, choice: Conf
     );
   }
 
-  if ((choice === 'accepted' || choice === 'accept_backend') && conflict.outbox_id > 0 && conflict.entity_type === 'member') {
+  if (
+    (choice === 'accepted' || choice === 'accept_backend') &&
+    conflict.outbox_id > 0 &&
+    conflict.entity_type === 'member'
+  ) {
     if (typeof conflict.local_payload.desired_cluster_id === 'string') {
       return __(
         'Accepting the machine version moves this identity back to the backend-selected cluster, removes the locally created cluster, and discards the local topology operation.',
@@ -228,7 +236,10 @@ export const getAcceptBackendPreview = (conflict: ConflictRecord): AcceptPreview
 
   if (conflict.conflict_code === 'member_cluster_reassignment') {
     return {
-      summary: __('Accepting the machine version reassigns the member to the machine cluster and clears curation.', 'alt-context'),
+      summary: __(
+        'Accepting the machine version reassigns the member to the machine cluster and clears curation.',
+        'alt-context',
+      ),
       payload: {
         ...conflict.machine_payload,
         is_curated: false,
@@ -242,7 +253,10 @@ export const getAcceptBackendPreview = (conflict: ConflictRecord): AcceptPreview
       typeof conflict.local_payload.desired_source_cluster_id === 'string'
     ) {
       return {
-        summary: __('Accepting the machine version removes the temporary restored cluster and moves the listed members back into the machine target cluster.', 'alt-context'),
+        summary: __(
+          'Accepting the machine version removes the temporary restored cluster and moves the listed members back into the machine target cluster.',
+          'alt-context',
+        ),
         payload: {
           target_cluster_id: conflict.local_payload.target_cluster_id,
           removed_cluster_id: conflict.local_payload.desired_source_cluster_id,
@@ -252,7 +266,10 @@ export const getAcceptBackendPreview = (conflict: ConflictRecord): AcceptPreview
     }
 
     return {
-      summary: __('Accepting the machine version resets the cluster to backend state and clears local curation guards.', 'alt-context'),
+      summary: __(
+        'Accepting the machine version resets the cluster to backend state and clears local curation guards.',
+        'alt-context',
+      ),
       payload: {
         ...conflict.machine_payload,
         label: null,
@@ -266,7 +283,10 @@ export const getAcceptBackendPreview = (conflict: ConflictRecord): AcceptPreview
   if (conflict.outbox_id > 0 && conflict.entity_type === 'member') {
     if (typeof conflict.local_payload.desired_cluster_id === 'string') {
       return {
-        summary: __('Accepting the machine version restores the member to the backend-selected cluster and removes the locally created cluster.', 'alt-context'),
+        summary: __(
+          'Accepting the machine version restores the member to the backend-selected cluster and removes the locally created cluster.',
+          'alt-context',
+        ),
         payload: {
           ...conflict.machine_payload,
           removed_cluster_id: conflict.local_payload.desired_cluster_id,
@@ -276,7 +296,10 @@ export const getAcceptBackendPreview = (conflict: ConflictRecord): AcceptPreview
     }
 
     return {
-      summary: __('Accepting the machine version restores the member to the backend-selected cluster and clears local curation on that assignment.', 'alt-context'),
+      summary: __(
+        'Accepting the machine version restores the member to the backend-selected cluster and clears local curation on that assignment.',
+        'alt-context',
+      ),
       payload: {
         ...conflict.machine_payload,
         is_curated: false,

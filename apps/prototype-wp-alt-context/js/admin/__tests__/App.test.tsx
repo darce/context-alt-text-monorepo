@@ -4,6 +4,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { App, determineInitialRoute } from '../App';
 import {
+  useDownloadExportJobData,
+  useExportJobStatus,
   useExportTenantData,
   usePurgeTenantData,
   useRetentionStatus,
@@ -40,6 +42,8 @@ vi.mock('../hooks/useRetentionStatus', () => ({
   useRetentionStatus: vi.fn(),
   useUpdateRetentionPolicy: vi.fn(),
   useExportTenantData: vi.fn(),
+  useExportJobStatus: vi.fn(),
+  useDownloadExportJobData: vi.fn(),
   usePurgeTenantData: vi.fn(),
 }));
 
@@ -55,6 +59,8 @@ describe('App route boot', () => {
   const mockedUseRetentionStatus = vi.mocked(useRetentionStatus);
   const mockedUseUpdateRetentionPolicy = vi.mocked(useUpdateRetentionPolicy);
   const mockedUseExportTenantData = vi.mocked(useExportTenantData);
+  const mockedUseExportJobStatus = vi.mocked(useExportJobStatus);
+  const mockedUseDownloadExportJobData = vi.mocked(useDownloadExportJobData);
   const mockedUsePurgeTenantData = vi.mocked(usePurgeTenantData);
   const updateMutateAsync = vi.fn();
   const originalHash = window.location.hash;
@@ -95,6 +101,8 @@ describe('App route boot', () => {
       }),
     );
     mockedUseExportTenantData.mockReturnValue(createMockMutation());
+    mockedUseExportJobStatus.mockReturnValue(createMockQuery());
+    mockedUseDownloadExportJobData.mockReturnValue(createMockMutation());
     mockedUsePurgeTenantData.mockReturnValue(createMockMutation());
   });
 

@@ -212,11 +212,7 @@ export const Combobox = ({
                 {emptyMessage ?? emptyText}
                 {onCreate && inputValue && (
                   <div className="acx-combobox__create">
-                    <button
-                      type="button"
-                      className="acx-button acx-button--small"
-                      onClick={handleCreateOption}
-                    >
+                    <button type="button" className="acx-button acx-button--small" onClick={handleCreateOption}>
                       {sprintf(__('Create "%s"', 'alt-context'), inputValue)}
                     </button>
                   </div>

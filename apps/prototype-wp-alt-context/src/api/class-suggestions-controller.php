@@ -107,6 +107,70 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
 			)
 		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/suggestions/name',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'list_name_suggestions' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+				'args'                => array(
+					'min_confidence' => array(
+						'type'    => 'number',
+						'default' => 0.0,
+					),
+					'limit'          => array(
+						'type'    => 'integer',
+						'default' => 25,
+					),
+					'offset'         => array(
+						'type'    => 'integer',
+						'default' => 0,
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/suggestions/name/(?P<suggestion_id>[a-f0-9-]+)/accept',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'accept_name_suggestion' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/suggestions/name/(?P<suggestion_id>[a-f0-9-]+)/reject',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'reject_name_suggestion' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/suggestions/bulk-accept',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'bulk_accept_suggestions' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+				'args'                => array(
+					'suggestion_type' => array(
+						'type'     => 'string',
+						'required' => true,
+					),
+					'min_confidence'  => array(
+						'type'    => 'number',
+						'default' => 0.0,
+					),
+				),
+			)
+		);
 	}
 
 	public function get_identity_suggestions( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -250,6 +314,101 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			sprintf( '/recognition/suggestions/merge/%s/reject', $suggestion_id ),
 			$payload
 		);
+	}
+
+	public function list_name_suggestions( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$query = array(
+			'tenant_id'      => $this->get_tenant_id(),
+			'min_confidence' => (float) ( $request->get_param( 'min_confidence' ) ?? 0.0 ),
+			'limit'          => absint( $request->get_param( 'limit' ) ?? 25 ),
+			'offset'         => absint( $request->get_param( 'offset' ) ?? 0 ),
+		);
+
+		$response = $this->proxy_request(
+			'GET',
+			'/recognition/suggestions/name',
+			array(),
+			$query
+		);
+		if ( $this->is_proxy_unavailable( $response ) ) {
+			return new WP_REST_Response(
+				array(
+					'suggestions' => array(),
+					'total'       => 0,
+					'limit'       => (int) $query['limit'],
+					'offset'      => (int) $query['offset'],
+				),
+				200
+			);
+		}
+
+		return $response;
+	}
+
+	public function accept_name_suggestion( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$suggestion_id = sanitize_text_field( (string) $request->get_param( 'suggestion_id' ) );
+
+		if ( '' === $suggestion_id ) {
+			return new WP_Error( 'missing_suggestion_id', 'Suggestion ID is required.', array( 'status' => 400 ) );
+		}
+
+		$payload = array(
+			'tenant_id' => $this->get_tenant_id(),
+		);
+
+		return $this->proxy_request(
+			'POST',
+			sprintf( '/recognition/suggestions/name/%s/accept', $suggestion_id ),
+			$payload
+		);
+	}
+
+	public function reject_name_suggestion( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$suggestion_id = sanitize_text_field( (string) $request->get_param( 'suggestion_id' ) );
+
+		if ( '' === $suggestion_id ) {
+			return new WP_Error( 'missing_suggestion_id', 'Suggestion ID is required.', array( 'status' => 400 ) );
+		}
+
+		$payload = array(
+			'tenant_id' => $this->get_tenant_id(),
+		);
+
+		return $this->proxy_request(
+			'POST',
+			sprintf( '/recognition/suggestions/name/%s/reject', $suggestion_id ),
+			$payload
+		);
+	}
+
+	public function bulk_accept_suggestions( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$suggestion_type = sanitize_text_field( (string) ( $request->get_param( 'suggestion_type' ) ?? '' ) );
+		if ( '' === $suggestion_type ) {
+			return new WP_Error( 'missing_suggestion_type', 'Suggestion type is required.', array( 'status' => 400 ) );
+		}
+
+		$payload = array(
+			'tenant_id'       => $this->get_tenant_id(),
+			'suggestion_type' => $suggestion_type,
+			'min_confidence'  => (float) ( $request->get_param( 'min_confidence' ) ?? 0.0 ),
+		);
+
+		$response = $this->proxy_request(
+			'POST',
+			'/recognition/suggestions/bulk-accept',
+			$payload
+		);
+		if ( $this->is_proxy_unavailable( $response ) ) {
+			return new WP_REST_Response(
+				array(
+					'accepted_count' => 0,
+					'skipped_count'  => 0,
+				),
+				200
+			);
+		}
+
+		return $response;
 	}
 
 	private function empty_pending_suggestions_response( int $limit, int $offset ): WP_REST_Response {

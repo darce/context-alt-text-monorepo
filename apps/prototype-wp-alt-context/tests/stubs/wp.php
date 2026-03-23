@@ -95,6 +95,14 @@ if (!class_exists('WP_REST_Request')) {
         }
 
         /**
+         * @return array<string,mixed>|null
+         */
+        public function get_json_params(): ?array
+        {
+            return $this->bodyParams ?: null;
+        }
+
+        /**
          * @param array<string,mixed> $params
          */
         public function set_body_params(array $params): void

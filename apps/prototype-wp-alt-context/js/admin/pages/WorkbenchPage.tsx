@@ -95,11 +95,7 @@ const WorkbenchPageContent = (): React.JSX.Element => {
                     ? __('Conflict Inbox', 'alt-context')
                     : __('Dead-Letter Queue', 'alt-context')}
                 </h2>
-                <button
-                  type="button"
-                  className="button button-link"
-                  onClick={() => setActiveOverlay(null)}
-                >
+                <button type="button" className="button button-link" onClick={() => setActiveOverlay(null)}>
                   {__('Close', 'alt-context')}
                 </button>
               </div>

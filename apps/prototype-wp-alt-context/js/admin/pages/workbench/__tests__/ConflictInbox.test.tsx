@@ -188,7 +188,11 @@ describe('ConflictInbox', () => {
     expect(screen.getByText('Conflict Detail')).toBeInTheDocument();
     expect(screen.getByText('Differing fields')).toBeInTheDocument();
     expect(screen.getByText('Accept backend preview')).toBeInTheDocument();
-    expect(screen.getByText('Accepting the machine version resets the cluster to backend state and clears local curation guards.')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Accepting the machine version resets the cluster to backend state and clears local curation guards.',
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText('confidence')).toBeInTheDocument();
     expect(screen.getByText('Machine: 0.91')).toBeInTheDocument();
     expect(screen.getByText('Local: 0.63')).toBeInTheDocument();
@@ -225,7 +229,9 @@ describe('ConflictInbox', () => {
         'Accepting the machine version deletes the curated cluster and 3 attached member rows still linked to it.',
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText('Accepting the machine version removes this cluster from the local projection.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Accepting the machine version removes this cluster from the local projection.'),
+    ).toBeInTheDocument();
   });
 
   it('shows member delete preview without a synthesized payload', () => {
@@ -247,7 +253,9 @@ describe('ConflictInbox', () => {
     renderInbox();
     fireEvent.click(screen.getByRole('button', { name: 'Review conflict' }));
 
-    expect(screen.getByText('Accepting the machine version removes this member from the local projection.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Accepting the machine version removes this member from the local projection.'),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/"is_curated": false/)).not.toBeInTheDocument();
   });
 
@@ -271,7 +279,9 @@ describe('ConflictInbox', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Review conflict' }));
 
     expect(
-      screen.getByText('Accepting the machine version reassigns the member to the machine cluster and clears curation.'),
+      screen.getByText(
+        'Accepting the machine version reassigns the member to the machine cluster and clears curation.',
+      ),
     ).toBeInTheDocument();
     expect(screen.getAllByText(/"cluster_uuid": "cluster-remote"/)).toHaveLength(2);
     expect(screen.getByText(/"is_curated": false/)).toBeInTheDocument();
@@ -463,7 +473,9 @@ describe('ConflictInbox', () => {
       });
     });
 
-    expect(screen.getByText('Conflict resolved. Trigger sync now to converge local state with the backend.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Conflict resolved. Trigger sync now to converge local state with the backend.'),
+    ).toBeInTheDocument();
   });
 
   it('limits batch actions to the shared allowed resolutions across the current selection', () => {
@@ -584,7 +596,9 @@ describe('ConflictInbox', () => {
       });
     });
 
-    expect(screen.getByText('Conflict resolved. Trigger sync now to converge local state with the backend.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Conflict resolved. Trigger sync now to converge local state with the backend.'),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
     expect(triggerSync).toHaveBeenCalledTimes(1);
   });

@@ -8,4 +8,3 @@ export const useConflicts = (params: ConflictListParams = {}) =>
     queryKey: queryKeys.conflicts.list(params),
     queryFn: () => fetchConflicts(params),
   });
-

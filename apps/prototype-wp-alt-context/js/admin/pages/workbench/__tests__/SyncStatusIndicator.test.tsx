@@ -14,9 +14,7 @@ const buildSyncStatus = (overrides: Partial<SyncStatusResponse> = {}): SyncStatu
   ...overrides,
 });
 
-const buildSyncTriggerResponse = (
-  overrides: Partial<SyncTriggerResponse> = {},
-): SyncTriggerResponse => ({
+const buildSyncTriggerResponse = (overrides: Partial<SyncTriggerResponse> = {}): SyncTriggerResponse => ({
   synced: false,
   reason: 'sync_failed',
   last_snapshot_version: 0,

@@ -1,11 +1,18 @@
 import { fetchRequiredApi } from '../../utils/http';
 import { getConfig } from '../config';
 import type {
+  ApplyRetentionPresetRequest,
+  ApplyRetentionPresetResponse,
+  AuditEventListResponse,
+  ExportJobStatusResponse,
+  ImportTenantDataRequest,
+  ImportTenantDataResponse,
   PurgeTenantDataRequest,
   PurgeTenantDataResponse,
   RetentionExportResponse,
   RetentionPolicy,
   RetentionStatusResponse,
+  StartExportJobResponse,
   UpdateRetentionPolicyRequest,
 } from './types';
 
@@ -75,9 +82,7 @@ export const fetchRetentionStatus = async (): Promise<RetentionStatusResponse> =
   });
 };
 
-export const updateRetentionPolicy = async (
-  request: UpdateRetentionPolicyRequest,
-): Promise<RetentionPolicy> => {
+export const updateRetentionPolicy = async (request: UpdateRetentionPolicyRequest): Promise<RetentionPolicy> => {
   const endpoint = requireRetentionEndpoint('retentionPolicy');
   return fetchRequiredApi<RetentionPolicy>(endpoint, {
     method: 'PATCH',
@@ -86,21 +91,77 @@ export const updateRetentionPolicy = async (
   });
 };
 
-export const exportTenantData = async (): Promise<RetentionExportResponse> => {
+export const exportTenantData = async (): Promise<StartExportJobResponse> => {
   const endpoint = requireRetentionEndpoint('retentionExport');
-  const response = await fetchRequiredApi<unknown>(endpoint, {
+  return fetchRequiredApi<StartExportJobResponse>(endpoint, {
     method: 'POST',
+    restNonce: getConfig().nonce,
+  });
+};
+
+export const getExportJobStatus = async (jobId: string): Promise<ExportJobStatusResponse> => {
+  const base = requireRetentionEndpoint('retentionExport');
+  return fetchRequiredApi<ExportJobStatusResponse>(`${base}/${jobId}/status`, {
+    method: 'GET',
+    restNonce: getConfig().nonce,
+  });
+};
+
+export const downloadExportJobData = async (jobId: string): Promise<RetentionExportResponse> => {
+  const base = requireRetentionEndpoint('retentionExport');
+  const response = await fetchRequiredApi<unknown>(`${base}/${jobId}/data`, {
+    method: 'GET',
     restNonce: getConfig().nonce,
   });
 
   return normalizeExportResponse(response);
 };
 
-export const purgeTenantData = async (
-  request: PurgeTenantDataRequest,
-): Promise<PurgeTenantDataResponse> => {
+export const purgeTenantData = async (request: PurgeTenantDataRequest): Promise<PurgeTenantDataResponse> => {
   const endpoint = requireRetentionEndpoint('retentionPurge');
   return fetchRequiredApi<PurgeTenantDataResponse>(endpoint, {
+    method: 'POST',
+    body: request,
+    restNonce: getConfig().nonce,
+  });
+};
+
+export const importTenantData = async (request: ImportTenantDataRequest): Promise<ImportTenantDataResponse> => {
+  const endpoint = requireRetentionEndpoint('retentionImport');
+  return fetchRequiredApi<ImportTenantDataResponse>(endpoint, {
+    method: 'POST',
+    body: request,
+    restNonce: getConfig().nonce,
+  });
+};
+
+export const fetchAuditEvents = async (params: {
+  limit?: number;
+  offset?: number;
+  event_type?: string;
+}): Promise<AuditEventListResponse> => {
+  const endpoint = requireRetentionEndpoint('retentionAudit');
+  const url = new URL(endpoint);
+  if (params.limit !== undefined) {
+    url.searchParams.set('limit', String(params.limit));
+  }
+  if (params.offset !== undefined) {
+    url.searchParams.set('offset', String(params.offset));
+  }
+  if (params.event_type) {
+    url.searchParams.set('event_type', params.event_type);
+  }
+  return fetchRequiredApi<AuditEventListResponse>(url.toString(), {
+    method: 'GET',
+    restNonce: getConfig().nonce,
+  });
+};
+
+export const applyRetentionPreset = async (
+  request: ApplyRetentionPresetRequest,
+): Promise<ApplyRetentionPresetResponse> => {
+  const endpoint = requireRetentionEndpoint('retentionPolicy');
+  return fetchRequiredApi<ApplyRetentionPresetResponse>(`${endpoint}/preset`, {
     method: 'POST',
     body: request,
     restNonce: getConfig().nonce,

@@ -49,7 +49,10 @@ export const ConflictInbox = (): React.JSX.Element => {
       dispatch({ type: 'setShowSyncNow', value: true });
     } catch {
       dispatch({ type: 'setShowSyncNow', value: false });
-      dispatch({ type: 'setResolutionError', value: __('Unable to resolve this conflict. Please try again.', 'alt-context') });
+      dispatch({
+        type: 'setResolutionError',
+        value: __('Unable to resolve this conflict. Please try again.', 'alt-context'),
+      });
     }
   };
 
@@ -134,7 +137,10 @@ export const ConflictInbox = (): React.JSX.Element => {
       dispatch({ type: 'setShowSyncNow', value: true });
     } catch {
       dispatch({ type: 'setShowSyncNow', value: false });
-      dispatch({ type: 'setResolutionError', value: __('Unable to resolve the selected conflicts. Please try again.', 'alt-context') });
+      dispatch({
+        type: 'setResolutionError',
+        value: __('Unable to resolve the selected conflicts. Please try again.', 'alt-context'),
+      });
     }
   };
 
@@ -153,14 +159,7 @@ export const ConflictInbox = (): React.JSX.Element => {
   return (
     <section aria-label="Conflict inbox">
       <h3>{__('Open conflicts', 'alt-context')}</h3>
-      <p>
-        {sprintf(
-          __('Showing %1$d-%2$d of %3$d open conflicts.', 'alt-context'),
-          rangeStart,
-          rangeEnd,
-          total,
-        )}
-      </p>
+      <p>{sprintf(__('Showing %1$d-%2$d of %3$d open conflicts.', 'alt-context'), rangeStart, rangeEnd, total)}</p>
       {canSelectAll ? (
         <div className="acx-dashboard__actions">
           <div className="acx-dashboard__actions">

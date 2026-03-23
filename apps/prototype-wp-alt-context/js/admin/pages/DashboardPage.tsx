@@ -259,18 +259,24 @@ export const DashboardPage = (): React.JSX.Element => {
             <>
               <div className="acx-dashboard__stats-grid">
                 <div className="acx-dashboard__stat">
-                  <span className="acx-dashboard__stat-value acx-dashboard__stat-value--compact">{retentionModeLabel}</span>
+                  <span className="acx-dashboard__stat-value acx-dashboard__stat-value--compact">
+                    {retentionModeLabel}
+                  </span>
                   <span className="acx-dashboard__stat-label">{__('Current Mode', 'alt-context')}</span>
                 </div>
                 <div className="acx-dashboard__stat">
                   <span className="acx-dashboard__stat-value acx-dashboard__stat-value--compact">
-                    {retentionPolicy.last_export_at ? new Date(retentionPolicy.last_export_at).toLocaleDateString() : __('Never', 'alt-context')}
+                    {retentionPolicy.last_export_at
+                      ? new Date(retentionPolicy.last_export_at).toLocaleDateString()
+                      : __('Never', 'alt-context')}
                   </span>
                   <span className="acx-dashboard__stat-label">{__('Last Export', 'alt-context')}</span>
                 </div>
                 <div className="acx-dashboard__stat">
                   <span className="acx-dashboard__stat-value acx-dashboard__stat-value--compact">
-                    {retentionPolicy.last_purge_at ? new Date(retentionPolicy.last_purge_at).toLocaleDateString() : __('Never', 'alt-context')}
+                    {retentionPolicy.last_purge_at
+                      ? new Date(retentionPolicy.last_purge_at).toLocaleDateString()
+                      : __('Never', 'alt-context')}
                   </span>
                   <span className="acx-dashboard__stat-label">{__('Last Purge', 'alt-context')}</span>
                 </div>
@@ -306,7 +312,12 @@ export const DashboardPage = (): React.JSX.Element => {
               ) : null}
             </>
           ) : (
-            <p>{__('No recent recognition batches yet. Start from the analysis queue when you are ready.', 'alt-context')}</p>
+            <p>
+              {__(
+                'No recent recognition batches yet. Start from the analysis queue when you are ready.',
+                'alt-context',
+              )}
+            </p>
           )}
           <div className="acx-dashboard__actions">
             <a href="#/workbench?tab=scan" className="acx-dashboard__action-card">

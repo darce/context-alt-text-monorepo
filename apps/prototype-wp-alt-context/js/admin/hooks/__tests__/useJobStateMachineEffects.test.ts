@@ -89,16 +89,13 @@ describe('useJobStateMachineEffects', () => {
 
   it('records projection sync failures and retries when the nonce changes', async () => {
     const options = buildBaseOptions();
-    const syncMutateAsync = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('Waiting for service…'))
-      .mockResolvedValueOnce({
-        synced: true,
-        reason: 'ok',
-        last_snapshot_version: 123,
-        last_synced_at: '2026-03-09T10:00:00Z',
-        is_stale: false,
-      });
+    const syncMutateAsync = vi.fn().mockRejectedValueOnce(new Error('Waiting for service…')).mockResolvedValueOnce({
+      synced: true,
+      reason: 'ok',
+      last_snapshot_version: 123,
+      last_synced_at: '2026-03-09T10:00:00Z',
+      is_stale: false,
+    });
     const acknowledgeMutateAsync = vi.fn().mockResolvedValue({ status: 'acknowledged', snapshot_version: 123 });
 
     options.syncTrigger = { mutateAsync: syncMutateAsync } as never;

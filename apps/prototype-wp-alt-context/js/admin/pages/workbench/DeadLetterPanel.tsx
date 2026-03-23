@@ -55,10 +55,7 @@ const INITIAL_STATE: DeadLetterPanelState = {
   mutationError: null,
 };
 
-const deadLetterPanelReducer = (
-  state: DeadLetterPanelState,
-  action: DeadLetterPanelAction,
-): DeadLetterPanelState => {
+const deadLetterPanelReducer = (state: DeadLetterPanelState, action: DeadLetterPanelAction): DeadLetterPanelState => {
   switch (action.type) {
     case 'setOffset':
       return { ...state, offset: action.offset };
@@ -149,7 +146,10 @@ export const DeadLetterPanel = (): React.JSX.Element => {
       dispatch({ type: 'setNotice', notice: __('Operation moved back to pending replay.', 'alt-context') });
     } catch {
       dispatch({ type: 'setNotice', notice: null });
-      dispatch({ type: 'setMutationError', error: __('Unable to retry this operation. Please try again.', 'alt-context') });
+      dispatch({
+        type: 'setMutationError',
+        error: __('Unable to retry this operation. Please try again.', 'alt-context'),
+      });
     }
   };
 
@@ -167,7 +167,10 @@ export const DeadLetterPanel = (): React.JSX.Element => {
       dispatch({ type: 'setNotice', notice: __('Operation discarded from dead-letter queue.', 'alt-context') });
     } catch {
       dispatch({ type: 'setNotice', notice: null });
-      dispatch({ type: 'setMutationError', error: __('Unable to discard this operation. Please try again.', 'alt-context') });
+      dispatch({
+        type: 'setMutationError',
+        error: __('Unable to discard this operation. Please try again.', 'alt-context'),
+      });
     }
   };
 
@@ -206,14 +209,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
   return (
     <section aria-label="Dead-letter panel">
       <h3>{__('Failed replay operations', 'alt-context')}</h3>
-      <p>
-        {sprintf(
-          __('Showing %1$d-%2$d of %3$d failed operations.', 'alt-context'),
-          rangeStart,
-          rangeEnd,
-          total,
-        )}
-      </p>
+      <p>{sprintf(__('Showing %1$d-%2$d of %3$d failed operations.', 'alt-context'), rangeStart, rangeEnd, total)}</p>
       {notice ? (
         <div className="acx-notice acx-notice--info">
           <p>{notice}</p>
@@ -275,13 +271,26 @@ export const DeadLetterPanel = (): React.JSX.Element => {
                       <div>
                         <strong>{formatOperationType(operation.operation_type)}</strong>
                         <p>{sprintf(__('Status: %s', 'alt-context'), formatStatusLabel(operation.status))}</p>
-                        <p>{sprintf(__('Entity: %1$s (%2$s)', 'alt-context'), operation.entity_key, operation.entity_type)}</p>
+                        <p>
+                          {sprintf(
+                            __('Entity: %1$s (%2$s)', 'alt-context'),
+                            operation.entity_key,
+                            operation.entity_type,
+                          )}
+                        </p>
                         <p>{sprintf(__('Created: %s', 'alt-context'), formatTimestamp(operation.created_at))}</p>
                         {operation.last_attempted_at ? (
-                          <p>{sprintf(__('Last attempted: %s', 'alt-context'), formatTimestamp(operation.last_attempted_at))}</p>
+                          <p>
+                            {sprintf(
+                              __('Last attempted: %s', 'alt-context'),
+                              formatTimestamp(operation.last_attempted_at),
+                            )}
+                          </p>
                         ) : null}
                         {operation.acknowledged_at ? (
-                          <p>{sprintf(__('Acknowledged: %s', 'alt-context'), formatTimestamp(operation.acknowledged_at))}</p>
+                          <p>
+                            {sprintf(__('Acknowledged: %s', 'alt-context'), formatTimestamp(operation.acknowledged_at))}
+                          </p>
                         ) : null}
                       </div>
                     </li>
@@ -323,9 +332,13 @@ export const DeadLetterPanel = (): React.JSX.Element => {
                 <li key={operation.id} className="acx-dashboard__activity-item">
                   <div>
                     <strong>{formatOperationType(operation.operation_type)}</strong>
-                    <p>{sprintf(__('Entity: %1$s (%2$s)', 'alt-context'), operation.entity_key, operation.entity_type)}</p>
+                    <p>
+                      {sprintf(__('Entity: %1$s (%2$s)', 'alt-context'), operation.entity_key, operation.entity_type)}
+                    </p>
                     <p>{sprintf(__('Attempts: %d', 'alt-context'), operation.attempts)}</p>
-                    <p>{sprintf(__('Last attempted: %s', 'alt-context'), formatTimestamp(operation.last_attempted_at))}</p>
+                    <p>
+                      {sprintf(__('Last attempted: %s', 'alt-context'), formatTimestamp(operation.last_attempted_at))}
+                    </p>
                     <p>{sprintf(__('Error: %s', 'alt-context'), formatErrorSummary(operation))}</p>
                     {payloadSummary ? <p>{payloadSummary}</p> : null}
                   </div>

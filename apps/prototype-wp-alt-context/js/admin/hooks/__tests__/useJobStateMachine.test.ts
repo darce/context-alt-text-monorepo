@@ -221,5 +221,4 @@ describe('useJobStateMachine', () => {
       expect(invalidateQueries).toHaveBeenCalled();
     });
   });
-
 });

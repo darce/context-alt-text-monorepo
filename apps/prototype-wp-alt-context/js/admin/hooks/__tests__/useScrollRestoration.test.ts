@@ -9,9 +9,7 @@ vi.mock('react-router-dom', () => ({
 
 describe('useScrollRestoration', () => {
   const originalScrollY = window.scrollY;
-  const buildLocation = (
-    overrides: Partial<ReturnType<typeof useLocation>> = {}
-  ): ReturnType<typeof useLocation> =>
+  const buildLocation = (overrides: Partial<ReturnType<typeof useLocation>> = {}): ReturnType<typeof useLocation> =>
     ({
       pathname: '/test-route',
       search: '?tab=scan',
@@ -90,7 +88,7 @@ describe('useScrollRestoration', () => {
         pathname: '/new-route',
         search: '',
         key: 'test-key-2',
-      })
+      }),
     );
 
     // Re-render

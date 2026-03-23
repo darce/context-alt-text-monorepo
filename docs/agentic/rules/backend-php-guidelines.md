@@ -1,4 +1,9 @@
-# Backend PHP Guidelines (WordPress Plugin)
+# Backend PHP Guidelines (WordPress Plugin) -- Project Conventions
+
+> **Library reference**: Use ctx7 to fetch current docs for WordPress hooks, WP_REST_API,
+> and PHPUnit listed in
+> [../maps/tech-stack.md](../maps/tech-stack.md#php-plugin) before starting work.
+> This file covers only project-specific conventions.
 
 > Load this document when working on PHP code in `apps/prototype-wp-alt-context/src/`.
 

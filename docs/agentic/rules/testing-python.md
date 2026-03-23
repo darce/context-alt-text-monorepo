@@ -1,15 +1,11 @@
-# Python Testing (pytest)
+# Python Testing (pytest) -- Project Conventions
+
+> **Library reference**: Use ctx7 to fetch current docs for `pytest`, `pytest-asyncio`,
+> `httpx`, and `sqlalchemy` listed in
+> [../maps/tech-stack.md](../maps/tech-stack.md#backend-python) before starting work.
+> This file covers only project-specific conventions.
 
 > Load this document when writing or reviewing tests in `apps/prototype-description-service/`. Start with [testing-principles.md](testing-principles.md) for universal concepts.
-
----
-
-## Framework Stack
-
-- **Test runner**: pytest
-- **Async testing**: pytest-asyncio
-- **HTTP client testing**: httpx.AsyncClient with FastAPI TestClient
-- **Database**: SQLAlchemy with in-memory SQLite or PostgreSQL test container
 
 ---
 
@@ -17,52 +13,23 @@
 
 ### Explicit Synchronization Over Sleep
 
-```python
-# BAD: Timing-based waits are flaky
-await asyncio.sleep(0.05)
-assert subscriber.received_event
-
-# GOOD: Wait for explicit condition with timeout
-await asyncio.wait_for(event_queue.get(), timeout=1.0)
-```
+Use `asyncio.wait_for(coro, timeout=N)` instead of `asyncio.sleep()`. Timing-based waits are flaky and non-deterministic.
 
 ### Exact Assertions in Integration Tests
 
-```python
-# BAD: Broad assertions allow regressions
-assert clusters_created >= 1
-
-# GOOD: Use deterministic fixtures for exact counts
-assert clusters_created == 3
-```
+Use deterministic fixtures for exact counts: `assert clusters_created == 3`, not `>= 1`.
 
 ### Test Mock Defaults Match Production Defaults
 
-```python
-# BAD: Mock returns different default than production
-repo.get_curriculum_t = AsyncMock(return_value=0.0)  # Production default is 0.5!
-
-# GOOD: Match production defaults explicitly
-repo.get_curriculum_t = AsyncMock(return_value=0.5)  # Matches schema default
-```
+Mock return values must match production defaults. For example: `AsyncMock(return_value=0.5)` not `0.0`; the `curriculum_t` field defaults to `0.5` in the schema.
 
 ---
 
-## Python Fake Pattern
+## Python Fake Pattern (Project Standard)
 
-### Domain Interface
-
-```python
-# Domain interface (in domain/repositories.py)
-class ClusterRepository(Protocol):
-    async def get(self, cluster_id: UUID) -> IdentityCluster | None: ...
-    async def save(self, cluster: IdentityCluster) -> None: ...
-```
-
-### Fake for Service Tests
+Use in-memory fakes for service layer tests. Keep fakes configurable, not hardcoded:
 
 ```python
-# Fake for service tests (in tests/fakes.py)
 class FakeClusterRepository:
     def __init__(self) -> None:
         self._clusters: dict[UUID, IdentityCluster] = {}
@@ -74,17 +41,15 @@ class FakeClusterRepository:
         self._clusters[cluster.id] = cluster
 ```
 
-### Configurable Fakes, Not False Positives
+Bad pattern -- always-None fakes produce false-positive passing tests:
 
 ```python
-# BAD: Always returns None
-class FakeSession:
-    async def get(self, *a, **kw): return None
+# BAD
+async def get(self, *a, **kw): return None
 
-# GOOD: Configurable
+# GOOD: configurable
 class FakeSession:
-    def __init__(self, data=None):
-        self._data = data
+    def __init__(self, data=None): self._data = data
     async def get(self, *a, **kw): return self._data
 ```
 
@@ -95,13 +60,6 @@ class FakeSession:
 ### Use One Injection Strategy Per Dependency
 
 Do not use both `app.dependency_overrides[dep]` and `monkeypatch.setattr(module, "dep", ...)` for the same dependency. Prefer FastAPI's `dependency_overrides` for endpoint-injected deps.
-
-```python
-# GOOD: Override via FastAPI dependency system
-app.dependency_overrides[get_cluster_repo] = lambda: FakeClusterRepository()
-
-# AVOID mixing with monkeypatch for the same dependency
-```
 
 ### Path Parameter Names Must Not Collide With Dependency Query Parameters
 
@@ -119,8 +77,6 @@ AssertionError: Cannot use `Query` for path param 'param_name'
 # BAD: {tenant_id} collides with tenant_id: Query in get_session dep chain
 @router.get("/tenants/{tenant_id}/clusters/snapshot")
 async def snapshot(tenant_id: str, repo=Depends(get_cluster_repository)): ...
-#                                        ^^ get_cluster_repository -> get_session
-#                                           -> get_tenant_id_optional(tenant_id: Query)
 
 # GOOD: {tenant_uuid} avoids the reserved name
 @router.get("/tenants/{tenant_uuid}/clusters/snapshot")

@@ -1,4 +1,9 @@
-# Backend Python Guidelines (FastAPI/Recognition Service)
+# Backend Python Guidelines (FastAPI/Recognition Service) -- Project Conventions
+
+> **Library reference**: Use ctx7 to fetch current docs for FastAPI, SQLAlchemy, Pydantic,
+> and pytest listed in
+> [../maps/tech-stack.md](../maps/tech-stack.md#backend-python) before starting work.
+> This file covers only project-specific conventions.
 
 > Load this document when working on Python code in `apps/prototype-description-service/`.
 

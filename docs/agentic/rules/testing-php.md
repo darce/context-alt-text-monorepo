@@ -1,4 +1,8 @@
-# PHP Testing (PHPUnit)
+# PHP Testing (PHPUnit) -- Project Conventions
+
+> **Library reference**: Use ctx7 to fetch current docs for PHPUnit and WP_Mock listed in
+> [../maps/tech-stack.md](../maps/tech-stack.md#php-plugin) before starting work.
+> This file covers only project-specific conventions.
 
 > Load this document when writing or reviewing tests in `apps/prototype-wp-alt-context/src/` and `apps/prototype-wp-alt-context/tests/`. Start with [testing-principles.md](testing-principles.md) for universal concepts.
 
@@ -121,6 +125,7 @@ These controllers combine sync-specific repositories/services (`ConflictReposito
 ### Outbox entry assertions
 
 When testing operations that enqueue outbox entries (reassign, merge, label), assert:
+
 1. The entry was written with the correct `operation_type` (for example `identity_reassigned`, `cluster_merged`, `assign_outlier_to_cluster`)
 2. The payload contains required fields per the topology contract
 3. The entry status is `pending`

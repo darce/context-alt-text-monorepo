@@ -133,12 +133,12 @@ tables (decisions, review findings, blockers, and next actions) stored in `hando
 
 Four FTS5 virtual tables are maintained in `handoff.db` alongside the canonical tables:
 
-| FTS table | Source table | Indexed body | Status column |
-|---|---|---|---|
-| `decisions_fts` | `decisions` | `decision || ' ' || COALESCE(rationale, '')` | no |
-| `findings_fts` | `review_findings` | `description || ' ' || COALESCE(fix, '')` | yes |
-| `blockers_fts` | `blockers` | `description` | yes |
-| `actions_fts` | `next_actions` | `action` | yes |
+| FTS table       | Source table      | Indexed body  | Status column |
+| --------------- | ----------------- | ------------- | ------------- | --- | --- | ------------------------ | --- |
+| `decisions_fts` | `decisions`       | `decision     |               | ' ' |     | COALESCE(rationale, '')` | no  |
+| `findings_fts`  | `review_findings` | `description  |               | ' ' |     | COALESCE(fix, '')`       | yes |
+| `blockers_fts`  | `blockers`        | `description` | yes           |
+| `actions_fts`   | `next_actions`    | `action`      | yes           |
 
 All tables use `tokenize='porter unicode61'`, `record_id UNINDEXED`, `task_ref UNINDEXED`, and
 `lane_id UNINDEXED` so that scope filters (`task_ref`, `lane_id`) are fast equality lookups
@@ -151,6 +151,7 @@ automatically. UPDATE triggers follow the DELETE-then-INSERT pattern to prevent 
 triggers use `CREATE TRIGGER IF NOT EXISTS` so they are schema-idempotent.
 
 `_ensure_handoff_fts(conn)` is called on every `_get_db_connection()` call. It:
+
 1. Probes FTS5 availability (CREATE/DROP `_fts5_handoff_probe`); silently returns on failure.
 2. Creates the four FTS5 virtual tables if not already present.
 3. Creates the twelve triggers if not already present.
@@ -223,7 +224,6 @@ agent-handoff-mcp --workspace-root <repo> handoff-search \
 - FTS5 tables not initialized (FTS5 unavailable): returns `{"ok": false, "error": "..."}`. Run
   `doctor` to diagnose.
 
-
 ## Request Shape Notes
 
 - Write tools target the active task only.
@@ -289,7 +289,7 @@ Lane manifests at `config/lane-orchestration/<task-ref>.json` support these hard
 
 ### BackendAdapter Protocol
 
-All execution backends MUST implement the `BackendAdapter` protocol defined in `scripts/mcp/backend_adapter.py`. This ensures consistent handling of `execute()` and `resolve_reasoning_effort()` across Codex, Claude, and local models.
+All execution backends MUST implement the `BackendAdapter` protocol defined in `scripts/mcp/backend_registry.py`. This ensures consistent handling of `execute()` and `resolve_reasoning_effort()` across Codex, Claude, and local models.
 
 ### Tool Signatures (Implementation Details)
 
@@ -448,11 +448,11 @@ Controlled via `RuntimeConfig`. Contract-frozen defaults:
 
 Content is chunked by `content_type` before FTS5 indexing:
 
-| `content_type`       | Strategy                                                      |
-| -------------------- | ------------------------------------------------------------- |
-| `text/markdown`      | Split at H1/H2/H3 headings; heading text becomes chunk title  |
-| `text/plain`         | Fixed groups of 50 lines; no title                            |
-| `application/json`   | Top-level keys (object) or top-level list elements (array)    |
+| `content_type`     | Strategy                                                     |
+| ------------------ | ------------------------------------------------------------ |
+| `text/markdown`    | Split at H1/H2/H3 headings; heading text becomes chunk title |
+| `text/plain`       | Fixed groups of 50 lines; no title                           |
+| `application/json` | Top-level keys (object) or top-level list elements (array)   |
 
 ### Deduplication
 
@@ -475,13 +475,13 @@ Content is chunked by `content_type` before FTS5 indexing:
 
 Base prompt sections are subject to per-section item caps (hardcoded in `lane_prompt.py`):
 
-| Section | Default cap | Requires flag |
-|---|---|---|
-| Assignment items (open actions, briefs) | 12 | — |
-| Dependency brief items | 6 | — |
-| Lane decision items | 4 | `--include-lane-history` |
-| Lane test result items | 4 | `--include-lane-history` |
-| Global / task-wide context items | 6 | `--include-global-context` |
+| Section                                 | Default cap | Requires flag              |
+| --------------------------------------- | ----------- | -------------------------- |
+| Assignment items (open actions, briefs) | 12          | —                          |
+| Dependency brief items                  | 6           | —                          |
+| Lane decision items                     | 4           | `--include-lane-history`   |
+| Lane test result items                  | 4           | `--include-lane-history`   |
+| Global / task-wide context items        | 6           | `--include-global-context` |
 
 `--include-lane-history` and `--include-global-context` are both off by default. When omitted, the rendered prompt includes a "Context Budget" section that tells the model explicitly why those sections are absent (to preserve tokens), and how to request them if manual inspection is needed.
 

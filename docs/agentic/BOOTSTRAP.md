@@ -151,7 +151,7 @@ authoritative checkout. `run_structured_turn` is bridge-only and rejects
 Example CLI equivalents:
 
 ```bash
-105: agent-handoff-mcp --workspace-root "$(pwd)" orchestrator-start --task-ref <task-ref> --backend codex-cli --model o3-mini
+agent-handoff-mcp --workspace-root "$(pwd)" orchestrator-start --task-ref <task-ref> --backend codex-cli --model o3-mini
 agent-handoff-mcp --workspace-root "$(pwd)" orchestrator-status
 agent-handoff-mcp --workspace-root "$(pwd)" orchestrator-pause
 agent-handoff-mcp --workspace-root "$(pwd)" orchestrator-resume

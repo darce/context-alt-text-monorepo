@@ -450,7 +450,7 @@ async def test_bulk_accept_name_skips_confirmed_cluster_with_conflicting_label(
 
 
 @pytest.mark.asyncio
-async def test_bulk_accept_and_expire_stale_cover_assignment_and_merge(
+async def test_list_pending_candidates_and_expire_stale_cover_assignment_and_merge(
     db_session: AsyncSession, tenant: Tenant
 ) -> None:
     identity = await _create_identity(db_session, tenant)
@@ -498,27 +498,20 @@ async def test_bulk_accept_and_expire_stale_cover_assignment_and_merge(
     await db_session.commit()
 
     service = SuggestionExtensionService(db_session)
-    assignment_result = await service.bulk_accept(str(tenant.id), suggestion_type="assignment", min_confidence=0.9)
-    merge_result = await service.bulk_accept(str(tenant.id), suggestion_type="merge", min_confidence=0.8)
-    assert isinstance(assignment_result, BulkAcceptResult)
-    assert isinstance(merge_result, BulkAcceptResult)
+    assignment_candidates = await service.list_pending_assignment_candidates(str(tenant.id), min_confidence=0.9)
+    merge_candidates = await service.list_pending_merge_candidates(str(tenant.id), min_confidence=0.8)
     expired_count = await service.expire_stale(str(tenant.id))
     await db_session.commit()
 
-    refreshed_assignment = await db_session.get(IdentitySuggestion, accepted_assignment.id)
-    refreshed_merge = await db_session.get(ClusterMergeSuggestion, accepted_merge.id)
     refreshed_stale_assignment = await db_session.get(IdentitySuggestion, stale_assignment.id)
     refreshed_stale_name = await db_session.get(NameSuggestionModel, stale_name.id)
 
-    assert assignment_result.accepted_count == 1
-    assert assignment_result.skipped_count == 0
-    assert merge_result.accepted_count == 1
-    assert merge_result.skipped_count == 0
+    # list_pending_* returns candidates without modifying status; side effects are HTTP-layer concerns
+    assert len(assignment_candidates) == 1
+    assert str(assignment_candidates[0].cluster_id) == str(cluster_a.id)
+    assert len(merge_candidates) == 1
+    assert str(merge_candidates[0].cluster_a_id) == str(cluster_a.id)
     assert expired_count == 2
-    assert refreshed_assignment is not None
-    assert refreshed_assignment.resolution == SuggestionStatus.ACCEPTED.value
-    assert refreshed_merge is not None
-    assert refreshed_merge.resolution == SuggestionStatus.ACCEPTED.value
     assert refreshed_stale_assignment is not None
     assert refreshed_stale_assignment.resolution == SuggestionStatus.EXPIRED.value
     assert refreshed_stale_name is not None

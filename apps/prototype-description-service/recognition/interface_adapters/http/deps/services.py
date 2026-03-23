@@ -10,7 +10,6 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Protocol
@@ -33,7 +32,6 @@ from recognition.application.suggestions.refresh_service import SuggestionRefres
 from recognition.application.suggestions.service import SuggestionService
 from recognition.config import get_settings as get_recognition_settings
 from recognition.infrastructure.embeddings import get_shared_insightface_adapter
-from recognition.infrastructure.services import SuggestionExtensionService
 from recognition.infrastructure.repositories import (
     SqlAlchemyClusterRepository,
     SqlAlchemyConstraintRepository,
@@ -44,6 +42,7 @@ from recognition.infrastructure.repositories import (
     SqlAlchemyScanQueueRepository,
     SqlAlchemySuggestionRepository,
 )
+from recognition.infrastructure.services import SuggestionExtensionService
 from recognition.interface_adapters.http.deps.session import (
     get_observability_session,
     get_optional_session,
@@ -69,6 +68,8 @@ class RetentionPolicyServiceProtocol(Protocol):
 
     async def update_policy(self, tenant_id: str, retention_mode: str, actor: str) -> dict[str, Any]: ...
 
+    async def apply_preset(self, tenant_id: str, preset_name: str, actor: str) -> dict[str, Any]: ...
+
     async def apply_disposal_after_ack(
         self,
         tenant_id: str,
@@ -84,6 +85,10 @@ class RetentionExportServiceProtocol(Protocol):
 
     async def export_tenant_data(self, tenant_id: str, actor: str) -> dict[str, Any]: ...
 
+    async def start_async_export(self, tenant_id: str, actor: str) -> dict[str, Any]: ...
+
+    async def get_export_status(self, job_id: str, tenant_id: str) -> dict[str, Any]: ...
+
 
 class RetentionPurgeServiceProtocol(Protocol):
     """Purge surface consumed by the retention router."""
@@ -94,9 +99,11 @@ class RetentionPurgeServiceProtocol(Protocol):
 class AuditRepositoryProtocol(Protocol):
     """Audit listing surface consumed by the retention router."""
 
-    async def list_events(self, tenant_id: str, limit: int, offset: int) -> list[dict[str, Any]]: ...
+    async def list_events(
+        self, tenant_id: str, limit: int, offset: int, event_type: str | None = None
+    ) -> list[dict[str, Any]]: ...
 
-    async def count_events(self, tenant_id: str) -> int: ...
+    async def count_events(self, tenant_id: str, event_type: str | None = None) -> int: ...
 
 
 class _NotImplementedRetentionPolicyService:
@@ -105,6 +112,9 @@ class _NotImplementedRetentionPolicyService:
 
     async def update_policy(self, tenant_id: str, retention_mode: str, actor: str) -> dict[str, Any]:
         raise NotImplementedError(f"Retention policy update is not implemented for tenant {tenant_id}")
+
+    async def apply_preset(self, tenant_id: str, preset_name: str, actor: str) -> dict[str, Any]:
+        raise NotImplementedError(f"Retention preset is not implemented for tenant {tenant_id}")
 
     async def apply_disposal_after_ack(
         self,
@@ -122,6 +132,12 @@ class _NotImplementedRetentionExportService:
     async def export_tenant_data(self, tenant_id: str, actor: str) -> dict[str, Any]:
         raise NotImplementedError(f"Tenant export service is not implemented for tenant {tenant_id}")
 
+    async def start_async_export(self, tenant_id: str, actor: str) -> dict[str, Any]:
+        raise NotImplementedError(f"Async export service is not implemented for tenant {tenant_id}")
+
+    async def get_export_status(self, job_id: str, tenant_id: str) -> dict[str, Any]:
+        raise NotImplementedError(f"Export status service is not implemented for job {job_id}")
+
 
 class _NotImplementedRetentionPurgeService:
     async def purge_tenant_data(self, tenant_id: str, actor: str, scope: str = "disposed") -> dict[str, Any]:
@@ -129,10 +145,12 @@ class _NotImplementedRetentionPurgeService:
 
 
 class _NotImplementedAuditRepository:
-    async def list_events(self, tenant_id: str, limit: int, offset: int) -> list[dict[str, Any]]:
+    async def list_events(
+        self, tenant_id: str, limit: int, offset: int, event_type: str | None = None
+    ) -> list[dict[str, Any]]:
         raise NotImplementedError(f"Audit repository is not implemented for tenant {tenant_id}")
 
-    async def count_events(self, tenant_id: str) -> int:
+    async def count_events(self, tenant_id: str, event_type: str | None = None) -> int:
         raise NotImplementedError(f"Audit repository is not implemented for tenant {tenant_id}")
 
 
@@ -206,6 +224,13 @@ async def get_cluster_repository(
     return SqlAlchemyClusterRepository(session)
 
 
+async def get_merge_suggestion_repository(
+    session: AsyncSession = Depends(get_session),
+) -> SqlAlchemyMergeSuggestionRepository:
+    """Return a merge suggestion repository backed by the current session."""
+    return SqlAlchemyMergeSuggestionRepository(session)
+
+
 async def get_observability_repository(
     session: AsyncSession | None = Depends(get_observability_session),
 ) -> ObservabilityRepository | None:
@@ -272,6 +297,29 @@ async def get_audit_repository(
         return AuditRepository(session)
     except ModuleNotFoundError:
         return _NotImplementedAuditRepository()
+
+
+class TenantImportServiceProtocol(Protocol):
+    """Import surface consumed by the retention router."""
+
+    async def validate_and_import(self, data: dict[str, Any], tenant_id: str, actor: str) -> dict[str, Any]: ...
+
+
+class _NotImplementedRetentionImportService:
+    async def validate_and_import(self, data: dict[str, Any], tenant_id: str, actor: str) -> dict[str, Any]:
+        raise NotImplementedError(f"Tenant import service is not implemented for tenant {tenant_id}")
+
+
+async def get_retention_import_service(
+    session: AsyncSession = Depends(get_session),
+) -> TenantImportServiceProtocol:
+    """Return the real tenant import service when available."""
+    try:
+        from recognition.domain.services.import_service import TenantImportService
+
+        return TenantImportService(session=session)
+    except ModuleNotFoundError:
+        return _NotImplementedRetentionImportService()
 
 
 async def build_cluster_service(
@@ -577,4 +625,5 @@ __all__ = [
     "get_job_service_dependency",
     "get_persisted_job_service",
     "get_persisted_cluster_job_service",
+    "get_merge_suggestion_repository",
 ]

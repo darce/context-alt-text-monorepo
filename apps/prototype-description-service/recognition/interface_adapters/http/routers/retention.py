@@ -5,30 +5,39 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 
-from recognition.config import get_settings as get_recognition_settings
+from recognition.domain.services.export_service import run_export_to_file
 from recognition.interface_adapters.http.dependencies import (
     AuditRepositoryProtocol,
     AuthContext,
     RetentionExportServiceProtocol,
     RetentionPolicyServiceProtocol,
     RetentionPurgeServiceProtocol,
+    TenantImportServiceProtocol,
     get_audit_repository,
     get_authenticated_tenant_id,
     get_retention_export_service,
+    get_retention_import_service,
     get_retention_policy_service,
     get_retention_purge_service,
     require_auth,
     require_write_access,
 )
-from recognition.interface_adapters.http.schemas.requests import PurgeRequest, UpdateRetentionPolicyRequest
+from recognition.interface_adapters.http.schemas.requests import (
+    ApplyPresetRequest,
+    ImportRequest,
+    PurgeRequest,
+    UpdateRetentionPolicyRequest,
+)
 from recognition.interface_adapters.http.schemas.responses import (
     AuditEventListResponse,
     AuditEventResponse,
-    ExportResponse,
+    ExportJobStatusResponse,
+    ImportResponse,
     PurgeResponse,
     RetentionPolicyResponse,
+    StartExportResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,35 +55,6 @@ def _actor_from_auth(auth: AuthContext) -> str:
     if auth.enabled and auth.is_admin:
         return "admin_api_key"
     return "auth_disabled"
-
-
-def _coerce_export_response(result: dict[str, Any], tenant_id: str) -> ExportResponse:
-    exported_at = result.get("exported_at")
-    if exported_at is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="export service returned no exported_at timestamp",
-        )
-    data = result.get("data")
-    if not isinstance(data, dict):
-        data = result.get("payload")
-    if not isinstance(data, dict):
-        data = {
-            str(key): value
-            for key, value in result.items()
-            if key not in {"tenant_id", "exported_at", "schema_version", "counts"}
-        }
-    counts = result.get("counts")
-    if not isinstance(counts, dict):
-        counts = {str(key): len(value) for key, value in data.items() if isinstance(value, list)}
-    schema_version = result.get("schema_version", 2)
-    return ExportResponse(
-        tenant_id=str(result.get("tenant_id", tenant_id)),
-        exported_at=exported_at,
-        schema_version=int(schema_version),
-        counts={str(key): int(value) for key, value in counts.items()},
-        data=data,
-    )
 
 
 def _coerce_purge_response(result: dict[str, Any], tenant_id: str, scope: str) -> PurgeResponse:
@@ -133,29 +113,97 @@ async def update_retention_policy(
     return RetentionPolicyResponse.model_validate(payload)
 
 
-@router.post("/export", response_model=ExportResponse)
+@router.post("/policy/preset", response_model=RetentionPolicyResponse)
+async def apply_policy_preset(
+    request: ApplyPresetRequest,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    auth: AuthContext = Depends(require_auth),
+    _: AuthContext = Depends(require_write_access),
+    service: RetentionPolicyServiceProtocol = Depends(get_retention_policy_service),
+) -> RetentionPolicyResponse:
+    """Apply a named retention preset (e.g. 'gdpr')."""
+    try:
+        payload = await service.apply_preset(tenant_id, request.preset, _actor_from_auth(auth))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover - fallback path
+        logger.exception("Failed to apply retention preset for tenant %s", tenant_id)
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
+    return RetentionPolicyResponse.model_validate(payload)
+
+
+@router.post("/export", response_model=StartExportResponse)
 async def trigger_export(
+    background_tasks: BackgroundTasks,
     tenant_id: str = Depends(get_authenticated_tenant_id),
     auth: AuthContext = Depends(require_auth),
     _: AuthContext = Depends(require_write_access),
     service: RetentionExportServiceProtocol = Depends(get_retention_export_service),
-) -> ExportResponse:
-    """Export tenant machine-derived state inline."""
-    settings = get_recognition_settings()
+) -> StartExportResponse:
+    """Start an async tenant data export job."""
     try:
-        exportable_identities = await service.count_exportable_identities(tenant_id)
-        if exportable_identities > settings.retention_export_max_identities:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=("tenant export exceeds synchronous response limit; use the async export flow once available"),
-            )
-        payload = await service.export_tenant_data(tenant_id, _actor_from_auth(auth))
+        result = await service.start_async_export(tenant_id, _actor_from_auth(auth))
     except HTTPException:
         raise
     except Exception as exc:  # pragma: no cover - fallback path
-        logger.exception("Failed to export tenant data for tenant %s", tenant_id)
+        logger.exception("Failed to start export job for tenant %s", tenant_id)
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
-    return _coerce_export_response(payload, tenant_id)
+
+    job_id = str(result["job_id"])
+    background_tasks.add_task(run_export_to_file, job_id, tenant_id, _actor_from_auth(auth))
+    return StartExportResponse(job_id=job_id, status="pending")
+
+
+@router.get("/export/{job_id}/status", response_model=ExportJobStatusResponse)
+async def get_export_job_status(
+    job_id: str,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    service: RetentionExportServiceProtocol = Depends(get_retention_export_service),
+) -> ExportJobStatusResponse:
+    """Return the current status of an async export job."""
+    try:
+        result = await service.get_export_status(job_id, tenant_id)
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover - fallback path
+        logger.exception("Failed to get export status for job %s", job_id)
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
+
+    if result.get("error") == "not_found":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="export job not found")
+    return ExportJobStatusResponse(
+        job_id=str(result["job_id"]),
+        status=str(result["status"]),
+        file_size=result.get("file_size"),  # type: ignore[arg-type]
+        error_message=result.get("error_message"),  # type: ignore[arg-type]
+    )
+
+
+@router.get("/export/{job_id}/data")
+async def get_export_job_data(
+    job_id: str,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    service: RetentionExportServiceProtocol = Depends(get_retention_export_service),
+) -> dict[str, Any]:
+    """Return the stored export payload when the job is completed."""
+    try:
+        result = await service.get_export_status(job_id, tenant_id)
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover - fallback path
+        logger.exception("Failed to retrieve export data for job %s", job_id)
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
+
+    if result.get("error") == "not_found":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="export job not found")
+    if result.get("status") != "completed":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="export not yet ready")
+    data = result.get("data_json")
+    if not data:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="export data not available")
+    return data  # type: ignore[return-value]
 
 
 @router.post("/purge", response_model=PurgeResponse)
@@ -188,12 +236,13 @@ async def list_audit_events(
     tenant_id: str = Depends(get_authenticated_tenant_id),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    event_type: str | None = Query(default=None),
     repository: AuditRepositoryProtocol = Depends(get_audit_repository),
 ) -> AuditEventListResponse:
     """List retention audit events, newest first."""
     try:
-        items = await repository.list_events(tenant_id, limit=limit, offset=offset)
-        total = await repository.count_events(tenant_id)
+        items = await repository.list_events(tenant_id, limit=limit, offset=offset, event_type=event_type)
+        total = await repository.count_events(tenant_id, event_type=event_type)
     except HTTPException:
         raise
     except Exception as exc:  # pragma: no cover - fallback path
@@ -206,3 +255,24 @@ async def list_audit_events(
         limit=limit,
         offset=offset,
     )
+
+
+@router.post("/import", response_model=ImportResponse)
+async def trigger_import(
+    request: ImportRequest,
+    tenant_id: str = Depends(get_authenticated_tenant_id),
+    auth: AuthContext = Depends(require_auth),
+    _: AuthContext = Depends(require_write_access),
+    service: TenantImportServiceProtocol = Depends(get_retention_import_service),
+) -> ImportResponse:
+    """Validate an export payload and record an import audit event."""
+    try:
+        result = await service.validate_and_import(request.data, tenant_id, _actor_from_auth(auth))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover - fallback path
+        logger.exception("Failed to import tenant data for tenant %s", tenant_id)
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
+    return ImportResponse.model_validate(result)

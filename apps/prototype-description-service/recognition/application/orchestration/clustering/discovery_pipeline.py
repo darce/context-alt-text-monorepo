@@ -11,6 +11,7 @@ import numpy as np
 
 from recognition.application.assignment import AssignmentCandidate
 from recognition.application.discovery import CentroidDiscovery, GraphDiscovery, RepresentativeDiscovery
+from recognition.application.discovery.graph.helpers import compute_member_similarities
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.identity import MediaIdentity
 from recognition.observability import ClusteringLogger
@@ -159,10 +160,11 @@ async def run_hac_refinement(
     clusters_created = 0
     for members in hac_groups.values():
         if len(members) > 1:
+            similarities = compute_member_similarities([member.face_vector for member in members])
             await assignment_writer.persist_new_cluster(
                 tenant_id=tenant_id,
                 identities=members,
-                similarities=[],
+                similarities=similarities,
                 algorithm="constrained_hac",
                 clustering_logger=clustering_logger,
             )

@@ -13,14 +13,19 @@ from recognition.config.security import get_security_settings
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.suggestion import (
     AssignmentSuggestion,
+    BulkAcceptResult,
     MergeSuggestion,
     NameSuggestion,
     SuggestionStatus,
 )
-from recognition.infrastructure.repositories import SqlAlchemyMergeSuggestionRepository
+from recognition.application.orchestration import ClusterService
+from recognition.application.suggestions.service import SuggestionService
+from recognition.infrastructure.repositories import SqlAlchemyClusterRepository, SqlAlchemyMergeSuggestionRepository
+from recognition.infrastructure.services import SuggestionExtensionService
 from recognition.interface_adapters.http.dependencies import (
     get_cluster_repository,
     get_cluster_service_builder,
+    get_merge_suggestion_repository,
     get_session,
     get_suggestion_extension_service,
     get_suggestion_service,
@@ -277,16 +282,41 @@ async def bulk_accept_suggestions(
     auth=Depends(require_write_access),
     session=Depends(get_session),
     suggestion_extension_service=Depends(get_suggestion_extension_service),
+    suggestion_service=Depends(get_suggestion_service),
+    cluster_service_builder=Depends(get_cluster_service_builder),
+    cluster_repo: SqlAlchemyClusterRepository = Depends(get_cluster_repository),
+    merge_repo: SqlAlchemyMergeSuggestionRepository = Depends(get_merge_suggestion_repository),
 ) -> BulkAcceptResponse:
     """Bulk-accept suggestions by type and confidence threshold."""
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
-    result = await suggestion_extension_service.bulk_accept(
-        request.tenant_id,
-        suggestion_type=request.suggestion_type,
-        min_confidence=request.min_confidence,
-    )
+    if request.suggestion_type == "name":
+        result = await suggestion_extension_service.bulk_accept(
+            request.tenant_id,
+            suggestion_type="name",
+            min_confidence=request.min_confidence,
+        )
+    elif request.suggestion_type == "assignment":
+        result = await _bulk_accept_assignments(
+            request.tenant_id,
+            min_confidence=request.min_confidence,
+            suggestion_extension_service=suggestion_extension_service,
+            suggestion_service=suggestion_service,
+            cluster_service_builder=cluster_service_builder,
+        )
+    elif request.suggestion_type == "merge":
+        result = await _bulk_accept_merges(
+            request.tenant_id,
+            min_confidence=request.min_confidence,
+            suggestion_extension_service=suggestion_extension_service,
+            cluster_service_builder=cluster_service_builder,
+            cluster_repo=cluster_repo,
+            merge_repo=merge_repo,
+        )
+    else:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="unsupported suggestion_type")
+
     await session.commit()
     return BulkAcceptResponse(accepted_count=result.accepted_count, skipped_count=result.skipped_count)
 
@@ -495,6 +525,87 @@ async def _collect_min_confidence_page[T_Suggestion](
         page_offset += batch_size
 
     return filtered[offset:target_count]
+
+
+async def _bulk_accept_assignments(
+    tenant_id: str,
+    *,
+    min_confidence: float,
+    suggestion_extension_service: SuggestionExtensionService,
+    suggestion_service: SuggestionService,
+    cluster_service_builder: Callable[[str], Awaitable[ClusterService]],
+) -> BulkAcceptResult:
+    """Bulk-accept assignment suggestions with full cluster-assignment side effects."""
+    candidates = await suggestion_extension_service.list_pending_assignment_candidates(
+        tenant_id, min_confidence=min_confidence
+    )
+    cluster_service = await cluster_service_builder(tenant_id)
+    accepted = 0
+    skipped = 0
+    for candidate in candidates:
+        suggestion = await suggestion_service.accept(candidate.id)
+        if suggestion is None:
+            skipped += 1
+            continue
+        assigned = await cluster_service.assign_outlier_to_cluster(
+            identity_id=candidate.identity_id,
+            target_cluster_id=candidate.cluster_id,
+            tenant_id=tenant_id,
+            similarity=candidate.representative_similarity,
+        )
+        if assigned is None:
+            skipped += 1
+            continue
+        await suggestion_service.resolve_for_identity_exclusive(
+            identity_id=candidate.identity_id,
+            accepted_cluster_id=candidate.cluster_id,
+            reason="bulk_accept",
+        )
+        accepted += 1
+    return BulkAcceptResult(accepted_count=accepted, skipped_count=skipped)
+
+
+async def _bulk_accept_merges(
+    tenant_id: str,
+    *,
+    min_confidence: float,
+    suggestion_extension_service: SuggestionExtensionService,
+    cluster_service_builder: Callable[[str], Awaitable[ClusterService]],
+    cluster_repo: SqlAlchemyClusterRepository,
+    merge_repo: SqlAlchemyMergeSuggestionRepository,
+) -> BulkAcceptResult:
+    """Bulk-accept merge suggestions with full cluster-merge side effects."""
+    candidates = await suggestion_extension_service.list_pending_merge_candidates(
+        tenant_id, min_confidence=min_confidence
+    )
+    cluster_service = await cluster_service_builder(tenant_id)
+    accepted = 0
+    skipped = 0
+    for candidate in candidates:
+        cluster_a = await cluster_repo.get_by_id(candidate.cluster_a_id)
+        cluster_b = await cluster_repo.get_by_id(candidate.cluster_b_id)
+        if not cluster_a or not cluster_b:
+            skipped += 1
+            continue
+        try:
+            source_cluster_id, target_cluster_id, target_label = _select_merge_target(cluster_a, cluster_b)
+        except HTTPException:
+            skipped += 1
+            continue
+        merged = await cluster_service.merge_cluster(
+            source_cluster_id,
+            tenant_id,
+            target_cluster_id,
+            target_label=target_label,
+            moved_by_merge_id=str(candidate.id),
+        )
+        if merged is None:
+            skipped += 1
+            continue
+        await merge_repo.delete_by_cluster(tenant_id, source_cluster_id)
+        await merge_repo.delete_by_cluster(tenant_id, target_cluster_id)
+        accepted += 1
+    return BulkAcceptResult(accepted_count=accepted, skipped_count=skipped)
 
 
 def _select_merge_target(cluster_a: IdentityCluster, cluster_b: IdentityCluster) -> tuple[str, str, str | None]:

@@ -262,6 +262,7 @@ class RetentionPolicyResponse(BaseModel):
     last_export_at: datetime | None = None
     last_purge_at: datetime | None = None
     retention_updated_at: datetime | None = None
+    preset: str | None = None
 
 
 class AuditEventResponse(BaseModel):
@@ -305,6 +306,36 @@ class ExportResponse(BaseModel):
         return _validate_uuid(v)
 
 
+class StartExportResponse(BaseModel):
+    """Response when an async export job is started."""
+
+    job_id: str
+    status: str = "pending"
+
+
+class ExportJobStatusResponse(BaseModel):
+    """Status of an async export job."""
+
+    job_id: str
+    status: str
+    file_size: int | None = None
+    error_message: str | None = None
+
+
+class ImportResponse(BaseModel):
+    """Summary of a completed import operation."""
+
+    tenant_id: str
+    schema_version: int
+    imported_at: datetime
+    counts: dict[str, int] = Field(default_factory=dict)
+
+    @field_validator("tenant_id")
+    @classmethod
+    def validate_import_tenant_id(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+
 class PurgeResponse(BaseModel):
     """Summary of a tenant purge operation."""
 
@@ -330,7 +361,7 @@ class JobProgressResponse(BaseModel):
 
     completed: int
     total: int
-    phase: Literal["queued", "detecting", "clustering", "awaiting_projection", "complete"] | None = None
+    phase: Literal["queued", "detecting", "clustering", "awaiting_projection", "failed", "complete"] | None = None
     images_processed: int | None = None
     faces_found: int | None = None
     clusters_created: int | None = None

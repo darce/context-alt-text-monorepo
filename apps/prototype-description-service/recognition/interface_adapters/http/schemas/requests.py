@@ -4,7 +4,7 @@ Request schemas for recognition HTTP API.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -158,6 +158,26 @@ class UpdateRetentionPolicyRequest(BaseModel):
         if not normalized:
             raise ValueError("retention_mode must not be empty")
         return normalized
+
+
+class ApplyPresetRequest(BaseModel):
+    """Request to apply a named retention preset."""
+
+    preset: str
+
+    @field_validator("preset")
+    @classmethod
+    def validate_preset(cls, v: str) -> str:
+        normalized = v.strip().lower()
+        if not normalized:
+            raise ValueError("preset must not be empty")
+        return normalized
+
+
+class ImportRequest(BaseModel):
+    """Request to validate and record an import from an export payload."""
+
+    data: dict[str, Any]
 
 
 class PurgeRequest(BaseModel):
@@ -367,11 +387,13 @@ class AcknowledgeProjectionRequest(BaseModel):
 
 __all__ = [
     "AnalyzeRequest",
+    "BulkAcceptSuggestionsRequest",
     "ClusteringJobRequest",
     "RecoverOrphansRequest",
     "AssignOutlierRequest",
     "AcknowledgeProjectionRequest",
     "CreateClusterForIdentityRequest",
+    "ImportRequest",
     "MediaItem",
     "MergeClusterRequest",
     "PatchClusterRequest",
@@ -382,5 +404,6 @@ __all__ = [
     "SplitClusterRequest",
     "SplitTopologyCommandRequest",
     "SuggestionActionRequest",
+    "ApplyPresetRequest",
     "UpdateRetentionPolicyRequest",
 ]

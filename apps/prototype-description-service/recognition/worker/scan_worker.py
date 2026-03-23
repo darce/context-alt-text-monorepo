@@ -206,6 +206,12 @@ class ScanWorker:
                 await handler.handle(job, session)
             return True
         except Exception as exc:  # pragma: no cover
+            logger.exception(
+                "[worker] Clustering job failed: job_id=%s tenant_id=%s job_type=%s",
+                job.id,
+                job.tenant_id,
+                job.job_type,
+            )
             await ensure_job_context(session=session, job=job)
             job.status = "failed"
             job.error_message = str(exc)

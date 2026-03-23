@@ -11,12 +11,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from db.models.identity import CurationReplayRecord
+from recognition.domain.suggestion import BulkAcceptResult, SuggestedLabelSource, SuggestionStatus
 from recognition.interface_adapters.http import dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id
 from recognition.interface_adapters.http.routers import media as media_router
 from recognition.interface_adapters.http.schemas.responses import ClusterResponse
-from recognition.domain.suggestion import BulkAcceptResult, SuggestedLabelSource, SuggestionStatus
 from recognition.shared.ids import generate_id
 from recognition.tests.fakes import FakeClusterRepository, FakeClusterService, FakeJobService
 
@@ -276,12 +276,32 @@ class FakeNameSuggestion:
         self.resolved_at = resolved_at
 
 
+class FakeMergeSuggestion:
+    """Minimal merge suggestion record for bulk-accept API tests."""
+
+    def __init__(
+        self,
+        cluster_a_id: str,
+        cluster_b_id: str,
+        *,
+        confidence_score: float | None = None,
+        expires_at=None,  # noqa: ANN001
+    ) -> None:
+        self.id = str(uuid.uuid4())
+        self.cluster_a_id = cluster_a_id
+        self.cluster_b_id = cluster_b_id
+        self.confidence_score = confidence_score
+        self.expires_at = expires_at
+        self.status = FakeSuggestionStatus()
+
+
 class FakeSuggestionExtensionService:
     """In-memory name-suggestion and bulk-accept service used by API tests."""
 
     def __init__(self, suggestion_service: FakeSuggestionService) -> None:
         self.suggestion_service = suggestion_service
         self.name_suggestions: dict[str, FakeNameSuggestion] = {}
+        self.merge_suggestions: dict[str, FakeMergeSuggestion] = {}
 
     async def list_name_suggestions(
         self,
@@ -315,39 +335,63 @@ class FakeSuggestionExtensionService:
         suggestion.status = SuggestionStatus.REJECTED
         return suggestion
 
-    async def bulk_accept(self, tenant_id: str, *, suggestion_type: str, min_confidence: float) -> BulkAcceptResult:
-        if suggestion_type == "name":
-            accepted = 0
-            skipped = 0
-            now = datetime.now(tz=UTC)
-            for suggestion in self.name_suggestions.values():
-                if suggestion.status != SuggestionStatus.PENDING:
-                    continue
-                if suggestion.expires_at is not None and suggestion.expires_at <= now:
-                    skipped += 1
-                    continue
-                if suggestion.confidence_score is None or suggestion.confidence_score < min_confidence:
-                    skipped += 1
-                    continue
-                suggestion.status = SuggestionStatus.ACCEPTED
-                accepted += 1
-            return BulkAcceptResult(accepted_count=accepted, skipped_count=skipped)
+    def create_merge_suggestion(
+        self,
+        cluster_a_id: str,
+        cluster_b_id: str,
+        *,
+        confidence_score: float | None = None,
+        expires_at=None,  # noqa: ANN001
+    ) -> FakeMergeSuggestion:
+        suggestion = FakeMergeSuggestion(
+            cluster_a_id, cluster_b_id, confidence_score=confidence_score, expires_at=expires_at
+        )
+        self.merge_suggestions[suggestion.id] = suggestion
+        return suggestion
 
+    async def list_pending_assignment_candidates(
+        self, tenant_id: str, *, min_confidence: float
+    ) -> list[FakeSuggestion]:
+        now = datetime.now(tz=UTC)
+        return [
+            s
+            for s in self.suggestion_service.suggestions.values()
+            if isinstance(s, FakeSuggestion)
+            and s.status.value == "pending"
+            and (s.expires_at is None or s.expires_at > now)
+            and s.confidence_score is not None
+            and s.confidence_score >= min_confidence
+        ]
+
+    async def list_pending_merge_candidates(
+        self, tenant_id: str, *, min_confidence: float
+    ) -> list[FakeMergeSuggestion]:
+        now = datetime.now(tz=UTC)
+        return [
+            s
+            for s in self.merge_suggestions.values()
+            if s.status.value == "pending"
+            and (s.expires_at is None or s.expires_at > now)
+            and s.confidence_score is not None
+            and s.confidence_score >= min_confidence
+        ]
+
+    async def bulk_accept(self, tenant_id: str, *, suggestion_type: str, min_confidence: float) -> BulkAcceptResult:
+        if suggestion_type != "name":
+            raise ValueError(f"bulk_accept only supports 'name'; got {suggestion_type!r}")
         accepted = 0
         skipped = 0
         now = datetime.now(tz=UTC)
-        for merge_suggestion in self.suggestion_service.suggestions.values():
-            if not isinstance(merge_suggestion, FakeSuggestion):
+        for suggestion in self.name_suggestions.values():
+            if suggestion.status != SuggestionStatus.PENDING:
                 continue
-            if merge_suggestion.status.value != "pending":
-                continue
-            if merge_suggestion.expires_at is not None and merge_suggestion.expires_at <= now:
+            if suggestion.expires_at is not None and suggestion.expires_at <= now:
                 skipped += 1
                 continue
-            if merge_suggestion.confidence_score is None or merge_suggestion.confidence_score < min_confidence:
+            if suggestion.confidence_score is None or suggestion.confidence_score < min_confidence:
                 skipped += 1
                 continue
-            merge_suggestion.status = FakeSuggestionStatus("accepted")
+            suggestion.status = SuggestionStatus.ACCEPTED
             accepted += 1
         return BulkAcceptResult(accepted_count=accepted, skipped_count=skipped)
 

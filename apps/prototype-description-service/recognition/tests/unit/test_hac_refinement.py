@@ -251,6 +251,8 @@ async def test_hac_refinement_creates_clusters_from_assignments(
     call_kwargs = assignment_writer.persist_new_cluster.call_args.kwargs
     assert call_kwargs["tenant_id"] == tenant_id
     assert len(call_kwargs["identities"]) == 2
+    assert len(call_kwargs["similarities"]) == 2
+    assert all(isinstance(similarity, float) for similarity in call_kwargs["similarities"])
     assert call_kwargs["algorithm"] == "constrained_hac"
 
 

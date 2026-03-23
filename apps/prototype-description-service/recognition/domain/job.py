@@ -34,6 +34,7 @@ class JobPhase(str, Enum):
     DETECTING = "detecting"
     CLUSTERING = "clustering"
     AWAITING_PROJECTION = "awaiting_projection"
+    FAILED = "failed"
     COMPLETE = "complete"
 
 

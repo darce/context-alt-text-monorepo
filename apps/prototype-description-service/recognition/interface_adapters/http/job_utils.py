@@ -53,6 +53,8 @@ def derive_job_phase(*, job_type: JobType, status: JobStatus) -> JobPhase:
         if job_type is JobType.ANALYZE:
             return JobPhase.DETECTING
         return JobPhase.CLUSTERING
+    if status is JobStatus.FAILED:
+        return JobPhase.FAILED
     return JobPhase.COMPLETE
 
 

@@ -211,19 +211,30 @@ async def test_name_suggestions_apply_min_confidence_before_paging(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("suggestion_type", ["assignment", "merge"])
-async def test_bulk_accept_endpoint_skips_expired_pending_suggestions(
-    api_client, tenant_id, fake_suggestion_service, suggestion_type: str
+async def test_bulk_accept_assignment_skips_expired_and_performs_assignment(
+    api_client, tenant_id, fake_suggestion_service, fake_cluster_service
 ) -> None:
+    cluster_id = str(uuid.uuid4())
+    fake_cluster_service.clusters.append(
+        ClusterResponse(
+            id=cluster_id,
+            tenant_id=tenant_id,
+            label="target",
+            is_labeled=True,
+            is_auto_label=False,
+            identity_count=1,
+            representatives=[],
+        )
+    )
     active = await fake_suggestion_service.create(
         identity_id=str(uuid.uuid4()),
-        cluster_id=str(uuid.uuid4()),
+        cluster_id=cluster_id,
         confidence_score=0.95,
         expires_at=datetime.now(tz=UTC) + timedelta(hours=1),
     )
     expired = await fake_suggestion_service.create(
         identity_id=str(uuid.uuid4()),
-        cluster_id=str(uuid.uuid4()),
+        cluster_id=cluster_id,
         confidence_score=0.97,
         expires_at=datetime.now(tz=UTC) - timedelta(minutes=1),
     )
@@ -231,14 +242,69 @@ async def test_bulk_accept_endpoint_skips_expired_pending_suggestions(
     resp = api_client.post(
         "/recognition/suggestions/bulk-accept",
         headers={"X-Tenant-ID": tenant_id},
-        json={"tenant_id": tenant_id, "suggestion_type": suggestion_type, "min_confidence": 0.8},
+        json={"tenant_id": tenant_id, "suggestion_type": "assignment", "min_confidence": 0.8},
     )
 
     assert resp.status_code == 200
-    assert resp.json() == {"accepted_count": 1, "skipped_count": 1}
-    assert isinstance(fake_suggestion_service.suggestions[active.id], FakeSuggestion)
+    assert resp.json() == {"accepted_count": 1, "skipped_count": 0}
     assert fake_suggestion_service.suggestions[active.id].status.value == "accepted"
     assert fake_suggestion_service.suggestions[expired.id].status.value == "pending"
+    assert fake_cluster_service.identity_cluster_map[active.identity_id] == cluster_id
+
+
+@pytest.mark.asyncio
+async def test_bulk_accept_merge_skips_expired_and_performs_merge(
+    api_client, tenant_id, fake_suggestion_extension_service, fake_cluster_service, fake_cluster_repository
+) -> None:
+    cluster_a_id = str(uuid.uuid4())
+    cluster_b_id = str(uuid.uuid4())
+    fake_cluster_service.clusters.extend(
+        [
+            ClusterResponse(
+                id=cluster_a_id,
+                tenant_id=tenant_id,
+                label=None,
+                is_labeled=False,
+                is_auto_label=False,
+                identity_count=2,
+                representatives=[],
+            ),
+            ClusterResponse(
+                id=cluster_b_id,
+                tenant_id=tenant_id,
+                label="labeled_cluster",
+                is_labeled=True,
+                is_auto_label=False,
+                identity_count=1,
+                representatives=[],
+            ),
+        ]
+    )
+    fake_cluster_repository.seed(cluster_a_id, tenant_id, label=None, identity_count=2)
+    fake_cluster_repository.seed(cluster_b_id, tenant_id, label="labeled_cluster", identity_count=1)
+    fake_suggestion_extension_service.create_merge_suggestion(
+        cluster_a_id=cluster_a_id,
+        cluster_b_id=cluster_b_id,
+        confidence_score=0.95,
+        expires_at=datetime.now(tz=UTC) + timedelta(hours=1),
+    )
+    fake_suggestion_extension_service.create_merge_suggestion(
+        cluster_a_id=str(uuid.uuid4()),
+        cluster_b_id=str(uuid.uuid4()),
+        confidence_score=0.97,
+        expires_at=datetime.now(tz=UTC) - timedelta(minutes=1),
+    )
+
+    resp = api_client.post(
+        "/recognition/suggestions/bulk-accept",
+        headers={"X-Tenant-ID": tenant_id},
+        json={"tenant_id": tenant_id, "suggestion_type": "merge", "min_confidence": 0.8},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"accepted_count": 1, "skipped_count": 0}
+    merge_calls = [c for c in fake_cluster_service.calls if c.get("method") == "merge_cluster"]
+    assert len(merge_calls) == 1
 
 
 @pytest.mark.asyncio

@@ -5,12 +5,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
 from db.models import (
     ClusterMergeSuggestion,
+    ExportJob,
     IdentityCluster,
     IdentityClusterRepresentative,
     IdentityMember,
@@ -42,9 +43,56 @@ class TenantExportService:
         self._session = session
         self._audit_service = audit_service or AuditService()
 
+    async def count_exportable_identities(self, tenant_id: str) -> int:
+        """Return the number of media identities for the tenant."""
+        tenant_uuid = coerce_uuid(tenant_id, on_failure="none")
+        if tenant_uuid is None:
+            return 0
+        result = await self._session.execute(
+            select(func.count()).select_from(MediaIdentity).where(MediaIdentity.tenant_id == tenant_uuid)
+        )
+        return result.scalar_one()
+
+    async def start_async_export(self, tenant_id: str, actor: str) -> dict[str, object]:
+        """Create an ExportJob row and return the job_id."""
+        tenant_uuid = coerce_uuid(tenant_id, on_failure="none")
+        if tenant_uuid is None:
+            raise ValueError("invalid tenant_id")
+        job = ExportJob(
+            tenant_id=tenant_uuid,
+            status="pending",
+            created_by_actor=actor,
+        )
+        self._session.add(job)
+        await self._session.flush()
+        return {"job_id": str(job.id), "status": "pending"}
+
+    async def get_export_status(self, job_id: str, tenant_id: str) -> dict[str, object]:
+        """Return current status of an export job."""
+        job_uuid = coerce_uuid(job_id, on_failure="none")
+        tenant_uuid = coerce_uuid(tenant_id, on_failure="none")
+        if job_uuid is None or tenant_uuid is None:
+            return {"error": "not_found"}
+        result = await self._session.execute(
+            select(ExportJob).where(
+                ExportJob.id == job_uuid,
+                ExportJob.tenant_id == tenant_uuid,
+            )
+        )
+        job = result.scalar_one_or_none()
+        if job is None:
+            return {"error": "not_found"}
+        return {
+            "job_id": str(job.id),
+            "status": job.status,
+            "file_size": job.file_size,
+            "error_message": job.error_message,
+            "data_json": job.data_json,
+        }
+
     async def export_tenant_data(self, tenant_id: str, actor: str) -> dict[str, object]:
-        tenant = await self._get_tenant(tenant_id)
         exported_at = datetime.now(tz=UTC)
+        tenant = await self._get_tenant(tenant_id)
 
         await self._audit_service.record_event(
             self._session,
@@ -358,3 +406,47 @@ class TenantExportService:
     @classmethod
     def _is_active_representative(cls, representative: IdentityClusterRepresentative) -> bool:
         return representative.disposed_at is None and cls._is_active_identity(representative.identity)
+
+
+async def run_export_to_file(job_id: str, tenant_id: str, actor: str) -> None:
+    """Background task: run the export and persist the result in ExportJob.data_json."""
+    import json  # noqa: PLC0415 - local import required for background task
+    import uuid as _uuid  # noqa: PLC0415
+    from datetime import datetime as _dt
+
+    from db.session import async_session_factory  # noqa: PLC0415
+    from db.tenant_context import set_tenant_context  # noqa: PLC0415
+
+    job_uuid = coerce_uuid(job_id)
+    tenant_uuid = _uuid.UUID(str(tenant_id))
+
+    async with async_session_factory() as session:
+        await set_tenant_context(session, tenant_uuid)
+        result = await session.execute(select(ExportJob).where(ExportJob.id == job_uuid))
+        job = result.scalar_one()
+        job.status = "running"
+        job.started_at = _dt.now(tz=UTC)
+        await session.commit()
+
+        svc = TenantExportService(session)
+        try:
+            payload = await svc.export_tenant_data(tenant_id, actor)
+            data_bytes = json.dumps(payload, default=str).encode()
+
+            # Re-query after export_tenant_data's internal commit
+            result = await session.execute(select(ExportJob).where(ExportJob.id == job_uuid))
+            job = result.scalar_one()
+            job.data_json = payload
+            job.file_size = len(data_bytes)
+            job.status = "completed"
+            job.completed_at = _dt.now(tz=UTC)
+            await session.commit()
+        except Exception as exc:
+            await session.rollback()
+            err_result = await session.execute(select(ExportJob).where(ExportJob.id == job_uuid))
+            failed_job = err_result.scalar_one_or_none()
+            if failed_job is not None:
+                failed_job.status = "failed"
+                failed_job.error_message = str(exc)[:500]
+                failed_job.completed_at = _dt.now(tz=UTC)
+                await session.commit()

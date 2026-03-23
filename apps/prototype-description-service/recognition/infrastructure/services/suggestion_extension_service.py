@@ -11,7 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import ClusterMergeSuggestion, IdentityCluster, IdentitySuggestion
 from db.models import NameSuggestion as NameSuggestionModel
-from recognition.domain.suggestion import BulkAcceptResult, NameSuggestion, SuggestedLabelSource, SuggestionStatus
+from recognition.domain.suggestion import (
+    AssignmentSuggestion,
+    BulkAcceptResult,
+    MergeSuggestion,
+    NameSuggestion,
+    SuggestedLabelSource,
+    SuggestionStatus,
+)
 from recognition.infrastructure.repositories._helpers import coerce_uuid
 
 type SuggestionModelRecord = IdentitySuggestion | ClusterMergeSuggestion | NameSuggestionModel
@@ -99,6 +106,71 @@ class SuggestionExtensionService:
             await self._session.refresh(suggestion)
         return self._to_name_suggestion(suggestion)
 
+    async def list_pending_assignment_candidates(
+        self,
+        tenant_id: str,
+        *,
+        min_confidence: float,
+    ) -> list[AssignmentSuggestion]:
+        """Return pending assignment suggestions above the confidence threshold, excluding expired."""
+        tenant_uuid = self._require_uuid(tenant_id, field_name="tenant_id")
+        now = datetime.now(tz=UTC)
+        stmt = (
+            select(IdentitySuggestion)
+            .where(IdentitySuggestion.tenant_id == tenant_uuid)
+            .where(IdentitySuggestion.resolution == SuggestionStatus.PENDING.value)
+            .where(self._active_expiry_clause(IdentitySuggestion, now))
+            .where(IdentitySuggestion.confidence_score.is_not(None))
+            .where(IdentitySuggestion.confidence_score >= min_confidence)
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [
+            AssignmentSuggestion(
+                id=str(row.id),
+                identity_id=str(row.identity_id),
+                cluster_id=str(row.suggested_cluster_id),
+                representative_similarity=row.representative_similarity,
+                member_similarity=row.avg_member_similarity,
+                status=SuggestionStatus(row.resolution),
+                confidence_score=row.confidence_score,
+                expires_at=row.expires_at,
+            )
+            for row in rows
+        ]
+
+    async def list_pending_merge_candidates(
+        self,
+        tenant_id: str,
+        *,
+        min_confidence: float,
+    ) -> list[MergeSuggestion]:
+        """Return pending merge suggestions above the confidence threshold (similarity fallback), excluding expired."""
+        tenant_uuid = self._require_uuid(tenant_id, field_name="tenant_id")
+        now = datetime.now(tz=UTC)
+        stmt = (
+            select(ClusterMergeSuggestion)
+            .where(ClusterMergeSuggestion.tenant_id == tenant_uuid)
+            .where(ClusterMergeSuggestion.resolution == SuggestionStatus.PENDING.value)
+            .where(self._active_expiry_clause(ClusterMergeSuggestion, now))
+            .where(
+                func.coalesce(ClusterMergeSuggestion.confidence_score, ClusterMergeSuggestion.similarity)
+                >= min_confidence
+            )
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [
+            MergeSuggestion(
+                id=str(row.id),
+                cluster_a_id=str(row.cluster_a_id),
+                cluster_b_id=str(row.cluster_b_id),
+                similarity=row.similarity,
+                status=SuggestionStatus(row.resolution),
+                confidence_score=float(row.confidence_score) if row.confidence_score is not None else None,
+                expires_at=row.expires_at,
+            )
+            for row in rows
+        ]
+
     async def bulk_accept(
         self,
         tenant_id: str,
@@ -110,20 +182,9 @@ class SuggestionExtensionService:
         if not 0.0 <= min_confidence <= 1.0:
             raise ValueError("min_confidence must be between 0.0 and 1.0")
 
-        if suggestion_type == "assignment":
-            accepted = await self._bulk_accept_rows(tenant_uuid, IdentitySuggestion, min_confidence)
-            return BulkAcceptResult(accepted_count=accepted, skipped_count=0)
-        if suggestion_type == "merge":
-            accepted = await self._bulk_accept_rows(
-                tenant_uuid,
-                ClusterMergeSuggestion,
-                min_confidence,
-                allow_similarity_fallback=True,
-            )
-            return BulkAcceptResult(accepted_count=accepted, skipped_count=0)
         if suggestion_type == "name":
             return await self._bulk_accept_name_suggestions(tenant_uuid, min_confidence)
-        raise ValueError("suggestion_type must be one of: assignment, merge, name")
+        raise ValueError("suggestion_type 'name' is supported here; use the HTTP route for assignment and merge")
 
     async def expire_stale(self, tenant_id: str) -> int:
         tenant_uuid = self._require_uuid(tenant_id, field_name="tenant_id")
@@ -135,38 +196,6 @@ class SuggestionExtensionService:
         if expired:
             await self._session.flush()
         return expired
-
-    async def _bulk_accept_rows(
-        self,
-        tenant_uuid: UUID,
-        model_type: type[IdentitySuggestion] | type[ClusterMergeSuggestion],
-        min_confidence: float,
-        *,
-        allow_similarity_fallback: bool = False,
-    ) -> int:
-        resolved_at = datetime.now(tz=UTC)
-        stmt = (
-            select(model_type)
-            .where(model_type.tenant_id == tenant_uuid)
-            .where(model_type.resolution == SuggestionStatus.PENDING.value)
-            .where(self._active_expiry_clause(model_type, resolved_at))
-        )
-        if allow_similarity_fallback:
-            merge_model = cast(type[ClusterMergeSuggestion], model_type)
-            stmt = stmt.where(func.coalesce(merge_model.confidence_score, merge_model.similarity) >= min_confidence)
-        else:
-            stmt = stmt.where(model_type.confidence_score.is_not(None)).where(
-                model_type.confidence_score >= min_confidence
-            )
-        rows = cast(
-            list[IdentitySuggestion | ClusterMergeSuggestion], (await self._session.execute(stmt)).scalars().all()
-        )
-        for row in rows:
-            row.resolution = SuggestionStatus.ACCEPTED.value
-            row.resolved_at = resolved_at
-        if rows:
-            await self._session.flush()
-        return len(rows)
 
     async def _bulk_accept_name_suggestions(self, tenant_uuid: UUID, min_confidence: float) -> BulkAcceptResult:
         resolved_at = datetime.now(tz=UTC)

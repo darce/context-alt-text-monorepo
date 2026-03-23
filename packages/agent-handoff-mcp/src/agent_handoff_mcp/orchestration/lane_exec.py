@@ -530,9 +530,6 @@ def run_lane_exec(
             "prompt": prompt_text,
             "schema": json.loads(schema_text),
         }
-        if backend_name == "codex-cli":
-            from backend_registry import find_codex as _find_codex  # noqa: PLC0415
-            result["codex_bin"] = _find_codex(codex_bin)
         out = output_path or _temp_output_path(lane_id=lane_id)
         out.write_text(json.dumps(result, indent=2))
         return out

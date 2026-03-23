@@ -101,6 +101,31 @@ def pythonpath_env(
     return env
 
 
+# Backend family detection helpers used by apply_backend_runtime_hints.
+_CODEX_BACKENDS = frozenset({"codex-cli", "codex-subagent"})
+_CLAUDE_BACKENDS = frozenset({"claude-code"})
+_CODEX_MODEL_PREFIXES = ("CODEX", "GPT", "O1", "O3", "O4")
+_CLAUDE_MODEL_PREFIXES = ("CLAUDE", "ANTHROPIC")
+
+
+def _is_codex_backend(backend: str | None, model: str | None) -> bool:
+    if backend in _CODEX_BACKENDS:
+        return True
+    if not backend and model:
+        upper = str(model).upper()
+        return any(prefix in upper for prefix in _CODEX_MODEL_PREFIXES)
+    return False
+
+
+def _is_claude_backend(backend: str | None, model: str | None) -> bool:
+    if backend in _CLAUDE_BACKENDS:
+        return True
+    if not backend and model:
+        upper = str(model).upper()
+        return any(prefix in upper for prefix in _CLAUDE_MODEL_PREFIXES)
+    return False
+
+
 def apply_backend_runtime_hints(
     env: dict[str, str],
     *,
@@ -110,14 +135,20 @@ def apply_backend_runtime_hints(
     backend: str | None = None,
 ) -> dict[str, str]:
     """Apply backend-specific runtime hints to an existing environment mapping."""
-    is_codex = backend in {"codex-cli", "codex-subagent"} or (not backend and model and ("CODEX" in str(model).upper() or "GPT" in str(model).upper()))
-    
+    is_codex = _is_codex_backend(backend, model)
+    is_claude = _is_claude_backend(backend, model)
+
     if model and is_codex:
         env.setdefault("CODEX_MODEL", model)
+    if model and is_claude:
+        env.setdefault("ANTHROPIC_MODEL", model)
 
     normalized_effort = str(reasoning_effort or "").strip().lower()
-    if normalized_effort in CODEX_REASONING_EFFORTS and is_codex:
-        env["CODEX_REASONING_EFFORT"] = normalized_effort
+    if normalized_effort in CODEX_REASONING_EFFORTS and (is_codex or is_claude):
+        if is_codex:
+            env["CODEX_REASONING_EFFORT"] = normalized_effort
+        if is_claude:
+            env["ANTHROPIC_REASONING_EFFORT"] = normalized_effort
 
     normalized_session_mode = str(session_mode or "").strip().lower()
     if normalized_session_mode == "shared_lane" and is_codex:

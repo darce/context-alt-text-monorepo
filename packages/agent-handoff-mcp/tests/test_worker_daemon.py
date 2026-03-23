@@ -230,7 +230,7 @@ def test_apply_backend_runtime_hints_model_does_not_overwrite_existing() -> None
 
 def test_subagent_adapter_injects_model_into_env() -> None:
     """CodexSubagentAdapter.execute() must inject CODEX_MODEL into env."""
-    from adapters.codex_subagent import CodexSubagentAdapter
+    from agent_handoff_mcp.orchestration.adapters.codex_subagent import CodexSubagentAdapter
 
     captured_env: dict[str, str] = {}
 

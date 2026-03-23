@@ -8,13 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
-try:
-    from backend_adapter import BackendAdapter, BackendResult
-except ImportError:
-    import sys
-    from pathlib import Path
-    sys.path.append(str(Path(__file__).resolve().parent.parent))
-    from backend_adapter import BackendAdapter, BackendResult
+from ..backend_adapter import BackendAdapter, BackendResult
 
 
 class ClaudeCodeAdapter(BackendAdapter):
@@ -34,8 +28,18 @@ class ClaudeCodeAdapter(BackendAdapter):
         prompt_override: str | None,
         previous_run_exhausted: bool = False,
     ) -> tuple[str | None, list[str]]:
-        """Claude Code currently handles effort via model selection; return default."""
-        return None, ["Claude Code uses model-level reasoning controls"]
+        """Resolve reasoning effort via the shared auto-resolver."""
+        from .._env import resolve_auto_reasoning_effort  # noqa: PLC0415
+
+        return resolve_auto_reasoning_effort(
+            orchestrator_root=orchestrator_root,
+            task_ref=task_ref,
+            lane_id=lane_id,
+            requested=requested,
+            cycle=cycle,
+            prompt_override=prompt_override,
+            previous_run_exhausted=previous_run_exhausted,
+        )
 
     def execute(
         self,
@@ -56,7 +60,6 @@ class ClaudeCodeAdapter(BackendAdapter):
         with tempfile.TemporaryDirectory(prefix="claude-code-") as tmpdir:
             tmp = Path(tmpdir)
             prompt_file = tmp / "prompt.md"
-            result_file = tmp / "result.json"
 
             # Claude Code expects a natural language prompt. 
             # We append the schema requirements to the prompt.
@@ -67,19 +70,19 @@ class ClaudeCodeAdapter(BackendAdapter):
             )
             prompt_file.write_text(full_prompt)
 
-            # Note: This assumes 'claude' CLI supports a non-interactive mode.
-            # In practice, we might need 'claude execute' or similar.
             cmd = [
                 self.claude_bin,
                 "execute", 
                 "--cwd", str(worktree_path),
                 "--file", str(prompt_file),
+                "--output-format", "json",
             ]
-            if model:
-                cmd.extend(["--model", model])
+            # Model priority: explicit parameter > ANTHROPIC_MODEL env var
+            effective_model = model or (env or {}).get("ANTHROPIC_MODEL")
+            if effective_model:
+                cmd.extend(["--model", effective_model])
 
             try:
-                # We use a longer timeout for LLM execution
                 completed = subprocess.run(
                     cmd,
                     capture_output=True,
@@ -104,19 +107,113 @@ class ClaudeCodeAdapter(BackendAdapter):
                     f"STDERR: {stderr_tail}"
                 )
 
-            # Claude Code output is usually to stdout; we try to find the JSON block.
-            # This is a heuristic parser.
             output = completed.stdout
-            json_match = re.search(r"(\{.*\})", output, re.DOTALL)
-            if not json_match:
-                raise RuntimeError("Claude Code completed but no JSON block was found in output.")
-
             try:
-                payload = json.loads(json_match.group(1))
-            except json.JSONDecodeError as exc:
-                raise RuntimeError(f"Failed to parse JSON from Claude Code output: {exc}")
+                response = json.loads(output)
+            except json.JSONDecodeError:
+                # Fallback: try regex extraction for older CLI versions
+                json_match = re.search(r"(\{.*\})", output, re.DOTALL)
+                if not json_match:
+                    raise RuntimeError("Claude Code completed but no JSON found in output.")
+                try:
+                    response = json.loads(json_match.group(1))
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError(f"Failed to parse JSON from Claude Code output: {exc}")
+
+            # Extract usage data from the structured response
+            token_usage = _extract_claude_usage(response)
+
+            # The structured response wraps the result; extract the inner content
+            payload = _extract_claude_result_payload(response)
+
+            if progress_callback and token_usage:
+                progress_callback(
+                    "subagent_turn_complete",
+                    backend="claude-code",
+                    phase="execution",
+                    token_usage=token_usage,
+                )
 
             if progress_callback:
                 progress_callback("exec_complete", backend="claude-code")
 
-            return BackendResult.from_dict(payload)
+            result = BackendResult.from_dict(payload)
+            if token_usage:
+                # Attach usage to the result via a new instance (frozen dataclass)
+                result = BackendResult(
+                    handoff_action=result.handoff_action,
+                    summary=result.summary,
+                    details=result.details,
+                    tests_run=result.tests_run,
+                    blockers=result.blockers,
+                    changed_files=result.changed_files,
+                    merge_ready=result.merge_ready,
+                    token_usage=token_usage,
+                    raw_payload=result.raw_payload,
+                )
+            return result
+
+
+def _extract_claude_usage(response: dict[str, Any]) -> dict[str, Any] | None:
+    """Extract token usage from a Claude CLI --output-format json response.
+
+    The Claude CLI JSON output may contain a ``usage`` key at the top level
+    with ``input_tokens`` and ``output_tokens``.  We normalize this into the
+    same ``{last: {...}, total: {...}}`` shape used by the codex-subagent bridge
+    so the downstream observability pipeline handles it uniformly.
+    """
+    usage = response.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    input_tokens = usage.get("input_tokens", 0)
+    output_tokens = usage.get("output_tokens", 0)
+    cache_read = usage.get("cache_read_input_tokens", 0)
+    cache_creation = usage.get("cache_creation_input_tokens", 0)
+    total_tokens = input_tokens + output_tokens
+    breakdown = {
+        "cached_input_tokens": cache_read + cache_creation,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "reasoning_output_tokens": 0,
+        "total_tokens": total_tokens,
+    }
+    return {
+        "last": breakdown,
+        "total": breakdown,
+        "model_context_window": None,
+    }
+
+
+def _extract_claude_result_payload(response: dict[str, Any]) -> dict[str, Any]:
+    """Extract the worker result payload from the Claude CLI JSON envelope.
+
+    When ``--output-format json`` is used, the actual assistant response may be
+    nested under a ``result`` or ``content`` key.  If the response already looks
+    like a ``BackendResult`` dict (has ``handoff_action``), return it directly.
+    """
+    if "handoff_action" in response:
+        return response
+    # Try common envelope keys
+    for key in ("result", "content", "response"):
+        candidate = response.get(key)
+        if isinstance(candidate, dict) and "handoff_action" in candidate:
+            return candidate
+        if isinstance(candidate, str):
+            try:
+                parsed = json.loads(candidate)
+                if isinstance(parsed, dict):
+                    return parsed
+            except (json.JSONDecodeError, TypeError):
+                continue
+    # Last resort: look for an embedded JSON block in any string value
+    for value in response.values():
+        if isinstance(value, str):
+            match = re.search(r"(\{.*\})", value, re.DOTALL)
+            if match:
+                try:
+                    parsed = json.loads(match.group(1))
+                    if isinstance(parsed, dict):
+                        return parsed
+                except (json.JSONDecodeError, TypeError):
+                    continue
+    return response

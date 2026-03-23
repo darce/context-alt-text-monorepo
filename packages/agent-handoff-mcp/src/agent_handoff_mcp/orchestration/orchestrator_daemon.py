@@ -1013,6 +1013,14 @@ def orchestrator_loop(
                     cursor = _complete_lane_plan_cursor(task_ref, lane_id)
                     if cursor is not None:
                         log("INFO", "plan_cursor_completed", lane=lane_id, plan_item_id=cursor.get("plan_item_id"))
+                    from agent_handoff_mcp import close_worktree_lane
+                    close_worktree_lane(
+                        lane_id=lane_id,
+                        status="merged",
+                        notes="Auto-closed by orchestrator daemon post-intake.",
+                        task_ref=task_ref,
+                    )
+                    log("INFO", "lane_auto_merged", lane=lane_id)
 
                 deps = downstream_lanes(task_ref, lane_id)
                 if deps:

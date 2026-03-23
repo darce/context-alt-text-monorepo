@@ -289,7 +289,7 @@ Lane manifests at `config/lane-orchestration/<task-ref>.json` support these hard
 
 ### BackendAdapter Protocol
 
-All execution backends MUST implement the `BackendAdapter` protocol defined in `scripts/mcp/backend_registry.py`. This ensures consistent handling of `execute()` and `resolve_reasoning_effort()` across Codex, Claude, and local models.
+All execution backends MUST implement the `BackendAdapter` protocol defined in `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/backend_registry.py`. This ensures consistent handling of `execute()` and `resolve_reasoning_effort()` across Codex, Claude, and local models.
 
 ### Tool Signatures (Implementation Details)
 

@@ -13,6 +13,13 @@ Is the task one of these exact four categories?
 
 **YES** — Terminal is allowed. Pipe output: `| tail -n 40`. Never redirect with `>` AND `2>&1` in the same command.
 
+**TEST RUNS (MANDATORY):** Always use `tee /tmp/<suite>.txt` then `read_file`. Never rely on terminal output alone:
+- Python: `cd <app-dir> && pyenv exec python -m pytest <path> -q 2>&1 | tee /tmp/pytest_<suite>.txt`
+- Vitest: `cd <app-dir> && npx vitest run <path> 2>&1 | tee /tmp/vitest_<suite>.txt`
+- PHP: `cd <app-dir> && vendor/bin/phpunit <path> 2>&1 | tee /tmp/phpunit_<suite>.txt`
+- Then: `read_file("/tmp/pytest_<suite>.txt")`. Never `cat` in terminal.
+- Background terminals lack pyenv; only use the foreground terminal for Python tests.
+
 **NO** — Stop. Use the native tool:
 
 | Task | Native tool | NEVER use terminal |

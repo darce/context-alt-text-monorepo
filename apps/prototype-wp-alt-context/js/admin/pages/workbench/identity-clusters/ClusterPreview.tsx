@@ -32,9 +32,7 @@ export const ClusterPreview = ({
   const hasValidThumbnail = representative?.media_url && representative?.bbox;
   const representativeId = representative?.representative_id ?? representative?.identity_id ?? null;
   const isPinned = Boolean(representative?.is_pinned);
-  const toggleLabel = isPinned
-    ? __('Unpin representative', 'alt-context')
-    : __('Pin representative', 'alt-context');
+  const toggleLabel = isPinned ? __('Unpin representative', 'alt-context') : __('Pin representative', 'alt-context');
 
   return (
     <div className="acx-identity-cluster__preview">

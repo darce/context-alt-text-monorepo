@@ -254,7 +254,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
   );
 
   const handleToggleRepresentativePin = React.useCallback(
-    (representative: typeof cluster.members[number], nextPinned: boolean) => {
+    (representative: (typeof cluster.members)[number], nextPinned: boolean) => {
       const representativeId = representative.representative_id ?? representative.identity_id;
       if (!cluster.clusterId || !representativeId) {
         return;

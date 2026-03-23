@@ -60,11 +60,59 @@ class RetentionController extends AbstractRecognitionProxyController {
 
 		register_rest_route(
 			'acx/v1',
+			'/retention/policy/preset',
+			array(
+				'methods' => 'POST',
+				'callback' => array( $this, 'apply_preset' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+				'args' => array(
+					'preset' => array(
+						'type' => 'string',
+						'required' => true,
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
 			'/retention/export',
 			array(
 				'methods' => 'POST',
 				'callback' => array( $this, 'trigger_export' ),
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/retention/export/(?P<job_id>[a-f0-9-]{36})/status',
+			array(
+				'methods' => 'GET',
+				'callback' => array( $this, 'get_export_job_status' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+				'args' => array(
+					'job_id' => array(
+						'type' => 'string',
+						'required' => true,
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/retention/export/(?P<job_id>[a-f0-9-]{36})/data',
+			array(
+				'methods' => 'GET',
+				'callback' => array( $this, 'get_export_job_data' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+				'args' => array(
+					'job_id' => array(
+						'type' => 'string',
+						'required' => true,
+					),
+				),
 			)
 		);
 
@@ -81,6 +129,40 @@ class RetentionController extends AbstractRecognitionProxyController {
 						'required' => true,
 					),
 					'scope' => array(
+						'type' => 'string',
+						'required' => false,
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/retention/import',
+			array(
+				'methods' => 'POST',
+				'callback' => array( $this, 'trigger_import' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/retention/audit',
+			array(
+				'methods' => 'GET',
+				'callback' => array( $this, 'list_audit_events' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+				'args' => array(
+					'limit' => array(
+						'type' => 'integer',
+						'required' => false,
+					),
+					'offset' => array(
+						'type' => 'integer',
+						'required' => false,
+					),
+					'event_type' => array(
 						'type' => 'string',
 						'required' => false,
 					),
@@ -144,6 +226,27 @@ class RetentionController extends AbstractRecognitionProxyController {
 		return $response;
 	}
 
+	public function apply_preset( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$preset = $this->normalize_string_param( $request->get_param( 'preset' ) );
+		if ( '' === $preset ) {
+			return new WP_Error( 'missing_preset', 'Retention preset name is required.', array( 'status' => 400 ) );
+		}
+
+		$response = $this->proxy_request(
+			'POST',
+			'/retention/policy/preset',
+			array( 'preset' => $preset ),
+			array(),
+			'mutation'
+		);
+
+		if ( ! $this->is_proxy_unavailable( $response ) && $response instanceof WP_REST_Response && $response->get_status() < 400 ) {
+			$this->invalidate_status_cache();
+		}
+
+		return $response;
+	}
+
 	public function trigger_export( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$response = $this->proxy_request( 'POST', '/retention/export', array(), array(), 'mutation' );
 
@@ -152,6 +255,16 @@ class RetentionController extends AbstractRecognitionProxyController {
 		}
 
 		return $response;
+	}
+
+	public function get_export_job_status( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$job_id = sanitize_key( $request->get_param( 'job_id' ) );
+		return $this->proxy_request( 'GET', "/retention/export/{$job_id}/status", array(), array(), 'ui_read' );
+	}
+
+	public function get_export_job_data( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$job_id = sanitize_key( $request->get_param( 'job_id' ) );
+		return $this->proxy_request( 'GET', "/retention/export/{$job_id}/data", array(), array(), 'ui_read' );
 	}
 
 	public function trigger_purge( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -215,6 +328,52 @@ class RetentionController extends AbstractRecognitionProxyController {
 		}
 
 		return $response;
+	}
+
+	public function trigger_import( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$body = $request->get_json_params();
+		if ( ! is_array( $body ) || ! isset( $body['data'] ) || ! is_array( $body['data'] ) ) {
+			return new WP_Error(
+				'retention_import_invalid_body',
+				'Import request must include a "data" object.',
+				array( 'status' => 400 )
+			);
+		}
+
+		$response = $this->proxy_request(
+			'POST',
+			'/retention/import',
+			array( 'data' => $body['data'] ),
+			array(),
+			'mutation'
+		);
+
+		if ( ! $this->is_proxy_unavailable( $response ) && $response instanceof WP_REST_Response && $response->get_status() < 400 ) {
+			$this->invalidate_status_cache();
+		}
+
+		return $response;
+	}
+
+	public function list_audit_events( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$query_params = array();
+
+		$limit = $request->get_param( 'limit' );
+		if ( null !== $limit ) {
+			$query_params['limit'] = (int) $limit;
+		}
+
+		$offset = $request->get_param( 'offset' );
+		if ( null !== $offset ) {
+			$query_params['offset'] = (int) $offset;
+		}
+
+		$event_type = $this->normalize_string_param( $request->get_param( 'event_type' ) );
+		if ( '' !== $event_type ) {
+			$query_params['event_type'] = $event_type;
+		}
+
+		return $this->proxy_request( 'GET', '/retention/audit', array(), $query_params, 'ui_read' );
 	}
 
 	private function build_unavailable_status_payload(): array {

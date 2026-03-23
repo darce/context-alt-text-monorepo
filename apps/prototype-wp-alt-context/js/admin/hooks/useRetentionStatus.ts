@@ -1,14 +1,26 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 
 import {
+  applyRetentionPreset,
+  downloadExportJobData,
   exportTenantData,
+  fetchAuditEvents,
   fetchRetentionStatus,
+  getExportJobStatus,
+  importTenantData,
   purgeTenantData,
   updateRetentionPolicy,
+  type ApplyRetentionPresetRequest,
+  type ApplyRetentionPresetResponse,
+  type AuditEventListResponse,
+  type ExportJobStatusResponse,
+  type ImportTenantDataRequest,
+  type ImportTenantDataResponse,
   type PurgeTenantDataRequest,
   type RetentionExportResponse,
   type RetentionPolicy,
   type RetentionStatusResponse,
+  type StartExportJobResponse,
   type UpdateRetentionPolicyRequest,
 } from '../api/recognition';
 import { queryKeys } from '../api/queryKeys';
@@ -34,13 +46,37 @@ export const useUpdateRetentionPolicy = () => {
 export const useExportTenantData = () => {
   const queryClient = useQueryClient();
 
-  return useMutation<RetentionExportResponse, Error, void>({
+  return useMutation<StartExportJobResponse, Error, void>({
     mutationFn: () => exportTenantData(),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.retention.status() });
     },
   });
 };
+
+export const useExportJobStatus = (jobId: string | null): UseQueryResult<ExportJobStatusResponse, Error> =>
+  useQuery<ExportJobStatusResponse>({
+    queryKey: queryKeys.retention.exportJob(jobId ?? ''),
+    queryFn: () => {
+      if (jobId === null) {
+        throw new Error('useExportJobStatus called without a valid jobId');
+      }
+      return getExportJobStatus(jobId);
+    },
+    enabled: jobId !== null,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      if (status === 'completed' || status === 'failed') {
+        return false;
+      }
+      return 2000;
+    },
+  });
+
+export const useDownloadExportJobData = () =>
+  useMutation<RetentionExportResponse, Error, string>({
+    mutationFn: (jobId: string) => downloadExportJobData(jobId),
+  });
 
 export const usePurgeTenantData = () => {
   const queryClient = useQueryClient();
@@ -51,6 +87,38 @@ export const usePurgeTenantData = () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.retention.status() });
       void queryClient.invalidateQueries({ queryKey: queryKeys.sync.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+    },
+  });
+};
+
+export const useImportTenantData = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation<ImportTenantDataResponse, Error, ImportTenantDataRequest>({
+    mutationFn: (request: ImportTenantDataRequest) => importTenantData(request),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.retention.status() });
+    },
+  });
+};
+
+export const useAuditEvents = (params: {
+  limit?: number;
+  offset?: number;
+  event_type?: string;
+}): UseQueryResult<AuditEventListResponse, Error> =>
+  useQuery<AuditEventListResponse>({
+    queryKey: queryKeys.retention.audit(params),
+    queryFn: () => fetchAuditEvents(params),
+    staleTime: 30_000,
+  });
+
+export const useApplyRetentionPreset = () => {
+  const queryClient = useQueryClient();
+  return useMutation<ApplyRetentionPresetResponse, Error, ApplyRetentionPresetRequest>({
+    mutationFn: (request) => applyRetentionPreset(request),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.retention.status() });
     },
   });
 };

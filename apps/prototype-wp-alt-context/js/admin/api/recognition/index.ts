@@ -51,10 +51,17 @@ export type {
   RetentionPolicy,
   AuditEvent,
   RetentionStatusResponse,
+  StartExportJobResponse,
+  ExportJobStatusResponse,
   UpdateRetentionPolicyRequest,
   RetentionExportResponse,
   PurgeTenantDataRequest,
   PurgeTenantDataResponse,
+  ImportTenantDataRequest,
+  ImportTenantDataResponse,
+  AuditEventListResponse,
+  ApplyRetentionPresetRequest,
+  ApplyRetentionPresetResponse,
   ConflictResolutionChoice,
   ConflictRecord,
   ConflictListResponse,
@@ -104,17 +111,32 @@ export {
   fetchIdentitySuggestions,
   fetchPendingSuggestions,
   fetchPendingMergeSuggestions,
+  fetchPendingNameSuggestions,
+  type PendingNameSuggestionsResponse,
   acceptSuggestion,
   acceptMergeSuggestion,
   rejectSuggestion,
   rejectMergeSuggestion,
+  acceptNameSuggestion,
+  rejectNameSuggestion,
+  bulkAcceptSuggestions,
 } from './identityApi';
 
 // Sync status
 export { fetchSyncStatus, triggerSync } from './syncApi';
 
 // Retention
-export { fetchRetentionStatus, updateRetentionPolicy, exportTenantData, purgeTenantData } from './retentionApi';
+export {
+  fetchRetentionStatus,
+  updateRetentionPolicy,
+  exportTenantData,
+  getExportJobStatus,
+  downloadExportJobData,
+  purgeTenantData,
+  importTenantData,
+  fetchAuditEvents,
+  applyRetentionPreset,
+} from './retentionApi';
 
 // Conflict and dead-letter operations
 export {

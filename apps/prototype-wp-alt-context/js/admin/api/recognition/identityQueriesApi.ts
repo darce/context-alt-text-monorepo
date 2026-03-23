@@ -4,6 +4,7 @@ import type {
   IdentitySuggestionsResponse,
   MediaIdentitiesResponse,
   PendingMergeSuggestionsResponse,
+  PendingNameSuggestion,
   PendingSuggestionsResponse,
 } from './types';
 import {
@@ -13,6 +14,13 @@ import {
   type PendingSuggestionApiResponse,
 } from './identitySuggestionMappers';
 import { createRecognitionTimeoutSignal } from './requestTimeout';
+
+export interface PendingNameSuggestionsResponse {
+  suggestions: PendingNameSuggestion[];
+  total: number;
+  limit: number;
+  offset: number;
+}
 
 export const fetchMediaIdentities = async (mediaIds: number[]): Promise<MediaIdentitiesResponse> => {
   if (mediaIds.length === 0) {
@@ -83,4 +91,22 @@ export const fetchPendingMergeSuggestions = async (
   );
 
   return mapPendingMergeSuggestions(response, limit, offset);
+};
+
+export const fetchPendingNameSuggestions = async (
+  minConfidence = 0,
+  limit = 25,
+  offset = 0,
+): Promise<PendingNameSuggestionsResponse> => {
+  const base = getEndpoint('recognitionNameSuggestions');
+  const url = new URL(base, window.location.origin);
+  url.searchParams.set('min_confidence', String(minConfidence));
+  url.searchParams.set('limit', String(limit));
+  url.searchParams.set('offset', String(offset));
+
+  return fetchRequiredApi<PendingNameSuggestionsResponse>(url.toString(), {
+    method: 'GET',
+    restNonce: getConfig().nonce,
+    signal: createRecognitionTimeoutSignal(2_000),
+  });
 };

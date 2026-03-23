@@ -7,6 +7,16 @@ export {
   fetchIdentitySuggestions,
   fetchPendingSuggestions,
   fetchPendingMergeSuggestions,
+  fetchPendingNameSuggestions,
+  type PendingNameSuggestionsResponse,
 } from './identityQueriesApi';
 
-export { acceptSuggestion, acceptMergeSuggestion, rejectSuggestion, rejectMergeSuggestion } from './identityActionsApi';
+export {
+  acceptSuggestion,
+  acceptMergeSuggestion,
+  rejectSuggestion,
+  rejectMergeSuggestion,
+  acceptNameSuggestion,
+  rejectNameSuggestion,
+  bulkAcceptSuggestions,
+} from './identityActionsApi';

@@ -45,6 +45,9 @@ export const queryKeys = {
   retention: {
     all: ['retention'] as const,
     status: () => [...queryKeys.retention.all, 'status'] as const,
+    exportJob: (jobId: string) => [...queryKeys.retention.all, 'exportJob', jobId] as const,
+    audit: (params: { limit?: number; offset?: number; event_type?: string }) =>
+      [...queryKeys.retention.all, 'audit', params] as const,
   },
   conflicts: {
     all: ['conflicts'] as const,
@@ -64,6 +67,7 @@ export const queryKeys = {
     all: ['suggestions'] as const,
     pending: () => [...queryKeys.suggestions.all, 'pending'] as const,
     mergePending: () => [...queryKeys.suggestions.all, 'merge'] as const,
+    namePending: () => [...queryKeys.suggestions.all, 'name'] as const,
     identity: () => [...queryKeys.suggestions.all, 'identity'] as const,
     identityFor: (identityId: string | undefined) => [...queryKeys.suggestions.identity(), identityId] as const,
     inline: () => [...queryKeys.suggestions.all, 'inline'] as const,

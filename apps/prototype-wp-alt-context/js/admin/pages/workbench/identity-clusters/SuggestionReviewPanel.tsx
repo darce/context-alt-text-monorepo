@@ -6,27 +6,14 @@
 
 import React from 'react';
 import { __ } from '@wordpress/i18n';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { queryKeys } from '../../../api/queryKeys';
-import {
-  acceptMergeSuggestion,
-  acceptSuggestion,
-  fetchPendingMergeSuggestions,
-  fetchPendingSuggestions,
-  rejectMergeSuggestion,
-  rejectSuggestion,
-  type PendingSuggestionsResponse,
-  type PendingSuggestion,
-} from '../../../api/recognition';
-import { getConfig } from '../../../api/config';
+import type { PendingSuggestion } from '../../../api/recognition';
 import { CollapsibleMergeQueue } from './CollapsibleMergeQueue';
 import { GroupedSuggestionCard, SuggestionCard } from './SuggestionCards';
-import { buildSuggestionReviewItems } from './suggestionReviewItems';
 import { TopClustersSection } from './TopClustersSection';
+import { useSuggestionReviewData } from './useSuggestionReviewData';
 
 const LOW_CONFIDENCE_THRESHOLD = 0.6;
-const SUGGESTION_PAGE_SIZE = 25;
 
 interface SuggestionReviewPanelProps {
   onLabel?: (clusterId: string) => void;
@@ -34,144 +21,32 @@ interface SuggestionReviewPanelProps {
 }
 
 export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPanelProps): React.JSX.Element | null => {
-  const queryClient = useQueryClient();
   const [isOpen, setIsOpen] = React.useState(true);
   const [expandedGroups, setExpandedGroups] = React.useState<Set<string>>(new Set());
-  const [bulkActionClusterId, setBulkActionClusterId] = React.useState<string | null>(null);
-  const bulkActionRef = React.useRef(false);
+  const [bulkConfidenceThreshold, setBulkConfidenceThreshold] = React.useState(LOW_CONFIDENCE_THRESHOLD);
   const contentId = React.useId();
 
-  const removePendingSuggestionFromCache = React.useCallback(
-    (suggestionId: string) => {
-      queryClient.setQueryData<PendingSuggestionsResponse | undefined>(queryKeys.suggestions.pending(), (current) => {
-        if (!current) {
-          return current;
-        }
-        const filtered = current.suggestions.filter((suggestion) => suggestion.id !== suggestionId);
-        if (filtered.length === current.suggestions.length) {
-          return current;
-        }
-        return {
-          ...current,
-          suggestions: filtered,
-          total: Math.max(0, current.total - 1),
-        };
-      });
-    },
-    [queryClient],
-  );
-
-  const invalidateSuggestionQueries = React.useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.pending() });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
-  }, [queryClient]);
-
   const {
-    data: assignmentData,
-    isLoading: isAssignmentLoading,
-    isError: isAssignmentError,
-    refetch: refetchAssignment,
-    failureCount: assignmentFailureCount,
-  } = useQuery({
-    queryKey: queryKeys.suggestions.pending(),
-    queryFn: () => fetchPendingSuggestions(SUGGESTION_PAGE_SIZE, 0),
-    refetchInterval: false,
-    retry: false,
-  });
-
-  const {
-    data: mergeData,
-    isLoading: isMergeLoading,
-    isError: isMergeError,
-    refetch: refetchMerge,
-    failureCount: mergeFailureCount,
-  } = useQuery({
-    queryKey: queryKeys.suggestions.mergePending(),
-    queryFn: () => fetchPendingMergeSuggestions(10, 0),
-    refetchInterval: false,
-    retry: false,
-  });
-
-  const acceptMutation = useMutation({
-    mutationFn: acceptSuggestion,
-    onMutate: async (suggestionId: string) => {
-      await queryClient.cancelQueries({ queryKey: queryKeys.suggestions.pending() });
-      const previous = queryClient.getQueryData<PendingSuggestionsResponse>(queryKeys.suggestions.pending());
-      removePendingSuggestionFromCache(suggestionId);
-      return { previous };
-    },
-    onError: (error, _suggestionId, context) => {
-      console.warn('[SuggestionReviewPanel] accept failed, restoring cache:', error);
-      if (context?.previous) {
-        queryClient.setQueryData(queryKeys.suggestions.pending(), context.previous);
-      }
-    },
-    onSettled: () => {
-      if (!bulkActionRef.current) {
-        invalidateSuggestionQueries();
-        void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
-      }
-    },
-  });
-
-  const acceptMergeMutation = useMutation({
-    mutationFn: acceptMergeSuggestion,
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.mergePending() });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
-    },
-  });
-
-  const rejectMutation = useMutation({
-    mutationFn: rejectSuggestion,
-    onMutate: async (suggestionId: string) => {
-      await queryClient.cancelQueries({ queryKey: queryKeys.suggestions.pending() });
-      const previous = queryClient.getQueryData<PendingSuggestionsResponse>(queryKeys.suggestions.pending());
-      removePendingSuggestionFromCache(suggestionId);
-      return { previous };
-    },
-    onError: (error, _suggestionId, context) => {
-      console.warn('[SuggestionReviewPanel] reject failed, restoring cache:', error);
-      if (context?.previous) {
-        queryClient.setQueryData(queryKeys.suggestions.pending(), context.previous);
-      }
-    },
-    onSuccess: (_data, suggestionId) => {
-      removePendingSuggestionFromCache(suggestionId);
-    },
-    onSettled: () => {
-      if (!bulkActionRef.current) {
-        invalidateSuggestionQueries();
-      }
-    },
-  });
-
-  const rejectMergeMutation = useMutation({
-    mutationFn: rejectMergeSuggestion,
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.mergePending() });
-    },
-  });
-
-  const assignmentSuggestions = assignmentData?.suggestions;
-  const mergeSuggestions = mergeData?.suggestions ?? [];
-  const reviewItems = React.useMemo(() => buildSuggestionReviewItems(assignmentSuggestions), [assignmentSuggestions]);
-
-  const assignmentCount = assignmentData?.total ?? 0;
-  const loadedAssignmentCount = assignmentSuggestions?.length ?? 0;
-  const hasNoSuggestionData = !assignmentData && !mergeData;
-  const hasInitialFailure = (assignmentFailureCount > 0 || mergeFailureCount > 0) && hasNoSuggestionData;
-  const isLoading = !hasInitialFailure && ((isAssignmentLoading && !assignmentData) || (isMergeLoading && !mergeData));
-  const isError = isAssignmentError && isMergeError && hasNoSuggestionData;
-  const failureCount = Math.max(assignmentFailureCount, mergeFailureCount);
-  const tenantId = getConfig().tenant_id;
-  const isAnyMutationPending =
-    acceptMutation.isPending ||
-    rejectMutation.isPending ||
-    acceptMergeMutation.isPending ||
-    rejectMergeMutation.isPending ||
-    bulkActionClusterId !== null;
+    mergeSuggestions,
+    nameSuggestions,
+    reviewItems,
+    assignmentCount,
+    loadedAssignmentCount,
+    hasInitialFailure,
+    isLoading,
+    isError,
+    failureCount,
+    tenantId,
+    isAnyMutationPending,
+    bulkActionClusterId,
+    setBulkActionClusterId,
+    bulkActionRef,
+    refetchAssignment,
+    refetchMerge,
+    invalidateSuggestionQueries,
+    invalidateMediaIdentities,
+    mutations,
+  } = useSuggestionReviewData();
 
   const toggleReviewEach = (clusterId: string): void => {
     setExpandedGroups((current) => {
@@ -192,7 +67,7 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
     setBulkActionClusterId(clusterId);
     bulkActionRef.current = true;
     try {
-      await Promise.all(suggestions.map((suggestion) => acceptMutation.mutateAsync(suggestion.id)));
+      await Promise.all(suggestions.map((suggestion) => mutations.accept.mutateAsync(suggestion.id)));
       setExpandedGroups((current) => {
         if (!current.has(clusterId)) {
           return current;
@@ -205,7 +80,7 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
       bulkActionRef.current = false;
       setBulkActionClusterId(null);
       invalidateSuggestionQueries();
-      void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
+      invalidateMediaIdentities();
     }
   };
 
@@ -216,7 +91,7 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
     setBulkActionClusterId(clusterId);
     bulkActionRef.current = true;
     try {
-      await Promise.all(suggestions.map((suggestion) => rejectMutation.mutateAsync(suggestion.id)));
+      await Promise.all(suggestions.map((suggestion) => mutations.reject.mutateAsync(suggestion.id)));
       setExpandedGroups((current) => {
         if (!current.has(clusterId)) {
           return current;
@@ -237,8 +112,8 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
       key={`assign-${suggestion.id}`}
       suggestion={suggestion}
       lowConfidenceThreshold={LOW_CONFIDENCE_THRESHOLD}
-      onAccept={() => acceptMutation.mutate(suggestion.id)}
-      onReject={() => rejectMutation.mutate(suggestion.id)}
+      onAccept={() => mutations.accept.mutate(suggestion.id)}
+      onReject={() => mutations.reject.mutate(suggestion.id)}
       onLabel={(clusterId) => {
         if (onLabel) {
           onLabel(clusterId ?? suggestion.suggested_cluster_id);
@@ -296,9 +171,9 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
         <div id={contentId} className="acx-suggestion-panel__content">
           <CollapsibleMergeQueue
             suggestions={mergeSuggestions}
-            onAccept={(id) => acceptMergeMutation.mutate(id)}
-            onReject={(id) => rejectMergeMutation.mutate(id)}
-            isPending={acceptMergeMutation.isPending || rejectMergeMutation.isPending}
+            onAccept={(id) => mutations.acceptMerge.mutate(id)}
+            onReject={(id) => mutations.rejectMerge.mutate(id)}
+            isPending={mutations.acceptMerge.isPending || mutations.rejectMerge.isPending}
           />
 
           <div className="acx-suggestion-queue">
@@ -346,6 +221,105 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
                 {__('and', 'alt-context')} {assignmentCount - loadedAssignmentCount} {__('more...', 'alt-context')}
               </p>
             )}
+          </div>
+
+          {nameSuggestions.length > 0 && (
+            <div className="acx-naming-queue acx-naming-queue--suggestions">
+              <h3 className="acx-suggestion-panel__section-title">{__('Suggested names', 'alt-context')}</h3>
+              <p className="acx-suggestion-panel__description">
+                {__('These names were suggested by the recognition engine for unlabeled clusters.', 'alt-context')}
+              </p>
+              <ul className="acx-suggestion-panel__list">
+                {nameSuggestions.map((suggestion) => (
+                  <li key={suggestion.id} className="acx-name-suggestion-card">
+                    <span className="acx-name-suggestion-card__label">{suggestion.suggested_name}</span>
+                    {suggestion.confidence_score !== null && suggestion.confidence_score !== undefined && (
+                      <span
+                        className={`acx-suggestion-confidence${suggestion.confidence_score < LOW_CONFIDENCE_THRESHOLD ? ' acx-suggestion-confidence--low' : ''}`}
+                      >
+                        {Math.round(suggestion.confidence_score * 100)}%
+                      </span>
+                    )}
+                    <div className="acx-name-suggestion-card__actions">
+                      <button
+                        type="button"
+                        className="acx-button acx-button--primary acx-button--small"
+                        disabled={mutations.acceptName.isPending || mutations.rejectName.isPending}
+                        onClick={() => mutations.acceptName.mutate(suggestion.id)}
+                      >
+                        {__('Accept', 'alt-context')}
+                      </button>
+                      <button
+                        type="button"
+                        className="acx-button acx-button--secondary acx-button--small"
+                        disabled={mutations.acceptName.isPending || mutations.rejectName.isPending}
+                        onClick={() => mutations.rejectName.mutate(suggestion.id)}
+                      >
+                        {__('Reject', 'alt-context')}
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="acx-bulk-accept">
+            <h3 className="acx-suggestion-panel__section-title">{__('Bulk accept', 'alt-context')}</h3>
+            <p className="acx-suggestion-panel__description">
+              {__('Accept all suggestions above a confidence threshold.', 'alt-context')}
+            </p>
+            <label className="acx-bulk-accept__threshold-label">
+              <span>{__('Minimum confidence:', 'alt-context')}</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={bulkConfidenceThreshold}
+                onChange={(e) => setBulkConfidenceThreshold(parseFloat(e.target.value))}
+                className="acx-bulk-accept__slider"
+              />
+              <span className="acx-bulk-accept__threshold-value">{Math.round(bulkConfidenceThreshold * 100)}%</span>
+            </label>
+            <div className="acx-bulk-accept__actions">
+              <button
+                type="button"
+                className="acx-button acx-button--secondary acx-button--small"
+                disabled={mutations.bulkAccept.isPending}
+                onClick={() =>
+                  mutations.bulkAccept.mutate({ suggestion_type: 'assignment', min_confidence: bulkConfidenceThreshold })
+                }
+              >
+                {mutations.bulkAccept.isPending
+                  ? __('Accepting…', 'alt-context')
+                  : __('Bulk accept assignments', 'alt-context')}
+              </button>
+              <button
+                type="button"
+                className="acx-button acx-button--secondary acx-button--small"
+                disabled={mutations.bulkAccept.isPending}
+                onClick={() =>
+                  mutations.bulkAccept.mutate({ suggestion_type: 'name', min_confidence: bulkConfidenceThreshold })
+                }
+              >
+                {mutations.bulkAccept.isPending
+                  ? __('Accepting…', 'alt-context')
+                  : __('Bulk accept names', 'alt-context')}
+              </button>
+              <button
+                type="button"
+                className="acx-button acx-button--secondary acx-button--small"
+                disabled={mutations.bulkAccept.isPending}
+                onClick={() =>
+                  mutations.bulkAccept.mutate({ suggestion_type: 'merge', min_confidence: bulkConfidenceThreshold })
+                }
+              >
+                {mutations.bulkAccept.isPending
+                  ? __('Accepting…', 'alt-context')
+                  : __('Bulk accept merges', 'alt-context')}
+              </button>
+            </div>
           </div>
 
           {tenantId && (

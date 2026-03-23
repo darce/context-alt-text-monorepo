@@ -8,4 +8,3 @@ export const useDeadLetterOperations = (params: FailedOutboxListParams = {}) =>
     queryKey: queryKeys.outbox.failedList(params),
     queryFn: () => fetchFailedOutboxOperations(params),
   });
-

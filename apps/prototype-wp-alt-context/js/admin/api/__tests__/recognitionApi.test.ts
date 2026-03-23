@@ -18,6 +18,7 @@ import {
   revertMergeCluster,
   acknowledgeProjection,
   cancelScanJob,
+  downloadExportJobData,
   exportTenantData,
   scanFaces,
   triggerSync,
@@ -193,6 +194,18 @@ describe('recognitionApi', () => {
     expect(result.progress?.total).toBe(20);
   });
 
+  it('starts an async export job and returns job_id and status', async () => {
+    fetchApiMock.mockResolvedValue({ job_id: 'export-job-1', status: 'pending' });
+
+    const result = await exportTenantData();
+
+    expect(result).toEqual({ job_id: 'export-job-1', status: 'pending' });
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      expect.stringContaining('/retentionExport'),
+      expect.objectContaining({ method: 'POST', restNonce: 'nonce-123' }),
+    );
+  });
+
   it('normalizes retention export payloads from backend data/counts fields', async () => {
     fetchApiMock.mockResolvedValue({
       tenant_id: 'tenant-1',
@@ -204,7 +217,7 @@ describe('recognitionApi', () => {
       },
     });
 
-    const result = await exportTenantData();
+    const result = await downloadExportJobData('export-job-1');
 
     expect(result).toEqual({
       tenant_id: 'tenant-1',
@@ -216,8 +229,8 @@ describe('recognitionApi', () => {
       },
     });
     expect(fetchApiMock).toHaveBeenCalledWith(
-      expect.stringContaining('/retentionExport'),
-      expect.objectContaining({ method: 'POST', restNonce: 'nonce-123' }),
+      expect.stringContaining('/retentionExport/export-job-1/data'),
+      expect.objectContaining({ method: 'GET', restNonce: 'nonce-123' }),
     );
   });
 

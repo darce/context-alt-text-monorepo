@@ -4,12 +4,16 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  acceptNameSuggestion,
   acceptSuggestion,
+  bulkAcceptSuggestions,
   dismissCluster,
   fetchPendingMergeSuggestions,
+  fetchPendingNameSuggestions,
   fetchPendingSuggestions,
   fetchTopUnlabeledClusters,
   mergeCluster,
+  rejectNameSuggestion,
   rejectSuggestion,
   updateClusterLabel,
 } from '../../../../api/recognition';
@@ -31,10 +35,14 @@ vi.mock('../../../../api/recognition', async () => {
     ...actual,
     fetchPendingSuggestions: vi.fn(),
     fetchPendingMergeSuggestions: vi.fn(),
+    fetchPendingNameSuggestions: vi.fn(),
     acceptSuggestion: vi.fn(),
     acceptMergeSuggestion: vi.fn(),
+    acceptNameSuggestion: vi.fn(),
     rejectSuggestion: vi.fn(),
     rejectMergeSuggestion: vi.fn(),
+    rejectNameSuggestion: vi.fn(),
+    bulkAcceptSuggestions: vi.fn(),
     fetchTopUnlabeledClusters: vi.fn(),
     dismissCluster: vi.fn().mockResolvedValue(undefined),
     mergeCluster: vi.fn().mockResolvedValue(undefined),
@@ -74,11 +82,14 @@ describe('SuggestionReviewPanel', () => {
       endpoints: {
         recognitionSuggestions: 'http://localhost/recognition/suggestions',
         recognitionMergeSuggestions: 'http://localhost/recognition/suggestions/merge',
+        recognitionNameSuggestions: 'http://localhost/recognition/suggestions/name',
+        recognitionBulkAcceptSuggestions: 'http://localhost/recognition/suggestions/bulk-accept',
         recognitionClusters: 'http://localhost/recognition/clusters',
       },
       tenant_id: 'test-tenant-id',
     } as unknown as NonNullable<Window['AltContextAdmin']>;
 
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({ suggestions: [], total: 0, limit: 25, offset: 0 });
     fetchTopUnlabeledClustersMock.mockResolvedValue([]);
     resetConfigCache();
   });
@@ -1028,6 +1039,211 @@ describe('SuggestionReviewPanel', () => {
     await act(async () => {
       resolveDismiss?.();
       await Promise.resolve();
+    });
+  });
+
+  it('renders name suggestions section when suggestions are returned', async () => {
+    const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
+    const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
+    const fetchPendingNameSuggestionsMock = vi.mocked(fetchPendingNameSuggestions);
+
+    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 25, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    fetchPendingNameSuggestionsMock.mockResolvedValue({
+      suggestions: [
+        { id: 'name-sugg-1', cluster_id: 'cluster-ns-1', suggested_name: 'Alice Lemon', confidence_score: 0.85, source: 'machine', created_at: '2026-01-01T00:00:00Z', expires_at: null },
+        { id: 'name-sugg-2', cluster_id: 'cluster-ns-2', suggested_name: 'Bob Apricot', confidence_score: 0.45, source: 'machine', created_at: '2026-01-01T00:00:00Z', expires_at: null },
+      ],
+      total: 2,
+      limit: 25,
+      offset: 0,
+    });
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(fetchPendingNameSuggestionsMock).toHaveBeenCalled();
+    });
+
+    expect(await screen.findByText('Alice Lemon')).toBeInTheDocument();
+    expect(screen.getByText('Bob Apricot')).toBeInTheDocument();
+    // High-confidence badge: 85%
+    expect(screen.getByText('85%')).toBeInTheDocument();
+    // Low-confidence class present for 45%
+    const lowBadge = screen.getByText('45%');
+    expect(lowBadge).toHaveClass('acx-suggestion-confidence--low');
+  });
+
+  it('accepts a name suggestion and invalidates namePending query', async () => {
+    const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
+    const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
+    const fetchPendingNameSuggestionsMock = vi.mocked(fetchPendingNameSuggestions);
+    const acceptNameSuggestionMock = vi.mocked(acceptNameSuggestion);
+
+    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 25, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    fetchPendingNameSuggestionsMock.mockResolvedValue({
+      suggestions: [
+        { id: 'name-accept-1', cluster_id: 'cluster-na-1', suggested_name: 'Carol Mint', confidence_score: 0.78, source: 'machine', created_at: '2026-01-01T00:00:00Z', expires_at: null },
+      ],
+      total: 1,
+      limit: 25,
+      offset: 0,
+    });
+    acceptNameSuggestionMock.mockResolvedValue({} as Awaited<ReturnType<typeof acceptNameSuggestion>>);
+
+    const { queryClient } = renderPanel();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    await waitFor(() => {
+      expect(fetchPendingSuggestionsMock).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(fetchPendingMergeSuggestionsMock).toHaveBeenCalled();
+    });
+
+    await screen.findByText('Carol Mint');
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Accept' }));
+
+    await waitFor(() => {
+      expect(acceptNameSuggestionMock).toHaveBeenCalledWith('name-accept-1', expect.anything());
+    });
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.namePending() });
+    });
+  });
+
+  it('rejects a name suggestion and invalidates namePending query', async () => {
+    const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
+    const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
+    const fetchPendingNameSuggestionsMock = vi.mocked(fetchPendingNameSuggestions);
+    const rejectNameSuggestionMock = vi.mocked(rejectNameSuggestion);
+
+    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 25, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    fetchPendingNameSuggestionsMock.mockResolvedValue({
+      suggestions: [
+        { id: 'name-reject-1', cluster_id: 'cluster-nr-1', suggested_name: 'Dana Peach', confidence_score: 0.72, source: 'machine', created_at: '2026-01-01T00:00:00Z', expires_at: null },
+      ],
+      total: 1,
+      limit: 25,
+      offset: 0,
+    });
+    rejectNameSuggestionMock.mockResolvedValue({} as Awaited<ReturnType<typeof rejectNameSuggestion>>);
+
+    const { queryClient } = renderPanel();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    await waitFor(() => {
+      expect(fetchPendingSuggestionsMock).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(fetchPendingMergeSuggestionsMock).toHaveBeenCalled();
+    });
+
+    await screen.findByText('Dana Peach');
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Reject' }));
+
+    await waitFor(() => {
+      expect(rejectNameSuggestionMock).toHaveBeenCalledWith('name-reject-1', expect.anything());
+    });
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.namePending() });
+    });
+  });
+
+  it('renders bulk accept section with slider and two buttons', async () => {
+    const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
+    const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
+
+    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 25, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(fetchPendingSuggestionsMock).toHaveBeenCalled();
+    });
+
+    expect(await screen.findByText('Bulk accept')).toBeInTheDocument();
+    expect(screen.getByRole('slider')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Bulk accept assignments' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Bulk accept names' })).toBeInTheDocument();
+  });
+
+  it('bulk accept assignments button calls bulkAcceptSuggestions with assignment type', async () => {
+    const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
+    const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
+    const bulkAcceptSuggestionsMock = vi.mocked(bulkAcceptSuggestions);
+
+    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 25, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    bulkAcceptSuggestionsMock.mockResolvedValue({ accepted_count: 2, skipped_count: 0 });
+
+    const { queryClient } = renderPanel();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    await waitFor(() => {
+      expect(fetchPendingSuggestionsMock).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(fetchPendingMergeSuggestionsMock).toHaveBeenCalled();
+    });
+
+    const assignBtn = await screen.findByRole('button', { name: 'Bulk accept assignments' });
+
+    const user = userEvent.setup();
+    await user.click(assignBtn);
+
+    await waitFor(() => {
+      expect(bulkAcceptSuggestionsMock).toHaveBeenCalledWith(
+        expect.objectContaining({ suggestion_type: 'assignment' }),
+        expect.anything(),
+      );
+    });
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.pending() });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.namePending() });
+    });
+  });
+
+  it('bulk accept names button calls bulkAcceptSuggestions with name type', async () => {
+    const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
+    const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
+    const bulkAcceptSuggestionsMock = vi.mocked(bulkAcceptSuggestions);
+
+    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 25, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    bulkAcceptSuggestionsMock.mockResolvedValue({ accepted_count: 1, skipped_count: 0 });
+
+    const { queryClient } = renderPanel();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    await waitFor(() => {
+      expect(fetchPendingSuggestionsMock).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(fetchPendingMergeSuggestionsMock).toHaveBeenCalled();
+    });
+
+    const namesBtn = await screen.findByRole('button', { name: 'Bulk accept names' });
+
+    const user = userEvent.setup();
+    await user.click(namesBtn);
+
+    await waitFor(() => {
+      expect(bulkAcceptSuggestionsMock).toHaveBeenCalledWith(
+        expect.objectContaining({ suggestion_type: 'name' }),
+        expect.anything(),
+      );
+    });
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.namePending() });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.clusters.all });
     });
   });
 });

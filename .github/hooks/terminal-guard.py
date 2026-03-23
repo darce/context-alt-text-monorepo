@@ -16,7 +16,8 @@ Allowlisted terminal uses
 - pyenv
 - Git write / coordination / history: commit, push, rebase, cherry-pick, worktree, stash,
   fetch, pull, log, checkout, merge, branch, tag, add, reset
-- Git metadata reads: diff --name-only, diff --shortstat, status -sb (narrow forms only)
+- Git metadata reads: diff --name-only, diff --shortstat, status -sb, ls-files (narrow forms only)
+- Read-only measurement: wc (line/word/byte counts)
 
 Everything else is default-denied.
 
@@ -75,12 +76,17 @@ _ALLOWLIST: list[re.Pattern[str]] = [
         r"^git\s+branch\b",
         r"^git\s+tag\b",
         r"^git\s+add\b",
+        r"^git\s+rm\b",
         r"^git\s+reset\b",
         # git diff: metadata forms only (no full diff output)
         r"^git\s+diff\b.*--name-only\b",
         r"^git\s+diff\b.*--shortstat\b",
         # git status: narrow concise form only; bare 'git status' is hard-blocked below
         r"^git\s+status\s+-sb\b",
+        # git ls-files: read-only file listing
+        r"^git\s+ls-files\b",
+        # Read-only measurement
+        r"^wc\b",
     ]
 ]
 

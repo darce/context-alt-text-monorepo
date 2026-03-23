@@ -110,7 +110,7 @@ def _bootstrap(
 
             if not lane_vendor.exists() and root_vendor.is_dir():
                 print(f"  Copying vendor from orchestrator root: {root_vendor}")
-                shutil.copytree(root_vendor, lane_vendor, symlinks=True)
+                shutil.copytree(root_vendor, lane_vendor)
             elif not lane_vendor.exists():
                 print(f"  Running composer install in {relative_path}")
                 result = subprocess.run(
@@ -135,7 +135,7 @@ def _bootstrap(
 
             if not lane_nm.exists() and root_nm.is_dir():
                 print(f"  Copying node_modules from orchestrator root: {root_nm}")
-                shutil.copytree(root_nm, lane_nm, symlinks=True)
+                shutil.copytree(root_nm, lane_nm)
             elif not lane_nm.exists():
                 print(f"  Running npm install in {relative_path}")
                 result = subprocess.run(

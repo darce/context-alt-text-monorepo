@@ -246,6 +246,35 @@ def _format_table(
 # ---------------------------------------------------------------------------
 
 
+def _metrics_summary_line(task_ref: str, state_dir: Path, orchestrator_root: Path) -> str:
+    """Return a one-line metrics summary string for the dashboard footer."""
+    try:
+        from agent_handoff_mcp.orchestration.ace_reflect import parse_strategy_bullets  # noqa: PLC0415
+        from agent_handoff_mcp.orchestration.ace_metrics import build_snapshot  # noqa: PLC0415
+    except ImportError:
+        return "  metrics: unavailable (ace_metrics not importable)"
+
+    try:
+        snap = build_snapshot(
+            task_ref=task_ref,
+            state_dir=state_dir,
+            logs_dir=orchestrator_root / "logs",
+            instruction_files=[
+                orchestrator_root / "docs/agentic/instructions.md",
+            ],
+        )
+        tb = snap["token_burn"]
+        cp = snap["context_pressure"]
+        ace = snap["ace_documentation"]
+        tokens = f"{tb['total_tokens']:,}" if tb["data_available"] else "n/a"
+        pressure = cp["latest_pressure"] if cp["data_available"] else "n/a"
+        bullets = str(ace["total_strategy_bullets"]) if ace["data_available"] else "n/a"
+        pruning = str(ace["pruning_candidates"]) if ace["data_available"] else "n/a"
+        return f"  metrics: tokens={tokens}  pressure={pressure}  bullets={bullets}  pruning_candidates={pruning}"
+    except Exception as exc:  # noqa: BLE001
+        return f"  metrics: error ({exc})"
+
+
 def poll_lane_status(
     *,
     orchestrator_root: Path,
@@ -254,6 +283,7 @@ def poll_lane_status(
     interval: int,
     once: bool,
     state_dir: Path | None = None,
+    show_metrics: bool = False,
 ) -> None:
     """Continuously poll and display lane worker status."""
     resolved_state_dir = state_dir if state_dir is not None else orchestrator_root / ".task-state"
@@ -268,7 +298,10 @@ def poll_lane_status(
             rows.append((lane_id, info))
         table = _format_table(task_ref, rows, now)
         # Clear screen (ANSI) then print
-        print("\033[2J\033[H" + table, flush=True)
+        output = "\033[2J\033[H" + table
+        if show_metrics:
+            output += "\n" + _metrics_summary_line(task_ref, resolved_state_dir, orchestrator_root)
+        print(output, flush=True)
         if once:
             break
         time.sleep(interval)
@@ -303,6 +336,11 @@ def _parse_args() -> argparse.Namespace:
         "--state-dir",
         default=None,
         help="Path to the task-state directory (default: <orchestrator-root>/.task-state).",
+    )
+    parser.add_argument(
+        "--show-metrics",
+        action="store_true",
+        help="Append a one-line ACE metrics summary (tokens, pressure, bullet health) after the lane table.",
     )
     return parser.parse_args()
 
@@ -340,6 +378,7 @@ def main() -> int:
             interval=interval,
             once=args.once,
             state_dir=state_dir,
+            show_metrics=getattr(args, "show_metrics", False),
         )
     except KeyboardInterrupt:
         print("\ndashboard-live interrupted.", flush=True)

@@ -121,6 +121,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "list_artifact_sources": "List indexed artifact sources so operators and prompts can discover available evidence without reading raw content.",
     "purge_artifacts": "Delete artifact sources and their FTS chunks to keep the sidecar database bounded after task archival, lane closure, or age-based expiry.",
     "search_handoff": "Search canonical handoff records (decisions, findings, blockers, actions) by keyword with BM25 ranking and optional task/lane/type scope filters.",
+    "get_metrics_summary": "Return an ACE metrics snapshot for the active task covering token burn, context pressure, FTS5 retrieval, lane health, phase timing, and documentation fitness.",
 }
 
 
@@ -871,6 +872,48 @@ def list_available_backends() -> str:
         return core._json_response({"ok": False, "error": str(exc)})
 
 
+def get_metrics_summary(
+    task_ref: str | None = None,
+    output_format: str = "markdown",
+) -> str:
+    """Return an ACE metrics snapshot for the active task."""
+    try:
+        from agent_handoff_mcp.orchestration.ace_metrics import (  # noqa: PLC0415
+            build_snapshot,
+            render_markdown,
+        )
+    except ImportError as exc:
+        return core._json_response({"ok": False, "error": f"ace_metrics module unavailable: {exc}"})
+
+    paths = _orchestrator_paths()
+    workspace_root = paths["workspace_root"]
+    state_dir = paths["state_dir"]
+    logs_dir = workspace_root / "logs"
+
+    resolved_task_ref = task_ref
+    if not resolved_task_ref:
+        try:
+            with core._get_db_connection() as conn:
+                resolved_task_ref = core._resolve_task_ref(conn, None)
+        except Exception:
+            resolved_task_ref = "unknown"
+
+    instruction_files = [workspace_root / "docs/agentic/instructions.md"]
+
+    try:
+        snapshot = build_snapshot(
+            task_ref=resolved_task_ref,
+            state_dir=state_dir,
+            logs_dir=logs_dir,
+            instruction_files=instruction_files,
+        )
+        if output_format == "json":
+            return core._json_response({"ok": True, "snapshot": snapshot})
+        return render_markdown(snapshot)
+    except Exception as exc:
+        return core._json_response({"ok": False, "error": str(exc)})
+
+
 def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
     configure_runtime(config)
     mcp = FastMCP(
@@ -938,6 +981,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
         list_artifact_sources,
         purge_artifacts,
         search_handoff,
+        get_metrics_summary,
     ]:
         mcp.add_tool(tool)
     return mcp

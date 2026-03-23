@@ -26,7 +26,6 @@ if str(SCRIPT_DIR) not in sys.path:
 from _env import WORKER_REASONING_EFFORT_CHOICES
 from _env import apply_backend_runtime_hints
 from _env import pythonpath_env
-from adapters.codex_cli import find_codex
 from backend_registry import get_adapter
 from backend_registry import get_backend_choices
 from backend_registry import get_backend_spec
@@ -476,6 +475,7 @@ def run_lane_exec(
         reasoning_effort=reasoning_effort,
         model=model_name,
         session_mode=session_mode,
+        backend=backend_name,
     )
 
     if not dry_run:
@@ -531,7 +531,8 @@ def run_lane_exec(
             "schema": json.loads(schema_text),
         }
         if backend_name == "codex-cli":
-            result["codex_bin"] = find_codex(codex_bin)
+            from backend_registry import find_codex as _find_codex  # noqa: PLC0415
+            result["codex_bin"] = _find_codex(codex_bin)
         out = output_path or _temp_output_path(lane_id=lane_id)
         out.write_text(json.dumps(result, indent=2))
         return out

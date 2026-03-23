@@ -451,8 +451,21 @@ def _ensure_handoff_fts(conn: sqlite3.Connection) -> None:
         conn.executescript(_HANDOFF_FTS_TRIGGERS_SQL)
         _backfill_handoff_fts(conn)
     except sqlite3.OperationalError as exc:
-        if "locked" in str(exc).lower():
+        errstr = str(exc).lower()
+        if "locked" in errstr:
             _log.warning("Handoff FTS setup skipped due to DB lock; will retry on next connection.")
+        elif "vtable constructor failed" in errstr:
+            # Corrupted FTS5 shadow tables (e.g. from a mid-write crash).  Drop all
+            # FTS virtual tables (SQLite automatically removes their shadow tables too)
+            # and recreate from scratch.  Existing rows are backfilled below.
+            _log.warning(
+                "Handoff FTS5 vtable corrupt (%s); dropping and recreating FTS tables.", exc
+            )
+            for _fts_table in ("decisions_fts", "findings_fts", "blockers_fts", "actions_fts"):
+                conn.execute(f"DROP TABLE IF EXISTS {_fts_table}")
+            conn.executescript(HANDOFF_FTS_SCHEMA_SQL)
+            conn.executescript(_HANDOFF_FTS_TRIGGERS_SQL)
+            _backfill_handoff_fts(conn)
         else:
             raise
 

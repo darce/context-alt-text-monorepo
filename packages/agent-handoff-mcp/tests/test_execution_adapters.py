@@ -11,9 +11,9 @@ _ORCHESTRATION_DIR = Path(__file__).resolve().parents[1] / "src" / "agent_handof
 if str(_ORCHESTRATION_DIR) not in sys.path:
     sys.path.insert(0, str(_ORCHESTRATION_DIR))
 
-from backend_adapter import BackendResult  # noqa: E402
-from adapters.codex_cli import CodexCliAdapter  # noqa: E402
-from adapters.codex_subagent import CodexSubagentAdapter  # noqa: E402
+from agent_handoff_mcp.orchestration.backend_adapter import BackendResult  # noqa: E402
+from agent_handoff_mcp.orchestration.adapters.codex_cli import CodexCliAdapter  # noqa: E402
+from agent_handoff_mcp.orchestration.adapters.codex_subagent import CodexSubagentAdapter  # noqa: E402
 
 
 def test_backend_result_serialization() -> None:
@@ -54,7 +54,7 @@ def test_codex_cli_adapter_execute(tmp_path: Path) -> None:
             "summary": "Done",
             "details": "Details",
         }))
-        return mock.Mock(returncode=0)
+        return mock.Mock(returncode=0, stdout="")
 
     with mock.patch.object(adapter, "_run_codex_process", side_effect=fake_run):
         result = adapter.execute(prompt, schema, worktree)

@@ -852,6 +852,40 @@ def orchestrator_loop(
             )
             dispatch_failure_count = 0
             log("INFO", "dispatch_complete", result=dispatch_result)
+
+            # ACE advisory: emit a warning when ace_reflect_log.jsonl has
+            # accumulated enough *unprocessed* entries to warrant operator attention.
+            # Counter writes are NOT done here; operators run 'make ace-reflect'.
+            # After make ace-reflect runs, ace_apply_counters() writes an offset file
+            # (ace_reflect_log.jsonl.offset) recording the processed line count;
+            # we subtract that from the total to avoid permanent false positives.
+            try:
+                _reflect_log = state_dir / "ace_reflect_log.jsonl"
+                if _reflect_log.exists():
+                    _total_lines = sum(
+                        1 for _l in _reflect_log.read_text(encoding="utf-8").splitlines()
+                        if _l.strip()
+                    )
+                    _processed = 0
+                    _offset_file = _reflect_log.with_name(_reflect_log.name + ".offset")
+                    if _offset_file.exists():
+                        try:
+                            import json as _json
+                            _processed = _json.loads(
+                                _offset_file.read_text(encoding="utf-8")
+                            ).get("processed_line_count", 0)
+                        except Exception:  # noqa: BLE001
+                            pass
+                    _pending_lines = max(0, _total_lines - _processed)
+                    if _pending_lines > 5:
+                        log(
+                            "WARNING",
+                            "ace_reflect_pending",
+                            pending=_pending_lines,
+                            hint="Run 'make ace-reflect TASK=<task-ref>' to apply counter updates.",
+                        )
+            except Exception:  # noqa: BLE001
+                pass
         except Exception as exc:
             dispatch_failure_count += 1
             log("ERROR", "dispatch_failed", error=str(exc))

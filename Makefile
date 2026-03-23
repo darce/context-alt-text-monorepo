@@ -128,7 +128,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/lane-maintenance.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend lint-all test-all test-handoff clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop
+.PHONY: help check-all check-frontend lint-all test-all test-handoff clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends
 
 # Default target
 help:
@@ -380,3 +380,51 @@ dev:
 dev-stop:
 	@cd apps/prototype-description-service && make stop 2>/dev/null || true
 	@echo "✅ Development environment stopped"
+
+# =============================================================================
+# ACE Observability
+# =============================================================================
+
+# Print a markdown metrics snapshot for the current task.
+# Usage: make ace-metrics TASK=<task-ref>
+ace-metrics:
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_handoff_mcp.orchestration.ace_metrics \
+		--task-ref "$(TASK)" \
+		--state-dir .task-state \
+		--logs-dir logs \
+		--output-format markdown
+
+# Print a JSON metrics snapshot (also appends to .task-state/metrics.jsonl).
+# Usage: make ace-metrics-json TASK=<task-ref>
+ace-metrics-json:
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_handoff_mcp.orchestration.ace_metrics \
+		--task-ref "$(TASK)" \
+		--state-dir .task-state \
+		--logs-dir logs \
+		--output-format json
+
+# Apply pending ACE counter updates from ace_reflect_log.jsonl to instruction files.
+# Must be run from the orchestrator root; never from daemon or worker context.
+# Usage: make ace-reflect TASK=<task-ref>
+ace-reflect:
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_handoff_mcp.orchestration.ace_reflect \
+		--task-ref "$(TASK)" \
+		--state-dir .task-state \
+		--instruction-files docs/agentic/instructions.md
+
+# Show pruning candidates across instruction files.
+# Usage: make ace-curation-report
+ace-curation-report:
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_handoff_mcp.orchestration.ace_reflect \
+		--task-ref "$(TASK)" \
+		--state-dir .task-state \
+		--instruction-files docs/agentic/instructions.md \
+		--curation-report-only
+
+# Print time-series sparklines from accumulated metrics history.
+# Usage: make ace-trends TASK=<task-ref>
+ace-trends:
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_handoff_mcp.orchestration.ace_metrics \
+		--task-ref "$(TASK)" \
+		--state-dir .task-state \
+		--sparklines

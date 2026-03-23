@@ -32,22 +32,22 @@ class BackendSpec:
 
 
 def _get_cli_adapter() -> Type[BackendAdapter]:
-    from adapters.codex_cli import CodexCliAdapter
+    from agent_handoff_mcp.orchestration.adapters.codex_cli import CodexCliAdapter
     return CodexCliAdapter
 
 
 def _get_subagent_adapter() -> Type[BackendAdapter]:
-    from adapters.codex_subagent import CodexSubagentAdapter
+    from agent_handoff_mcp.orchestration.adapters.codex_subagent import CodexSubagentAdapter
     return CodexSubagentAdapter
 
 
 def _get_claude_adapter() -> Type[BackendAdapter]:
-    from adapters.claude_code import ClaudeCodeAdapter
+    from agent_handoff_mcp.orchestration.adapters.claude_code import ClaudeCodeAdapter
     return ClaudeCodeAdapter
 
 
 def _get_local_model_adapter() -> Type[BackendAdapter]:
-    from adapters.local_model import LocalModelAdapter
+    from agent_handoff_mcp.orchestration.adapters.local_model import LocalModelAdapter
     return LocalModelAdapter
 
 
@@ -92,6 +92,7 @@ BACKENDS: dict[str, BackendSpec] = {
             supports_structured_output=True,
             supports_sandbox=True,
             supports_sync_turn=False,
+            supports_reasoning_effort=True,
         ),
     ),
     "local-model-openai": BackendSpec(
@@ -170,7 +171,7 @@ def get_adapter(name: str, **kwargs: Any) -> BackendAdapter:
 
 def find_codex(*args: Any, **kwargs: Any) -> str:
     """Backward compatibility wrapper for tests."""
-    from adapters.codex_cli import find_codex as _find
+    from agent_handoff_mcp.orchestration.adapters.codex_cli import find_codex as _find
     return _find(*args, **kwargs)
 
 
@@ -215,5 +216,22 @@ def probe_capabilities(name: str) -> BackendCapabilities:
             )
         except RuntimeError:
             return BackendCapabilities(is_available=False)
+
+    if name == "claude-code":
+        try:
+            result = subprocess.run(
+                ["claude", "--version"],
+                capture_output=True, text=True, check=False, timeout=10,
+            )
+            if result.returncode == 0:
+                return BackendCapabilities(
+                    is_available=True,
+                    supports_structured_output=base.supports_structured_output,
+                    supports_sandbox=base.supports_sandbox,
+                    supports_sync_turn=base.supports_sync_turn,
+                )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        return BackendCapabilities(is_available=False)
 
     return base

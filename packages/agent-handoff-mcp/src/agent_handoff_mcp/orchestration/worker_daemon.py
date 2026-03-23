@@ -501,7 +501,66 @@ def _record_observability(
         thread_id=entry.get("thread_id"),
         turn_id=entry.get("turn_id"),
     )
+    _record_token_usage_to_handoff(
+        orchestrator_root=orchestrator_root,
+        task_ref=task_ref,
+        lane_id=lane_id,
+        session=session,
+        cycle=cycle,
+        phase=phase,
+        backend=backend,
+        model=model,
+        entry=entry,
+    )
     return entry
+
+
+def _record_token_usage_to_handoff(
+    *,
+    orchestrator_root: Path,
+    task_ref: str,
+    lane_id: str,
+    session: str,
+    cycle: int,
+    phase: str,
+    backend: str,
+    model: str | None,
+    entry: dict[str, Any],
+) -> None:
+    """Best-effort recording of token usage to MCP handoff as a decision."""
+    totals = entry.get("token_usage_totals") or {}
+    total_tokens = totals.get("total_tokens")
+    if not total_tokens:
+        return
+    try:
+        from agent_handoff_mcp import api  # noqa: PLC0415
+        from agent_handoff_mcp.config import RuntimeConfig  # noqa: PLC0415
+
+        config = RuntimeConfig(workspace_root=orchestrator_root)
+        api.configure_runtime(config)
+
+        reasoning_tokens = totals.get("reasoning_output_tokens") or 0
+        token_usage = entry.get("token_usage") or {}
+        last = token_usage.get("last") or {}
+
+        rationale = (
+            f"cycle={cycle} phase={phase} backend={backend} model={model or 'default'} "
+            f"total_tokens={total_tokens} "
+            f"input={last.get('input_tokens', 'n/a')} "
+            f"output={last.get('output_tokens', 'n/a')} "
+            f"cached={last.get('cached_input_tokens', 'n/a')} "
+            f"reasoning={reasoning_tokens} "
+            f"context_window={token_usage.get('model_context_window', 'n/a')}"
+        )
+        api.record_decision(
+            session=session,
+            decision=f"token_usage_c{cycle}_{phase}",
+            rationale=rationale,
+            actor={"agent": f"worker-{lane_id}", "branch": None, "commit_sha": None},
+        )
+    except Exception:
+        # Best-effort; do not break the execution pipeline for telemetry logging
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -917,6 +976,7 @@ def worker_loop(
                 else:
                     log("INFO", event, cycle=cycle, **kw)
 
+            _exec_start = time.monotonic()
             try:
                 log("INFO", "exec_start", cycle=cycle, worktree_path=str(worktree_path))
                 final_result_path = run_lane_exec(
@@ -939,7 +999,8 @@ def worker_loop(
                 log("ERROR", "exec_failed", error=str(exc), cycle=cycle)
                 break
 
-            log("INFO", "exec_complete", result_path=str(final_result_path), cycle=cycle)
+            exec_seconds = round(time.monotonic() - _exec_start, 2)
+            log("INFO", "exec_complete", result_path=str(final_result_path), cycle=cycle, exec_seconds=exec_seconds)
 
             # Emit artifact_indexed event when lane_exec compressed a large details field
             result = _load_result(final_result_path)
@@ -1144,6 +1205,7 @@ def worker_loop(
                 result_path=final_result_path,
                 cycle=cycle,
             )
+            _review_start = time.monotonic()
             try:
                 review_output = run_review(
                     worktree_path=worktree_path,
@@ -1162,10 +1224,45 @@ def worker_loop(
                 log("ERROR", "review_failed", error=str(exc), cycle=cycle)
                 break
 
+            review_seconds = round(time.monotonic() - _review_start, 2)
             findings = review_output.get("findings", [])
             converged = review_output.get("converged", False)
             log("INFO", "review_complete", cycle=cycle, converged=converged,
-                finding_count=len(findings))
+                finding_count=len(findings), review_seconds=review_seconds)
+
+            # ACE reflection hook: scan new findings for rule references and
+            # append detection records to the shared ace_reflect_log.jsonl.
+            # Counter writes are intentionally deferred to 'make ace-reflect'
+            # so instruction-file edits never happen inside a daemon cycle.
+            if findings:
+                try:
+                    import datetime as _dt  # noqa: PLC0415
+                    from agent_handoff_mcp.orchestration.ace_reflect import (  # noqa: PLC0415
+                        ace_reflect_on_findings,
+                    )
+
+                    _workspace_root = state_dir.parent
+                    # CLAUDE.md and GEMINI.md are symlinks to instructions.md;
+                    # only pass the canonical path to avoid triple-counting.
+                    _instruction_files = [
+                        _workspace_root / "docs/agentic/instructions.md",
+                    ]
+                    _records = ace_reflect_on_findings(findings, _instruction_files)
+                    if _records:
+                        _reflect_log = state_dir / "ace_reflect_log.jsonl"
+                        with _reflect_log.open("a", encoding="utf-8") as _fh:
+                            for _rec in _records:
+                                _rec["cycle"] = cycle
+                                _rec["timestamp"] = _dt.datetime.utcnow().isoformat() + "Z"
+                                _fh.write(json.dumps(_rec) + "\n")
+                        log(
+                            "INFO",
+                            "ace_reflect_detected",
+                            cycle=cycle,
+                            records=len(_records),
+                        )
+                except Exception as _ace_exc:  # noqa: BLE001
+                    log("WARNING", "ace_reflect_error", error=str(_ace_exc))
 
             # Compute finding diff before updating prev_finding_ids
             if prev_finding_ids or findings:

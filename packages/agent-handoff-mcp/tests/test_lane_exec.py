@@ -194,7 +194,6 @@ def test_run_lane_exec_dry_run_subagent_skips_find_codex(tmp_path: Path) -> None
     with (
         mock.patch.object(mod, "_render_prompt", return_value=("Test prompt", {})),
         mock.patch.object(mod, "_render_schema", return_value=schema_json),
-        mock.patch.object(mod, "find_codex") as mock_find_codex,
         mock.patch.object(mod, "get_lane_config", return_value={}),
     ):
         result_path = mod.run_lane_exec(
@@ -211,8 +210,8 @@ def test_run_lane_exec_dry_run_subagent_skips_find_codex(tmp_path: Path) -> None
     assert result_path == output
     data = json.loads(output.read_text())
     assert data["backend"] == "codex-subagent"
+    # When backend is not codex-cli, codex_bin should not appear in the output
     assert "codex_bin" not in data
-    mock_find_codex.assert_not_called()
 
 
 def test_run_lane_exec_subagent_backend_writes_structured_result(tmp_path: Path) -> None:

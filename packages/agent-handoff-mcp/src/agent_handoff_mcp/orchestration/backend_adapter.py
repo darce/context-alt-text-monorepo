@@ -15,11 +15,12 @@ class BackendResult:
     blockers: list[str] = field(default_factory=list)
     changed_files: list[str] = field(default_factory=list)
     merge_ready: bool = False
+    token_usage: dict[str, Any] | None = None
     raw_payload: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to a standardized dictionary for serialization."""
-        return {
+        d: dict[str, Any] = {
             "handoff_action": self.handoff_action,
             "summary": self.summary,
             "details": self.details,
@@ -29,6 +30,9 @@ class BackendResult:
             "merge_ready": self.merge_ready,
             "raw_payload": self.raw_payload,
         }
+        if self.token_usage is not None:
+            d["token_usage"] = self.token_usage
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> BackendResult:
@@ -41,6 +45,7 @@ class BackendResult:
             blockers=data.get("blockers") or [],
             changed_files=data.get("changed_files") or [],
             merge_ready=bool(data.get("merge_ready", False)),
+            token_usage=data.get("token_usage"),
             raw_payload=data,
         )
 

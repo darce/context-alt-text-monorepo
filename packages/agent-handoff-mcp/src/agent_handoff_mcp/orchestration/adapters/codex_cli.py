@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -9,10 +10,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-try:
-    from scripts.mcp.backend_adapter import BackendAdapter, BackendResult
-except ModuleNotFoundError:  # pragma: no cover - compatibility for script-style test loaders
-    from backend_adapter import BackendAdapter, BackendResult
+from ..backend_adapter import BackendAdapter, BackendResult
 
 
 _CODEX_SEARCH_PATHS = (
@@ -57,10 +55,7 @@ class CodexCliAdapter(BackendAdapter):
         prompt_override: str | None,
         previous_run_exhausted: bool = False,
     ) -> tuple[str | None, list[str]]:
-        try:
-            from scripts.mcp._env import resolve_auto_reasoning_effort
-        except ModuleNotFoundError:  # pragma: no cover - compatibility for script-style test loaders
-            from _env import resolve_auto_reasoning_effort
+        from .._env import resolve_auto_reasoning_effort  # noqa: PLC0415
 
         return resolve_auto_reasoning_effort(
             orchestrator_root=orchestrator_root,
@@ -134,7 +129,31 @@ class CodexCliAdapter(BackendAdapter):
                 raise RuntimeError("codex exec completed but no result file was produced.")
 
             payload = json.loads(result_file.read_text())
-            return BackendResult.from_dict(payload)
+
+            # Extract token usage from the result JSON or stdout
+            token_usage = _extract_codex_usage(payload, completed.stdout)
+            if progress_callback and token_usage:
+                progress_callback(
+                    "subagent_turn_complete",
+                    backend="codex-cli",
+                    phase="execution",
+                    token_usage=token_usage,
+                )
+
+            result = BackendResult.from_dict(payload)
+            if token_usage:
+                result = BackendResult(
+                    handoff_action=result.handoff_action,
+                    summary=result.summary,
+                    details=result.details,
+                    tests_run=result.tests_run,
+                    blockers=result.blockers,
+                    changed_files=result.changed_files,
+                    merge_ready=result.merge_ready,
+                    token_usage=token_usage,
+                    raw_payload=result.raw_payload,
+                )
+            return result
 
 
     def _run_codex_process(
@@ -179,3 +198,71 @@ class CodexCliAdapter(BackendAdapter):
         if isinstance(text, bytes):
             text = text.decode("utf-8", errors="replace")
         return text.strip()[-limit:]
+
+
+def _extract_codex_usage(
+    payload: dict[str, Any], stdout: str | None
+) -> dict[str, Any] | None:
+    """Extract token usage from a Codex CLI result JSON or stdout.
+
+    The Codex CLI may embed usage data in the result JSON under ``usage`` or
+    ``token_usage``, or print a usage summary to stdout.  We normalize into
+    the ``{last: {...}, total: {...}}`` shape expected by the observability
+    pipeline.
+    """
+    # Check the result JSON first
+    usage = payload.get("token_usage") or payload.get("usage")
+    if isinstance(usage, dict):
+        # Already in normalized shape?
+        if "last" in usage and "total" in usage:
+            return usage
+        # Flat shape from the CLI
+        return _normalize_flat_usage(usage)
+
+    # Try parsing a usage summary line from stdout
+    if stdout:
+        match = re.search(
+            r"tokens?\s*(?:used|usage)[:\s]*(\d+)\s*input[,\s]+(\d+)\s*output",
+            stdout,
+            re.IGNORECASE,
+        )
+        if match:
+            input_tokens = int(match.group(1))
+            output_tokens = int(match.group(2))
+            return _normalize_flat_usage({
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+            })
+    return None
+
+
+def _normalize_flat_usage(usage: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a flat usage dict into the standard nested shape."""
+    input_tokens = int(usage.get("input_tokens") or usage.get("inputTokens") or 0)
+    output_tokens = int(usage.get("output_tokens") or usage.get("outputTokens") or 0)
+    cached = int(
+        usage.get("cached_input_tokens")
+        or usage.get("cachedInputTokens")
+        or 0
+    )
+    reasoning = int(
+        usage.get("reasoning_output_tokens")
+        or usage.get("reasoningOutputTokens")
+        or 0
+    )
+    total_tokens = int(usage.get("total_tokens") or usage.get("totalTokens") or 0)
+    if total_tokens == 0:
+        total_tokens = input_tokens + output_tokens
+    breakdown = {
+        "cached_input_tokens": cached,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "reasoning_output_tokens": reasoning,
+        "total_tokens": total_tokens,
+    }
+    return {
+        "last": breakdown,
+        "total": breakdown,
+        "model_context_window": usage.get("model_context_window")
+        or usage.get("modelContextWindow"),
+    }

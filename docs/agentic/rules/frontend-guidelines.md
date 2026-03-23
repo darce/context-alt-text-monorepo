@@ -1,17 +1,11 @@
-# Frontend Guidelines
+# Frontend Guidelines -- Project Conventions
 
-> Load this document when working on React/TypeScript frontend code in `apps/prototype-wp-alt-context/js/`.
+> **Library reference**: Use ctx7 to fetch current docs for React, TypeScript, TanStack Query,
+> Radix UI, Vite, and Vitest listed in
+> [../maps/tech-stack.md](../maps/tech-stack.md#frontend-reactts) before starting work.
+> This file covers only project-specific conventions.
 
----
-
-## Technology Stack
-
-- **React 18+** with functional components and hooks
-- **TypeScript 5.3+** with `strict: true`
-- **Vite 5+** for build and dev server
-- **React Query 5+** for data fetching
-- **Radix UI** for accessible primitives
-- **Vitest + Testing Library** for tests
+> Load this document when working on React/TypeScript frontend code in `apps/prototype-wp-alt-context/js/`. See [testing-typescript.md](testing-typescript.md) for test conventions.
 
 ---
 
@@ -34,91 +28,6 @@ Before building custom UI, check [RADIX_UI_COMPONENT_GUIDE.md](RADIX_UI_COMPONEN
 - Component has 6+ useState hooks
 
 For detailed architecture patterns and refactoring case studies, see [component-architecture-patterns.md](component-architecture-patterns.md).
-
----
-
-## State Management Anti-Patterns
-
-```tsx
-// BAD: Syncing props to state
-const [value, setValue] = useState(initialValue);
-useEffect(() => setValue(initialValue), [initialValue]);
-
-// GOOD: Use prop directly
-const value = initialValue;
-
-// BAD: Derived state in useState
-const [filtered, setFiltered] = useState([]);
-useEffect(() => setFiltered(items.filter((x) => x.active)), [items]);
-
-// GOOD: Compute during render
-const filtered = useMemo(() => items.filter((x) => x.active), [items]);
-
-// BAD: Chained effects
-useEffect(() => setB(a + 1), [a]);
-useEffect(() => setC(b * 2), [b]);
-
-// GOOD: Handle in event or derive
-const handleChange = (newA: number) => {
-  setA(newA);
-  setC((newA + 1) * 2);
-};
-```
-
----
-
-## Hook Architecture Anti-Patterns
-
-```tsx
-// BAD: "God Hook" (>150 lines, multiple concerns)
-const useEverything = () => {
-  // Mutations, derived state, SSE tracking, status text, progress aggregation...
-  const [state1, setState1] = useState();
-  const [state2, setState2] = useState();
-  // ... 20 more hooks
-  return { mutation1, mutation2, phase, status, progress, isOnline, ... };
-};
-
-// GOOD: Compose focused hooks
-const useScanMutation = (options) => useMutation({...});
-const useJobPhase = (activeJobs) => useMemo(() => derivePhase(activeJobs), [activeJobs]);
-const useStatusText = (phase, progress) => useMemo(() => formatStatus(phase, progress), [phase, progress]);
-
-const useJobStateMachine = () => {
-  const scan = useScanMutation();
-  const phase = useJobPhase(scan.activeJobs);
-  const status = useStatusText(phase, scan.progress);
-  return { scan: scan.mutate, phase, status };
-};
-```
-
-**Signs of a God Hook:**
-
-- More than 150 lines
-- More than 5 `useState` calls
-- More than 3 `useEffect` calls
-- Returns more than 8 values
-- Mixes mutation orchestration with derived state
-
-**Refactoring strategy:**
-
-1. Extract each `useMemo` into a focused hook
-2. Group related mutations into a single hook
-3. Keep the "orchestration" hook thin (compose, don't implement)
-
----
-
-## Data Fetching
-
-Use React Query for all API calls:
-
-```tsx
-const { data, isLoading, error, refetch } = useQuery({
-  queryKey: ["clusters", tenantId],
-  queryFn: () => fetchClusters(tenantId),
-  staleTime: 60_000,
-});
-```
 
 ---
 
@@ -181,11 +90,7 @@ The Workbench page uses URL-synced overlay state via the `panel` query param to 
 
 ## Accessibility Requirements
 
-- Query elements by accessible roles: `getByRole('button')`, not `getByTestId()`
-- All interactive elements must be keyboard accessible
-- Include ARIA labels for screen readers
-- Test with axe-core (zero critical violations)
-- Meet WCAG 2.1 AA standards
+Meet WCAG 2.1 AA; test with axe-core (zero critical violations). Query elements by accessible role (`getByRole`), not by test ID.
 
 ---
 

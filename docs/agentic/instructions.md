@@ -8,9 +8,9 @@
 
 ---
 
-## Document Maintenance (ACE Self-Correction)
+## Document Maintenance (ACE Playbook Evolution)
 
-This document follows Autonomous Coding Engine principles for minimal, self-correcting agent instructions.
+This document follows Autonomous Coding Engine principles for minimal, self-correcting agent instructions. Each rule is a strategy bullet tracked with evidence counters (`helpful` / `harmful`) to drive retention and pruning.
 
 **Inclusion criteria** -- a rule belongs here only if:
 
@@ -18,13 +18,22 @@ This document follows Autonomous Coding Engine principles for minimal, self-corr
 2. Violating it has caused a real failure in this project (not hypothetical)
 3. It applies universally across all domains (domain-specific rules go in sub-documents)
 
-**Self-correction protocol:**
+### Reflection triggers
 
-- If a rule restates a linter check or config setting (`tsconfig`, `phpcs`, `pyproject.toml`, `eslint`), delete it -- the tool is the source of truth
-- Never duplicate content between this file and linked sub-documents; use links
-- Every paragraph must prevent a specific class of agent failure that has actually occurred; delete "good practice" paragraphs
-- When encountering stale content (broken links, outdated naming), fix in-place
-- Do not add rules that an agent can verify by running `make check`, `npm run lint`, or `composer phpstan`
+A reflection cycle runs when:
+
+1. A branch review finding references a rule (daemon detects and logs automatically; run `make ace-reflect TASK=<task-ref>` from the orchestrator root to apply pending counter updates)
+2. A branch review finding contradicts a rule (daemon detects and logs automatically; run `make ace-reflect TASK=<task-ref>` from the orchestrator root to apply pending counter updates)
+3. A new failure mode is discovered that no existing rule covers (add new bullet)
+4. A library version upgrade invalidates a rule (remove; ctx7 serves current docs)
+
+### Curation rules
+
+- Rules with `helpful=0 harmful>=2` are pruning candidates; delete on next review.
+- Rules that restate a linter/config check get deleted immediately (tool is source of truth).
+- New rules require a real failure reference (issue, commit, or branch review finding ID).
+- Delta updates only; never rewrite a section from scratch (prevents context collapse).
+- Never duplicate content between this file and linked sub-documents; use links.
 
 ---
 
@@ -54,12 +63,12 @@ flowchart TB
 
 Choose your domain to load targeted context. **Always load the testing guide** alongside your role guidelines — we practice TDD.
 
-| Role                          | Context Map                                | Guidelines                                                               | Testing Guide                                              | Key Entry Points                      |
-| ----------------------------- | ------------------------------------------ | ------------------------------------------------------------------------ | ---------------------------------------------------------- | ------------------------------------- |
-| **Backend (Python)**          | [maps/backend.md](maps/backend.md)         | [rules/backend-python-guidelines.md](rules/backend-python-guidelines.md) | [rules/testing-python.md](rules/testing-python.md)         | `apps/prototype-description-service/` |
-| **Frontend (React/TS)**       | [maps/frontend.md](maps/frontend.md)       | [rules/frontend-guidelines.md](rules/frontend-guidelines.md)             | [rules/testing-typescript.md](rules/testing-typescript.md) | `apps/prototype-wp-alt-context/js/`   |
-| **PHP Plugin**                | [maps/php-plugin.md](maps/php-plugin.md)   | [rules/backend-php-guidelines.md](rules/backend-php-guidelines.md)       | [rules/testing-php.md](rules/testing-php.md)               | `apps/prototype-wp-alt-context/src/`  |
-| **Cross-Service Integration** | [maps/integration.md](maps/integration.md) | [contracts/](contracts/)                                                 | [rules/testing-principles.md](rules/testing-principles.md) | `docs/agentic/contracts/`             |
+| Role                          | Context Map                                | Guidelines                                                               | Testing Guide                                              | Tech Stack (ctx7)                                                          | Key Entry Points                      |
+| ----------------------------- | ------------------------------------------ | ------------------------------------------------------------------------ | ---------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------- |
+| **Backend (Python)**          | [maps/backend.md](maps/backend.md)         | [rules/backend-python-guidelines.md](rules/backend-python-guidelines.md) | [rules/testing-python.md](rules/testing-python.md)         | [maps/tech-stack.md#backend-python](maps/tech-stack.md#backend-python)     | `apps/prototype-description-service/` |
+| **Frontend (React/TS)**       | [maps/frontend.md](maps/frontend.md)       | [rules/frontend-guidelines.md](rules/frontend-guidelines.md)             | [rules/testing-typescript.md](rules/testing-typescript.md) | [maps/tech-stack.md#frontend-reactts](maps/tech-stack.md#frontend-reactts) | `apps/prototype-wp-alt-context/js/`   |
+| **PHP Plugin**                | [maps/php-plugin.md](maps/php-plugin.md)   | [rules/backend-php-guidelines.md](rules/backend-php-guidelines.md)       | [rules/testing-php.md](rules/testing-php.md)               | [maps/tech-stack.md#php-plugin](maps/tech-stack.md#php-plugin)             | `apps/prototype-wp-alt-context/src/`  |
+| **Cross-Service Integration** | [maps/integration.md](maps/integration.md) | [contracts/](contracts/)                                                 | [rules/testing-principles.md](rules/testing-principles.md) | [maps/tech-stack.md#orchestration](maps/tech-stack.md#orchestration)       | `docs/agentic/contracts/`             |
 
 ### Additional Routing
 
@@ -121,35 +130,48 @@ If a task seems to require external changes, STOP and propose an alternative wit
 
 ### Short Rules
 
-- Do not relax compliance/lint scripts to silence violations. Fix the offending code.
-- Every `composer`/`npm` gate script must succeed on invocation, not just be defined.
-- **npm** for Node.js (not pnpm). **Composer** for PHP.
-- When editing CSS/SCSS, use existing design tokens (`--acx-*` custom properties) for colors, typography, elevation, radius, and font-weight instead of raw literals. If a needed token does not exist, add it to the shared token surface first. Specifically: `--acx-color-*` or `--acx-gray-*` for colors (no hex literals); `--acx-text-*` for font sizes; `--acx-shadow-*` for box-shadows; `--acx-radius-*` for border-radius; `--acx-font-weight-*` for font weights. Status indicators must pair color with an icon; do not rely on color alone.
-- In TypeScript, use assertion helpers (`asserts value is ...`) for internal invariants and unreachable branches instead of `console.assert` or non-null assertions on API data. Do not use assertion helpers for request/input validation; validate boundary data explicitly.
-- In Python, use `assert` only for narrow internal invariants during development and tests. Do not use `assert` for request validation, external data checks, or behavior that must always execute in production; raise explicit exceptions or HTTP errors instead.
-- Centralize domain status values as enums or `as const` objects (TypeScript), PHP backed enums, or Python `StrEnum`/`IntEnum`. Do not scatter magic string comparisons (`=== 'completed'`, `=== 'clustering'`) across files; import from a single canonical definition and use exhaustive switches where applicable.
-- When a hook, function, or constructor takes more than 8 destructured parameters, group them into 2-3 cohesive typed objects (e.g., state, actions, mutations). This prevents the "parameter slippery slope" that compounds with each new feature.
-- PHP controller methods that run transactions must use a shared `run_transactional(callable)` wrapper instead of inlining START TRANSACTION / COMMIT / ROLLBACK boilerplate.
-- For a full local-only development reset of both databases, use `make reset-local WP_PATH="<wordpress>/app/public" CONFIRM_LOCAL_RESET="RESET"` from the repo root. `WP_PATH` must point to the WordPress directory containing `wp-load.php` (for LocalWP here, typically `/Users/daniel/Development/wp-context-alt-text/app/public`). Never use this against non-local environments.
+<!-- ACE playbook: each rule is a strategy bullet with evidence counters.
+     helpful = times this rule prevented a real failure
+     harmful = times this rule caused unnecessary friction or was wrong
+     Rules with helpful=0 harmful>=2 are pruning candidates.
+     Worker daemon auto-detects rule references in findings and logs them to
+     .task-state/ace_reflect_log.jsonl. Run 'make ace-reflect TASK=<ref>' to apply. -->
+
+- [sr-001] helpful=2 harmful=0 :: Do not relax compliance/lint scripts to silence violations. Fix the offending code.
+- [sr-002] helpful=1 harmful=0 :: Every `composer`/`npm` gate script must succeed on invocation, not just be defined.
+- [sr-003] helpful=1 harmful=0 :: **npm** for Node.js (not pnpm). **Composer** for PHP.
+- [sr-004] helpful=2 harmful=0 :: When editing CSS/SCSS, use existing design tokens (`--acx-*` custom properties) for colors, typography, elevation, radius, and font-weight instead of raw literals. If a needed token does not exist, add it to the shared token surface first. Specifically: `--acx-color-*` or `--acx-gray-*` for colors (no hex literals); `--acx-text-*` for font sizes; `--acx-shadow-*` for box-shadows; `--acx-radius-*` for border-radius; `--acx-font-weight-*` for font weights. Status indicators must pair color with an icon; do not rely on color alone.
+- [sr-005] helpful=2 harmful=0 :: In TypeScript, use assertion helpers (`asserts value is ...`) for internal invariants and unreachable branches instead of `console.assert` or non-null assertions on API data. Do not use assertion helpers for request/input validation; validate boundary data explicitly.
+- [sr-006] helpful=1 harmful=0 :: In Python, use `assert` only for narrow internal invariants during development and tests. Do not use `assert` for request validation, external data checks, or behavior that must always execute in production; raise explicit exceptions or HTTP errors instead.
+- [sr-007] helpful=2 harmful=0 :: Centralize domain status values as enums or `as const` objects (TypeScript), PHP backed enums, or Python `StrEnum`/`IntEnum`. Do not scatter magic string comparisons (`=== 'completed'`, `=== 'clustering'`) across files; import from a single canonical definition and use exhaustive switches where applicable.
+- [sr-008] helpful=1 harmful=0 :: When a hook, function, or constructor takes more than 8 destructured parameters, group them into 2-3 cohesive typed objects (e.g., state, actions, mutations). This prevents the "parameter slippery slope" that compounds with each new feature.
+- [sr-009] helpful=1 harmful=0 :: PHP controller methods that run transactions must use a shared `run_transactional(callable)` wrapper instead of inlining START TRANSACTION / COMMIT / ROLLBACK boilerplate.
+- [sr-010] helpful=1 harmful=0 :: For a full local-only development reset of both databases, use `make reset-local WP_PATH="<wordpress>/app/public" CONFIRM_LOCAL_RESET="RESET"` from the repo root. `WP_PATH` must point to the WordPress directory containing `wp-load.php` (for LocalWP here, typically `/Users/daniel/Development/wp-context-alt-text/app/public`). Never use this against non-local environments.
 
 ### Cross-Branch Regression Guards
 
-Hard guardrails from real failures in this project:
+<!-- ACE playbook: regression guards from real failures in this project.
+     helpful = times this guard caught a regression before merge
+     harmful = times this guard caused unnecessary friction or false positive
+     Rules with helpful=0 harmful>=2 are pruning candidates. -->
 
-1. **No type-shim masking.** New import? Update `package.json`/`composer.json` and verify with a real build.
-2. **Preserve atomic write paths.** Do not split a backend atomic operation into multiple frontend mutations.
-3. **Primary controls reachable from zero state.** Never gate primary actions behind non-zero selection.
-4. **Role semantics match behavior.** Controlled dialogs must wire `onOpenChange`.
-5. **Schema/contract parity.** Validate SQL column names against real schema before merge.
-6. **Documented commands must run as written.** Broken copy-paste syntax is a bug.
-7. **Long-running loops: bounded stall detection.** Daemon/loop code that processes multiple independent units must track per-unit no-progress cycles and exit non-zero after a bounded threshold. A single unit's failure must not halt processing of other units in the same cycle.
-8. **Config files: validate at load time.** JSON/YAML config consumed by multiple modules must be structurally validated at load time. Fail fast on missing or malformed required keys instead of silently returning empty defaults.
-9. **No task-specific logic in generic modules.** If a generic utility contains `if task_ref == "some-task"` or hardcoded domain strings for a specific task, extract that logic to a config-driven policy module or the task's manifest. It becomes dead code once the task is done.
-10. **IDE tool output may be stale after external writes.** Editor-integrated `read_file` and `grep_search` tools read from the IDE's in-memory file model, not from disk. After git operations (rebase, cherry-pick, merge, worktree intake) or edits by other agents/terminals, the model can lag behind the filesystem. When a review finding seems surprising, cross-check with a terminal command (`grep -n`, `wc -l`, `sed -n`) before recording it. This caused an entire review cycle of false positives against `scripts/mcp/orchestrator_daemon.py` (IDE showed ~700 lines, disk had 850).
-11. **Effort goes up on failure, not down.** If a worker run exhausts at a given reasoning effort, the next attempt must escalate one level (low->medium->high->xhigh), never decrease. The backend-domain lane was auto-lowered from medium to low after exhaustion, causing 7M+ tokens burned in non-converging loops. The `_escalate_effort()` ladder in `_env.py` enforces this; do not override it with manual effort lowering after exhaustion.
-12. **Scope enforcement is a runtime gate, not advisory.** `lane_exec.py` validates the worktree diff against `effective_owned_paths` after execution, before review. A scope violation skips review entirely and emits a `scope_violation` event. This prevents contaminated worktrees from poisoning subsequent cycles. Commit-time scope checking in `mk/lane-worker.mk` remains as a secondary guard.
+- [rg-001] helpful=1 harmful=0 :: **No type-shim masking.** New import? Update `package.json`/`composer.json` and verify with a real build.
+- [rg-002] helpful=1 harmful=0 :: **Preserve atomic write paths.** Do not split a backend atomic operation into multiple frontend mutations.
+- [rg-003] helpful=1 harmful=0 :: **Primary controls reachable from zero state.** Never gate primary actions behind non-zero selection.
+- [rg-004] helpful=1 harmful=0 :: **Role semantics match behavior.** Controlled dialogs must wire `onOpenChange`.
+- [rg-005] helpful=1 harmful=0 :: **Schema/contract parity.** Validate SQL column names against real schema before merge.
+- [rg-006] helpful=1 harmful=0 :: **Documented commands must run as written.** Broken copy-paste syntax is a bug.
+- [rg-007] helpful=1 harmful=0 :: **Long-running loops: bounded stall detection.** Daemon/loop code that processes multiple independent units must track per-unit no-progress cycles and exit non-zero after a bounded threshold. A single unit's failure must not halt processing of other units in the same cycle.
+- [rg-008] helpful=1 harmful=0 :: **Config files: validate at load time.** JSON/YAML config consumed by multiple modules must be structurally validated at load time. Fail fast on missing or malformed required keys instead of silently returning empty defaults.
+- [rg-009] helpful=1 harmful=0 :: **No task-specific logic in generic modules.** If a generic utility contains `if task_ref == "some-task"` or hardcoded domain strings for a specific task, extract that logic to a config-driven policy module or the task's manifest. It becomes dead code once the task is done.
+- [rg-010] helpful=1 harmful=0 :: **IDE tool output may be stale after external writes.** Editor-integrated `read_file` and `grep_search` tools read from the IDE's in-memory file model, not from disk. After git operations (rebase, cherry-pick, merge, worktree intake) or edits by other agents/terminals, the model can lag behind the filesystem. When a review finding seems surprising, cross-check with a terminal command (`grep -n`, `wc -l`, `sed -n`) before recording it. This caused an entire review cycle of false positives against `scripts/mcp/orchestrator_daemon.py` (IDE showed ~700 lines, disk had 850).
+- [rg-013] helpful=1 harmful=0 :: **core.py must remain pure handoff-state CRUD.** No orchestration imports, no subprocess calls, no lock management. Enforce during code review.
+- [rg-014] helpful=1 harmful=0 :: **Orchestration modules must use late-binding imports** (function-level) for `agent_handoff_mcp` symbols to preserve the clean split seam and avoid load-time coupling.
+- [sr-011] helpful=0 harmful=4 :: **VS Code native tools over terminal.** In VS Code: use `read_file` (not `cat`/`sed`), `grep_search` or `search_subagent` (not `grep -rn`), `get_changed_files` (not `git diff`/`git status`), `get_errors` (not `npm run lint`/`mypy`). Terminal is only for tests, `make`, `pyenv`, and `git commit`/`push`/`rebase`/`cherry-pick`/`worktree`. Terminal output accumulates stale scrollback; native tools read live IDE state. **Enforcement**: `.github/copilot-instructions.md` (auto-injected every session) + `.github/hooks/terminal-guard.py` (PreToolUse hook).
 
 ### Tool Selection Discipline
+
+> **Enforcement layer**: `.github/copilot-instructions.md` contains the mandatory decision tree and is auto-injected into every VS Code Copilot session. `.github/hooks/terminal-guard.py` intercepts `run_in_terminal` calls at the PreToolUse hook and asks for confirmation when a native tool equivalent exists.
 
 Agents in this project run in two environments with different tool surfaces. Using the wrong tool for the environment wastes tokens and causes retries. This section exists because repeated terminal-output bloat (16 KB+ of stale scrollback per command) caused entire review sessions to choke on scope discovery that native tools could have resolved in one call.
 
@@ -188,6 +210,7 @@ Reserve terminal for operations with no native-tool equivalent: test execution, 
 - Consolidate all checklists at the **bottom** of task documents. No scattered `- [ ]` items. No time estimates.
 - Planning docs must stay internally consistent (current state vs checklist vs success criteria vs ADR terms).
 - When reviewing task plans, epics, roadmaps, ADRs, or other planning documents for gaps, bugs, obsolete assumptions, or unnecessary complexity, record every finding in MCP handoff before presenting it in chat.
+- Do not log branch-review or plan-review findings, `finding_id`s, or fix-status notes into task plans. MCP handoff is the canonical store for review results, and `CURRENT_TASK.md` is the generated human-readable mirror when review state needs to be surfaced.
 - Reference code locations by **function/target name**, not line numbers. Line numbers go stale; names survive refactors.
 - Every pseudocode function or CLI command in a plan must map to an existing API/import or be explicitly marked as "new, to be created." Unresolved pseudocode references cause implementation ambiguity.
 - Validate enum values, status strings, and filter parameters used in plans against the actual API or schema. Using a status value that the API rejects (e.g., `done` when valid values are `planned/active/blocked/review/merged/closed`) is a plan bug.
@@ -218,29 +241,6 @@ Canonical handoff runtime:
 - Do not use handoff tools or CLI subcommands from `scripts/mcp/unified_server.py`; they are deprecated and fail by design.
 - The legacy unified server is now repo-intel-only.
 
-Bootstrap for local orchestration and retrieval:
-
-```bash
-# Install the packaged MCP server
-uv tool install ./packages/agent-handoff-mcp
-
-# Or install/editably expose the bridge used by BACKEND=codex-subagent
-python3 -m pip install -e packages/codex-subagent-bridge
-
-# Optional dashboard dependencies for dashboard-tui / rich.live rendering
-PYENV_VERSION=description-service python3 -m pip install -e "apps/prototype-description-service[dashboard,dev]"
-
-# Verify SQLite FTS5, writable state dirs, and MCP runtime wiring
-agent-handoff-mcp --workspace-root "$(pwd)" doctor
-```
-
-If you are running from repo source instead of an installed binary, prefer:
-
-```bash
-PYTHONPATH="packages/agent-handoff-mcp/src:packages/codex-subagent-bridge/src" \
-python3 -m agent_handoff_mcp --workspace-root "$(pwd)" doctor
-```
-
 Primary binary shape:
 
 - `agent-handoff-mcp --workspace-root <repo> serve-stdio`
@@ -264,7 +264,6 @@ During work:
 5. Record/code-review findings with `record_review_finding(..., details={ line_start?, line_end?, fix? }, actor={ ... })`.
 6. Update finding status with `update_review_finding(..., actor={ ... })`.
 7. Validate review state using `get_review_findings_summary(...)` and `list_review_findings(...)` (not direct `sqlite3` queries).
-8. For bulky logs, HTTP payloads, grep output, or copied docs, prefer the artifact sidecar: `record_artifact`, `search_artifacts`, `get_artifact_source`, `list_artifact_sources`, and `purge_artifacts` instead of pasting raw evidence into prompts or lane messages.
 
 Write-tool targeting rule:
 
@@ -276,9 +275,10 @@ Write-tool targeting rule:
 Before final response:
 
 1. Mark completed/skipped actions via `update_next_actions(...)`.
-2. Update singleton state via `set_handoff_state(..., expected_revision=<current>, actor={ ... })`.
-3. Regenerate `CURRENT_TASK.md` using `generate_current_task_md(...)`.
-4. Include a one-line status marker in the response: `Handoff updated: yes`.
+2. Record a **slice completion summary** via `record_decision(decision="slice_complete_<short_label>", rationale=<summary>, actor={ ... })`. The rationale must include: (a) what this coding slice accomplished (files changed, features added, bugs fixed); (b) verification performed (tests run, commands executed); (c) any open threads or follow-ups the next agent should pick up. This is the canonical artifact for multi-turn task continuation; a future agent told to "review the last N slices" will read these decisions in reverse chronological order.
+3. Update singleton state via `set_handoff_state(..., expected_revision=<current>, actor={ ... })`.
+4. Regenerate `CURRENT_TASK.md` using `generate_current_task_md(...)`.
+5. Include a one-line status marker in the response: `Handoff updated: yes`.
 
 Read discipline:
 
@@ -320,14 +320,6 @@ Decomposition rules for the orchestrating agent:
 8. Manifest scaffolds must emit every field the runtime reads, even if initially empty (e.g., `guidance_fallbacks`, `tooling_paths`). An omitted field is invisible to operators and silently breaks runtime consumers.
 9. Derive computable manifest fields at load time instead of requiring manual duplication. `commit_paths` is derived from `owned_paths` (strip `/**` suffixes); `routing` is derived from `owned_paths` (strip `**`, ensure trailing `/`). Maintaining both independently invites drift.
 
-Task-plan-to-lane dispatch rules:
-
-1. Start from the task plan's lane decomposition, owned paths, required tests, and merge order. The plan is the orchestration source of truth; do not invent extra worker lanes or silently collapse distinct lanes without an explicit decision.
-2. Materialize that plan into `config/lane-orchestration/<task-ref>.json` with `make lane-manifest-init ...`, then fill in `owned_paths`, `app_root`, `preferred_model`, `preferred_reasoning_effort`, `token_burn_threshold`, `model_context_window`, and required docs/tests from the plan.
-3. Use `dispatch_lane_work(...)` or `agent-handoff-mcp dispatch-lane-work ...` to set backend/model/reasoning effort per lane, then send the human-readable assignment with `make lane-dispatch ...` or `record_lane_brief(...)`.
-4. Dispatch messages should include the concrete slice from the task plan: objective, owned paths, required verification, explicit non-goals, and any downstream dependency brief. Do not forward full transcripts when a compact brief or artifact ref will do.
-5. For large supporting evidence, index it once and attach the resulting artifact refs to lane messages (`record_lane_message(..., payload={"artifacts": [...]})` or CLI `--artifact`) so workers can rehydrate exact context on demand.
-
 Worktree setup and switching:
 
 ```bash
@@ -360,12 +352,11 @@ Required domain boundaries per default Phase 5 lane split:
 
 Domain guardrails for worker lanes:
 
-1. Workers may edit only files inside their lane's owned paths. Scope enforcement is now a **runtime gate**: `lane_exec.py` validates the worktree diff against `effective_owned_paths` (or manifest `owned_paths`) after execution, before review. A scope violation rejects the turn immediately.
+1. Workers may edit only files inside their lane's owned paths.
 2. If a required fix falls outside the lane's owned paths, record a blocker or lane message for the orchestrator instead of editing another domain.
 3. Workers must not "helpfully" patch sibling-lane files, shared contracts, or checklist truth unless explicitly assigned.
 4. Before handoff, workers should verify changed files with `git diff --name-only` from their worktree and confirm the list stays inside lane scope.
 5. Orchestrators should reject or selectively intake any out-of-scope file changes during merge review.
-6. The orchestrator can narrow scope for a specific dispatch by embedding `effective_owned_paths` as a JSON-encoded string in the `artifacts` list of the dispatch lane message (e.g., `artifacts=[json.dumps({"type": "owned_paths_override", "paths": [...]})]`). `lane_exec.py` reads this override from the most recent `orchestrator_to_worker` message and prefers it over the manifest `owned_paths`.
 6. Merge-ready worker handoff must be commit-based. Dirty worktrees are not a valid handoff artifact; commit or stash lane work before reporting it.
 7. If a lane needs to catch up with orchestrator changes, use `make lane-refresh` instead of copying files across worktrees.
 8. `make lane-refresh` now updates worker lanes from committed orchestrator branch state only. If root workflow tooling is still uncommitted, commit it on the orchestrator branch before refreshing workers.
@@ -395,7 +386,7 @@ How workers communicate with the orchestrator:
 4. Agents performing review should do it from the orchestrator root, record findings in MCP handoff, and let the orchestrator route them with `make handoff-dispatch` so the owning worker lane sees both the dispatch message and the lane-stamped findings. The same command also stamps routeable open blockers and pending next actions onto their owning lanes.
 5. At worker start, record a decision noting lane ownership and actor metadata (`agent`, `branch`, `commit_sha` when available). If the orchestrator assigned next actions, do not rewrite sibling lanes.
 6. During work, record blockers, targeted test results, and review findings in MCP as they occur. Workers should report lane-local facts only; the orchestrator synthesizes cross-lane conclusions.
-7. Before handing work back, record one decision summarizing:
+7. Before handing work back, record one decision using the slice completion summary format (`decision="slice_complete_<short_label>"`) summarizing:
    - files changed
    - tests run
    - assumptions made
@@ -408,7 +399,6 @@ How workers communicate with the orchestrator:
 12. Workers do not close the overall implementation task unless they are explicitly acting as the orchestrator. They close only their assigned actions/findings.
 13. When a worker receives review work through MCP, the open lane message is the assignment and the lane-stamped open review findings are the actionable checklist. Fix or disposition those findings in-lane before handing work back.
 14. `make lane-check` is the preferred verification command because it records each configured test command into MCP with lane attribution, not just into terminal scrollback.
-15. Workers should treat `make lane-prompt` or `get_lane_activity(...)` as the authoritative prompt surface. Current prompt retrieval can consume pinned artifact refs from lane-message payloads and fall back to scoped artifact search; workers should not paste full logs back into the prompt manually.
 
 How the orchestrator should monitor and delegate:
 
@@ -422,14 +412,6 @@ How the orchestrator should monitor and delegate:
 8. After each accepted lane, regenerate `CURRENT_TASK.md` so the next worker sees current state without reading every branch diff.
 9. Keep the orchestrator root clean. If `git status` is dirty, do not intake. Stash or commit root-local work first.
 10. If a lane becomes stale, refresh the whole lane with `make lane-refresh` instead of manually copying individual files into the worktree.
-11. Use `make dashboard-live` (or `worker_status` via MCP) for live per-lane health monitoring. The dashboard shows composite state, token burn, exhaustion streak, context pressure, and attention flags. Use `make dashboard-tui` for a full interactive Textual TUI when available.
-12. The orchestrator daemon now skips auto-start for lanes with `exhaustion_streak >= 2` and emits `lane_unhealthy`. Lanes in this state require an explicit orchestrator decision (e.g., `promote_model`, `split_lane`, `close_lane`, `fresh_worktree`) before work resumes.
-13. Lane health is scored as `healthy` / `degraded` / `unhealthy` by `_check_lane_health()` in `orchestrator_daemon.py`, based on exhaustion streak, scope violation history, token burn, and context pressure. Health transitions emit `lane_health_changed` events.
-14. Surface model selection and reasoning effort explicitly during triage. `worker_status(...)` and the dashboards expose the current model, requested/effective reasoning effort, cumulative token usage, and `context_utilization.pressure`; use those signals before redispatching a stalled lane.
-15. For continuous operation, prefer one of two control planes and stay consistent:
-    - Shell-first: `make orchestrator-daemon ...`, `make worker-daemon ...`, `make dashboard-live`, `make artifact-list`, `make artifact-search`
-    - MCP-first: `orchestrator_start(...)`, `worker_start(...)`, `worker_status(...)`, `worker_event_history(...)`, `list_artifact_sources(...)`, `search_artifacts(...)`
-16. When evidence is too large for inline dispatch, index it once and route the lane with an artifact ref. This keeps prompt pressure down while preserving full-fidelity inspection through `get_artifact_source(...)`.
 
 How to merge worker worktree changes into the current branch:
 
@@ -474,9 +456,6 @@ make lane-clean TASK=phase-5-retention-export-and-audit-controls LANE=backend-ht
 - `make daemon-pause`, `make daemon-resume`, and `make daemon-status` all operate on that same singleton orchestrator state under `$(git rev-parse --git-common-dir)/..`. `make daemon-status` reports the shared state/log paths so you can see exactly which orchestrator root owns the daemon.
 - In MCP-capable hosts, `agent-handoff-mcp` now exposes orchestration commands as an alternative to shell-first Make targets: `orchestrator_start`, `orchestrator_status`, `orchestrator_stop`, `orchestrator_pause`, `orchestrator_resume`, and `run_structured_turn`. Use those when an in-app agent already has MCP access and should control orchestration without `run_in_terminal`. `run_structured_turn` is bridge-only and is not a synchronous wrapper for `codex exec`.
 - Worker daemon progress after `cycle_start` is written to `logs/worker-daemon/worker-<lane>.jsonl`. The foreground terminal now also shows `exec_start`, `exec_spawned`, and periodic `exec_heartbeat` lines so operators can tell a long-running worker is still alive without tailing logs.
-- The worker daemon emits structured JSONL events for health-relevant conditions: `scope_violation` (files outside owned_paths), `exhaustion_streak` (consecutive non-converged review cycles), `token_burn_warning` (cumulative tokens exceed threshold), `worker_stopped` (clean shutdown with lock cleanup), `context_pressure` (prompt consuming unsafe fraction of context window), and `lane_health_changed` (health state transition).
-- `worker_stop` now cleans up the lock file and emits a `worker_stopped` event. After stop, `daemon_status()` reports `lock.held: false` consistently. No contradictory state artifacts remain.
-- `make dashboard-live` is the polling dashboard for live lane health. It queries `worker_status` per lane via MCP CLI and prints a formatted table with composite state, health, token burn, exhaustion streak, context pressure, cycle count, model, and effort. `make dashboard-tui` is the interactive Textual TUI variant.
 - `make handoff-inbox` is the orchestrator polling command. It reads open `worker_to_orchestrator` lane messages from MCP and the latest merge-ready or blocked worker reports across lanes.
 - `make lane-dispatch` is the orchestrator assignment command. It writes an open lane message for a specific worker lane and regenerates `CURRENT_TASK.md` so the dispatch is mirrored for humans.
 - `make handoff-dispatch` is the orchestrator handoff-routing command. It reads open handoff review findings, blockers, and next actions from the root, stamps any routeable unassigned items onto the owning lane, and sends lane messages so the correct worktree sees the queue in `make lane-inbox`.
@@ -527,9 +506,6 @@ Current `agent-handoff-mcp` capabilities that support this workflow:
 - worker reports that link changed files, test commands, blockers, and merge readiness to a specific lane
 - lane-scoped activity queries so the orchestrator can inspect one worker lane without sifting the full task history
 - explicit lane messages for orchestrator-to-worker and worker-to-orchestrator communication when sessions cannot chat directly
-- orchestration lifecycle controls (`orchestrator_start`, `worker_start`, `dispatch_lane_work`, `worker_event_history`) so in-app agents can run the same control plane without shell wrappers
-- artifact retrieval sidecar tools for large evidence (`record_artifact`, `search_artifacts`, `get_artifact_source`, `list_artifact_sources`, `purge_artifacts`)
-- health and telemetry surfaces that expose lane model, reasoning effort, cumulative token burn, and context pressure through `worker_status` and the live dashboards
 
 Still-useful future `agent-handoff-mcp` improvements:
 

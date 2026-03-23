@@ -40,6 +40,7 @@ Hard rule for agent responses:
 
 - Do not present a finding in chat unless it has already been recorded in MCP with a stable `finding_id`.
 - If a finding is discussed before recording, immediately record it and then reference its `finding_id`.
+- Do not write review findings back into task plans, ADRs, or other planning docs. Log them in MCP handoff, then rely on generated `CURRENT_TASK.md` when a task-facing summary is needed.
 
 ### Scope
 
@@ -211,6 +212,7 @@ After completing the review, every finding **must** be recorded into the MCP han
 ### Required Execution Surface
 
 For this repo, agents must log review findings through the handoff MCP server from the orchestrator root, not by keeping findings only in chat or a markdown file.
+Task plans may update implementation checklist state, but review findings themselves stay in MCP handoff and the generated `CURRENT_TASK.md`, not in the task plan body.
 
 Preferred pattern:
 
@@ -289,6 +291,61 @@ The MCP `severity` field maps directly to this guide's severity levels:
 - `HIGH` -> `high` -- must fix before merge
 - `MEDIUM` -> `medium` -- should fix; defer only with justification
 - `LOW` -> `low` -- fix if easy; otherwise next pass
+
+---
+
+## ACE Reflection
+
+When recording review findings, note any `[sr-NNN]` or `[rg-NNN]` rule IDs referenced or contradicted by a finding. This is the signal used to evolve instruction-file strategy bullets.
+
+- A finding that **confirms** a rule (the rule prevented a real failure) increments its `helpful` counter.
+- A finding that **contradicts** a rule (the rule caused unnecessary friction or was wrong) increments its `harmful` counter.
+- Rules accumulate evidence over time; rules with `helpful=0 harmful>=2` become pruning candidates.
+
+### Automated Detection (daemon-cycle)
+
+During a review cycle the **worker daemon** automatically scans new findings for ACE rule references after each `review_complete` event. When references are found:
+
+1. Detection records are appended to `.task-state/ace_reflect_log.jsonl` (fields: `finding_id`, `rule_id`, `contradicts`, `cycle`, `timestamp`).
+2. A `ace_reflect_detected` log event is emitted with the record count.
+3. **No instruction-file edits are made during the daemon cycle.** Counter updates are intentionally deferred.
+
+When more than 5 entries accumulate in `ace_reflect_log.jsonl`, the **orchestrator daemon** emits an `ace_reflect_pending` advisory warning with the pending count and a hint to run `make ace-reflect`.
+
+### Applying Counter Updates
+
+From the orchestrator root, run:
+
+```bash
+make ace-reflect TASK=<task-ref>
+```
+
+This calls `ace_reflect.py __main__`, which:
+
+1. Reads all pending entries from `.task-state/ace_reflect_log.jsonl`.
+2. Increments the `helpful` or `harmful` counter on the matching bullet in the canonical instruction file (`docs/agentic/instructions.md`). `CLAUDE.md` and `GEMINI.md` are symlinks to the same file; do not list them separately.
+3. Records processed keys in a sidecar `.ace_dedup.json` file to prevent double-counting.
+4. Prints a summary: `processed=N  incremented=N  skipped=N`.
+
+For findings that occurred outside a daemon cycle (e.g., manual reviews):
+
+```python
+from agent_handoff_mcp.orchestration.ace_reflect import ace_reflect_on_findings
+# Pass state_dir so the function writes records to the log AND applies counters
+ace_reflect_on_findings(findings, instruction_files, state_dir=Path(".task-state"))
+```
+
+### Curation Report
+
+To view pruning candidates without making any changes:
+
+```bash
+make ace-curation-report
+```
+
+This prints all bullets where `helpful=0 and harmful>=2` across all instruction files. Delete or revise those bullets in a focused PR after review.
+
+The counter-update procedure and Reflection triggers are also documented in [../instructions.md](../instructions.md) under **Document Maintenance -- ACE Playbook Evolution**.
 
 ---
 

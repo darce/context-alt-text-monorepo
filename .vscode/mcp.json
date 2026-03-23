@@ -1,5 +1,10 @@
 {
   "servers": {
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@2.1.4"],
+      "type": "stdio"
+    },
     "altcontext-mcp": {
       "command": "${env:HOME}/.pyenv/versions/description-service/bin/python3",
       "args": [

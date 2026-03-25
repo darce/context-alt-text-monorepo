@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
     from recognition.application.clustering.constrained_hac import ConstrainedHAC
 
 from db.models import MediaIdentity as MediaIdentityModel
@@ -150,6 +152,7 @@ class ClusterService:
         *,
         progress_callback: Callable[[int, int], Awaitable[None]] | None = None,
         commit: bool = True,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
     ):
         """Cluster any identities not yet assigned to a cluster."""
         result = await cluster_unclustered_identities_op(
@@ -168,6 +171,7 @@ class ClusterService:
             hac_settings=self.hac_settings,
             progress_callback=progress_callback,
             commit=commit,
+            session_factory=session_factory,
         )
 
         if self.suggestion_refresh_service and result.created_cluster_ids:

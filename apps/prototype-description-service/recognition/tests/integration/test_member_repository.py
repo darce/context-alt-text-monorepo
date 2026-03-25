@@ -153,3 +153,95 @@ async def test_get_by_cluster_is_tenant_scoped(db_session, tenant) -> None:
     members = await member_repo.get_by_cluster(other_cluster.id)
 
     assert members == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: Conflict-safe bulk membership scaffolds
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_bulk_add_members_if_not_exists_inserts_new_rows(db_session, tenant) -> None:
+    """bulk_add_members_if_not_exists should insert all rows when none exist."""
+    cluster_repo = SqlAlchemyClusterRepository(db_session)
+    member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
+    cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label="Conflict-safe cluster",
+            is_labeled=False,
+            identity_count=0,
+            created_at=None,
+        )
+    )
+
+    members = [
+        MemberData(identity_id=str(uuid.uuid4()), similarity=0.85),
+        MemberData(identity_id=str(uuid.uuid4()), similarity=0.86),
+    ]
+    created, skipped = await member_repo.bulk_add_members_if_not_exists(cluster.id, members)
+
+    assert len(created) == 2
+    assert skipped == 0
+    stored = await member_repo.get_by_cluster(cluster.id)
+    assert {m.identity_id for m in stored} == {m.identity_id for m in members}
+
+
+@pytest.mark.asyncio
+async def test_bulk_add_members_if_not_exists_skips_duplicates(db_session, tenant) -> None:
+    """bulk_add_members_if_not_exists must not raise on duplicate identity inserts.
+
+    This is the regression guard for planner overlap: calling persist_new_cluster()
+    twice with the same identity must not produce an integrity error.
+    """
+    cluster_repo = SqlAlchemyClusterRepository(db_session)
+    member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
+    cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label="Idempotent cluster",
+            is_labeled=False,
+            identity_count=0,
+            created_at=None,
+        )
+    )
+
+    identity_id = str(uuid.uuid4())
+    first_member = MemberData(identity_id=identity_id, similarity=0.9)
+
+    # Insert once
+    await member_repo.add_member(cluster.id, identity_id=identity_id, similarity=0.9)
+
+    # Attempt to insert the same identity again via conflict-safe path
+    created, skipped = await member_repo.bulk_add_members_if_not_exists(cluster.id, [first_member])
+
+    assert len(created) == 0
+    assert skipped == 1
+
+    # Exactly one row in the cluster
+    stored = await member_repo.get_by_cluster(cluster.id)
+    assert len(stored) == 1
+
+
+@pytest.mark.asyncio
+async def test_bulk_add_members_if_not_exists_returns_empty_for_empty_input(db_session, tenant) -> None:
+    """bulk_add_members_if_not_exists on empty list returns empty result without error."""
+    cluster_repo = SqlAlchemyClusterRepository(db_session)
+    member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
+    cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label="Empty cluster",
+            is_labeled=False,
+            identity_count=0,
+            created_at=None,
+        )
+    )
+
+    created, skipped = await member_repo.bulk_add_members_if_not_exists(cluster.id, [])
+
+    assert created == []
+    assert skipped == 0

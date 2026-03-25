@@ -361,10 +361,17 @@ class JobProgressResponse(BaseModel):
 
     completed: int
     total: int
-    phase: Literal["queued", "detecting", "clustering", "awaiting_projection", "failed", "complete"] | None = None
+    phase: (
+        Literal["queued", "detecting", "clustering", "retrying", "awaiting_projection", "failed", "complete"] | None
+    ) = None
     images_processed: int | None = None
     faces_found: int | None = None
     clusters_created: int | None = None
+    retry_count: int | None = None
+    current_stage: str | None = None
+    last_successful_processed_identities: int | None = None
+    last_error_code: str | None = None
+    current_chunk_size: int | None = None
 
 
 class JobStatusResponse(BaseModel):

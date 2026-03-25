@@ -6,6 +6,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityClusteringJob
@@ -23,6 +24,8 @@ from recognition.worker.handlers.utils import (
 )
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
     from recognition.application.orchestration.cluster_service import ClusterService
 
 logger = logging.getLogger(__name__)
@@ -64,25 +67,66 @@ class CurationJobHandler(JobHandler[IdentityClusteringJob]):
 class ClusteringJobHandler(JobHandler[IdentityClusteringJob]):
     """Handle clustering jobs."""
 
-    def __init__(self, cluster_service: ClusterService | None = None) -> None:
+    def __init__(
+        self,
+        cluster_service: ClusterService | None = None,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
+    ) -> None:
         self._cluster_service = cluster_service
+        self._session_factory = session_factory
 
     async def handle(self, job: IdentityClusteringJob, session: AsyncSession) -> None:
         cluster_service = self._cluster_service
         if cluster_service is None:
             cluster_service = await build_cluster_service(session=session, tenant_id=str(job.tenant_id))
 
+        job_id = job.id
+        session_factory = self._session_factory
+
         async def progress_callback(completed: int, total: int):
+            # Update in-memory state unconditionally so the main session sees
+            # current values if it flushes after the callback returns.
             job.processed_identities = completed
             job.total_identities = total
             job.progress = compute_progress(completed, total)
-            await session.flush()
 
+            if session_factory is None:
+                # Fallback: persist via main session (no durability guarantee).
+                await session.flush()
+                return
+
+            # Persist progress outside the main clustering transaction so
+            # checkpoints survive a subsequent rollback (Phase 2 durable
+            # checkpoints). Use a blind UPDATE to avoid lock-wait conflicts
+            # with the main session that already holds FOR UPDATE on this row.
+            try:
+                async with session_factory() as chk_session:
+                    await chk_session.execute(
+                        sa_update(IdentityClusteringJob)
+                        .where(IdentityClusteringJob.id == job_id)
+                        .values(
+                            processed_identities=completed,
+                            total_identities=total,
+                            progress=compute_progress(completed, total),
+                        )
+                    )
+                    await chk_session.commit()
+            except Exception:
+                logger.warning("[clustering_handler] checkpoint flush failed for job %s; progress may be lost", job_id)
+
+        # Re-establish tenant context before entering the orchestrator. The
+        # scan worker commits the job's "running" status (scan_worker.py) which
+        # clears the SET LOCAL variables set by ensure_job_context.  Without
+        # this call, the clustering orchestrator starts with no app.current_tenant
+        # or app.bypass_rls, so per-chunk commits and observability INSERTs fail
+        # RLS checks (defense-in-depth for rls-tenant-context-lost-after-chunk-commit).
+        await ensure_job_context(session=session, job=job)
         result = await cluster_service.cluster_unclustered_identities(
             tenant_id=str(job.tenant_id),
             job_id=str(job.id),
             progress_callback=progress_callback,
             commit=False,
+            session_factory=self._session_factory,
         )
         await session.flush()
         _, _, snapshot_version, _snapshot_generation_id = await cluster_service.cluster_repository.get_snapshot(

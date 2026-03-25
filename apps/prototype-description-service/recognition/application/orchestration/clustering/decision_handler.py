@@ -174,3 +174,54 @@ class DecisionHandler:
             )
 
         return decision
+
+    async def evaluate_only(
+        self,
+        candidate: AssignmentCandidate,
+        *,
+        job_id: str,
+        job_label: str,
+        verbose: bool = True,
+    ) -> AssignmentDecision:
+        """Evaluate a candidate and handle SUGGEST/REJECT, but defer ACCEPT persistence.
+
+        For ACCEPT decisions the caller is responsible for bulk-persisting membership
+        and resolving suggestions (see ``AssignmentWriter.persist_assignments_chunk``).
+        This allows the orchestrator to batch all ACCEPT decisions for a chunk into
+        a single bulk INSERT per cluster instead of N per-identity round-trips.
+        """
+        decision = await self._gate.evaluate(candidate)
+        if verbose:
+            log_and_report_decision(
+                logger_instance=self._logger,
+                clustering_logger=self._clustering_logger,
+                gate=self._gate,
+                candidate=candidate,
+                decision=decision,
+                job_label=job_label,
+            )
+
+        if decision.outcome == AssignmentOutcome.SUGGEST:
+            await self._suggestions.create(candidate, decision.suggestion_confidence)
+            if verbose:
+                self._logger.info(
+                    "[clustering] SUGGESTED job_id=%s identity=%s media_id=%s cluster=%s confidence=%.2f reason=%s",
+                    job_id,
+                    candidate.identity.id,
+                    candidate.identity.media_id,
+                    candidate.cluster_id,
+                    decision.suggestion_confidence or 0.0,
+                    decision.rejection_reason,
+                )
+        elif decision.outcome == AssignmentOutcome.REJECT:
+            if verbose:
+                self._logger.info(
+                    "[clustering] REJECTED job_id=%s identity=%s media_id=%s cluster=%s reason=%s",
+                    job_id,
+                    candidate.identity.id,
+                    candidate.identity.media_id,
+                    candidate.cluster_id,
+                    decision.rejection_reason,
+                )
+
+        return decision

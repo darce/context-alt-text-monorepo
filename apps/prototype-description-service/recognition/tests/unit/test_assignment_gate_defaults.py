@@ -164,6 +164,9 @@ class MemberRepoStub(MemberRepository):
     async def bulk_add_members(self, cluster_id: str, members):
         raise NotImplementedError
 
+    async def bulk_add_members_if_not_exists(self, cluster_id: str, members) -> tuple[list, int]:
+        raise NotImplementedError
+
     async def move_members(self, source_cluster_id: str, target_cluster_id: str) -> int:
         raise NotImplementedError
 

@@ -30,6 +30,33 @@ async def test_derive_job_phase(job_type: JobType, status: JobStatus, expected: 
     assert derive_job_phase(job_type=job_type, status=status) is expected
 
 
+@pytest.mark.parametrize(
+    ("job_type", "status", "payload", "expected"),
+    [
+        # Clustering job re-queued after transient failure: RETRYING while pending
+        (JobType.CLUSTERING, JobStatus.PENDING, {"retry_count": 1}, JobPhase.RETRYING),
+        (JobType.CLUSTERING, JobStatus.PENDING, {"retry_count": 2}, JobPhase.RETRYING),
+        # Clustering job running its retry attempt: RETRYING while running
+        (JobType.CLUSTERING, JobStatus.RUNNING, {"retry_count": 1}, JobPhase.RETRYING),
+        # retry_count=0 is not a retry: still QUEUED / CLUSTERING
+        (JobType.CLUSTERING, JobStatus.PENDING, {"retry_count": 0}, JobPhase.QUEUED),
+        (JobType.CLUSTERING, JobStatus.RUNNING, {"retry_count": 0}, JobPhase.CLUSTERING),
+        # No payload: QUEUED / CLUSTERING as before
+        (JobType.CLUSTERING, JobStatus.PENDING, None, JobPhase.QUEUED),
+        (JobType.CLUSTERING, JobStatus.RUNNING, None, JobPhase.CLUSTERING),
+        # RETRYING only applies to clustering jobs; analyze with retry_count stays QUEUED
+        (JobType.ANALYZE, JobStatus.PENDING, {"retry_count": 1}, JobPhase.QUEUED),
+    ],
+)
+def test_derive_job_phase_with_payload(
+    job_type: JobType,
+    status: JobStatus,
+    payload: dict[str, object] | None,
+    expected: JobPhase,
+) -> None:
+    assert derive_job_phase(job_type=job_type, status=status, payload=payload) is expected
+
+
 @pytest.mark.asyncio
 async def test_build_scan_progress_snapshot_uses_counts_and_faces() -> None:
     scan_repo = AsyncMock()
@@ -112,3 +139,20 @@ async def test_build_job_progress_response_marks_failed_jobs_failed() -> None:
     progress = await build_job_progress_response(job=job, scan_repo=None)
     assert progress is not None
     assert progress.phase == JobPhase.FAILED.value
+
+
+@pytest.mark.asyncio
+async def test_build_job_progress_response_includes_current_chunk_size() -> None:
+    job = Job(
+        id=str(uuid.uuid4()),
+        type=JobType.CLUSTERING,
+        tenant_id="tenant",
+        status=JobStatus.RUNNING,
+        progress_completed=5,
+        progress_total=12,
+        payload={"current_chunk_size": 5, "clusters_created": 2},
+    )
+
+    progress = await build_job_progress_response(job=job, scan_repo=None)
+    assert progress is not None
+    assert progress.current_chunk_size == 5

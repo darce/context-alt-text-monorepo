@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator
 from contextlib import aclosing
 
 from fastapi import Depends
+from fastapi.exceptions import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,6 +63,8 @@ async def get_optional_session(
                     commit = getattr(session, "commit", None)
                     if callable(commit):
                         await commit()
+                except HTTPException:
+                    raise
                 except Exception as exc:
                     logger.error("get_optional_session: exception during yield/commit: %s", exc)
                     rollback = getattr(session, "rollback", None)

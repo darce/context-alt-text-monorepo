@@ -405,3 +405,78 @@ async def test_hac_refinement_reduces_singletons_with_real_hac(
     assignment_writer.persist_new_cluster.assert_called_once()
     call_kwargs = assignment_writer.persist_new_cluster.call_args.kwargs
     assert len(call_kwargs["identities"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: Planner overlap and HAC exclusion regression scaffolds
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_hac_refinement_excludes_already_assigned_identities(
+    hac_settings: HACSettings,
+    assignment_writer: MagicMock,
+) -> None:
+    """HAC must not persist clusters for identities already assigned by graph fallback.
+
+    This is the regression scaffold for the planner overlap bug: when
+    _process_chunks() passes a filtered hac_eligible list (excluding identities
+    placed in graph-fallback clusters), run_hac_refinement must only process
+    those filtered identities.
+    """
+    id_assigned = _make_identity(np.array([1.0, 0.0, 0.0], dtype=np.float32), media_id=1)
+    id_unassigned = _make_identity(np.array([0.99, 0.05, 0.0], dtype=np.float32), media_id=2)
+
+    # Simulate the caller already filtering out id_assigned — only pass id_unassigned.
+    # HAC with a single identity has fewer than 2 members, so nothing should be created.
+    fake_hac = FakeConstrainedHAC(cluster_assignments={uuid.UUID(id_unassigned.id): uuid.uuid4()})
+
+    result = await run_hac_refinement(
+        still_unclustered=[id_unassigned],  # id_assigned has already been excluded upstream
+        tenant_id=str(uuid.uuid4()),
+        job_id=str(uuid.uuid4()),
+        constrained_hac=fake_hac,
+        hac_settings=hac_settings,
+        assignment_writer=assignment_writer,
+    )
+
+    # Single identity cannot form a cluster
+    assert result == 0
+    assignment_writer.persist_new_cluster.assert_not_called()
+    # HAC must not have been called with the excluded identity
+    if fake_hac.refine_clusters_calls:
+        _t, embeddings, _thresh = fake_hac.refine_clusters_calls[0]
+        assert uuid.UUID(id_assigned.id) not in embeddings
+
+
+@pytest.mark.asyncio
+async def test_hac_refinement_two_eligible_identities_create_cluster(
+    hac_settings: HACSettings,
+    assignment_writer: MagicMock,
+) -> None:
+    """Two identities left after planner exclusion can still form an HAC cluster.
+
+    Verifies that filtering for planner overlap does not break normal HAC paths.
+    """
+    id_a = _make_identity(np.array([1.0, 0.0, 0.0], dtype=np.float32), media_id=10)
+    id_b = _make_identity(np.array([0.99, 0.1, 0.0], dtype=np.float32), media_id=11)
+
+    shared_group = uuid.uuid4()
+    fake_hac = FakeConstrainedHAC(
+        cluster_assignments={
+            uuid.UUID(id_a.id): shared_group,
+            uuid.UUID(id_b.id): shared_group,
+        }
+    )
+
+    result = await run_hac_refinement(
+        still_unclustered=[id_a, id_b],
+        tenant_id=str(uuid.uuid4()),
+        job_id=str(uuid.uuid4()),
+        constrained_hac=fake_hac,
+        hac_settings=hac_settings,
+        assignment_writer=assignment_writer,
+    )
+
+    assert result == 1
+    assignment_writer.persist_new_cluster.assert_called_once()

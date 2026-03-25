@@ -154,6 +154,86 @@ class SqlAlchemyMemberRepository(MemberRepository):
             await self._session.refresh(model)
         return [self._to_domain(model) for model in models]
 
+    async def bulk_add_members_if_not_exists(self, cluster_id: str, members) -> tuple[list[IdentityMember], int]:
+        """Bulk insert members using a single ON CONFLICT DO NOTHING statement.
+
+        Issues one INSERT per cluster instead of N per-identity round-trips,
+        trading O(N) DB statements for O(1) (Phase 3: bulk membership writes).
+        Returns (created_members, skipped_count) for observability.
+        """
+        if not members:
+            return [], 0
+
+        tenant_uuid = _coerce_uuid(self._tenant_id)
+        cluster_uuid = _coerce_uuid(cluster_id)
+        if tenant_uuid is None or cluster_uuid is None:
+            raise ValueError("tenant_id and cluster_id must be valid UUID-compatible strings")
+
+        # Validate and ensure ancestor rows exist (test scaffold; no-ops in production).
+        identity_uuids: list[uuid.UUID] = []
+        for member in members:
+            identity_uuid = _coerce_uuid(member.identity_id)
+            if identity_uuid is None:
+                raise ValueError("identity_id must be a valid UUID-compatible string")
+            await _ensure_media_identity(self._session, tenant_uuid, identity_uuid)
+            identity_uuids.append(identity_uuid)
+
+        # Build all rows upfront; keep a member_id -> identity_id_str map for result assembly.
+        rows: list[dict] = []
+        id_to_identity: dict[uuid.UUID, str] = {}
+        for member, identity_uuid in zip(members, identity_uuids, strict=True):
+            member_id = uuid.uuid4()
+            id_to_identity[member_id] = str(member.identity_id)
+            rows.append(
+                {
+                    "id": member_id,
+                    "tenant_id": tenant_uuid,
+                    "cluster_id": cluster_uuid,
+                    "identity_id": identity_uuid,
+                    "similarity": _clamp_similarity(member.similarity),
+                }
+            )
+
+        bind = self._session.get_bind()
+        dialect_name = bind.dialect.name if bind is not None else None
+
+        # Single bulk INSERT ON CONFLICT DO NOTHING RETURNING id.
+        # RETURNING filters to only the rows that were actually inserted, so
+        # we avoid a second SELECT to distinguish inserted vs skipped.
+        stmt: Insert
+        if dialect_name == "postgresql":
+            stmt = (
+                pg_insert(MemberModel)
+                .values(rows)
+                .on_conflict_do_nothing(constraint="unique_identity_member")
+                .returning(MemberModel.id)
+            )
+        elif dialect_name == "sqlite":
+            stmt = (
+                sqlite_insert(MemberModel)
+                .values(rows)
+                .on_conflict_do_nothing(index_elements=["cluster_id", "identity_id"])
+                .returning(MemberModel.id)
+            )
+        else:
+            stmt = insert(MemberModel).values(rows).returning(MemberModel.id)
+
+        result = await self._session.execute(stmt)
+        inserted_ids: set[uuid.UUID] = {row[0] for row in result.fetchall()}
+
+        if not inserted_ids:
+            return [], len(members)
+
+        # Fetch fully populated models for inserted rows only (single round-trip).
+        fetch_stmt = (
+            select(MemberModel).where(MemberModel.id.in_(inserted_ids)).where(MemberModel.cluster_id == cluster_uuid)
+        )
+        fetch_result = await self._session.execute(fetch_stmt)
+        created_models = list(fetch_result.scalars().all())
+
+        skipped = len(members) - len(created_models)
+        return [self._to_domain(model) for model in created_models], skipped
+
     async def move_members(self, source_cluster_id: str, target_cluster_id: str) -> int:
         """Reassign all members from a source cluster to a target cluster.
 

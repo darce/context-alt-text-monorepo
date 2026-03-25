@@ -35,6 +35,7 @@ from recognition.interface_adapters.http.deps.services import (
     get_job_service,
     get_job_service_dependency,
     get_media_identity_service,
+    get_merge_suggestion_repository,
     get_observability_repository,
     get_persisted_cluster_job_service,
     get_persisted_job_service,
@@ -50,7 +51,6 @@ from recognition.interface_adapters.http.deps.services import (
     get_settings,
     get_shared_insightface_adapter,
     get_suggestion_extension_service,
-    get_merge_suggestion_repository,
     get_suggestion_refresh_service,
     get_suggestion_service,
 )

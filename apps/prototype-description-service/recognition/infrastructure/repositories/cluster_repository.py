@@ -694,6 +694,41 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         await self._session.execute(stmt)
         await self._session.flush()
 
+    async def update_curriculum_t_ema(self, cluster_id: str, new_similarity: float, alpha: float) -> None:
+        """Atomically apply EMA update to curriculum_t using a single UPDATE expression.
+
+        Computes: new_value = alpha * new_similarity + (1 - alpha) * current_value
+        Falls back to new_similarity when curriculum_t is NULL.
+
+        Uses ANSI SQL CASE-based clamping (compatible with SQLite and PostgreSQL).
+        """
+        from sqlalchemy import case, literal
+
+        cluster_uuid = _coerce_uuid(cluster_id)
+        if cluster_uuid is None:
+            return
+
+        alpha_lit = literal(alpha)
+        sim_lit = literal(new_similarity)
+        new_value = case(
+            (ClusterModel.curriculum_t.is_(None), sim_lit),
+            else_=alpha_lit * sim_lit + (literal(1.0) - alpha_lit) * ClusterModel.curriculum_t,
+        )
+        # Clamp to [0, 1] using ANSI CASE instead of func.greatest/func.least
+        # so the expression works on both PostgreSQL and SQLite.
+        clamped = case(
+            (new_value < literal(0.0), literal(0.0)),
+            (new_value > literal(1.0), literal(1.0)),
+            else_=new_value,
+        )
+        stmt = (
+            update(ClusterModel)
+            .where(ClusterModel.id == cluster_uuid)
+            .values(curriculum_t=clamped, curriculum_t_updated_at=datetime.now(tz=UTC))
+        )
+        await self._session.execute(stmt)
+        await self._session.flush()
+
     async def get_member_embeddings(self, cluster_id: str) -> list[np.ndarray]:
         """Return embeddings for members of the cluster."""
         stmt = (

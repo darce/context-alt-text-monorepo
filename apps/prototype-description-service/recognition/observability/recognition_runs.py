@@ -7,15 +7,22 @@ record, without requiring every call site to construct ORM models directly.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import RecognitionEvent, RecognitionRun
+from db.tenant_context import enable_rls_bypass, set_tenant_context
 from recognition.shared.ids import parse_optional_uuid
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -30,6 +37,8 @@ class RecognitionRunContext:
     session: AsyncSession
     tenant_id: UUID
     run_id: UUID
+    buffer_events: bool = False
+    _pending_events: list[RecognitionEvent] = field(default_factory=list, init=False, repr=False)
 
     def add_event(
         self,
@@ -42,16 +51,16 @@ class RecognitionRunContext:
         target_cluster_id: str | UUID | None = None,
         payload: dict[str, Any] | None = None,
     ) -> None:
-        """Add a `recognition_events` row to the current session.
+        """Add a `recognition_events` row to the current session or pending buffer.
 
-        Args:
-            event_type: Event type string (e.g. "assignment_decision", "cluster_created").
-            timestamp: Optional explicit timestamp; defaults to DB/server time.
-            identity_id: Optional identity UUID (string or UUID).
-            cluster_id: Optional cluster UUID (string or UUID).
-            source_cluster_id: Optional source cluster UUID.
-            target_cluster_id: Optional target cluster UUID.
-            payload: JSON payload for the event.
+        When `buffer_events` is True the event is held in `_pending_events` and
+        will be persisted by the next `flush_pending_events()` call in a separate
+        short-lived session.  This decouples observability writes from the main
+        clustering transaction so that an RLS or other DB error in observability
+        cannot abort the clustering transaction (stretch goal).
+
+        When `buffer_events` is False (default) the event is added directly to
+        `self.session` and will be flushed/committed by the surrounding transaction.
         """
         identity_uuid = parse_optional_uuid(identity_id)
         cluster_uuid = parse_optional_uuid(cluster_id)
@@ -70,7 +79,46 @@ class RecognitionRunContext:
         )
         if timestamp is not None:
             event.timestamp = timestamp
-        self.session.add(event)
+        if self.buffer_events:
+            self._pending_events.append(event)
+        else:
+            self.session.add(event)
+
+    async def flush_pending_events(
+        self,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
+    ) -> None:
+        """Persist buffered events; no-op if no events are pending.
+
+        When `session_factory` is provided the events are written in a fresh
+        short-lived session that is committed and closed independently of the
+        main clustering session.  This ensures that an observability failure
+        cannot roll back committed clustering data.
+
+        When `session_factory` is None the events are added to `self.session`
+        and flushed inline (fallback path for tests or callers without a factory).
+        """
+        if not self._pending_events:
+            return
+        events, self._pending_events = self._pending_events, []
+        try:
+            if session_factory is not None:
+                async with session_factory() as obs_session:
+                    await set_tenant_context(obs_session, self.tenant_id)
+                    await enable_rls_bypass(obs_session)
+                    for ev in events:
+                        obs_session.add(ev)
+                    await obs_session.commit()
+            else:
+                for ev in events:
+                    self.session.add(ev)
+                await self.session.flush()
+        except Exception:
+            logger.warning(
+                "[observability] failed to flush %d events for run %s; events discarded",
+                len(events),
+                self.run_id,
+            )
 
 
 async def create_recognition_run(

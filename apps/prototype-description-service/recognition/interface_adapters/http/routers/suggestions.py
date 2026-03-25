@@ -9,6 +9,8 @@ from typing import TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from recognition.application.orchestration import ClusterService
+from recognition.application.suggestions.service import SuggestionService
 from recognition.config.security import get_security_settings
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.suggestion import (
@@ -18,8 +20,6 @@ from recognition.domain.suggestion import (
     NameSuggestion,
     SuggestionStatus,
 )
-from recognition.application.orchestration import ClusterService
-from recognition.application.suggestions.service import SuggestionService
 from recognition.infrastructure.repositories import SqlAlchemyClusterRepository, SqlAlchemyMergeSuggestionRepository
 from recognition.infrastructure.services import SuggestionExtensionService
 from recognition.interface_adapters.http.dependencies import (

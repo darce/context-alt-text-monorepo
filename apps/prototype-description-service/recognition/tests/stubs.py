@@ -107,6 +107,10 @@ class NullClusterRepository(ClusterRepository):
     async def set_curriculum_t(self, cluster_id: str, value: float) -> None:
         self._curriculum_t[cluster_id] = value
 
+    async def update_curriculum_t_ema(self, cluster_id: str, new_similarity: float, alpha: float) -> None:
+        current = self._curriculum_t.get(cluster_id, new_similarity)
+        self._curriculum_t[cluster_id] = alpha * new_similarity + (1.0 - alpha) * current
+
     async def get_member_embeddings(self, cluster_id: str) -> Sequence[np.ndarray]:
         return list(self._member_embeddings_by_cluster.get(cluster_id, []))
 

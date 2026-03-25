@@ -44,7 +44,15 @@ async def post_merge_retry_matching(
     max_unclustered: int = 200,
     min_similarity_for_unclustered: float = 0.95,
 ) -> None:
-    """Best-effort post-merge matching pass for the updated target cluster."""
+    """Best-effort post-merge matching pass for the updated target cluster.
+
+    Session contract: ``session`` must already be under the correct tenant
+    context (``app.current_tenant``) with RLS bypass enabled
+    (``app.bypass_rls = 'true'``).  Both settings are transaction-scoped
+    (``SET LOCAL``); callers that commit before invoking this function must
+    re-establish them after the commit.  If ``session`` is ``None`` this
+    function returns immediately without doing work.
+    """
     if session is None:
         return
 

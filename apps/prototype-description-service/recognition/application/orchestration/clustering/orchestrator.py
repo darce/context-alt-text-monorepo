@@ -733,6 +733,13 @@ class IncrementalClusteringRunner:
         )
         if self._commit:
             await self._session.commit()
+            # Seam 4: restore tenant context + RLS bypass after the commit clears
+            # the SET LOCAL variables.  The HTTP sync path sets commit=True; the
+            # worker path sets commit=False so this block is intentionally skipped
+            # there (the worker already owns context via ensure_job_context).
+            tenant_uuid = uuid.UUID(tenant_id) if isinstance(tenant_id, str) else tenant_id
+            await set_tenant_context(self._session, tenant_uuid)
+            await enable_rls_bypass(self._session)
 
         if self._clustering_logger:
             clustering_job_report = BatchJobReport(

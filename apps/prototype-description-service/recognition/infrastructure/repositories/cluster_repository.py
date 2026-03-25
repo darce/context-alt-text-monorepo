@@ -24,6 +24,7 @@ from db.models import IdentityClusterRepresentative, IdentitySuggestion, MediaId
 from db.models import IdentityMember as IdentityMemberModel
 from db.models import NameSuggestion as NameSuggestionModel
 from db.settings import get_database_settings
+from db.tenant_context import enable_rls_bypass
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity as DomainIdentity
 from recognition.domain.maturity import ClusterMaturityInfo, compute_maturity_adjustment, compute_maturity_level
@@ -61,6 +62,37 @@ def _datetime_to_snapshot_version(value: datetime | None) -> int:
         value = value.astimezone(UTC)
     delta = value - _SNAPSHOT_EPOCH
     return ((delta.days * 86_400) + delta.seconds) * 1_000_000 + delta.microseconds
+
+
+_MV_CENTROIDS = "mv_identity_cluster_centroids"
+
+
+async def _refresh_mv_concurrent_with_bypass(conn: AsyncConnection) -> None:
+    """Execute a concurrent MV refresh on an AUTOCOMMIT connection with RLS bypass.
+
+    SET app.bypass_rls is session-scoped (not SET LOCAL) because AUTOCOMMIT mode
+    has no enclosing transaction for SET LOCAL to bind to.
+    All 18 MV source tables carry relforcerowsecurity=true; without bypass even
+    the table owner sees zero rows.
+    """
+    await conn.execute(text("SET app.bypass_rls = 'true'"))
+    try:
+        before_result = await conn.execute(text(f"SELECT COUNT(*) FROM {_MV_CENTROIDS}"))
+        before_count: int = before_result.scalar_one()
+        started_at = datetime.now(tz=UTC)
+        await conn.execute(text(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {_MV_CENTROIDS}"))
+        duration_ms = int((datetime.now(tz=UTC) - started_at).total_seconds() * 1000)
+        after_result = await conn.execute(text(f"SELECT COUNT(*) FROM {_MV_CENTROIDS}"))
+        after_count: int = after_result.scalar_one()
+        logger.info(
+            "Refreshed %s: before=%d after=%d duration_ms=%d",
+            _MV_CENTROIDS,
+            before_count,
+            after_count,
+            duration_ms,
+        )
+    finally:
+        await conn.execute(text("RESET app.bypass_rls"))
 
 
 class SqlAlchemyClusterRepository(ClusterRepository):
@@ -425,34 +457,44 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             # Use CONCURRENTLY if possible, but it requires a unique index on the MV
             # For now, standard refresh.
             # SQLite and other databases don't support REFRESH MATERIALIZED VIEW
+            await enable_rls_bypass(self._session)
             await self._session.execute(text("REFRESH MATERIALIZED VIEW mv_identity_cluster_centroids"))
+            count_result = await self._session.execute(text("SELECT COUNT(*) FROM mv_identity_cluster_centroids"))
+            logger.debug(
+                "Refreshed mv_identity_cluster_centroids (standard): count=%d",
+                count_result.scalar_one(),
+            )
         except Exception:
             logger.warning("Failed to refresh centroid materialized view", exc_info=True)
 
-    async def refresh_centroids_view_concurrent(self) -> None:
+    async def refresh_centroids_view_concurrent(self) -> bool:
         """Refresh the materialized view concurrently.
 
         This allows reads to continue during the refresh and avoids locking the table.
         It requires a unique index on the MV, which is created in the migration.
+
+        Returns True on success, False when the refresh fails (after logging).
         """
         try:
             if is_sqlite(self._session):
                 await self.refresh_centroids_view()
-                return
+                return True
 
             # Use CONCURRENTLY for background scheduled refreshes
             # This is critical to avoid locking the MV during updates
             bind = self._session.bind
             if isinstance(bind, AsyncConnection):
                 conn = await bind.execution_options(isolation_level="AUTOCOMMIT")
-                await conn.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_identity_cluster_centroids"))
-                return
+                await _refresh_mv_concurrent_with_bypass(conn)
+                return True
 
             async with bind.connect() as conn:
                 conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
-                await conn.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_identity_cluster_centroids"))
+                await _refresh_mv_concurrent_with_bypass(conn)
+            return True
         except Exception:
             logger.warning("Failed to refresh centroid materialized view concurrently", exc_info=True)
+            return False
 
     async def get_unclustered(self, tenant_id: str):
         """Return media identities not yet assigned to any cluster."""

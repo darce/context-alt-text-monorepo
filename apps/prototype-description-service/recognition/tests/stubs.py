@@ -81,8 +81,8 @@ class NullClusterRepository(ClusterRepository):
     async def refresh_centroids_view(self) -> None:
         return None
 
-    async def refresh_centroids_view_concurrent(self) -> None:
-        return None
+    async def refresh_centroids_view_concurrent(self) -> bool:
+        return True
 
     async def get_unclustered(self, tenant_id: str) -> Sequence[MediaIdentity]:
         return []

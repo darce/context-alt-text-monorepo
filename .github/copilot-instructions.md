@@ -14,6 +14,7 @@ Is the task one of these exact four categories?
 **YES** — Terminal is allowed. Pipe output: `| tail -n 40`. Never redirect with `>` AND `2>&1` in the same command.
 
 **TEST RUNS (MANDATORY):** Always use `tee /tmp/<suite>.txt` then `read_file`. Never rely on terminal output alone:
+
 - Python: `cd <app-dir> && pyenv exec python -m pytest <path> -q 2>&1 | tee /tmp/pytest_<suite>.txt`
 - Vitest: `cd <app-dir> && npx vitest run <path> 2>&1 | tee /tmp/vitest_<suite>.txt`
 - PHP: `cd <app-dir> && vendor/bin/phpunit <path> 2>&1 | tee /tmp/phpunit_<suite>.txt`
@@ -22,13 +23,13 @@ Is the task one of these exact four categories?
 
 **NO** — Stop. Use the native tool:
 
-| Task | Native tool | NEVER use terminal |
-|------|-----------|--------------------|
-| Read file contents | `read_file` | `cat`, `sed -n`, `head`, `tail` |
-| Search / grep code | `grep_search` or `search_subagent` | `grep -rn`, `rg` |
-| List changed files or diffs | `get_changed_files` | `git diff`, `git status` |
-| Lint / type-check errors | `get_errors` | `npm run lint`, `mypy`, `phpstan`, `eslint` |
-| Explore multiple files | `Explore` subagent | chained terminal reads |
+| Task                        | Native tool                        | NEVER use terminal                          |
+| --------------------------- | ---------------------------------- | ------------------------------------------- |
+| Read file contents          | `read_file`                        | `cat`, `sed -n`, `head`, `tail`             |
+| Search / grep code          | `grep_search` or `search_subagent` | `grep -rn`, `rg`                            |
+| List changed files or diffs | `get_changed_files`                | `git diff`, `git status`                    |
+| Lint / type-check errors    | `get_errors`                       | `npm run lint`, `mypy`, `phpstan`, `eslint` |
+| Explore multiple files      | `Explore` subagent                 | chained terminal reads                      |
 
 Terminal output is **stale**. Native tools read live IDE state and never accumulate scrollback. When in doubt, use the native tool.
 

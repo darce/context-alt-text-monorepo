@@ -742,13 +742,22 @@ def _ensure_lane_workers(
                     recommended_action=recommended_action,
                 )
             if recommended_action == "close_lane":
-                salvage_and_close_lane(
-                    orchestrator_root,
-                    task_ref,
-                    lane_id,
-                    dry_run=dry_run,
-                    log=log,
-                )
+                try:
+                    salvage_and_close_lane(
+                        orchestrator_root,
+                        task_ref,
+                        lane_id,
+                        dry_run=dry_run,
+                        log=log,
+                    )
+                except FileNotFoundError:
+                    if log is not None:
+                        log(
+                            "WARNING",
+                            "salvage_skipped_no_manifest",
+                            lane_id=lane_id,
+                            task_ref=task_ref,
+                        )
             rows.append(status_payload)
             continue
 

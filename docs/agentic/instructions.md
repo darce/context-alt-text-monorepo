@@ -302,6 +302,7 @@ Before final response:
    ```
 
    Rules: (a) list every changed file with the specific function, class, route, or hook that was modified; (b) include concrete test counts, not just "tests pass"; (c) list schema column names, REST routes, TypeScript type changes, and PHP hook names explicitly so downstream agents can grep for them; (d) note any open threads or follow-ups.
+
 3. Update singleton state via `set_handoff_state(..., expected_revision=<current>, actor={ ... })`.
 4. Regenerate `CURRENT_TASK.md` using `generate_current_task_md(...)`.
 5. Include a one-line status marker in the response: `Handoff updated: yes`.

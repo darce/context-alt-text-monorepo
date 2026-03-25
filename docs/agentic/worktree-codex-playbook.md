@@ -270,13 +270,13 @@ Context pressure is reported in `worker_status(...)` and emitted as a `context_p
 
 The worker daemon emits structured JSONL events to `logs/worker-daemon/worker-<lane>.jsonl` for health-relevant conditions:
 
-| Event | Trigger |
-| --- | --- |
-| `scope_violation` | Files outside `owned_paths` detected post-execution |
-| `exhaustion_streak` | Consecutive non-converged review cycles |
-| `token_burn_warning` | Cumulative tokens exceed `token_burn_threshold` |
-| `worker_stopped` | Clean shutdown with lock cleanup |
-| `context_pressure` | Prompt consuming unsafe fraction of context window |
+| Event                 | Trigger                                              |
+| --------------------- | ---------------------------------------------------- |
+| `scope_violation`     | Files outside `owned_paths` detected post-execution  |
+| `exhaustion_streak`   | Consecutive non-converged review cycles              |
+| `token_burn_warning`  | Cumulative tokens exceed `token_burn_threshold`      |
+| `worker_stopped`      | Clean shutdown with lock cleanup                     |
+| `context_pressure`    | Prompt consuming unsafe fraction of context window   |
 | `lane_health_changed` | Health state transition (healthy/degraded/unhealthy) |
 
 Use `worker_event_history(task_ref, lane_id, limit=20)` via MCP to query recent events without tailing log files.

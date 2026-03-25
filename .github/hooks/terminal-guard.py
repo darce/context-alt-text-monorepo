@@ -96,6 +96,9 @@ _ALLOWLIST: list[re.Pattern[str]] = [
         r"^git\s+-C\s+\S+\s+rev-parse\b",
         # Read-only measurement
         r"^wc\b",
+        # Database shell (development-only tool for investigation queries)
+        r"^bash\s+(\S+/)?scripts/db_shell\.sh\b",
+        r"^(\./|\S+/)?scripts/db_shell\.sh\b",
     ]
 ]
 

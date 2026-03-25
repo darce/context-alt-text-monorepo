@@ -1,6 +1,7 @@
 from .api import (
     archive_task_state,
     build_handoff_mcp,
+    close_worktree_lane,
     configure_runtime,
     export_handoff_state,
     generate_current_task_md,
@@ -63,6 +64,7 @@ __all__ = [
     "RuntimeConfig",
     "archive_task_state",
     "build_handoff_mcp",
+    "close_worktree_lane",
     "configure_runtime",
     "export_handoff_state",
     "generate_current_task_md",

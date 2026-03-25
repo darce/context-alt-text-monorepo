@@ -184,6 +184,7 @@ class _FakeSessionContext:
             for col, val in stmt._values.items():
                 values[str(col)] = val.value if hasattr(val, "value") else val
         self._pending.append(values)
+        return SimpleNamespace(rowcount=1)
 
     async def commit(self):
         self._factory.committed_updates.extend(self._pending)

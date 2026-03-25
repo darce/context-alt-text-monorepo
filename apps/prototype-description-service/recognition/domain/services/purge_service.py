@@ -35,6 +35,7 @@ from db.models import (
     RecognitionRun,
     Tenant,
 )
+from db.tenant_context import enable_rls_bypass
 from recognition.domain.services.audit_service import AuditService
 from recognition.infrastructure.repositories._helpers import coerce_uuid
 from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
@@ -394,12 +395,14 @@ class ScheduledDisposalWorker:
     async def run_once(self) -> dict[str, object]:
         """Purge disposed rows for all tenants with dispose_after_ack mode."""
         async with self._session_factory() as session:
+            await enable_rls_bypass(session)
             result = await session.execute(select(Tenant.id).where(Tenant.retention_mode == "dispose_after_ack"))
             tenant_ids = list(result.scalars().all())
 
         results: list[dict[str, object]] = []
         for tenant_id in tenant_ids:
             async with self._session_factory() as purge_session:
+                await enable_rls_bypass(purge_session)
                 purge_service = TenantPurgeService(purge_session)
                 try:
                     purge_result = await purge_service.purge_tenant_data(

@@ -616,12 +616,12 @@ class AssignmentWriter:
         if callable(refresh):
             await refresh()
 
-    async def refresh_centroids_view_concurrent(self) -> None:
-        """Trigger a concurrent refresh of the cluster centroids view."""
-        # Call repo if it supports it
+    async def refresh_centroids_view_concurrent(self) -> bool:
+        """Trigger a concurrent refresh of the cluster centroids view. Returns True on success."""
         refresh = getattr(self._clusters, "refresh_centroids_view_concurrent", None)
         if callable(refresh):
-            await refresh()
+            return bool(await refresh())
+        return True
 
     async def _should_add_representative(
         self, decision: AssignmentDecision, batch_mode: bool = False

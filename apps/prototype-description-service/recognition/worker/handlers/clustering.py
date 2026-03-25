@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import update as sa_update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityClusteringJob
+from db.tenant_context import enable_rls_bypass
 from recognition.application.orchestration.curation_job import run_curation_job
 from recognition.application.orchestration.job_service import JobService
 from recognition.infrastructure.repositories.job_repository import SqlAlchemyJobRepository
@@ -101,16 +103,27 @@ class ClusteringJobHandler(JobHandler[IdentityClusteringJob]):
             # with the main session that already holds FOR UPDATE on this row.
             try:
                 async with session_factory() as chk_session:
-                    await chk_session.execute(
-                        sa_update(IdentityClusteringJob)
-                        .where(IdentityClusteringJob.id == job_id)
-                        .values(
-                            processed_identities=completed,
-                            total_identities=total,
-                            progress=compute_progress(completed, total),
-                        )
+                    await enable_rls_bypass(chk_session)
+                    result = cast(
+                        CursorResult[Any],
+                        await chk_session.execute(
+                            sa_update(IdentityClusteringJob)
+                            .where(IdentityClusteringJob.id == job_id)
+                            .values(
+                                processed_identities=completed,
+                                total_identities=total,
+                                progress=compute_progress(completed, total),
+                            )
+                        ),
                     )
+                    if result.rowcount == 0:
+                        raise RuntimeError(
+                            f"[clustering_handler] RLS context missing: "
+                            f"checkpoint UPDATE matched 0 rows for job {job_id}"
+                        )
                     await chk_session.commit()
+            except RuntimeError:
+                raise  # RLS regression -- propagate so callers and tests see the failure
             except Exception:
                 logger.warning("[clustering_handler] checkpoint flush failed for job %s; progress may be lost", job_id)
 

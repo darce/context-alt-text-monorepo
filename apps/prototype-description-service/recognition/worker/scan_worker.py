@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from db.models import IdentityClusteringJob
-from db.tenant_context import enable_rls_bypass
+from db.tenant_context import enable_rls_bypass, set_tenant_context
 from recognition.application.embedding.detector import FaceDetectorProtocol, InsightFaceFaceDetector, StubFaceDetector
 from recognition.application.embedding.generator import (
     EmbeddingGeneratorProtocol,
@@ -243,6 +243,17 @@ class ScanWorker:
             try:
                 async with self._session_factory() as fresh_session:
                     await enable_rls_bypass(fresh_session)
+                    # Seam 5 (defense-in-depth): also restore tenant context so any
+                    # RLS-gated reads on the failed_job row see the correct tenant.
+                    # tenant_id is captured before session.rollback() above.
+                    if tenant_id is not None:
+                        try:
+                            await set_tenant_context(fresh_session, uuid.UUID(str(tenant_id)))
+                        except Exception:
+                            logger.warning(
+                                "[worker] Failed to set tenant context in error recovery for job_id=%s; bypass still active",
+                                job_id,
+                            )
                     failed_stmt = (
                         select(IdentityClusteringJob)
                         .where(IdentityClusteringJob.id == job_id)
@@ -331,17 +342,40 @@ class ScanWorker:
 
         logger.info("[worker] Refreshing centroids MV (elapsed=%.1fs)", elapsed)
         try:
+            from sqlalchemy import text
+
             from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
 
             cluster_repo = SqlAlchemyClusterRepository(session)
-            await cluster_repo.refresh_centroids_view_concurrent()
-            self._last_mv_refresh_time = now
-            await session.commit()
+            succeeded = await cluster_repo.refresh_centroids_view_concurrent()
+            if succeeded:
+                await session.commit()
+                # Stamp completion time AFTER commit so the interval is measured
+                # from the actual end of the refresh, not the start.  If commit
+                # fails, _last_mv_refresh_time is not advanced and the next cycle
+                # retries immediately.
+                self._last_mv_refresh_time = datetime.now(tz=UTC)
+                # Re-establish RLS bypass after commit: SET LOCAL is transaction-scoped
+                # and is cleared by COMMIT.  The health check queries must see all
+                # tenants' rows, not just the current-transaction filtered view.
+                await enable_rls_bypass(session)
+                # Health check: warn if MV row count diverges from identity_clusters.
+                try:
+                    mv_count = await session.scalar(text("SELECT COUNT(*) FROM mv_identity_cluster_centroids"))
+                    cluster_count = await session.scalar(text("SELECT COUNT(*) FROM identity_clusters"))
+                    if mv_count != cluster_count:
+                        logger.warning(
+                            "[worker] Centroid MV health check divergence: mv_count=%s identity_clusters=%s",
+                            mv_count,
+                            cluster_count,
+                        )
+                    else:
+                        logger.debug("[worker] Centroid MV health check ok: count=%s", mv_count)
+                except Exception:
+                    logger.debug("[worker] Centroid MV health check skipped (may be SQLite or unsupported)")
         except Exception:
             logger.exception("[worker] Failed to refresh centroids MV")
-            # Don't update _last_mv_refresh_time so we retry next cycle,
-            # but maybe backoff/limit retries logic is needed if it fails persistently?
-            # For now, let it retry next loop.
+            # Don't update _last_mv_refresh_time so we retry next cycle.
 
 
 async def _main() -> None:

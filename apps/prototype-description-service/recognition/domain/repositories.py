@@ -79,8 +79,8 @@ class ClusterRepository(Protocol):
         """Refresh the materialized view for cluster centroids."""
         ...
 
-    async def refresh_centroids_view_concurrent(self) -> None:
-        """Refresh the materialized view concurrently."""
+    async def refresh_centroids_view_concurrent(self) -> bool:
+        """Refresh the materialized view concurrently. Returns True on success, False on failure."""
         ...
 
     # Clustering helpers

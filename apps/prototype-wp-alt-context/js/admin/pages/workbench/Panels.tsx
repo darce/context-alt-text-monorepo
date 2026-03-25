@@ -3,8 +3,7 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 import type { JobProgress } from '../../api/recognition/types/scan';
 export { mediaEditUrl, rosterClustersUrl } from '../../utils/adminUrls';
 
-const isClusteringActive = (phase?: string | null): boolean =>
-  phase === 'clustering' || phase === 'retrying';
+const isClusteringActive = (phase?: string | null): boolean => phase === 'clustering' || phase === 'retrying';
 
 interface ScanActionPanelProps {
   selectedCount: number;
@@ -88,16 +87,12 @@ export const ScanActionPanel = ({
                 ? sprintf(__(' · %d faces found', 'alt-context'), progress.faces_found)
                 : '')}
         </p>
-        {isClusteringActive(progress.phase) &&
-          typeof progress.retry_count === 'number' &&
-          progress.retry_count > 0 && (
-            <p className="acx-apply-panel__status">
-              {sprintf(_n('Retry %d', 'Retry %d', progress.retry_count, 'alt-context'), progress.retry_count)}
-              {progress.last_error_code
-                ? sprintf(__(' (last error: %s)', 'alt-context'), progress.last_error_code)
-                : ''}
-            </p>
-          )}
+        {isClusteringActive(progress.phase) && typeof progress.retry_count === 'number' && progress.retry_count > 0 && (
+          <p className="acx-apply-panel__status">
+            {sprintf(_n('Retry %d', 'Retry %d', progress.retry_count, 'alt-context'), progress.retry_count)}
+            {progress.last_error_code ? sprintf(__(' (last error: %s)', 'alt-context'), progress.last_error_code) : ''}
+          </p>
+        )}
         <progress
           className="acx-apply-panel__progress"
           value={Math.min(progress.completed, progress.total)}

@@ -4,7 +4,6 @@ AssignmentWriter interface for persisting gate decisions (Phase 5).
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import uuid
 from collections.abc import Sequence
@@ -435,13 +434,21 @@ class AssignmentWriter:
         if not cluster:
             raise ClusterNotFoundError(decision.candidate.cluster_id)
 
-        await self._members.add_member(
+        # Use conflict-safe insert so retries and planner-overlap races do not
+        # raise integrity errors (finding 1166: accepted path idempotent write).
+        existing_member = await self._members.add_member_if_not_exists(
             cluster_id=decision.candidate.cluster_id,
             identity_id=decision.candidate.identity.id,
             similarity=decision.candidate.discovery_similarity,
         )
 
-        if await self._should_add_representative(decision, batch_mode=batch_mode):
+        # If the identity was already a member (ON CONFLICT DO NOTHING returned None),
+        # skip representative, centroid, and curriculum updates to remain idempotent.
+        if existing_member is None:
+            return
+
+        should_add, cached_reps = await self._should_add_representative(decision, batch_mode=batch_mode)
+        if should_add:
             # Store the full 1024D embedding, not the face-only 512D vector
             # Identify if this was an upgrade vs novel addition for the reason
             is_upgrade = getattr(self, "_last_decision_was_upgrade", False)
@@ -468,9 +475,16 @@ class AssignmentWriter:
                     },
                 )
 
-            new_centroid = await self.recompute_centroid(decision.candidate.cluster_id)
-            if new_centroid is not None:
-                cluster.centroid = new_centroid
+            # Compute centroid from the cached reps (returned by _should_add_representative)
+            # plus the newly added rep -- this avoids a redundant get_all_representatives
+            # DB round-trip (Phase 3: duplicate-read elimination).
+            all_rep_embeddings = [r.embedding for r in cached_reps]
+            all_rep_embeddings.append(rep.embedding)
+            if all_rep_embeddings:
+                stacked = np.stack(all_rep_embeddings)
+                mean_vec = np.mean(stacked, axis=0)
+                norm = float(np.linalg.norm(mean_vec))
+                cluster.centroid = cast(np.ndarray, mean_vec / norm if norm > 0 else mean_vec)
 
         cluster.identity_count += 1
         await self._clusters.update(cluster)
@@ -480,21 +494,120 @@ class AssignmentWriter:
         similarity = decision.candidate.discovery_similarity
         await self._update_curriculum_t(decision.candidate.cluster_id, similarity)
 
+    async def persist_assignments_chunk(
+        self,
+        decisions: list[AssignmentDecision],
+        batch_mode: bool = False,
+    ) -> tuple[int, int, int]:
+        """Bulk-persist accepted assignment decisions for one processing chunk.
+
+        Groups decisions by cluster and issues a single bulk INSERT per cluster
+        (ON CONFLICT DO NOTHING) instead of N per-identity round-trips.  Only
+        newly-inserted members receive representative, centroid, and curriculum
+        updates; idempotent skips are counted but not re-processed.
+
+        Returns:
+            (total_persisted, total_skipped, reps_added) - persisted is newly inserted,
+            skipped is ON CONFLICT matches (already a member of this cluster),
+            reps_added is the count of new representatives created (representative churn proxy).
+        """
+        if not decisions:
+            return 0, 0, 0
+
+        from collections import defaultdict
+
+        by_cluster: dict[str, list[AssignmentDecision]] = defaultdict(list)
+        for decision in decisions:
+            by_cluster[decision.candidate.cluster_id].append(decision)
+
+        total_persisted = 0
+        total_skipped = 0
+        _reps_added = 0
+
+        for cluster_id, cluster_decisions in by_cluster.items():
+            cluster = await self._clusters.get_by_id(cluster_id)
+            if not cluster:
+                logger.warning(
+                    "[assignment_writer] persist_assignments_chunk: cluster %s not found, skipping",
+                    cluster_id,
+                )
+                total_skipped += len(cluster_decisions)
+                continue
+
+            member_data = [
+                MemberData(
+                    identity_id=d.candidate.identity.id,
+                    similarity=d.candidate.discovery_similarity,
+                )
+                for d in cluster_decisions
+            ]
+            created_members, skipped = await self._members.bulk_add_members_if_not_exists(cluster_id, member_data)
+            total_skipped += skipped
+
+            if not created_members:
+                continue
+
+            created_identity_ids = {m.identity_id for m in created_members}
+            newly_inserted = [d for d in cluster_decisions if d.candidate.identity.id in created_identity_ids]
+            total_persisted += len(newly_inserted)
+
+            # Per-identity: representative and centroid updates for new members only.
+            for decision in newly_inserted:
+                should_add, cached_reps = await self._should_add_representative(decision, batch_mode=batch_mode)
+                if should_add:
+                    is_upgrade = getattr(self, "_last_decision_was_upgrade", False)
+                    reason = "representative_upgrade" if is_upgrade else "diverse_addition"
+                    if not is_upgrade and getattr(self, "_last_decision_was_novel_pose", False):
+                        reason = "novel_pose_addition"
+                    rep = await self._create_and_add_representative(
+                        cluster_id=cluster_id,
+                        identity=decision.candidate.identity,
+                        reason=reason,
+                        is_provisional=batch_mode,
+                        existing_rep_count=len(cached_reps),
+                    )
+                    _reps_added += 1
+                    all_rep_embeddings = [r.embedding for r in cached_reps]
+                    all_rep_embeddings.append(rep.embedding)
+                    if all_rep_embeddings:
+                        stacked = np.stack(all_rep_embeddings)
+                        mean_vec = np.mean(stacked, axis=0)
+                        norm = float(np.linalg.norm(mean_vec))
+                        cluster.centroid = cast(np.ndarray, mean_vec / norm if norm > 0 else mean_vec)
+
+            # Single cluster identity_count update for all newly inserted members.
+            cluster.identity_count += len(newly_inserted)
+            await self._clusters.update(cluster)
+
+            # Curriculum EMA: per-identity atomic update but only for new members.
+            for decision in newly_inserted:
+                await self._update_curriculum_t(cluster_id, decision.candidate.discovery_similarity)
+
+        return total_persisted, total_skipped, _reps_added
+
     async def _update_curriculum_t(self, cluster_id: str, similarity: float) -> None:
-        """Update the cluster's curriculum bias using EMA.
+        """Update the cluster's curriculum bias using an atomic EMA update.
 
         The curriculum parameter t tracks the running average of accepted similarities,
         allowing thresholds to adapt based on actual match quality rather than
         discrete maturity buckets.
 
-        Formula: t_new = α * r_k + (1 - α) * t_prev
-        Where α = 0.99 (fast adaptation to new observations)
+        Formula: t_new = alpha * r_k + (1 - alpha) * t_prev
+        Where alpha = 0.99 (fast adaptation to new observations)
+
+        Delegates to the atomic repository method to avoid the chatty
+        get_curriculum_t + set_curriculum_t round-trip (Phase 3 efficiency).
         """
         alpha = 0.99
-        t_prev = await self._clusters.get_curriculum_t(cluster_id) or 0.0
-        t_new = alpha * similarity + (1 - alpha) * t_prev
-        t_new = max(0.0, min(1.0, t_new))  # Clamp to [0, 1]
-        await self._clusters.set_curriculum_t(cluster_id, t_new)
+        update_ema = getattr(self._clusters, "update_curriculum_t_ema", None)
+        if callable(update_ema):
+            await update_ema(cluster_id, similarity, alpha)
+        else:
+            # Fallback for repositories that don't yet implement atomic EMA.
+            t_prev = await self._clusters.get_curriculum_t(cluster_id) or 0.0
+            t_new = alpha * similarity + (1 - alpha) * t_prev
+            t_new = max(0.0, min(1.0, t_new))
+            await self._clusters.set_curriculum_t(cluster_id, t_new)
 
     async def refresh_centroids_view(self) -> None:
         """Trigger a refresh of the cluster centroids view."""
@@ -510,14 +623,26 @@ class AssignmentWriter:
         if callable(refresh):
             await refresh()
 
-    async def _should_add_representative(self, decision: AssignmentDecision, batch_mode: bool = False) -> bool:
-        """Determine if the assigned identity should become a representative."""
+    async def _should_add_representative(
+        self, decision: AssignmentDecision, batch_mode: bool = False
+    ) -> tuple[bool, list[ClusterRepresentative]]:
+        """Determine if the assigned identity should become a representative.
+
+        Returns ``(should_add, cached_reps)`` where ``cached_reps`` reflects
+        the current DB state *after* any upgrade removal so the caller can
+        compute the new centroid from cached data without a second DB round-trip
+        (Phase 3 duplicate-read elimination).
+        """
         cluster_id = decision.candidate.cluster_id
 
-        # Optimize: fetch all reps once
-        existing_reps = await self._clusters.get_all_representatives(cluster_id)
+        # Fetch all reps once; this is the only get_all_representatives call
+        # for the accepted-assignment path (Phase 3: remove duplicate reads).
+        existing_reps: list[ClusterRepresentative] = list(await self._clusters.get_all_representatives(cluster_id))
         current_count = len(existing_reps)
         self._last_rep_count = current_count
+
+        # Track which rep was removed so cached_reps reflects current DB state.
+        removed_rep_id: str | None = None
 
         # 1. Check for upgrade opportunity (replace lower quality rep in same pose bucket)
         upgrade_target = _find_upgradeable_representative(
@@ -530,9 +655,10 @@ class AssignmentWriter:
             # User-selected representatives are protected from automatic upgrades
             if getattr(upgrade_target, "is_user_selected", False):
                 self._last_decision_was_upgrade = False
-                return False
+                return False, existing_reps
 
             await self._clusters.remove_representative(upgrade_target.id)
+            removed_rep_id = upgrade_target.id
             logger.info(
                 "[pose_bucket] QUALITY_UPGRADE cluster=%s old_identity=%s new_identity=%s quality_diff=%.3f",
                 cluster_id,
@@ -545,6 +671,9 @@ class AssignmentWriter:
 
         self._last_decision_was_upgrade = False
 
+        # cached_reps = existing_reps minus any rep just removed by the upgrade path.
+        cached_reps = [r for r in existing_reps if r.id != removed_rep_id] if removed_rep_id else existing_reps
+
         # 2. Check limits with bonus
         max_base = self._settings.max_representatives_per_cluster
         max_total = max_base + self._settings.pose_diversity_bonus
@@ -554,21 +683,21 @@ class AssignmentWriter:
         # Actually, the upgrade logic (1) already handles replacing.
         # For new additions:
         if not batch_mode and current_count >= max_total:
-            return False
+            return False, cached_reps
 
         # 3. If above base limit, only add if novel pose
         if current_count >= max_base:
             if _is_novel_pose(decision.candidate.identity, existing_reps, self._settings.pose_bucket_size):
                 self._last_decision_was_novel_pose = True
-                return True
+                return True, cached_reps
             # If batch_mode, we might still want to add it if it's "better" than nothing?
             # No, if not novel pose and no upgrade target, it's redundant.
-            return False
+            return False, cached_reps
 
         self._last_decision_was_novel_pose = False
 
         if not existing_reps:
-            return True
+            return True, cached_reps
 
         # 4. Standard diversity check (embedding distance)
         for rep in existing_reps:
@@ -580,9 +709,9 @@ class AssignmentWriter:
                 # If above max_base, we already checked novel pose (which implies diversity in pose space).
                 # But novel pose == false -> we fell through.
                 # So if similarity is high, we reject.
-                return False
+                return False, cached_reps
 
-        return True
+        return True, cached_reps
 
     async def _select_reps_to_preserve(
         self,
@@ -789,9 +918,19 @@ class AssignmentWriter:
         ]
         if cluster.id is None:
             raise ClusterNotFoundError("new cluster id missing after save")
-        await self._members.bulk_add_members(cluster.id, member_data)
+        cluster_id_str: str = cluster.id
+        created_members, skipped = await self._members.bulk_add_members_if_not_exists(cluster_id_str, member_data)
+        if skipped:
+            logger.warning(
+                "[assignment_writer] persist_new_cluster skipped %d duplicate members for cluster %s",
+                skipped,
+                cluster_id_str,
+            )
+            # Correct identity_count to reflect actual persisted members (finding 1162).
+            cluster.identity_count = len(created_members)
+            cluster = await self._clusters.update(cluster)
         self._emit_cluster_created_event(
-            cluster_id=cluster.id,
+            cluster_id=cluster_id_str,
             identities=identities,
             similarities=similarities,
             algorithm=algorithm,
@@ -800,15 +939,21 @@ class AssignmentWriter:
         # Log per-identity assignments
         if clustering_logger:
             for identity, similarity in zip(identities, similarities, strict=False):
-                with contextlib.suppress(Exception):
+                try:
                     media_id_int = int(identity.media_id) if identity.media_id else 0
                     clustering_logger.log_initial_assignment(
                         identity_id=identity.id,
                         media_id=media_id_int,
-                        cluster_id=cluster.id,
+                        cluster_id=cluster_id_str,
                         similarity=similarity,
                         algorithm=algorithm,
                         tenant_id=tenant_id,
+                    )
+                except (TypeError, ValueError, AttributeError) as _log_exc:
+                    logger.debug(
+                        "[assignment_writer] log_initial_assignment suppressed for identity %s: %s",
+                        identity.id,
+                        _log_exc,
                     )
 
         # Create initial representative(s) using diversity-aware sampling (FPS)
@@ -820,14 +965,14 @@ class AssignmentWriter:
             )
             for identity in diverse_reps:
                 await self._create_and_add_representative(
-                    cluster_id=cluster.id,
+                    cluster_id=cluster_id_str,
                     identity=identity,
                     reason="fps_seed",
                 )
 
             # Recompute and persist the centroid immediately.
             # Without this, CentroidDiscovery cannot find this cluster in subsequent batches.
-            new_centroid = await self.recompute_centroid(cluster.id)
+            new_centroid = await self.recompute_centroid(cluster_id_str)
             if new_centroid is not None:
                 cluster.centroid = new_centroid
                 await self._clusters.update(cluster)

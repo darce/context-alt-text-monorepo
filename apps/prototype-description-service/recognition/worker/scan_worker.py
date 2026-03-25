@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -74,6 +75,13 @@ class ScanWorker:
         self._runtime_mode = settings.runtime_mode
 
         self._last_mv_refresh_time: datetime = datetime.min.replace(tzinfo=UTC)
+        # Store the ID of a clustering job that was just re-queued for retry so
+        # the MV refresh can be skipped on the cycle where that exact job runs
+        # again. Using the job ID (rather than a boolean) makes the suppression
+        # job-scoped: the refresh is only postponed for the specific retried job,
+        # not for any unrelated pending work that might be claimed first
+        # (finding 1169: same-job MV-refresh suppression).
+        self._retry_suppressed_job_id: uuid.UUID | None = None
         self._scan_handler = ScanItemHandler(
             session_factory=self._session_factory,
             detector=self._detector,
@@ -84,7 +92,7 @@ class ScanWorker:
         self._job_handlers = {
             "split": SplitJobHandler(),
             "curation": CurationJobHandler(),
-            "clustering": ClusteringJobHandler(),
+            "clustering": ClusteringJobHandler(session_factory=self._session_factory),
         }
 
     async def __aenter__(self) -> ScanWorker:
@@ -193,6 +201,16 @@ class ScanWorker:
         job.status = "running"
         job.started_at = now
         await session.flush()
+        # Commit the "running" state before handing control to the handler.
+        # This releases the SELECT FOR UPDATE row lock acquired during job
+        # claiming so that per-chunk checkpoint callbacks (which open a
+        # fresh session and UPDATE the same row) do not block indefinitely
+        # (finding 1163).
+        await session.commit()
+
+        job_id = job.id
+        tenant_id = job.tenant_id
+        job_type = job.job_type
 
         try:
             handler = self._job_handlers.get(job.job_type)
@@ -208,19 +226,105 @@ class ScanWorker:
         except Exception as exc:  # pragma: no cover
             logger.exception(
                 "[worker] Clustering job failed: job_id=%s tenant_id=%s job_type=%s",
-                job.id,
-                job.tenant_id,
-                job.job_type,
+                job_id,
+                tenant_id,
+                job_type,
             )
-            await ensure_job_context(session=session, job=job)
-            job.status = "failed"
-            job.error_message = str(exc)
-            job.completed_at = datetime.now(tz=UTC)
-            await session.flush()
+            # Roll back the main session FIRST so its row lock on the job is
+            # released before the fresh session tries to acquire it. Without
+            # this, the fresh FOR UPDATE query gets SKIP-LOCKED and returns
+            # None, leaving the job reclaimable as pending.
+            try:
+                await session.rollback()
+            except Exception:
+                logger.warning("[worker] Failed to rollback main session for job_id=%s", job_id)
+            # Use a fresh session to persist retry/failed status durably
+            # (finding 1161 + finding 1168: bounded retry budget).
+            try:
+                async with self._session_factory() as fresh_session:
+                    await enable_rls_bypass(fresh_session)
+                    failed_stmt = (
+                        select(IdentityClusteringJob)
+                        .where(IdentityClusteringJob.id == job_id)
+                        .with_for_update(skip_locked=True)
+                    )
+                    fresh_result = await fresh_session.execute(failed_stmt)
+                    failed_job = fresh_result.scalar_one_or_none()
+                    if failed_job is not None:
+                        # Persist retry/checkpoint metadata in payload.
+                        existing_payload = dict(failed_job.payload) if failed_job.payload else {}
+                        _prev_retry = existing_payload.get("retry_count", 0)
+                        new_retry_count = (_prev_retry if isinstance(_prev_retry, int) else 0) + 1
+                        existing_payload["retry_count"] = new_retry_count
+                        existing_payload["last_error_code"] = type(exc).__name__
+                        existing_payload["last_error_at"] = datetime.now(tz=UTC).isoformat()
+                        existing_payload["current_stage"] = "clustering"
+                        failed_job.payload = existing_payload
+
+                        # Retry budget: re-queue only for known-transient infrastructure
+                        # failures; all other errors (including IntegrityError, ValueError,
+                        # RuntimeError) fail immediately without retrying because they are
+                        # deterministic and retrying cannot fix them
+                        # (finding 1168: transient-vs-deterministic classification policy).
+                        _transient_exceptions = (
+                            OSError,
+                            TimeoutError,
+                            ConnectionError,
+                        )
+                        is_transient = isinstance(exc, _transient_exceptions)
+                        max_retries = self._config.max_attempts
+                        if is_transient and new_retry_count < max_retries:
+                            failed_job.status = "pending"
+                            failed_job.started_at = None
+                            failed_job.completed_at = None
+                            self._retry_suppressed_job_id = failed_job.id
+                            logger.warning(
+                                "[worker] Clustering job %s transient failure (attempt %d/%d), re-queuing: %s",
+                                job_id,
+                                new_retry_count,
+                                max_retries,
+                                type(exc).__name__,
+                            )
+                        else:
+                            failed_job.status = "failed"
+                            failed_job.error_message = str(exc)
+                            failed_job.completed_at = datetime.now(tz=UTC)
+                            logger.error(
+                                "[worker] Clustering job %s failed permanently (attempt %d/%d%s): %s",
+                                job_id,
+                                new_retry_count,
+                                max_retries,
+                                ", deterministic" if not is_transient else "",
+                                exc,
+                            )
+                        await fresh_session.commit()
+            except Exception:
+                logger.exception(
+                    "[worker] Failed to persist retry/failed status for job_id=%s; job may be reclaimed",
+                    job_id,
+                )
             return True
 
     async def _refresh_mv_if_needed(self, session: AsyncSession, now: datetime) -> None:
         """Periodically refresh the cluster centroids materialized view."""
+        # Job-scoped retry suppression: if a specific clustering job was just
+        # re-queued, skip refresh only when that exact job is next in the queue.
+        # A non-locking peek query identifies the next pending job without
+        # racing with the FOR UPDATE claim that follows (finding 1169).
+        if self._retry_suppressed_job_id is not None:
+            peek_stmt = (
+                select(IdentityClusteringJob.id)
+                .where(IdentityClusteringJob.status == "pending")
+                .where(IdentityClusteringJob.job_type.in_(["clustering", "curation", "split"]))
+                .order_by(IdentityClusteringJob.created_at.asc())
+                .limit(1)
+            )
+            next_job_id = await session.scalar(peek_stmt)
+            suppressed = next_job_id == self._retry_suppressed_job_id
+            self._retry_suppressed_job_id = None  # always clear
+            if suppressed:
+                logger.debug("[worker] Skipping MV refresh for retried job %s", next_job_id)
+                return
         elapsed = (now - self._last_mv_refresh_time).total_seconds()
         if elapsed < self._config.mv_refresh_interval_seconds:
             return

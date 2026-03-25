@@ -1,4 +1,4 @@
-.PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive worker-daemon FORCE
+.PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset FORCE
 
 # Default target
 help:
@@ -16,7 +16,7 @@ help:
 	@echo "  make test       - Run pytest"
 	@echo "  make ci         - Format code and run all checks"
 	@echo "  make clean      - Remove cache and build files"
-	@echo "  make reset      - Drop and recreate the local database"
+	@echo "  make reset      - Drop and recreate the local database (alias: db-reset)"
 	@echo "  make mcp        - Start the MCP server for AI agents (monorepo-wide)"
 	@echo "  make lane-*     - Worktree lane commands (forwarded to root Makefile; run 'make help' from repo root for full list)"
 	@echo "  make worker-daemon* - Worker daemon controls (run/status/stop/resume/tail) forwarded to root Makefile"
@@ -91,8 +91,8 @@ serve: dev-ready
 stop:
 	@./scripts/start_prototype_local.sh stop
 
-# Reset local database
-reset:
+# Reset local database (db-reset is an alias)
+reset db-reset:
 	@./scripts/reset_dev_db.sh
 	@echo "✓ Local database reset"
 

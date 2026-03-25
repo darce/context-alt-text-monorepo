@@ -186,6 +186,149 @@ def test_get_job_status_surfaces_followup_clustering_job(monkeypatch, tenant_id:
     assert body["progress"]["clusters_created"] == 3
 
 
+def test_pipeline_response_exposes_retrying_phase_and_checkpoint_fields(monkeypatch, tenant_id: str) -> None:
+    """GET /recognition/jobs/{scan_job_id} resolves to a retrying clustering job and exposes checkpoint metadata."""
+    monkeypatch.setenv("RECOGNITION_AUTH_ENABLED", "0")
+
+    session = FakeSession()
+    scan_job_id = uuid.uuid4()
+    clustering_job_id = uuid.uuid4()
+    tenant_uuid = uuid.UUID(tenant_id)
+
+    scan_job = IdentityScanJob(
+        id=scan_job_id,
+        tenant_id=tenant_uuid,
+        status="completed",
+        media_ids=[],
+        total_media=100,
+        processed_media=100,
+        identities_detected=937,
+        message="Queued 100 items",
+    )
+    clustering_job = IdentityClusteringJob(
+        id=clustering_job_id,
+        tenant_id=tenant_uuid,
+        job_type="clustering",
+        status="pending",  # re-queued after transient failure
+        progress=0.5,
+        total_identities=937,
+        processed_identities=500,
+        message="Retrying clustering",
+        payload={
+            "scan_job_id": str(scan_job_id),
+            "retry_count": 2,
+            "current_stage": "hac_refinement",
+            "last_successful_processed_identities": 500,
+            "last_error_code": "TimeoutError",
+        },
+    )
+    session.set_get_result(model_class=IdentityScanJob, pk=scan_job_id, value=scan_job)
+    session.queue_execute_result(all_rows=[clustering_job])
+
+    app = FastAPI()
+    app.include_router(recognition_router, prefix="/recognition")
+
+    async def _session_override():
+        yield session
+
+    class _NullJobService:
+        async def get_job_status(self, _job_id: str):
+            return None
+
+    async def _job_service_override():
+        return _NullJobService()
+
+    app.dependency_overrides[dependencies.get_optional_session] = _session_override
+    app.dependency_overrides[dependencies.get_job_service_dependency] = _job_service_override
+
+    client = TestClient(app)
+    resp = client.get(f"/recognition/jobs/{scan_job_id}", params={"tenant_id": tenant_id})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == str(scan_job_id)
+    assert body["type"] == "clustering"
+    assert body["status"] == "pending"
+    progress = body["progress"]
+    assert progress["phase"] == "retrying"
+    assert progress["completed"] == 500
+    assert progress["total"] == 937
+    assert progress["retry_count"] == 2
+    assert progress["current_stage"] == "hac_refinement"
+    assert progress["last_successful_processed_identities"] == 500
+    assert progress["last_error_code"] == "TimeoutError"
+
+
+def test_pipeline_response_exposes_clustering_phase_for_first_run(monkeypatch, tenant_id: str) -> None:
+    """GET /recognition/jobs/{scan_job_id} resolves to a first-attempt clustering job with phase=clustering."""
+    monkeypatch.setenv("RECOGNITION_AUTH_ENABLED", "0")
+
+    session = FakeSession()
+    scan_job_id = uuid.uuid4()
+    clustering_job_id = uuid.uuid4()
+    tenant_uuid = uuid.UUID(tenant_id)
+
+    scan_job = IdentityScanJob(
+        id=scan_job_id,
+        tenant_id=tenant_uuid,
+        status="completed",
+        media_ids=[],
+        total_media=50,
+        processed_media=50,
+        identities_detected=200,
+        message="Queued 50 items",
+    )
+    clustering_job = IdentityClusteringJob(
+        id=clustering_job_id,
+        tenant_id=tenant_uuid,
+        job_type="clustering",
+        status="running",
+        progress=0.3,
+        total_identities=200,
+        processed_identities=60,
+        message="Clustering identities",
+        payload={
+            "scan_job_id": str(scan_job_id),
+            "retry_count": 0,
+            "current_stage": "assignment",
+            "clusters_created": 5,
+        },
+    )
+    session.set_get_result(model_class=IdentityScanJob, pk=scan_job_id, value=scan_job)
+    session.queue_execute_result(all_rows=[clustering_job])
+
+    app = FastAPI()
+    app.include_router(recognition_router, prefix="/recognition")
+
+    async def _session_override():
+        yield session
+
+    class _NullJobService:
+        async def get_job_status(self, _job_id: str):
+            return None
+
+    async def _job_service_override():
+        return _NullJobService()
+
+    app.dependency_overrides[dependencies.get_optional_session] = _session_override
+    app.dependency_overrides[dependencies.get_job_service_dependency] = _job_service_override
+
+    client = TestClient(app)
+    resp = client.get(f"/recognition/jobs/{scan_job_id}", params={"tenant_id": tenant_id})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == str(scan_job_id)
+    assert body["type"] == "clustering"
+    assert body["status"] == "running"
+    progress = body["progress"]
+    assert progress["phase"] == "clustering"
+    assert progress["completed"] == 60
+    assert progress["total"] == 200
+    assert progress["clusters_created"] == 5
+    assert progress.get("retry_count") in (None, 0)
+
+
 def test_get_job_status_surfaces_projection_pending_for_completed_followup(monkeypatch, tenant_id: str) -> None:
     monkeypatch.setenv("RECOGNITION_AUTH_ENABLED", "0")
 

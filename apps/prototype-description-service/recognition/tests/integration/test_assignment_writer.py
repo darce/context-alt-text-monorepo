@@ -371,7 +371,7 @@ async def test_should_not_upgrade_user_selected_representative(db_session, tenan
         checks_failed=[],
     )
 
-    should_add = await writer._should_add_representative(decision)
+    should_add, _ = await writer._should_add_representative(decision)
     assert should_add is False, "Should not upgrade user-selected representative"
 
 

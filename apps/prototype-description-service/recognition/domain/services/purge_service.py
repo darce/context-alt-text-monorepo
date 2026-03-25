@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -422,10 +423,8 @@ class ScheduledDisposalWorker:
                 await self.run_once()
             except Exception:
                 logger.exception("Scheduled disposal run failed")
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(
                     asyncio.shield(self._stop_event.wait()),
                     timeout=self._interval_seconds,
                 )
-            except TimeoutError:
-                pass

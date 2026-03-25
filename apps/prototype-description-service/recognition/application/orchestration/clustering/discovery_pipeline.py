@@ -29,7 +29,12 @@ async def prepare_cluster_caches(
     assignment_writer: AssignmentWriter,
     tenant_id: str,
 ) -> tuple[dict[str, list[np.ndarray]], dict[str, np.ndarray], set[str]]:
-    """Fetch existing clusters and build cached structures for discovery."""
+    """Fetch existing clusters and build cached structures for discovery.
+
+    Should be called ONCE per job before the chunk loop.  Use
+    update_cluster_caches_from_new_cluster() to incrementally update the
+    returned dicts after each chunk commits new clusters (Phase 3 efficiency).
+    """
     existing_clusters = await assignment_writer.cluster_repository.get_by_tenant(tenant_id, limit=1000, offset=0)
     logger.info("[clustering] Found %d existing clusters for discovery", len(existing_clusters))
 
@@ -59,6 +64,38 @@ async def prepare_cluster_caches(
             centroids_by_cluster[cluster.id] = np.array(centroid, dtype=np.float32)
 
     return representatives_by_cluster, centroids_by_cluster, labeled_cluster_ids
+
+
+def update_cluster_caches_from_new_cluster(
+    *,
+    cluster_id: str,
+    seed_identities: list[MediaIdentity],
+    centroid: np.ndarray | None,
+    representatives_by_cluster: dict[str, list[np.ndarray]],
+    centroids_by_cluster: dict[str, np.ndarray],
+) -> None:
+    """Incrementally update in-memory cluster caches after a new cluster is created.
+
+    Called once per newly persisted cluster inside the chunk loop so that
+    subsequent chunks can discover the cluster without reloading from the DB.
+
+    Args:
+        cluster_id: UUID string of the newly created cluster.
+        seed_identities: The identities that seeded the cluster (their embeddings
+            become the initial representative set in the cache).
+        centroid: Pre-computed centroid array returned by persist_new_cluster,
+            or None if not yet available.
+        representatives_by_cluster: Mutable representative cache to update in-place.
+        centroids_by_cluster: Mutable centroid cache to update in-place.
+    """
+    if seed_identities:
+        representatives_by_cluster[cluster_id] = [
+            normalize_face_embedding(np.asarray(i.embedding, dtype=np.float32))
+            for i in seed_identities
+            if i.embedding is not None
+        ]
+    if centroid is not None:
+        centroids_by_cluster[cluster_id] = centroid
 
 
 async def run_discovery_pipeline(

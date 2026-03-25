@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -15,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import IdentityClusteringJob
 from db.models import IdentityMember as MemberModel
 from db.models import MediaIdentity as MediaIdentityModel
+from db.tenant_context import enable_rls_bypass, set_tenant_context
 from recognition.application.assignment import AssignmentGate, AssignmentOutcome
 from recognition.application.discovery import CentroidDiscovery, GraphDiscovery, RepresentativeDiscovery
 from recognition.application.orchestration.clustering.chunked_processor import ChunkedIdentityProcessor
@@ -24,18 +26,25 @@ from recognition.application.orchestration.clustering.discovery_pipeline import 
     run_discovery_pipeline,
     run_hac_refinement,
     run_singleton_hac_refinement,
+    update_cluster_caches_from_new_cluster,
 )
 from recognition.application.orchestration.clustering.job_result import ClusterJobResult
 from recognition.application.orchestration.protocols import MergeSuggestionServiceProtocol, SuggestionServiceProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.identity import MediaIdentity
 from recognition.observability import ClusteringLogger
-from recognition.observability.recognition_runs import complete_recognition_run, create_recognition_run
+from recognition.observability.recognition_runs import (
+    RecognitionRunContext,
+    complete_recognition_run,
+    create_recognition_run,
+)
 from recognition.observability.reports import BatchJobReport
 from recognition.shared.ids import generate_id
 from recognition.shared.tenant import coerce_tenant_uuid
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
     from recognition.application.settings import HACSettings
     from recognition.domain.repositories import ConstrainedHACProtocol
 
@@ -59,6 +68,7 @@ async def cluster_unclustered_identities(
     hac_settings: HACSettings | None = None,
     progress_callback: Callable[[int, int], Awaitable[None]] | None = None,
     commit: bool = True,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> ClusterJobResult:
     """Cluster any identities not yet assigned to a cluster."""
     runner = IncrementalClusteringRunner(
@@ -75,6 +85,7 @@ async def cluster_unclustered_identities(
         hac_settings=hac_settings,
         progress_callback=progress_callback,
         commit=commit,
+        session_factory=session_factory,
     )
     return await runner.run(tenant_id=tenant_id, job_id=job_id)
 
@@ -98,6 +109,7 @@ class IncrementalClusteringRunner:
         hac_settings: HACSettings | None = None,
         progress_callback: Callable[[int, int], Awaitable[None]] | None = None,
         commit: bool = True,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> None:
         self._session = session
         self._gate = gate
@@ -112,6 +124,7 @@ class IncrementalClusteringRunner:
         self._hac_settings = hac_settings
         self._progress_callback = progress_callback
         self._commit = commit
+        self._obs_session_factory = session_factory
         self._decision_handler = DecisionHandler(
             gate=gate,
             assignment_writer=assignment_writer,
@@ -160,6 +173,11 @@ class IncrementalClusteringRunner:
             dataset=unclustered,
             started_at=started_at,
         )
+        # Buffer observability events when a separate session_factory is
+        # available so that a write failure in the observability path cannot
+        # roll back committed clustering data (stretch goal).
+        if self._obs_session_factory is not None:
+            run_ctx.buffer_events = True
         self._bind_run_context(run_ctx)
 
         domain_identities = self._build_domain_identities(unclustered)
@@ -177,6 +195,7 @@ class IncrementalClusteringRunner:
             job_label=job_label,
             clustering_job=clustering_job,
             identities=domain_identities,
+            run_ctx=run_ctx,
         )
 
         await self._finalize_job(
@@ -352,6 +371,80 @@ class IncrementalClusteringRunner:
             media_ids[:20] if len(media_ids) > 20 else media_ids,
         )
 
+    async def _persist_and_cache_new_clusters(
+        self,
+        new_clusters: list[tuple[list[MediaIdentity], list[float]]],
+        *,
+        tenant_id: str,
+        job_id: str,
+        representatives_by_cluster: dict,
+        centroids_by_cluster: dict,
+        resolve_reason: str,
+        preserve_suggestion_ids: set[str] | None = None,
+        assigned_ids_out: set[str] | None = None,
+    ) -> tuple[int, list[str]]:
+        """Persist a batch of new clusters, update caches, resolve suggestions, and log.
+
+        Args:
+            new_clusters: List of (members, similarities) tuples to persist.
+            tenant_id: Tenant identifier for cluster creation.
+            job_id: Job identifier for logging.
+            representatives_by_cluster: In-memory representative cache to update.
+            centroids_by_cluster: In-memory centroid cache to update.
+            resolve_reason: Reason string passed to resolve_for_identity_exclusive.
+            preserve_suggestion_ids: Identity IDs whose pending suggestions should
+                not be auto-resolved (typically identities the gate marked SUGGEST).
+            assigned_ids_out: If provided, all processed member IDs are added here.
+
+        Returns:
+            (clusters_added, new_cluster_ids)
+        """
+        clusters_added = 0
+        new_ids: list[str] = []
+        for members, similarities in new_clusters:
+            if not members:
+                continue
+            cluster = await self._assignment_writer.persist_new_cluster(
+                tenant_id=tenant_id,
+                identities=members,
+                similarities=similarities,
+                algorithm=self._graph_discovery.algorithm_name,
+                clustering_logger=self._clustering_logger,
+            )
+            clusters_added += 1
+            if cluster and cluster.id:
+                new_ids.append(str(cluster.id))
+                centroid_arr = np.array(cluster.centroid, dtype=np.float32) if cluster.centroid is not None else None
+                update_cluster_caches_from_new_cluster(
+                    cluster_id=str(cluster.id),
+                    seed_identities=members,
+                    centroid=centroid_arr,
+                    representatives_by_cluster=representatives_by_cluster,
+                    centroids_by_cluster=centroids_by_cluster,
+                )
+            for member in members:
+                if assigned_ids_out is not None:
+                    assigned_ids_out.add(member.id)
+                if preserve_suggestion_ids is not None and member.id in preserve_suggestion_ids:
+                    logger.debug(
+                        "[clustering] Preserving pending suggestions for suggested identity %s (fallback cluster %s)",
+                        member.id,
+                        cluster.id,
+                    )
+                    continue
+                await self._suggestion_service.resolve_for_identity_exclusive(
+                    identity_id=member.id,
+                    accepted_cluster_id=str(cluster.id),
+                    reason=resolve_reason,
+                )
+            logger.info(
+                "[clustering] new_cluster job_id=%s identity_count=%d media_ids=%s",
+                job_id,
+                len(members),
+                [m.media_id for m in members],
+            )
+        return clusters_added, new_ids
+
     async def _process_chunks(
         self,
         *,
@@ -360,6 +453,7 @@ class IncrementalClusteringRunner:
         job_label: str,
         clustering_job: IdentityClusteringJob,
         identities: list[MediaIdentity],
+        run_ctx: RecognitionRunContext | None = None,
     ) -> tuple[int, int, int, int, list[str]]:
         accept_count = 0
         suggest_count = 0
@@ -370,6 +464,18 @@ class IncrementalClusteringRunner:
         processor = ChunkedIdentityProcessor(identities)
         total_identities = processor.total_count
 
+        # For large jobs, suppress per-identity gate/decision log lines and rely
+        # on the chunk_stats summary instead. This prevents log volume from growing
+        # linearly with identity count (stretch goal: chunk-level summary logging mode).
+        _verbose_decisions = total_identities <= 100
+
+        # Phase 3: prime cluster caches ONCE before the chunk loop instead of
+        # re-loading the full cluster table on every chunk.  The caches are
+        # updated incrementally after each batch of new clusters is persisted.
+        representatives_by_cluster, centroids_by_cluster, labeled_cluster_ids = await prepare_cluster_caches(
+            self._assignment_writer, str(tenant_id)
+        )
+
         for chunk, processed_before in processor.iter_chunks():
             logger.info(
                 "[clustering] chunk_processing job_id=%s processed=%d/%d chunk_size=%d",
@@ -378,10 +484,8 @@ class IncrementalClusteringRunner:
                 total_identities,
                 len(chunk),
             )
-
-            representatives_by_cluster, centroids_by_cluster, labeled_cluster_ids = await prepare_cluster_caches(
-                self._assignment_writer, str(tenant_id)
-            )
+            _chunk_t0 = time.perf_counter()
+            _chunk_clusters_before = clusters_created
 
             all_candidates, new_cluster_proposals = await run_discovery_pipeline(
                 chunk=chunk,
@@ -397,22 +501,58 @@ class IncrementalClusteringRunner:
             accepted_ids: set[str] = set()
             suggested_ids: set[str] = set()
             rejected_ids: set[str] = set()
+            accepted_decisions: list = []
 
             for candidate in all_candidates:
-                decision = await self._decision_handler.evaluate_and_handle(
+                decision = await self._decision_handler.evaluate_only(
                     candidate,
                     job_id=job_id,
                     job_label=job_label,
+                    verbose=_verbose_decisions,
                 )
                 if decision.outcome == AssignmentOutcome.ACCEPT:
                     accept_count += 1
                     accepted_ids.add(candidate.identity.id)
+                    accepted_decisions.append(decision)
                 elif decision.outcome == AssignmentOutcome.SUGGEST:
                     suggest_count += 1
                     suggested_ids.add(candidate.identity.id)
                 else:
                     reject_count += 1
                     rejected_ids.add(candidate.identity.id)
+
+            # Bulk-persist all accepted assignments for this chunk: one INSERT per
+            # cluster instead of N per-identity round-trips (Phase 3 bulk writes).
+            _chunk_reps_added = 0
+            if accepted_decisions:
+                (
+                    _bulk_persisted,
+                    _bulk_skipped,
+                    _bulk_reps_added,
+                ) = await self._assignment_writer.persist_assignments_chunk(accepted_decisions, batch_mode=True)
+                _chunk_reps_added += _bulk_reps_added
+                if _bulk_skipped:
+                    logger.info(
+                        "[clustering] bulk_persist job_id=%s accepted=%d skipped=%d",
+                        job_id,
+                        _bulk_persisted,
+                        _bulk_skipped,
+                    )
+                # Resolve suggestions for each accepted identity after membership is committed.
+                for decision in accepted_decisions:
+                    await self._suggestion_service.resolve_for_identity_exclusive(
+                        identity_id=decision.candidate.identity.id,
+                        accepted_cluster_id=decision.candidate.cluster_id,
+                        reason="auto_assignment",
+                    )
+                    if _verbose_decisions:
+                        logger.info(
+                            "[clustering] ACCEPTED job_id=%s identity=%s media_id=%s cluster=%s",
+                            job_id,
+                            decision.candidate.identity.id,
+                            decision.candidate.identity.media_id,
+                            decision.candidate.cluster_id,
+                        )
 
             already_in_new_clusters = {member.id for members, _ in new_cluster_proposals for member in members}
             all_processed_ids = accepted_ids | suggested_ids | rejected_ids | already_in_new_clusters
@@ -433,73 +573,36 @@ class IncrementalClusteringRunner:
 
             if still_unclustered:
                 final_result = await self._graph_discovery.discover(still_unclustered, {})
-                for members, similarities in final_result.new_clusters:
-                    if members:
-                        cluster = await self._assignment_writer.persist_new_cluster(
-                            tenant_id=tenant_id,
-                            identities=members,
-                            similarities=similarities,
-                            algorithm=self._graph_discovery.algorithm_name,
-                            clustering_logger=self._clustering_logger,
-                        )
-                        clusters_created += 1
-                        if cluster and cluster.id:
-                            created_cluster_ids.append(str(cluster.id))
+                assigned_by_graph_fallback: set[str] = set()
+                _fallback_added, _fallback_ids = await self._persist_and_cache_new_clusters(
+                    final_result.new_clusters,
+                    tenant_id=tenant_id,
+                    job_id=job_id,
+                    representatives_by_cluster=representatives_by_cluster,
+                    centroids_by_cluster=centroids_by_cluster,
+                    resolve_reason="auto_new_cluster",
+                    preserve_suggestion_ids=suggested_ids,
+                    assigned_ids_out=assigned_by_graph_fallback,
+                )
+                clusters_created += _fallback_added
+                created_cluster_ids.extend(_fallback_ids)
+            else:
+                assigned_by_graph_fallback = set()
 
-                        for member in members:
-                            # Curation-first: identities the gate marked SUGGEST have
-                            # pending suggestions linking them to a labeled cluster.
-                            # Don't auto-reject those suggestions just because the
-                            # identity also needs a fallback cluster.  The user should
-                            # see the suggestion card and decide.
-                            if member.id in suggested_ids:
-                                logger.debug(
-                                    "[clustering] Preserving pending suggestions for suggested identity %s "
-                                    "(fallback cluster %s)",
-                                    member.id,
-                                    cluster.id,
-                                )
-                                continue
-                            await self._suggestion_service.resolve_for_identity_exclusive(
-                                identity_id=member.id,
-                                accepted_cluster_id=str(cluster.id),
-                                reason="auto_new_cluster",
-                            )
-                        logger.info(
-                            "[clustering] new_cluster job_id=%s identity_count=%d media_ids=%s",
-                            job_id,
-                            len(members),
-                            [m.media_id for m in members],
-                        )
+            _proposal_added, _proposal_ids = await self._persist_and_cache_new_clusters(
+                new_cluster_proposals,
+                tenant_id=tenant_id,
+                job_id=job_id,
+                representatives_by_cluster=representatives_by_cluster,
+                centroids_by_cluster=centroids_by_cluster,
+                resolve_reason="auto_proposal_new_cluster",
+            )
+            clusters_created += _proposal_added
+            created_cluster_ids.extend(_proposal_ids)
 
-            for members, similarities in new_cluster_proposals:
-                if members:
-                    cluster = await self._assignment_writer.persist_new_cluster(
-                        tenant_id=tenant_id,
-                        identities=members,
-                        similarities=similarities,
-                        algorithm=self._graph_discovery.algorithm_name,
-                        clustering_logger=self._clustering_logger,
-                    )
-                    clusters_created += 1
-                    if cluster and cluster.id:
-                        created_cluster_ids.append(str(cluster.id))
-
-                    for member in members:
-                        await self._suggestion_service.resolve_for_identity_exclusive(
-                            identity_id=member.id,
-                            accepted_cluster_id=str(cluster.id),
-                            reason="auto_proposal_new_cluster",
-                        )
-                    logger.info(
-                        "[clustering] new_cluster job_id=%s identity_count=%d media_ids=%s",
-                        job_id,
-                        len(members),
-                        [m.media_id for m in members],
-                    )
-
+            hac_eligible = [i for i in still_unclustered if i.id not in assigned_by_graph_fallback]
             hac_created = await run_hac_refinement(
-                still_unclustered=still_unclustered,
+                still_unclustered=hac_eligible,
                 tenant_id=str(tenant_id),
                 job_id=job_id,
                 constrained_hac=self._constrained_hac,
@@ -516,8 +619,45 @@ class IncrementalClusteringRunner:
             clustering_job.payload = {
                 **(clustering_job.payload or {}),
                 "clusters_created": clusters_created,
+                "last_successful_processed_identities": processor.processed_count,
+                "current_chunk_size": len(chunk),
             }
-            await self._session.flush()
+            # Commit after every chunk so completed work is durable even if a
+            # later chunk fails (finding 1164: durable chunk commit boundaries).
+            await self._session.commit()
+            # Restore SET LOCAL tenant context cleared by the chunk commit.
+            # PostgreSQL SET LOCAL variables are transaction-scoped and are
+            # cleared when the transaction commits; without this, subsequent
+            # chunks run with no app.current_tenant or app.bypass_rls set,
+            # causing RLS to reject observability event INSERTs on autoflush
+            # (investigation: rls-tenant-context-lost-after-chunk-commit-2026-03-24).
+            await set_tenant_context(self._session, uuid.UUID(tenant_id))
+            await enable_rls_bypass(self._session)
+            # Flush buffered observability events in a separate session so that
+            # an observability failure cannot roll back committed clustering data
+            # (stretch goal: decouple observability writes from clustering session).
+            if run_ctx is not None and run_ctx.buffer_events:
+                try:
+                    await run_ctx.flush_pending_events(self._obs_session_factory)
+                except Exception:
+                    logger.warning("[clustering] observability flush failed for job %s; events discarded", job_id)
+            _chunk_elapsed_ms = (time.perf_counter() - _chunk_t0) * 1000
+            logger.info(
+                "[clustering] chunk_stats job_id=%s processed=%d/%d size=%d "
+                "accept=%d suggest=%d reject=%d new_clusters=%d reps_added=%d elapsed_ms=%.1f",
+                job_id,
+                processed,
+                total_identities,
+                len(chunk),
+                len(accepted_ids),
+                len(suggested_ids),
+                len(rejected_ids),
+                clusters_created - _chunk_clusters_before,
+                _chunk_reps_added,
+                _chunk_elapsed_ms,
+            )
+            # Feed latency back to the processor so it can adapt the next chunk size.
+            processor.record_chunk_ms(_chunk_elapsed_ms, len(chunk))
 
             if self._progress_callback:
                 await self._progress_callback(processed, total_identities)

@@ -93,7 +93,14 @@ async def test_accept_evaluates_candidacy(
     mock_cluster_repo.get_representative_count.return_value = 1
     mock_cluster_repo.get_all_representatives.return_value = [
         # One existing rep with different embedding
-        np.zeros(512, dtype=np.float32)
+        ClusterRepresentative(
+            id=str(uuid.uuid4()),
+            cluster_id=cluster_id,
+            identity_id="id-existing",
+            embedding=np.zeros(512, dtype=np.float32),
+            created_at=None,
+            tenant_id="tenant-1",
+        )
     ]
 
     await writer.persist_assignment(decision)

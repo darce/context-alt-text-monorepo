@@ -33,6 +33,7 @@ class JobPhase(str, Enum):
     QUEUED = "queued"
     DETECTING = "detecting"
     CLUSTERING = "clustering"
+    RETRYING = "retrying"
     AWAITING_PROJECTION = "awaiting_projection"
     FAILED = "failed"
     COMPLETE = "complete"

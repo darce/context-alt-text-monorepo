@@ -122,6 +122,20 @@ class ClusterRepository(Protocol):
         """
         ...
 
+    async def update_curriculum_t_ema(self, cluster_id: str, new_similarity: float, alpha: float) -> None:
+        """Atomically apply exponential moving-average update to curriculum_t.
+
+        Computes new_value = alpha * new_similarity + (1 - alpha) * current_value
+        using a single SQL UPDATE expression so there is no read-modify-write race.
+        If curriculum_t is NULL the new_similarity is used as the initial value.
+
+        Args:
+            cluster_id: Cluster to update.
+            new_similarity: New similarity value to blend in.
+            alpha: EMA smoothing factor in (0, 1].
+        """
+        ...
+
     async def get_member_embeddings(self, cluster_id: str) -> Sequence[np.ndarray]: ...
 
     async def get_representative_embeddings(self, cluster_id: str) -> Sequence[np.ndarray]:
@@ -375,6 +389,16 @@ class MemberRepository(Protocol):
 
     async def bulk_add_members(self, cluster_id: str, members: Sequence[MemberData]) -> list[IdentityMember]:
         """Bulk insert members for efficiency."""
+        ...
+
+    async def bulk_add_members_if_not_exists(
+        self, cluster_id: str, members: Sequence[MemberData]
+    ) -> tuple[list[IdentityMember], int]:
+        """Bulk insert members using ON CONFLICT DO NOTHING semantics.
+
+        Returns a tuple of (created_members, skipped_count) for observability.
+        Prevents duplicate-key errors when retrying or when planner overlap occurs.
+        """
         ...
 
     async def move_members(self, source_cluster_id: str, target_cluster_id: str) -> int:

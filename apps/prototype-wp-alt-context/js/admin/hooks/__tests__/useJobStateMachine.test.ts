@@ -221,4 +221,66 @@ describe('useJobStateMachine', () => {
       expect(invalidateQueries).toHaveBeenCalled();
     });
   });
+
+  it('reports clustering phase when backend auto-chained clustering without a local cluster job', async () => {
+    const { useCombinedScanStatus } = await import('../useRecognitionHooks');
+    (useCombinedScanStatus as Mock).mockReturnValue({
+      scanStatusQuery: {
+        data: {
+          id: 'analyze-1',
+          type: 'clustering',
+          status: 'running',
+          progress: { completed: 50, total: 150, phase: 'clustering' },
+          started_at: new Date().toISOString(),
+          finished_at: null,
+        },
+      },
+    });
+
+    const { result } = renderHook(() => useJobStateMachine());
+
+    expect(result.current.currentPhase).toBe('clustering');
+    expect(result.current.isScanRunning).toBe(true);
+  });
+
+  it('connects SSE to the backend job id when in backend-driven clustering', async () => {
+    const { useCombinedScanStatus } = await import('../useRecognitionHooks');
+    (useCombinedScanStatus as Mock).mockReturnValue({
+      scanStatusQuery: {
+        data: {
+          id: 'analyze-1',
+          type: 'clustering',
+          status: 'running',
+          progress: { completed: 50, total: 150, phase: 'clustering' },
+          started_at: new Date().toISOString(),
+          finished_at: null,
+        },
+      },
+    });
+
+    const { result } = renderHook(() => useJobStateMachine());
+
+    expect(result.current.latestJobId).toBe('analyze-1');
+  });
+
+  it('returns idle when backend clustering job completes and no active jobs remain', async () => {
+    const { useCombinedScanStatus } = await import('../useRecognitionHooks');
+    (useCombinedScanStatus as Mock).mockReturnValue({
+      scanStatusQuery: {
+        data: {
+          id: 'analyze-1',
+          type: 'clustering',
+          status: 'completed',
+          progress: { completed: 150, total: 150, phase: 'complete' },
+          started_at: new Date().toISOString(),
+          finished_at: new Date().toISOString(),
+        },
+      },
+    });
+
+    const { result } = renderHook(() => useJobStateMachine());
+
+    expect(result.current.currentPhase).toBe('idle');
+    expect(result.current.latestJobId).toBeNull();
+  });
 });

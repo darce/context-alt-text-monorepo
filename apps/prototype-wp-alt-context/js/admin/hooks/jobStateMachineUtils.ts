@@ -20,6 +20,14 @@ export const derivePipelinePhase = (
   if (scanStatus?.progress?.phase === 'awaiting_projection' && (latestClusterJob || latestScanJob)) {
     return 'projecting';
   }
+  // Backend auto-chained a clustering job; frontend never registered a local cluster entry.
+  // Guard: only treat as active when backend reports a non-terminal state so stale cached
+  // responses do not lock the UI in the clustering phase after the job finishes.
+  const backendClusteringActive =
+    scanStatus?.type === 'clustering' && scanStatus.status !== 'completed' && scanStatus.status !== 'failed';
+  if (backendClusteringActive) {
+    return 'clustering';
+  }
   if (latestClusterJob) {
     return 'clustering';
   }
@@ -35,9 +43,12 @@ export const deriveLatestJobId = (
   currentPhase: PipelinePhase,
   latestScanJob: PersistedJob | null,
   latestClusterJob: PersistedJob | null,
+  scanStatus?: JobStatusResponse,
 ): string | null => {
   if (currentPhase === 'clustering' || currentPhase === 'projecting') {
-    return latestClusterJob?.id ?? null;
+    // Fall back to the backend job id so the SSE stream can connect even when
+    // the frontend never registered a local cluster job entry.
+    return latestClusterJob?.id ?? scanStatus?.id ?? null;
   }
   if (currentPhase === 'scanning') {
     return latestScanJob?.id ?? null;

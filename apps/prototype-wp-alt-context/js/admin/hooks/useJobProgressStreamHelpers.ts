@@ -6,20 +6,28 @@ interface ProgressEventData<TStatus extends string> {
   completed: number;
   total: number;
   status: TStatus;
-  phase?: 'queued' | 'detecting' | 'clustering' | 'awaiting_projection' | 'complete';
+  phase?: 'queued' | 'detecting' | 'clustering' | 'retrying' | 'awaiting_projection' | 'failed' | 'complete';
   images_processed?: number;
   faces_found?: number;
   clusters_created?: number;
+  retry_count?: number;
+  current_stage?: string;
+  last_successful_processed_identities?: number;
+  last_error_code?: string;
 }
 
 interface DoneEventData<TStatus extends string> {
   status: TStatus;
   completed?: number;
   total?: number;
-  phase?: 'queued' | 'detecting' | 'clustering' | 'awaiting_projection' | 'complete';
+  phase?: 'queued' | 'detecting' | 'clustering' | 'retrying' | 'awaiting_projection' | 'failed' | 'complete';
   images_processed?: number;
   faces_found?: number;
   clusters_created?: number;
+  retry_count?: number;
+  current_stage?: string;
+  last_successful_processed_identities?: number;
+  last_error_code?: string;
 }
 
 const parseJson = <T>(payload: string): T | null => {
@@ -69,6 +77,18 @@ export const parseProgressEvent = <TStatus extends string>(
   if (typeof data.clusters_created === 'number') {
     progress.clusters_created = data.clusters_created;
   }
+  if (typeof data.retry_count === 'number') {
+    progress.retry_count = data.retry_count;
+  }
+  if (typeof data.current_stage === 'string') {
+    progress.current_stage = data.current_stage;
+  }
+  if (typeof data.last_successful_processed_identities === 'number') {
+    progress.last_successful_processed_identities = data.last_successful_processed_identities;
+  }
+  if (typeof data.last_error_code === 'string') {
+    progress.last_error_code = data.last_error_code;
+  }
 
   const etaSeconds =
     startTimeRef.current && data.completed > 0
@@ -103,6 +123,18 @@ export const parseDoneEvent = <TStatus extends string>(
     }
     if (typeof data.clusters_created === 'number') {
       progress.clusters_created = data.clusters_created;
+    }
+    if (typeof data.retry_count === 'number') {
+      progress.retry_count = data.retry_count;
+    }
+    if (typeof data.current_stage === 'string') {
+      progress.current_stage = data.current_stage;
+    }
+    if (typeof data.last_successful_processed_identities === 'number') {
+      progress.last_successful_processed_identities = data.last_successful_processed_identities;
+    }
+    if (typeof data.last_error_code === 'string') {
+      progress.last_error_code = data.last_error_code;
     }
     return { progress, status: data.status };
   }

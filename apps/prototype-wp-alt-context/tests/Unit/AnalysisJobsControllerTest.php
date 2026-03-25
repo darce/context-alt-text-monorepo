@@ -152,6 +152,107 @@ class AnalysisJobsControllerTest extends TestCase
         $this->assertSame('Recognition backend unavailable.', $data['message'] ?? null);
     }
 
+    public function testGetJobStatusForwardsCheckpointFieldsInProgressResponse(): void
+    {
+        $jobId = '44444444-4444-4444-4444-444444444444';
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'id'     => $jobId,
+                'status' => 'pending',
+                'type'   => 'clustering',
+                'progress' => [
+                    'completed' => 500,
+                    'total'     => 937,
+                    'phase'     => 'retrying',
+                    'retry_count' => 2,
+                    'current_stage' => 'hac_refinement',
+                    'last_successful_processed_identities' => 500,
+                    'last_error_code' => 'TimeoutError',
+                    'clusters_created' => 12,
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/' . $jobId);
+        $request->set_param('job_id', $jobId);
+        $response = $this->controller->get_job_status($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertIsArray($data);
+        // The proxy passes through the full backend response without stripping fields.
+        $progress = $data['progress'] ?? [];
+        $this->assertSame('retrying', $progress['phase'] ?? null);
+        $this->assertSame(2, $progress['retry_count'] ?? null);
+        $this->assertSame('hac_refinement', $progress['current_stage'] ?? null);
+        $this->assertSame(500, $progress['last_successful_processed_identities'] ?? null);
+        $this->assertSame('TimeoutError', $progress['last_error_code'] ?? null);
+        $this->assertSame(12, $progress['clusters_created'] ?? null);
+    }
+
+    public function testBuildStreamProgressPayloadIncludesAllCheckpointFields(): void
+    {
+        $progress = [
+            'completed'                           => 500,
+            'total'                               => 937,
+            'phase'                               => 'retrying',
+            'retry_count'                         => 3,
+            'current_stage'                       => 'hac_refinement',
+            'last_successful_processed_identities' => 500,
+            'last_error_code'                     => 'TimeoutError',
+            'clusters_created'                    => 15,
+        ];
+
+        $method = new \ReflectionMethod($this->controller, 'build_stream_progress_payload');
+        $payload = $method->invoke(
+            $this->controller,
+            $progress,
+            'test-job-id',
+            'clustering_progress',
+            'pending'
+        );
+
+        $this->assertSame('clustering_progress', $payload['type']);
+        $this->assertSame('test-job-id', $payload['job_id']);
+        $this->assertSame('pending', $payload['status']);
+        $this->assertSame(500, $payload['completed']);
+        $this->assertSame(937, $payload['total']);
+        $this->assertSame('retrying', $payload['phase']);
+        $this->assertSame(3, $payload['retry_count']);
+        $this->assertSame('hac_refinement', $payload['current_stage']);
+        $this->assertSame(500, $payload['last_successful_processed_identities']);
+        $this->assertSame('TimeoutError', $payload['last_error_code']);
+        $this->assertSame(15, $payload['clusters_created']);
+    }
+
+    public function testBuildStreamProgressPayloadOmitsAbsentOptionalFields(): void
+    {
+        $progress = [
+            'completed' => 10,
+            'total'     => 100,
+        ];
+
+        $method = new \ReflectionMethod($this->controller, 'build_stream_progress_payload');
+        $payload = $method->invoke(
+            $this->controller,
+            $progress,
+            'job-xyz',
+            'scan_progress',
+            'running'
+        );
+
+        $this->assertSame('scan_progress', $payload['type']);
+        $this->assertSame(10, $payload['completed']);
+        $this->assertArrayNotHasKey('phase', $payload);
+        $this->assertArrayNotHasKey('retry_count', $payload);
+        $this->assertArrayNotHasKey('current_stage', $payload);
+        $this->assertArrayNotHasKey('last_successful_processed_identities', $payload);
+        $this->assertArrayNotHasKey('last_error_code', $payload);
+        $this->assertArrayNotHasKey('clusters_created', $payload);
+    }
+
     /**
      * @return array<string,mixed>|null
      */

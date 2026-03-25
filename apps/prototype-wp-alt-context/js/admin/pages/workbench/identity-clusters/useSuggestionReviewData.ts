@@ -31,9 +31,13 @@ export const useSuggestionReviewData = () => {
   const removePendingSuggestionFromCache = React.useCallback(
     (suggestionId: string) => {
       queryClient.setQueryData<PendingSuggestionsResponse | undefined>(queryKeys.suggestions.pending(), (current) => {
-        if (!current) return current;
+        if (!current) {
+          return current;
+        }
         const filtered = current.suggestions.filter((suggestion) => suggestion.id !== suggestionId);
-        if (filtered.length === current.suggestions.length) return current;
+        if (filtered.length === current.suggestions.length) {
+          return current;
+        }
         return { ...current, suggestions: filtered, total: Math.max(0, current.total - 1) };
       });
     },

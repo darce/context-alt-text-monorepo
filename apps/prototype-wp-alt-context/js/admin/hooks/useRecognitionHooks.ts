@@ -23,6 +23,16 @@ import {
 } from '../api/recognition';
 import { queryKeys } from '../api/queryKeys';
 
+/**
+ * Returns the polling interval for a recognition job status query.
+ * Exported so tests can exercise the real logic rather than duplicating it.
+ */
+export const getJobRefetchInterval = (data: JobStatusResponse | undefined): number | false => {
+  const isActive = data?.status === 'running' || data?.status === 'pending';
+  const isAwaitingProjection = data?.progress?.phase === 'awaiting_projection';
+  return isActive || isAwaitingProjection ? 1500 : false;
+};
+
 export const useScanIdentities = (options?: UseMutationOptions<AnalyzeResponse[], Error, number[], unknown>) =>
   useMutation<AnalyzeResponse[], Error, number[]>({
     mutationFn: async (mediaIds) => {
@@ -39,8 +49,7 @@ export const useScanStatus = (jobId: string | null, enabled = true) =>
     queryKey: queryKeys.jobs.status(jobId),
     enabled: Boolean(jobId) && enabled,
     queryFn: () => fetchScanStatus(jobId!),
-    refetchInterval: (query) =>
-      query.state.data?.status === 'running' || query.state.data?.status === 'pending' ? 1500 : false,
+    refetchInterval: (query) => getJobRefetchInterval(query.state.data),
     retry: (failureCount, error) => {
       if (error.message.includes('404')) {
         return false;
@@ -62,8 +71,7 @@ export const useMultiScanStatus = (jobIds: string[], enabled = true) =>
         queryKey: queryKeys.jobs.status(jobId),
         queryFn: () => fetchScanStatus(jobId),
         enabled: Boolean(jobId) && enabled,
-        refetchInterval: (query) =>
-          query.state.data?.status === 'running' || query.state.data?.status === 'pending' ? 1500 : false,
+        refetchInterval: (query) => getJobRefetchInterval(query.state.data),
         retry: (failureCount, error) => {
           if (error.message.includes('404')) {
             return false;

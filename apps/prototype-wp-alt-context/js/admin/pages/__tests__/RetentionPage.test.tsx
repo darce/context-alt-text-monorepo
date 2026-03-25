@@ -126,9 +126,7 @@ describe('RetentionPage', () => {
         mutateAsync: exportMutateAsync,
       }),
     );
-    mockedUseExportJobStatus.mockReturnValue(
-      createMockQuery<ExportJobStatusResponse>({ data: undefined }),
-    );
+    mockedUseExportJobStatus.mockReturnValue(createMockQuery<ExportJobStatusResponse>({ data: undefined }));
     mockedUseDownloadExportJobData.mockReturnValue(
       createMockMutation({
         mutateAsync: downloadMutateAsync,
@@ -223,17 +221,19 @@ describe('RetentionPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Export data' }));
     expect(screen.getByRole('button', { name: 'Start export' })).toBeInTheDocument();
 
-    // Use async act so the awaited mutateAsync promise resolves before assertions
+    // Wrap in async act so exportMutateAsync resolves and React applies the state update
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Start export' }));
+      await Promise.resolve();
     });
 
-    // After exportMutateAsync resolves, exportJobId is set and download button should appear
-    const downloadButton = await screen.findByRole('button', { name: 'Download export' });
+    // exportJobId is now set and exportJobStatus is 'completed' so download button appears
+    const downloadButton = screen.getByRole('button', { name: 'Download export' });
     expect(downloadButton).not.toBeDisabled();
 
     await act(async () => {
       fireEvent.click(downloadButton);
+      await Promise.resolve();
     });
 
     expect(downloadMutateAsync).toHaveBeenCalledTimes(1);

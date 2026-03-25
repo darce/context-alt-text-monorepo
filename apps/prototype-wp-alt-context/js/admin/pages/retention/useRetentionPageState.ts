@@ -170,7 +170,9 @@ export const useRetentionPageState = () => {
   );
 
   const savePolicy = useCallback(async (): Promise<void> => {
-    if (!policy || !isPolicyDirty) return;
+    if (!policy || !isPolicyDirty) {
+      return;
+    }
     try {
       await updatePolicy.mutateAsync({ retention_mode: selectedMode });
       dispatch({ type: 'SET_DRAFT_MODE', mode: null });
@@ -190,7 +192,9 @@ export const useRetentionPageState = () => {
   }, [exportMutation, showError]);
 
   const downloadExport = useCallback(async (): Promise<void> => {
-    if (!state.exportJobId) return;
+    if (!state.exportJobId) {
+      return;
+    }
     try {
       const response = await downloadJobData.mutateAsync(state.exportJobId);
       downloadExportPayload(response);
@@ -212,7 +216,9 @@ export const useRetentionPageState = () => {
   }, [state.purgeScope, purgeMutation, success, showError]);
 
   const confirmImport = useCallback(async (): Promise<void> => {
-    if (!state.importFile) return;
+    if (!state.importFile) {
+      return;
+    }
     try {
       const text = await state.importFile.text();
       const parsed: unknown = JSON.parse(text);

@@ -107,8 +107,8 @@
   }
 
   &__badge--ok {
-    background-color: var(--acx-color-success-bg, #dcfce7);
-    color: var(--acx-color-success-text, #166534);
+    background-color: var(--acx-color-success-bg);
+    color: var(--acx-color-success-text);
   }
 
   &--warning {
@@ -125,7 +125,7 @@
   }
 
   &--success {
-    border-color: var(--acx-color-success-border, #22c55e);
+    border-color: var(--acx-color-success-border);
   }
 }
 
@@ -492,6 +492,58 @@
       max-width: 480px;
       margin: 0 0 var(--acx-space-16);
       color: var(--acx-color-text-muted);
+    }
+  }
+}
+
+.acx-job-timeline {
+  list-style: none;
+  padding: 0;
+  margin: var(--acx-space-8) 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--acx-space-4);
+  font-size: 0.85rem;
+  color: var(--acx-color-text-secondary);
+
+  &__item {
+    display: flex;
+    align-items: baseline;
+    gap: var(--acx-space-8);
+  }
+
+  &__icon {
+    flex-shrink: 0;
+    width: 1em;
+    text-align: center;
+    font-style: normal;
+
+    &--completed {
+      color: var(--acx-color-success-text);
+    }
+
+    &--active {
+      color: var(--acx-color-accent);
+    }
+
+    &--pending {
+      color: var(--acx-color-text-muted);
+    }
+
+    &--failed {
+      color: var(--acx-color-danger);
+    }
+  }
+
+  &__label {
+    flex: 1;
+  }
+
+  &__detail {
+    color: var(--acx-color-text-muted);
+
+    &::before {
+      content: '\2014\00a0';
     }
   }
 }

@@ -265,25 +265,7 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			);
 
 			if ( $should_emit ) {
-				$payload = array(
-					'type'      => $event_type,
-					'job_id'    => $job_id,
-					'status'    => $status,
-					'completed' => $completed,
-					'total'     => $total,
-				);
-				if ( null !== $phase && '' !== $phase ) {
-					$payload['phase'] = $phase;
-				}
-				if ( isset( $progress['images_processed'] ) ) {
-					$payload['images_processed'] = absint( $progress['images_processed'] );
-				}
-				if ( isset( $progress['faces_found'] ) ) {
-					$payload['faces_found'] = absint( $progress['faces_found'] );
-				}
-				if ( isset( $progress['clusters_created'] ) ) {
-					$payload['clusters_created'] = absint( $progress['clusters_created'] );
-				}
+				$payload = $this->build_stream_progress_payload( $progress, $job_id, $event_type, $status );
 				echo "event: progress\n";
 				echo 'data: ' . wp_json_encode( $payload ) . "\n\n";
 				$last_completed = $completed;
@@ -295,25 +277,7 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			}
 
 			if ( in_array( $status, array( 'completed', 'failed' ), true ) ) {
-				$done_payload = array(
-					'type'      => $event_type,
-					'job_id'    => $job_id,
-					'status'    => $status,
-					'completed' => $completed,
-					'total'     => $total,
-				);
-				if ( null !== $phase && '' !== $phase ) {
-					$done_payload['phase'] = $phase;
-				}
-				if ( isset( $progress['images_processed'] ) ) {
-					$done_payload['images_processed'] = absint( $progress['images_processed'] );
-				}
-				if ( isset( $progress['faces_found'] ) ) {
-					$done_payload['faces_found'] = absint( $progress['faces_found'] );
-				}
-				if ( isset( $progress['clusters_created'] ) ) {
-					$done_payload['clusters_created'] = absint( $progress['clusters_created'] );
-				}
+				$done_payload = $this->build_stream_progress_payload( $progress, $job_id, $event_type, $status );
 				echo "event: done\n";
 				echo 'data: ' . wp_json_encode( $done_payload ) . "\n\n";
 				@ob_flush();
@@ -342,6 +306,66 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 				'tenant_id' => $this->get_tenant_id(),
 			)
 		);
+	}
+
+	/**
+	 * Build the SSE event payload for a single stream poll result.
+	 *
+	 * Extracted so the field-forwarding logic can be unit-tested independently
+	 * of the streaming loop and its side-effects (headers, output flushing).
+	 *
+	 * @param array<string,mixed> $progress  The `progress` sub-array from the backend job response.
+	 * @param string              $job_id    The job being streamed.
+	 * @param string              $event_type  'scan_progress' or 'clustering_progress'.
+	 * @param string              $status    Current job status string.
+	 * @return array<string,mixed>
+	 */
+	protected function build_stream_progress_payload(
+		array $progress,
+		string $job_id,
+		string $event_type,
+		string $status
+	): array {
+		$completed = absint( $progress['completed'] ?? 0 );
+		$total     = absint( $progress['total'] ?? 0 );
+		$phase     = isset( $progress['phase'] ) && '' !== $progress['phase']
+			? sanitize_text_field( (string) $progress['phase'] )
+			: null;
+
+		$payload = array(
+			'type'      => $event_type,
+			'job_id'    => $job_id,
+			'status'    => $status,
+			'completed' => $completed,
+			'total'     => $total,
+		);
+		if ( null !== $phase ) {
+			$payload['phase'] = $phase;
+		}
+		if ( isset( $progress['images_processed'] ) ) {
+			$payload['images_processed'] = absint( $progress['images_processed'] );
+		}
+		if ( isset( $progress['faces_found'] ) ) {
+			$payload['faces_found'] = absint( $progress['faces_found'] );
+		}
+		if ( isset( $progress['clusters_created'] ) ) {
+			$payload['clusters_created'] = absint( $progress['clusters_created'] );
+		}
+		// Phase-2 checkpoint/retry metadata (finding 1165).
+		if ( isset( $progress['retry_count'] ) ) {
+			$payload['retry_count'] = absint( $progress['retry_count'] );
+		}
+		if ( isset( $progress['current_stage'] ) && '' !== $progress['current_stage'] ) {
+			$payload['current_stage'] = sanitize_text_field( (string) $progress['current_stage'] );
+		}
+		if ( isset( $progress['last_successful_processed_identities'] ) ) {
+			$payload['last_successful_processed_identities'] = absint( $progress['last_successful_processed_identities'] );
+		}
+		if ( isset( $progress['last_error_code'] ) && '' !== $progress['last_error_code'] ) {
+			$payload['last_error_code'] = sanitize_text_field( (string) $progress['last_error_code'] );
+		}
+
+		return $payload;
 	}
 
 	private function build_offline_job_status_response( string $job_id ): WP_REST_Response {

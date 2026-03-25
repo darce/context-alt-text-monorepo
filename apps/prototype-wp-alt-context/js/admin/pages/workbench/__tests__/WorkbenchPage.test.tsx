@@ -546,4 +546,48 @@ describe('WorkbenchPage', () => {
     expect(screen.queryByRole('tab', { name: 'Batch' })).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Scan Media Queue' })).toHaveAttribute('data-state', 'active');
   });
+
+  it('shows "Clustering identities…" button text when backend-driven clustering is active', () => {
+    mockUseCombinedScanStatus.mockReturnValue({
+      scanStatusQuery: createMockQuery({
+        data: {
+          id: 'analyze-1',
+          type: 'clustering' as const,
+          status: 'running' as const,
+          progress: { completed: 50, total: 150, phase: 'clustering' },
+          started_at: new Date().toISOString(),
+          finished_at: null,
+        },
+        refetch: vi.fn(),
+      }),
+      multiScanStatus: [],
+    });
+
+    renderWorkbench();
+
+    expect(screen.getByRole('button', { name: 'Clustering identities…' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clustering identities…' })).toBeDisabled();
+  });
+
+  it('shows identity-based progress label during backend-driven clustering', () => {
+    mockUseCombinedScanStatus.mockReturnValue({
+      scanStatusQuery: createMockQuery({
+        data: {
+          id: 'analyze-1',
+          type: 'clustering' as const,
+          status: 'running' as const,
+          progress: { completed: 75, total: 150, phase: 'clustering' },
+          started_at: new Date().toISOString(),
+          finished_at: null,
+        },
+        refetch: vi.fn(),
+      }),
+      multiScanStatus: [],
+    });
+
+    renderWorkbench();
+
+    expect(screen.getByText('Processed 75/150 identities')).toBeInTheDocument();
+    expect(screen.queryByText(/Processed.*images/i)).not.toBeInTheDocument();
+  });
 });

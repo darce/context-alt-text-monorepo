@@ -39,9 +39,7 @@ export const RecentAuditEvents = ({ events }: RecentAuditEventsProps): React.JSX
   <section className="acx-dashboard__panel acx-retention__panel acx-retention__panel--wide">
     <div className="acx-retention__panel-header">
       <h2 id="retention-audit-history">{__('Recent audit events', 'alt-context')}</h2>
-      <span className="acx-retention__detail">
-        {__('Showing the five most recent audit events.', 'alt-context')}
-      </span>
+      <span className="acx-retention__detail">{__('Showing the five most recent audit events.', 'alt-context')}</span>
     </div>
     {events.length === 0 ? (
       <p>{__('No audit events recorded yet.', 'alt-context')}</p>

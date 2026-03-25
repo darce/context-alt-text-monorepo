@@ -37,7 +37,7 @@
         },
         "phase": {
           "type": "string",
-          "enum": ["queued", "detecting", "clustering", "complete"],
+          "enum": ["queued", "detecting", "clustering", "retrying", "awaiting_projection", "failed", "complete"],
           "description": "Current pipeline phase when available."
         },
         "images_processed": {
@@ -54,6 +54,34 @@
           "type": "integer",
           "minimum": 0,
           "description": "Number of clusters created during clustering jobs."
+        },
+        "retry_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of times this job has been retried."
+        },
+        "current_stage": {
+          "type": "string",
+          "description": "Machine-readable stage label for the current processing phase."
+        },
+        "last_successful_processed_identities": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Identity count at the last durable checkpoint."
+        },
+        "last_error_code": {
+          "type": "string",
+          "description": "Error code from the most recent failed attempt."
+        },
+        "current_chunk_size": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Adaptive chunk size in use at the last durable checkpoint."
+        },
+        "last_error_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the most recent failed attempt."
         }
       }
     },

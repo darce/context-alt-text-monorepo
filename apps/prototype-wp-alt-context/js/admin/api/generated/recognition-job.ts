@@ -3,10 +3,16 @@
 export interface JobProgress {
   completed: number;
   total: number;
-  phase?: 'queued' | 'detecting' | 'clustering' | 'awaiting_projection' | 'complete';
+  phase?: 'queued' | 'detecting' | 'clustering' | 'retrying' | 'awaiting_projection' | 'failed' | 'complete';
   images_processed?: number;
   faces_found?: number;
   clusters_created?: number;
+  retry_count?: number;
+  current_stage?: string;
+  last_successful_processed_identities?: number;
+  last_error_code?: string;
+  current_chunk_size?: number;
+  last_error_at?: string;
 }
 
 export interface RecognitionJob {

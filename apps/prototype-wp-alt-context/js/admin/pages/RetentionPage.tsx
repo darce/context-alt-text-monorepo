@@ -129,9 +129,7 @@ export const RetentionPage = (): React.JSX.Element => {
                 disabled={pending.applyPreset}
                 onClick={() => void actions.applyGdprPreset()}
               >
-                {pending.applyPreset
-                  ? __('Applying\u2026', 'alt-context')
-                  : __('Apply GDPR preset', 'alt-context')}
+                {pending.applyPreset ? __('Applying\u2026', 'alt-context') : __('Apply GDPR preset', 'alt-context')}
               </button>
             </div>
           </div>
@@ -148,9 +146,7 @@ export const RetentionPage = (): React.JSX.Element => {
           <p className="acx-retention__detail">
             {sprintf(__('Last export: %s', 'alt-context'), formatTimestamp(policy.last_export_at))}
           </p>
-          <p className="acx-retention__note">
-            {__('Raw embedding vectors are excluded from exports.', 'alt-context')}
-          </p>
+          <p className="acx-retention__note">{__('Raw embedding vectors are excluded from exports.', 'alt-context')}</p>
           <button
             type="button"
             className="acx-button acx-button--secondary"

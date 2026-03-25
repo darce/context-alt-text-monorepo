@@ -58,7 +58,9 @@ export const ExportDialog = ({
   <DialogRoot
     open={open}
     onOpenChange={(nextOpen: boolean) => {
-      if (!nextOpen) dispatch({ type: 'CLOSE_EXPORT_DIALOG' });
+      if (!nextOpen) {
+        dispatch({ type: 'CLOSE_EXPORT_DIALOG' });
+      }
     }}
   >
     <DialogPortal>
@@ -133,7 +135,14 @@ export const PurgeDialog = ({
   isPurgePending,
   onConfirmPurge,
 }: PurgeDialogProps): React.JSX.Element => (
-  <DialogRoot open={open} onOpenChange={(nextOpen: boolean) => { if (!nextOpen) dispatch({ type: 'CLOSE_PURGE_DIALOG' }); }}>
+  <DialogRoot
+    open={open}
+    onOpenChange={(nextOpen: boolean) => {
+      if (!nextOpen) {
+        dispatch({ type: 'CLOSE_PURGE_DIALOG' });
+      }
+    }}
+  >
     <DialogPortal>
       <DialogOverlay />
       <DialogContent>

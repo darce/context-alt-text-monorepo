@@ -85,8 +85,8 @@ export const useJobStateMachine = ({
 
   // SSE Stream
   const latestJobId = useMemo(
-    () => deriveLatestJobId(currentPhase, latestScanJob, latestClusterJob),
-    [currentPhase, latestScanJob, latestClusterJob],
+    () => deriveLatestJobId(currentPhase, latestScanJob, latestClusterJob, scanStatusQuery.data),
+    [currentPhase, latestScanJob, latestClusterJob, scanStatusQuery.data],
   );
 
   const {

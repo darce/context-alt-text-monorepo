@@ -288,7 +288,10 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
                 className="acx-button acx-button--secondary acx-button--small"
                 disabled={mutations.bulkAccept.isPending}
                 onClick={() =>
-                  mutations.bulkAccept.mutate({ suggestion_type: 'assignment', min_confidence: bulkConfidenceThreshold })
+                  mutations.bulkAccept.mutate({
+                    suggestion_type: 'assignment',
+                    min_confidence: bulkConfidenceThreshold,
+                  })
                 }
               >
                 {mutations.bulkAccept.isPending

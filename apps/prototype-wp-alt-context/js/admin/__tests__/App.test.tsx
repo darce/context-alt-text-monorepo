@@ -4,9 +4,12 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { App, determineInitialRoute } from '../App';
 import {
+  useApplyRetentionPreset,
+  useAuditEvents,
   useDownloadExportJobData,
   useExportJobStatus,
   useExportTenantData,
+  useImportTenantData,
   usePurgeTenantData,
   useRetentionStatus,
   useUpdateRetentionPolicy,
@@ -45,6 +48,9 @@ vi.mock('../hooks/useRetentionStatus', () => ({
   useExportJobStatus: vi.fn(),
   useDownloadExportJobData: vi.fn(),
   usePurgeTenantData: vi.fn(),
+  useImportTenantData: vi.fn(),
+  useAuditEvents: vi.fn(),
+  useApplyRetentionPreset: vi.fn(),
 }));
 
 vi.mock('../context/ToastContext', () => ({
@@ -62,6 +68,9 @@ describe('App route boot', () => {
   const mockedUseExportJobStatus = vi.mocked(useExportJobStatus);
   const mockedUseDownloadExportJobData = vi.mocked(useDownloadExportJobData);
   const mockedUsePurgeTenantData = vi.mocked(usePurgeTenantData);
+  const mockedUseImportTenantData = vi.mocked(useImportTenantData);
+  const mockedUseAuditEvents = vi.mocked(useAuditEvents);
+  const mockedUseApplyRetentionPreset = vi.mocked(useApplyRetentionPreset);
   const updateMutateAsync = vi.fn();
   const originalHash = window.location.hash;
   const originalHref = window.location.href;
@@ -104,6 +113,9 @@ describe('App route boot', () => {
     mockedUseExportJobStatus.mockReturnValue(createMockQuery());
     mockedUseDownloadExportJobData.mockReturnValue(createMockMutation());
     mockedUsePurgeTenantData.mockReturnValue(createMockMutation());
+    mockedUseImportTenantData.mockReturnValue(createMockMutation());
+    mockedUseAuditEvents.mockReturnValue(createMockQuery({ data: { items: [], total: 0, limit: 20, offset: 0 } }));
+    mockedUseApplyRetentionPreset.mockReturnValue(createMockMutation());
   });
 
   afterEach(() => {

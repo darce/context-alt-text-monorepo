@@ -3,6 +3,9 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 import type { JobProgress } from '../../api/recognition/types/scan';
 export { mediaEditUrl, rosterClustersUrl } from '../../utils/adminUrls';
 
+const isClusteringActive = (phase?: string | null): boolean =>
+  phase === 'clustering' || phase === 'retrying';
+
 interface ScanActionPanelProps {
   selectedCount: number;
   onScanFaces: () => void;
@@ -45,7 +48,11 @@ export const ScanActionPanel = ({
       onClick={onScanFaces}
       disabled={isScanning || selectedCount === 0}
     >
-      {isScanning ? __('Scanning media…', 'alt-context') : __('Analyze selected media', 'alt-context')}
+      {isScanning
+        ? isClusteringActive(progress?.phase)
+          ? __('Clustering identities…', 'alt-context')
+          : __('Scanning media…', 'alt-context')
+        : __('Analyze selected media', 'alt-context')}
     </button>
     {onCancelScan && (
       <button
@@ -70,20 +77,36 @@ export const ScanActionPanel = ({
           </p>
         )}
         <p className="acx-apply-panel__status">
-          {sprintf(
-            __('Processed %d/%d images', 'alt-context'),
-            progress.images_processed ?? progress.completed,
-            progress.total,
-          )}
-          {typeof progress.faces_found === 'number'
-            ? sprintf(__(' · %d faces found', 'alt-context'), progress.faces_found)
-            : ''}
+          {isClusteringActive(progress.phase)
+            ? sprintf(__('Processed %d/%d identities', 'alt-context'), progress.completed, progress.total)
+            : sprintf(
+                __('Processed %d/%d images', 'alt-context'),
+                progress.images_processed ?? progress.completed,
+                progress.total,
+              ) +
+              (typeof progress.faces_found === 'number'
+                ? sprintf(__(' · %d faces found', 'alt-context'), progress.faces_found)
+                : '')}
         </p>
+        {isClusteringActive(progress.phase) &&
+          typeof progress.retry_count === 'number' &&
+          progress.retry_count > 0 && (
+            <p className="acx-apply-panel__status">
+              {sprintf(_n('Retry %d', 'Retry %d', progress.retry_count, 'alt-context'), progress.retry_count)}
+              {progress.last_error_code
+                ? sprintf(__(' (last error: %s)', 'alt-context'), progress.last_error_code)
+                : ''}
+            </p>
+          )}
         <progress
           className="acx-apply-panel__progress"
           value={Math.min(progress.completed, progress.total)}
           max={progress.total}
-          aria-label={__('Scan progress', 'alt-context')}
+          aria-label={
+            isClusteringActive(progress.phase)
+              ? __('Clustering progress', 'alt-context')
+              : __('Scan progress', 'alt-context')
+          }
         />
         {typeof etaSeconds === 'number' && (
           <p className="acx-apply-panel__eta">
@@ -174,6 +197,12 @@ export const ConfirmPanel = ({
             {sprintf(__('Clusters created: %d', 'alt-context'), progress.clusters_created)}
           </p>
         )}
+        {typeof progress.retry_count === 'number' && progress.retry_count > 0 && (
+          <p className="acx-apply-panel__status">
+            {sprintf(_n('Retry %d', 'Retry %d', progress.retry_count, 'alt-context'), progress.retry_count)}
+            {progress.last_error_code ? sprintf(__(' (last error: %s)', 'alt-context'), progress.last_error_code) : ''}
+          </p>
+        )}
         <progress
           className="acx-apply-panel__progress"
           value={Math.min(progress.completed, progress.total)}
@@ -251,8 +280,12 @@ const formatJobPhase = (phase: NonNullable<JobProgress['phase']>): string => {
       return __('Detecting', 'alt-context');
     case 'clustering':
       return __('Clustering', 'alt-context');
+    case 'retrying':
+      return __('Retrying', 'alt-context');
     case 'awaiting_projection':
       return __('Projecting', 'alt-context');
+    case 'failed':
+      return __('Failed', 'alt-context');
     case 'complete':
       return __('Complete', 'alt-context');
     default:

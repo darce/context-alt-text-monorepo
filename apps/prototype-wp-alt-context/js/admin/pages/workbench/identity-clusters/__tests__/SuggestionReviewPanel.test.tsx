@@ -1051,8 +1051,24 @@ describe('SuggestionReviewPanel', () => {
     fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
     fetchPendingNameSuggestionsMock.mockResolvedValue({
       suggestions: [
-        { id: 'name-sugg-1', cluster_id: 'cluster-ns-1', suggested_name: 'Alice Lemon', confidence_score: 0.85, source: 'machine', created_at: '2026-01-01T00:00:00Z', expires_at: null },
-        { id: 'name-sugg-2', cluster_id: 'cluster-ns-2', suggested_name: 'Bob Apricot', confidence_score: 0.45, source: 'machine', created_at: '2026-01-01T00:00:00Z', expires_at: null },
+        {
+          id: 'name-sugg-1',
+          cluster_id: 'cluster-ns-1',
+          suggested_name: 'Alice Lemon',
+          confidence_score: 0.85,
+          source: 'machine',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+        {
+          id: 'name-sugg-2',
+          cluster_id: 'cluster-ns-2',
+          suggested_name: 'Bob Apricot',
+          confidence_score: 0.45,
+          source: 'machine',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
       ],
       total: 2,
       limit: 25,
@@ -1084,7 +1100,15 @@ describe('SuggestionReviewPanel', () => {
     fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
     fetchPendingNameSuggestionsMock.mockResolvedValue({
       suggestions: [
-        { id: 'name-accept-1', cluster_id: 'cluster-na-1', suggested_name: 'Carol Mint', confidence_score: 0.78, source: 'machine', created_at: '2026-01-01T00:00:00Z', expires_at: null },
+        {
+          id: 'name-accept-1',
+          cluster_id: 'cluster-na-1',
+          suggested_name: 'Carol Mint',
+          confidence_score: 0.78,
+          source: 'machine',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
       ],
       total: 1,
       limit: 25,
@@ -1125,7 +1149,15 @@ describe('SuggestionReviewPanel', () => {
     fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
     fetchPendingNameSuggestionsMock.mockResolvedValue({
       suggestions: [
-        { id: 'name-reject-1', cluster_id: 'cluster-nr-1', suggested_name: 'Dana Peach', confidence_score: 0.72, source: 'machine', created_at: '2026-01-01T00:00:00Z', expires_at: null },
+        {
+          id: 'name-reject-1',
+          cluster_id: 'cluster-nr-1',
+          suggested_name: 'Dana Peach',
+          confidence_score: 0.72,
+          source: 'machine',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
       ],
       total: 1,
       limit: 25,

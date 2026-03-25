@@ -3,6 +3,7 @@ import { __ } from '@wordpress/i18n';
 import { ErrorBoundary } from '../../../components/ErrorBoundary';
 import { useScrollRestoration } from '../../hooks/useScrollRestoration';
 import { ScanActionPanel } from './Panels';
+import { JobTimeline } from './JobTimeline';
 import { ClusterLabelingPanel, ClusterReviewPanel, SuggestionReviewPanel } from './identity-clusters';
 import { MediaSelection } from './MediaSelection';
 import { useWorkbenchContext } from './WorkbenchContext';
@@ -33,6 +34,9 @@ export const ScanTabContent = (): React.JSX.Element => {
     jobId,
     scanError,
     scanProgress,
+    clusterProgress,
+    currentPhase,
+    projectionSyncState,
     etaSeconds,
     isPrimary,
     latestJobId,
@@ -74,6 +78,12 @@ export const ScanTabContent = (): React.JSX.Element => {
         progress={scanProgress}
         etaSeconds={etaSeconds}
         isSynced={!isPrimary && !!latestJobId}
+      />
+      <JobTimeline
+        scanProgress={scanProgress}
+        clusterProgress={clusterProgress}
+        phase={currentPhase}
+        projectionSyncState={projectionSyncState}
       />
       <ScanScrollRestoration />
       {!isScanRunning && !hasIdentities && <NoMediaPanel />}

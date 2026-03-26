@@ -90,7 +90,13 @@ async def _job_to_pipeline_response(
                     completed=resolved_job.progress_completed,
                     total=resolved_job.progress_total,
                 )
-            response.progress.phase = "awaiting_projection" if projection.acknowledged_at is None else "complete"
+            if projection.snapshot_version == 0:
+                # No clusters produced; nothing to project. Skip the sync/ack cycle.
+                response.progress.phase = "complete"
+            elif projection.acknowledged_at is None:
+                response.progress.phase = "awaiting_projection"
+            else:
+                response.progress.phase = "complete"
             response.snapshot_version = projection.snapshot_version
             response.source_job_id = projection.source_job_id
             response.projection_acknowledged_at = projection.acknowledged_at

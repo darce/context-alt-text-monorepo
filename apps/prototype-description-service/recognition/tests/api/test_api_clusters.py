@@ -848,3 +848,107 @@ def test_get_tenant_snapshot_includes_members(
     assert "y" in bbox
     assert "width" in bbox
     assert "height" in bbox
+
+
+def test_get_tenant_snapshot_includes_suggested_label_for_unlabeled_cluster(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository, monkeypatch
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from recognition.domain.suggestion import SuggestedLabel, SuggestedLabelSource
+
+    cluster = seed_cluster(fake_cluster_service, tenant_id, label=None, fake_cluster_repository=fake_cluster_repository)
+    # un-confirm so enrichment is attempted
+    fake_cluster_repository.clusters[cluster.id].user_confirmed = False
+
+    inferred = SuggestedLabel(
+        label="Alice",
+        source=SuggestedLabelSource.SIMILAR_CLUSTER,
+        confidence=0.88,
+        target_cluster_id="bbb-222",
+    )
+    monkeypatch.setattr(
+        "recognition.interface_adapters.http.routers.clusters.infer_suggested_label",
+        AsyncMock(return_value=inferred),
+    )
+
+    resp = api_client.get(f"/recognition/tenants/{tenant_id}/clusters/snapshot")
+
+    assert resp.status_code == 200
+    clusters = resp.json()["clusters"]
+    target = next(c for c in clusters if c["cluster_uuid"] == cluster.id)
+    assert target["suggested_label"] == "Alice"
+    assert target["suggested_label_source"] == "similar_cluster"
+    assert target["suggested_label_confidence"] == pytest.approx(0.88, abs=1e-6)
+    assert target["suggested_target_cluster_id"] == "bbb-222"
+
+
+def test_get_tenant_snapshot_has_null_suggested_label_for_confirmed_cluster(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository, monkeypatch
+) -> None:
+    from unittest.mock import AsyncMock
+
+    cluster = seed_cluster(
+        fake_cluster_service, tenant_id, label="Alice", fake_cluster_repository=fake_cluster_repository
+    )
+    fake_cluster_repository.clusters[cluster.id].user_confirmed = True
+
+    mock_infer = AsyncMock()
+    monkeypatch.setattr(
+        "recognition.interface_adapters.http.routers.clusters.infer_suggested_label",
+        mock_infer,
+    )
+
+    resp = api_client.get(f"/recognition/tenants/{tenant_id}/clusters/snapshot")
+
+    assert resp.status_code == 200
+    clusters = resp.json()["clusters"]
+    target = next(c for c in clusters if c["cluster_uuid"] == cluster.id)
+    # Confirmed clusters must never receive a suggested_label
+    assert target["suggested_label"] is None
+    mock_infer.assert_not_called()
+
+
+def test_cluster_delta_includes_suggested_label_for_unlabeled_cluster(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository, monkeypatch
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from recognition.domain.suggestion import SuggestedLabel, SuggestedLabelSource
+
+    cluster = seed_cluster(fake_cluster_service, tenant_id, label=None, fake_cluster_repository=fake_cluster_repository)
+    fake_cluster_repository.clusters[cluster.id].user_confirmed = False
+    snapshot_version = fake_cluster_repository._snapshot_version
+
+    inferred = SuggestedLabel(
+        label="Bob",
+        source=SuggestedLabelSource.ROSTER,
+        confidence=0.75,
+        target_cluster_id=None,
+    )
+    monkeypatch.setattr(
+        "recognition.interface_adapters.http.routers.clusters.infer_suggested_label",
+        AsyncMock(return_value=inferred),
+    )
+
+    async def _fake_get_delta(request_tenant_id: str, *, since_version: int):
+        return (
+            await fake_cluster_repository.get_clusters_by_ids(tenant_id, [cluster.id]),
+            await fake_cluster_repository.get_members_by_cluster_ids(tenant_id, [cluster.id]),
+            snapshot_version,
+        )
+
+    monkeypatch.setattr(fake_cluster_repository, "get_delta", _fake_get_delta)
+
+    resp = api_client.get(
+        f"/recognition/tenants/{tenant_id}/clusters/delta",
+        params={"since_version": snapshot_version - 1},
+    )
+
+    assert resp.status_code == 200
+    clusters = resp.json()["clusters"]
+    assert len(clusters) == 1
+    assert clusters[0]["suggested_label"] == "Bob"
+    assert clusters[0]["suggested_label_source"] == "roster"
+    assert clusters[0]["suggested_label_confidence"] == pytest.approx(0.75, abs=1e-6)
+    assert clusters[0]["suggested_target_cluster_id"] is None

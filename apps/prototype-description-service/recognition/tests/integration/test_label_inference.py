@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 
+import numpy as np
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -486,3 +487,56 @@ async def test_infer_suggested_label_uses_representative_table_when_missing_rep_
     assert result is not None
     assert result.label == "Casey"
     assert result.source == SuggestedLabelSource.SIMILAR_CLUSTER
+
+
+@pytest.mark.asyncio
+async def test_infer_suggested_label_does_not_raise_on_numpy_embedding(
+    db_session: AsyncSession,
+    tenant: Tenant,
+) -> None:
+    """Embedding stored as a NumPy array must not raise ValueError on truthiness check.
+
+    Regression test for the bug where ``if embedding:`` on a multi-element
+    NumPy array raised ``ValueError: The truth value of an array with more
+    than one element is ambiguous``.
+    """
+    tenant_id = tenant.id
+
+    embedding_array = np.random.default_rng(42).standard_normal(512).astype(np.float32)
+
+    rep_identity = MediaIdentity(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        media_id=9001,
+        media_url="http://example.test/9001.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=1,
+        bbox_height=1,
+        confidence=1.0,
+        embedding=embedding_array.tolist(),
+    )
+    db_session.add(rep_identity)
+
+    target_cluster = IdentityCluster(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        label=None,
+        identity_count=3,
+        representative_identity_id=rep_identity.id,
+        user_confirmed=False,
+    )
+    db_session.add(target_cluster)
+    await db_session.commit()
+
+    repo = SqlAlchemyClusterRepository(db_session)
+
+    # Should not raise ValueError; returns None because no labeled clusters exist.
+    result = await infer_suggested_label(
+        tenant_id=str(tenant_id),
+        cluster_id=str(target_cluster.id),
+        session=db_session,
+        cluster_repository=repo,
+    )
+
+    assert result is None

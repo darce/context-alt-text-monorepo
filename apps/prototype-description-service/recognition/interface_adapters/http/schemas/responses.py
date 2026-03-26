@@ -576,6 +576,10 @@ class ClusterSnapshotClusterResponse(BaseModel):
     representative_thumb_path: str | None = None
     representative_id: str | None = None
     is_pinned: bool = False
+    suggested_label: str | None = None
+    suggested_label_source: Literal["identity", "roster", "similar_cluster", "none"] | None = None
+    suggested_label_confidence: float | None = None
+    suggested_target_cluster_id: str | None = None
 
 
 class ClusterSnapshotResponse(BaseModel):

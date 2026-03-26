@@ -12,10 +12,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import db.session as db_session_module
 from db.models import Tenant
 from db.models.identity import CurationReplayRecord
+from recognition.application.settings import ClusteringSettings
+from recognition.application.suggestions.label_inference import infer_suggested_label
 from recognition.application.tasks.clustering import run_background_surface_suggestions
 from recognition.config import get_settings as get_recognition_settings
 from recognition.config.security import get_security_settings
@@ -80,6 +83,8 @@ from recognition.interface_adapters.http.validation import validate_entity_id, v
 from recognition.shared.ids import generate_id
 
 _logger = logging.getLogger(__name__)
+
+_INFERENCE_CAP = 20
 
 router = APIRouter(tags=["clusters"], dependencies=[Depends(require_auth)])
 
@@ -337,12 +342,47 @@ def _build_member_responses(
     return responses
 
 
+async def _enrich_with_suggested_labels(
+    cluster_responses: list[ClusterSnapshotClusterResponse],
+    tenant_id: str,
+    session: AsyncSession,
+    repo: ClusterRepository,
+    settings: ClusteringSettings,
+) -> None:
+    """Best-effort label inference for unlabeled clusters, bounded to top N."""
+    unlabeled = [cr for cr in cluster_responses if cr.label is None and not cr.is_user_confirmed]
+    unlabeled.sort(key=lambda cr: cr.identity_count, reverse=True)
+
+    for cluster_resp in unlabeled[:_INFERENCE_CAP]:
+        try:
+            inferred = await infer_suggested_label(
+                tenant_id=tenant_id,
+                cluster_id=cluster_resp.cluster_uuid,
+                session=session,
+                cluster_repository=repo,
+                settings=settings,
+            )
+            if inferred:
+                cluster_resp.suggested_label = inferred.label
+                cluster_resp.suggested_label_source = inferred.source.value
+                cluster_resp.suggested_label_confidence = inferred.confidence
+                cluster_resp.suggested_target_cluster_id = inferred.target_cluster_id
+        except Exception:
+            _logger.warning(
+                "suggested_label inference failed for cluster %s (tenant %s); skipping enrichment",
+                cluster_resp.cluster_uuid,
+                tenant_id,
+                exc_info=True,
+            )
+
+
 @router.get("/tenants/{tenant_uuid}/clusters/snapshot", response_model=ClusterSnapshotResponse)
 async def get_tenant_cluster_snapshot(
     tenant_uuid: str,
     auth=Depends(require_auth),
     repo=Depends(get_cluster_repository),
     job_service=Depends(get_persisted_cluster_job_service),
+    session=Depends(get_session),
 ) -> ClusterSnapshotResponse:
     """Get complete cluster snapshot for WordPress plugin projection.
 
@@ -373,6 +413,8 @@ async def get_tenant_cluster_snapshot(
 
     # Build responses
     cluster_responses = _build_cluster_responses(clusters)
+    clustering_settings = get_recognition_settings().clustering
+    await _enrich_with_suggested_labels(cluster_responses, tenant_id, session, repo, clustering_settings)
     member_responses = _build_member_responses(members_with_identities)
 
     return ClusterSnapshotResponse(
@@ -428,6 +470,7 @@ async def get_tenant_cluster_delta(
     since_version: int = Query(..., ge=0),
     auth=Depends(require_auth),
     repo: ClusterRepository = Depends(get_cluster_repository),
+    session=Depends(get_session),
 ) -> ClusterDeltaResponse:
     """Get version-filtered cluster updates for incremental projection sync."""
     tenant_id = tenant_uuid
@@ -440,11 +483,15 @@ async def get_tenant_cluster_delta(
     if snapshot_version <= 0 and not clusters and not members_with_identities:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No clusters found for tenant")
 
+    cluster_responses = _build_cluster_responses(clusters)
+    clustering_settings = get_recognition_settings().clustering
+    await _enrich_with_suggested_labels(cluster_responses, tenant_id, session, repo, clustering_settings)
+
     return ClusterDeltaResponse(
         tenant_id=tenant_uuid,
         snapshot_version=snapshot_version,
         generated_at=datetime.now(tz=UTC),
-        clusters=_build_cluster_responses(clusters),
+        clusters=cluster_responses,
         members=_build_member_responses(members_with_identities),
     )
 
@@ -468,7 +515,6 @@ async def get_top_unlabeled_clusters(
         min_identity_count=min_identity_count,
     )
     allowed_sources = {"identity", "roster", "similar_cluster", "none"}
-    from recognition.application.suggestions.label_inference import infer_suggested_label
 
     responses: list[ClusterResponse] = []
     clustering_settings = get_recognition_settings().clustering

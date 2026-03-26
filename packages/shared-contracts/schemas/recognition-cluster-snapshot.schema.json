@@ -62,6 +62,26 @@
           "representative_thumb_path": {
             "type": ["string", "null"],
             "description": "ACX-formatted path to the representative thumbnail."
+          },
+          "suggested_label": {
+            "type": ["string", "null"],
+            "description": "Backend-inferred label for unlabeled, unconfirmed clusters. Null when no inference was attempted or the cluster is user-confirmed."
+          },
+          "suggested_label_source": {
+            "type": ["string", "null"],
+            "enum": ["identity", "roster", "similar_cluster", "none", null],
+            "description": "Source of the label inference. Null when suggested_label is null."
+          },
+          "suggested_label_confidence": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Confidence score for the inferred label in [0.0, 1.0]. Null when suggested_label is null."
+          },
+          "suggested_target_cluster_id": {
+            "type": ["string", "null"],
+            "format": "uuid",
+            "description": "Target cluster ID for a pending merge suggestion. Null when the source is not similar_cluster."
           }
         }
       }

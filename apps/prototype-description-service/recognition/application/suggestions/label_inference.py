@@ -151,8 +151,13 @@ async def infer_suggested_label(
 
     # 3. Nearest Neighbor Search (Fallback)
     target_embedding: np.ndarray | None = None
-    if target_cluster.representative_identity and target_cluster.representative_identity.embedding:
-        target_embedding = np.asarray(target_cluster.representative_identity.embedding, dtype=np.float32)
+    embedding = (
+        getattr(target_cluster.representative_identity, "embedding", None)
+        if target_cluster.representative_identity is not None
+        else None
+    )
+    if embedding is not None:
+        target_embedding = np.asarray(embedding, dtype=np.float32)
     else:
         if cluster_repository is None:
             return None
@@ -202,6 +207,9 @@ async def infer_suggested_label(
                 target_cluster_id=best_cluster_id,
             )
 
+        # In-process search was authoritative; skip the DB fallback.
+        return None
+
     # Find nearest labeled cluster using embedding distance (DB fallback)
     stmt = (
         select(IdentityCluster)
@@ -218,13 +226,14 @@ async def infer_suggested_label(
     result = await session.execute(stmt)
     nearest_cluster = result.scalar_one_or_none()
 
-    if (
-        nearest_cluster
-        and nearest_cluster.representative_identity
-        and nearest_cluster.representative_identity.embedding
-    ):
+    nearest_embedding = (
+        getattr(nearest_cluster.representative_identity, "embedding", None)
+        if nearest_cluster and nearest_cluster.representative_identity
+        else None
+    )
+    if nearest_cluster and nearest_embedding is not None:
         vec_a = np.array(target_embedding)
-        vec_b = np.array(nearest_cluster.representative_identity.embedding)
+        vec_b = np.array(nearest_embedding)
 
         norm_a = np.linalg.norm(vec_a)
         norm_b = np.linalg.norm(vec_b)

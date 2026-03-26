@@ -53,6 +53,12 @@ Query params:
 
 Response: `JobStatusResponse`.
 
+Notes:
+
+- When the service cannot acquire a database connection from the pool, the route returns `503` with `{ "error": "database_unavailable", "trace_id": "...", "path": "..." }` and a `Retry-After: 5` header.
+- Generic unhandled `500` responses expose `trace_id` and `path`, but no longer leak raw exception class names or messages.
+- The request uses the tenant-aware session provided by `get_optional_session()` and does not repeat tenant-context setup inside `get_job_status()`.
+
 ### POST /recognition/jobs/{job_id}/cancel
 
 Query params:

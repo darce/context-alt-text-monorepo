@@ -32,9 +32,13 @@ interface IdentityClusterListProps {
  * NOTE: v4.12.0 - CurateTopClustersPrompt removed; naming queue is now in
  * SuggestionReviewPanel for unified curation flow.
  */
-export const IdentityClusterList = ({ identities, dataSource, onRetry }: IdentityClusterListProps): React.JSX.Element => {
+export const IdentityClusterList = ({
+  identities,
+  dataSource,
+  onRetry,
+}: IdentityClusterListProps): React.JSX.Element => {
   const clusters = React.useMemo(() => groupIdentitiesByClusters(identities), [identities]);
-  const isReadOnly = dataSource === DATA_SOURCE.BACKEND_PROXY;
+  const isLabelOnly = dataSource === DATA_SOURCE.BACKEND_PROXY;
 
   if (clusters.length === 0) {
     if (dataSource === DATA_SOURCE.UNAVAILABLE) {
@@ -52,13 +56,16 @@ export const IdentityClusterList = ({ identities, dataSource, onRetry }: Identit
 
   return (
     <div className="acx-identity-clusters">
-      {isReadOnly && (
+      {isLabelOnly && (
         <p className="acx-identity-clusters__notice">
-          {__('Identity curation is read-only until local sync completes.', 'alt-context')}
+          {__(
+            'Names can be curated now. Split/remove actions stay disabled until local sync completes.',
+            'alt-context',
+          )}
         </p>
       )}
       {clusters.map((cluster) => (
-        <IdentityClusterItem key={cluster.key} cluster={cluster} canMutate={!isReadOnly} />
+        <IdentityClusterItem key={cluster.key} cluster={cluster} canLabel canMutate={!isLabelOnly} />
       ))}
     </div>
   );

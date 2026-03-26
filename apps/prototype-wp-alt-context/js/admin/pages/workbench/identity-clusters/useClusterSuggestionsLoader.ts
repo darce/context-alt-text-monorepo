@@ -91,6 +91,12 @@ export const useClusterSuggestionsLoader = ({
           return { id: match.id, label: match.label };
         }
       } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          return null;
+        }
+        if (err instanceof Error && err.name === 'AbortError') {
+          return null;
+        }
         console.warn('Failed to find cluster by label:', err);
       }
 

@@ -72,7 +72,8 @@ export const mapPendingSuggestions = (
   const suggestions = rawSuggestions.map((suggestion) => {
     const suggestedClusterId = suggestion.suggested_cluster_id ?? suggestion.cluster_id ?? '';
     const representativeSimilarity = suggestion.representative_similarity ?? suggestion.rep_similarity ?? 0;
-    const avgMemberSimilarity = suggestion.avg_member_similarity ?? suggestion.member_similarity ?? representativeSimilarity;
+    const avgMemberSimilarity =
+      suggestion.avg_member_similarity ?? suggestion.member_similarity ?? representativeSimilarity;
 
     return {
       id: suggestion.id,

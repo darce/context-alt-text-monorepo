@@ -2,10 +2,7 @@ import React from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { getConfig } from '../../../api/config';
-import {
-  SUGGESTION_PAGE_SIZE,
-  useSuggestionReviewQueries,
-} from './useSuggestionReviewQueries';
+import { SUGGESTION_PAGE_SIZE, useSuggestionReviewQueries } from './useSuggestionReviewQueries';
 import { useSuggestionReviewMutations } from './useSuggestionReviewMutations';
 
 export const useSuggestionReviewData = () => {
@@ -34,7 +31,9 @@ export const useSuggestionReviewData = () => {
   const loadedAssignmentCount = assignmentSuggestions?.length ?? 0;
   const hasNoSuggestionData = !assignmentQuery.data && !mergeQuery.data;
   const hasInitialFailure = (assignmentQuery.failureCount > 0 || mergeQuery.failureCount > 0) && hasNoSuggestionData;
-  const isLoading = !hasInitialFailure && ((assignmentQuery.isLoading && !assignmentQuery.data) || (mergeQuery.isLoading && !mergeQuery.data));
+  const isLoading =
+    !hasInitialFailure &&
+    ((assignmentQuery.isLoading && !assignmentQuery.data) || (mergeQuery.isLoading && !mergeQuery.data));
   const isError = assignmentQuery.isError && mergeQuery.isError && hasNoSuggestionData;
   const failureCount = Math.max(assignmentQuery.failureCount, mergeQuery.failureCount);
   const tenantId = getConfig().tenant_id;

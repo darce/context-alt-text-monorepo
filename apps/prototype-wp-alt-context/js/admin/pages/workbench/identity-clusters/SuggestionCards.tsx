@@ -1,6 +1,7 @@
 import React from 'react';
 import { __ } from '@wordpress/i18n';
 
+import { Avatar } from '../../../../components/ui/avatar';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import type { PendingSuggestion } from '../../../api/recognition';
 
@@ -63,6 +64,8 @@ export const SuggestionCard = ({
     suggestion.representative_media_url && suggestion.representative_bbox
       ? { mediaUrl: suggestion.representative_media_url, bbox: suggestion.representative_bbox }
       : null;
+  const identityThumbUrl = suggestion.identity_thumb_url ?? suggestion.identity_media_url ?? null;
+  const representativeThumbUrl = suggestion.representative_thumb_url ?? suggestion.representative_media_url ?? null;
 
   return (
     <div className={`acx-suggestion-card${isLowConfidence ? ' acx-suggestion-card--low-confidence' : ''}`}>
@@ -73,6 +76,13 @@ export const SuggestionCard = ({
               mediaUrl={identityFace.mediaUrl}
               bbox={identityFace.bbox}
               size="md"
+              alt={__('Candidate face', 'alt-context')}
+              className="acx-suggestion-card__thumb"
+            />
+          ) : identityThumbUrl ? (
+            <Avatar
+              src={identityThumbUrl}
+              size="lg"
               alt={__('Candidate face', 'alt-context')}
               className="acx-suggestion-card__thumb"
             />
@@ -88,6 +98,13 @@ export const SuggestionCard = ({
               mediaUrl={representativeFace.mediaUrl}
               bbox={representativeFace.bbox}
               size="md"
+              alt={__('Cluster representative', 'alt-context')}
+              className="acx-suggestion-card__thumb"
+            />
+          ) : representativeThumbUrl ? (
+            <Avatar
+              src={representativeThumbUrl}
+              size="lg"
               alt={__('Cluster representative', 'alt-context')}
               className="acx-suggestion-card__thumb"
             />
@@ -203,8 +220,9 @@ export const GroupedSuggestionCard = ({
       <div className="acx-suggestion-card__faces">
         <div className="acx-suggestion-card__face acx-suggestion-card__face--grid">
           <div className="acx-face-grid-preview acx-face-grid-preview--candidates">
-            {visibleCandidates.map((suggestion) =>
-              suggestion.identity_media_url && suggestion.identity_bbox ? (
+            {visibleCandidates.map((suggestion) => {
+              const identityThumbUrl = suggestion.identity_thumb_url ?? suggestion.identity_media_url;
+              return suggestion.identity_media_url && suggestion.identity_bbox ? (
                 <FaceThumbnail
                   key={suggestion.id}
                   mediaUrl={suggestion.identity_media_url}
@@ -213,13 +231,21 @@ export const GroupedSuggestionCard = ({
                   alt={__('Candidate face', 'alt-context')}
                   className="acx-suggestion-card__thumb"
                 />
+              ) : identityThumbUrl ? (
+                <Avatar
+                  key={suggestion.id}
+                  src={identityThumbUrl}
+                  size="md"
+                  alt={__('Candidate face', 'alt-context')}
+                  className="acx-suggestion-card__thumb"
+                />
               ) : (
                 <span
                   key={suggestion.id}
                   className="acx-suggestion-card__thumb acx-suggestion-card__thumb--placeholder"
                 />
-              ),
-            )}
+              );
+            })}
             {extraCandidatesCount > 0 && (
               <span className="acx-suggestion-card__thumb acx-suggestion-card__thumb--more">
                 +{extraCandidatesCount}

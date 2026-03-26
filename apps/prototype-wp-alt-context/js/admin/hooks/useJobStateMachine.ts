@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '../api/queryKeys';
@@ -30,6 +30,7 @@ export interface JobStateMachineOptions {
   onClusterError?: (message: string) => void;
   onCancelComplete?: () => void;
   jobId?: string | null; // For history polling
+  onJobNotFound?: (jobId: string) => void;
 }
 
 export const useJobStateMachine = ({
@@ -40,6 +41,7 @@ export const useJobStateMachine = ({
   onClusterError,
   onCancelComplete,
   jobId,
+  onJobNotFound,
 }: JobStateMachineOptions = {}) => {
   const queryClient = useQueryClient();
   const { activeJobs, addJob, removeJob } = useJobPersistence();
@@ -76,6 +78,16 @@ export const useJobStateMachine = ({
 
   // Poll for history / external updates
   const { scanStatusQuery } = useCombinedScanStatus(jobId ?? null, activeJobIds);
+
+  useEffect(() => {
+    if (!jobId) {
+      return;
+    }
+    const message = scanStatusQuery.error instanceof Error ? scanStatusQuery.error.message : '';
+    if (message.includes('(404)')) {
+      onJobNotFound?.(jobId);
+    }
+  }, [jobId, onJobNotFound, scanStatusQuery.error]);
 
   // Derive phase
   const currentPhase = useMemo<PipelinePhase>(

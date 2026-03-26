@@ -69,6 +69,7 @@ describe('DashboardPage', () => {
       jobId: null,
       rememberJob: vi.fn(),
       selectJob: vi.fn(),
+      forgetJob: vi.fn(),
       clearHistory: vi.fn(),
     });
     mockedUseSyncStatus.mockReturnValue(
@@ -194,6 +195,7 @@ describe('DashboardPage', () => {
       jobId: 'job-1',
       rememberJob: vi.fn(),
       selectJob: vi.fn(),
+      forgetJob: vi.fn(),
       clearHistory: vi.fn(),
     });
 
@@ -224,6 +226,7 @@ describe('DashboardPage', () => {
       jobId: 'job-unavailable',
       rememberJob: vi.fn(),
       selectJob: vi.fn(),
+      forgetJob: vi.fn(),
       clearHistory: vi.fn(),
     });
 
@@ -309,6 +312,7 @@ describe('DashboardPage', () => {
       jobId: 'job-batch-9',
       rememberJob: vi.fn(),
       selectJob: vi.fn(),
+      forgetJob: vi.fn(),
       clearHistory: vi.fn(),
     });
     mockedUseIdentityStats.mockReturnValue(

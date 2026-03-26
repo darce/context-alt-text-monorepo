@@ -251,12 +251,16 @@ describe('IdentityClusterList', () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
-  it('renders backend-fallback clusters as read-only until local sync completes', async () => {
+  it('keeps backend-fallback clusters labelable while hiding local-only corrective actions', async () => {
     await renderWithClient(<IdentityClusterList identities={[baseIdentity]} dataSource={DATA_SOURCE.BACKEND_PROXY} />);
 
-    expect(screen.getByText('Identity curation is read-only until local sync completes.')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Cluster 1' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Name this person|Edit label/i })).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Names can be curated now. Split/remove actions stay disabled until local sync completes.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cluster 1' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Name this person|Edit label/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Remove from Cluster/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Split cluster/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Pin representative|Unpin representative/i })).not.toBeInTheDocument();
   });
 

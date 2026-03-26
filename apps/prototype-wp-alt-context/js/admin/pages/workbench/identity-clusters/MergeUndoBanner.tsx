@@ -21,6 +21,7 @@ interface MergeUndoBannerProps {
  */
 export const MergeUndoBanner = ({ mergeResult, isReverting, onUndo }: MergeUndoBannerProps): React.JSX.Element => {
   const targetLabel = mergeResult.target_label ?? __('existing cluster', 'alt-context');
+  const canUndo = mergeResult.moved_identity_ids.length > 0;
 
   return (
     <div className="acx-identity-cluster__undo">
@@ -31,9 +32,11 @@ export const MergeUndoBanner = ({ mergeResult, isReverting, onUndo }: MergeUndoB
           targetLabel,
         )}
       </span>
-      <button type="button" onClick={onUndo} disabled={isReverting}>
-        {isReverting ? __('Reverting…', 'alt-context') : __('Undo merge', 'alt-context')}
-      </button>
+      {canUndo && (
+        <button type="button" onClick={onUndo} disabled={isReverting}>
+          {isReverting ? __('Reverting…', 'alt-context') : __('Undo merge', 'alt-context')}
+        </button>
+      )}
     </div>
   );
 };

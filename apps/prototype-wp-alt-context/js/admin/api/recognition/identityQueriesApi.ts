@@ -8,10 +8,7 @@ import type {
   PendingNameSuggestionsResponse,
   PendingSuggestionsResponse,
 } from './types';
-import {
-  mapPendingMergeSuggestions,
-  mapPendingSuggestions,
-} from './identitySuggestionMappers';
+import { mapPendingMergeSuggestions, mapPendingSuggestions } from './identitySuggestionMappers';
 import { createRecognitionTimeoutSignal } from './requestTimeout';
 
 export const fetchMediaIdentities = async (mediaIds: number[]): Promise<MediaIdentitiesResponse> => {
@@ -78,14 +75,11 @@ export const fetchPendingMergeSuggestions = async (
   url.searchParams.set('limit', String(limit));
   url.searchParams.set('offset', String(offset));
 
-  const response = await fetchRequiredApi<PendingMergeSuggestionsResponse>(
-    url.toString(),
-    {
-      method: 'GET',
-      restNonce: getConfig().nonce,
-      signal: createRecognitionTimeoutSignal(2_000),
-    },
-  );
+  const response = await fetchRequiredApi<PendingMergeSuggestionsResponse>(url.toString(), {
+    method: 'GET',
+    restNonce: getConfig().nonce,
+    signal: createRecognitionTimeoutSignal(2_000),
+  });
 
   return mapPendingMergeSuggestions(response, limit, offset);
 };

@@ -8,10 +8,34 @@ import uuid
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
+from db.session import get_pool_stats
 from recognition.domain.repositories import ClusterNotFoundError
 
 logger = logging.getLogger(__name__)
+
+
+def _trace_id_for(request: Request) -> str:
+    return request.headers.get("X-Request-ID") or f"req-{uuid.uuid4()}"
+
+
+def _opaque_error_response(
+    *,
+    request: Request,
+    status_code: int,
+    error: str,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error": error,
+            "path": str(request.url),
+            "trace_id": _trace_id_for(request),
+        },
+        headers=headers,
+    )
 
 
 class RecognitionError(Exception):
@@ -35,7 +59,7 @@ class ValidationError(RecognitionError):
 
 async def recognition_exception_handler(request: Request, exc: RecognitionError) -> JSONResponse:
     """Handle known recognition errors with a structured payload."""
-    trace_id = request.headers.get("X-Request-ID") or f"req-{uuid.uuid4()}"
+    trace_id = _trace_id_for(request)
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -49,22 +73,33 @@ async def recognition_exception_handler(request: Request, exc: RecognitionError)
 
 async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Handle unexpected errors with a 500 response."""
-    trace_id = request.headers.get("X-Request-ID") or f"req-{uuid.uuid4()}"
+    trace_id = _trace_id_for(request)
     logger.exception("Unhandled exception", extra={"trace_id": trace_id, "path": str(request.url)})
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": exc.__class__.__name__,
-            "message": str(exc),
-            "path": str(request.url),
+    return _opaque_error_response(request=request, status_code=500, error="internal_server_error")
+
+
+async def pool_exhaustion_handler(request: Request, exc: PoolTimeoutError) -> JSONResponse:
+    """Map SQLAlchemy pool checkout failures to a retryable 503."""
+    trace_id = _trace_id_for(request)
+    logger.exception(
+        "Database pool exhausted",
+        extra={
             "trace_id": trace_id,
+            "path": str(request.url),
+            "pool_stats": get_pool_stats(),
         },
+    )
+    return _opaque_error_response(
+        request=request,
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        error="database_unavailable",
+        headers={"Retry-After": "5"},
     )
 
 
 async def cluster_not_found_exception_handler(request: Request, exc: ClusterNotFoundError) -> JSONResponse:
     """Translate domain cluster-not-found errors to HTTP 404."""
-    trace_id = request.headers.get("X-Request-ID") or f"req-{uuid.uuid4()}"
+    trace_id = _trace_id_for(request)
     return JSONResponse(
         status_code=status.HTTP_404_NOT_FOUND,
         content={
@@ -87,7 +122,7 @@ def _is_duplicate_cluster_label(exc: IntegrityError) -> bool:
 
 async def integrity_exception_handler(request: Request, exc: IntegrityError) -> JSONResponse:
     """Translate common DB constraint violations into friendlier HTTP errors."""
-    trace_id = request.headers.get("X-Request-ID") or f"req-{uuid.uuid4()}"
+    trace_id = _trace_id_for(request)
 
     if _is_duplicate_cluster_label(exc):
         return JSONResponse(
@@ -101,14 +136,8 @@ async def integrity_exception_handler(request: Request, exc: IntegrityError) -> 
         )
 
     logger.exception("Unhandled integrity error", extra={"trace_id": trace_id, "path": str(request.url)})
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={
-            "error": exc.__class__.__name__,
-            "message": str(exc),
-            "path": str(request.url),
-            "trace_id": trace_id,
-        },
+    return _opaque_error_response(
+        request=request, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, error="integrity_error"
     )
 
 
@@ -117,6 +146,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ClusterNotFoundError, cluster_not_found_exception_handler)
     app.add_exception_handler(RecognitionError, recognition_exception_handler)
     app.add_exception_handler(IntegrityError, integrity_exception_handler)
+    app.add_exception_handler(PoolTimeoutError, pool_exhaustion_handler)
     app.add_exception_handler(Exception, generic_exception_handler)
 
 
@@ -126,6 +156,7 @@ __all__ = [
     "ValidationError",
     "recognition_exception_handler",
     "generic_exception_handler",
+    "pool_exhaustion_handler",
     "cluster_not_found_exception_handler",
     "register_exception_handlers",
 ]

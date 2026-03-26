@@ -97,8 +97,8 @@ def get_database_settings() -> DatabaseSettings:
     async_dsn = os.getenv("POSTGRES_DSN") or _render_default_async_dsn()
     sync_dsn = os.getenv("POSTGRES_SYNC_DSN") or _infer_sync_dsn(async_dsn)
     pgvector_dim = int(os.getenv("PGVECTOR_DIM", "512"))
-    pool_size = int(os.getenv("DB_POOL_SIZE", "10"))
-    max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "5"))
+    pool_size = int(os.getenv("DB_POOL_SIZE", "20"))
+    max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "10"))
     pool_timeout = int(os.getenv("DB_POOL_TIMEOUT", "30"))
     pool_recycle = int(os.getenv("DB_POOL_RECYCLE", "3600"))
 

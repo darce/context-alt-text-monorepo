@@ -38,6 +38,7 @@ class BulkAcceptResult:
 class SuggestionRefreshReason(str, Enum):
     """Reason code for refreshing suggestion candidates."""
 
+    BOOTSTRAP = "bootstrap"
     MANUAL_SPLIT = "manual_split"
     WRONG_PERSON = "wrong_person"
     MANUAL_ASSIGN = "manual_assign"

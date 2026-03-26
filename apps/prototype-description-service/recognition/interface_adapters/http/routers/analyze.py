@@ -8,6 +8,7 @@ import contextlib
 import json
 import logging
 import os
+import time as _time
 import uuid
 from datetime import UTC, datetime
 
@@ -74,6 +75,8 @@ async def _job_to_pipeline_response(
     scan_repo,
 ):
     resolved_job = await _resolve_pipeline_job(requested_job_id=requested_job_id, domain_job=domain_job, repo=repo)
+    if resolved_job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     response = await _job_to_response(resolved_job, scan_repo=scan_repo)
     if resolved_job is not domain_job:
         response.id = requested_job_id
@@ -103,6 +106,116 @@ async def _job_to_pipeline_response(
     return response
 
 
+def _prepare_media_items(request: AnalyzeRequest) -> tuple[list[str], list[str], list[tuple[int, str]]]:
+    """Validate and normalize analyze request media inputs."""
+    media_ids = request.media_ids
+    media_sources: list[str] = []
+    if request.media_items:
+        media_sources = [item.media_url for item in request.media_items]
+        media_ids = [str(item.media_id) for item in request.media_items]
+    elif media_ids:
+        media_sources = list(media_ids)
+
+    if not media_ids:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="media_ids are required")
+
+    validated_media_ids = [_validate_uuid(mid) for mid in media_ids]
+    if request.media_items:
+        media_items = [(int(item.media_id), str(item.media_url)) for item in request.media_items]
+    else:
+        media_items = [(extract_media_id(mid), str(mid)) for mid in media_sources]
+
+    return validated_media_ids, media_sources, media_items
+
+
+async def _prepare_tenant_context(
+    *,
+    request: AnalyzeRequest,
+    auth,
+    session: AsyncSession | None,
+    inline_processing: bool,
+) -> uuid.UUID:
+    """Validate tenant/auth state and prepare DB tenant context when available."""
+    if auth and auth.tenant_claim and auth.tenant_claim != str(request.tenant_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
+    try:
+        tenant_uuid = uuid.UUID(str(request.tenant_id))
+    except Exception as exc:  # pragma: no cover - request validation should catch this
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid tenant_id") from exc
+
+    if session is not None and hasattr(session, "execute") and is_postgres(session):
+        await ensure_tenant_exists(session, tenant_uuid)
+        await set_tenant_context(session, tenant_uuid)
+        if not inline_processing and not await scan_worker_available(session):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Scan worker unavailable. Start the scan worker or enable inline processing.",
+            )
+
+    return tenant_uuid
+
+
+async def _schedule_analysis(
+    *,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession | None,
+    scan_queue,
+    tenant_uuid: uuid.UUID,
+    media_items: list[tuple[int, str]],
+    media_ids: list[str],
+    media_sources: list[str],
+    inline_processing: bool,
+    auth,
+) -> JobStatusResponse:
+    """Create the scan job, schedule background work, and build the initial response."""
+    if scan_queue is None:
+        if session is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database unavailable",
+            )
+        scan_queue = get_scan_queue_service_factory(session)
+
+    job_id = await scan_queue.create_scan_job_record(
+        tenant_id=tenant_uuid,
+        total=len(media_items),
+        created_by_user_id=getattr(auth, "user_id", None),
+    )
+
+    if session is not None:
+        await session.commit()
+
+    session_factory: async_sessionmaker[AsyncSession] | None = None
+    if session is not None and getattr(session, "bind", None) is not None and not is_postgres(session):
+        session_factory = async_sessionmaker(bind=session.bind, expire_on_commit=False)
+
+    background_tasks.add_task(
+        chain_populate_and_process,
+        tenant_id=str(tenant_uuid),
+        job_id=str(job_id),
+        media_items=media_items,
+        media_ids=media_ids,
+        media_sources=media_sources,
+        scan_queue=scan_queue if not isinstance(scan_queue, ScanQueueService) else None,
+        session_factory=session_factory,
+        inline_processing=inline_processing,
+        adapter_provider=get_shared_insightface_adapter if inline_processing else None,
+    )
+
+    total = len(media_items)
+    progress = JobProgressResponse(completed=0, total=total, phase="queued", images_processed=0, faces_found=0)
+    return JobStatusResponse(
+        id=str(job_id),
+        type=JobType.ANALYZE.value,
+        status="pending",
+        progress=progress,
+        started_at=datetime.now(tz=UTC),
+        finished_at=None,
+        message=f"Queueing 0/{total} items",
+    )
+
+
 @router.post("/analyze", response_model=JobStatusResponse, status_code=status.HTTP_202_ACCEPTED)
 async def analyze_media(
     request: AnalyzeRequest,
@@ -113,107 +226,55 @@ async def analyze_media(
 ) -> JobStatusResponse:
     """Scan media for face identities. Returns a job ID for polling."""
     tenant_uuid: uuid.UUID | None = None
+    inline_processing = os.environ.get("RECOGNITION_ASYNC_ANALYZE_INLINE", "0") == "1"
+    total_media_items = 0
+    outcome = "error"
+    started_at = _time.perf_counter()
     try:
-        # Extract media IDs and URLs
-        media_ids = request.media_ids
-        media_sources: list[str] = []  # URLs or IDs to pass to detector
-        if request.media_items:
-            # Use URLs for detection (InsightFaceFaceDetector will fetch them)
-            media_sources = [item.media_url for item in request.media_items]
-            media_ids = [str(item.media_id) for item in request.media_items]
-        elif media_ids:
-            # No URLs available, pass IDs (will work with StubFaceDetector)
-            media_sources = list(media_ids)
-        if not media_ids:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="media_ids are required")
-        media_ids = [_validate_uuid(mid) for mid in media_ids]
-        inline_processing = os.environ.get("RECOGNITION_ASYNC_ANALYZE_INLINE", "0") == "1"
-        if session is not None and hasattr(session, "execute") and is_postgres(session):
-            try:
-                tenant_uuid = uuid.UUID(str(request.tenant_id))
-                # Auto-provision tenant if it doesn't exist (first-use provisioning)
-                await ensure_tenant_exists(session, tenant_uuid)
-                await set_tenant_context(session, tenant_uuid)
-            except Exception as exc:  # pragma: no cover - validation should handle
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid tenant_id") from exc
-            if not inline_processing and not await scan_worker_available(session):
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Scan worker unavailable. Start the scan worker or enable inline processing.",
-                )
-        if auth and auth.tenant_claim and auth.tenant_claim != str(request.tenant_id):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
-
-        if tenant_uuid is None:
-            tenant_uuid = uuid.UUID(str(request.tenant_id))
-
-        media_items: list[tuple[int, str]] = []
-        if request.media_items:
-            media_items = [(int(item.media_id), str(item.media_url)) for item in request.media_items]
-        else:
-            media_items = [(extract_media_id(mid), str(mid)) for mid in media_sources]
-
-        # NOTE: Tier-based batch limits removed for MVP (see progress-tracking-investigation-2026-01-20.md)
-
-        # Use injected scan_queue if available (for tests), otherwise create from factory
-        if scan_queue is None:
-            if session is None:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Database unavailable",
-                )
-            scan_queue = get_scan_queue_service_factory(session)
-
-        job_id = await scan_queue.create_scan_job_record(
-            tenant_id=tenant_uuid,
-            total=len(media_items),
-            created_by_user_id=getattr(auth, "user_id", None),
+        media_ids, media_sources, media_items = _prepare_media_items(request)
+        total_media_items = len(media_items)
+        tenant_uuid = await _prepare_tenant_context(
+            request=request,
+            auth=auth,
+            session=session,
+            inline_processing=inline_processing,
         )
 
-        # Commit the job BEFORE the background task runs, so the task can find it
-        if session is not None:
-            await session.commit()
-
-        session_factory: async_sessionmaker[AsyncSession] | None = None
-        # Only use request-bound factory for testing (SQLite/in-memory)
-        # For Postgres, use the default factory to get fresh connections from the pool
-        if session is not None and getattr(session, "bind", None) is not None and not is_postgres(session):
-            session_factory = async_sessionmaker(bind=session.bind, expire_on_commit=False)
-
-        background_tasks.add_task(
-            chain_populate_and_process,
-            tenant_id=str(request.tenant_id),
-            job_id=str(job_id),
+        # NOTE: Tier-based batch limits removed for MVP (see progress-tracking-investigation-2026-01-20.md)
+        response = await _schedule_analysis(
+            background_tasks=background_tasks,
+            session=session,
+            scan_queue=scan_queue,
+            tenant_uuid=tenant_uuid,
             media_items=media_items,
             media_ids=media_ids,
             media_sources=media_sources,
-            scan_queue=scan_queue if not isinstance(scan_queue, ScanQueueService) else None,
-            session_factory=session_factory,
             inline_processing=inline_processing,
-            adapter_provider=get_shared_insightface_adapter if inline_processing else None,
+            auth=auth,
         )
-
-        total = len(media_items)
-        progress = JobProgressResponse(completed=0, total=total, phase="queued", images_processed=0, faces_found=0)
-        return JobStatusResponse(
-            id=str(job_id),
-            type=JobType.ANALYZE.value,
-            status="pending",
-            progress=progress,
-            started_at=datetime.now(tz=UTC),
-            finished_at=None,
-            message=f"Queueing 0/{total} items",
-        )
+        outcome = "queued"
+        return response
     except ProgrammingError as exc:
+        outcome = "programming_error"
         if _is_insufficient_privilege(exc):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="insufficient privileges") from exc
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
     except HTTPException:
+        outcome = "http_exception"
         raise
     except Exception as exc:  # pragma: no cover - stub fallback
+        outcome = "unexpected_exception"
         logger.exception("Unexpected error in analyze_media: %s", exc)
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
     finally:
+        logger.info(
+            "analyze_media_timing tenant_id=%s outcome=%s inline_processing=%s media_items=%d elapsed_ms=%.2f",
+            request.tenant_id,
+            outcome,
+            inline_processing,
+            total_media_items,
+            (_time.perf_counter() - started_at) * 1000,
+        )
         if session is not None and hasattr(session, "execute") and tenant_uuid and is_postgres(session):
             with contextlib.suppress(Exception):
                 await clear_tenant_context(session)
@@ -247,15 +308,6 @@ async def get_job_status(
     # Look up from database if we have a session
 
     if session is not None:
-        # Set tenant context for RLS
-        if tenant_id and is_postgres(session):
-            try:
-                tenant_uuid = uuid.UUID(str(tenant_id))
-                await ensure_tenant_exists(session, tenant_uuid)
-                await set_tenant_context(session, tenant_uuid)
-            except Exception:
-                pass  # Continue without RLS if context fails
-
         from recognition.infrastructure.repositories.job_repository import SqlAlchemyJobRepository
 
         repo = SqlAlchemyJobRepository(session)

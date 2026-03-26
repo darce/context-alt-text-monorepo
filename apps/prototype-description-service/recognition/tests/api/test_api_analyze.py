@@ -186,6 +186,65 @@ def test_get_job_status_surfaces_followup_clustering_job(monkeypatch, tenant_id:
     assert body["progress"]["clusters_created"] == 3
 
 
+def test_get_job_status_relies_on_dependency_tenant_setup_once(monkeypatch, tenant_id: str) -> None:
+    """The route should not redo tenant setup after get_optional_session has already done it."""
+    monkeypatch.setenv("RECOGNITION_AUTH_ENABLED", "0")
+
+    session = FakeSession()
+    scan_job_id = uuid.uuid4()
+    tenant_uuid = uuid.UUID(tenant_id)
+    scan_job = IdentityScanJob(
+        id=scan_job_id,
+        tenant_id=tenant_uuid,
+        status="running",
+        media_ids=[],
+        total_media=10,
+        processed_media=4,
+        identities_detected=2,
+        message="Queueing 4/10 items",
+    )
+    session.set_get_result(model_class=IdentityScanJob, pk=scan_job_id, value=scan_job)
+
+    setup_calls = {"count": 0}
+
+    async def _session_override():
+        setup_calls["count"] += 1
+        yield session
+
+    async def _ensure_tenant_exists(*_args, **_kwargs):
+        setup_calls["count"] += 1
+
+    async def _set_tenant_context(*_args, **_kwargs):
+        setup_calls["count"] += 1
+
+    class _NullJobService:
+        async def get_job_status(self, _job_id: str):
+            return None
+
+    async def _job_service_override():
+        return _NullJobService()
+
+    monkeypatch.setattr(
+        "recognition.interface_adapters.http.routers.analyze.ensure_tenant_exists",
+        _ensure_tenant_exists,
+    )
+    monkeypatch.setattr(
+        "recognition.interface_adapters.http.routers.analyze.set_tenant_context",
+        _set_tenant_context,
+    )
+
+    app = FastAPI()
+    app.include_router(recognition_router, prefix="/recognition")
+    app.dependency_overrides[dependencies.get_optional_session] = _session_override
+    app.dependency_overrides[dependencies.get_job_service_dependency] = _job_service_override
+
+    client = TestClient(app)
+    resp = client.get(f"/recognition/jobs/{scan_job_id}", params={"tenant_id": tenant_id})
+
+    assert resp.status_code == 200
+    assert setup_calls["count"] == 1
+
+
 def test_pipeline_response_exposes_retrying_phase_and_checkpoint_fields(monkeypatch, tenant_id: str) -> None:
     """GET /recognition/jobs/{scan_job_id} resolves to a retrying clustering job and exposes checkpoint metadata."""
     monkeypatch.setenv("RECOGNITION_AUTH_ENABLED", "0")

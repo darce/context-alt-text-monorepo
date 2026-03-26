@@ -518,3 +518,44 @@ async def test_backfill_surfaces_for_confirmed_clusters(monkeypatch) -> None:
     call_kwargs = call_args.kwargs
     assert call_kwargs["cluster_label"] == "Label A"
     assert set(call_kwargs["candidate_cluster_ids"]) == {"c-created", "c-fallback"}
+
+
+@pytest.mark.asyncio
+async def test_backfill_bootstraps_self_referential_suggestions_without_confirmed_labels() -> None:
+    tenant_id = "tenant-1"
+    repo = AsyncMock()
+    cluster_repo = AsyncMock()
+    cluster_repo.get_unlabeled_created_after = AsyncMock(return_value=[MagicMock(id="c-fallback")])
+    cluster_repo.get_confirmed_labeled = AsyncMock(return_value=[])
+    cluster_repo.get_members = AsyncMock(
+        side_effect=lambda cluster_id: [MagicMock(identity_id=f"{cluster_id}-identity")]
+    )
+
+    service = SuggestionRefreshService(
+        repository=repo,
+        tenant_id=tenant_id,
+        cluster_repository=cluster_repo,
+        session=AsyncMock(),
+    )
+
+    created = await service.backfill_for_new_unlabeled_clusters(
+        tenant_id=tenant_id,
+        created_cluster_ids=["c-created"],
+        fallback_window_minutes=30,
+    )
+
+    assert created == 2
+    assert repo.upsert_by_identity_cluster.await_count == 2
+    first_call = repo.upsert_by_identity_cluster.await_args_list[0]
+    second_call = repo.upsert_by_identity_cluster.await_args_list[1]
+    first_payload = first_call.args[1]
+    second_payload = second_call.args[1]
+    assert {first_payload.cluster_id, second_payload.cluster_id} == {"c-created", "c-fallback"}
+    assert {first_payload.identity_id, second_payload.identity_id} == {
+        "c-created-identity",
+        "c-fallback-identity",
+    }
+    assert first_payload.source == SuggestionRefreshReason.BOOTSTRAP.value
+    assert second_payload.source == SuggestionRefreshReason.BOOTSTRAP.value
+    assert first_payload.confidence_score == 1.0
+    assert second_payload.confidence_score == 1.0

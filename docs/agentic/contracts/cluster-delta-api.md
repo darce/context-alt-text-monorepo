@@ -46,7 +46,11 @@ Query params:
       "identity_count": 6,
       "representative_thumb_path": "acx://cluster/b43c2ab2-8d4f-42a8-9b2d-7f1d2e5a9b7a/media/101",
       "representative_id": "0a7b8331-bb7f-40c1-8f24-8c7e2b2d7c4f",
-      "is_pinned": true
+      "is_pinned": true,
+      "suggested_label": null,
+      "suggested_label_source": null,
+      "suggested_label_confidence": null,
+      "suggested_target_cluster_id": null
     }
   ],
   "members": [
@@ -82,6 +86,7 @@ Query params:
   - `representative_id` identifies the backend-selected representative
   - `is_pinned` carries explicit user pin state for that representative
 - Empty `clusters` and `members` with a newer `snapshot_version` means the backend observed a newer stream version but had no active cluster upserts to emit in this slice, such as when only disposed clusters changed.
+- `suggested_label` fields are ephemeral backend enrichments computed at read time by `infer_suggested_label`. They follow the same semantics as the full snapshot: only unlabeled, unconfirmed clusters may receive non-null values; all others carry null for all four fields. These fields are never curation-guarded and are always overwritten by each delta pull.
 
 ## Current Limitation
 

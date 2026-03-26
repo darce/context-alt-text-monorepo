@@ -75,6 +75,7 @@ These items apply regardless of language. Stack-specific items are in the langua
 - [ ] **No unreachable code** — dead branches inside conditionals.
 - [ ] **No duplicate field declarations** — Pydantic models, dataclasses.
 - [ ] **API contract alignment** — response schemas match `docs/agentic/contracts/`. New fields have tests.
+- [ ] **Boundary metadata preservation** — adapters/wrappers do not invent `limit`, `offset`, `total`, `data_source`, or similar envelope metadata; every field has a traceable source in the request, upstream payload, or documented fallback.
 - [ ] **Assertion intent matches layer** — assertions are used only for internal invariants/unreachable states, never as a substitute for boundary validation.
 - [ ] **Runtime dependency integrity** — no local type-only shims masking missing runtime packages; verify new imports with real build/test execution.
 - [ ] **Atomic mutation path preserved** — avoid splitting an existing atomic backend write flow into multiple client mutations without explicit architecture sign-off.
@@ -83,6 +84,7 @@ These items apply regardless of language. Stack-specific items are in the langua
 - [ ] **Interactive timeout parity** — related remote calls use a shared timeout helper and consistent timeout budgets.
 - [ ] **Import/restore payload validation** — malformed snapshot shapes fail fast with explicit errors (never silent success).
 - [ ] **Provenance preservation** — status/update operations do not overwrite original creator metadata.
+- [ ] **Single contract owner per boundary** — only one layer owns shape adaptation (for example backend array -> WordPress envelope). Downstream layers consume the canonical shape instead of carrying duplicate backward-compat fallbacks.
 
 ### Code Duplication
 
@@ -153,6 +155,13 @@ These items prevent the accumulation of structural debt documented in `docs/task
 - [ ] Transformation output matches method B's expected input type and format.
 - [ ] Error/null returns from B are checked by A.
 - [ ] Derivatives computed from the filtered set, not the original unfiltered input.
+
+**Envelope-wrapper sanity check:** When a boundary layer wraps a list payload into an envelope:
+
+- [ ] `limit` and `offset` come from the request or upstream paging contract, never from list length or hardcoded defaults.
+- [ ] `total` comes from the upstream contract when available; if it falls back to current page length, that fallback is explicitly documented and correct for the route.
+- [ ] Provenance fields such as `data_source`, `projection_status`, or `source` are copied from a real upstream value or set by a documented local authority path, not guessed ad hoc.
+- [ ] If the upstream payload unexpectedly arrives in a different shape than the boundary owns (for example an envelope where only a list is valid), the code fails explicitly instead of silently supporting multiple contradictory contracts.
 
 **Boundary value sweep:** For each function accepting numeric or collection inputs, mentally substitute empty, single element, and large (10k+) inputs.
 

@@ -43,6 +43,7 @@ Response (proxied from `/recognition/analyze`):
 ```
 
 Notes:
+
 - The plugin resolves `media_ids` to `{media_id, media_url}` before forwarding.
 - Batch limits are tier-based (default max 50 for free tier).
 
@@ -105,9 +106,10 @@ Response:
 
 ## GET /recognition/clusters
 
-List clusters.
+List clusters (local-first via sovereign projection).
 
 Query params:
+
 - `limit` (default 50, max 500)
 - `offset` (default 0)
 - `labeled_only` (`true` or omitted)
@@ -124,14 +126,17 @@ Response (array of clusters):
     "is_labeled": true,
     "is_auto_label": false,
     "identity_count": 5,
+    "user_confirmed": true,
     "suggested_label": null,
     "suggested_label_source": null,
     "suggested_label_confidence": null,
     "representatives": [
       {
         "id": "8f91f4e7-3ad9-4c31-9a12-9c86e8790e6a",
-        "media_id": "101",
+        "media_id": 101,
         "thumb_url": "https://example.test/uploads/101-thumb.jpg",
+        "media_url": "https://example.test/uploads/101.jpg",
+        "bbox": { "x": 45, "y": 60, "width": 120, "height": 120 },
         "is_pinned": false
       }
     ]
@@ -140,13 +145,77 @@ Response (array of clusters):
 ```
 
 Notes:
-- For unlabeled clusters, `label` is null and `suggested_label*` may be populated.
+
+- For unlabeled clusters, `label` may be a synthetic `cluster-*` prefix and `is_auto_label` is `true`.
+- `suggested_label*` fields may be populated for unlabeled clusters.
+- `user_confirmed` distinguishes user-curated labels from auto-generated ones.
+
+## GET /recognition/clusters/top-unlabeled
+
+List the largest unlabeled clusters for the naming queue.
+
+Query params:
+
+- `limit` (default 10)
+
+Response (envelope):
+
+```json
+{
+  "clusters": [
+    {
+      "id": "b43c2ab2-8d4f-42a8-9b2d-7f1d2e5a9b7a",
+      "tenant_id": "a9c2c2c0f6ef4a1f8d6d7a3f6c9b8e12",
+      "label": "cluster-a1b2c3d4",
+      "is_labeled": false,
+      "is_auto_label": true,
+      "identity_count": 8,
+      "user_confirmed": false,
+      "suggested_label": "Alice",
+      "suggested_label_source": "identity",
+      "suggested_label_confidence": 0.91,
+      "suggested_target_cluster_id": null,
+      "representatives": [
+        {
+          "id": "8f91f4e7-3ad9-4c31-9a12-9c86e8790e6a",
+          "media_id": 101,
+          "thumb_url": "https://example.test/uploads/101-thumb.jpg",
+          "media_url": "https://example.test/uploads/101.jpg",
+          "bbox": { "x": 45, "y": 60, "width": 120, "height": 120 },
+          "is_pinned": false
+        }
+      ]
+    }
+  ],
+  "singleton_count": 3,
+  "data_source": "local_projection",
+  "projection_status": "available"
+}
+```
+
+Notes:
+
+- Returns clusters from **sovereign local projection** only; does not proxy to backend when projection is unavailable.
+- When local projection is missing, schedules a bootstrap sync and returns an empty envelope with `data_source: "unavailable"` and `projection_status: "bootstrapping"`.
+- `singleton_count` reports the number of single-identity clusters excluded from the naming queue.
+- `projection_status` is `available` when local projection is readable, `bootstrapping` while the controller has scheduled bootstrap sync, and `unavailable` if a future controller path needs to surface a non-bootstrap projection failure.
+- Clusters with `identity_count < 2`, `is_user_confirmed = true`, or `dismissed_at` set are excluded.
+
+## GET /recognition/clusters/labels
+
+List distinct cluster labels for autocomplete / label search.
+
+Query params:
+
+- `search` (optional substring filter)
+- `limit` (default 50)
 
 ## GET /recognition/media-identities
 
 Return identities grouped by `media_id`.
 
 Query params:
+
 - `media_ids[]` (1-100 attachment IDs)
 - `include_debug` (optional)
 
@@ -164,7 +233,7 @@ Response:
         "is_auto_label": false,
         "bbox": { "x": 45, "y": 60, "width": 120, "height": 120 },
         "confidence": 0.98,
-        "thumbnail_url": "https://example.test/uploads/101-thumb.jpg",
+        "thumb_url": "https://example.test/uploads/101-thumb.jpg",
         "media_url": "https://example.test/uploads/101.jpg",
         "debug_metrics": {
           "pose": { "pitch": 5.0, "yaw": -2.0, "roll": 1.0 },
@@ -178,11 +247,16 @@ Response:
           "similarity_threshold": null,
           "match_similarity": null,
           "representative_count": 3,
-          "pose_buckets": { "filled": 3, "total": 13, "current_bucket": [0, -1] }
+          "pose_buckets": {
+            "filled": 3,
+            "total": 13,
+            "current_bucket": [0, -1]
+          }
         }
       }
     ]
-  }
+  },
+  "data_source": "local_projection"
 }
 ```
 
@@ -271,6 +345,23 @@ Response (async):
 }
 ```
 
+## PATCH /recognition/clusters/{cluster_id}/representatives/{representative_id}/pin
+
+Pin or unpin a representative identity within a cluster.
+
+Request body:
+
+```json
+{ "pinned": true }
+```
+
+Response: `200` with updated representative object.
+
+Notes:
+
+- Registered in `ClusterMutationsController`.
+- Pinned representatives are excluded from automatic representative rotation.
+
 ## POST /recognition/clusters/create-for-identity
 
 Create a new labeled cluster for a single identity.
@@ -313,61 +404,161 @@ Response:
 
 ## GET /recognition/suggestions
 
-List pending suggestions.
+List pending assignment suggestions.
 
 Query params:
+
 - `limit` (default 10)
 - `offset` (default 0)
 
-Response:
+Response (envelope):
 
 ```json
-[
-  {
-    "id": "...",
-    "identity_id": "...",
-    "cluster_id": "...",
-    "rep_similarity": 0.92,
-    "member_similarity": 0.92,
-    "status": "pending",
-    "cluster_label": null,
-    "cluster_identity_count": 5,
-    "suggested_label": "Alice",
-    "suggested_label_source": "identity",
-    "suggested_label_confidence": 0.91,
-    "identity_media_id": 123,
-    "identity_media_url": "https://...",
-    "identity_thumbnail_url": "https://...",
-    "identity_bbox": { "x": 10, "y": 20, "width": 120, "height": 120 },
-    "representative_media_id": 456,
-    "representative_media_url": "https://...",
-    "representative_thumbnail_url": "https://...",
-    "representative_bbox": { "x": 14, "y": 18, "width": 118, "height": 118 },
-    "cluster_thumbnails": [
-      "https://example.test/uploads/102-thumb.jpg",
-      "https://example.test/uploads/103-thumb.jpg"
-    ]
-  }
-]
+{
+  "suggestions": [
+    {
+      "id": "...",
+      "identity_id": "...",
+      "suggested_cluster_id": "...",
+      "representative_similarity": 0.92,
+      "avg_member_similarity": 0.9,
+      "confidence_score": 0.91,
+      "resolution": "pending",
+      "cluster_label": null,
+      "cluster_identity_count": 5,
+      "suggested_label": "Alice",
+      "suggested_label_source": "identity",
+      "suggested_label_confidence": 0.91,
+      "identity_media_id": 123,
+      "identity_media_url": "https://...",
+      "identity_thumb_url": "https://...",
+      "identity_bbox": { "x": 10, "y": 20, "width": 120, "height": 120 },
+      "representative_media_id": 456,
+      "representative_media_url": "https://...",
+      "representative_thumb_url": "https://...",
+      "representative_bbox": { "x": 14, "y": 18, "width": 118, "height": 118 }
+    }
+  ],
+  "total": 1,
+  "limit": 10,
+  "offset": 0,
+  "data_source": "backend_proxy"
+}
 ```
 
 Notes:
+
 - `cluster_label` is null for unlabeled clusters; use `suggested_label*` for copy if present.
+- `total` reports the number of items in the current page only, derived from the backend array length. The backend does not provide a global total count, so consumers must not treat `total` as server-side pagination metadata.
+- When proxy is unavailable, the controller returns `{ "suggestions": [], "total": 0, "limit": <requested>, "offset": <requested>, "data_source": "unavailable" }` with HTTP 200.
+- TypeScript type: `PendingSuggestion` in `js/admin/api/recognition/types/suggestion.ts`.
+- Field names use `suggested_cluster_id` (not `cluster_id`), `representative_similarity` (not `rep_similarity`), and `*_thumb_url` (not `*_thumbnail_url`).
+
+## GET /recognition/suggestions/merge
+
+List pending merge suggestions.
+
+Query params:
+
+- `limit` (default 10)
+- `offset` (default 0)
+
+Response (envelope):
+
+```json
+{
+  "suggestions": [
+    {
+      "id": "...",
+      "cluster_a_id": "...",
+      "cluster_b_id": "...",
+      "similarity": 0.88,
+      "status": "pending",
+      "confidence_score": 0.85,
+      "cluster_a_label": "Alice",
+      "cluster_b_label": null,
+      "cluster_a_identity_count": 5,
+      "cluster_b_identity_count": 3,
+      "cluster_a_representative_thumb_url": "https://...",
+      "cluster_b_representative_thumb_url": "https://..."
+    }
+  ],
+  "total": 1,
+  "limit": 10,
+  "offset": 0,
+  "data_source": "backend_proxy"
+}
+```
+
+Notes:
+
+- The WordPress proxy wraps the backend's bare-array merge-suggestion response into this envelope.
+- `total` reports the number of items in the current page only, derived from the backend array length. The backend does not provide a global total count, so consumers must not treat `total` as server-side pagination metadata.
+- When proxy is unavailable, the controller returns `{ "suggestions": [], "total": 0, "limit": <requested>, "offset": <requested>, "data_source": "unavailable" }` with HTTP 200.
+
+## GET /recognition/suggestions/name
+
+List pending name suggestions.
+
+Query params:
+
+- `min_confidence` (default 0.0)
+- `limit` (default 25)
+- `offset` (default 0)
+
+Response (envelope):
+
+```json
+{
+  "suggestions": [
+    {
+      "id": "...",
+      "cluster_id": "...",
+      "suggested_name": "Alice",
+      "confidence_score": 0.88,
+      "source": "roster",
+      "created_at": "2026-03-25T12:00:00Z",
+      "expires_at": null,
+      "representatives": []
+    }
+  ],
+  "total": 1,
+  "limit": 25,
+  "offset": 0,
+  "data_source": "backend_proxy"
+}
+```
+
+Notes:
+
+- The WordPress proxy wraps the backend's bare-array name-suggestion response into this envelope.
+- `total` reports the number of items in the current page only, derived from the backend array length. The backend does not provide a global total count, so consumers must not treat `total` as server-side pagination metadata.
+- `representatives` is optional; current UI types allow it but the proxy may omit it when the backend response does not supply representative context.
+- When proxy is unavailable, the controller returns `{ "suggestions": [], "total": 0, "limit": <requested>, "offset": <requested>, "data_source": "unavailable" }` with HTTP 200.
 
 ## POST /recognition/suggestions/{suggestion_id}/accept
+
 ## POST /recognition/suggestions/{suggestion_id}/reject
 
-Accept or reject a suggestion. Response mirrors `SuggestionResponse`.
+Accept or reject an assignment suggestion.
+
+## POST /recognition/suggestions/merge/{suggestion_id}/accept
+
+## POST /recognition/suggestions/merge/{suggestion_id}/reject
+
+Accept or reject a merge suggestion.
+
+## POST /recognition/suggestions/name/{suggestion_id}/accept
+
+## POST /recognition/suggestions/name/{suggestion_id}/reject
+
+Accept or reject a name suggestion.
 
 ## Known proxy gaps
 
-The following proxy routes exist in WordPress but the backend endpoints are not
-implemented in the recognition service yet (expect 404 until wired):
+The following backend endpoints exist but lack WordPress proxy routes:
 
-- `GET /recognition/clusters/labels`
-
-The recognition service does support representative pinning, but the WordPress
-proxy does not currently expose it.
+- `POST /recognition/clusters/recover-orphans` (direct backend call only)
 
 ## Related contracts
 

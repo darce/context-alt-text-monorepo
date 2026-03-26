@@ -40,6 +40,7 @@ Request body:
 Response: `JobStatusResponse`.
 
 Notes:
+
 - `media_items` is preferred. `media_ids` is accepted for tests and stub detectors.
 - When `RECOGNITION_ASYNC_ANALYZE_INLINE=0`, Postgres requires a running scan
   worker or the service returns 503.
@@ -47,6 +48,7 @@ Notes:
 ### GET /recognition/jobs/{job_id}
 
 Query params:
+
 - `tenant_id` (required for Postgres/RLS)
 
 Response: `JobStatusResponse`.
@@ -54,6 +56,7 @@ Response: `JobStatusResponse`.
 ### POST /recognition/jobs/{job_id}/cancel
 
 Query params:
+
 - `tenant_id` (required for Postgres/RLS)
 
 Response: `JobStatusResponse`.
@@ -69,6 +72,7 @@ Request body:
 ```
 
 Response:
+
 - `sync` mode returns `ClusteringJobStatusResponse` with `clusters_created`.
 - `async` mode returns a queued job status.
 
@@ -97,6 +101,7 @@ Response:
 ### GET /recognition/clusters
 
 Query params:
+
 - `tenant_id` (header or query)
 - `limit` (default 50)
 - `offset` (default 0)
@@ -107,6 +112,7 @@ Query params:
 Response: `ClusterResponse[]`.
 
 ClusterResponse fields (abridged):
+
 - `id`, `tenant_id`, `label`, `is_labeled`, `is_auto_label`, `identity_count`, `representatives`
 - `suggested_label` (nullable; best-effort label inference for unlabeled clusters)
 - `suggested_label_source` (`identity` | `roster` | `similar_cluster` | `none` | null)
@@ -115,14 +121,18 @@ ClusterResponse fields (abridged):
 ### GET /recognition/clusters/top-unlabeled
 
 Query params:
+
 - `tenant_id` (header or query)
 - `limit` (default 10)
+- `min_identity_count` (default 2, minimum 1; filters out singletons by default)
 
 Response: `ClusterResponse[]`.
 
 Notes:
-- Returns clusters from the **latest clustering run** (current batch).
-- Falls back to tenant-wide unlabeled clusters if no run data exists.
+
+- Returns clusters using **tenant-wide size-priority selection**: largest unlabeled clusters across the entire tenant, ordered by `identity_count` descending, then `created_at` descending.
+- Excluded: clusters with `user_confirmed = true`, `dismissed_at` set, `identity_count < min_identity_count`, or auto-generated `cluster-*` labels that have been confirmed.
+- The `min_identity_count` filter defaults to 2, which excludes singletons from the naming queue.
 - `representatives` objects include `thumb_url` for UI display.
 
 ### PATCH /recognition/clusters/{cluster_id}
@@ -170,6 +180,7 @@ Request body:
 ```
 
 Response:
+
 - `SplitClusterResponse` for sync
 - `AsyncSplitClusterResponse` for async
 
@@ -217,6 +228,7 @@ Response: 204 No Content.
 ### GET /recognition/suggestions
 
 Query params:
+
 - `tenant_id` (header or query)
 - `limit` (default 50)
 - `offset` (default 0)
@@ -239,28 +251,95 @@ Response example:
     "suggested_label": "Alice",
     "suggested_label_source": "identity",
     "suggested_label_confidence": 0.91,
+    "confidence_score": 0.91,
+    "expires_at": null,
+    "source_job_id": "...",
     "identity_media_id": 123,
     "identity_media_url": "https://...",
-    "identity_thumbnail_url": "https://...",
     "identity_bbox": { "x": 10, "y": 20, "width": 120, "height": 120 },
+    "representative_media_id": 456,
     "representative_media_url": "https://...",
-    "representative_thumbnail_url": "https://...",
-    "representative_bbox": { "x": 14, "y": 18, "width": 118, "height": 118 },
-    "cluster_thumbnails": [
-      "https://example.test/uploads/102-thumb.jpg",
-      "https://example.test/uploads/103-thumb.jpg"
-    ]
+    "representative_bbox": { "x": 14, "y": 18, "width": 118, "height": 118 }
   }
 ]
 ```
 
 Notes:
+
 - `cluster_label` is null when the cluster is unlabeled.
 - `suggested_label*` fields are best-effort and may be null when no reliable source exists.
+
+### GET /recognition/suggestions/merge
+
+Query params:
+
+- `tenant_id` (header or query)
+- `limit` (default 50)
+- `offset` (default 0)
+
+Response: `MergeSuggestionResponse[]`.
+
+Response example:
+
+```json
+[
+  {
+    "id": "...",
+    "cluster_a_id": "...",
+    "cluster_b_id": "...",
+    "similarity": 0.88,
+    "status": "pending",
+    "cluster_a_label": "Alice",
+    "cluster_b_label": null,
+    "cluster_a_identity_count": 5,
+    "cluster_b_identity_count": 3,
+    "cluster_a_representative_media_id": 123,
+    "cluster_a_representative_media_url": "https://...",
+    "cluster_a_representative_bbox": { "x": 10, "y": 20, "width": 120, "height": 120 },
+    "cluster_b_representative_media_id": 456,
+    "cluster_b_representative_media_url": "https://...",
+    "cluster_b_representative_bbox": { "x": 14, "y": 18, "width": 118, "height": 118 },
+    "confidence_score": 0.88,
+    "expires_at": null,
+    "source_job_id": "..."
+  }
+]
+```
+
+### GET /recognition/suggestions/name
+
+Query params:
+
+- `tenant_id` (header or query)
+- `limit` (default 50)
+- `offset` (default 0)
+- `min_confidence` (optional)
+
+Response: `NameSuggestionResponse[]`.
+
+Response example:
+
+```json
+[
+  {
+    "id": "...",
+    "cluster_id": "...",
+    "suggested_name": "Alice",
+    "source": "roster",
+    "status": "pending",
+    "confidence_score": 0.88,
+    "source_job_id": "...",
+    "created_at": "2026-03-25T12:00:00Z",
+    "expires_at": null,
+    "resolved_at": null
+  }
+]
+```
 
 ### GET /recognition/identities/{identity_id}/suggestions
 
 Query params:
+
 - `tenant_id` (header or query)
 
 Response:
@@ -279,6 +358,7 @@ Response:
 ```
 
 ### POST /recognition/suggestions/{suggestion_id}/accept
+
 ### POST /recognition/suggestions/{suggestion_id}/reject
 
 Request body:
@@ -294,6 +374,7 @@ Response: `SuggestionResponse`.
 ### GET /recognition/media/identities
 
 Query params:
+
 - `tenant_id` (header or query)
 - `media_ids` (accepts `media_ids`, `media_ids[]`, or `media_ids[0]` style)
 - `include_debug` (optional)

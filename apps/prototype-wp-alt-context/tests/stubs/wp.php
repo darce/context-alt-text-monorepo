@@ -219,6 +219,54 @@ if (!class_exists('WP_CLI_Command')) {
     class WP_CLI_Command {}
 }
 
+if (!class_exists('CaseInsensitiveDictionary')) {
+    class CaseInsensitiveDictionary implements \ArrayAccess, \IteratorAggregate
+    {
+        /** @var array<string,mixed> */
+        private array $items;
+
+        /**
+         * @param array<string,mixed> $items
+         */
+        public function __construct(array $items = [])
+        {
+            $this->items = [];
+            foreach ($items as $key => $value) {
+                $this->items[strtolower((string) $key)] = $value;
+            }
+        }
+
+        public function offsetExists(mixed $offset): bool
+        {
+            return isset($this->items[strtolower((string) $offset)]);
+        }
+
+        public function offsetGet(mixed $offset): mixed
+        {
+            return $this->items[strtolower((string) $offset)] ?? null;
+        }
+
+        public function offsetSet(mixed $offset, mixed $value): void
+        {
+            if ($offset === null) {
+                return;
+            }
+
+            $this->items[strtolower((string) $offset)] = $value;
+        }
+
+        public function offsetUnset(mixed $offset): void
+        {
+            unset($this->items[strtolower((string) $offset)]);
+        }
+
+        public function getIterator(): \Traversable
+        {
+            return new \ArrayIterator($this->items);
+        }
+    }
+}
+
 if (!class_exists('WP_CLI')) {
     class WP_CLI
     {
@@ -1398,6 +1446,17 @@ if (!function_exists('wp_remote_retrieve_body')) {
         }
 
         return '';
+    }
+}
+
+if (!function_exists('wp_remote_retrieve_headers')) {
+    function wp_remote_retrieve_headers($response)
+    {
+        if (is_array($response) && isset($response['headers']) && is_array($response['headers'])) {
+            return new CaseInsensitiveDictionary($response['headers']);
+        }
+
+        return new CaseInsensitiveDictionary();
     }
 }
 

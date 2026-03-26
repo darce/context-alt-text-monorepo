@@ -200,6 +200,9 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			array(),
 			$query
 		);
+		if ( $this->is_backend_overloaded( $response ) ) {
+			return parent::backend_overloaded_response( $response );
+		}
 		if ( $this->is_proxy_unavailable( $response ) ) {
 			return new WP_REST_Response(
 				array(
@@ -226,6 +229,9 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			$query,
 			self::REQUEST_CLASS_POST_SCAN_READ
 		);
+		if ( $this->is_backend_overloaded( $response ) ) {
+			return parent::backend_overloaded_response( $response );
+		}
 		if ( $this->is_proxy_unavailable( $response ) ) {
 			return $this->empty_pending_suggestions_response( (int) $query['limit'], (int) $query['offset'] );
 		}
@@ -247,6 +253,9 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			$query,
 			self::REQUEST_CLASS_POST_SCAN_READ
 		);
+		if ( $this->is_backend_overloaded( $response ) ) {
+			return parent::backend_overloaded_response( $response );
+		}
 		if ( $this->is_proxy_unavailable( $response ) ) {
 			return $this->empty_pending_suggestions_response( (int) $query['limit'], (int) $query['offset'] );
 		}
@@ -341,6 +350,9 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			$query,
 			self::REQUEST_CLASS_POST_SCAN_READ
 		);
+		if ( $this->is_backend_overloaded( $response ) ) {
+			return parent::backend_overloaded_response( $response );
+		}
 		if ( $this->is_proxy_unavailable( $response ) ) {
 			return $this->empty_pending_name_suggestions_response( (int) $query['limit'], (int) $query['offset'] );
 		}
@@ -401,6 +413,9 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			'/recognition/suggestions/bulk-accept',
 			$payload
 		);
+		if ( $this->is_backend_overloaded( $response ) ) {
+			return parent::backend_overloaded_response( $response );
+		}
 		if ( $this->is_proxy_unavailable( $response ) ) {
 			return new WP_REST_Response(
 				array(
@@ -413,7 +428,6 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 
 		return $response;
 	}
-
 	private function empty_pending_suggestions_response( int $limit, int $offset ): WP_REST_Response {
 		return new WP_REST_Response(
 			array(

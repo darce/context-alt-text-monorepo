@@ -101,6 +101,9 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 		}
 
 		$response = $this->proxy_request( 'GET', '/recognition/media/identities', array(), $query, self::REQUEST_CLASS_POST_SCAN_READ );
+		if ( $this->is_backend_overloaded( $response ) ) {
+			return parent::backend_overloaded_response( $response );
+		}
 		if ( $this->is_proxy_unavailable( $response ) ) {
 			return new WP_REST_Response(
 				array(

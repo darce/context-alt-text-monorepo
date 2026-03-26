@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\ClusterMutationsController;
+use AltContext\Api\MediaIdentitiesController;
 use AltContext\Api\RecognitionController;
 use AltContext\Tests\TestCase;
 use AltContext\Tests\Stubs\NullClustersRepository;
@@ -58,6 +59,7 @@ class RecognitionControllerTest extends TestCase
     public function testDefaultCompositionWiresSyncJobAndSharedSyncStateRepository(): void
     {
         $controller = new RecognitionController();
+        $controller->register_routes();
         $recognitionReflection = new \ReflectionClass($controller);
 
         $clustersControllerProperty = $recognitionReflection->getProperty('clustersController');
@@ -263,6 +265,28 @@ class RecognitionControllerTest extends TestCase
         $this->assertNotNull($this->findRegisteredRoute('/retention/policy', 'PATCH'));
         $this->assertNotNull($this->findRegisteredRoute('/retention/export', 'POST'));
         $this->assertNotNull($this->findRegisteredRoute('/retention/purge', 'POST'));
+    }
+
+    public function testRegisterRoutesContinuesWhenAProxyBackedControllerFailsToRegister(): void
+    {
+        $controller = new RecognitionController(
+            null,
+            null,
+            null,
+            null,
+            new class() extends MediaIdentitiesController {
+                public function register_routes(): void
+                {
+                    throw new \RuntimeException('media identities broken');
+                }
+            }
+        );
+
+        $controller->register_routes();
+
+        $this->assertNotNull($this->findRegisteredRoute('/recognition/analyze', 'POST'));
+        $this->assertNotNull($this->findRegisteredRoute('/recognition/jobs/(?P<job_id>[a-f0-9-]+)', 'GET'));
+        $this->assertNull($this->findRegisteredRoute('/recognition/media-identities', 'GET'));
     }
 
     public function testRegisterRoutesDoesNotExposeRemovedSurfaces(): void
@@ -625,6 +649,11 @@ class RecognitionControllerClusterMutationsRepositorySpy extends NullClustersRep
         return $this->localClusterRows[$cluster_uuid] ?? null;
     }
 
+    public function has_projection_rows_for_tenant(string $tenant_id): bool
+    {
+        return ! empty($this->localClusterRows);
+    }
+
     public function seedCluster(string $cluster_uuid, int $snapshot_version, int $local_revision): void
     {
         $this->localClusterRows[$cluster_uuid] = [
@@ -683,6 +712,11 @@ class RecognitionControllerSyncStateRepositorySpy extends NullSyncStateRepositor
 
 class RecognitionControllerIdentityMembersRepositorySpy extends NullIdentityMembersRepository
 {
+    public function has_projection_rows_for_tenant(string $tenant_id): bool
+    {
+        return true;
+    }
+
     public function reassign_to_cluster(string $identity_uuid, string $target_cluster_uuid): int
     {
         return 1;

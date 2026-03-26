@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/class-recognition-proxy-policy.php';
+
+use Traversable;
 use WP_Error;
 use WP_REST_Response;
 
@@ -26,10 +29,13 @@ use function untrailingslashit;
 use function wp_json_encode;
 use function wp_remote_request;
 use function wp_remote_retrieve_body;
+use function wp_remote_retrieve_headers;
 use function wp_remote_retrieve_response_code;
 use function trim;
 
 abstract class AbstractRecognitionProxyController implements RecognitionRouteControllerInterface {
+	private ?RecognitionProxyPolicy $proxy_policy = null;
+
 	public function can_manage_recognition(): bool {
 		return current_user_can( 'manage_options' );
 	}
@@ -63,7 +69,7 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			$headers['X-API-Key'] = $api_key;
 		}
 
-		$policy = $this->resolve_request_policy( $method, $request_class );
+		$policy = $this->get_proxy_policy()->resolve( $method, $request_class );
 		$circuit_key = $this->build_circuit_breaker_key( $base_url );
 		$failure_key = $circuit_key . '_failures';
 
@@ -115,7 +121,8 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			}
 
 			$response_body = wp_remote_retrieve_body( $response );
-			return new WP_REST_Response( json_decode( $response_body, true ), $status );
+			$response_headers = wp_remote_retrieve_headers( $response );
+			return new WP_REST_Response( json_decode( $response_body, true ), $status, $this->normalize_response_headers( $response_headers ) );
 		}
 
 		return $last_error ?? new WP_Error( 'proxy_failed', 'Request failed after retries.', array( 'status' => 502 ) );
@@ -217,6 +224,43 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		return $response->get_status() >= 500;
 	}
 
+	protected function is_backend_overloaded( WP_REST_Response|WP_Error $response ): bool {
+		return ! is_wp_error( $response ) && 503 === $response->get_status();
+	}
+
+	protected function get_retry_after_seconds( WP_REST_Response|WP_Error $response ): ?int {
+		if ( ! $response instanceof WP_REST_Response ) {
+			return null;
+		}
+
+		$headers = $response->get_headers();
+		$retry_after = $headers['Retry-After'] ?? $headers['retry-after'] ?? null;
+		if ( is_string( $retry_after ) && '' !== trim( $retry_after ) && is_numeric( $retry_after ) ) {
+			return max( 1, (int) $retry_after );
+		}
+
+		if ( is_int( $retry_after ) ) {
+			return max( 1, $retry_after );
+		}
+
+		return null;
+	}
+
+	protected function backend_overloaded_response( WP_REST_Response|WP_Error $response ): WP_REST_Response {
+		$retry_after = $this->get_retry_after_seconds( $response );
+		$headers = array();
+		if ( null !== $retry_after ) {
+			$headers['Retry-After'] = (string) $retry_after;
+		}
+
+		$payload = array( 'error' => 'backend_overloaded' );
+		if ( null !== $retry_after ) {
+			$payload['retry_after'] = $retry_after;
+		}
+
+		return new WP_REST_Response( $payload, 503, $headers );
+	}
+
 	protected function is_projection_stale( ?string $updated_at ): bool {
 		if ( ! is_string( $updated_at ) || '' === trim( $updated_at ) ) {
 			return true;
@@ -235,48 +279,55 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		return $age > $threshold;
 	}
 
+	protected function get_proxy_policy(): RecognitionProxyPolicy {
+		if ( null === $this->proxy_policy ) {
+			$this->proxy_policy = new RecognitionProxyPolicy();
+		}
+
+		return $this->proxy_policy;
+	}
+
 	/**
-	 * @return array{timeout_seconds:int,max_retries:int,base_delay_ms:int,circuit_enabled:bool}
+	 * @return array<string,string>
 	 */
-	private function resolve_request_policy( string $method, string $request_class ): array {
-		$normalized_class = trim( strtolower( $request_class ) );
-		if ( 'auto' === $normalized_class ) {
-			$normalized_class = 'GET' === strtoupper( $method ) ? 'ui_read' : 'mutation';
-		}
-
-		if ( 'background_sync' === $normalized_class ) {
-			return array(
-				'timeout_seconds' => (int) apply_filters( 'acx_proxy_timeout_background_sync_seconds', 30 ),
-				'max_retries' => (int) apply_filters( 'acx_proxy_max_retries_background_sync', 3 ),
-				'base_delay_ms' => (int) apply_filters( 'acx_proxy_backoff_base_ms_background_sync', 500 ),
-				'circuit_enabled' => false,
-			);
-		}
-
-		if ( 'ui_read' === $normalized_class ) {
-			return array(
-				'timeout_seconds' => (int) apply_filters( 'acx_proxy_timeout_ui_read_seconds', 2 ),
-				'max_retries' => (int) apply_filters( 'acx_proxy_max_retries_ui_read', 1 ),
-				'base_delay_ms' => (int) apply_filters( 'acx_proxy_backoff_base_ms_ui_read', 0 ),
-				'circuit_enabled' => true,
-			);
-		}
-
-		if ( 'post_scan_read' === $normalized_class ) {
-			return array(
-				'timeout_seconds' => (int) apply_filters( 'acx_proxy_timeout_post_scan_read_seconds', 10 ),
-				'max_retries' => (int) apply_filters( 'acx_proxy_max_retries_post_scan_read', 1 ),
-				'base_delay_ms' => (int) apply_filters( 'acx_proxy_backoff_base_ms_post_scan_read', 0 ),
-				'circuit_enabled' => false,
-			);
-		}
-
-		return array(
-			'timeout_seconds' => (int) apply_filters( 'acx_proxy_timeout_mutation_seconds', 60 ),
-			'max_retries' => (int) apply_filters( 'acx_proxy_max_retries_mutation', 3 ),
-			'base_delay_ms' => (int) apply_filters( 'acx_proxy_backoff_base_ms_mutation', 500 ),
-			'circuit_enabled' => false,
+	private function normalize_response_headers( mixed $response_headers ): array {
+		$allowed_headers = array(
+			'retry-after' => 'Retry-After',
 		);
+
+		if ( is_array( $response_headers ) ) {
+			return $this->filter_forwarded_response_headers( $response_headers, $allowed_headers );
+		}
+
+		if ( $response_headers instanceof Traversable ) {
+			$normalized = array();
+			foreach ( $response_headers as $key => $value ) {
+				$normalized[ (string) $key ] = $value;
+			}
+
+			return $this->filter_forwarded_response_headers( $normalized, $allowed_headers );
+		}
+
+		return array();
+	}
+
+	/**
+	 * @param array<string,mixed> $response_headers
+	 * @param array<string,string> $allowed_headers
+	 * @return array<string,string>
+	 */
+	private function filter_forwarded_response_headers( array $response_headers, array $allowed_headers ): array {
+		$normalized = array();
+		foreach ( $response_headers as $key => $value ) {
+			$lookup = strtolower( trim( (string) $key ) );
+			if ( '' === $lookup || ! isset( $allowed_headers[ $lookup ] ) ) {
+				continue;
+			}
+
+			$normalized[ $allowed_headers[ $lookup ] ] = (string) $value;
+		}
+
+		return $normalized;
 	}
 
 	private function build_circuit_breaker_key( string $base_url ): string {

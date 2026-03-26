@@ -82,6 +82,34 @@ class MediaIdentitiesControllerTest extends TestCase
         $this->assertSame('unavailable', $data['data_source'] ?? null);
     }
 
+    public function testMediaIdentitiesPropagatesBackendOverloadedAs503(): void
+    {
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_media_ids(string $tenant_id, array $media_ids): array {
+                return [];
+            }
+        };
+
+        $syncRepo = new NullSyncStateRepository();
+
+        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
+        $this->queueHttpResponse([
+            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+            'headers' => ['Retry-After' => '5'],
+            'body' => '{"error":"database_unavailable","trace_id":"trace-1","path":"/recognition/media/identities"}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/media-identities');
+        $request->set_param('media_ids', [22, 23]);
+
+        $response = $controller->get_media_identities($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(503, $response->get_status());
+        $this->assertSame(['error' => 'backend_overloaded', 'retry_after' => 5], $response->get_data());
+        $this->assertSame('5', $response->get_headers()['Retry-After'] ?? null);
+    }
+
     public function testMediaIdentitiesAnnotatesBackendProxyResponses(): void
     {
         $membersRepo = new class() extends NullIdentityMembersRepository {

@@ -90,6 +90,40 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame('unavailable', $data['data_source'] ?? null);
     }
 
+    public function testBackendOverloadedDetectionMatchesOnlyHttp503Responses(): void
+    {
+        $controller = new class() extends SuggestionsController {
+            public function detectBackendOverloaded($response): bool
+            {
+                return $this->is_backend_overloaded($response);
+            }
+        };
+
+        $this->assertTrue($controller->detectBackendOverloaded(new \WP_REST_Response([], 503)));
+        $this->assertFalse($controller->detectBackendOverloaded(new \WP_REST_Response([], 500)));
+        $this->assertFalse($controller->detectBackendOverloaded(new \WP_Error('proxy_failed', 'Proxy failure.')));
+    }
+
+    public function testGetPendingSuggestionsPropagatesBackendOverloadedAs503(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 503, 'message' => 'Service Unavailable'],
+            'headers' => ['Retry-After' => '5'],
+            'body' => '{"error":"database_unavailable","trace_id":"trace-1","path":"/recognition/suggestions"}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/suggestions');
+        $request->set_param('limit', 25);
+        $request->set_param('offset', 0);
+
+        $response = $this->controller->get_pending_suggestions($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(503, $response->get_status());
+        $this->assertSame(['error' => 'backend_overloaded', 'retry_after' => 5], $response->get_data());
+        $this->assertSame('5', $response->get_headers()['Retry-After'] ?? null);
+    }
+
     public function testGetPendingMergeSuggestionsReturnsEmptyPayloadWhenProxyUnavailable(): void
     {
         $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));

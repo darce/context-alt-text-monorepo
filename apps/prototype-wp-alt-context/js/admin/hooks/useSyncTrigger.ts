@@ -26,6 +26,7 @@ export const useSyncTrigger = (isStale: boolean, autoTrigger = false) => {
         void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
         void queryClient.invalidateQueries({ queryKey: queryKeys.sync.all });
         void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.all });
       }
     },
   });

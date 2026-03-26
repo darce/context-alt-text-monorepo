@@ -36,7 +36,7 @@ export const scanFaces = async (request: AnalyzeRequest): Promise<AnalyzeRespons
     method: 'POST',
     body,
     restNonce: getConfig().nonce,
-    signal: createRecognitionTimeoutSignal(5_000),
+    signal: createRecognitionTimeoutSignal(30_000),
   });
 };
 
@@ -62,7 +62,7 @@ export const fetchScanStatus = async (jobId: string): Promise<JobStatusResponse>
   return fetchRequiredApi<JobStatusResponse>(`${base}${separator}${jobId}`, {
     method: 'GET',
     restNonce: getConfig().nonce,
-    signal: createRecognitionTimeoutSignal(2_000),
+    signal: createRecognitionTimeoutSignal(15_000),
   });
 };
 
@@ -73,7 +73,7 @@ export const cancelScanJob = async (jobId: string): Promise<JobStatusResponse> =
   return fetchRequiredApi<JobStatusResponse>(`${base}${separator}${jobId}/cancel`, {
     method: 'POST',
     restNonce: getConfig().nonce,
-    signal: createRecognitionTimeoutSignal(5_000),
+    signal: createRecognitionTimeoutSignal(15_000),
   });
 };
 
@@ -90,7 +90,9 @@ export const acknowledgeProjection = async (
       method: 'POST',
       body: { snapshot_version: snapshotVersion },
       restNonce: getConfig().nonce,
-      signal: createRecognitionTimeoutSignal(5_000),
+      // Projection acknowledgement can legitimately take longer than a
+      // client round-trip during curation, so keep the browser timeout wide.
+      signal: createRecognitionTimeoutSignal(30_000),
     },
   );
 };
@@ -104,6 +106,6 @@ export const clusterFaces = async (mode: 'sync' | 'async' = 'async'): Promise<Cl
       mode,
     },
     restNonce: getConfig().nonce,
-    signal: createRecognitionTimeoutSignal(5_000),
+    signal: createRecognitionTimeoutSignal(15_000),
   });
 };

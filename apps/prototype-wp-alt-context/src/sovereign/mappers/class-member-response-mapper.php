@@ -64,6 +64,11 @@ class MemberResponseMapper {
 			$is_pinned = true;
 		}
 
+		$cluster_label  = $this->normalize_cluster_label( $member_row );
+		$is_auto_label  = '' !== (string) $cluster_label
+			&& ! $this->normalize_boolean_value( $member_row['is_user_confirmed'] ?? false )
+			&& $this->looks_like_system_defined_label( (string) $cluster_label );
+
 		return array(
 			'identity_id' => $identity_id,
 			'media_id' => $media_id,
@@ -74,8 +79,8 @@ class MemberResponseMapper {
 			'thumb_url'     => $this->resolve_thumb_url( $member_row, $media_id ),
 			'media_url'     => $this->resolve_media_url( $media_id ),
 			'cluster_id' => $this->normalize_cluster_id( $member_row ),
-			'cluster_label' => $this->normalize_cluster_label( $member_row ),
-			'is_auto_label' => false,
+			'cluster_label' => $cluster_label,
+			'is_auto_label' => $is_auto_label,
 			'is_pinned' => $is_pinned,
 			'detected_at' => null,
 			'representative_id' => '' !== $representative_id ? $representative_id : null,

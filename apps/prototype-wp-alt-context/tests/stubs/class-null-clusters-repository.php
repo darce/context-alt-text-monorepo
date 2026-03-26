@@ -23,8 +23,16 @@ class NullClustersRepository implements ClustersRepositoryInterface {
 		return array();
 	}
 
+	public function has_projection_rows_for_tenant( string $tenant_id ): bool {
+		return false;
+	}
+
 	public function list_top_unlabeled( string $tenant_id, int $limit = 10 ): array {
 		return array();
+	}
+
+	public function count_top_unlabeled_singletons( string $tenant_id ): int {
+		return 0;
 	}
 
 	public function find_by_uuid( string $cluster_uuid ): ?array {

@@ -26,6 +26,10 @@ class NullIdentityMembersRepository implements IdentityMembersRepositoryInterfac
 		return array();
 	}
 
+	public function has_projection_rows_for_tenant( string $tenant_id ): bool {
+		return false;
+	}
+
 	public function mark_as_curated( string $identity_uuid ): int {
 		return 0;
 	}

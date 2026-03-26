@@ -54,65 +54,66 @@ export const ExportDialog = ({
   isDownloadPending,
   onStartExport,
   onDownloadExport,
-}: ExportDialogProps): React.JSX.Element => (
-  <DialogRoot
-    open={open}
-    onOpenChange={(nextOpen: boolean) => {
-      if (!nextOpen) {
-        dispatch({ type: 'CLOSE_EXPORT_DIALOG' });
-      }
-    }}
-  >
-    <DialogPortal>
-      <DialogOverlay />
-      <DialogContent>
-        <DialogTitle>{__('Export tenant data', 'alt-context')}</DialogTitle>
-        <DialogDescription>
-          {__(
-            'This export includes clusters, members, detection metadata, and representative details. Raw embedding vectors are excluded.',
-            'alt-context',
+}: ExportDialogProps): React.JSX.Element => {
+  const handleOpenChange = React.useCallback((nextOpen: boolean) => {
+    if (!nextOpen) {
+      dispatch({ type: 'CLOSE_EXPORT_DIALOG' });
+    }
+  }, [dispatch]);
+
+  return (
+    <DialogRoot open={open} onOpenChange={handleOpenChange}>
+      <DialogPortal>
+        <DialogOverlay />
+        <DialogContent>
+          <DialogTitle>{__('Export tenant data', 'alt-context')}</DialogTitle>
+          <DialogDescription>
+            {__(
+              'This export includes clusters, members, detection metadata, and representative details. Raw embedding vectors are excluded.',
+              'alt-context',
+            )}
+          </DialogDescription>
+          {exportJobId && exportJobStatus !== null && exportJobStatus !== 'completed' && (
+            <p className="acx-retention__detail">
+              {exportJobStatus === 'failed'
+                ? __('Export failed. Please try again.', 'alt-context')
+                : __('Export in progress\u2026', 'alt-context')}
+            </p>
           )}
-        </DialogDescription>
-        {exportJobId && exportJobStatus !== null && exportJobStatus !== 'completed' && (
-          <p className="acx-retention__detail">
-            {exportJobStatus === 'failed'
-              ? __('Export failed. Please try again.', 'alt-context')
-              : __('Export in progress\u2026', 'alt-context')}
-          </p>
-        )}
-        <div className="acx-dialog__actions">
-          <button
-            type="button"
-            className="acx-button acx-button--secondary"
-            onClick={() => dispatch({ type: 'CLOSE_EXPORT_DIALOG' })}
-            disabled={isExportPending || isDownloadPending}
-          >
-            {__('Cancel', 'alt-context')}
-          </button>
-          {exportJobId !== null && exportJobStatus === 'completed' ? (
+          <div className="acx-dialog__actions">
             <button
               type="button"
-              className="acx-button acx-button--primary"
-              onClick={onDownloadExport}
-              disabled={isDownloadPending}
+              className="acx-button acx-button--secondary"
+              onClick={() => dispatch({ type: 'CLOSE_EXPORT_DIALOG' })}
+              disabled={isExportPending || isDownloadPending}
             >
-              {isDownloadPending ? __('Downloading\u2026', 'alt-context') : __('Download export', 'alt-context')}
+              {__('Cancel', 'alt-context')}
             </button>
-          ) : (
-            <button
-              type="button"
-              className="acx-button acx-button--primary"
-              onClick={onStartExport}
-              disabled={isExportPending || exportJobId !== null}
-            >
-              {isExportPending ? __('Starting\u2026', 'alt-context') : __('Start export', 'alt-context')}
-            </button>
-          )}
-        </div>
-      </DialogContent>
-    </DialogPortal>
-  </DialogRoot>
-);
+            {exportJobId !== null && exportJobStatus === 'completed' ? (
+              <button
+                type="button"
+                className="acx-button acx-button--primary"
+                onClick={onDownloadExport}
+                disabled={isDownloadPending}
+              >
+                {isDownloadPending ? __('Downloading\u2026', 'alt-context') : __('Download export', 'alt-context')}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="acx-button acx-button--primary"
+                onClick={onStartExport}
+                disabled={isExportPending || exportJobId !== null}
+              >
+                {isExportPending ? __('Starting\u2026', 'alt-context') : __('Start export', 'alt-context')}
+              </button>
+            )}
+          </div>
+        </DialogContent>
+      </DialogPortal>
+    </DialogRoot>
+  );
+};
 
 /* ------------------------------------------------------------------ */
 /*  Purge Dialog                                                       */
@@ -134,71 +135,72 @@ export const PurgeDialog = ({
   purgeConfirmation,
   isPurgePending,
   onConfirmPurge,
-}: PurgeDialogProps): React.JSX.Element => (
-  <DialogRoot
-    open={open}
-    onOpenChange={(nextOpen: boolean) => {
-      if (!nextOpen) {
-        dispatch({ type: 'CLOSE_PURGE_DIALOG' });
-      }
-    }}
-  >
-    <DialogPortal>
-      <DialogOverlay />
-      <DialogContent>
-        <DialogTitle>{__('Purge tenant data', 'alt-context')}</DialogTitle>
-        <DialogDescription>
-          {__(
-            'Choose whether to purge only disposed state or all machine-derived tenant data. This cannot be undone.',
-            'alt-context',
-          )}
-        </DialogDescription>
-        <RadioGroup
-          className="acx-retention__dialog-fieldset"
-          aria-label={__('Purge scope', 'alt-context')}
-          value={purgeScope}
-          onValueChange={(value: string) => dispatch({ type: 'SET_PURGE_SCOPE', scope: value as 'disposed' | 'all' })}
-        >
-          {PURGE_SCOPE_OPTIONS.map((option) => (
-            <label key={option.value} className="acx-retention__option">
-              <RadioGroupItem value={option.value} aria-label={option.label} />
-              <span>
-                <strong>{option.label}</strong>
-                <small>{option.description}</small>
-              </span>
-            </label>
-          ))}
-        </RadioGroup>
-        <label className="acx-retention__confirm-input">
-          <span>{sprintf(__('Type %s to confirm this purge.', 'alt-context'), RETENTION_CONFIRM_PHRASE)}</span>
-          <input
-            type="text"
-            value={purgeConfirmation}
-            onChange={(event) => dispatch({ type: 'SET_PURGE_CONFIRMATION', text: event.target.value })}
-          />
-        </label>
-        <div className="acx-dialog__actions">
-          <button
-            type="button"
-            className="acx-button acx-button--secondary"
-            onClick={() => dispatch({ type: 'CLOSE_PURGE_DIALOG' })}
-            disabled={isPurgePending}
+}: PurgeDialogProps): React.JSX.Element => {
+  const handleOpenChange = React.useCallback((nextOpen: boolean) => {
+    if (!nextOpen) {
+      dispatch({ type: 'CLOSE_PURGE_DIALOG' });
+    }
+  }, [dispatch]);
+
+  return (
+    <DialogRoot open={open} onOpenChange={handleOpenChange}>
+      <DialogPortal>
+        <DialogOverlay />
+        <DialogContent>
+          <DialogTitle>{__('Purge tenant data', 'alt-context')}</DialogTitle>
+          <DialogDescription>
+            {__(
+              'Choose whether to purge only disposed state or all machine-derived tenant data. This cannot be undone.',
+              'alt-context',
+            )}
+          </DialogDescription>
+          <RadioGroup
+            className="acx-retention__dialog-fieldset"
+            aria-label={__('Purge scope', 'alt-context')}
+            value={purgeScope}
+            onValueChange={(value: string) => dispatch({ type: 'SET_PURGE_SCOPE', scope: value as 'disposed' | 'all' })}
           >
-            {__('Cancel', 'alt-context')}
-          </button>
-          <button
-            type="button"
-            className="acx-button acx-button--danger"
-            onClick={onConfirmPurge}
-            disabled={isPurgePending || purgeConfirmation !== RETENTION_CONFIRM_PHRASE}
-          >
-            {isPurgePending ? __('Purging\u2026', 'alt-context') : __('Confirm purge', 'alt-context')}
-          </button>
-        </div>
-      </DialogContent>
-    </DialogPortal>
-  </DialogRoot>
-);
+            {PURGE_SCOPE_OPTIONS.map((option) => (
+              <label key={option.value} className="acx-retention__option">
+                <RadioGroupItem value={option.value} aria-label={option.label} />
+                <span>
+                  <strong>{option.label}</strong>
+                  <small>{option.description}</small>
+                </span>
+              </label>
+            ))}
+          </RadioGroup>
+          <label className="acx-retention__confirm-input">
+            <span>{sprintf(__('Type %s to confirm this purge.', 'alt-context'), RETENTION_CONFIRM_PHRASE)}</span>
+            <input
+              type="text"
+              value={purgeConfirmation}
+              onChange={(event) => dispatch({ type: 'SET_PURGE_CONFIRMATION', text: event.target.value })}
+            />
+          </label>
+          <div className="acx-dialog__actions">
+            <button
+              type="button"
+              className="acx-button acx-button--secondary"
+              onClick={() => dispatch({ type: 'CLOSE_PURGE_DIALOG' })}
+              disabled={isPurgePending}
+            >
+              {__('Cancel', 'alt-context')}
+            </button>
+            <button
+              type="button"
+              className="acx-button acx-button--danger"
+              onClick={onConfirmPurge}
+              disabled={isPurgePending || purgeConfirmation !== RETENTION_CONFIRM_PHRASE}
+            >
+              {isPurgePending ? __('Purging\u2026', 'alt-context') : __('Confirm purge', 'alt-context')}
+            </button>
+          </div>
+        </DialogContent>
+      </DialogPortal>
+    </DialogRoot>
+  );
+};
 
 /* ------------------------------------------------------------------ */
 /*  Import Dialog                                                      */
@@ -220,59 +222,60 @@ export const ImportDialog = ({
   importFileRef,
   isImportPending,
   onConfirmImport,
-}: ImportDialogProps): React.JSX.Element => (
-  <DialogRoot
-    open={open}
-    onOpenChange={(nextOpen: boolean) => {
-      if (!nextOpen) {
-        dispatch({ type: 'CLOSE_IMPORT_DIALOG' });
-        if (importFileRef.current) {
-          importFileRef.current.value = '';
-        }
+}: ImportDialogProps): React.JSX.Element => {
+  const handleOpenChange = React.useCallback((nextOpen: boolean) => {
+    if (!nextOpen) {
+      dispatch({ type: 'CLOSE_IMPORT_DIALOG' });
+      if (importFileRef.current) {
+        importFileRef.current.value = '';
       }
-    }}
-  >
-    <DialogPortal>
-      <DialogOverlay />
-      <DialogContent>
-        <DialogTitle>{__('Import tenant data', 'alt-context')}</DialogTitle>
-        <DialogDescription>
-          {__(
-            'Select a JSON export file to validate and record as an import event. Schema version compatibility is verified before import.',
-            'alt-context',
+    }
+  }, [dispatch, importFileRef]);
+
+  return (
+    <DialogRoot open={open} onOpenChange={handleOpenChange}>
+      <DialogPortal>
+        <DialogOverlay />
+        <DialogContent>
+          <DialogTitle>{__('Import tenant data', 'alt-context')}</DialogTitle>
+          <DialogDescription>
+            {__(
+              'Select a JSON export file to validate and record as an import event. Schema version compatibility is verified before import.',
+              'alt-context',
+            )}
+          </DialogDescription>
+          <label className="acx-retention__file-input">
+            <span>{__('Export file (.json)', 'alt-context')}</span>
+            <input
+              ref={importFileRef}
+              type="file"
+              accept="application/json,.json"
+              onChange={(event) => dispatch({ type: 'SET_IMPORT_FILE', file: event.target.files?.[0] ?? null })}
+            />
+          </label>
+          {importFile && (
+            <p className="acx-retention__detail">{sprintf(__('Selected: %s', 'alt-context'), importFile.name)}</p>
           )}
-        </DialogDescription>
-        <label className="acx-retention__file-input">
-          <span>{__('Export file (.json)', 'alt-context')}</span>
-          <input
-            ref={importFileRef}
-            type="file"
-            accept="application/json,.json"
-            onChange={(event) => dispatch({ type: 'SET_IMPORT_FILE', file: event.target.files?.[0] ?? null })}
-          />
-        </label>
-        {importFile && (
-          <p className="acx-retention__detail">{sprintf(__('Selected: %s', 'alt-context'), importFile.name)}</p>
-        )}
-        <div className="acx-dialog__actions">
-          <button
-            type="button"
-            className="acx-button acx-button--secondary"
-            onClick={() => dispatch({ type: 'CLOSE_IMPORT_DIALOG' })}
-            disabled={isImportPending}
-          >
-            {__('Cancel', 'alt-context')}
-          </button>
-          <button
-            type="button"
-            className="acx-button acx-button--primary"
-            onClick={onConfirmImport}
-            disabled={isImportPending || !importFile}
-          >
-            {isImportPending ? __('Importing\u2026', 'alt-context') : __('Import', 'alt-context')}
-          </button>
-        </div>
-      </DialogContent>
-    </DialogPortal>
-  </DialogRoot>
-);
+          <div className="acx-dialog__actions">
+            <button
+              type="button"
+              className="acx-button acx-button--secondary"
+              onClick={() => dispatch({ type: 'CLOSE_IMPORT_DIALOG' })}
+              disabled={isImportPending}
+            >
+              {__('Cancel', 'alt-context')}
+            </button>
+            <button
+              type="button"
+              className="acx-button acx-button--primary"
+              onClick={onConfirmImport}
+              disabled={isImportPending || !importFile}
+            >
+              {isImportPending ? __('Importing\u2026', 'alt-context') : __('Import', 'alt-context')}
+            </button>
+          </div>
+        </DialogContent>
+      </DialogPortal>
+    </DialogRoot>
+  );
+};

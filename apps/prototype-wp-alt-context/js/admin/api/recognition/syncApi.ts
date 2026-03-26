@@ -8,7 +8,7 @@ export const fetchSyncStatus = async (): Promise<SyncStatusResponse> => {
   return fetchRequiredApi<SyncStatusResponse>(endpoint, {
     method: 'GET',
     restNonce: getConfig().nonce,
-    signal: createRecognitionTimeoutSignal(2_000),
+    signal: createRecognitionTimeoutSignal(10_000),
   });
 };
 
@@ -17,6 +17,6 @@ export const triggerSync = async (): Promise<SyncTriggerResponse> => {
   return fetchRequiredApi<SyncTriggerResponse>(endpoint, {
     method: 'POST',
     restNonce: getConfig().nonce,
-    signal: createRecognitionTimeoutSignal(5_000),
+    signal: createRecognitionTimeoutSignal(30_000),
   });
 };

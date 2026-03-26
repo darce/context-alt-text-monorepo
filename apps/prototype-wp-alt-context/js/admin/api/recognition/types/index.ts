@@ -5,6 +5,7 @@
  */
 
 export * from './scan';
+export * from './dataSource';
 export * from './identity';
 export * from './cluster';
 export * from './suggestion';

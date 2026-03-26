@@ -33,6 +33,10 @@ class ClusterFacadeTest extends TestCase {
 			->method( 'list_top_unlabeled' )
 			->with( $tenant_id, $limit )
 			->willReturn( $clusters );
+		$clusters_repo->expects( $this->once() )
+			->method( 'count_top_unlabeled_singletons' )
+			->with( $tenant_id )
+			->willReturn( 2 );
 
 		$members_repo->expects( $this->once() )
 			->method( 'list_for_cluster_uuids' )
@@ -43,6 +47,7 @@ class ClusterFacadeTest extends TestCase {
 
 		$this->assertSame( $clusters, $result['clusters'] );
 		$this->assertSame( $members, $result['members'] );
+		$this->assertSame( 2, $result['singleton_count'] );
 	}
 
 	public function test_list_top_unlabeled_returns_empty_when_no_clusters(): void {
@@ -51,11 +56,13 @@ class ClusterFacadeTest extends TestCase {
 		$facade        = new ClusterFacade( $clusters_repo, $members_repo );
 
 		$clusters_repo->method( 'list_top_unlabeled' )->willReturn( [] );
+		$clusters_repo->method( 'count_top_unlabeled_singletons' )->willReturn( 3 );
 		$members_repo->expects( $this->never() )->method( 'list_for_cluster_uuids' );
 
 		$result = $facade->list_top_unlabeled( 'tenant-123' );
 
 		$this->assertEmpty( $result['clusters'] );
 		$this->assertEmpty( $result['members'] );
+		$this->assertSame( 3, $result['singleton_count'] );
 	}
 }

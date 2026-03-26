@@ -19,6 +19,10 @@ use function rest_sanitize_boolean;
 use function trim;
 
 class MediaIdentitiesController extends AbstractRecognitionProxyController {
+	private const DATA_SOURCE_LOCAL_PROJECTION = 'local_projection';
+	private const DATA_SOURCE_BACKEND_PROXY = 'backend_proxy';
+	private const DATA_SOURCE_UNAVAILABLE = 'unavailable';
+	private const REQUEST_CLASS_POST_SCAN_READ = 'post_scan_read';
 	private IdentityMembersRepositoryInterface $members_repository;
 	private SyncStateRepositoryInterface $sync_state_repository;
 	private MemberResponseMapper $member_mapper;
@@ -81,6 +85,7 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 			$rows = $this->members_repository->list_for_media_ids( $tenant_id, $ids );
 			$payload = array(
 				'identities_by_media' => $this->member_mapper->map_media_identities( $rows ),
+				'data_source' => self::DATA_SOURCE_LOCAL_PROJECTION,
 			);
 			return new WP_REST_Response( $payload, 200 );
 		}
@@ -95,11 +100,12 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 			$query['include_debug'] = 'true';
 		}
 
-		$response = $this->proxy_request( 'GET', '/recognition/media/identities', array(), $query );
+		$response = $this->proxy_request( 'GET', '/recognition/media/identities', array(), $query, self::REQUEST_CLASS_POST_SCAN_READ );
 		if ( $this->is_proxy_unavailable( $response ) ) {
 			return new WP_REST_Response(
 				array(
 					'identities_by_media' => array(),
+					'data_source' => self::DATA_SOURCE_UNAVAILABLE,
 				),
 				200
 			);
@@ -108,6 +114,11 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 		if ( $response instanceof WP_REST_Response && 200 === $response->get_status() ) {
 			$data = $response->get_data();
 			if ( is_array( $data ) ) {
+				if ( isset( $data['identities_by_media'] ) && is_array( $data['identities_by_media'] ) ) {
+					$data['data_source'] = self::DATA_SOURCE_BACKEND_PROXY;
+					return new WP_REST_Response( $data, 200 );
+				}
+
 				$grouped = array();
 				foreach ( $data as $identity ) {
 					if ( isset( $identity['media_id'] ) ) {
@@ -118,7 +129,13 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 						$grouped[ $media_key ][] = $identity;
 					}
 				}
-				return new WP_REST_Response( array( 'identities_by_media' => $grouped ), 200 );
+				return new WP_REST_Response(
+					array(
+						'identities_by_media' => $grouped,
+						'data_source' => self::DATA_SOURCE_BACKEND_PROXY,
+					),
+					200
+				);
 			}
 		}
 
@@ -126,6 +143,7 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 	}
 
 	private function should_use_local_projection( string $tenant_id ): bool {
-		return $this->should_use_local_projection_gate( $this->sync_state_repository, $tenant_id );
+		return $this->should_use_local_projection_gate( $this->sync_state_repository, $tenant_id )
+			&& $this->members_repository->has_projection_rows_for_tenant( $tenant_id );
 	}
 }

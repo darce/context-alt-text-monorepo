@@ -8,13 +8,14 @@
 
 import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { __, _n, sprintf } from '@wordpress/i18n';
+import { __ } from '@wordpress/i18n';
 
 import { queryKeys } from '../../../api/queryKeys';
 import { dismissCluster, fetchTopUnlabeledClusters, mergeCluster, updateClusterLabel } from '../../../api/recognition';
-import type { TopUnlabeledCluster } from '../../../api/recognition/types/cluster';
-import type { BoundingBox } from '../../../api/recognition/types/identity';
-import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
+import { DATA_SOURCE, PROJECTION_STATUS } from '../../../api/recognition/types/dataSource';
+import { EmptyStateWarning } from './EmptyStateWarning';
+import type { TopUnlabeledClustersResponse } from '../../../api/recognition/types/cluster';
+import { TopClusterCard } from './TopClusterCard';
 
 interface TopClustersSectionProps {
   /** Tenant ID for API scoping */
@@ -26,222 +27,6 @@ interface TopClustersSectionProps {
 }
 
 const TOP_UNLABELED_LIMIT = 20;
-
-const resolveRepresentativeThumbUrl = (
-  representative: TopUnlabeledCluster['representatives'][number],
-): string | null => {
-  const rawUrl = representative.thumb_url ?? null;
-  if (typeof rawUrl !== 'string' || rawUrl.trim() === '') {
-    return null;
-  }
-  return rawUrl;
-};
-
-const resolveRepresentativeCrop = (
-  representative: TopUnlabeledCluster['representatives'][number],
-): { mediaUrl: string; bbox: BoundingBox } | null => {
-  const mediaUrl = representative.media_url;
-  const bbox = representative.bbox;
-  if (typeof mediaUrl !== 'string' || mediaUrl.trim() === '' || !bbox) {
-    return null;
-  }
-
-  const x = Number(bbox.x);
-  const y = Number(bbox.y);
-  const width = Number(bbox.width);
-  const height = Number(bbox.height);
-
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) {
-    return null;
-  }
-  if (width <= 0 || height <= 0) {
-    return null;
-  }
-
-  return {
-    mediaUrl,
-    bbox: { x, y, width, height },
-  };
-};
-
-const getMostRepresentative = (
-  representatives: TopUnlabeledCluster['representatives'],
-): TopUnlabeledCluster['representatives'][number] | null => {
-  if (!Array.isArray(representatives) || representatives.length === 0) {
-    return null;
-  }
-
-  return representatives.reduce((best, current) => {
-    if (!best) {
-      return current;
-    }
-    if (current.is_pinned && !best.is_pinned) {
-      return current;
-    }
-    return best;
-  }, representatives[0] ?? null);
-};
-
-/**
- * Individual cluster card with face thumbnails and label action.
- */
-const TopClusterCard = ({
-  cluster,
-  onLabel,
-  onReview,
-  onConfirmSuggestedLabel,
-  onDismiss,
-  isConfirming,
-  isDismissing,
-}: {
-  cluster: TopUnlabeledCluster;
-  onLabel: (clusterId: string) => void;
-  onReview?: (clusterId: string) => void;
-  onConfirmSuggestedLabel?: (
-    clusterId: string,
-    suggestedLabel: string,
-    suggestedTargetClusterId?: string | null,
-  ) => void;
-  onDismiss?: (clusterId: string) => void;
-  isConfirming?: boolean;
-  isDismissing?: boolean;
-}): React.JSX.Element => {
-  const gridSizePx = 80;
-  const gapPx = 2;
-  const maxThumbs = 4;
-  const faceCount = cluster.identity_count;
-  const suggestedLabel =
-    typeof cluster.suggested_label === 'string' && cluster.suggested_label.trim() !== ''
-      ? cluster.suggested_label.trim()
-      : null;
-  const title = suggestedLabel
-    ? `${__('Is this', 'alt-context')} ${suggestedLabel}?`
-    : __('Name this person', 'alt-context');
-  const representative = getMostRepresentative(cluster.representatives ?? []);
-  const reps = suggestedLabel
-    ? representative
-      ? [representative]
-      : []
-    : (cluster.representatives ?? []).slice(0, maxThumbs);
-  const columnCount = reps.length <= 1 ? 1 : 2;
-  const cellSize = (gridSizePx - gapPx * (columnCount - 1)) / columnCount;
-  const gridClassName =
-    columnCount === 1 ? 'acx-top-cluster-card__grid acx-top-cluster-card__grid--single' : 'acx-top-cluster-card__grid';
-  const isBusy = (isDismissing ?? false) || (isConfirming ?? false);
-  const handleConfirmSuggestedLabelClick = () => {
-    if (!suggestedLabel || !onConfirmSuggestedLabel) {
-      return;
-    }
-    onConfirmSuggestedLabel(cluster.id, suggestedLabel, cluster.suggested_target_cluster_id);
-  };
-  const handleRejectSuggestedLabelClick = () => {
-    if (onDismiss) {
-      onDismiss(cluster.id);
-      return;
-    }
-    onLabel(cluster.id);
-  };
-
-  return (
-    <div className="acx-top-cluster-card">
-      <div className="acx-top-cluster-card__faces">
-        {reps.length > 0 ? (
-          <div className={gridClassName}>
-            {reps.map((rep) => {
-              const cropData = resolveRepresentativeCrop(rep);
-              const thumbUrl = resolveRepresentativeThumbUrl(rep);
-              return (
-                <div key={rep.id} className="acx-top-cluster-card__thumb acx-top-cluster-card__thumb--frame">
-                  {cropData ? (
-                    <FaceThumbnail
-                      mediaUrl={cropData.mediaUrl}
-                      bbox={cropData.bbox}
-                      sizePx={cellSize}
-                      shape="square"
-                      alt=""
-                      className="acx-top-cluster-card__thumb-image"
-                    />
-                  ) : thumbUrl ? (
-                    <img src={thumbUrl} alt="" className="acx-top-cluster-card__thumb-image" />
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <span className="acx-top-cluster-card__thumb acx-top-cluster-card__thumb--placeholder" />
-        )}
-      </div>
-
-      <div className="acx-top-cluster-card__content">
-        <p className="acx-top-cluster-card__title">
-          {suggestedLabel ? (
-            <strong>{title}</strong>
-          ) : (
-            <button
-              type="button"
-              className="acx-top-cluster-card__title-action acx-identity-cluster__label acx-identity-cluster__label--action"
-              onClick={() => onLabel(cluster.id)}
-              disabled={isBusy}
-              title={__('Open labeling form', 'alt-context')}
-            >
-              {title}
-            </button>
-          )}
-        </p>
-        <p className="acx-top-cluster-card__meta">
-          {sprintf(_n('%d face in cluster', '%d faces in cluster', faceCount, 'alt-context'), faceCount)}
-        </p>
-      </div>
-
-      <div className="acx-top-cluster-card__actions">
-        {suggestedLabel && onConfirmSuggestedLabel ? (
-          <>
-            <button
-              type="button"
-              className="button button-primary acx-top-cluster-card__confirm-btn"
-              onClick={handleConfirmSuggestedLabelClick}
-              disabled={isBusy}
-              title={__('Confirm suggested name', 'alt-context')}
-            >
-              {__('Yes', 'alt-context')}
-            </button>
-            <button
-              type="button"
-              className="button acx-top-cluster-card__reject-btn"
-              onClick={handleRejectSuggestedLabelClick}
-              disabled={isBusy}
-              title={__('Reject suggestion for now', 'alt-context')}
-            >
-              {__('No', 'alt-context')}
-            </button>
-          </>
-        ) : null}
-        {onReview && (
-          <button
-            type="button"
-            className="button acx-top-cluster-card__review-btn"
-            onClick={() => onReview(cluster.id)}
-            disabled={isBusy}
-          >
-            {__('Review', 'alt-context')}
-          </button>
-        )}
-        {onDismiss && (
-          <button
-            type="button"
-            className="button button-link acx-top-cluster-card__skip-btn"
-            onClick={() => onDismiss(cluster.id)}
-            disabled={isBusy}
-            title={__('Skip this cluster for now', 'alt-context')}
-          >
-            {__('Skip', 'alt-context')}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-};
 
 /**
  * Section showing top unlabeled clusters with curation prompts.
@@ -256,7 +41,7 @@ export const TopClustersSection = ({
   const [dismissingClusterIds, setDismissingClusterIds] = React.useState<Set<string>>(new Set());
   const [confirmingClusterIds, setConfirmingClusterIds] = React.useState<Set<string>>(new Set());
 
-  const { data: topClusters, isLoading } = useQuery<TopUnlabeledCluster[]>({
+  const { data: topUnlabeledResponse, isLoading, refetch } = useQuery<TopUnlabeledClustersResponse>({
     queryKey: queryKeys.clusters.topUnlabeled(tenantId),
     queryFn: () => fetchTopUnlabeledClusters(tenantId, TOP_UNLABELED_LIMIT),
     staleTime: 60000, // 1 minute
@@ -361,16 +146,61 @@ export const TopClustersSection = ({
     return null; // Don't show loading state - suggestions panel handles that
   }
 
-  if (!topClusters || topClusters.length === 0) {
+  const topClusters = topUnlabeledResponse?.clusters ?? [];
+  const singletonCount = topUnlabeledResponse?.singleton_count ?? 0;
+  const dataSource = topUnlabeledResponse?.data_source;
+  const projectionStatus = topUnlabeledResponse?.projection_status;
+  const isReadOnly = dataSource === DATA_SOURCE.BACKEND_PROXY;
+
+  if (!topUnlabeledResponse) {
     return null;
   }
 
-  // Filter to only show clusters with more than 1 face (not singletons)
-  const nonSingletons = [...topClusters]
-    .filter((c) => c.identity_count > 1 && !hiddenClusterIds.has(c.id))
-    .sort((a, b) => b.identity_count - a.identity_count);
+  if (dataSource === DATA_SOURCE.UNAVAILABLE) {
+    const isBootstrapping = projectionStatus === PROJECTION_STATUS.BOOTSTRAPPING;
+    return (
+      <div className="acx-top-clusters-section acx-top-clusters-section--empty">
+        <h4 className="acx-top-clusters-section__title">{__('Name These People', 'alt-context')}</h4>
+        <EmptyStateWarning
+          title={
+            isBootstrapping
+              ? __('Local identities are still syncing', 'alt-context')
+              : __('Naming queue unavailable', 'alt-context')
+          }
+          message={
+            isBootstrapping
+              ? __('The local projection is still being prepared. This queue will populate when sync completes.', 'alt-context')
+              : __('We could not load the naming queue right now.', 'alt-context')
+          }
+          onRetry={() => void refetch()}
+        />
+      </div>
+    );
+  }
 
-  if (nonSingletons.length === 0) {
+  if (topClusters.length === 0 && singletonCount === 0) {
+    return null;
+  }
+
+  const visibleClusters = [...topClusters]
+    .sort((a, b) => b.identity_count - a.identity_count)
+    .filter((cluster) => !hiddenClusterIds.has(cluster.id));
+
+  if (topClusters.length === 0 && singletonCount > 0) {
+    return (
+      <div className="acx-top-clusters-section acx-top-clusters-section--empty">
+        <h4 className="acx-top-clusters-section__title">{__('Name These People', 'alt-context')}</h4>
+        <p className="acx-top-clusters-section__empty-message">
+          {__(
+            'All detected groups contain only a single photo. Groups with multiple photos will appear here.',
+            'alt-context',
+          )}
+        </p>
+      </div>
+    );
+  }
+
+  if (visibleClusters.length === 0) {
     return null;
   }
 
@@ -378,19 +208,25 @@ export const TopClustersSection = ({
     <div className="acx-top-clusters-section">
       <h4 className="acx-top-clusters-section__title">{__('Name These People', 'alt-context')}</h4>
       <p className="acx-top-clusters-section__description">
-        {__(
-          'These clusters have multiple faces and need labels. Labeling them helps the system suggest names automatically.',
-          'alt-context',
-        )}
+        {isReadOnly
+          ? __(
+              'These clusters are visible while local sync catches up. Curation stays disabled until projected results are available locally.',
+              'alt-context',
+            )
+          : __(
+              'These clusters have multiple faces and need labels. Labeling them helps the system suggest names automatically.',
+              'alt-context',
+            )}
       </p>
 
       <div className="acx-top-clusters-section__list">
-        {nonSingletons.map((cluster) => (
+        {visibleClusters.map((cluster) => (
           <TopClusterCard
             key={cluster.id}
             cluster={cluster}
             onLabel={onLabel}
             onReview={onReview}
+            isReadOnly={isReadOnly}
             onConfirmSuggestedLabel={(clusterId, suggestedLabel, suggestedTargetClusterId) =>
               confirmSuggestedLabelMutation.mutate({ clusterId, suggestedLabel, suggestedTargetClusterId })
             }

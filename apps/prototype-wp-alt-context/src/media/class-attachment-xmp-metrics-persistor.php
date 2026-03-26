@@ -11,9 +11,15 @@ use function do_action;
 use function get_attached_file;
 use function is_array;
 use function is_string;
+use function time;
+use function wp_next_scheduled;
+use function wp_schedule_single_event;
 use function update_post_meta;
 
 class AttachmentXmpMetricsPersistor {
+	private const REQUEST_HOOK = 'acx_xmp_refresh_requested';
+	private const PERSIST_HOOK = 'acx_xmp_persist_attachment';
+
 	private ImageXmpWriter $xmpWriter;
 
 	public function __construct( ImageXmpWriter $xmp_writer ) {
@@ -21,13 +27,35 @@ class AttachmentXmpMetricsPersistor {
 	}
 
 	public function init(): void {
-		add_action( 'acx_recognition_complete', array( $this, 'persist_for_attachment' ), 10, 2 );
+		// Keep curated XMP refresh requests cheap. The expensive file writes
+		// run on a queued follow-up action so review updates stay responsive.
+		add_action( self::REQUEST_HOOK, array( $this, 'queue_persist_for_attachment' ), 10, 2 );
+		add_action( self::PERSIST_HOOK, array( $this, 'persist_for_attachment' ), 10, 2 );
+	}
+
+	/**
+	 * Queue the XMP write so the refresh request does not block on file IO.
+	 *
+	 * @param int|string $attachment_id
+	 */
+	public function queue_persist_for_attachment( $attachment_id, string $context = '' ): void {
+		$id = absint( $attachment_id );
+		if ( $id <= 0 ) {
+			return;
+		}
+
+		$args = array( $id, $context );
+		if ( false !== wp_next_scheduled( self::PERSIST_HOOK, $args ) ) {
+			return;
+		}
+
+		wp_schedule_single_event( time(), self::PERSIST_HOOK, $args );
 	}
 
 	/**
 	 * @param int|string $attachment_id
 	 */
-	public function persist_for_attachment( $attachment_id, string $job_id = '' ): void {
+	public function persist_for_attachment( $attachment_id, string $context = '' ): void {
 		$id = absint( $attachment_id );
 		if ( $id <= 0 ) {
 			return;
@@ -35,16 +63,16 @@ class AttachmentXmpMetricsPersistor {
 
 		$original_path = get_attached_file( $id, true );
 		if ( ! is_string( $original_path ) || '' === $original_path ) {
-			$this->record_result( $id, ImageXmpWriter::STATUS_SKIPPED, $job_id, 'Missing original attachment file path.' );
+			$this->record_result( $id, ImageXmpWriter::STATUS_SKIPPED, $context, 'Missing original attachment file path.' );
 			return;
 		}
 
 		$status = $this->xmpWriter->write_for_attachment( $id, $original_path );
 		if ( ImageXmpWriter::STATUS_FAILED === $status ) {
-			do_action( 'acx_xmp_persist_failure', $id, $job_id, $original_path );
+			do_action( 'acx_xmp_persist_failure', $id, $context, $original_path );
 		}
 
-		$this->record_result( $id, $status, $job_id, null );
+		$this->record_result( $id, $status, $context, null );
 	}
 
 	/**

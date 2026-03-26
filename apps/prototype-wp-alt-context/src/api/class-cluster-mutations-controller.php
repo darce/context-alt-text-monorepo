@@ -279,7 +279,10 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 
 		$cluster = $this->clusters_repository->find_by_uuid( $cluster_id );
 		if ( ! is_array( $cluster ) ) {
-			return new WP_Error( 'cluster_not_found', 'Cluster not found.', array( 'status' => 404 ) );
+			$cluster = $this->get_projected_cluster_or_error( $cluster_id );
+			if ( is_wp_error( $cluster ) ) {
+				return $cluster;
+			}
 		}
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
@@ -336,9 +339,9 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
 		}
 
-		$cluster = $this->clusters_repository->find_by_uuid( $cluster_id );
-		if ( ! is_array( $cluster ) ) {
-			return new WP_Error( 'cluster_not_found', 'Cluster not found.', array( 'status' => 404 ) );
+		$cluster = $this->get_projected_cluster_or_error( $cluster_id );
+		if ( is_wp_error( $cluster ) ) {
+			return $cluster;
 		}
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
@@ -379,9 +382,9 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
 		}
 
-		$cluster = $this->clusters_repository->find_by_uuid( $cluster_id );
-		if ( ! is_array( $cluster ) ) {
-			return new WP_Error( 'cluster_not_found', 'Cluster not found.', array( 'status' => 404 ) );
+		$cluster = $this->get_projected_cluster_or_error( $cluster_id );
+		if ( is_wp_error( $cluster ) ) {
+			return $cluster;
 		}
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
@@ -433,14 +436,14 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'invalid_target_cluster_id', 'Source and target cluster IDs must differ.', array( 'status' => 400 ) );
 		}
 
-		$source_cluster = $this->clusters_repository->find_by_uuid( $source_id );
-		if ( ! is_array( $source_cluster ) ) {
-			return new WP_Error( 'source_cluster_not_found', 'Source cluster not found.', array( 'status' => 404 ) );
+		$source_cluster = $this->get_projected_cluster_or_error( $source_id, 'source_cluster_not_found', 'Source cluster not found.' );
+		if ( is_wp_error( $source_cluster ) ) {
+			return $source_cluster;
 		}
 
-		$target_cluster = $this->clusters_repository->find_by_uuid( $target_cluster_id );
-		if ( ! is_array( $target_cluster ) ) {
-			return new WP_Error( 'target_cluster_not_found', 'Target cluster not found.', array( 'status' => 404 ) );
+		$target_cluster = $this->get_projected_cluster_or_error( $target_cluster_id, 'target_cluster_not_found', 'Target cluster not found.' );
+		if ( is_wp_error( $target_cluster ) ) {
+			return $target_cluster;
 		}
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
@@ -508,9 +511,9 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
 		}
 
-		$cluster = $this->clusters_repository->find_by_uuid( $cluster_id );
-		if ( ! is_array( $cluster ) ) {
-			return new WP_Error( 'cluster_not_found', 'Cluster not found.', array( 'status' => 404 ) );
+		$cluster = $this->get_projected_cluster_or_error( $cluster_id );
+		if ( is_wp_error( $cluster ) ) {
+			return $cluster;
 		}
 
 			$n_clusters = absint( $request->get_param( 'n_clusters' ) ?? 0 );
@@ -715,9 +718,9 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'missing_moved_identity_ids', 'Provide one or more valid identity IDs to revert.', array( 'status' => 400 ) );
 		}
 
-		$target_cluster = $this->clusters_repository->find_by_uuid( $target_cluster_id );
-		if ( ! is_array( $target_cluster ) ) {
-			return new WP_Error( 'target_cluster_not_found', 'Target cluster not found.', array( 'status' => 404 ) );
+		$target_cluster = $this->get_projected_cluster_or_error( $target_cluster_id, 'target_cluster_not_found', 'Target cluster not found.' );
+		if ( is_wp_error( $target_cluster ) ) {
+			return $target_cluster;
 		}
 
 		foreach ( $sanitized_ids as $identity_id ) {
@@ -811,9 +814,9 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'missing_identity_id', 'Identity ID is required.', array( 'status' => 400 ) );
 		}
 
-		$target_cluster = $this->clusters_repository->find_by_uuid( $cluster_id );
-		if ( ! is_array( $target_cluster ) ) {
-			return new WP_Error( 'target_cluster_not_found', 'Target cluster not found.', array( 'status' => 404 ) );
+		$target_cluster = $this->get_projected_cluster_or_error( $cluster_id, 'target_cluster_not_found', 'Target cluster not found.' );
+		if ( is_wp_error( $target_cluster ) ) {
+			return $target_cluster;
 		}
 
 		$existing_member = $this->members_repository->find_by_identity_uuid( $identity_id );
@@ -909,9 +912,9 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 
 		$is_pinned = $request->get_param( 'is_pinned' );
 		$desired_is_pinned = null === $is_pinned ? true : rest_sanitize_boolean( $is_pinned );
-		$cluster = $this->clusters_repository->find_by_uuid( $cluster_id );
-		if ( ! is_array( $cluster ) ) {
-			return new WP_Error( 'cluster_not_found', 'Cluster not found.', array( 'status' => 404 ) );
+		$cluster = $this->get_projected_cluster_or_error( $cluster_id );
+		if ( is_wp_error( $cluster ) ) {
+			return $cluster;
 		}
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
@@ -976,6 +979,30 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 	}
 
 	/**
+	 * @return array<string,mixed>|WP_Error
+	 */
+	private function get_projected_cluster_or_error(
+		string $cluster_id,
+		string $missing_code = 'cluster_not_found',
+		string $missing_message = 'Cluster not found.'
+	): array|WP_Error {
+		$cluster = $this->clusters_repository->find_by_uuid( $cluster_id );
+		if ( is_array( $cluster ) ) {
+			return $cluster;
+		}
+
+		if ( ! $this->clusters_repository->has_projection_rows_for_tenant( $this->get_tenant_id() ) ) {
+			return new WP_Error(
+				'projection_not_ready',
+				'Local projection is not ready for curation yet. Retry sync and try again.',
+				array( 'status' => 409 )
+			);
+		}
+
+		return new WP_Error( $missing_code, $missing_message, array( 'status' => 404 ) );
+	}
+
+	/**
 	 * @param string[] $cluster_ids
 	 */
 	public function refresh_xmp_for_cluster_ids_async( array $cluster_ids, string $context ): void {
@@ -1020,7 +1047,7 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 		}
 
 		foreach ( array_values( array_unique( $media_ids ) ) as $media_id ) {
-			do_action( 'acx_recognition_complete', $media_id, $context );
+			do_action( 'acx_xmp_refresh_requested', $media_id, $context );
 		}
 	}
 

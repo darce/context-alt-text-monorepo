@@ -11,7 +11,7 @@ import {
   updateClusterLabel,
   type MergeClusterResponse,
 } from '../../../api/recognition';
-import { isAbortError } from './clusterMutationUtils';
+import { getProjectionNotReadyMessage, isAbortError, isProjectionNotReadyError } from './clusterMutationUtils';
 
 interface UseClusterLabelMutationsOptions {
   clusterId: string | null;
@@ -69,7 +69,9 @@ export const useClusterLabelMutations = ({
       }
       invalidateQueries();
       const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('409')) {
+      if (isProjectionNotReadyError(message)) {
+        onError?.(getProjectionNotReadyMessage());
+      } else if (message.includes('409')) {
         onError?.(__('Label already exists. Use the dropdown to merge.', 'alt-context'));
       } else {
         onError?.(message);

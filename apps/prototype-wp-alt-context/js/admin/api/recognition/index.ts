@@ -9,6 +9,7 @@
 export type {
   AnalyzeRequest,
   AnalyzeResponse,
+  DataSource,
   JobProgress,
   JobStatusResponse,
   ClusterResponse,
@@ -38,6 +39,7 @@ export type {
   // Suggestion types
   PendingSuggestion,
   PendingSuggestionsResponse,
+  ProjectionStatus,
   PendingNameSuggestion,
   PendingMergeSuggestion,
   PendingMergeSuggestionsResponse,
@@ -75,6 +77,7 @@ export type {
 } from './types';
 
 export type { ConflictListParams, FailedOutboxListParams, OutboxListParams } from './conflictApi';
+export { DATA_SOURCE, PROJECTION_STATUS } from './types';
 
 // Scan operations
 export {

@@ -2,6 +2,7 @@
  * Cluster Types and Operations
  */
 
+import type { DataSource, ProjectionStatus } from './dataSource';
 import type { BoundingBox, ClusterIdentity, RepresentativeBounds } from './identity';
 
 export interface ClusterSummary {
@@ -42,6 +43,13 @@ export interface TopUnlabeledCluster {
   suggested_label_confidence?: number | null;
   suggested_target_cluster_id?: string | null;
   representatives: TopUnlabeledRepresentative[];
+}
+
+export interface TopUnlabeledClustersResponse {
+  clusters: TopUnlabeledCluster[];
+  singleton_count: number;
+  data_source?: DataSource;
+  projection_status?: ProjectionStatus;
 }
 
 export interface ClusterListParams {

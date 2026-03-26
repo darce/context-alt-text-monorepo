@@ -6,7 +6,9 @@
 @use './dialog';
 
 /** componets */
+@use './avatar';
 @use './cluster-grid';
+@use './face-thumbnail';
 @use './media-selection';
 @use './identity-cluster-list';
 @use './cluster-panels';

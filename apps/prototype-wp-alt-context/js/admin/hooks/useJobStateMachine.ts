@@ -18,7 +18,7 @@ import { useJobStateMachineEffects, type ProjectionSyncState } from './useJobSta
 import { useJobStateMachineMutations } from './useJobStateMachineMutations';
 import { useJobPersistence } from './useJobPersistence';
 import { useJobProgressStream } from './useJobProgressStream';
-import { useAcknowledgeProjection, useCombinedScanStatus } from './useRecognitionHooks';
+import { useCombinedScanStatus } from './useRecognitionHooks';
 
 export type { JobPhase, PipelinePhase } from './jobStateMachineUtils';
 
@@ -97,7 +97,6 @@ export const useJobStateMachine = ({
     isPrimary,
   } = useJobProgressStream(latestJobId);
   const syncTrigger = useSyncTrigger(false);
-  const acknowledgeProjectionMutation = useAcknowledgeProjection();
 
   useJobStateMachineEffects({
     scanStatus: scanStatusQuery.data,
@@ -113,7 +112,7 @@ export const useJobStateMachine = ({
     latestClusterJob,
     currentPhase,
     syncTrigger,
-    acknowledgeProjection: acknowledgeProjectionMutation,
+    projectionSyncState,
     projectionSyncNonce,
     setProjectionSyncState,
     setProjectionError,
@@ -170,6 +169,21 @@ export const useJobStateMachine = ({
     [activeJobIds, isWaitingForScanCompletion, scanMutation.isPending, scanStatusQuery.data, sseStatus],
   );
 
+  const handleScan = useCallback(
+    (mediaIds: number[]) => {
+      setProjectionSyncState('idle');
+      setProjectionError(null);
+      setProjectionSyncNonce(0);
+      scanMutation.mutate(mediaIds);
+    },
+    [scanMutation],
+  );
+
+  const retryProjectionSync = useCallback(() => {
+    setProjectionError(null);
+    setProjectionSyncNonce((value) => value + 1);
+  }, []);
+
   return {
     // State
     currentPhase,
@@ -189,13 +203,9 @@ export const useJobStateMachine = ({
     isPrimary,
 
     // Actions
-    scan: scanMutation.mutate,
+    scan: handleScan,
     cancelScan: cancelMutation.mutate,
     cluster: clusterMutation.mutate,
-    retryProjectionSync: () => {
-      setProjectionError(null);
-      setProjectionSyncState('idle');
-      setProjectionSyncNonce((value) => value + 1);
-    },
+    retryProjectionSync,
   };
 };

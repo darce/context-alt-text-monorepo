@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import * as httpModule from '../../utils/http';
 import {
   fetchPendingMergeSuggestions,
+  fetchPendingNameSuggestions,
   fetchPendingSuggestions,
   fetchMediaIdentities,
   fetchIdentitySuggestions,
@@ -29,6 +30,7 @@ import {
   type BulkAcceptResponse,
   type PendingNameSuggestion,
 } from '../recognition';
+import { DATA_SOURCE, PROJECTION_STATUS } from '../recognition/types';
 
 const mockConfig = {
   nonce: 'nonce-123',
@@ -97,6 +99,56 @@ describe('recognitionApi', () => {
         restNonce: 'nonce-123',
       }),
     );
+  });
+
+  it('normalizes media identity data_source metadata', async () => {
+    fetchApiMock.mockResolvedValue({ identities_by_media: {}, data_source: 'backend_proxy' });
+
+    const result = await fetchMediaIdentities([99]);
+
+    expect(result.data_source).toBe(DATA_SOURCE.BACKEND_PROXY);
+  });
+
+  it('normalizes top-unlabeled response metadata', async () => {
+    fetchApiMock.mockResolvedValue({
+      clusters: [],
+      singleton_count: 0,
+      data_source: 'unavailable',
+      projection_status: 'bootstrapping',
+    });
+
+    const result = await fetchTopUnlabeledClusters('tenant-1', 20);
+
+    expect(result.data_source).toBe(DATA_SOURCE.UNAVAILABLE);
+    expect(result.projection_status).toBe(PROJECTION_STATUS.BOOTSTRAPPING);
+  });
+
+  it('normalizes pending suggestion data_source metadata', async () => {
+    fetchApiMock.mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 10,
+      offset: 0,
+      data_source: 'backend_proxy',
+    });
+
+    const result = await fetchPendingSuggestions(10, 0);
+
+    expect(result.data_source).toBe(DATA_SOURCE.BACKEND_PROXY);
+  });
+
+  it('normalizes pending name suggestion data_source metadata', async () => {
+    fetchApiMock.mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 25,
+      offset: 0,
+      data_source: 'unavailable',
+    });
+
+    const result = await fetchPendingNameSuggestions(0, 25, 0);
+
+    expect(result.data_source).toBe(DATA_SOURCE.UNAVAILABLE);
   });
 
   it('calls updateClusterLabel with PATCH', async () => {
@@ -353,17 +405,23 @@ describe('recognitionApi', () => {
     );
   });
 
-  it('normalizes legacy pending suggestion array payloads', async () => {
-    fetchApiMock.mockResolvedValue([
-      {
-        id: 's-1',
-        identity_id: 'identity-1',
-        cluster_id: 'cluster-1',
-        rep_similarity: 0.87,
-        member_similarity: null,
-        status: 'pending',
-      },
-    ]);
+  it('normalizes pending suggestion envelope payloads from the WP proxy', async () => {
+    fetchApiMock.mockResolvedValue({
+      suggestions: [
+        {
+          id: 's-1',
+          identity_id: 'identity-1',
+          cluster_id: 'cluster-1',
+          rep_similarity: 0.87,
+          member_similarity: null,
+          status: 'pending',
+        },
+      ],
+      total: 1,
+      limit: 10,
+      offset: 5,
+      data_source: 'backend_proxy',
+    });
 
     const result = await fetchPendingSuggestions(10, 5);
 
@@ -378,18 +436,25 @@ describe('recognitionApi', () => {
       avg_member_similarity: 0.87,
       confidence_score: 0.87,
     });
+    expect(result.data_source).toBe(DATA_SOURCE.BACKEND_PROXY);
   });
 
-  it('normalizes legacy pending merge suggestion array payloads', async () => {
-    fetchApiMock.mockResolvedValue([
-      {
-        id: 'm-1',
-        cluster_a_id: 'cluster-a',
-        cluster_b_id: 'cluster-b',
-        similarity: 0.93,
-        status: 'pending',
-      },
-    ]);
+  it('normalizes pending merge suggestion envelope payloads from the WP proxy', async () => {
+    fetchApiMock.mockResolvedValue({
+      suggestions: [
+        {
+          id: 'm-1',
+          cluster_a_id: 'cluster-a',
+          cluster_b_id: 'cluster-b',
+          similarity: 0.93,
+          status: 'pending',
+        },
+      ],
+      total: 1,
+      limit: 25,
+      offset: 0,
+      data_source: 'backend_proxy',
+    });
 
     const result = await fetchPendingMergeSuggestions(25, 0);
 
@@ -405,6 +470,7 @@ describe('recognitionApi', () => {
       cluster_a_label: null,
       cluster_b_label: null,
     });
+    expect(result.data_source).toBe(DATA_SOURCE.BACKEND_PROXY);
   });
 
   it('builds cluster list query params through URLSearchParams', async () => {
@@ -447,43 +513,47 @@ describe('recognitionApi', () => {
   });
 
   it('normalizes top-unlabeled representative thumbnail fields', async () => {
-    fetchApiMock.mockResolvedValue([
-      {
-        id: 'cluster-1',
-        tenant_id: 'tenant-1',
-        label: null,
-        is_labeled: false,
-        is_auto_label: false,
-        identity_count: 2,
-        user_confirmed: false,
-        representatives: [
-          {
-            id: 'rep-1',
-            media_id: 101,
-            is_pinned: false,
-            thumb_url: 'http://example.test/thumb-101.jpg',
-            media_url: ' ',
-            bbox: null,
-          },
-          {
-            id: 'rep-2',
-            media_id: 202,
-            is_pinned: false,
-            thumb_url: 'http://example.test/thumb-202.jpg',
-            media_url: 'http://example.test/media-202.jpg',
-            bbox: null,
-          },
-        ],
-      },
-    ]);
+    fetchApiMock.mockResolvedValue({
+      clusters: [
+        {
+          id: 'cluster-1',
+          tenant_id: 'tenant-1',
+          label: null,
+          is_labeled: false,
+          is_auto_label: false,
+          identity_count: 2,
+          user_confirmed: false,
+          representatives: [
+            {
+              id: 'rep-1',
+              media_id: 101,
+              is_pinned: false,
+              thumb_url: 'http://example.test/thumb-101.jpg',
+              media_url: ' ',
+              bbox: null,
+            },
+            {
+              id: 'rep-2',
+              media_id: 202,
+              is_pinned: false,
+              thumb_url: 'http://example.test/thumb-202.jpg',
+              media_url: 'http://example.test/media-202.jpg',
+              bbox: null,
+            },
+          ],
+        },
+      ],
+      singleton_count: 4,
+    });
 
     const result = await fetchTopUnlabeledClusters('tenant-1', 3);
 
-    expect(result[0]?.representatives[0]).toMatchObject({
+    expect(result.singleton_count).toBe(4);
+    expect(result.clusters[0]?.representatives[0]).toMatchObject({
       thumb_url: 'http://example.test/thumb-101.jpg',
       media_url: null,
     });
-    expect(result[0]?.representatives[1]).toMatchObject({
+    expect(result.clusters[0]?.representatives[1]).toMatchObject({
       thumb_url: 'http://example.test/thumb-202.jpg',
       media_url: 'http://example.test/media-202.jpg',
     });

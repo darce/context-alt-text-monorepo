@@ -10,8 +10,6 @@ use WP_REST_Request;
 use WP_REST_Response;
 
 use function absint;
-use function do_action;
-use function get_transient;
 use function get_current_user_id;
 use function get_site_url;
 use function gmdate;
@@ -28,8 +26,8 @@ use function wp_json_encode;
 class AnalysisJobsController extends AbstractRecognitionProxyController {
 	use BatchLimits;
 
+	private const REQUEST_CLASS_POST_SCAN_READ = 'post_scan_read';
 	private const JOB_MEDIA_IDS_TRANSIENT_PREFIX = 'acx_job_media_ids_';
-	private const JOB_COMPLETION_TRANSIENT_PREFIX = 'acx_job_completion_emitted_';
 	private const JOB_TRACKING_TTL_SECONDS = 86400;
 
 	public function register_routes(): void {
@@ -83,6 +81,16 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			array(
 				'methods'             => 'POST',
 				'callback'            => array( $this, 'cancel_job' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/jobs/(?P<job_id>[a-f0-9-]+)/acknowledge-projection',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'acknowledge_projection' ),
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
 			)
 		);
@@ -153,17 +161,11 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			array(),
 			array(
 				'tenant_id' => $this->get_tenant_id(),
-			)
+			),
+			self::REQUEST_CLASS_POST_SCAN_READ
 		);
 		if ( $this->is_proxy_unavailable( $response ) ) {
 			return $this->build_offline_job_status_response( $job_id );
-		}
-
-		if ( $response instanceof WP_REST_Response ) {
-			$data = $response->get_data();
-			if ( is_array( $data ) ) {
-				$this->maybe_dispatch_recognition_complete( $job_id, $data );
-			}
 		}
 
 		return $response;
@@ -252,10 +254,6 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			if ( 'clustering' === $job_type ) {
 				$event_type = 'clustering_progress';
 			}
-			if ( 'completed' === $status ) {
-				$this->maybe_dispatch_recognition_complete( $job_id, $data );
-			}
-
 			$now         = microtime( true );
 			$should_emit = (
 				$completed !== $last_completed
@@ -305,6 +303,35 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			array(
 				'tenant_id' => $this->get_tenant_id(),
 			)
+		);
+	}
+
+	public function acknowledge_projection( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$job_id = sanitize_text_field( (string) $request->get_param( 'job_id' ) );
+
+		if ( '' === $job_id ) {
+			return new WP_Error( 'missing_job_id', 'Job ID is required.', array( 'status' => 400 ) );
+		}
+
+		$body = $request->get_json_params();
+		$snapshot_version = absint( $body['snapshot_version'] ?? 0 );
+		if ( $snapshot_version <= 0 ) {
+			return new WP_Error( 'invalid_snapshot_version', 'A positive snapshot_version is required.', array( 'status' => 400 ) );
+		}
+
+		$payload = array(
+			'snapshot_version' => $snapshot_version,
+		);
+
+		$snapshot_generation_id = sanitize_text_field( (string) ( $body['snapshot_generation_id'] ?? '' ) );
+		if ( '' !== $snapshot_generation_id ) {
+			$payload['snapshot_generation_id'] = $snapshot_generation_id;
+		}
+
+		return $this->proxy_request(
+			'POST',
+			sprintf( '/recognition/jobs/%s/acknowledge-projection', $job_id ),
+			$payload
 		);
 	}
 
@@ -465,63 +492,6 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 	}
 
 	/**
-	 * @param array<string,mixed> $job_data
-	 */
-	private function maybe_dispatch_recognition_complete( string $job_id, array $job_data ): void {
-		$status = (string) ( $job_data['status'] ?? '' );
-		if ( 'completed' !== $status || '' === $job_id || $this->has_emitted_completion( $job_id ) ) {
-			return;
-		}
-
-		$media_ids = $this->extract_media_ids_from_job_data( $job_data );
-		if ( empty( $media_ids ) ) {
-			$media_ids = $this->load_stored_media_ids( $job_id );
-		}
-
-		if ( empty( $media_ids ) ) {
-			return;
-		}
-
-		foreach ( $media_ids as $attachment_id ) {
-			do_action( 'acx_recognition_complete', $attachment_id, $job_id );
-		}
-
-		$this->mark_completion_emitted( $job_id );
-	}
-
-	/**
-	 * @param array<string,mixed> $job_data
-	 * @return int[]
-	 */
-	private function extract_media_ids_from_job_data( array $job_data ): array {
-		$media_ids = array();
-
-		if ( isset( $job_data['media_ids'] ) && is_array( $job_data['media_ids'] ) ) {
-			foreach ( $job_data['media_ids'] as $candidate ) {
-				$media_id = absint( $candidate );
-				if ( $media_id > 0 ) {
-					$media_ids[] = $media_id;
-				}
-			}
-		}
-
-		if ( isset( $job_data['media_items'] ) && is_array( $job_data['media_items'] ) ) {
-			foreach ( $job_data['media_items'] as $media_item ) {
-				if ( ! is_array( $media_item ) ) {
-					continue;
-				}
-
-				$media_id = absint( $media_item['media_id'] ?? 0 );
-				if ( $media_id > 0 ) {
-					$media_ids[] = $media_id;
-				}
-			}
-		}
-
-		return array_values( array_unique( $media_ids ) );
-	}
-
-	/**
 	 * @param int[] $media_ids
 	 */
 	private function store_job_media_ids( string $job_id, array $media_ids ): void {
@@ -532,47 +502,7 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 		set_transient( $this->job_media_ids_transient_key( $job_id ), $media_ids, self::JOB_TRACKING_TTL_SECONDS );
 	}
 
-	/**
-	 * @return int[]
-	 */
-	private function load_stored_media_ids( string $job_id ): array {
-		if ( '' === $job_id ) {
-			return array();
-		}
-
-		$stored = get_transient( $this->job_media_ids_transient_key( $job_id ) );
-		if ( ! is_array( $stored ) ) {
-			return array();
-		}
-
-		$media_ids = array();
-		foreach ( $stored as $candidate ) {
-			$media_id = absint( $candidate );
-			if ( $media_id > 0 ) {
-				$media_ids[] = $media_id;
-			}
-		}
-
-		return array_values( array_unique( $media_ids ) );
-	}
-
-	private function has_emitted_completion( string $job_id ): bool {
-		return true === (bool) get_transient( $this->completion_emitted_transient_key( $job_id ) );
-	}
-
-	private function mark_completion_emitted( string $job_id ): void {
-		if ( '' === $job_id ) {
-			return;
-		}
-
-		set_transient( $this->completion_emitted_transient_key( $job_id ), true, self::JOB_TRACKING_TTL_SECONDS );
-	}
-
 	private function job_media_ids_transient_key( string $job_id ): string {
 		return self::JOB_MEDIA_IDS_TRANSIENT_PREFIX . $job_id;
-	}
-
-	private function completion_emitted_transient_key( string $job_id ): string {
-		return self::JOB_COMPLETION_TRANSIENT_PREFIX . $job_id;
 	}
 }

@@ -1,19 +1,10 @@
-import { useCallback, useMemo, useReducer, useRef } from 'react';
+import { useReducer, useRef } from 'react';
 import { __ } from '@wordpress/i18n';
 
 import type { RetentionExportResponse, RetentionMode, StartExportJobResponse } from '../../api/recognition';
-import {
-  useApplyRetentionPreset,
-  useAuditEvents,
-  useDownloadExportJobData,
-  useExportJobStatus,
-  useExportTenantData,
-  useImportTenantData,
-  usePurgeTenantData,
-  useRetentionStatus,
-  useUpdateRetentionPolicy,
-} from '../../hooks/useRetentionStatus';
 import { useToast } from '../../context/ToastContext';
+import { useRetentionPageMutations } from './useRetentionPageMutations';
+import { useRetentionPageQueries } from './useRetentionPageQueries';
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -143,19 +134,15 @@ const downloadExportPayload = (response: RetentionExportResponse): void => {
 
 export const useRetentionPageState = () => {
   const { success, error: showError } = useToast();
-  const retentionQuery = useRetentionStatus();
-  const updatePolicy = useUpdateRetentionPolicy();
-  const exportMutation = useExportTenantData();
-  const purgeMutation = usePurgeTenantData();
-  const importMutation = useImportTenantData();
-  const applyPreset = useApplyRetentionPreset();
-  const downloadJobData = useDownloadExportJobData();
-
   const [state, dispatch] = useReducer(retentionReducer, initialState);
   const importFileRef = useRef<HTMLInputElement>(null);
-
-  const exportJobStatusQuery = useExportJobStatus(state.exportJobId);
-  const auditQuery = useAuditEvents({ limit: AUDIT_PAGE_SIZE, offset: state.auditPage * AUDIT_PAGE_SIZE });
+  const { retentionQuery, exportJobStatusQuery, auditQuery } = useRetentionPageQueries(
+    state.exportJobId,
+    state.auditPage,
+    AUDIT_PAGE_SIZE,
+  );
+  const { updatePolicy, exportMutation, purgeMutation, importMutation, applyPreset, downloadJobData } =
+    useRetentionPageMutations();
 
   const status = retentionQuery.data;
   const policy = status?.policy ?? null;
@@ -163,13 +150,9 @@ export const useRetentionPageState = () => {
   const isPolicyDirty = Boolean(policy && selectedMode !== policy.retention_mode);
   const auditEvents = status?.recent_audit_events ?? [];
   const exportJobStatus = exportJobStatusQuery.data?.status ?? null;
+  const modeDescription = RETENTION_OPTIONS.find((option) => option.value === selectedMode)?.description ?? '';
 
-  const modeDescription = useMemo(
-    () => RETENTION_OPTIONS.find((option) => option.value === selectedMode)?.description ?? '',
-    [selectedMode],
-  );
-
-  const savePolicy = useCallback(async (): Promise<void> => {
+  const savePolicy = async (): Promise<void> => {
     if (!policy || !isPolicyDirty) {
       return;
     }
@@ -180,18 +163,18 @@ export const useRetentionPageState = () => {
     } catch (error) {
       showError(error instanceof Error ? error.message : __('Unable to update retention policy.', 'alt-context'));
     }
-  }, [policy, isPolicyDirty, selectedMode, updatePolicy, success, showError]);
+  };
 
-  const confirmExport = useCallback(async (): Promise<void> => {
+  const confirmExport = async (): Promise<void> => {
     try {
       const result: StartExportJobResponse = await exportMutation.mutateAsync();
       dispatch({ type: 'SET_EXPORT_JOB_ID', jobId: result.job_id });
     } catch (error) {
       showError(error instanceof Error ? error.message : __('Unable to start export.', 'alt-context'));
     }
-  }, [exportMutation, showError]);
+  };
 
-  const downloadExport = useCallback(async (): Promise<void> => {
+  const downloadExport = async (): Promise<void> => {
     if (!state.exportJobId) {
       return;
     }
@@ -203,9 +186,9 @@ export const useRetentionPageState = () => {
     } catch (error) {
       showError(error instanceof Error ? error.message : __('Unable to download export data.', 'alt-context'));
     }
-  }, [state.exportJobId, downloadJobData, success, showError]);
+  };
 
-  const confirmPurge = useCallback(async (): Promise<void> => {
+  const confirmPurge = async (): Promise<void> => {
     try {
       await purgeMutation.mutateAsync({ scope: state.purgeScope, confirm: true });
       dispatch({ type: 'CLOSE_PURGE_DIALOG' });
@@ -213,9 +196,9 @@ export const useRetentionPageState = () => {
     } catch (error) {
       showError(error instanceof Error ? error.message : __('Unable to purge tenant data.', 'alt-context'));
     }
-  }, [state.purgeScope, purgeMutation, success, showError]);
+  };
 
-  const confirmImport = useCallback(async (): Promise<void> => {
+  const confirmImport = async (): Promise<void> => {
     if (!state.importFile) {
       return;
     }
@@ -235,9 +218,9 @@ export const useRetentionPageState = () => {
     } catch (error) {
       showError(error instanceof Error ? error.message : __('Unable to import data.', 'alt-context'));
     }
-  }, [state.importFile, importMutation, success, showError]);
+  };
 
-  const applyGdprPreset = useCallback(async (): Promise<void> => {
+  const applyGdprPreset = async (): Promise<void> => {
     try {
       await applyPreset.mutateAsync({ preset: 'gdpr' });
       dispatch({ type: 'SET_DRAFT_MODE', mode: null });
@@ -245,7 +228,7 @@ export const useRetentionPageState = () => {
     } catch (error) {
       showError(error instanceof Error ? error.message : __('Unable to apply preset.', 'alt-context'));
     }
-  }, [applyPreset, success, showError]);
+  };
 
   return {
     state,

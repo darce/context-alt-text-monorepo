@@ -7,8 +7,10 @@
 import React from 'react';
 import { __ } from '@wordpress/i18n';
 
+import { DATA_SOURCE } from '../../../api/recognition/types';
 import type { PendingSuggestion } from '../../../api/recognition';
 import { CollapsibleMergeQueue } from './CollapsibleMergeQueue';
+import { EmptyStateWarning } from './EmptyStateWarning';
 import { GroupedSuggestionCard, SuggestionCard } from './SuggestionCards';
 import { TopClustersSection } from './TopClustersSection';
 import { useSuggestionReviewData } from './useSuggestionReviewData';
@@ -29,9 +31,11 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
   const {
     mergeSuggestions,
     nameSuggestions,
+    nameDataSource,
     reviewItems,
     assignmentCount,
     loadedAssignmentCount,
+    assignmentDataSource,
     hasInitialFailure,
     isLoading,
     isError,
@@ -43,6 +47,7 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
     bulkActionRef,
     refetchAssignment,
     refetchMerge,
+    refetchName,
     invalidateSuggestionQueries,
     invalidateMediaIdentities,
     mutations,
@@ -151,6 +156,9 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
     );
   }
 
+  const showUnavailableWarning = reviewItems.length === 0 && assignmentDataSource === DATA_SOURCE.UNAVAILABLE;
+  const showNameUnavailableWarning = nameSuggestions.length === 0 && nameDataSource === DATA_SOURCE.UNAVAILABLE;
+
   return (
     <div className={`acx-suggestion-panel${isOpen ? '' : ' acx-suggestion-panel--collapsed'}`}>
       <button
@@ -177,7 +185,13 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
           />
 
           <div className="acx-suggestion-queue">
-            {reviewItems.length === 0 ? (
+            {showUnavailableWarning ? (
+              <EmptyStateWarning
+                title={__('Suggestions unavailable', 'alt-context')}
+                message={__('We could not load assignment suggestions right now.', 'alt-context')}
+                onRetry={() => void refetchAssignment().then(() => refetchMerge())}
+              />
+            ) : reviewItems.length === 0 ? (
               <p className="acx-suggestion-panel__description">{__('No suggestions to review yet.', 'alt-context')}</p>
             ) : (
               <p className="acx-suggestion-panel__description">
@@ -223,44 +237,56 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
             )}
           </div>
 
-          {nameSuggestions.length > 0 && (
+          {(nameSuggestions.length > 0 || showNameUnavailableWarning) && (
             <div className="acx-naming-queue acx-naming-queue--suggestions">
               <h3 className="acx-suggestion-panel__section-title">{__('Suggested names', 'alt-context')}</h3>
-              <p className="acx-suggestion-panel__description">
-                {__('These names were suggested by the recognition engine for unlabeled clusters.', 'alt-context')}
-              </p>
-              <ul className="acx-suggestion-panel__list">
-                {nameSuggestions.map((suggestion) => (
-                  <li key={suggestion.id} className="acx-name-suggestion-card">
-                    <span className="acx-name-suggestion-card__label">{suggestion.suggested_name}</span>
-                    {suggestion.confidence_score !== null && suggestion.confidence_score !== undefined && (
-                      <span
-                        className={`acx-suggestion-confidence${suggestion.confidence_score < LOW_CONFIDENCE_THRESHOLD ? ' acx-suggestion-confidence--low' : ''}`}
-                      >
-                        {Math.round(suggestion.confidence_score * 100)}%
-                      </span>
-                    )}
-                    <div className="acx-name-suggestion-card__actions">
-                      <button
-                        type="button"
-                        className="acx-button acx-button--primary acx-button--small"
-                        disabled={mutations.acceptName.isPending || mutations.rejectName.isPending}
-                        onClick={() => mutations.acceptName.mutate(suggestion.id)}
-                      >
-                        {__('Accept', 'alt-context')}
-                      </button>
-                      <button
-                        type="button"
-                        className="acx-button acx-button--secondary acx-button--small"
-                        disabled={mutations.acceptName.isPending || mutations.rejectName.isPending}
-                        onClick={() => mutations.rejectName.mutate(suggestion.id)}
-                      >
-                        {__('Reject', 'alt-context')}
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              {showNameUnavailableWarning ? (
+                <EmptyStateWarning
+                  title={__('Suggested names unavailable', 'alt-context')}
+                  message={__('We could not load suggested names right now.', 'alt-context')}
+                  onRetry={() => {
+                    void refetchName();
+                  }}
+                />
+              ) : (
+                <>
+                  <p className="acx-suggestion-panel__description">
+                    {__('These names were suggested by the recognition engine for unlabeled clusters.', 'alt-context')}
+                  </p>
+                  <ul className="acx-suggestion-panel__list">
+                    {nameSuggestions.map((suggestion) => (
+                      <li key={suggestion.id} className="acx-name-suggestion-card">
+                        <span className="acx-name-suggestion-card__label">{suggestion.suggested_name}</span>
+                        {suggestion.confidence_score !== null && suggestion.confidence_score !== undefined && (
+                          <span
+                            className={`acx-suggestion-confidence${suggestion.confidence_score < LOW_CONFIDENCE_THRESHOLD ? ' acx-suggestion-confidence--low' : ''}`}
+                          >
+                            {Math.round(suggestion.confidence_score * 100)}%
+                          </span>
+                        )}
+                        <div className="acx-name-suggestion-card__actions">
+                          <button
+                            type="button"
+                            className="acx-button acx-button--primary acx-button--small"
+                            disabled={mutations.acceptName.isPending || mutations.rejectName.isPending}
+                            onClick={() => mutations.acceptName.mutate(suggestion.id)}
+                          >
+                            {__('Accept', 'alt-context')}
+                          </button>
+                          <button
+                            type="button"
+                            className="acx-button acx-button--secondary acx-button--small"
+                            disabled={mutations.acceptName.isPending || mutations.rejectName.isPending}
+                            onClick={() => mutations.rejectName.mutate(suggestion.id)}
+                          >
+                            {__('Reject', 'alt-context')}
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
             </div>
           )}
 

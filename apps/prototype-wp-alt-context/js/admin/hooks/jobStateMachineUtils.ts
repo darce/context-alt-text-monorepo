@@ -17,7 +17,11 @@ export const derivePipelinePhase = (
   latestClusterJob: PersistedJob | null,
   scanStatus: JobStatusResponse | undefined,
 ): PipelinePhase => {
-  if (scanStatus?.progress?.phase === 'awaiting_projection' && (latestClusterJob || latestScanJob)) {
+  // Trust the backend when it reports awaiting_projection.  The previous guard
+  // `(latestClusterJob || latestScanJob)` prevented entering 'projecting' when
+  // the backend auto-chains a clustering job because the scan job is removed
+  // from activeJobs on SSE completion and no local clustering entry exists.
+  if (scanStatus?.progress?.phase === 'awaiting_projection') {
     return 'projecting';
   }
   // Backend auto-chained a clustering job; frontend never registered a local cluster entry.

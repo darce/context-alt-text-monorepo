@@ -8,6 +8,7 @@
  * A pending suggestion for user review.
  * Created when a face matches a cluster but is below the auto-assign threshold.
  */
+import type { DataSource } from './dataSource';
 import type { TopUnlabeledRepresentative } from './cluster';
 import type { BoundingBox } from './identity';
 
@@ -44,6 +45,7 @@ export interface PendingSuggestionsResponse {
   total: number;
   limit: number;
   offset: number;
+  data_source?: DataSource;
 }
 
 /**
@@ -58,6 +60,14 @@ export interface PendingNameSuggestion {
   created_at: string;
   expires_at: string | null;
   representatives?: TopUnlabeledRepresentative[];
+}
+
+export interface PendingNameSuggestionsResponse {
+  suggestions: PendingNameSuggestion[];
+  total: number;
+  limit: number;
+  offset: number;
+  data_source?: DataSource;
 }
 
 export interface BulkAcceptRequest {
@@ -106,4 +116,5 @@ export interface PendingMergeSuggestionsResponse {
   total: number;
   limit: number;
   offset: number;
+  data_source?: DataSource;
 }

@@ -17,17 +17,39 @@ import {
   rejectSuggestion,
   updateClusterLabel,
 } from '../../../../api/recognition';
+import { DATA_SOURCE } from '../../../../api/recognition/types';
 import { resetConfigCache } from '../../../../api/config';
 import { queryKeys } from '../../../../api/queryKeys';
 import { SuggestionReviewPanel } from '../SuggestionReviewPanel';
 import type { PendingSuggestionsResponse } from '../../../../api/recognition/types';
-import type { TopUnlabeledCluster } from '../../../../api/recognition/types';
+import type { TopUnlabeledCluster, TopUnlabeledClustersResponse } from '../../../../api/recognition/types';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
   _n: (single: string, plural: string, number: number) => (number === 1 ? single : plural),
   sprintf: (text: string) => text,
 }));
+
+// Radix Avatar's Image uses Image.onload which never fires in JSDOM.
+// Render plain elements so test selectors can find the <img>.
+vi.mock('@radix-ui/react-avatar', async () => {
+  const React = await import('react');
+  return {
+    Root: React.forwardRef(function MockRoot({ children, ...props }: Record<string, unknown>, ref: unknown) {
+      return React.createElement(
+        'span',
+        { ...props, ref } as React.HTMLAttributes<HTMLSpanElement>,
+        children as React.ReactNode,
+      );
+    }),
+    Image: React.forwardRef(function MockImage(props: Record<string, unknown>, ref: unknown) {
+      return React.createElement('img', { ...props, ref } as React.ImgHTMLAttributes<HTMLImageElement>);
+    }),
+    Fallback: React.forwardRef(function MockFallback() {
+      return null;
+    }),
+  };
+});
 
 vi.mock('../../../../api/recognition', async () => {
   const actual = await vi.importActual<typeof import('../../../../api/recognition')>('../../../../api/recognition');
@@ -69,6 +91,11 @@ const renderPanel = () => {
   return { queryClient, ...utils };
 };
 
+const topUnlabeledResponse = (clusters: TopUnlabeledCluster[], singletonCount = 0): TopUnlabeledClustersResponse => ({
+  clusters,
+  singleton_count: singletonCount,
+});
+
 describe('SuggestionReviewPanel', () => {
   afterEach(() => {
     vi.clearAllMocks();
@@ -90,7 +117,7 @@ describe('SuggestionReviewPanel', () => {
     } as unknown as NonNullable<Window['AltContextAdmin']>;
 
     vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({ suggestions: [], total: 0, limit: 25, offset: 0 });
-    fetchTopUnlabeledClustersMock.mockResolvedValue([]);
+    fetchTopUnlabeledClustersMock.mockResolvedValue(topUnlabeledResponse([]));
     resetConfigCache();
   });
 
@@ -111,6 +138,64 @@ describe('SuggestionReviewPanel', () => {
     );
 
     expect(screen.queryByText('Failed to load suggestions.')).not.toBeInTheDocument();
+  });
+
+  it('renders an unavailable warning instead of a false empty state', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.UNAVAILABLE,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 10,
+      offset: 0,
+      data_source: DATA_SOURCE.UNAVAILABLE,
+    });
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(fetchPendingSuggestions).toHaveBeenCalled();
+    });
+
+    expect(screen.getByText('Suggestions unavailable')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.queryByText('No suggestions to review yet.')).not.toBeInTheDocument();
+  });
+
+  it('renders an unavailable warning when suggested names cannot be loaded', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 25,
+      offset: 0,
+      data_source: DATA_SOURCE.UNAVAILABLE,
+    });
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(fetchPendingNameSuggestions).toHaveBeenCalled();
+    });
+
+    expect(screen.getByText('Suggested names unavailable')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Retry' }).length).toBeGreaterThan(0);
   });
 
   it('renders suggestions and accepts a suggestion', async () => {
@@ -773,18 +858,20 @@ describe('SuggestionReviewPanel', () => {
     });
 
     // 3. Setup top unlabeled clusters (Naming Queue)
-    fetchTopUnlabeledClustersMock.mockResolvedValue([
-      {
-        id: 'c-unlabeled',
-        label: 'cluster-123',
-        identity_count: 5, // Non-singleton
-        representatives: [],
-        tenant_id: 'test-tenant',
-        user_confirmed: false,
-        is_labeled: false,
-        is_auto_label: true,
-      },
-    ]);
+    fetchTopUnlabeledClustersMock.mockResolvedValue(
+      topUnlabeledResponse([
+        {
+          id: 'c-unlabeled',
+          label: 'cluster-123',
+          identity_count: 5, // Non-singleton
+          representatives: [],
+          tenant_id: 'test-tenant',
+          user_confirmed: false,
+          is_labeled: false,
+          is_auto_label: true,
+        },
+      ]),
+    );
 
     renderPanel();
 
@@ -822,18 +909,20 @@ describe('SuggestionReviewPanel', () => {
 
     fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
     fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
-    fetchTopUnlabeledClustersMock.mockResolvedValue([
-      {
-        id: 'cluster-top-1',
-        label: null,
-        identity_count: 3,
-        representatives: [representative],
-        tenant_id: 'test-tenant-id',
-        user_confirmed: false,
-        is_labeled: false,
-        is_auto_label: true,
-      },
-    ]);
+    fetchTopUnlabeledClustersMock.mockResolvedValue(
+      topUnlabeledResponse([
+        {
+          id: 'cluster-top-1',
+          label: null,
+          identity_count: 3,
+          representatives: [representative],
+          tenant_id: 'test-tenant-id',
+          user_confirmed: false,
+          is_labeled: false,
+          is_auto_label: true,
+        },
+      ]),
+    );
 
     const { container } = renderPanel();
 
@@ -857,6 +946,34 @@ describe('SuggestionReviewPanel', () => {
     expect(thumbImage.getAttribute('src')).toContain('face-101.jpg');
   });
 
+  it('renders the singleton-only naming message for auto-labeled cluster rows', async () => {
+    const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
+    const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
+    const fetchPendingNameSuggestionsMock = vi.mocked(fetchPendingNameSuggestions);
+    const fetchTopUnlabeledClustersMock = vi.mocked(fetchTopUnlabeledClusters);
+
+    fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
+    fetchPendingNameSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 25, offset: 0 });
+    fetchTopUnlabeledClustersMock.mockResolvedValue(topUnlabeledResponse([], 1));
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(fetchPendingSuggestionsMock).toHaveBeenCalled();
+      expect(fetchPendingMergeSuggestionsMock).toHaveBeenCalled();
+      expect(fetchPendingNameSuggestionsMock).toHaveBeenCalled();
+    });
+
+    expect(await screen.findByText('Name These People')).toBeInTheDocument();
+    expect(fetchTopUnlabeledClustersMock).toHaveBeenCalledWith('test-tenant-id', 20);
+    expect(
+      screen.getByText(
+        'All detected groups contain only a single photo. Groups with multiple photos will appear here.',
+      ),
+    ).toBeInTheDocument();
+  });
+
   it('renders top-cluster inferred name prompt with yes/no and confirms by merging into suggested target', async () => {
     const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
     const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
@@ -865,35 +982,37 @@ describe('SuggestionReviewPanel', () => {
 
     fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
     fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
-    fetchTopUnlabeledClustersMock.mockResolvedValue([
-      {
-        id: 'cluster-top-suggested',
-        label: null,
-        identity_count: 6,
-        suggested_label: 'Coral Osborne',
-        suggested_label_source: 'similar_cluster',
-        suggested_label_confidence: 0.93,
-        suggested_target_cluster_id: 'cluster-known-coral',
-        representatives: [
-          {
-            id: 'rep-not-pinned',
-            media_id: 101,
-            thumb_url: 'http://example.test/media/not-pinned.jpg',
-            is_pinned: false,
-          },
-          {
-            id: 'rep-pinned',
-            media_id: 102,
-            thumb_url: 'http://example.test/media/pinned.jpg',
-            is_pinned: true,
-          },
-        ],
-        tenant_id: 'test-tenant-id',
-        user_confirmed: false,
-        is_labeled: false,
-        is_auto_label: true,
-      },
-    ]);
+    fetchTopUnlabeledClustersMock.mockResolvedValue(
+      topUnlabeledResponse([
+        {
+          id: 'cluster-top-suggested',
+          label: null,
+          identity_count: 6,
+          suggested_label: 'Coral Osborne',
+          suggested_label_source: 'similar_cluster',
+          suggested_label_confidence: 0.93,
+          suggested_target_cluster_id: 'cluster-known-coral',
+          representatives: [
+            {
+              id: 'rep-not-pinned',
+              media_id: 101,
+              thumb_url: 'http://example.test/media/not-pinned.jpg',
+              is_pinned: false,
+            },
+            {
+              id: 'rep-pinned',
+              media_id: 102,
+              thumb_url: 'http://example.test/media/pinned.jpg',
+              is_pinned: true,
+            },
+          ],
+          tenant_id: 'test-tenant-id',
+          user_confirmed: false,
+          is_labeled: false,
+          is_auto_label: true,
+        },
+      ]),
+    );
 
     const { container } = renderPanel();
 
@@ -930,26 +1049,28 @@ describe('SuggestionReviewPanel', () => {
 
     fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
     fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
-    fetchTopUnlabeledClustersMock.mockResolvedValue([
-      {
-        id: 'cluster-top-2',
-        label: null,
-        identity_count: 3,
-        representatives: [
-          {
-            id: 'rep-crop-1',
-            media_id: 101,
-            media_url: 'http://example.test/media/face-source-101.jpg',
-            bbox: { x: 12, y: 8, width: 40, height: 30 },
-            is_pinned: false,
-          },
-        ],
-        tenant_id: 'test-tenant-id',
-        user_confirmed: false,
-        is_labeled: false,
-        is_auto_label: true,
-      },
-    ]);
+    fetchTopUnlabeledClustersMock.mockResolvedValue(
+      topUnlabeledResponse([
+        {
+          id: 'cluster-top-2',
+          label: null,
+          identity_count: 3,
+          representatives: [
+            {
+              id: 'rep-crop-1',
+              media_id: 101,
+              media_url: 'http://example.test/media/face-source-101.jpg',
+              bbox: { x: 12, y: 8, width: 40, height: 30 },
+              is_pinned: false,
+            },
+          ],
+          tenant_id: 'test-tenant-id',
+          user_confirmed: false,
+          is_labeled: false,
+          is_auto_label: true,
+        },
+      ]),
+    );
 
     const { container } = renderPanel();
 
@@ -987,28 +1108,30 @@ describe('SuggestionReviewPanel', () => {
     );
 
     // Top-unlabeled fetch returns multiple clusters.
-    fetchTopUnlabeledClustersMock.mockResolvedValue([
-      {
-        id: 'cluster-skip-1',
-        label: null,
-        identity_count: 4,
-        representatives: [],
-        tenant_id: 'test-tenant-id',
-        user_confirmed: false,
-        is_labeled: false,
-        is_auto_label: true,
-      },
-      {
-        id: 'cluster-skip-2',
-        label: null,
-        identity_count: 3,
-        representatives: [],
-        tenant_id: 'test-tenant-id',
-        user_confirmed: false,
-        is_labeled: false,
-        is_auto_label: true,
-      },
-    ]);
+    fetchTopUnlabeledClustersMock.mockResolvedValue(
+      topUnlabeledResponse([
+        {
+          id: 'cluster-skip-1',
+          label: null,
+          identity_count: 4,
+          representatives: [],
+          tenant_id: 'test-tenant-id',
+          user_confirmed: false,
+          is_labeled: false,
+          is_auto_label: true,
+        },
+        {
+          id: 'cluster-skip-2',
+          label: null,
+          identity_count: 3,
+          representatives: [],
+          tenant_id: 'test-tenant-id',
+          user_confirmed: false,
+          is_labeled: false,
+          is_auto_label: true,
+        },
+      ]),
+    );
 
     renderPanel();
 

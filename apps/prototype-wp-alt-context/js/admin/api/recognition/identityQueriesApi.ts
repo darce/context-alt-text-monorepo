@@ -1,30 +1,22 @@
 import { fetchRequiredApi, stripTrailingSlash } from '../../utils/http';
 import { getEndpoint, getConfig, isDevMode } from '../config';
+import { DATA_SOURCE, normalizeDataSource } from './types/dataSource';
 import type {
   IdentitySuggestionsResponse,
   MediaIdentitiesResponse,
   PendingMergeSuggestionsResponse,
-  PendingNameSuggestion,
+  PendingNameSuggestionsResponse,
   PendingSuggestionsResponse,
 } from './types';
 import {
   mapPendingMergeSuggestions,
   mapPendingSuggestions,
-  type PendingMergeSuggestionApiResponse,
-  type PendingSuggestionApiResponse,
 } from './identitySuggestionMappers';
 import { createRecognitionTimeoutSignal } from './requestTimeout';
 
-export interface PendingNameSuggestionsResponse {
-  suggestions: PendingNameSuggestion[];
-  total: number;
-  limit: number;
-  offset: number;
-}
-
 export const fetchMediaIdentities = async (mediaIds: number[]): Promise<MediaIdentitiesResponse> => {
   if (mediaIds.length === 0) {
-    return { identities_by_media: {} };
+    return { identities_by_media: {}, data_source: DATA_SOURCE.LOCAL_PROJECTION };
   }
 
   const endpoint = getEndpoint('recognitionMediaIdentities');
@@ -37,11 +29,16 @@ export const fetchMediaIdentities = async (mediaIds: number[]): Promise<MediaIde
     url.searchParams.set('include_debug', 'true');
   }
 
-  return fetchRequiredApi<MediaIdentitiesResponse>(url.toString(), {
+  const response = await fetchRequiredApi<MediaIdentitiesResponse>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
     signal: createRecognitionTimeoutSignal(2_000),
   });
+
+  return {
+    identities_by_media: response.identities_by_media ?? {},
+    data_source: normalizeDataSource(response.data_source),
+  };
 };
 
 export const fetchIdentitySuggestions = async (identityId: string, topK = 5): Promise<IdentitySuggestionsResponse> => {
@@ -63,7 +60,7 @@ export const fetchPendingSuggestions = async (limit = 10, offset = 0): Promise<P
   url.searchParams.set('limit', String(limit));
   url.searchParams.set('offset', String(offset));
 
-  const response = await fetchRequiredApi<PendingSuggestionsResponse | PendingSuggestionApiResponse[]>(url.toString(), {
+  const response = await fetchRequiredApi<PendingSuggestionsResponse>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
     signal: createRecognitionTimeoutSignal(2_000),
@@ -81,7 +78,7 @@ export const fetchPendingMergeSuggestions = async (
   url.searchParams.set('limit', String(limit));
   url.searchParams.set('offset', String(offset));
 
-  const response = await fetchRequiredApi<PendingMergeSuggestionsResponse | PendingMergeSuggestionApiResponse[]>(
+  const response = await fetchRequiredApi<PendingMergeSuggestionsResponse>(
     url.toString(),
     {
       method: 'GET',
@@ -108,5 +105,11 @@ export const fetchPendingNameSuggestions = async (
     method: 'GET',
     restNonce: getConfig().nonce,
     signal: createRecognitionTimeoutSignal(2_000),
-  });
+  }).then((response) => ({
+    suggestions: response.suggestions ?? [],
+    total: response.total ?? 0,
+    limit: response.limit ?? limit,
+    offset: response.offset ?? offset,
+    data_source: normalizeDataSource(response.data_source),
+  }));
 };

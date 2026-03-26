@@ -106,6 +106,7 @@ const buildMilestones = (
 ): Milestone[] => {
   const milestones: Milestone[] = [];
   const scanDone = isScanComplete(scanProgress, phase);
+  const projectionReady = projectionSyncState === 'ready';
 
   // --- Scan milestone ---
   if (phase === 'scanning' || scanProgress) {
@@ -160,6 +161,8 @@ const buildMilestones = (
     let projStatus: MilestoneStatus;
     if (projFailed) {
       projStatus = 'failed';
+    } else if (projectionReady) {
+      projStatus = 'active';
     } else if (projDone) {
       projStatus = 'completed';
     } else if (projectionSyncState === 'acknowledging' || projectionSyncState === 'syncing') {
@@ -172,11 +175,13 @@ const buildMilestones = (
       id: 'projection',
       label: projFailed
         ? __('Projection sync failed', 'alt-context')
-        : projDone
-          ? __('Projection synced', 'alt-context')
-          : projectionSyncState === 'acknowledging'
-            ? __('Acknowledging results\u2026', 'alt-context')
-            : __('Syncing results\u2026', 'alt-context'),
+        : projectionReady
+          ? __('Projected results ready for review', 'alt-context')
+          : projDone
+            ? __('Projection synced', 'alt-context')
+            : projectionSyncState === 'acknowledging'
+              ? __('Acknowledging results\u2026', 'alt-context')
+              : __('Syncing results\u2026', 'alt-context'),
       status: projStatus,
     });
   }

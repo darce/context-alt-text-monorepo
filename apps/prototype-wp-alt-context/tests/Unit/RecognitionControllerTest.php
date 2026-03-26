@@ -324,7 +324,7 @@ class RecognitionControllerTest extends TestCase
         );
 
         add_action(
-            'acx_recognition_complete',
+            'acx_xmp_refresh_requested',
             static function ($attachmentId, $context) use (&$captured): void {
                 $captured[] = [(int) $attachmentId, (string) $context];
             },
@@ -379,7 +379,7 @@ class RecognitionControllerTest extends TestCase
         );
 
         add_action(
-            'acx_recognition_complete',
+            'acx_xmp_refresh_requested',
             static function ($attachmentId, $context) use (&$captured): void {
                 $captured[] = [(int) $attachmentId, (string) $context];
             },

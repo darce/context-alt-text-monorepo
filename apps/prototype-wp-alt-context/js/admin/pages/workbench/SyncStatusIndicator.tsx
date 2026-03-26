@@ -218,19 +218,32 @@ export const SyncStatusIndicator = ({
       </div>
     ) : null;
 
+  if (projectionState === 'error') {
+    return (
+      <div className="acx-sync-status acx-sync-status--syncing">
+        <span className="acx-sync-status__label">{projectionError ?? __('Waiting for service…', 'alt-context')}</span>
+        <button
+          type="button"
+          className="button button-link"
+          onClick={() => onRetryProjection?.()}
+          disabled={!onRetryProjection}
+        >
+          {__('Retry sync', 'alt-context')}
+        </button>
+        {syncModeDetails}
+        {retentionDetails}
+        {curationDetails}
+        {topologyDetails}
+      </div>
+    );
+  }
+
   if (pipelinePhase === 'projecting') {
-    if (projectionState === 'error') {
+    if (projectionState === 'ready') {
       return (
-        <div className="acx-sync-status acx-sync-status--syncing">
-          <span className="acx-sync-status__label">{projectionError ?? __('Waiting for service…', 'alt-context')}</span>
-          <button
-            type="button"
-            className="button button-link"
-            onClick={() => onRetryProjection?.()}
-            disabled={!onRetryProjection}
-          >
-            {__('Retry sync', 'alt-context')}
-          </button>
+        <div className="acx-sync-status acx-sync-status--success">
+          <span className="acx-sync-status__label">{__('Projected results ready for review.', 'alt-context')}</span>
+          <span className="acx-sync-status__badge acx-sync-status__badge--ok">{__('Ready', 'alt-context')}</span>
           {syncModeDetails}
           {retentionDetails}
           {curationDetails}

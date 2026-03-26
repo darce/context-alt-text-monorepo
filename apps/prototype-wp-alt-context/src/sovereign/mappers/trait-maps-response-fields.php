@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Mappers;
 
+require_once dirname( __DIR__, 2 ) . '/support/trait-detects-system-defined-labels.php';
+
+use AltContext\Support\DetectsSystemDefinedLabels;
 use function absint;
 use function is_array;
 use function is_bool;
@@ -21,6 +24,8 @@ use function wp_get_attachment_url;
  * and MemberResponseMapper.
  */
 trait MapsResponseFields {
+	use DetectsSystemDefinedLabels;
+
 	/**
 	 * Resolve thumbnail URL from thumb_path or WordPress attachment fallback.
 	 *

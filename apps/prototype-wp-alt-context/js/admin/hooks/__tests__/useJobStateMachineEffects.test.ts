@@ -1,7 +1,8 @@
 import { renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { useJobStateMachineEffects } from '../useJobStateMachineEffects';
+import type { PipelinePhase } from '../jobStateMachineUtils';
+import { useJobStateMachineEffects, type ProjectionSyncState } from '../useJobStateMachineEffects';
 
 describe('useJobStateMachineEffects', () => {
   const buildBaseOptions = () => ({
@@ -30,9 +31,9 @@ describe('useJobStateMachineEffects', () => {
     removeJob: vi.fn(),
     cluster: vi.fn(),
     latestClusterJob: { id: 'job-2', type: 'clustering' as const, startedAt: Date.now(), totalItems: 10 },
-    currentPhase: 'projecting' as const,
+    currentPhase: 'projecting' as PipelinePhase,
     syncTrigger: { mutateAsync: vi.fn() } as never,
-    acknowledgeProjection: { mutateAsync: vi.fn() } as never,
+    projectionSyncState: 'idle' as ProjectionSyncState,
     projectionSyncNonce: 0,
     setProjectionSyncState: vi.fn(),
     setProjectionError: vi.fn(),
@@ -74,7 +75,7 @@ describe('useJobStateMachineEffects', () => {
         latestClusterJob: null,
         currentPhase: 'scanning',
         syncTrigger: { mutateAsync: vi.fn() } as never,
-        acknowledgeProjection: { mutateAsync: vi.fn() } as never,
+        projectionSyncState: 'idle',
         projectionSyncNonce: 0,
         setProjectionSyncState,
         setProjectionError,
@@ -87,7 +88,7 @@ describe('useJobStateMachineEffects', () => {
     expect(cluster).not.toHaveBeenCalled();
   });
 
-  it('records projection sync failures and retries when the nonce changes', async () => {
+  it('keeps projection failures retryable after the backend leaves projecting', async () => {
     const options = buildBaseOptions();
     const syncMutateAsync = vi.fn().mockRejectedValueOnce(new Error('Waiting for service…')).mockResolvedValueOnce({
       synced: true,
@@ -96,10 +97,8 @@ describe('useJobStateMachineEffects', () => {
       last_synced_at: '2026-03-09T10:00:00Z',
       is_stale: false,
     });
-    const acknowledgeMutateAsync = vi.fn().mockResolvedValue({ status: 'acknowledged', snapshot_version: 123 });
 
     options.syncTrigger = { mutateAsync: syncMutateAsync } as never;
-    options.acknowledgeProjection = { mutateAsync: acknowledgeMutateAsync } as never;
 
     const { rerender } = renderHook((props) => useJobStateMachineEffects(props), {
       initialProps: options,
@@ -112,13 +111,16 @@ describe('useJobStateMachineEffects', () => {
 
     rerender({
       ...options,
+      currentPhase: 'idle',
+      projectionSyncState: 'error',
       projectionSyncNonce: 1,
     });
 
     await waitFor(() => {
       expect(syncMutateAsync).toHaveBeenCalledTimes(2);
-      expect(acknowledgeMutateAsync).toHaveBeenCalledWith({ jobId: 'job-2', snapshotVersion: 123 });
-      expect(options.removeJob).toHaveBeenCalledWith('job-2');
+      expect(options.setProjectionSyncState).toHaveBeenCalledWith('ready');
+      expect(options.setProjectionSyncState).not.toHaveBeenCalledWith('idle');
+      expect(options.removeJob).not.toHaveBeenCalled();
     });
   });
 });

@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { useJobStateMachine } from '../useJobStateMachine';
 import { useJobPersistence } from '../useJobPersistence';
@@ -23,7 +23,6 @@ vi.mock('../useRecognitionHooks', () => ({
   useClusterIdentities: vi.fn(() => ({ mutate: vi.fn() })),
   useCancelScanJobs: vi.fn(() => ({ mutate: vi.fn() })),
   useCombinedScanStatus: vi.fn(() => ({ scanStatusQuery: { data: null } })),
-  useAcknowledgeProjection: vi.fn(() => ({ mutateAsync: vi.fn() })),
 }));
 vi.mock('../useSyncTrigger', () => ({
   useSyncTrigger: vi.fn(() => ({ mutateAsync: vi.fn() })),
@@ -149,7 +148,7 @@ describe('useJobStateMachine', () => {
     expect(result.current.latestJobId).toBe('job-2');
   });
 
-  it('falls back to idle when awaiting_projection is cached but no active jobs remain', async () => {
+  it('enters projecting phase when awaiting_projection is reported even without local active jobs', async () => {
     const { useCombinedScanStatus } = await import('../useRecognitionHooks');
     (useCombinedScanStatus as Mock).mockReturnValue({
       scanStatusQuery: {
@@ -168,11 +167,10 @@ describe('useJobStateMachine', () => {
     });
 
     const { result } = renderHook(() => useJobStateMachine());
-    expect(result.current.currentPhase).toBe('idle');
-    expect(result.current.latestJobId).toBeNull();
+    expect(result.current.currentPhase).toBe('projecting');
   });
 
-  it('syncs and acknowledges projected results before clearing the clustering job', async () => {
+  it('syncs projected results and leaves them ready for review', async () => {
     const removeJob = vi.fn();
     const invalidateQueries = vi.fn();
     const syncMutateAsync = vi.fn().mockResolvedValue({
@@ -182,8 +180,7 @@ describe('useJobStateMachine', () => {
       last_synced_at: '2026-03-09T10:00:00Z',
       is_stale: false,
     });
-    const acknowledgeMutateAsync = vi.fn().mockResolvedValue({ status: 'acknowledged', snapshot_version: 123 });
-    const { useCombinedScanStatus, useAcknowledgeProjection } = await import('../useRecognitionHooks');
+    const { useCombinedScanStatus } = await import('../useRecognitionHooks');
     const { useSyncTrigger } = await import('../useSyncTrigger');
 
     (useJobPersistence as Mock).mockReturnValue({
@@ -210,14 +207,20 @@ describe('useJobStateMachine', () => {
       },
     });
     (useSyncTrigger as Mock).mockReturnValue({ mutateAsync: syncMutateAsync });
-    (useAcknowledgeProjection as Mock).mockReturnValue({ mutateAsync: acknowledgeMutateAsync });
 
-    renderHook(() => useJobStateMachine());
+    const { result } = renderHook(() => useJobStateMachine());
 
     await waitFor(() => {
       expect(syncMutateAsync).toHaveBeenCalledTimes(1);
-      expect(acknowledgeMutateAsync).toHaveBeenCalledWith({ jobId: 'job-2', snapshotVersion: 123 });
-      expect(removeJob).toHaveBeenCalledWith('job-2');
+    });
+
+    await act(async () => {
+      await syncMutateAsync.mock.results[0]?.value;
+    });
+
+    await waitFor(() => {
+      expect(result.current.projectionSyncState).toBe('ready');
+      expect(removeJob).not.toHaveBeenCalled();
       expect(invalidateQueries).toHaveBeenCalled();
     });
   });

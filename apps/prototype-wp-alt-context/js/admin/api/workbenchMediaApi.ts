@@ -1,6 +1,7 @@
 import type { WorkbenchMediaItem as WorkbenchMediaItemSchema } from './generated';
 import { getConfig, getEndpoint } from './config';
 import { fetchRequiredApi } from '../utils/http';
+import { createRecognitionTimeoutSignal } from './recognition/requestTimeout';
 
 export interface WorkbenchMediaItem extends WorkbenchMediaItemSchema {
   thumbnailSrcset?: string | null;
@@ -54,6 +55,7 @@ export const fetchWorkbenchMedia = async ({
   const payload = await fetchRequiredApi<unknown>(requestUrl.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
+    signal: createRecognitionTimeoutSignal(15_000),
   });
 
   if (!isWorkbenchMediaResponse(payload)) {

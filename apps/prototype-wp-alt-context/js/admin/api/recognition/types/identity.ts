@@ -2,6 +2,8 @@
  * Identity and Detection Types
  */
 
+import type { DataSource } from './dataSource';
+
 export interface BoundingBox {
   x: number;
   y: number;
@@ -74,4 +76,5 @@ export interface DetectedIdentity {
 
 export interface MediaIdentitiesResponse {
   identities_by_media: Record<string, DetectedIdentity[]>;
+  data_source?: DataSource;
 }

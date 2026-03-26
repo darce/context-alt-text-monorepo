@@ -16,8 +16,10 @@ import {
 } from '../../../api/recognition';
 import { queryKeys } from '../../../api/queryKeys';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
+import { Avatar } from '../../../../components/ui/avatar';
 import { Combobox } from '../../../../components/ui/combobox';
 import { useRosterEntries } from '../../../hooks/useRosterHooks';
+import { getProjectionNotReadyMessage, isProjectionNotReadyError } from './clusterMutationUtils';
 
 interface ClusterLabelingPanelProps {
   clusterId: string;
@@ -36,6 +38,9 @@ const getErrorMessage = (error: unknown, label: string): string => {
       error.message.toLowerCase().includes('timeout')
     ) {
       return __('Save is taking too long. Please try again.', 'alt-context');
+    }
+    if (isProjectionNotReadyError(error.message)) {
+      return getProjectionNotReadyMessage();
     }
     // Check for 409 Conflict (duplicate label)
     if (error.message.includes('409') || error.message.toLowerCase().includes('conflict')) {
@@ -210,10 +215,10 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
           ) : members && members.length > 0 ? (
             members.map((member) => (
               <div key={member.identity_id} className="acx-cluster-labeling-panel__face">
-                {member.thumb_url ? (
-                  <img src={member.thumb_url} alt="" className="acx-face-thumbnail" />
-                ) : member.media_url && member.bbox ? (
+                {member.media_url && member.bbox ? (
                   <FaceThumbnail mediaUrl={member.media_url} bbox={member.bbox} size="lg" />
+                ) : member.thumb_url ? (
+                  <Avatar src={member.thumb_url} size="lg" alt="" />
                 ) : (
                   <div className="acx-face-thumbnail acx-face-thumbnail--placeholder" />
                 )}

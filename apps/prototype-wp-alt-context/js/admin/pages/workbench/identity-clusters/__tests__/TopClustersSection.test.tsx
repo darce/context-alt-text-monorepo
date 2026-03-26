@@ -10,8 +10,9 @@ import {
   mergeCluster,
   updateClusterLabel,
 } from '../../../../api/recognition';
+import { DATA_SOURCE, PROJECTION_STATUS } from '../../../../api/recognition/types';
 import { TopClustersSection } from '../TopClustersSection';
-import type { TopUnlabeledCluster } from '../../../../api/recognition/types';
+import type { TopUnlabeledCluster, TopUnlabeledClustersResponse } from '../../../../api/recognition/types';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -75,6 +76,11 @@ const clusterWithSuggestion = (): TopUnlabeledCluster => ({
   ],
 });
 
+const topUnlabeledResponse = (clusters: TopUnlabeledCluster[], singletonCount = 0): TopUnlabeledClustersResponse => ({
+  clusters,
+  singleton_count: singletonCount,
+});
+
 describe('TopClustersSection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -89,7 +95,7 @@ describe('TopClustersSection', () => {
   });
 
   it('renders cluster cards when top-unlabeled query succeeds', async () => {
-    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue([clusterWithSuggestion()]);
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue(topUnlabeledResponse([clusterWithSuggestion()]));
     const { onReview } = renderSection();
 
     await waitFor(() => {
@@ -107,7 +113,7 @@ describe('TopClustersSection', () => {
   it('returns null while loading and on query error', async () => {
     vi.mocked(fetchTopUnlabeledClusters).mockImplementationOnce(
       () =>
-        new Promise<TopUnlabeledCluster[]>((resolve) => {
+        new Promise<TopUnlabeledClustersResponse>((resolve) => {
           void resolve;
         }),
     );
@@ -125,8 +131,51 @@ describe('TopClustersSection', () => {
     expect(rendered.container.firstChild).toBeNull();
   });
 
+  it('renders an informational message when only singleton clusters are returned', async () => {
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue(topUnlabeledResponse([], 1));
+    renderSection();
+
+    await waitFor(() => {
+      expect(fetchTopUnlabeledClusters).toHaveBeenCalled();
+    });
+
+    expect(screen.getByText('Name These People')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'All detected groups contain only a single photo. Groups with multiple photos will appear here.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps rendering nothing when the API returns zero clusters', async () => {
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue(topUnlabeledResponse([]));
+    const rendered = renderSection();
+
+    await waitFor(() => {
+      expect(fetchTopUnlabeledClusters).toHaveBeenCalled();
+    });
+
+    expect(rendered.container.firstChild).toBeNull();
+  });
+
+  it('renders a retryable warning when top-unlabeled data is unavailable', async () => {
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      ...topUnlabeledResponse([]),
+      data_source: DATA_SOURCE.UNAVAILABLE,
+      projection_status: PROJECTION_STATUS.BOOTSTRAPPING,
+    });
+    renderSection();
+
+    await waitFor(() => {
+      expect(fetchTopUnlabeledClusters).toHaveBeenCalled();
+    });
+
+    expect(screen.getByText('Local identities are still syncing')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+
   it('supports confirming suggested labels', async () => {
-    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue([clusterWithSuggestion()]);
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue(topUnlabeledResponse([clusterWithSuggestion()]));
     renderSection();
 
     await waitFor(() => {
@@ -141,7 +190,7 @@ describe('TopClustersSection', () => {
   });
 
   it('supports dismissing suggested labels', async () => {
-    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue([clusterWithSuggestion()]);
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue(topUnlabeledResponse([clusterWithSuggestion()]));
     renderSection();
 
     await waitFor(() => {
@@ -152,5 +201,28 @@ describe('TopClustersSection', () => {
     await user.click(screen.getByRole('button', { name: 'No' }));
 
     expect(dismissCluster).toHaveBeenCalledWith('cluster-1');
+  });
+
+  it('renders backend-fallback clusters as read-only until local sync completes', async () => {
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      ...topUnlabeledResponse([clusterWithSuggestion()]),
+      data_source: DATA_SOURCE.BACKEND_PROXY,
+      projection_status: PROJECTION_STATUS.BOOTSTRAPPING,
+    });
+
+    renderSection();
+
+    await waitFor(() => {
+      expect(fetchTopUnlabeledClusters).toHaveBeenCalled();
+    });
+
+    expect(
+      screen.getByText(
+        'These clusters are visible while local sync catches up. Curation stays disabled until projected results are available locally.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Yes' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'No' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Review' })).not.toBeInTheDocument();
   });
 });

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Sovereign\Repositories;
 
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
+require_once __DIR__ . '/trait-resolves-persons-table-name.php';
 require_once __DIR__ . '/../sync/class-conflict-repository.php';
 
 use AltContext\Sovereign\Sync\ConflictRepository;
@@ -30,6 +31,7 @@ use function wp_json_encode;
 
 class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 	use PreparesSqlQueries;
+	use ResolvesPersonsTableName;
 
 	private string $members_table_name;
 	private string $clusters_table_name;
@@ -169,18 +171,21 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 
 		$normalized_limit  = max( 1, $limit );
 		$normalized_offset = max( 0, $offset );
+		$persons_table     = $this->resolve_persons_table_name();
 
 		// When tenant_id is provided, JOIN to clusters table for defense-in-depth
 		if ( null !== $tenant_id && '' !== trim( $tenant_id ) ) {
 			$sql = $this->prepare_query(
-				'SELECT m.*, c.label AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
+				'SELECT m.*, COALESCE(p.name, c.label) AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
 				FROM %i m
 				INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
+				LEFT JOIN %i p ON p.id = c.person_id
 				WHERE m.cluster_uuid = %s AND c.tenant_id = %s
 				ORDER BY m.updated_at DESC LIMIT %d OFFSET %d',
 				array(
 					$this->members_table_name,
 					$this->clusters_table_name,
+					$persons_table,
 					$normalized_cluster_uuid,
 					trim( $tenant_id ),
 					$normalized_limit,
@@ -190,14 +195,16 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 		} else {
 			// Legacy path: UUID-only filtering (relies on UUID uniqueness)
 			$sql = $this->prepare_query(
-				'SELECT m.*, c.label AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
+				'SELECT m.*, COALESCE(p.name, c.label) AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
 				FROM %i m
 				LEFT JOIN %i c ON c.cluster_uuid = m.cluster_uuid
+				LEFT JOIN %i p ON p.id = c.person_id
 				WHERE m.cluster_uuid = %s
 				ORDER BY m.updated_at DESC LIMIT %d OFFSET %d',
 				array(
 					$this->members_table_name,
 					$this->clusters_table_name,
+					$persons_table,
 					$normalized_cluster_uuid,
 					$normalized_limit,
 					$normalized_offset,
@@ -247,17 +254,19 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 
 		$normalized_limit = max( 1, $limit_per_cluster );
 		$placeholders     = implode( ', ', array_fill( 0, count( $normalized_uuids ), '%s' ) );
+		$persons_table    = $this->resolve_persons_table_name();
 
 		// Use ROW_NUMBER() window function to limit results per cluster
 		$sql = $this->prepare_query(
 			"SELECT * FROM (
-				SELECT m.*, c.label AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned, ROW_NUMBER() OVER (PARTITION BY m.cluster_uuid ORDER BY m.updated_at DESC) as rn
+				SELECT m.*, COALESCE(p.name, c.label) AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned, ROW_NUMBER() OVER (PARTITION BY m.cluster_uuid ORDER BY m.updated_at DESC) as rn
 				FROM %i m
 				LEFT JOIN %i c ON c.cluster_uuid = m.cluster_uuid
+				LEFT JOIN %i p ON p.id = c.person_id
 				WHERE m.cluster_uuid IN ($placeholders)
 			) subquery WHERE rn <= %d",
 			array_merge(
-				array( $this->members_table_name, $this->clusters_table_name ),
+				array( $this->members_table_name, $this->clusters_table_name, $persons_table ),
 				$normalized_uuids,
 				array( $normalized_limit )
 			)
@@ -333,16 +342,19 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 		}
 
 		$placeholders = implode( ', ', array_fill( 0, count( $normalized_ids ), '%d' ) );
+		$persons_table = $this->resolve_persons_table_name();
 		$sql          = $this->prepare_query(
-			"SELECT m.*, c.label AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
+			"SELECT m.*, COALESCE(p.name, c.label) AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
 			FROM %i m
 			INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
+			LEFT JOIN %i p ON p.id = c.person_id
 			WHERE c.tenant_id = %s AND m.attachment_id IN ($placeholders)
 			ORDER BY m.updated_at DESC",
 			array_merge(
 				array(
 					$this->members_table_name,
 					$this->clusters_table_name,
+					$persons_table,
 					$normalized_tenant_id,
 				),
 				$normalized_ids
@@ -356,6 +368,40 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
 		return is_array( $rows ) ? $rows : array();
+	}
+
+	public function has_projection_rows_for_tenant( string $tenant_id ): bool {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return false;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			return false;
+		}
+
+		$sql = $this->prepare_query(
+			"SELECT 1
+			FROM %i m
+			INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
+			WHERE c.tenant_id = %s
+			LIMIT 1",
+			array(
+				$this->members_table_name,
+				$this->clusters_table_name,
+				$normalized_tenant_id,
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return false;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		return null !== $wpdb->get_var( $sql );
 	}
 
 	public function mark_as_curated( string $identity_uuid ): int {

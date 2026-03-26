@@ -190,4 +190,82 @@ class ClusterResponseMapperTest extends TestCase
 
         $this->assertTrue($payload[0]['representatives'][0]['is_pinned']);
     }
+
+    public function testMapTopUnlabeledClustersReadsSuggestedLabelFromRow(): void
+    {
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-inferred',
+                'label' => '',
+                'identity_count' => 5,
+                'is_user_confirmed' => 0,
+                'suggested_label' => 'Alice',
+                'suggested_label_source' => 'similar_cluster',
+                'suggested_label_confidence' => '0.92',
+                'suggested_target_cluster_id' => 'cluster-target',
+            ],
+        ];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters($clusters, [], 'tenant-1');
+
+        $this->assertSame('Alice', $payload[0]['suggested_label']);
+        $this->assertSame('similar_cluster', $payload[0]['suggested_label_source']);
+        $this->assertEqualsWithDelta(0.92, $payload[0]['suggested_label_confidence'], 0.001);
+        $this->assertSame('cluster-target', $payload[0]['suggested_target_cluster_id']);
+    }
+
+    public function testMapTopUnlabeledClustersReturnsNullWhenSuggestedLabelAbsent(): void
+    {
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-nosugg',
+                'label' => '',
+                'identity_count' => 2,
+                'is_user_confirmed' => 0,
+            ],
+        ];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters($clusters, [], 'tenant-1');
+
+        $this->assertNull($payload[0]['suggested_label']);
+        $this->assertNull($payload[0]['suggested_label_source']);
+        $this->assertNull($payload[0]['suggested_label_confidence']);
+        $this->assertNull($payload[0]['suggested_target_cluster_id']);
+    }
+
+    public function testMapTopUnlabeledClustersTreatsSyntheticClusterLabelsAsAutoLabels(): void
+    {
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-auto',
+                'label' => 'cluster-12345678',
+                'identity_count' => 2,
+                'is_user_confirmed' => 0,
+            ],
+        ];
+
+        $payload = $this->mapper->map_top_unlabeled_clusters($clusters, [], 'tenant-1');
+
+        $this->assertNull($payload[0]['label']);
+        $this->assertFalse($payload[0]['is_labeled']);
+        $this->assertTrue($payload[0]['is_auto_label']);
+        $this->assertFalse($payload[0]['user_confirmed']);
+    }
+
+    public function testMapClusterListTreatsSyntheticClusterLabelsAsAutoLabels(): void
+    {
+        $clusters = [
+            [
+                'cluster_uuid' => 'cluster-list-auto',
+                'label' => 'cluster-12345678',
+                'identity_count' => 3,
+                'is_user_confirmed' => 0,
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_list($clusters, []);
+
+        $this->assertNull($payload[0]['label']);
+        $this->assertTrue($payload[0]['is_auto_label']);
+    }
 }

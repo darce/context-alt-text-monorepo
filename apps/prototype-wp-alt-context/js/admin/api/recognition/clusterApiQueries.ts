@@ -1,6 +1,13 @@
 import { fetchRequiredApi, stripTrailingSlash } from '../../utils/http';
 import { getEndpoint, getConfig } from '../config';
-import type { ClusterListParams, ClusterSummary, TopUnlabeledCluster, TopUnlabeledRepresentative } from './types';
+import { DATA_SOURCE, PROJECTION_STATUS, normalizeDataSource, normalizeProjectionStatus } from './types/dataSource';
+import type {
+  ClusterListParams,
+  ClusterSummary,
+  TopUnlabeledCluster,
+  TopUnlabeledClustersResponse,
+  TopUnlabeledRepresentative,
+} from './types';
 
 type TopUnlabeledRepresentativePayload = Omit<TopUnlabeledRepresentative, 'thumb_url'> & {
   thumb_url?: string | null;
@@ -9,6 +16,13 @@ type TopUnlabeledRepresentativePayload = Omit<TopUnlabeledRepresentative, 'thumb
 type TopUnlabeledClusterPayload = Omit<TopUnlabeledCluster, 'representatives'> & {
   representatives?: TopUnlabeledRepresentativePayload[] | null;
 };
+
+interface TopUnlabeledClustersResponsePayload {
+  clusters?: TopUnlabeledClusterPayload[] | null;
+  singleton_count?: number | null;
+  data_source?: string | null;
+  projection_status?: string | null;
+}
 
 const normalizeOptionalUrl = (value: unknown): string | null => {
   if (typeof value !== 'string') {
@@ -77,16 +91,21 @@ export const fetchTopUnlabeledClusters = async (
   tenantId: string,
   limit: number,
   signal?: AbortSignal,
-): Promise<TopUnlabeledCluster[]> => {
+): Promise<TopUnlabeledClustersResponse> => {
   const base = getEndpoint('recognitionClusters');
   const url = new URL(`${stripTrailingSlash(base)}/top-unlabeled`, window.location.origin);
   url.searchParams.set('tenant_id', tenantId);
   url.searchParams.set('limit', String(limit));
 
-  const payload = await fetchRequiredApi<TopUnlabeledClusterPayload[]>(url.toString(), {
+  const payload = await fetchRequiredApi<TopUnlabeledClustersResponsePayload>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
     signal,
   });
-  return payload.map(normalizeTopUnlabeledCluster);
+  return {
+    clusters: Array.isArray(payload.clusters) ? payload.clusters.map(normalizeTopUnlabeledCluster) : [],
+    singleton_count: Number.isFinite(payload.singleton_count) ? Number(payload.singleton_count) : 0,
+    data_source: normalizeDataSource(payload.data_source, DATA_SOURCE.LOCAL_PROJECTION),
+    projection_status: normalizeProjectionStatus(payload.projection_status, PROJECTION_STATUS.AVAILABLE),
+  };
 };

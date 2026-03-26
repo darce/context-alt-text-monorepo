@@ -9,10 +9,18 @@ use WP_REST_Request;
 use WP_REST_Response;
 
 use function absint;
+use function array_keys;
+use function count;
+use function is_array;
+use function range;
 use function sanitize_text_field;
 use function sprintf;
 
 class SuggestionsController extends AbstractRecognitionProxyController {
+	private const DATA_SOURCE_BACKEND_PROXY = 'backend_proxy';
+	private const DATA_SOURCE_UNAVAILABLE = 'unavailable';
+	private const REQUEST_CLASS_POST_SCAN_READ = 'post_scan_read';
+
 	public function register_routes(): void {
 		register_rest_route(
 			'acx/v1',
@@ -215,13 +223,14 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			'GET',
 			'/recognition/suggestions',
 			array(),
-			$query
+			$query,
+			self::REQUEST_CLASS_POST_SCAN_READ
 		);
 		if ( $this->is_proxy_unavailable( $response ) ) {
 			return $this->empty_pending_suggestions_response( (int) $query['limit'], (int) $query['offset'] );
 		}
 
-		return $response;
+		return $this->normalize_pending_suggestions_response( $response, (int) $query['limit'], (int) $query['offset'] );
 	}
 
 	public function get_pending_merge_suggestions( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -235,13 +244,14 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			'GET',
 			'/recognition/suggestions/merge',
 			array(),
-			$query
+			$query,
+			self::REQUEST_CLASS_POST_SCAN_READ
 		);
 		if ( $this->is_proxy_unavailable( $response ) ) {
 			return $this->empty_pending_suggestions_response( (int) $query['limit'], (int) $query['offset'] );
 		}
 
-		return $response;
+		return $this->normalize_pending_suggestions_response( $response, (int) $query['limit'], (int) $query['offset'] );
 	}
 
 	public function accept_suggestion( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -328,21 +338,14 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			'GET',
 			'/recognition/suggestions/name',
 			array(),
-			$query
+			$query,
+			self::REQUEST_CLASS_POST_SCAN_READ
 		);
 		if ( $this->is_proxy_unavailable( $response ) ) {
-			return new WP_REST_Response(
-				array(
-					'suggestions' => array(),
-					'total'       => 0,
-					'limit'       => (int) $query['limit'],
-					'offset'      => (int) $query['offset'],
-				),
-				200
-			);
+			return $this->empty_pending_name_suggestions_response( (int) $query['limit'], (int) $query['offset'] );
 		}
 
-		return $response;
+		return $this->normalize_pending_name_suggestions_response( $response, (int) $query['limit'], (int) $query['offset'] );
 	}
 
 	public function accept_name_suggestion( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -418,8 +421,90 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 				'total'       => 0,
 				'limit'       => $limit,
 				'offset'      => $offset,
+				'data_source' => self::DATA_SOURCE_UNAVAILABLE,
 			),
 			200
 		);
+	}
+
+	private function empty_pending_name_suggestions_response( int $limit, int $offset ): WP_REST_Response {
+		return new WP_REST_Response(
+			array(
+				'suggestions' => array(),
+				'total'       => 0,
+				'limit'       => $limit,
+				'offset'      => $offset,
+				'data_source' => self::DATA_SOURCE_UNAVAILABLE,
+			),
+			200
+		);
+	}
+
+	private function normalize_pending_suggestions_response( WP_REST_Response|WP_Error $response, int $limit, int $offset ): WP_REST_Response|WP_Error {
+		if ( ! $response instanceof WP_REST_Response || 200 !== $response->get_status() ) {
+			return $response;
+		}
+
+		$data = $response->get_data();
+		if ( ! is_array( $data ) ) {
+			return $response;
+		}
+
+		if ( ! $this->is_list_payload( $data ) ) {
+			return new WP_Error(
+				'invalid_suggestions_payload',
+				'Suggestions payload must be a JSON array.',
+				array( 'status' => 502 )
+			);
+		}
+
+		return new WP_REST_Response(
+			array(
+				'suggestions' => $data,
+				'total'       => count( $data ),
+				'limit'       => $limit,
+				'offset'      => $offset,
+				'data_source' => self::DATA_SOURCE_BACKEND_PROXY,
+			),
+			200
+		);
+	}
+
+	private function normalize_pending_name_suggestions_response( WP_REST_Response|WP_Error $response, int $limit, int $offset ): WP_REST_Response|WP_Error {
+		if ( ! $response instanceof WP_REST_Response || 200 !== $response->get_status() ) {
+			return $response;
+		}
+
+		$data = $response->get_data();
+		if ( ! is_array( $data ) ) {
+			return $response;
+		}
+
+		if ( ! $this->is_list_payload( $data ) ) {
+			return new WP_Error(
+				'invalid_name_suggestions_payload',
+				'Name suggestions payload must be a JSON array.',
+				array( 'status' => 502 )
+			);
+		}
+
+		return new WP_REST_Response(
+			array(
+				'suggestions' => $data,
+				'total'       => count( $data ),
+				'limit'       => $limit,
+				'offset'      => $offset,
+				'data_source' => self::DATA_SOURCE_BACKEND_PROXY,
+			),
+			200
+		);
+	}
+
+	private function is_list_payload( array $data ): bool {
+		if ( array() === $data ) {
+			return true;
+		}
+
+		return array_keys( $data ) === range( 0, count( $data ) - 1 );
 	}
 }

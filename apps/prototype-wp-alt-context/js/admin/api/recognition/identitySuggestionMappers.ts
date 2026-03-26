@@ -1,3 +1,4 @@
+import { normalizeDataSource } from './types/dataSource';
 import type {
   BoundingBox,
   PendingMergeSuggestion,
@@ -8,10 +9,15 @@ import type {
 export interface PendingSuggestionApiResponse {
   id: string;
   identity_id: string;
-  cluster_id: string;
-  rep_similarity: number;
-  member_similarity: number | null;
-  status: string;
+  cluster_id?: string;
+  suggested_cluster_id?: string;
+  rep_similarity?: number;
+  representative_similarity?: number;
+  member_similarity?: number | null;
+  avg_member_similarity?: number | null;
+  status?: string;
+  resolution?: string;
+  confidence_score?: number | null;
   cluster_label?: string | null;
   cluster_identity_count?: number | null;
   identity_media_id?: number | null;
@@ -48,55 +54,76 @@ export interface PendingMergeSuggestionApiResponse {
 }
 
 export const mapPendingSuggestions = (
-  response: PendingSuggestionsResponse | PendingSuggestionApiResponse[],
+  response: PendingSuggestionsResponse,
   limit: number,
   offset: number,
 ): PendingSuggestionsResponse => {
-  if (!Array.isArray(response)) {
-    return response;
+  const rawSuggestions = response.suggestions as PendingSuggestionApiResponse[] | undefined;
+  if (!Array.isArray(rawSuggestions)) {
+    return {
+      suggestions: [],
+      total: 0,
+      limit: response.limit ?? limit,
+      offset: response.offset ?? offset,
+      data_source: normalizeDataSource(response.data_source),
+    };
   }
 
-  const suggestions = response.map((suggestion) => ({
-    id: suggestion.id,
-    identity_id: suggestion.identity_id,
-    suggested_cluster_id: suggestion.cluster_id,
-    representative_similarity: suggestion.rep_similarity,
-    avg_member_similarity: suggestion.member_similarity ?? suggestion.rep_similarity,
-    confidence_score: suggestion.rep_similarity,
-    resolution: suggestion.status,
-    cluster_label: suggestion.cluster_label ?? null,
-    cluster_identity_count: suggestion.cluster_identity_count ?? null,
-    identity_media_id: suggestion.identity_media_id ?? null,
-    identity_media_url: suggestion.identity_media_url ?? null,
-    identity_thumb_url: suggestion.identity_thumb_url ?? null,
-    identity_bbox: suggestion.identity_bbox ?? null,
-    representative_media_id: suggestion.representative_media_id ?? null,
-    representative_media_url: suggestion.representative_media_url ?? null,
-    representative_thumb_url: suggestion.representative_thumb_url ?? null,
-    representative_bbox: suggestion.representative_bbox ?? null,
-    suggested_label: suggestion.suggested_label ?? null,
-    suggested_label_source: suggestion.suggested_label_source ?? null,
-    suggested_label_confidence: suggestion.suggested_label_confidence ?? null,
-  }));
+  const suggestions = rawSuggestions.map((suggestion) => {
+    const suggestedClusterId = suggestion.suggested_cluster_id ?? suggestion.cluster_id ?? '';
+    const representativeSimilarity = suggestion.representative_similarity ?? suggestion.rep_similarity ?? 0;
+    const avgMemberSimilarity = suggestion.avg_member_similarity ?? suggestion.member_similarity ?? representativeSimilarity;
+
+    return {
+      id: suggestion.id,
+      identity_id: suggestion.identity_id,
+      suggested_cluster_id: suggestedClusterId,
+      representative_similarity: representativeSimilarity,
+      avg_member_similarity: avgMemberSimilarity,
+      confidence_score: suggestion.confidence_score ?? representativeSimilarity,
+      resolution: suggestion.resolution ?? suggestion.status,
+      cluster_label: suggestion.cluster_label ?? null,
+      cluster_identity_count: suggestion.cluster_identity_count ?? null,
+      identity_media_id: suggestion.identity_media_id ?? null,
+      identity_media_url: suggestion.identity_media_url ?? null,
+      identity_thumb_url: suggestion.identity_thumb_url ?? null,
+      identity_bbox: suggestion.identity_bbox ?? null,
+      representative_media_id: suggestion.representative_media_id ?? null,
+      representative_media_url: suggestion.representative_media_url ?? null,
+      representative_thumb_url: suggestion.representative_thumb_url ?? null,
+      representative_bbox: suggestion.representative_bbox ?? null,
+      suggested_label: suggestion.suggested_label ?? null,
+      suggested_label_source: suggestion.suggested_label_source ?? null,
+      suggested_label_confidence: suggestion.suggested_label_confidence ?? null,
+    };
+  });
 
   return {
     suggestions,
-    total: suggestions.length,
-    limit,
-    offset,
+    total: response.total ?? suggestions.length,
+    limit: response.limit ?? limit,
+    offset: response.offset ?? offset,
+    data_source: normalizeDataSource(response.data_source),
   };
 };
 
 export const mapPendingMergeSuggestions = (
-  response: PendingMergeSuggestionsResponse | PendingMergeSuggestionApiResponse[],
+  response: PendingMergeSuggestionsResponse,
   limit: number,
   offset: number,
 ): PendingMergeSuggestionsResponse => {
-  if (!Array.isArray(response)) {
-    return response;
+  const rawSuggestions = response.suggestions as PendingMergeSuggestionApiResponse[] | undefined;
+  if (!Array.isArray(rawSuggestions)) {
+    return {
+      suggestions: [],
+      total: 0,
+      limit: response.limit ?? limit,
+      offset: response.offset ?? offset,
+      data_source: normalizeDataSource(response.data_source),
+    };
   }
 
-  const suggestions: PendingMergeSuggestion[] = response.map((suggestion) => ({
+  const suggestions: PendingMergeSuggestion[] = rawSuggestions.map((suggestion) => ({
     id: suggestion.id,
     cluster_a_id: suggestion.cluster_a_id,
     cluster_b_id: suggestion.cluster_b_id,
@@ -118,8 +145,9 @@ export const mapPendingMergeSuggestions = (
 
   return {
     suggestions,
-    total: suggestions.length,
-    limit,
-    offset,
+    total: response.total ?? suggestions.length,
+    limit: response.limit ?? limit,
+    offset: response.offset ?? offset,
+    data_source: normalizeDataSource(response.data_source),
   };
 };

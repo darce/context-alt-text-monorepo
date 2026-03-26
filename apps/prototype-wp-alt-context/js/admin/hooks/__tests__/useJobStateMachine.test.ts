@@ -170,6 +170,30 @@ describe('useJobStateMachine', () => {
     expect(result.current.currentPhase).toBe('projecting');
   });
 
+  it('forgets remembered jobs when status polling returns 404', async () => {
+    const { useCombinedScanStatus } = await import('../useRecognitionHooks');
+    const onJobNotFound = vi.fn();
+
+    (useCombinedScanStatus as Mock).mockReturnValue({
+      scanStatusQuery: {
+        data: null,
+        error: new Error('Request failed (404)'),
+      },
+      multiScanStatus: [],
+    });
+
+    renderHook(() =>
+      useJobStateMachine({
+        jobId: 'stale-job',
+        onJobNotFound,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(onJobNotFound).toHaveBeenCalledWith('stale-job');
+    });
+  });
+
   it('syncs projected results and leaves them ready for review', async () => {
     const removeJob = vi.fn();
     const invalidateQueries = vi.fn();

@@ -55,11 +55,14 @@ export const ExportDialog = ({
   onStartExport,
   onDownloadExport,
 }: ExportDialogProps): React.JSX.Element => {
-  const handleOpenChange = React.useCallback((nextOpen: boolean) => {
-    if (!nextOpen) {
-      dispatch({ type: 'CLOSE_EXPORT_DIALOG' });
-    }
-  }, [dispatch]);
+  const handleOpenChange = React.useCallback(
+    (nextOpen: boolean) => {
+      if (!nextOpen) {
+        dispatch({ type: 'CLOSE_EXPORT_DIALOG' });
+      }
+    },
+    [dispatch],
+  );
 
   return (
     <DialogRoot open={open} onOpenChange={handleOpenChange}>
@@ -136,11 +139,14 @@ export const PurgeDialog = ({
   isPurgePending,
   onConfirmPurge,
 }: PurgeDialogProps): React.JSX.Element => {
-  const handleOpenChange = React.useCallback((nextOpen: boolean) => {
-    if (!nextOpen) {
-      dispatch({ type: 'CLOSE_PURGE_DIALOG' });
-    }
-  }, [dispatch]);
+  const handleOpenChange = React.useCallback(
+    (nextOpen: boolean) => {
+      if (!nextOpen) {
+        dispatch({ type: 'CLOSE_PURGE_DIALOG' });
+      }
+    },
+    [dispatch],
+  );
 
   return (
     <DialogRoot open={open} onOpenChange={handleOpenChange}>
@@ -223,14 +229,17 @@ export const ImportDialog = ({
   isImportPending,
   onConfirmImport,
 }: ImportDialogProps): React.JSX.Element => {
-  const handleOpenChange = React.useCallback((nextOpen: boolean) => {
-    if (!nextOpen) {
-      dispatch({ type: 'CLOSE_IMPORT_DIALOG' });
-      if (importFileRef.current) {
-        importFileRef.current.value = '';
+  const handleOpenChange = React.useCallback(
+    (nextOpen: boolean) => {
+      if (!nextOpen) {
+        dispatch({ type: 'CLOSE_IMPORT_DIALOG' });
+        if (importFileRef.current) {
+          importFileRef.current.value = '';
+        }
       }
-    }
-  }, [dispatch, importFileRef]);
+    },
+    [dispatch, importFileRef],
+  );
 
   return (
     <DialogRoot open={open} onOpenChange={handleOpenChange}>

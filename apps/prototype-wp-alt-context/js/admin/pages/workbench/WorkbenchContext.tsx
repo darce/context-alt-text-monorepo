@@ -60,6 +60,7 @@ interface WorkbenchContextValue {
   jobStatuses: Record<string, string>;
   rememberJob: (id: string) => void;
   selectJob: (id: string) => void;
+  forgetJob: (id: string) => void;
   clearHistory: () => void;
 
   // Selection
@@ -134,7 +135,8 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     clusterId: null,
   });
 
-  const { jobId, jobHistory, jobStatuses, rememberJob, selectJob, clearHistory } = useRecognitionJobHistory();
+  const { jobId, jobHistory, jobStatuses, rememberJob, selectJob, forgetJob, clearHistory } =
+    useRecognitionJobHistory();
   const { selection, selectedMedia, toggleRow, toggleAll, isPageFullySelected } = useMediaSelectionState();
   const {
     searchQuery,
@@ -196,6 +198,9 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     retryProjectionSync,
   } = useJobStateMachine({
     jobId,
+    onJobNotFound: (staleJobId: string) => {
+      forgetJob(staleJobId);
+    },
     onScanStart: () => {
       setScanError(null);
     },
@@ -259,6 +264,7 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       jobStatuses,
       rememberJob,
       selectJob,
+      forgetJob,
       clearHistory,
       selection,
       selectedMedia,
@@ -312,6 +318,7 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       jobStatuses,
       rememberJob,
       selectJob,
+      forgetJob,
       clearHistory,
       selection,
       selectedMedia,

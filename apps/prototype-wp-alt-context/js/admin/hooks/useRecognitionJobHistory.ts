@@ -146,6 +146,25 @@ export const useRecognitionJobHistory = () => {
     persistHistory([]);
   }, []);
 
+  const forgetJob = useCallback((staleJobId: string) => {
+    setJobHistory((prev) => {
+      const next = prev.filter((id) => id !== staleJobId);
+      persistHistory(next);
+      return next;
+    });
+    setJobStatuses((prev) => {
+      const next = { ...prev };
+      delete next[staleJobId];
+      return next;
+    });
+    setJobDetails((prev) => {
+      const next = { ...prev };
+      delete next[staleJobId];
+      return next;
+    });
+    setJobId((current) => (current === staleJobId ? null : current));
+  }, []);
+
   return {
     jobId,
     jobHistory,
@@ -153,6 +172,7 @@ export const useRecognitionJobHistory = () => {
     jobDetails,
     rememberJob,
     selectJob,
+    forgetJob,
     clearHistory,
   } as const;
 };

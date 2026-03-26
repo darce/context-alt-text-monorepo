@@ -41,7 +41,11 @@ export const TopClustersSection = ({
   const [dismissingClusterIds, setDismissingClusterIds] = React.useState<Set<string>>(new Set());
   const [confirmingClusterIds, setConfirmingClusterIds] = React.useState<Set<string>>(new Set());
 
-  const { data: topUnlabeledResponse, isLoading, refetch } = useQuery<TopUnlabeledClustersResponse>({
+  const {
+    data: topUnlabeledResponse,
+    isLoading,
+    refetch,
+  } = useQuery<TopUnlabeledClustersResponse>({
     queryKey: queryKeys.clusters.topUnlabeled(tenantId),
     queryFn: () => fetchTopUnlabeledClusters(tenantId, TOP_UNLABELED_LIMIT),
     staleTime: 60000, // 1 minute
@@ -169,7 +173,10 @@ export const TopClustersSection = ({
           }
           message={
             isBootstrapping
-              ? __('The local projection is still being prepared. This queue will populate when sync completes.', 'alt-context')
+              ? __(
+                  'The local projection is still being prepared. This queue will populate when sync completes.',
+                  'alt-context',
+                )
               : __('We could not load the naming queue right now.', 'alt-context')
           }
           onRetry={() => void refetch()}

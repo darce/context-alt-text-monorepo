@@ -1,5 +1,6 @@
 import { fetchApi, fetchRequiredApi, stripTrailingSlash } from '../../utils/http';
 import { getEndpoint, getConfig } from '../config';
+import { normalizeMergeClusterResponse } from './clusterApiResponseMappers';
 import type {
   AsyncSplitClusterResponse,
   AssignOutlierRequest,
@@ -31,12 +32,13 @@ export const mergeCluster = async (
   signal?: AbortSignal,
 ): Promise<MergeClusterResponse> => {
   const url = `${stripTrailingSlash(getEndpoint('recognitionClusters'))}/${sourceId}/merge`;
-  return fetchRequiredApi<MergeClusterResponse>(url, {
+  const response = await fetchRequiredApi<unknown>(url, {
     method: 'POST',
     body: { target_cluster_id: targetClusterId, target_label: targetLabel },
     restNonce: getConfig().nonce,
     signal,
   });
+  return normalizeMergeClusterResponse(sourceId, targetLabel, response);
 };
 
 export const reassignClusterIdentity = async (
@@ -141,7 +143,6 @@ export const createClusterForIdentity = async (
 ): Promise<CreateClusterForIdentityResponse> => {
   const base = getEndpoint('recognitionCreateClusterForIdentity');
   const url = stripTrailingSlash(base);
-
   return fetchRequiredApi<CreateClusterForIdentityResponse>(url, {
     method: 'POST',
     body: {

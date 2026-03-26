@@ -35,6 +35,7 @@ const MATCH_DEBOUNCE_MS = 300;
 
 interface IdentityClusterItemProps {
   cluster: ClusterGroup;
+  canLabel?: boolean;
   canMutate?: boolean;
 }
 
@@ -47,7 +48,11 @@ interface IdentityClusterItemProps {
  * - Merge undo banner
  * - Error display
  */
-export const IdentityClusterItem = ({ cluster, canMutate = true }: IdentityClusterItemProps): React.JSX.Element => {
+export const IdentityClusterItem = ({
+  cluster,
+  canLabel = true,
+  canMutate = true,
+}: IdentityClusterItemProps): React.JSX.Element => {
   // Compute derived values
   const derivedLabel = React.useMemo(
     () => formatClusterLabel(cluster.clusterId, cluster.label, cluster.isAutoLabel),
@@ -58,8 +63,8 @@ export const IdentityClusterItem = ({ cluster, canMutate = true }: IdentityClust
 
   // For singletons without a cluster, we still allow naming/merging via identity ID
   const isSingleton = !editableClusterId && cluster.members.length === 1;
-  const canEdit = canMutate && Boolean(editableClusterId) && !cluster.clusteringPending;
-  const canSearchForMatch = canMutate && isSingleton && !cluster.clusteringPending;
+  const canEdit = canLabel && Boolean(editableClusterId) && !cluster.clusteringPending;
+  const canSearchForMatch = canLabel && isSingleton && !cluster.clusteringPending;
 
   // Show "Processing..." when clustering hasn't run yet, otherwise "Unlabeled identity"
   const labelText = cluster.clusteringPending
@@ -311,8 +316,8 @@ export const IdentityClusterItem = ({ cluster, canMutate = true }: IdentityClust
                 canSearchForMatch={canSearchForMatch}
                 hasLabel={Boolean(cluster.label)}
                 isAutoLabel={cluster.isAutoLabel}
-                canSplit={Boolean(cluster.clusterId)}
-                canReject={isSingleton || cluster.members.length === 1}
+                canSplit={canMutate && Boolean(cluster.clusterId)}
+                canReject={canMutate && (isSingleton || cluster.members.length === 1)}
                 isPending={mutations.isPending}
                 onEdit={startEditing}
                 onWrongPerson={handleWrongPerson}

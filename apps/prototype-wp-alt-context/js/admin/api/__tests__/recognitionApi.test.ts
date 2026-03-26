@@ -171,6 +171,26 @@ describe('recognitionApi', () => {
     });
   });
 
+  it('normalizes backend merge responses for the cluster edit UI', async () => {
+    fetchApiMock.mockResolvedValue({
+      id: 'target-cluster-id',
+      label: 'Target Label',
+      identity_count: 7,
+    });
+
+    const result = await mergeCluster('source-cluster-id', 'target-cluster-id', 'Target Label');
+
+    expect(result).toEqual({
+      source_id: 'source-cluster-id',
+      source_label: null,
+      target_id: 'target-cluster-id',
+      target_label: 'Target Label',
+      identities_moved: 0,
+      moved_identity_ids: [],
+      target_identity_count: 7,
+    });
+  });
+
   it('fetches identity suggestions with tenant nonce', async () => {
     fetchApiMock.mockResolvedValue({ matches: [] });
     await fetchIdentitySuggestions('identity-123', 3);

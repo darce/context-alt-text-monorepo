@@ -10,6 +10,14 @@ export interface HTTPOptions {
  */
 export const stripTrailingSlash = (value: string): string => (value.endsWith('/') ? value.slice(0, -1) : value);
 
+const buildResponsePreview = (rawBody: string): string => {
+  const normalized = rawBody.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= 240) {
+    return normalized;
+  }
+  return `${normalized.slice(0, 240)}...`;
+};
+
 const buildHeaders = (options: HTTPOptions): Record<string, string> => {
   const headers: Record<string, string> = {
     Accept: 'application/json',
@@ -49,8 +57,16 @@ export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): 
     return undefined;
   }
 
-  const payload: unknown = JSON.parse(rawBody);
-  return payload as T;
+  try {
+    const payload: unknown = JSON.parse(rawBody);
+    return payload as T;
+  } catch (error) {
+    const preview = buildResponsePreview(rawBody);
+    const syntaxDetail = error instanceof Error ? error.message : 'Unknown JSON parse error.';
+    throw new Error(
+      `Request to ${endpoint} returned malformed JSON (${response.status}): ${syntaxDetail}. Response preview: ${preview}`,
+    );
+  }
 };
 
 /**

@@ -332,6 +332,47 @@ describe('SuggestionReviewPanel', () => {
     expect(acceptSuggestionMock).not.toHaveBeenCalledWith('sugg-other-1', expect.anything());
   });
 
+  it('renders suggestion thumbnails from media urls when bbox data is missing', async () => {
+    const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
+    const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
+
+    fetchPendingSuggestionsMock.mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-thumb-1',
+          identity_id: 'identity-thumb-1',
+          suggested_cluster_id: 'cluster-thumb-1',
+          representative_similarity: 0.78,
+          avg_member_similarity: 0.74,
+          cluster_label: 'Laura Sampliner',
+          identity_media_url: 'http://example.test/media/candidate.jpg',
+          representative_media_url: 'http://example.test/media/representative.jpg',
+        },
+      ],
+      total: 1,
+      limit: 10,
+      offset: 0,
+    });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 10,
+      offset: 0,
+    });
+
+    const { container } = renderPanel();
+
+    await waitFor(() => {
+      expect(fetchPendingSuggestionsMock).toHaveBeenCalled();
+    });
+
+    const thumbImages = container.querySelectorAll<HTMLImageElement>('.acx-suggestion-card__thumb img');
+    expect(thumbImages).toHaveLength(2);
+    expect(thumbImages[0]?.getAttribute('src')).toBe('http://example.test/media/candidate.jpg');
+    expect(thumbImages[1]?.getAttribute('src')).toBe('http://example.test/media/representative.jpg');
+    expect(container.querySelectorAll('.acx-suggestion-card__thumb--placeholder')).toHaveLength(0);
+  });
+
   it('groups suggestions by target cluster and rejects only that group with "No all"', async () => {
     const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
     const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);

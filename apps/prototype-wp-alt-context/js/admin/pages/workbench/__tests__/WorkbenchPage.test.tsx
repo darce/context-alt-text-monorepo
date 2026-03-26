@@ -272,6 +272,7 @@ describe('WorkbenchPage', () => {
       jobDetails: {},
       rememberJob,
       selectJob,
+      forgetJob: vi.fn(),
       clearHistory,
     });
 

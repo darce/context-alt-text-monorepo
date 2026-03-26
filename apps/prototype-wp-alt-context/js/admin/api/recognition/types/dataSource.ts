@@ -14,11 +14,12 @@ export const PROJECTION_STATUS = {
 
 export type ProjectionStatus = (typeof PROJECTION_STATUS)[keyof typeof PROJECTION_STATUS];
 
-export const normalizeDataSource = (
-  value: unknown,
-  fallback: DataSource = DATA_SOURCE.BACKEND_PROXY,
-): DataSource => {
-  if (value === DATA_SOURCE.LOCAL_PROJECTION || value === DATA_SOURCE.BACKEND_PROXY || value === DATA_SOURCE.UNAVAILABLE) {
+export const normalizeDataSource = (value: unknown, fallback: DataSource = DATA_SOURCE.BACKEND_PROXY): DataSource => {
+  if (
+    value === DATA_SOURCE.LOCAL_PROJECTION ||
+    value === DATA_SOURCE.BACKEND_PROXY ||
+    value === DATA_SOURCE.UNAVAILABLE
+  ) {
     return value;
   }
   return fallback;

@@ -80,4 +80,19 @@ class ClustersRepositoryMutationTest extends TestCase
         $this->assertStringContainsString("WHERE cluster_uuid = 'cluster-789'", $query);
         $this->assertSame(1, $result);
     }
+
+    public function testUpdateLabelClearsSuggestedLabelColumns(): void
+    {
+        global $wpdb;
+        $wpdb->defaultQueryResult = 1;
+
+        $this->repository->update_label('cluster-abc', 'Bob');
+
+        $this->assertCount(1, $wpdb->queries);
+        $query = $wpdb->queries[0];
+        $this->assertStringContainsString('suggested_label = NULL', $query);
+        $this->assertStringContainsString('suggested_label_source = NULL', $query);
+        $this->assertStringContainsString('suggested_label_confidence = NULL', $query);
+        $this->assertStringContainsString('suggested_target_cluster_id = NULL', $query);
+    }
 }

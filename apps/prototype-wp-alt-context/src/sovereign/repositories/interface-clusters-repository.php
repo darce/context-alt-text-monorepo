@@ -28,11 +28,21 @@ interface ClustersRepositoryInterface {
 	public function list_labels( string $tenant_id ): array;
 
 	/**
+	 * Return whether any projected cluster rows exist for a tenant.
+	 */
+	public function has_projection_rows_for_tenant( string $tenant_id ): bool;
+
+	/**
 	 * Return top unlabeled clusters for a tenant.
 	 *
 	 * @return array<int,array<string,mixed>>
 	 */
 	public function list_top_unlabeled( string $tenant_id, int $limit = 10 ): array;
+
+	/**
+	 * Count tenant-scoped unlabeled singleton clusters hidden from the primary naming queue.
+	 */
+	public function count_top_unlabeled_singletons( string $tenant_id ): int;
 
 	/**
 	 * Return one projected cluster row when present.

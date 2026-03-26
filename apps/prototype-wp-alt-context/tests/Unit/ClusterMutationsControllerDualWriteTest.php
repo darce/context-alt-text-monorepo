@@ -248,6 +248,22 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->assertSame([], $this->getHttpCalls());
     }
 
+    public function testLabelUpdateReturnsProjectionNotReadyWhenLocalProjectionIsMissing(): void
+    {
+        $this->repository->localClusterRows = [];
+
+        $request = new \WP_REST_Request('PATCH', '/recognition/clusters/cluster-xyz', [
+            'cluster_id' => 'cluster-xyz',
+            'label' => 'Known Person',
+        ]);
+
+        $response = $this->controller->update_cluster_label($request);
+
+        $this->assertTrue(is_wp_error($response));
+        $this->assertSame('projection_not_ready', $response->get_error_code());
+        $this->assertSame(409, $response->get_error_data()['status'] ?? null);
+    }
+
     public function testMergeQueuesReplayOperationInsideTransaction(): void
     {
         global $wpdb;
@@ -582,6 +598,11 @@ class ClusterMutationsRepositorySpy extends NullClustersRepository
     public function find_by_uuid(string $cluster_uuid): ?array
     {
         return $this->localClusterRows[$cluster_uuid] ?? null;
+    }
+
+    public function has_projection_rows_for_tenant(string $tenant_id): bool
+    {
+        return ! empty($this->localClusterRows);
     }
 
     public function update_label(string $cluster_uuid, string $label, bool $mark_user_confirmed = true): int

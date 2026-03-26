@@ -8,8 +8,9 @@ export {
   fetchPendingSuggestions,
   fetchPendingMergeSuggestions,
   fetchPendingNameSuggestions,
-  type PendingNameSuggestionsResponse,
 } from './identityQueriesApi';
+
+export type { PendingNameSuggestionsResponse } from './types';
 
 export {
   acceptSuggestion,

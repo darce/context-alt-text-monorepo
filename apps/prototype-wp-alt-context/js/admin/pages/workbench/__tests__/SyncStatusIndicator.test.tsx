@@ -455,6 +455,20 @@ describe('SyncStatusIndicator', () => {
     expect(screen.queryByRole('button', { name: 'Sync now' })).not.toBeInTheDocument();
   });
 
+  it('renders ready-for-review projection state before the final acknowledgement', () => {
+    mockReturn.data = buildSyncStatus({
+      last_snapshot_version: 4,
+      last_synced_at: '2026-03-08 10:00:00',
+      is_stale: true,
+      sync_health: 'stale',
+    });
+
+    render(<SyncStatusIndicator pipelinePhase="projecting" projectionState="ready" />);
+
+    expect(screen.getByText('Projected results ready for review.')).toBeInTheDocument();
+    expect(screen.getByText('Ready')).toBeInTheDocument();
+  });
+
   it('renders projection retry state with the provided error message', () => {
     const retryProjection = vi.fn();
     mockReturn.data = buildSyncStatus({
@@ -467,6 +481,29 @@ describe('SyncStatusIndicator', () => {
     render(
       <SyncStatusIndicator
         pipelinePhase="projecting"
+        projectionState="error"
+        projectionError="Waiting for service…"
+        onRetryProjection={retryProjection}
+      />,
+    );
+
+    expect(screen.getByText('Waiting for service…')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry sync' }));
+    expect(retryProjection).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps projection retry state visible after the pipeline leaves projecting', () => {
+    const retryProjection = vi.fn();
+    mockReturn.data = buildSyncStatus({
+      last_snapshot_version: 4,
+      last_synced_at: '2026-03-08 10:00:00',
+      is_stale: true,
+      sync_health: 'stale',
+    });
+
+    render(
+      <SyncStatusIndicator
+        pipelinePhase="idle"
         projectionState="error"
         projectionError="Waiting for service…"
         onRetryProjection={retryProjection}

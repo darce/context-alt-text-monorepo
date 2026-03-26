@@ -35,6 +35,7 @@ const MATCH_DEBOUNCE_MS = 300;
 
 interface IdentityClusterItemProps {
   cluster: ClusterGroup;
+  canMutate?: boolean;
 }
 
 /**
@@ -46,7 +47,7 @@ interface IdentityClusterItemProps {
  * - Merge undo banner
  * - Error display
  */
-export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): React.JSX.Element => {
+export const IdentityClusterItem = ({ cluster, canMutate = true }: IdentityClusterItemProps): React.JSX.Element => {
   // Compute derived values
   const derivedLabel = React.useMemo(
     () => formatClusterLabel(cluster.clusterId, cluster.label, cluster.isAutoLabel),
@@ -57,8 +58,8 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
 
   // For singletons without a cluster, we still allow naming/merging via identity ID
   const isSingleton = !editableClusterId && cluster.members.length === 1;
-  const canEdit = Boolean(editableClusterId) && !cluster.clusteringPending;
-  const canSearchForMatch = isSingleton && !cluster.clusteringPending;
+  const canEdit = canMutate && Boolean(editableClusterId) && !cluster.clusteringPending;
+  const canSearchForMatch = canMutate && isSingleton && !cluster.clusteringPending;
 
   // Show "Processing..." when clustering hasn't run yet, otherwise "Unlabeled identity"
   const labelText = cluster.clusteringPending
@@ -284,7 +285,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
       <ClusterPreview
         representative={representative}
         memberCount={cluster.members.length}
-        onTogglePin={handleToggleRepresentativePin}
+        onTogglePin={canMutate ? handleToggleRepresentativePin : undefined}
         isPinning={mutations.isPinningRepresentative}
       />
 
@@ -319,7 +320,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
               />
             )}
             {/* Show inline "Is this X?" prompt for unlabeled items */}
-            {!cluster.label && anchorIdentityId && (
+            {!cluster.label && anchorIdentityId && canMutate && (
               <InlineSuggestionPrompt
                 identityId={anchorIdentityId}
                 onConfirm={(clusterId, label) => void handleConfirmSuggestion(clusterId, label)}

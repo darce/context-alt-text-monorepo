@@ -342,9 +342,10 @@ class Api {
 			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
 		}
 
-		$person_id = $request->get_param( 'roster_entry_id' );
-		$new_name  = $request->get_param( 'new_entry_name' );
-		$person_uuid = null;
+		$person_id            = $request->get_param( 'roster_entry_id' );
+		$new_name             = $request->get_param( 'new_entry_name' );
+		$resolved_person_name = null;
+		$person_uuid          = null;
 		$table_persons  = $wpdb->prefix . 'acx_persons';
 		$table_clusters = $wpdb->prefix . 'acx_clusters';
 
@@ -361,6 +362,7 @@ class Api {
 				if ( $existing ) {
 					$person_id   = (int) $existing->id;
 					$person_uuid = (string) ( $existing->person_uuid ?? '' );
+					$resolved_person_name = $new_name;
 				} else {
 					$person_uuid       = wp_generate_uuid4();
 					$person_created_at = current_time( 'mysql' );
@@ -397,23 +399,24 @@ class Api {
 						$this->rollback_database_transaction();
 						return new WP_Error( 'acx_db_error', __( 'Could not queue person creation replay operation.', 'alt-context' ), array( 'status' => 500 ) );
 					}
+
+					$resolved_person_name = $new_name;
 				}
 			}
 		}
 
 		$person_id = $person_id ? absint( $person_id ) : null;
 		if ( null !== $person_id && ( ! is_string( $person_uuid ) || '' === trim( $person_uuid ) ) ) {
-			$resolved_uuid = $wpdb->get_var(
-				$wpdb->prepare( 'SELECT person_uuid FROM %i WHERE id = %d', $table_persons, $person_id )
-			);
-			if ( is_string( $resolved_uuid ) ) {
-				$person_uuid = $resolved_uuid;
-			}
+			$person_uuid = $this->get_person_uuid_by_id( $person_id, $table_persons );
 		}
 
 		if ( null !== $person_id && ( ! is_string( $person_uuid ) || '' === trim( $person_uuid ) ) ) {
 			$this->rollback_database_transaction();
 			return new WP_Error( 'acx_db_error', __( 'Could not resolve person UUID for cluster assignment.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
+		if ( null !== $person_id && ( ! is_string( $resolved_person_name ) || '' === trim( $resolved_person_name ) ) ) {
+			$resolved_person_name = $this->get_person_name_by_id( $person_id, $table_persons );
 		}
 
 		$now = current_time( 'mysql' );
@@ -428,6 +431,9 @@ class Api {
 
 		if ( null === $person_id ) {
 			$update_fmt[0] = null;
+		} elseif ( is_string( $resolved_person_name ) && '' !== trim( $resolved_person_name ) ) {
+			$update_data['label'] = trim( $resolved_person_name );
+			$update_fmt[]         = '%s';
 		}
 
 		$cluster_updated = $wpdb->update(
@@ -629,6 +635,11 @@ class Api {
 		if ( false === $result ) {
 			$this->rollback_database_transaction();
 			return new WP_Error( 'acx_db_error', __( 'Could not update person in database.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
+		if ( null !== $name && $name !== $person->name && ! $this->sync_bound_cluster_labels( $id, $name, $now, $wpdb->prefix . 'acx_clusters' ) ) {
+			$this->rollback_database_transaction();
+			return new WP_Error( 'acx_db_error', __( 'Could not sync bound cluster labels.', 'alt-context' ), array( 'status' => 500 ) );
 		}
 
 		$person_revision_updated = $wpdb->query(
@@ -847,6 +858,53 @@ class Api {
 		}
 
 		$wpdb->query( 'ROLLBACK' );
+	}
+
+	private function get_person_uuid_by_id( int $person_id, string $table_persons ): ?string {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_var' ) || ! method_exists( $wpdb, 'prepare' ) ) {
+			return null;
+		}
+
+		$resolved_uuid = $wpdb->get_var(
+			$wpdb->prepare( 'SELECT person_uuid FROM %i WHERE id = %d', $table_persons, $person_id )
+		);
+
+		return is_string( $resolved_uuid ) && '' !== trim( $resolved_uuid ) ? $resolved_uuid : null;
+	}
+
+	private function get_person_name_by_id( int $person_id, string $table_persons ): ?string {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_var' ) || ! method_exists( $wpdb, 'prepare' ) ) {
+			return null;
+		}
+
+		$resolved_name = $wpdb->get_var(
+			$wpdb->prepare( 'SELECT name FROM %i WHERE id = %d', $table_persons, $person_id )
+		);
+
+		return is_string( $resolved_name ) && '' !== trim( $resolved_name ) ? trim( $resolved_name ) : null;
+	}
+
+	private function sync_bound_cluster_labels( int $person_id, string $person_name, string $updated_at, string $table_clusters ): bool {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) || ! method_exists( $wpdb, 'prepare' ) ) {
+			return false;
+		}
+
+		$sql = $wpdb->prepare(
+			'UPDATE %i SET label = %s, updated_at = %s, local_revision = local_revision + 1 WHERE person_id = %d',
+			$table_clusters,
+			trim( $person_name ),
+			$updated_at,
+			$person_id
+		);
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		return false !== $wpdb->query( $sql );
 	}
 
 	private function get_local_tenant_id(): string {

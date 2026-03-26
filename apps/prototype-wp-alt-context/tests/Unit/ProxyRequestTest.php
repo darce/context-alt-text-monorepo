@@ -242,9 +242,9 @@ class ProxyRequestTest extends TestCase
     }
 
     /**
-     * UI read requests should fail fast without internal retries.
+     * Job-status polling uses the post-scan read policy.
      */
-    public function testProxyRequestUiReadDoesNotRetryOn500Error(): void
+    public function testProxyRequestJobStatusUsesPostScanReadPolicyOn500Error(): void
     {
         $this->queueHttpResponse([
             'response' => ['code' => 500, 'message' => 'Internal Server Error'],
@@ -261,8 +261,8 @@ class ProxyRequestTest extends TestCase
         $this->assertSame(200, $result->get_status());
 
         $calls = $this->getHttpCalls();
-        $this->assertCount(1, $calls, 'UI reads should fast-fail without retries');
-        $this->assertSame(2, $calls[0]['args']['timeout'] ?? null);
+        $this->assertCount(1, $calls, 'Post-scan reads should fast-fail without retries.');
+        $this->assertSame(10, $calls[0]['args']['timeout'] ?? null);
     }
 
     /**
@@ -289,9 +289,9 @@ class ProxyRequestTest extends TestCase
     }
 
     /**
-     * UI read requests should fail fast on transport errors.
+     * Job-status polling should keep the post-scan read timeout on transport errors.
      */
-    public function testProxyRequestUiReadDoesNotRetryOnNetworkError(): void
+    public function testProxyRequestJobStatusUsesPostScanReadPolicyOnNetworkError(): void
     {
         $this->queueHttpResponse(new WP_Error('http_request_failed', 'Connection timed out'));
 
@@ -305,12 +305,13 @@ class ProxyRequestTest extends TestCase
         $this->assertSame(200, $result->get_status());
 
         $calls = $this->getHttpCalls();
-        $this->assertCount(1, $calls, 'UI reads should not retry transport failures');
-        $this->assertSame(2, $calls[0]['args']['timeout'] ?? null);
+        $this->assertCount(1, $calls, 'Post-scan reads should not retry transport failures.');
+        $this->assertSame(10, $calls[0]['args']['timeout'] ?? null);
     }
 
-    public function testProxyRequestOpensCircuitAfterConsecutiveUiReadFailures(): void
+    public function testProxyRequestJobStatusDoesNotOpenCircuitAfterConsecutivePostScanReadFailures(): void
     {
+        $this->queueHttpResponse(new WP_Error('http_request_failed', 'Connection timed out'));
         $this->queueHttpResponse(new WP_Error('http_request_failed', 'Connection timed out'));
         $this->queueHttpResponse(new WP_Error('http_request_failed', 'Connection timed out'));
 
@@ -321,11 +322,12 @@ class ProxyRequestTest extends TestCase
         $this->controller->get_job_status($request);
 
         $callsAfterFailures = $this->getHttpCalls();
-        $this->assertCount(2, $callsAfterFailures, 'First two requests should hit remote and open circuit.');
+        $this->assertCount(2, $callsAfterFailures, 'First two post-scan reads should hit the remote service.');
 
         $this->controller->get_job_status($request);
         $callsAfterCircuit = $this->getHttpCalls();
-        $this->assertCount(2, $callsAfterCircuit, 'Open circuit should short-circuit without a third HTTP call.');
+        $this->assertCount(3, $callsAfterCircuit, 'Post-scan reads should not be short-circuited by the UI-read circuit breaker.');
+        $this->assertSame(10, $callsAfterCircuit[2]['args']['timeout'] ?? null);
     }
 
     /**

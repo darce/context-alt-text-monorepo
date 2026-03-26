@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace AltContext\Media;
 
+require_once dirname( __DIR__ ) . '/support/trait-detects-system-defined-labels.php';
+
+use AltContext\Support\DetectsSystemDefinedLabels;
 use function array_values;
 use function file_get_contents;
 use function file_put_contents;
@@ -25,6 +28,8 @@ use function trim;
 use function wp_get_attachment_metadata;
 
 class ImageXmpWriter {
+	use DetectsSystemDefinedLabels;
+
 	public const STATUS_WRITTEN = 'written';
 	public const STATUS_SKIPPED = 'skipped';
 	public const STATUS_FAILED = 'failed';
@@ -233,24 +238,16 @@ class ImageXmpWriter {
 			return false;
 		}
 
+		// Avoid writing raw UUID identifiers as human-readable labels.
+		if ( 1 === preg_match( '/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i', $label ) ) {
+			return false;
+		}
+
 		if ( $this->looks_like_system_defined_label( $label ) ) {
 			return false;
 		}
 
 		return true;
-	}
-
-	private function looks_like_system_defined_label( string $label ): bool {
-		// Avoid writing identifiers that look like UUIDs or generated cluster keys.
-		if ( 1 === preg_match( '/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i', $label ) ) {
-			return true;
-		}
-
-		if ( 1 === preg_match( '/^cluster[-_][a-f0-9-]{8,}$/i', $label ) ) {
-			return true;
-		}
-
-		return false;
 	}
 
 	/**

@@ -56,6 +56,10 @@ class ClustersControllerTest extends TestCase
         $GLOBALS['__ac_attachment_urls'][101] = 'http://example.test/media/101.jpg';
 
         $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
             public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
             {
                 return [
@@ -89,7 +93,8 @@ class ClustersControllerTest extends TestCase
             }
         };
 
-        $controller = new ClustersController($clustersRepo, $membersRepo, $syncRepo, null, new ClusterResponseMapper(), new MemberResponseMapper());
+        $syncSpy = new ClustersControllerSyncPullSpy();
+        $controller = new ClustersController($clustersRepo, $membersRepo, $syncRepo, $syncSpy, new ClusterResponseMapper(), new MemberResponseMapper());
 
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
         $response = $controller->list_top_unlabeled_clusters($request);
@@ -98,7 +103,10 @@ class ClustersControllerTest extends TestCase
         $this->assertSame(200, $response->get_status());
 
         $data = $response->get_data();
-        $this->assertSame('http://example.test/media/101.jpg', $data[0]['representatives'][0]['thumb_url']);
+        $this->assertSame(0, $data['singleton_count']);
+        $this->assertSame('local_projection', $data['data_source']);
+        $this->assertSame('available', $data['projection_status']);
+        $this->assertSame('http://example.test/media/101.jpg', $data['clusters'][0]['representatives'][0]['thumb_url']);
     }
 
     public function testTopUnlabeledClustersReturnsEmptyArrayAndSchedulesBootstrapWhenProjectionUnavailable(): void
@@ -118,7 +126,15 @@ class ClustersControllerTest extends TestCase
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $this->assertSame(200, $response->get_status());
-        $this->assertSame([], $response->get_data());
+        $this->assertSame(
+            [
+                'clusters' => [],
+                'singleton_count' => 0,
+                'data_source' => 'unavailable',
+                'projection_status' => 'bootstrapping',
+            ],
+            $response->get_data()
+        );
 
         // Verify that the bootstrap sync hook was scheduled.
         $tenant_id = md5((string) get_site_url());
@@ -131,6 +147,10 @@ class ClustersControllerTest extends TestCase
     public function testTopUnlabeledOfflineReturnsBareArray(): void
     {
         $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
             public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
             {
                 return [
@@ -159,7 +179,8 @@ class ClustersControllerTest extends TestCase
             }
         };
 
-        $controller = new ClustersController($clustersRepo, $membersRepo, $syncRepo, null, new ClusterResponseMapper(), new MemberResponseMapper());
+        $syncSpy = new ClustersControllerSyncPullSpy();
+        $controller = new ClustersController($clustersRepo, $membersRepo, $syncRepo, $syncSpy, new ClusterResponseMapper(), new MemberResponseMapper());
 
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
         $response = $controller->list_top_unlabeled_clusters($request);
@@ -167,14 +188,20 @@ class ClustersControllerTest extends TestCase
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $data = $response->get_data();
         $this->assertIsArray($data);
-        $this->assertArrayNotHasKey('clusters', $data);
-        $this->assertArrayNotHasKey('tenant_id', $data);
-        $this->assertSame('cluster-unlabeled', $data[0]['id']);
+        $this->assertArrayHasKey('clusters', $data);
+        $this->assertArrayHasKey('singleton_count', $data);
+        $this->assertSame('local_projection', $data['data_source']);
+        $this->assertSame('available', $data['projection_status']);
+        $this->assertSame('cluster-unlabeled', $data['clusters'][0]['id']);
     }
 
     public function testListClustersUsesLocalProjectionWhenSyncStatePresent(): void
     {
         $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
             public function list_for_tenant(string $tenant_id, int $limit = 50, int $offset = 0, array $filters = []): array
             {
                 return [
@@ -264,6 +291,48 @@ class ClustersControllerTest extends TestCase
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $data = $response->get_data();
         $this->assertSame('cluster-proxy', $data[0]['id']);
+    }
+
+    public function testListClustersFallsBackToProxyWhenSyncStateExistsButProjectionRowsAreMissing(): void
+    {
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return false;
+            }
+        };
+
+        $membersRepo = new NullIdentityMembersRepository();
+
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int {
+                return 9;
+            }
+            public function get_last_updated(string $tenant_id): ?string {
+                return '2026-03-26 12:00:00';
+            }
+        };
+
+        $syncSpy = new ClustersControllerSyncPullSpy();
+        $controller = new ClustersController($clustersRepo, $membersRepo, $syncRepo, $syncSpy, new ClusterResponseMapper(), new MemberResponseMapper());
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                ['id' => 'cluster-proxy', 'label' => 'Proxied', 'identity_count' => 5],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
+        $response = $controller->list_clusters($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame('cluster-proxy', $data[0]['id']);
+        $this->assertTrue($syncSpy->performedBypass);
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('/recognition/clusters', $calls[0]['url']);
     }
 
     public function testSuccessfulProxyReadTriggersInlineBootstrapSyncWithoutSchedulingCron(): void
@@ -396,6 +465,10 @@ class ClustersControllerTest extends TestCase
     public function testStaleProjectionTriggersSyncPullBeforeServing(): void
     {
         $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
             public function list_for_tenant(string $tenant_id, int $limit = 50, int $offset = 0, array $filters = []): array
             {
                 return [
@@ -450,6 +523,10 @@ class ClustersControllerTest extends TestCase
     public function testStaleProjectionServesStaleDataWhenSyncFails(): void
     {
         $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
             public function list_for_tenant(string $tenant_id, int $limit = 50, int $offset = 0, array $filters = []): array
             {
                 return [
@@ -504,6 +581,10 @@ class ClustersControllerTest extends TestCase
     public function testNullSyncPullJobDoesNotCrashOnStaleProjection(): void
     {
         $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
             public function list_for_tenant(string $tenant_id, int $limit = 50, int $offset = 0, array $filters = []): array
             {
                 return [

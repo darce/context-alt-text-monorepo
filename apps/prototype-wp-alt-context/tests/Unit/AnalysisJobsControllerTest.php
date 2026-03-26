@@ -44,13 +44,13 @@ class AnalysisJobsControllerTest extends TestCase
         $this->assertSame('no_media_items', $result->get_error_code());
     }
 
-    public function testGetJobStatusDispatchesRecognitionCompleteOnlyOncePerJob(): void
+    public function testGetJobStatusDoesNotDispatchXmpRefresh(): void
     {
         $jobId = '11111111-1111-1111-1111-111111111111';
         $captured = [];
 
         add_action(
-            'acx_recognition_complete',
+            'acx_xmp_refresh_requested',
             static function ($attachmentId, $dispatchedJobId) use (&$captured): void {
                 $captured[] = [(int) $attachmentId, (string) $dispatchedJobId];
             },
@@ -95,18 +95,16 @@ class AnalysisJobsControllerTest extends TestCase
         ]);
 
         $this->controller->get_job_status($statusRequest);
-
-        $this->assertCount(2, $captured);
-        $this->assertSame([[101, $jobId], [202, $jobId]], $captured);
+        $this->assertSame([], $captured);
     }
 
-    public function testGetJobStatusDispatchesRecognitionCompleteFromJobPayloadMediaIds(): void
+    public function testGetJobStatusDoesNotDispatchXmpRefreshFromJobPayloadMediaIds(): void
     {
         $jobId = '22222222-2222-2222-2222-222222222222';
         $captured = [];
 
         add_action(
-            'acx_recognition_complete',
+            'acx_xmp_refresh_requested',
             static function ($attachmentId, $dispatchedJobId) use (&$captured): void {
                 $captured[] = [(int) $attachmentId, (string) $dispatchedJobId];
             },
@@ -129,7 +127,7 @@ class AnalysisJobsControllerTest extends TestCase
         $request->set_param('job_id', $jobId);
         $this->controller->get_job_status($request);
 
-        $this->assertSame([[303, $jobId]], $captured);
+        $this->assertSame([], $captured);
     }
 
     public function testGetJobStatusReturnsOfflineFailurePayloadWhenProxyUnavailable(): void

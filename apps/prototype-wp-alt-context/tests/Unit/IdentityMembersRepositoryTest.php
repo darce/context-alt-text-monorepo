@@ -159,6 +159,9 @@ class IdentityMembersRepositoryTest extends TestCase
 
         $this->assertCount(1, $rows);
         $this->assertSame('id-list', $rows[0]['identity_uuid']);
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('LEFT JOIN `wp_acx_persons` p', $sql);
+        $this->assertStringContainsString('COALESCE(p.name, c.label) AS cluster_label', $sql);
     }
 
     public function testListForMediaIdsScopesByTenantAndMediaIds(): void
@@ -179,6 +182,8 @@ class IdentityMembersRepositoryTest extends TestCase
         $sql = implode("\n", $wpdb->queries);
         $this->assertStringContainsString('attachment_id IN (55, 56)', $sql);
         $this->assertStringContainsString('tenant-media', $sql);
+        $this->assertStringContainsString('LEFT JOIN `wp_acx_persons` p', $sql);
+        $this->assertStringContainsString('COALESCE(p.name, c.label) AS cluster_label', $sql);
     }
 
     public function testMarkAsCuratedWritesUpdateQuery(): void

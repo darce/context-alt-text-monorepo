@@ -65,6 +65,7 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame('12', (string) ($query['limit'] ?? ''));
         $this->assertSame('7', (string) ($query['offset'] ?? ''));
         $this->assertNotEmpty($query['tenant_id'] ?? '');
+        $this->assertSame(10, $calls[0]['args']['timeout'] ?? null);
     }
 
     public function testGetPendingSuggestionsReturnsEmptyPayloadWhenProxyUnavailable(): void
@@ -86,6 +87,7 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame(0, $data['total'] ?? null);
         $this->assertSame(25, $data['limit'] ?? null);
         $this->assertSame(0, $data['offset'] ?? null);
+        $this->assertSame('unavailable', $data['data_source'] ?? null);
     }
 
     public function testGetPendingMergeSuggestionsReturnsEmptyPayloadWhenProxyUnavailable(): void
@@ -107,6 +109,58 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame(0, $data['total'] ?? null);
         $this->assertSame(10, $data['limit'] ?? null);
         $this->assertSame(0, $data['offset'] ?? null);
+        $this->assertSame('unavailable', $data['data_source'] ?? null);
+    }
+
+    public function testGetPendingSuggestionsAnnotatesBackendProxyEnvelope(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '[{"id":"suggestion-1","identity_id":"identity-1","cluster_id":"cluster-1","rep_similarity":0.91,"status":"pending"}]',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/suggestions');
+        $request->set_param('limit', 10);
+        $request->set_param('offset', 4);
+        $response = $this->controller->get_pending_suggestions($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame('backend_proxy', $data['data_source'] ?? null);
+        $this->assertSame(10, $data['limit'] ?? null);
+        $this->assertSame(4, $data['offset'] ?? null);
+        $this->assertSame(1, $data['total'] ?? null);
+    }
+
+    public function testGetPendingSuggestionsRejectsUnexpectedEnvelopePayload(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"suggestions":[],"total":0,"limit":10,"offset":0}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/suggestions');
+        $response = $this->controller->get_pending_suggestions($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_suggestions_payload', $response->get_error_code());
+    }
+
+    public function testGetPendingMergeSuggestionsWrapsBackendArrayResponses(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '[{"id":"merge-1","source_cluster_id":"cluster-a","target_cluster_id":"cluster-b"}]',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/suggestions/merge');
+        $response = $this->controller->get_pending_merge_suggestions($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame('backend_proxy', $data['data_source'] ?? null);
+        $this->assertCount(1, $data['suggestions'] ?? []);
+        $this->assertSame(1, $data['total'] ?? null);
     }
 
     public function testRegisterRoutesIncludesNameSuggestionEndpoints(): void
@@ -128,7 +182,7 @@ class SuggestionsControllerTest extends TestCase
     {
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => '{"suggestions":[],"total":0,"limit":15,"offset":5}',
+            'body' => '[]',
         ]);
 
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/suggestions/name');
@@ -152,6 +206,7 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame('15', (string) ($query['limit'] ?? ''));
         $this->assertSame('5', (string) ($query['offset'] ?? ''));
         $this->assertNotEmpty($query['tenant_id'] ?? '');
+        $this->assertSame(10, $calls[0]['args']['timeout'] ?? null);
     }
 
     public function testListNameSuggestionsReturnsEmptyPayloadWhenProxyUnavailable(): void
@@ -171,6 +226,58 @@ class SuggestionsControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame([], $data['suggestions'] ?? null);
         $this->assertSame(0, $data['total'] ?? null);
+        $this->assertSame('unavailable', $data['data_source'] ?? null);
+    }
+
+    public function testListNameSuggestionsAnnotatesBackendProxyArrayResponse(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '[{"id":"name-1","cluster_id":"cluster-a","suggested_name":"Alice","confidence_score":0.88,"source":"roster","status":"pending"}]',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/suggestions/name');
+        $request->set_param('limit', 25);
+        $request->set_param('offset', 6);
+        $response = $this->controller->list_name_suggestions($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame('backend_proxy', $data['data_source'] ?? null);
+        $this->assertSame(25, $data['limit'] ?? null);
+        $this->assertSame(6, $data['offset'] ?? null);
+        $this->assertSame(1, $data['total'] ?? null);
+    }
+
+    public function testListNameSuggestionsRejectsUnexpectedEnvelopePayload(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"suggestions":[],"total":0,"limit":25,"offset":0}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/suggestions/name');
+        $response = $this->controller->list_name_suggestions($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_name_suggestions_payload', $response->get_error_code());
+    }
+
+    public function testListNameSuggestionsWrapsBackendArrayResponses(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '[{"id":"name-1","cluster_id":"cluster-a","suggested_name":"Alice"}]',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/suggestions/name');
+        $response = $this->controller->list_name_suggestions($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame('backend_proxy', $data['data_source'] ?? null);
+        $this->assertCount(1, $data['suggestions'] ?? []);
+        $this->assertSame(1, $data['total'] ?? null);
     }
 
     public function testAcceptNameSuggestionForwardsSuggestionId(): void

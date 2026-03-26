@@ -56,6 +56,10 @@ use function wp_schedule_single_event;
 
 class ClustersController extends AbstractRecognitionProxyController {
 	private const BOOTSTRAP_SYNC_HOOK = 'acx_bootstrap_sync';
+	private const DATA_SOURCE_LOCAL_PROJECTION = 'local_projection';
+	private const DATA_SOURCE_UNAVAILABLE = 'unavailable';
+	private const PROJECTION_STATUS_AVAILABLE = 'available';
+	private const PROJECTION_STATUS_BOOTSTRAPPING = 'bootstrapping';
 	private ClustersRepositoryInterface $clusters_repository;
 	private IdentityMembersRepositoryInterface $members_repository;
 	private SyncStateRepositoryInterface $sync_state_repository;
@@ -188,7 +192,15 @@ class ClustersController extends AbstractRecognitionProxyController {
 			if ( false === wp_next_scheduled( self::BOOTSTRAP_SYNC_HOOK, array( $tenant_id ) ) ) {
 				wp_schedule_single_event( time(), self::BOOTSTRAP_SYNC_HOOK, array( $tenant_id ) );
 			}
-			return new WP_REST_Response( array(), 200 );
+			return new WP_REST_Response(
+				array(
+					'clusters' => array(),
+					'singleton_count' => 0,
+					'data_source' => self::DATA_SOURCE_UNAVAILABLE,
+					'projection_status' => self::PROJECTION_STATUS_BOOTSTRAPPING,
+				),
+				200
+			);
 		}
 
 		$sovereign_data = $this->cluster_facade->list_top_unlabeled( $tenant_id, $limit );
@@ -198,7 +210,15 @@ class ClustersController extends AbstractRecognitionProxyController {
 			$tenant_id
 		);
 
-		return new WP_REST_Response( $unlabeled_items, 200 );
+		return new WP_REST_Response(
+			array(
+				'clusters' => $unlabeled_items,
+				'singleton_count' => max( 0, (int) ( $sovereign_data['singleton_count'] ?? 0 ) ),
+				'data_source' => self::DATA_SOURCE_LOCAL_PROJECTION,
+				'projection_status' => self::PROJECTION_STATUS_AVAILABLE,
+			),
+			200
+		);
 	}
 
 	public function list_cluster_labels( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -324,6 +344,10 @@ class ClustersController extends AbstractRecognitionProxyController {
 	private function should_use_local_projection( string $tenant_id ): bool {
 		$has_projection = $this->should_use_local_projection_gate( $this->sync_state_repository, $tenant_id );
 		if ( ! $has_projection ) {
+			return false;
+		}
+
+		if ( ! $this->clusters_repository->has_projection_rows_for_tenant( $tenant_id ) ) {
 			return false;
 		}
 

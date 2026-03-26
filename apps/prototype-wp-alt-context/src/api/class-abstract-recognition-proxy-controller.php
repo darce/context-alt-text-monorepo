@@ -262,6 +262,15 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			);
 		}
 
+		if ( 'post_scan_read' === $normalized_class ) {
+			return array(
+				'timeout_seconds' => (int) apply_filters( 'acx_proxy_timeout_post_scan_read_seconds', 10 ),
+				'max_retries' => (int) apply_filters( 'acx_proxy_max_retries_post_scan_read', 1 ),
+				'base_delay_ms' => (int) apply_filters( 'acx_proxy_backoff_base_ms_post_scan_read', 0 ),
+				'circuit_enabled' => false,
+			);
+		}
+
 		return array(
 			'timeout_seconds' => (int) apply_filters( 'acx_proxy_timeout_mutation_seconds', 60 ),
 			'max_retries' => (int) apply_filters( 'acx_proxy_max_retries_mutation', 3 ),

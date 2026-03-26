@@ -8,7 +8,7 @@ import type { PipelinePhase } from './jobStateMachineUtils';
 import type { PersistedJob } from './useJobPersistence';
 import type { JobStatus } from './useJobProgressStream';
 
-export type ProjectionSyncState = 'idle' | 'syncing' | 'acknowledging' | 'error';
+export type ProjectionSyncState = 'idle' | 'syncing' | 'ready' | 'acknowledging' | 'error';
 
 interface JobStateMachineEffectsOptions {
   scanStatus: JobStatusResponse | undefined;
@@ -24,12 +24,7 @@ interface JobStateMachineEffectsOptions {
   latestClusterJob: PersistedJob | null;
   currentPhase: PipelinePhase;
   syncTrigger: UseMutationResult<SyncTriggerResponse, Error, void, unknown>;
-  acknowledgeProjection: UseMutationResult<
-    { status: string; snapshot_version: number },
-    Error,
-    { jobId: string; snapshotVersion: number },
-    unknown
-  >;
+  projectionSyncState: ProjectionSyncState;
   projectionSyncNonce: number;
   setProjectionSyncState: (value: ProjectionSyncState) => void;
   setProjectionError: (value: string | null) => void;
@@ -49,13 +44,14 @@ export const useJobStateMachineEffects = ({
   latestClusterJob,
   currentPhase,
   syncTrigger,
-  acknowledgeProjection,
+  projectionSyncState,
   projectionSyncNonce,
   setProjectionSyncState,
   setProjectionError,
 }: JobStateMachineEffectsOptions) => {
   const backendHandledClustering = scanStatus?.type === 'clustering' || scanStatus?.progress?.phase === 'clustering';
   const lastProjectionAttemptRef = useRef<string | null>(null);
+  const syncProjectionRef = useRef(syncTrigger.mutateAsync);
   const projectionSnapshotVersion = useMemo(
     () => (typeof scanStatus?.snapshot_version === 'number' ? scanStatus.snapshot_version : null),
     [scanStatus?.snapshot_version],
@@ -68,7 +64,11 @@ export const useJobStateMachineEffects = ({
     return latestClusterJob?.id ?? null;
   }, [latestClusterJob?.id, scanStatus?.source_job_id]);
   const projectionTarget = useMemo(() => {
-    if (currentPhase !== 'projecting' || !projectionJobId || projectionSnapshotVersion === null) {
+    if (
+      (currentPhase !== 'projecting' && projectionSyncState !== 'error') ||
+      !projectionJobId ||
+      projectionSnapshotVersion === null
+    ) {
       return null;
     }
 
@@ -77,7 +77,11 @@ export const useJobStateMachineEffects = ({
       snapshotVersion: projectionSnapshotVersion,
       attemptKey: `${projectionJobId}:${projectionSnapshotVersion}:${projectionSyncNonce}`,
     };
-  }, [currentPhase, projectionJobId, projectionSnapshotVersion, projectionSyncNonce]);
+  }, [currentPhase, projectionJobId, projectionSnapshotVersion, projectionSyncNonce, projectionSyncState]);
+
+  useEffect(() => {
+    syncProjectionRef.current = syncTrigger.mutateAsync;
+  }, [syncTrigger.mutateAsync]);
 
   useEffect(() => {
     if (scanStatus?.status === 'completed') {
@@ -128,7 +132,7 @@ export const useJobStateMachineEffects = ({
   }, [sseStatus, currentPhase, latestClusterJob, queryClient, removeJob]);
 
   useEffect(() => {
-    if (currentPhase !== 'projecting') {
+    if (currentPhase !== 'projecting' && projectionSyncState !== 'error') {
       lastProjectionAttemptRef.current = null;
       setProjectionSyncState('idle');
       setProjectionError(null);
@@ -140,36 +144,24 @@ export const useJobStateMachineEffects = ({
     }
 
     lastProjectionAttemptRef.current = projectionTarget.attemptKey;
-    let cancelled = false;
 
-    const runProjectionSync = async () => {
+    const executeProjectionSync = async () => {
       try {
         setProjectionError(null);
         setProjectionSyncState('syncing');
 
-        const syncResult = await syncTrigger.mutateAsync();
+        const syncResult = await syncProjectionRef.current();
         if (!syncResult.synced) {
           throw new Error(syncResult.reason === 'sync_failed' ? 'Waiting for service…' : 'Syncing results failed.');
         }
 
-        setProjectionSyncState('acknowledging');
-        await acknowledgeProjection.mutateAsync({
-          jobId: projectionTarget.jobId,
-          snapshotVersion: projectionTarget.snapshotVersion,
-        });
-
-        if (cancelled) {
+        if (lastProjectionAttemptRef.current !== projectionTarget.attemptKey) {
           return;
         }
 
-        removeJob(projectionTarget.jobId);
-        setProjectionSyncState('idle');
-        void queryClient.invalidateQueries({ queryKey: queryKeys.jobs.status(projectionTarget.jobId) });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.sync.all });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
-        void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
+        setProjectionSyncState('ready');
       } catch (error) {
-        if (cancelled) {
+        if (lastProjectionAttemptRef.current !== projectionTarget.attemptKey) {
           return;
         }
 
@@ -178,19 +170,13 @@ export const useJobStateMachineEffects = ({
       }
     };
 
-    void runProjectionSync();
-
-    return () => {
-      cancelled = true;
-    };
+    void executeProjectionSync();
   }, [
-    acknowledgeProjection,
     currentPhase,
     projectionTarget,
-    queryClient,
-    removeJob,
+    projectionSyncState,
     setProjectionError,
     setProjectionSyncState,
-    syncTrigger,
+    projectionSyncNonce,
   ]);
 };

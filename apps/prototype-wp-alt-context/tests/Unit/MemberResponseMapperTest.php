@@ -76,4 +76,23 @@ class MemberResponseMapperTest extends TestCase
         $this->assertSame('identity-2', $payload['202'][0]['representative_id']);
         $this->assertTrue($payload['202'][0]['is_pinned']);
     }
+
+    public function testMapClusterMembersTreatsSyntheticClusterLabelsAsAutoLabels(): void
+    {
+        $rows = [
+            [
+                'identity_uuid' => 'identity-auto',
+                'attachment_id' => 303,
+                'cluster_uuid' => 'cluster-303',
+                'cluster_label' => 'cluster-12345678',
+                'is_user_confirmed' => 0,
+                'bbox_json' => '{"pixels":{"x":1,"y":1,"width":1,"height":1}}',
+            ],
+        ];
+
+        $payload = $this->mapper->map_cluster_members($rows);
+
+        $this->assertSame('cluster-12345678', $payload[0]['cluster_label']);
+        $this->assertTrue($payload[0]['is_auto_label']);
+    }
 }

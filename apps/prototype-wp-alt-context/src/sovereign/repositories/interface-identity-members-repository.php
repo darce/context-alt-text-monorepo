@@ -36,6 +36,11 @@ interface IdentityMembersRepositoryInterface {
 	public function list_for_media_ids( string $tenant_id, array $media_ids ): array;
 
 	/**
+	 * Return whether any projected member rows exist for a tenant.
+	 */
+	public function has_projection_rows_for_tenant( string $tenant_id ): bool;
+
+	/**
 	 * Mark one projected member row as locally curated.
 	 */
 	public function mark_as_curated( string $identity_uuid ): int;

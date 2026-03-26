@@ -3,6 +3,7 @@ import * as Select from '@radix-ui/react-select';
 import { Check, ChevronDown } from 'lucide-react';
 import { __, sprintf } from '@wordpress/i18n';
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
+import type { DataSource } from '../../api/recognition/types';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 import { IdentityClusterList } from './identity-clusters';
 import { mediaEditUrl } from './Panels';
@@ -83,7 +84,16 @@ export const MediaSelection = (): React.JSX.Element => {
               <th scope="col">{__('Tags', 'alt-context')}</th>
             </tr>
           </thead>
-          <tbody>{renderRows({ items, isLoading, onToggleRow, selection })}</tbody>
+          <tbody>
+            {renderRows({
+              items,
+              isLoading,
+              onToggleRow,
+              selection,
+              identitiesDataSource: identityQuery.data?.data_source,
+              onRetryIdentities: () => void identityQuery.refetch(),
+            })}
+          </tbody>
         </table>
 
         <MediaSelectionPagination
@@ -268,11 +278,15 @@ const renderRows = ({
   isLoading,
   onToggleRow,
   selection,
+  identitiesDataSource,
+  onRetryIdentities,
 }: {
   items: WorkbenchMediaItem[];
   isLoading: boolean;
   onToggleRow: (item: WorkbenchMediaItem, checked: boolean) => void;
   selection: Record<string, boolean>;
+  identitiesDataSource?: DataSource;
+  onRetryIdentities?: () => void;
 }) => {
   if (isLoading && items.length === 0) {
     return (
@@ -331,7 +345,11 @@ const renderRows = ({
             </p>
             <p className="acx-media-selection__media-alt">{item.altText ?? __('No alt text yet', 'alt-context')}</p>
           </a>
-          <IdentityClusterList identities={item.identities ?? []} />
+          <IdentityClusterList
+            identities={item.identities ?? []}
+            dataSource={identitiesDataSource}
+            onRetry={onRetryIdentities}
+          />
         </td>
         <td>
           {item.tags.length === 0 ? (

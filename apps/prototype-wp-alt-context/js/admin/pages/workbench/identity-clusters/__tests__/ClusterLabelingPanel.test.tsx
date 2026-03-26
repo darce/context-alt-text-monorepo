@@ -181,6 +181,22 @@ describe('ClusterLabelingPanel', () => {
     expect(alert).toHaveTextContent('Network error. Please check your connection and try again.');
   });
 
+  it('shows projection-not-ready error inline with alert role', async () => {
+    vi.mocked(updateClusterLabel).mockRejectedValueOnce(
+      new Error(
+        'Request to /recognition/clusters/source-cluster-id failed (409): {"code":"projection_not_ready","message":"Local projection is not ready for curation yet. Retry sync and try again."}',
+      ),
+    );
+
+    renderPanel();
+
+    await selectOrCreateName('Coral Osborne');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Local sync is still catching up. Retry sync before editing labels.');
+  });
+
   it('dismisses duplicate prompt on No and keeps editing available', async () => {
     vi.mocked(updateClusterLabel).mockRejectedValueOnce(
       new Error('Request to /recognition/clusters/source-cluster-id failed (409): conflict'),

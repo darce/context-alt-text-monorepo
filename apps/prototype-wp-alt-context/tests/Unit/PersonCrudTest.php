@@ -122,6 +122,9 @@ class PersonCrudTest extends TestCase
 
         $updateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_persons');
         $this->assertStringContainsString("name = 'New Name'", $updateQuery);
+        $clusterSyncQuery = $this->findQueryContaining($wpdb->queries, 'WHERE person_id = 1');
+        $this->assertStringContainsString("UPDATE `wp_acx_clusters` SET label = 'New Name'", $clusterSyncQuery);
+        $this->assertStringContainsString('local_revision = local_revision + 1', $clusterSyncQuery);
 
         $outboxInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
         $this->assertStringContainsString("'person_updated'", $outboxInsert);
@@ -174,6 +177,7 @@ class PersonCrudTest extends TestCase
 
         $wpdb->queryResults['SELECT person_uuid FROM `wp_acx_persons` WHERE id = 7'] =
             '8cb36e76-7c2c-4aa8-bf2f-0d4dfab01234';
+        $wpdb->queryResults['SELECT name FROM `wp_acx_persons` WHERE id = 7'] = 'Roster Name';
         $wpdb->queryResults['SELECT snapshot_version FROM `wp_acx_clusters` WHERE cluster_uuid = \'cluster-123\' LIMIT 1'] = 27;
         $wpdb->queryResults['SELECT local_revision FROM `wp_acx_clusters` WHERE cluster_uuid = \'cluster-123\''] = 3;
 
@@ -190,6 +194,7 @@ class PersonCrudTest extends TestCase
 
         $clusterUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_clusters');
         $this->assertStringContainsString('person_id = 7', $clusterUpdate);
+        $this->assertStringContainsString("label = 'Roster Name'", $clusterUpdate);
         $this->assertStringContainsString("curation_state = 'confirmed'", $clusterUpdate);
         $this->assertStringContainsString('is_user_confirmed = 1', $clusterUpdate);
 
@@ -233,6 +238,9 @@ class PersonCrudTest extends TestCase
         $this->assertStringContainsString("'Inline Person'", $personInsert);
         $this->assertStringContainsString('local_revision', $personInsert);
         $this->assertStringContainsString(', 1,', $personInsert);
+
+        $clusterUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_clusters');
+        $this->assertStringContainsString("label = 'Inline Person'", $clusterUpdate);
 
         $outboxInserts = array_values(
             array_filter(

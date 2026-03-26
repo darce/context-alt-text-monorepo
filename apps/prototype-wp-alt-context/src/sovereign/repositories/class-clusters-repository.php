@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Sovereign\Repositories;
 
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
+require_once __DIR__ . '/trait-resolves-persons-table-name.php';
 
 use function absint;
 use function array_fill;
@@ -27,11 +28,9 @@ use function method_exists;
 use function preg_match;
 use function sprintf;
 use function trim;
-use function str_ends_with;
-use function substr;
-
 class ClustersRepository implements ClustersRepositoryInterface {
 	use PreparesSqlQueries;
+	use ResolvesPersonsTableName;
 
 	private string $table_name;
 
@@ -97,8 +96,8 @@ class ClustersRepository implements ClustersRepositoryInterface {
 
 			$sql = $this->prepare_query(
 				'INSERT INTO %i
-				(cluster_uuid, tenant_id, label, curation_state, representative_thumb_path, representative_id, is_pinned, identity_count, snapshot_version, is_user_confirmed, created_at, updated_at, last_synced_at)
-				VALUES (%s, %s, %s, %s, %s, %s, %d, %d, %d, %d, %s, %s, %s)
+				(cluster_uuid, tenant_id, label, curation_state, representative_thumb_path, representative_id, is_pinned, identity_count, snapshot_version, is_user_confirmed, created_at, updated_at, last_synced_at, suggested_label, suggested_label_source, suggested_label_confidence, suggested_target_cluster_id)
+				VALUES (%s, %s, %s, %s, %s, %s, %d, %d, %d, %d, %s, %s, %s, NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'))
 				ON DUPLICATE KEY UPDATE
 					label = IF(is_user_confirmed = 1, label, VALUES(label)),
 					curation_state = IF(is_user_confirmed = 1, curation_state, VALUES(curation_state)),
@@ -111,7 +110,11 @@ class ClustersRepository implements ClustersRepositoryInterface {
 					identity_count = VALUES(identity_count),
 					snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version)),
 					updated_at = VALUES(updated_at),
-					last_synced_at = VALUES(last_synced_at)',
+					last_synced_at = VALUES(last_synced_at),
+					suggested_label = VALUES(suggested_label),
+					suggested_label_source = VALUES(suggested_label_source),
+					suggested_label_confidence = VALUES(suggested_label_confidence),
+					suggested_target_cluster_id = VALUES(suggested_target_cluster_id)',
 				array(
 					$this->table_name,
 					$cluster_uuid,
@@ -127,6 +130,10 @@ class ClustersRepository implements ClustersRepositoryInterface {
 					$inserted_at,
 					$now_utc,
 					$now_utc,
+					trim( (string) ( $cluster['suggested_label'] ?? '' ) ),
+					trim( (string) ( $cluster['suggested_label_source'] ?? '' ) ),
+					isset( $cluster['suggested_label_confidence'] ) ? (string) (float) ( $cluster['suggested_label_confidence'] ) : '',
+					trim( (string) ( $cluster['suggested_target_cluster_id'] ?? '' ) ),
 				)
 			);
 
@@ -246,6 +253,35 @@ class ClustersRepository implements ClustersRepositoryInterface {
 		return array_values( array_unique( $labels ) );
 	}
 
+	public function has_projection_rows_for_tenant( string $tenant_id ): bool {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return false;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			return false;
+		}
+
+		$sql = $this->prepare_query(
+			'SELECT 1 FROM %i WHERE tenant_id = %s LIMIT 1',
+			array(
+				$this->table_name,
+				$normalized_tenant_id,
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return false;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		return null !== $wpdb->get_var( $sql );
+	}
+
 	/**
 	 * @return array<int,array<string,mixed>>
 	 */
@@ -265,14 +301,16 @@ class ClustersRepository implements ClustersRepositoryInterface {
 		$normalized_limit = max( 1, $limit );
 		$persons_table    = $this->resolve_persons_table_name();
 		$sql = $this->prepare_query(
-			"SELECT c.*, COALESCE(p.name, c.label) as label 
-			FROM %i c
-			LEFT JOIN %i p ON c.person_id = p.id
-			WHERE c.tenant_id = %s
-				AND (c.label IS NULL OR c.label = '')
-				AND (c.curation_state IS NULL OR c.curation_state <> 'dismissed')
-			ORDER BY c.identity_count DESC, c.updated_at DESC
-			LIMIT %d",
+				"SELECT c.*, COALESCE(p.name, c.label) as label 
+				FROM %i c
+				LEFT JOIN %i p ON c.person_id = p.id
+				WHERE c.tenant_id = %s
+					AND c.is_user_confirmed = 0
+					AND (c.label IS NULL OR c.label = '' OR c.label LIKE 'cluster-%%')
+					AND c.identity_count >= 2
+					AND (c.curation_state IS NULL OR c.curation_state <> 'dismissed')
+				ORDER BY c.identity_count DESC, c.updated_at DESC
+				LIMIT %d",
 				array(
 					$this->table_name,
 					$persons_table,
@@ -288,6 +326,42 @@ class ClustersRepository implements ClustersRepositoryInterface {
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $sql, ARRAY_A );
 		return is_array( $rows ) ? $rows : array();
+	}
+
+	public function count_top_unlabeled_singletons( string $tenant_id ): int {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return 0;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			return 0;
+		}
+
+		$sql = $this->prepare_query(
+			"SELECT COUNT(*)
+			FROM %i c
+			WHERE c.tenant_id = %s
+				AND c.is_user_confirmed = 0
+				AND (c.label IS NULL OR c.label = '' OR c.label LIKE 'cluster-%%')
+				AND c.identity_count <= 1
+				AND (c.curation_state IS NULL OR c.curation_state <> 'dismissed')",
+			array(
+				$this->table_name,
+				$normalized_tenant_id,
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return 0;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$count = $wpdb->get_var( $sql );
+		return is_numeric( $count ) ? max( 0, (int) $count ) : 0;
 	}
 
 	/**
@@ -339,7 +413,7 @@ class ClustersRepository implements ClustersRepositoryInterface {
 
 		$now_utc = gmdate( 'Y-m-d H:i:s' );
 		$sql     = $this->prepare_query(
-			'UPDATE %i SET label = %s, is_user_confirmed = %d, local_revision = local_revision + 1, updated_at = %s WHERE cluster_uuid = %s',
+			'UPDATE %i SET label = %s, is_user_confirmed = %d, local_revision = local_revision + 1, updated_at = %s, suggested_label = NULL, suggested_label_source = NULL, suggested_label_confidence = NULL, suggested_target_cluster_id = NULL WHERE cluster_uuid = %s',
 			array(
 				$this->table_name,
 				$normalized_label,
@@ -852,14 +926,6 @@ class ClustersRepository implements ClustersRepositoryInterface {
 			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 			$wpdb->query( $sql );
 		}
-	}
-
-	private function resolve_persons_table_name(): string {
-		if ( str_ends_with( $this->table_name, 'acx_clusters' ) ) {
-			return substr( $this->table_name, 0, -12 ) . 'acx_persons';
-		}
-
-		return 'wp_acx_persons';
 	}
 
 	/**

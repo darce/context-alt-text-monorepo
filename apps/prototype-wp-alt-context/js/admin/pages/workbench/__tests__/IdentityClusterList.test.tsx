@@ -8,6 +8,7 @@ import * as api from '../../../api/recognition';
 import { resetConfigCache } from '../../../api/config';
 import { queryKeys } from '../../../api/queryKeys';
 import type { MediaIdentitiesResponse } from '../../../api/recognition';
+import { DATA_SOURCE } from '../../../api/recognition/types';
 import type {
   ClusterSuggestionsLoaderOptions,
   ClusterSuggestionsLoaderResult,
@@ -236,6 +237,27 @@ describe('IdentityClusterList', () => {
     await renderWithClient(<IdentityClusterList identities={[]} />);
     expect(screen.getByText(/No identities detected yet/i)).toBeInTheDocument();
     expect(MockEventSource.instances).toBe(0);
+  });
+
+  it('renders an unavailable warning when identity data cannot be loaded', async () => {
+    const onRetry = vi.fn();
+    const { user } = await renderWithClient(
+      <IdentityClusterList identities={[]} dataSource={DATA_SOURCE.UNAVAILABLE} onRetry={onRetry} />,
+    );
+
+    expect(screen.getByText(/Identity data unavailable/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders backend-fallback clusters as read-only until local sync completes', async () => {
+    await renderWithClient(<IdentityClusterList identities={[baseIdentity]} dataSource={DATA_SOURCE.BACKEND_PROXY} />);
+
+    expect(screen.getByText('Identity curation is read-only until local sync completes.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cluster 1' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Name this person|Edit label/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Pin representative|Unpin representative/i })).not.toBeInTheDocument();
   });
 
   it('pins and unpins the representative from the cluster preview', async () => {

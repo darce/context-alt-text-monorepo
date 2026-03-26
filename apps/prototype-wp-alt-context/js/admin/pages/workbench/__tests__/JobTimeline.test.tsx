@@ -162,4 +162,9 @@ describe('JobTimeline', () => {
     render(<JobTimeline scanProgress={null} clusterProgress={null} phase="projecting" projectionSyncState="syncing" />);
     expect(screen.getByText('Syncing results\u2026')).toBeTruthy();
   });
+
+  it('renders projection ready milestone after sync completes', () => {
+    render(<JobTimeline scanProgress={null} clusterProgress={null} phase="projecting" projectionSyncState="ready" />);
+    expect(screen.getByText('Projected results ready for review')).toBeTruthy();
+  });
 });

@@ -27,15 +27,17 @@ class ClusterFacade {
 	 *
 	 * @param string $tenant_id Tenant UUID.
 	 * @param int    $limit     Maximum clusters to return.
-	 * @return array{clusters: array<int, array<string, mixed>>, members: array<string, array<int, array<string, mixed>>>}
+	 * @return array{clusters: array<int, array<string, mixed>>, members: array<string, array<int, array<string, mixed>>>, singleton_count: int}
 	 * @throws RuntimeException If the query fails.
 	 */
 	public function list_top_unlabeled( string $tenant_id, int $limit = 10 ): array {
 		$clusters = $this->clusters_repo->list_top_unlabeled( $tenant_id, $limit );
+		$singleton_count = $this->clusters_repo->count_top_unlabeled_singletons( $tenant_id );
 		if ( empty( $clusters ) ) {
 			return array(
 				'clusters' => array(),
 				'members'  => array(),
+				'singleton_count' => $singleton_count,
 			);
 		}
 
@@ -55,6 +57,7 @@ class ClusterFacade {
 		return array(
 			'clusters' => $clusters,
 			'members'  => $members_by_cluster,
+			'singleton_count' => $singleton_count,
 		);
 	}
 }

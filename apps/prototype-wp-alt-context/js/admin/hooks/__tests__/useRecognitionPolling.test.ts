@@ -120,4 +120,20 @@ describe('derivePipelinePhase exits projecting state', () => {
     const phase = derivePipelinePhase(null, { id: 'job-1', type: 'clustering' } as never, firstPoll);
     expect(phase).toBe('projecting');
   });
+
+  it('returns projecting when phase is awaiting_projection even without local active jobs', () => {
+    const poll = {
+      id: 'job-1',
+      type: 'clustering',
+      status: 'completed',
+      progress: { completed: 10, total: 10, phase: 'awaiting_projection' },
+      started_at: '2026-03-25T00:00:00Z',
+      finished_at: null,
+      projection_acknowledged_at: null,
+    } as unknown as JobStatusResponse;
+
+    // Backend auto-chained clustering: no local scan or cluster job exists.
+    const phase = derivePipelinePhase(null, null, poll);
+    expect(phase).toBe('projecting');
+  });
 });

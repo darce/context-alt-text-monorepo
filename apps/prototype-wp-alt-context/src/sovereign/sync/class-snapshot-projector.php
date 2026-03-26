@@ -22,6 +22,7 @@ use function array_values;
 use function array_fill_keys;
 use function array_key_exists;
 use function count;
+use function max;
 
 class SnapshotProjector implements SnapshotProjectorInterface {
 	private ClustersRepositoryInterface $clusters_repository;
@@ -68,6 +69,17 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 			$snapshot_version = (int) ( $snapshot['snapshot_version'] ?? 0 );
 			$clusters         = is_array( $snapshot['clusters'] ?? null ) ? $snapshot['clusters'] : array();
 			$members          = is_array( $snapshot['members'] ?? null ) ? $snapshot['members'] : array();
+			$is_empty_snapshot = ( true === ( $snapshot['empty'] ?? false ) )
+				|| ( empty( $clusters ) && 0 === $snapshot_version );
+
+			if ( $is_empty_snapshot ) {
+				$committed = false !== $wpdb->query( 'COMMIT' );
+				if ( ! $committed ) {
+					throw new RuntimeException( 'Snapshot projection failed to commit transaction.' );
+				}
+				return;
+			}
+
 			$pre_projection_conflict_count = $this->sync_state_repository->get_conflict_count( $normalized_tenant_id );
 
 			$this->record_person_name_conflicts( $normalized_tenant_id, $clusters, $snapshot_version );
@@ -79,6 +91,18 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 			$this->sync_state_repository->refresh_curation_metrics( $normalized_tenant_id );
 			$post_projection_conflict_count = $this->sync_state_repository->get_conflict_count( $normalized_tenant_id );
 			$conflicts_generated            = max( 0, $post_projection_conflict_count - $pre_projection_conflict_count );
+
+			if ( function_exists( 'do_action' ) ) {
+				$non_singleton_count = count(
+					array_filter(
+						$clusters,
+						static function ( $cluster ): bool {
+							return is_array( $cluster ) && (int) ( $cluster['identity_count'] ?? 0 ) > 1;
+						}
+					)
+				);
+				do_action( 'acx_snapshot_projected', $normalized_tenant_id, count( $clusters ), $non_singleton_count, $snapshot_version );
+			}
 
 			if ( $conflicts_generated > 0 && function_exists( 'do_action' ) ) {
 				do_action( 'acx_projection_conflicts_detected', $conflicts_generated, $normalized_tenant_id );

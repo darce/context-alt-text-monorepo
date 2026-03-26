@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
+use AltContext\Sovereign\ClusterFacade;
 use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
@@ -25,13 +26,25 @@ class SnapshotProjectorTest extends TestCase
         $clustersRepo = new SnapshotProjectorClustersSpy();
         $membersRepo = new SnapshotProjectorMembersSpy();
         $syncRepo = new SnapshotProjectorSyncStateSpy();
+        $snapshotEvents = [];
+        add_action(
+            'acx_snapshot_projected',
+            static function (string $tenantId, int $clusterCount, int $nonSingletonCount, int $snapshotVersion) use (&$snapshotEvents): void {
+                $snapshotEvents[] = [$tenantId, $clusterCount, $nonSingletonCount, $snapshotVersion];
+            },
+            10,
+            4
+        );
 
         $projector = new SnapshotProjector($clustersRepo, $membersRepo, $syncRepo);
         $projector->project(
             'tenant-a',
             [
                 'snapshot_version' => 7,
-                'clusters' => [['cluster_uuid' => 'cluster-1']],
+                'clusters' => [
+                    ['cluster_uuid' => 'cluster-1', 'identity_count' => 1],
+                    ['cluster_uuid' => 'cluster-2', 'identity_count' => 3],
+                ],
                 'members' => [['identity_uuid' => 'identity-1', 'cluster_uuid' => 'cluster-1']],
             ]
         );
@@ -43,9 +56,10 @@ class SnapshotProjectorTest extends TestCase
 
         $this->assertSame('tenant-a', $clustersRepo->tenantId);
         $this->assertSame(7, $clustersRepo->snapshotVersion);
-        $this->assertCount(1, $clustersRepo->clusters);
+        $this->assertCount(2, $clustersRepo->clusters);
         $this->assertCount(1, $membersRepo->members);
         $this->assertSame(7, $syncRepo->snapshotVersion);
+        $this->assertSame([['tenant-a', 2, 1, 7]], $snapshotEvents);
     }
 
     public function testProjectRollsBackWhenRepositoryThrows(): void
@@ -117,6 +131,43 @@ class SnapshotProjectorTest extends TestCase
         $this->assertSame([], $wpdb->queries);
         $this->assertCount(1, $warnings);
         $this->assertSame('empty_tenant_id', $warnings[0][0]);
+    }
+
+    public function testProjectSkipsAllWritesForEmptySnapshotPayload(): void
+    {
+        $clustersRepo = new SnapshotProjectorClustersSpy();
+        $membersRepo = new SnapshotProjectorMembersSpy();
+        $syncRepo = new SnapshotProjectorSyncStateSpy();
+        $snapshotEvents = [];
+        add_action(
+            'acx_snapshot_projected',
+            static function () use (&$snapshotEvents): void {
+                $snapshotEvents[] = true;
+            }
+        );
+
+        $projector = new SnapshotProjector($clustersRepo, $membersRepo, $syncRepo);
+        $projector->project(
+            'tenant-empty',
+            [
+                'snapshot_version' => 0,
+                'clusters' => [],
+                'members' => [],
+                'empty' => true,
+            ]
+        );
+
+        global $wpdb;
+        $this->assertContains('START TRANSACTION', $wpdb->queries);
+        $this->assertContains('COMMIT', $wpdb->queries);
+        $this->assertNotContains('ROLLBACK', $wpdb->queries);
+        $this->assertSame('', $clustersRepo->tenantId);
+        $this->assertSame([], $clustersRepo->clusters);
+        $this->assertSame([], $membersRepo->members);
+        $this->assertSame(0, $syncRepo->snapshotVersion);
+        $this->assertNull($syncRepo->get_last_updated('tenant-empty'));
+        $this->assertSame('', $syncRepo->refreshedTenantId);
+        $this->assertSame([], $snapshotEvents);
     }
 
     public function testProjectRecordsCuratedClusterDeletionConflictsAndRefreshesMetrics(): void
@@ -491,6 +542,50 @@ class SnapshotProjectorTest extends TestCase
             array_column($membersRepo->mergedMembers, 'identity_uuid')
         );
     }
+
+    public function testProjectThenReadReturnsProjectedNonSingletonClusters(): void
+    {
+        $clustersRepo = new SnapshotProjectorClustersSpy();
+        $membersRepo = new SnapshotProjectorMembersSpy();
+        $syncRepo = new SnapshotProjectorSyncStateSpy();
+        $projector = new SnapshotProjector($clustersRepo, $membersRepo, $syncRepo);
+
+        $projector->project(
+            'tenant-readback',
+            [
+                'snapshot_version' => 11,
+                'clusters' => [
+                    [
+                        'cluster_uuid' => 'cluster-singleton',
+                        'label' => '',
+                        'curation_state' => 'active',
+                        'identity_count' => 1,
+                    ],
+                    [
+                        'cluster_uuid' => 'cluster-visible',
+                        'label' => '',
+                        'curation_state' => 'active',
+                        'identity_count' => 4,
+                    ],
+                ],
+                'members' => [
+                    [
+                        'identity_uuid' => 'identity-visible',
+                        'cluster_uuid' => 'cluster-visible',
+                        'attachment_id' => 42,
+                        'thumb_path' => 'acx://identity/identity-visible/attachment/42',
+                    ],
+                ],
+            ]
+        );
+
+        $facade = new ClusterFacade($clustersRepo, $membersRepo);
+        $result = $facade->list_top_unlabeled('tenant-readback', 10);
+
+        $this->assertSame(['cluster-visible', 'cluster-singleton'], array_column($result['clusters'], 'cluster_uuid'));
+        $this->assertCount(1, $result['members']['cluster-visible']);
+        $this->assertSame('identity-visible', $result['members']['cluster-visible'][0]['identity_uuid']);
+    }
 }
 
 class SnapshotProjectorClustersSpy extends NullClustersRepository
@@ -501,6 +596,8 @@ class SnapshotProjectorClustersSpy extends NullClustersRepository
     public array $mergedClusters = [];
     public bool $shouldThrow = false;
     public int $tenantPageSize = 0;
+    /** @var array<int,array<string,mixed>> */
+    public array $topUnlabeledRows = [];
     /** @var array<string,array<string,mixed>> */
     private array $curatedClusters;
 
@@ -522,6 +619,36 @@ class SnapshotProjectorClustersSpy extends NullClustersRepository
         $this->clusters = $clusters;
         $this->mergedClusters = $clusters;
         $this->snapshotVersion = $snapshot_version;
+        $this->topUnlabeledRows = array_values(
+            array_filter(
+                $clusters,
+                static function ($cluster): bool {
+                    if (!is_array($cluster)) {
+                        return false;
+                    }
+
+                    $label = trim((string) ($cluster['label'] ?? ''));
+                    $curationState = trim((string) ($cluster['curation_state'] ?? ''));
+                    return '' === $label && 'dismissed' !== $curationState;
+                }
+            )
+        );
+        usort(
+            $this->topUnlabeledRows,
+            static function (array $left, array $right): int {
+                $countCompare = (int) ($right['identity_count'] ?? 0) <=> (int) ($left['identity_count'] ?? 0);
+                if (0 !== $countCompare) {
+                    return $countCompare;
+                }
+
+                return strcmp((string) ($right['updated_at'] ?? ''), (string) ($left['updated_at'] ?? ''));
+            }
+        );
+    }
+
+    public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+    {
+        return array_slice($this->topUnlabeledRows, 0, max(1, $limit));
     }
 
     public function list_for_tenant(string $tenant_id, int $limit = 50, int $offset = 0, array $filters = array()): array
@@ -560,6 +687,23 @@ class SnapshotProjectorMembersSpy extends NullIdentityMembersRepository
     {
         $this->members = $members;
         $this->mergedMembers = $members;
+        $groupedMembers = [];
+        foreach ($members as $member) {
+            if (!is_array($member)) {
+                continue;
+            }
+
+            $clusterUuid = (string) ($member['cluster_uuid'] ?? '');
+            if ('' === $clusterUuid) {
+                continue;
+            }
+
+            if (!isset($groupedMembers[$clusterUuid])) {
+                $groupedMembers[$clusterUuid] = [];
+            }
+            $groupedMembers[$clusterUuid][] = $member;
+        }
+        $this->membersByCluster = $groupedMembers;
     }
 
     public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
@@ -589,15 +733,22 @@ class SnapshotProjectorSyncStateSpy extends NullSyncStateRepository
     public int $conflictCount = 0;
     public int $preRefreshConflictCount = 0;
     public int $postRefreshConflictCount = 0;
+    public ?string $lastUpdated = null;
 
     public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void
     {
         $this->snapshotVersion = $snapshot_version;
+        $this->lastUpdated = '2026-03-25 00:00:00';
     }
 
     public function get_snapshot_version(string $tenant_id): int
     {
         return $this->snapshotVersion;
+    }
+
+    public function get_last_updated(string $tenant_id): ?string
+    {
+        return $this->lastUpdated;
     }
 
     public function get_conflict_count(string $tenant_id): int

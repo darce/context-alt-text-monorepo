@@ -721,13 +721,17 @@ class SuggestionRefreshService:
 
         confirmed_clusters = await self._cluster_repository.get_confirmed_labeled(tenant_id)
         if not confirmed_clusters:
+            bootstrapped = await self._bootstrap_pending_suggestions(tenant_id, candidate_ids, fallback_recovered)
             logger.info(
-                "[suggestions] backfill skipped tenant_id=%s reason=no_confirmed candidates=%d fallback_recovered=%d",
+                "[suggestions] backfill complete tenant_id=%s primary_candidates=%d "
+                "fallback_recovered=%d candidates_total=%d confirmed_total=0 bootstrap_created=%d",
                 tenant_id,
-                len(candidate_ids),
+                len(primary_candidate_ids),
                 fallback_recovered,
+                len(candidate_ids),
+                bootstrapped,
             )
-            return 0
+            return bootstrapped
 
         total_created = 0
         confirmed_skipped = 0
@@ -762,3 +766,44 @@ class SuggestionRefreshService:
             total_created,
         )
         return total_created
+
+    async def _bootstrap_pending_suggestions(
+        self,
+        tenant_id: str,
+        candidate_ids: set[str],
+        fallback_recovered: int,
+    ) -> int:
+        """Create one self-referential review suggestion per candidate cluster on greenfield tenants."""
+        cluster_repository = self._cluster_repository
+        if cluster_repository is None:
+            return 0
+
+        created = 0
+        skipped_without_members = 0
+
+        for cluster_id in sorted(candidate_ids):
+            members = await cluster_repository.get_members(cluster_id)
+            if not members:
+                skipped_without_members += 1
+                continue
+
+            seed_identity_id = str(members[0].identity_id)
+            await self._create_or_update_suggestion(
+                seed_identity_id,
+                cluster_id,
+                1.0,
+                SuggestionRefreshReason.BOOTSTRAP,
+                confidence_score=1.0,
+            )
+            created += 1
+
+        logger.info(
+            "[suggestions] bootstrap complete tenant_id=%s candidates=%d "
+            "fallback_recovered=%d created=%d skipped_without_members=%d",
+            tenant_id,
+            len(candidate_ids),
+            fallback_recovered,
+            created,
+            skipped_without_members,
+        )
+        return created

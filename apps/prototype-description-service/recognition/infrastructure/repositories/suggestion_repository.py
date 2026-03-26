@@ -134,6 +134,10 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
             else None,
             identity_media_id=int(identity.media_id) if identity and identity.media_id is not None else None,
             identity_media_url=identity.media_url if identity else None,
+            identity_bbox=self._build_bbox(identity),
+            representative_media_id=int(representative.media_id)
+            if representative and representative.media_id is not None
+            else None,
             representative_media_url=representative.media_url if representative else None,
             representative_bbox=self._build_bbox(representative),
         )

@@ -16,6 +16,8 @@ from recognition.domain.repositories import ClusterRepository
 
 logger = logging.getLogger(__name__)
 
+_BACKGROUND_SURFACE_SUGGESTIONS_SEMAPHORE = asyncio.Semaphore(3)
+
 
 class ClusterServiceProtocol(Protocol):
     """Protocol for background task helpers."""
@@ -71,76 +73,8 @@ async def run_background_surface_suggestions(
     try:
         # Timeout to prevent background task from blocking too long
         async with asyncio.timeout(30):  # 30 second max
-            chunk_target = 1000
-            async with session_factory() as session:
-                cluster_service = await cluster_service_builder(session=session, tenant_id=tenant_id)
-                refresh_service = cluster_service.suggestion_refresh_service
-                if refresh_service is None:
-                    logger.warning(
-                        "[suggestions] Background surfacing: surface_fn not available for cluster_id=%s",
-                        cluster_id,
-                    )
-                    return
-
-                cluster_repository = cluster_service.cluster_repository
-                rep_cache = await RepresentativeCache.load([cluster_id], cluster_repository)
-                rep_embeddings = rep_cache.get_representatives(cluster_id)
-                if rep_embeddings is None:
-                    logger.info(
-                        "[suggestions] Background surfacing: no representatives cluster_id=%s",
-                        cluster_id,
-                    )
-                    return
-
-                all_clusters = await cluster_repository.get_by_tenant(tenant_id, limit=1000)
-                unlabeled_clusters = [
-                    c
-                    for c in all_clusters
-                    if c.id != cluster_id and (not c.user_confirmed or not c.label or c.label.startswith("cluster-"))
-                ]
-
-            if not unlabeled_clusters:
-                logger.info(
-                    "[suggestions] Background surfacing: no unlabeled clusters to scan cluster_id=%s",
-                    cluster_id,
-                )
-                return
-
-            identity_counts = {
-                cluster.id: max(int(cluster.identity_count or 1), 1) for cluster in unlabeled_clusters if cluster.id
-            }
-            total_estimated_identities = sum(identity_counts.values())
-
-            # Only the newly labeled cluster is preloaded for matching.
-            labeled_reps = {cluster_id: rep_embeddings}
-            chunks: list[list[str]] = []
-            current_chunk: list[str] = []
-            current_count = 0
-            for unlabeled_cluster in unlabeled_clusters:
-                if not unlabeled_cluster.id:
-                    continue
-                identity_count = identity_counts.get(unlabeled_cluster.id, 1)
-                if current_chunk and current_count + identity_count > chunk_target:
-                    chunks.append(current_chunk)
-                    current_chunk = []
-                    current_count = 0
-                current_chunk.append(unlabeled_cluster.id)
-                current_count += identity_count
-            if current_chunk:
-                chunks.append(current_chunk)
-
-            logger.info(
-                "[suggestions] Background surfacing: %d unlabeled clusters (est_identities=%d) chunk_target=%d chunks=%d",
-                len(unlabeled_clusters),
-                total_estimated_identities,
-                chunk_target,
-                len(chunks),
-            )
-
-            total_surfaced = 0
-            for chunk_idx, chunk_ids in enumerate(chunks, start=1):
-                chunk_estimated_identities = sum(identity_counts.get(cluster_id, 1) for cluster_id in chunk_ids)
-                _t_chunk_start = _time.perf_counter()
+            async with _BACKGROUND_SURFACE_SUGGESTIONS_SEMAPHORE:
+                chunk_target = 1000
                 async with session_factory() as session:
                     cluster_service = await cluster_service_builder(session=session, tenant_id=tenant_id)
                     refresh_service = cluster_service.suggestion_refresh_service
@@ -149,36 +83,106 @@ async def run_background_surface_suggestions(
                             "[suggestions] Background surfacing: surface_fn not available for cluster_id=%s",
                             cluster_id,
                         )
-                        break
-                    chunk_surfaced = await refresh_service.surface_for_newly_labeled_cluster(
+                        return
+
+                    cluster_repository = cluster_service.cluster_repository
+                    rep_cache = await RepresentativeCache.load([cluster_id], cluster_repository)
+                    rep_embeddings = rep_cache.get_representatives(cluster_id)
+                    if rep_embeddings is None:
+                        logger.info(
+                            "[suggestions] Background surfacing: no representatives cluster_id=%s",
+                            cluster_id,
+                        )
+                        return
+
+                    all_clusters = await cluster_repository.get_by_tenant(tenant_id, limit=1000)
+                    unlabeled_clusters = [
+                        c
+                        for c in all_clusters
+                        if c.id != cluster_id
+                        and (not c.user_confirmed or not c.label or c.label.startswith("cluster-"))
+                    ]
+
+                if not unlabeled_clusters:
+                    logger.info(
+                        "[suggestions] Background surfacing: no unlabeled clusters to scan cluster_id=%s",
                         cluster_id,
-                        cluster_label=cluster_label,
-                        candidate_cluster_ids=chunk_ids,
-                        representatives_by_cluster=labeled_reps,
                     )
-                    # Background sessions are not wrapped by request-scoped commit middleware.
-                    # Explicit commit ensures surfaced suggestions are persisted.
-                    await session.commit()
-                    total_surfaced += chunk_surfaced
-                chunk_elapsed = _time.perf_counter() - _t_chunk_start
+                    return
+
+                identity_counts = {
+                    cluster.id: max(int(cluster.identity_count or 1), 1) for cluster in unlabeled_clusters if cluster.id
+                }
+                total_estimated_identities = sum(identity_counts.values())
+
+                # Only the newly labeled cluster is preloaded for matching.
+                labeled_reps = {cluster_id: rep_embeddings}
+                chunks: list[list[str]] = []
+                current_chunk: list[str] = []
+                current_count = 0
+                for unlabeled_cluster in unlabeled_clusters:
+                    if not unlabeled_cluster.id:
+                        continue
+                    identity_count = identity_counts.get(unlabeled_cluster.id, 1)
+                    if current_chunk and current_count + identity_count > chunk_target:
+                        chunks.append(current_chunk)
+                        current_chunk = []
+                        current_count = 0
+                    current_chunk.append(unlabeled_cluster.id)
+                    current_count += identity_count
+                if current_chunk:
+                    chunks.append(current_chunk)
+
                 logger.info(
-                    "[suggestions] Background surfacing chunk %d/%d completed: clusters=%d est_identities=%d surfaced=%d time=%.2fs",
-                    chunk_idx,
+                    "[suggestions] Background surfacing: %d unlabeled clusters (est_identities=%d) chunk_target=%d chunks=%d",
+                    len(unlabeled_clusters),
+                    total_estimated_identities,
+                    chunk_target,
                     len(chunks),
-                    len(chunk_ids),
-                    chunk_estimated_identities,
-                    chunk_surfaced,
-                    chunk_elapsed,
                 )
 
-            total_elapsed = _time.perf_counter() - _t_task_start
-            logger.info(
-                "[suggestions] Background surfacing completed: cluster_id=%s surfaced=%d total_time=%.2fs est_identities=%d",
-                cluster_id,
-                total_surfaced,
-                total_elapsed,
-                total_estimated_identities,
-            )
+                total_surfaced = 0
+                for chunk_idx, chunk_ids in enumerate(chunks, start=1):
+                    chunk_estimated_identities = sum(identity_counts.get(cluster_id, 1) for cluster_id in chunk_ids)
+                    _t_chunk_start = _time.perf_counter()
+                    async with session_factory() as session:
+                        cluster_service = await cluster_service_builder(session=session, tenant_id=tenant_id)
+                        refresh_service = cluster_service.suggestion_refresh_service
+                        if refresh_service is None:
+                            logger.warning(
+                                "[suggestions] Background surfacing: surface_fn not available for cluster_id=%s",
+                                cluster_id,
+                            )
+                            break
+                        chunk_surfaced = await refresh_service.surface_for_newly_labeled_cluster(
+                            cluster_id,
+                            cluster_label=cluster_label,
+                            candidate_cluster_ids=chunk_ids,
+                            representatives_by_cluster=labeled_reps,
+                        )
+                        # Background sessions are not wrapped by request-scoped commit middleware.
+                        # Explicit commit ensures surfaced suggestions are persisted.
+                        await session.commit()
+                        total_surfaced += chunk_surfaced
+                    chunk_elapsed = _time.perf_counter() - _t_chunk_start
+                    logger.info(
+                        "[suggestions] Background surfacing chunk %d/%d completed: clusters=%d est_identities=%d surfaced=%d time=%.2fs",
+                        chunk_idx,
+                        len(chunks),
+                        len(chunk_ids),
+                        chunk_estimated_identities,
+                        chunk_surfaced,
+                        chunk_elapsed,
+                    )
+
+                total_elapsed = _time.perf_counter() - _t_task_start
+                logger.info(
+                    "[suggestions] Background surfacing completed: cluster_id=%s surfaced=%d total_time=%.2fs est_identities=%d",
+                    cluster_id,
+                    total_surfaced,
+                    total_elapsed,
+                    total_estimated_identities,
+                )
     except TimeoutError:
         logger.warning(
             "[suggestions] Background surfacing timed out after 30s: cluster_id=%s",

@@ -148,3 +148,61 @@ async def test_background_backfill_suggestions_commits_session() -> None:
         fallback_window_minutes=0,
     )
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_background_surface_suggestions_limits_parallel_sessions(monkeypatch) -> None:
+    from recognition.application.tasks import clustering as clustering_tasks
+
+    monkeypatch.setattr(clustering_tasks, "_BACKGROUND_SURFACE_SUGGESTIONS_SEMAPHORE", asyncio.Semaphore(1))
+
+    active_sessions = 0
+    max_active_sessions = 0
+
+    @asynccontextmanager
+    async def _session_factory():
+        nonlocal active_sessions, max_active_sessions
+        active_sessions += 1
+        max_active_sessions = max(max_active_sessions, active_sessions)
+        try:
+            await asyncio.sleep(0.01)
+            yield AsyncMock()
+        finally:
+            active_sessions -= 1
+
+    class _RepCache:
+        def get_representatives(self, _cluster_id: str):
+            return [np.array([1.0], dtype=np.float32)]
+
+    async def _fake_rep_load(_cluster_ids, _cluster_repo):
+        return _RepCache()
+
+    monkeypatch.setattr(clustering_tasks.RepresentativeCache, "load", _fake_rep_load)
+
+    cluster_repository = SimpleNamespace(get_by_tenant=AsyncMock(return_value=[]))
+    cluster_service = SimpleNamespace(
+        cluster_repository=cluster_repository,
+        suggestion_refresh_service=SimpleNamespace(surface_for_newly_labeled_cluster=AsyncMock(return_value=0)),
+    )
+
+    async def _builder(*, session, tenant_id):  # noqa: ANN001
+        return cluster_service
+
+    await asyncio.gather(
+        run_background_surface_suggestions(
+            "tenant-1",
+            "cluster-a",
+            "Label A",
+            session_factory=_session_factory,
+            cluster_service_builder=_builder,
+        ),
+        run_background_surface_suggestions(
+            "tenant-1",
+            "cluster-b",
+            "Label B",
+            session_factory=_session_factory,
+            cluster_service_builder=_builder,
+        ),
+    )
+
+    assert max_active_sessions == 1

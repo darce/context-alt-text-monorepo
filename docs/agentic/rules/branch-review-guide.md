@@ -78,6 +78,7 @@ These items apply regardless of language. Stack-specific items are in the langua
 - [ ] **Boundary metadata preservation** — adapters/wrappers do not invent `limit`, `offset`, `total`, `data_source`, or similar envelope metadata; every field has a traceable source in the request, upstream payload, or documented fallback.
 - [ ] **Assertion intent matches layer** — assertions are used only for internal invariants/unreachable states, never as a substitute for boundary validation.
 - [ ] **Runtime dependency integrity** — no local type-only shims masking missing runtime packages; verify new imports with real build/test execution.
+- [ ] **PHP runtime autoload parity** — new plugin runtime classes resolve under the real WordPress/Composer load path, not only under the PHPUnit bootstrap fallback autoloader.
 - [ ] **Atomic mutation path preserved** — avoid splitting an existing atomic backend write flow into multiple client mutations without explicit architecture sign-off.
 - [ ] **Primary control reachability** — primary actions (for example select-all) are reachable from initial zero-state UI.
 - [ ] **Stale/offline path remains user-recoverable** — automation flags/defaults cannot remove an explicit manual recovery action.

@@ -51,6 +51,13 @@ Notes:
 
 Poll job status (proxy to `/recognition/jobs/{job_id}`).
 
+Notes:
+
+- The upstream backend may return `503` with `{ "error": "database_unavailable", "trace_id": "...", "path": "..." }` and `Retry-After: 5` when the recognition service cannot acquire a database connection.
+- The WordPress proxy preserves that overload state as HTTP `503` with `{ "error": "backend_overloaded", "retry_after": 5 }` and a matching `Retry-After` header instead of degrading it to an empty success payload.
+- The proxied backend no longer leaks raw exception class names or messages in generic `500` responses.
+- Tenant-context setup occurs in the backend session dependency; the job-status handler does not repeat tenant setup after the session has already been prepared.
+
 ## GET /recognition/jobs/{job_id}/stream
 
 Stream job progress via SSE. Emits `progress` events with `{ completed, total, status }`
@@ -260,6 +267,20 @@ Response:
 }
 ```
 
+Overload response:
+
+```json
+{
+  "error": "backend_overloaded",
+  "retry_after": 5
+}
+```
+
+Notes:
+
+- When the proxied backend returns `503 database_unavailable`, the WordPress proxy responds with HTTP `503`, `{ "error": "backend_overloaded", "retry_after": <seconds> }`, and forwards `Retry-After`.
+- `data_source: "unavailable"` remains the degraded HTTP `200` response only for non-503 upstream failures (for example other `5xx` or transport errors).
+
 ## POST /recognition/clusters/reassign
 
 Reassign an identity to a different cluster, or remove it from its cluster.
@@ -402,6 +423,15 @@ Response:
 }
 ```
 
+Overload response:
+
+```json
+{
+  "error": "backend_overloaded",
+  "retry_after": 5
+}
+```
+
 ## GET /recognition/suggestions
 
 List pending assignment suggestions.
@@ -450,7 +480,8 @@ Notes:
 
 - `cluster_label` is null for unlabeled clusters; use `suggested_label*` for copy if present.
 - `total` reports the number of items in the current page only, derived from the backend array length. The backend does not provide a global total count, so consumers must not treat `total` as server-side pagination metadata.
-- When proxy is unavailable, the controller returns `{ "suggestions": [], "total": 0, "limit": <requested>, "offset": <requested>, "data_source": "unavailable" }` with HTTP 200.
+- When the proxied backend returns `503 database_unavailable`, the WordPress proxy responds with HTTP `503`, `{ "error": "backend_overloaded", "retry_after": <seconds> }`, and forwards `Retry-After`.
+- For non-503 upstream failures, the controller still returns `{ "suggestions": [], "total": 0, "limit": <requested>, "offset": <requested>, "data_source": "unavailable" }` with HTTP 200.
 - TypeScript type: `PendingSuggestion` in `js/admin/api/recognition/types/suggestion.ts`.
 - Field names use `suggested_cluster_id` (not `cluster_id`), `representative_similarity` (not `rep_similarity`), and `*_thumb_url` (not `*_thumbnail_url`).
 
@@ -494,7 +525,8 @@ Notes:
 
 - The WordPress proxy wraps the backend's bare-array merge-suggestion response into this envelope.
 - `total` reports the number of items in the current page only, derived from the backend array length. The backend does not provide a global total count, so consumers must not treat `total` as server-side pagination metadata.
-- When proxy is unavailable, the controller returns `{ "suggestions": [], "total": 0, "limit": <requested>, "offset": <requested>, "data_source": "unavailable" }` with HTTP 200.
+- When the proxied backend returns `503 database_unavailable`, the WordPress proxy responds with HTTP `503`, `{ "error": "backend_overloaded", "retry_after": <seconds> }`, and forwards `Retry-After`.
+- For non-503 upstream failures, the controller still returns `{ "suggestions": [], "total": 0, "limit": <requested>, "offset": <requested>, "data_source": "unavailable" }` with HTTP 200.
 
 ## GET /recognition/suggestions/name
 
@@ -534,7 +566,8 @@ Notes:
 - The WordPress proxy wraps the backend's bare-array name-suggestion response into this envelope.
 - `total` reports the number of items in the current page only, derived from the backend array length. The backend does not provide a global total count, so consumers must not treat `total` as server-side pagination metadata.
 - `representatives` is optional; current UI types allow it but the proxy may omit it when the backend response does not supply representative context.
-- When proxy is unavailable, the controller returns `{ "suggestions": [], "total": 0, "limit": <requested>, "offset": <requested>, "data_source": "unavailable" }` with HTTP 200.
+- When the proxied backend returns `503 database_unavailable`, the WordPress proxy responds with HTTP `503`, `{ "error": "backend_overloaded", "retry_after": <seconds> }`, and forwards `Retry-After`.
+- For non-503 upstream failures, the controller still returns `{ "suggestions": [], "total": 0, "limit": <requested>, "offset": <requested>, "data_source": "unavailable" }` with HTTP 200.
 
 ## POST /recognition/suggestions/{suggestion_id}/accept
 

@@ -41,13 +41,13 @@ API keys are stored in the `api_keys` database table with the following structur
 
 ## Environment Variables
 
-| Variable                           | Default         | Description                                        |
-| ---------------------------------- | --------------- | -------------------------------------------------- |
-| `RECOGNITION_AUTH_ENABLED`         | `true`          | Enable/disable authentication globally             |
-| `RECOGNITION_ALLOWED_API_KEYS`     | (empty)         | Comma-separated list of dev keys for local testing |
-| `RECOGNITION_API_KEY_HEADER`       | `Authorization` | Header name for API key extraction                 |
-| `RECOGNITION_API_KEY_HASH_ALGORITHM` | `sha256`      | Algorithm for key hashing                          |
-| `RECOGNITION_MAX_PAGE_SIZE`        | `500`           | Maximum allowed page size for list endpoints       |
+| Variable                             | Default         | Description                                        |
+| ------------------------------------ | --------------- | -------------------------------------------------- |
+| `RECOGNITION_AUTH_ENABLED`           | `true`          | Enable/disable authentication globally             |
+| `RECOGNITION_ALLOWED_API_KEYS`       | (empty)         | Comma-separated list of dev keys for local testing |
+| `RECOGNITION_API_KEY_HEADER`         | `Authorization` | Header name for API key extraction                 |
+| `RECOGNITION_API_KEY_HASH_ALGORITHM` | `sha256`        | Algorithm for key hashing                          |
+| `RECOGNITION_MAX_PAGE_SIZE`          | `500`           | Maximum allowed page size for list endpoints       |
 
 ### Example Configuration
 
@@ -85,38 +85,73 @@ If an API key's tenant claim doesn't match the `X-Tenant-ID` header, the request
 
 Mutate endpoints (POST, PATCH, DELETE) require additional write access verification via the `require_write_access` dependency:
 
-| Endpoint                          | Method | Requires Write Access |
-| --------------------------------- | ------ | --------------------- |
-| `/analyze`                        | POST   | Yes                   |
-| `/clustering/jobs`                | POST   | Yes                   |
-| `/clusters/{id}`                  | PATCH  | Yes                   |
-| `/clusters/{id}/merge`            | POST   | Yes                   |
-| `/clusters/{id}/assign`           | POST   | Yes                   |
-| `/clusters/reassign`              | POST   | Yes                   |
-| `/clusters/create-for-identity`   | POST   | Yes                   |
-| `/clusters/revert-merge`          | POST   | Yes                   |
-| `/suggestions/{id}/accept`        | POST   | Yes                   |
-| `/suggestions/{id}/reject`        | POST   | Yes                   |
-| `/jobs/{id}/cancel`               | POST   | Yes                   |
-| `/roster/curation/sync`           | POST   | Yes                   |
-| `/tenants/{id}/acknowledge-projection` | POST | Yes                |
-| `/clusters`                       | GET    | No (read-only)        |
-| `/suggestions`                    | GET    | No (read-only)        |
-| `/jobs/{id}`                      | GET    | No (read-only)        |
-| `/tenants/{id}/clusters/snapshot` | GET    | No (read-only)        |
+| Endpoint                               | Method | Requires Write Access |
+| -------------------------------------- | ------ | --------------------- |
+| `/analyze`                             | POST   | Yes                   |
+| `/clustering/jobs`                     | POST   | Yes                   |
+| `/clusters/{id}`                       | PATCH  | Yes                   |
+| `/clusters/{id}/merge`                 | POST   | Yes                   |
+| `/clusters/{id}/assign`                | POST   | Yes                   |
+| `/clusters/reassign`                   | POST   | Yes                   |
+| `/clusters/create-for-identity`        | POST   | Yes                   |
+| `/clusters/revert-merge`               | POST   | Yes                   |
+| `/suggestions/{id}/accept`             | POST   | Yes                   |
+| `/suggestions/{id}/reject`             | POST   | Yes                   |
+| `/jobs/{id}/cancel`                    | POST   | Yes                   |
+| `/roster/curation/sync`                | POST   | Yes                   |
+| `/tenants/{id}/acknowledge-projection` | POST   | Yes                   |
+| `/clusters`                            | GET    | No (read-only)        |
+| `/suggestions`                         | GET    | No (read-only)        |
+| `/jobs/{id}`                           | GET    | No (read-only)        |
+| `/tenants/{id}/clusters/snapshot`      | GET    | No (read-only)        |
 
 ### WordPress-Side Authorization (WP REST)
 
-All conflict, dead-letter, and sync status endpoints in the WordPress plugin require `manage_options` capability:
+All WordPress plugin REST endpoints require `manage_options` capability via the `can_manage_recognition` permission callback:
 
-| WP REST Endpoint                                  | Capability Required |
-| ------------------------------------------------- | ------------------- |
-| `GET/POST /acx/v1/recognition/conflicts`          | `manage_options`    |
-| `GET/POST /acx/v1/recognition/conflicts/{id}/*`   | `manage_options`    |
-| `GET /acx/v1/recognition/outbox/failed`            | `manage_options`    |
-| `POST /acx/v1/recognition/outbox/{id}/retry`       | `manage_options`    |
-| `POST /acx/v1/recognition/outbox/{id}/discard`     | `manage_options`    |
-| `GET/POST /acx/v1/recognition/sync-status`         | `manage_options`    |
+| WP REST Endpoint                                                 | Method | Capability Required |
+| ---------------------------------------------------------------- | ------ | ------------------- |
+| `/acx/v1/recognition/analyze`                                    | POST   | `manage_options`    |
+| `/acx/v1/recognition/jobs/{id}`                                  | GET    | `manage_options`    |
+| `/acx/v1/recognition/jobs/{id}/stream`                           | GET    | `manage_options`    |
+| `/acx/v1/recognition/jobs/{id}/cancel`                           | POST   | `manage_options`    |
+| `/acx/v1/recognition/jobs/{id}/acknowledge-projection`           | POST   | `manage_options`    |
+| `/acx/v1/recognition/clusters`                                   | GET    | `manage_options`    |
+| `/acx/v1/recognition/clusters/top-unlabeled`                     | GET    | `manage_options`    |
+| `/acx/v1/recognition/clusters/labels`                            | GET    | `manage_options`    |
+| `/acx/v1/recognition/clusters/{id}`                              | GET    | `manage_options`    |
+| `/acx/v1/recognition/clusters/{id}/members`                      | GET    | `manage_options`    |
+| `/acx/v1/recognition/clusters/{id}`                              | PATCH  | `manage_options`    |
+| `/acx/v1/recognition/clusters/{id}/dismiss`                      | POST   | `manage_options`    |
+| `/acx/v1/recognition/clusters/{id}/dismiss`                      | DELETE | `manage_options`    |
+| `/acx/v1/recognition/clusters/{source_id}/merge`                 | POST   | `manage_options`    |
+| `/acx/v1/recognition/clusters/{id}/split`                        | POST   | `manage_options`    |
+| `/acx/v1/recognition/clusters/create-for-identity`               | POST   | `manage_options`    |
+| `/acx/v1/recognition/clusters/reassign`                          | POST   | `manage_options`    |
+| `/acx/v1/recognition/clusters/revert-merge`                      | POST   | `manage_options`    |
+| `/acx/v1/recognition/clusters/{id}/assign`                       | POST   | `manage_options`    |
+| `/acx/v1/recognition/clusters/{id}/representatives/{rep_id}/pin` | PATCH  | `manage_options`    |
+| `/acx/v1/recognition/cluster`                                    | POST   | `manage_options`    |
+| `/acx/v1/recognition/suggestions`                                | GET    | `manage_options`    |
+| `/acx/v1/recognition/suggestions/merge`                          | GET    | `manage_options`    |
+| `/acx/v1/recognition/suggestions/name`                           | GET    | `manage_options`    |
+| `/acx/v1/recognition/suggestions/{id}/accept`                    | POST   | `manage_options`    |
+| `/acx/v1/recognition/suggestions/{id}/reject`                    | POST   | `manage_options`    |
+| `/acx/v1/recognition/suggestions/merge/{id}/accept`              | POST   | `manage_options`    |
+| `/acx/v1/recognition/suggestions/merge/{id}/reject`              | POST   | `manage_options`    |
+| `/acx/v1/recognition/suggestions/name/{id}/accept`               | POST   | `manage_options`    |
+| `/acx/v1/recognition/suggestions/name/{id}/reject`               | POST   | `manage_options`    |
+| `/acx/v1/recognition/identities/{id}/suggestions`                | GET    | `manage_options`    |
+| `/acx/v1/recognition/media-identities`                           | GET    | `manage_options`    |
+| `/acx/v1/recognition/conflicts`                                  | GET    | `manage_options`    |
+| `/acx/v1/recognition/conflicts/{id}`                             | GET    | `manage_options`    |
+| `/acx/v1/recognition/conflicts/{id}/resolve`                     | POST   | `manage_options`    |
+| `/acx/v1/recognition/outbox`                                     | GET    | `manage_options`    |
+| `/acx/v1/recognition/outbox/failed`                              | GET    | `manage_options`    |
+| `/acx/v1/recognition/outbox/{id}/retry`                          | POST   | `manage_options`    |
+| `/acx/v1/recognition/outbox/{id}/discard`                        | POST   | `manage_options`    |
+| `/acx/v1/recognition/sync-status`                                | GET    | `manage_options`    |
+| `/acx/v1/recognition/sync/trigger`                               | POST   | `manage_options`    |
 
 Write access is granted when:
 
@@ -195,5 +230,3 @@ $response = wp_remote_post($api_url . '/analyze', [
 ```
 
 ## Future Enhancements
-
-

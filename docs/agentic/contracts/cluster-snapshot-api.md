@@ -61,7 +61,11 @@ Timeout expectations:
       "identity_count": 5,
       "representative_thumb_path": "acx://cluster/b43c2ab2-8d4f-42a8-9b2d-7f1d2e5a9b7a/media/101",
       "representative_id": "0a7b8331-bb7f-40c1-8f24-8c7e2b2d7c4f",
-      "is_pinned": true
+      "is_pinned": true,
+      "suggested_label": null,
+      "suggested_label_source": null,
+      "suggested_label_confidence": null,
+      "suggested_target_cluster_id": null
     }
   ],
   "members": [
@@ -91,6 +95,9 @@ Timeout expectations:
 - Curation-first guard:
   - existing `wp_acx_clusters.is_user_confirmed = 1` rows are authoritative for `label`, `curation_state`, `is_user_confirmed`
   - non-authoritative fields (`identity_count`, `representative_thumb_path`, `snapshot_version`, `last_synced_at`) may refresh
+- `suggested_label` fields are ephemeral backend enrichments computed at read time by `infer_suggested_label`. They are never curation-guarded and are always overwritten by each sync pull. Only unlabeled, unconfirmed clusters (`is_user_confirmed = false`) may receive a non-null `suggested_label`; all other clusters receive null for all four fields.
+- `suggested_label_source` values: `"identity"`, `"roster"`, `"similar_cluster"`, `"none"`. Null when no inference was attempted.
+- `suggested_label_confidence` is a float in `[0.0, 1.0]`. Null when no inference was attempted.
 - Plugin stale-row cleanup deletes only non-curated rows absent from incoming snapshot.
 - Representative metadata semantics:
   - `representative_id` identifies the currently selected backend representative for the cluster.

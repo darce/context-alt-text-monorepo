@@ -203,6 +203,7 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 
 	public function reassign_cluster_identity( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		global $wpdb;
+		$tenant_id = $this->get_tenant_id();
 
 		$identity_id = sanitize_text_field( (string) $request->get_param( 'identity_id' ) );
 		if ( '' === $identity_id ) {
@@ -214,12 +215,26 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'missing_target_cluster_id', 'Target cluster ID is required.', array( 'status' => 400 ) );
 		}
 
+		if ( $this->should_proxy_mutation_to_backend( $tenant_id ) ) {
+			$payload = array(
+				'tenant_id'         => $tenant_id,
+				'identity_id'       => $identity_id,
+				'target_cluster_id' => $target,
+			);
+			$block_from_cluster = $request->get_param( 'block_from_cluster' );
+			if ( null !== $block_from_cluster ) {
+				$payload['block_from_cluster'] = rest_sanitize_boolean( $block_from_cluster );
+			}
+
+			return $this->proxy_cluster_mutation( 'POST', '/recognition/clusters/reassign', $payload );
+		}
+
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
 			return new WP_Error( 'acx_db_error', 'Database access is unavailable.', array( 'status' => 500 ) );
 		}
 
 		$payload = array(
-			'tenant_id'         => $this->get_tenant_id(),
+			'tenant_id'         => $tenant_id,
 			'identity_id'       => $identity_id,
 			'target_cluster_id' => $target,
 			'user_id'           => get_current_user_id(),
@@ -265,6 +280,7 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 
 	public function update_cluster_label( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		global $wpdb;
+		$tenant_id = $this->get_tenant_id();
 
 		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
 		$label      = sanitize_text_field( (string) $request->get_param( 'label' ) );
@@ -275,6 +291,17 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 
 		if ( '' === $label ) {
 			return new WP_Error( 'missing_label', 'Label cannot be empty.', array( 'status' => 400 ) );
+		}
+
+		if ( $this->should_proxy_mutation_to_backend( $tenant_id ) ) {
+			return $this->proxy_cluster_mutation(
+				'PATCH',
+				sprintf( '/recognition/clusters/%s', $cluster_id ),
+				array(
+					'tenant_id' => $tenant_id,
+					'label'     => $label,
+				)
+			);
 		}
 
 		$cluster = $this->clusters_repository->find_by_uuid( $cluster_id );
@@ -333,10 +360,15 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 
 	public function dismiss_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		global $wpdb;
+		$tenant_id = $this->get_tenant_id();
 
 		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
 		if ( '' === $cluster_id ) {
 			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
+		}
+
+		if ( $this->should_proxy_mutation_to_backend( $tenant_id ) ) {
+			return $this->proxy_cluster_mutation( 'POST', sprintf( '/recognition/clusters/%s/dismiss', $cluster_id ) );
 		}
 
 		$cluster = $this->get_projected_cluster_or_error( $cluster_id );
@@ -376,10 +408,15 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 
 	public function undismiss_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		global $wpdb;
+		$tenant_id = $this->get_tenant_id();
 
 		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
 		if ( '' === $cluster_id ) {
 			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
+		}
+
+		if ( $this->should_proxy_mutation_to_backend( $tenant_id ) ) {
+			return $this->proxy_cluster_mutation( 'DELETE', sprintf( '/recognition/clusters/%s/dismiss', $cluster_id ) );
 		}
 
 		$cluster = $this->get_projected_cluster_or_error( $cluster_id );
@@ -419,6 +456,7 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 
 	public function merge_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		global $wpdb;
+		$tenant_id = $this->get_tenant_id();
 
 		$source_id         = sanitize_text_field( (string) $request->get_param( 'source_id' ) );
 		$target_cluster_id = sanitize_text_field( (string) $request->get_param( 'target_cluster_id' ) );
@@ -434,6 +472,22 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 
 		if ( $source_id === $target_cluster_id ) {
 			return new WP_Error( 'invalid_target_cluster_id', 'Source and target cluster IDs must differ.', array( 'status' => 400 ) );
+		}
+
+		if ( $this->should_proxy_mutation_to_backend( $tenant_id ) ) {
+			$payload = array(
+				'tenant_id'         => $tenant_id,
+				'target_cluster_id' => $target_cluster_id,
+			);
+			if ( '' !== $target_label ) {
+				$payload['target_label'] = $target_label;
+			}
+
+			return $this->proxy_cluster_mutation(
+				'POST',
+				sprintf( '/recognition/clusters/%s/merge', $source_id ),
+				$payload
+			);
 		}
 
 		$source_cluster = $this->get_projected_cluster_or_error( $source_id, 'source_cluster_not_found', 'Source cluster not found.' );
@@ -504,6 +558,7 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 
 	public function split_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		global $wpdb;
+		$tenant_id = $this->get_tenant_id();
 
 		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
 
@@ -605,6 +660,7 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 
 	public function create_cluster_for_identity( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		global $wpdb;
+		$tenant_id = $this->get_tenant_id();
 
 		$identity_id = sanitize_text_field( (string) $request->get_param( 'identity_id' ) );
 		$label       = sanitize_text_field( (string) $request->get_param( 'label' ) );
@@ -617,12 +673,23 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'missing_label', 'Label is required.', array( 'status' => 400 ) );
 		}
 
+		if ( $this->should_proxy_mutation_to_backend( $tenant_id ) ) {
+			return $this->proxy_cluster_mutation(
+				'POST',
+				'/recognition/clusters/create-for-identity',
+				array(
+					'tenant_id'   => $tenant_id,
+					'identity_id' => $identity_id,
+					'label'       => $label,
+				)
+			);
+		}
+
 		$existing_member = $this->members_repository->find_by_identity_uuid( $identity_id );
 		if ( ! is_array( $existing_member ) ) {
 			return new WP_Error( 'identity_not_found', 'Identity is not present in the local projection.', array( 'status' => 404 ) );
 		}
 
-		$tenant_id = $this->get_tenant_id();
 		$new_cluster_id = wp_generate_uuid4();
 		$source_cluster_id = sanitize_text_field( (string) ( $existing_member['cluster_uuid'] ?? '' ) );
 		$source_member_count = '' !== $source_cluster_id ? $this->members_repository->count_for_cluster( $source_cluster_id ) : 0;
@@ -685,6 +752,7 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 
 	public function revert_merge_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		global $wpdb;
+		$tenant_id = $this->get_tenant_id();
 
 		$target_cluster_id  = sanitize_text_field( (string) $request->get_param( 'target_cluster_id' ) );
 		$moved_identity_ids = $request->get_param( 'moved_identity_ids' );
@@ -718,6 +786,22 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'missing_moved_identity_ids', 'Provide one or more valid identity IDs to revert.', array( 'status' => 400 ) );
 		}
 
+		if ( $this->should_proxy_mutation_to_backend( $tenant_id ) ) {
+			$payload = array(
+				'tenant_id'          => $tenant_id,
+				'target_cluster_id'  => $target_cluster_id,
+				'moved_identity_ids' => $sanitized_ids,
+			);
+			if ( '' !== $requested_source_cluster_id ) {
+				$payload['desired_source_cluster_id'] = $requested_source_cluster_id;
+			}
+			if ( is_string( $source_label ) && '' !== trim( $source_label ) ) {
+				$payload['source_label'] = sanitize_text_field( (string) $source_label );
+			}
+
+			return $this->proxy_cluster_mutation( 'POST', '/recognition/clusters/revert-merge', $payload );
+		}
+
 		$target_cluster = $this->get_projected_cluster_or_error( $target_cluster_id, 'target_cluster_not_found', 'Target cluster not found.' );
 		if ( is_wp_error( $target_cluster ) ) {
 			return $target_cluster;
@@ -739,7 +823,6 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'acx_db_error', 'Database access is unavailable.', array( 'status' => 500 ) );
 		}
 
-		$tenant_id = $this->get_tenant_id();
 		$source_cluster_id = '' !== $requested_source_cluster_id ? $requested_source_cluster_id : wp_generate_uuid4();
 		$restored_label = $source_label ? sanitize_text_field( (string) $source_label ) : '';
 		$target_member_count = $this->members_repository->count_for_cluster( $target_cluster_id );
@@ -801,6 +884,7 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 
 	public function assign_outlier_to_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		global $wpdb;
+		$tenant_id = $this->get_tenant_id();
 
 		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
 		$identity_id = sanitize_text_field( (string) $request->get_param( 'identity_id' ) );
@@ -812,6 +896,18 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 
 		if ( '' === $identity_id ) {
 			return new WP_Error( 'missing_identity_id', 'Identity ID is required.', array( 'status' => 400 ) );
+		}
+
+		if ( $this->should_proxy_mutation_to_backend( $tenant_id ) ) {
+			return $this->proxy_cluster_mutation(
+				'POST',
+				sprintf( '/recognition/clusters/%s/assign', $cluster_id ),
+				array(
+					'tenant_id'   => $tenant_id,
+					'identity_id' => $identity_id,
+					'similarity'  => $similarity,
+				)
+			);
 		}
 
 		$target_cluster = $this->get_projected_cluster_or_error( $cluster_id, 'target_cluster_not_found', 'Target cluster not found.' );
@@ -846,7 +942,6 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'acx_db_error', 'Database access is unavailable.', array( 'status' => 500 ) );
 		}
 
-		$tenant_id = $this->get_tenant_id();
 		$source_member_count = $this->members_repository->count_for_cluster( $source_cluster_id );
 		$target_member_count = $this->members_repository->count_for_cluster( $cluster_id );
 
@@ -899,6 +994,7 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 
 	public function pin_representative( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		global $wpdb;
+		$tenant_id = $this->get_tenant_id();
 
 		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
 		if ( '' === $cluster_id ) {
@@ -912,6 +1008,18 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 
 		$is_pinned = $request->get_param( 'is_pinned' );
 		$desired_is_pinned = null === $is_pinned ? true : rest_sanitize_boolean( $is_pinned );
+
+		if ( $this->should_proxy_mutation_to_backend( $tenant_id ) ) {
+			return $this->proxy_cluster_mutation(
+				'PATCH',
+				sprintf( '/recognition/clusters/%s/representatives/%s/pin', $cluster_id, $representative_id ),
+				array(
+					'tenant_id' => $tenant_id,
+					'is_pinned' => $desired_is_pinned,
+				)
+			);
+		}
+
 		$cluster = $this->get_projected_cluster_or_error( $cluster_id );
 		if ( is_wp_error( $cluster ) ) {
 			return $cluster;
@@ -1000,6 +1108,24 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 		}
 
 		return new WP_Error( $missing_code, $missing_message, array( 'status' => 404 ) );
+	}
+
+	private function should_proxy_mutation_to_backend( string $tenant_id ): bool {
+		return ! $this->clusters_repository->has_projection_rows_for_tenant( $tenant_id )
+			&& ! $this->members_repository->has_projection_rows_for_tenant( $tenant_id );
+	}
+
+	private function proxy_cluster_mutation(
+		string $method,
+		string $path,
+		array $body = array()
+	): WP_REST_Response|WP_Error {
+		$response = $this->proxy_request( $method, $path, $body, array(), 'mutation' );
+		if ( $this->is_backend_overloaded( $response ) ) {
+			return parent::backend_overloaded_response( $response );
+		}
+
+		return $response;
 	}
 
 	/**

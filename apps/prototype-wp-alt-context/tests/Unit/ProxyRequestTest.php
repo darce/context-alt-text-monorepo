@@ -72,6 +72,46 @@ class ProxyRequestTest extends TestCase
         $this->assertSame('test-123', $data['job_id']);
     }
 
+    public function testProxyRequestPreservesHeadersFromCaseInsensitiveDictionary(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'headers' => ['Retry-After' => '7', 'Content-Length' => '505'],
+            'body' => '{"status": "completed"}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
+        $request->set_param('job_id', 'test-123');
+
+        $result = $this->controller->get_job_status($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $result);
+        $this->assertSame('7', $result->get_headers()['Retry-After'] ?? null);
+        $this->assertArrayNotHasKey('Content-Length', $result->get_headers());
+        $this->assertArrayNotHasKey('content-length', $result->get_headers());
+    }
+
+    public function testAbstractProxyControllerLoadsPolicyUnderRuntimeAutoloadRules(): void
+    {
+        $script = <<<'PHP'
+require 'vendor/autoload.php';
+require_once 'src/api/interface-recognition-route-controller.php';
+require_once 'src/api/class-abstract-recognition-proxy-controller.php';
+var_export(class_exists('AltContext\\Api\\RecognitionProxyPolicy'));
+PHP;
+
+        $command = sprintf(
+            'cd %s && %s -r %s',
+            escapeshellarg(__DIR__ . '/../../'),
+            escapeshellarg((string) PHP_BINARY),
+            escapeshellarg($script)
+        );
+
+        $output = shell_exec($command);
+
+        $this->assertSame('true', trim((string) $output));
+    }
+
     /**
      * Test proxy request includes API key header when configured.
      */

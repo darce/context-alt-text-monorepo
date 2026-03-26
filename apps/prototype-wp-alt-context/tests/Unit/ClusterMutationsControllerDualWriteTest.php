@@ -248,9 +248,13 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->assertSame([], $this->getHttpCalls());
     }
 
-    public function testLabelUpdateReturnsProjectionNotReadyWhenLocalProjectionIsMissing(): void
+    public function testLabelUpdateProxiesToBackendWhenLocalProjectionIsMissing(): void
     {
         $this->repository->localClusterRows = [];
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"id":"cluster-xyz","label":"Known Person","identity_count":3}',
+        ]);
 
         $request = new \WP_REST_Request('PATCH', '/recognition/clusters/cluster-xyz', [
             'cluster_id' => 'cluster-xyz',
@@ -259,9 +263,36 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
 
         $response = $this->controller->update_cluster_label($request);
 
-        $this->assertTrue(is_wp_error($response));
-        $this->assertSame('projection_not_ready', $response->get_error_code());
-        $this->assertSame(409, $response->get_error_data()['status'] ?? null);
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('/recognition/clusters/cluster-xyz', $calls[0]['url']);
+        $this->assertSame('PATCH', $calls[0]['args']['method']);
+        $this->assertStringContainsString('"tenant_id"', (string) ($calls[0]['args']['body'] ?? ''));
+        $this->assertStringContainsString('"label":"Known Person"', (string) ($calls[0]['args']['body'] ?? ''));
+    }
+
+    public function testLabelUpdateProxyReturnsBackendFailureResponse(): void
+    {
+        $this->repository->localClusterRows = [];
+        for ($index = 0; $index < 3; $index++) {
+            $this->queueHttpResponse([
+                'response' => ['code' => 500, 'message' => 'Internal Server Error'],
+                'body' => '{"detail":"backend exploded"}',
+            ]);
+        }
+
+        $request = new \WP_REST_Request('PATCH', '/recognition/clusters/cluster-xyz', [
+            'cluster_id' => 'cluster-xyz',
+            'label' => 'Known Person',
+        ]);
+
+        $response = $this->controller->update_cluster_label($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(500, $response->get_status());
+        $this->assertSame(['detail' => 'backend exploded'], $response->get_data());
     }
 
     public function testMergeQueuesReplayOperationInsideTransaction(): void

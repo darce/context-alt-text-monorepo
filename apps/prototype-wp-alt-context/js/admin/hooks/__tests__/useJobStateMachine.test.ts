@@ -4,6 +4,17 @@ import { useJobStateMachine } from '../useJobStateMachine';
 import { useJobPersistence } from '../useJobPersistence';
 import { useQueryClient } from '@tanstack/react-query';
 
+const createDeferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+
+  return { promise, resolve, reject };
+};
+
 // Mocks
 vi.mock('../useJobPersistence');
 vi.mock('@tanstack/react-query', () => ({
@@ -122,11 +133,20 @@ describe('useJobStateMachine', () => {
 
   it('reports projecting phase when the backend exposes awaiting_projection', async () => {
     const { useCombinedScanStatus } = await import('../useRecognitionHooks');
+    const { useSyncTrigger } = await import('../useSyncTrigger');
+    const syncDeferred = createDeferred<{
+      synced: boolean;
+      reason: string;
+      last_snapshot_version: number;
+      last_synced_at: string;
+      is_stale: boolean;
+    }>();
     (useJobPersistence as Mock).mockReturnValue({
       activeJobs: [{ id: 'job-2', type: 'clustering' }],
       addJob: vi.fn(),
       removeJob: vi.fn(),
     });
+    (useSyncTrigger as Mock).mockReturnValue({ mutateAsync: vi.fn(() => syncDeferred.promise) });
     (useCombinedScanStatus as Mock).mockReturnValue({
       scanStatusQuery: {
         data: {
@@ -143,13 +163,38 @@ describe('useJobStateMachine', () => {
       },
     });
 
-    const { result } = renderHook(() => useJobStateMachine());
-    expect(result.current.currentPhase).toBe('projecting');
-    expect(result.current.latestJobId).toBe('job-2');
+    const { result, unmount } = renderHook(() => useJobStateMachine());
+
+    await waitFor(() => {
+      expect(result.current.currentPhase).toBe('projecting');
+      expect(result.current.latestJobId).toBe('job-2');
+      expect(result.current.projectionSyncState).toBe('syncing');
+    });
+
+    await act(async () => {
+      unmount();
+      syncDeferred.resolve({
+        synced: true,
+        reason: 'ok',
+        last_snapshot_version: 123,
+        last_synced_at: '2026-03-09T10:00:00Z',
+        is_stale: false,
+      });
+      await Promise.resolve();
+    });
   });
 
   it('enters projecting phase when awaiting_projection is reported even without local active jobs', async () => {
     const { useCombinedScanStatus } = await import('../useRecognitionHooks');
+    const { useSyncTrigger } = await import('../useSyncTrigger');
+    const syncDeferred = createDeferred<{
+      synced: boolean;
+      reason: string;
+      last_snapshot_version: number;
+      last_synced_at: string;
+      is_stale: boolean;
+    }>();
+    (useSyncTrigger as Mock).mockReturnValue({ mutateAsync: vi.fn(() => syncDeferred.promise) });
     (useCombinedScanStatus as Mock).mockReturnValue({
       scanStatusQuery: {
         data: {
@@ -166,8 +211,24 @@ describe('useJobStateMachine', () => {
       },
     });
 
-    const { result } = renderHook(() => useJobStateMachine());
-    expect(result.current.currentPhase).toBe('projecting');
+    const { result, unmount } = renderHook(() => useJobStateMachine());
+
+    await waitFor(() => {
+      expect(result.current.currentPhase).toBe('projecting');
+      expect(result.current.projectionSyncState).toBe('syncing');
+    });
+
+    await act(async () => {
+      unmount();
+      syncDeferred.resolve({
+        synced: true,
+        reason: 'ok',
+        last_snapshot_version: 123,
+        last_synced_at: '2026-03-09T10:00:00Z',
+        is_stale: false,
+      });
+      await Promise.resolve();
+    });
   });
 
   it('forgets remembered jobs when status polling returns 404', async () => {

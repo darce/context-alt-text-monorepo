@@ -7,6 +7,10 @@ description: Use when a task should be split across Git worktrees or multiple Co
 
 Use this skill when one main agent needs to coordinate worker agents in sibling Git worktrees.
 
+## Trigger
+
+Use this skill when a task should be split across stable seams such as owned paths, contract boundaries, or test packs, and one orchestrator agent needs to coordinate multiple worker lanes without losing shared task truth.
+
 ## What this skill owns
 
 - deciding whether a task should be split into lanes
@@ -133,10 +137,23 @@ git checkout codex/<task>-<lane> -- path/to/file
   - [../../templates/DECISION_CROSS_LANE.template.md](../../templates/DECISION_CROSS_LANE.template.md)
 - Keep policy details in the canonical sources: [../../instructions.md](../../instructions.md) for startup and loading rules, and [../../rules/development-workflow.md#cross-boundary-change-protocol](../../rules/development-workflow.md#cross-boundary-change-protocol) for boundary validation.
 
-## Guardrails
+## Safety Constraints
 
 - Do not assign two workers to the same owned path set.
 - Do not let workers rewrite shared plan truth unless explicitly assigned.
 - Reject out-of-scope files during intake.
 - Keep the overall task `in_progress` while individual lanes move to `review`, `merged`, or `closed`.
 - The orchestrator owns final MCP task updates and `CURRENT_TASK.md` generation.
+
+## Recovery
+
+- If lane ownership is ambiguous, stop and split the work again before dispatching.
+- If a worker reports out-of-scope changes, reject intake and reroute the work rather than silently absorbing it.
+- If a lane gets blocked on another domain, record the blocker and dispatch the dependent work instead of letting the worker cross boundaries.
+- If orchestration state drifts from the shared MCP state, regenerate the shared human-readable surfaces only after the MCP write path is corrected.
+
+## Convergence Criteria
+
+- Each active lane has a bounded owned path set, a worker brief, and a clear verification target.
+- Worker handoffs route back through MCP with merge-ready or blocker status instead of ad hoc chat-only summaries.
+- Final task truth, shared checklist state, and `CURRENT_TASK.md` are consistent with the orchestrator’s MCP updates.

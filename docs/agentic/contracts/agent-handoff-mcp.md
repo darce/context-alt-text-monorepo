@@ -233,6 +233,9 @@ agent-handoff-mcp --workspace-root <repo> handoff-search \
 - Write tools target the active task only.
 - Live MCP tool signatures are authoritative over examples, templates, or prior-session memory. Prefer the minimal valid payload for write operations unless a richer payload is required by the current signature.
 - If a write call fails validation, treat it as signature drift. Retry once with the minimal payload accepted by the live signature, then update the stale contract/rule/template in the same slice so the bounce does not recur.
+- Slice-completion decisions must use `decision="slice_complete_<short_label>"` and a structured rationale with the four headings `## Changes`, `## Verification`, `## Schema / Contract Changes`, and `## Open Threads`.
+- The structured rationale is mandatory even for docs-only slices. Use `- none.` for empty sections rather than omitting headings.
+- Handoff consumers should treat prose-only completion decisions as malformed process output that must be corrected before the slice is considered fully handed off.
 - To switch between tasks, use `switch_task(task_ref)`. It auto-archives the outgoing task (full snapshot) and activates the target, restoring the objective from its archive when not provided. Idempotent if the target is already active.
 - For in-place updates to the _current_ task (status, objective change), use `set_handoff_state(...)` directly.
 - `set_handoff_state` requires `expected_revision` for updates.

@@ -7,6 +7,10 @@ description: Use when uncommitted changes on the current Git branch need to be s
 
 Use this skill when the user asks you to turn a dirty branch into a small set of reviewable commits.
 
+## Trigger
+
+Use this skill when the current branch contains multiple completed slices, refactors, or docs/tooling updates that need to be grouped into intentional commits. If the working tree already contains one clean isolated slice, prefer `docs/agentic/skills/subfeature-committer/SKILL.md` instead.
+
 ## Goal
 
 Create one commit per completed sub-feature, not one commit per directory or per file type.
@@ -69,6 +73,13 @@ Do not group by:
 - language alone
 - folder alone
 - "everything touched for this task" when the branch clearly contains multiple finished slices
+
+## Safety Constraints
+
+- Stay in the current worktree and branch; do not switch to the orchestrator root or a sibling worktree just to commit.
+- Do not use this skill to make checkpoint or WIP commits unless the user explicitly asked for that.
+- Do not stage ambiguous hunks just to make the tree clean. Leave unrelated work unstaged when the slice boundary is unclear.
+- When operating in a worker lane, respect lane-owned paths and prefer `make lane-commit` if it already gives the required prefixing behavior.
 
 ## Stage deliberately
 
@@ -138,6 +149,13 @@ When you are inside a worker lane worktree in this repo:
 
 If the user explicitly wants the worktree name instead of the lane name, prefer a manual `git commit -m "<worktree-name>: <subject>"` in the current worker worktree and then run the reporting step separately if needed.
 
+## Recovery
+
+- If the staged diff tells more than one story, unstage it and split the slice before committing.
+- If a file contains interleaved hunks that cannot be separated safely, stop and ask the user instead of guessing.
+- If the lane/worktree prefix behavior is unclear, inspect `git rev-parse --git-dir` and `git rev-parse --git-common-dir` again before committing.
+- If a lane helper would hide important staging detail for the current slice, fall back to manual staging in the same worktree rather than leaving the lane context.
+
 ## Final check per commit
 
 For each commit group:
@@ -148,3 +166,9 @@ For each commit group:
 4. Re-run `git status --short` and repeat for the next slice.
 
 Stop and ask the user only if one file contains interleaved changes that cannot be split safely into separate sub-features.
+
+## Convergence Criteria
+
+- Each commit represents exactly one completed slice, sub-feature, or reviewable refactor.
+- The staged diff for each commit tells one coherent story with matching tests/docs where applicable.
+- The remaining working tree is intentionally left for follow-on slices rather than accidentally swept into the commit.

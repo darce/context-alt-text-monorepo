@@ -1,8 +1,7 @@
 ---
 title: Recognition Service HTTP API
 status: draft
-owners:
-  - recognition-service
+boundary_owner: backend
 description: FastAPI endpoints backing recognition analysis, clustering, and suggestions.
 ---
 

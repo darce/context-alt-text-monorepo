@@ -1,6 +1,7 @@
 # Agent-Agnostic Orchestration Refactor
 
 > **Scope:** Tooling/infrastructure; successor to `mcp-orchestration-reliability`. Not tracked in a product roadmap or epic.
+> **Status:** complete -- all phases (0-5) implemented; checklist fully checked.
 
 ## Problem Statement
 

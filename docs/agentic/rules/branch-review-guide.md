@@ -100,6 +100,15 @@ Reviewer prompts:
 
 If the answer is no, treat the claim as a `GAP`; use `HIGH` when the missing proof changes merge or release readiness.
 
+## Contract-Change Gate
+
+Apply this gate whenever the reviewed diff changes a documented boundary payload, status/error contract, shared enum vocabulary, or adapter-owned envelope shape.
+
+- A boundary-touching change is not `review-ready` unless the owning contract changed in the same slice, or handoff contains an explicit no-contract-change rationale tied to the current diff.
+- A boundary-touching change is not `review-ready` unless matching fixture, schema, or contract-test evidence exists for the changed shape.
+- A boundary-touching change is not `merge-ready` unless handoff records the boundary owner, verification path, and current contract reference.
+- Use [contract-change-checklist.md](contract-change-checklist.md) as the canonical review aid for ownership, schema-evolution notes, fixture proof, and remediation-plan finding-ID checks.
+
 ## Common Checklist
 
 These items apply regardless of language. Stack-specific items are in the language guides linked above.
@@ -122,6 +131,7 @@ These items apply regardless of language. Stack-specific items are in the langua
 - [ ] **Import/restore payload validation** — malformed snapshot shapes fail fast with explicit errors (never silent success).
 - [ ] **Provenance preservation** — status/update operations do not overwrite original creator metadata.
 - [ ] **Single contract owner per boundary** — only one layer owns shape adaptation (for example backend array -> WordPress envelope). Downstream layers consume the canonical shape instead of carrying duplicate backward-compat fallbacks.
+- [ ] **Contract-change gate satisfied** — boundary changes have owning-contract updates or an explicit no-change rationale, plus matching fixture/schema/test evidence and handoff proof.
 
 ### Code Duplication
 

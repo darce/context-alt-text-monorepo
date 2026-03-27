@@ -1,9 +1,7 @@
 ---
 title: Curation Sync API
 status: in-progress
-owners:
-  - plugin-platform
-  - recognition-service
+boundary_owner: backend
 description: Contract for idempotent replay of local curation operations to backend state via durable outbox pattern.
 ---
 

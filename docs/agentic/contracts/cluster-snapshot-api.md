@@ -1,9 +1,7 @@
 ---
 title: Tenant Cluster Snapshot API
 status: finalized
-owners:
-  - plugin-platform
-  - recognition-service
+boundary_owner: backend
 description: Contract for backend snapshot export consumed by sovereign local projection in the WordPress plugin.
 ---
 

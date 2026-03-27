@@ -1,9 +1,7 @@
 ---
 title: Recognition Media XMP Mapping
 status: active
-owners:
-  - plugin-platform
-  - recognition-service
+boundary_owner: wp-proxy
 description: Mapping between `/recognition/media/identities?include_debug=true` payload fields and persisted IPTC/ACX XMP fields.
 ---
 

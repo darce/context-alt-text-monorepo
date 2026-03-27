@@ -66,6 +66,8 @@ Add one integration-lite test per major page using real hooks with mocked networ
 
 Use `http://example.test/` (RFC 2606 reserved domain) for all MSW handler URLs, not `localhost`.
 
+Mock handlers and `vi.mock` factories also follow the shared stub-fidelity rules in [testing-principles.md](testing-principles.md): when production code distinguishes malformed payloads, failures, or degraded responses, the mock should model those behaviors instead of returning an always-happy shape.
+
 ---
 
 ## Sovereign Sync Test Patterns

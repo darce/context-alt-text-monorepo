@@ -23,6 +23,8 @@ Use deterministic fixtures for exact counts: `assert clusters_created == 3`, not
 
 Mock return values must match production defaults. For example: `AsyncMock(return_value=0.5)` not `0.0`; the `curriculum_t` field defaults to `0.5` in the schema.
 
+This rule is part of the broader stub-fidelity requirements in [testing-principles.md](testing-principles.md). Matching default values is not enough when the real dependency also raises errors or transitions state; use a behavioral fake when the test depends on that behavior.
+
 ---
 
 ## Python Fake Pattern (Project Standard)

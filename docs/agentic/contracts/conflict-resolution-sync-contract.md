@@ -1,3 +1,7 @@
+---
+boundary_owner: wp-proxy
+---
+
 # Conflict Resolution and Sync Contract
 
 ## Purpose

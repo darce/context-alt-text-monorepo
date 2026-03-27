@@ -1,9 +1,7 @@
 ---
 title: Suggestion Extensions API
 status: draft
-owners:
-  - plugin-platform
-  - recognition-service
+boundary_owner: backend
 description: Phase 0 contract for extending the existing suggestion system with name suggestions, confidence filtering, bulk accept, and expiry metadata.
 ---
 

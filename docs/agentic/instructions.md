@@ -92,6 +92,27 @@ Choose your domain to load targeted context. **Always load the testing guide** a
 | Lane decomposition / orchestration   | [worktree-codex-playbook.md](worktree-codex-playbook.md) + [lane-scoped-context.md](lane-scoped-context.md) |
 
 
+## Agent Startup Protocol
+
+Use this checklist at session start, whether you are entering from a cold start, resuming a task mid-slice, or inheriting a lane from another agent.
+
+1. Query MCP handoff state first. Load the current task objective, open blockers, latest verification, and latest decisions with `get_handoff_state(task_ref="<task>")`.
+2. If you are working in a lane, load the lane inbox before editing. Use `make lane-inbox`, lane activity MCP reads, or the equivalent lane-status helper to pick up routed findings, blockers, and dispatch messages.
+3. Load role routing next. Choose the domain from the Role Selection table and read the linked context map, guidelines, and testing guide before touching code.
+4. Check open findings before proposing or repeating a fix. Use `list_review_findings(status="open")` so you do not re-raise known issues or miss already-assigned follow-up work.
+5. Verify the contract surface before implementation. If the task touches a service, language, schema, or MCP boundary, confirm the owning contract exists in [contracts/](contracts/) and load it before writing code.
+6. Decide whether `ctx7` is needed. If the slice depends on upstream library or framework behavior, apply the `ctx7` entry criteria below before relying on memory or stale local notes.
+
+Cold start vs. mid-task re-entry:
+
+- Cold start: if no handoff state exists yet, initialize it, then continue through the checklist in order.
+- Mid-task re-entry: after loading hot state, use targeted `search_handoff` queries to recover prior slice summaries, earlier decisions, or older findings relevant to the current change. Do not replay the full task history into prompt context.
+
+If MCP handoff is unavailable:
+
+- Read `CURRENT_TASK.md` only as a stale human-readable fallback.
+- Treat the missing MCP path as a blocker and record or report that unavailability as soon as MCP access returns.
+
 ---
 
 ## Critical Rules
@@ -244,6 +265,20 @@ You are one of multiple concurrent agents. MCP handoff tools are required for ta
 
 - Every code change must be logged to MCP handoff with a decision entry before review or completion. The decision must summarize what changed and how it was verified so handoff remains the canonical review trail.
 
+## Selective Handoff Loading
+
+Treat handoff state as a tiered memory system. Load only what is needed for the current slice.
+
+- Hot state: always load at startup. This includes the current objective, open findings, open blockers, latest verification, and latest 3 decisions.
+- Warm state: load on demand when the current slice needs it. This includes recent worker reports, recent lane activity, active artifacts tied to the current slice, and nearby plan-cursor history.
+- Cold state: retrieve only through targeted search. This includes archived findings, superseded plan cursors, verbose logs, and large artifacts.
+
+Loading rules:
+
+- Do not replay full handoff history into prompt context. Use `search_handoff` or targeted artifact lookup for older records.
+- After recording a decision, finding, blocker, or test result, do not immediately re-read the full task state just to confirm it. Trust the write confirmation unless a later step needs fresh state.
+- When resuming a task, start with hot state, then expand to warm or cold state only if the active slice cannot be completed from the smaller working set.
+
 Canonical handoff runtime:
 
 - Use `agent-handoff-mcp` exclusively for handoff state.
@@ -258,6 +293,27 @@ Primary binary shape:
 - `agent-handoff-mcp --workspace-root <repo> task <task_ref>`
 - `agent-handoff-mcp --workspace-root <repo> switch <task_ref>`
 
+## ctx7 Entry Criteria
+
+Use `ctx7` for current upstream documentation when implementation depends on library or framework behavior that may have drifted since the repo docs were written.
+
+Use `ctx7` when:
+
+- modifying code that depends on an upstream framework or library API such as FastAPI, SQLAlchemy, Radix UI, WordPress hooks, React, or MCP SDK behavior
+- verifying version-specific behavior, migration guidance, or deprecation details that are not stable enough to trust from memory
+- confirming the current supported API surface for a dependency named in [maps/tech-stack.md](maps/tech-stack.md)
+
+Do not use `ctx7` for:
+
+- repo-local rules, contracts, task plans, handoff state, or architecture decisions
+- facts already owned by repo documents such as [instructions.md](instructions.md), [contracts/](contracts/), or [maps/tech-stack.md](maps/tech-stack.md)
+- broad context assignment when a targeted local document answers the question
+
+Fallback and caching:
+
+- If `ctx7` is unavailable, use [maps/tech-stack.md](maps/tech-stack.md) as the static version manifest and note the `ctx7` gap in handoff when it materially affects confidence.
+- When a `ctx7` lookup materially changes an implementation decision, record the resolved library id and the query in the handoff decision so later agents do not spend tokens rediscovering the same upstream detail.
+
 Before any code exploration:
 
 1. Call `get_handoff_state(task_ref="<task>")`.
@@ -266,7 +322,7 @@ Before any code exploration:
 
 During work:
 
-1. Record non-trivial decisions with `record_decision(..., actor={ agent?, branch?, commit_sha? })`.
+1. Record non-trivial decisions with `record_decision(..., actor={ agent?, branch?, commit_sha? })`. After recording, call `generate_current_task_md(...)` so the human-readable mirror stays current; do not defer this to session end.
 2. Add/update/complete task steps with `update_next_actions(..., actor={ ... })`.
 3. Record blockers immediately with `report_blocker(..., actor={ ... })`.
 4. Record verification commands with `record_test_result(..., actor={ ... })`.

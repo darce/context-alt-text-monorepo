@@ -154,8 +154,8 @@ This epic is process-focused rather than product-schema-focused. The important i
 
 ### Phase 1: Context Loading and Handoff Discipline -- not-started
 
-> **Status**: not-started
-> **Task plans**: not yet scoped
+> **Status**: not-started (task plan scoped; implementation not yet started)
+> **Task plans**: `docs/tasks/11.0/context-loading-and-handoff-discipline-task-plan.md`
 
 **Goal**: Make every agent session start with the right repo context and leave behind the right MCP evidence.
 
@@ -164,7 +164,7 @@ Deliverables:
 - tighten `instructions.md` so boundary work has an explicit startup protocol: role docs, contracts, rules, and handoff state must be loaded before edits
 - add a concise "cross-boundary change protocol" that ties contract updates, tests, runtime checks, and handoff decisions together
 - update worktree/orchestration skills so they explicitly require evidence and handoff logging, not just lane ownership
-- define a handoff decision template for code, docs-only, review, and remediation-plan updates
+- define boundary-oriented handoff decision templates for cross-boundary work: contract-change, breaking-change, and cross-lane dependency; task plan intentionally narrows to these boundary-focused categories; general update-category templates (code, docs-only, review, remediation-plan) are deferred to Phase 4
 - define a context-assignment policy that prefers repo-local rules/contracts/handoff for project truth and uses `ctx7` only for current external library/framework documentation
 - define a selective-memory policy for handoff loading:
   - start from active task summary, open findings, open blockers, and latest decisions
@@ -213,10 +213,10 @@ Exit criteria:
 - every major cross-service boundary has a declared owner and documented adaptation point
 - a boundary change cannot be considered complete unless the owning contract changed in the same slice or the decision explicitly records why it did not need to
 
-### Phase 3: Runtime Parity and Test Fidelity Gates -- not-started
+### Phase 3: Runtime Parity and Test Fidelity Gates -- in-progress
 
-> **Status**: not-started
-> **Task plans**: not yet scoped
+> **Status**: in-progress (1 item completed by review-guide-hardening task 11.0)
+> **Task plans**: partial coverage from `docs/tasks/11.0/review-guide-hardening-task-plan.md`; remaining items not yet scoped
 
 **Goal**: Catch production-only breakage earlier by aligning tests, bootstrap paths, and review gates with real runtime behavior.
 
@@ -251,7 +251,7 @@ Deliverables:
 - evaluate new MCP helpers or wrappers for common operations such as startup checks, boundary-change checklists, handoff close readiness, and review-readiness summaries
 - define skill-wrapper rules from Chapter 68 so repo skills state explicit triggers, owned outputs, safety constraints, retry/recovery rules, and convergence criteria
 - create `docs/agentic/skills/daemon-lifecycle/SKILL.md` encoding safe-start, signal-stop, stale-lock-recovery, pause/resume, and lane-health-check procedures; this skill should encapsulate the patterns already hardened in `api.py`, `orchestrator_daemon.py`, `worker_daemon.py`, and `worker_daemon_ctl.py` so agents are not expected to rediscover safe daemon interaction through code archaeology
-- create `.agent/workflows/rescue.md` encoding the rescue-lane protocol: (a) create rescue branch from the last known-good commit, (b) cherry-pick fix commits with `git cherry-pick`, (c) diff contract surfaces between the rescue branch and the broken lane, (d) run lane test pack plus targeted regression test, (e) update MCP state with a rescue decision record, (f) regenerate `CURRENT_TASK.md`
+- create `docs/agentic/skills/rescue-lane/SKILL.md` encoding the rescue-lane protocol: (a) create rescue branch from the last known-good commit, (b) cherry-pick fix commits with `git cherry-pick`, (c) diff contract surfaces between the rescue branch and the broken lane, (d) run lane test pack plus targeted regression test, (e) update MCP state with a rescue decision record, (f) regenerate `CURRENT_TASK.md`; note: `.agent/workflows/` was removed 2026-03-27; the canonical location for repo-native skills is `docs/agentic/skills/`
 - add a post-intake `check-all` gate to `make lane-intake` in `mk/lane-maintenance.mk` so cross-lane regression tests run automatically after a lane is merged into the orchestrator branch
 - add auto-regeneration of `CURRENT_TASK.md` at the end of a successful `make lane-intake` so the active-task mirror is never stale for the next agent session
 - add a repo-native branch/worktree "review readiness" command inspired by `gstack` that checks plan review, contract co-change, verification evidence, docs drift, and open handoff blockers before review
@@ -329,7 +329,7 @@ Exit criteria:
 | Skill             | `docs/agentic/skills/worktree-orchestrator/SKILL.md`                                                                      | Multi-agent orchestration entrypoint; Phase 1 should make evidence and handoff expectations more explicit.                                                                                                                            |
 | Skill             | `docs/agentic/skills/worktree-worker/SKILL.md`                                                                            | Worker execution guidance; should load the same core process rules without policy drift.                                                                                                                                              |
 | Skill             | `docs/agentic/skills/daemon-lifecycle/SKILL.md`                                                                           | Daemon lifecycle procedures (to be created in Phase 4); encodes safe-start, signal-stop, stale-lock-recovery, and lane-health-check patterns from `api.py`, `orchestrator_daemon.py`, `worker_daemon.py`, and `worker_daemon_ctl.py`. |
-| Workflow          | `.agent/workflows/rescue.md`                                                                                              | Rescue-lane workflow (to be created in Phase 4); covers cherry-pick, contract diff, regression tests, MCP decision, and `CURRENT_TASK.md` regeneration.                                                                               |
+| Skill/Rule        | `docs/agentic/skills/rescue-lane/SKILL.md` or `docs/agentic/rules/rescue-workflow.md`                                     | Rescue-lane workflow (to be created in Phase 4); covers cherry-pick, contract diff, regression tests, MCP decision, and `CURRENT_TASK.md` regeneration. _(`.agent/workflows/` directory removed 2026-03-27; relocate here.)_          |
 | Contract          | `packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json`                                              | Shared cluster snapshot schema; known gap: missing `is_pinned`, `representative_id`, `representative_thumb_path`. Update required in Phase 2.                                                                                         |
 | Literature        | `docs/literature/process/product-deploy-agents/README.md`                                                                 | Source for staged multi-lens audit and hard-gate recommendations.                                                                                                                                                                     |
 | Literature        | `docs/literature/process/gstack/README.md`                                                                                | Source for branch-scoped review/readiness/documentation workflow ideas that may be selectively adapted.                                                                                                                               |
@@ -343,6 +343,14 @@ Exit criteria:
 | Literature        | `docs/literature/process/Agentic_Design_Patterns.txt`                                                                     | Source for planning, reflection, exception handling, human-in-the-loop, and multi-agent control-pattern ideas.                                                                                                                        |
 | Incident evidence | `docs/tasks/10.0/10.3/recognition-service-502-audit-2026-03-26.md`                                                        | Concrete example of how drift across boundaries and tooling complicated debugging.                                                                                                                                                    |
 | Incident evidence | `docs/tasks/10.0/10.3/recognition-502-remediation-plan.md`                                                                | Shows where plan drift, runtime-parity gaps, and contract updates had to be corrected in-flight.                                                                                                                                      |
+
+---
+
+## Completed Tasks
+
+| Task Ref | Task                   | Scope                                                                                                                                                                                            | Date       |
+| -------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------- |
+| 11.0     | Review Guide Hardening | Hardened 4 review guides (intake, evidence, escalation, resolution); added 3 MCP tool upgrades (`require_fresh_tests`, `review_mode`, `require_clean_slice`); source crosswalk fully implemented | 2026-03-27 |
 
 ---
 
@@ -367,13 +375,14 @@ Exit criteria:
 - [ ] Add cross-boundary contract tests for the backend to WP to TS cluster snapshot pipeline.
 - [ ] Audit and close or archive RSWR-IMPL-008, R-TOPO-02, R-TOPO-11 (zero codebase references confirmed).
 
-## Phase 3: Runtime Parity and Test Fidelity Gates -- not-started
+## Phase 3: Runtime Parity and Test Fidelity Gates -- in-progress
 
 - [ ] Document runtime-parity requirements for high-risk boundary classes.
 - [ ] Add guidance for golden payload tests and malformed-shape tests.
 - [ ] Define stub and fake fidelity rules to prevent test-only masking.
 - [ ] Add performance-evidence expectations for latency, queueing, and retry behavior.
-- [ ] Tighten review heuristics around empty-state masking and bootstrap drift.
+- [x] Tighten review heuristics around empty-state masking and bootstrap drift. _(Completed by review-guide-hardening task 11.0: branch-review-php.md now has degradation semantics and bootstrap parity; branch-review-typescript.md has UI state matrix and API-boundary payload validation.)_
+- [ ] Add fresh-evidence requirements to `branch-review-python.md` parallel to TS and PHP modules. _(Identified in expanded rules audit 2026-03-27.)_
 - [ ] Add Hypothesis property-based tests for FTS5 query-input sanitization in `packages/agent-handoff-mcp/tests/`.
 
 ## Phase 4: MCP and Tooling Automation -- not-started
@@ -383,7 +392,7 @@ Exit criteria:
 - [ ] Define structured progress, error, and status semantics for process automation surfaces.
 - [ ] Add trigger, recovery, and convergence requirements to repo skills and MCP wrappers.
 - [ ] Create `docs/agentic/skills/daemon-lifecycle/SKILL.md` (safe-start, signal-stop, stale-lock-recovery, lane-health-check).
-- [ ] Create `.agent/workflows/rescue.md` (rescue-lane protocol: branch, cherry-pick, contract diff, test pack, MCP decision, regenerate `CURRENT_TASK.md`).
+- [ ] Create a rescue-lane protocol document (branch, cherry-pick, contract diff, test pack, MCP decision, regenerate `CURRENT_TASK.md`). _(Originally scoped to `.agent/workflows/rescue.md`; `.agent/workflows/` directory was removed 2026-03-27 after Gemini/Antigravity phase-off. Relocate to `docs/agentic/skills/` or `docs/agentic/rules/`.)_
 - [ ] Add post-intake `check-all` gate to `make lane-intake` in `mk/lane-maintenance.mk`.
 - [ ] Add auto-regeneration of `CURRENT_TASK.md` at end of successful `make lane-intake`.
 - [ ] Add selective-memory MCP surfaces for active-task briefs, targeted retrieval, and archival summaries.

@@ -64,6 +64,42 @@ Dev tooling findings should still be recorded through the handoff MCP server bef
 
 ---
 
+## Review Intake
+
+Before walking the checklist, load only the minimum review packet:
+
+1. the intended change: task plan, scoped request, or stated branch objective
+2. the actual diff or working-directory change set being reviewed
+3. the boundary contracts, ADRs, and repo rules touched by that change
+4. the proof artifacts already produced: tests, type checks, static analysis, runtime checks
+
+Required intake details:
+
+- branch or commit range under review
+- intended scope reference
+- relevant contracts/ADRs/rules
+- verification commands already run, if any
+- review mode: normal branch review or release-audit escalation
+
+Do not bulk-load unrelated docs, lane chatter, or historical artifacts unless the branch cannot be reviewed correctly without them.
+
+## Fresh Verification Evidence
+
+Treat any claim that a branch is "done", "fixed", "passing", or "ready" as unproven unless there is fresh verification evidence for the current branch state.
+
+- A review finding is warranted when verification is stale, partial, or unrelated to the behavior being claimed fixed.
+- Historical test rows are useful context, but they do not by themselves prove current-branch correctness.
+- Prefer deterministic proof on the current branch state: test run, type check, static analysis, runtime-parity check, or equivalent command evidence.
+
+Reviewer prompts:
+
+- What command would actually prove this claim?
+- Was that command run on the current branch state?
+- Does the output support the claim, or only part of it?
+- Is runtime-sensitive behavior being justified only by unit tests?
+
+If the answer is no, treat the claim as a `GAP`; use `HIGH` when the missing proof changes merge or release readiness.
+
 ## Common Checklist
 
 These items apply regardless of language. Stack-specific items are in the language guides linked above.
@@ -175,14 +211,14 @@ These items prevent the accumulation of structural debt documented in `docs/task
 
 **Mutable-record provenance:** For lifecycle/status updates, confirm updater context does not erase original creator metadata (`agent`, `branch`, `commit_sha`).
 
-**IDE stale-file guard:** Editor-integrated file-reading tools (`read_file`, `grep_search`) may return cached content after git operations or external writes. Before recording a finding that claims a function/feature is missing, run `grep -n '<function_name>' <file>` in the terminal to confirm. File-length mismatches (terminal `wc -l` vs tool output) are a strong signal of stale cache.
+**IDE stale-file guard:** Editor-integrated file-reading tools (`read_file`, `grep_search`) may return cached content after git operations or external writes. VS Code agents should use native `grep_search(...)` as the primary string-search surface when confirming that a function or feature is missing. Codex and other terminal-only agents may use `grep -n '<function_name>' <file>` as the fallback check. Tool-selection discipline matters here: use native IDE search when available, and reserve terminal grep for terminal-only environments. File-length mismatches between local file reads and search output are a strong signal of stale cache.
 
 **False-fix detection (review finding closures):** When an agent (or operator) marks review findings as `fixed`, verify each closure individually:
 
 - [ ] The claimed code change actually exists in the current working tree (grep for the function/variable/log-event by name).
-- [ ] Resolution notes reference real file paths and real function names that can be verified with a single `grep` command.
+- [ ] Resolution notes reference real file paths and real function names that can be verified with a single string-search command (`grep_search(...)` in VS Code agents; terminal `grep` fallback for Codex/terminal-only agents).
 - [ ] Findings closed in rapid succession (3+ in under 60 seconds) are suspect -- each must show independent evidence of the fix.
-- [ ] Previously-reopened findings (reopen_count >= 2) require `verification_evidence` containing concrete proof (grep output, diff snippet, or code excerpt).
+- [ ] Previously-reopened findings (reopen_count >= 2) require `verification_evidence` containing concrete proof (string-search output, diff snippet, or code excerpt).
 - [ ] Plan documents updated alongside bulk closures are cross-checked against the actual code to prevent circular false claims.
 
 The `update_review_finding` MCP tool enforces two structural guards automatically:
@@ -190,9 +226,29 @@ The `update_review_finding` MCP tool enforces two structural guards automaticall
 1. **Reopen escalation:** Findings reopened >= 2 times cannot be marked `fixed` without a `verification_evidence` parameter containing proof the fix exists.
 2. **Batch-close detection:** When 2+ findings for the same task have been fixed within the last 60 seconds, subsequent closures require `verification_evidence`.
 
-Both guards can be satisfied by providing `--verification-evidence` (CLI) or `verification_evidence` (MCP tool) with grep output, diff excerpts, or code snippets proving the fix.
+Both guards can be satisfied by providing `--verification-evidence` (CLI) or `verification_evidence` (MCP tool) with string-search output, diff excerpts, or code snippets proving the fix. Prefer `grep_search(...)` when the agent has native IDE search tools; use terminal `grep` only as the Codex/terminal-only fallback.
 
 ---
+
+## Escalate To Multi-Lens Audit When
+
+Upgrade a normal branch review to a higher-cost release-style audit when the branch touches:
+
+- security or compliance boundaries
+- release/deploy paths
+- major architecture transitions
+- multi-service state machines
+- high-risk persistence or migration behavior
+- broad UI/UX surfaces with many state branches
+
+When escalating, name the audit lenses explicitly:
+
+- architecture/reliability
+- QA/state-matrix
+- UX/state-surface
+- compliance/claims, when applicable
+
+Normal branch review is still the default. Escalation is for branches where one reviewer pass is not enough to cover the failure surface honestly.
 
 ## Finding Categories
 
@@ -214,6 +270,22 @@ Both guards can be satisfied by providing `--verification-evidence` (CLI) or `ve
 | **LOW**    | Style, minor cleanup, small duplications                                                      | Fix if easy; otherwise next pass          |
 
 ---
+
+## Resolving Findings
+
+Review is not complete when findings are merely written down. Each finding needs an explicit lifecycle transition.
+
+- Fixed findings: use `update_review_finding(status="fixed", ...)`.
+- Deferred findings: use `update_review_finding(status="deferred", resolution_notes=...)`.
+- Wontfix findings: use `update_review_finding(status="wontfix", resolution_notes=...)`.
+- Regressed or partially fixed findings: use `reopen_review_finding(...)`.
+- `record_decision(...)` may add rationale, but it does not replace the finding status update.
+
+Before declaring the review complete:
+
+1. verify findings were written successfully
+2. verify follow-up status transitions are reflected in MCP
+3. run `get_review_findings_summary` or equivalent to confirm the final open/deferred state matches the review verdict
 
 ## MCP Handoff Integration (MANDATORY for Agents)
 
@@ -290,7 +362,7 @@ When marking a finding as `fixed`, the `update_review_finding` / `review-update`
 - The finding has been reopened 2+ times (reopen escalation guard)
 - 2+ findings for the same task were already fixed in the last 60 seconds (batch-close guard)
 
-Good evidence: `grep -n 'function_name' path/to/file.py` output, `git diff` excerpts, or inline code snippets proving the fix exists. Bad evidence: restating the resolution notes or referencing the commit SHA alone (the commit guard already covers that).
+Good evidence: `grep_search(query="function_name", includePattern="path/to/file.py")` output when native IDE search is available, terminal `grep -n 'function_name' path/to/file.py` output for Codex/terminal-only environments, `git diff` excerpts, or inline code snippets proving the fix exists. Bad evidence: restating the resolution notes or referencing the commit SHA alone (the commit guard already covers that).
 
 When either guard rejects the closure, the response includes a `false_fix_guard` object identifying which guard fired and current thresholds.
 

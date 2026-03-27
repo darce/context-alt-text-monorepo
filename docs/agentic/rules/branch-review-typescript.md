@@ -14,6 +14,14 @@
 | ESLint                  | `cd apps/prototype-wp-alt-context && npm run lint`                                  |
 | Architecture compliance | `cd apps/prototype-wp-alt-context && node scripts/check-architecture-compliance.js` |
 
+When a UI-behavior fix is claimed, require fresh command evidence on the current branch state for:
+
+- `typecheck`
+- `lint`
+- the targeted Vitest coverage for the changed behavior
+
+Do not accept "UI fix is done" claims based on screenshots, manual browsing, or stale test output alone.
+
 ---
 
 ## Type Safety
@@ -32,6 +40,15 @@
 - [ ] **No inline styles for layout** — grid/flex patterns in SCSS classes.
 - [ ] **API calls go through API modules** — no direct `fetchApi` imports in components.
 - [ ] **`URLSearchParams` for query strings** — no string interpolation for URL params.
+
+---
+
+## State Surface Correctness
+
+- [ ] **UI state matrix** — changed UI surfaces explicitly cover empty, loading, error, degraded, and offline states.
+- [ ] **Abort/cancel semantics** — expected cancellation does not surface noisy console warnings or error UI; only unexpected cancellation should behave like failure.
+- [ ] **API-boundary payload validation** — components tolerate malformed JSON, partial payloads, and missing optional fields without white-screen or unhandled-rejection behavior.
+- [ ] **Query invalidation regression** — after successful mutation, invalidation/refetch cannot silently restore stale pre-mutation UI state.
 
 ---
 

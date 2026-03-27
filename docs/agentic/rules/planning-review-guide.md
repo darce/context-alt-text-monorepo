@@ -52,6 +52,27 @@ Hard rule for agent responses:
 
 ---
 
+## Planning Intake
+
+Before walking the checklist, load only the minimum planning packet:
+
+1. the planning document under review
+2. the prerequisite spec, ADR, and contract surfaces it depends on
+3. the current implementation surfaces the plan claims to change
+4. the already-completed slices, dependencies, or adjacent plans that constrain sequencing
+
+Required intake details:
+
+- planning document path
+- prerequisite spec/ADR/contracts
+- current implementation anchors
+- completed slices or dependency state
+- expected review mode after implementation: ordinary branch review, specialized module review, or release-style audit
+
+Avoid speculative review against broad repo context. If the plan cannot be evaluated from these surfaces, name the missing dependency as the finding.
+
+---
+
 ## Planning Review Checklist
 
 ### Current-State Accuracy
@@ -65,7 +86,7 @@ Hard rule for agent responses:
 
 - [ ] Problem statement, current-state section, checklist, and success criteria do not contradict each other.
 - [ ] Deferred/stretch items do not conflict with "done" or success-criteria language.
-- [ ] Phase ordering matches stated prerequisites and dependencies.
+- [ ] Slice ordering matches stated prerequisites and dependencies.
 - [ ] Terminology is consistent with current ADRs/contracts.
 - [ ] Review findings and handoff action items are tracked exclusively in MCP handoff state, not duplicated into the task plan. Task plans define scope and checklists; MCP is the single source of truth for review findings, blockers, and agent-recorded decisions. Embedding handoff items in the plan creates drift when findings are resolved or reopened.
 
@@ -95,6 +116,11 @@ Hard rule for agent responses:
 ### Rollout and Testability
 
 - [ ] The plan can be implemented incrementally without leaving impossible intermediate states.
+- [ ] Cross-boundary or large-surface work cites the governing spec/ADR, not just the task plan itself.
+- [ ] Each slice names the files, contracts, and tests it expects to touch.
+- [ ] Each slice states what proof makes that slice honestly complete.
+- [ ] Scaffold-only or placeholder slices are rejected as progress theater unless they deliver executable value in the same slice.
+- [ ] The plan declares the expected review path: ordinary branch review, specialized module review, or release-style audit.
 - [ ] Tests validate real behavior, not placeholder scaffolding.
 - [ ] Manual/E2E-only steps are not used to hide core correctness gaps.
 - [ ] Success criteria are objectively testable from code and tests.

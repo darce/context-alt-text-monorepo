@@ -1,21 +1,16 @@
 # Epic Template
 
 > Use this template for multi-phase epics under `docs/epics/`.
-> Epics define a **product capability** delivered across multiple task plans.
-> Each phase spawns one or more task plans (`TASK_PLAN.template.md`) for implementation details.
+> Epics define a bounded capability or process change delivered across multiple task plans.
+> Epics describe the end-state architecture, evidence model, and delivery phases.
+> Task plans describe executable implementation slices and should use `TASK_PLAN.template.md`.
 >
 > Key differences from task plans:
 >
-> - No "Functions to Change" or code patterns (too granular for an epic)
-> - Phases have goals, deliverables, and exit criteria
-> - External dependencies and parallel workstreams are first-class
-> - Code anchors orient agents to the relevant codebase surface area
->
-> Key differences from roadmaps:
->
-> - Epics deliver one bounded capability; roadmaps span the full product vision
-> - Epics track progress (completed / in-progress / not-started phases)
-> - Epics link to concrete task plans; roadmaps link to epics
+> - Epics define destination and sequencing, not file-by-file implementation steps.
+> - Epics use **phases** for coarse-grained temporal progression across multiple task plans.
+> - Epics should identify durable process/data model changes, evidence gates, and cross-team dependencies.
+> - Epics should not duplicate live review findings from MCP handoff; they should describe policy, scope, and delivery shape.
 
 ---
 
@@ -23,21 +18,21 @@
 
 ## Objective
 
-[What capability the system gains when this epic is complete. 2-3 sentences max.]
+[What capability, workflow, or product surface the system gains when this epic is complete. 2-3 sentences max.]
 
 ## Problem Statement
 
-[What user-visible behavior is broken or missing. Why the current architecture fails.]
+[What is broken, missing, or drifting today. Why the current architecture or workflow fails.]
 
 ## UX Vision
 
-[Target user experience. What the user sees and does when the epic is complete.]
+[What the intended user or operator experience looks like when this epic is complete.]
 
 ## Constraints
 
-- [Architectural or policy constraint that shapes all phases]
-- [External dependency constraint]
-- [Technology or timeline constraint]
+- [Architectural, policy, or repo-level constraint]
+- [Dependency, staffing, or runtime constraint]
+- [Technology, safety, or timeline constraint]
 
 ## Terminology
 
@@ -45,55 +40,74 @@
 
 ## Current State
 
-[What works, what's broken, what's missing. Bullet points.]
+- [Current behavior that works but is insufficient]
+- [Broken or missing behavior]
+- [Known drift, risk, or process gap]
 
-- [Component] does X but should do Y.
-- [Capability] does not exist yet.
+## Applied Concepts from Sources
+
+> Optional but recommended when the epic is informed by literature, prior audits, or external process references.
+> Prefer concrete source-to-application mappings over broad summaries.
+
+| Source | Concept | Epic application |
+| --- | --- | --- |
+| `[path/to/source]` | [Idea or pattern] | [How it changes this epic's design or delivery] |
+
+## Git Workflow Assessment
+
+> Optional when the epic changes workflow, orchestration, or review behavior.
+> Use this section to clarify what should be borrowed, adapted, or explicitly rejected from external workflows.
+
+[Short assessment of how git/worktree/review flow should support this epic.]
 
 ## Target Architecture
 
-[Narrative description of the end-state architecture. Include data model, integration pattern, and key design decisions.]
+[Narrative description of the end-state architecture or process. Explain how context, contracts, runtime behavior, evidence, and review fit together.]
 
 ### Design Decisions
 
-| Decision                         | Rationale                                  |
-| -------------------------------- | ------------------------------------------ |
-| [e.g., No taxonomy for clusters] | [Why this was chosen over the alternative] |
+| Decision | Rationale |
+| --- | --- |
+| [Decision] | [Why it was chosen over alternatives] |
 
 ### Data Model
 
-[Table schemas, entity relationships, or data flow description.]
+[Describe the important information flow. For process epics, this can be a process/evidence model instead of product schema.]
+
+- [Canonical source of truth]
+- [Evidence or artifact flow]
+- [State model or cross-boundary data flow]
 
 ## Phased Delivery
 
 ### Phase N: [Title] -- [STATUS]
 
 > **Status**: completed | in-progress | not-started
-> **Task plans**: [link to task plan(s)] or "not yet scoped"
+> **Task plans**: [link to task plan(s)] or `not yet scoped`
 
 **Goal**: [One sentence.]
 
 Deliverables:
 
 - [Deliverable]
+- [Deliverable]
 
 Exit criteria:
 
-- [Observable outcome that proves the phase is done]
+- [Observable outcome that proves the phase is complete]
+- [Another observable outcome]
 
 ## External Dependencies
 
-| Dependency                | Owner                | Status                             | Blocks                  |
-| ------------------------- | -------------------- | ---------------------------------- | ----------------------- |
-| [e.g., Snapshot endpoint] | [e.g., Backend team] | [Not started / In progress / Done] | [Phase N exit criteria] |
+| Dependency | Owner | Status | Blocks |
+| --- | --- | --- | --- |
+| [Dependency] | [Owner] | [Not started / In progress / Done] | [Phase or exit criteria blocked] |
 
 ## Code Anchors
 
-| Layer    | File               | Note                            |
-| -------- | ------------------ | ------------------------------- |
-| Plugin   | `path/to/file.php` | [Current role and what changes] |
-| Backend  | `path/to/file.py`  | [Current role]                  |
-| Frontend | `path/to/file.ts`  | [Current role]                  |
+| Layer | File | Note |
+| --- | --- | --- |
+| [Layer] | `path/to/file` | [Why this anchor matters to the epic] |
 
 ---
 

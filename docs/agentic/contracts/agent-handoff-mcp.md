@@ -232,9 +232,14 @@ agent-handoff-mcp --workspace-root <repo> handoff-search \
 - `set_handoff_state` requires `expected_revision` for updates.
 - The shared actor shape may include `lane_id` in addition to `agent`, `branch`, and `commit_sha`. When present, lane-aware write tools persist it on decisions, tests, blockers, actions, and review findings.
 - `record_review_finding` accepts optional `details={ line_start?, line_end?, fix? }`.
+- `record_review_finding` also accepts optional `review_mode` with values `branch` or `release_audit`.
 - `update_review_finding` accepts exactly one of `finding_id` or `finding_db_id`.
 - `update_review_finding` requires `resolution_notes` for `wontfix` and `deferred`.
 - `update_review_finding` requires `reopen_reason` when changing a non-open finding back to `open`.
+- `list_review_findings` accepts optional `review_mode`; `branch` includes rows where `review_mode IS NULL` for backward compatibility.
+- `get_review_findings_summary` accepts the same optional `review_mode` filter and scopes counts/top lists to that mode.
+- `handoff_close_check` accepts optional `require_fresh_tests` and `current_commit_sha`. When the flag is enabled, at least one `verified_tests` row must exist for the current commit or the close check fails with a structured stale-test error.
+- `upsert_plan_cursor` accepts optional `require_clean_slice`. When enabled, the update fails unless there are no open HIGH findings in the relevant lane/task scope and at least one recent `verified_tests` row exists since the cursor's prior update time.
 - `import_handoff_state(mode="replace_task")` rejects destructive clears unless `allow_destructive_clear=true`.
 - `upsert_worktree_lane` is the canonical way to register a delegated worker lane with `lane_id`, `worktree_path`, `branch`, ownership, and status.
 - `record_worker_report` stores a structured worker handback for one lane: summary, changed files, test commands, blockers, and merge-readiness.

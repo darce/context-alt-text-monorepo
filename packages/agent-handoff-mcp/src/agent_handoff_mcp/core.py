@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import json
 import os
+import re
 import sqlite3
 import subprocess
 from datetime import UTC, datetime
@@ -13,6 +14,8 @@ from typing import Protocol, TypedDict, runtime_checkable
 
 from .runtime import get_runtime_config
 from . import artifact_index as artifact_index
+
+_FTS5_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 
 HANDOFF_SCHEMA_SQL = """
@@ -1772,7 +1775,7 @@ def search_handoff(
     # syntax.  Escape internal double-quotes by doubling them (FTS5 phrase literal rule).
     fts_terms: list[str] = []
     for q in queries:
-        stripped = q.strip()
+        stripped = _FTS5_CONTROL_RE.sub(" ", q).strip()
         if stripped:
             fts_terms.append('"' + stripped.replace('"', '""') + '"')
     if not fts_terms:

@@ -87,7 +87,7 @@ def get_artifact_db_connection(artifact_db_path: Path) -> sqlite3.Connection:
 # Chunkers
 # ---------------------------------------------------------------------------
 
-_FTS5_SPECIAL_RE = re.compile(r'["^*+\-():]')
+_FTS5_SPECIAL_RE = re.compile(r"[^\w\s]|[\x00-\x1f\x7f]", re.UNICODE)
 
 
 def _build_fts5_match_query(queries: list[str]) -> str | None:
@@ -97,17 +97,23 @@ def _build_fts5_match_query(queries: list[str]) -> str | None:
     words. Multiple queries are OR-joined so any match wins.
     Words within a single query must all appear in the same chunk (FTS5 AND).
     """
-    parts: list[str] = []
+    groups: list[str] = []
     for q in queries:
         # Strip FTS5 metacharacters so callers don't need FTS5 syntax knowledge
         cleaned = _FTS5_SPECIAL_RE.sub(" ", q).strip()
         if cleaned:
-            parts.append(cleaned)
-    if not parts:
+            terms = [
+                '"' + term.replace('"', '""') + '"'
+                for term in cleaned.split()
+                if term
+            ]
+            if terms:
+                groups.append(" ".join(terms))
+    if not groups:
         return None
-    if len(parts) == 1:
-        return parts[0]
-    return " OR ".join(f"({p})" for p in parts)
+    if len(groups) == 1:
+        return groups[0]
+    return " OR ".join(f"({group})" for group in groups)
 
 
 _HEADING_RE = re.compile(r"^(#{1,3})\s+(.+)$", re.MULTILINE)

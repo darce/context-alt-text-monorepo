@@ -9,8 +9,7 @@ if str(_ORCHESTRATION_DIR) not in sys.path:
 from review_runner import REVIEW_OUTPUT_SCHEMA
 
 
-def test_schema():
-    print("Testing REVIEW_OUTPUT_SCHEMA...")
+def _schema_has_all_required_fields() -> bool:
 
     # Simulate a payload that has nullable fields
     payload = {
@@ -45,16 +44,24 @@ def test_schema():
     findings_req = REVIEW_OUTPUT_SCHEMA["properties"]["findings"]["items"]["required"]
 
     missing_req = [p for p in findings_props if p not in findings_req]
-    if missing_req:
-        print(f"FAILED: Missing from 'required': {missing_req}")
-        return False
+    return not missing_req
 
-    print("SUCCESS: All properties are in 'required'.")
-    return True
+
+def test_schema() -> None:
+    findings_props = REVIEW_OUTPUT_SCHEMA["properties"]["findings"]["items"]["properties"]
+    findings_req = REVIEW_OUTPUT_SCHEMA["properties"]["findings"]["items"]["required"]
+    missing_req = [p for p in findings_props if p not in findings_req]
+    assert not missing_req, f"Missing from 'required': {missing_req}"
 
 
 if __name__ == "__main__":
-    if test_schema():
+    print("Testing REVIEW_OUTPUT_SCHEMA...")
+    if _schema_has_all_required_fields():
+        print("SUCCESS: All properties are in 'required'.")
         exit(0)
     else:
+        findings_props = REVIEW_OUTPUT_SCHEMA["properties"]["findings"]["items"]["properties"]
+        findings_req = REVIEW_OUTPUT_SCHEMA["properties"]["findings"]["items"]["required"]
+        missing_req = [p for p in findings_props if p not in findings_req]
+        print(f"FAILED: Missing from 'required': {missing_req}")
         exit(1)

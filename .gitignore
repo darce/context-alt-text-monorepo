@@ -76,6 +76,7 @@ packages/agent-handoff-mcp/build/
 venv/
 __pycache__/
 *.pyc
+.hypothesis/
 
 # pip install artifacts
 .eggs/

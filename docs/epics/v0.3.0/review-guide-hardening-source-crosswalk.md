@@ -474,3 +474,162 @@ The three proposed MCP tool upgrades should be logged as next-action items again
 - `https://github.com/obra/superpowers/blob/main/skills/verification-before-completion/SKILL.md`
 - `https://github.com/obra/superpowers/blob/main/skills/requesting-code-review/SKILL.md`
 - `https://github.com/obra/superpowers/blob/main/skills/requesting-code-review/code-reviewer.md`
+
+---
+
+## Implementation Audit
+
+> Added 2026-03-27. Records the implementation status of every crosswalk recommendation against the actual rules files, plus an expanded audit of all `docs/agentic/rules/` files for process hardening gaps not originally covered by the crosswalk.
+
+### Recommendation Implementation Status
+
+Every recommendation from the crosswalk was implemented by task plan `docs/tasks/11.0/review-guide-hardening-task-plan.md` (Slices 1-5, all checked complete).
+
+| Rec | Recommendation | Target File | Status | Implementation |
+|-----|----------------|-------------|--------|----------------|
+| 1 | Review Intake section | `branch-review-guide.md` | Done | `## Review Intake` added before Common Checklist; four required load surfaces |
+| 1 | Planning Intake section | `planning-review-guide.md` | Done | `## Planning Intake` added before checklist; four required load surfaces |
+| 2 | Fresh-evidence blocking rule | `branch-review-guide.md` | Done | `## Fresh Verification Evidence` with reviewer prompts and GAP/HIGH protocol |
+| 2 | TS fresh-evidence rule | `branch-review-typescript.md` | Done | Automated Checks requires fresh `typecheck`, `lint`, and targeted Vitest evidence |
+| 2 | PHP fresh-evidence rule | `branch-review-php.md` | Done | Automated Checks requires fresh PHPUnit and PHPStan for runtime-sensitive changes |
+| 3 | Escalation trigger list | `branch-review-guide.md` | Done | `## Escalate To Multi-Lens Audit When` with trigger conditions and named lenses |
+| 3 | Audit declaration in planning | `planning-review-guide.md` | Done | Rollout and Testability checklist item |
+| 4 | Spec/ADR citation for large plans | `planning-review-guide.md` | Done | Checklist item under Rollout and Testability |
+| 4 | Scaffold-only slice rejection | `planning-review-guide.md` | Done | Checklist item flagging scaffold-only slices |
+| 4 | Per-slice proof surfaces | `planning-review-guide.md` | Done | Checklist items for file/contract/test naming and completion evidence |
+| 5 | Resolving Findings section | `branch-review-guide.md` | Done | `## Resolving Findings` with mandatory `update_review_finding` calls per status |
+| 6 | TS state-surface items (4) | `branch-review-typescript.md` | Done | `## State Surface Correctness`: UI state matrix, abort/cancel, API-boundary, query invalidation |
+| 6 | PHP boundary items (4) | `branch-review-php.md` | Done | `## Boundary and Runtime Correctness`: bootstrap parity, adapter provenance, header preservation, degradation |
+| 7 | Hooks as lightweight prompts | deferred | Deferred | Phase 4 guidance; not in review-guide-hardening scope |
+| MCP-1 | `require_fresh_tests` on `handoff_close_check` | `core.py` | Done | Optional parameter with SHA freshness check; `test_hardening.py` |
+| MCP-2 | `review_mode` on finding tools | `core.py` | Done | `review_mode TEXT` column; filter on `record/list/summary`; `test_review_mode.py` |
+| MCP-3 | `require_clean_slice` on `upsert_plan_cursor` | `core.py` | Done | Optional parameter with open-HIGH and test-result gates; `test_plan_cursor_gate.py` |
+
+### Expanded Rules File Audit
+
+The original crosswalk scoped recommendations to four files: `branch-review-guide.md`, `planning-review-guide.md`, `branch-review-typescript.md`, and `branch-review-php.md`. The following audit covers the remaining rules files against the same process improvement themes (bounded context loading, fresh evidence, escalation paths, resolution discipline, runtime parity, boundary ownership, performance evidence).
+
+#### `branch-review-python.md`
+
+**Coverage**: Type safety, architecture boundaries, error handling, code duplication, metric thresholds (Radon), automated check commands.
+
+**Gaps**:
+
+- No fresh-evidence requirement for `pytest`, `mypy`, or `ruff` when correctness is claimed fixed. The TS and PHP guides now require this; Python does not.
+- No escalation path when boundary violations (e.g., DTO in domain layer) are found.
+- No resolution discipline for complexity findings (grade C flagged but no required disposition).
+- No runtime-parity check for deployment vs test behavior.
+
+**Recommendation**: Add fresh-evidence rules and resolution discipline parallel to the TS and PHP modules. Scope as follow-on in Phase 3.
+
+#### `development-workflow.md`
+
+**Coverage**: Slice checklists, scaffolding definition of done, TDD, commit conventions, orchestrated task execution, MCP handoff protocol.
+
+**Gaps**:
+
+- No blocker escalation SLA or timeline when MCP tools are unavailable or blockers go unanswered.
+- No cross-lane schema/contract parity verification step before integration.
+- Scaffolding verification is stated but not gated by CI or automation.
+
+**Recommendation**: Phase 1 should address blocker SLA and cross-lane verification.
+
+#### `testing-principles.md`
+
+**Coverage**: Test pyramid, deterministic data, behavioral assertions, shared fakes, performance targets (150ms endpoint, Lighthouse > 90).
+
+**Gaps**:
+
+- Performance targets stated but no measurement gate or regression detection.
+- No flaky-test escalation protocol.
+- No environment parity requirements (test DB version vs production, CI vs local).
+- No isolation verification between tests.
+
+**Recommendation**: Phase 3 should address environment parity and measurement enforcement.
+
+#### `testing-python.md`
+
+**Coverage**: pytest async patterns, exact assertions, mock defaults, FastAPI DI patterns, test directory structure.
+
+**Gaps**:
+
+- No automated DI parameter-collision detection (manual grep only).
+- No async test pollution detection (event loop reuse, session leaks).
+- No test execution time budgets.
+
+**Recommendation**: Phase 3 should add async isolation and DI collision automation.
+
+#### `testing-typescript.md`
+
+**Coverage**: Provider harness parity, hoisted mocks, mutable refs, QueryClient cleanup, MSW patterns, sovereign sync test patterns.
+
+**Gaps**:
+
+- No automated provider parity verification (missing MemoryRouter/QueryClientProvider).
+- No QueryClient inter-test isolation detection.
+- No test execution time budgets.
+- MSW handlers have no timeout budgets.
+
+**Recommendation**: Phase 3 should add provider parity and isolation gates.
+
+#### `testing-php.md`
+
+**Coverage**: PHPUnit framework, interface compliance, response shape enforcement, WP_Mock patterns, sovereign sync test patterns.
+
+**Gaps**:
+
+- No automated interface change detection (manual search for `implements`).
+- No autoload validation gate after new file creation.
+- WP_Mock cleanup discipline undocumented.
+
+**Recommendation**: Phase 3 should add autoload and interface-change automation.
+
+#### `frontend-guidelines.md`
+
+**Coverage**: Component size limits, TypeScript safety rules, design tokens, URL state, accessibility (WCAG 2.1 AA, axe-core).
+
+**Gaps**:
+
+- No automated enforcement of `no non-null assertions` or design token usage.
+- No Lighthouse measurement gate in CI.
+- No query key centralization validation.
+
+**Recommendation**: Phase 4 should evaluate CI guards for these.
+
+#### `backend-python-guidelines.md`
+
+**Coverage**: Hexagonal architecture, layer rules, standards, async patterns, Pydantic patterns, FastAPI DI, coverage targets.
+
+**Gaps**:
+
+- Coverage targets (80% overall, 95% critical) not CI-enforced.
+- No dependency drift detection for `pyproject.toml`.
+- No endpoint latency SLA.
+- No definition of "critical" for the 95% coverage target.
+
+**Recommendation**: Phase 3 should define "critical" and add measurement.
+
+#### `backend-php-guidelines.md`
+
+**Coverage**: Security patterns, WordPress plugin rules, sovereign sync layer, repository patterns, trait extraction, taxonomy model.
+
+**Gaps**:
+
+- No symmetric create/destroy CI verification.
+- No automated schema-key parity validation.
+- No N+1 detection automation.
+- No conflict resolution latency SLA.
+
+**Recommendation**: Phase 3 and Phase 4 should address schema parity automation and performance budgets.
+
+### Cross-Cutting Gap Summary
+
+| Theme | Severity | Files Affected | Epic Phase |
+|-------|----------|---------------|------------|
+| Fresh evidence for Python review | HIGH | `branch-review-python.md` | Phase 3 |
+| Escalation SLAs across all guides | MEDIUM | `development-workflow.md`, all review guides | Phase 1 |
+| CI/automated enforcement of stated rules | MEDIUM | All testing guides, `frontend-guidelines.md` | Phase 4 |
+| Environment/runtime parity in tests | MEDIUM | `testing-principles.md`, all testing guides | Phase 3 |
+| Performance measurement gates | MEDIUM | `testing-principles.md`, `frontend-guidelines.md`, backend guides | Phase 3 or Phase 5 |
+| Cross-lane contract parity verification | MEDIUM | `development-workflow.md` | Phase 1 |
+| Boundary violation escalation protocols | LOW | `branch-review-python.md`, backend guides | Phase 1 |

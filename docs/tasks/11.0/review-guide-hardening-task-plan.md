@@ -324,7 +324,7 @@ make lane-manifest-init TASK=review-guide-hardening LANE_IDS='docs-guides mcp-up
 
 ## Stretch Goals
 
-- [x] Add a new `.agent/workflows/review-intake.md` shortcut that calls `get_handoff_state` + `list_review_findings(status="open")` + `get_plan_cursor` in one step as the canonical pre-review hook.
+- [x] ~~Add a new `.agent/workflows/review-intake.md` shortcut~~ *(Completed, then removed: `.agent/workflows/` directory deleted 2026-03-27 after Gemini/Antigravity phase-off. The pre-review hook functionality is fully covered by MCP tools: `get_handoff_state` + `list_review_findings(status="open")` + `get_plan_cursor`.)*
 
 ## Success Criteria
 

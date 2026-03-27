@@ -1,9 +1,7 @@
 ---
 title: Tenant Cluster Delta API
 status: draft
-owners:
-  - plugin-platform
-  - recognition-service
+boundary_owner: backend
 description: Incremental cluster sync contract for version-filtered upserts between the recognition backend and the WordPress projector.
 ---
 

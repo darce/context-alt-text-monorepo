@@ -1,9 +1,7 @@
 ---
 title: Recognition REST API (WordPress Proxy)
 status: draft
-owners:
-  - plugin-platform
-  - recognition-service
+boundary_owner: wp-proxy
 description: WordPress REST endpoints used by the admin UI. These proxy to /recognition on the FastAPI service.
 ---
 

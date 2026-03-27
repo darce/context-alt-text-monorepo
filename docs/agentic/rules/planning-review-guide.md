@@ -96,6 +96,8 @@ Avoid speculative review against broad repo context. If the plan cannot be evalu
 - [ ] New handlers/endpoints are added to the correct boundary.
 - [ ] The plan does not re-implement behavior that already exists in another service or adapter.
 - [ ] Compound operations have an explicit contract for atomicity, idempotency, and conflict ownership.
+- [ ] Boundary-touching slices identify the owning contract and the canonical boundary owner explicitly.
+- [ ] Plans state whether compatibility is actually required; greenfield default is no compatibility shim unless an exception is documented.
 
 ### Contract and Data Model Realism
 
@@ -104,6 +106,8 @@ Avoid speculative review against broad repo context. If the plan cannot be evalu
 - [ ] Multi-entity operations define which entity/version drives conflict detection.
 - [ ] Schema changes are sufficient for the reporting/metrics the plan promises.
 - [ ] Migration strategy matches the repo's greenfield policy: baseline schema edits, no preservation-only data migrations, and no backward-compatibility shims unless the task explicitly justifies an exception.
+- [ ] If a slice changes a boundary field or payload shape, the plan updates the shared schema/fixture and owning contract in the same slice.
+- [ ] If a remediation plan cites a `finding_id`, that id resolves to a real MCP finding or a concrete code site before implementation begins.
 
 ### Interface and API Realism
 

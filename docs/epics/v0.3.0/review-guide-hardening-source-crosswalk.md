@@ -78,13 +78,13 @@ This helps prevent speculative plan review against stale or invented context.
 
 **MCP Tools**
 
-| Tool | Role |
-|---|---|
-| `get_handoff_state` | Load active task objective, open blockers, and latest decisions at intake; the "intended scope" half of the review packet. |
-| `list_review_findings(task_ref=...)` | Surface all open findings before loading the diff; prevents the reviewer from re-raising already-tracked issues. |
-| `search_handoff(queries=[...], record_types=["decision"])` | Retrieve prior boundary-ownership decisions without loading the full history; replaces speculative context reconstruction. |
-| `get_plan_cursor` | Confirm which slice is the subject of review; prevents reviewing a superseded slice. |
-| `get_handoff_dashboard` | Quick health summary (open findings count, blocker count, latest test result) to assess whether the branch is even at a reviewable state before loading detailed context. |
+| Tool                                                       | Role                                                                                                                                                                      |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_handoff_state`                                        | Load active task objective, open blockers, and latest decisions at intake; the "intended scope" half of the review packet.                                                |
+| `list_review_findings(task_ref=...)`                       | Surface all open findings before loading the diff; prevents the reviewer from re-raising already-tracked issues.                                                          |
+| `search_handoff(queries=[...], record_types=["decision"])` | Retrieve prior boundary-ownership decisions without loading the full history; replaces speculative context reconstruction.                                                |
+| `get_plan_cursor`                                          | Confirm which slice is the subject of review; prevents reviewing a superseded slice.                                                                                      |
+| `get_handoff_dashboard`                                    | Quick health summary (open findings count, blocker count, latest test result) to assess whether the branch is even at a reviewable state before loading detailed context. |
 
 ### 2. Add A Fresh-Evidence Rule To Branch Review
 
@@ -121,14 +121,14 @@ This would help catch “tests passed earlier”, “typecheck was not rerun”,
 
 **MCP Tools**
 
-| Tool | Role |
-|---|---|
-| `record_test_result` | The canonical evidence artifact. Every "passes" or "fixed" claim must be backed by a `record_test_result` call on the current branch state with `commit_sha` populated. |
-| `get_handoff_state` | Check the `latest_verification` snapshot before accepting a review-ready status claim from another agent. |
-| `record_review_finding(category="GAP", severity="HIGH")` | The correct response when evidence is stale or missing; the `fix` field should name the exact command that would close the gap. |
-| `handoff_close_check` | Terminal enforcement: open HIGH findings block task close; catches missing evidence as a hard gate at merge time. |
+| Tool                                                     | Role                                                                                                                                                                    |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `record_test_result`                                     | The canonical evidence artifact. Every "passes" or "fixed" claim must be backed by a `record_test_result` call on the current branch state with `commit_sha` populated. |
+| `get_handoff_state`                                      | Check the `latest_verification` snapshot before accepting a review-ready status claim from another agent.                                                               |
+| `record_review_finding(category="GAP", severity="HIGH")` | The correct response when evidence is stale or missing; the `fix` field should name the exact command that would close the gap.                                         |
+| `handoff_close_check`                                    | Terminal enforcement: open HIGH findings block task close; catches missing evidence as a hard gate at merge time.                                                       |
 
-**Gap:** No tool currently validates whether the most recent `record_test_result` for a suite was recorded on the current `commit_sha`. Evidence stamping exists, but freshness comparison requires manual agent judgment. *(Addressed in "Proposed MCP Tool Upgrades" below.)*
+**Gap:** No tool currently validates whether the most recent `record_test_result` for a suite was recorded on the current `commit_sha`. Evidence stamping exists, but freshness comparison requires manual agent judgment. _(Addressed in "Proposed MCP Tool Upgrades" below.)_
 
 ### 3. Distinguish Branch Review From Release-Audit Escalation
 
@@ -172,14 +172,14 @@ Require large plans to state whether they need:
 
 **MCP Tools**
 
-| Tool | Role |
-|---|---|
-| `record_review_finding` | `severity=HIGH` findings are the primary escalation signal. `category=GAP` on a security or contract boundary is a natural upgrade trigger. |
-| `get_review_findings_summary` | `open_high_count > 0` is a structural signal that ordinary branch sign-off is insufficient and the review must escalate. |
-| `reconcile_review_findings` | Designed for batch-updating findings after a multi-pass review; in a multi-lens audit, each lens records independently and `reconcile` merges the result set. |
-| `handoff_close_check` | Already hard-fails on unresolved HIGH findings, functioning as a merge gate without additional ceremony. |
+| Tool                          | Role                                                                                                                                                          |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `record_review_finding`       | `severity=HIGH` findings are the primary escalation signal. `category=GAP` on a security or contract boundary is a natural upgrade trigger.                   |
+| `get_review_findings_summary` | `open_high_count > 0` is a structural signal that ordinary branch sign-off is insufficient and the review must escalate.                                      |
+| `reconcile_review_findings`   | Designed for batch-updating findings after a multi-pass review; in a multi-lens audit, each lens records independently and `reconcile` merges the result set. |
+| `handoff_close_check`         | Already hard-fails on unresolved HIGH findings, functioning as a merge gate without additional ceremony.                                                      |
 
-**Gap:** There is no escalation-tier tag on findings. The distinction between a branch-level finding and a release-audit finding is not first-class in the schema and must be encoded narratively, which is lossy across sessions. *(Addressed in "Proposed MCP Tool Upgrades" below.)*
+**Gap:** There is no escalation-tier tag on findings. The distinction between a branch-level finding and a release-audit finding is not first-class in the schema and must be encoded narratively, which is lossy across sessions. _(Addressed in "Proposed MCP Tool Upgrades" below.)_
 
 ### 4. Make Planning Review More Spec-Bound And Slice-Oriented
 
@@ -214,14 +214,14 @@ This aligns review with the repo’s current task-plan template and avoids plans
 
 **MCP Tools**
 
-| Tool | Role |
-|---|---|
-| `upsert_plan_cursor` / `get_plan_cursor` | Tracks the current slice explicitly. Every planning review should verify the cursor matches the slice being reviewed and that prior cursors have closed findings and test results. |
-| `record_decision(decision="plan_authorized")` | Record the spec/ADR reference before implementation starts; creates a durable anchor for later review sessions that can be searched by boundary name. |
-| `search_handoff(queries=[...], record_types=["decision"])` | Find prior boundary-ownership decisions the plan must be consistent with before implementation begins. |
-| `list_review_findings(task_ref=..., status="open")` | Verify no open planning-review findings from the current plan remain unresolved before the next slice starts. |
+| Tool                                                       | Role                                                                                                                                                                               |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `upsert_plan_cursor` / `get_plan_cursor`                   | Tracks the current slice explicitly. Every planning review should verify the cursor matches the slice being reviewed and that prior cursors have closed findings and test results. |
+| `record_decision(decision="plan_authorized")`              | Record the spec/ADR reference before implementation starts; creates a durable anchor for later review sessions that can be searched by boundary name.                              |
+| `search_handoff(queries=[...], record_types=["decision"])` | Find prior boundary-ownership decisions the plan must be consistent with before implementation begins.                                                                             |
+| `list_review_findings(task_ref=..., status="open")`        | Verify no open planning-review findings from the current plan remain unresolved before the next slice starts.                                                                      |
 
-**Gap:** `upsert_plan_cursor` currently advances without checking whether the outgoing slice has open HIGH findings or at least one recorded test result. The plan cursor is advisory only. *(Addressed in "Proposed MCP Tool Upgrades" below.)*
+**Gap:** `upsert_plan_cursor` currently advances without checking whether the outgoing slice has open HIGH findings or at least one recorded test result. The plan cursor is advisory only. _(Addressed in "Proposed MCP Tool Upgrades" below.)_
 
 ### 5. Formalize Review Resolution Discipline
 
@@ -250,13 +250,13 @@ This would give the repo a clearer norm for what happens after review, not just 
 
 The tool surface is already complete for this recommendation. The missing piece is a rule in the guide making these calls **mandatory** rather than optional.
 
-| Tool | Role |
-|---|---|
+| Tool                                                             | Role                                                                                                                                                            |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `update_review_finding(finding_id=..., status="fixed", fix=...)` | Required action for every resolved finding. Agents who close the review without calling this are bypassing the process; the guide should state this explicitly. |
-| `reopen_review_finding` | Correct call when a fix was partial or regressed; prevents silent duplicate findings accumulating over multiple review passes. |
-| `record_decision(decision="finding_deferred")` | For deferred findings, with `rationale` stating explicit residual risk and the follow-up slice; replaces hand-waving into future debt. |
-| `reconcile_review_findings` | Batch-close or re-open findings after a focused remediation pass; avoids N individual `update_review_finding` calls after a rapid-fix sprint. |
-| `get_review_findings_summary` | Pre-close verification: confirm `open_high = 0` (or all deferrals have decision records) before accepting a merge. |
+| `reopen_review_finding`                                          | Correct call when a fix was partial or regressed; prevents silent duplicate findings accumulating over multiple review passes.                                  |
+| `record_decision(decision="finding_deferred")`                   | For deferred findings, with `rationale` stating explicit residual risk and the follow-up slice; replaces hand-waving into future debt.                          |
+| `reconcile_review_findings`                                      | Batch-close or re-open findings after a focused remediation pass; avoids N individual `update_review_finding` calls after a rapid-fix sprint.                   |
+| `get_review_findings_summary`                                    | Pre-close verification: confirm `open_high = 0` (or all deferrals have decision records) before accepting a merge.                                              |
 
 ### 6. Strengthen Language-Specific Modules Around Boundary Proof
 
@@ -294,11 +294,11 @@ These additions would have caught several of the proxy/controller regressions ea
 
 These map directly onto Recs 2 and 5; no novel tool surface is needed here.
 
-| Tool | Role |
-|---|---|
-| `record_test_result` | Golden payload tests, PHPUnit runtime-bootstrap checks, and TypeScript API-boundary tests each produce a `record_test_result` entry with command, output snippet, and `commit_sha`. |
-| `record_review_finding(category="GAP", severity="HIGH")` | For absent boundary tests (e.g., no runtime-parity check for a changed PHP autoload path); the `fix` field names the exact test or command that would close the gap. |
-| `search_handoff(queries=[...])` | Before reviewing a boundary change, search for prior decisions and findings about that boundary to avoid re-raising already-resolved issues and to locate existing contract rationale. |
+| Tool                                                     | Role                                                                                                                                                                                   |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `record_test_result`                                     | Golden payload tests, PHPUnit runtime-bootstrap checks, and TypeScript API-boundary tests each produce a `record_test_result` entry with command, output snippet, and `commit_sha`.    |
+| `record_review_finding(category="GAP", severity="HIGH")` | For absent boundary tests (e.g., no runtime-parity check for a changed PHP autoload path); the `fix` field names the exact test or command that would close the gap.                   |
+| `search_handoff(queries=[...])`                          | Before reviewing a boundary change, search for prior decisions and findings about that boundary to avoid re-raising already-resolved issues and to locate existing contract rationale. |
 
 ### 7. Use Hooks As Lightweight Prompts, Not As The Review System
 
@@ -327,12 +327,12 @@ This maps well to the epic’s Phase 4 direction without duplicating `agent-hand
 
 **MCP Tools**
 
-| Tool | Role |
-|---|---|
-| `get_handoff_state` | Session-start hook: load active task, open findings, and latest decisions; replaces any ad hoc session reconstruction. |
-| `list_review_findings(status="open")` | Pre-review hook: surface all unresolved findings before the reviewer loads the diff. |
-| `generate_current_task_md` | Post-change hook: regenerate the human-readable mirror so the next session starts from an accurate `CURRENT_TASK.md`. |
-| `handoff_close_check` | Pre-completion hook: enforce the evidence gate before claiming work done; the lightest-weight placement for this call is a reminder at session end, not during review. |
+| Tool                                  | Role                                                                                                                                                                   |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_handoff_state`                   | Session-start hook: load active task, open findings, and latest decisions; replaces any ad hoc session reconstruction.                                                 |
+| `list_review_findings(status="open")` | Pre-review hook: surface all unresolved findings before the reviewer loads the diff.                                                                                   |
+| `generate_current_task_md`            | Post-change hook: regenerate the human-readable mirror so the next session starts from an accurate `CURRENT_TASK.md`.                                                  |
+| `handoff_close_check`                 | Pre-completion hook: enforce the evidence gate before claiming work done; the lightest-weight placement for this call is a reminder at session end, not during review. |
 
 ## Recommended Concrete Edits By Guide
 
@@ -443,6 +443,7 @@ upsert_plan_cursor(
 ```
 
 When `require_clean_slice=True`, the tool checks that:
+
 1. `open_high_count == 0` for findings tagged to the current plan position
 2. At least one `record_test_result` exists with a label or note referencing the current slice
 
@@ -485,25 +486,25 @@ The three proposed MCP tool upgrades should be logged as next-action items again
 
 Every recommendation from the crosswalk was implemented by task plan `docs/tasks/11.0/review-guide-hardening-task-plan.md` (Slices 1-5, all checked complete).
 
-| Rec | Recommendation | Target File | Status | Implementation |
-|-----|----------------|-------------|--------|----------------|
-| 1 | Review Intake section | `branch-review-guide.md` | Done | `## Review Intake` added before Common Checklist; four required load surfaces |
-| 1 | Planning Intake section | `planning-review-guide.md` | Done | `## Planning Intake` added before checklist; four required load surfaces |
-| 2 | Fresh-evidence blocking rule | `branch-review-guide.md` | Done | `## Fresh Verification Evidence` with reviewer prompts and GAP/HIGH protocol |
-| 2 | TS fresh-evidence rule | `branch-review-typescript.md` | Done | Automated Checks requires fresh `typecheck`, `lint`, and targeted Vitest evidence |
-| 2 | PHP fresh-evidence rule | `branch-review-php.md` | Done | Automated Checks requires fresh PHPUnit and PHPStan for runtime-sensitive changes |
-| 3 | Escalation trigger list | `branch-review-guide.md` | Done | `## Escalate To Multi-Lens Audit When` with trigger conditions and named lenses |
-| 3 | Audit declaration in planning | `planning-review-guide.md` | Done | Rollout and Testability checklist item |
-| 4 | Spec/ADR citation for large plans | `planning-review-guide.md` | Done | Checklist item under Rollout and Testability |
-| 4 | Scaffold-only slice rejection | `planning-review-guide.md` | Done | Checklist item flagging scaffold-only slices |
-| 4 | Per-slice proof surfaces | `planning-review-guide.md` | Done | Checklist items for file/contract/test naming and completion evidence |
-| 5 | Resolving Findings section | `branch-review-guide.md` | Done | `## Resolving Findings` with mandatory `update_review_finding` calls per status |
-| 6 | TS state-surface items (4) | `branch-review-typescript.md` | Done | `## State Surface Correctness`: UI state matrix, abort/cancel, API-boundary, query invalidation |
-| 6 | PHP boundary items (4) | `branch-review-php.md` | Done | `## Boundary and Runtime Correctness`: bootstrap parity, adapter provenance, header preservation, degradation |
-| 7 | Hooks as lightweight prompts | deferred | Deferred | Phase 4 guidance; not in review-guide-hardening scope |
-| MCP-1 | `require_fresh_tests` on `handoff_close_check` | `core.py` | Done | Optional parameter with SHA freshness check; `test_hardening.py` |
-| MCP-2 | `review_mode` on finding tools | `core.py` | Done | `review_mode TEXT` column; filter on `record/list/summary`; `test_review_mode.py` |
-| MCP-3 | `require_clean_slice` on `upsert_plan_cursor` | `core.py` | Done | Optional parameter with open-HIGH and test-result gates; `test_plan_cursor_gate.py` |
+| Rec   | Recommendation                                 | Target File                   | Status   | Implementation                                                                                                |
+| ----- | ---------------------------------------------- | ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------- |
+| 1     | Review Intake section                          | `branch-review-guide.md`      | Done     | `## Review Intake` added before Common Checklist; four required load surfaces                                 |
+| 1     | Planning Intake section                        | `planning-review-guide.md`    | Done     | `## Planning Intake` added before checklist; four required load surfaces                                      |
+| 2     | Fresh-evidence blocking rule                   | `branch-review-guide.md`      | Done     | `## Fresh Verification Evidence` with reviewer prompts and GAP/HIGH protocol                                  |
+| 2     | TS fresh-evidence rule                         | `branch-review-typescript.md` | Done     | Automated Checks requires fresh `typecheck`, `lint`, and targeted Vitest evidence                             |
+| 2     | PHP fresh-evidence rule                        | `branch-review-php.md`        | Done     | Automated Checks requires fresh PHPUnit and PHPStan for runtime-sensitive changes                             |
+| 3     | Escalation trigger list                        | `branch-review-guide.md`      | Done     | `## Escalate To Multi-Lens Audit When` with trigger conditions and named lenses                               |
+| 3     | Audit declaration in planning                  | `planning-review-guide.md`    | Done     | Rollout and Testability checklist item                                                                        |
+| 4     | Spec/ADR citation for large plans              | `planning-review-guide.md`    | Done     | Checklist item under Rollout and Testability                                                                  |
+| 4     | Scaffold-only slice rejection                  | `planning-review-guide.md`    | Done     | Checklist item flagging scaffold-only slices                                                                  |
+| 4     | Per-slice proof surfaces                       | `planning-review-guide.md`    | Done     | Checklist items for file/contract/test naming and completion evidence                                         |
+| 5     | Resolving Findings section                     | `branch-review-guide.md`      | Done     | `## Resolving Findings` with mandatory `update_review_finding` calls per status                               |
+| 6     | TS state-surface items (4)                     | `branch-review-typescript.md` | Done     | `## State Surface Correctness`: UI state matrix, abort/cancel, API-boundary, query invalidation               |
+| 6     | PHP boundary items (4)                         | `branch-review-php.md`        | Done     | `## Boundary and Runtime Correctness`: bootstrap parity, adapter provenance, header preservation, degradation |
+| 7     | Hooks as lightweight prompts                   | deferred                      | Deferred | Phase 4 guidance; not in review-guide-hardening scope                                                         |
+| MCP-1 | `require_fresh_tests` on `handoff_close_check` | `core.py`                     | Done     | Optional parameter with SHA freshness check; `test_hardening.py`                                              |
+| MCP-2 | `review_mode` on finding tools                 | `core.py`                     | Done     | `review_mode TEXT` column; filter on `record/list/summary`; `test_review_mode.py`                             |
+| MCP-3 | `require_clean_slice` on `upsert_plan_cursor`  | `core.py`                     | Done     | Optional parameter with open-HIGH and test-result gates; `test_plan_cursor_gate.py`                           |
 
 ### Expanded Rules File Audit
 
@@ -624,12 +625,12 @@ The original crosswalk scoped recommendations to four files: `branch-review-guid
 
 ### Cross-Cutting Gap Summary
 
-| Theme | Severity | Files Affected | Epic Phase |
-|-------|----------|---------------|------------|
-| Fresh evidence for Python review | HIGH | `branch-review-python.md` | Phase 3 |
-| Escalation SLAs across all guides | MEDIUM | `development-workflow.md`, all review guides | Phase 1 |
-| CI/automated enforcement of stated rules | MEDIUM | All testing guides, `frontend-guidelines.md` | Phase 4 |
-| Environment/runtime parity in tests | MEDIUM | `testing-principles.md`, all testing guides | Phase 3 |
-| Performance measurement gates | MEDIUM | `testing-principles.md`, `frontend-guidelines.md`, backend guides | Phase 3 or Phase 5 |
-| Cross-lane contract parity verification | MEDIUM | `development-workflow.md` | Phase 1 |
-| Boundary violation escalation protocols | LOW | `branch-review-python.md`, backend guides | Phase 1 |
+| Theme                                    | Severity | Files Affected                                                    | Epic Phase         |
+| ---------------------------------------- | -------- | ----------------------------------------------------------------- | ------------------ |
+| Fresh evidence for Python review         | HIGH     | `branch-review-python.md`                                         | Phase 3            |
+| Escalation SLAs across all guides        | MEDIUM   | `development-workflow.md`, all review guides                      | Phase 1            |
+| CI/automated enforcement of stated rules | MEDIUM   | All testing guides, `frontend-guidelines.md`                      | Phase 4            |
+| Environment/runtime parity in tests      | MEDIUM   | `testing-principles.md`, all testing guides                       | Phase 3            |
+| Performance measurement gates            | MEDIUM   | `testing-principles.md`, `frontend-guidelines.md`, backend guides | Phase 3 or Phase 5 |
+| Cross-lane contract parity verification  | MEDIUM   | `development-workflow.md`                                         | Phase 1            |
+| Boundary violation escalation protocols  | LOW      | `branch-review-python.md`, backend guides                         | Phase 1            |

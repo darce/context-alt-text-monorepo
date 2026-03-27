@@ -49,8 +49,8 @@ Agents working in this repo should be able to start from a cold session, load th
 - Recent handoff history shows optimistic empty-state degradation that masked real backend failure.
 - Recent handoff history shows remediation plans and audit docs that needed repeated corrections to match the actual code.
 - MCP-002 through MCP-006 daemon lifecycle fixes are implemented in code (`packages/agent-handoff-mcp/`), but no `daemon-lifecycle` skill encodes the safe-startup, signal-stop, and stale-lock-recovery procedures for agents.
-- `packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json` is missing `is_pinned`, `representative_id`, and `representative_thumb_path` despite all three service layers using these fields in production; cross-boundary contract tests for the backend to WP to TS pipeline do not exist.
-- Finding IDs RSWR-IMPL-008, R-TOPO-02, and R-TOPO-11 have zero codebase references and must be explicitly closed or archived before they become silently open technical debt.
+- `packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json` is missing `is_pinned` and `representative_id` despite all three service layers using these fields in production; cross-boundary contract tests for the backend to WP to TS pipeline do not exist.
+- Finding IDs RSWR-IMPL-008, R-TOPO-02, and R-TOPO-11 were documentation-only debt markers; Phase 2 now requires verifying their MCP state and documenting or closing them explicitly so they do not linger as silent technical debt.
 - The FTS5 sanitization fix (P-FTS-SANITIZE-01 in `core.py` and `artifact_index.py`) is in production, but no property-based tests exercise edge-case special characters or injection sequences.
 - No rescue workflow or skill exists; the commit convention for cherry-pick-based rescue is undocumented, making recovery from lane regressions ad hoc.
 - `make lane-intake` does not auto-regenerate `CURRENT_TASK.md` after a successful intake, leaving the active-task mirror stale for the next agent session.
@@ -152,9 +152,9 @@ This epic is process-focused rather than product-schema-focused. The important i
 
 ## Phased Delivery
 
-### Phase 1: Context Loading and Handoff Discipline -- not-started
+### Phase 1: Context Loading and Handoff Discipline -- complete
 
-> **Status**: not-started (task plan scoped; implementation not yet started)
+> **Status**: complete (implemented by docs/tasks/11.0/context-loading-and-handoff-discipline-task-plan.md; evidence recorded in decisions 829 and 830)
 > **Task plans**: `docs/tasks/11.0/context-loading-and-handoff-discipline-task-plan.md`
 
 **Goal**: Make every agent session start with the right repo context and leave behind the right MCP evidence.
@@ -180,10 +180,10 @@ Exit criteria:
 - an agent can start from cold context and follow one documented startup path for planning, implementation, and review
 - MCP decision entries for cross-boundary changes consistently include changed boundary, verification, and contract/doc status
 
-### Phase 2: Contract Ownership and Documentation Sync -- not-started
+### Phase 2: Contract Ownership and Documentation Sync -- complete
 
-> **Status**: not-started
-> **Task plans**: not yet scoped
+> **Status**: complete
+> **Task plans**: `docs/tasks/11.0/contract-ownership-and-documentation-sync-task-plan.md`
 
 **Goal**: Stop contract drift by making boundary ownership explicit and same-slice synchronization mandatory.
 
@@ -195,7 +195,7 @@ Deliverables:
 - define how remediation plans, audits, and epics must reference current contracts and implementation evidence
 - define healthy data-pattern rules for boundaries: one writer per fact, explicit provenance for derived metadata, no silent dual-write drift, and documented read-after-write/consistency expectations
 - require schema-evolution notes whenever a boundary payload changes, including whether compatibility is required and who owns it
-- update `packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json` to include `is_pinned`, `representative_id`, and `representative_thumb_path` on the cluster item definition; add a planning-review-guide check: if the change touches a boundary field, is the shared schema updated in the same slice?
+- update `packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json` to include `is_pinned` and `representative_id` on the cluster item definition; add a planning-review-guide check: if the change touches a boundary field, is the shared schema updated in the same slice?
 - add cross-boundary contract tests for the backend to WP to TS pipeline covering at minimum the recognition cluster snapshot shape
 - audit and close or archive finding IDs with zero codebase references (confirmed unresolvable: RSWR-IMPL-008, R-TOPO-02, R-TOPO-11); add a note to the contract-change checklist that every finding ID cited in a remediation plan must resolve to a located code site before implementation starts
 - define a blocking contract-change gate for cross-boundary work:
@@ -213,10 +213,10 @@ Exit criteria:
 - every major cross-service boundary has a declared owner and documented adaptation point
 - a boundary change cannot be considered complete unless the owning contract changed in the same slice or the decision explicitly records why it did not need to
 
-### Phase 3: Runtime Parity and Test Fidelity Gates -- in-progress
+### Phase 3: Runtime Parity and Test Fidelity Gates -- complete
 
-> **Status**: in-progress (1 item completed by review-guide-hardening task 11.0)
-> **Task plans**: partial coverage from `docs/tasks/11.0/review-guide-hardening-task-plan.md`; remaining items not yet scoped
+> **Status**: complete
+> **Task plans**: `docs/tasks/11.0/runtime-parity-and-test-fidelity-gates-task-plan.md`; partial prior coverage from `docs/tasks/11.0/review-guide-hardening-task-plan.md`
 
 **Goal**: Catch production-only breakage earlier by aligning tests, bootstrap paths, and review gates with real runtime behavior.
 
@@ -330,7 +330,7 @@ Exit criteria:
 | Skill             | `docs/agentic/skills/worktree-worker/SKILL.md`                                                                            | Worker execution guidance; should load the same core process rules without policy drift.                                                                                                                                              |
 | Skill             | `docs/agentic/skills/daemon-lifecycle/SKILL.md`                                                                           | Daemon lifecycle procedures (to be created in Phase 4); encodes safe-start, signal-stop, stale-lock-recovery, and lane-health-check patterns from `api.py`, `orchestrator_daemon.py`, `worker_daemon.py`, and `worker_daemon_ctl.py`. |
 | Skill/Rule        | `docs/agentic/skills/rescue-lane/SKILL.md` or `docs/agentic/rules/rescue-workflow.md`                                     | Rescue-lane workflow (to be created in Phase 4); covers cherry-pick, contract diff, regression tests, MCP decision, and `CURRENT_TASK.md` regeneration. _(`.agent/workflows/` directory removed 2026-03-27; relocate here.)_          |
-| Contract          | `packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json`                                              | Shared cluster snapshot schema; known gap: missing `is_pinned`, `representative_id`, `representative_thumb_path`. Update required in Phase 2.                                                                                         |
+| Contract          | `packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json`                                              | Shared cluster snapshot schema; known gap: missing `is_pinned` and `representative_id`. Update required in Phase 2.                                                                                                                   |
 | Literature        | `docs/literature/process/product-deploy-agents/README.md`                                                                 | Source for staged multi-lens audit and hard-gate recommendations.                                                                                                                                                                     |
 | Literature        | `docs/literature/process/gstack/README.md`                                                                                | Source for branch-scoped review/readiness/documentation workflow ideas that may be selectively adapted.                                                                                                                               |
 | Literature        | `docs/literature/process/agentfactory-book/ch-66-mcp-fundamentals-drilldown-summary.md`                                   | Source for tool/resource/prompt separation, transport discipline, and MCP debugging-by-layer.                                                                                                                                         |
@@ -348,42 +348,45 @@ Exit criteria:
 
 ## Completed Tasks
 
-| Task Ref | Task                   | Scope                                                                                                                                                                                            | Date       |
-| -------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------- |
-| 11.0     | Review Guide Hardening | Hardened 4 review guides (intake, evidence, escalation, resolution); added 3 MCP tool upgrades (`require_fresh_tests`, `review_mode`, `require_clean_slice`); source crosswalk fully implemented | 2026-03-27 |
+| Task Ref | Task                                      | Scope                                                                                                                                                                                            | Date       |
+| -------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------- |
+| 11.0     | Review Guide Hardening                    | Hardened 4 review guides (intake, evidence, escalation, resolution); added 3 MCP tool upgrades (`require_fresh_tests`, `review_mode`, `require_clean_slice`); source crosswalk fully implemented | 2026-03-27 |
+| 11.0     | Context Loading and Handoff Discipline    | Startup protocol, cross-boundary change protocol, selective handoff-loading, `ctx7` entry criteria, handoff decision templates, orchestration/worker skill updates                               | 2026-03-27 |
+| 11.0     | Contract Ownership and Documentation Sync | 9 boundary owners declared, contract-change checklist, golden fixture + 3 cross-boundary tests, contract-change gate in review guides, MCP write-signature discipline, schema gap closure        | 2026-03-27 |
+| 11.0     | Runtime Parity and Test Fidelity Gates    | Python review parity rules, stub-fidelity and runtime-parity testing guidance, performance-evidence requirements, and Hypothesis property tests for FTS5 sanitization                            | 2026-03-27 |
 
 ---
 
 # Consolidated Checklist
 
-## Phase 1: Context Loading and Handoff Discipline -- not-started
+## Phase 1: Context Loading and Handoff Discipline -- complete
 
-- [ ] Define the startup protocol for cross-boundary work in `instructions.md`.
-- [ ] Add a cross-boundary change protocol tying contracts, tests, runtime checks, and handoff decisions together.
-- [ ] Update orchestration and worker skills to require evidence-oriented handoff usage.
-- [ ] Define reusable handoff decision templates.
-- [ ] Define selective handoff-loading and `ctx7` entry rules.
+- [x] Define the startup protocol for cross-boundary work in `instructions.md`.
+- [x] Add a cross-boundary change protocol tying contracts, tests, runtime checks, and handoff decisions together.
+- [x] Update orchestration and worker skills to require evidence-oriented handoff usage.
+- [x] Define reusable handoff decision templates.
+- [x] Define selective handoff-loading and `ctx7` entry rules.
 
-## Phase 2: Contract Ownership and Documentation Sync -- not-started
+## Phase 2: Contract Ownership and Documentation Sync -- complete
 
-- [ ] Declare boundary owners for the major backend, WP proxy, frontend, and MCP seams.
-- [ ] Add a contract-change checklist and co-change guidance.
-- [ ] Define contract fixture and golden-payload expectations.
-- [ ] Define blocking contract-gate requirements for review-ready and merge-ready status.
-- [ ] Align remediation-plan and audit-doc expectations with the contract workflow.
-- [ ] Update `recognition-cluster-snapshot.schema.json` to add `is_pinned`, `representative_id`, and `representative_thumb_path`.
-- [ ] Add cross-boundary contract tests for the backend to WP to TS cluster snapshot pipeline.
-- [ ] Audit and close or archive RSWR-IMPL-008, R-TOPO-02, R-TOPO-11 (zero codebase references confirmed).
+- [x] Declare boundary owners for the major backend, WP proxy, frontend, and MCP seams.
+- [x] Add a contract-change checklist and co-change guidance.
+- [x] Define contract fixture and golden-payload expectations.
+- [x] Define blocking contract-gate requirements for review-ready and merge-ready status.
+- [x] Align remediation-plan and audit-doc expectations with the contract workflow.
+- [x] Update `recognition-cluster-snapshot.schema.json` to add `is_pinned` and `representative_id`.
+- [x] Add cross-boundary contract tests for the backend to WP to TS cluster snapshot pipeline.
+- [x] Audit and close or archive RSWR-IMPL-008, R-TOPO-02, R-TOPO-11 (zero codebase references confirmed).
 
-## Phase 3: Runtime Parity and Test Fidelity Gates -- in-progress
+## Phase 3: Runtime Parity and Test Fidelity Gates -- complete
 
-- [ ] Document runtime-parity requirements for high-risk boundary classes.
-- [ ] Add guidance for golden payload tests and malformed-shape tests.
-- [ ] Define stub and fake fidelity rules to prevent test-only masking.
-- [ ] Add performance-evidence expectations for latency, queueing, and retry behavior.
+- [x] Document runtime-parity requirements for high-risk boundary classes.
+- [x] Add guidance for golden payload tests and malformed-shape tests.
+- [x] Define stub and fake fidelity rules to prevent test-only masking.
+- [x] Add performance-evidence expectations for latency, queueing, and retry behavior.
 - [x] Tighten review heuristics around empty-state masking and bootstrap drift. _(Completed by review-guide-hardening task 11.0: branch-review-php.md now has degradation semantics and bootstrap parity; branch-review-typescript.md has UI state matrix and API-boundary payload validation.)_
-- [ ] Add fresh-evidence requirements to `branch-review-python.md` parallel to TS and PHP modules. _(Identified in expanded rules audit 2026-03-27.)_
-- [ ] Add Hypothesis property-based tests for FTS5 query-input sanitization in `packages/agent-handoff-mcp/tests/`.
+- [x] Add fresh-evidence requirements to `branch-review-python.md` parallel to TS and PHP modules.
+- [x] Add Hypothesis property-based tests for FTS5 query-input sanitization in `packages/agent-handoff-mcp/tests/`.
 
 ## Phase 4: MCP and Tooling Automation -- not-started
 

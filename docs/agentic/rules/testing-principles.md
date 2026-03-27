@@ -101,6 +101,21 @@ When a route, hook, export, or runtime surface is intentionally removed, add an 
 | Random/UUID   | Seeded/fixed    | Seeded/fixed    | Seeded/fixed      | Real     |
 | External APIs | Never           | Fake client     | Mock server       | Sandbox  |
 
+## Stub and Fake Fidelity
+
+- A stub must reproduce the real implementation's error-raising behavior for invalid inputs; silent success is a false positive when production would fail.
+- Null stubs are acceptable only when the dependency's behavior is irrelevant to the assertion under test. If the test depends on success, failure, or state-transition semantics, use a behavioral fake instead.
+- When a production implementation throws or returns an explicit error on invalid state, the fake must do the same for the same class of input.
+- Inline anonymous spies or per-test doubles should extend the canonical shared null stub or fake when one exists, rather than re-implementing the interface from scratch with drift-prone behavior.
+- New fakes should be checked against the real implementation's constructor expectations, state transitions, and negative-path behavior before becoming shared test utilities.
+
+## Runtime-Parity Verification
+
+- For each high-risk boundary class, at least one test or verification path must exercise the real runtime behavior or explicitly document why that is not locally verifiable.
+- Runtime parity includes bootstrap/load path behavior, dependency injection, transaction lifecycle, header and protocol forwarding, and error-shape preservation across adapters.
+- Golden payload tests and malformed-shape tests are part of runtime-parity proof for boundary changes; a happy-path fixture alone is not enough when the real risk is malformed input or drift.
+- If runtime parity cannot be verified locally, record a `GAP` finding in MCP instead of claiming full verification from isolated tests alone.
+
 ---
 
 ## Test Organization
@@ -163,6 +178,14 @@ Keep at most one smoke test asserting the real config file loads without error.
 - Synchronous endpoints: < 150ms response time
 - Frontend: Lighthouse score > 90
 - Core Web Vitals: LCP < 2.5s, FID < 100ms, CLS < 0.1
+
+## Performance Evidence Requirements
+
+- Performance claims for high-risk changes must include latency distributions such as `p50`, `p95`, and `p99`, not only averages.
+- Queue depth, connection-pool wait time, and retry counts must be observable and reportable for flows that use shared resources or external services.
+- Backpressure and saturation behavior must be documented: what happens under overload matters as much as steady-state success.
+- Attach performance evidence to MCP test results or handoff decisions with concrete numbers, not narrative claims like "seems faster."
+- Incident and remediation work must distinguish average-latency improvements from tail-latency or saturation improvements.
 
 ---
 

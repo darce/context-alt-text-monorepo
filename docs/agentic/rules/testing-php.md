@@ -102,6 +102,8 @@ $clustersRepo = new class() implements ClustersRepositoryInterface {
 
 **Caution:** When the interface changes, ALL anonymous implementations must be updated. Use grep to find them.
 
+These stubs still need to follow the shared fidelity rules in [testing-principles.md](testing-principles.md). When a real repository method throws or returns an explicit failure for invalid state, a `Null*` stub should not silently succeed if the test depends on that failure behavior.
+
 ---
 
 ## Composer Classmap Regeneration

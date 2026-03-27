@@ -100,7 +100,7 @@ Use this checklist at session start, whether you are entering from a cold start,
 2. If you are working in a lane, load the lane inbox before editing. Use `make lane-inbox`, lane activity MCP reads, or the equivalent lane-status helper to pick up routed findings, blockers, and dispatch messages.
 3. Load role routing next. Choose the domain from the Role Selection table and read the linked context map, guidelines, and testing guide before touching code.
 4. Check open findings before proposing or repeating a fix. Use `list_review_findings(status="open")` so you do not re-raise known issues or miss already-assigned follow-up work.
-5. Verify the contract surface before implementation. If the task touches a service, language, schema, or MCP boundary, confirm the owning contract exists in [contracts/](contracts/) and load it before writing code.
+5. Verify the contract surface before implementation. If the task touches a service, language, schema, or MCP boundary, confirm the owning contract exists in [contracts/](contracts/) and load it before writing code. If no contract exists for the boundary, follow the Cross-Boundary Change Protocol in [rules/development-workflow.md](rules/development-workflow.md) to scaffold one before proceeding.
 6. Decide whether `ctx7` is needed. If the slice depends on upstream library or framework behavior, apply the `ctx7` entry criteria below before relying on memory or stale local notes.
 
 Cold start vs. mid-task re-entry:
@@ -243,6 +243,8 @@ Reserve terminal for operations with no native-tool equivalent: test execution, 
 - Every pseudocode function or CLI command in a plan must map to an existing API/import or be explicitly marked as "new, to be created." Unresolved pseudocode references cause implementation ambiguity.
 - Validate enum values, status strings, and filter parameters used in plans against the actual API or schema. Using a status value that the API rejects (e.g., `done` when valid values are `planned/active/blocked/review/merged/closed`) is a plan bug.
 - Do not list a file in "Functions to Change" unless it actually requires modification. If a file only needs verification (no code changes), mark it as verification-only.
+- For MCP write tools, the live tool schema is authoritative over examples, templates, or prior-session memory. Prefer the minimal valid payload for common writes instead of copying rich historical examples with optional fields.
+- If an MCP write fails validation because a documented example or template drifted from the live signature, retry once with the minimal live-valid payload and update the stale guidance surface in the same slice.
 
 ### Naming Convention: acx\_\* / ACX\_\* Prefix
 
@@ -316,9 +318,7 @@ Fallback and caching:
 
 Before any code exploration:
 
-1. Call `get_handoff_state(task_ref="<task>")`.
-2. If no active state exists, call `set_handoff_state(...)` to initialize it.
-3. Do not use manual edits to `CURRENT_TASK.md` for state tracking.
+Follow the Agent Startup Protocol above. The steps below assume MCP state is already loaded.
 
 During work:
 

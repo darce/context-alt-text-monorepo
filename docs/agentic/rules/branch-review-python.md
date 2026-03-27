@@ -14,6 +14,8 @@ Backend review commands must run inside the `description-service` pyenv. For non
 | Lint + types + tests     | `cd apps/prototype-description-service && PYENV_VERSION=description-service make check`        |
 | Cyclomatic complexity    | `cd apps/prototype-description-service && PYENV_VERSION=description-service python -m radon cc --min C --show-complexity --average recognition/` |
 
+When backend behavior or performance is claimed fixed, require fresh command evidence on the current branch state for `make check` or the targeted `pytest` slice that proves the claim. If the evidence is stale, missing, or only partially relevant, record a `GAP` finding instead of accepting the claim as done.
+
 ---
 
 ## Type Safety
@@ -33,6 +35,16 @@ Backend review commands must run inside the `description-service` pyenv. For non
 - [ ] **No cross-layer exception duplication** — one canonical definition per exception.
 - [ ] **No redundant router/dependency wiring** — each router registered exactly once.
 - [ ] **No time-based gates on curated state** — gate on data deltas, never elapsed time.
+
+---
+
+## Boundary and Runtime Correctness
+
+- [ ] **Dependency-injection parity** — FastAPI dependency overrides used in tests match the production dependency graph instead of bypassing real startup or tenant/session behavior.
+- [ ] **Session and transaction lifecycle parity** — tests for DB-sensitive changes verify the same commit/rollback/session-close semantics used in production, not a looser autocommit-only path.
+- [ ] **Schema and adapter validation parity** — Pydantic adapters validate against the canonical boundary shape, and malformed payloads fail explicitly instead of being normalized into success.
+- [ ] **Degradation semantics stay explicit** — upstream failures, unavailable dependencies, and true empty results remain distinct outcomes; backend handlers do not silently collapse them together.
+- [ ] **Golden payload coverage exists for high-risk boundaries** — boundary shape changes rely on fixture or malformed-shape tests, not only happy-path service assertions.
 
 ---
 
@@ -74,6 +86,14 @@ Backend review commands must run inside the `description-service` pyenv. For non
 | **E/F** | 21+   | **Block merge.**                                    |
 
 Typical offenders: Repository `_to_domain` converters, refresh service orchestration methods, clustering dispatch functions.
+
+### Performance Evidence
+
+For changes touching database queries, external HTTP calls, background task scheduling, or queue-driven work, require evidence beyond unit-test pass/fail:
+
+- query timing or request latency on the affected path
+- connection-pool wait, retry, or queue behavior when applicable
+- enough evidence to distinguish average improvements from tail-latency or saturation regressions
 
 ---
 

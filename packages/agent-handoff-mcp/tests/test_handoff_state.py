@@ -94,6 +94,7 @@ def test_schema_bootstrap_is_idempotent(isolated_handoff: dict) -> None:
         "last_reopen_reason",
         "last_reopened_at",
         "updated_at",
+        "review_mode",
     }.issubset(review_finding_columns)
     assert {"plan_item_id", "state", "dispatch_count", "summary"}.issubset(plan_cursor_columns)
 

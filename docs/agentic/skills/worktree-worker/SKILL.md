@@ -86,6 +86,16 @@ scripts/worktree-lane report \
 
 Merge-ready and blocked reports auto-open a worker-to-orchestrator handoff message even if you do not pass `--message`. Use that path whenever the lane is done or needs more guidance from root.
 
+## Evidence Collection
+
+- At implementation start, confirm the contracts touching your owned paths are loaded. If a required contract is missing, stop and record a blocker naming the missing contract surface.
+- When modifying a boundary call, shared type, schema, REST route, or MCP API surface, follow [../../rules/development-workflow.md#cross-boundary-change-protocol](../../rules/development-workflow.md#cross-boundary-change-protocol).
+- At handoff, use the appropriate decision template when your slice changes a contract or creates a cross-lane dependency:
+  - [../../templates/DECISION_CONTRACT_CHANGE.template.md](../../templates/DECISION_CONTRACT_CHANGE.template.md)
+  - [../../templates/DECISION_BREAKING_CHANGE.template.md](../../templates/DECISION_BREAKING_CHANGE.template.md)
+  - [../../templates/DECISION_CROSS_LANE.template.md](../../templates/DECISION_CROSS_LANE.template.md)
+- Do not hand off a changed boundary without citing at least one verification command result for that boundary in the lane report or decision entry.
+
 ## Guardrails
 
 - Do not mark the whole task complete.

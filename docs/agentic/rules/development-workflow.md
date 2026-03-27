@@ -80,6 +80,27 @@ This ensures:
 
 **Enforcement**: Task checklists MUST include a "Phase 0: Scaffolding" section that is completed and verified before implementation phases begin.
 
+## Cross-Boundary Change Protocol
+
+Follow this checklist whenever a change touches a service, language, schema, or MCP boundary. This protocol applies even when only one path family is edited, as long as the change alters or depends on a shared contract.
+
+Trigger heuristics:
+
+- `apps/prototype-description-service/`
+- `apps/prototype-wp-alt-context/src/`
+- `apps/prototype-wp-alt-context/js/`
+- `packages/agent-handoff-mcp/`
+- `docs/agentic/contracts/`
+
+If a change within one of those stacks modifies a shared type, endpoint signature, REST route, database schema, or MCP API surface, run the protocol before continuing.
+
+1. Discover the owning contract. Check [../contracts/](../contracts/) for the surface that governs the boundary. If none exists and the change introduces a new cross-boundary call, scaffold the contract first.
+2. Validate contract parity. Confirm the contract matches the current implementation. If it is stale, update the contract in the same slice as the code change.
+3. Map changed fields to tests. Identify which downstream assertions prove the changed field or behavior. If no test covers the boundary, add one in the same slice.
+4. Run a runtime-parity check. For remote calls or adapter paths, verify the real runtime path works, not only the stubbed or unit-test path. If true runtime verification is not available locally, log that gap as a finding instead of claiming full verification.
+5. Record the change with evidence. Use `record_decision` with the relevant decision template from [../templates/DECISION_CONTRACT_CHANGE.template.md](../templates/DECISION_CONTRACT_CHANGE.template.md), [../templates/DECISION_BREAKING_CHANGE.template.md](../templates/DECISION_BREAKING_CHANGE.template.md), or [../templates/DECISION_CROSS_LANE.template.md](../templates/DECISION_CROSS_LANE.template.md).
+6. Notify affected lanes or owners. If another lane or stack depends on the new contract shape, send a lane message or dispatch update with the contract path, changed surface, and required follow-up.
+
 ---
 
 ## Orchestrated Task Execution

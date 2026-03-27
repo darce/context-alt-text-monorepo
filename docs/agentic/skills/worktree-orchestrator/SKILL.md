@@ -122,6 +122,17 @@ Use selective file intake only when intentionally trimming scope:
 git checkout codex/<task>-<lane> -- path/to/file
 ```
 
+## Handoff Evidence Checklist
+
+- Before dispatching work to a lane, confirm the worker's contract surface exists and is current. Cite the contract path in the lane brief or dispatch message.
+- Before accepting a lane handoff, verify the worker summary names changed contracts, test counts, and schema or runtime implications.
+- When routing findings or blockers to a lane, include the contract path and at least one verification command so the worker does not have to rediscover the boundary from scratch.
+- When a slice changes a boundary or creates a downstream dependency, require the worker to use one of:
+  - [../../templates/DECISION_CONTRACT_CHANGE.template.md](../../templates/DECISION_CONTRACT_CHANGE.template.md)
+  - [../../templates/DECISION_BREAKING_CHANGE.template.md](../../templates/DECISION_BREAKING_CHANGE.template.md)
+  - [../../templates/DECISION_CROSS_LANE.template.md](../../templates/DECISION_CROSS_LANE.template.md)
+- Keep policy details in the canonical sources: [../../instructions.md](../../instructions.md) for startup and loading rules, and [../../rules/development-workflow.md#cross-boundary-change-protocol](../../rules/development-workflow.md#cross-boundary-change-protocol) for boundary validation.
+
 ## Guardrails
 
 - Do not assign two workers to the same owned path set.

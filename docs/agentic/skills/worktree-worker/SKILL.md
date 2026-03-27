@@ -7,6 +7,10 @@ description: Use when implementing a delegated slice inside a worktree lane. Sel
 
 Use this skill when you are the worker agent assigned to a bounded worktree lane.
 
+## Trigger
+
+Use this skill when you are implementing a delegated lane slice with a defined owned-path boundary and you need to stay inside that scope until the work is ready for orchestrator review.
+
 ## What this skill owns
 
 - reading lane scope from shared MCP state
@@ -96,7 +100,7 @@ Merge-ready and blocked reports auto-open a worker-to-orchestrator handoff messa
   - [../../templates/DECISION_CROSS_LANE.template.md](../../templates/DECISION_CROSS_LANE.template.md)
 - Do not hand off a changed boundary without citing at least one verification command result for that boundary in the lane report or decision entry.
 
-## Guardrails
+## Safety Constraints
 
 - Do not mark the whole task complete.
 - Use lane status progression:
@@ -105,3 +109,16 @@ Merge-ready and blocked reports auto-open a worker-to-orchestrator handoff messa
   - `merged` only after the orchestrator has taken it
   - `closed` when the lane is fully done
 - Keep blockers factual and lane-local.
+
+## Recovery
+
+- If lane ownership is missing or ambiguous, stop and ask the orchestrator to repair the lane definition before editing.
+- If your fix requires another domain’s files, record a blocker or lane message instead of crossing the boundary.
+- If the slice changes a contract surface, use the cross-boundary protocol and the appropriate decision template before handoff.
+- If lane-local tests fail unexpectedly, keep the failure scoped and report the concrete command plus result instead of summarizing loosely.
+
+## Convergence Criteria
+
+- All changed files stay inside the lane’s owned paths.
+- Lane-local verification has been run and the results are ready to cite in the handoff.
+- The lane is handed back through the supported report/handoff path with a clear merge-ready or blocked status.

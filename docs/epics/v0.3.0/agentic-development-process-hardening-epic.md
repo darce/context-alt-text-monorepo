@@ -235,10 +235,10 @@ Exit criteria:
 - branch review and testing guidance require runtime-parity checks for every boundary class known to diverge in this repo
 - at least one deterministic verification path exists for each high-risk boundary failure mode: malformed payloads, missing runtime load path, header/protocol drift, and masked upstream failure
 
-### Phase 4: MCP and Tooling Automation -- not-started
+### Phase 4: MCP and Tooling Automation -- planned
 
-> **Status**: not-started
-> **Task plans**: not yet scoped
+> **Status**: planned
+> **Task plans**: `docs/tasks/11.0/mcp-and-tooling-automation-task-plan.md`
 
 **Goal**: Move the highest-value process rules out of memory and into tools, templates, and automated review surfaces.
 
@@ -388,7 +388,7 @@ Exit criteria:
 - [x] Add fresh-evidence requirements to `branch-review-python.md` parallel to TS and PHP modules.
 - [x] Add Hypothesis property-based tests for FTS5 query-input sanitization in `packages/agent-handoff-mcp/tests/`.
 
-## Phase 4: MCP and Tooling Automation -- not-started
+## Phase 4: MCP and Tooling Automation -- planned
 
 - [ ] Define which startup, review, and closeout checks can move into MCP helpers or wrappers.
 - [ ] Define which repo capabilities should be modeled as MCP actions, read-only resources, or reusable prompt templates.

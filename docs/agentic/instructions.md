@@ -361,11 +361,12 @@ Before final response:
    - <what the next agent should pick up>
    ```
 
-   Rules: (a) list every changed file with the specific function, class, route, or hook that was modified; (b) include concrete test counts, not just "tests pass"; (c) list schema column names, REST routes, TypeScript type changes, and PHP hook names explicitly so downstream agents can grep for them; (d) note any open threads or follow-ups.
+   Rules: (a) list every changed file with the specific function, class, route, or hook that was modified; (b) include concrete test counts, not just "tests pass"; (c) list schema column names, REST routes, TypeScript type changes, and PHP hook names explicitly so downstream agents can grep for them; (d) note any open threads or follow-ups; (e) if a section has no entries, write `- none.` instead of omitting the section; (f) freeform prose-only slice decisions are not acceptable.
 
-3. Update singleton state via `set_handoff_state(..., expected_revision=<current>, actor={ ... })`.
-4. Regenerate `CURRENT_TASK.md` using `generate_current_task_md(...)`.
-5. Include a one-line status marker in the response: `Handoff updated: yes`.
+3. Treat the slice-completion format as a gate, not a suggestion. If a slice changes files and you cannot yet populate the structured decision with concrete changes, verification, and open threads, the slice is not ready to mark complete in handoff.
+4. Update singleton state via `set_handoff_state(..., expected_revision=<current>, actor={ ... })`.
+5. Regenerate `CURRENT_TASK.md` using `generate_current_task_md(...)`.
+6. Include a one-line status marker in the response: `Handoff updated: yes`.
 
 Read discipline:
 

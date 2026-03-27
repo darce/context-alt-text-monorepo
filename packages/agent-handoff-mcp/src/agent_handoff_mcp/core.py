@@ -113,6 +113,8 @@ CREATE TABLE IF NOT EXISTS review_findings (
     fix           TEXT,
     status        TEXT NOT NULL DEFAULT 'open'
                   CHECK (status IN ('open', 'fixed', 'wontfix', 'deferred')),
+    review_mode   TEXT
+                  CHECK (review_mode IN ('branch', 'release_audit') OR review_mode IS NULL),
     session       TEXT NOT NULL,
     agent         TEXT,
     branch        TEXT,
@@ -235,6 +237,7 @@ DEFAULT_HANDOFF_LIMITS = {
 HANDOFF_ACTIVE_STATUSES = {"in_progress", "blocked", "review", "done"}
 REVIEW_FINDING_STATUSES = {"open", "fixed", "wontfix", "deferred"}
 REVIEW_FINDING_SEVERITIES = {"high", "medium", "low"}
+REVIEW_MODES = {"branch", "release_audit"}
 MAX_RESOLUTION_NOTES_LENGTH = 500
 MAX_REOPEN_REASON_LENGTH = 500
 MAX_VERIFICATION_EVIDENCE_LENGTH = 2000
@@ -503,6 +506,15 @@ def _coerce_string_list(value: object) -> list[str]:
     return result
 
 
+def _normalize_review_mode(value: object) -> str | None:
+    normalized = _normalize_optional_text(value)
+    if normalized is None:
+        return None
+    if normalized not in REVIEW_MODES:
+        raise ValueError(f"Invalid review_mode. Valid: {', '.join(sorted(REVIEW_MODES))}")
+    return normalized
+
+
 def _normalize_lane_message_payload(payload: object) -> tuple[dict[str, object] | None, str | None]:
     if payload is None:
         return None, None
@@ -626,6 +638,7 @@ def _dedupe_review_findings(conn: sqlite3.Connection, task_ref: str | None = Non
                 description = ?,
                 fix = ?,
                 status = ?,
+                review_mode = ?,
                 session = ?,
                 agent = ?,
                 branch = ?,
@@ -647,6 +660,7 @@ def _dedupe_review_findings(conn: sqlite3.Connection, task_ref: str | None = Non
                 _first_present(values_by_column["description"]) or "",
                 _first_present(values_by_column["fix"]),
                 _first_present(values_by_column["status"]) or "open",
+                _first_present(values_by_column.get("review_mode", [])),
                 _first_present(values_by_column["session"]) or "migration",
                 _first_present(values_by_column["agent"]),
                 _first_present(values_by_column["branch"]),
@@ -733,6 +747,7 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
             ("last_reopened_at", "ALTER TABLE review_findings ADD COLUMN last_reopened_at TEXT"),
             ("updated_at", "ALTER TABLE review_findings ADD COLUMN updated_at TEXT"),
             ("verification_evidence", "ALTER TABLE review_findings ADD COLUMN verification_evidence TEXT"),
+            ("review_mode", "ALTER TABLE review_findings ADD COLUMN review_mode TEXT"),
         ]:
             if not _has_column(conn, "review_findings", column):
                 conn.execute(sql)
@@ -2113,6 +2128,7 @@ def upsert_plan_cursor(
     source_heading: str | None = None,
     summary: str | None = None,
     task_ref: str | None = None,
+    require_clean_slice: bool = False,
 ) -> str:
     valid_states = {"dispatched", "completed", "skipped", "escalated"}
     normalized_plan_item_id = _normalize_optional_text(plan_item_id)
@@ -2131,6 +2147,47 @@ def upsert_plan_cursor(
         ).fetchone()
         if existing is None and normalized_summary is None:
             return _json_response({"ok": False, "error": "summary is required when creating a new plan cursor."})
+
+        next_lane_id = (
+            normalized_lane_id or _normalize_optional_text(existing["lane_id"])
+        ) if existing is not None else normalized_lane_id
+        if require_clean_slice:
+            since_value = existing["updated_at"] if existing is not None else None
+            open_high_query = ["SELECT COUNT(*) AS count FROM review_findings WHERE task_ref = ? AND status = 'open' AND severity = 'high'"]
+            open_high_params: list[object] = [resolved_task_ref]
+            if next_lane_id is not None:
+                open_high_query.append("AND lane_id = ?")
+                open_high_params.append(next_lane_id)
+            open_high_count = int(conn.execute(" ".join(open_high_query), tuple(open_high_params)).fetchone()["count"])
+
+            test_query = ["SELECT COUNT(*) AS count FROM verified_tests WHERE task_ref = ?"]
+            test_params: list[object] = [resolved_task_ref]
+            if since_value is not None:
+                test_query.append("AND verified_at >= ?")
+                test_params.append(since_value)
+            fresh_test_count = int(conn.execute(" ".join(test_query), tuple(test_params)).fetchone()["count"])
+
+            missing_gates: list[str] = []
+            if open_high_count > 0:
+                missing_gates.append("open_high_findings")
+            if fresh_test_count == 0:
+                missing_gates.append("missing_recent_test")
+            if missing_gates:
+                return _json_response(
+                    {
+                        "ok": False,
+                        "error": "require_clean_slice gate failed.",
+                        "missing_gates": missing_gates,
+                        "gate": {
+                            "require_clean_slice": True,
+                            "lane_scope": next_lane_id,
+                            "task_ref": resolved_task_ref,
+                            "open_high_count": open_high_count,
+                            "fresh_test_count": fresh_test_count,
+                            "tests_since": since_value,
+                        },
+                    }
+                )
 
         if existing is None:
             cur = conn.execute(
@@ -2164,7 +2221,6 @@ def upsert_plan_cursor(
             return _json_response({"ok": True, "cursor": row})
 
         next_summary = normalized_summary or str(existing["summary"])
-        next_lane_id = normalized_lane_id or _normalize_optional_text(existing["lane_id"])
         next_heading = normalized_heading or _normalize_optional_text(existing["source_heading"])
         next_action_id = mcp_action_id if mcp_action_id is not None else existing["mcp_action_id"]
         next_worker_message_id = worker_message_id if worker_message_id is not None else existing["worker_message_id"]
@@ -2399,9 +2455,13 @@ def report_blocker(operation: str, description: str | None = None, blocker_id: i
         return _json_response({"ok": True, "operation": operation, "blocker": _row_to_dict(conn.execute("SELECT * FROM blockers WHERE id = ?", (blocker_id,)).fetchone())})
 
 
-def record_review_finding(session: str, finding_id: str, severity: str, file_path: str, description: str, details: ReviewFindingDetails | None = None, actor: WriteActor | None = None, task_ref: str | None = None) -> str:
+def record_review_finding(session: str, finding_id: str, severity: str, file_path: str, description: str, details: ReviewFindingDetails | None = None, actor: WriteActor | None = None, task_ref: str | None = None, review_mode: str | None = None) -> str:
     if severity not in REVIEW_FINDING_SEVERITIES:
         return _json_response({"ok": False, "error": f"Invalid severity. Valid: {', '.join(sorted(REVIEW_FINDING_SEVERITIES))}"})
+    try:
+        normalized_review_mode = _normalize_review_mode(review_mode)
+    except ValueError as exc:
+        return _json_response({"ok": False, "error": str(exc)})
     line_start, line_end, fix = _parse_review_finding_details(details)
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
@@ -2410,8 +2470,8 @@ def record_review_finding(session: str, finding_id: str, severity: str, file_pat
         conn.execute(
             """
             INSERT INTO review_findings (
-                task_ref, lane_id, finding_id, severity, file_path, line_start, line_end, description, fix, status, session, agent, branch, commit_sha, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, datetime('now'), datetime('now'))
+                task_ref, lane_id, finding_id, severity, file_path, line_start, line_end, description, fix, status, review_mode, session, agent, branch, commit_sha, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
             ON CONFLICT(task_ref, finding_id) DO UPDATE SET
                 severity = excluded.severity,
                 file_path = excluded.file_path,
@@ -2420,6 +2480,7 @@ def record_review_finding(session: str, finding_id: str, severity: str, file_pat
                 description = excluded.description,
                 fix = excluded.fix,
                 status = 'open',
+                review_mode = COALESCE(excluded.review_mode, review_findings.review_mode),
                 resolved_at = NULL,
                 resolution_notes = NULL,
                 reopen_count = CASE WHEN review_findings.status <> 'open' THEN COALESCE(review_findings.reopen_count, 0) + 1 ELSE COALESCE(review_findings.reopen_count, 0) END,
@@ -2432,7 +2493,7 @@ def record_review_finding(session: str, finding_id: str, severity: str, file_pat
                 branch = COALESCE(review_findings.branch, excluded.branch),
                 commit_sha = COALESCE(review_findings.commit_sha, excluded.commit_sha)
             """,
-            (resolved_task_ref, lane_id, finding_id, severity, file_path, line_start, line_end, description, fix, session, agent, branch, commit_sha),
+            (resolved_task_ref, lane_id, finding_id, severity, file_path, line_start, line_end, description, fix, normalized_review_mode, session, agent, branch, commit_sha),
         )
         row = conn.execute("SELECT * FROM review_findings WHERE task_ref = ? AND finding_id = ?", (resolved_task_ref, finding_id)).fetchone()
         _write_current_task_md_for_task(conn, resolved_task_ref)
@@ -2658,13 +2719,17 @@ def reopen_review_finding(reason: str, finding_id: str | None = None, finding_db
     return update_review_finding(status="open", finding_id=finding_id, finding_db_id=finding_db_id, reopen_reason=reason, task_ref=task_ref, session=session, actor=actor)
 
 
-def list_review_findings(task_ref: str | None = None, status: str = "all", severity: str = "all", limit: int = 100, offset: int = 0) -> str:
+def list_review_findings(task_ref: str | None = None, status: str = "all", severity: str = "all", limit: int = 100, offset: int = 0, review_mode: str | None = None) -> str:
     valid_statuses = {"all", *REVIEW_FINDING_STATUSES}
     if status not in valid_statuses:
         return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(valid_statuses))}"})
     valid_severities = {"all", *REVIEW_FINDING_SEVERITIES}
     if severity not in valid_severities:
         return _json_response({"ok": False, "error": f"Invalid severity. Valid: {', '.join(sorted(valid_severities))}"})
+    try:
+        normalized_review_mode = _normalize_review_mode(review_mode)
+    except ValueError as exc:
+        return _json_response({"ok": False, "error": str(exc)})
     limit = max(1, min(limit, 500))
     offset = max(0, offset)
     with _get_db_connection() as conn:
@@ -2677,14 +2742,19 @@ def list_review_findings(task_ref: str | None = None, status: str = "all", sever
         if severity != "all":
             where_parts.append("severity = ?")
             params.append(severity)
+        if normalized_review_mode == "branch":
+            where_parts.append("(review_mode = 'branch' OR review_mode IS NULL)")
+        elif normalized_review_mode == "release_audit":
+            where_parts.append("review_mode = ?")
+            params.append(normalized_review_mode)
         where_sql = " AND ".join(where_parts)
         total_row = conn.execute(f"SELECT COUNT(*) AS count FROM review_findings WHERE {where_sql}", tuple(params)).fetchone()
         raw_findings = [dict(row) for row in conn.execute(f"SELECT * FROM review_findings WHERE {where_sql} ORDER BY CASE status WHEN 'open' THEN 0 WHEN 'deferred' THEN 1 WHEN 'fixed' THEN 2 WHEN 'wontfix' THEN 3 END, CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, COALESCE(updated_at, created_at) DESC, id DESC LIMIT ? OFFSET ?", (*params, limit, offset)).fetchall()]
         status_counts = {key: 0 for key in sorted(REVIEW_FINDING_STATUSES)}
-        for row in conn.execute("SELECT status, COUNT(*) AS count FROM review_findings WHERE task_ref = ? GROUP BY status", (resolved_task_ref,)).fetchall():
+        for row in conn.execute(f"SELECT status, COUNT(*) AS count FROM review_findings WHERE {where_sql} GROUP BY status", tuple(params)).fetchall():
             status_counts[str(row["status"])] = int(row["count"])
         severity_counts = {key: 0 for key in sorted(REVIEW_FINDING_SEVERITIES)}
-        for row in conn.execute("SELECT severity, COUNT(*) AS count FROM review_findings WHERE task_ref = ? GROUP BY severity", (resolved_task_ref,)).fetchall():
+        for row in conn.execute(f"SELECT severity, COUNT(*) AS count FROM review_findings WHERE {where_sql} GROUP BY severity", tuple(params)).fetchall():
             severity_counts[str(row["severity"])] = int(row["count"])
     workspace_git = _workspace_git_context()
     findings = [
@@ -2696,7 +2766,7 @@ def list_review_findings(task_ref: str | None = None, status: str = "all", sever
         for row in raw_findings
     ]
     total = int(total_row["count"]) if total_row else 0
-    return _json_response({"ok": True, "task_ref": resolved_task_ref, "workspace_git": workspace_git, "filters": {"status": status, "severity": severity, "limit": limit, "offset": offset}, "total_matching": total, "returned": len(findings), "has_more": (offset + len(findings)) < total, "counts": {"status": status_counts, "severity": severity_counts}, "findings": findings})
+    return _json_response({"ok": True, "task_ref": resolved_task_ref, "workspace_git": workspace_git, "filters": {"status": status, "severity": severity, "review_mode": normalized_review_mode, "limit": limit, "offset": offset}, "total_matching": total, "returned": len(findings), "has_more": (offset + len(findings)) < total, "counts": {"status": status_counts, "severity": severity_counts}, "findings": findings})
 
 
 def get_review_finding(finding_db_id: int | None = None, finding_id: str | None = None, task_ref: str | None = None) -> str:
@@ -2711,20 +2781,32 @@ def get_review_finding(finding_db_id: int | None = None, finding_id: str | None 
         return _json_response({"ok": True, "task_ref": resolved_task_ref, "workspace_git": workspace_git, "finding": _annotate_review_finding(dict(row), workspace_branch=workspace_git["branch"], workspace_commit_sha=workspace_git["commit_sha"])})
 
 
-def get_review_findings_summary(task_ref: str | None = None, top_n_open: int = 5, top_n_recent_updates: int = 3) -> str:
+def get_review_findings_summary(task_ref: str | None = None, top_n_open: int = 5, top_n_recent_updates: int = 3, review_mode: str | None = None) -> str:
     top_n_open = max(1, top_n_open)
     top_n_recent_updates = max(1, top_n_recent_updates)
+    try:
+        normalized_review_mode = _normalize_review_mode(review_mode)
+    except ValueError as exc:
+        return _json_response({"ok": False, "error": str(exc)})
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
-        total_row = conn.execute("SELECT COUNT(*) AS total FROM review_findings WHERE task_ref = ?", (resolved_task_ref,)).fetchone()
+        where_parts = ["task_ref = ?"]
+        params: list[object] = [resolved_task_ref]
+        if normalized_review_mode == "branch":
+            where_parts.append("(review_mode = 'branch' OR review_mode IS NULL)")
+        elif normalized_review_mode == "release_audit":
+            where_parts.append("review_mode = ?")
+            params.append(normalized_review_mode)
+        where_sql = " AND ".join(where_parts)
+        total_row = conn.execute(f"SELECT COUNT(*) AS total FROM review_findings WHERE {where_sql}", tuple(params)).fetchone()
         status_counts = {key: 0 for key in sorted(REVIEW_FINDING_STATUSES)}
-        for row in conn.execute("SELECT status, COUNT(*) AS count FROM review_findings WHERE task_ref = ? GROUP BY status", (resolved_task_ref,)).fetchall():
+        for row in conn.execute(f"SELECT status, COUNT(*) AS count FROM review_findings WHERE {where_sql} GROUP BY status", tuple(params)).fetchall():
             status_counts[str(row["status"])] = int(row["count"])
         severity_counts = {key: 0 for key in sorted(REVIEW_FINDING_SEVERITIES)}
-        for row in conn.execute("SELECT severity, COUNT(*) AS count FROM review_findings WHERE task_ref = ? GROUP BY severity", (resolved_task_ref,)).fetchall():
+        for row in conn.execute(f"SELECT severity, COUNT(*) AS count FROM review_findings WHERE {where_sql} GROUP BY severity", tuple(params)).fetchall():
             severity_counts[str(row["severity"])] = int(row["count"])
-        raw_open_findings = [dict(row) for row in conn.execute("SELECT * FROM review_findings WHERE task_ref = ? AND status = 'open' ORDER BY CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, COALESCE(updated_at, created_at) DESC, id DESC LIMIT ?", (resolved_task_ref, top_n_open)).fetchall()]
-        raw_recent_updates = [dict(row) for row in conn.execute("SELECT * FROM review_findings WHERE task_ref = ? ORDER BY COALESCE(updated_at, resolved_at, created_at) DESC, id DESC LIMIT ?", (resolved_task_ref, top_n_recent_updates)).fetchall()]
+        raw_open_findings = [dict(row) for row in conn.execute(f"SELECT * FROM review_findings WHERE {where_sql} AND status = 'open' ORDER BY CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, COALESCE(updated_at, created_at) DESC, id DESC LIMIT ?", (*params, top_n_open)).fetchall()]
+        raw_recent_updates = [dict(row) for row in conn.execute(f"SELECT * FROM review_findings WHERE {where_sql} ORDER BY COALESCE(updated_at, resolved_at, created_at) DESC, id DESC LIMIT ?", (*params, top_n_recent_updates)).fetchall()]
     workspace_git = _workspace_git_context()
     open_findings = [
         _annotate_review_finding(
@@ -2742,7 +2824,7 @@ def get_review_findings_summary(task_ref: str | None = None, top_n_open: int = 5
         )
         for row in raw_recent_updates
     ]
-    return _json_response({"ok": True, "task_ref": resolved_task_ref, "workspace_git": workspace_git, "counts": {"total": int(total_row["total"]) if total_row else 0, "status": status_counts, "severity": severity_counts}, "open_top": open_findings, "recent_updates": recent_updates, "limits": {"top_n_open": top_n_open, "top_n_recent_updates": top_n_recent_updates}})
+    return _json_response({"ok": True, "task_ref": resolved_task_ref, "workspace_git": workspace_git, "review_mode": normalized_review_mode, "counts": {"total": int(total_row["total"]) if total_row else 0, "status": status_counts, "severity": severity_counts}, "open_top": open_findings, "recent_updates": recent_updates, "limits": {"top_n_open": top_n_open, "top_n_recent_updates": top_n_recent_updates}})
 
 
 def _collect_review_findings_integrity(conn: sqlite3.Connection, task_ref: str, *, apply: bool = False) -> dict:
@@ -2823,7 +2905,10 @@ def _collect_task_provenance_integrity(conn: sqlite3.Connection, task_ref: str) 
     return {"healthy": total_issues == 0, "total_issues": total_issues, "tables": table_checks, "active_state": active_missing}
 
 
-def handoff_close_check(task_ref: str | None = None, allow_no_active_task: bool = False, enforce: bool = False) -> str:
+def handoff_close_check(task_ref: str | None = None, allow_no_active_task: bool = False, enforce: bool = False, require_fresh_tests: bool = False, current_commit_sha: str | None = None) -> str:
+    normalized_current_commit_sha = _normalize_optional_text(current_commit_sha)
+    if require_fresh_tests and normalized_current_commit_sha is None:
+        return _json_response({"ok": False, "error": "current_commit_sha required when require_fresh_tests=True"})
     with _get_db_connection() as conn:
         active_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
         if task_ref is None:
@@ -2841,6 +2926,14 @@ def handoff_close_check(task_ref: str | None = None, allow_no_active_task: bool 
         open_blockers = [row for row in snapshot["blockers"] if row.get("status") == "open"]
         pending_actions = [row for row in snapshot["next_actions"] if row.get("status") == "pending"]
         open_findings = [row for row in snapshot["review_findings"] if row.get("status") == "open"]
+        fresh_test_count = 0
+        if require_fresh_tests and normalized_current_commit_sha is not None:
+            fresh_test_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS count FROM verified_tests WHERE task_ref = ? AND commit_sha = ?",
+                    (resolved_task_ref, normalized_current_commit_sha),
+                ).fetchone()["count"]
+            )
         review_integrity = _collect_review_findings_integrity(conn, resolved_task_ref, apply=False)
         provenance_integrity = _collect_task_provenance_integrity(conn, resolved_task_ref)
         expected_markdown = _render_current_task_md(_build_current_task_state_from_snapshot(snapshot))
@@ -2863,6 +2956,8 @@ def handoff_close_check(task_ref: str | None = None, allow_no_active_task: bool 
         failures.append("Write provenance integrity checks failed (missing agent/branch metadata).")
     if not current_task_in_sync:
         failures.append("CURRENT_TASK.md is out of sync with handoff DB state.")
+    if require_fresh_tests and fresh_test_count == 0:
+        failures.append("Fresh verification for the current commit is required before close.")
     ready_to_close = len(failures) == 0
     payload = {
         "ok": not (enforce and not ready_to_close),
@@ -2876,11 +2971,22 @@ def handoff_close_check(task_ref: str | None = None, allow_no_active_task: bool 
             "review_integrity": review_integrity,
             "write_provenance": provenance_integrity,
             "current_task_sync": {"path": str(_current_task_path()), "exists": current_task_exists, "is_in_sync": current_task_in_sync},
+            "fresh_tests": {
+                "required": require_fresh_tests,
+                "current_commit_sha": normalized_current_commit_sha,
+                "count": fresh_test_count,
+                "is_violation": bool(require_fresh_tests and fresh_test_count == 0),
+            },
         },
         "failures": failures,
     }
     if enforce and not ready_to_close:
         payload["error"] = "Handoff close checks failed."
+    if require_fresh_tests and fresh_test_count == 0:
+        payload["stale_test"] = {
+            "current_commit_sha": normalized_current_commit_sha,
+            "reason": "No verification rows recorded for the current commit.",
+        }
     return _json_response(payload)
 
 def export_handoff_state(task_ref: str | None = None, output_path: str | None = None, include_markdown: bool = True) -> str:
@@ -2951,7 +3057,7 @@ def _import_snapshot(conn: sqlite3.Connection, task_ref: str, snapshot: dict, mo
         conn.execute("INSERT INTO verified_tests (task_ref, lane_id, command, passed, exit_code, result, session, agent, branch, commit_sha, verified_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, _resolve_import_lane_id(row), row.get("command", ""), 1 if row.get("passed") else 0, row.get("exit_code"), row.get("result"), row.get("session", "import"), agent, branch, commit_sha, row.get("verified_at") or now))
     for row in findings:
         agent, branch, commit_sha = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
-        conn.execute("INSERT INTO review_findings (task_ref, lane_id, finding_id, severity, file_path, line_start, line_end, description, fix, status, session, agent, branch, commit_sha, resolution_notes, reopen_count, last_reopen_reason, last_reopened_at, resolved_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, _resolve_import_lane_id(row), row.get("finding_id", ""), row.get("severity", "low"), row.get("file_path", ""), row.get("line_start"), row.get("line_end"), row.get("description", ""), row.get("fix"), row.get("status", "open"), row.get("session", "import"), agent, branch, commit_sha, row.get("resolution_notes"), int(row.get("reopen_count") or 0), row.get("last_reopen_reason"), row.get("last_reopened_at"), row.get("resolved_at"), row.get("created_at") or now, row.get("updated_at") or row.get("resolved_at") or row.get("created_at") or now))
+        conn.execute("INSERT INTO review_findings (task_ref, lane_id, finding_id, severity, file_path, line_start, line_end, description, fix, status, review_mode, session, agent, branch, commit_sha, resolution_notes, reopen_count, last_reopen_reason, last_reopened_at, resolved_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, _resolve_import_lane_id(row), row.get("finding_id", ""), row.get("severity", "low"), row.get("file_path", ""), row.get("line_start"), row.get("line_end"), row.get("description", ""), row.get("fix"), row.get("status", "open"), row.get("review_mode"), row.get("session", "import"), agent, branch, commit_sha, row.get("resolution_notes"), int(row.get("reopen_count") or 0), row.get("last_reopen_reason"), row.get("last_reopened_at"), row.get("resolved_at"), row.get("created_at") or now, row.get("updated_at") or row.get("resolved_at") or row.get("created_at") or now))
     for row in lanes:
         conn.execute("INSERT INTO worktree_lanes (task_ref, lane_id, title, objective, worktree_path, branch, owner_agent, status, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, row.get("lane_id", ""), row.get("title"), row.get("objective"), row.get("worktree_path", ""), row.get("branch", ""), row.get("owner_agent"), row.get("status", "planned"), row.get("notes"), row.get("created_at") or now, row.get("updated_at") or row.get("created_at") or now))
     for row in reports:

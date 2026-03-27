@@ -8,9 +8,26 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from agent_handoff_mcp import api as mcp_server
+from agent_handoff_mcp.config import RuntimeConfig
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ORCHESTRATION_DIR = Path(__file__).resolve().parents[1] / "src" / "agent_handoff_mcp" / "orchestration"
+
+
+@pytest.fixture()
+def isolated_handoff(tmp_path: Path):
+    runtime = RuntimeConfig.for_workspace(
+        tmp_path,
+        state_dir=tmp_path / ".task-state",
+        current_task_path=tmp_path / "CURRENT_TASK.md",
+    )
+    mcp_server.configure_runtime(runtime)
+    return runtime
+
+
+def _parse(payload: str) -> dict[str, Any]:
+    return json.loads(payload)
 
 
 def _load(name: str):
@@ -93,6 +110,92 @@ class TestEscalateEffort:
             previous_run_exhausted=False,
         )
         assert not any("escalated" in r for r in reasons)
+
+
+class TestFreshCloseChecks:
+    def test_requires_current_commit_sha_when_fresh_tests_enabled(self, isolated_handoff: RuntimeConfig) -> None:
+        _parse(
+            mcp_server.set_handoff_state(
+                task_ref="review-guide-hardening",
+                objective="Verify fresh test gates",
+                status="done",
+            )
+        )
+
+        response = _parse(mcp_server.handoff_close_check(require_fresh_tests=True))
+
+        assert response["ok"] is False
+        assert "current_commit_sha required" in response["error"]
+
+    def test_fails_when_no_test_exists_for_current_commit(self, isolated_handoff: RuntimeConfig) -> None:
+        _parse(
+            mcp_server.set_handoff_state(
+                task_ref="review-guide-hardening",
+                objective="Verify fresh test gates",
+                status="done",
+            )
+        )
+        _parse(
+            mcp_server.record_test_result(
+                session="review",
+                command="pytest old",
+                passed=True,
+                actor={"agent": "tester", "branch": "feature/review", "commit_sha": "oldsha"},
+            )
+        )
+        _parse(mcp_server.generate_current_task_md(write_file=True))
+
+        response = _parse(
+            mcp_server.handoff_close_check(
+                enforce=True,
+                require_fresh_tests=True,
+                current_commit_sha="newsha",
+            )
+        )
+
+        assert response["ok"] is False
+        assert response["checks"]["fresh_tests"]["count"] == 0
+        assert response["checks"]["fresh_tests"]["is_violation"] is True
+        assert response["stale_test"]["current_commit_sha"] == "newsha"
+
+    def test_passes_when_current_commit_has_test_even_with_older_history(self, isolated_handoff: RuntimeConfig) -> None:
+        _parse(
+            mcp_server.set_handoff_state(
+                task_ref="review-guide-hardening",
+                objective="Verify fresh test gates",
+                status="done",
+            )
+        )
+        _parse(
+            mcp_server.record_test_result(
+                session="review",
+                command="pytest old",
+                passed=True,
+                actor={"agent": "tester", "branch": "feature/review", "commit_sha": "oldsha"},
+            )
+        )
+        _parse(
+            mcp_server.record_test_result(
+                session="review",
+                command="pytest current",
+                passed=True,
+                actor={"agent": "tester", "branch": "feature/review", "commit_sha": "newsha"},
+            )
+        )
+        _parse(mcp_server.generate_current_task_md(write_file=True))
+
+        response = _parse(
+            mcp_server.handoff_close_check(
+                enforce=True,
+                require_fresh_tests=True,
+                current_commit_sha="newsha",
+            )
+        )
+
+        assert response["ok"] is True
+        assert response["ready_to_close"] is True
+        assert response["checks"]["fresh_tests"]["count"] == 1
+        assert response["checks"]["fresh_tests"]["is_violation"] is False
 
 
 # ---------------------------------------------------------------------------

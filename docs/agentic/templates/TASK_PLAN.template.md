@@ -1,130 +1,186 @@
 # Task Plan Template
 
 > Use this template for all implementation plans under `docs/tasks/`.
-> See `docs/agentic/instructions.md` §"Consolidated Checklists" for the rules this template enforces.
+> Task plans describe executable work for one bounded objective.
+> Task plans use **slices**, not phases:
+>
+> - **Phases** belong to epics and describe coarse-grained temporal delivery across multiple task plans.
+> - **Slices** are reviewable implementation increments that can be completed, verified, and logged independently.
+>
+> Favor slices that each produce behavior plus proof. Avoid scaffold-only slices that add placeholders, skipped tests, or empty abstractions without executable value.
+> See `docs/agentic/instructions.md` and `docs/agentic/rules/planning-review-guide.md` for repo-wide planning rules.
 
 ---
 
 # [TASK_TITLE]
 
+## Objective
+
+[What changes when this task is complete. 2-3 sentences max.]
+
 ## Problem Statement
 
-[What user-visible behavior needs to change. 2-3 sentences max.]
+[What behavior, contract, or workflow needs to change, and why the current state is insufficient.]
+
+## Constraints
+
+- [Architectural, policy, or runtime constraint]
+- [Cross-boundary or ownership constraint]
+- [Testing, rollout, or safety constraint]
 
 ## Workflow Principles
 
-- [Key behavioral rule that guides implementation decisions]
-- [Another principle, e.g., "Confirmed clusters only for suggestion eligibility"]
+- [Behavioral or policy rule that guides implementation decisions]
+- [Another principle, such as single contract owner or no compatibility shim in greenfield paths]
 
 ## Terminology
 
-- **[Term]**: [Definition as used in this task context]
+- **[Term]**: [Definition as used in this task]
 
 ## Current State Analysis
 
-[What works, what's broken, what's missing. Use bullet points.]
+- [What currently works]
+- [What is broken or drifting]
+- [What assumptions/tests/docs are currently misleading]
 
-- [Component/endpoint] does X but should do Y.
-- [Frontend/backend] currently [behavior]. This conflicts with [requirement].
+## Target Outcome
+
+[Narrative description of the intended behavior and the preferred end-state design.]
+
+## Context Loading
+
+> List the minimum authoritative context an agent should load before implementation.
+> Prefer small, role-specific surfaces over broad repo ingestion.
+
+- Rules: `[path/to/rule.md]`
+- Contracts: `[path/to/contract.md]`
+- Handoff/MCP state: [task ref, findings, or decision surfaces to inspect]
+- External docs via `ctx7` only if: [exact dependency/runtime reason]
+
+## Contract and Boundary Impact
+
+> Required for any task that touches a cross-service, cross-language, or tool/client boundary.
+> Omit only when the task is strictly local and cannot affect a boundary contract.
+
+| Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
+| --- | --- | --- | --- | --- | --- |
+| `[boundary-name]` | [backend / proxy / frontend / MCP] | `[path/to/contract.md]` | [Change or `none`] | [yes/no + why] | [fixture/schema/test] |
 
 ## Proposed Solution
 
-[Narrative description of the approach. Keep it concise — details go in Patterns to Follow.]
+[Concise description of the approach. Keep this high-level. Put implementation sequencing in slices below.]
 
-## Patterns to Follow
+## Files and Surfaces to Change
 
-### [Pattern Name]
-
-```python
-# Code snippet showing the pattern to implement
-```
-
-### [Pattern Name]
-
-```tsx
-// Code snippet showing the pattern to implement
-```
-
-## Functions to Change
-
-| File | Line | Change |
+| Surface | File | Change |
 | --- | --- | --- |
-| `path/to/file.py` | 10 | [Specific change description] |
-| `path/to/file.ts` | 47 | [Specific change description] |
+| [backend/frontend/docs/tests/tooling] | `path/to/file` | [Specific change] |
 
 ## Related Files
 
 | File | Note |
 | --- | --- |
-| `path/to/related.py` | [Why this file is relevant but not directly changed] |
+| `path/to/file` | [Relevant context or likely adjacent impact] |
+
+## Verification Strategy
+
+> Define the evidence bundle before implementation.
+> Include deterministic tests first; add runtime-parity or manual verification when they are genuinely required.
+
+- Deterministic tests:
+  - `[command]`
+- Runtime-parity / environment checks:
+  - `[command or workflow]`
+- Contract/fixture verification:
+  - `[command or assertion]`
+- Manual verification:
+  - `[UI path or operator action]`
+
+## Slice Delivery
+
+### Slice 1: [Title]
+
+**Goal**: [One sentence.]
+
+Changes:
+
+- [Behavioral change]
+- [Docs/contract/test change in same slice]
+
+Proof:
+
+- [Command, fixture, or observable outcome]
+
+### Slice 2: [Title]
+
+**Goal**: [One sentence.]
+
+Changes:
+
+- [Behavioral change]
+- [Docs/contract/test change in same slice]
+
+Proof:
+
+- [Command, fixture, or observable outcome]
 
 ## Lane Decomposition (Multi-Agent)
 
-> Include this section when the task naturally splits into independent backend/frontend/PHP lanes.
-> Omit for single-lane tasks that one agent can complete in a single session.
-> See `docs/agentic/worktree-codex-playbook.md` for the full operational playbook and `docs/agentic/lane-scoped-context.md` for prompt budget rules.
+> Include this section only when the task naturally splits into independent lanes.
+> Omit for single-lane work that one agent can complete in a bounded session.
 
 ### Lanes
 
 | Lane ID | Owned Paths | Upstream Dependencies | Required Tests |
 | --- | --- | --- | --- |
-| `backend-domain` | `apps/prototype-description-service/db/**`, `apps/prototype-description-service/recognition/domain/**` | None | `PYENV_VERSION=description-service pytest recognition/tests/unit/` |
-| `backend-http` | `apps/prototype-description-service/recognition/interface_adapters/http/**` | `backend-domain` | `PYENV_VERSION=description-service pytest recognition/tests/unit/` |
-| `wp-proxy` | `apps/prototype-wp-alt-context/src/**` | `backend-http` (contract only) | `composer phpunit` |
-| `frontend` | `apps/prototype-wp-alt-context/js/**` | `wp-proxy` (contract only) | `npm run test -- --run` |
+| `lane-id` | `path/**` | [None or lane dependency] | `[command]` |
 
 ### Merge Order
 
-[List lanes in dependency order: schema/domain before HTTP, backend contract before WordPress proxy, proxy before frontend.]
+[List lanes in dependency order.]
 
 ### Manifest
 
-Initialize the lane manifest for this task:
-
 ```bash
-make lane-manifest-init TASK=<task-ref> LANE_IDS='backend-domain backend-http wp-proxy frontend' TASK_PLAN=docs/tasks/<version>/<this-file>.md
+make lane-manifest-init TASK=<task-ref> LANE_IDS='<lane-a lane-b>' TASK_PLAN=docs/tasks/<version>/<this-file>.md
 ```
 
 ### Orchestration Mode
 
-- **Codex subagent (preferred when available)**: Use MCP worker lifecycle tools (`worker_start_all`, `worker_status`, `worker_stop`) with `backend="codex-subagent"`. The orchestrator daemon dispatches work, intakes merge-ready lanes, and refreshes downstream dependents automatically.
-- **Shell fallback**: Use `make lane-open`, `make lane-run`, `make lane-handoff`, and `make lane-intake` from the orchestrator root.
+- **Codex subagent (preferred when available)**: Use MCP worker lifecycle tools with the declared lane ownership and verification boundaries.
+- **Shell fallback**: Use repo lane helpers or manual worktrees while preserving the same ownership and evidence requirements.
 
 ---
 
 # Consolidated Checklist
 
-## Completed
+## Context and Ownership
 
-- [ ] [Pre-existing completed work, if any]
+- [ ] Loaded the minimum authoritative rules, contracts, and handoff state before editing.
+- [ ] Confirmed whether external dependency context requires `ctx7`.
+- [ ] Recorded boundary ownership and compatibility expectations if any contract is touched.
 
-## Phase 0: Scaffolding
+## Slice 1: [Title]
 
-- [ ] Add interface/method signatures with type hints and docstrings.
-- [ ] Add `raise NotImplementedError("TODO: ...")` stubs.
-- [ ] Create test files with `@pytest.mark.skip("scaffold")` or `it.todo()` stubs.
-- [ ] Update API contracts in `docs/agentic/contracts/` if cross-layer.
-- [ ] Verify scaffolds compile: `mypy .` / `npm run typecheck`.
+- [ ] [Implementation step]
+- [ ] [Contract/docs/tests updated in same slice]
+- [ ] [Verification evidence captured]
 
-## Phase 1: [Description]
+## Slice 2: [Title]
 
-- [ ] [Task 1]
-- [ ] [Task 2]
+- [ ] [Implementation step]
+- [ ] [Contract/docs/tests updated in same slice]
+- [ ] [Verification evidence captured]
 
-## Phase 2: [Description]
+## Review Readiness
 
-- [ ] [Task 1]
-- [ ] [Task 2]
-
-## Phase 3: Tests
-
-- [ ] [Unit test coverage]
-- [ ] [Integration test coverage]
-- [ ] [Frontend test coverage]
+- [ ] No boundary-touching implementation is left without matching contract/doc/fixture evidence.
+- [ ] Runtime-parity checks are included where tests can mask real behavior.
+- [ ] Handoff decision records the change, verification, and any contract implications.
 
 ## Stretch Goals
 
-- [ ] [Nice-to-have that won't block completion]
+- [ ] [Nice-to-have that will not block completion]
 
 ## Success Criteria
 

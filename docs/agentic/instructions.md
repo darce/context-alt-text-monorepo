@@ -90,7 +90,7 @@ Choose your domain to load targeted context. **Always load the testing guide** a
 | MCP tooling / testing commands       | [BOOTSTRAP.md](BOOTSTRAP.md)                                                                                |
 | Codex custom MCP attachment          | [codex-custom-mcp-playbook.md](codex-custom-mcp-playbook.md)                                                |
 | Lane decomposition / orchestration   | [worktree-codex-playbook.md](worktree-codex-playbook.md) + [lane-scoped-context.md](lane-scoped-context.md) |
-| **Antigravity Agents (`/` cmds)**    | **See `.agent/workflows/` for environment-specific fallbacks and orchestration.**                           |
+
 
 ---
 
@@ -328,7 +328,7 @@ Failure policy:
 
 - If MCP handoff tools are unavailable, stop normal implementation work.
 - Record/report the blocker, and include: `Handoff updated: no (tool unavailable)`.
-- **Antigravity Agents ONLY**: Use predefined terminal commands in `.agent/workflows/` (e.g., `make task`, `make dashboard`) to query/orchestrate task state if native MCP tools are unconfigured. These CLI-style fallbacks exist only for MCP-constrained environments. Do not attempt raw SQLite writes.
+
 - Use `templates/CURRENT_TASK.template.md` only as fallback when MCP handoff is unavailable.
 
 Completion gate:

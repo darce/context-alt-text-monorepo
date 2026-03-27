@@ -12,6 +12,19 @@
 | Static analysis | `cd apps/prototype-wp-alt-context && composer phpstan` |
 | Tests           | `cd apps/prototype-wp-alt-context && composer test`    |
 
+When runtime-sensitive behavior is claimed fixed, require fresh command evidence on the current branch state for both PHPUnit and PHPStan. Runtime-sensitive changes include bootstrap paths, controller composition, proxy/header forwarding, and autoload behavior.
+
+---
+
+## Boundary and Runtime Correctness
+
+> `branch-review-guide.md` already carries the general principles for PHP runtime autoload parity and boundary metadata preservation. The items here are the PHP/WordPress-specific expansion: real runtime load-path checks, concrete proxy/header verification, and degradation semantics at the controller boundary.
+
+- [ ] **Runtime bootstrap/autoload parity** — when bootstrap, controller composition, or autoload paths change, verify behavior under the real WordPress load path, not only the PHPUnit bootstrap fallback.
+- [ ] **Adapter provenance** — controllers/adapters do not invent envelope fields such as `limit`, `offset`, `total`, `data_source`, or status metadata; every field must trace to the request, upstream payload, or documented local authority.
+- [ ] **Header and status preservation** — proxy controllers preserve upstream HTTP status and relevant headers without normalizing away failure semantics.
+- [ ] **Degradation semantics** — error paths explicitly match the contract: empty, unavailable, or blocking are distinct outcomes and must not be silently conflated.
+
 ---
 
 ## Security

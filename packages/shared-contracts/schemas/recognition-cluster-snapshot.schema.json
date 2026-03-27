@@ -63,6 +63,16 @@
             "type": ["string", "null"],
             "description": "ACX-formatted path to the representative thumbnail."
           },
+          "representative_id": {
+            "type": ["string", "null"],
+            "format": "uuid",
+            "description": "Identity UUID of the chosen representative member for this cluster."
+          },
+          "is_pinned": {
+            "type": "boolean",
+            "description": "Whether the representative selection is pinned instead of machine-chosen.",
+            "default": false
+          },
           "suggested_label": {
             "type": ["string", "null"],
             "description": "Backend-inferred label for unlabeled, unconfirmed clusters. Null when no inference was attempted or the cluster is user-confirmed."

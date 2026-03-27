@@ -1,13 +1,14 @@
 # Shared Contracts
 
-Machine-readable JSON schemas for cross-service contracts between the WordPress plugin and the description service.
+Machine-readable JSON schemas and shared golden fixtures for cross-service contracts between the WordPress plugin and the description service.
 
 ## Structure
 
 ```
 packages/shared-contracts/
 ├── recognition/
-│   └── roster-roundtrip.sample.json   # Sample roster sync payload
+│   ├── roster-roundtrip.sample.json   # Sample roster sync payload
+│   └── *.golden.json                  # Cross-boundary fixture payloads
 └── schemas/
     ├── coverage-stats.schema.json
     ├── recognition-cluster-snapshot.schema.json
@@ -19,7 +20,7 @@ packages/shared-contracts/
 
 ## Purpose
 
-These canonical schema definitions will be used to generate language-specific types for each consuming app (TypeScript, PHP DTOs, Pydantic models). Until code generation tooling is in place, the schemas serve as the authoritative specification.
+These canonical schema definitions and shared fixtures are used to keep cross-boundary payloads aligned across backend, WordPress, and frontend consumers. Until code generation tooling is in place, the schemas serve as the authoritative machine-readable specification.
 
 ## vs. docs/agentic/contracts/
 
@@ -32,5 +33,6 @@ These canonical schema definitions will be used to generate language-specific ty
 ## Related
 
 - `docs/agentic/contracts/` -- human-readable contract documentation
+- `docs/agentic/rules/contract-change-checklist.md` -- boundary-owner, schema-evolution, and fixture expectations
 - `apps/prototype-wp-alt-context/` -- WordPress plugin (consumer)
 - `apps/prototype-description-service/` -- description service (consumer)

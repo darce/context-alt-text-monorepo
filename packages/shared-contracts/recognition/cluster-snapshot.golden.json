@@ -1,0 +1,84 @@
+{
+  "tenant_id": "cc42f496-c7e1-5631-b3b5-cfa270c763f8",
+  "snapshot_version": 104,
+  "snapshot_generation_id": "70e7f684-7228-4b4d-9594-c3ca024478f6",
+  "source_job_id": "6e2b534b-c5f1-4d3d-a6d1-1f0b8d8ab7ec",
+  "generated_at": "2026-03-27T18:00:00Z",
+  "clusters": [
+    {
+      "cluster_uuid": "6c1a2e32-31b2-4d54-a4de-98b1a73d77a1",
+      "label": "Alice Example",
+      "curation_state": "confirmed",
+      "is_user_confirmed": true,
+      "identity_count": 2,
+      "representative_thumb_path": "acx://cluster/6c1a2e32-31b2-4d54-a4de-98b1a73d77a1/media/501",
+      "representative_id": "4b8f0a3e-3f1f-4f59-96f2-bfb6c8c1d3bb",
+      "is_pinned": true,
+      "suggested_label": null,
+      "suggested_label_source": null,
+      "suggested_label_confidence": null,
+      "suggested_target_cluster_id": null
+    },
+    {
+      "cluster_uuid": "28f91a5d-0a26-48cc-ab25-f1ad9ac74367",
+      "label": null,
+      "curation_state": "active",
+      "is_user_confirmed": false,
+      "identity_count": 1,
+      "representative_thumb_path": "acx://cluster/28f91a5d-0a26-48cc-ab25-f1ad9ac74367/media/777",
+      "representative_id": null,
+      "is_pinned": false,
+      "suggested_label": "Alice Example",
+      "suggested_label_source": "similar_cluster",
+      "suggested_label_confidence": 0.91,
+      "suggested_target_cluster_id": "6c1a2e32-31b2-4d54-a4de-98b1a73d77a1"
+    }
+  ],
+  "members": [
+    {
+      "identity_uuid": "4b8f0a3e-3f1f-4f59-96f2-bfb6c8c1d3bb",
+      "cluster_uuid": "6c1a2e32-31b2-4d54-a4de-98b1a73d77a1",
+      "attachment_id": 501,
+      "bbox": {
+        "x": 12,
+        "y": 20,
+        "width": 80,
+        "height": 96
+      },
+      "image_width": 1200,
+      "image_height": 1600,
+      "thumb_path": "acx://identity/4b8f0a3e-3f1f-4f59-96f2-bfb6c8c1d3bb/thumb",
+      "similarity": 0.98
+    },
+    {
+      "identity_uuid": "0db4d66d-2d7b-4454-8ad4-954e469c0a33",
+      "cluster_uuid": "6c1a2e32-31b2-4d54-a4de-98b1a73d77a1",
+      "attachment_id": 502,
+      "bbox": {
+        "x": 144,
+        "y": 210,
+        "width": 72,
+        "height": 88
+      },
+      "image_width": 1200,
+      "image_height": 1600,
+      "thumb_path": "acx://identity/0db4d66d-2d7b-4454-8ad4-954e469c0a33/thumb",
+      "similarity": 0.95
+    },
+    {
+      "identity_uuid": "59e93ee8-e65b-4eb7-a46e-c73da0b6d4c2",
+      "cluster_uuid": "28f91a5d-0a26-48cc-ab25-f1ad9ac74367",
+      "attachment_id": 777,
+      "bbox": {
+        "x": 31,
+        "y": 44,
+        "width": 66,
+        "height": 84
+      },
+      "image_width": 1024,
+      "image_height": 1024,
+      "thumb_path": "acx://identity/59e93ee8-e65b-4eb7-a46e-c73da0b6d4c2/thumb",
+      "similarity": 0.87
+    }
+  ]
+}

@@ -66,11 +66,11 @@ The repo has a defined set of process health metrics that can be collected from 
 
 ## Contract and Boundary Impact
 
-| Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
-| --- | --- | --- | --- | --- | --- |
-| `get_metrics_summary` MCP tool | agentic-tooling | `docs/agentic/contracts/agent-handoff-mcp.md` | Add process-health sections to snapshot output | Yes; existing snapshot keys preserved | Existing callers still parse current sections |
-| Review guide escalation surface | agentic-tooling | `docs/agentic/rules/branch-review-guide.md` | Expand multi-lens audit from trigger list to workflow definition | No; additive | Manual review |
-| ACE reflect / pruning surface | agentic-tooling | `docs/agentic/instructions.md` (curation rules section) | Add periodic pruning workflow and trigger criteria | No; additive | Manual review |
+| Boundary                        | Owner           | Current Contract                                        | Expected Change                                                  | Compatibility Needed?                 | Verification                                  |
+| ------------------------------- | --------------- | ------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------- | --------------------------------------------- |
+| `get_metrics_summary` MCP tool  | agentic-tooling | `docs/agentic/contracts/agent-handoff-mcp.md`           | Add process-health sections to snapshot output                   | Yes; existing snapshot keys preserved | Existing callers still parse current sections |
+| Review guide escalation surface | agentic-tooling | `docs/agentic/rules/branch-review-guide.md`             | Expand multi-lens audit from trigger list to workflow definition | No; additive                          | Manual review                                 |
+| ACE reflect / pruning surface   | agentic-tooling | `docs/agentic/instructions.md` (curation rules section) | Add periodic pruning workflow and trigger criteria               | No; additive                          | Manual review                                 |
 
 ## Proposed Solution
 
@@ -78,28 +78,28 @@ Five slices delivered in dependency order. Slice 1 defines metrics and extends `
 
 ## Files and Surfaces to Change
 
-| Surface | File | Change |
-| --- | --- | --- |
-| tooling | `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/ace_metrics.py` | Add process-health metric collectors: reopened-finding rate, contract co-change signal, handoff completeness, finding-resolution velocity |
-| test | `packages/agent-handoff-mcp/tests/test_ace_metrics.py` | Extend existing suite with unit tests for process-health metric computation |
-| contract | `docs/agentic/contracts/agent-handoff-mcp.md` | Update `get_metrics_summary` description to include process-health sections |
-| rules | `docs/agentic/rules/branch-review-guide.md` | Expand "Escalate To Multi-Lens Audit" into a full workflow with lens definitions, finding conventions, and completion criteria |
-| rules | `docs/agentic/instructions.md` | Add periodic pruning workflow section near existing curation rules |
-| docs | `packages/agent-handoff-mcp/README.md` | Synchronize metrics description after snapshot shape changes |
-| docs | `docs/agentic/instructions.md` | Add handoff-memory and ctx7 evaluation guidance |
-| docs | `docs/epics/v0.3.0/agentic-development-process-hardening-epic.md` | Update Phase 5 checklist items to checked |
+| Surface  | File                                                                            | Change                                                                                                                                    |
+| -------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| tooling  | `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/ace_metrics.py` | Add process-health metric collectors: reopened-finding rate, contract co-change signal, handoff completeness, finding-resolution velocity |
+| test     | `packages/agent-handoff-mcp/tests/test_ace_metrics.py`                          | Extend existing suite with unit tests for process-health metric computation                                                               |
+| contract | `docs/agentic/contracts/agent-handoff-mcp.md`                                   | Update `get_metrics_summary` description to include process-health sections                                                               |
+| rules    | `docs/agentic/rules/branch-review-guide.md`                                     | Expand "Escalate To Multi-Lens Audit" into a full workflow with lens definitions, finding conventions, and completion criteria            |
+| rules    | `docs/agentic/instructions.md`                                                  | Add periodic pruning workflow section near existing curation rules                                                                        |
+| docs     | `packages/agent-handoff-mcp/README.md`                                          | Synchronize metrics description after snapshot shape changes                                                                              |
+| docs     | `docs/agentic/instructions.md`                                                  | Add handoff-memory and ctx7 evaluation guidance                                                                                           |
+| docs     | `docs/epics/v0.3.0/agentic-development-process-hardening-epic.md`               | Update Phase 5 checklist items to checked                                                                                                 |
 
 ## Related Files
 
-| File | Note |
-| --- | --- |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/ace_reflect.py` | Strategy-bullet parser and counter updater; pruning workflow references this |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/review_ready.py` | Review-readiness gate; audit escalation may reference its output |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py` | Source of truth for finding `reopen_count`, finding status transitions, and close-check logic |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/dashboard_live.py` | Existing dashboard that imports ace_reflect; may need alignment with new metrics |
-| `docs/literature/process/product-deploy-agents/README.md` | Multi-lens audit pipeline model |
-| `docs/literature/process/agentfactory-book/ch-99-evaluation-quality-gates-drilldown-v2.md` | Quality-gate design principles |
-| `Makefile` | `ace-reflect` and `ace-metrics` targets |
+| File                                                                                       | Note                                                                                          |
+| ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/ace_reflect.py`            | Strategy-bullet parser and counter updater; pruning workflow references this                  |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/review_ready.py`           | Review-readiness gate; audit escalation may reference its output                              |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py`                                 | Source of truth for finding `reopen_count`, finding status transitions, and close-check logic |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/dashboard_live.py`         | Existing dashboard that imports ace_reflect; may need alignment with new metrics              |
+| `docs/literature/process/product-deploy-agents/README.md`                                  | Multi-lens audit pipeline model                                                               |
+| `docs/literature/process/agentfactory-book/ch-99-evaluation-quality-gates-drilldown-v2.md` | Quality-gate design principles                                                                |
+| `Makefile`                                                                                 | `ace-reflect` and `ace-metrics` targets                                                       |
 
 ## Verification Strategy
 
@@ -208,16 +208,15 @@ Proof:
 
 Changes:
 
-- Update `agentic-development-process-hardening-epic.md` Phase 5 checklist items to `[x]`
-- Update Phase 5 status from `not-started` to `complete`
-- Add a Completed Tasks row for Phase 5
+- Update `agentic-development-process-hardening-epic.md` Phase 5 checklist and status to match the implemented subset honestly
+- Keep Phase 5 marked `in-progress` until the remaining evaluation deliverables are implemented
 - Ensure `packages/agent-handoff-mcp/README.md` metrics section reflects the final snapshot shape
 - Ensure `docs/agentic/contracts/agent-handoff-mcp.md` `get_metrics_summary` description reflects the final snapshot shape
 - Record handoff decision for Slice 5
 
 Proof:
 
-- Epic checklist matches implementation state
+- Epic checklist and Phase 5 status match implementation state
 - README and contract doc are synchronized with `ace_metrics.py` snapshot output
 - `git diff --check` clean on all modified files
 
@@ -227,66 +226,66 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded the minimum authoritative rules, contracts, and handoff state before editing.
-- [ ] Confirmed `ace_metrics.py` snapshot schema before extending it.
-- [ ] Verified `record_review_finding` supports `review_mode` parameter before defining audit conventions.
+- [x] Loaded the minimum authoritative rules, contracts, and handoff state before editing.
+- [x] Confirmed `ace_metrics.py` snapshot schema before extending it.
+- [x] Verified `record_review_finding` supports `review_mode` parameter before defining audit conventions.
 
 ## Slice 1: Process Health Metrics
 
-- [ ] Added `process_health` section to `ace_metrics.py` snapshot.
-- [ ] Implemented `reopened_finding_rate` collector from `handoff.db` finding data.
-- [ ] Implemented `finding_resolution_velocity` collector.
-- [ ] Implemented `handoff_decision_completeness` collector.
-- [ ] Implemented `contract_co_change_signal` collector.
-- [ ] Extended existing `test_ace_metrics.py` with unit tests for each new collector.
-- [ ] Updated `get_metrics_summary` description in contract doc.
-- [ ] Synchronized README metrics section.
-- [ ] Handoff decision recorded for Slice 1.
+- [x] Added `process_health` section to `ace_metrics.py` snapshot.
+- [x] Implemented `reopened_finding_rate` collector from `handoff.db` finding data.
+- [x] Implemented `finding_resolution_velocity` collector.
+- [x] Implemented `handoff_decision_completeness` collector.
+- [x] Implemented `contract_co_change_signal` collector.
+- [x] Extended existing `test_ace_metrics.py` with unit tests for each new collector.
+- [x] Updated `get_metrics_summary` description in contract doc.
+- [x] Synchronized README metrics section.
+- [x] Handoff decision recorded for Slice 1.
 
 ## Slice 2: Multi-Lens Audit Workflow
 
-- [ ] Expanded "Escalate To Multi-Lens Audit" into full workflow section in `branch-review-guide.md`.
-- [ ] Defined architecture/reliability, QA/state-matrix, and contract/compliance lens scopes.
-- [ ] Defined finding-ID prefix conventions for per-lens classification (e.g., `ARCH-`, `QA-`, `CONTRACT-`).
-- [ ] Defined completion criteria for multi-lens audits.
-- [ ] Added cross-reference in `development-workflow.md`.
-- [ ] Verified `review_mode=release_audit` is a valid value on `record_review_finding`.
-- [ ] Handoff decision recorded for Slice 2.
+- [x] Expanded "Escalate To Multi-Lens Audit" into full workflow section in `branch-review-guide.md`.
+- [x] Defined architecture/reliability, QA/state-matrix, and contract/compliance lens scopes.
+- [x] Defined finding-ID prefix conventions for per-lens classification (e.g., `ARCH-`, `QA-`, `CONTRACT-`).
+- [x] Defined completion criteria for multi-lens audits.
+- [x] Added cross-reference in `development-workflow.md`.
+- [x] Verified `review_mode=release_audit` is a valid value on `record_review_finding`.
+- [x] Handoff decision recorded for Slice 2.
 
 ## Slice 3: Rule and Skill Pruning Workflow
 
-- [ ] Added "Periodic Pruning Workflow" section to `instructions.md`.
-- [ ] Defined trigger criteria (phase completion, finding count, calendar threshold).
-- [ ] Defined evidence thresholds for pruning candidates and confirmed keepers.
-- [ ] Defined skill evaluation criteria (trigger frequency, coverage, freshness, convergence).
-- [ ] Updated existing "Curation rules" section to cross-reference pruning workflow.
-- [ ] Handoff decision recorded for Slice 3.
+- [x] Added "Periodic Pruning Workflow" section to `instructions.md`.
+- [x] Defined trigger criteria (phase completion, finding count, calendar threshold).
+- [x] Defined evidence thresholds for pruning candidates and confirmed keepers.
+- [x] Defined skill evaluation criteria (trigger frequency, coverage, freshness, convergence).
+- [x] Updated existing "Curation rules" section to cross-reference pruning workflow.
+- [x] Handoff decision recorded for Slice 3.
 
 ## Slice 4: Handoff-Memory and ctx7 Evaluation Guidance
 
-- [ ] Added `handoff_memory` section to `ace_metrics.py` snapshot.
-- [ ] Added handoff-memory health evaluation questions to `instructions.md`.
-- [ ] Added ctx7 adoption evaluation guidance to `instructions.md`.
-- [ ] Added tests for `handoff_memory` collectors in `test_ace_metrics.py`.
-- [ ] Handoff decision recorded for Slice 4.
+- [x] Added `handoff_memory` section to `ace_metrics.py` snapshot.
+- [x] Added handoff-memory health evaluation questions to `instructions.md`.
+- [x] Added ctx7 adoption evaluation guidance to `instructions.md`.
+- [x] Added tests for `handoff_memory` collectors in `test_ace_metrics.py`.
+- [x] Handoff decision recorded for Slice 4.
 
 ## Slice 5: Epic Completion and Documentation Sync
 
-- [ ] Updated epic Phase 5 checklist items to checked.
-- [ ] Updated epic Phase 5 status to complete.
-- [ ] Added Completed Tasks row for Phase 5.
-- [ ] Synchronized README and contract doc with final snapshot shape.
-- [ ] Handoff decision recorded for Slice 5.
+- [x] Updated epic Phase 5 checklist to match the implemented subset.
+- [x] Updated epic Phase 5 status to in-progress.
+- [x] Removed the overstated Completed Tasks row for Phase 5.
+- [x] Synchronized README and contract doc with final snapshot shape.
+- [x] Handoff decision recorded for Slice 5.
 
 ## Review Readiness
 
-- [ ] No boundary-touching implementation is left without matching contract/doc/fixture evidence.
-- [ ] `ace_metrics.py` snapshot is backward-compatible (new keys added, none removed).
-- [ ] Handoff decision records the change, verification, and any contract implications.
+- [x] No boundary-touching implementation is left without matching contract/doc/fixture evidence.
+- [x] `ace_metrics.py` snapshot is backward-compatible (new keys added, none removed).
+- [x] Handoff decision records the change, verification, and any contract implications.
 
 ## Success Criteria
 
-- [ ] `get_metrics_summary` includes process-health and handoff-memory sections with non-null values from current handoff state.
-- [ ] Multi-lens audit workflow in `branch-review-guide.md` is executable from cold start without additional context.
-- [ ] Periodic pruning workflow has clear triggers, thresholds, and steps that reference existing tooling.
-- [ ] Epic Phase 5 checklist accurately reflects implementation state.
+- [x] `get_metrics_summary` includes process-health and handoff-memory sections with non-null values from current handoff state.
+- [x] Multi-lens audit workflow in `branch-review-guide.md` is executable from cold start without additional context.
+- [x] Periodic pruning workflow has clear triggers, thresholds, and steps that reference existing tooling.
+- [x] Epic Phase 5 checklist accurately reflects implementation state.

@@ -10,12 +10,17 @@ Covers:
 from __future__ import annotations
 
 import json
+import sqlite3
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from agent_handoff_mcp.orchestration.ace_metrics import (
+    _contract_co_change_signal,
+    _handoff_memory,
     _phase_timing,
+    _process_health,
     _sparkline,
     _token_burn,
     build_snapshot,
@@ -127,6 +132,8 @@ class TestBuildSnapshotZeroData:
         assert snapshot["token_burn"]["data_available"] is False
         assert snapshot["context_pressure"]["data_available"] is False
         assert snapshot["lane_health"]["data_available"] is False
+        assert snapshot["process_health"]["data_available"] is False
+        assert snapshot["handoff_memory"]["data_available"] is False
         assert snapshot["phase_timing"]["data_available"] is False
 
     def test_snapshot_has_required_top_level_keys(self, tmp_path: Path) -> None:
@@ -138,7 +145,7 @@ class TestBuildSnapshotZeroData:
         )
         required_keys = {
             "timestamp", "task_ref", "token_burn", "context_pressure",
-            "fts5_retrieval", "lane_health", "phase_timing", "ace_documentation",
+            "fts5_retrieval", "lane_health", "process_health", "handoff_memory", "phase_timing", "ace_documentation",
         }
         assert required_keys.issubset(snapshot.keys())
 
@@ -212,6 +219,26 @@ class TestRenderMarkdown:
                 "max_exhaustion_streak": 0,
                 "convergence_rate": 0.0,
             },
+            "process_health": {
+                "data_available": False,
+                "reopened_finding_rate": {"value": None, "reopened_findings": 0, "total_findings": 0},
+                "finding_resolution_velocity_hours": {"median_hours": None, "resolved_findings": 0},
+                "handoff_decision_completeness": {"value": None, "structured_decisions": 0, "total_decisions": 0},
+                "contract_co_change_signal": {
+                    "data_available": False,
+                    "recent_commits_scanned": 0,
+                    "boundary_touching_commits": 0,
+                    "boundary_commits_with_contract_co_change": 0,
+                    "value": None,
+                },
+            },
+            "handoff_memory": {
+                "data_available": False,
+                "hot_state_size_bytes": 0,
+                "total_decisions": 0,
+                "total_findings": 0,
+                "artifact_source_count": 0,
+            },
             "phase_timing": {
                 "data_available": False,
                 "exec": {"count": 0, "total": 0.0, "mean": 0.0, "max": 0.0},
@@ -254,10 +281,447 @@ class TestRenderMarkdown:
             "## Context Pressure",
             "## Retrieval Activity",
             "## Lane Stability",
+            "## Process Health",
+            "## Handoff Memory",
             "## Phase Timing",
             "## Documentation Fitness",
         ]:
             assert section in md, f"Missing section: {section}"
+
+
+class TestProcessHealth:
+    def _write_handoff_db(self, state_dir: Path) -> None:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        db_path = state_dir / "handoff.db"
+        with sqlite3.connect(db_path) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE review_findings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_ref TEXT NOT NULL,
+                    reopen_count INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    resolved_at TEXT
+                );
+                CREATE TABLE decisions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_ref TEXT NOT NULL,
+                    rationale TEXT
+                );
+                """
+            )
+            conn.executemany(
+                """
+                INSERT INTO review_findings (task_ref, reopen_count, status, created_at, resolved_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                [
+                    ("task-1", 1, "fixed", "2026-03-01 00:00:00", "2026-03-01 12:00:00"),
+                    ("task-1", 0, "fixed", "2026-03-02 00:00:00", "2026-03-03 00:00:00"),
+                    ("task-1", 0, "deferred", "2026-03-03 00:00:00", "2026-03-08 00:00:00"),
+                    ("task-1", 0, "open", "2026-03-04 00:00:00", None),
+                ],
+            )
+            conn.executemany(
+                "INSERT INTO decisions (task_ref, rationale) VALUES (?, ?)",
+                [
+                    (
+                        "task-1",
+                        "\n".join(
+                            [
+                                "## Changes",
+                                "- landed",
+                                "## Verification",
+                                "- passed",
+                                "## Schema / Contract Changes",
+                                "- none.",
+                                "## Open Threads",
+                                "- none.",
+                            ]
+                        ),
+                    ),
+                    ("task-1", "plain prose decision"),
+                ],
+            )
+
+    def _init_git_repo(self, repo_root: Path) -> None:
+        subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "config", "user.name", "Codex"], cwd=repo_root, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "config", "user.email", "codex@example.com"], cwd=repo_root, check=True, capture_output=True, text=True)
+
+    def _commit_file(self, repo_root: Path, path: str, content: str, message: str) -> None:
+        file_path = repo_root / path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content, encoding="utf-8")
+        subprocess.run(["git", "add", path], cwd=repo_root, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "commit", "-m", message], cwd=repo_root, check=True, capture_output=True, text=True)
+
+    def test_process_health_aggregates_handoff_metrics(self, tmp_path: Path) -> None:
+        state_dir = tmp_path / ".task-state"
+        self._write_handoff_db(state_dir)
+
+        result = _process_health("task-1", state_dir, tmp_path)
+
+        assert result["data_available"] is True
+        assert result["reopened_finding_rate"]["reopened_findings"] == 1
+        assert result["reopened_finding_rate"]["total_findings"] == 4
+        assert result["reopened_finding_rate"]["value"] == 0.25
+        assert result["finding_resolution_velocity_hours"]["resolved_findings"] == 2
+        assert result["finding_resolution_velocity_hours"]["median_hours"] == 18.0
+        assert result["handoff_decision_completeness"]["structured_decisions"] == 1
+        assert result["handoff_decision_completeness"]["total_decisions"] == 2
+        assert result["handoff_decision_completeness"]["value"] == 0.5
+
+    def test_process_health_zero_findings_leaves_rate_unavailable(self, tmp_path: Path) -> None:
+        state_dir = tmp_path / ".task-state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(state_dir / "handoff.db") as conn:
+            conn.executescript(
+                """
+                CREATE TABLE review_findings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_ref TEXT NOT NULL,
+                    reopen_count INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    resolved_at TEXT
+                );
+                CREATE TABLE decisions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_ref TEXT NOT NULL,
+                    rationale TEXT
+                );
+                """
+            )
+
+        result = _process_health("task-1", state_dir, tmp_path)
+
+        assert result["reopened_finding_rate"]["value"] is None
+        assert result["reopened_finding_rate"]["total_findings"] == 0
+        assert result["finding_resolution_velocity_hours"]["resolved_findings"] == 0
+
+    def test_process_health_ignores_non_fixed_and_malformed_resolution_timestamps(self, tmp_path: Path) -> None:
+        state_dir = tmp_path / ".task-state"
+        self._write_handoff_db(state_dir)
+        with sqlite3.connect(state_dir / "handoff.db") as conn:
+            conn.execute(
+                """
+                INSERT INTO review_findings (task_ref, reopen_count, status, created_at, resolved_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                ("task-1", 0, "fixed", "not-a-date", "2026-03-09 00:00:00"),
+            )
+            conn.execute(
+                """
+                INSERT INTO review_findings (task_ref, reopen_count, status, created_at, resolved_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                ("task-1", 0, "wontfix", "2026-03-10 00:00:00", "2026-03-11 00:00:00"),
+            )
+
+        result = _process_health("task-1", state_dir, tmp_path)
+
+        assert result["finding_resolution_velocity_hours"]["resolved_findings"] == 2
+        assert result["finding_resolution_velocity_hours"]["median_hours"] == 18.0
+
+    def test_process_health_empty_rationale_is_not_structured(self, tmp_path: Path) -> None:
+        state_dir = tmp_path / ".task-state"
+        self._write_handoff_db(state_dir)
+        with sqlite3.connect(state_dir / "handoff.db") as conn:
+            conn.execute("INSERT INTO decisions (task_ref, rationale) VALUES (?, ?)", ("task-1", ""))
+
+        result = _process_health("task-1", state_dir, tmp_path)
+
+        assert result["handoff_decision_completeness"]["structured_decisions"] == 1
+        assert result["handoff_decision_completeness"]["total_decisions"] == 3
+        assert result["handoff_decision_completeness"]["value"] == pytest.approx(0.333, abs=0.001)
+
+    def test_contract_co_change_signal_uses_review_ready_prefixes(self, tmp_path: Path) -> None:
+        self._init_git_repo(tmp_path)
+        self._commit_file(
+            tmp_path,
+            "README.md",
+            "seed\n",
+            "seed",
+        )
+        self._commit_file(
+            tmp_path,
+            "apps/example/service.py",
+            "print('boundary only')\n",
+            "boundary only",
+        )
+        file_path = tmp_path / "apps/example/service.py"
+        file_path.write_text("print('boundary with contract')\n", encoding="utf-8")
+        contract_path = tmp_path / "docs/agentic/contracts/example.md"
+        contract_path.parent.mkdir(parents=True, exist_ok=True)
+        contract_path.write_text("contract\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "add", "apps/example/service.py", "docs/agentic/contracts/example.md"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(["git", "commit", "-m", "boundary with contract"], cwd=tmp_path, check=True, capture_output=True, text=True)
+
+        result = _contract_co_change_signal(tmp_path, commit_limit=10)
+
+        assert result["data_available"] is True
+        assert result["boundary_touching_commits"] == 2
+        assert result["boundary_commits_with_contract_co_change"] == 1
+        assert result["value"] == 0.5
+
+
+class TestHandoffMemory:
+    def _write_handoff_db(self, state_dir: Path) -> None:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        db_path = state_dir / "handoff.db"
+        with sqlite3.connect(db_path) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE handoff_state (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    task_ref TEXT NOT NULL,
+                    objective TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    revision INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL,
+                    updated_by TEXT,
+                    updated_branch TEXT,
+                    updated_commit_sha TEXT
+                );
+                CREATE TABLE decisions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_ref TEXT NOT NULL,
+                    lane_id TEXT,
+                    session TEXT NOT NULL DEFAULT 'test',
+                    decision TEXT NOT NULL DEFAULT '',
+                    rationale TEXT,
+                    agent TEXT,
+                    branch TEXT,
+                    commit_sha TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                CREATE TABLE blockers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_ref TEXT NOT NULL,
+                    lane_id TEXT,
+                    description TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    agent TEXT,
+                    branch TEXT,
+                    commit_sha TEXT,
+                    resolved_at TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                CREATE TABLE verified_tests (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_ref TEXT NOT NULL,
+                    lane_id TEXT,
+                    command TEXT NOT NULL,
+                    passed INTEGER NOT NULL,
+                    exit_code INTEGER,
+                    result TEXT,
+                    session TEXT NOT NULL,
+                    agent TEXT,
+                    branch TEXT,
+                    commit_sha TEXT,
+                    verified_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                CREATE TABLE review_findings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_ref TEXT NOT NULL,
+                    lane_id TEXT,
+                    finding_id TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    line_start INTEGER,
+                    line_end INTEGER,
+                    description TEXT NOT NULL,
+                    fix TEXT,
+                    status TEXT NOT NULL,
+                    review_mode TEXT,
+                    session TEXT NOT NULL,
+                    agent TEXT,
+                    branch TEXT,
+                    commit_sha TEXT,
+                    resolution_notes TEXT,
+                    reopen_count INTEGER NOT NULL DEFAULT 0,
+                    last_reopen_reason TEXT,
+                    last_reopened_at TEXT,
+                    resolved_at TEXT,
+                    verification_evidence TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                CREATE TABLE next_actions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_ref TEXT NOT NULL,
+                    lane_id TEXT,
+                    action TEXT NOT NULL,
+                    priority INTEGER NOT NULL DEFAULT 100,
+                    status TEXT NOT NULL,
+                    agent TEXT,
+                    branch TEXT,
+                    commit_sha TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                CREATE TABLE worktree_lanes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_ref TEXT NOT NULL,
+                    lane_id TEXT NOT NULL,
+                    title TEXT,
+                    objective TEXT,
+                    worktree_path TEXT NOT NULL,
+                    branch TEXT NOT NULL,
+                    owner_agent TEXT,
+                    model TEXT,
+                    backend TEXT,
+                    reasoning_effort TEXT,
+                    status TEXT NOT NULL,
+                    notes TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                CREATE TABLE worker_reports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_ref TEXT NOT NULL,
+                    lane_id TEXT NOT NULL,
+                    session TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    changed_files_json TEXT NOT NULL DEFAULT '[]',
+                    test_commands_json TEXT NOT NULL DEFAULT '[]',
+                    blockers_json TEXT NOT NULL DEFAULT '[]',
+                    merge_ready INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'submitted',
+                    agent TEXT,
+                    branch TEXT,
+                    commit_sha TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                CREATE TABLE lane_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_ref TEXT NOT NULL,
+                    lane_id TEXT NOT NULL,
+                    session TEXT NOT NULL,
+                    direction TEXT NOT NULL,
+                    subject TEXT,
+                    message TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    payload_json TEXT,
+                    agent TEXT,
+                    branch TEXT,
+                    commit_sha TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                CREATE TABLE plan_cursors (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_ref TEXT NOT NULL,
+                    plan_item_id TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    lane_id TEXT,
+                    mcp_action_id INTEGER,
+                    worker_message_id INTEGER,
+                    source_heading TEXT,
+                    summary TEXT NOT NULL,
+                    dispatch_count INTEGER NOT NULL DEFAULT 0,
+                    dispatched_at TEXT,
+                    completed_at TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO handoff_state (
+                    id, task_ref, objective, status, revision, updated_at
+                ) VALUES (1, 'task-1', 'Test objective', 'in_progress', 1, '2026-03-01 00:00:00')
+                """
+            )
+            conn.execute(
+                "INSERT INTO decisions (task_ref, session, decision, rationale) VALUES ('task-1', 'test', 'd1', 'decision body')"
+            )
+            conn.execute(
+                "INSERT INTO review_findings (task_ref, finding_id, severity, file_path, description, status, session) VALUES ('task-1', 'F-1', 'medium', 'a.py', 'desc', 'open', 'test')"
+            )
+            conn.execute(
+                "INSERT INTO verified_tests (task_ref, command, passed, session) VALUES ('task-1', 'pytest', 1, 'test')"
+            )
+
+    def _write_artifacts_db(self, state_dir: Path) -> None:
+        db_path = state_dir / "mcp-artifacts.db"
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE artifact_sources (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_label TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute("INSERT INTO artifact_sources (source_label) VALUES ('a')")
+
+    def test_handoff_memory_collects_hot_state_and_artifact_counts(self, tmp_path: Path) -> None:
+        state_dir = tmp_path / ".task-state"
+        self._write_handoff_db(state_dir)
+        self._write_artifacts_db(state_dir)
+
+        result = _handoff_memory("task-1", state_dir, tmp_path)
+
+        assert result["data_available"] is True
+        assert result["hot_state_size_bytes"] > 0
+        assert result["total_decisions"] == 1
+        assert result["total_findings"] == 1
+        assert result["artifact_source_count"] == 1
+
+    def test_handoff_memory_handles_missing_artifacts_db(self, tmp_path: Path) -> None:
+        state_dir = tmp_path / ".task-state"
+        self._write_handoff_db(state_dir)
+
+        result = _handoff_memory("task-1", state_dir, tmp_path)
+
+        assert result["data_available"] is True
+        assert result["hot_state_size_bytes"] > 0
+        assert result["artifact_source_count"] == 0
+
+    def test_handoff_memory_uses_requested_task_scope_when_active_task_differs(self, tmp_path: Path) -> None:
+        state_dir = tmp_path / ".task-state"
+        self._write_handoff_db(state_dir)
+        with sqlite3.connect(state_dir / "handoff.db") as conn:
+            conn.execute("UPDATE handoff_state SET task_ref = 'other-task' WHERE id = 1")
+
+        result = _handoff_memory("task-1", state_dir, tmp_path)
+
+        assert result["data_available"] is True
+        assert result["hot_state_size_bytes"] > 0
+        assert result["total_decisions"] == 1
+        assert result["total_findings"] == 1
+
+    def test_handoff_memory_returns_zero_counts_for_unknown_task(self, tmp_path: Path) -> None:
+        state_dir = tmp_path / ".task-state"
+        self._write_handoff_db(state_dir)
+
+        result = _handoff_memory("missing-task", state_dir, tmp_path)
+
+        assert result["data_available"] is True
+        assert result["hot_state_size_bytes"] > 0
+        assert result["total_decisions"] == 0
+        assert result["total_findings"] == 0
+
+    def test_handoff_memory_returns_defaults_when_handoff_db_missing(self, tmp_path: Path) -> None:
+        result = _handoff_memory("task-1", tmp_path / ".task-state", tmp_path)
+
+        assert result == {
+            "data_available": False,
+            "hot_state_size_bytes": 0,
+            "total_decisions": 0,
+            "total_findings": 0,
+            "artifact_source_count": 0,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -291,8 +755,10 @@ class TestRenderSparklines:
                 "phase_timing": {"data_available": False,
                                  "exec": {"mean": 0.0}, "review": {"mean": 0.0}},
                 "lane_health": {"convergence_rate": 0.0, "data_available": False},
+                "process_health": {"reopened_finding_rate": {"value": 0.1 * i}},
+                "handoff_memory": {"hot_state_size_bytes": 1000 * i},
             }
-            for t in [100, 200, 300]
+            for i, t in enumerate([100, 200, 300], start=1)
         ]
         metrics.write_text(
             "\n".join(json.dumps(s) for s in snapshots) + "\n",
@@ -301,6 +767,8 @@ class TestRenderSparklines:
         result = render_sparklines(tmp_path, "demo")
         assert "Snapshots**: 3" in result
         assert "Token Burn" in result
+        assert "Reopened Finding Rate" in result
+        assert "Hot-State Size (bytes)" in result
 
     def test_empty_task_ref_matches_all_snapshots(self, tmp_path: Path) -> None:
         metrics = tmp_path / "metrics.jsonl"

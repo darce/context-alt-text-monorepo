@@ -249,6 +249,10 @@ Deliverables:
 - document an MCP troubleshooting ladder for process tooling: startup failure, capability discovery failure, runtime execution failure, and evidence-write failure, with the expected inspection command or dashboard surface for each
 - add structured progress and error semantics for long-running process helpers so agents get typed status (`starting`, `blocked`, `awaiting_review`, `complete`) instead of free-form narration
 - evaluate new MCP helpers or wrappers for common operations such as startup checks, boundary-change checklists, handoff close readiness, and review-readiness summaries
+- normalize MCP write provenance so handoff `actor` is consistently structured and auto-populated rather than hand-authored:
+  - define one canonical actor shape for handoff writes (`agent`, `branch`, `commit_sha`, optional `lane_id`)
+  - add helper or wrapper flows for common MCP writes so decisions, tests, blockers, and finding updates do not hand-build actor payloads ad hoc
+  - tighten contract/examples so minimal valid payloads always show the canonical actor object shape and stale string-form examples are removed
 - define skill-wrapper rules from Chapter 68 so repo skills state explicit triggers, owned outputs, safety constraints, retry/recovery rules, and convergence criteria
 - create `docs/agentic/skills/daemon-lifecycle/SKILL.md` encoding safe-start, signal-stop, stale-lock-recovery, pause/resume, and lane-health-check procedures; this skill should encapsulate the patterns already hardened in `api.py`, `orchestrator_daemon.py`, `worker_daemon.py`, and `worker_daemon_ctl.py` so agents are not expected to rediscover safe daemon interaction through code archaeology
 - create `docs/agentic/skills/rescue-lane/SKILL.md` encoding the rescue-lane protocol: (a) create rescue branch from the last known-good commit, (b) cherry-pick fix commits with `git cherry-pick`, (c) diff contract surfaces between the rescue branch and the broken lane, (d) run lane test pack plus targeted regression test, (e) update MCP state with a rescue decision record, (f) regenerate `CURRENT_TASK.md`; note: `.agent/workflows/` was removed 2026-03-27; the canonical location for repo-native skills is `docs/agentic/skills/`
@@ -279,10 +283,10 @@ Exit criteria:
 - context assignment uses less prompt space for upstream references because external docs are retrieved through targeted `ctx7` or MCP reads instead of bulk-ingested prose
 - the default handoff payload for a task stays compact enough to load quickly because archival detail is summarized or retrieved only when needed
 
-### Phase 5: Evaluation and Release Audit Layer -- not-started
+### Phase 5: Evaluation and Release Audit Layer -- in-progress
 
-> **Status**: not-started
-> **Task plans**: not yet scoped
+> **Status**: in-progress
+> **Task plans**: `docs/tasks/11.0/evaluation-and-release-audit-layer-task-plan.md`
 
 **Goal**: Add a repeatable process-evaluation layer so the repo can measure whether the hardening work is improving execution quality.
 
@@ -393,6 +397,7 @@ Exit criteria:
 - [x] Define which startup, review, and closeout checks can move into MCP helpers or wrappers.
 - [x] Define which repo capabilities should be modeled as MCP actions, read-only resources, or reusable prompt templates.
 - [ ] Define structured progress, error, and status semantics for process automation surfaces.
+- [ ] Normalize handoff `actor` provenance so MCP writes use one canonical structured actor shape with helper/wrapper support.
 - [x] Add trigger, recovery, and convergence requirements to repo skills and MCP wrappers.
 - [x] Create `docs/agentic/skills/daemon-lifecycle/SKILL.md` (safe-start, signal-stop, stale-lock-recovery, lane-health-check).
 - [x] Create a rescue-lane protocol document (branch, cherry-pick, contract diff, test pack, MCP decision, regenerate `CURRENT_TASK.md`). _(Originally scoped to `.agent/workflows/rescue.md`; `.agent/workflows/` directory was removed 2026-03-27 after Gemini/Antigravity phase-off. Relocate to `docs/agentic/skills/` or `docs/agentic/rules/`.)_
@@ -405,14 +410,20 @@ Exit criteria:
 - [x] Reduce policy duplication across skills and README surfaces.
 - [x] Keep `agent-handoff-mcp` contract and operator docs synchronized.
 
-## Phase 5: Evaluation and Release Audit Layer -- not-started
+## Phase 5: Evaluation and Release Audit Layer -- in-progress
 
-- [ ] Define process health metrics and how they are measured.
-- [ ] Create a multi-lens pre-merge audit model for cross-boundary changes.
-- [ ] Add handoff-memory and `ctx7` adoption metrics.
-- [ ] Add a periodic rule and skill review loop driven by evidence.
+- [x] Define the initial process-health metrics and how they are measured.
+- [x] Create a multi-lens pre-merge audit model for cross-boundary changes.
+- [x] Add initial handoff-memory and `ctx7` adoption guidance.
+- [x] Add a periodic rule and skill review loop driven by evidence.
+- [ ] Add runtime-parity coverage, planning-review drift rate, and performance-evidence coverage metrics.
+- [ ] Add the deferred data-pattern and latency-health review loop.
+- [ ] Add the resolved-from-hot-state ratio and stale-artifact/archive-rate metrics.
+- [ ] Add a credible `ctx7` token-cost reduction measurement or explicitly narrow that deliverable.
 
 ## Deferred (Post-v0.3.0)
+
+Deferred items from this epic are consolidated in [../deferred-features/agentic-process-hardening-post-v0.3.0.md](../deferred-features/agentic-process-hardening-post-v0.3.0.md).
 
 - [ ] Deep MCP productization beyond repo needs, such as generalized dashboards or external distribution changes not required to enforce this repo's workflow
 - [ ] TUI monitoring task: 9 open findings (H-GAP-TUI-01 through L-GAP-TUI-09) in `docs/tasks/9.0/orchestration-tui-monitoring-task-plan.md`; deferred until Phase 4 tooling automation work establishes the review-readiness and MCP-surface patterns the TUI should reflect; the plan's slice structure and runtime model section should be re-evaluated at that point using the template improvements added in Phase 1.

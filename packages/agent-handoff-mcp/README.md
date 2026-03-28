@@ -2,6 +2,8 @@
 
 Portable MCP server for agent handoff state, review findings, exports, and close checks.
 
+The metrics snapshot surface also reports derived process-health signals such as reopened-finding rate, structured handoff decision completeness, and contract co-change signal, plus handoff-memory health such as hot-state size and artifact-source count, alongside the existing execution metrics.
+
 It also supports multi-worktree coordination primitives for orchestrator/worker setups:
 
 - registered worktree lanes

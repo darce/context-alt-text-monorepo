@@ -208,8 +208,9 @@ Source-of-truth policy:
 2. Record session outcomes via MCP tools (`record_decision`, `update_next_actions`, `record_test_result`, `report_blocker`).
 3. Read compact snapshot at session start via `get_handoff_state`.
 4. Before close/final handoff, run `handoff_close_check(enforce=True)` and resolve all failures.
-5. Regenerate markdown view on demand via `generate_current_task_md`.
-6. Use template fallback only when MCP tooling is unavailable.
+5. Before requesting branch review, run `make review-ready` from the current worktree and resolve all reported NOT READY reasons.
+6. Regenerate markdown view on demand via `generate_current_task_md`.
+7. Use template fallback only when MCP tooling is unavailable.
 
 **Template location:** [templates/CURRENT_TASK.template.md](../templates/CURRENT_TASK.template.md)
 

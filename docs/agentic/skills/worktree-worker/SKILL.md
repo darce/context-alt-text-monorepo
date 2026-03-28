@@ -19,6 +19,12 @@ Use this skill when you are implementing a delegated lane slice with a defined o
 - running lane-local verification
 - handing the slice back cleanly for orchestrator review
 
+## Canonical Policy
+
+- Use [../../instructions.md](../../instructions.md) for startup, handoff, and `ctx7` policy.
+- Use [../../rules/development-workflow.md](../../rules/development-workflow.md) for cross-boundary, slice, and review-readiness rules.
+- Treat this skill as the lane-worker execution recipe; shared process policy remains in the linked canonical docs.
+
 ## Start-up checklist
 
 1. Read [instructions.md](../../instructions.md), especially the multi-agent worktree section.

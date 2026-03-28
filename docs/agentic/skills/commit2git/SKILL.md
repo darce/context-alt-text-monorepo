@@ -15,6 +15,12 @@ Use this skill when the current branch contains multiple completed slices, refac
 
 Create one commit per completed sub-feature, not one commit per directory or per file type.
 
+## Canonical Policy
+
+- Use [../../instructions.md](../../instructions.md) for startup, handoff, and evidence-logging policy.
+- Use [../../rules/development-workflow.md](../../rules/development-workflow.md) for slice, contract, and review-readiness rules.
+- Use this skill for commit grouping and staging behavior only; broader process policy lives in the linked canonical docs.
+
 ## Worktree safety
 
 Treat the current checkout as authoritative.
@@ -144,7 +150,7 @@ This repo's `make lane-commit` and `make lane-handoff` helpers already prefix co
 When you are inside a worker lane worktree in this repo:
 
 - prefer `make lane-commit` over a manual root-level `git commit`
-- do not switch to `/Users/daniel/Development/context-alt-text-monorepo` just to perform the commit
+- do not switch to the orchestrator root or another sibling worktree just to perform the commit
 - do not leave the lane on the orchestrator branch after committing
 
 If the user explicitly wants the worktree name instead of the lane name, prefer a manual `git commit -m "<worktree-name>: <subject>"` in the current worker worktree and then run the reporting step separately if needed.

@@ -314,7 +314,13 @@ Do not use `ctx7` for:
 Fallback and caching:
 
 - If `ctx7` is unavailable, use [maps/tech-stack.md](maps/tech-stack.md) as the static version manifest and note the `ctx7` gap in handoff when it materially affects confidence.
+- Before issuing a new `ctx7` lookup for a dependency, search recent handoff decisions for the package name, resolved library id, or prior query so you can reuse an existing answer when it is still relevant.
 - When a `ctx7` lookup materially changes an implementation decision, record the resolved library id and the query in the handoff decision so later agents do not spend tokens rediscovering the same upstream detail.
+- Use this cache format inside the decision rationale when relevant:
+  - `ctx7 library id: /org/project[/version]`
+  - `ctx7 query: <targeted question>`
+  - `ctx7 impact: <what changed in implementation or review scope>`
+- Do not bulk-copy upstream docs into repo documents just because a `ctx7` lookup was used. Cache the pointer and the decision impact, not a prose dump of the source.
 
 Before any code exploration:
 

@@ -930,6 +930,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
         set_handoff_state,
         get_handoff_state,
         upsert_worktree_lane,
+        close_worktree_lane,
         list_worktree_lanes,
         get_lane_activity,
         list_next_actions,

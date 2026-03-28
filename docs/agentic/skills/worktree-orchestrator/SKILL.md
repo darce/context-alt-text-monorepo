@@ -20,6 +20,12 @@ Use this skill when a task should be split across stable seams such as owned pat
 - deciding merge order and integration checks
 - keeping shared checklist and task truth centralized
 
+## Canonical Policy
+
+- Use [../../instructions.md](../../instructions.md) for startup, handoff, and `ctx7` policy.
+- Use [../../rules/development-workflow.md](../../rules/development-workflow.md) for cross-boundary, slice, and review-readiness rules.
+- Treat this skill as the orchestrator execution recipe; shared process policy remains in the linked canonical docs.
+
 ## Preflight
 
 1. Read [instructions.md](../../instructions.md), especially the multi-agent worktree section.

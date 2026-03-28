@@ -2,7 +2,7 @@
 # Handoff / Task State / Daemons
 # =============================================================================
 
-.PHONY: task dashboard state list-tasks lane-list mcp-serve-http handoff-close-check handoff-integrity-check handoff-inbox handoff-dispatch review-dispatch review-run worker-daemon worker-daemon-status worker-daemon-stop worker-daemon-resume worker-daemon-tail orchestrator-daemon daemon-pause daemon-resume daemon-status
+.PHONY: task dashboard state list-tasks lane-list mcp-serve-http handoff-close-check handoff-integrity-check handoff-inbox handoff-dispatch review-dispatch review-run review-ready worker-daemon worker-daemon-status worker-daemon-stop worker-daemon-resume worker-daemon-tail orchestrator-daemon daemon-pause daemon-resume daemon-status
 
 # Generate CURRENT_TASK.md from handoff DB
 task:
@@ -34,6 +34,21 @@ list-tasks:
 # Validate that active handoff state is ready to close
 handoff-close-check:
 	@$(MCP_CMD) $(MCP_STATE_ARGS) handoff-close-check --enforce
+
+review-ready:
+	@if [ -z "$(TASK)" ]; then \
+		echo "TASK is required."; \
+		echo "No active task could be inferred from MCP state."; \
+		echo "Example: make review-ready TASK=agentic-development-process-hardening-epic"; \
+		echo "Inspect current state: make state"; \
+		exit 1; \
+	fi
+	@PYTHONPATH="$(WORKTREE_MCP_PYTHONPATH)" \
+		$(MCP_PYTHON) "$(WORKTREE_ORCHESTRATION_DIR)/review_ready.py" \
+		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+		--worktree-root "$(WORKTREE_ROOT_REAL)" \
+		--task-ref "$(TASK)" \
+		--review-base "$(or $(REVIEW_BASE),$(ORCHESTRATOR_BRANCH))"
 
 # CI/local guard for parser + lifecycle + close-check integrity
 handoff-integrity-check:

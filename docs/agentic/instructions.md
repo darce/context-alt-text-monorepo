@@ -35,6 +35,38 @@ A reflection cycle runs when:
 - Delta updates only; never rewrite a section from scratch (prevents context collapse).
 - Never duplicate content between this file and linked sub-documents; use links.
 
+### Periodic Pruning Workflow
+
+Run a pruning pass:
+
+1. after each epic phase completion
+2. after any task with 5+ review findings that reference rules or skills
+3. after 30 calendar days without a pruning pass
+
+Workflow:
+
+1. Run `get_metrics_summary` for the active process-hardening task to inspect process-health and handoff-memory signals.
+2. Run `make ace-reflect TASK=<task-ref>` from the orchestrator root so pending `helpful` / `harmful` counters are applied before evaluating candidates.
+3. Review rule pruning candidates: any rule with `helpful=0 harmful>=2` is an automatic candidate for deletion or demotion.
+4. For each candidate, inspect recent handoff decisions and findings for the rule ID before changing the guidance. Delete confirmed dead rules; demote marginal rules to a watch note when evidence is mixed.
+5. Review skills for overlap and coverage. Skills referenced in 0 decisions or findings over the evaluation window are candidates for retirement, consolidation, or scope reduction.
+6. Record the pruning outcome in MCP with a structured decision summarizing what was deleted, what was kept, and what remains under watch.
+
+Evidence thresholds:
+
+- `helpful=0 harmful>=2`: automatic pruning candidate
+- `helpful>=3 harmful=0`: confirmed keeper
+- everything else: review on case merit against recent findings and decisions
+
+Skill evaluation criteria:
+
+- trigger frequency: does the skill appear in decisions/findings often enough to justify the maintenance cost?
+- coverage: is the skill covering a unique workflow, or overlapping another skill?
+- freshness: does the skill reference current tooling, commands, and runtime surfaces?
+- convergence: do sessions using the skill reach completion more cleanly or quickly?
+
+Use the curation rules above as the per-rule decision policy, and use this workflow as the cadence and evidence loop.
+
 ---
 
 ## System Overview
@@ -321,6 +353,56 @@ Fallback and caching:
   - `ctx7 query: <targeted question>`
   - `ctx7 impact: <what changed in implementation or review scope>`
 - Do not bulk-copy upstream docs into repo documents just because a `ctx7` lookup was used. Cache the pointer and the decision impact, not a prose dump of the source.
+
+## Handoff Memory Health
+
+Evaluate selective-memory health during the periodic pruning workflow.
+
+Ask:
+
+- Is hot-state load cost growing?
+  - measure with `handoff_memory.hot_state_size_bytes` from `get_metrics_summary`
+- Are sessions resolving from hot state plus targeted search, or replaying more than they need?
+  - compare targeted `search_handoff` use against repeated broad `get_handoff_state` reloads in recent worker activity/logs when available
+- Are stale artifacts being archived instead of accumulating forever?
+  - inspect artifact counts and age distribution before deciding whether to archive or purge
+- Is context rediscovery happening?
+  - look for repeated `ctx7 library id:` entries or repeated handoff searches for the same dependency across decisions in the same task
+
+Healthy pattern:
+
+- hot state stays compact
+- older context is recovered via search, not replay
+- artifacts are archived or purged when they stop serving active work
+- repeated upstream doc lookups are reused from prior decisions instead of rediscovered
+
+Unhealthy pattern:
+
+- hot-state size grows without bound
+- agents repeatedly reload full state instead of using targeted retrieval
+- stale artifacts accumulate with no archival discipline
+- the same dependency is re-looked-up across nearby slices because earlier decisions did not cache the resolved `ctx7` pointer
+
+If handoff-memory health regresses, treat that as a process issue: simplify guidance, archive stale state, or tighten retrieval discipline instead of normalizing around larger prompt loads.
+
+## ctx7 Adoption Evaluation
+
+Review `ctx7` usage during the periodic pruning workflow.
+
+Ask:
+
+- are resolved library ids being reused across sessions?
+  - search recent decisions for `ctx7 library id:` and repeated package names
+- are bulk upstream doc copies still appearing in repo docs or plans?
+  - review instruction-file and task-plan changes for pasted vendor docs instead of targeted references
+- is targeted retrieval preferred over broad browsing?
+  - check whether recent decisions captured a narrow `ctx7 query:` and impact note instead of generic “looked it up” prose
+
+Keep `ctx7` usage targeted:
+
+- reuse prior library ids and questions when still relevant
+- record the impact, not the upstream prose
+- prefer repo-owned docs for local process and architecture decisions
 
 Before any code exploration:
 

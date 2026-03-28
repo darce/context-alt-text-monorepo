@@ -240,23 +240,96 @@ Both guards can be satisfied by providing `--verification-evidence` (CLI) or `ve
 
 ---
 
-## Escalate To Multi-Lens Audit When
+## Multi-Lens Audit Workflow
 
-Upgrade a normal branch review to a higher-cost release-style audit when the branch touches:
+Escalate a normal branch review to a release-style multi-lens audit when the branch touches:
 
 - security or compliance boundaries
-- release/deploy paths
+- release or deploy paths
 - major architecture transitions
 - multi-service state machines
 - high-risk persistence or migration behavior
 - broad UI/UX surfaces with many state branches
 
-When escalating, name the audit lenses explicitly:
+This workflow adds review perspectives, not new tooling. Record all audit findings through the existing MCP review-finding surface with `review_mode=release_audit`. Use finding-ID prefixes to classify which lens produced each finding:
 
-- architecture/reliability
-- QA/state-matrix
-- UX/state-surface
-- compliance/claims, when applicable
+- `ARCH-<id>` for architecture/reliability
+- `QA-<id>` for QA/state-matrix
+- `CONTRACT-<id>` for contract/compliance
+
+### Lens Definitions
+
+#### Architecture / Reliability
+
+Focus:
+
+- ownership boundaries and adapter seams
+- single-writer and single-owner contract discipline
+- degraded/error behavior
+- queueing, retry, timeout, and recovery semantics
+- cross-service state transitions and race conditions
+
+Bias:
+
+- findings about hidden coupling, state drift, unsafe fallback behavior, replay hazards, or operational ambiguity
+
+#### QA / State-Matrix
+
+Focus:
+
+- state coverage across loading, empty, degraded, error, stale, and recovery paths
+- runtime-parity proof, not only unit proof
+- regression traps in polling, retries, offline/manual recovery, and import/restore flows
+- whether the diff proves the behavior users will actually see
+
+Bias:
+
+- findings about missing tests, stale verification, unproven fixes, or uncovered state combinations
+
+#### Contract / Compliance
+
+Focus:
+
+- documented contract ownership and same-slice contract updates
+- schema/fixture parity
+- boundary metadata provenance
+- release claims, compatibility notes, and explicit no-contract-change rationale
+
+Bias:
+
+- findings about undocumented shape changes, backward-compat drift, missing contract co-change, or unverifiable compliance/release claims
+
+### Execution Flow
+
+1. Confirm escalation is warranted from the trigger list above.
+2. Load the minimum audit packet:
+   - intended change or release scope
+   - actual diff under review
+   - touched contracts, ADRs, and rules
+   - fresh verification evidence already produced
+3. Run the lenses sequentially in this order:
+   - architecture/reliability
+   - QA/state-matrix
+   - contract/compliance
+4. Record findings after each lens before moving to the next one.
+5. Use `review_mode=release_audit` for every finding in the audit.
+6. Use the lens-specific finding-ID prefix so later summaries can distinguish which lens raised the issue.
+7. If a later lens depends on an earlier unresolved HIGH finding, record that dependency in the later finding or summary decision instead of pretending the branch was fully reviewable.
+
+### Completion Criteria
+
+A multi-lens audit is complete only when:
+
+- all three lenses were applied, even if one lens found no issues
+- all HIGH findings are either fixed or deferred with explicit rationale
+- any remaining MEDIUM or LOW findings are clearly triaged
+- a summary decision is recorded in MCP describing audit scope, outcome, and any deferred risk
+
+### Reporting Rules
+
+- Do not invent new MCP categories or tool parameters for the audit. The supported review-mode value is `release_audit`.
+- Keep per-lens classification in the `finding_id` prefix rather than trying to encode it into `review_mode`.
+- If a branch does not meet the trigger criteria, stay in normal branch-review mode and avoid inflating process cost unnecessarily.
 
 Normal branch review is still the default. Escalation is for branches where one reviewer pass is not enough to cover the failure surface honestly.
 

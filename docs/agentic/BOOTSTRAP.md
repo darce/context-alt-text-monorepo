@@ -196,7 +196,7 @@ curl -s http://127.0.0.1:8741/
 ```
 
 The default bind is `127.0.0.1` (localhost only, no auth). For remote access use SSH
-tunneling or a reverse proxy. See [codex-custom-mcp-playbook.md](codex-custom-mcp-playbook.md)
+tunneling or a reverse proxy. See [playbooks/codex-custom-mcp-playbook.md](playbooks/codex-custom-mcp-playbook.md)
 for the full attach-to-Codex walkthrough.
 
 ### Troubleshooting
@@ -271,7 +271,7 @@ A count of `-1` for any table means the table is absent and structured search is
 
 `make lane-run` automates worker execution via `codex exec`. The pipeline:
 
-1. `scripts/mcp/lane_prompt.py` renders an actionable worker prompt from MCP state (open lane messages, pending actions, open blockers, open findings).
+1. `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_prompt.py` renders an actionable worker prompt from MCP state (open lane messages, pending actions, open blockers, open findings).
 2. `codex exec` runs in the lane worktree with that prompt.
 3. The worker outputs a structured JSON result matching the schema from `scripts/mcp/lane_result.py schema`.
 4. `scripts/mcp/lane_result.py handoff` converts the result into a `scripts/worktree-lane report` call.

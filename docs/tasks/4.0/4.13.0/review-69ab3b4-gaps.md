@@ -71,7 +71,7 @@ The commit addresses findings M-1 through M-5 and L-1/L-2 from `web-deployment-c
 
 **Finding:** `SUPPORTED_PAGE_SLUGS` in `class-admin.php:48` includes `'alt-context-settings'`, but no `SettingsPage` class or menu registration exists anywhere in the codebase. The slug has no runtime effect but is misleading and adds a dead branch to the page-slug check.
 
-**Evidence:** [class-admin.php](apps/prototype-wp-alt-context/src/admin/class-admin.php#L48) — only match for `alt-context-settings` in the entire app.
+**Evidence:** [class-admin.php](../../../../apps/prototype-wp-alt-context/src/admin/class-admin.php#L48) — only match for `alt-context-settings` in the entire app.
 
 **Recommendation:** Remove the entry from `SUPPORTED_PAGE_SLUGS` or create the corresponding settings page if planned.
 
@@ -81,7 +81,7 @@ The commit addresses findings M-1 through M-5 and L-1/L-2 from `web-deployment-c
 
 **Finding:** The commit correctly imports components from their new paths, but aliases them to the old deprecated names (`ClusterGrid as ClusterGallery`, `ClusterDrawerPanel as ClusterDrawer`). The test `describe` blocks still use the old names (`ClusterGallery`, `ClusterDrawer`). This obscures the canonical component names for future readers.
 
-**Evidence:** [RosterPage.test.tsx](apps/prototype-wp-alt-context/js/admin/pages/__tests__/RosterPage.test.tsx#L3-L4) (imports) and [line 29](apps/prototype-wp-alt-context/js/admin/pages/__tests__/RosterPage.test.tsx#L29), [line 118](apps/prototype-wp-alt-context/js/admin/pages/__tests__/RosterPage.test.tsx#L118) (describe blocks).
+**Evidence:** [RosterPage.test.tsx](../../../../apps/prototype-wp-alt-context/js/admin/pages/__tests__/RosterPage.test.tsx#L3-L4) (imports) and [line 29](../../../../apps/prototype-wp-alt-context/js/admin/pages/__tests__/RosterPage.test.tsx#L29), [line 118](../../../../apps/prototype-wp-alt-context/js/admin/pages/__tests__/RosterPage.test.tsx#L118) (describe blocks).
 
 **Recommendation:** Rename imports and describe blocks to use canonical names (`ClusterGrid`, `ClusterDrawerPanel`).
 
@@ -91,7 +91,7 @@ The commit addresses findings M-1 through M-5 and L-1/L-2 from `web-deployment-c
 
 **Finding:** After removing ~96 lines of dead endpoints, the controller is still 1,195 lines with 29+ public methods registered as REST routes. This is the largest PHP file in the plugin and exceeds reasonable per-file complexity for a controller. While the branch review guide's file-size thresholds are frontend-specific, the PHP controller's size creates maintainability risk.
 
-**Evidence:** [class-recognition-controller.php](apps/prototype-wp-alt-context/src/api/class-recognition-controller.php) — 1,195 lines, 20+ route callbacks.
+**Evidence:** [class-recognition-controller.php](../../../../apps/prototype-wp-alt-context/src/api/class-recognition-controller.php) — 1,195 lines, 20+ route callbacks.
 
 **Recommendation:** Extract route groups into sub-controllers (e.g., `ClusterController`, `SuggestionController`, `AnalysisController`) sharing the `proxy_request()` and `get_tenant_id()` helpers via a base class or trait.
 
@@ -101,7 +101,7 @@ The commit addresses findings M-1 through M-5 and L-1/L-2 from `web-deployment-c
 
 **Finding:** Removing the `.acx-training-stage-banner` block left a double blank line at line 389 before the `// Suggestion Review Panel` comment. Minor formatting artifact.
 
-**Evidence:** [_workbench.scss](apps/prototype-wp-alt-context/js/admin/styles/components/_workbench.scss#L389) — blank line 389 between closing brace and next section comment.
+**Evidence:** [_workbench.scss](../../../../apps/prototype-wp-alt-context/js/admin/styles/components/_workbench.scss#L389) — blank line 389 between closing brace and next section comment.
 
 **Recommendation:** Remove the extra blank line.
 
@@ -111,7 +111,7 @@ The commit addresses findings M-1 through M-5 and L-1/L-2 from `web-deployment-c
 
 **Finding:** `IdentityClusterList.test.tsx` retains a `MockEventSource` class (lines 43–57) originally created for `useClusterEvents`. The hook is deleted. The comment was updated to say "guard against accidental per-row subscriptions," which is a reasonable defensive pattern, but the mock is now orphaned from its original purpose and may confuse future maintainers.
 
-**Evidence:** [IdentityClusterList.test.tsx](apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/IdentityClusterList.test.tsx#L43-L57).
+**Evidence:** [IdentityClusterList.test.tsx](../../../../apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/IdentityClusterList.test.tsx#L43-L57).
 
 **Recommendation:** Keep if the defensive guard rationale is intentional; add a brief comment explaining why it's retained despite `useClusterEvents` deletion. Alternatively, remove if no component in the test tree touches `EventSource`.
 
@@ -125,7 +125,7 @@ The commit addresses findings M-1 through M-5 and L-1/L-2 from `web-deployment-c
 2. `WorkbenchPage.test.tsx:78` — "Workbench clusters panel shows summary cards…"
 3. `RosterPage.test.tsx:151` (via `it.todo`) — "commits to an existing roster entry" (has inline comment explaining JSDOM limitation but no issue link)
 
-**Evidence:** [WorkbenchPage.test.tsx](apps/prototype-wp-alt-context/js/admin/pages/__tests__/WorkbenchPage.test.tsx#L77-L78), [RosterPage.test.tsx](apps/prototype-wp-alt-context/js/admin/pages/__tests__/RosterPage.test.tsx#L151).
+**Evidence:** [WorkbenchPage.test.tsx](../../../../apps/prototype-wp-alt-context/js/admin/pages/__tests__/WorkbenchPage.test.tsx#L77-L78), [RosterPage.test.tsx](../../../../apps/prototype-wp-alt-context/js/admin/pages/__tests__/RosterPage.test.tsx#L151).
 
 **Recommendation:** Add issue references or convert to actual tests.
 
@@ -185,7 +185,7 @@ The commit addresses findings M-1 through M-5 and L-1/L-2 from `web-deployment-c
 
 #### G-8 — MEDIUM — ANTIPATTERN: `class-api.php` indentation broken on `thumbnailUrl` line
 
-**Finding:** The replacement on [class-api.php](apps/prototype-wp-alt-context/src/api/class-api.php#L141) introduced a tab-alignment error. The `'thumbnailUrl'` key is indented with an extra tab compared to its siblings in the array:
+**Finding:** The replacement on [class-api.php](../../../../apps/prototype-wp-alt-context/src/api/class-api.php#L141) introduced a tab-alignment error. The `'thumbnailUrl'` key is indented with an extra tab compared to its siblings in the array:
 
 ```php
 				'status'       => '' === trim( (string) $alt_text ) ? 'missing' : 'complete',
@@ -203,7 +203,7 @@ All other keys in the array use 4 tabs of indentation; `thumbnailUrl` uses 5. Th
 
 #### G-9 — MEDIUM — GAP: `tests` directory removed from `cs-check` scope
 
-**Finding:** The `cs-check` script in [composer.json](apps/prototype-wp-alt-context/composer.json#L32) now targets `src alt-context.php` only. The `tests` directory was dropped entirely. While test files have heavy formatting incompatibilities with WordPress coding standards, excluding them means no code-style enforcement on test code at all.
+**Finding:** The `cs-check` script in [composer.json](../../../../apps/prototype-wp-alt-context/composer.json#L32) now targets `src alt-context.php` only. The `tests` directory was dropped entirely. While test files have heavy formatting incompatibilities with WordPress coding standards, excluding them means no code-style enforcement on test code at all.
 
 **Severity:** MEDIUM — Test code may drift in style without any lint coverage. A narrower exclusion (e.g., keeping tests but adding test-specific exclusions) would be preferable.
 

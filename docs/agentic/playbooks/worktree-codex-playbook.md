@@ -135,7 +135,7 @@ Both daemons default to `BACKEND=codex-cli`.
 
 Backend dispatch is now registry-based, not duplicated per caller. The shared
 registry lives at
-[`scripts/mcp/backend_registry.py`](/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/backend_registry.py).
+[`backend_registry.py`](../../../packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/backend_registry.py).
 `lane_exec.py`, `review_runner.py`, and the daemon CLI surfaces all read backend
 choices from that registry. New bridge backends should be added there instead of
 editing `if backend == ...` branches in multiple files.

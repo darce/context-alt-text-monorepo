@@ -48,7 +48,7 @@ PostgreSQL semantics for `SET LOCAL`:
 
 > `SET LOCAL` can only be used inside a transaction block. When the transaction is committed or rolled back, the session-level value takes effect again.
 
-The tenant context is established via `SET LOCAL app.current_tenant = '<uuid>'` in `set_tenant_context()` ([db/tenant_context.py](apps/prototype-description-service/db/tenant_context.py)). This is called:
+The tenant context is established via `SET LOCAL app.current_tenant = '<uuid>'` in `set_tenant_context()` ([db/tenant_context.py](../../../apps/prototype-description-service/db/tenant_context.py)). This is called:
 
 1. By `ensure_job_context()` before the job is marked `running` (scan_worker.py line 200).
 2. The `running` status commit (line 210) clears it.

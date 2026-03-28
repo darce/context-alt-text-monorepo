@@ -73,7 +73,7 @@ Expected minimum tool list:
 ## 3. Attach in Codex
 
 For same-machine development, prefer the checked-in project-scoped Codex config in
-[`../../.codex/config.toml`](../../.codex/config.toml).
+[`../../../.codex/config.toml`](../../../.codex/config.toml).
 It registers the stdio adapter as `altcontext-mcp` and pins the launcher to the
 repo-local workspace state while exposing both the handoff MCP package and the
 Codex subagent bridge on `PYTHONPATH`.
@@ -112,6 +112,6 @@ A first-class auth layer may be added in a future task.
 
 ## Related
 
-- [BOOTSTRAP.md](BOOTSTRAP.md) -- MCP server setup and testing commands
+- [BOOTSTRAP.md](../BOOTSTRAP.md) -- MCP server setup and testing commands
 - [worktree-codex-playbook.md](worktree-codex-playbook.md) -- worktree lane orchestration
-- [instructions.md](instructions.md) -- cold-start development instructions
+- [instructions.md](../instructions.md) -- cold-start development instructions

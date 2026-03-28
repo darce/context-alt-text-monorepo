@@ -18,7 +18,7 @@ The current worktree system already has the core ingredients for multi-lane orch
 ## Current State Analysis
 
 - `make lane-run` already renders a lane prompt, runs Codex, and auto-submits a structured handoff through `scripts/mcp/lane_result.py`.
-- `scripts/mcp/lane_prompt.py --check` already provides actionable-work detection for pull-based workers.
+- `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_prompt.py --check` already provides actionable-work detection for pull-based workers.
 - `make handoff-dispatch` already routes review findings, blockers, and actions via `scripts/mcp/lane_manifest.py`, which loads a checked-in manifest from `config/lane-orchestration/<task-ref>.json`.
 - `make lane-intake` already performs verified scratch-worktree intake.
 - `make lane-refresh` already propagates committed orchestrator state into worker worktrees.
@@ -35,9 +35,9 @@ The epic is delivered through three task plans:
    - Record findings in MCP before daemon callers act on them
 
 2. **Daemon 2: Worker daemon**
-   - Add a non-reporting execution primitive, `scripts/mcp/lane_exec.py`
+   - Add a non-reporting execution primitive, `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_exec.py`
    - Refactor `make lane-run` to stay as the human wrapper around `lane_exec.py` + `lane_result.py handoff`
-   - Add `scripts/mcp/worker_daemon.py` to poll, execute, self-review, verify, and emit one final handoff
+   - Add `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/worker_daemon.py` to poll, execute, self-review, verify, and emit one final handoff
 
 3. **Daemon 3: Orchestrator daemon**
    - Reuse the existing `config/lane-orchestration/<task-ref>.json` routing and merge-order manifest
@@ -80,8 +80,8 @@ config/lane-orchestration/<task-ref>.json
 | File                                        | Change                                                           |
 | ------------------------------------------- | ---------------------------------------------------------------- |
 | `scripts/mcp/review_runner.py`              | New review execution and schema module                           |
-| `scripts/mcp/lane_exec.py`                  | New non-reporting worker execution primitive                     |
-| `scripts/mcp/worker_daemon.py`              | New worker-side automation loop                                  |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_exec.py`                  | New non-reporting worker execution primitive                     |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/worker_daemon.py`              | New worker-side automation loop                                  |
 | `scripts/mcp/orchestrator_daemon.py`        | New root-side automation loop                                    |
 | `config/lane-orchestration/<task-ref>.json` | Existing routing and merge-order manifest (already shipped)      |
 | `Makefile`                                  | Add daemon targets and refactor `lane-run` around `lane_exec.py` |

@@ -4,6 +4,8 @@ Task: `{{TASK_REF}}`
 Lane: `{{LANE_ID}}`
 Branch: `{{BRANCH}}`
 Worktree: `{{WORKTREE_PATH}}`
+Date: `{{DATE_EST}}`
+Author: `{{AGENT_NAME}}`
 
 ## Objective
 

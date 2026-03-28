@@ -53,7 +53,7 @@ recognition/
 +-- worker/                      # Background job processing
 ```
 
-**Naming boundary:** Infrastructure uses `Face*` nomenclature (tied to InsightFace); domain uses `*Identity` nomenclature (technology-agnostic). The seam is `EmbeddingService.to_media_identities()`. See [ADR-001](../../architecture/ADR-001-face-identity-nomenclature.md) for full rationale.
+**Naming boundary:** Infrastructure uses `Face*` nomenclature (tied to InsightFace); domain uses `*Identity` nomenclature (technology-agnostic). The seam is `EmbeddingService.to_media_identities()`. See [ADR-001](../adrs/ADR-001-face-identity-nomenclature.md) for full rationale.
 
 ---
 

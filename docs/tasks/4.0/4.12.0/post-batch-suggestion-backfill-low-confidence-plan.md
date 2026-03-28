@@ -59,7 +59,7 @@ This eliminates a settings field (`rejection_cooldown_days`) that would consume 
 
 ### Dedup Key — Schema Change Required (`evidence_generation` Column)
 
-The existing `SuggestionModel` has a unique constraint on `(identity_id, suggested_cluster_id)` ([db/models/constraints.py line 105](db/models/constraints.py#L105)). You **cannot** create a second suggestion row for the same identity→cluster pair without violating this constraint. Encoding generation in `source` or metadata doesn't help — the DB will reject the INSERT regardless.
+The existing `SuggestionModel` has a unique constraint on `(identity_id, suggested_cluster_id)` ([db/models/constraints.py line 105](../../../../apps/prototype-description-service/db/models/constraints.py#L105)). You **cannot** create a second suggestion row for the same identity→cluster pair without violating this constraint. Encoding generation in `source` or metadata doesn't help — the DB will reject the INSERT regardless.
 
 Required schema change:
 
@@ -85,7 +85,7 @@ Generation 0 = original suggestion. Generation N+1 = new-evidence re-proposal af
 
 Backfill runs after successful clustering jobs only. Manual operations (label, split, merge, reassign) are already covered by existing infrastructure:
 
-- **Label/rename** → calls `surface_for_newly_labeled_cluster` directly ([cluster_service.py line 294](recognition/application/orchestration/cluster_service.py#L294))
+- **Label/rename** → calls `surface_for_newly_labeled_cluster` directly ([cluster_service.py line 294](../../../../apps/prototype-description-service/recognition/application/orchestration/cluster_service.py#L294))
 - **Split** → produces `SuggestionRefreshReason.MANUAL_SPLIT`, triggers suggestion refresh for new sub-clusters
 - **Merge** → `cluster_merge.py` resolves pending suggestions for the absorbed cluster
 - **Reassign** → `SuggestionRefreshReason.MANUAL_ASSIGN` handles re-evaluation

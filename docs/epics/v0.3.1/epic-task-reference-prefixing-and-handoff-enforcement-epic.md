@@ -1,5 +1,7 @@
 # E12. Epic and Task Reference Prefixing and Handoff Enforcement (v0.3.1)
 
+> **Epic Short ID**: E12
+
 ## Objective
 
 Introduce a compact, deterministic reference scheme for epics, task plans, roadmaps, and handoff decisions so agents and reviewers can refer to work unambiguously without long opaque IDs. The scheme must be documented in the repo guidance, reflected in the planning templates, and enforced by `agent-handoff-mcp` for new handoff decisions and context-routing helpers.
@@ -12,9 +14,9 @@ Handoff decisions have the same ambiguity. The current `slice_complete_<short_la
 
 ## UX Vision
 
-When a new epic is created, its title starts with the next global epic number using the compact `E**` form, for example `E12. Epic and Task Reference Prefixing and Handoff Enforcement`. Each epic also declares a short epic id, and every task plan under that epic uses a compact local task reference in its title, for example `REF-1. Define the naming schema`.
+When a new epic is created, its title starts with the next global epic number using the compact `E**` form, for example `E12. Epic and Task Reference Prefixing and Handoff Enforcement`. Each epic also declares the compact id used for local task references, and every task plan under that epic uses a compact local task reference in its title, for example `E12-1. Define the naming schema`.
 
-When an agent records a handoff decision, the decision string itself is compact but self-describing. Reviewers can immediately see who authored it and which work item it belongs to, for example `cdx_slice_complete_REF-1_gate-validation`. MCP validation rejects malformed new decision ids, and the repo guidance/templates teach the same format the runtime enforces. When an agent reviews or creates planning docs, the workflow also deterministically routes it to the correct guide or template based on intent and target path.
+When an agent records a handoff decision, the decision string itself is compact but self-describing. Reviewers can immediately see who authored it and which work item it belongs to, for example `cdx_slice_complete_E12-1_gate-validation`. MCP validation rejects malformed new decision ids, and the repo guidance/templates teach the same format the runtime enforces. When an agent reviews or creates planning docs, the workflow also deterministically routes it to the correct guide or template based on intent and target path.
 
 ## Constraints
 
@@ -28,10 +30,10 @@ When an agent records a handoff decision, the decision string itself is compact 
 ## Terminology
 
 - **Epic index**: The next global sequential number across all prior epic files, rendered in the epic title as `E<number>`, for example `E12.`.
-- **Epic short id**: A compact uppercase identifier chosen for one epic, typically 2-5 letters, for example `REF`.
-- **Task reference**: A local task identifier composed of the epic short id and a per-epic sequence number, for example `REF-1`.
+- **Epic short id**: The compact identifier used for local task references under one epic, typically the epic id itself, for example `E12`.
+- **Task reference**: A local task identifier composed of the epic short id and a per-epic sequence number, for example `E12-1`.
 - **Decision author tag**: A short lowercase tag derived from the authoring agent, for example `cdx`, `cop`, `cla`, or `gem`.
-- **Slice reference**: An optional task-local reference such as `REF-1/S1`. This epic evaluates slice prefixes and recommends keeping them optional rather than mandatory in headings/titles.
+- **Slice reference**: An optional task-local reference such as `E12-1/S1`. This epic evaluates slice prefixes and recommends keeping them optional rather than mandatory in headings/titles.
 - **Context router**: The rule or MCP helper that selects the correct review guide or planning template based on request intent and target artifact path.
 
 ## Current State
@@ -63,8 +65,8 @@ This preserves the existing semantic signal that a decision is a slice completio
 | Decision | Rationale |
 | --- | --- |
 | `E<number>` prefix for epic titles | Epics are few enough that one repo-wide sequential number stays compact and meaningful, and the `E` prefix makes the token visually distinct from task refs. |
-| Local task numbering with epic short id | Tasks need uniqueness without repeating the full global epic index everywhere. `REF-1` is short, grep-friendly, and unique enough in context. |
-| No mandatory slice prefix in titles/headings | Task plans already organize slices locally. Requiring `REF-1/S1` on every slice heading would add noise with limited value. Keep slice references optional for cross-doc and handoff citation only. |
+| Local task numbering with epic short id | Tasks need uniqueness without repeating long prose labels everywhere. `E12-1` is short, grep-friendly, and directly tied to the owning epic id. |
+| No mandatory slice prefix in titles/headings | Task plans already organize slices locally. Requiring `E12-1/S1` on every slice heading would add noise with limited value. Keep slice references optional for cross-doc and handoff citation only. |
 | Decision ids carry both author and work reference | Review history becomes easier to scan, and decisions become more self-describing outside the immediate task context. |
 | Preserve `slice_complete` semantics inside the decision id | Existing slice review packet and close-check flows depend on detecting completion decisions; the new format should extend that behavior, not replace it with an unrelated grammar. |
 | Enforce guide/template loading through context routing | The right planning surface should be selected from request intent and target path, not from chat memory. This keeps review and doc-authoring behavior auditable and consistent. |
@@ -88,7 +90,7 @@ This preserves the existing semantic signal that a decision is a slice completio
 ### Phase 1: Naming Spec and Template Update -- not-started
 
 > **Status**: not-started
-> **Task plans**: `not yet scoped`
+> **Task plans**: [E12-1. Naming Spec and Template Update](../../tasks/12.0/12.1/E12-1-naming-spec-and-template-update-task-plan.md)
 
 **Goal**: Define the compact naming scheme and make new epic/task/roadmap authoring follow it by default.
 
@@ -109,7 +111,7 @@ Exit criteria:
 ### Phase 2: Guidance Rollout -- not-started
 
 > **Status**: not-started
-> **Task plans**: `not yet scoped`
+> **Task plans**: [E12-2. Guidance Rollout and Context Routing](../../tasks/12.0/12.1/E12-2-guidance-rollout-and-context-routing-task-plan.md)
 
 **Goal**: Synchronize the repo rules and author guidance with the naming scheme.
 
@@ -133,7 +135,7 @@ Exit criteria:
 ### Phase 3: MCP Enforcement and Parsing -- not-started
 
 > **Status**: not-started
-> **Task plans**: `not yet scoped`
+> **Task plans**: [E12-3. MCP Decision Enforcement and Context Router](../../tasks/12.0/12.1/E12-3-mcp-decision-enforcement-and-context-router-task-plan.md)
 
 **Goal**: Enforce the new decision-id format and make guide/template routing auditable.
 
@@ -155,20 +157,19 @@ Exit criteria:
 ### Phase 4: Migration Policy and Audit Pass -- not-started
 
 > **Status**: not-started
-> **Task plans**: `not yet scoped`
+> **Task plans**: [E12-4. Migration Policy and Audit Pass](../../tasks/12.0/12.1/E12-4-migration-policy-and-audit-pass-task-plan.md)
 
-**Goal**: Define what is required for existing content and prevent partial rollout drift.
+**Goal**: Prevent partial rollout drift with one explicit grandfathering rule and one lightweight compliance checklist.
 
 Deliverables:
 
-- Decide which historical epic/task titles are renamed versus grandfathered.
-- Decide whether historical decisions remain untouched while new decisions are enforced, or whether a bounded backfill is worth doing.
+- Add one explicit rule that historical docs and historical decision rows are grandfathered by default unless a concrete artifact blocks review or tooling.
 - Add a lightweight audit checklist for new epics/task plans so reviewers can verify the numbering rules were followed.
-- Update any contract text that still documents the old decision-only naming rule.
+- Update any contract text that still documents the old decision-only naming rule for new work.
 
 Exit criteria:
 
-- The repo has a clear policy for old vs new docs and decisions.
+- The repo has a clear old-vs-new rule without planning a broad backfill.
 - Reviewers can tell whether a new epic/task/decision is compliant without reading tribal-memory notes.
 
 ## External Dependencies

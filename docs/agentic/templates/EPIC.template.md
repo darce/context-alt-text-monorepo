@@ -1,5 +1,11 @@
 # Epic Template
 
+> **Metadata** — fill in when creating a new doc from this template:
+>
+> - **Date**: [YYYY-MM-DD HH:MM EST]
+> - **Author**: [agent-name or handle]
+> - **Epic Short ID**: [2-5 uppercase letters; this becomes the task-plan prefix source]
+>
 > Use this template for multi-phase epics under `docs/epics/`.
 > Epics define a bounded capability or process change delivered across multiple task plans.
 > Epics describe the end-state architecture, evidence model, and delivery phases.
@@ -14,7 +20,9 @@
 
 ---
 
-# [EPIC_TITLE] (v[VERSION])
+# E[GLOBAL_EPIC_INDEX]. [EPIC_TITLE] (v[VERSION])
+
+> **Epic Short ID**: [SHORT_ID]
 
 ## Objective
 
@@ -49,8 +57,8 @@
 > Optional but recommended when the epic is informed by literature, prior audits, or external process references.
 > Prefer concrete source-to-application mappings over broad summaries.
 
-| Source | Concept | Epic application |
-| --- | --- | --- |
+| Source             | Concept           | Epic application                                |
+| ------------------ | ----------------- | ----------------------------------------------- |
 | `[path/to/source]` | [Idea or pattern] | [How it changes this epic's design or delivery] |
 
 ## Git Workflow Assessment
@@ -66,8 +74,8 @@
 
 ### Design Decisions
 
-| Decision | Rationale |
-| --- | --- |
+| Decision   | Rationale                             |
+| ---------- | ------------------------------------- |
 | [Decision] | [Why it was chosen over alternatives] |
 
 ### Data Model
@@ -99,14 +107,14 @@ Exit criteria:
 
 ## External Dependencies
 
-| Dependency | Owner | Status | Blocks |
-| --- | --- | --- | --- |
+| Dependency   | Owner   | Status                             | Blocks                           |
+| ------------ | ------- | ---------------------------------- | -------------------------------- |
 | [Dependency] | [Owner] | [Not started / In progress / Done] | [Phase or exit criteria blocked] |
 
 ## Code Anchors
 
-| Layer | File | Note |
-| --- | --- | --- |
+| Layer   | File           | Note                                  |
+| ------- | -------------- | ------------------------------------- |
 | [Layer] | `path/to/file` | [Why this anchor matters to the epic] |
 
 ---

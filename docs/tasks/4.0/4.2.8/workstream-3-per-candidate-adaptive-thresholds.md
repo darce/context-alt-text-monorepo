@@ -24,13 +24,13 @@ This prevents "singleton snowballing" while allowing mature, user-verified clust
 
 | Component            | File                                                                                                               | Current Behavior                                                                                  |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| `MaturityCheck`      | [checks/maturity.py](apps/prototype-description-service/recognition/application/assignment/checks/maturity.py)     | Checks `min_representatives_for_maturity` setting; bypasses for anchor-linked to labeled clusters |
-| `ConfidenceCheck`    | [checks/confidence.py](apps/prototype-description-service/recognition/application/assignment/checks/confidence.py) | Uses `compute_adaptive_threshold()` based on **global** labeled cluster count                     |
-| `user_confirmed`     | [db/models.py](apps/prototype-description-service/db/models.py#L140)                                               | Column exists on `identity_clusters`                                                              |
-| `diversity_score`    | [db/models.py](apps/prototype-description-service/db/models.py#L214)                                               | Column exists on `identity_cluster_representatives`                                               |
-| `quality_score`      | [db/models.py](apps/prototype-description-service/db/models.py#L213)                                               | Column exists on `identity_cluster_representatives` (NOT on `media_identities`)                   |
-| Pose metadata        | [db/models.py](apps/prototype-description-service/db/models.py)                                                    | `pose_pitch`, `pose_yaw`, `pose_roll` exist on `media_identities`                                 |
-| `ClusteringSettings` | [settings/clustering.py](apps/prototype-description-service/recognition/application/settings/clustering.py)        | All threshold settings in one place                                                               |
+| `MaturityCheck`      | [domain/maturity.py](../../../../apps/prototype-description-service/recognition/domain/maturity.py)     | Historical maturity logic reference; the old `checks/maturity.py` module was later removed |
+| `ConfidenceCheck`    | [checks/confidence.py](../../../../apps/prototype-description-service/recognition/application/assignment/checks/confidence.py) | Uses `compute_adaptive_threshold()` based on **global** labeled cluster count                     |
+| `user_confirmed`     | [db/models.py](../../../../apps/prototype-description-service/db/models.py#L140)                                               | Column exists on `identity_clusters`                                                              |
+| `diversity_score`    | [db/models.py](../../../../apps/prototype-description-service/db/models.py#L214)                                               | Column exists on `identity_cluster_representatives`                                               |
+| `quality_score`      | [db/models.py](../../../../apps/prototype-description-service/db/models.py#L213)                                               | Column exists on `identity_cluster_representatives` (NOT on `media_identities`)                   |
+| Pose metadata        | [db/models.py](../../../../apps/prototype-description-service/db/models.py)                                                    | `pose_pitch`, `pose_yaw`, `pose_roll` exist on `media_identities`                                 |
+| `ClusteringSettings` | [settings/clustering.py](../../../../apps/prototype-description-service/recognition/application/settings/clustering.py)        | All threshold settings in one place                                                               |
 
 ### False Assumptions in Original Plan ❌
 

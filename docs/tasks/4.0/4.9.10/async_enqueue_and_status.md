@@ -46,7 +46,7 @@ Resolve 500 timeouts when analyzing large batches of media (e.g., 10,000 items) 
 
 ### Backend: `prototype-description-service`
 
-#### [MODIFY] [db/models.py](apps/prototype-description-service/db/models.py)
+#### [MODIFY] [db/models.py](../../../../apps/prototype-description-service/db/models.py)
 
 Add `message` column to `IdentityScanJob`:
 
@@ -64,7 +64,7 @@ class IdentityScanJob(Base):
 - Position after `error_message` for logical grouping
 - `error_message` = terminal failure reason, `message` = progress feedback
 
-#### [MODIFY] [db/migrations/versions/001_identity_schema.py](apps/prototype-description-service/db/migrations/versions/001_identity_schema.py)
+#### [MODIFY] [db/migrations/versions/001_identity_schema.py](../../../../apps/prototype-description-service/db/migrations/versions/001_identity_schema.py)
 
 Add column to baseline schema (lines ~244-245, after `error_message`):
 
@@ -74,7 +74,7 @@ sa.Column("message", sa.Text()),  # NEW: granular status message
 sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()),
 ```
 
-#### [MODIFY] [domain/job.py](apps/prototype-description-service/recognition/domain/job.py)
+#### [MODIFY] [domain/job.py](../../../../apps/prototype-description-service/recognition/domain/job.py)
 
 Add `message` to dataclass:
 
@@ -95,7 +95,7 @@ class Job:
     finished_at: datetime | None = None
 ```
 
-#### [MODIFY] [responses.py](apps/prototype-description-service/recognition/interface_adapters/http/schemas/responses.py)
+#### [MODIFY] [responses.py](../../../../apps/prototype-description-service/recognition/interface_adapters/http/schemas/responses.py)
 
 Add `message` to `JobStatusResponse`:
 
@@ -112,7 +112,7 @@ class JobStatusResponse(BaseModel):
     finished_at: datetime | None
 ```
 
-#### [MODIFY] [scan_queue_service.py](apps/prototype-description-service/recognition/application/scan/scan_queue_service.py)
+#### [MODIFY] [scan_queue_service.py](../../../../apps/prototype-description-service/recognition/application/scan/scan_queue_service.py)
 
 Split `enqueue_scan_job` into two methods:
 
@@ -210,7 +210,7 @@ class ScanQueueService:
         # ... existing implementation unchanged ...
 ```
 
-#### [MODIFY] [queue_repository.py (Protocol)](apps/prototype-description-service/recognition/application/scan/queue_repository.py)
+#### [MODIFY] [queue_repository.py (Protocol)](../../../../apps/prototype-description-service/recognition/application/scan/queue_repository.py)
 
 Add new protocol methods:
 
@@ -247,7 +247,7 @@ class ScanQueueRepository(Protocol):
         """Update media_ids array and message after all items are queued."""
 ```
 
-#### [MODIFY] [scan_queue_repository.py (SQLA impl)](apps/prototype-description-service/recognition/infrastructure/repositories/scan_queue_repository.py)
+#### [MODIFY] [scan_queue_repository.py (SQLA impl)](../../../../apps/prototype-description-service/recognition/infrastructure/repositories/scan_queue_repository.py)
 
 Implement new methods:
 
@@ -307,7 +307,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         )
 ```
 
-#### [MODIFY] [analyze.py](apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py)
+#### [MODIFY] [analyze.py](../../../../apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py)
 
 Update `analyze_media` to use async enqueueing:
 
@@ -394,7 +394,7 @@ async def _process_scan_job_inline(...):
         await scan_service.save_job_results(...)
 ```
 
-#### [MODIFY] [job_repository.py](apps/prototype-description-service/recognition/infrastructure/repositories/job_repository.py)
+#### [MODIFY] [job_repository.py](../../../../apps/prototype-description-service/recognition/infrastructure/repositories/job_repository.py)
 
 Map `message` field when reading scan jobs:
 
@@ -417,7 +417,7 @@ async def get(self, job_id: str) -> Job | None:
         )
 ```
 
-#### [MODIFY] [analyze.py `_job_to_response`](apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py)
+#### [MODIFY] [analyze.py `_job_to_response`](../../../../apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py)
 
 Include `message` in response mapping:
 
@@ -442,7 +442,7 @@ def _job_to_response(job: Job) -> JobStatusResponse:
 
 ### Frontend: `prototype-wp-alt-context`
 
-#### [MODIFY] [js/admin/api/recognition/types/scan.ts](apps/prototype-wp-alt-context/js/admin/api/recognition/types/scan.ts)
+#### [MODIFY] [js/admin/api/recognition/types/scan.ts](../../../../apps/prototype-wp-alt-context/js/admin/api/recognition/types/scan.ts)
 
 Add `message` to response types:
 
@@ -458,7 +458,7 @@ export interface AnalyzeResponse {
 }
 ```
 
-#### [MODIFY] [js/admin/pages/WorkbenchPage.tsx](apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx)
+#### [MODIFY] [js/admin/pages/WorkbenchPage.tsx](../../../../apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx)
 
 Update `scanStatusText` to prefer backend message:
 

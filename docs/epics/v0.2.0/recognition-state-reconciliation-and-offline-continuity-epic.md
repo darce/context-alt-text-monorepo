@@ -357,7 +357,7 @@ Depends on backend tenant policy infrastructure (retention mode fields, audit ev
 
 ## Deferred (Post-v0.2.0)
 
-- [x] Replace snapshot-heavy sync with richer delta ingest once the MVP replay model is stable. -- Moved to [sync-completion-and-retention-hardening-epic (v0.3.0)](../v0.3.0/sync-completion-and-retention-hardening-epic.md) Phase 1.
+- [x] Replace snapshot-heavy sync with richer delta ingest once the MVP replay model is stable. -- Moved to [sync-completion-and-retention-hardening-epic (v0.3.1)](../v0.3.1/sync-completion-and-retention-hardening-epic.md) Phase 1.
 - [x] Add backend-side storage and API support for first-class machine proposals separate from committed cluster state. -- Delivered as suggestions infrastructure (`identity_suggestions`, `cluster_merge_suggestions`, `name_suggestions` tables + API).
 - [x] Add richer operator tooling for merge-preview and proposal acceptance workflows. -- Delivered via suggestions router, WP proxy, and frontend hooks.
 - [ ] Explore tenant-level sovereignty tiers where WordPress becomes the authoritative long-term store for embeddings and machine proposals. -- Deferred beyond v0.3.0.

@@ -367,7 +367,7 @@ When a cluster is unbound from a person:
 
 ## Related Contracts
 
-- [ADR-003: WordPress Local Authority and Durable Outbox Replay](../ADR-003-wordpress-local-authority-and-durable-outbox-replay.md): Architectural decision for local authority, replay, acknowledgement, and conflict semantics
+- [ADR-003: WordPress Local Authority and Durable Outbox Replay](../adrs/ADR-003-wordpress-local-authority-and-durable-outbox-replay.md): Architectural decision for local authority, replay, acknowledgement, and conflict semantics
 - [Cluster Snapshot API](cluster-snapshot-api.md): Pull-based snapshot for local projection
 - [Security](security.md): Authentication and tenant resolution patterns
 

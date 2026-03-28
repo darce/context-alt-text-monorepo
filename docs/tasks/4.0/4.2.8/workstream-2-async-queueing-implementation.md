@@ -19,19 +19,19 @@ Convert the synchronous `/recognition/analyze` endpoint to an async "enqueue + p
 
 | Component       | File                                                                                                                                                | Current Behavior                                                                                           |
 | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Analyze Router  | [recognition/interface_adapters/http/routers/analyze.py](apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py) | `POST /analyze` calls `ScanService.analyze_media()` synchronously, awaits full completion before returning |
-| ScanService     | [recognition/application/scan/service.py](apps/prototype-description-service/recognition/application/scan/service.py)                               | `analyze_media()` runs detection + embedding + DB writes in single transaction, blocks caller              |
-| Job Model       | [recognition/domain/job.py](apps/prototype-description-service/recognition/domain/job.py)                                                           | In-memory `Job` dataclass with `PENDING/RUNNING/COMPLETED/FAILED` states                                   |
-| IdentityScanJob | [db/models.py#L256-280](apps/prototype-description-service/db/models.py)                                                                            | Persisted job record with `media_ids`, `status`, `processed_media`, `identities_detected`                  |
+| Analyze Router  | [recognition/interface_adapters/http/routers/analyze.py](../../../../apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py) | `POST /analyze` calls `ScanService.analyze_media()` synchronously, awaits full completion before returning |
+| ScanService     | [recognition/application/scan/service.py](../../../../apps/prototype-description-service/recognition/application/scan/service.py)                               | `analyze_media()` runs detection + embedding + DB writes in single transaction, blocks caller              |
+| Job Model       | [recognition/domain/job.py](../../../../apps/prototype-description-service/recognition/domain/job.py)                                                           | In-memory `Job` dataclass with `PENDING/RUNNING/COMPLETED/FAILED` states                                   |
+| IdentityScanJob | [db/models.py#L256-280](../../../../apps/prototype-description-service/db/models.py)                                                                            | Persisted job record with `media_ids`, `status`, `processed_media`, `identities_detected`                  |
 
 ### Frontend (`apps/prototype-wp-alt-context/`)
 
 | Component     | File                                                                                                                           | Current Behavior                                                       |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
-| PHP Proxy     | [src/api/class-recognition-proxy-controller.php](apps/prototype-wp-alt-context/src/api/class-recognition-proxy-controller.php) | 60s timeout for POST/PUT/PATCH requests (`line 696`)                   |
-| scanApi       | [js/admin/api/recognition/scanApi.ts](apps/prototype-wp-alt-context/js/admin/api/recognition/scanApi.ts)                       | `scanFacesBatched()` chunks 300 IDs per request, sequential execution  |
-| Hook          | [js/admin/hooks/useRecognitionHooks.ts](apps/prototype-wp-alt-context/js/admin/hooks/useRecognitionHooks.ts)                   | `useScanIdentities` mutation, `useScanStatus` polling at 1.5s interval |
-| WorkbenchPage | [js/admin/pages/WorkbenchPage.tsx](apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx)                             | `handleScanFaces()` triggers mutation, polls for completion            |
+| PHP Proxy     | [src/api/class-abstract-recognition-proxy-controller.php](../../../../apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php) | 60s timeout for POST/PUT/PATCH requests in the current proxy base class                   |
+| scanApi       | [js/admin/api/recognition/scanApi.ts](../../../../apps/prototype-wp-alt-context/js/admin/api/recognition/scanApi.ts)                       | `scanFacesBatched()` chunks 300 IDs per request, sequential execution  |
+| Hook          | [js/admin/hooks/useRecognitionHooks.ts](../../../../apps/prototype-wp-alt-context/js/admin/hooks/useRecognitionHooks.ts)                   | `useScanIdentities` mutation, `useScanStatus` polling at 1.5s interval |
+| WorkbenchPage | [js/admin/pages/WorkbenchPage.tsx](../../../../apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx)                             | `handleScanFaces()` triggers mutation, polls for completion            |
 
 ---
 

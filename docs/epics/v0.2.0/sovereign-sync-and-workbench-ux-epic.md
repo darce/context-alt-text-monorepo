@@ -2,11 +2,11 @@
 
 ## Status
 
-Closed. All items either delivered under v0.2.0 task plans or moved to [sync-completion-and-retention-hardening-epic (v0.3.0)](../v0.3.0/sync-completion-and-retention-hardening-epic.md).
+Closed. All items either delivered under v0.2.0 task plans or moved to [sync-completion-and-retention-hardening-epic (v0.3.1)](../v0.3.1/sync-completion-and-retention-hardening-epic.md).
 
 ## Objective
 
-Implement the next sovereign sync architecture layer and close remaining product-surface UX gaps that go beyond the reliability baseline established in [production-readiness-epic.md](./production-readiness-epic.md).
+Implement the next sovereign sync architecture layer and close remaining product-surface UX gaps that go beyond the reliability baseline established in [production-readiness-epic.md](../v0.3.1/production-readiness-epic.md).
 
 This epic owns:
 
@@ -26,7 +26,7 @@ This epic owns:
 
 ## Relationship to Production-Readiness Epic
 
-The v0.2.0 [production-readiness-epic.md](./production-readiness-epic.md) Phase 1 now owns all **frontend-only reliability fixes**, specifically:
+The later [production-readiness-epic.md](../v0.3.1/production-readiness-epic.md) Phase 1 now owns all **frontend-only reliability fixes**, specifically:
 
 | Item                                        | Owned By                      | Rationale                                |
 | ------------------------------------------- | ----------------------------- | ---------------------------------------- |
@@ -42,7 +42,7 @@ This follow-on epic captures **product expansion** and **architecture evolution*
 
 ## Sources and Inputs
 
-- [production-readiness-epic.md](./production-readiness-epic.md)
+- [production-readiness-epic.md](../v0.3.1/production-readiness-epic.md)
 - [roadmap-v3.hybrid.md](../../roadmaps/roadmap-v3.hybrid.md)
 - [v0.2-sovereign-outbox-task-plan.md](../../tasks/4.0/4.13.3/v0.2-sovereign-outbox-task-plan.md)
 - [v0.2-sovereign-action-scheduler-task-plan.md](../../tasks/4.0/4.13.3/v0.2-sovereign-action-scheduler-task-plan.md)
@@ -157,8 +157,8 @@ Exit criteria:
 
 - [x] Implement outbox schema + lifecycle.
 - [x] Migrate async sync execution to Action Scheduler.
-- [x] Implement delta ingest path with snapshot fallback. -- Moved to [sync-completion-and-retention-hardening-epic (v0.3.0)](../v0.3.0/sync-completion-and-retention-hardening-epic.md) Phase 1.
-- [x] Implement drift reconciliation flow and conflict-safe replay policy. -- Moved to [sync-completion-and-retention-hardening-epic (v0.3.0)](../v0.3.0/sync-completion-and-retention-hardening-epic.md) Phase 2.
+- [x] Implement delta ingest path with snapshot fallback. -- Moved to [sync-completion-and-retention-hardening-epic (v0.3.1)](../v0.3.1/sync-completion-and-retention-hardening-epic.md) Phase 1.
+- [x] Implement drift reconciliation flow and conflict-safe replay policy. -- Moved to [sync-completion-and-retention-hardening-epic (v0.3.1)](../v0.3.1/sync-completion-and-retention-hardening-epic.md) Phase 2.
 - [x] Implement representative projection and pin/unpin replay parity. -- Delivered.
 - [x] Complete `cluster_merged` accept-machine revert contract with moved-member provenance. -- Delivered.
 - [x] Implement bidirectional conflict resolution for person-name edits. -- Delivered.

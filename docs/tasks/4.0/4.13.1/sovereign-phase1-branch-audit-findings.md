@@ -56,7 +56,7 @@
 
 |              |                                                                                                                                                         |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Files**    | [class-identity-members-repository.php](../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-identity-members-repository.php#L206-L211) |
+| **Files**    | [class-identity-members-repository.php](../../../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-identity-members-repository.php#L206-L211) |
 | **Category** | ANTIPATTERN                                                                                                                                             |
 
 `normalize_similarity_value()` returns the literal string `'NULL'` when no similarity is present. This value is bound via `%s` in `$wpdb->prepare()`, producing the quoted string `'NULL'` in SQL. The `NULLIF(%s, '')` wrapper (line 100) checks against empty string, not the sentinel `'NULL'`, so the expression evaluates to the **string** `'NULL'` instead of SQL `NULL`.
@@ -73,7 +73,7 @@ The `similarity` column is declared as `double NULL` in the schema. MySQL in str
 
 |              |                                                                                                                                                         |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Files**    | [class-identity-members-repository.php](../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-identity-members-repository.php#L103-L112) |
+| **Files**    | [class-identity-members-repository.php](../../../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-identity-members-repository.php#L103-L112) |
 | **Category** | GAP                                                                                                                                                     |
 
 The `INSERT INTO ... SELECT ... FROM DUAL WHERE EXISTS (...)` guard on member upserts includes `c.is_user_confirmed = 0`. This means member rows for user-confirmed clusters are **silently not inserted or updated**.
@@ -88,7 +88,7 @@ The contract doc says non-authoritative fields on clusters (`identity_count`, `r
 
 |              |                                                                                                                                                                                                                                                                                                  |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Files**    | [class-clusters-repository.php](../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-clusters-repository.php#L206-L214), [class-identity-members-repository.php](../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-identity-members-repository.php#L196-L207) |
+| **Files**    | [class-clusters-repository.php](../../../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-clusters-repository.php#L206-L214), [class-identity-members-repository.php](../../../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-identity-members-repository.php#L196-L207) |
 | **Category** | ANTIPATTERN                                                                                                                                                                                                                                                                                      |
 
 Both stale-row deletion methods use `FIND_IN_SET(cluster_uuid, %s)` where the set is built via `implode(',', $incoming_ids)`. UUIDs from the snapshot payload are only `trim()`ed, not validated against a UUID format pattern.
@@ -101,7 +101,7 @@ A UUID containing a comma (e.g., `"abc,target-uuid"`) would cause `FIND_IN_SET` 
 
 |              |                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Files**    | [class-clusters-repository.php](../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-clusters-repository.php#L318-L353), [class-identity-members-repository.php](../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-identity-members-repository.php#L320-L355), [class-sync-state-repository.php](../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-sync-state-repository.php#L93-L130) |
+| **Files**    | [class-clusters-repository.php](../../../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-clusters-repository.php#L318-L353), [class-identity-members-repository.php](../../../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-identity-members-repository.php#L320-L355), [class-sync-state-repository.php](../../../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-sync-state-repository.php#L93-L130) |
 | **Category** | COMPLEXITY                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 Character-for-character identical `prepare_query()` (~30 lines) and `escape_identifier()` (~5 lines) methods are copy-pasted across all three repository classes. This is ~105 total lines of duplicated code.
@@ -114,7 +114,7 @@ The branch review guide §3.4 states: "Shared repository utilities — UUID coer
 
 |              |                                                                                                                                                         |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Files**    | [class-identity-members-repository.php](../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-identity-members-repository.php#L157-L197) |
+| **Files**    | [class-identity-members-repository.php](../../../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-identity-members-repository.php#L157-L197) |
 | **Category** | GAP                                                                                                                                                     |
 
 `delete_stale_non_curated_rows()` uses an `INNER JOIN` against `wp_acx_clusters` for tenant scoping. Member rows whose `cluster_uuid` references no cluster (deleted or never existed) are invisible to this join and will never be cleaned up. Over time, after backend cluster restructuring, orphan member rows accumulate unbounded.
@@ -133,7 +133,7 @@ Phase 2 note: current implementation runs orphan cleanup on every `merge_snapsho
 
 |              |                                                                                 |
 | ------------ | ------------------------------------------------------------------------------- |
-| **Files**    | [cluster-snapshot-api.md](../../docs/agentic/contracts/cluster-snapshot-api.md) |
+| **Files**    | [cluster-snapshot-api.md](../../../agentic/contracts/cluster-snapshot-api.md) |
 | **Category** | GAP                                                                             |
 
 The snapshot contract is `draft` status. It documents error HTTP statuses (4xx/5xx) and a one-line retry note, but is missing:
@@ -154,7 +154,7 @@ Acceptable for v0.1.0 draft but should be tracked for the contract evolution bef
 
 |              |                                                                                                                                                                                                                                                                                        |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Files**    | [class-clusters-repository.php](../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-clusters-repository.php#L213), [class-identity-members-repository.php](../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-identity-members-repository.php#L205) |
+| **Files**    | [class-clusters-repository.php](../../../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-clusters-repository.php#L213), [class-identity-members-repository.php](../../../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-identity-members-repository.php#L205) |
 | **Category** | ANTIPATTERN                                                                                                                                                                                                                                                                            |
 
 Both files declare explicit `use function` imports for all other PHP builtins (`array_map`, `array_filter`, `trim`, `sprintf`, etc.) but omit `use function implode;`. Works at runtime via namespace fallback but is inconsistent with the file's own style convention.
@@ -163,7 +163,7 @@ Both files declare explicit `use function` imports for all other PHP builtins (`
 
 |              |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Files**    | [class-snapshot-projector.php](../../apps/prototype-wp-alt-context/src/sovereign/sync/class-snapshot-projector.php#L42-L44), [class-clusters-repository.php](../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-clusters-repository.php#L49-L51), [class-identity-members-repository.php](../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-identity-members-repository.php#L51-L53), [class-sync-state-repository.php](../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-sync-state-repository.php#L37-L39) |
+| **Files**    | [class-snapshot-projector.php](../../../../apps/prototype-wp-alt-context/src/sovereign/sync/class-snapshot-projector.php#L42-L44), [class-clusters-repository.php](../../../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-clusters-repository.php#L49-L51), [class-identity-members-repository.php](../../../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-identity-members-repository.php#L51-L53), [class-sync-state-repository.php](../../../../apps/prototype-wp-alt-context/src/sovereign/repositories/class-sync-state-repository.php#L37-L39) |
 | **Category** | ANTIPATTERN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 All sovereign classes silently return/no-op when `tenant_id` is empty. Per the branch review guide §3.5 spirit: masked failures should at minimum produce a log warning. An empty `tenant_id` reaching the projector indicates a configuration or integration bug in the caller.
@@ -172,7 +172,7 @@ All sovereign classes silently return/no-op when `tenant_id` is empty. Per the b
 
 |              |                                                                                    |
 | ------------ | ---------------------------------------------------------------------------------- |
-| **Files**    | [tests/stubs/wp.php](../../apps/prototype-wp-alt-context/tests/stubs/wp.php#L1422) |
+| **Files**    | [tests/stubs/wp.php](../../../../apps/prototype-wp-alt-context/tests/stubs/wp.php#L1422) |
 | **Category** | GAP                                                                                |
 
 The `prepare_query` polyfill in all three repositories calls `method_exists($wpdb, 'has_cap')` to detect `%i` identifier placeholder support. The `WPDBStub` does not implement `has_cap()`, causing the polyfill fallback path to always execute in tests. This means tests never exercise the native `%i` path, reducing coverage of the mainline code path in modern WordPress (6.2+).
@@ -183,7 +183,7 @@ Adding `public function has_cap(string $cap): bool { return $cap === 'identifier
 
 |              |                                                                                                                                 |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| **Files**    | [SovereignProjectionIntegrationTest.php](../../apps/prototype-wp-alt-context/tests/Unit/SovereignProjectionIntegrationTest.php) |
+| **Files**    | [SovereignProjectionIntegrationTest.php](../../../../apps/prototype-wp-alt-context/tests/Unit/SovereignProjectionIntegrationTest.php) |
 | **Category** | GAP                                                                                                                             |
 
 The "integration" test (`testFixtureSnapshotProjectionWritesAllLocalReadModelTables`) asserts only that SQL strings contain certain keywords (`INSERT INTO`, `COMMIT`). It does not verify actual data in the projected tables because the test uses a `WPDBStub` that doesn't simulate a real database.

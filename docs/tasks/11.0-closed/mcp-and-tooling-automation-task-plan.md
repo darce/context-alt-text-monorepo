@@ -260,7 +260,7 @@ Changes:
 
 - Deduplicate policy text across skills and `instructions.md`:
   - Identify passages in skill files that restate rules from `instructions.md` or `rules/`
-  - Replace with concise cross-references: "See [rules/development-workflow.md](../../rules/development-workflow.md) for the full protocol"
+  - Replace with concise cross-references: "See [rules/development-workflow.md](../../agentic/rules/development-workflow.md) for the full protocol"
   - Keep only skill-specific behavioral guidance in skill files
 
 - Synchronize `packages/agent-handoff-mcp/README.md` with `docs/agentic/contracts/agent-handoff-mcp.md`:

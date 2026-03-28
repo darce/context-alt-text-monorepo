@@ -512,7 +512,7 @@ This enables users to make changes offline that sync when connectivity returns. 
 
 ## 11. References
 
-- [Current backend architecture](../../../docs/agentic/maps/backend.md)
-- [Frontend state management](../../../docs/agentic/maps/frontend.md)
-- [API contracts](../../../docs/agentic/contracts/clustering-api.md)
+- [Current backend architecture](../../../agentic/maps/backend.md)
+- [Frontend state management](../../../agentic/maps/frontend.md)
+- [API contracts](../../../agentic/contracts/clustering-api.md)
 - [WordPress custom tables guide](https://developer.wordpress.org/plugins/custom-tables/)

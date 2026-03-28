@@ -187,7 +187,7 @@ def main() -> None:
 | [`/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/instructions.md`](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/instructions.md) | 1 | Update MCP fallback and handoff guidance to refer to the dedicated handoff server and its canonical state location. |
 | `/Users/daniel/Development/context-alt-text-monorepo/CLAUDE.md` | 152 | Update MCP handoff contract text and any server-name or tool-prefix assumptions. |
 | `/Users/daniel/Development/context-alt-text-monorepo/GEMINI.md` | 152 | Update MCP handoff contract text and any server-name or tool-prefix assumptions. |
-| [`/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/recognition/tests/unit/test_mcp_handoff_state.py`](/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/recognition/tests/unit/test_mcp_handoff_state.py) | 1 | Retarget the handoff tests to the extracted package/module boundaries and add packaging/runtime config coverage. |
+| `apps/prototype-description-service/recognition/tests/unit/test_mcp_handoff_state.py` (historical location; tests now live under `packages/agent-handoff-mcp/tests/`) | 1 | Retarget the handoff tests to the extracted package/module boundaries and add packaging/runtime config coverage. |
 
 ## Related Files
 

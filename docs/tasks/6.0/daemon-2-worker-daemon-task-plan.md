@@ -14,7 +14,7 @@ Worker execution is still operator-driven. A human opens the lane, runs Codex, c
 
 ## Terminology
 
-- **Worker daemon**: `scripts/mcp/worker_daemon.py`
+- **Worker daemon**: `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/worker_daemon.py`
 - **Implementation pass**: One non-reporting Codex execution against the current lane prompt
 - **Review pass**: One `review_runner.py run --record-findings` invocation
 - **Fix cycle**: A follow-up implementation pass driven by recorded review findings
@@ -35,7 +35,7 @@ Worker execution is still operator-driven. A human opens the lane, runs Codex, c
 Split worker automation into two layers:
 
 1. **Non-reporting execution primitive**
-   - Add `scripts/mcp/lane_exec.py` as the reusable implementation runner.
+   - Add `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_exec.py` as the reusable implementation runner.
    - It should render the same prompt/schema currently used by `make lane-run`, execute Codex, and write a structured result file without reporting anything to MCP.
    - Refactor `make lane-run` to call `lane_exec.py`, then `lane_result.py handoff`, so existing human ergonomics stay unchanged.
 
@@ -114,8 +114,8 @@ def worker_loop(...) -> None:
 
 | File                                | Change                                                                                            |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `scripts/mcp/lane_exec.py`          | New non-reporting worker execution primitive                                                      |
-| `scripts/mcp/worker_daemon.py`      | New poll/execute/review/verify/report loop                                                        |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_exec.py`          | New non-reporting worker execution primitive                                                      |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/worker_daemon.py`      | New poll/execute/review/verify/report loop                                                        |
 | `mk/lane-worker.mk`                 | Refactor `lane-run` to call `lane_exec.py` + `lane_result.py handoff`                            |
 | `mk/handoff.mk`                     | Add `worker-daemon` target and related daemon control targets                                     |
 | `packages/agent-handoff-mcp/tests/` | Add daemon tests and result-pipeline coverage                                                     |
@@ -124,7 +124,7 @@ def worker_loop(...) -> None:
 
 | File                           | Note                                                 |
 | ------------------------------ | ---------------------------------------------------- |
-| `scripts/mcp/lane_prompt.py`   | Existing actionable-work detection                   |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_prompt.py`   | Existing actionable-work detection                   |
 | `scripts/mcp/lane_result.py`   | Final handoff adapter used after convergence         |
 | `scripts/mcp/review_runner.py` | Review primitive from daemon-1                       |
 | `scripts/worktree-lane`        | Existing report plumbing used by final handoff paths |
@@ -135,10 +135,10 @@ def worker_loop(...) -> None:
 
 ## Phase 0: Scaffolding
 
-- [x] Create `scripts/mcp/lane_exec.py` with CLI args for task, lane, worktree, session, and output path
-- [x] Create `scripts/mcp/worker_daemon.py` with CLI args for task, lane, orchestrator root, polling, retries, and dry-run
+- [x] Create `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_exec.py` with CLI args for task, lane, worktree, session, and output path
+- [x] Create `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/worker_daemon.py` with CLI args for task, lane, orchestrator root, polling, retries, and dry-run
 - [x] Add `worker-daemon` Makefile target and help text
-- [x] Verify: `python3 scripts/mcp/worker_daemon.py --help` exits cleanly
+- [x] Verify: `python3 packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/worker_daemon.py --help` exits cleanly
 
 ## Phase 1: Execution Primitive Refactor
 

@@ -265,10 +265,10 @@ These items from the reconciliation epic are explicitly scoped out. They represe
 
 ## Consolidated Checklist
 
-### Phase 1: Delta Ingest and Drift Reconciliation -- MOVED TO v0.3.0
+### Phase 1: Delta Ingest and Drift Reconciliation -- MOVED TO v0.3.1
 
-- [x] Implement delta ingest path on the WordPress side with snapshot fallback. -- Moved to [sync-completion-and-retention-hardening-epic (v0.3.0)](../v0.3.0/sync-completion-and-retention-hardening-epic.md) Phase 1.
-- [x] Implement drift reconciliation logic with conflict-safe replay policy. -- Moved to [sync-completion-and-retention-hardening-epic (v0.3.0)](../v0.3.0/sync-completion-and-retention-hardening-epic.md) Phase 2.
+- [x] Implement delta ingest path on the WordPress side with snapshot fallback. -- Moved to [sync-completion-and-retention-hardening-epic (v0.3.1)](../v0.3.1/sync-completion-and-retention-hardening-epic.md) Phase 1.
+- [x] Implement drift reconciliation logic with conflict-safe replay policy. -- Moved to [sync-completion-and-retention-hardening-epic (v0.3.1)](../v0.3.1/sync-completion-and-retention-hardening-epic.md) Phase 2.
 - [x] Add tests for delta chain break and stale-delta fallback scenarios. -- Moved to v0.3.0 Phase 1.
 
 ### Phase 2: Topology Completion -- COMPLETED
@@ -303,8 +303,8 @@ These items from the reconciliation epic are explicitly scoped out. They represe
 - [x] Async/file-based export for large tenants.
 - [x] Paginated full audit event log page with filtering. -- Delivered via AuditTimeline component + audit REST endpoints.
 - [x] Scheduled disposal worker (auto-purge on interval).
-- [x] Export format versioning and import for cross-site migration. -- Export format versioning moved to [sync-completion-and-retention-hardening-epic (v0.3.0)](../v0.3.0/sync-completion-and-retention-hardening-epic.md) Phase 3.
-- [x] Embedding-level disposal tracking. -- Moved to [sync-completion-and-retention-hardening-epic (v0.3.0)](../v0.3.0/sync-completion-and-retention-hardening-epic.md) Phase 4.
+- [x] Export format versioning and import for cross-site migration. -- Export format versioning moved to [sync-completion-and-retention-hardening-epic (v0.3.1)](../v0.3.1/sync-completion-and-retention-hardening-epic.md) Phase 3.
+- [x] Embedding-level disposal tracking. -- Moved to [sync-completion-and-retention-hardening-epic (v0.3.1)](../v0.3.1/sync-completion-and-retention-hardening-epic.md) Phase 4.
 - [x] Retention policy presets (e.g., "GDPR mode").
 
 ### Cross-Cutting: Worktree Lane Lifecycle Management -- COMPLETED

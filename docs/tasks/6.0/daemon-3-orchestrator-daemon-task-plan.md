@@ -127,7 +127,7 @@ class OrchestratorLock:
 | -------------------------------- | --------------------------------------------------------------------------------------------------- |
 | `Makefile`                       | Existing `handoff-dispatch`, `lane-intake`, and `lane-refresh` targets remain the execution surface |
 | `scripts/mcp/review_dispatch.py` | First consumer of the new routing manifest                                                          |
-| `scripts/mcp/worker_daemon.py`   | Worker-side counterpart from daemon-2                                                               |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/worker_daemon.py`   | Worker-side counterpart from daemon-2                                                               |
 | `packages/agent-handoff-mcp/`    | MCP APIs for worker reports, findings, blockers, actions, and decisions                             |
 
 ---

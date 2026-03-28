@@ -80,25 +80,25 @@ sequenceDiagram
 
 | File                                                                                                                         | Changes                                                                                                               |
 | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| [assignment_writer.py](../../../apps/prototype-description-service/recognition/application/persistence/assignment_writer.py) | Add `log_initial_assignments()` call in `persist_new_cluster`                                                         |
-| [cluster_curation.py](../../../apps/prototype-description-service/recognition/application/orchestration/cluster_curation.py) | Compute live similarity in `assign_outlier_to_cluster`; check representative status in `remove_identity_from_cluster` |
-| [logging.py](../../../apps/prototype-description-service/recognition/observability/logging.py)                               | Add `log_initial_assignment()` method to `ClusteringLogger`                                                           |
-| [clusters.py router](../../../apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters.py)    | Pass embedding data to curation functions                                                                             |
+| [assignment_writer.py](../../../../apps/prototype-description-service/recognition/application/persistence/assignment_writer.py) | Add `log_initial_assignments()` call in `persist_new_cluster`                                                         |
+| `cluster_curation.py` (historical module; now split across orchestration services) | Compute live similarity in `assign_outlier_to_cluster`; check representative status in `remove_identity_from_cluster` |
+| [logging.py](../../../../apps/prototype-description-service/recognition/observability/logging.py)                               | Add `log_initial_assignment()` method to `ClusteringLogger`                                                           |
+| [clusters.py router](../../../../apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters.py)    | Pass embedding data to curation functions                                                                             |
 
 ### Frontend (TypeScript)
 
 | File                                                                                                                                 | Changes                                       |
 | ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------- |
-| [IdentityClusterItem.tsx](../../../apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx) | Rename "Wrong Person" → "Remove from Cluster" |
-| [useClusterMutations.ts](../../../apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/useClusterMutations.ts)   | Update mutation labels for clarity            |
+| [IdentityClusterItem.tsx](../../../../apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx) | Rename "Wrong Person" → "Remove from Cluster" |
+| [useClusterMutations.ts](../../../../apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/useClusterMutations.ts)   | Update mutation labels for clarity            |
 
 ### Tests
 
 | File                                                                                                                             | Changes                                                    |
 | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| [test_assignment_writer.py](../../../apps/prototype-description-service/recognition/tests/integration/test_assignment_writer.py) | Test `log_initial_assignments` is called                   |
-| [test_curation_logic.py](../../../apps/prototype-description-service/recognition/tests/integration/test_curation_logic.py)       | Test similarity computed, representative refresh triggered |
-| [test_logging.py](../../../apps/prototype-description-service/recognition/tests/unit/test_logging.py)                            | Test new log format                                        |
+| [test_assignment_writer.py](../../../../apps/prototype-description-service/recognition/tests/integration/test_assignment_writer.py) | Test `log_initial_assignments` is called                   |
+| [test_curation_logic.py](../../../../apps/prototype-description-service/recognition/tests/integration/test_curation_logic.py)       | Test similarity computed, representative refresh triggered |
+| `test_logging.py` (historical test module; coverage moved into newer observability tests)                                        | Test new log format                                        |
 
 ---
 
@@ -578,4 +578,4 @@ async def test_remove_representative_triggers_refresh(db_session, tenant):
 
 - [identity-cluster-suggestions-plan.md](../4.10.1/identity-cluster-suggestions-plan.md) — Related UX improvements
 - [instructions.md](../../../agentic/instructions.md) — Development workflow and standards
-- [ADR-001-face-identity-nomenclature.md](../../../architecture/ADR-001-face-identity-nomenclature.md) — Domain terminology
+- [ADR-001-face-identity-nomenclature.md](../../../agentic/adrs/ADR-001-face-identity-nomenclature.md) — Domain terminology

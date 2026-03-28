@@ -61,67 +61,67 @@ Surface classes:
 - `query`: read-only inspection of canonical state. Safe to retry when transport/runtime is healthy.
 - `generator`: derives a report, search result, reconciliation result, or rendered artifact from current state. Usually safe to retry unless the tool also writes a file by default.
 
-| Tool | Surface class | Idempotent | Notes |
-| --- | --- | --- | --- |
-| `set_handoff_state` | action | no | Updates active task state with optimistic revision guard. |
-| `get_handoff_state` | query | yes | Canonical task-state read. |
-| `upsert_worktree_lane` | action | no | Updates lane metadata and regenerates `CURRENT_TASK.md`. |
-| `close_worktree_lane` | action | no | Transitions lane status to merged or closed. |
-| `list_worktree_lanes` | query | yes | Lists registered lane rows. |
-| `get_lane_activity` | generator | yes | Aggregated lane summary across decisions, tests, blockers, and messages; supports `format="archival"` for compact retention-friendly summaries. |
-| `list_next_actions` | query | yes | Lists canonical action rows. |
-| `record_decision` | action | no | Appends decision ledger state. |
-| `update_next_actions` | action | no | Creates or mutates action rows. |
-| `record_test_result` | action | no | Appends verification evidence. |
-| `report_blocker` | action | no | Adds, resolves, or reopens blockers. |
-| `record_worker_report` | action | no | Appends structured worker handback state. |
-| `list_worker_reports` | query | yes | Lists worker reports. |
-| `record_lane_message` | action | no | Appends lane message state. |
-| `record_lane_brief` | action | no | Creates a structured brief on top of lane messages. |
-| `update_lane_message` | action | no | Mutates lane-message status. |
-| `list_lane_messages` | query | yes | Lists lane messages. |
-| `list_lane_briefs` | query | yes | Lists structured lane briefs. |
-| `get_plan_cursor` | query | yes | Reads one durable plan cursor. |
-| `list_plan_cursors` | query | yes | Lists plan cursor rows. |
-| `upsert_plan_cursor` | action | no | Mutates plan cursor state; can enforce clean-slice gate. |
-| `record_review_finding` | action | no | Creates or reopens review findings. |
-| `update_review_finding` | action | no | Changes finding status or resolution metadata. |
-| `reopen_review_finding` | action | no | Reopens closed finding with reason. |
-| `list_review_findings` | query | yes | Lists findings with filters. |
-| `get_review_finding` | query | yes | Reads one finding by stable or DB id. |
-| `get_review_findings_summary` | generator | yes | Returns aggregated counts and top open findings. |
-| `reconcile_review_findings` | generator | yes | Compares open findings with current files; `apply=true` turns it into a mutating action and should be treated as a controlled repair step. |
-| `handoff_close_check` | generator | yes | Derived readiness verdict from current state. |
-| `generate_current_task_md` | generator | no | Renders deterministic markdown and writes `CURRENT_TASK.md` by default. |
-| `export_handoff_state` | generator | yes | Produces portable snapshot output. |
-| `import_handoff_state` | action | no | Imports snapshot into local DB; destructive in replace modes. |
-| `archive_task_state` | action | no | Moves active state into archive storage. |
-| `switch_task` | action | no | Archives outgoing task and activates target task. |
-| `get_handoff_dashboard` | generator | yes | Derived dashboard view across lanes, findings, and blockers. |
-| `orchestrator_start` | action | no | Starts shared orchestrator daemon. |
-| `orchestrator_status` | query | yes | Inspects orchestrator runtime state. |
-| `orchestrator_stop` | action | no | Stops orchestrator daemon. |
-| `orchestrator_pause` | action | no | Creates pause sentinel. |
-| `orchestrator_resume` | action | no | Clears pause sentinel. |
-| `worker_start` | action | no | Starts one lane worker daemon. |
-| `worker_status` | query | yes | Inspects worker runtime state and health metadata. |
-| `worker_event_history` | query | yes | Reads worker JSONL event history. Event-name filters should use the canonical enum-backed worker event vocabulary (for example `cycle_start`, `exec_complete`, `review_complete`). |
-| `worker_stop` | action | no | Stops worker daemon. |
-| `worker_resume` | action | no | Resumes stopped worker daemon. |
-| `worker_start_all` | action | no | Starts multiple worker daemons. |
-| `run_structured_turn` | action | no | Executes a synchronous backend turn; may spend tokens or mutate external runtime state. |
-| `orchestrator_single_cycle` | action | no | Runs one full dispatch/poll/intake/verify cycle. |
-| `dispatch_lane_work` | action | no | Mutates lane dispatch parameters for future cycles. |
-| `list_available_backends` | query | yes | Reads registered backend catalog. |
-| `record_artifact` | action | no | Indexes artifact content into sidecar FTS store. |
-| `search_artifacts` | generator | yes | Returns ranked snippets from indexed artifacts. |
-| `get_artifact_source` | query | yes | Reads stored artifact record. |
-| `get_artifact_terms` | generator | yes | Derives suggested query terms from indexed artifact chunks. |
-| `list_artifact_sources` | query | yes | Lists indexed artifact metadata. |
-| `purge_artifacts` | action | no | Deletes stored artifact rows and FTS chunks. |
-| `search_handoff` | generator | yes | Returns ranked snippets over handoff FTS tables. |
-| `get_latest_slice_review_packet` | query | yes | Resolves the latest `slice_complete_*` decision into a deterministic review packet. |
-| `get_metrics_summary` | generator | yes | Derived metrics snapshot across lanes, retrieval, context pressure, process-health signals, and handoff-memory health. |
+| Tool                             | Surface class | Idempotent | Notes                                                                                                                                                                              |
+| -------------------------------- | ------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `set_handoff_state`              | action        | no         | Updates active task state with optimistic revision guard.                                                                                                                          |
+| `get_handoff_state`              | query         | yes        | Canonical task-state read.                                                                                                                                                         |
+| `upsert_worktree_lane`           | action        | no         | Updates lane metadata and regenerates `CURRENT_TASK.md`.                                                                                                                           |
+| `close_worktree_lane`            | action        | no         | Transitions lane status to merged or closed.                                                                                                                                       |
+| `list_worktree_lanes`            | query         | yes        | Lists registered lane rows.                                                                                                                                                        |
+| `get_lane_activity`              | generator     | yes        | Aggregated lane summary across decisions, tests, blockers, and messages; supports `format="archival"` for compact retention-friendly summaries.                                    |
+| `list_next_actions`              | query         | yes        | Lists canonical action rows.                                                                                                                                                       |
+| `record_decision`                | action        | no         | Appends decision ledger state.                                                                                                                                                     |
+| `update_next_actions`            | action        | no         | Creates or mutates action rows.                                                                                                                                                    |
+| `record_test_result`             | action        | no         | Appends verification evidence.                                                                                                                                                     |
+| `report_blocker`                 | action        | no         | Adds, resolves, or reopens blockers.                                                                                                                                               |
+| `record_worker_report`           | action        | no         | Appends structured worker handback state.                                                                                                                                          |
+| `list_worker_reports`            | query         | yes        | Lists worker reports.                                                                                                                                                              |
+| `record_lane_message`            | action        | no         | Appends lane message state.                                                                                                                                                        |
+| `record_lane_brief`              | action        | no         | Creates a structured brief on top of lane messages.                                                                                                                                |
+| `update_lane_message`            | action        | no         | Mutates lane-message status.                                                                                                                                                       |
+| `list_lane_messages`             | query         | yes        | Lists lane messages.                                                                                                                                                               |
+| `list_lane_briefs`               | query         | yes        | Lists structured lane briefs.                                                                                                                                                      |
+| `get_plan_cursor`                | query         | yes        | Reads one durable plan cursor.                                                                                                                                                     |
+| `list_plan_cursors`              | query         | yes        | Lists plan cursor rows.                                                                                                                                                            |
+| `upsert_plan_cursor`             | action        | no         | Mutates plan cursor state; can enforce clean-slice gate.                                                                                                                           |
+| `record_review_finding`          | action        | no         | Creates or reopens review findings.                                                                                                                                                |
+| `update_review_finding`          | action        | no         | Changes finding status or resolution metadata.                                                                                                                                     |
+| `reopen_review_finding`          | action        | no         | Reopens closed finding with reason.                                                                                                                                                |
+| `list_review_findings`           | query         | yes        | Lists findings with filters.                                                                                                                                                       |
+| `get_review_finding`             | query         | yes        | Reads one finding by stable or DB id.                                                                                                                                              |
+| `get_review_findings_summary`    | generator     | yes        | Returns aggregated counts and top open findings.                                                                                                                                   |
+| `reconcile_review_findings`      | generator     | yes        | Compares open findings with current files; `apply=true` turns it into a mutating action and should be treated as a controlled repair step.                                         |
+| `handoff_close_check`            | generator     | yes        | Derived readiness verdict from current state.                                                                                                                                      |
+| `generate_current_task_md`       | generator     | no         | Renders deterministic markdown and writes `CURRENT_TASK.md` by default.                                                                                                            |
+| `export_handoff_state`           | generator     | yes        | Produces portable snapshot output.                                                                                                                                                 |
+| `import_handoff_state`           | action        | no         | Imports snapshot into local DB; destructive in replace modes.                                                                                                                      |
+| `archive_task_state`             | action        | no         | Moves active state into archive storage.                                                                                                                                           |
+| `switch_task`                    | action        | no         | Archives outgoing task and activates target task.                                                                                                                                  |
+| `get_handoff_dashboard`          | generator     | yes        | Derived dashboard view across lanes, findings, and blockers.                                                                                                                       |
+| `orchestrator_start`             | action        | no         | Starts shared orchestrator daemon.                                                                                                                                                 |
+| `orchestrator_status`            | query         | yes        | Inspects orchestrator runtime state.                                                                                                                                               |
+| `orchestrator_stop`              | action        | no         | Stops orchestrator daemon.                                                                                                                                                         |
+| `orchestrator_pause`             | action        | no         | Creates pause sentinel.                                                                                                                                                            |
+| `orchestrator_resume`            | action        | no         | Clears pause sentinel.                                                                                                                                                             |
+| `worker_start`                   | action        | no         | Starts one lane worker daemon.                                                                                                                                                     |
+| `worker_status`                  | query         | yes        | Inspects worker runtime state and health metadata.                                                                                                                                 |
+| `worker_event_history`           | query         | yes        | Reads worker JSONL event history. Event-name filters should use the canonical enum-backed worker event vocabulary (for example `cycle_start`, `exec_complete`, `review_complete`). |
+| `worker_stop`                    | action        | no         | Stops worker daemon.                                                                                                                                                               |
+| `worker_resume`                  | action        | no         | Resumes stopped worker daemon.                                                                                                                                                     |
+| `worker_start_all`               | action        | no         | Starts multiple worker daemons.                                                                                                                                                    |
+| `run_structured_turn`            | action        | no         | Executes a synchronous backend turn; may spend tokens or mutate external runtime state.                                                                                            |
+| `orchestrator_single_cycle`      | action        | no         | Runs one full dispatch/poll/intake/verify cycle.                                                                                                                                   |
+| `dispatch_lane_work`             | action        | no         | Mutates lane dispatch parameters for future cycles.                                                                                                                                |
+| `list_available_backends`        | query         | yes        | Reads registered backend catalog.                                                                                                                                                  |
+| `record_artifact`                | action        | no         | Indexes artifact content into sidecar FTS store.                                                                                                                                   |
+| `search_artifacts`               | generator     | yes        | Returns ranked snippets from indexed artifacts.                                                                                                                                    |
+| `get_artifact_source`            | query         | yes        | Reads stored artifact record.                                                                                                                                                      |
+| `get_artifact_terms`             | generator     | yes        | Derives suggested query terms from indexed artifact chunks.                                                                                                                        |
+| `list_artifact_sources`          | query         | yes        | Lists indexed artifact metadata.                                                                                                                                                   |
+| `purge_artifacts`                | action        | no         | Deletes stored artifact rows and FTS chunks.                                                                                                                                       |
+| `search_handoff`                 | generator     | yes        | Returns ranked snippets over handoff FTS tables.                                                                                                                                   |
+| `get_latest_slice_review_packet` | query         | yes        | Resolves the latest `slice_complete_*` decision into a deterministic review packet.                                                                                                |
+| `get_metrics_summary`            | generator     | yes        | Derived metrics snapshot across lanes, retrieval, context pressure, process-health signals, and handoff-memory health.                                                             |
 
 ### `get_metrics_summary` Snapshot Shape
 
@@ -452,6 +452,7 @@ agent-handoff-mcp --workspace-root <repo> handoff-search \
 - Live MCP tool signatures are authoritative over examples, templates, or prior-session memory. Prefer the minimal valid payload for write operations unless a richer payload is required by the current signature.
 - If a write call fails validation, treat it as signature drift. Retry once with the minimal payload accepted by the live signature, then update the stale contract/rule/template in the same slice so the bounce does not recur.
 - Slice-completion decisions must use `decision="slice_complete_<short_label>"` and a structured rationale with the four headings `## Changes`, `## Verification`, `## Schema / Contract Changes`, and `## Open Threads`.
+- `record_decision(...)` rejects `slice_complete_*` writes at write time when the rationale is missing those headings or any section is empty. This is enforced before the row is inserted.
 - The structured rationale is mandatory even for docs-only slices. Use `- none.` for empty sections rather than omitting headings.
 - Handoff consumers should treat prose-only completion decisions as malformed process output that must be corrected before the slice is considered fully handed off.
 - To switch between tasks, use `switch_task(task_ref)`. It auto-archives the outgoing task (full snapshot) and activates the target, restoring the objective from its archive when not provided. Idempotent if the target is already active.
@@ -635,7 +636,7 @@ Use the new lane tools when a task is intentionally split across Git worktrees o
 - `lane_messages` provide an explicit mailbox for orchestrator briefs, worker questions, and acknowledgements when clients cannot directly message one another.
 - Structured dependency briefs should ride on `lane_messages` rather than a parallel storage surface. The recommended convention is an open `orchestrator_to_worker` message whose subject starts with `brief:` and whose body stays compact enough to be injected into the next lane prompt without replaying full transcripts.
 - Emit downstream briefs only for merge-ready source-lane reports with no unresolved blockers. If the source lane is blocked, non-merge-ready, or ambiguous, escalate through orchestrator guidance instead of replaying partial dependency state into downstream lanes.
-- Lane prompt rendering is lane-scoped by default. `scripts/mcp/lane_prompt.py` should prioritize open assignment items plus compact `brief:` messages, cap those sections to a fixed budget, and omit deeper lane history unless an explicit inspection/escalation flag such as `--include-lane-history` is requested.
+- Lane prompt rendering is lane-scoped by default. `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_prompt.py` should prioritize open assignment items plus compact `brief:` messages, cap those sections to a fixed budget, and omit deeper lane history unless an explicit inspection/escalation flag such as `--include-lane-history` is requested.
 - Lane prompt renders should also expose a compact "Prompt Budget" summary so operators can see how much of the worker prompt came from assignment, dependency briefs, runtime guidance, lane history, and optional task-wide escalation before deciding to widen context further.
 - Broader task-wide context is also opt-in. Use `--include-global-context` only when lane-local state and structured briefs are insufficient; default worker prompts should continue to rehydrate from the lane inbox, lane runtime guidance, unresolved briefs, and the latest lane report.
 - Export/import and archive flows now include lane records, worker reports, and lane messages so delegated task history survives workspace migration.
@@ -645,7 +646,7 @@ Shared-state rule for sibling worktrees:
 
 - Keep `workspace-root` pointed at the current worktree so branch/worktree provenance stays accurate.
 - Point `state-dir`, `current-task-path`, and `exports-dir` at the orchestrator root so all lanes share one handoff database and generated `CURRENT_TASK.md`.
-- The helper script [`scripts/worktree-lane`](../../scripts/worktree-lane) encodes this pattern and should be preferred over ad-hoc CLI invocation.
+- The helper script [`scripts/worktree-lane`](../../../scripts/worktree-lane) encodes this pattern and should be preferred over ad-hoc CLI invocation.
 - Orchestrator entrypoints such as `make lane-open` should fail fast if an existing worktree has drifted onto the wrong branch; silently reusing the wrong checkout risks misdirected commits and violates the lane-safety contract.
 - Worker daemons should be started from the worker worktree root against the shared orchestrator state, for example `make worker-daemon TASK=<task-ref> LANE=<lane>` from the lane checkout. If launched from an app subdirectory, callers should either use a forwarding app Makefile that supports `worker-daemon` or invoke the top-level Makefile explicitly with `make -C "$(git rev-parse --show-toplevel)" worker-daemon ...`.
 - In MCP-capable hosts, the preferred worker lifecycle surface is now `worker_start`, `worker_status`, `worker_stop`, `worker_resume`, and `worker_start_all`. Shell `make worker-daemon*` commands remain the fallback/wrapper layer for non-MCP environments and manual operator workflows.
@@ -701,7 +702,7 @@ Content is chunked by `content_type` before FTS5 indexing:
 
 ### Prompt-Budget Integration
 
-`scripts/mcp/lane_prompt.py` appends retrieved artifact snippets to worker prompts when context budget allows:
+`packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_prompt.py` appends retrieved artifact snippets to worker prompts when context budget allows:
 
 1. After the base sections are rendered, `_measure_context_utilization()` produces a `pressure` value.
    Pressure is classified using a char-per-token approximation of 4 (`prompt_tokens_approx = prompt_chars // 4`):
@@ -730,12 +731,12 @@ This integration is purely additive. When `agent_handoff_mcp` is not importable,
 
 ### Ingestion Gates
 
-`scripts/mcp/lane_exec.py` applies `_compress_large_result_details()` after worker execution:
+`packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_exec.py` applies `_compress_large_result_details()` after worker execution:
 
 - If the `details` field of the structured result JSON exceeds the configured `RuntimeConfig.artifact_index_min_bytes` / `artifact_index_min_lines` threshold, the full body is indexed as an `"execution-output"` artifact.
 - The inline `details` is replaced with the first 500 chars plus a truncation marker: `... [truncated — full output indexed as artifact:<source_id>]`.
 - The result JSON gains a `details_artifact_ref` integer field.
-- `scripts/mcp/worker_daemon.py` reads `details_artifact_ref` after `exec_complete` and emits an `artifact_indexed` JSONL event when present.
+- `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/worker_daemon.py` reads `details_artifact_ref` after `exec_complete` and emits an `artifact_indexed` JSONL event when present.
 - `scripts/mcp/lane_result.py` can attach that artifact ref to the follow-up `worker_to_orchestrator` lane message payload so operators have an inspectable evidence handle without replaying the full log.
 
 `scripts/mcp/orchestrator_guidance.py` indexes redispatch message bodies:

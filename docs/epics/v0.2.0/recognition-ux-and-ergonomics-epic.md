@@ -40,7 +40,7 @@ The v0.1.0 sovereign architecture and v0.2.0 reliability baseline established a 
 
 ## Terminology
 
-- **Person**: operator-curated identity record (name, tags, optional reference thumbnail). Ground truth for "who is this person." Stored in `wp_acx_persons`. See [ADR-002](../../agentic/ADR-002-person-as-first-class-local-entity.md).
+- **Person**: operator-curated identity record (name, tags, optional reference thumbnail). Ground truth for "who is this person." Stored in `wp_acx_persons`. See [ADR-002](../../agentic/adrs/ADR-002-person-as-first-class-local-entity.md).
 - **Person UUID**: stable UUID v4 stored on each person row (`person_uuid`). This is the only value synced to backend `identity_clusters.roster_id`.
 - **Cluster**: system-inferred grouping of visually similar faces. May be unlabeled (pending review) or assigned to a person.
 - **Assign/Commit**: assigning a cluster to a person -- confirming the system's grouping as correct. The `person_id` FK on the cluster row is the assignment.
@@ -75,7 +75,7 @@ _All gaps addressed by Phases 1-5. Remaining sync follow-on work (delta ingest, 
 
 | Decision                                              | Rationale                                                                                                                                                                                               |
 | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Person as first-class local entity (`wp_acx_persons`) | Person provides identity stability across cluster lifecycle. Option storage lacks indexing/pagination/relational integrity. See [ADR-002](../../agentic/ADR-002-person-as-first-class-local-entity.md). |
+| Person as first-class local entity (`wp_acx_persons`) | Person provides identity stability across cluster lifecycle. Option storage lacks indexing/pagination/relational integrity. See [ADR-002](../../agentic/adrs/ADR-002-person-as-first-class-local-entity.md). |
 | Label derivation, not duplication                     | When `person_id IS NOT NULL`, cluster label = person name. Single source of truth. No label reconciliation needed.                                                                                      |
 | Person CRUD is 100% local (no backend proxy)          | Person is a curation concern. Create/rename/delete in plugin tables only. Sync to backend `roster_id` is Epic D.                                                                                        |
 | `acx_roster_assignments` option retired               | Assignment IS the `person_id` FK on `wp_acx_clusters`. No separate mapping needed.                                                                                                                      |
@@ -87,7 +87,7 @@ _All gaps addressed by Phases 1-5. Remaining sync follow-on work (delta ingest, 
 
 ### Data Model
 
-**New table: `wp_acx_persons`** ([ADR-002](../../agentic/ADR-002-person-as-first-class-local-entity.md))
+**New table: `wp_acx_persons`** ([ADR-002](../../agentic/adrs/ADR-002-person-as-first-class-local-entity.md))
 
 ```sql
 CREATE TABLE {prefix}acx_persons (
@@ -116,7 +116,7 @@ CREATE TABLE {prefix}acx_persons (
 ### Phase 1: Person CRUD Backend (Plugin REST API) -- COMPLETED
 
 > **Status**: completed
-> **Task plan**: [phase-2-recognition-ux-polish-task-plan.md](../../tasks/5.0/phase-2-recognition-ux-polish-task-plan.md) Phase 1
+> **Task plan**: implementation captured in this epic's completed checklist; later sync follow-through is tracked in [phase-5-sovereign-sync-person-push-task-plan.md](../../tasks/5.0/phase-5-sovereign-sync-person-push-task-plan.md).
 
 **Goal**: Persons have a proper storage layer and full CRUD REST endpoints.
 
@@ -140,7 +140,7 @@ Exit criteria:
 ### Phase 2: Person CRUD Frontend (UI) -- COMPLETED
 
 > **Status**: completed
-> **Task plan**: [phase-2-recognition-ux-polish-task-plan.md](../../tasks/5.0/phase-2-recognition-ux-polish-task-plan.md) Phase 2
+> **Task plan**: implementation captured in this epic's completed checklist and follow-on UX planning in [sovereign-sync-and-workbench-ux-epic.md](sovereign-sync-and-workbench-ux-epic.md).
 
 **Goal**: Admins can manage persons entirely from the Roster page UI.
 
@@ -161,7 +161,7 @@ Exit criteria:
 ### Phase 3: Dashboard Buildout -- COMPLETED
 
 > **Status**: completed
-> **Task plan**: [phase-3-dashboard-buildout-task-plan.md](../../tasks/5.0/phase-3-dashboard-buildout-task-plan.md)
+> **Task plan**: dashboard follow-through is summarized in [sovereign-sync-and-workbench-ux-epic.md](sovereign-sync-and-workbench-ux-epic.md).
 
 **Goal**: Dashboard is the admin's home base with live data and contextual guidance.
 
@@ -181,7 +181,7 @@ Exit criteria:
 ### Phase 4: Recognition UX Polish -- COMPLETED
 
 > **Status**: completed
-> **Task plan**: [phase-4-recognition-ux-polish-task-plan.md](../../tasks/5.0/phase-4-recognition-ux-polish-task-plan.md)
+> **Task plan**: recognition UX follow-through is summarized in [sovereign-sync-and-workbench-ux-epic.md](sovereign-sync-and-workbench-ux-epic.md).
 
 **Goal**: Cluster review is efficient for large batches via multi-select, bulk actions, keyboard nav, and roster-aware labeling.
 
@@ -330,8 +330,8 @@ Exit criteria:
 
 ## Deferred (Post-Epic)
 
-> Tracked in: [deferred-ux-ergonomics-post-epic-task-plan.md](../../tasks/5.0/deferred-ux-ergonomics-post-epic-task-plan.md) and [Sovereign Sync Expansion + Workbench UX Continuation](sovereign-sync-and-workbench-ux-epic.md)
+> Tracked in: [deferred-ux-ergonomics-post-epic-task-plan.md](../../tasks/6.0/deferred-ux-ergonomics-post-epic-task-plan.md) and [Sovereign Sync Expansion + Workbench UX Continuation](sovereign-sync-and-workbench-ux-epic.md)
 
 - [x] Action Scheduler integration (upgrade from WP cron drain) -- delivered in Phase 5.
-- [x] Delta ingest and drift reconciliation -- moved to [sync-completion-and-retention-hardening-epic (v0.3.0)](../v0.3.0/sync-completion-and-retention-hardening-epic.md) Phases 1-2.
+- [x] Delta ingest and drift reconciliation -- moved to [sync-completion-and-retention-hardening-epic (v0.3.1)](../v0.3.1/sync-completion-and-retention-hardening-epic.md) Phases 1-2.
 - [x] Bidirectional conflict resolution for person name edits -- delivered in remaining-sync-workbench-and-retention-epic Phase 3.

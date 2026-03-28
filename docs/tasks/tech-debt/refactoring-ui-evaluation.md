@@ -85,11 +85,11 @@ These patterns align well with "Refactoring UI" prescriptions and should be pres
 
 ### 1. Spacing System (Book: "Layout and Spacing")
 
-[tokens/\_spacing.scss](apps/prototype-wp-alt-context/js/admin/styles/tokens/_spacing.scss) defines a systematic 8px base scale: `--acx-space-2` (0.125rem) through `--acx-space-48` (3rem). Components consistently reference these tokens for gap, padding, and margin. This exactly matches the book's advice to use a non-linear spacing scale and avoid ambiguous spacing.
+[tokens/\_spacing.scss](../../../apps/prototype-wp-alt-context/js/admin/styles/tokens/_spacing.scss) defines a systematic 8px base scale: `--acx-space-2` (0.125rem) through `--acx-space-48` (3rem). Components consistently reference these tokens for gap, padding, and margin. This exactly matches the book's advice to use a non-linear spacing scale and avoid ambiguous spacing.
 
 ### 2. Semantic Color Naming (Book: "Working with Color")
 
-[tokens/\_colors.scss](apps/prototype-wp-alt-context/js/admin/styles/tokens/_colors.scss) uses intent-based naming:
+[tokens/\_colors.scss](../../../apps/prototype-wp-alt-context/js/admin/styles/tokens/_colors.scss) uses intent-based naming:
 
 - Surface: `--acx-color-surface`, `--acx-color-surface-alt`
 - Text: `--acx-color-text`, `--acx-color-text-muted`
@@ -126,7 +126,7 @@ Dashboard and cluster grid use `grid-template-columns: repeat(auto-fit, minmax(2
 
 **Book reference:** "Designing Text"; "Define a hand-crafted type scale with 5-7 sizes."
 
-**Token surface:** [tokens/\_typography.scss](apps/prototype-wp-alt-context/js/admin/styles/tokens/_typography.scss) defines only 3 tokens:
+**Token surface:** [tokens/\_typography.scss](../../../apps/prototype-wp-alt-context/js/admin/styles/tokens/_typography.scss) defines only 3 tokens:
 
 - `--acx-font-sans`: Inter + system fallbacks
 - `--acx-font-size-base`: 16px

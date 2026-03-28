@@ -67,4 +67,4 @@ Current retention, export, and purge features operate at the application layer w
 
 ## Relationship to v0.3.0
 
-The v0.3.0 [sync-completion-and-retention-hardening-epic.md](../epics/v0.3.0/sync-completion-and-retention-hardening-epic.md) intentionally stops at export format versioning and embedding-level disposal tracking. It does not attempt sovereignty-tier deployment or per-tenant key management. These items remain deferred beyond v0.3.0.
+The v0.3.1 [sync-completion-and-retention-hardening-epic.md](../epics/v0.3.1/sync-completion-and-retention-hardening-epic.md) intentionally stops at export format versioning and embedding-level disposal tracking. It does not attempt sovereignty-tier deployment or per-tenant key management. These items remain deferred beyond v0.3.0.

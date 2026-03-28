@@ -425,7 +425,7 @@ Exit criteria:
 
 ## Deferred (Post-v0.3.0)
 
-Deferred items from this epic are consolidated in [../deferred-features/agentic-process-hardening-post-v0.3.0.md](../deferred-features/agentic-process-hardening-post-v0.3.0.md).
+Deferred items from this epic are consolidated in [../../deferred-features/agentic-process-hardening-post-v0.3.0.md](../../deferred-features/agentic-process-hardening-post-v0.3.0.md).
 
 - [ ] Deep MCP productization beyond repo needs, such as generalized dashboards or external distribution changes not required to enforce this repo's workflow
 - [ ] TUI monitoring task: 9 open findings (H-GAP-TUI-01 through L-GAP-TUI-09) in `docs/tasks/9.0/orchestration-tui-monitoring-task-plan.md`; deferred until Phase 4 tooling automation work establishes the review-readiness and MCP-surface patterns the TUI should reflect; the plan's slice structure and runtime model section should be re-evaluated at that point using the template improvements added in Phase 1.

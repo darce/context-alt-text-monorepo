@@ -1,7 +1,7 @@
 # Context Alt Text Roadmap v3.0 -- Core Vision
 
 > **Status:** Closed -- superseded by [roadmap-v4.md](roadmap-v4.md). Retained as the architectural vision document.
-> **Completed epics:** [v0.1.0 Sovereign Cluster Epic](../epics/v0.1.0/wp-sovereign-cluster-epic.md), [v0.2.0 Production Readiness Epic](../epics/v0.2.0/production-readiness-epic.md)
+> **Completed epics:** [v0.1.0 Sovereign Cluster Epic](../epics/v0.1.0/wp-sovereign-cluster-epic.md), [v0.3.1 Production Readiness Epic](../epics/v0.3.1/production-readiness-epic.md)
 > **Successor:** [Roadmap v4 -- Face Recognition UX and Plugin Ergonomics](roadmap-v4.md)
 
 ---
@@ -64,7 +64,7 @@ Plugin bootstrap, lifecycle hooks, security, API client with retries/backoff. Fe
 
 ### B -- Data Model
 
-Plugin-owned tables for clusters, identity members, and sync state. Sovereign local projection (see [v0.1.0 roadmap](v0.1.0/wp-sovereign-cluster-roadmap.md)).
+Plugin-owned tables for clusters, identity members, and sync state. Sovereign local projection (see [v0.1.0 Sovereign Cluster Epic](../epics/v0.1.0/wp-sovereign-cluster-epic.md)).
 
 ### C -- Recognition Pipeline (WP <-> FastAPI)
 

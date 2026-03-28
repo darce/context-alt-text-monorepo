@@ -21,7 +21,7 @@ Coupling-point audit across the orchestration codebase. Items are numbered AAO-0
 
 ### AAO-002: Codex binary discovery leaks into generic execution path
 
-**Location:** `scripts/mcp/lane_exec.py` -- `find_codex()` (line 47), hardcoded search paths (lines 41-42); duplicated in `mk/lane-worker.mk` (lines 52-56)
+**Location:** `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_exec.py` -- `find_codex()` (line 47), hardcoded search paths (lines 41-42); duplicated in `mk/lane-worker.mk` (lines 52-56)
 
 **Problem:** `find_codex()` contains hardcoded macOS paths (`/Applications/Codex.app/Contents/Resources/codex`, `~/.local/bin/codex`) and is called unconditionally in `run_lane_exec()` even for non-Codex backends. The same paths are duplicated in `mk/lane-worker.mk`'s `lane-run` target. This function is Codex-specific infrastructure that belongs inside a codex-cli adapter, not in the shared execution module.
 
@@ -29,7 +29,7 @@ Coupling-point audit across the orchestration codebase. Items are numbered AAO-0
 
 ### AAO-003: Reasoning effort heuristic is hardcoded in worker daemon
 
-**Location:** `scripts/mcp/worker_daemon.py` -- `_resolve_reasoning_effort()` (lines 508-563)
+**Location:** `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/worker_daemon.py` -- `_resolve_reasoning_effort()` (lines 508-563)
 
 **Problem:** This function auto-tunes `CODEX_REASONING_EFFORT` based on lane name patterns and cycle number (e.g., "frontend" lanes get lower effort on early cycles). The heuristic is Codex-specific (the `reasoning_effort` parameter is a Codex API concept), embeds domain knowledge about lane names that belongs in manifests, and cannot be overridden by an orchestrating agent that wants to make its own cost/quality tradeoffs.
 
@@ -69,7 +69,7 @@ Coupling-point audit across the orchestration codebase. Items are numbered AAO-0
 
 ### AAO-008: Codex CLI `--model` flag is never used; all lanes run the default (most expensive) model
 
-**Location:** `scripts/mcp/lane_exec.py` -- `run_lane_exec()` CLI command construction
+**Location:** `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_exec.py` -- `run_lane_exec()` CLI command construction
 
 **Problem:** `codex exec` supports `--model gpt-5.4-mini` (and other models) as a first-class per-invocation flag, but `run_lane_exec()` never passes `--model`. Every lane execution pays for the default `gpt-5.4` (or whatever `~/.codex/config.toml` sets) regardless of lane complexity. The `CODEX_ARGS` passthrough exists in `make lane-run` but is not wired through the daemon path. Meanwhile, OpenAI explicitly recommends `gpt-5.4-mini` "for subagents" which is exactly the lane-worker use case.
 
@@ -164,8 +164,8 @@ These features duplicate or conflict with agent runtime capabilities and should 
 
 **Functions to change:**
 
-- `scripts/mcp/lane_exec.py` -- `run_lane_exec()`: thread `model` parameter through to `--model` flag on the `codex exec` subprocess command. Also thread `--profile` when a profile name is provided.
-- `scripts/mcp/worker_daemon.py` -- `worker_loop()`: accept `model` parameter (from CLI arg or MCP dispatch state) and pass it through to `run_lane_exec()`
+- `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_exec.py` -- `run_lane_exec()`: thread `model` parameter through to `--model` flag on the `codex exec` subprocess command. Also thread `--profile` when a profile name is provided.
+- `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/worker_daemon.py` -- `worker_loop()`: accept `model` parameter (from CLI arg or MCP dispatch state) and pass it through to `run_lane_exec()`
 - `scripts/mcp/review_runner.py` -- `_codex_exec()`: accept and pass `--model` when provided
 
 **Wrapper/API surfaces that must also thread `model` (or remain on `CODEX_ARGS` until this is done):**
@@ -217,7 +217,7 @@ The orchestrating agent makes this decision at dispatch time (Phase 3); Phase 0 
 **Functions to change:**
 
 - `scripts/mcp/backend_registry.py` -- `BACKENDS` dict entries reference adapter classes; `resolve_backend()` returns a `BackendAdapter` instance instead of a `BackendSpec`
-- `scripts/mcp/lane_exec.py` -- `run_lane_exec()` calls `adapter.execute()` instead of branching on `kind`; `find_codex()` removed (moved to codex-cli adapter)
+- `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_exec.py` -- `run_lane_exec()` calls `adapter.execute()` instead of branching on `kind`; `find_codex()` removed (moved to codex-cli adapter)
 
 **BackendAdapter Protocol:**
 
@@ -258,10 +258,10 @@ class BackendAdapter(Protocol):
 
 **Functions to change:**
 
-- `scripts/mcp/lane_exec.py` -- remove `find_codex()`, `_run_subagent()`; these become internal to their respective adapters
+- `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_exec.py` -- remove `find_codex()`, `_run_subagent()`; these become internal to their respective adapters
 - `scripts/mcp/review_runner.py` -- remove `_find_codex_path()`, `_codex_exec()`; use `BackendAdapter.execute()` via registry
 - `scripts/mcp/_env.py` -- remove `apply_codex_runtime_hints()`; each adapter applies its own env setup in `execute()`
-- `scripts/mcp/worker_daemon.py` -- remove `_resolve_reasoning_effort()` heuristic; accept `effort` as a pass-through parameter from orchestrator dispatch
+- `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/worker_daemon.py` -- remove `_resolve_reasoning_effort()` heuristic; accept `effort` as a pass-through parameter from orchestrator dispatch
 - `scripts/mcp/orchestrator_guidance.py` -- replace `"codex"` default with backend-derived agent identity
 
 **Verification:**
@@ -282,7 +282,7 @@ class BackendAdapter(Protocol):
 
 **Functions to change:**
 
-- `scripts/mcp/worker_daemon.py` -- `worker_loop()` reads dispatch parameters from MCP state (lane record or dispatch message) instead of CLI args
+- `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/worker_daemon.py` -- `worker_loop()` reads dispatch parameters from MCP state (lane record or dispatch message) instead of CLI args
 - `scripts/mcp/orchestrator_daemon.py` -- `_ensure_lane_workers()` uses per-lane dispatch parameters when available; falls back to global defaults
 
 **Verification:**
@@ -334,7 +334,7 @@ class BackendAdapter(Protocol):
 
 4. **Execution backends section (if referenced inline):** Update to reference `BackendAdapter` Protocol as the canonical dispatch boundary instead of raw `backend_registry.py` `BACKENDS` dict.
 
-**Changes to `docs/agentic/worktree-codex-playbook.md`:**
+**Changes to `docs/agentic/playbooks/worktree-codex-playbook.md`:**
 
 1. **Quick Reference -- Orchestrator one-liners:** Add `MODEL=` parameter to `make orchestrator-daemon` and `make lane-run`:
 

@@ -361,19 +361,19 @@ This audit should be read with the current repo contracts and instructions in mi
 
 ### Contract alignment
 
-- Per [clustering-api.md](../../agentic/contracts/clustering-api.md), `GET /recognition/clusters/top-unlabeled` is a **local-projection-only** WordPress surface. Any proposal to add backend fallback there would be a contract change, not just an implementation tweak.
-- Per [clustering-api.md](../../agentic/contracts/clustering-api.md), suggestions, merge suggestions, name suggestions, and media identities currently use envelopes with `data_source`, and proxy-unavailable behavior is documented as empty `200` with `data_source: "unavailable"`. If we change that behavior, the contract docs must change in the same scope.
-- Per [recognition-clustering.md](../../agentic/contracts/recognition-clustering.md), the backend job-status route remains tenant-scoped. Any optimization of `/recognition/jobs/{job_id}` still needs to preserve correct tenant ownership and RLS semantics.
+- Per [clustering-api.md](../../../agentic/contracts/clustering-api.md), `GET /recognition/clusters/top-unlabeled` is a **local-projection-only** WordPress surface. Any proposal to add backend fallback there would be a contract change, not just an implementation tweak.
+- Per [clustering-api.md](../../../agentic/contracts/clustering-api.md), suggestions, merge suggestions, name suggestions, and media identities currently use envelopes with `data_source`, and proxy-unavailable behavior is documented as empty `200` with `data_source: "unavailable"`. If we change that behavior, the contract docs must change in the same scope.
+- Per [recognition-clustering.md](../../../agentic/contracts/recognition-clustering.md), the backend job-status route remains tenant-scoped. Any optimization of `/recognition/jobs/{job_id}` still needs to preserve correct tenant ownership and RLS semantics.
 
 ### Instructions alignment
 
-- Per [instructions.md](../../agentic/instructions.md), this repo is treated as **greenfield**. Follow-up fixes should therefore prefer clean rewrites of masking or duplicated logic over layering compatibility shims.
+- Per [instructions.md](../../../agentic/instructions.md), this repo is treated as **greenfield**. Follow-up fixes should therefore prefer clean rewrites of masking or duplicated logic over layering compatibility shims.
 - The same instructions require centralized status values and discourage stringly failure semantics. If follow-up work introduces statuses such as `database_unavailable`, `pool_saturated`, or new `data_source` variants, they should be added as canonical enums/constants and documented in the contracts.
 - `rg-015` also matters here: boundary adapters must not invent ambiguous metadata. For this incident class, that means error provenance should come from the actual layer that knows it, not from inferred empty envelopes that guess at state.
 
 ### Planning implications
 
-Per [planning-review-guide.md](../../agentic/rules/planning-review-guide.md), any follow-up implementation plan based on this audit should:
+Per [planning-review-guide.md](../../../agentic/rules/planning-review-guide.md), any follow-up implementation plan based on this audit should:
 
 - keep current-state claims synchronized with the real code and contracts
 - assign failure-handling changes to the correct owner boundary

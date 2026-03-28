@@ -1,7 +1,7 @@
 # Roadmap v4 -- Face Recognition UX and Plugin Ergonomics
 
 > **Status:** Active -- Epics A-C complete, Epic D in progress.
-> **Predecessor:** [roadmap-v3.hybrid.md](roadmap-v3.hybrid.md) (core vision, closed), [v0.1.0 Sovereign Cluster Epic](../epics/v0.1.0/wp-sovereign-cluster-epic.md) (completed), [v0.2.0 Production Readiness Epic](../epics/v0.2.0/production-readiness-epic.md) (in progress)
+> **Predecessor:** [roadmap-v3.hybrid.md](roadmap-v3.hybrid.md) (core vision, closed), [v0.1.0 Sovereign Cluster Epic](../epics/v0.1.0/wp-sovereign-cluster-epic.md) (completed), [v0.3.1 Production Readiness Epic](../epics/v0.3.1/production-readiness-epic.md) (tracked)
 
 ---
 
@@ -29,7 +29,7 @@ The v0.1.0/v0.2.0 releases established the sovereign data model and reliability 
 
 ## Terminology
 
-- **Person**: an operator-curated identity record (name, optional tags, optional reference photo). Created manually or via cluster commit. Stored in `wp_acx_persons`. See [ADR-002](../agentic/ADR-002-person-as-first-class-local-entity.md).
+- **Person**: an operator-curated identity record (name, optional tags, optional reference photo). Created manually or via cluster commit. Stored in `wp_acx_persons`. See [ADR-002](../agentic/adrs/ADR-002-person-as-first-class-local-entity.md).
 - **Cluster**: a system-inferred grouping of visually similar faces. Stored in `wp_acx_clusters`. May be unlabeled (pending review) or assigned to a person.
 - **Commit/Assign**: the action of assigning a cluster to a person, confirming the system's grouping as correct.
 - **Label derivation**: when a cluster has a `person_id`, its display label is the person's name. When unassigned, the cluster shows its backend-assigned label (e.g. "Person N").
@@ -69,7 +69,7 @@ The v0.1.0/v0.2.0 releases established the sovereign data model and reliability 
 
 | Decision                                                | Rationale                                                                                                                                                                                                                                            |
 | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Person is a first-class local entity (`wp_acx_persons`) | Person provides identity stability across cluster lifecycle (merges, splits, re-clustering). Option storage does not support indexing, pagination, or relational integrity. See [ADR-002](../agentic/ADR-002-person-as-first-class-local-entity.md). |
+| Person is a first-class local entity (`wp_acx_persons`) | Person provides identity stability across cluster lifecycle (merges, splits, re-clustering). Option storage does not support indexing, pagination, or relational integrity. See [ADR-002](../agentic/adrs/ADR-002-person-as-first-class-local-entity.md). |
 | Label derivation, not duplication                       | When `person_id IS NOT NULL`, cluster display label = person name. No dual source of truth for names.                                                                                                                                                |
 | Person CRUD is 100% local (no backend proxy)            | Person is a curation concern owned by the plugin. Create/rename/delete happen in plugin tables only. Sync to backend `roster_id` is a separate concern (Epic D).                                                                                     |
 | `acx_roster_assignments` option retired                 | The assignment IS the `person_id` FK on `wp_acx_clusters`. No separate mapping needed.                                                                                                                                                               |
@@ -79,7 +79,7 @@ The v0.1.0/v0.2.0 releases established the sovereign data model and reliability 
 
 ### Data Model Evolution
 
-**New table: `wp_acx_persons`** ([ADR-002](../agentic/ADR-002-person-as-first-class-local-entity.md))
+**New table: `wp_acx_persons`** ([ADR-002](../agentic/adrs/ADR-002-person-as-first-class-local-entity.md))
 
 | Column                 | Type                  | Note                                    |
 | ---------------------- | --------------------- | --------------------------------------- |
@@ -207,7 +207,7 @@ Sync scope additions:
 | Plugin data        | `src/support/class-life-cycle-manager.php`                   | `wp_acx_persons` table + `person_id` column     |
 | Roster API layer   | `js/admin/api/rosterApi.ts`                                  | Gains create/update/delete functions            |
 | Backend roster     | `apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py` | Replace legacy `roster_entries` lookup and align with person UUID sync to `roster_id` (Epic D) |
-| Architecture       | `docs/agentic/ADR-002-person-as-first-class-local-entity.md` | Decision record for Person entity               |
+| Architecture       | `docs/agentic/adrs/ADR-002-person-as-first-class-local-entity.md` | Decision record for Person entity               |
 
 ## Risks and Mitigations
 

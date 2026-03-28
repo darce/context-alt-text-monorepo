@@ -32,7 +32,7 @@ Total identities:             198
 
 ## Root Cause #1: Suggestion Eligibility Requires Labels
 
-**Location**: [eligibility.py#L10-27](../../../apps/prototype-description-service/recognition/application/suggestions/eligibility.py#L10)
+**Location**: [eligibility.py#L10-27](../../../../apps/prototype-description-service/recognition/application/suggestions/eligibility.py#L10)
 
 ```python
 def is_eligible_cluster(cluster: object, tenant_id: str) -> bool:
@@ -184,7 +184,7 @@ similarity = 0.1472 (14.7%)  -- WAY BELOW 80% threshold!
 3. With `min_cluster_size=2`, HDBSCAN can create 2-member clusters from any points in the same density region
 4. **Critical bug**: The code created new clusters without validating pairwise similarities
 
-**Code location**: [discovery.py#L204-207](apps/prototype-description-service/recognition/application/discovery/graph/discovery.py#L204)
+**Code location**: [discovery.py#L204-207](../../../../apps/prototype-description-service/recognition/application/discovery/graph/discovery.py#L204)
 
 ```python
 # BEFORE: No validation - blindly trusts HDBSCAN groupings

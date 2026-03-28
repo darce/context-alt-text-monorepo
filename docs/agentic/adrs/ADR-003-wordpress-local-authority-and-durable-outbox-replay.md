@@ -153,9 +153,9 @@ The backend may finish compute before the operator can actually see the result. 
 
 - [ADR-001: Face -> Identity Nomenclature Boundary](ADR-001-face-identity-nomenclature.md)
 - [ADR-002: Person as First-Class Local Entity](ADR-002-person-as-first-class-local-entity.md)
-- [Curation Sync API](contracts/curation-sync-api.md)
-- [Recognition State Reconciliation + Offline Continuity Epic](../epics/v0.2.0/recognition-state-reconciliation-and-offline-continuity-epic.md)
-- [Recognition State Reconciliation + Offline Continuity Epic Phase 5 (Retention, Export, Purge)](../epics/v0.2.0/recognition-state-reconciliation-and-offline-continuity-epic.md)
+- [Curation Sync API](../contracts/curation-sync-api.md)
+- [Recognition State Reconciliation + Offline Continuity Epic](../../epics/v0.2.0/recognition-state-reconciliation-and-offline-continuity-epic.md)
+- [Recognition State Reconciliation + Offline Continuity Epic Phase 5 (Retention, Export, Purge)](../../epics/v0.2.0/recognition-state-reconciliation-and-offline-continuity-epic.md)
 - Plugin outbox implementation:
   - `apps/prototype-wp-alt-context/src/sovereign/sync`
 - Plugin lifecycle/schema entrypoint:

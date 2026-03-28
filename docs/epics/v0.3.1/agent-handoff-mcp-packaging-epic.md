@@ -10,7 +10,7 @@ Today all 53+ MCP tools ship in a single flat registration regardless of whether
 
 ## UX Vision
 
-Portable adopters get a working MCP server with ~42 core tools for task state, decisions, findings, test results, artifacts, and CURRENT_TASK.md generation without pulling in repo-specific ACE logic. During the v0.x compatibility window, existing monorepo/full-install consumers keep the current orchestration surface; the portable core-only footprint is introduced as an explicit packaging mode or install target and only becomes the default in a clearly versioned breaking release. Repos that also want multi-agent worktree orchestration opt into the orchestration tier and get daemons, lane management, backend adapters, and review dispatch with configurable path conventions. ACE playbook logic (`ace_metrics`, `ace_reflect`) and project-specific lane manifests remain in this monorepo only.
+Portable adopters get a working MCP server with ~42 core tools for task state, decisions, findings, test results, artifacts, and CURRENT_TASK.md generation without pulling in repo-specific ACE logic. During the v0.x compatibility window, existing monorepo/full-install consumers keep the current orchestration surface; the portable core-only footprint is introduced as an explicit packaging mode or install target and only becomes the default in a clearly versioned breaking release. Repos that also want multi-agent worktree orchestration opt into the orchestration tier and get daemons, lane management, backend adapters, and review dispatch with configurable path conventions. ACE playbook logic (`ace_metrics`, `ace_reflect`) and project-specific lane manifests remain in this monorepo only. Planning/authoring templates (`EPIC.template.md`, `TASK_PLAN.template.md`, `ROADMAP.template.md`, decision-writing templates) remain repo-local guidance assets and are never a runtime dependency of the shipped package.
 
 ## Constraints
 
@@ -19,6 +19,7 @@ Portable adopters get a working MCP server with ~42 core tools for task state, d
 - No breaking changes to the MCP tool surface for existing consumers during the v0.x compatibility window. Shared tool signatures and behavior must remain stable, and existing monorepo/full-install consumers must keep the current orchestration surface, including today's `get_metrics_summary` availability, until a clearly versioned breaking release or an explicit alternate packaging mode is introduced.
 - The `codex-subagent-bridge` package is a separate concern and stays out of `agent-handoff-mcp` core dependencies.
 - Greenfield packaging policy applies; no backward-compat shims for import paths that move between tiers.
+- Only operational templates that are actually rendered by shipped orchestration tooling may be treated as package-adjacent dependencies. Planning/authoring templates under `docs/agentic/templates/` stay repo-local and must not become required at package runtime.
 
 ## Terminology
 
@@ -26,6 +27,8 @@ Portable adopters get a working MCP server with ~42 core tools for task state, d
 - **Orchestration**: The generic multi-agent layer; daemons, backend adapters, lane exec/prompt/result, review dispatch/runner, slice review packets, dashboards. Reusable across any repo that uses worktree-based multi-agent workflows.
 - **ACE**: Autonomous Coding Engine. The self-correcting playbook system that parses `[sr-NNN]`/`[rg-NNN]` strategy bullets from instruction files, tracks `helpful`/`harmful` evidence counters, and produces process metrics. Specific to this monorepo's `CLAUDE.md` format.
 - **Project-specific**: Lane manifests, hardcoded `REPO_ROOT` derivations, boundary-prefix constants, and review-rules-dir paths that assume this monorepo's directory layout.
+- **Operational templates**: Template files consumed by runtime/operator tooling, such as worktree lane brief/report renderers.
+- **Authoring templates**: Repo-local planning/decision templates that guide humans/agents when drafting docs, but are not required for package runtime.
 
 ## Current State
 
@@ -55,10 +58,17 @@ repo-local (not shipped)
   lane manifests (config/lane-orchestration/*.json)
   review_ready boundary prefixes
   review_runner rules_dir paths
-  docs/agentic/templates/
+  docs/agentic/templates/ (authoring templates and repo-owned operational templates)
 ```
 
 `api.py` will eventually probe for `orchestration/` importability at registration time, but the rollout is staged for compatibility. During v0.x, the existing full-install path continues to expose the current orchestration surface for existing consumers, including the currently unconditionally registered `get_metrics_summary` tool, while a separate portable/core-only install target exercises the smaller registration set. `get_metrics_summary` only moves behind an explicit ACE extension when the caller has intentionally selected the portable/core-only mode or when the project takes a clearly versioned breaking release. The `__init__.py` public API becomes conditional only when the packaging mode is explicit or when the project takes a clearly versioned breaking release.
+
+Template dependency policy:
+
+- The shipped core package must not require any files under `docs/agentic/templates/`.
+- Planning/authoring templates (`EPIC.template.md`, `TASK_PLAN.template.md`, `ROADMAP.template.md`, decision templates) remain repo-local guidance and are outside package dependency management.
+- If shipped orchestration features keep rendering lane briefs/reports from disk templates, those templates need an explicit configurable seam such as `template_dir`, similar to `rules_dir`.
+- Shipped orchestration must degrade cleanly when optional operational templates are absent: either use built-in defaults or disable the rendering feature with a clear diagnostic, never crash on a hardcoded monorepo path.
 
 ### Design Decisions
 
@@ -76,6 +86,7 @@ repo-local (not shipped)
 
 - **Canonical source**: `handoff.db` SQLite schema, `artifacts.db` sidecar. Owned entirely by core; orchestration reads/writes via core's public functions.
 - **Configuration flow**: `RuntimeConfig` (core) provides `workspace_root`, `state_dir`, `db_path`. Orchestration adds `manifest_dir`, `rules_dir`, `boundary_prefixes` as optional config extensions.
+- **Template flow**: authoring templates remain repo-local and are discovered through repo instructions/rules, not package runtime. If orchestration keeps file-backed brief/report rendering, it must treat those as optional operational templates behind an explicit `template_dir`-style config seam rather than a hardcoded docs path.
 - **Tool registration flow**: `build_handoff_mcp()` in `api.py` eventually registers core tools unconditionally and appends orchestration tools when `_HAS_ORCHESTRATION` is true, but the migration is staged. During v0.x, the default/full-install path keeps today's registration surface, including `get_metrics_summary`; the explicit portable/core-only mode is where orchestration and ACE tools become conditional first.
 - **ACE integration flow**: the shipped package provides generic extension seams only, such as optional metrics providers, review-postprocessing hooks, and advisory hooks. This monorepo's ACE extension supplies the instruction-file paths, reflection log handling, and tool registration that sit on top of those seams.
 
@@ -135,15 +146,16 @@ Deliverables:
 - `lane_manifest.py`: accept `manifest_dir` parameter instead of deriving from `SCRIPT_DIR.parents[4]`.
 - `review_runner.py`: accept `rules_dir` parameter instead of hardcoding `docs/agentic/rules`.
 - `review_ready.py`: accept `boundary_prefixes` and `contract_prefixes` instead of hardcoding `apps/`, `packages/agent-handoff-mcp/src/`, `docs/agentic/contracts/`.
+- Audit shipped orchestration tooling for template-path assumptions (`scripts/worktree-lane` today; any future package-owned brief/report renderer) and either relocate that rendering outside the shipped package or parameterize it behind `template_dir`.
 - Audit and parameterize the remaining repo-root/path-coupled helpers that currently assume this monorepo layout (`generate_lane_manifest.py`, `handoff_integrity_guard.py`, and any other `SCRIPT_DIR`/`REPO_ROOT`-derived orchestration helpers that are meant to ship).
-- Add path configuration to `RuntimeConfig` or a new `OrchestrationConfig` dataclass.
+- Add path configuration to `RuntimeConfig` or a new `OrchestrationConfig` dataclass, including `template_dir` only if template-backed orchestration rendering remains in scope.
 - Default values match this monorepo's layout so nothing breaks without explicit config.
 
 Exit criteria:
 
 - Orchestration modules instantiated with custom paths work correctly in tests.
 - This monorepo's existing workflow is unchanged (defaults match current hardcoded values).
-- No remaining shipping-critical `SCRIPT_DIR.parents[N]` or monorepo-root path assumptions in the shipped orchestration modules.
+- No remaining shipping-critical `SCRIPT_DIR.parents[N]`, monorepo-root path assumptions, or hardcoded template paths in the shipped orchestration modules.
 
 ### Phase 4: Extract ACE to Repo-Local Extension -- not-started
 
@@ -213,11 +225,13 @@ Exit criteria:
 | Hardcoded paths | `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_manifest.py` | `REPO_ROOT = SCRIPT_DIR.parents[4]`; parameterize in Phase 3 |
 | Hardcoded prefixes | `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/review_ready.py` | `BOUNDARY_PREFIXES`; parameterize in Phase 3 |
 | Hardcoded rules dir | `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/review_runner.py` | `REPO_ROOT / "docs" / "agentic" / "rules"`; parameterize in Phase 3 |
+| Operational templates | `scripts/worktree-lane` | Reads `docs/agentic/templates/WORKTREE_LANE_{BRIEF,REPORT}.template.md`; decide whether this stays repo-local or moves behind `template_dir` |
 | ACE log handling | `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/worker_daemon.py` | Appends to `ace_reflect_log.jsonl`; must move behind extension seam |
 | ACE advisory handling | `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/orchestrator_daemon.py` | Reads pending `ace_reflect_log.jsonl` state; must move behind extension seam |
 | Repo-root helpers | `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/generate_lane_manifest.py` | Derives output from monorepo-root assumptions; likely repo-local |
 | Repo-root guard | `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/handoff_integrity_guard.py` | Resolves package/src paths relative to repo root; audit for shipment |
 | Lane manifests | `config/lane-orchestration/*.json` | Project-specific; stays repo-local |
+| Authoring templates | `docs/agentic/templates/{EPIC,TASK_PLAN,ROADMAP,DECISION_*}.template.md` | Repo-local guidance only; not a runtime dependency of the shipped package |
 | Guard rules | `docs/agentic/instructions.md` | `[rg-013]`, `[rg-014]` enforce core/orchestration boundary |
 
 ---
@@ -246,8 +260,9 @@ Exit criteria:
 - [ ] Parameterize `lane_manifest.py` manifest_dir
 - [ ] Parameterize `review_runner.py` rules_dir
 - [ ] Parameterize `review_ready.py` boundary/contract prefixes
+- [ ] Decide whether operational brief/report templates remain repo-local or gain an explicit `template_dir` seam for shipped orchestration
 - [ ] Audit and parameterize or relocate remaining shipping repo-root helpers (`generate_lane_manifest.py`, `handoff_integrity_guard.py`, similar `SCRIPT_DIR`/`REPO_ROOT` consumers)
-- [ ] Add path config to `RuntimeConfig` or `OrchestrationConfig`
+- [ ] Add path config to `RuntimeConfig` or `OrchestrationConfig` for every remaining shipped path dependency, including templates if needed
 - [ ] Defaults match this monorepo; custom paths work in tests
 
 ## Phase 4: Extract ACE to Repo-Local Extension -- not-started

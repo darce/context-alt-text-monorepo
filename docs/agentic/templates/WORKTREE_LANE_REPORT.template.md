@@ -5,6 +5,8 @@ Lane: `{{LANE_ID}}`
 Session: `{{SESSION}}`
 Branch: `{{BRANCH}}`
 Worktree: `{{WORKTREE_PATH}}`
+Date: `{{DATE_EST}}`
+Author: `{{AGENT_NAME}}`
 Status: `{{STATUS}}`
 Merge Ready: `{{MERGE_READY}}`
 

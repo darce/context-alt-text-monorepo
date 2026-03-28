@@ -11,9 +11,13 @@ import sys as _sys
 _PARENT = str(Path(__file__).resolve().parent.parent)
 if _PARENT not in _sys.path:
     _sys.path.insert(0, _PARENT)
+_PACKAGE_SRC = str(Path(__file__).resolve().parents[3])
+if _PACKAGE_SRC not in _sys.path:
+    _sys.path.insert(0, _PACKAGE_SRC)
 
 from backend_adapter import BackendAdapter, BackendResult
 from _env import resolve_auto_reasoning_effort
+from agent_handoff_mcp.enums import WorkerEventName
 
 
 class LocalModelAdapter(BackendAdapter):
@@ -67,8 +71,8 @@ class LocalModelAdapter(BackendAdapter):
         if not model:
             raise ValueError("model is required for LocalModelAdapter.")
 
-        if progress_callback:
-            progress_callback("exec_spawned", backend="local-model-openai", model=model)
+            if progress_callback:
+                progress_callback(WorkerEventName.EXEC_SPAWNED, backend="local-model-openai", model=model)
 
         # Build message payload for instruction-following model
         messages = [
@@ -100,7 +104,7 @@ class LocalModelAdapter(BackendAdapter):
                 content = data["choices"][0]["message"]["content"]
                 
                 if progress_callback:
-                    progress_callback("exec_complete", backend="local-model-openai")
+                    progress_callback(WorkerEventName.EXEC_COMPLETE, backend="local-model-openai")
                 
                 # We expect the model's content to be valid JSON matching the schema
                 # for the purposes of this adapter.

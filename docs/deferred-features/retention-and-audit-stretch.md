@@ -18,11 +18,11 @@ The v0.3.0 retention epic delivers the core building blocks: export format versi
 
 > **Item**: Read older format versions and upgrade on import (cross-site migration path).
 
-The v0.3.0 export versioning work stamps a `format_version` header on every new export. It does not implement a reader that can parse exports produced with older format versions and upgrade them to the current schema. This is needed for cross-site migration scenarios where an operator exports data from an older plugin version and imports it into a newer one.
+The v0.3.0 export versioning work stamps a `schema_version` header on every new export (see epic Design Decisions: the existing integer `schema_version` field is canonical unless Phase 3 explicitly decides otherwise). It does not implement a reader that can parse exports produced with older schema versions and upgrade them to the current schema. This is needed for cross-site migration scenarios where an operator exports data from an older plugin version and imports it into a newer one.
 
 This requires:
-- A version registry mapping `format_version` values to migration transforms.
-- An import endpoint or CLI tool that detects the format version and applies the appropriate migration chain.
+- A version registry mapping `schema_version` values to migration transforms.
+- An import endpoint or CLI tool that detects the schema version and applies the appropriate migration chain.
 - Tests for upgrading from version N-1 to N.
 
 **Dependency**: at least one version increment must exist before this is meaningful to implement. Activate after the first breaking export format change.

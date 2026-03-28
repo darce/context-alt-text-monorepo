@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..backend_adapter import BackendAdapter, BackendResult
+from ...enums import WorkerEventName
 
 
 class CodexSubagentAdapter(BackendAdapter):
@@ -51,7 +52,7 @@ class CodexSubagentAdapter(BackendAdapter):
     ) -> BackendResult:
         """Execute turn via the provided bridge runner."""
         if progress_callback:
-            progress_callback("exec_spawned", backend=self.name)
+            progress_callback(WorkerEventName.EXEC_SPAWNED, backend=self.name)
 
         runner_kwargs: dict[str, Any] = {
             "prompt": prompt,
@@ -69,7 +70,7 @@ class CodexSubagentAdapter(BackendAdapter):
 
         if progress_callback is not None:
             runner_kwargs["telemetry_callback"] = lambda telemetry: progress_callback(
-                "subagent_turn_complete",
+                WorkerEventName.SUBAGENT_TURN_COMPLETE,
                 backend=self.name,
                 phase="execution",
                 **telemetry,
@@ -92,7 +93,7 @@ class CodexSubagentAdapter(BackendAdapter):
             payload = json.loads(payload)
 
         if progress_callback:
-            progress_callback("exec_complete", backend=self.name)
+            progress_callback(WorkerEventName.EXEC_COMPLETE, backend=self.name)
 
         return BackendResult.from_dict(payload)
 

@@ -16,6 +16,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from agent_handoff_mcp import RuntimeConfig
+from agent_handoff_mcp import build_write_actor
 from agent_handoff_mcp import configure_runtime
 from agent_handoff_mcp import get_handoff_state
 from agent_handoff_mcp import list_lane_messages
@@ -197,13 +198,14 @@ def _load_open_handoff_items(task_ref: str) -> dict[str, list[dict[str, Any]]]:
 
 
 def _stamp_issue_to_lane(issue_kind: str, issue: dict[str, Any], lane_id: str, dispatch_session: str) -> None:
+    lane_actor = build_write_actor(lane_id=lane_id)
     if issue_kind == "review_findings":
         result = _json_load(
             update_review_finding(
                 status="open",
                 finding_id=str(issue["finding_id"]),
                 session=dispatch_session,
-                actor={"lane_id": lane_id},
+                actor=lane_actor,
             )
         )
         if result.get("ok") is not True:
@@ -215,7 +217,7 @@ def _stamp_issue_to_lane(issue_kind: str, issue: dict[str, Any], lane_id: str, d
             report_blocker(
                 operation="reopen",
                 blocker_id=int(issue["id"]),
-                actor={"lane_id": lane_id},
+                actor=lane_actor,
             )
         )
         if result.get("ok") is not True:
@@ -227,7 +229,7 @@ def _stamp_issue_to_lane(issue_kind: str, issue: dict[str, Any], lane_id: str, d
             operation="update",
             action_id=int(issue["id"]),
             status=str(issue.get("status") or "pending"),
-            actor={"lane_id": lane_id},
+            actor=lane_actor,
         )
     )
     if result.get("ok") is not True:

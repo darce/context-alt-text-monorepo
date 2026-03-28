@@ -229,58 +229,58 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded the minimum authoritative rules, contracts, and handoff state before editing.
-- [ ] Confirmed whether external dependency context requires `ctx7`.
-- [ ] Recorded boundary ownership and compatibility expectations if any contract is touched.
+- [x] Loaded the minimum authoritative rules, contracts, and handoff state before editing.
+- [x] Confirmed whether external dependency context requires `ctx7`.
+- [x] Recorded boundary ownership and compatibility expectations if any contract is touched.
 
 ## Slice 1: Status Enum Consolidation and Actor Helper
 
-- [ ] Created `enums.py` with StrEnum types for all 10 status domains.
-- [ ] Replaced inline `*_STATUSES` / `*_SEVERITIES` / `*_MODES` sets in core.py with enum references.
-- [ ] Added public `build_write_actor()` factory in core.py.
-- [ ] Added `test_enums.py` with string-value parity, round-trip, and actor factory tests.
-- [ ] `mypy` clean on changed files.
-- [ ] Full test suite passes (no regressions).
+- [x] Created `enums.py` with StrEnum types for all 10 status domains.
+- [x] Replaced inline `*_STATUSES` / `*_SEVERITIES` / `*_MODES` sets in core.py with enum references.
+- [x] Added public `build_write_actor()` factory in core.py.
+- [x] Added `test_enums.py` with string-value parity, round-trip, and actor factory tests.
+- [x] `mypy` clean on changed files.
+- [x] Full test suite passes (no regressions).
 
 ## Slice 2: Lane-Activity Summary and Retention Rules
 
-- [ ] Extended `get_lane_activity()` with `format="archival"` response preset.
-- [ ] Documented retention rules (staleness threshold, auto-purge semantics) in contract doc.
-- [ ] Added tests for archival format shape, empty-lane edge case, multi-lane isolation.
-- [ ] Verified `get_handoff_state` unchanged (no active-brief duplication per SMEM-PLAN-03).
+- [x] Extended `get_lane_activity()` with `format="archival"` response preset.
+- [x] Documented retention rules (staleness threshold, auto-purge semantics) in contract doc.
+- [x] Added tests for archival format shape, empty-lane edge case, multi-lane isolation.
+- [x] Verified `get_handoff_state` unchanged (no active-brief duplication per SMEM-PLAN-03).
 
 ## Slice 3: Derivable ACE Metrics
 
-- [ ] Added `_planning_drift()` collector with plan_cursors derivation.
-- [ ] Added `_stale_artifact_metrics()` collector with artifact_sources derivation.
-- [ ] Added `_archive_rate()` collector with task_archives derivation.
-- [ ] Added `_ctx7_adoption()` collector with decision-keyword derivation.
-- [ ] Documented non-derivable metrics (runtime_parity, performance_evidence, resolved_from_hot_state) as deferred instrumentation.
-- [ ] Added per-collector unit tests.
+- [x] Added `_planning_drift()` collector with plan_cursors derivation.
+- [x] Added `_stale_artifact_metrics()` collector with artifact_sources derivation.
+- [x] Added `_archive_rate()` collector with task_archives derivation.
+- [x] Added `_ctx7_adoption()` collector with decision-keyword derivation.
+- [x] Documented non-derivable metrics (runtime_parity, performance_evidence, resolved_from_hot_state) as deferred instrumentation.
+- [x] Added per-collector unit tests.
 
 ## Slice 4: Review Loop, ctx7 Narrowing, and Epic Sync
 
-- [ ] Added data-pattern/latency review section to instructions.md.
-- [ ] Narrowed ctx7 deliverable to adoption metric; documented token-cost measurement boundary.
-- [ ] Checked off all remaining Phase 4 items in epic.
-- [ ] Checked off all remaining Phase 5 items in epic (with scope narrowing documented).
-- [ ] Verified deferred-features doc remains accurate.
+- [x] Added data-pattern/latency review section to instructions.md.
+- [x] Narrowed ctx7 deliverable to adoption metric; documented token-cost measurement boundary.
+- [x] Checked off all remaining Phase 4 items in epic.
+- [x] Checked off all remaining Phase 5 items in epic (with scope narrowing documented).
+- [x] Verified deferred-features doc remains accurate.
 
 ## Review Readiness
 
-- [ ] No boundary-touching implementation is left without matching contract/doc/fixture evidence.
-- [ ] Runtime-parity checks are included where tests can mask real behavior.
-- [ ] Handoff decision records the change, verification, and any contract implications.
+- [x] No boundary-touching implementation is left without matching contract/doc/fixture evidence.
+- [x] Runtime-parity checks are included where tests can mask real behavior. _(Verified with a live `ace_metrics` snapshot under the real MCP runtime, in addition to focused pytest and mypy runs.)_
+- [x] Handoff decision records the change, verification, and any contract implications.
 
 ## Stretch Goals
 
-- [ ] Add worker JSONL event name enums (currently free-form strings like `cycle_start`, `exec_complete`).
-- [ ] Add compact markdown examples for `get_lane_activity(format="archival")` response shape in contract doc.
+- [x] Add worker JSONL event name enums (currently free-form strings like `cycle_start`, `exec_complete`). _(Added `WorkerEventName` and wired worker/adapters through the canonical vocabulary.)_
+- [x] Add compact markdown examples for `get_lane_activity(format="archival")` response shape in contract doc.
 
 ## Success Criteria
 
-- [ ] All status domains use StrEnums; callers use `build_write_actor()` instead of inline dicts.
-- [ ] Lane-activity archival compression available via `get_lane_activity(format="archival")`; retention rules documented in contract.
-- [ ] ACE metrics snapshot covers planning_drift, stale_artifact_rate, archive_rate, ctx7_adoption.
-- [ ] Non-derivable metrics explicitly documented as deferred instrumentation (not faked).
-- [ ] Epic Phase 4 and Phase 5 checklists fully resolved; no active/deferred ambiguity.
+- [x] All status domains use StrEnums; callers use `build_write_actor()` instead of inline dicts. _(All 10 status domains consolidated as StrEnums. All production write-actor callers use `build_write_actor()`; remaining inline dicts are test fixtures constructing actor shapes directly, which is expected.)_
+- [x] Lane-activity archival compression available via `get_lane_activity(format="archival")`; retention rules documented in contract.
+- [x] ACE metrics snapshot covers planning_drift, stale_artifact_rate, archive_rate, ctx7_adoption.
+- [x] Non-derivable metrics explicitly documented as deferred instrumentation (not faked).
+- [x] Epic Phase 4 and Phase 5 checklists fully resolved; no active/deferred ambiguity.

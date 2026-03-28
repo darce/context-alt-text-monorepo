@@ -1,6 +1,7 @@
 from .api import (
     archive_task_state,
     build_handoff_mcp,
+    build_write_actor,
     close_worktree_lane,
     configure_runtime,
     export_handoff_state,
@@ -64,6 +65,7 @@ __all__ = [
     "RuntimeConfig",
     "archive_task_state",
     "build_handoff_mcp",
+    "build_write_actor",
     "close_worktree_lane",
     "configure_runtime",
     "export_handoff_state",

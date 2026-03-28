@@ -25,10 +25,14 @@ from typing import Any
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+PACKAGE_SRC = SCRIPT_DIR.parents[1]
+if str(PACKAGE_SRC) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_SRC))
 
 from _env import WORKER_REASONING_EFFORT_CHOICES
 from _env import pythonpath_env
 from backend_registry import get_backend_choices
+from agent_handoff_mcp.enums import WorkerEventName
 from orchestrator_helpers import rotate_jsonl_if_needed, _combined_text, _json_load, _normalize_text
 
 _MAX_LOG_BYTES = 1_000_000
@@ -278,7 +282,7 @@ def _run_final_handoff(
         stderr_tail = (result.stderr or "")[-500:]
         stdout_tail = (result.stdout or "")[-500:]
         log_dir = orchestrator_root / "logs" / "worker-daemon"
-        _log(lane_id, log_dir, "ERROR", "handoff_subprocess_failed",
+        _log(lane_id, log_dir, "ERROR", WorkerEventName.HANDOFF_SUBPROCESS_FAILED,
              exit_code=result.returncode,
              run_id=run_id,
              stderr_tail=stderr_tail,
@@ -556,7 +560,7 @@ def _record_token_usage_to_handoff(
             session=session,
             decision=f"token_usage_c{cycle}_{phase}",
             rationale=rationale,
-            actor={"agent": f"worker-{lane_id}", "branch": None, "commit_sha": None},
+            actor=api.build_write_actor(agent=f"worker-{lane_id}"),
         )
     except Exception:
         # Best-effort; do not break the execution pipeline for telemetry logging
@@ -733,7 +737,7 @@ def worker_loop(
 
     previous_run_exhausted = False
 
-    log("INFO", "daemon_start", task_ref=task_ref, single_pass=single_pass,
+    log("INFO", WorkerEventName.DAEMON_START, task_ref=task_ref, single_pass=single_pass,
         max_review_cycles=max_review_cycles, backend=backend, session_mode=session_mode,
         reasoning_effort=reasoning_effort, model=model)
     if existing_status.get("state") != "handoff_failed":
@@ -754,7 +758,7 @@ def worker_loop(
 
     while True:
         if _shutdown_requested:
-            log("INFO", "daemon_stop", reason="sigterm")
+            log("INFO", WorkerEventName.DAEMON_STOP, reason="sigterm")
             return 0
         persisted_status = _read_worker_status(state_dir, lane_id) or {}
         if persisted_status.get("state") == "handoff_failed":
@@ -764,7 +768,7 @@ def worker_loop(
                 backoff = min(poll_interval * (2 ** handoff_retry_count), 300)
                 if handoff_retry_count > 0:
                     time.sleep(backoff)
-                log("INFO", "handoff_retry_start", result_path=str(result_path), retry=handoff_retry_count + 1)
+                log("INFO", WorkerEventName.HANDOFF_RETRY_START, result_path=str(result_path), retry=handoff_retry_count + 1)
                 retry_exit = _run_final_handoff(
                     orchestrator_root=orchestrator_root,
                     task_ref=task_ref,
@@ -787,14 +791,14 @@ def worker_loop(
                         summary="Worker handoff submitted successfully; waiting for orchestrator follow-up.",
                         clear_result_path=True,
                     )
-                    log("INFO", "handoff_retry_complete", result_path=str(result_path))
+                    log("INFO", WorkerEventName.HANDOFF_RETRY_COMPLETE, result_path=str(result_path))
                     if single_pass:
                         return 0
                     time.sleep(poll_interval)
                     continue
-                log("ERROR", "handoff_retry_failed", result_path=str(result_path))
+                log("ERROR", WorkerEventName.HANDOFF_RETRY_FAILED, result_path=str(result_path))
             if dormant_state != "handoff_failed":
-                log("ERROR", "dormant_entered", state="handoff_failed", interval=poll_interval, retry_count=handoff_retry_count)
+                log("ERROR", WorkerEventName.DORMANT_ENTERED, state="handoff_failed", interval=poll_interval, retry_count=handoff_retry_count)
                 dormant_state = "handoff_failed"
             if single_pass:
                 return 1
@@ -809,7 +813,7 @@ def worker_loop(
                 worktree_path=worktree_path,
             )
         except RuntimeError as exc:
-            log("ERROR", "poll_error", error=str(exc))
+            log("ERROR", WorkerEventName.POLL_ERROR, error=str(exc))
             if single_pass:
                 return 1
             time.sleep(poll_interval)
@@ -818,7 +822,7 @@ def worker_loop(
         if lane_state != "actionable":
             if dormant_state != lane_state:
                 if lane_state == "waiting":
-                    log("INFO", "dormant_entered", state="waiting_for_orchestrator", interval=poll_interval)
+                    log("INFO", WorkerEventName.DORMANT_ENTERED, state="waiting_for_orchestrator", interval=poll_interval)
                     _write_worker_status(
                         state_dir,
                         lane_id,
@@ -828,7 +832,7 @@ def worker_loop(
                         summary="Worker already handed off this lane and is waiting for orchestrator follow-up.",
                     )
                 else:
-                    log("INFO", "dormant_entered", state="idle", interval=poll_interval)
+                    log("INFO", WorkerEventName.DORMANT_ENTERED, state="idle", interval=poll_interval)
                     _write_worker_status(
                         state_dir,
                         lane_id,
@@ -845,7 +849,7 @@ def worker_loop(
 
         if dormant_state is not None:
             wake_reason = "orchestrator_dispatch" if dormant_state == "waiting" else "new_lane_work"
-            log("INFO", "dormant_exited", previous_state=dormant_state, reason=wake_reason)
+            log("INFO", WorkerEventName.DORMANT_EXITED, previous_state=dormant_state, reason=wake_reason)
             dormant_state = None
 
         final_result_path = None
@@ -857,16 +861,16 @@ def worker_loop(
             # M-3: Fetch dynamic overrides from MCP at the START of each cycle
             mcp_params = _fetch_mcp_lane_params(orchestrator_root, task_ref, lane_id)
             if mcp_params.get("backend"):
-                log("INFO", "mcp_backend_override", old=backend, new=mcp_params["backend"])
+                log("INFO", WorkerEventName.MCP_BACKEND_OVERRIDE, old=backend, new=mcp_params["backend"])
                 backend = str(mcp_params["backend"])
             if mcp_params.get("model"):
-                log("INFO", "mcp_model_override", old=model, new=mcp_params["model"])
+                log("INFO", WorkerEventName.MCP_MODEL_OVERRIDE, old=model, new=mcp_params["model"])
                 model = str(mcp_params["model"])
             if mcp_params.get("reasoning_effort"):
-                log("INFO", "mcp_effort_override", old=reasoning_effort, new=mcp_params["reasoning_effort"])
+                log("INFO", WorkerEventName.MCP_EFFORT_OVERRIDE, old=reasoning_effort, new=mcp_params["reasoning_effort"])
                 reasoning_effort = str(mcp_params["reasoning_effort"])
 
-            log("INFO", "cycle_start", cycle=cycle)
+            log("INFO", WorkerEventName.CYCLE_START, cycle=cycle)
             _write_worker_status(
                 state_dir,
                 lane_id,
@@ -899,7 +903,7 @@ def worker_loop(
                 else:
                     log(
                         "WARNING",
-                        "fix_prompt_failed",
+                        WorkerEventName.FIX_PROMPT_FAILED,
                         cycle=cycle,
                         error=(base_result.stderr or base_result.stdout or "").strip()[:200],
                     )
@@ -922,7 +926,7 @@ def worker_loop(
             )
             log(
                 "INFO",
-                "reasoning_effort_selected",
+                WorkerEventName.REASONING_EFFORT_SELECTED,
                 cycle=cycle,
                 requested_reasoning_effort=reasoning_effort,
                 effective_reasoning_effort=cycle_reasoning_effort or "inherit",
@@ -932,7 +936,7 @@ def worker_loop(
             execution_effective_effort = cycle_reasoning_effort or "inherit"
 
             def _worker_progress(event: str, **kw: Any) -> None:
-                if event == "subagent_turn_complete":
+                if event == WorkerEventName.SUBAGENT_TURN_COMPLETE:
                     phase = str(kw.get("phase") or "execution")
                     phase_state = "reviewing" if phase == "review" else "executing"
                     _record_observability(
@@ -978,7 +982,7 @@ def worker_loop(
 
             _exec_start = time.monotonic()
             try:
-                log("INFO", "exec_start", cycle=cycle, worktree_path=str(worktree_path))
+                log("INFO", WorkerEventName.EXEC_START, cycle=cycle, worktree_path=str(worktree_path))
                 final_result_path = run_lane_exec(
                     orchestrator_root=orchestrator_root,
                     task_ref=task_ref,
@@ -996,17 +1000,17 @@ def worker_loop(
                     dry_run=dry_run,
                 )
             except Exception as exc:
-                log("ERROR", "exec_failed", error=str(exc), cycle=cycle)
+                log("ERROR", WorkerEventName.EXEC_FAILED, error=str(exc), cycle=cycle)
                 break
 
             exec_seconds = round(time.monotonic() - _exec_start, 2)
-            log("INFO", "exec_complete", result_path=str(final_result_path), cycle=cycle, exec_seconds=exec_seconds)
+            log("INFO", WorkerEventName.EXEC_COMPLETE, result_path=str(final_result_path), cycle=cycle, exec_seconds=exec_seconds)
 
             # Emit artifact_indexed event when lane_exec compressed a large details field
             result = _load_result(final_result_path)
             _details_ref = result.get("details_artifact_ref")
             if _details_ref is not None:
-                log("INFO", "artifact_indexed",
+                log("INFO", WorkerEventName.ARTIFACT_INDEXED,
                     cycle=cycle,
                     details_artifact_ref=_details_ref,
                     lane_id=lane_id,
@@ -1018,7 +1022,7 @@ def worker_loop(
             if isinstance(_ctx_util, dict):
                 _pressure = str(_ctx_util.get("pressure") or "normal")
                 if _pressure in ("elevated", "high"):
-                    log("WARNING", "context_pressure",
+                    log("WARNING", WorkerEventName.CONTEXT_PRESSURE,
                         cycle=cycle,
                         pressure=_pressure,
                         utilization_ratio=_ctx_util.get("utilization_ratio"),
@@ -1057,7 +1061,7 @@ def worker_loop(
 
             # Check for needs_guidance
             if result.get("handoff_action") == "needs_guidance":
-                log("INFO", "needs_guidance", cycle=cycle)
+                log("INFO", WorkerEventName.NEEDS_GUIDANCE, cycle=cycle)
                 _write_worker_status(
                     state_dir,
                     lane_id,
@@ -1105,7 +1109,7 @@ def worker_loop(
                         handoff_action="needs_guidance",
                         attention_required=True,
                     )
-                    log("ERROR", "handoff_failed", cycle=cycle, result_path=str(final_result_path))
+                    log("ERROR", WorkerEventName.HANDOFF_FAILED, cycle=cycle, result_path=str(final_result_path))
                 if single_pass:
                     return handoff_exit
                 break
@@ -1113,7 +1117,7 @@ def worker_loop(
             # --- Scope violation gate ---
             if result.get("scope_violation"):
                 scope_violations = result.get("scope_violations", [])
-                log("WARNING", "scope_violation", cycle=cycle, violations=scope_violations)
+                log("WARNING", WorkerEventName.SCOPE_VIOLATION, cycle=cycle, violations=scope_violations)
                 _record_observability(
                     orchestrator_root=orchestrator_root,
                     task_ref=task_ref,
@@ -1188,13 +1192,13 @@ def worker_loop(
                         handoff_action="needs_guidance",
                         attention_required=True,
                     )
-                    log("ERROR", "handoff_failed", cycle=cycle, result_path=str(final_result_path))
+                    log("ERROR", WorkerEventName.HANDOFF_FAILED, cycle=cycle, result_path=str(final_result_path))
                 if single_pass:
                     return handoff_exit
                 break
 
             # --- Self-review pass ---
-            log("INFO", "review_start", cycle=cycle)
+            log("INFO", WorkerEventName.REVIEW_START, cycle=cycle)
             _write_worker_status(
                 state_dir,
                 lane_id,
@@ -1221,13 +1225,13 @@ def worker_loop(
                     progress_callback=_worker_progress,
                 )
             except Exception as exc:
-                log("ERROR", "review_failed", error=str(exc), cycle=cycle)
+                log("ERROR", WorkerEventName.REVIEW_FAILED, error=str(exc), cycle=cycle)
                 break
 
             review_seconds = round(time.monotonic() - _review_start, 2)
             findings = review_output.get("findings", [])
             converged = review_output.get("converged", False)
-            log("INFO", "review_complete", cycle=cycle, converged=converged,
+            log("INFO", WorkerEventName.REVIEW_COMPLETE, cycle=cycle, converged=converged,
                 finding_count=len(findings), review_seconds=review_seconds)
 
             # ACE reflection hook: scan new findings for rule references and
@@ -1262,12 +1266,12 @@ def worker_loop(
                             records=len(_records),
                         )
                 except Exception as _ace_exc:  # noqa: BLE001
-                    log("WARNING", "ace_reflect_error", error=str(_ace_exc))
+                    log("WARNING", WorkerEventName.ACE_REFLECT_ERROR, error=str(_ace_exc))
 
             # Compute finding diff before updating prev_finding_ids
             if prev_finding_ids or findings:
                 diff = _compute_finding_diff(prev_finding_ids, findings)
-                log("INFO", "finding_diff", cycle=cycle,
+                log("INFO", WorkerEventName.FINDING_DIFF, cycle=cycle,
                     new_count=len(diff["new"]),
                     recurring_count=len(diff["recurring"]),
                     resolved_count=diff["resolved_count"])
@@ -1280,7 +1284,7 @@ def worker_loop(
                 # --- Verification ---
                 _reset_exhaustion_streak(state_dir, lane_id, run_id)
                 previous_run_exhausted = False
-                log("INFO", "verification_start")
+                log("INFO", WorkerEventName.VERIFICATION_START)
                 _write_worker_status(
                     state_dir,
                     lane_id,
@@ -1300,7 +1304,7 @@ def worker_loop(
                         lane_id=lane_id,
                         worktree_path=worktree_path,
                     )
-                log("INFO", "verification_complete", passed=check_ok)
+                log("INFO", WorkerEventName.VERIFICATION_COMPLETE, passed=check_ok)
 
                 if not check_ok:
                     _patch_result(final_result_path, {
@@ -1356,21 +1360,21 @@ def worker_loop(
                         handoff_action=handoff_action,
                         attention_required=True,
                     )
-                    log("ERROR", "handoff_failed", cycle=cycle, result_path=str(final_result_path))
+                    log("ERROR", WorkerEventName.HANDOFF_FAILED, cycle=cycle, result_path=str(final_result_path))
                 if single_pass:
                     return handoff_exit
                 break
 
-            log("INFO", "fix_cycle_needed", cycle=cycle)
+            log("INFO", WorkerEventName.FIX_CYCLE_NEEDED, cycle=cycle)
             # Loop continues with next cycle
         else:
             # Exhausted review cycles
-            log("WARNING", "review_exhausted", max_cycles=max_review_cycles)
+            log("WARNING", WorkerEventName.REVIEW_EXHAUSTED, max_cycles=max_review_cycles)
             previous_run_exhausted = True
             exhaustion_streak = _update_exhaustion_streak(state_dir, lane_id, run_id)
-            log("WARNING", "exhaustion_streak", streak=exhaustion_streak, lane=lane_id)
+            log("WARNING", WorkerEventName.EXHAUSTION_STREAK, streak=exhaustion_streak, lane=lane_id)
             if exhaustion_streak >= 3:
-                log("WARNING", "lane_exhaustion_forced_stop", streak=exhaustion_streak)
+                log("WARNING", WorkerEventName.LANE_EXHAUSTION_FORCED_STOP, streak=exhaustion_streak)
             if final_result_path:
                 _patch_result(final_result_path, {
                     "handoff_action": "needs_guidance",
@@ -1424,12 +1428,12 @@ def worker_loop(
                         handoff_action="needs_guidance",
                         attention_required=True,
                     )
-                    log("ERROR", "handoff_failed", result_path=str(final_result_path))
+                    log("ERROR", WorkerEventName.HANDOFF_FAILED, result_path=str(final_result_path))
 
         if single_pass:
             return handoff_exit
 
-        log("INFO", "poll_sleep", interval=poll_interval)
+        log("INFO", WorkerEventName.POLL_SLEEP, interval=poll_interval)
         time.sleep(poll_interval)
 
 

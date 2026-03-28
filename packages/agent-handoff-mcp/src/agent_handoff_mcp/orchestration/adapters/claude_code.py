@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..backend_adapter import BackendAdapter, BackendResult
+from ...enums import WorkerEventName
 
 
 class ClaudeCodeAdapter(BackendAdapter):
@@ -55,7 +56,7 @@ class ClaudeCodeAdapter(BackendAdapter):
     ) -> BackendResult:
         """Execute turn via `claude` CLI."""
         if progress_callback:
-            progress_callback("exec_spawned", backend="claude-code")
+            progress_callback(WorkerEventName.EXEC_SPAWNED, backend="claude-code")
 
         with tempfile.TemporaryDirectory(prefix="claude-code-") as tmpdir:
             tmp = Path(tmpdir)
@@ -128,14 +129,14 @@ class ClaudeCodeAdapter(BackendAdapter):
 
             if progress_callback and token_usage:
                 progress_callback(
-                    "subagent_turn_complete",
+                    WorkerEventName.SUBAGENT_TURN_COMPLETE,
                     backend="claude-code",
                     phase="execution",
                     token_usage=token_usage,
                 )
 
             if progress_callback:
-                progress_callback("exec_complete", backend="claude-code")
+                progress_callback(WorkerEventName.EXEC_COMPLETE, backend="claude-code")
 
             result = BackendResult.from_dict(payload)
             if token_usage:

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..backend_adapter import BackendAdapter, BackendResult
+from ...enums import WorkerEventName
 
 
 _CODEX_SEARCH_PATHS = (
@@ -134,7 +135,7 @@ class CodexCliAdapter(BackendAdapter):
             token_usage = _extract_codex_usage(payload, completed.stdout)
             if progress_callback and token_usage:
                 progress_callback(
-                    "subagent_turn_complete",
+                    WorkerEventName.SUBAGENT_TURN_COMPLETE,
                     backend="codex-cli",
                     phase="execution",
                     token_usage=token_usage,
@@ -176,19 +177,19 @@ class CodexCliAdapter(BackendAdapter):
         )
         started = time.monotonic()
         if progress_callback:
-            progress_callback("exec_spawned", pid=proc.pid, backend="codex-cli")
+            progress_callback(WorkerEventName.EXEC_SPAWNED, pid=proc.pid, backend="codex-cli")
 
         while True:
             try:
                 stdout, stderr = proc.communicate(timeout=heartbeat_interval)
                 if progress_callback:
-                    progress_callback("exec_complete", pid=proc.pid, backend="codex-cli")
+                    progress_callback(WorkerEventName.EXEC_COMPLETE, pid=proc.pid, backend="codex-cli")
                 return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
             except subprocess.TimeoutExpired as exc:
                 if progress_callback:
                     elapsed = int(time.monotonic() - started)
                     progress_callback(
-                        "exec_heartbeat",
+                        WorkerEventName.EXEC_HEARTBEAT,
                         pid=proc.pid,
                         elapsed_seconds=elapsed,
                         backend="codex-cli",

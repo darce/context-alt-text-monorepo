@@ -209,9 +209,10 @@ def _dispatch_plan_item(
     owned_paths_override: list[str] | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    from agent_handoff_mcp import record_decision, record_lane_message, update_next_actions, upsert_plan_cursor
+    from agent_handoff_mcp import build_write_actor, record_decision, record_lane_message, update_next_actions, upsert_plan_cursor
 
     marker = f"[plan:{plan_item_id}]"
+    lane_actor = build_write_actor(lane_id=lane_id)
     result = {
         "plan_item_id": plan_item_id,
         "lane_id": lane_id,
@@ -226,7 +227,7 @@ def _dispatch_plan_item(
             operation="add",
             action=f"{marker} {summary}",
             priority=100,
-            actor={"lane_id": lane_id},
+            actor=lane_actor,
         )
     )
     if action_payload.get("ok") is not True:
@@ -266,6 +267,7 @@ def _dispatch_plan_item(
         session=f"{task_ref}-orchestrator-daemon",
         decision=f"Dispatched plan item {plan_item_id} to {lane_id}.",
         rationale=f"Selected the next unchecked task-plan item from {resolved_plan.name} and routed it via manifest-owned lane metadata.",
+        actor=lane_actor,
     )
     return result
 

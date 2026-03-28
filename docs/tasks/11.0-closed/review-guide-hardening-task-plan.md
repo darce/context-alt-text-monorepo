@@ -22,7 +22,7 @@ Harden the four review guides (`branch-review-guide.md`, `planning-review-guide.
 
 The review guides are strong on correctness categories but under-specify workflow discipline. Agents currently start reviews from unbounded context, accept self-certified "passing" or "fixed" claims without stamped evidence, flatten all reviews into a single mode regardless of risk level, advance plan cursors without verifying slice completion, and resolve findings without calling the mandatory MCP update tools. This produces stale evidence in handoff, undetected regressions after merge, and lossy escalation paths for high-risk work.
 
-The root source and crosswalk analysis is `docs/epics/v0.3.0/review-guide-hardening-source-crosswalk.md`.
+The root source and crosswalk analysis is `docs/research/agentic/review-guide-hardening-source-crosswalk.md`.
 
 ## Constraints
 
@@ -78,7 +78,7 @@ After this task:
 - Rules: `docs/agentic/rules/planning-review-guide.md`
 - Rules: `docs/agentic/rules/branch-review-typescript.md`
 - Rules: `docs/agentic/rules/branch-review-php.md`
-- Crosswalk source: `docs/epics/v0.3.0/review-guide-hardening-source-crosswalk.md`
+- Crosswalk source: `docs/research/agentic/review-guide-hardening-source-crosswalk.md`
 - Contract: `docs/agentic/contracts/agent-handoff-mcp.md`
 - Tooling: `packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py` (for `handoff_close_check` implementation)
 - Tooling: `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py` (tool description strings in `TOOL_DESCRIPTIONS` dict; FastMCP derives schemas from core.py signatures)

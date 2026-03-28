@@ -27,14 +27,14 @@
 sqlalchemy.dialects.postgresql.asyncpg.IntegrityError: duplicate key value violates unique constraint "unique_identity_member"
 ```
 
-**Log Evidence** ([recognition.log#L303](../../../apps/prototype-description-service/logs/recognition.log)):
+**Log Evidence** ([recognition.log#L303](../../../../apps/prototype-description-service/logs/recognition.log)):
 
 ```
 INSERT INTO identity_members (id, ..., identity_id) VALUES (..., '0458c1d3-f080-4fe8-8b50-fa9753914b06')
 ```
 
 **Root Cause**:
-In `assign_outlier_to_cluster` ([cluster_curation.py#L352](../../../apps/prototype-description-service/recognition/application/orchestration/cluster_curation.py#L352)), the code:
+In `assign_outlier_to_cluster` (`cluster_curation.py`, historical module later split into smaller orchestration services), the code:
 
 1. Checks if identity is already in a cluster
 2. Removes from source cluster if different
@@ -76,7 +76,7 @@ Process 81726 waits for ShareLock on transaction 50576; blocked by process 81682
 Process 81682 waits for AccessExclusiveLock on relation 1719539
 ```
 
-**Log Evidence** ([recognition.log#L1954](../../../apps/prototype-description-service/logs/recognition.log)):
+**Log Evidence** ([recognition.log#L1954](../../../../apps/prototype-description-service/logs/recognition.log)):
 
 ```sql
 UPDATE identity_members SET cluster_id=$1 WHERE identity_members.id = $2
@@ -108,7 +108,7 @@ async def move_members(self, from_cluster_id: str, to_cluster_id: str) -> int:
 ### 2.3 Duplicate RENAMED API Calls
 
 **Symptoms**:
-7 RENAMED log entries in 250ms for the same cluster ([recognition.log#L294-301](../../../apps/prototype-description-service/logs/recognition.log)):
+7 RENAMED log entries in 250ms for the same cluster ([recognition.log#L294-301](../../../../apps/prototype-description-service/logs/recognition.log)):
 
 ```
 15:03:15,967 RENAMED old_label='None' new_label='Tory Guzman'

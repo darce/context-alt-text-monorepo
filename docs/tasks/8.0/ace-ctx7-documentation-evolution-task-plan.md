@@ -71,7 +71,7 @@ ACE's runtime automates what Phases 0-4 do manually, but it requires: (1) a `Dat
 # Frontend Guidelines (Project Conventions)
 
 > **Library reference**: Use ctx7 to fetch current docs for the libraries listed
-> in [maps/tech-stack.md](../maps/tech-stack.md#frontend) before starting work.
+> in [maps/tech-stack.md](../../agentic/maps/tech-stack.md#frontend) before starting work.
 > This file covers only project-specific conventions.
 ```
 

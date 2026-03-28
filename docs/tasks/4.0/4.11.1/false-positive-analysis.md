@@ -82,7 +82,7 @@ From logs:
 
 ### Issue 1: Assign vs Merge Terminology
 
-**Location**: [IdentityClusterItem.tsx#L237-L239](../../../apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx#L237-L239)
+**Location**: [IdentityClusterItem.tsx#L237-L239](../../../../apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx#L237-L239)
 
 ```tsx
 return canSearchForMatch
@@ -108,7 +108,7 @@ embedding[LANDMARK_QUALITY_IDX] = landmark_std / 100.0
 
 ### Issue 3: Pose Buckets Never Filled
 
-**Location**: [assignment_writer.py#L144-185](../../../apps/prototype-description-service/recognition/application/persistence/assignment_writer.py#L144-L185)
+**Location**: [assignment_writer.py#L144-185](../../../../apps/prototype-description-service/recognition/application/persistence/assignment_writer.py#L144-L185)
 
 Buckets are computed as:
 
@@ -126,7 +126,7 @@ The issue is that pose data (`pose_pitch`, `pose_yaw`) may not be populated on i
 
 ### Issue 4: Image Thumbnails Cropping
 
-**Location**: [\_media-selection.scss#L63-69](../../../apps/prototype-wp-alt-context/js/admin/styles/components/_media-selection.scss#L63-L69)
+**Location**: [\_media-selection.scss#L63-69](../../../../apps/prototype-wp-alt-context/js/admin/styles/components/_media-selection.scss#L63-L69)
 
 ```scss
 &__thumb {
@@ -148,7 +148,7 @@ Should use `object-fit: contain` to show entire image.
 4. Zero suggestions are created
 5. "Review Suggestions" box shows "Label a cluster to start seeing suggestions"
 
-**Root cause**: From [cluster_repository.py#L115-L117](../../../apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py#L115-L117):
+**Root cause**: From [cluster_repository.py#L115-L117](../../../../apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py#L115-L117):
 
 ```python
 .where(ClusterModel.user_confirmed.is_(True))
@@ -348,6 +348,6 @@ After implementing P0-P1:
 
 ## 8. References
 
-- [Apple: Recognizing People in Photos Through Private On-Device Machine Learning](../../../docs/literature/extracted/recognition/apple/Recognizing%20People%20in%20Photos%20Through%20Private%20On-Device%20Machine%20Learning%20-%20Apple%20Machine%20Learning%20Research.txt)
-- [CurricularFace: Adaptive Curriculum Learning Loss for Deep Face Recognition](../../../docs/literature/extracted/recognition/apple/CurricularFace--Adaptive-Curriculum-Learning-Loss-for-Deep-Face-Recognition.txt)
-- [Chinese Whispers Graph Clustering](../../../docs/literature/extracted/recognition/chinese-whispers.txt)
+- [Apple: Recognizing People in Photos Through Private On-Device Machine Learning](../../../literature/extracted/recognition/apple/Recognizing People in Photos Through Private On-Device Machine Learning - Apple Machine Learning Research.txt)
+- [CurricularFace: Adaptive Curriculum Learning Loss for Deep Face Recognition](../../../literature/extracted/recognition/apple/CurricularFace--Adaptive-Curriculum-Learning-Loss-for-Deep-Face-Recognition.txt)
+- [Chinese Whispers Graph Clustering](../../../literature/extracted/recognition/chinese-whispers.txt)

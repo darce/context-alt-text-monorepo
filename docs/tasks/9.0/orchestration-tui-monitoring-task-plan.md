@@ -119,7 +119,7 @@ def derive_live_state(snapshot: LaneRuntimeSnapshot) -> str:
 | `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py` | TBD | Optionally expose a convenience `tui` command or structured state endpoint if direct import is too awkward. |
 | `scripts/mcp/_env.py` | TBD | Share workspace-root, log-path, and state-dir discovery with the TUI launcher. |
 | `mk/lane-worker.mk` | TBD | Add a `make orchestration-tui` target for consistent startup. |
-| `docs/agentic/worktree-codex-playbook.md` | TBD | Document how operators use the TUI alongside lane workflows. |
+| `docs/agentic/playbooks/worktree-codex-playbook.md` | TBD | Document how operators use the TUI alongside lane workflows. |
 
 ## Related Files
 
@@ -127,8 +127,8 @@ def derive_live_state(snapshot: LaneRuntimeSnapshot) -> str:
 | --- | --- |
 | [logs/worker-daemon](/Users/daniel/Development/context-alt-text-monorepo/logs/worker-daemon) | Existing worker event stream that the aggregator should tail. |
 | [logs/daemon/orchestrator.jsonl](/Users/daniel/Development/context-alt-text-monorepo/logs/daemon/orchestrator.jsonl) | Existing orchestrator event stream. |
-| [scripts/mcp/lane_exec.py](/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/lane_exec.py) | Existing worker lifecycle semantics the TUI must represent faithfully. |
-| [docs/agentic/worktree-codex-playbook.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/worktree-codex-playbook.md) | Operator workflow that should eventually reference the TUI. |
+| [lane_exec.py](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_exec.py) | Existing worker lifecycle semantics the TUI must represent faithfully. |
+| [docs/agentic/playbooks/worktree-codex-playbook.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/playbooks/worktree-codex-playbook.md) | Operator workflow that should eventually reference the TUI. |
 | [docs/agentic/contracts/agent-handoff-mcp.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/contracts/agent-handoff-mcp.md) | Source of truth for MCP orchestration behaviors and handoff expectations. |
 
 ## Lane Decomposition (Multi-Agent)

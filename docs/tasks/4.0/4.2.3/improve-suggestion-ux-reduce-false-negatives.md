@@ -571,7 +571,7 @@ Member validation PASSED
 - [clustering-improvements-dev-plan.md](./clustering-improvements-dev-plan.md) - Backend improvements (Slices A-G)
 - [clustering-algorithm-comprehensive-analysis.md](./clustering-algorithm-comprehensive-analysis.md) - Algorithm selection analysis
 - [clustering-fix-implementation-plan.md](../cluster-rework/clustering-fix-implementation-plan.md) - Original clustering fix
-- [debug-clustering-batch-size-regression.md](./debug-clustering-batch-size-regression.md) - Batch size regression analysis
+- [debug-clustering-batch-size-regression.md](../cluster-rework/debug-clustering-batch-size-regression.md) - Batch size regression analysis
 - Recognition logs: `apps/prototype-description-service/logs/recognition.log`
 
 ### Key Source Files

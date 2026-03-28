@@ -139,7 +139,7 @@ The eligibility check is correct (suggestions should target labeled clusters), b
 The investigation claimed tier limits were removed from Python. Searching for `_DEFAULT_TIER_BATCH_LIMITS`, `load_tier_batch_limits`, and `max_batch_for_tier` confirms:
 
 - **No matches in Python codebase** (only in docs referencing the old code)
-- Only reference is in [progress-tracking-investigation.md](progress-tracking-investigation.md) documenting removal
+- Only reference is in [progress-tracking-investigation-2026-01-20.md](progress-tracking-investigation-2026-01-20.md) documenting removal
 
 ---
 
@@ -225,7 +225,7 @@ The function now **delegates** to the canonical implementation. ✅ Fixed.
 
 ### Problem
 
-[progress-tracking-investigation.md](progress-tracking-investigation.md) has incomplete verification checklist:
+[progress-tracking-investigation-2026-01-20.md](progress-tracking-investigation-2026-01-20.md) has incomplete verification checklist:
 
 ```markdown
 ## Testing Verification

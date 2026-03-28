@@ -1,5 +1,10 @@
 # Roadmap Template
 
+> **Metadata** — fill in when creating a new doc from this template:
+>
+> - **Date**: [YYYY-MM-DD HH:MM EST]
+> - **Author**: [agent-name or handle]
+>
 > Use this template for multi-phase architectural roadmaps under `docs/roadmaps/`.
 > Roadmaps describe **what** and **why** across multiple delivery phases.
 > Individual phases spawn task plans (`TASK_PLAN.template.md`) for **how**.

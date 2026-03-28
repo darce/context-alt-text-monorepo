@@ -315,7 +315,7 @@ recognition/
 
 ## Architecture: Face → Identity Boundary
 
-> **UML Reference**: [`uml/architecture-face-identity-boundary.mmd`](uml/architecture-face-identity-boundary.mmd)
+> **UML Reference**: [`face-identity-boundary.mmd`](../../../agentic/diagrams/backend-uml/domain/face-identity-boundary.mmd)
 
 ### The Nomenclature Split
 
@@ -961,7 +961,7 @@ No frontend changes required. All changes are internal refactoring.
 
 ## API Plan Cross-Reference
 
-> **Reference**: [recognition_service_api_plan.md](./recognition_service_api_plan.md)
+> **Reference**: API reference content was later consolidated into this implementation plan and adjacent contract docs; the standalone `recognition_service_api_plan.md` file no longer exists.
 
 The following table shows how each TODO from the API plan is addressed:
 
@@ -2096,7 +2096,7 @@ async def cluster_unclustered_identities(self, tenant_id: str) -> ClusteringResu
 **Goal**: Expose the unified recognition service via REST API with full endpoint coverage.
 
 > **Dependency**: Requires Phase 5 repositories to wire real services.  
-> **Reference**: [recognition_service_api_plan.md](./recognition_service_api_plan.md) — Full API specification  
+> **Reference**: Full API specification content was later folded into this plan and the live clustering contracts.
 > **Diagrams**: See `docs/agentic/diagrams/backend-uml/workflows/unified-assignment.mmd`  
 > **Contract**: All IDs use UUIDv7 internally, displayed as 22-char base64 in responses
 
@@ -3061,7 +3061,7 @@ await session.execute(stmt)
 > This phase is the final step before production deployment.
 >
 > **Prerequisites**: Phases 5 (persistence) and 6 (API scaffolding) must be complete.
-> **Reference**: [recognition_service_api_plan.md](./recognition_service_api_plan.md) — Original API specification
+> **Reference**: Original API specification content was later folded into this plan and the live clustering contracts.
 >
 > **TDD Approach**: Red → Green → Refactor for every subsection.
 >

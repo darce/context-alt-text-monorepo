@@ -1,6 +1,11 @@
 # Cross-Lane Dependency Decision Template
 
-Use this template when one lane creates a dependency, blocker, or required follow-up for another lane.
+> **Metadata** — fill in when creating a new doc from this template:
+>
+> - **Date**: [YYYY-MM-DD HH:MM EST]
+> - **Author**: [agent-name or handle]
+>
+> Use this template when one lane creates a dependency, blocker, or required follow-up for another lane.
 
 Reference: [../rules/development-workflow.md#cross-boundary-change-protocol](../rules/development-workflow.md#cross-boundary-change-protocol)
 

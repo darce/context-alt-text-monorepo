@@ -1,5 +1,12 @@
 # Task Plan Template
 
+> **Metadata** — fill in when creating a new doc from this template:
+>
+> - **Date**: [YYYY-MM-DD HH:MM EST]
+> - **Author**: [agent-name or handle]
+> - **Owning Epic**: [path/to/epic.md]
+> - **Epic Short ID**: [must match the owning epic's declared `Epic Short ID`]
+>
 > Use this template for all implementation plans under `docs/tasks/`.
 > Task plans describe executable work for one bounded objective.
 > Task plans use **slices**, not phases:
@@ -9,10 +16,11 @@
 >
 > Favor slices that each produce behavior plus proof. Avoid scaffold-only slices that add placeholders, skipped tests, or empty abstractions without executable value.
 > See `docs/agentic/instructions.md` and `docs/agentic/rules/planning-review-guide.md` for repo-wide planning rules.
+> Task-plan title prefixes are derived from the owning epic's declared `Epic Short ID`. Do not invent ad hoc prefixes or copy example ids from unrelated epics.
 
 ---
 
-# [TASK_TITLE]
+# [EPIC_SHORT_ID]-[LOCAL_TASK_INDEX]. [TASK_TITLE]
 
 ## Objective
 
@@ -62,9 +70,9 @@
 > Required for any task that touches a cross-service, cross-language, or tool/client boundary.
 > Omit only when the task is strictly local and cannot affect a boundary contract.
 
-| Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
-| --- | --- | --- | --- | --- | --- |
-| `[boundary-name]` | [backend / proxy / frontend / MCP] | `[path/to/contract.md]` | [Change or `none`] | [yes/no + why] | [fixture/schema/test] |
+| Boundary          | Owner                              | Current Contract        | Expected Change    | Compatibility Needed? | Verification          |
+| ----------------- | ---------------------------------- | ----------------------- | ------------------ | --------------------- | --------------------- |
+| `[boundary-name]` | [backend / proxy / frontend / MCP] | `[path/to/contract.md]` | [Change or `none`] | [yes/no + why]        | [fixture/schema/test] |
 
 ## Proposed Solution
 
@@ -72,14 +80,14 @@
 
 ## Files and Surfaces to Change
 
-| Surface | File | Change |
-| --- | --- | --- |
+| Surface                               | File           | Change            |
+| ------------------------------------- | -------------- | ----------------- |
 | [backend/frontend/docs/tests/tooling] | `path/to/file` | [Specific change] |
 
 ## Related Files
 
-| File | Note |
-| --- | --- |
+| File           | Note                                         |
+| -------------- | -------------------------------------------- |
 | `path/to/file` | [Relevant context or likely adjacent impact] |
 
 ## Verification Strategy
@@ -131,9 +139,9 @@ Proof:
 
 ### Lanes
 
-| Lane ID | Owned Paths | Upstream Dependencies | Required Tests |
-| --- | --- | --- | --- |
-| `lane-id` | `path/**` | [None or lane dependency] | `[command]` |
+| Lane ID   | Owned Paths | Upstream Dependencies     | Required Tests |
+| --------- | ----------- | ------------------------- | -------------- |
+| `lane-id` | `path/**`   | [None or lane dependency] | `[command]`    |
 
 ### Merge Order
 

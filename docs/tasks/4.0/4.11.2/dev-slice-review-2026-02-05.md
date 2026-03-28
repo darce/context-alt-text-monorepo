@@ -17,7 +17,7 @@ The issues below are ordered by severity.
 
 ## 1. Domain Entity Mutation (Anti-Pattern) — HIGH
 
-**File**: [cluster_repository.py](apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py#L490-L491)
+**File**: [cluster_repository.py](../../../../apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py#L490-L491)
 
 ```python
 domain_identity = self._to_domain_identity(model)
@@ -44,8 +44,8 @@ def _to_domain_identity(self, model: MediaIdentity, *, cluster_id: str | None = 
 
 **Files**:
 
-- [refresh_service.py#L482](apps/prototype-description-service/recognition/application/suggestions/refresh_service.py#L482): `import time as _time`
-- [clustering.py#L62-L63](apps/prototype-description-service/recognition/application/tasks/clustering.py#L62-L63): `import asyncio` + `import time as _time`
+- [refresh_service.py#L482](../../../../apps/prototype-description-service/recognition/application/suggestions/refresh_service.py#L482): `import time as _time`
+- [clustering.py#L62-L63](../../../../apps/prototype-description-service/recognition/application/tasks/clustering.py#L62-L63): `import asyncio` + `import time as _time`
 
 Both imports are inside function bodies. The `asyncio` import is especially gratuitous — it's a stdlib module with no circular-dependency risk.
 
@@ -57,7 +57,7 @@ Both imports are inside function bodies. The `asyncio` import is especially grat
 
 ## 3. Dead N+1 Warning (Vestigial Guard) — MEDIUM
 
-**File**: [refresh_service.py#L621-L627](apps/prototype-description-service/recognition/application/suggestions/refresh_service.py#L621-L627)
+**File**: [refresh_service.py#L621-L627](../../../../apps/prototype-description-service/recognition/application/suggestions/refresh_service.py#L621-L627)
 
 ```python
 if _total_db_queries > 10:
@@ -77,7 +77,7 @@ After the batching fix, `_total_db_queries` is always `1` (the single `get_membe
 
 ## 4. Duplicate Service Rebuild Inside Chunk Loop — MEDIUM
 
-**File**: [clustering.py#L148-L157](apps/prototype-description-service/recognition/application/tasks/clustering.py#L148-L157)
+**File**: [clustering.py#L148-L157](../../../../apps/prototype-description-service/recognition/application/tasks/clustering.py#L148-L157)
 
 Inside the per-chunk loop the task opens a new session (good), but then rebuilds the entire `ClusterService` tree via `cluster_service_builder(session=session, tenant_id=tenant_id)` on every chunk, then re-derives `refresh_service` and `surface_fn` via `getattr`. The same `cluster_service_builder` was already called once outside the loop (line 78) to load the representative cache.
 
@@ -91,8 +91,8 @@ Inside the per-chunk loop the task opens a new session (good), but then rebuilds
 
 **Files**:
 
-- [clustering.py#L97](apps/prototype-description-service/recognition/application/tasks/clustering.py#L97)
-- [refresh_service.py#L497](apps/prototype-description-service/recognition/application/suggestions/refresh_service.py#L497)
+- [clustering.py#L97](../../../../apps/prototype-description-service/recognition/application/tasks/clustering.py#L97)
+- [refresh_service.py#L497](../../../../apps/prototype-description-service/recognition/application/suggestions/refresh_service.py#L497)
 
 Both paths call `get_by_tenant(tenant_id, limit=1000)` to load all clusters into memory. With the `selectinload(representatives → identity)` + `selectinload(centroid_data)` options, each cluster object carries its full representative embeddings. At 1000 clusters × ~5 reps × 512-D float32 vectors = ~10 MB of embeddings loaded into Python heap per call.
 
@@ -104,7 +104,7 @@ Both paths call `get_by_tenant(tenant_id, limit=1000)` to load all clusters into
 
 ## 6. `representatives_by_cluster` Shadowed by Single-Key Dict — LOW
 
-**File**: [clustering.py#L122](apps/prototype-description-service/recognition/application/tasks/clustering.py#L122)
+**File**: [clustering.py#L122](../../../../apps/prototype-description-service/recognition/application/tasks/clustering.py#L122)
 
 ```python
 representatives_by_cluster = {cluster_id: rep_embeddings}
@@ -120,8 +120,8 @@ This dict is passed into `surface_for_newly_labeled_cluster()` but always contai
 
 **Files**:
 
-- Protocol: `Sequence[str]` ([repositories.py#L133](apps/prototype-description-service/recognition/domain/repositories.py#L133))
-- Fakes: `list[str]` ([fakes.py#L51](apps/prototype-description-service/recognition/tests/fakes.py#L51), [conftest.py#L169](apps/prototype-description-service/recognition/tests/conftest.py#L169), [api/conftest.py#L403](apps/prototype-description-service/recognition/tests/api/conftest.py#L403))
+- Protocol: `Sequence[str]` ([repositories.py#L133](../../../../apps/prototype-description-service/recognition/domain/repositories.py#L133))
+- Fakes: `list[str]` ([fakes.py#L51](../../../../apps/prototype-description-service/recognition/tests/fakes.py#L51), [conftest.py#L169](../../../../apps/prototype-description-service/recognition/tests/conftest.py#L169), [api/conftest.py#L403](../../../../apps/prototype-description-service/recognition/tests/api/conftest.py#L403))
 
 The Protocol defines the parameter as `Sequence[str]`, but all three fake implementations type it as `list[str]`. This is technically compatible (list is a Sequence), but it's a protocol contract divergence that mypy `--strict` would flag in future and makes copy-paste error propagation easy.
 
@@ -131,7 +131,7 @@ The Protocol defines the parameter as `Sequence[str]`, but all three fake implem
 
 ## 8. Redundant Empty-Check Branches for `rep_embeddings` — LOW
 
-**File**: [refresh_service.py#L464-L477](apps/prototype-description-service/recognition/application/suggestions/refresh_service.py#L464-L477)
+**File**: [refresh_service.py#L464-L477](../../../../apps/prototype-description-service/recognition/application/suggestions/refresh_service.py#L464-L477)
 
 The code has three nearly identical logging+return blocks for the NumPy size-0 array check, the sequence-length-0 check, and the None check:
 
@@ -160,7 +160,7 @@ def _is_empty_reps(reps: Sequence[np.ndarray] | np.ndarray | None) -> bool:
 
 ## 9. Frontend WP Global Check Is Warn-Only — LOW
 
-**File**: [main.tsx#L12-L28](apps/prototype-wp-alt-context/js/admin/main.tsx#L12-L28)
+**File**: [main.tsx#L12-L28](../../../../apps/prototype-wp-alt-context/js/admin/main.tsx#L12-L28)
 
 The defensive WP global check logs `console.warn(…)` but proceeds to render the app regardless. If `wp.hooks` is truly missing, downstream code may still crash. This is acceptable for diagnostics, but consider gating features that depend on `wp.hooks` with `typeof` guards at usage sites.
 
@@ -168,7 +168,7 @@ The defensive WP global check logs `console.warn(…)` but proceeds to render th
 
 ## 10. No Explicit `quality_score` Field in `_to_domain_identity` — INFO
 
-**File**: [cluster_repository.py#L720-L735](apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py#L720-L735)
+**File**: [cluster_repository.py#L720-L735](../../../../apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py#L720-L735)
 
 The `_to_domain_identity` method does not map `model.quality_score` → `DomainIdentity`. The domain `MediaIdentity` dataclass also lacks this field. Per the root-cause-analysis from 4.11.1, `quality_score` was added to the ORM model but is never surfaced to domain consumers. This is not a regression from this slice but is worth noting for completeness.
 

@@ -15,7 +15,7 @@ The face recognition admin experience is functional but ergonomically incomplete
 
 ## Terminology
 
-- **Person**: operator-curated identity record (name, tags, optional reference thumbnail). Ground truth for "who is this person." Stored in `wp_acx_persons`. See [ADR-002](../../agentic/ADR-002-person-as-first-class-local-entity.md).
+- **Person**: operator-curated identity record (name, tags, optional reference thumbnail). Ground truth for "who is this person." Stored in `wp_acx_persons`. See [ADR-002](../../../agentic/adrs/ADR-002-person-as-first-class-local-entity.md).
 - **Person UUID**: stable UUID v4 persisted on each person row (`person_uuid`). This is the only value synced to backend `identity_clusters.roster_id`.
 - **Cluster**: system-inferred grouping of visually similar faces. May be unlabeled (pending review) or assigned to a person.
 - **Assign/Commit**: assigning a cluster to a person -- confirming the system's grouping as correct. The `person_id` FK on the cluster is the assignment.

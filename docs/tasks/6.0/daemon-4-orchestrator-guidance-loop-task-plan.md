@@ -22,8 +22,8 @@ Worker daemons can now detect blocked or already-resolved assignments, emit `nee
 
 ## Current State Analysis
 
-- `scripts/mcp/worker_daemon.py` already distinguishes `actionable`, `idle`, and `waiting` lane states and logs `dormant_entered` when the lane is waiting for orchestrator input.
-- `scripts/mcp/lane_prompt.py` already suppresses worker action when a newer open `worker_to_orchestrator` message exists for the lane.
+- `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/worker_daemon.py` already distinguishes `actionable`, `idle`, and `waiting` lane states and logs `dormant_entered` when the lane is waiting for orchestrator input.
+- `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_prompt.py` already suppresses worker action when a newer open `worker_to_orchestrator` message exists for the lane.
 - `mk/handoff.mk` already exposes `make handoff-inbox`, which shows open worker handoff messages and the latest blocked or merge-ready worker reports.
 - `scripts/mcp/orchestrator_daemon.py` already handles dispatch, merge-ready polling, lane intake, downstream refresh, and cross-lane verification.
 - `scripts/mcp/orchestrator_daemon.py` does **not** yet poll and resolve open worker guidance handoffs, so workers can go dormant indefinitely even when the orchestrator could respond automatically.
@@ -166,7 +166,7 @@ Both long-running and `--single-pass` orchestrator runs should execute this clos
 
 | File                                          | Note                                                                                                                                      |
 | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `scripts/mcp/worker_daemon.py`                | Worker-side waiting/dormant behavior already exists and must stay compatible with the new orchestrator loop.                              |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/worker_daemon.py`                | Worker-side waiting/dormant behavior already exists and must stay compatible with the new orchestrator loop.                              |
 | `scripts/mcp/orchestrator_guidance.py`        | Extracted guidance classifier/resolution layer used by the orchestrator main loop.                                                         |
 | `scripts/mcp/orchestrator_guidance_policy.py` | Manifest-driven fallback assignment rules; not the primary daemon-4 logic surface.                                                         |
 | `scripts/mcp/orchestrator_helpers.py`         | Shared JSON/text/logging helpers used by the extracted guidance modules.                                                                    |

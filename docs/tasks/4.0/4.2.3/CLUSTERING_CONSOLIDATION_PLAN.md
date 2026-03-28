@@ -518,4 +518,4 @@ else:
 - [clustering-pipeline-analysis.md](./clustering-pipeline-analysis.md) - Dead code analysis
 - [clustering-algorithm-comprehensive-analysis.md](./clustering-algorithm-comprehensive-analysis.md) - HDBSCAN vs CW comparison (Q8-Q9)
 - [early-stage-suggestion-guard.md](./early-stage-suggestion-guard.md) - Suggestion system design
-- [Chinese Whispers Paper](../../literature/extracted/recognition/chinese-whispers.txt) - Algorithm details
+- [Chinese Whispers Paper](../../../literature/extracted/recognition/chinese-whispers.txt) - Algorithm details

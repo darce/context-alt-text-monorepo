@@ -223,13 +223,13 @@ This task targets the seam, not a specific transport implementation. In other wo
 | `scripts/mcp/orchestrator_daemon.py` | `orchestrator_loop`           | Log discovered lanes at startup                                                              | 4     |
 | `scripts/mcp/orchestrator_daemon.py` | `_dispatch_plan_item`         | Include `lane` field in dispatch result dict                                                 | 4     |
 | `scripts/mcp/orchestrator_lanes.py`  | `_intake_lane`                | After successful intake, close open `orchestrator_to_worker` dispatch messages for that lane | 4     |
-| `scripts/mcp/worker_daemon.py`       | `_cleanup_result_file`        | New function: delete consumed result JSON after successful handoff                           | 4     |
-| `scripts/mcp/worker_daemon.py`       | `worker_loop`                 | Call `_cleanup_result_file` after `_run_final_handoff()` returns 0                           | 4     |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/worker_daemon.py`       | `_cleanup_result_file`        | New function: delete consumed result JSON after successful handoff                           | 4     |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/worker_daemon.py`       | `worker_loop`                 | Call `_cleanup_result_file` after `_run_final_handoff()` returns 0                           | 4     |
 | `mk/lane-lifecycle.mk`               | `lane-dispatch`               | Add `lane-guard` prerequisite alongside `lane-orchestrator-guard`                            | 1     |
 | `mk/lane-maintenance.mk`             | `lane-commits`, `lane-intake` | Add `lane-guard` prerequisite alongside `lane-orchestrator-guard`                            | 1     |
-| `scripts/mcp/lane_exec.py`           | `run_lane_exec`               | Add `backend` parameter (`codex-cli` / `codex-subagent`); new `_run_subagent()` code path    | 5     |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_exec.py`           | `run_lane_exec`               | Add `backend` parameter (`codex-cli` / `codex-subagent`); new `_run_subagent()` code path    | 5     |
 | `scripts/mcp/review_runner.py`       | `run_review`                  | Add `backend` parameter mirroring `lane_exec.py` contract                                    | 5     |
-| `scripts/mcp/worker_daemon.py`       | `_parse_args`, `worker_loop`  | Thread `--backend` flag through to `run_lane_exec` and `run_review`                          | 5     |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/worker_daemon.py`       | `_parse_args`, `worker_loop`  | Thread `--backend` flag through to `run_lane_exec` and `run_review`                          | 5     |
 | `scripts/mcp/orchestrator_daemon.py` | `_parse_args`, `main`         | Thread `--backend` flag for orchestrator-invoked review/execution                            | 5     |
 
 ## Related Files (reference, no changes expected)
@@ -240,7 +240,7 @@ This task targets the seam, not a specific transport implementation. In other wo
 | `scripts/mcp/lane_manifest.py`         | Manifest loading, `task_plan_path`, `merge_order`                                                    |
 | `scripts/mcp/lane_config.py`           | `infer-task`, `infer-lane`, `list-tasks` CLI                                                         |
 | `config/lane-orchestration/*.json`     | Lane manifests (source of truth for lane topology)                                                   |
-| `scripts/mcp/lane_prompt.py`           | Worker prompt generation (downstream of dispatch)                                                    |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_prompt.py`           | Worker prompt generation (downstream of dispatch)                                                    |
 | `scripts/mcp/task_plan_parser.py`      | Task plan parsing, normalization, lane mapping                                                       |
 | `scripts/mcp/lane_result.py`           | Result schema definition and handoff command; shared contract for both backends                      |
 

@@ -180,9 +180,9 @@ Query `recognition_runs.settings_snapshot` to audit historical configurations.
 
 ## Related Documentation
 
-- [Assignment Gate Architecture](./assignment-gate.md)
+- [Assignment Gate Architecture](../../../agentic/diagrams/backend-uml/components/assignment-gate.mmd)
 - [Suggestion Strategy](../../../tasks/4.0/4.2.8/cluster-split-and-suggestions-implementation.md)
-- [API Reference](../contracts/clustering-api.md)
+- [API Reference](../../../agentic/contracts/clustering-api.md)
 \`\`\`
 
 ### 1.2 Update Architecture Index

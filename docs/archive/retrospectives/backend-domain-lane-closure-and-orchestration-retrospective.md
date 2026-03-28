@@ -276,7 +276,7 @@ That would have made the backend-domain lane’s condition obvious much earlier.
 
 ## Suggested Next Engineering Tasks
 
-1. Add `scope_violation` enforcement in `scripts/mcp/lane_exec.py`.
+1. Add `scope_violation` enforcement in `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_exec.py`.
 2. Add a fresh-worktree redispatch mode in the orchestration pipeline.
 3. Fix `worker-stop` to clear stale lock state.
 4. Add an MCP action for `salvage_and_close`.

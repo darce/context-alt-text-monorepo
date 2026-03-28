@@ -108,6 +108,6 @@ Domain Layer (Identity Nomenclature)
 
 ## References
 
-- [`recognition/application/embedding/service.py`](../../../apps/prototype-description-service/recognition/application/embedding/service.py) - The seam implementation
-- [`docs/tasks/4.0/4.2.4/uml/architecture-face-identity-boundary.mmd`](../tasks/4.0/4.2.4/uml/architecture-face-identity-boundary.mmd) - Visual diagram
-- [`RECOGNITION_SERVICE_V4.2.4_IMPLEMENTATION_PLAN.md`](../tasks/4.0/4.2.4/RECOGNITION_SERVICE_V4.2.4_IMPLEMENTATION_PLAN.md) - Full implementation plan
+- [`recognition/__init__.py`](../../../apps/prototype-description-service/recognition/__init__.py) - The seam documentation and package boundary overview
+- [`face-identity-boundary.mmd`](../diagrams/backend-uml/domain/face-identity-boundary.mmd) - Visual diagram
+- [`RECOGNITION_SERVICE_V4.2.4_IMPLEMENTATION_PLAN.md`](../../tasks/4.0/4.2.4/RECOGNITION_SERVICE_V4.2.4_IMPLEMENTATION_PLAN.md) - Full implementation plan

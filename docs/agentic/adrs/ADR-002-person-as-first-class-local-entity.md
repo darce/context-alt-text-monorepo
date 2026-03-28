@@ -133,6 +133,6 @@ The boundary is clean: backend clusters identities, plugin curates persons.
 - [ADR-001: Face -> Identity Nomenclature Boundary](ADR-001-face-identity-nomenclature.md)
 - [Roadmap v4](../../roadmaps/roadmap-v4.md)
 - [Recognition UX Epic](../../epics/v0.2.0/recognition-ux-and-ergonomics-epic.md)
-- [Phase 2 Task Plan](../../tasks/5.0/phase-2-recognition-ux-polish-task-plan.md)
+- [Recognition UX Follow-On Epic](../../epics/v0.2.0/sovereign-sync-and-workbench-ux-epic.md)
 - Backend schema: `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py`
 - Plugin clusters table: `apps/prototype-wp-alt-context/src/support/class-life-cycle-manager.php`

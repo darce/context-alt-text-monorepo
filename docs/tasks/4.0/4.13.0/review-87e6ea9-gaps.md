@@ -161,7 +161,7 @@ Line   Content                          Tabs  Expected
 
 The entire `return array(…)` should start at 4 tabs (matching sibling statements in the closure body), keys at 5 tabs, `dimensions` children at 6 tabs, closings one level out from their opener.
 
-**Evidence:** [class-api.php](apps/prototype-wp-alt-context/src/api/class-api.php#L137-L151) — `sed -n 'l'` output confirms tab sequences.
+**Evidence:** [class-api.php](../../../../apps/prototype-wp-alt-context/src/api/class-api.php#L137-L151) — `sed -n 'l'` output confirms tab sequences.
 
 **Impact:** Not a runtime defect. Passes `composer cs-check` because `WordPress.Arrays.ArrayIndentation` is excluded. Creates visual confusion for maintainers and will surface as a violation if array indentation sniffs are ever re-enabled.
 
@@ -208,7 +208,7 @@ The entire `return array(…)` should start at 4 tabs (matching sibling statemen
 
 The anonymous class comment line has a leading tab mixed with spaces, and the class body uses pure tabs — contrasting with the surrounding pure-space indentation.
 
-**Evidence:** [BatchLimitsTest.php](apps/prototype-wp-alt-context/tests/Unit/BatchLimitsTest.php#L24-L37).
+**Evidence:** [BatchLimitsTest.php](../../../../apps/prototype-wp-alt-context/tests/Unit/BatchLimitsTest.php#L24-L37).
 
 **Impact:** Cosmetic. Passes `composer cs-check` because `Generic.WhiteSpace.DisallowSpaceIndent` is excluded in `phpcs.xml.dist`. Does not affect test execution.
 

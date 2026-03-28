@@ -1259,5 +1259,5 @@ Add SCSS for identity cluster inline display:
 ## References
 
 - [workbench-cluster-editing-plan.md](workbench-cluster-editing-plan.md)
-- [identity-scan-implementation-guide.md](identity-scan-implementation-guide.md)
+- [face-scan-implementation-guide.md](face-scan-implementation-guide.md)
 - Archived service: `apps/archived-wp-context-alt-text/src/Domain/Clustering/ClusteringService.php` (lines 582-651)

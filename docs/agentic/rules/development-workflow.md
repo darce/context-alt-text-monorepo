@@ -154,8 +154,8 @@ Operational notes:
 
 ### References
 
-- Full playbook: [../worktree-codex-playbook.md](../worktree-codex-playbook.md)
-- Lane-scoped context and prompt budgets: [../lane-scoped-context.md](../lane-scoped-context.md)
+- Full playbook: [../playbooks/worktree-codex-playbook.md](../playbooks/worktree-codex-playbook.md)
+- Lane-scoped context and prompt budgets: [../playbooks/lane-scoped-context.md](../playbooks/lane-scoped-context.md)
 - Worker lifecycle MCP tools: [../contracts/agent-handoff-mcp.md](../contracts/agent-handoff-mcp.md)
 - Lane brief template: [../templates/WORKTREE_LANE_BRIEF.template.md](../templates/WORKTREE_LANE_BRIEF.template.md)
 

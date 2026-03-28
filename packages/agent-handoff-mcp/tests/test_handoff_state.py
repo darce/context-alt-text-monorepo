@@ -2132,6 +2132,66 @@ def test_handoff_close_check_rejects_empty_structured_slice_sections_for_current
     assert response["checks"]["current_commit_handoff"]["structured_slice_decision_count"] == 0
 
 
+def test_record_decision_rejects_unstructured_slice_completion_rationale(isolated_handoff: dict) -> None:
+    initialized = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="slice-summary-validation",
+            objective="Require structured slice summaries at write time",
+            status="in_progress",
+        )
+    )
+    assert initialized["ok"] is True
+
+    actor = {"agent": "codex", "branch": "tooling/review-hardening", "commit_sha": "abc123"}
+    response = _parse(
+        mcp_server.record_decision(
+            session="slice-invalid",
+            decision="slice_complete_invalid_summary",
+            rationale="single line summary only",
+            actor=actor,
+        )
+    )
+
+    assert response["ok"] is False
+    assert "slice_complete_* decisions require a structured rationale" in response["error"]
+
+    handoff = _parse(mcp_server.get_handoff_state(task_ref="slice-summary-validation"))
+    assert handoff["decisions_recent"] == []
+
+
+def test_record_decision_accepts_structured_slice_completion_rationale(isolated_handoff: dict) -> None:
+    initialized = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="slice-summary-validation-ok",
+            objective="Allow valid slice completion summaries",
+            status="in_progress",
+        )
+    )
+    assert initialized["ok"] is True
+
+    actor = {"agent": "codex", "branch": "tooling/review-hardening", "commit_sha": "abc123"}
+    response = _parse(
+        mcp_server.record_decision(
+            session="slice-valid",
+            decision="slice_complete_valid_summary",
+            rationale=(
+                "## Changes\n"
+                "- docs/README.md: updated navigation hub.\n\n"
+                "## Verification\n"
+                "- python3 docs audit: TOTAL 0.\n\n"
+                "## Schema / Contract Changes\n"
+                "- none.\n\n"
+                "## Open Threads\n"
+                "- none."
+            ),
+            actor=actor,
+        )
+    )
+
+    assert response["ok"] is True
+    assert response["decision"]["decision"] == "slice_complete_valid_summary"
+
+
 # ---------------------------------------------------------------------------
 # generate_current_task_md -- related_task_refs
 # ---------------------------------------------------------------------------

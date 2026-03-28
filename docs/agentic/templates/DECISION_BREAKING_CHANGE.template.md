@@ -1,6 +1,11 @@
 # Breaking Change Decision Template
 
-Use this template when a slice intentionally removes or changes a contract shape in a way that would break an existing consumer without coordinated follow-up.
+> **Metadata** — fill in when creating a new doc from this template:
+>
+> - **Date**: [YYYY-MM-DD HH:MM EST]
+> - **Author**: [agent-name or handle]
+>
+> Use this template when a slice intentionally removes or changes a contract shape in a way that would break an existing consumer without coordinated follow-up.
 
 Reference: [../rules/development-workflow.md#cross-boundary-change-protocol](../rules/development-workflow.md#cross-boundary-change-protocol)
 

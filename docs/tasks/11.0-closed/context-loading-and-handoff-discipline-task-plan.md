@@ -77,7 +77,7 @@ After this task:
 - Skills: `docs/agentic/skills/worktree-worker/SKILL.md`
 - Bootstrap: `docs/agentic/BOOTSTRAP.md` (ctx7, MCP server setup)
 - Maps: `docs/agentic/maps/tech-stack.md`
-- Crosswalk: `docs/epics/v0.3.0/review-guide-hardening-source-crosswalk.md` (expanded rules audit, Phase 1 gap findings)
+- Crosswalk: `docs/research/agentic/review-guide-hardening-source-crosswalk.md` (expanded rules audit, Phase 1 gap findings)
 - Epic: `docs/epics/v0.3.0/agentic-development-process-hardening-epic.md` (Phase 1 deliverables)
 - External docs via `ctx7` only if: verifying current MCP SDK patterns for handoff tool usage
 

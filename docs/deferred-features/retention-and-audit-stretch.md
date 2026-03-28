@@ -2,7 +2,7 @@
 
 ## Source
 
-Deferred from [sync-completion-and-retention-hardening-epic.md](../epics/v0.3.0/sync-completion-and-retention-hardening-epic.md) (v0.3.0), "Deferred (Post-v0.3.0)" section.
+Deferred from [sync-completion-and-retention-hardening-epic.md](../epics/v0.3.1/sync-completion-and-retention-hardening-epic.md) (v0.3.1), "Deferred (Post-v0.3.0)" section.
 
 ## Why Deferred
 

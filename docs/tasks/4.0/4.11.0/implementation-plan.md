@@ -359,19 +359,19 @@ After (curriculum):
    - Key insight: "Learn from easier samples first and hard samples later"
    - Eq. 7: $N(t, \cos\theta_j) = \cos\theta_j(t + \cos\theta_j)$ for hard samples
    - Code interpretation (planned): weight hard-sample similarity by `(t + similarity)` before thresholding
-   - [Paper](../../literature/extracted/recognition/apple/CurricularFace--Adaptive-Curriculum-Learning-Loss-for-Deep-Face-Recognition.txt)
+   - [Paper](../../../literature/extracted/recognition/apple/CurricularFace--Adaptive-Curriculum-Learning-Loss-for-Deep-Face-Recognition.txt)
 
 2. **Apple Photos (2021):** Two-phase clustering with HAC
 
    - Phase 1: Conservative within-moment clustering
    - Phase 2: HAC across moments for recall
-   - [Paper](../../literature/extracted/recognition/apple/Recognizing%20People%20in%20Photos%20Through%20Private%20On-Device%20Machine%20Learning%20-%20Apple%20Machine%20Learning%20Research.txt)
+   - [Paper](../../../literature/extracted/recognition/apple/Recognizing People in Photos Through Private On-Device Machine Learning - Apple Machine Learning Research.txt)
 
 3. **Support Vector Guided Softmax (Wang et al., 2018):** Mining-based loss
 
    - Emphasizes misclassified samples (support vectors)
    - Bridges mining-based and margin-based approaches
-   - [Paper](../../literature/extracted/recognition/apple/Support-Vector-Guided-Softmax-Loss-for-Face-Recognition.txt)
+   - [Paper](../../../literature/extracted/recognition/apple/Support-Vector-Guided-Softmax-Loss-for-Face-Recognition.txt)
 
 4. **K-means Feature Learning (Coates & Ng, 2012):**
 

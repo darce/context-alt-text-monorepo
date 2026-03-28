@@ -25,7 +25,7 @@ After processing 100 images, the system failed ALL validation criteria from `fal
 
 ### 1. CRITICAL: Centroid Data Not Loaded in `get_by_tenant()` Query
 
-**Location**: [cluster_repository.py#L68](apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py#L68)
+**Location**: [cluster_repository.py#L68](../../../../apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py#L68)
 
 **Problem**: The `get_by_tenant()` query loads `representatives` but does NOT load `centroid_data`:
 
@@ -59,7 +59,7 @@ Only 27/109 clusters have centroids in the MV (those with ≥2 members).
 
 ### 2. CRITICAL: MV Centroid Refresh Not Called After Clustering
 
-**Location**: [orchestrator.py#L545](apps/prototype-description-service/recognition/application/orchestration/clustering/orchestrator.py#L545)
+**Location**: [orchestrator.py#L545](../../../../apps/prototype-description-service/recognition/application/orchestration/clustering/orchestrator.py#L545)
 
 **Problem**: After clustering completes and commits, `refresh_centroids_view()` is NEVER called. The materialized view `mv_identity_cluster_centroids` becomes stale immediately after new clusters are created.
 
@@ -82,7 +82,7 @@ Only 27/109 clusters have centroids in the MV (those with ≥2 members).
 
 ### 3. CRITICAL: 82 Singletons Not Eligible for Merge Suggestions
 
-**Location**: MV definition in [001_identity_schema.py#L952-999](apps/prototype-description-service/db/migrations/versions/001_identity_schema.py#L952)
+**Location**: MV definition in [001_identity_schema.py#L952-999](../../../../apps/prototype-description-service/db/migrations/versions/001_identity_schema.py#L952)
 
 **Problem**: The materialized view filters `WHERE identity_count >= 2`:
 
@@ -114,7 +114,7 @@ SELECT ... FROM cluster_embeddings WHERE (identity_count >= 2);
 
 ### 4. HIGH: Pose Diversity Always 0/13 Buckets
 
-**Location**: [cluster_repository.py#L504-L512](apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py#L504-L512)
+**Location**: [cluster_repository.py#L504-L512](../../../../apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py#L504-L512)
 
 **Problem**: Pose buckets are computed in `_to_domain()` from representatives, but the `filled_buckets` set is only populated when BOTH conditions are true:
 
@@ -137,7 +137,7 @@ pose_yaw: -26.09, 24.82, -25.83, ... (all non-null)
 
 ### 5. HIGH: Landmark Quality Always 1.0
 
-**Location**: [cluster_repository.py#L532](apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py#L532)
+**Location**: [cluster_repository.py#L532](../../../../apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py#L532)
 
 **Problem**:
 
@@ -169,7 +169,7 @@ But the current codebase doesn't compute `landmark_std` from landmark positions.
 
 ### 6. MEDIUM: HAC Refinement Not Reducing Singletons
 
-**Location**: [orchestrator.py#L469-L479](apps/prototype-description-service/recognition/application/orchestration/clustering/orchestrator.py#L469-L479)
+**Location**: [orchestrator.py#L469-L479](../../../../apps/prototype-description-service/recognition/application/orchestration/clustering/orchestrator.py#L469-L479)
 
 **Problem**: HAC refinement runs but produces no new clusters:
 
@@ -458,9 +458,9 @@ After P0 fixes:
 ## References
 
 - [false-positive-analysis.md](false-positive-analysis.md) - Original validation criteria
-- [cluster_repository.py](apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py) - Query definitions
-- [cluster_service.py](apps/prototype-description-service/recognition/application/orchestration/cluster_service.py) - Merge suggestion trigger
-- [merge_suggestions.py](apps/prototype-description-service/recognition/application/suggestions/merge_suggestions.py) - Generation logic
+- [cluster_repository.py](../../../../apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py) - Query definitions
+- [cluster_service.py](../../../../apps/prototype-description-service/recognition/application/orchestration/cluster_service.py) - Merge suggestion trigger
+- [merge_suggestions.py](../../../../apps/prototype-description-service/recognition/application/suggestions/merge_suggestions.py) - Generation logic
 
 ---
 

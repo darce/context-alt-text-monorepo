@@ -12,7 +12,7 @@ Accepted
 
 The v0.2.0 release cycle delivered the core sync pipeline (snapshot projector, outbox drain, conflict resolution), retention controls (policy, export, purge, audit), and the full suggestion/proposal lifecycle. However, a full audit of the five v0.2.0 epics revealed seven genuinely open hardening items spread across three separate epics. These items share a common theme: they close the gap between "functional sync and retention" and "contractually hardened sync and retention."
 
-This ADR documents why the work described in the [sync-completion-and-retention-hardening-epic.md](../epics/v0.3.0/sync-completion-and-retention-hardening-epic.md) is necessary and traces each phase to the roadmap items it fulfills.
+This ADR documents why the work described in the [sync-completion-and-retention-hardening-epic.md](../../epics/v0.3.1/sync-completion-and-retention-hardening-epic.md) is necessary and traces each phase to the roadmap items it fulfills.
 
 ### Why This Work is Needed
 
@@ -38,9 +38,9 @@ Implements the following roadmap items:
 
 | Roadmap                                                         | Item                                                                    | Reference                                                                    |
 | --------------------------------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| [roadmap-v4.md](../roadmaps/roadmap-v4.md) Epic D checklist     | "Delta ingest with snapshot fallback"                                   | Unchecked item in the Epic D consolidated checklist                          |
-| [roadmap-v4.md](../roadmaps/roadmap-v4.md) Current Gaps         | "Sync is full-snapshot only; no outbox, delta, or drift reconciliation" | Listed as a current gap; delta ingest closes the "delta" portion             |
-| [roadmap-v3.hybrid.md](../roadmaps/roadmap-v3.hybrid.md) Epic E | "Outbox pattern with Action Scheduler (v0.2+)"                          | Delta ingest is the consumer-side complement of outbox-driven sync evolution |
+| [roadmap-v4.md](../../roadmaps/roadmap-v4.md) Epic D checklist     | "Delta ingest with snapshot fallback"                                   | Unchecked item in the Epic D consolidated checklist                          |
+| [roadmap-v4.md](../../roadmaps/roadmap-v4.md) Current Gaps         | "Sync is full-snapshot only; no outbox, delta, or drift reconciliation" | Listed as a current gap; delta ingest closes the "delta" portion             |
+| [roadmap-v3.hybrid.md](../../roadmaps/roadmap-v3.hybrid.md) Epic E | "Outbox pattern with Action Scheduler (v0.2+)"                          | Delta ingest is the consumer-side complement of outbox-driven sync evolution |
 
 v0.2.0 source items consolidated:
 
@@ -54,10 +54,10 @@ Implements the following roadmap items:
 
 | Roadmap                                                                           | Item                                                                                                    | Reference                                                                                                                                                    |
 | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [roadmap-v4.md](../roadmaps/roadmap-v4.md) Epic D checklist                       | "Drift reconciliation with curation-safe conflict policy"                                               | Unchecked item in the Epic D consolidated checklist                                                                                                          |
-| [roadmap-v4.md](../roadmaps/roadmap-v4.md) Current Gaps                           | "Sync is full-snapshot only; no outbox, delta, or drift reconciliation"                                 | Listed as a current gap; drift reconciliation closes the "drift reconciliation" portion                                                                      |
-| [roadmap-v4.md](../roadmaps/roadmap-v4.md) Sync scope additions                   | "Drift reconciliation surfaces conflicting person assignments instead of silently overwriting curation" | Explicit requirement that drift reconciliation must respect curation-first precedence                                                                        |
-| [roadmap-v3.hybrid.md](../roadmaps/roadmap-v3.hybrid.md) Architectural Principles | "Sovereign local state"                                                                                 | Drift reconciliation is a direct consequence of the sovereign model: if WordPress owns the projection, it must be able to verify that projection is accurate |
+| [roadmap-v4.md](../../roadmaps/roadmap-v4.md) Epic D checklist                       | "Drift reconciliation with curation-safe conflict policy"                                               | Unchecked item in the Epic D consolidated checklist                                                                                                          |
+| [roadmap-v4.md](../../roadmaps/roadmap-v4.md) Current Gaps                           | "Sync is full-snapshot only; no outbox, delta, or drift reconciliation"                                 | Listed as a current gap; drift reconciliation closes the "drift reconciliation" portion                                                                      |
+| [roadmap-v4.md](../../roadmaps/roadmap-v4.md) Sync scope additions                   | "Drift reconciliation surfaces conflicting person assignments instead of silently overwriting curation" | Explicit requirement that drift reconciliation must respect curation-first precedence                                                                        |
+| [roadmap-v3.hybrid.md](../../roadmaps/roadmap-v3.hybrid.md) Architectural Principles | "Sovereign local state"                                                                                 | Drift reconciliation is a direct consequence of the sovereign model: if WordPress owns the projection, it must be able to verify that projection is accurate |
 
 v0.2.0 source items consolidated:
 
@@ -71,9 +71,9 @@ Implements the following roadmap items:
 
 | Roadmap                                                                                                                           | Item                                                                                | Reference                                                                                            |
 | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| [recognition-privacy-hybrid-roadmap-2026-03-06.md](../roadmaps/recognition-privacy-hybrid-roadmap-2026-03-06.md) Phase 1          | "Add manual tenant-scoped purge and export endpoints for biometric-derived records" | Export endpoints must carry a stable version contract for downstream consumers to parse and validate |
-| [recognition-privacy-hybrid-roadmap-2026-03-06.md](../roadmaps/recognition-privacy-hybrid-roadmap-2026-03-06.md) Design Decisions | "Privacy controls are per-tenant and auditable"                                     | Auditability requires machine-readable export metadata, including a stable version field             |
-| [roadmap-v3.hybrid.md](../roadmaps/roadmap-v3.hybrid.md) Epic F                                                                   | "Observability and Security: audit logs"                                            | Export versioning is the retention-specific instance of the broader auditability requirement         |
+| [recognition-privacy-hybrid-roadmap-2026-03-06.md](../../roadmaps/recognition-privacy-hybrid-roadmap-2026-03-06.md) Phase 1          | "Add manual tenant-scoped purge and export endpoints for biometric-derived records" | Export endpoints must carry a stable version contract for downstream consumers to parse and validate |
+| [recognition-privacy-hybrid-roadmap-2026-03-06.md](../../roadmaps/recognition-privacy-hybrid-roadmap-2026-03-06.md) Design Decisions | "Privacy controls are per-tenant and auditable"                                     | Auditability requires machine-readable export metadata, including a stable version field             |
+| [roadmap-v3.hybrid.md](../../roadmaps/roadmap-v3.hybrid.md) Epic F                                                                   | "Observability and Security: audit logs"                                            | Export versioning is the retention-specific instance of the broader auditability requirement         |
 
 v0.2.0 source item:
 
@@ -85,10 +85,10 @@ Implements the following roadmap items:
 
 | Roadmap                                                                                                                              | Item                                                                                                                | Reference                                                                                                                |
 | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| [recognition-privacy-hybrid-roadmap-2026-03-06.md](../roadmaps/recognition-privacy-hybrid-roadmap-2026-03-06.md) Target Architecture | "Biometric retention is minimized by default" and "export, purge, and auditability become first-class capabilities" | Per-embedding disposal is the audit granularity required to make the "auditability" claim concrete                       |
-| [recognition-privacy-hybrid-roadmap-2026-03-06.md](../roadmaps/recognition-privacy-hybrid-roadmap-2026-03-06.md) Phase 2             | "Add administrative visibility into what biometric state is currently retained per tenant"                          | Embedding-level events enable visibility into exactly which vectors were retained and which were disposed                |
-| [recognition-privacy-hybrid-roadmap-2026-03-06.md](../roadmaps/recognition-privacy-hybrid-roadmap-2026-03-06.md) Data Model          | `embedding_purged_at`, `embedding_retained`, audit events for retain/purge actions                                  | The data model already anticipates per-embedding retention metadata and audit events; Phase 4 delivers the disposal side |
-| [roadmap-v3.hybrid.md](../roadmaps/roadmap-v3.hybrid.md) Architectural Principles                                                    | "Privacy by design"                                                                                                 | Fine-grained disposal tracking is a direct implementation of privacy-by-design for biometric data                        |
+| [recognition-privacy-hybrid-roadmap-2026-03-06.md](../../roadmaps/recognition-privacy-hybrid-roadmap-2026-03-06.md) Target Architecture | "Biometric retention is minimized by default" and "export, purge, and auditability become first-class capabilities" | Per-embedding disposal is the audit granularity required to make the "auditability" claim concrete                       |
+| [recognition-privacy-hybrid-roadmap-2026-03-06.md](../../roadmaps/recognition-privacy-hybrid-roadmap-2026-03-06.md) Phase 2             | "Add administrative visibility into what biometric state is currently retained per tenant"                          | Embedding-level events enable visibility into exactly which vectors were retained and which were disposed                |
+| [recognition-privacy-hybrid-roadmap-2026-03-06.md](../../roadmaps/recognition-privacy-hybrid-roadmap-2026-03-06.md) Data Model          | `embedding_purged_at`, `embedding_retained`, audit events for retain/purge actions                                  | The data model already anticipates per-embedding retention metadata and audit events; Phase 4 delivers the disposal side |
+| [roadmap-v3.hybrid.md](../../roadmaps/roadmap-v3.hybrid.md) Architectural Principles                                                    | "Privacy by design"                                                                                                 | Fine-grained disposal tracking is a direct implementation of privacy-by-design for biometric data                        |
 
 v0.2.0 source item:
 
@@ -120,8 +120,8 @@ All other v0.2.0 checklist items were verified as implemented during the audit a
 
 ## References
 
-- Epic: [sync-completion-and-retention-hardening-epic.md](../epics/v0.3.0/sync-completion-and-retention-hardening-epic.md)
-- Active roadmap: [roadmap-v4.md](../roadmaps/roadmap-v4.md) (Epic D)
-- Vision roadmap: [roadmap-v3.hybrid.md](../roadmaps/roadmap-v3.hybrid.md) (Epic E, Epic F)
-- Privacy roadmap: [recognition-privacy-hybrid-roadmap-2026-03-06.md](../roadmaps/recognition-privacy-hybrid-roadmap-2026-03-06.md) (Phases 1-2)
+- Epic: [sync-completion-and-retention-hardening-epic.md](../../epics/v0.3.1/sync-completion-and-retention-hardening-epic.md)
+- Active roadmap: [roadmap-v4.md](../../roadmaps/roadmap-v4.md) (Epic D)
+- Vision roadmap: [roadmap-v3.hybrid.md](../../roadmaps/roadmap-v3.hybrid.md) (Epic E, Epic F)
+- Privacy roadmap: [recognition-privacy-hybrid-roadmap-2026-03-06.md](../../roadmaps/recognition-privacy-hybrid-roadmap-2026-03-06.md) (Phases 1-2)
 - Related ADRs: [ADR-002: Person as First-Class Local Entity](ADR-002-person-as-first-class-local-entity.md)

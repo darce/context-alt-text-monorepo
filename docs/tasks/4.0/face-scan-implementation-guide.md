@@ -2533,4 +2533,4 @@ class FaceEmbedding:
 - [pgvector Documentation](https://github.com/pgvector/pgvector)
 - [FastAPI Documentation](https://fastapi.tiangolo.com/)
 - [SQLAlchemy 2.0 Documentation](https://docs.sqlalchemy.org/en/20/)
-- [Archived Recognition Service Code](../../apps/archived-recognition-service/)
+- [Archived Recognition Service Code](../../../apps/archived-recognition-service)

@@ -6,7 +6,7 @@
 
 - [clustering-pipeline-analysis.md](./clustering-pipeline-analysis.md)
 - [improve-suggestion-ux-reduce-false-negatives.md](./improve-suggestion-ux-reduce-false-negatives.md)
-- [Chinese Whispers Paper](../../literature/extracted/recognition/chinese-whispers.txt)
+- [Chinese Whispers Paper](../../../literature/extracted/recognition/chinese-whispers.txt)
 - [Apple ML Research](https://machinelearning.apple.com/research/recognizing-people-photos)
 
 ---

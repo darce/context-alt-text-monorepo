@@ -30,10 +30,10 @@ All `[x]` items in the packaging plan are confirmed implemented in the codebase.
 
 | Item | Status | Evidence |
 |------|--------|----------|
-| Create `scripts/release/` directory | ✅ | [scripts/release/package-plugin.sh](../../../apps/prototype-wp-alt-context/scripts/release/package-plugin.sh) exists |
+| Create `scripts/release/` directory | ✅ | [scripts/release/package-plugin.sh](../../../../apps/prototype-wp-alt-context/scripts/release/package-plugin.sh) exists |
 | `package-plugin.sh` with `set -euo pipefail` and `--no-build` | ✅ | L1–L28: shebang, strict mode, flag parsing |
-| `release:package` in `package.json` | ✅ | [package.json](../../../apps/prototype-wp-alt-context/package.json) L13 |
-| `dist/` in `.gitignore` | ✅ | [.gitignore](../../../apps/prototype-wp-alt-context/.gitignore) L70 |
+| `release:package` in `package.json` | ✅ | [package.json](../../../../apps/prototype-wp-alt-context/package.json) L13 |
+| `dist/` in `.gitignore` | ✅ | `apps/prototype-wp-alt-context/.gitignore` no longer exists as a standalone file in the current app layout; ignore coverage moved to the consolidated workspace gitignore during later packaging cleanup. |
 | Scaffold runs without error | ✅ | Script structure is complete and executable |
 
 ### Phase 1: Prefix Consolidation — PASS (5/5)
@@ -122,7 +122,7 @@ All `[x]` items in the packaging plan are confirmed implemented in the codebase.
 
 | | |
 |---|---|
-| **File** | [package-plugin.sh](../../../apps/prototype-wp-alt-context/scripts/release/package-plugin.sh) L81–92 |
+| **File** | [package-plugin.sh](../../../../apps/prototype-wp-alt-context/scripts/release/package-plugin.sh) L81–92 |
 | **Category** | GAP |
 | **Resolution** | `extract_package_json_version()` (L55–58) and `validate_version_consistency()` (L81–92) added. Script now cross-checks `alt-context.php` header version against `package.json` version and fails on mismatch. |
 
@@ -134,7 +134,7 @@ All `[x]` items in the packaging plan are confirmed implemented in the codebase.
 
 | | |
 |---|---|
-| **File** | [.env.local](../../../apps/prototype-wp-alt-context/.env.local) |
+| **File** | [.env.local](../../../../apps/prototype-wp-alt-context/.env.local) |
 | **Category** | ANTIPATTERN |
 | **Resolution** | Env vars renamed to `ACX_*` prefix; `getenv()` calls in `alt-context.php` updated to match. |
 
@@ -142,7 +142,7 @@ All `[x]` items in the packaging plan are confirmed implemented in the codebase.
 
 | | |
 |---|---|
-| **File** | [localWpCliScript.test.ts](../../../apps/prototype-wp-alt-context/js/__tests__/localWpCliScript.test.ts) |
+| **File** | `localWpCliScript.test.ts` (historical test file no longer present in the current tree) |
 | **Category** | ANTIPATTERN |
 | **Resolution** | Renamed to `ACX_WP_CLI_DRY_RUN` in the test and backing script. |
 

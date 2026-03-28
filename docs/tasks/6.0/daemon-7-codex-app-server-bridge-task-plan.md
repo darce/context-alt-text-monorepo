@@ -16,7 +16,7 @@ We need to implement Option A: a host-provided bridge that speaks `codex app-ser
 
 ## Terminology
 
-- **Execution seam**: The narrow interface already used by [`lane_exec.py`](/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/lane_exec.py) and [`review_runner.py`](/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/review_runner.py) to invoke an agent runtime.
+- **Execution seam**: The narrow interface already used by [`lane_exec.py`](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_exec.py) and [`review_runner.py`](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/review_runner.py) to invoke an agent runtime.
 - **Bridge module**: A Python module named `codex_subagent_bridge` exposing `run_subagent(prompt, schema, cwd, env=None)`.
 - **Host runtime**: The environment that can actually talk to Codex app-server, whether embedded in the desktop app or forwarded through another local transport.
 - **App-server lifecycle**: The initialize -> thread/start -> turn/start -> stream -> turn/completed flow used to obtain structured results from Codex app-server.
@@ -24,7 +24,7 @@ We need to implement Option A: a host-provided bridge that speaks `codex app-ser
 
 ## Current State Analysis
 
-- [`scripts/mcp/lane_exec.py`](/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/lane_exec.py) and [`scripts/mcp/review_runner.py`](/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/review_runner.py) already import `codex_subagent_bridge` and call `run_subagent(...)`, but no in-repo implementation exists.
+- [`lane_exec.py`](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_exec.py) and [`review_runner.py`](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/review_runner.py) already import `codex_subagent_bridge` and call `run_subagent(...)`, but no in-repo implementation exists.
 - The execution seam is already narrow and workable: prompt rendering, schema generation, result validation, MCP recording, and worktree routing stay outside the bridge.
 - The current bridge contract already carries the right inputs for portability:
   - `prompt`: fully rendered task/review prompt
@@ -109,14 +109,14 @@ except ImportError as exc:
 | `packages/codex-subagent-bridge/src/codex_subagent_bridge.py`  | protocol helpers                 | Add request id management, JSON line parsing, timeout/error handling, and process cleanup helpers.                                                                                                                                                                         |
 | `packages/codex-subagent-bridge/tests/test_bridge.py`          | new tests                        | Add unit coverage for startup, lifecycle sequencing, structured output extraction, invalid payload errors, and process cleanup.                                                                                                                                            |
 | `packages/codex-subagent-bridge/tests/test_bridge_contract.py` | integration-style contract tests | Verify the bridge returns objects compatible with the existing `lane_exec.py` and `review_runner.py` expectations using mocked app-server streams.                                                                                                                         |
-| `docs/agentic/worktree-codex-playbook.md`                      | backend provisioning section     | Document how to install or inject the optional bridge package and what runtime guarantees the bridge provides.                                                                                                                                                             |
+| `docs/agentic/playbooks/worktree-codex-playbook.md`            | backend provisioning section     | Document how to install or inject the optional bridge package and what runtime guarantees the bridge provides.                                                                                                                                                             |
 | `docs/tasks/6.0/daemon-6-autonomous-orchestrator-task-plan.md` | Phase 5 bridge notes             | Update the bridge wording to point at this task as the concrete implementation plan for the app-server-backed adapter.                                                                                                                                                     |
 
 ## Related Files
 
 | File                                                                      | Note                                                                                             |
 | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `scripts/mcp/lane_exec.py`                                                | Already contains the `codex-subagent` backend seam and lane-result validation.                   |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_exec.py`                                                | Already contains the `codex-subagent` backend seam and lane-result validation.                   |
 | `scripts/mcp/review_runner.py`                                            | Already contains the review-side bridge seam and output validation.                              |
 | `packages/agent-handoff-mcp/tests/test_lane_exec.py`                      | Existing subagent-backend tests should remain green once the real bridge package is provisioned. |
 | `packages/agent-handoff-mcp/tests/test_review_runner.py`                  | Existing review backend tests define the contract the bridge must satisfy.                       |

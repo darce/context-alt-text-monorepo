@@ -96,17 +96,17 @@ The purge service records a disposal audit event for each embedding vector delet
 
 ## Phased Delivery
 
-### Phase 1: Delta Ingest Hardening -- in-progress
+### Phase 1: Delta Ingest Hardening -- planned
 
-> **Status**: in-progress
+> **Status**: planned
 > **Task plans**: not yet scoped
 
 **Goal**: Harden the already-landed delta path with explicit contracts, deletion semantics, and repair visibility.
 
 Deliverables:
 
-- Shared delta response contract in `packages/shared-contracts/`
-- Explicit fallback semantics for stale cursor / broken chain, including whether `chain_break` stays distinct from generic fallback-to-snapshot
+- Formalize the existing draft delta contract (`docs/agentic/contracts/cluster-delta-api.md`) to stable status and add a companion JSON schema to `packages/shared-contracts/schemas/`
+- Explicit fallback semantics for stale cursor / broken chain (i.e., when the server cannot produce a delta from the client's `since_version` because the version is too old or the delta log has been pruned), including whether this stays distinct from generic fallback-to-snapshot
 - Deletion/tombstone semantics for delta payloads, or an explicit rule that deletions require snapshot fallback
 - Cursor acknowledgement lifecycle documented and tested end to end
 - Tests for delta happy path, chain break fallback, first-sync (no cursor), and the chosen deletion semantics
@@ -129,7 +129,7 @@ Deliverables:
 - Fingerprint computation on both backend and WordPress sides
 - Reconciliation service that compares fingerprints and produces a structured diff
 - Admin dashboard reconciliation prompt with diff display and accept/dismiss actions
-- Configurable reconciliation schedule (WP cron or admin-triggered)
+- Configurable reconciliation schedule owned by WordPress (configured via WP admin settings, executed via WP cron triggering a backend fingerprint comparison endpoint; the backend provides the computation endpoint, WordPress owns the schedule)
 - Shared contract for the fingerprint comparison payload and reconciliation diff surface
 
 Exit criteria:
@@ -179,10 +179,10 @@ Exit criteria:
 
 ## External Dependencies
 
-| Dependency                                                                   | Owner      | Status      | Blocks           |
-| ---------------------------------------------------------------------------- | ---------- | ----------- | ---------------- |
-| Shared delta and export contract definitions in `packages/shared-contracts/` | Backend    | Not started | Phase 1, Phase 3 |
-| WordPress hardening work for delta fallback and export-version propagation   | PHP Plugin | Not started | Phase 1, Phase 3 |
+| Dependency                                                                                                     | Owner      | Status                                                                                                                                                                | Blocks           |
+| -------------------------------------------------------------------------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| Shared delta and export contract definitions across `docs/agentic/contracts/` and `packages/shared-contracts/` | Backend    | Human-readable delta draft exists at `docs/agentic/contracts/cluster-delta-api.md`; machine-readable shared-contract schemas for delta and export are not started yet | Phase 1, Phase 3 |
+| WordPress hardening work for delta fallback and export-version propagation                                     | PHP Plugin | Not started                                                                                                                                                           | Phase 1, Phase 3 |
 
 ## Review Path
 
@@ -193,25 +193,27 @@ Exit criteria:
 
 ## Code Anchors
 
-| Layer                    | File                                                                                              | Note                                                                                                                          |
-| ------------------------ | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Backend delta tests      | `apps/prototype-description-service/recognition/tests/unit/test_cluster_repository_delta_stub.py` | Existing integration tests for the working `get_delta()` path; filename is stale but coverage is real                         |
-| Backend retention router | `apps/prototype-description-service/recognition/interface_adapters/http/routers/retention.py`     | Export endpoints to propagate the agreed version field through the HTTP envelope                                              |
-| Backend export service   | `apps/prototype-description-service/recognition/domain/services/export_service.py`                | Async export already emits `schema_version`; Phase 3 decides and propagates the canonical version field                       |
-| Backend purge service    | `apps/prototype-description-service/recognition/domain/services/purge_service.py`                 | Purge logic to emit per-embedding events                                                                                      |
-| Backend audit service    | `apps/prototype-description-service/recognition/domain/services/audit_service.py`                 | Audit event recording                                                                                                         |
-| WP sync client           | `apps/prototype-wp-alt-context/src/sovereign/sync/class-snapshot-projector.php`                   | Snapshot projector already implements `project_delta()`; Phase 1 hardens contract/fallback semantics around the existing path |
-| WP sync state            | `apps/prototype-wp-alt-context/src/sovereign/repositories/class-sync-state-repository.php`        | Cursor storage                                                                                                                |
-| WP retention controller  | `apps/prototype-wp-alt-context/src/api/class-retention-controller.php`                            | Export proxy to forward version field                                                                                         |
-| Frontend audit timeline  | `apps/prototype-wp-alt-context/js/admin/pages/retention/AuditTimeline.tsx`                        | UI to display embedding disposal events                                                                                       |
+| Layer                    | File                                                                                              | Note                                                                                                                                                                                      |
+| ------------------------ | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Backend delta tests      | `apps/prototype-description-service/recognition/tests/unit/test_cluster_repository_delta_stub.py` | Existing integration tests for the working `get_delta()` path; filename is stale but coverage is real                                                                                     |
+| Backend retention router | `apps/prototype-description-service/recognition/interface_adapters/http/routers/retention.py`     | Export endpoints to propagate the agreed version field through the HTTP envelope                                                                                                          |
+| Backend export service   | `apps/prototype-description-service/recognition/domain/services/export_service.py`                | Async export already emits `schema_version`; Phase 3 decides and propagates the canonical version field                                                                                   |
+| Backend purge service    | `apps/prototype-description-service/recognition/domain/services/purge_service.py`                 | Purge logic to emit per-embedding events                                                                                                                                                  |
+| Backend audit service    | `apps/prototype-description-service/recognition/domain/services/audit_service.py`                 | Audit event recording                                                                                                                                                                     |
+| WP sync pull job         | `apps/prototype-wp-alt-context/src/sovereign/sync/class-sync-pull-job.php`                        | Phase 1 fallback-to-snapshot behavior lives here via `try_delta_sync()`; this is the primary WordPress owner for delta fetch/fallback semantics                                           |
+| WP sync client contract  | `apps/prototype-wp-alt-context/src/sovereign/sync/interface-snapshot-client.php`                  | Defines `fetch_delta()` and acknowledgement semantics that Phase 1 hardens alongside the backend delta contract                                                                           |
+| WP sync projector        | `apps/prototype-wp-alt-context/src/sovereign/sync/class-snapshot-projector.php`                   | Projector already implements `project_delta()`; keep this anchor for merge/application behavior after the fetch/fallback path succeeds                                                    |
+| WP sync state            | `apps/prototype-wp-alt-context/src/sovereign/repositories/class-sync-state-repository.php`        | Snapshot version storage (also used as delta `since_version` cursor); Phase 1 may extend with explicit delta cursor methods if acknowledgement semantics diverge from snapshot versioning |
+| WP retention controller  | `apps/prototype-wp-alt-context/src/api/class-retention-controller.php`                            | Export proxy to forward version field                                                                                                                                                     |
+| Frontend audit timeline  | `apps/prototype-wp-alt-context/js/admin/pages/retention/AuditTimeline.tsx`                        | UI to display embedding disposal events                                                                                                                                                   |
 
 ---
 
 # Consolidated Checklist
 
-## Phase 1: Delta Ingest Hardening -- in-progress
+## Phase 1: Delta Ingest Hardening -- planned
 
-- [ ] Define delta response contract in `packages/shared-contracts/`
+- [ ] Formalize existing draft delta contract and add JSON schema to `packages/shared-contracts/`
 - [ ] Document and test explicit chain-break / fallback semantics
 - [ ] Define and test delta deletion/tombstone behavior or explicit snapshot-fallback rule
 - [ ] Document and test cursor acknowledgement lifecycle
@@ -245,6 +247,8 @@ Exit criteria:
 - [ ] Add tests: per-embedding events created, parent references correct
 
 ## Deferred (Post-v0.3.0)
+
+> Expanded rationale and activation criteria: [docs/deferred-features/retention-and-audit-stretch.md](../../../docs/deferred-features/retention-and-audit-stretch.md)
 
 - [ ] Multi-version export import migration (read older format versions and upgrade on import)
 - [ ] GDPR-specific retention policy presets (right-to-erasure workflow beyond disposal)

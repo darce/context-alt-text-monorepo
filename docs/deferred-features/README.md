@@ -4,11 +4,11 @@ This directory consolidates work that has been explicitly deferred during planni
 
 ## Contents
 
-| File | Source epics | Theme |
-| --- | --- | --- |
-| [agentic-process-hardening-post-v0.3.0.md](agentic-process-hardening-post-v0.3.0.md) | `agentic-development-process-hardening-epic.md` (v0.3.0) | Post-v0.3.0 MCP productization, TUI follow-on, and model-eval backlog |
-| [sovereignty-and-compliance.md](sovereignty-and-compliance.md) | `recognition-state-reconciliation-and-offline-continuity-epic.md` (v0.2.0) | Tenant sovereignty tiers, encryption, and compliance |
-| [retention-and-audit-stretch.md](retention-and-audit-stretch.md) | `sync-completion-and-retention-hardening-epic.md` (v0.3.0) | Retention stretch goals deferred from v0.3.0 |
+| File                                                                                 | Source epics                                                               | Theme                                                                 |
+| ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| [agentic-process-hardening-post-v0.3.0.md](agentic-process-hardening-post-v0.3.0.md) | `agentic-development-process-hardening-epic.md` (v0.3.0)                   | Post-v0.3.0 MCP productization, TUI follow-on, and model-eval backlog |
+| [sovereignty-and-compliance.md](sovereignty-and-compliance.md)                       | `recognition-state-reconciliation-and-offline-continuity-epic.md` (v0.2.0) | Tenant sovereignty tiers, encryption, and compliance                  |
+| [retention-and-audit-stretch.md](retention-and-audit-stretch.md)                     | `sync-completion-and-retention-hardening-epic.md` (v0.3.0)                 | Retention stretch goals deferred from v0.3.0                          |
 
 ## Inclusion policy
 

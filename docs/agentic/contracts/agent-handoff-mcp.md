@@ -120,7 +120,40 @@ Surface classes:
 | `list_artifact_sources` | query | yes | Lists indexed artifact metadata. |
 | `purge_artifacts` | action | no | Deletes stored artifact rows and FTS chunks. |
 | `search_handoff` | generator | yes | Returns ranked snippets over handoff FTS tables. |
-| `get_metrics_summary` | generator | yes | Derived metrics snapshot across lanes, retrieval, and context pressure. |
+| `get_metrics_summary` | generator | yes | Derived metrics snapshot across lanes, retrieval, context pressure, process-health signals, and handoff-memory health. |
+
+### `get_metrics_summary` Snapshot Shape
+
+`get_metrics_summary` is additive: existing top-level sections remain stable and new sections are appended rather than replacing prior keys.
+
+Top-level snapshot fields:
+
+- `timestamp`: ISO-8601 generation time.
+- `task_ref`: task the snapshot was generated for.
+- `token_burn`: aggregate token spend and converged-cycle efficiency.
+- `context_pressure`: pressure-level ratios from worker events.
+- `fts5_retrieval`: handoff/artifact index counts.
+- `lane_health`: scope-violation, exhaustion, and convergence signals.
+- `process_health`: repo-process quality signals derived from handoff state and git history.
+- `handoff_memory`: hot-state and artifact-footprint signals derived from current MCP state.
+- `phase_timing`: exec/review timing aggregates.
+- `ace_documentation`: strategy-bullet and pruning-candidate counts from instruction files.
+
+`process_health` currently includes:
+
+- `reopened_finding_rate`: `{ value, reopened_findings, total_findings }`
+- `finding_resolution_velocity_hours`: `{ median_hours, resolved_findings }`
+- `handoff_decision_completeness`: `{ value, structured_decisions, total_decisions }`
+- `contract_co_change_signal`: `{ data_available, recent_commits_scanned, boundary_touching_commits, boundary_commits_with_contract_co_change, value }`
+
+`handoff_memory` currently includes:
+
+- `hot_state_size_bytes`: serialized byte size of the `get_handoff_state`-shaped hot-state payload for the active task
+- `total_decisions`: total decisions stored for the task
+- `total_findings`: total review findings stored for the task
+- `artifact_source_count`: indexed artifact-source count from `mcp-artifacts.db`
+
+Consumers should treat unknown keys as forward-compatible additions and should not require every section to have `data_available=true`; unavailable sections return explicit sentinel values rather than disappearing.
 
 Retry guidance:
 

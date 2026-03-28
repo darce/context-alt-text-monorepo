@@ -1,23 +1,13 @@
 from __future__ import annotations
 
 import json
-import os
 import urllib.request
-import time
 from pathlib import Path
 from typing import Any, Callable
 
-import sys as _sys
-_PARENT = str(Path(__file__).resolve().parent.parent)
-if _PARENT not in _sys.path:
-    _sys.path.insert(0, _PARENT)
-_PACKAGE_SRC = str(Path(__file__).resolve().parents[3])
-if _PACKAGE_SRC not in _sys.path:
-    _sys.path.insert(0, _PACKAGE_SRC)
-
-from backend_adapter import BackendAdapter, BackendResult
-from _env import resolve_auto_reasoning_effort
-from agent_handoff_mcp.enums import WorkerEventName
+from .._env import resolve_auto_reasoning_effort
+from ..backend_adapter import BackendAdapter, BackendResult
+from ...enums import WorkerEventName
 
 
 class LocalModelAdapter(BackendAdapter):
@@ -63,16 +53,19 @@ class LocalModelAdapter(BackendAdapter):
         schema: dict[str, Any],
         worktree_path: Path,
         model: str | None = None,
+        reasoning_effort: str | None = None,
+        session_mode: str | None = None,
         env: dict[str, str] | None = None,
         progress_callback: Callable[..., None] | None = None,
         **kwargs: Any,
     ) -> BackendResult:
         """Execute turn via OpenAI-compatible completion API."""
+        del reasoning_effort, session_mode, schema, worktree_path, env, kwargs
         if not model:
             raise ValueError("model is required for LocalModelAdapter.")
 
-            if progress_callback:
-                progress_callback(WorkerEventName.EXEC_SPAWNED, backend="local-model-openai", model=model)
+        if progress_callback:
+            progress_callback(WorkerEventName.EXEC_SPAWNED, backend="local-model-openai", model=model)
 
         # Build message payload for instruction-following model
         messages = [

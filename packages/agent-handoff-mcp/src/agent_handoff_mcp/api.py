@@ -42,6 +42,7 @@ get_handoff_dashboard = core.get_handoff_dashboard
 set_handoff_state = core.set_handoff_state
 get_handoff_state = core.get_handoff_state
 get_lane_activity = core.get_lane_activity
+get_latest_slice_review_packet = core.get_latest_slice_review_packet
 list_lane_messages = core.list_lane_messages
 list_lane_briefs = core.list_lane_briefs
 get_plan_cursor = core.get_plan_cursor
@@ -73,6 +74,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "close_worktree_lane": "Transition a worktree lane to merged or closed status. Accepts lane_id, optional status (merged|closed, default closed), optional notes, and optional task_ref.",
     "list_worktree_lanes": "List registered worktree lanes for the active or requested task.",
     "get_lane_activity": "Read the current activity summary for a lane, including blockers, actions, findings, messages, and tests.",
+    "get_latest_slice_review_packet": "Resolve the latest completed slice review packet for a task, optionally filtered by lane or review kind, using MCP-recorded slice decisions and worker evidence.",
     "list_next_actions": "List next-action rows for the active or requested task, optionally filtered by lane or status.",
     "record_decision": "Record an orchestrator or worker decision in the handoff ledger for the active task.",
     "update_next_actions": "Add, update, complete, or skip next-action items for the active task.",
@@ -986,6 +988,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
         purge_artifacts,
         search_handoff,
         get_metrics_summary,
+        get_latest_slice_review_packet,
     ]:
         mcp.add_tool(tool)
     return mcp

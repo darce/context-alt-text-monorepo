@@ -491,7 +491,7 @@ def _record_observability(
         lane_id,
         log_dir,
         "INFO",
-        "subagent_turn_observed",
+        WorkerEventName.SUBAGENT_TURN_OBSERVED,
         cycle=cycle,
         phase=phase,
         backend=backend,
@@ -1231,8 +1231,17 @@ def worker_loop(
             review_seconds = round(time.monotonic() - _review_start, 2)
             findings = review_output.get("findings", [])
             converged = review_output.get("converged", False)
-            log("INFO", WorkerEventName.REVIEW_COMPLETE, cycle=cycle, converged=converged,
-                finding_count=len(findings), review_seconds=review_seconds)
+            log(
+                "INFO",
+                WorkerEventName.REVIEW_COMPLETE,
+                cycle=cycle,
+                converged=converged,
+                finding_count=len(findings),
+                review_seconds=review_seconds,
+                review_kind=review_output.get("review_kind"),
+                scope_source=review_output.get("scope_source"),
+                scope_reason=review_output.get("scope_reason"),
+            )
 
             # ACE reflection hook: scan new findings for rule references and
             # append detection records to the shared ace_reflect_log.jsonl.
@@ -1261,7 +1270,7 @@ def worker_loop(
                                 _fh.write(json.dumps(_rec) + "\n")
                         log(
                             "INFO",
-                            "ace_reflect_detected",
+                            WorkerEventName.ACE_REFLECT_DETECTED,
                             cycle=cycle,
                             records=len(_records),
                         )

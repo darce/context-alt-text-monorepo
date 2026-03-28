@@ -23,8 +23,10 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Sequence
 from statistics import median
+from typing import Sequence
+
+from ..enums import ReviewKind, ReviewScopeSource, WorkerEventName
 
 
 # ---------------------------------------------------------------------------
@@ -70,12 +72,12 @@ def _token_burn(worker_events: list[dict]) -> dict:
 
     for e in worker_events:
         event = e.get("event")
-        if event == "subagent_turn_observed":
+        if event == WorkerEventName.SUBAGENT_TURN_OBSERVED:
             tokens = (e.get("token_usage_totals") or {}).get("total_tokens") or 0
             lane = e.get("lane_id", "unknown")
             total += tokens
             by_lane[lane] = by_lane.get(lane, 0) + tokens
-        elif event == "review_complete":
+        elif event == WorkerEventName.REVIEW_COMPLETE:
             total_review_cycles += 1
             if e.get("converged"):
                 converged_cycles += 1
@@ -99,7 +101,7 @@ def _context_pressure(worker_events: list[dict]) -> dict:
     counts: dict[str, int] = {"normal": 0, "elevated": 0, "high": 0}
     latest = "normal"
     for e in worker_events:
-        if e.get("event") == "context_pressure":
+        if e.get("event") == WorkerEventName.CONTEXT_PRESSURE:
             level = e.get("pressure_level", "normal")
             if level in counts:
                 counts[level] += 1
@@ -119,14 +121,18 @@ def _context_pressure(worker_events: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 
 def _lane_health(worker_events: list[dict]) -> dict:
-    scope_violations = sum(1 for e in worker_events if e.get("event") == "scope_violation")
+    scope_violations = sum(
+        1 for e in worker_events if e.get("event") == WorkerEventName.SCOPE_VIOLATION
+    )
     max_streak = 0
     for e in worker_events:
         streak = (e.get("exhaustion_streak") or {}).get("count", 0)
         if streak > max_streak:
             max_streak = streak
 
-    review_events = [e for e in worker_events if e.get("event") == "review_complete"]
+    review_events = [
+        e for e in worker_events if e.get("event") == WorkerEventName.REVIEW_COMPLETE
+    ]
     total_cycles = len(review_events)
     converged = sum(1 for e in review_events if e.get("converged"))
     convergence_rate = round(converged / total_cycles, 3) if total_cycles else 0.0
@@ -148,11 +154,11 @@ def _phase_timing(worker_events: list[dict]) -> dict:
     review_times: list[float] = []
 
     for e in worker_events:
-        if e.get("event") == "exec_complete":
+        if e.get("event") == WorkerEventName.EXEC_COMPLETE:
             t = e.get("exec_seconds")
             if t is not None:
                 exec_times.append(float(t))
-        elif e.get("event") == "review_complete":
+        elif e.get("event") == WorkerEventName.REVIEW_COMPLETE:
             t = e.get("review_seconds")
             if t is not None:
                 review_times.append(float(t))
@@ -171,6 +177,43 @@ def _phase_timing(worker_events: list[dict]) -> dict:
         "data_available": len(exec_times) > 0 or len(review_times) > 0,
         "exec": _stats(exec_times),
         "review": _stats(review_times),
+    }
+
+
+def _slice_review_adoption(worker_events: list[dict]) -> dict:
+    review_events = [
+        event for event in worker_events if event.get("event") == WorkerEventName.REVIEW_COMPLETE
+    ]
+    packet_backed_reviews = 0
+    branch_diff_fallback_reviews = 0
+    planning_reviews = 0
+    branch_reviews = 0
+
+    for event in review_events:
+        if event.get("scope_source") == ReviewScopeSource.SLICE_PACKET:
+            packet_backed_reviews += 1
+        elif event.get("scope_source") == ReviewScopeSource.BRANCH_DIFF:
+            branch_diff_fallback_reviews += 1
+
+        if event.get("review_kind") == ReviewKind.PLANNING:
+            planning_reviews += 1
+        elif event.get("review_kind") == ReviewKind.BRANCH:
+            branch_reviews += 1
+
+    total_reviews = len(review_events)
+    return {
+        "data_available": total_reviews > 0,
+        "total_reviews": total_reviews,
+        "packet_backed_reviews": packet_backed_reviews,
+        "branch_diff_fallback_reviews": branch_diff_fallback_reviews,
+        "planning_reviews": planning_reviews,
+        "branch_reviews": branch_reviews,
+        "packet_backed_adoption_rate": (
+            round(packet_backed_reviews / total_reviews, 3) if total_reviews else None
+        ),
+        "branch_diff_fallback_rate": (
+            round(branch_diff_fallback_reviews / total_reviews, 3) if total_reviews else None
+        ),
     }
 
 
@@ -772,6 +815,7 @@ def build_snapshot(
         "archive_rate": _archive_rate(state_dir),
         "ctx7_adoption": _ctx7_adoption(task_ref, state_dir),
         "phase_timing": _phase_timing(worker_events),
+        "slice_review_adoption": _slice_review_adoption(worker_events),
         "ace_documentation": _ace_documentation(instruction_files),
     }
     return snapshot
@@ -937,6 +981,29 @@ def _render_phase_timing(pt: dict) -> list[str]:
     return lines
 
 
+def _render_slice_review_adoption(adoption: dict) -> list[str]:
+    lines = ["", "## Slice Review Adoption"]
+    if adoption.get("data_available"):
+        return lines + [
+            f"- Total review cycles: {adoption['total_reviews']}",
+            "- Packet-backed latest-slice reviews: "
+            + (
+                f"{adoption['packet_backed_reviews']} ({adoption['packet_backed_adoption_rate']:.1%})"
+                if adoption.get("packet_backed_adoption_rate") is not None
+                else "n/a"
+            ),
+            "- Branch-diff fallback reviews: "
+            + (
+                f"{adoption['branch_diff_fallback_reviews']} ({adoption['branch_diff_fallback_rate']:.1%})"
+                if adoption.get("branch_diff_fallback_rate") is not None
+                else "n/a"
+            ),
+            f"- Review kinds: branch={adoption['branch_reviews']} planning={adoption['planning_reviews']}",
+        ]
+    lines.append("_No review-complete events recorded with scope-source metadata yet._")
+    return lines
+
+
 def _render_documentation_fitness(ace: dict) -> list[str]:
     lines = ["", "## Documentation Fitness (ACE)"]
     if ace["data_available"]:
@@ -971,6 +1038,7 @@ def render_markdown(snapshot: dict) -> str:
         _render_archive_cadence(snapshot.get("archive_rate", {})),
         _render_ctx7_adoption(snapshot.get("ctx7_adoption", {})),
         _render_phase_timing(snapshot.get("phase_timing", {})),
+        _render_slice_review_adoption(snapshot.get("slice_review_adoption", {})),
         _render_documentation_fitness(snapshot["ace_documentation"]),
     ):
         lines.extend(section_lines)
@@ -1039,6 +1107,10 @@ def render_sparklines(state_dir: Path, task_ref: str) -> str:
         s.get("handoff_memory", {}).get("hot_state_size_bytes", 0)
         for s in snapshots
     ]
+    packet_backed_series = [
+        s.get("slice_review_adoption", {}).get("packet_backed_adoption_rate") or 0.0
+        for s in snapshots
+    ]
 
     lines += [
         "## Token Burn",
@@ -1067,6 +1139,10 @@ def render_sparklines(state_dir: Path, task_ref: str) -> str:
         "## Hot-State Size (bytes)",
         f"  `{_sparkline(hot_state_series)}`",
         f"  latest={hot_state_series[-1]:,}" if hot_state_series else "",
+        "",
+        "## Packet-Backed Review Adoption",
+        f"  `{_sparkline(packet_backed_series)}`",
+        f"  latest={packet_backed_series[-1]:.1%}" if packet_backed_series else "",
     ]
 
     return "\n".join(lines) + "\n"

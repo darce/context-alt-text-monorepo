@@ -261,6 +261,8 @@ def _build_parser() -> argparse.ArgumentParser:
     close_parser.add_argument("--task-ref")
     close_parser.add_argument("--allow-no-active-task", action="store_true")
     close_parser.add_argument("--enforce", action="store_true")
+    close_parser.add_argument("--require-fresh-tests", action="store_true")
+    close_parser.add_argument("--current-commit-sha")
 
     task_parser = subparsers.add_parser("task")
     task_parser.add_argument("task_ref", nargs="?")
@@ -705,6 +707,8 @@ def main() -> None:
                 task_ref=args.task_ref,
                 allow_no_active_task=args.allow_no_active_task,
                 enforce=args.enforce,
+                require_fresh_tests=args.require_fresh_tests,
+                current_commit_sha=args.current_commit_sha,
             )
         )
         return

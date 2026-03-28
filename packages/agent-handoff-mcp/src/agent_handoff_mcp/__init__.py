@@ -1,3 +1,6 @@
+from .core import ReviewFindingDetails, WriteActor
+from .enums import ReviewKind, ReviewScopeSource
+from .orchestration.slice_review_packet import SliceReviewPacket
 from .api import (
     archive_task_state,
     build_handoff_mcp,
@@ -11,6 +14,7 @@ from .api import (
     get_handoff_dashboard,
     get_handoff_state,
     get_lane_activity,
+    get_latest_slice_review_packet,
     get_plan_cursor,
     get_review_finding,
     get_review_findings_summary,
@@ -63,6 +67,11 @@ from .config import RuntimeConfig
 
 __all__ = [
     "RuntimeConfig",
+    "ReviewFindingDetails",
+    "ReviewKind",
+    "ReviewScopeSource",
+    "SliceReviewPacket",
+    "WriteActor",
     "archive_task_state",
     "build_handoff_mcp",
     "build_write_actor",
@@ -75,6 +84,7 @@ __all__ = [
     "get_handoff_dashboard",
     "get_handoff_state",
     "get_lane_activity",
+    "get_latest_slice_review_packet",
     "get_plan_cursor",
     "get_review_finding",
     "get_review_findings_summary",

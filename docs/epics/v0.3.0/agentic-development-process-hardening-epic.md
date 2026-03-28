@@ -235,9 +235,9 @@ Exit criteria:
 - branch review and testing guidance require runtime-parity checks for every boundary class known to diverge in this repo
 - at least one deterministic verification path exists for each high-risk boundary failure mode: malformed payloads, missing runtime load path, header/protocol drift, and masked upstream failure
 
-### Phase 4: MCP and Tooling Automation -- planned
+### Phase 4: MCP and Tooling Automation -- in-progress
 
-> **Status**: planned
+> **Status**: in-progress
 > **Task plans**: `docs/tasks/11.0/mcp-and-tooling-automation-task-plan.md`
 
 **Goal**: Move the highest-value process rules out of memory and into tools, templates, and automated review surfaces.
@@ -253,7 +253,7 @@ Deliverables:
 - create `docs/agentic/skills/daemon-lifecycle/SKILL.md` encoding safe-start, signal-stop, stale-lock-recovery, pause/resume, and lane-health-check procedures; this skill should encapsulate the patterns already hardened in `api.py`, `orchestrator_daemon.py`, `worker_daemon.py`, and `worker_daemon_ctl.py` so agents are not expected to rediscover safe daemon interaction through code archaeology
 - create `docs/agentic/skills/rescue-lane/SKILL.md` encoding the rescue-lane protocol: (a) create rescue branch from the last known-good commit, (b) cherry-pick fix commits with `git cherry-pick`, (c) diff contract surfaces between the rescue branch and the broken lane, (d) run lane test pack plus targeted regression test, (e) update MCP state with a rescue decision record, (f) regenerate `CURRENT_TASK.md`; note: `.agent/workflows/` was removed 2026-03-27; the canonical location for repo-native skills is `docs/agentic/skills/`
 - add a post-intake `check-all` gate to `make lane-intake` in `mk/lane-maintenance.mk` so cross-lane regression tests run automatically after a lane is merged into the orchestrator branch
-- add auto-regeneration of `CURRENT_TASK.md` at the end of a successful `make lane-intake` so the active-task mirror is never stale for the next agent session
+- preserve and verify the existing `CURRENT_TASK.md` regeneration path at the end of a successful `make lane-intake` so the active-task mirror is never stale for the next agent session
 - add a repo-native branch/worktree "review readiness" command inspired by `gstack` that checks plan review, contract co-change, verification evidence, docs drift, and open handoff blockers before review
 - add CI or scripted checks where feasible for doc/contract co-change, stale path detection, and runtime-parity test presence
 - refine skills so they point to the canonical rules and avoid duplicating long policy text
@@ -388,22 +388,22 @@ Exit criteria:
 - [x] Add fresh-evidence requirements to `branch-review-python.md` parallel to TS and PHP modules.
 - [x] Add Hypothesis property-based tests for FTS5 query-input sanitization in `packages/agent-handoff-mcp/tests/`.
 
-## Phase 4: MCP and Tooling Automation -- planned
+## Phase 4: MCP and Tooling Automation -- in-progress
 
-- [ ] Define which startup, review, and closeout checks can move into MCP helpers or wrappers.
-- [ ] Define which repo capabilities should be modeled as MCP actions, read-only resources, or reusable prompt templates.
+- [x] Define which startup, review, and closeout checks can move into MCP helpers or wrappers.
+- [x] Define which repo capabilities should be modeled as MCP actions, read-only resources, or reusable prompt templates.
 - [ ] Define structured progress, error, and status semantics for process automation surfaces.
-- [ ] Add trigger, recovery, and convergence requirements to repo skills and MCP wrappers.
-- [ ] Create `docs/agentic/skills/daemon-lifecycle/SKILL.md` (safe-start, signal-stop, stale-lock-recovery, lane-health-check).
-- [ ] Create a rescue-lane protocol document (branch, cherry-pick, contract diff, test pack, MCP decision, regenerate `CURRENT_TASK.md`). _(Originally scoped to `.agent/workflows/rescue.md`; `.agent/workflows/` directory was removed 2026-03-27 after Gemini/Antigravity phase-off. Relocate to `docs/agentic/skills/` or `docs/agentic/rules/`.)_
-- [ ] Add post-intake `check-all` gate to `make lane-intake` in `mk/lane-maintenance.mk`.
-- [ ] Add auto-regeneration of `CURRENT_TASK.md` at end of successful `make lane-intake`.
+- [x] Add trigger, recovery, and convergence requirements to repo skills and MCP wrappers.
+- [x] Create `docs/agentic/skills/daemon-lifecycle/SKILL.md` (safe-start, signal-stop, stale-lock-recovery, lane-health-check).
+- [x] Create a rescue-lane protocol document (branch, cherry-pick, contract diff, test pack, MCP decision, regenerate `CURRENT_TASK.md`). _(Originally scoped to `.agent/workflows/rescue.md`; `.agent/workflows/` directory was removed 2026-03-27 after Gemini/Antigravity phase-off. Relocate to `docs/agentic/skills/` or `docs/agentic/rules/`.)_
+- [x] Add post-intake `check-all` gate to `make lane-intake` in `mk/lane-maintenance.mk`.
+- [x] Preserve and verify the existing `CURRENT_TASK.md` regeneration path at the end of successful `make lane-intake`.
 - [ ] Add selective-memory MCP surfaces for active-task briefs, targeted retrieval, and archival summaries.
-- [ ] Add reusable `ctx7` helpers and caching guidance for external-doc retrieval.
-- [ ] Decide what repo-native branch and worktree gate should exist before review or merge.
-- [ ] Add feasible CI and scripted guards for doc, contract, and runtime evidence.
-- [ ] Reduce policy duplication across skills and README surfaces.
-- [ ] Keep `agent-handoff-mcp` contract and operator docs synchronized.
+- [x] Add reusable `ctx7` helpers and caching guidance for external-doc retrieval.
+- [x] Decide what repo-native branch and worktree gate should exist before review or merge.
+- [x] Add feasible CI and scripted guards for doc, contract, and runtime evidence.
+- [x] Reduce policy duplication across skills and README surfaces.
+- [x] Keep `agent-handoff-mcp` contract and operator docs synchronized.
 
 ## Phase 5: Evaluation and Release Audit Layer -- not-started
 

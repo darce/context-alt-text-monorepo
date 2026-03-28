@@ -13,7 +13,7 @@ It also supports multi-worktree coordination primitives for orchestrator/worker 
 
 This package only handles handoff state. It does not include the old WordPress, React, or repo-intel helpers from the monorepo `unified_server.py`.
 
-The non-handoff helpers have been classified separately in [`repo-intel-mcp-candidates.md`](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/contracts/repo-intel-mcp-candidates.md). Most are intentionally dropped because they duplicate native search and file-navigation capabilities. The only current future candidate is the cross-boundary `trace_api_endpoint` workflow.
+The non-handoff helpers have been classified separately in [../../docs/agentic/contracts/repo-intel-mcp-candidates.md](../../docs/agentic/contracts/repo-intel-mcp-candidates.md). Most are intentionally dropped because they duplicate native search and file-navigation capabilities. The only current future candidate is the cross-boundary `trace_api_endpoint` workflow.
 
 ## Runtime State
 
@@ -232,3 +232,28 @@ Additional lane/worktree CLI commands:
 - `lane-message-update`
 - `lane-message-list`
 - `switch` -- atomically archive the current task and activate a different one
+
+## MCP Surface Classes
+
+For agent callers, the live tool surface falls into three behavior classes:
+
+- `action`: mutates handoff state, daemon state, lane state, or artifact state. Do not blind-retry.
+- `query`: read-only inspection of canonical state. Safe to retry for transient transport/runtime failures.
+- `generator`: derived output such as dashboards, search results, close checks, or rendered markdown. Usually safe to retry unless the tool also writes a file.
+
+The canonical per-tool catalog lives in [../../docs/agentic/contracts/agent-handoff-mcp.md](../../docs/agentic/contracts/agent-handoff-mcp.md). Keep the contract doc and this README synchronized whenever the tool surface changes.
+
+## Troubleshooting
+
+Use the contract doc's troubleshooting ladder for four failure layers:
+
+1. startup failure
+2. capability discovery failure
+3. runtime execution failure
+4. evidence-write failure
+
+The fastest first check is still:
+
+```bash
+agent-handoff-mcp --workspace-root /path/to/repo doctor
+```

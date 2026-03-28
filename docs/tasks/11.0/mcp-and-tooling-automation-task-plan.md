@@ -76,10 +76,10 @@ After this task:
 
 ## Contract and Boundary Impact
 
-| Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
-| --- | --- | --- | --- | --- | --- |
-| `agent-handoff-mcp` tool surface | agentic-tooling | `docs/agentic/contracts/agent-handoff-mcp.md` | Add surface-class annotations to tool catalog | No; documentation only | Contract doc updated in same slice |
-| `make lane-intake` | orchestration | `mk/lane-maintenance.mk` + `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_manifest.py` + `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_config.py` | Preserve current `CURRENT_TASK.md` sync path, add post-intake gate, and add manifest/config support if checks are lane-configurable | Yes; `SKIP_TESTS` and `DRY_RUN` must still work | Existing lane-intake behavior preserved; manifest-backed checks resolve through real config readers |
+| Boundary                         | Owner           | Current Contract                                                                                                                                                                               | Expected Change                                                                                                                     | Compatibility Needed?                           | Verification                                                                                        |
+| -------------------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `agent-handoff-mcp` tool surface | agentic-tooling | `docs/agentic/contracts/agent-handoff-mcp.md`                                                                                                                                                  | Add surface-class annotations to tool catalog                                                                                       | No; documentation only                          | Contract doc updated in same slice                                                                  |
+| `make lane-intake`               | orchestration   | `mk/lane-maintenance.mk` + `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_manifest.py` + `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_config.py` | Preserve current `CURRENT_TASK.md` sync path, add post-intake gate, and add manifest/config support if checks are lane-configurable | Yes; `SKIP_TESTS` and `DRY_RUN` must still work | Existing lane-intake behavior preserved; manifest-backed checks resolve through real config readers |
 
 ## Proposed Solution
 
@@ -93,35 +93,35 @@ Five slices delivered in dependency order:
 
 ## Files and Surfaces to Change
 
-| Surface | File | Change |
-| --- | --- | --- |
-| skill | `docs/agentic/skills/daemon-lifecycle/SKILL.md` | Create; encode safe-start, signal-stop, stale-lock-recovery, pause/resume, lane-health-check |
-| skill | `docs/agentic/skills/rescue-lane/SKILL.md` | Create; encode cherry-pick rescue, contract diff, MCP decision, regeneration |
-| skill | `docs/agentic/skills/subfeature-committer/SKILL.md` | Create; encode single-slice commit flow for already-isolated completed work |
-| skill | `docs/agentic/skills/worktree-orchestrator/SKILL.md` | Add structured trigger/recovery/convergence sections |
-| skill | `docs/agentic/skills/worktree-worker/SKILL.md` | Add structured trigger/recovery/convergence sections |
-| skill | `docs/agentic/skills/commit2git/SKILL.md` | Add structured trigger/recovery/convergence sections |
-| tooling | `mk/lane-maintenance.mk` | Preserve verified `CURRENT_TASK.md` sync behavior and add `check-all` gate to `lane-intake` |
-| tooling | `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_manifest.py` | Add manifest support for post-intake checks if Slice 2 uses lane-configurable commands |
-| tooling | `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_config.py` | Expose post-intake check settings to Make helpers if Slice 2 uses lane-configurable commands |
-| contract | `docs/agentic/contracts/agent-handoff-mcp.md` | Add per-tool surface-class catalog (action/query/generator), MCP troubleshooting ladder |
-| docs | `packages/agent-handoff-mcp/README.md` | Synchronize with contract doc after classification changes |
-| rules | `docs/agentic/rules/development-workflow.md` | Add review-readiness check reference |
-| tooling | `Makefile` or `mk/` | Add `review-ready` target |
-| docs | `docs/agentic/instructions.md` | Add ctx7 caching guidance; remove any policy text that duplicates rules |
+| Surface  | File                                                                              | Change                                                                                       |
+| -------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| skill    | `docs/agentic/skills/daemon-lifecycle/SKILL.md`                                   | Create; encode safe-start, signal-stop, stale-lock-recovery, pause/resume, lane-health-check |
+| skill    | `docs/agentic/skills/rescue-lane/SKILL.md`                                        | Create; encode cherry-pick rescue, contract diff, MCP decision, regeneration                 |
+| skill    | `docs/agentic/skills/subfeature-committer/SKILL.md`                               | Create; encode single-slice commit flow for already-isolated completed work                  |
+| skill    | `docs/agentic/skills/worktree-orchestrator/SKILL.md`                              | Add structured trigger/recovery/convergence sections                                         |
+| skill    | `docs/agentic/skills/worktree-worker/SKILL.md`                                    | Add structured trigger/recovery/convergence sections                                         |
+| skill    | `docs/agentic/skills/commit2git/SKILL.md`                                         | Add structured trigger/recovery/convergence sections                                         |
+| tooling  | `mk/lane-maintenance.mk`                                                          | Preserve verified `CURRENT_TASK.md` sync behavior and add `check-all` gate to `lane-intake`  |
+| tooling  | `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_manifest.py` | Add manifest support for post-intake checks if Slice 2 uses lane-configurable commands       |
+| tooling  | `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_config.py`   | Expose post-intake check settings to Make helpers if Slice 2 uses lane-configurable commands |
+| contract | `docs/agentic/contracts/agent-handoff-mcp.md`                                     | Add per-tool surface-class catalog (action/query/generator), MCP troubleshooting ladder      |
+| docs     | `packages/agent-handoff-mcp/README.md`                                            | Synchronize with contract doc after classification changes                                   |
+| rules    | `docs/agentic/rules/development-workflow.md`                                      | Add review-readiness check reference                                                         |
+| tooling  | `Makefile` or `mk/`                                                               | Add `review-ready` target                                                                    |
+| docs     | `docs/agentic/instructions.md`                                                    | Add ctx7 caching guidance; remove any policy text that duplicates rules                      |
 
 ## Related Files
 
-| File | Note |
-| --- | --- |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py` | Source of truth for all MCP tool registrations; ~50 tools |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestrator_daemon.py` | Safe-start, lock, pause/resume, health-check patterns for daemon-lifecycle skill |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/worker_daemon.py` | Worker daemon patterns: poll, preflight, handoff, observability |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/worker_daemon_ctl.py` | Control commands: start, stop, resume, status, event history |
+| File                                                                              | Note                                                                                            |
+| --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py`                         | Source of truth for all MCP tool registrations; ~50 tools                                       |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestrator_daemon.py`         | Safe-start, lock, pause/resume, health-check patterns for daemon-lifecycle skill                |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/worker_daemon.py`               | Worker daemon patterns: poll, preflight, handoff, observability                                 |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/worker_daemon_ctl.py`           | Control commands: start, stop, resume, status, event history                                    |
 | `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_manifest.py` | Validates and normalizes lane manifest fields; must change if Slice 2 adds `post_intake_checks` |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_config.py` | Emits manifest-derived values to Make helpers; must change if Slice 2 adds `post_intake_checks` |
-| `mk/lane-lifecycle.mk` | Lane lifecycle targets that may need coordination with lane-intake changes |
-| `config/lane-orchestration/` | Lane manifest files; relevant for rescue-lane skill context |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_config.py`   | Emits manifest-derived values to Make helpers; must change if Slice 2 adds `post_intake_checks` |
+| `mk/lane-lifecycle.mk`                                                            | Lane lifecycle targets that may need coordination with lane-intake changes                      |
+| `config/lane-orchestration/`                                                      | Lane manifest files; relevant for rescue-lane skill context                                     |
 
 ## Verification Strategy
 
@@ -303,51 +303,51 @@ Proof:
 
 ## Slice 2: Lane Intake Automation
 
-- [ ] Preserved and verified `CURRENT_TASK.md` sync on the `make lane-intake` success path.
-- [ ] Added post-intake `check-all` gate with configurable commands.
-- [ ] `DRY_RUN=1` skips regeneration and post-intake checks.
-- [ ] `SKIP_TESTS=1` still works as before.
-- [ ] `SKIP_POST_INTAKE=1` skips post-intake cross-lane checks.
-- [ ] If configurable checks are manifest-backed, `lane_manifest.py` and `lane_config.py` support the new field.
-- [ ] Post-intake check failure emits warning but does not roll back merge.
-- [ ] Handoff decision recorded for Slice 2.
+- [x] Preserved and verified `CURRENT_TASK.md` sync on the `make lane-intake` success path.
+- [x] Added post-intake `check-all` gate with configurable commands.
+- [x] `DRY_RUN=1` skips regeneration and post-intake checks.
+- [x] `SKIP_TESTS=1` still works as before.
+- [x] `SKIP_POST_INTAKE=1` skips post-intake cross-lane checks.
+- [x] If configurable checks are manifest-backed, `lane_manifest.py` and `lane_config.py` support the new field.
+- [x] Post-intake check failure emits warning but does not roll back merge.
+- [x] Handoff decision recorded for Slice 2.
 
 ## Slice 3: MCP Surface Classification and Troubleshooting
 
-- [ ] Audited all tools in `api.py`; classified each as action/query/generator.
-- [ ] Added per-tool surface-class catalog table to contract doc.
-- [ ] Added MCP troubleshooting ladder (startup, discovery, runtime, evidence-write).
-- [ ] Synchronized README with contract doc.
-- [ ] Handoff decision recorded for Slice 3.
+- [x] Audited all tools in `api.py`; classified each as action/query/generator.
+- [x] Added per-tool surface-class catalog table to contract doc.
+- [x] Added MCP troubleshooting ladder (startup, discovery, runtime, evidence-write).
+- [x] Synchronized README with contract doc.
+- [x] Handoff decision recorded for Slice 3.
 
 ## Slice 4: Review Readiness Command
 
-- [ ] Created `make review-ready` target.
-- [ ] Checks: open findings, open blockers, contract co-change, stale CURRENT_TASK.md, test evidence.
-- [ ] Outputs structured READY / NOT READY summary.
-- [ ] Works from orchestrator root and worker worktrees.
-- [ ] Referenced in `development-workflow.md`.
-- [ ] Handoff decision recorded for Slice 4.
+- [x] Created `make review-ready` target.
+- [x] Checks: open findings, open blockers, contract co-change, stale CURRENT_TASK.md, test evidence.
+- [x] Outputs structured READY / NOT READY summary.
+- [x] Works from orchestrator root and worker worktrees.
+- [x] Referenced in `development-workflow.md`.
+- [x] Handoff decision recorded for Slice 4.
 
 ## Slice 5: Documentation Sync and Policy Deduplication
 
-- [ ] Deduplicated policy text across skills (replaced with cross-references).
-- [ ] Synchronized README and contract doc.
-- [ ] Added ctx7 caching guidance to `instructions.md`.
-- [ ] Updated epic Phase 4 checklist items to checked.
-- [ ] Handoff decision recorded for Slice 5.
+- [x] Deduplicated policy text across skills (replaced with cross-references).
+- [x] Synchronized README and contract doc.
+- [x] Added ctx7 caching guidance to `instructions.md`.
+- [x] Updated epic Phase 4 checklist items to checked.
+- [x] Handoff decision recorded for Slice 5.
 
 ## Review Readiness
 
-- [ ] No boundary-touching implementation is left without matching contract/doc/fixture evidence.
-- [ ] All new skills follow the structured skill template with trigger, safety, recovery, convergence.
-- [ ] Handoff decision records the change, verification, and any contract implications.
+- [x] No boundary-touching implementation is left without matching contract/doc/fixture evidence.
+- [x] All new skills follow the structured skill template with trigger, safety, recovery, convergence.
+- [x] Handoff decision records the change, verification, and any contract implications.
 
 ## Success Criteria
 
-- [ ] Agents can invoke `daemon-lifecycle` and `rescue-lane` skills from cold start without reading source code.
-- [ ] Agents can invoke `subfeature-committer` for a single isolated slice without misusing `commit2git`.
-- [ ] `make lane-intake` leaves `CURRENT_TASK.md` current and runs cross-lane verification.
-- [ ] Every MCP tool has a documented surface class (action/query/generator) in the contract doc.
-- [ ] `make review-ready` produces a structured pre-review evidence summary.
-- [ ] Policy text exists in exactly one canonical location; skills cross-reference rather than duplicate.
+- [x] Agents can invoke `daemon-lifecycle` and `rescue-lane` skills from cold start without reading source code.
+- [x] Agents can invoke `subfeature-committer` for a single isolated slice without misusing `commit2git`.
+- [x] `make lane-intake` leaves `CURRENT_TASK.md` current and runs cross-lane verification.
+- [x] Every MCP tool has a documented surface class (action/query/generator) in the contract doc.
+- [x] `make review-ready` produces a structured pre-review evidence summary.
+- [x] Policy text exists in exactly one canonical location; skills cross-reference rather than duplicate.

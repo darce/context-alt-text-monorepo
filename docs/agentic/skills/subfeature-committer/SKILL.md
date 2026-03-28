@@ -21,6 +21,12 @@ If the branch contains multiple completed slices or mixed unrelated hunks, switc
 
 Create one clean commit for the current completed slice while leaving the rest of the working tree intentionally untouched.
 
+## Canonical Policy
+
+- Use [../../instructions.md](../../instructions.md) for startup, handoff, and evidence-logging policy.
+- Use [../../rules/development-workflow.md](../../rules/development-workflow.md) for slice, contract, and review-readiness rules.
+- Use this skill for the commit recipe only; do not copy broader process policy into commit notes or ad hoc local guidance.
+
 ## Steps
 
 1. Inspect the current diff shape:

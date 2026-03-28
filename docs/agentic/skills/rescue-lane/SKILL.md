@@ -19,6 +19,12 @@ Use this skill when a lane has one of these failure modes:
 
 Recover the lane through a bounded rescue branch and a documented MCP trail instead of improvising fixes directly on the broken branch.
 
+## Canonical Policy
+
+- Use [../../instructions.md](../../instructions.md) for startup, handoff, and `ctx7` policy.
+- Use [../../rules/development-workflow.md](../../rules/development-workflow.md) for cross-boundary change rules and review-readiness expectations.
+- Treat this skill as the rescue execution recipe; project-wide policy stays in the linked canonical docs.
+
 ## Steps
 
 1. Confirm the failing lane state:

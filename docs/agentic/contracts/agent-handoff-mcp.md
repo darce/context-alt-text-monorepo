@@ -55,78 +55,172 @@ Notes:
 
 ## MCP Tool Surface
 
-Task state:
+Surface classes:
 
-- `set_handoff_state`
-- `get_handoff_state`
-- `upsert_worktree_lane`
-- `list_worktree_lanes`
-- `get_lane_activity`
-- `record_decision`
-- `update_next_actions`
-- `record_test_result`
-- `report_blocker`
-- `record_worker_report`
-- `list_worker_reports`
-- `record_lane_message`
-- `record_lane_brief`
-- `update_lane_message`
-- `list_lane_messages`
-- `list_lane_briefs`
+- `action`: mutates state, filesystem state, lane runtime, or daemon runtime. Do not retry blindly.
+- `query`: read-only inspection of canonical state. Safe to retry when transport/runtime is healthy.
+- `generator`: derives a report, search result, reconciliation result, or rendered artifact from current state. Usually safe to retry unless the tool also writes a file by default.
 
-Review findings:
+| Tool | Surface class | Idempotent | Notes |
+| --- | --- | --- | --- |
+| `set_handoff_state` | action | no | Updates active task state with optimistic revision guard. |
+| `get_handoff_state` | query | yes | Canonical task-state read. |
+| `upsert_worktree_lane` | action | no | Updates lane metadata and regenerates `CURRENT_TASK.md`. |
+| `close_worktree_lane` | action | no | Transitions lane status to merged or closed. |
+| `list_worktree_lanes` | query | yes | Lists registered lane rows. |
+| `get_lane_activity` | generator | yes | Aggregated lane summary across decisions, tests, blockers, and messages. |
+| `list_next_actions` | query | yes | Lists canonical action rows. |
+| `record_decision` | action | no | Appends decision ledger state. |
+| `update_next_actions` | action | no | Creates or mutates action rows. |
+| `record_test_result` | action | no | Appends verification evidence. |
+| `report_blocker` | action | no | Adds, resolves, or reopens blockers. |
+| `record_worker_report` | action | no | Appends structured worker handback state. |
+| `list_worker_reports` | query | yes | Lists worker reports. |
+| `record_lane_message` | action | no | Appends lane message state. |
+| `record_lane_brief` | action | no | Creates a structured brief on top of lane messages. |
+| `update_lane_message` | action | no | Mutates lane-message status. |
+| `list_lane_messages` | query | yes | Lists lane messages. |
+| `list_lane_briefs` | query | yes | Lists structured lane briefs. |
+| `get_plan_cursor` | query | yes | Reads one durable plan cursor. |
+| `list_plan_cursors` | query | yes | Lists plan cursor rows. |
+| `upsert_plan_cursor` | action | no | Mutates plan cursor state; can enforce clean-slice gate. |
+| `record_review_finding` | action | no | Creates or reopens review findings. |
+| `update_review_finding` | action | no | Changes finding status or resolution metadata. |
+| `reopen_review_finding` | action | no | Reopens closed finding with reason. |
+| `list_review_findings` | query | yes | Lists findings with filters. |
+| `get_review_finding` | query | yes | Reads one finding by stable or DB id. |
+| `get_review_findings_summary` | generator | yes | Returns aggregated counts and top open findings. |
+| `reconcile_review_findings` | generator | yes | Compares open findings with current files; `apply=true` turns it into a mutating action and should be treated as a controlled repair step. |
+| `handoff_close_check` | generator | yes | Derived readiness verdict from current state. |
+| `generate_current_task_md` | generator | no | Renders deterministic markdown and writes `CURRENT_TASK.md` by default. |
+| `export_handoff_state` | generator | yes | Produces portable snapshot output. |
+| `import_handoff_state` | action | no | Imports snapshot into local DB; destructive in replace modes. |
+| `archive_task_state` | action | no | Moves active state into archive storage. |
+| `switch_task` | action | no | Archives outgoing task and activates target task. |
+| `get_handoff_dashboard` | generator | yes | Derived dashboard view across lanes, findings, and blockers. |
+| `orchestrator_start` | action | no | Starts shared orchestrator daemon. |
+| `orchestrator_status` | query | yes | Inspects orchestrator runtime state. |
+| `orchestrator_stop` | action | no | Stops orchestrator daemon. |
+| `orchestrator_pause` | action | no | Creates pause sentinel. |
+| `orchestrator_resume` | action | no | Clears pause sentinel. |
+| `worker_start` | action | no | Starts one lane worker daemon. |
+| `worker_status` | query | yes | Inspects worker runtime state and health metadata. |
+| `worker_event_history` | query | yes | Reads worker JSONL event history. |
+| `worker_stop` | action | no | Stops worker daemon. |
+| `worker_resume` | action | no | Resumes stopped worker daemon. |
+| `worker_start_all` | action | no | Starts multiple worker daemons. |
+| `run_structured_turn` | action | no | Executes a synchronous backend turn; may spend tokens or mutate external runtime state. |
+| `orchestrator_single_cycle` | action | no | Runs one full dispatch/poll/intake/verify cycle. |
+| `dispatch_lane_work` | action | no | Mutates lane dispatch parameters for future cycles. |
+| `list_available_backends` | query | yes | Reads registered backend catalog. |
+| `record_artifact` | action | no | Indexes artifact content into sidecar FTS store. |
+| `search_artifacts` | generator | yes | Returns ranked snippets from indexed artifacts. |
+| `get_artifact_source` | query | yes | Reads stored artifact record. |
+| `get_artifact_terms` | generator | yes | Derives suggested query terms from indexed artifact chunks. |
+| `list_artifact_sources` | query | yes | Lists indexed artifact metadata. |
+| `purge_artifacts` | action | no | Deletes stored artifact rows and FTS chunks. |
+| `search_handoff` | generator | yes | Returns ranked snippets over handoff FTS tables. |
+| `get_metrics_summary` | generator | yes | Derived metrics snapshot across lanes, retrieval, and context pressure. |
 
-- `record_review_finding`
-- `update_review_finding`
-- `reopen_review_finding`
-- `list_review_findings`
-- `get_review_finding`
-- `get_review_findings_summary`
-- `reconcile_review_findings`
+Retry guidance:
 
-Lifecycle:
+- Retry `query` and pure `generator` surfaces when the failure is transport-level, timeout-based, or due to a transient read lock.
+- Do not auto-retry `action` surfaces unless the caller can prove the operation is safe to repeat.
+- Treat `generate_current_task_md` and `reconcile_review_findings(apply=true)` as write-affecting surfaces even though they derive output from current state.
 
-- `orchestrator_start` (with optional `model`, `backend`)
-- `orchestrator_status`
-- `orchestrator_stop`
-- `orchestrator_pause`
-- `orchestrator_resume`
-- `orchestrator_single_cycle`
-- `worker_start` (with optional `model`, `backend`, `reasoning_effort`)
-- `worker_status`
-- `worker_stop`
-- `worker_resume`
-- `worker_event_history`
-- `worker_start_all` (with optional `model`, `backend`)
-- `run_structured_turn`
-- `dispatch_lane_work` (new: assign `model`, `backend`, `reasoning_effort` to a lane)
-- `list_available_backends` (new: list registered execution backends)
-- `handoff_close_check`
-- `generate_current_task_md`
-- `export_handoff_state`
-- `import_handoff_state`
-- `archive_task_state`
-- `switch_task`
-- `get_handoff_dashboard`
+## MCP Troubleshooting Ladder
 
-Plan cursors:
+### 1. Startup Failure
 
-- `get_plan_cursor`
-- `list_plan_cursors`
-- `upsert_plan_cursor`
+Symptoms:
 
-Artifact retrieval sidecar:
+- `agent-handoff-mcp` binary not found
+- import or launcher failure
+- wrong `--workspace-root` / `--state-dir`
+- missing `.task-state` or unwritable `CURRENT_TASK.md`
 
-- `record_artifact`
-- `search_artifacts`
-- `get_artifact_source`
-- `list_artifact_sources`
-- `purge_artifacts`
-- `get_artifact_terms`
+Checks:
 
-Structured handoff search:
+```bash
+agent-handoff-mcp --workspace-root /path/to/repo doctor
+python3 -m agent_handoff_mcp --workspace-root /path/to/repo doctor
+ls -ld /path/to/repo/.task-state /path/to/repo/.task-state/exports
+```
 
-- `search_handoff`
+Recovery:
+
+- fix the executable or `PYTHONPATH`
+- point the client at the real orchestrator root
+- create or repair the workspace-owned state directories
+
+### 2. Capability Discovery Failure
+
+Symptoms:
+
+- tool appears in docs but not in the client
+- wrapper or skill references stale tool names
+- adapter launches the wrong server entrypoint
+
+Checks:
+
+```bash
+python3 - <<'PY'
+from agent_handoff_mcp.api import TOOL_DESCRIPTIONS
+print(len(TOOL_DESCRIPTIONS))
+print(sorted(TOOL_DESCRIPTIONS))
+PY
+```
+
+Recovery:
+
+- treat `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py` as the live source of truth
+- update stale docs, skills, or wrappers in the same slice
+- prefer minimal valid payloads when a write bounces on signature drift
+
+### 3. Runtime Execution Failure
+
+Symptoms:
+
+- optimistic revision mismatch
+- SQLite lock or FTS5 errors
+- daemon start/stop/resume fails
+- lane-intake or lane worker actions leave stale runtime state
+
+Checks:
+
+```bash
+agent-handoff-mcp --workspace-root /path/to/repo doctor
+agent-handoff-mcp --workspace-root /path/to/repo orchestrator-status
+agent-handoff-mcp --workspace-root /path/to/repo worker-status --lane-id <lane>
+```
+
+Recovery:
+
+- refresh the expected revision before retrying write operations
+- treat FTS5 errors as environment/runtime issues first, not search-contract bugs
+- use the daemon lifecycle skill or Make targets before manual lock cleanup
+
+### 4. Evidence-Write Failure
+
+Symptoms:
+
+- a decision, finding, or test write is described in prose but not persisted
+- `CURRENT_TASK.md` is out of sync with handoff state
+- review close checks fail because fresh verification evidence is missing
+
+Checks:
+
+```bash
+agent-handoff-mcp --workspace-root /path/to/repo doctor
+agent-handoff-mcp --workspace-root /path/to/repo state
+agent-handoff-mcp --workspace-root /path/to/repo review-list
+```
+
+Recovery:
+
+- reissue the write with the live signature and minimal valid payload
+- record verification with `record_test_result` instead of prose-only rationale
+- regenerate `CURRENT_TASK.md` after decision writes when the workflow requires it
 
 ## Structured Handoff Search (`search_handoff`)
 

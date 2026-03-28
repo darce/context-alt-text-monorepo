@@ -4,6 +4,8 @@
 
 .PHONY: lane-reset lane-refresh lane-clean lane-close lane-prune lane-path lane-commits lane-intake
 
+POST_INTAKE_CHECK_CMD ?= $(MAKE) --no-print-directory check-all
+
 lane-reset: lane-guard
 	@if [ -z "$(REF)" ]; then \
 		echo "REF is required."; \
@@ -233,6 +235,12 @@ lane-intake: lane-guard lane-orchestrator-guard
 		git log --oneline --reverse HEAD..$(LANE_BRANCH); \
 		echo ""; \
 		echo "[dry-run] create scratch worktree, cherry-pick $$COMMITS there, verify file scope against lane-owned paths, run lane-local verification, then fast-forward merge into $(ORCHESTRATOR_BRANCH)"; \
+		echo "[dry-run] preserve CURRENT_TASK.md regeneration via lane-upsert and verify CURRENT_TASK sync with $(MCP_CMD) handoff-close-check"; \
+		if [ "$(SKIP_POST_INTAKE)" = "1" ]; then \
+			echo "[dry-run] skip post-intake cross-lane verification because SKIP_POST_INTAKE=1"; \
+		else \
+			echo "[dry-run] run post-intake verification from orchestrator root: $(POST_INTAKE_CHECK_CMD)"; \
+		fi; \
 	else \
 		TMP_PARENT="$$(mktemp -d "$${TMPDIR:-/tmp}/lane-intake-$(LANE)-XXXXXX")"; \
 		SCRATCH_WORKTREE="$$TMP_PARENT/repo"; \
@@ -299,5 +307,20 @@ lane-intake: lane-guard lane-orchestrator-guard
 		fi; \
 		git merge --ff-only "$$SCRATCH_BRANCH"; \
 		$(MCP_CMD) $(MCP_STATE_ARGS) lane-upsert --task-ref "$(TASK)" --lane-id "$(LANE)" --worktree-path "$(LANE_WORKTREE)" --branch "$(LANE_BRANCH)" --status merged --notes "Merged into $(ORCHESTRATOR_BRANCH) via scratch intake."; \
+		CURRENT_TASK_PATH="$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md"; \
+		if ! $(MCP_CMD) $(MCP_STATE_ARGS) handoff-close-check --task-ref "$(TASK)" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("checks", {}).get("current_task_sync", {}).get("is_in_sync") else 1)'; then \
+			echo "WARNING: lane-upsert completed but handoff close-check reported CURRENT_TASK.md out of sync at $$CURRENT_TASK_PATH."; \
+			$(MCP_CMD) $(MCP_STATE_ARGS) blocker --operation add --description "CURRENT_TASK.md sync verification failed after lane $(LANE) intake for task $(TASK)."; \
+			exit 1; \
+		fi; \
+		if [ "$(SKIP_POST_INTAKE)" = "1" ]; then \
+			echo "WARNING: SKIP_POST_INTAKE=1 — skipping post-intake cross-lane verification."; \
+		else \
+			if ! ( cd "$(ORCHESTRATOR_ROOT)" && sh -lc '$(POST_INTAKE_CHECK_CMD)' ); then \
+				echo "WARNING: post-intake verification failed after merging lane $(LANE). The merge was kept; blocker recorded in MCP."; \
+				$(MCP_CMD) $(MCP_STATE_ARGS) blocker --operation add --description "Post-intake verification failed after lane $(LANE) intake for task $(TASK). Rerun $(POST_INTAKE_CHECK_CMD) from the orchestrator root and fix the regression before further intake."; \
+				exit 1; \
+			fi; \
+		fi; \
 		echo "Lane $(LANE) intake completed cleanly via scratch worktree."; \
 	fi

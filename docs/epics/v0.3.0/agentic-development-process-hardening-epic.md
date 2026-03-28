@@ -235,9 +235,9 @@ Exit criteria:
 - branch review and testing guidance require runtime-parity checks for every boundary class known to diverge in this repo
 - at least one deterministic verification path exists for each high-risk boundary failure mode: malformed payloads, missing runtime load path, header/protocol drift, and masked upstream failure
 
-### Phase 4: MCP and Tooling Automation -- in-progress
+### Phase 4: MCP and Tooling Automation -- complete
 
-> **Status**: in-progress
+> **Status**: complete
 > **Task plans**: `docs/tasks/11.0/mcp-and-tooling-automation-task-plan.md`, `docs/tasks/12.0/slice-review-packet-and-cross-agent-review-task-plan.md`
 
 **Goal**: Move the highest-value process rules out of memory and into tools, templates, and automated review surfaces.
@@ -284,9 +284,9 @@ Exit criteria:
 - context assignment uses less prompt space for upstream references because external docs are retrieved through targeted `ctx7` or MCP reads instead of bulk-ingested prose
 - the default handoff payload for a task stays compact enough to load quickly because archival detail is summarized or retrieved only when needed
 
-### Phase 5: Evaluation and Release Audit Layer -- in-progress
+### Phase 5: Evaluation and Release Audit Layer -- complete
 
-> **Status**: in-progress
+> **Status**: complete
 > **Task plans**: `docs/tasks/11.0/evaluation-and-release-audit-layer-task-plan.md`
 
 **Goal**: Add a repeatable process-evaluation layer so the repo can measure whether the hardening work is improving execution quality.
@@ -393,7 +393,7 @@ Exit criteria:
 - [x] Add fresh-evidence requirements to `branch-review-python.md` parallel to TS and PHP modules.
 - [x] Add Hypothesis property-based tests for FTS5 query-input sanitization in `packages/agent-handoff-mcp/tests/`.
 
-## Phase 4: MCP and Tooling Automation -- in-progress
+## Phase 4: MCP and Tooling Automation -- complete
 
 - [x] Define which startup, review, and closeout checks can move into MCP helpers or wrappers.
 - [x] Define which repo capabilities should be modeled as MCP actions, read-only resources, or reusable prompt templates.
@@ -409,7 +409,7 @@ Exit criteria:
 - [x] Decide what repo-native branch and worktree gate should exist before review or merge.
 - [x] Add feasible CI and scripted guards for doc, contract, and runtime evidence.
 - [x] Reduce policy duplication across skills and README surfaces.
-- [ ] Add packet-backed latest-slice review intake so cross-agent review can use MCP-recorded slice scope instead of branch-diff inference.
+- [x] Add packet-backed latest-slice review intake so cross-agent review can use MCP-recorded slice scope instead of branch-diff inference.
 - [x] Keep `agent-handoff-mcp` contract and operator docs synchronized.
 
 ## Phase 5: Evaluation and Release Audit Layer -- complete

@@ -33,7 +33,7 @@ list-tasks:
 
 # Validate that active handoff state is ready to close
 handoff-close-check:
-	@$(MCP_CMD) $(MCP_STATE_ARGS) handoff-close-check --enforce
+	@$(MCP_CMD) $(MCP_STATE_ARGS) handoff-close-check --enforce --current-commit-sha "$$(git rev-parse HEAD)"
 
 review-ready:
 	@if [ -z "$(TASK)" ]; then \

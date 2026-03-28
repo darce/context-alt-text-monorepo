@@ -120,6 +120,7 @@ Surface classes:
 | `list_artifact_sources` | query | yes | Lists indexed artifact metadata. |
 | `purge_artifacts` | action | no | Deletes stored artifact rows and FTS chunks. |
 | `search_handoff` | generator | yes | Returns ranked snippets over handoff FTS tables. |
+| `get_latest_slice_review_packet` | query | yes | Resolves the latest `slice_complete_*` decision into a deterministic review packet. |
 | `get_metrics_summary` | generator | yes | Derived metrics snapshot across lanes, retrieval, context pressure, process-health signals, and handoff-memory health. |
 
 ### `get_metrics_summary` Snapshot Shape
@@ -446,7 +447,8 @@ agent-handoff-mcp --workspace-root <repo> handoff-search \
 
 ## Request Shape Notes
 
-- Write tools target the active task only.
+- Most write tools accept optional `task_ref`. When omitted, they target the active task as a fallback.
+- In concurrent or multi-task workflows, pass `task_ref` explicitly on writes instead of relying on `switch_task(...)` plus ambient active-state routing.
 - Live MCP tool signatures are authoritative over examples, templates, or prior-session memory. Prefer the minimal valid payload for write operations unless a richer payload is required by the current signature.
 - If a write call fails validation, treat it as signature drift. Retry once with the minimal payload accepted by the live signature, then update the stale contract/rule/template in the same slice so the bounce does not recur.
 - Slice-completion decisions must use `decision="slice_complete_<short_label>"` and a structured rationale with the four headings `## Changes`, `## Verification`, `## Schema / Contract Changes`, and `## Open Threads`.
@@ -456,6 +458,9 @@ agent-handoff-mcp --workspace-root <repo> handoff-search \
 - For in-place updates to the _current_ task (status, objective change), use `set_handoff_state(...)` directly.
 - `set_handoff_state` requires `expected_revision` for updates.
 - The shared actor shape may include `lane_id` in addition to `agent`, `branch`, and `commit_sha`. When present, lane-aware write tools persist it on decisions, tests, blockers, actions, and review findings.
+- `build_write_actor(agent=None, branch=None, commit_sha=None, lane_id=None) -> WriteActor` is the public helper for constructing that normalized actor payload before passing it into write tools.
+- `record_decision`, `record_test_result`, `report_blocker`, and `update_next_actions` now accept optional `task_ref`, matching the existing cross-task targeting pattern already used by the review-finding and lane-message/report surfaces.
+- Write responses for `record_decision`, `record_test_result`, `report_blocker`, and `update_next_actions` echo the resolved `task_ref`. Treat that field as the authoritative write target in multi-agent flows.
 - `record_review_finding` accepts optional `details={ line_start?, line_end?, fix? }`.
 - `record_review_finding` also accepts optional `review_mode` with values `branch` or `release_audit`.
 - `update_review_finding` accepts exactly one of `finding_id` or `finding_db_id`.
@@ -464,6 +469,8 @@ agent-handoff-mcp --workspace-root <repo> handoff-search \
 - `list_review_findings` accepts optional `review_mode`; `branch` includes rows where `review_mode IS NULL` for backward compatibility.
 - `get_review_findings_summary` accepts the same optional `review_mode` filter and scopes counts/top lists to that mode.
 - `handoff_close_check` accepts optional `require_fresh_tests` and `current_commit_sha`. When the flag is enabled, at least one `verified_tests` row must exist for the current commit or the close check fails with a structured stale-test error.
+- When `current_commit_sha` is provided, `handoff_close_check` also verifies that at least one structured `slice_complete_*` decision exists for that commit. Treat missing current-commit slice summaries as a close/review gate failure, including for docs-only slices.
+- `record_test_result.result` is a concise verification-summary field, not a full log sink. Keep short proof lines such as `55 passed in 7.02s`, `diff-check clean`, or `REVIEW READY: READY`; store longer output in artifacts/files instead of the `verified_tests` table.
 - `upsert_plan_cursor` accepts optional `require_clean_slice`. When enabled, the update fails unless there are no open HIGH findings in the relevant lane/task scope and at least one recent `verified_tests` row exists since the cursor's prior update time.
 - `import_handoff_state(mode="replace_task")` rejects destructive clears unless `allow_destructive_clear=true`.
 - `upsert_worktree_lane` is the canonical way to register a delegated worker lane with `lane_id`, `worktree_path`, `branch`, ownership, and status.
@@ -474,6 +481,8 @@ agent-handoff-mcp --workspace-root <repo> handoff-search \
 - `get_lane_activity` is the lane-scoped query surface for decisions, tests, blockers, actions, findings, worker reports, and lane messages.
 - `get_lane_activity(format="full")` preserves the existing detailed payload.
 - `get_lane_activity(format="archival")` returns a compact `summary` object with decision count plus latest rationale excerpt, finding counts by status, latest worker merge-ready state, message counts by direction/status, and verified-test totals with pass rate.
+- `get_latest_slice_review_packet` resolves the latest `slice_complete_*` decision into a deterministic review packet using MCP state instead of current branch diff. The packet currently includes `slice_label`, `decision_id`, `decision`, `session`, `lane_id`, `plan_item_id`, `changed_files`, `test_commands`, `contract_files`, `review_kind`, `review_guide_path`, `scope_source="slice_packet"`, and a rationale excerpt.
+- `get_latest_slice_review_packet(review_kind="planning")` only matches docs-only slices (`changed_files` all under `docs/`). Mixed doc-plus-code slices resolve to `branch`.
 - `worker_status` should be treated as an inspection tool, not a boolean health check. Use `running`, `worker_state`, `attention_required`, and `state_summary` together. Current durable worker states include `idle`, `waiting_for_orchestrator`, `handoff_failed`, `paused`, and `stopped`.
 - `worker_status` also exposes hardening signals: `exhaustion_streak` (consecutive non-converged cycles), `cumulative_tokens` (session token spend), `health` (`healthy` / `degraded` / `unhealthy`), and a `context_utilization` sub-dict with `utilization_ratio`, `domain_signal_ratio`, and `pressure` (`normal` / `elevated` / `high`). Use these alongside `attention_required` to assess lane health.
 - `worker_status` and dashboard surfaces should be treated as the authoritative runtime view for model size, requested/effective reasoning effort, token burn, and context pressure. Use them before redispatching or promoting a lane.

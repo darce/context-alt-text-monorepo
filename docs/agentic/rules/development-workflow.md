@@ -14,7 +14,7 @@ For every unit of work (feature slice, bug fix, refactor):
 4. If remote dependencies exist, add a provider interface + mock
 5. Implement minimal production code to pass tests (Red -> Green -> Refactor)
 6. Refactor for clarity while tests stay green
-7. Update UML diagrams if architecture changed
+7. Run the [UML Change Checklist](uml-change-checklist.md) if architecture changed
 8. Security pass: nonce/capability checks, escape/sanitize
 9. Accessibility pass: keyboard navigation, ARIA labels
 10. Run full test suite locally before committing
@@ -102,6 +102,20 @@ If a change within one of those stacks modifies a shared type, endpoint signatur
 5. Record the change with evidence. Use `record_decision` with the relevant decision template from [../templates/DECISION_CONTRACT_CHANGE.template.md](../templates/DECISION_CONTRACT_CHANGE.template.md), [../templates/DECISION_BREAKING_CHANGE.template.md](../templates/DECISION_BREAKING_CHANGE.template.md), or [../templates/DECISION_CROSS_LANE.template.md](../templates/DECISION_CROSS_LANE.template.md).
 6. Notify affected lanes or owners. If another lane or stack depends on the new contract shape, send a lane message or dispatch update with the contract path, changed surface, and required follow-up.
 
+## Architecture Diagram Change Protocol
+
+Follow the [UML Change Checklist](uml-change-checklist.md) whenever a slice changes architecture that is represented in `docs/agentic/diagrams/`.
+
+Trigger heuristics:
+
+- `docs/agentic/diagrams/`
+- `docs/agentic/maps/`
+- `apps/prototype-description-service/recognition/`
+- `apps/prototype-wp-alt-context/src/api/`
+- `apps/prototype-wp-alt-context/js/admin/`
+
+If a change modifies controller families, route namespaces, page inventory, workflow sequencing, or state-machine structure, update or explicitly confirm the relevant Mermaid diagrams in the same slice.
+
 ---
 
 ## Orchestrated Task Execution
@@ -183,7 +197,7 @@ refactor/clustering-pipeline
 
 ## Session State with MCP Handoff + CURRENT_TASK.md
 
-For multi-session tasks, use MCP handoff state tools as the source of truth and treat `CURRENT_TASK.md` as a generated view.
+For all repo changes, use MCP handoff state tools as the source of truth and treat `CURRENT_TASK.md` as a generated view. A `docs/tasks/` plan is optional; an MCP handoff task is not.
 
 Source-of-truth policy:
 
@@ -193,25 +207,25 @@ Source-of-truth policy:
 
 **When to use:**
 
+- Every change that edits repo files
 - Tasks spanning multiple sessions (> 1 hour of work)
 - Complex debugging where findings need to be preserved
 - Multi-phase implementations with dependencies between phases
 
 **When NOT to use:**
 
-- Single-session tasks that complete quickly
-- Simple bug fixes or documentation updates
-- Tasks fully tracked by a `docs/tasks/` plan document
+- Only when MCP tooling is unavailable; treat that as a blocker and fall back temporarily to generated markdown until MCP access is restored
 
 **Workflow:**
 
 1. Initialize or update active task via MCP `set_handoff_state`.
 2. Record session outcomes via MCP tools (`record_decision`, `update_next_actions`, `record_test_result`, `report_blocker`).
 3. Read compact snapshot at session start via `get_handoff_state`.
-4. Before close/final handoff, run `handoff_close_check(enforce=True)` and resolve all failures.
-5. Before requesting branch review, run `make review-ready` from the current worktree and resolve all reported NOT READY reasons.
-6. Regenerate markdown view on demand via `generate_current_task_md`.
-7. Use template fallback only when MCP tooling is unavailable.
+4. Record a structured `slice_complete_<short_label>` decision for every completed slice, including docs-only or no-plan slices.
+5. Before close/final handoff, run `handoff_close_check(enforce=True, current_commit_sha=<HEAD>)` and resolve all failures.
+6. Before requesting branch review, run `make review-ready` from the current worktree and resolve all reported NOT READY reasons.
+7. Regenerate markdown view on demand via `generate_current_task_md`.
+8. Use template fallback only when MCP tooling is unavailable.
 
 **Template location:** [templates/CURRENT_TASK.template.md](../templates/CURRENT_TASK.template.md)
 

@@ -210,7 +210,7 @@ If tools don't appear in VS Code:
 
 Handoff guard commands:
 
-- `make handoff-close-check` runs `handoff_close_check(enforce=True)` for the active task.
+- `make handoff-close-check` runs `handoff_close_check(enforce=True, current_commit_sha=<HEAD>)` for the active task and fails if the current commit is missing a structured `slice_complete_*` summary.
 - `make handoff-integrity-check` runs the CLI parser/lifecycle guard used by CI.
 
 ### Phase 5 Lifecycle
@@ -241,7 +241,7 @@ Phase 5 (Verification & Handoff) follows implementation:
 - `update_review_finding` accepts `finding_id` (preferred logical key) or legacy `finding_db_id`; optional `resolution_notes` is required for `wontfix` / `deferred`, and `reopen_reason` is required for non-open -> `open` transitions.
 - `reopen_review_finding` is a thin wrapper over `update_review_finding(status="open", ...)` that always requires a reopen rationale.
 - `reconcile_review_findings` validates state integrity (duplicates, done+open mismatch, stale open findings, provenance completeness, reopen metadata coherence) and can apply safe dedupe fixes.
-- `handoff_close_check` runs closure gates, including write-provenance checks, and can fail hard with `enforce=True`.
+- `handoff_close_check` runs closure gates, including write-provenance checks and current-commit slice-summary presence, and can fail hard with `enforce=True`.
 - Review finding write operations auto-refresh `CURRENT_TASK.md`.
 - `CURRENT_TASK.md` is a generated view only; if drift is detected, regenerate from DB state.
 - For finding verification/history, use `get_review_findings_summary` or `list_review_findings` instead of direct SQLite queries.

@@ -2,50 +2,53 @@
 title: Context Alt Text - System Architecture Overview
 ---
 flowchart TB
-    %% =======================================================================
-    %% HIGH-LEVEL SYSTEM ARCHITECTURE
-    %% Shows interaction between WordPress Plugin and Recognition Service
-    %% Updated: 2025-06-15
-    %% =======================================================================
+    %% Updated: 2026-03-28
 
     subgraph WordPress["WordPress Plugin (prototype-wp-alt-context)"]
         subgraph ReactUI["React Admin UI"]
             Dashboard["DashboardPage"]
-            Workbench["WorkbenchPage<br/>Media + Clustering"]
-            Roster["RosterPage<br/>Identity Management"]
+            Workbench["WorkbenchPage<br/>scan + confirm"]
+            Roster["RosterPage<br/>entries + clusters"]
+            Retention["RetentionPage<br/>governance + audit"]
             ConflictInbox["ConflictInbox"]
             DeadLetterPanel["DeadLetterPanel"]
             SyncHealth["SyncStatusIndicator"]
         end
 
-        subgraph Hooks["React Hooks"]
-            useRecognition["useRecognitionHooks"]
-            useJobHistory["useJobProgressStream"]
-            useMediaIdentities["useMediaIdentities"]
-            useJobCoord["useJobCoordination"]
-            useSyncStatus["useSyncStatus"]
-            useConflicts["useConflicts / useConflictDetail"]
-            useOutbox["useOutboxOperations"]
+        subgraph Hooks["React Hooks / Page State"]
+            JobHistory["useRecognitionJobHistory"]
+            WorkbenchMedia["useWorkbenchMedia"]
+            Selection["useMediaSelectionState"]
+            Filters["useWorkbenchFilters"]
+            JobState["useJobStateMachine"]
+            SyncStatus["useSyncStatus"]
+            Conflicts["useConflicts"]
+            OutboxOps["useOutboxOperations"]
+            RetentionState["useRetentionPageState"]
+            RosterHooks["useRosterEntries + cluster hooks"]
         end
 
         subgraph ApiClient["TypeScript API Client"]
-            scanApi["scanApi"]
-            clusterApi["clusterApi"]
-            identityApi["identityApi"]
-            syncApi["syncApi"]
-            conflictApi["conflictApi"]
+            ScanApi["scanApi"]
+            ClusterApi["clusterApi + clusterApiMutations"]
+            IdentityApi["identityApi"]
+            ConflictApi["conflictApi"]
+            SyncApi["syncApi"]
+            RetentionApi["retentionApi"]
+            RosterApi["rosterApi"]
         end
 
         subgraph PHPLayer["PHP REST Layer"]
-            ApiClass["Api (class-api.php)<br/>Route Registration"]
-            RecognitionCtrl["RecognitionController<br/>Recognition proxy"]
-            ConflictCtrl["ConflictController<br/>Conflicts + dead-letter"]
-            SyncCtrl["SyncStatusController<br/>Sync health"]
+            RecognitionCtrl["RecognitionController"]
+            BaseProxy["AbstractRecognitionProxyController"]
+            ConflictCtrl["ConflictController"]
+            SyncCtrl["SyncStatusController"]
+            RetentionCtrl["RetentionController"]
         end
 
         subgraph SovereignSync["Sovereign Sync Layer"]
             Projector["SnapshotProjector"]
-            OutboxDrain["OutboxDrain +<br/>OutboxDispatcher"]
+            OutboxDrain["OutboxDrain + OutboxDispatcher"]
             ConflictSvc["ConflictResolutionService"]
             Sequencer["CrossPlaneSequencer"]
             SyncStateRepo["SyncStateRepository"]
@@ -62,35 +65,27 @@ flowchart TB
 
     subgraph Backend["Recognition Service (prototype-description-service)"]
         subgraph API["FastAPI Routers"]
-            AnalyzeRouter["POST /analyze<br/>GET /jobs/{id}"]
-            ClusterRouter["POST /clustering/jobs<br/>GET /clusters<br/>PATCH /clusters/{id}<br/>POST /merge, /split"]
-            SuggestionRouter["GET /suggestions<br/>POST accept/reject"]
-            SnapshotRouter["GET /snapshot/{tenant}"]
-            CurationRouter["POST /curation/sync<br/>POST /topology/*"]
+            AnalyzeRouter["/analyze + /jobs/*"]
+            ClusterRouter["/clusters + /clustering/jobs"]
+            SuggestionRouter["/suggestions + /identities/*/suggestions"]
+            SnapshotRouter["/snapshot/{tenant}"]
+            CurationRouter["/curation/sync + /topology/*"]
+            RetentionRouter["/retention/policy + /retention/audit + /retention/export + /retention/purge + /retention/import"]
         end
 
         subgraph Orchestration["Orchestration"]
-            ScanService["ScanService<br/>Detection + Embedding"]
-            ClusterService["ClusterService<br/>Clustering Workflow"]
-            JobService["JobService<br/>Job Tracking"]
-        end
-
-        subgraph Discovery["Discovery Layer"]
-            RepDiscovery["RepresentativeDiscovery"]
-            CentroidDiscovery["CentroidDiscovery"]
-            GraphDiscovery["GraphDiscovery"]
-        end
-
-        subgraph Assignment["Assignment Layer"]
-            Gate["AssignmentGate<br/>Quality Checks"]
-            Writer["AssignmentWriter<br/>Persistence"]
-            Suggestions["SuggestionService"]
+            ScanService["ScanService"]
+            ClusterService["ClusterService"]
+            JobService["JobService"]
+            SuggestionSvc["SuggestionService"]
+            RetentionSvc["Retention application services"]
         end
 
         subgraph Infra["Infrastructure"]
-            EmbeddingService["InsightFaceAdapter<br/>Detector + Generator"]
+            EmbeddingService["InsightFaceAdapter"]
             ClusterRepo["ClusterRepository"]
             MemberRepo["MemberRepository"]
+            RetentionRepo["Tenant / audit repositories"]
         end
     end
 
@@ -99,77 +94,71 @@ flowchart TB
         RepTable["ClusterRepresentative"]
         SuggestionTable["IdentitySuggestion"]
         JobTables["ScanJob<br/>ClusteringJob"]
+        TenantTables["Tenant<br/>ApiKey<br/>Retention audit state"]
         CentroidMV["mv_identity_cluster_centroids"]
     end
 
-    %% WordPress internal flow (UI)
     ReactUI --> Hooks
     Hooks --> ApiClient
-    ApiClient --> ApiClass
-    ApiClass --> RecognitionCtrl
-    ApiClass --> ConflictCtrl
-    ApiClass --> SyncCtrl
+    ApiClient --> RecognitionCtrl
+    ApiClient --> ConflictCtrl
+    ApiClient --> SyncCtrl
+    ApiClient --> RetentionCtrl
 
-    %% Cross-boundary: recognition proxy
-    RecognitionCtrl -->|"HTTP + X-API-Key<br/>tenant_id (query/body)"| API
+    RecognitionCtrl --> BaseProxy
+    ConflictCtrl --> BaseProxy
+    SyncCtrl --> BaseProxy
+    RetentionCtrl --> BaseProxy
+    BaseProxy -->|"HTTP + API key + tenant headers"| API
 
-    %% Cross-boundary: snapshot pull (WP pulls from backend)
     SnapshotRouter -->|"JSON snapshot"| Projector
-    Projector -->|"Atomic projection"| WPCluster
-    Projector -->|"Atomic projection"| WPMembers
-    Projector -->|"Conflict detection"| WPConflicts
-    Projector -->|"Update metrics"| WPSyncState
+    Projector --> WPCluster
+    Projector --> WPMembers
+    Projector --> WPConflicts
+    Projector --> WPSyncState
 
-    %% Cross-boundary: outbox push (WP pushes to backend)
-    OutboxDrain -->|"Curation ops"| CurationRouter
-    OutboxDrain -->|"Topology ops"| CurationRouter
-    WPOutbox -->|"Drain cycle"| OutboxDrain
-    OutboxDrain -->|"Update metrics"| SyncStateRepo
+    WPOutbox --> OutboxDrain
+    OutboxDrain --> CurationRouter
+    OutboxDrain --> SyncStateRepo
     SyncStateRepo --> WPSyncState
 
-    %% Conflict resolution
     ConflictCtrl --> ConflictSvc
     ConflictSvc --> WPCluster
     ConflictSvc --> WPConflicts
-    ConflictSvc -->|"Re-enqueue"| WPOutbox
-
-    %% Sync health and sovereign UI flows
-    SyncCtrl --> SyncStateRepo
-    SyncHealth --> useSyncStatus
-    ConflictInbox --> useConflicts
-    DeadLetterPanel --> useOutbox
-    useSyncStatus --> syncApi
-    useConflicts --> conflictApi
-    useOutbox --> conflictApi
-
-    %% Sequencing
+    ConflictSvc --> WPOutbox
     Sequencer --> OutboxDrain
 
-    %% Backend flow
+    SyncHealth --> SyncStatus
+    ConflictInbox --> Conflicts
+    DeadLetterPanel --> OutboxOps
+    Retention --> RetentionState
+
+    SyncStatus --> SyncApi
+    Conflicts --> ConflictApi
+    OutboxOps --> ConflictApi
+    RetentionState --> RetentionApi
+    WorkbenchMedia --> IdentityApi
+    JobState --> ScanApi
+    JobState --> ClusterApi
+    RosterHooks --> RosterApi
+
     API --> Orchestration
-    Orchestration --> Discovery
-    Discovery --> Gate
-    Gate --> Writer
-    Gate --> Suggestions
-
     Orchestration --> Infra
-    Writer --> ClusterRepo
-    Writer --> MemberRepo
-    Suggestions --> ClusterRepo
 
-    %% Database connections
+    ClusterService --> ClusterRepo
+    ClusterService --> MemberRepo
+    SuggestionSvc --> ClusterRepo
+    RetentionSvc --> RetentionRepo
+    JobService --> JobTables
     ClusterRepo --> IdentityTables
     ClusterRepo --> RepTable
     ClusterRepo --> CentroidMV
     MemberRepo --> IdentityTables
-    Suggestions --> SuggestionTable
-    JobService --> JobTables
+    SuggestionSvc --> SuggestionTable
+    RetentionRepo --> TenantTables
 
-    %% Styling (WCAG AA compliant)
     style WordPress fill:#e3f2fd,stroke:#0d47a1,stroke-width:2px,color:#0d47a1
     style Backend fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20
     style Database fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#e65100
-    style Discovery fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c
-    style Assignment fill:#fce4ec,stroke:#ad1457,color:#880e4f
     style SovereignSync fill:#fff9c4,stroke:#f9a825,stroke-width:2px,color:#f57f17
     style WPData fill:#e0f7fa,stroke:#00838f,color:#006064

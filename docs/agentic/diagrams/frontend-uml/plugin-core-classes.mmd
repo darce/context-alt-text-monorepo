@@ -1,5 +1,5 @@
 classDiagram
-%% Admin SPA modules (React + WP REST config)
+%% Updated: 2026-03-28
 
 class AltContextAdminConfig {
   <<window.AltContextAdmin>>
@@ -7,6 +7,7 @@ class AltContextAdminConfig {
   +endpoints: map
   +tenant_id?: string
   +devMode?: boolean | string | number
+  +recognitionUrlFallback?: boolean
 }
 
 class ApiConfig {
@@ -21,44 +22,40 @@ class HttpClient {
 }
 
 class WorkbenchPage {
-  +tabs: ["scan","batch","confirm"]
-  +useRecognitionJobHistory()
-  +useMediaSelectionState()
-  +useWorkbenchMedia()
-  +useRecognitionHooks()
+  +tabs: ["scan","confirm"]
+  +uses WorkbenchProvider
+}
+
+class WorkbenchContext {
+  +activeSection: WorkbenchTab
+  +activeOverlay: WorkbenchOverlay
+  +jobHistory state
+  +mediaQuery state
+  +scan / cluster orchestration
 }
 
 class WorkbenchHooks {
-  +useWorkbenchMedia(params)
+  +useRecognitionJobHistory()
   +useMediaSelectionState()
   +useWorkbenchFilters()
-  +useRecognitionJobHistory()
-}
-
-class RecognitionHooks {
-  +useScanIdentities()
-  +useScanStatus()
-  +useMultiScanStatus()
-  +useClusterIdentities()
-  +useRecognitionClusters()
-  +useRecognitionCluster()
-  +useTrainingStage()
-}
-
-class ClusterEditingHooks {
-  +useClusterEditState()
-  +useClusterMutations()
-  +useClusterSuggestions()
+  +useWorkbenchMedia(params)
+  +useJobStateMachine(opts)
+  +useTabParam()
+  +useOverlayParam()
 }
 
 class WorkbenchComponents {
-  +MediaSelection
-  +TrainingStageBanner
-  +BatchPanel
-  +ConfirmPanel
-  +IdentityClusterList
-  +SuggestionReviewPanel
-  +MergeUndoBanner
+  +ScanTabContent
+  +ConfirmTabContent
+  +SyncStatusIndicator
+  +ConflictInbox
+  +DeadLetterPanel
+}
+
+class RetentionPage {
+  +useRetentionPageState()
+  +RetentionDialogs
+  +AuditTimeline
 }
 
 class RosterPage {
@@ -77,13 +74,10 @@ class RosterComponents {
 }
 
 AltContextAdminConfig --> ApiConfig : localized
-ApiConfig --> HttpClient : supplies endpoints/nonce
-WorkbenchPage --> WorkbenchHooks
-WorkbenchPage --> RecognitionHooks
-WorkbenchPage --> ClusterEditingHooks
+ApiConfig --> HttpClient : supplies endpoints and nonce
+WorkbenchPage --> WorkbenchContext
+WorkbenchContext --> WorkbenchHooks
 WorkbenchPage --> WorkbenchComponents
-WorkbenchComponents --> ClusterEditingHooks
+RetentionPage --> HttpClient
 RosterPage --> RosterComponents
-RosterPage --> RecognitionHooks
-RosterComponents --> RecognitionHooks
 RosterComponents --> HttpClient

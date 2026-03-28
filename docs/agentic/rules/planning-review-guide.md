@@ -68,8 +68,20 @@ Required intake details:
 - current implementation anchors
 - completed slices or dependency state
 - expected review mode after implementation: ordinary branch review, specialized module review, or release-style audit
+- scope source: `slice_packet` when reviewing the latest completed planning slice, otherwise a direct doc/codebase review
 
 Avoid speculative review against broad repo context. If the plan cannot be evaluated from these surfaces, name the missing dependency as the finding.
+
+### Latest Planning Slice Review
+
+When the ask is "review the latest completed planning slice", prefer the MCP-backed slice packet over ad hoc git or chat archaeology:
+
+1. Request the latest slice packet with `review_kind="planning"`.
+2. Use packet `changed_files` as the planning review scope when the packet returns `scope_source="slice_packet"`.
+3. Confirm the packet is docs-only before treating it as a planning slice; mixed doc-plus-code slices should fall back to branch review.
+4. If no valid planning packet exists, say the review is using fallback scope instead of implying deterministic latest-slice coverage.
+
+Planning review is still a document-and-codebase review, but the packet-backed file set should define which planning surfaces belong to the latest completed slice.
 
 ---
 

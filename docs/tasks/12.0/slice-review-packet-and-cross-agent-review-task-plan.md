@@ -192,46 +192,46 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded the minimum authoritative rules, contracts, and handoff state before editing.
-- [ ] Confirmed whether external dependency context requires `ctx7`.
-- [ ] Recorded boundary ownership and compatibility expectations for the new review packet surface.
+- [x] Loaded the minimum authoritative rules, contracts, and handoff state before editing.
+- [x] Confirmed whether external dependency context requires `ctx7`.
+- [x] Recorded boundary ownership and compatibility expectations for the new review packet surface.
 
 ## Slice 1: Packet Contract and Derivation Rules
 
-- [ ] Defined the canonical slice review packet fields in the MCP contract doc.
-- [ ] Defined deterministic derivation order from slice decision, worker report, plan cursor, and tests.
-- [ ] Added focused derivation tests.
+- [x] Defined the canonical slice review packet fields in the MCP contract doc.
+- [x] Defined deterministic derivation order from slice decision, worker report, plan cursor, and tests.
+- [x] Added focused derivation tests.
 
 ## Slice 2: Latest Slice Review Packet Query
 
-- [ ] Added the MCP query/helper for latest slice packet lookup.
-- [ ] Exposed the query on the public MCP API surface.
-- [ ] Added tests for lane filtering, review-kind routing, and empty-state behavior.
+- [x] Added the MCP query/helper for latest slice packet lookup.
+- [x] Exposed the query on the public MCP API surface.
+- [x] Added tests for lane filtering, review-kind routing, and empty-state behavior.
 
 ## Slice 3: Packet-Backed Review Dispatch
 
-- [ ] Updated review tooling to prefer packet-backed file scope when requested.
-- [ ] Preserved explicit branch-diff fallback behavior.
-- [ ] Verified the correct review guide is selected for planning vs implementation slices.
+- [x] Updated review tooling to prefer packet-backed file scope when requested.
+- [x] Preserved explicit branch-diff fallback behavior.
+- [x] Verified the correct review guide is selected for planning vs implementation slices.
 
 ## Slice 4: Guidance and Completion Semantics
 
-- [ ] Updated branch review guidance to prefer packet-backed latest-slice review.
-- [ ] Updated planning review guidance to prefer packet-backed latest-slice review.
-- [ ] Aligned slice-completion instructions with the evidence required for packet derivation.
+- [x] Updated branch review guidance to prefer packet-backed latest-slice review.
+- [x] Updated planning review guidance to prefer packet-backed latest-slice review.
+- [x] Aligned slice-completion instructions with the evidence required for packet derivation.
 
 ## Review Readiness
 
-- [ ] No packet-backed review path depends on reconstructing slice scope from chat or commit memory alone.
-- [ ] Packet-backed review can explain whether its file scope came from MCP packet state or branch-diff fallback.
-- [ ] Handoff decision records the contract and verification changes for this review-intake improvement.
+- [x] No packet-backed review path depends on reconstructing slice scope from chat or commit memory alone.
+- [x] Packet-backed review can explain whether its file scope came from MCP packet state or branch-diff fallback.
+- [x] Handoff decision records the contract and verification changes for this review-intake improvement.
 
 ## Stretch Goals
 
-- [ ] Add adoption metrics for packet-backed review vs branch-diff fallback in ACE metrics after the base workflow lands.
+- [x] Add adoption metrics for packet-backed review vs branch-diff fallback in ACE metrics after the base workflow lands.
 
 ## Success Criteria
 
-- [ ] An agent can ask to review the latest completed implementation slice and receive the correct file set from MCP without manual cherry-picking.
-- [ ] An agent can ask to review the latest planning slice and be routed to the planning review guide with packet-backed scope.
-- [ ] Cross-agent review of the latest slice remains reliable even when the branch contains additional unrelated changes after the slice was completed.
+- [x] An agent can ask to review the latest completed implementation slice and receive the correct file set from MCP without manual cherry-picking.
+- [x] An agent can ask to review the latest planning slice and be routed to the planning review guide with packet-backed scope.
+- [x] Cross-agent review of the latest slice remains reliable even when the branch contains additional unrelated changes after the slice was completed.

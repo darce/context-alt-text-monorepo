@@ -68,7 +68,7 @@ Surface classes:
 | `upsert_worktree_lane` | action | no | Updates lane metadata and regenerates `CURRENT_TASK.md`. |
 | `close_worktree_lane` | action | no | Transitions lane status to merged or closed. |
 | `list_worktree_lanes` | query | yes | Lists registered lane rows. |
-| `get_lane_activity` | generator | yes | Aggregated lane summary across decisions, tests, blockers, and messages. |
+| `get_lane_activity` | generator | yes | Aggregated lane summary across decisions, tests, blockers, and messages; supports `format="archival"` for compact retention-friendly summaries. |
 | `list_next_actions` | query | yes | Lists canonical action rows. |
 | `record_decision` | action | no | Appends decision ledger state. |
 | `update_next_actions` | action | no | Creates or mutates action rows. |
@@ -105,7 +105,7 @@ Surface classes:
 | `orchestrator_resume` | action | no | Clears pause sentinel. |
 | `worker_start` | action | no | Starts one lane worker daemon. |
 | `worker_status` | query | yes | Inspects worker runtime state and health metadata. |
-| `worker_event_history` | query | yes | Reads worker JSONL event history. |
+| `worker_event_history` | query | yes | Reads worker JSONL event history. Event-name filters should use the canonical enum-backed worker event vocabulary (for example `cycle_start`, `exec_complete`, `review_complete`). |
 | `worker_stop` | action | no | Stops worker daemon. |
 | `worker_resume` | action | no | Resumes stopped worker daemon. |
 | `worker_start_all` | action | no | Starts multiple worker daemons. |
@@ -136,6 +136,10 @@ Top-level snapshot fields:
 - `lane_health`: scope-violation, exhaustion, and convergence signals.
 - `process_health`: repo-process quality signals derived from handoff state and git history.
 - `handoff_memory`: hot-state and artifact-footprint signals derived from current MCP state.
+- `planning_drift`: plan-cursor completion vs dispatch drift within the evaluation window.
+- `stale_artifact_rate`: artifact-source staleness counts and ratio from `mcp-artifacts.db`.
+- `archive_rate`: repo-wide task archive cadence derived from `task_archives`.
+- `ctx7_adoption`: decision-level `ctx7 library id:` reuse and adoption counts.
 - `phase_timing`: exec/review timing aggregates.
 - `ace_documentation`: strategy-bullet and pruning-candidate counts from instruction files.
 
@@ -152,6 +156,91 @@ Top-level snapshot fields:
 - `total_decisions`: total decisions stored for the task
 - `total_findings`: total review findings stored for the task
 - `artifact_source_count`: indexed artifact-source count from `mcp-artifacts.db`
+
+Example `get_lane_activity(format="archival")` response:
+
+```json
+{
+  "ok": true,
+  "task_ref": "agentic-development-process-hardening-epic",
+  "format": "archival",
+  "lane": {
+    "lane_id": "backend",
+    "status": "active"
+  },
+  "summary": {
+    "decisions": {
+      "count": 3,
+      "latest_rationale_excerpt": "Aligned the retention contract with the new archive cadence metrics..."
+    },
+    "findings": {
+      "counts_by_status": {
+        "open": 1,
+        "fixed": 4,
+        "wontfix": 0,
+        "deferred": 0
+      }
+    },
+    "reports": {
+      "count": 2,
+      "latest_merge_ready": true
+    },
+    "messages": {
+      "counts_by_direction": {
+        "orchestrator_to_worker": 2,
+        "worker_to_orchestrator": 3
+      },
+      "counts_by_status": {
+        "open": 0,
+        "acknowledged": 1,
+        "closed": 4
+      }
+    },
+    "tests": {
+      "total": 5,
+      "passed": 5,
+      "pass_rate": 1.0
+    }
+  }
+}
+```
+
+`planning_drift` currently includes:
+
+- `window_days`: lookback window used for evaluation
+- `total`: total `plan_cursors` rows updated inside the window
+- `terminal`: rows in terminal states (`completed`, `skipped`) inside the window
+- `drift`: `1 - terminal / total`, or `null` when no rows exist in the window
+
+`stale_artifact_rate` currently includes:
+
+- `window_days`: staleness threshold for artifact freshness
+- `total`: total indexed artifact sources
+- `stale_count`: artifact sources with `updated_at` older than the threshold
+- `stale_rate`: `stale_count / total`, with `0.0` for an empty artifact index
+
+`archive_rate` currently includes:
+
+- `window_days`: lookback window used for the in-window archive count
+- `total_archives`: total archived tasks recorded in `task_archives`
+- `in_window`: archived tasks whose `archived_at` falls inside the window
+- `mean_interval_hours`: average hours between archive events across the repo, or `null` when fewer than two archives exist
+
+`ctx7_adoption` currently includes:
+
+- `decisions_with_ctx7`: number of task decisions containing at least one `ctx7 library id:`
+- `unique_library_ids`: distinct library ids referenced by those decisions
+- `reuse_ratio`: total library-id mentions divided by distinct library ids, or `null` when none exist
+- `library_ids`: sorted distinct library ids referenced in task decisions
+
+### Deferred Instrumentation
+
+The current handoff schema does not support the following metrics without new structured telemetry. These remain explicit instrumentation gaps, not inferred heuristics:
+
+- `runtime_parity` coverage: requires structured classification of verification rows beyond raw command text
+- `performance_evidence` coverage: requires typed linkage between verification records and latency / queue-health benchmark evidence
+- `resolved_from_hot_state` ratio: requires agent-side retrieval telemetry indicating whether work was resolved from hot state, archival summary, or targeted search
+- `ctx7` token-cost reduction: requires prompt/tooling telemetry outside the current handoff DB schema
 
 Consumers should treat unknown keys as forward-compatible additions and should not require every section to have `data_available=true`; unavailable sections return explicit sentinel values rather than disappearing.
 
@@ -383,6 +472,8 @@ agent-handoff-mcp --workspace-root <repo> handoff-search \
 - `record_lane_message` accepts artifact refs in its payload; the CLI fallback exposes this as repeated `--artifact <source-id>` flags.
 - `record_lane_brief` / `list_lane_briefs` are the structured-brief helpers built on top of `lane_messages`; they persist an open `orchestrator_to_worker` message with a `brief:<reason>` subject plus a compact JSON payload (`source_lane`, `reason`, `summary`, optional `required_actions`, optional `artifacts`).
 - `get_lane_activity` is the lane-scoped query surface for decisions, tests, blockers, actions, findings, worker reports, and lane messages.
+- `get_lane_activity(format="full")` preserves the existing detailed payload.
+- `get_lane_activity(format="archival")` returns a compact `summary` object with decision count plus latest rationale excerpt, finding counts by status, latest worker merge-ready state, message counts by direction/status, and verified-test totals with pass rate.
 - `worker_status` should be treated as an inspection tool, not a boolean health check. Use `running`, `worker_state`, `attention_required`, and `state_summary` together. Current durable worker states include `idle`, `waiting_for_orchestrator`, `handoff_failed`, `paused`, and `stopped`.
 - `worker_status` also exposes hardening signals: `exhaustion_streak` (consecutive non-converged cycles), `cumulative_tokens` (session token spend), `health` (`healthy` / `degraded` / `unhealthy`), and a `context_utilization` sub-dict with `utilization_ratio`, `domain_signal_ratio`, and `pressure` (`normal` / `elevated` / `high`). Use these alongside `attention_required` to assess lane health.
 - `worker_status` and dashboard surfaces should be treated as the authoritative runtime view for model size, requested/effective reasoning effort, token burn, and context pressure. Use them before redispatching or promoting a lane.
@@ -663,11 +754,14 @@ agent-handoff-mcp --workspace-root <repo> artifact-get --source-id <source-id>
 agent-handoff-mcp --workspace-root <repo> artifact-purge [--task-ref ...] [--older-than-days ...]
 ```
 
-### Retention
+### Retention Rules
 
 Call `purge_artifacts` periodically to reclaim disk space:
 
 - Per-task purge on final archive: `purge_artifacts(task_ref=<completed_task>)`.
 - Global age-based purge: `purge_artifacts(older_than_days=30)`.
+- The default stale-artifact threshold is 30 days since `artifact_sources.updated_at`.
+- `archive_task_state(...)` archives handoff rows only. Artifact retention stays explicit: archive the task first, then purge artifact rows with `purge_artifacts(...)` if the artifacts are no longer needed.
+- `purge_artifacts(...)` can scope by `task_ref`, `lane_id`, `app_root`, `older_than_days`, or a compatible combination of those filters.
 
 The sidecar database is not included in `archive_task_state` and must be backed up separately if artifact content needs to survive workspace migration.

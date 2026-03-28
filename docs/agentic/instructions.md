@@ -403,6 +403,40 @@ Keep `ctx7` usage targeted:
 - record the impact, not the upstream prose
 - prefer repo-owned docs for local process and architecture decisions
 
+Token-cost boundary:
+
+- Treat `ctx7` token-cost reduction as a qualitative process goal unless a tool explicitly records prompt/tool token savings.
+- The current repo can measure `ctx7` adoption and reuse from handoff decisions; it cannot credibly measure prompt-token savings from those lookups yet.
+
+## Data Pattern and Latency Review
+
+Review data-pattern and latency health during the periodic pruning workflow.
+
+Ask:
+
+- are fabricated-field incidents recurring?
+  - scan recent findings for `ANTIPATTERN` categories involving made-up fields, inferred payload properties, or contract drift hidden behind fallback values
+- are dual-write exceptions being left undocumented?
+  - compare recent boundary-touching changes against contract co-change evidence and recorded boundary decisions
+- are queue or worker saturation signals rising?
+  - inspect context pressure, worker daemon logs, and retry/backpressure notes for repeated saturation patterns
+- are tail-latency regressions being distinguished from average-latency improvements?
+  - compare `phase_timing` trends and recorded verification notes for mean-only claims without max/tail evidence
+
+Healthy pattern:
+
+- boundary changes record contract evidence and do not fabricate fallback fields
+- dual-write or reconciliation exceptions are explicit and time-bounded
+- saturation and queue health are reviewed as reliability signals, not only speed signals
+- latency claims distinguish average improvements from degraded tails or saturation behavior
+
+Unhealthy pattern:
+
+- fabricated fields reappear because contract drift is absorbed into adapters or UI placeholders
+- boundary exceptions are treated as implementation detail rather than reviewed process risk
+- workers repeatedly show pressure or retry behavior with no follow-up note
+- average latency is reported as “faster” while tail behavior regresses or remains unknown
+
 Before any code exploration:
 
 Follow the Agent Startup Protocol above. The steps below assume MCP state is already loaded.

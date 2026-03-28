@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sqlite3
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Sequence
 from statistics import median
 
 
@@ -249,6 +251,9 @@ _HOT_STATE_LIMITS = {
     "findings": 10,
 }
 
+_METRIC_WINDOW_DAYS = 30
+_CTX7_LIBRARY_ID_RE = re.compile(r"ctx7 library id:\s*(?P<library_id>/[^\s`]+)", re.IGNORECASE)
+
 
 def _process_health(task_ref: str, state_dir: Path, workspace_root: Path) -> dict:
     result: dict = {
@@ -450,6 +455,178 @@ def _parse_metric_datetime(value: object) -> datetime | None:
     return None
 
 
+def _window_start(days: int = _METRIC_WINDOW_DAYS) -> datetime:
+    return datetime.now(tz=timezone.utc).replace(microsecond=0) - timedelta(days=days)
+
+
+def _planning_drift(task_ref: str, state_dir: Path, window_days: int = _METRIC_WINDOW_DAYS) -> dict:
+    from agent_handoff_mcp.enums import PlanCursorState  # noqa: PLC0415
+
+    result: dict[str, object] = {
+        "data_available": False,
+        "window_days": window_days,
+        "total": 0,
+        "terminal": 0,
+        "drift": None,
+    }
+    handoff_db = state_dir / "handoff.db"
+    if not handoff_db.exists():
+        return result
+
+    terminal_states = (
+        PlanCursorState.COMPLETED.value,
+        PlanCursorState.SKIPPED.value,
+    )
+    terminal_placeholders = ", ".join("?" for _ in terminal_states)
+    cutoff = _window_start(window_days).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with sqlite3.connect(str(handoff_db)) as conn:
+            total_row = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM plan_cursors
+                WHERE task_ref = ? AND updated_at >= ?
+                """,
+                (task_ref, cutoff),
+            ).fetchone()
+            terminal_row = conn.execute(
+                f"""
+                SELECT COUNT(*) AS count
+                FROM plan_cursors
+                WHERE task_ref = ? AND updated_at >= ? AND state IN ({terminal_placeholders})
+                """,
+                (task_ref, cutoff, *terminal_states),
+            ).fetchone()
+    except sqlite3.Error:
+        return result
+
+    total = int(total_row[0]) if total_row else 0
+    terminal = int(terminal_row[0]) if terminal_row else 0
+    result["data_available"] = total > 0
+    result["total"] = total
+    result["terminal"] = terminal
+    result["drift"] = None if total == 0 else round(1.0 - (terminal / total), 3)
+    return result
+
+
+def _stale_artifact_metrics(state_dir: Path, window_days: int = _METRIC_WINDOW_DAYS) -> dict:
+    result: dict[str, object] = {
+        "data_available": False,
+        "window_days": window_days,
+        "total": 0,
+        "stale_count": 0,
+        "stale_rate": 0.0,
+    }
+    artifacts_db = state_dir / "mcp-artifacts.db"
+    if not artifacts_db.exists():
+        return result
+
+    cutoff = _window_start(window_days).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with sqlite3.connect(str(artifacts_db)) as conn:
+            total_row = conn.execute("SELECT COUNT(*) FROM artifact_sources").fetchone()
+            stale_row = conn.execute(
+                "SELECT COUNT(*) FROM artifact_sources WHERE updated_at < ?",
+                (cutoff,),
+            ).fetchone()
+    except sqlite3.Error:
+        return result
+
+    total = int(total_row[0]) if total_row else 0
+    stale_count = int(stale_row[0]) if stale_row else 0
+    result["data_available"] = True
+    result["total"] = total
+    result["stale_count"] = stale_count
+    result["stale_rate"] = round(stale_count / total, 3) if total else 0.0
+    return result
+
+
+def _archive_rate(state_dir: Path, window_days: int = _METRIC_WINDOW_DAYS) -> dict:
+    result: dict[str, object] = {
+        "data_available": False,
+        "window_days": window_days,
+        "total_archives": 0,
+        "in_window": 0,
+        "mean_interval_hours": None,
+    }
+    handoff_db = state_dir / "handoff.db"
+    if not handoff_db.exists():
+        return result
+
+    cutoff = _window_start(window_days)
+    try:
+        with sqlite3.connect(str(handoff_db)) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT archived_at FROM task_archives ORDER BY archived_at ASC"
+            ).fetchall()
+    except sqlite3.Error:
+        return result
+
+    archive_times = [
+        parsed
+        for row in rows
+        if (parsed := _parse_metric_datetime(row["archived_at"])) is not None
+    ]
+    result["total_archives"] = len(archive_times)
+    result["in_window"] = sum(1 for value in archive_times if value >= cutoff)
+    intervals_hours = [
+        round((later - earlier).total_seconds() / 3600.0, 3)
+        for earlier, later in zip(archive_times, archive_times[1:])
+    ]
+    result["mean_interval_hours"] = (
+        round(sum(intervals_hours) / len(intervals_hours), 3)
+        if intervals_hours
+        else None
+    )
+    result["data_available"] = len(rows) > 0
+    return result
+
+
+def _ctx7_adoption(task_ref: str, state_dir: Path) -> dict:
+    result: dict[str, object] = {
+        "data_available": False,
+        "decisions_with_ctx7": 0,
+        "unique_library_ids": 0,
+        "reuse_ratio": None,
+        "library_ids": [],
+    }
+    handoff_db = state_dir / "handoff.db"
+    if not handoff_db.exists():
+        return result
+
+    try:
+        with sqlite3.connect(str(handoff_db)) as conn:
+            rows = conn.execute(
+                "SELECT rationale FROM decisions WHERE task_ref = ?",
+                (task_ref,),
+            ).fetchall()
+    except sqlite3.Error:
+        return result
+
+    decision_count = 0
+    library_ids: list[str] = []
+    for row in rows:
+        rationale = str(row[0] or "")
+        matches = [match.group("library_id") for match in _CTX7_LIBRARY_ID_RE.finditer(rationale)]
+        if not matches:
+            continue
+        decision_count += 1
+        library_ids.extend(matches)
+
+    unique_library_ids = sorted(set(library_ids))
+    result["data_available"] = len(rows) > 0
+    result["decisions_with_ctx7"] = decision_count
+    result["unique_library_ids"] = len(unique_library_ids)
+    result["reuse_ratio"] = (
+        round(len(library_ids) / len(unique_library_ids), 3)
+        if unique_library_ids
+        else None
+    )
+    result["library_ids"] = unique_library_ids
+    return result
+
+
 def _contract_co_change_signal(workspace_root: Path, commit_limit: int = 20) -> dict:
     from .review_ready import (  # noqa: PLC0415
         BOUNDARY_PREFIXES,
@@ -457,7 +634,7 @@ def _contract_co_change_signal(workspace_root: Path, commit_limit: int = 20) -> 
         CONTRACT_PREFIXES,
     )
 
-    result = {
+    result: dict[str, object] = {
         "data_available": False,
         "recent_commits_scanned": 0,
         "boundary_touching_commits": 0,
@@ -590,6 +767,10 @@ def build_snapshot(
         "lane_health": _lane_health(worker_events),
         "process_health": _process_health(task_ref, state_dir, workspace_root),
         "handoff_memory": _handoff_memory(task_ref, state_dir, workspace_root),
+        "planning_drift": _planning_drift(task_ref, state_dir),
+        "stale_artifact_rate": _stale_artifact_metrics(state_dir),
+        "archive_rate": _archive_rate(state_dir),
+        "ctx7_adoption": _ctx7_adoption(task_ref, state_dir),
         "phase_timing": _phase_timing(worker_events),
         "ace_documentation": _ace_documentation(instruction_files),
     }
@@ -607,148 +788,157 @@ def _append_snapshot(state_dir: Path, snapshot: dict) -> None:
 # Markdown renderer
 # ---------------------------------------------------------------------------
 
-def render_markdown(snapshot: dict) -> str:
-    tb = snapshot["token_burn"]
-    cp = snapshot["context_pressure"]
-    fts = snapshot["fts5_retrieval"]
-    lh = snapshot["lane_health"]
-    ph = snapshot.get("process_health", {})
-    hm = snapshot.get("handoff_memory", {})
-    ace = snapshot["ace_documentation"]
-
-    lines = [
-        f"# ACE Metrics Snapshot",
-        f"",
-        f"**Task**: `{snapshot['task_ref']}`  **Timestamp**: `{snapshot['timestamp']}`",
-        f"",
-        f"## Token Efficiency",
-    ]
+def _render_token_efficiency(tb: dict) -> list[str]:
+    lines = ["", "## Token Efficiency"]
     if tb["data_available"]:
         lines += [
             f"- Total tokens: **{tb['total_tokens']:,}**",
             f"- Converged cycles: {tb['converged_cycles']} / {tb['total_review_cycles']}",
-            f"- Tokens per converged cycle: "
-            + (f"**{tb['tokens_per_converged_cycle']:,}**" if tb["tokens_per_converged_cycle"] else "n/a"),
+            f"- Tokens per converged cycle: " + (f"**{tb['tokens_per_converged_cycle']:,}**" if tb["tokens_per_converged_cycle"] else "n/a"),
         ]
         if tb["by_lane"]:
             lines.append("- By lane:")
             for lane, tokens in sorted(tb["by_lane"].items()):
                 lines.append(f"  - `{lane}`: {tokens:,}")
-    else:
-        lines.append("_No worker turn events found. Data not available._")
+        return lines
+    lines.append("_No worker turn events found. Data not available._")
+    return lines
 
-    lines += [
-        f"",
-        f"## Context Pressure",
-    ]
+
+def _render_context_pressure(cp: dict) -> list[str]:
+    lines = ["", "## Context Pressure"]
     if cp["data_available"]:
-        lines += [
+        return lines + [
             f"- Latest pressure: **{cp['latest_pressure']}**",
             f"- Elevated cycle ratio: {cp['elevated_cycle_ratio']:.1%}",
             f"- High cycle ratio: {cp['high_cycle_ratio']:.1%}",
         ]
-    else:
-        lines.append("_No context pressure events recorded._")
+    lines.append("_No context pressure events recorded._")
+    return lines
 
-    lines += [
-        f"",
-        f"## Retrieval Activity (FTS5)",
-    ]
+
+def _render_retrieval_activity(fts: dict) -> list[str]:
+    lines = ["", "## Retrieval Activity (FTS5)"]
     if fts["data_available"]:
         hrc = fts["handoff_record_counts"]
-        lines += [
+        return lines + [
             f"- Artifact sources indexed: {fts['artifact_sources_indexed']}",
             f"- Artifact chunks (FTS): {fts['artifact_chunks_fts_count']}",
-            f"- Handoff records: decisions={hrc['decisions']}  "
-            f"findings={hrc['findings']}  blockers={hrc['blockers']}  actions={hrc['actions']}",
+            f"- Handoff records: decisions={hrc['decisions']}  findings={hrc['findings']}  blockers={hrc['blockers']}  actions={hrc['actions']}",
         ]
-    else:
-        lines.append("_No database data available._")
+    lines.append("_No database data available._")
+    return lines
 
-    lines += [
-        f"",
-        f"## Lane Stability",
-    ]
+
+def _render_lane_stability(lh: dict) -> list[str]:
+    lines = ["", "## Lane Stability"]
     if lh["data_available"]:
-        lines += [
+        return lines + [
             f"- Scope violations: {lh['total_scope_violations']}",
             f"- Max exhaustion streak: {lh['max_exhaustion_streak']}",
             f"- Convergence rate: {lh['convergence_rate']:.1%}",
         ]
-    else:
-        lines.append("_No lane event data available._")
+    lines.append("_No lane event data available._")
+    return lines
 
-    lines += [
-        f"",
-        f"## Process Health",
-    ]
+
+def _render_process_health(ph: dict) -> list[str]:
+    lines = ["", "## Process Health"]
     if ph.get("data_available"):
         reopened = ph["reopened_finding_rate"]
         velocity = ph["finding_resolution_velocity_hours"]
         completeness = ph["handoff_decision_completeness"]
         contract = ph["contract_co_change_signal"]
-        lines += [
-            "- Reopened finding rate: "
-            + (
-                f"{reopened['value']:.1%} ({reopened['reopened_findings']} / {reopened['total_findings']})"
-                if reopened["value"] is not None
-                else "n/a"
-            ),
-            "- Finding resolution velocity (median hours): "
-            + (
-                f"{velocity['median_hours']}h across {velocity['resolved_findings']} resolved findings"
-                if velocity["median_hours"] is not None
-                else "n/a"
-            ),
-            "- Structured handoff decision completeness: "
-            + (
-                f"{completeness['value']:.1%} ({completeness['structured_decisions']} / {completeness['total_decisions']})"
-                if completeness["value"] is not None
-                else "n/a"
-            ),
-            "- Contract co-change signal: "
-            + (
-                f"{contract['value']:.1%} ({contract['boundary_commits_with_contract_co_change']} / {contract['boundary_touching_commits']} boundary-touching commits)"
-                if contract.get("value") is not None
-                else "n/a"
-            ),
+        return lines + [
+            "- Reopened finding rate: " + (f"{reopened['value']:.1%} ({reopened['reopened_findings']} / {reopened['total_findings']})" if reopened["value"] is not None else "n/a"),
+            "- Finding resolution velocity (median hours): " + (f"{velocity['median_hours']}h across {velocity['resolved_findings']} resolved findings" if velocity["median_hours"] is not None else "n/a"),
+            "- Structured handoff decision completeness: " + (f"{completeness['value']:.1%} ({completeness['structured_decisions']} / {completeness['total_decisions']})" if completeness["value"] is not None else "n/a"),
+            "- Contract co-change signal: " + (f"{contract['value']:.1%} ({contract['boundary_commits_with_contract_co_change']} / {contract['boundary_touching_commits']} boundary-touching commits)" if contract.get("value") is not None else "n/a"),
         ]
-    else:
-        lines.append("_No process-health data available yet._")
+    lines.append("_No process-health data available yet._")
+    return lines
 
-    lines += [
-        f"",
-        f"## Handoff Memory",
-    ]
+
+def _render_handoff_memory(hm: dict) -> list[str]:
+    lines = ["", "## Handoff Memory"]
     if hm.get("data_available"):
-        lines += [
+        return lines + [
             f"- Hot-state size: {hm['hot_state_size_bytes']} bytes",
             f"- Total decisions: {hm['total_decisions']}",
             f"- Total findings: {hm['total_findings']}",
             f"- Artifact sources indexed: {hm['artifact_source_count']}",
         ]
-    else:
-        lines.append("_No handoff-memory data available yet._")
+    lines.append("_No handoff-memory data available yet._")
+    return lines
 
-    pt = snapshot.get("phase_timing", {})
-    lines += [
-        f"",
-        f"## Phase Timing",
-    ]
+
+def _render_planning_drift(pd: dict) -> list[str]:
+    lines = ["", "## Planning Drift"]
+    if pd.get("data_available"):
+        return lines + [
+            "- Drift ratio: " + (f"{pd['drift']:.1%}" if pd.get("drift") is not None else "n/a"),
+            f"- Window: {pd['window_days']} days",
+            f"- Plan cursor rows in window: {pd['total']}  terminal={pd['terminal']}",
+        ]
+    lines.append("_No plan-cursor data available in the evaluation window._")
+    return lines
+
+
+def _render_artifact_staleness(sa: dict) -> list[str]:
+    lines = ["", "## Artifact Staleness"]
+    if sa.get("data_available"):
+        return lines + [
+            f"- Window: {sa['window_days']} days",
+            f"- Artifact sources: {sa['total']}",
+            f"- Stale artifacts: {sa['stale_count']} ({sa['stale_rate']:.1%})",
+        ]
+    lines.append("_No artifact-index data available yet._")
+    return lines
+
+
+def _render_archive_cadence(ar: dict) -> list[str]:
+    lines = ["", "## Archive Cadence"]
+    if ar.get("data_available"):
+        return lines + [
+            f"- Window: {ar['window_days']} days",
+            f"- Total archived tasks: {ar['total_archives']}",
+            f"- Archived in window: {ar['in_window']}",
+            "- Mean interval between archives: " + (f"{ar['mean_interval_hours']}h" if ar.get("mean_interval_hours") is not None else "n/a"),
+        ]
+    lines.append("_No archive history available yet._")
+    return lines
+
+
+def _render_ctx7_adoption(ctx7: dict) -> list[str]:
+    lines = ["", "## ctx7 Adoption"]
+    if ctx7.get("data_available"):
+        lines += [
+            f"- Decisions with ctx7 references: {ctx7['decisions_with_ctx7']}",
+            f"- Unique library ids: {ctx7['unique_library_ids']}",
+            "- Library-id reuse ratio: " + (f"{ctx7['reuse_ratio']:.2f}" if ctx7.get("reuse_ratio") is not None else "n/a"),
+        ]
+        if ctx7.get("library_ids"):
+            lines.append(f"- Library ids: {', '.join(ctx7['library_ids'])}")
+        return lines
+    lines.append("_No decision history available for ctx7 adoption metrics._")
+    return lines
+
+
+def _render_phase_timing(pt: dict) -> list[str]:
+    lines = ["", "## Phase Timing"]
     if pt.get("data_available"):
         exec_s = pt["exec"]
         rev_s = pt["review"]
-        lines += [
+        return lines + [
             f"- Exec cycles: {exec_s['count']}  total={exec_s['total']}s  mean={exec_s['mean']}s  max={exec_s['max']}s",
             f"- Review cycles: {rev_s['count']}  total={rev_s['total']}s  mean={rev_s['mean']}s  max={rev_s['max']}s",
         ]
-    else:
-        lines.append("_No exec/review timing data recorded yet._")
+    lines.append("_No exec/review timing data recorded yet._")
+    return lines
 
-    lines += [
-        f"",
-        f"## Documentation Fitness (ACE)",
-    ]
+
+def _render_documentation_fitness(ace: dict) -> list[str]:
+    lines = ["", "## Documentation Fitness (ACE)"]
     if ace["data_available"]:
         lines += [
             f"- Strategy bullets: {ace['total_strategy_bullets']}",
@@ -758,9 +948,32 @@ def render_markdown(snapshot: dict) -> str:
         ]
         if ace["pruning_candidate_ids"]:
             lines.append(f"- Candidate IDs: {', '.join(ace['pruning_candidate_ids'])}")
-    else:
-        lines.append("_No ACE strategy bullets found in instruction files._")
+        return lines
+    lines.append("_No ACE strategy bullets found in instruction files._")
+    return lines
 
+
+def render_markdown(snapshot: dict) -> str:
+    lines = [
+        "# ACE Metrics Snapshot",
+        "",
+        f"**Task**: `{snapshot['task_ref']}`  **Timestamp**: `{snapshot['timestamp']}`",
+    ]
+    for section_lines in (
+        _render_token_efficiency(snapshot["token_burn"]),
+        _render_context_pressure(snapshot["context_pressure"]),
+        _render_retrieval_activity(snapshot["fts5_retrieval"]),
+        _render_lane_stability(snapshot["lane_health"]),
+        _render_process_health(snapshot.get("process_health", {})),
+        _render_handoff_memory(snapshot.get("handoff_memory", {})),
+        _render_planning_drift(snapshot.get("planning_drift", {})),
+        _render_artifact_staleness(snapshot.get("stale_artifact_rate", {})),
+        _render_archive_cadence(snapshot.get("archive_rate", {})),
+        _render_ctx7_adoption(snapshot.get("ctx7_adoption", {})),
+        _render_phase_timing(snapshot.get("phase_timing", {})),
+        _render_documentation_fitness(snapshot["ace_documentation"]),
+    ):
+        lines.extend(section_lines)
     return "\n".join(lines) + "\n"
 
 
@@ -771,7 +984,7 @@ def render_markdown(snapshot: dict) -> str:
 _SPARK_CHARS = " \u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"
 
 
-def _sparkline(values: list[float]) -> str:
+def _sparkline(values: Sequence[float]) -> str:
     """Convert a list of numeric values into a compact Unicode sparkline."""
     if not values:
         return ""

@@ -650,6 +650,242 @@ def test_lane_briefs_round_trip_with_structured_payload(isolated_handoff: dict) 
     assert activity["messages"][0]["payload"]["summary"] == "Export response now includes purge eligibility metadata."
 
 
+def test_get_lane_activity_archival_format_returns_compact_summary(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="5.2.0",
+            objective="Archival lane summary",
+            status="in_progress",
+        )
+    )
+    actor = {"agent": "codex", "branch": "codex/p5-backend", "commit_sha": "abc123", "lane_id": "backend"}
+    _parse(
+        mcp_server.upsert_worktree_lane(
+            task_ref="5.2.0",
+            lane_id="backend",
+            worktree_path="/tmp/backend",
+            branch="codex/p5-backend",
+            status="active",
+        )
+    )
+    _parse(
+        mcp_server.record_decision(
+            session="archival",
+            decision="sync_contract_updated",
+            rationale="Updated the retention contract to include explicit archival retention semantics.",
+            actor=actor,
+        )
+    )
+    _parse(
+        mcp_server.record_test_result(
+            session="archival",
+            command="pytest packages/agent-handoff-mcp/tests/test_handoff_state.py -q",
+            passed=True,
+            actor=actor,
+        )
+    )
+    _parse(
+        mcp_server.record_test_result(
+            session="archival",
+            command="pytest packages/agent-handoff-mcp/tests/test_review_ready.py -q",
+            passed=False,
+            exit_code=1,
+            actor=actor,
+        )
+    )
+    _parse(
+        mcp_server.record_review_finding(
+            session="archival",
+            finding_id="ARCH-1",
+            severity="high",
+            file_path="docs/agentic/contracts/agent-handoff-mcp.md",
+            description="Retention rules need the age-based purge threshold.",
+            actor=actor,
+            task_ref="5.2.0",
+        )
+    )
+    _parse(
+        mcp_server.update_review_finding(
+            task_ref="5.2.0",
+            finding_id="ARCH-1",
+            status="fixed",
+            session="archival",
+            actor=actor,
+            verification_evidence="Retention section now includes older_than_days guidance.",
+        )
+    )
+    _parse(
+        mcp_server.record_review_finding(
+            session="archival",
+            finding_id="ARCH-2",
+            severity="medium",
+            file_path="packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py",
+            description="Archival summary needs multi-lane isolation coverage.",
+            actor=actor,
+            task_ref="5.2.0",
+        )
+    )
+    _parse(
+        mcp_server.record_worker_report(
+            task_ref="5.2.0",
+            lane_id="backend",
+            session="archival",
+            summary="Backend archival summary is ready for review.",
+            changed_files=["packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py"],
+            merge_ready=True,
+            actor=actor,
+        )
+    )
+    _parse(
+        mcp_server.record_lane_message(
+            task_ref="5.2.0",
+            lane_id="backend",
+            session="archival",
+            direction="worker_to_orchestrator",
+            message="Archival summary is ready.",
+            status="acknowledged",
+            actor=actor,
+        )
+    )
+
+    activity = _parse(
+        mcp_server.get_lane_activity(task_ref="5.2.0", lane_id="backend", format="archival")
+    )
+
+    assert activity["ok"] is True
+    assert activity["format"] == "archival"
+    assert "decisions" not in activity
+    assert activity["summary"]["decisions"]["count"] == 1
+    assert activity["summary"]["findings"]["counts_by_status"] == {
+        "deferred": 0,
+        "fixed": 1,
+        "open": 1,
+        "wontfix": 0,
+    }
+    assert activity["summary"]["reports"] == {
+        "count": 1,
+        "latest_merge_ready": True,
+    }
+    assert activity["summary"]["messages"]["counts_by_direction"] == {
+        "orchestrator_to_worker": 0,
+        "worker_to_orchestrator": 1,
+    }
+    assert activity["summary"]["messages"]["counts_by_status"] == {
+        "acknowledged": 1,
+        "closed": 0,
+        "open": 0,
+    }
+    assert activity["summary"]["tests"] == {
+        "total": 2,
+        "passed": 1,
+        "pass_rate": 0.5,
+    }
+    assert "retention contract" in activity["summary"]["decisions"]["latest_rationale_excerpt"]
+
+
+def test_get_lane_activity_archival_format_truncates_long_decision_rationale(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="5.2.3",
+            objective="Archival truncation",
+            status="in_progress",
+        )
+    )
+    actor = {"agent": "codex", "branch": "codex/p5-backend", "commit_sha": "def456", "lane_id": "backend"}
+    _parse(
+        mcp_server.upsert_worktree_lane(
+            task_ref="5.2.3",
+            lane_id="backend",
+            worktree_path="/tmp/backend-truncation",
+            branch="codex/p5-backend",
+            status="active",
+        )
+    )
+    long_rationale = " ".join(["retention-proof"] * 40)
+    assert len(long_rationale) > 240
+    _parse(
+        mcp_server.record_decision(
+            session="archival",
+            decision="long_rationale_recorded",
+            rationale=long_rationale,
+            actor=actor,
+        )
+    )
+
+    activity = _parse(
+        mcp_server.get_lane_activity(task_ref="5.2.3", lane_id="backend", format="archival")
+    )
+
+    excerpt = activity["summary"]["decisions"]["latest_rationale_excerpt"]
+    assert excerpt is not None
+    assert excerpt.endswith("...")
+    assert len(excerpt) <= 240
+
+
+def test_get_lane_activity_archival_format_handles_empty_lane() -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="5.2.1",
+            objective="Empty archival lane",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.upsert_worktree_lane(
+            task_ref="5.2.1",
+            lane_id="frontend",
+            worktree_path="/tmp/frontend",
+            branch="codex/p5-frontend",
+            status="planned",
+        )
+    )
+
+    activity = _parse(
+        mcp_server.get_lane_activity(task_ref="5.2.1", lane_id="frontend", format="archival")
+    )
+
+    assert activity["ok"] is True
+    assert activity["summary"]["decisions"] == {
+        "count": 0,
+        "latest_rationale_excerpt": None,
+    }
+    assert activity["summary"]["reports"] == {
+        "count": 0,
+        "latest_merge_ready": None,
+    }
+    assert activity["summary"]["tests"] == {
+        "total": 0,
+        "passed": 0,
+        "pass_rate": None,
+    }
+
+
+def test_get_lane_activity_rejects_unknown_format(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="5.2.2",
+            objective="Bad archival format",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.upsert_worktree_lane(
+            task_ref="5.2.2",
+            lane_id="backend",
+            worktree_path="/tmp/backend",
+            branch="codex/p5-backend",
+            status="active",
+        )
+    )
+
+    activity = _parse(
+        mcp_server.get_lane_activity(task_ref="5.2.2", lane_id="backend", format="compact")
+    )
+
+    assert activity["ok"] is False
+    assert activity["error"] == "Invalid format. Valid: archival, full."
+
+
 def test_import_handoff_state_prefers_decoded_lane_message_payload(isolated_handoff: dict) -> None:
     payload_path = isolated_handoff["state_dir"] / "exports" / "payload-precedence.json"
     payload_path.parent.mkdir(parents=True, exist_ok=True)

@@ -22,6 +22,7 @@ from .runtime import configure_runtime, get_runtime_config, reset_runtime_config
 
 
 record_decision = core.record_decision
+build_write_actor = core.build_write_actor
 update_next_actions = core.update_next_actions
 record_test_result = core.record_test_result
 report_blocker = core.report_blocker

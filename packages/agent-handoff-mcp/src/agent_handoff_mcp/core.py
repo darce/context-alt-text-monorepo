@@ -10,10 +10,23 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Thread
-from typing import Protocol, TypedDict, runtime_checkable
+from typing import Any, Awaitable, Protocol, TypedDict, cast, runtime_checkable
 
 from .runtime import get_runtime_config
 from . import artifact_index as artifact_index
+from .enums import (
+    ActionStatus,
+    BlockerStatus,
+    FindingSeverity,
+    FindingStatus,
+    HandoffStatus,
+    LaneMessageDirection,
+    LaneStatus,
+    MessageStatus,
+    PlanCursorState,
+    ReportStatus,
+    ReviewMode,
+)
 
 _FTS5_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
@@ -237,10 +250,18 @@ DEFAULT_HANDOFF_LIMITS = {
     "tests": 3,
     "findings": 10,
 }
-HANDOFF_ACTIVE_STATUSES = {"in_progress", "blocked", "review", "done"}
-REVIEW_FINDING_STATUSES = {"open", "fixed", "wontfix", "deferred"}
-REVIEW_FINDING_SEVERITIES = {"high", "medium", "low"}
-REVIEW_MODES = {"branch", "release_audit"}
+HANDOFF_ACTIVE_STATUSES = frozenset(status.value for status in HandoffStatus)
+BLOCKER_STATUSES = frozenset(status.value for status in BlockerStatus)
+ACTION_STATUSES = frozenset(status.value for status in ActionStatus)
+REVIEW_FINDING_STATUSES = frozenset(status.value for status in FindingStatus)
+REVIEW_FINDING_SEVERITIES = frozenset(status.value for status in FindingSeverity)
+REVIEW_MODES = frozenset(mode.value for mode in ReviewMode)
+LANE_STATUSES = frozenset(status.value for status in LaneStatus)
+CLOSEABLE_LANE_STATUSES = frozenset({LaneStatus.MERGED.value, LaneStatus.CLOSED.value})
+REPORT_STATUSES = frozenset(status.value for status in ReportStatus)
+MESSAGE_STATUSES = frozenset(status.value for status in MessageStatus)
+LANE_MESSAGE_DIRECTIONS = frozenset(direction.value for direction in LaneMessageDirection)
+PLAN_CURSOR_STATES = frozenset(state.value for state in PlanCursorState)
 MAX_RESOLUTION_NOTES_LENGTH = 500
 MAX_REOPEN_REASON_LENGTH = 500
 MAX_VERIFICATION_EVIDENCE_LENGTH = 2000
@@ -261,6 +282,28 @@ class ReviewFindingDetails(TypedDict, total=False):
     line_start: int
     line_end: int
     fix: str
+
+
+def build_write_actor(
+    agent: str | None = None,
+    branch: str | None = None,
+    commit_sha: str | None = None,
+    lane_id: str | None = None,
+) -> WriteActor:
+    actor: WriteActor = {}
+    normalized_agent = _normalize_optional_text(agent)
+    normalized_branch = _normalize_optional_text(branch)
+    normalized_commit_sha = _normalize_optional_text(commit_sha)
+    normalized_lane_id = _normalize_optional_text(lane_id)
+    if normalized_agent is not None:
+        actor["agent"] = normalized_agent
+    if normalized_branch is not None:
+        actor["branch"] = normalized_branch
+    if normalized_commit_sha is not None:
+        actor["commit_sha"] = normalized_commit_sha
+    if normalized_lane_id is not None:
+        actor["lane_id"] = normalized_lane_id
+    return actor
 
 
 class LaneMessagePayload(TypedDict, total=False):
@@ -799,15 +842,20 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
 def _resolve_awaitable(value: object) -> object:
     if not inspect.isawaitable(value):
         return value
+
+    async def _await_value(awaitable: Awaitable[Any]) -> Any:
+        return await awaitable
+
+    awaitable = cast(Awaitable[Any], value)
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(value)
+        return asyncio.run(_await_value(awaitable))
     box: dict[str, object] = {}
 
     def _runner() -> None:
         try:
-            box["value"] = asyncio.run(value)
+            box["value"] = asyncio.run(_await_value(awaitable))
         except Exception as exc:
             box["error"] = exc
             box["traceback"] = exc.__traceback__
@@ -1216,6 +1264,160 @@ def _resolve_import_lane_id(row: dict) -> str | None:
     return _normalize_optional_text(row.get("lane_id"))
 
 
+def _excerpt_text(value: str | None, *, limit: int = 240) -> str | None:
+    normalized = _normalize_optional_text(value)
+    if normalized is None:
+        return None
+    collapsed = " ".join(normalized.split())
+    if len(collapsed) <= limit:
+        return collapsed
+    if limit <= 3:
+        return "." * limit
+    return f"{collapsed[: limit - 3].rstrip()}..."
+
+
+def _count_by_value(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    field: str,
+    task_ref: str,
+    lane_id: str,
+    allowed_values: frozenset[str],
+) -> dict[str, int]:
+    # This helper intentionally supports only the fixed archival-summary queries below.
+    # Keep the SQL identifiers whitelisted so callers cannot expand it into a generic
+    # f-string query surface.
+    allowed_identifiers = {
+        ("review_findings", "status"),
+        ("lane_messages", "direction"),
+        ("lane_messages", "status"),
+    }
+    if (table, field) not in allowed_identifiers:
+        raise ValueError(f"Unsupported count identifiers: {table}.{field}")
+    counts = {value: 0 for value in sorted(allowed_values)}
+    rows = conn.execute(
+        f"SELECT {field} AS value, COUNT(*) AS count FROM {table} WHERE task_ref = ? AND lane_id = ? GROUP BY {field}",
+        (task_ref, lane_id),
+    ).fetchall()
+    for row in rows:
+        value = _normalize_optional_text(row["value"])
+        if value is not None and value in counts:
+            counts[value] = int(row["count"])
+    return counts
+
+
+def _build_archival_decision_summary(conn: sqlite3.Connection, *, task_ref: str, lane_id: str) -> dict[str, object]:
+    decisions_total_row = conn.execute(
+        "SELECT COUNT(*) AS count FROM decisions WHERE task_ref = ? AND lane_id = ?",
+        (task_ref, lane_id),
+    ).fetchone()
+    latest_decision_row = conn.execute(
+        """
+        SELECT rationale
+        FROM decisions
+        WHERE task_ref = ? AND lane_id = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        (task_ref, lane_id),
+    ).fetchone()
+    return {
+        "count": int(decisions_total_row["count"]) if decisions_total_row else 0,
+        "latest_rationale_excerpt": _excerpt_text(
+            str(latest_decision_row["rationale"]) if latest_decision_row and latest_decision_row["rationale"] is not None else None
+        ),
+    }
+
+
+def _build_archival_report_summary(conn: sqlite3.Connection, *, task_ref: str, lane_id: str) -> dict[str, object]:
+    reports_total_row = conn.execute(
+        "SELECT COUNT(*) AS count FROM worker_reports WHERE task_ref = ? AND lane_id = ?",
+        (task_ref, lane_id),
+    ).fetchone()
+    latest_report_row = conn.execute(
+        """
+        SELECT merge_ready
+        FROM worker_reports
+        WHERE task_ref = ? AND lane_id = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        (task_ref, lane_id),
+    ).fetchone()
+    return {
+        "count": int(reports_total_row["count"]) if reports_total_row else 0,
+        "latest_merge_ready": (
+            bool(latest_report_row["merge_ready"])
+            if latest_report_row is not None and latest_report_row["merge_ready"] is not None
+            else None
+        ),
+    }
+
+
+def _build_archival_test_summary(conn: sqlite3.Connection, *, task_ref: str, lane_id: str) -> dict[str, object]:
+    tests_summary_row = conn.execute(
+        """
+        SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN passed = 1 THEN 1 ELSE 0 END), 0) AS passed
+        FROM verified_tests
+        WHERE task_ref = ? AND lane_id = ?
+        """,
+        (task_ref, lane_id),
+    ).fetchone()
+    tests_total = int(tests_summary_row["total"]) if tests_summary_row else 0
+    tests_passed = int(tests_summary_row["passed"]) if tests_summary_row else 0
+    return {
+        "total": tests_total,
+        "passed": tests_passed,
+        "pass_rate": round(tests_passed / tests_total, 3) if tests_total else None,
+    }
+
+
+def _build_archival_message_summary(conn: sqlite3.Connection, *, task_ref: str, lane_id: str) -> dict[str, object]:
+    return {
+        "counts_by_direction": _count_by_value(
+            conn,
+            table="lane_messages",
+            field="direction",
+            task_ref=task_ref,
+            lane_id=lane_id,
+            allowed_values=LANE_MESSAGE_DIRECTIONS,
+        ),
+        "counts_by_status": _count_by_value(
+            conn,
+            table="lane_messages",
+            field="status",
+            task_ref=task_ref,
+            lane_id=lane_id,
+            allowed_values=MESSAGE_STATUSES,
+        ),
+    }
+
+
+def _build_archival_lane_activity_summary(
+    conn: sqlite3.Connection,
+    *,
+    task_ref: str,
+    lane_id: str,
+) -> dict[str, object]:
+    return {
+        "decisions": _build_archival_decision_summary(conn, task_ref=task_ref, lane_id=lane_id),
+        "findings": {
+            "counts_by_status": _count_by_value(
+                conn,
+                table="review_findings",
+                field="status",
+                task_ref=task_ref,
+                lane_id=lane_id,
+                allowed_values=REVIEW_FINDING_STATUSES,
+            ),
+        },
+        "reports": _build_archival_report_summary(conn, task_ref=task_ref, lane_id=lane_id),
+        "messages": _build_archival_message_summary(conn, task_ref=task_ref, lane_id=lane_id),
+        "tests": _build_archival_test_summary(conn, task_ref=task_ref, lane_id=lane_id),
+    }
+
+
 def _count_task_rows(conn: sqlite3.Connection, task_ref: str) -> dict[str, int]:
     counts: dict[str, int] = {}
     for key in ("blockers", "next_actions", "decisions", "verified_tests", "review_findings", "worktree_lanes", "worker_reports", "lane_messages", "plan_cursors"):
@@ -1335,7 +1537,7 @@ def upsert_worktree_lane(
     notes: str | None = None,
     task_ref: str | None = None,
 ) -> str:
-    valid_statuses = {"planned", "active", "blocked", "review", "merged", "closed"}
+    valid_statuses = LANE_STATUSES
     normalized_lane_id = _normalize_optional_text(lane_id)
     normalized_path = _normalize_optional_text(worktree_path)
     normalized_branch = _normalize_optional_text(branch)
@@ -1388,7 +1590,7 @@ def close_worktree_lane(
     task_ref: str | None = None,
 ) -> str:
     """Transition a worktree lane to closed or merged status in the handoff database."""
-    valid_close_statuses = {"merged", "closed"}
+    valid_close_statuses = CLOSEABLE_LANE_STATUSES
     normalized_lane_id = _normalize_optional_text(lane_id)
     if normalized_lane_id is None:
         return _json_response({"ok": False, "error": "lane_id is required."})
@@ -1421,7 +1623,7 @@ def close_worktree_lane(
 def list_worktree_lanes(task_ref: str | None = None, status: str = "all", limit: int = 100, offset: int = 0) -> str:
     limit = max(1, limit)
     offset = max(0, offset)
-    valid_statuses = {"all", "planned", "active", "blocked", "review", "merged", "closed"}
+    valid_statuses = {"all", *LANE_STATUSES}
     if status not in valid_statuses:
         return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(valid_statuses))}"})
     with _get_db_connection() as conn:
@@ -1460,19 +1662,37 @@ def get_lane_activity(
     limit_blockers: int = 20,
     limit_actions: int = 20,
     limit_findings: int = 20,
+    format: str = "full",
 ) -> str:
     normalized_lane_id = _normalize_optional_text(lane_id)
     if normalized_lane_id is None:
         return _json_response({"ok": False, "error": "lane_id is required."})
+    if format not in {"full", "archival"}:
+        return _json_response({"ok": False, "error": "Invalid format. Valid: archival, full."})
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         lane = _get_lane_row(conn, resolved_task_ref, normalized_lane_id)
         if lane is None:
             return _json_response({"ok": False, "error": "Lane not found for task_ref."})
+        if format == "archival":
+            return _json_response(
+                {
+                    "ok": True,
+                    "task_ref": resolved_task_ref,
+                    "format": format,
+                    "lane": dict(lane),
+                    "summary": _build_archival_lane_activity_summary(
+                        conn,
+                        task_ref=resolved_task_ref,
+                        lane_id=normalized_lane_id,
+                    ),
+                }
+            )
         return _json_response(
             {
                 "ok": True,
                 "task_ref": resolved_task_ref,
+                "format": format,
                 "lane": dict(lane),
                 "decisions": _fetch_handoff_rows(conn, table="decisions", where_sql="task_ref = ? AND lane_id = ?", order_sql="created_at DESC, id DESC", limit=max(1, limit_decisions), params=(resolved_task_ref, normalized_lane_id)),
                 "tests": _fetch_handoff_rows(conn, table="verified_tests", where_sql="task_ref = ? AND lane_id = ?", order_sql="verified_at DESC, id DESC", limit=max(1, limit_tests), params=(resolved_task_ref, normalized_lane_id)),
@@ -1873,7 +2093,7 @@ def record_worker_report(
     task_ref: str | None = None,
     actor: WriteActor | None = None,
 ) -> str:
-    valid_statuses = {"submitted", "acknowledged", "superseded"}
+    valid_statuses = REPORT_STATUSES
     normalized_lane_id = _normalize_optional_text(lane_id)
     if normalized_lane_id is None:
         return _json_response({"ok": False, "error": "lane_id is required."})
@@ -1938,8 +2158,8 @@ def record_lane_message(
     task_ref: str | None = None,
     actor: WriteActor | None = None,
 ) -> str:
-    valid_directions = {"orchestrator_to_worker", "worker_to_orchestrator"}
-    valid_statuses = {"open", "acknowledged", "closed"}
+    valid_directions = LANE_MESSAGE_DIRECTIONS
+    valid_statuses = MESSAGE_STATUSES
     normalized_lane_id = _normalize_optional_text(lane_id)
     if normalized_lane_id is None:
         return _json_response({"ok": False, "error": "lane_id is required."})
@@ -2003,7 +2223,7 @@ def record_lane_brief(
         return _json_response({"ok": False, "error": "summary is required."})
     if normalized_source_lane is None:
         return _json_response({"ok": False, "error": "source_lane is required."})
-    payload: LaneMessagePayload = {
+    payload: dict[str, object] = {
         "source_lane": normalized_source_lane,
         "reason": normalized_reason,
         "summary": normalized_summary,
@@ -2031,7 +2251,7 @@ def update_lane_message(
     task_ref: str | None = None,
     actor: WriteActor | None = None,
 ) -> str:
-    valid_statuses = {"open", "acknowledged", "closed"}
+    valid_statuses = MESSAGE_STATUSES
     if status not in valid_statuses:
         return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(valid_statuses))}"})
     with _get_db_connection() as conn:
@@ -2050,7 +2270,7 @@ def update_lane_message(
 
 
 def list_lane_messages(task_ref: str | None = None, lane_id: str | None = None, status: str = "all", limit: int = 20, offset: int = 0) -> str:
-    valid_statuses = {"all", "open", "acknowledged", "closed"}
+    valid_statuses = {"all", *MESSAGE_STATUSES}
     if status not in valid_statuses:
         return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(valid_statuses))}"})
     limit = max(1, limit)
@@ -2084,7 +2304,7 @@ def list_lane_messages(task_ref: str | None = None, lane_id: str | None = None, 
 
 
 def list_lane_briefs(task_ref: str | None = None, lane_id: str | None = None, status: str = "open", limit: int = 20, offset: int = 0) -> str:
-    valid_statuses = {"all", "open", "acknowledged", "closed"}
+    valid_statuses = {"all", *MESSAGE_STATUSES}
     if status not in valid_statuses:
         return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(valid_statuses))}"})
     limit = max(1, limit)
@@ -2365,7 +2585,7 @@ def update_next_actions(operation: str, action_id: int | None = None, action: st
             if action is None and priority is None and status is None:
                 return _json_response({"ok": False, "error": "At least one of action, priority, or status is required for update."})
             use_status = status if status is not None else str(existing["status"])
-            if use_status not in {"pending", "done", "skipped"}:
+            if use_status not in ACTION_STATUSES:
                 return _json_response({"ok": False, "error": "Invalid status value."})
             conn.execute("UPDATE next_actions SET action = ?, priority = ?, status = ?, agent = ?, branch = ?, commit_sha = ?, lane_id = COALESCE(lane_id, ?), updated_at = datetime('now') WHERE id = ? AND task_ref = ?", (action if action is not None else str(existing["action"]), priority if priority is not None else int(existing["priority"]), use_status, agent, branch, commit_sha, lane_id, action_id, resolved_task_ref))
         elif operation == "complete":
@@ -2376,7 +2596,7 @@ def update_next_actions(operation: str, action_id: int | None = None, action: st
 
 
 def list_next_actions(task_ref: str | None = None, lane_id: str | None = None, status: str = "all", limit: int = 100, offset: int = 0) -> str:
-    valid_statuses = {"all", "pending", "done", "skipped"}
+    valid_statuses = {"all", *ACTION_STATUSES}
     if status not in valid_statuses:
         return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(valid_statuses))}"})
     limit = max(1, limit)
@@ -2500,7 +2720,7 @@ def record_review_finding(session: str, finding_id: str, severity: str, file_pat
         )
         row = conn.execute("SELECT * FROM review_findings WHERE task_ref = ? AND finding_id = ?", (resolved_task_ref, finding_id)).fetchone()
         _write_current_task_md_for_task(conn, resolved_task_ref)
-        payload = {"ok": True, "finding": _row_to_dict(row)}
+        payload: dict[str, object] = {"ok": True, "finding": _row_to_dict(row)}
         if existing is not None and str(existing["status"]) != "open":
             payload["reopened"] = True
             payload["reopen_reason"] = "Re-recorded via review-record."
@@ -2698,7 +2918,7 @@ def update_review_finding(status: str, finding_id: str | None = None, finding_db
         )
         row = conn.execute("SELECT * FROM review_findings WHERE id = ?", (target_db_id,)).fetchone()
         _write_current_task_md_for_task(conn, resolved_task_ref)
-        payload = {
+        payload: dict[str, object] = {
             "ok": True,
             "finding": _row_to_dict(row),
             "commit_guard": {

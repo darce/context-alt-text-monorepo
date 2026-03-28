@@ -12,16 +12,21 @@ from __future__ import annotations
 import json
 import sqlite3
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from agent_handoff_mcp.orchestration.ace_metrics import (
+    _archive_rate,
     _contract_co_change_signal,
+    _ctx7_adoption,
     _handoff_memory,
     _phase_timing,
+    _planning_drift,
     _process_health,
     _sparkline,
+    _stale_artifact_metrics,
     _token_burn,
     build_snapshot,
     render_markdown,
@@ -145,7 +150,9 @@ class TestBuildSnapshotZeroData:
         )
         required_keys = {
             "timestamp", "task_ref", "token_burn", "context_pressure",
-            "fts5_retrieval", "lane_health", "process_health", "handoff_memory", "phase_timing", "ace_documentation",
+            "fts5_retrieval", "lane_health", "process_health", "handoff_memory",
+            "planning_drift", "stale_artifact_rate", "archive_rate", "ctx7_adoption",
+            "phase_timing", "ace_documentation",
         }
         assert required_keys.issubset(snapshot.keys())
 
@@ -239,6 +246,34 @@ class TestRenderMarkdown:
                 "total_findings": 0,
                 "artifact_source_count": 0,
             },
+            "planning_drift": {
+                "data_available": False,
+                "window_days": 30,
+                "total": 0,
+                "terminal": 0,
+                "drift": None,
+            },
+            "stale_artifact_rate": {
+                "data_available": False,
+                "window_days": 30,
+                "total": 0,
+                "stale_count": 0,
+                "stale_rate": 0.0,
+            },
+            "archive_rate": {
+                "data_available": False,
+                "window_days": 30,
+                "total_archives": 0,
+                "in_window": 0,
+                "mean_interval_hours": None,
+            },
+            "ctx7_adoption": {
+                "data_available": False,
+                "decisions_with_ctx7": 0,
+                "unique_library_ids": 0,
+                "reuse_ratio": None,
+                "library_ids": [],
+            },
             "phase_timing": {
                 "data_available": False,
                 "exec": {"count": 0, "total": 0.0, "mean": 0.0, "max": 0.0},
@@ -283,10 +318,178 @@ class TestRenderMarkdown:
             "## Lane Stability",
             "## Process Health",
             "## Handoff Memory",
+            "## Planning Drift",
+            "## Artifact Staleness",
+            "## Archive Cadence",
+            "## ctx7 Adoption",
             "## Phase Timing",
             "## Documentation Fitness",
         ]:
             assert section in md, f"Missing section: {section}"
+
+
+class TestDerivedMetrics:
+    def _write_handoff_db(self, state_dir: Path) -> None:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        db_path = state_dir / "handoff.db"
+        with sqlite3.connect(db_path) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE plan_cursors (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_ref TEXT NOT NULL,
+                    plan_item_id TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    lane_id TEXT,
+                    mcp_action_id INTEGER,
+                    worker_message_id INTEGER,
+                    source_heading TEXT,
+                    summary TEXT NOT NULL,
+                    dispatch_count INTEGER NOT NULL DEFAULT 0,
+                    dispatched_at TEXT,
+                    completed_at TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                CREATE TABLE task_archives (
+                    task_ref TEXT PRIMARY KEY,
+                    archived_at TEXT NOT NULL,
+                    archived_by TEXT,
+                    archived_branch TEXT,
+                    archived_commit_sha TEXT,
+                    notes TEXT,
+                    snapshot_json TEXT NOT NULL
+                );
+                CREATE TABLE decisions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_ref TEXT NOT NULL,
+                    rationale TEXT
+                );
+                """
+            )
+            conn.executemany(
+                """
+                INSERT INTO plan_cursors (task_ref, plan_item_id, state, summary, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                [
+                    ("task-1", "slice-1", "completed", "done", "2026-03-20 00:00:00"),
+                    ("task-1", "slice-2", "skipped", "skip", "2026-03-21 00:00:00"),
+                    ("task-1", "slice-3", "dispatched", "still active", "2026-03-22 00:00:00"),
+                    ("task-1", "slice-4", "escalated", "needs help", "2026-03-23 00:00:00"),
+                ],
+            )
+            conn.executemany(
+                """
+                INSERT INTO task_archives (task_ref, archived_at, snapshot_json)
+                VALUES (?, ?, ?)
+                """,
+                [
+                    ("arch-1", "2026-03-01 00:00:00", "{}"),
+                    ("arch-2", "2026-03-10 00:00:00", "{}"),
+                    ("arch-3", "2026-03-20 00:00:00", "{}"),
+                ],
+            )
+            conn.executemany(
+                "INSERT INTO decisions (task_ref, rationale) VALUES (?, ?)",
+                [
+                    ("task-1", "ctx7 library id: /vercel/next.js\nUsed current docs."),
+                    ("task-1", "ctx7 library id: /vercel/next.js\nctx7 library id: /openai/openai"),
+                    ("task-1", "plain prose decision"),
+                ],
+            )
+
+    def _write_artifacts_db(self, state_dir: Path) -> None:
+        db_path = state_dir / "mcp-artifacts.db"
+        with sqlite3.connect(db_path) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE artifact_sources (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_ref TEXT NOT NULL,
+                    lane_id TEXT,
+                    app_root TEXT,
+                    source_kind TEXT NOT NULL,
+                    source_label TEXT NOT NULL,
+                    content_type TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    metadata_json TEXT,
+                    summary TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                """
+            )
+            conn.executemany(
+                """
+                INSERT INTO artifact_sources (
+                    task_ref, lane_id, app_root, source_kind, source_label, content_type,
+                    content_hash, metadata_json, summary, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    ("task-1", None, None, "log", "recent", "text/plain", "h1", None, None, "2026-03-20 00:00:00", "2026-03-24 00:00:00"),
+                    ("task-1", None, None, "log", "stale", "text/plain", "h2", None, None, "2026-02-01 00:00:00", "2026-02-15 00:00:00"),
+                ],
+            )
+
+    def test_planning_drift_uses_terminal_ratio(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        state_dir = tmp_path / ".task-state"
+        self._write_handoff_db(state_dir)
+        monkeypatch.setattr(
+            "agent_handoff_mcp.orchestration.ace_metrics._window_start",
+            lambda days=30: datetime(2026, 3, 1, tzinfo=timezone.utc),
+        )
+
+        result = _planning_drift("task-1", state_dir)
+
+        assert result["data_available"] is True
+        assert result["total"] == 4
+        assert result["terminal"] == 2
+        assert result["drift"] == 0.5
+
+    def test_stale_artifact_metrics_counts_old_sources(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        state_dir = tmp_path / ".task-state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        self._write_artifacts_db(state_dir)
+        monkeypatch.setattr(
+            "agent_handoff_mcp.orchestration.ace_metrics._window_start",
+            lambda days=30: datetime(2026, 3, 1, tzinfo=timezone.utc),
+        )
+
+        result = _stale_artifact_metrics(state_dir)
+
+        assert result["data_available"] is True
+        assert result["total"] == 2
+        assert result["stale_count"] == 1
+        assert result["stale_rate"] == 0.5
+
+    def test_archive_rate_uses_repo_wide_archive_history(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        state_dir = tmp_path / ".task-state"
+        self._write_handoff_db(state_dir)
+        monkeypatch.setattr(
+            "agent_handoff_mcp.orchestration.ace_metrics._window_start",
+            lambda days=30: datetime(2026, 3, 5, tzinfo=timezone.utc),
+        )
+
+        result = _archive_rate(state_dir)
+
+        assert result["data_available"] is True
+        assert result["total_archives"] == 3
+        assert result["in_window"] == 2
+        assert result["mean_interval_hours"] == 228.0
+
+    def test_ctx7_adoption_tracks_decisions_and_unique_library_ids(self, tmp_path: Path) -> None:
+        state_dir = tmp_path / ".task-state"
+        self._write_handoff_db(state_dir)
+
+        result = _ctx7_adoption("task-1", state_dir)
+
+        assert result["data_available"] is True
+        assert result["decisions_with_ctx7"] == 2
+        assert result["unique_library_ids"] == 2
+        assert result["reuse_ratio"] == 1.5
+        assert result["library_ids"] == ["/openai/openai", "/vercel/next.js"]
 
 
 class TestProcessHealth:

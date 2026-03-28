@@ -18,9 +18,11 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from statistics import median
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +231,304 @@ def _fts5_retrieval(state_dir: Path) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Process health metrics
+# ---------------------------------------------------------------------------
+
+_MANDATORY_DECISION_HEADINGS = (
+    "## Changes",
+    "## Verification",
+    "## Schema / Contract Changes",
+    "## Open Threads",
+)
+
+_HOT_STATE_LIMITS = {
+    "blockers": 5,
+    "actions": 5,
+    "decisions": 3,
+    "tests": 3,
+    "findings": 10,
+}
+
+
+def _process_health(task_ref: str, state_dir: Path, workspace_root: Path) -> dict:
+    result: dict = {
+        "data_available": False,
+        "reopened_finding_rate": {
+            "value": None,
+            "reopened_findings": 0,
+            "total_findings": 0,
+        },
+        "finding_resolution_velocity_hours": {
+            "median_hours": None,
+            "resolved_findings": 0,
+        },
+        "handoff_decision_completeness": {
+            "value": None,
+            "structured_decisions": 0,
+            "total_decisions": 0,
+        },
+        "contract_co_change_signal": _contract_co_change_signal(workspace_root),
+    }
+
+    handoff_db = state_dir / "handoff.db"
+    if not handoff_db.exists():
+        result["data_available"] = result["contract_co_change_signal"]["data_available"]
+        return result
+
+    try:
+        with sqlite3.connect(str(handoff_db)) as conn:
+            conn.row_factory = sqlite3.Row
+
+            finding_rows = conn.execute(
+                """
+                SELECT reopen_count, created_at, resolved_at, status
+                FROM review_findings
+                WHERE task_ref = ?
+                """,
+                (task_ref,),
+            ).fetchall()
+            total_findings = len(finding_rows)
+            reopened_findings = sum(1 for row in finding_rows if int(row["reopen_count"] or 0) >= 1)
+            if total_findings:
+                result["reopened_finding_rate"] = {
+                    "value": round(reopened_findings / total_findings, 3),
+                    "reopened_findings": reopened_findings,
+                    "total_findings": total_findings,
+                }
+                result["data_available"] = True
+
+            resolution_durations_hours: list[float] = []
+            for row in finding_rows:
+                if str(row["status"] or "") != "fixed":
+                    continue
+                created_at = _parse_metric_datetime(row["created_at"])
+                resolved_at = _parse_metric_datetime(row["resolved_at"])
+                if created_at is None or resolved_at is None:
+                    continue
+                resolution_durations_hours.append(
+                    round((resolved_at - created_at).total_seconds() / 3600.0, 3)
+                )
+            if resolution_durations_hours:
+                result["finding_resolution_velocity_hours"] = {
+                    "median_hours": round(median(resolution_durations_hours), 3),
+                    "resolved_findings": len(resolution_durations_hours),
+                }
+                result["data_available"] = True
+
+            decision_rows = conn.execute(
+                """
+                SELECT rationale
+                FROM decisions
+                WHERE task_ref = ?
+                """,
+                (task_ref,),
+            ).fetchall()
+            total_decisions = len(decision_rows)
+            structured_decisions = sum(
+                1
+                for row in decision_rows
+                if _has_structured_decision_headings(str(row["rationale"] or ""))
+            )
+            if total_decisions:
+                result["handoff_decision_completeness"] = {
+                    "value": round(structured_decisions / total_decisions, 3),
+                    "structured_decisions": structured_decisions,
+                    "total_decisions": total_decisions,
+                }
+                result["data_available"] = True
+    except sqlite3.Error:
+        pass
+
+    if result["contract_co_change_signal"]["data_available"]:
+        result["data_available"] = True
+
+    return result
+
+
+def _handoff_memory(task_ref: str, state_dir: Path, workspace_root: Path) -> dict:
+    result = {
+        "data_available": False,
+        "hot_state_size_bytes": 0,
+        "total_decisions": 0,
+        "total_findings": 0,
+        "artifact_source_count": 0,
+    }
+
+    handoff_db = state_dir / "handoff.db"
+    if not handoff_db.exists():
+        return result
+
+    try:
+        from agent_handoff_mcp.config import RuntimeConfig  # noqa: PLC0415
+        from agent_handoff_mcp.core import get_handoff_state  # noqa: PLC0415
+        from agent_handoff_mcp.runtime import (  # noqa: PLC0415
+            configure_runtime,
+            get_runtime_config,
+        )
+
+        prior_runtime = None
+        try:
+            prior_runtime = get_runtime_config()
+        except RuntimeError:
+            prior_runtime = None
+
+        try:
+            configure_runtime(
+                RuntimeConfig.for_workspace(
+                    workspace_root,
+                    state_dir=state_dir,
+                    current_task_path=workspace_root / "CURRENT_TASK.md",
+                    exports_dir=state_dir / "exports",
+                )
+            )
+            hot_state = json.loads(
+                get_handoff_state(
+                    task_ref=task_ref,
+                    top_n_blockers=_HOT_STATE_LIMITS["blockers"],
+                    top_n_actions=_HOT_STATE_LIMITS["actions"],
+                    top_n_decisions=_HOT_STATE_LIMITS["decisions"],
+                    top_n_tests=_HOT_STATE_LIMITS["tests"],
+                    top_n_findings=_HOT_STATE_LIMITS["findings"],
+                )
+            )
+        finally:
+            if prior_runtime is not None:
+                configure_runtime(prior_runtime)
+
+        result["hot_state_size_bytes"] = len(
+            json.dumps(hot_state, sort_keys=True).encode("utf-8")
+        )
+
+        with sqlite3.connect(str(handoff_db)) as conn:
+            (decision_count,) = conn.execute(
+                "SELECT COUNT(*) FROM decisions WHERE task_ref = ?",
+                (task_ref,),
+            ).fetchone()
+            (finding_count,) = conn.execute(
+                "SELECT COUNT(*) FROM review_findings WHERE task_ref = ?",
+                (task_ref,),
+            ).fetchone()
+            result["total_decisions"] = int(decision_count)
+            result["total_findings"] = int(finding_count)
+            result["data_available"] = True
+    except (json.JSONDecodeError, RuntimeError, sqlite3.Error):
+        pass
+
+    artifacts_db = state_dir / "mcp-artifacts.db"
+    if artifacts_db.exists():
+        try:
+            with sqlite3.connect(str(artifacts_db)) as conn:
+                (artifact_count,) = conn.execute(
+                    "SELECT COUNT(*) FROM artifact_sources"
+                ).fetchone()
+                result["artifact_source_count"] = int(artifact_count)
+                result["data_available"] = True
+        except sqlite3.Error:
+            pass
+
+    return result
+
+
+def _has_structured_decision_headings(text: str) -> bool:
+    return all(heading in text for heading in _MANDATORY_DECISION_HEADINGS)
+
+
+def _parse_metric_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if normalized == "":
+        return None
+    for parser in (
+        lambda raw: datetime.strptime(raw, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc),
+        lambda raw: datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(timezone.utc),
+    ):
+        try:
+            return parser(normalized)
+        except ValueError:
+            continue
+    return None
+
+
+def _contract_co_change_signal(workspace_root: Path, commit_limit: int = 20) -> dict:
+    from .review_ready import (  # noqa: PLC0415
+        BOUNDARY_PREFIXES,
+        CONTRACT_CHECKLIST_PATH,
+        CONTRACT_PREFIXES,
+    )
+
+    result = {
+        "data_available": False,
+        "recent_commits_scanned": 0,
+        "boundary_touching_commits": 0,
+        "boundary_commits_with_contract_co_change": 0,
+        "value": None,
+    }
+
+    git_dir = workspace_root / ".git"
+    if not workspace_root.exists() or not git_dir.exists():
+        return result
+
+    try:
+        log_output = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(workspace_root),
+                "log",
+                "--format=commit:%H",
+                f"-n{commit_limit}",
+                "--name-only",
+                "HEAD",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return result
+
+    commits: list[list[str]] = []
+    current_files: list[str] = []
+    for raw_line in log_output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("commit:"):
+            if current_files:
+                commits.append(current_files)
+            current_files = []
+            continue
+        current_files.append(line)
+    if current_files:
+        commits.append(current_files)
+
+    boundary_touching_commits = 0
+    co_changed_commits = 0
+    for changed_files in commits:
+        if not changed_files:
+            continue
+        boundary_changed = any(path.startswith(BOUNDARY_PREFIXES) for path in changed_files)
+        if not boundary_changed:
+            continue
+        boundary_touching_commits += 1
+        contract_changed = any(
+            path.startswith(CONTRACT_PREFIXES) or path == CONTRACT_CHECKLIST_PATH
+            for path in changed_files
+        )
+        if contract_changed:
+            co_changed_commits += 1
+
+    result["data_available"] = bool(commits)
+    result["recent_commits_scanned"] = len(commits)
+    result["boundary_touching_commits"] = boundary_touching_commits
+    result["boundary_commits_with_contract_co_change"] = co_changed_commits
+    if boundary_touching_commits:
+        result["value"] = round(co_changed_commits / boundary_touching_commits, 3)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # ACE documentation health
 # ---------------------------------------------------------------------------
 
@@ -279,6 +579,7 @@ def build_snapshot(
     instruction_files: list[Path],
 ) -> dict:
     worker_events = _collect_worker_events(logs_dir)
+    workspace_root = state_dir.parent
 
     snapshot = {
         "timestamp": datetime.now(tz=timezone.utc).isoformat(),
@@ -287,6 +588,8 @@ def build_snapshot(
         "context_pressure": _context_pressure(worker_events),
         "fts5_retrieval": _fts5_retrieval(state_dir),
         "lane_health": _lane_health(worker_events),
+        "process_health": _process_health(task_ref, state_dir, workspace_root),
+        "handoff_memory": _handoff_memory(task_ref, state_dir, workspace_root),
         "phase_timing": _phase_timing(worker_events),
         "ace_documentation": _ace_documentation(instruction_files),
     }
@@ -309,6 +612,8 @@ def render_markdown(snapshot: dict) -> str:
     cp = snapshot["context_pressure"]
     fts = snapshot["fts5_retrieval"]
     lh = snapshot["lane_health"]
+    ph = snapshot.get("process_health", {})
+    hm = snapshot.get("handoff_memory", {})
     ace = snapshot["ace_documentation"]
 
     lines = [
@@ -372,6 +677,58 @@ def render_markdown(snapshot: dict) -> str:
         ]
     else:
         lines.append("_No lane event data available._")
+
+    lines += [
+        f"",
+        f"## Process Health",
+    ]
+    if ph.get("data_available"):
+        reopened = ph["reopened_finding_rate"]
+        velocity = ph["finding_resolution_velocity_hours"]
+        completeness = ph["handoff_decision_completeness"]
+        contract = ph["contract_co_change_signal"]
+        lines += [
+            "- Reopened finding rate: "
+            + (
+                f"{reopened['value']:.1%} ({reopened['reopened_findings']} / {reopened['total_findings']})"
+                if reopened["value"] is not None
+                else "n/a"
+            ),
+            "- Finding resolution velocity (median hours): "
+            + (
+                f"{velocity['median_hours']}h across {velocity['resolved_findings']} resolved findings"
+                if velocity["median_hours"] is not None
+                else "n/a"
+            ),
+            "- Structured handoff decision completeness: "
+            + (
+                f"{completeness['value']:.1%} ({completeness['structured_decisions']} / {completeness['total_decisions']})"
+                if completeness["value"] is not None
+                else "n/a"
+            ),
+            "- Contract co-change signal: "
+            + (
+                f"{contract['value']:.1%} ({contract['boundary_commits_with_contract_co_change']} / {contract['boundary_touching_commits']} boundary-touching commits)"
+                if contract.get("value") is not None
+                else "n/a"
+            ),
+        ]
+    else:
+        lines.append("_No process-health data available yet._")
+
+    lines += [
+        f"",
+        f"## Handoff Memory",
+    ]
+    if hm.get("data_available"):
+        lines += [
+            f"- Hot-state size: {hm['hot_state_size_bytes']} bytes",
+            f"- Total decisions: {hm['total_decisions']}",
+            f"- Total findings: {hm['total_findings']}",
+            f"- Artifact sources indexed: {hm['artifact_source_count']}",
+        ]
+    else:
+        lines.append("_No handoff-memory data available yet._")
 
     pt = snapshot.get("phase_timing", {})
     lines += [
@@ -461,6 +818,14 @@ def render_sparklines(state_dir: Path, task_ref: str) -> str:
     exec_mean_series = [s.get("phase_timing", {}).get("exec", {}).get("mean", 0.0) for s in snapshots]
     review_mean_series = [s.get("phase_timing", {}).get("review", {}).get("mean", 0.0) for s in snapshots]
     convergence_series = [s.get("lane_health", {}).get("convergence_rate", 0.0) for s in snapshots]
+    reopened_series = [
+        s.get("process_health", {}).get("reopened_finding_rate", {}).get("value") or 0.0
+        for s in snapshots
+    ]
+    hot_state_series = [
+        s.get("handoff_memory", {}).get("hot_state_size_bytes", 0)
+        for s in snapshots
+    ]
 
     lines += [
         "## Token Burn",
@@ -481,6 +846,14 @@ def render_sparklines(state_dir: Path, task_ref: str) -> str:
         "## Lane Convergence Rate",
         f"  `{_sparkline(convergence_series)}`",
         f"  latest={convergence_series[-1]:.1%}" if convergence_series else "",
+        "",
+        "## Reopened Finding Rate",
+        f"  `{_sparkline(reopened_series)}`",
+        f"  latest={reopened_series[-1]:.1%}" if reopened_series else "",
+        "",
+        "## Hot-State Size (bytes)",
+        f"  `{_sparkline(hot_state_series)}`",
+        f"  latest={hot_state_series[-1]:,}" if hot_state_series else "",
     ]
 
     return "\n".join(lines) + "\n"

@@ -990,12 +990,13 @@ def _utcnow_iso() -> str:
 
 def _render_current_task_md(state: dict) -> str:
     active = state.get("active")
+    _generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     if not active:
-        return "# CURRENT_TASK\n\n_DO NOT EDIT: generated from .task-state/handoff.db._\n\nNo active handoff state found.\n"
+        return f"# CURRENT_TASK\n\n_DO NOT EDIT: generated from .task-state/handoff.db. Last generated: {_generated_at}_\n\nNo active handoff state found.\n"
     lines = [
         "# CURRENT_TASK",
         "",
-        "_DO NOT EDIT: generated from .task-state/handoff.db._",
+        f"_DO NOT EDIT: generated from .task-state/handoff.db. Last generated: {_generated_at}_",
         "",
         "## Objective",
         f"{active.get('objective', '')}",
@@ -1011,7 +1012,7 @@ def _render_current_task_md(state: dict) -> str:
     for section, empty_text, formatter in [
         ("blockers_open", "- None", lambda item: f"- [#{item.get('id')}] {item.get('description')}"),
         ("actions_pending", "- None", lambda item: f"- (P{item.get('priority')}) [#{item.get('id')}] {item.get('action')}"),
-        ("decisions_recent", "- None", lambda item: f"- [#{item.get('id')}] {item.get('decision')}"),
+        ("decisions_recent", "- None", lambda item: f"- [#{item.get('id')}] {item.get('decision')}" + (f" ({item.get('agent')})" if item.get('agent') else "")),
         ("tests_recent", "- None", lambda item: f"- [#{item.get('id')}] `{item.get('command')}` -> `{'pass' if item.get('passed') else 'fail'}`"),
     ]:
         items = state.get(section, [])
@@ -1167,6 +1168,16 @@ def _has_structured_slice_summary(text: str) -> bool:
         if current_heading is not None:
             section_content[current_heading].append(line)
     return all(section_content[heading] for heading in MANDATORY_SLICE_DECISION_HEADINGS)
+
+
+def _validate_decision_payload(decision: str, rationale: str | None) -> str | None:
+    if decision.startswith("slice_complete_") and not _has_structured_slice_summary(str(rationale or "")):
+        headings = ", ".join(MANDATORY_SLICE_DECISION_HEADINGS)
+        return (
+            "slice_complete_* decisions require a structured rationale with non-empty sections for: "
+            f"{headings}."
+        )
+    return None
 
 
 def _normalize_path_for_match(path_value: str | Path) -> str:
@@ -2659,6 +2670,9 @@ def list_plan_cursors(
 
 
 def record_decision(session: str, decision: str, rationale: str | None = None, actor: WriteActor | None = None, task_ref: str | None = None) -> str:
+    validation_error = _validate_decision_payload(decision, rationale)
+    if validation_error is not None:
+        return _json_response({"ok": False, "error": validation_error})
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         agent, branch, commit_sha, lane_id = _resolve_write_actor(conn, actor)

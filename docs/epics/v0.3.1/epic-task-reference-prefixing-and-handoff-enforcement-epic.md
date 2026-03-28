@@ -177,7 +177,7 @@ Exit criteria:
 | Dependency | Owner | Status | Blocks |
 | --- | --- | --- | --- |
 | Decision on epic short-id style (manual choice vs constrained derivation) | @daniel | Not started | Phase 1 template finalization |
-| Agreement on grandfathering scope for historical docs/decisions | @daniel | Not started | Phase 4 migration policy |
+| Agreement on grandfathering scope for historical docs/decisions | @daniel | Resolved by E12-4 plan (grandfathered by default) | none |
 
 ## Code Anchors
 

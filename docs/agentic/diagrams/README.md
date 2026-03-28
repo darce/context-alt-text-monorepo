@@ -109,4 +109,4 @@ diagrams/
 1. **One concern per diagram** — Keep diagrams small for readability
 2. **Use consistent styling** — Follow WCAG AA color contrast
 3. **Include code anchors** — Reference source file locations
-4. **Update when architecture changes** — Diagrams must match implementation
+4. **Update when architecture changes** — Follow [../rules/uml-change-checklist.md](../rules/uml-change-checklist.md) and keep diagrams in the same slice as the code change

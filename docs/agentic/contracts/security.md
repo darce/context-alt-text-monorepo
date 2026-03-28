@@ -33,7 +33,7 @@ API keys are stored in the `api_keys` database table with the following structur
 | -------------- | -------- | --------------------------- |
 | `id`           | UUID     | Primary key (UUIDv7)        |
 | `tenant_id`    | UUID     | Associated tenant           |
-| `key_hash`     | string   | SHA-256 hash of the API key |
+| `api_key_hash` | string   | Hash of the API key using `RECOGNITION_API_KEY_HASH_ALGORITHM` |
 | `created_at`   | datetime | Creation timestamp          |
 | `last_used_at` | datetime | Last usage timestamp        |
 
@@ -71,15 +71,7 @@ Each API key is scoped to a specific tenant. The service enforces tenant isolati
 
 ### Tenant Mismatch Handling
 
-If an API key's tenant claim doesn't match the `X-Tenant-ID` header, the request is rejected with:
-
-```json
-{
-  "error": "HTTPException",
-  "message": "tenant mismatch",
-  "status_code": 403
-}
-```
+If an API key's tenant claim doesn't match the normalized `X-Tenant-ID` header, `require_auth` raises `HTTPException(status_code=403, detail="tenant mismatch")`.
 
 ## Write Access Control
 
@@ -152,6 +144,15 @@ All WordPress plugin REST endpoints require `manage_options` capability via the 
 | `/acx/v1/recognition/outbox/{id}/discard`                        | POST   | `manage_options`    |
 | `/acx/v1/recognition/sync-status`                                | GET    | `manage_options`    |
 | `/acx/v1/recognition/sync/trigger`                               | POST   | `manage_options`    |
+| `/acx/v1/retention/status`                                       | GET    | `manage_options`    |
+| `/acx/v1/retention/policy`                                       | PATCH  | `manage_options`    |
+| `/acx/v1/retention/policy/preset`                                | POST   | `manage_options`    |
+| `/acx/v1/retention/export`                                       | POST   | `manage_options`    |
+| `/acx/v1/retention/export/{job_id}/status`                       | GET    | `manage_options`    |
+| `/acx/v1/retention/export/{job_id}/data`                         | GET    | `manage_options`    |
+| `/acx/v1/retention/purge`                                        | POST   | `manage_options`    |
+| `/acx/v1/retention/import`                                       | POST   | `manage_options`    |
+| `/acx/v1/retention/audit`                                        | GET    | `manage_options`    |
 
 Write access is granted when:
 
@@ -161,7 +162,7 @@ Write access is granted when:
 
 ## Admin Keys
 
-Development API keys (from `DEV_API_KEYS`) are marked as `is_admin=True` and have cross-tenant access for debugging and administrative operations.
+Development API keys (from `RECOGNITION_ALLOWED_API_KEYS`, surfaced as `settings.dev_api_keys`) are marked as `is_admin=True` and have cross-tenant access for debugging and administrative operations.
 
 **⚠️ Warning**: Never use dev keys in production environments.
 
@@ -169,40 +170,22 @@ Development API keys (from `DEV_API_KEYS`) are marked as `is_admin=True` and hav
 
 ### 401 Unauthorized
 
-Missing or malformed authorization header:
+`require_auth` raises plain FastAPI `HTTPException` responses for missing headers or invalid auth schemes:
 
-```json
-{
-  "error": "HTTPException",
-  "message": "Authorization header required",
-  "status_code": 401
-}
-```
+- `401` with `detail="Authorization header required"`
+- `401` with `detail="invalid authorization scheme"`
 
 ### 403 Forbidden
 
-Invalid API key or tenant mismatch:
+`require_auth` and `require_write_access` also raise plain FastAPI `HTTPException` responses for authorization failures:
 
-```json
-{
-  "error": "HTTPException",
-  "message": "invalid or missing API key",
-  "status_code": 403
-}
-```
+- `403` with `detail="invalid or missing API key"`
+- `403` with `detail="tenant mismatch"`
+- `403` with `detail="Write access requires a tenant-scoped API key or admin privileges"`
 
 ### Structured Error Format
 
-All errors include:
-
-```json
-{
-  "error": "<exception_class>",
-  "message": "<human_readable_message>",
-  "path": "<request_path>",
-  "trace_id": "<request_id_or_generated>"
-}
-```
+Structured `{error, message, path, trace_id}` payloads are used by the registered application exception handlers such as `RecognitionError`, `ClusterNotFoundError`, and duplicate-label `IntegrityError`. Generic 500 and pool exhaustion responses are intentionally opaque and omit `message`. Plain `HTTPException` responses raised directly by auth dependencies keep FastAPI's default `detail` shape instead of this envelope.
 
 ## WordPress Plugin Integration
 

@@ -115,9 +115,10 @@ Choose your domain to load targeted context. **Always load the testing guide** a
 | Planning document review             | [rules/planning-review-guide.md](rules/planning-review-guide.md)                                            |
 | Component architecture patterns      | [rules/component-architecture-patterns.md](rules/component-architecture-patterns.md)                        |
 | Radix UI / accessibility primitives  | [rules/RADIX_UI_COMPONENT_GUIDE.md](rules/RADIX_UI_COMPONENT_GUIDE.md)                                      |
-| Roster auto-resolve vs pending       | [rules/roster_auto_resolve_behavior.md](rules/roster_auto_resolve_behavior.md)                              |
-| Embedding search evolution           | [rules/search_optimizations.md](rules/search_optimizations.md)                                              |
-| Detection vs identification boundary | [rules/why-identify-endpoint-exists.md](rules/why-identify-endpoint-exists.md)                              |
+| Roster auto-resolve current behavior | [maps/php-plugin.md](maps/php-plugin.md)                                                                    |
+| Deferred roster pending-review mode  | [../deferred-features/roster-pending-references.md](../deferred-features/roster-pending-references.md)     |
+| Deferred embedding search roadmap    | [../deferred-features/embedding-search-optimizations.md](../deferred-features/embedding-search-optimizations.md) |
+| Detection vs identification boundary | [maps/integration.md](maps/integration.md)                                                                  |
 | Face/Identity nomenclature (ADR)     | [ADR-001-face-identity-nomenclature.md](ADR-001-face-identity-nomenclature.md)                              |
 | MCP tooling / testing commands       | [BOOTSTRAP.md](BOOTSTRAP.md)                                                                                |
 | Codex custom MCP attachment          | [codex-custom-mcp-playbook.md](codex-custom-mcp-playbook.md)                                                |
@@ -133,6 +134,7 @@ Use this checklist at session start, whether you are entering from a cold start,
 4. Check open findings before proposing or repeating a fix. Use `list_review_findings(status="open")` so you do not re-raise known issues or miss already-assigned follow-up work.
 5. Verify the contract surface before implementation. If the task touches a service, language, schema, or MCP boundary, confirm the owning contract exists in [contracts/](contracts/) and load it before writing code. If no contract exists for the boundary, follow the Cross-Boundary Change Protocol in [rules/development-workflow.md](rules/development-workflow.md) to scaffold one before proceeding.
 6. Decide whether `ctx7` is needed. If the slice depends on upstream library or framework behavior, apply the `ctx7` entry criteria below before relying on memory or stale local notes.
+7. Ensure the work has an MCP task, even if there is no `docs/tasks/` plan. A task plan is optional; handoff state is not. If the current change does not fit the active task, switch to or initialize an ad hoc task before editing so the slice can be logged and reviewed.
 
 Cold start vs. mid-task re-entry:
 
@@ -443,20 +445,22 @@ Follow the Agent Startup Protocol above. The steps below assume MCP state is alr
 
 During work:
 
-1. Record non-trivial decisions with `record_decision(..., actor={ agent?, branch?, commit_sha? })`. After recording, call `generate_current_task_md(...)` so the human-readable mirror stays current; do not defer this to session end.
+1. Record decisions in handoff as the work progresses. Every slice that changes files, including docs-only and no-plan slices, must end with a structured `slice_complete_*` decision. After recording, call `generate_current_task_md(...)` so the human-readable mirror stays current; do not defer this to session end.
 2. Add/update/complete task steps with `update_next_actions(..., actor={ ... })`.
 3. Record blockers immediately with `report_blocker(..., actor={ ... })`.
-4. Record verification commands with `record_test_result(..., actor={ ... })`.
+4. Record verification commands with `record_test_result(..., actor={ ... })`. Keep `result` as a concise proof line, not a full terminal log.
 5. Record/code-review findings with `record_review_finding(..., details={ line_start?, line_end?, fix? }, actor={ ... })`.
 6. Update finding status with `update_review_finding(..., actor={ ... })`.
 7. Validate review state using `get_review_findings_summary(...)` and `list_review_findings(...)` (not direct `sqlite3` queries).
 
 Write-tool targeting rule:
 
-- Write tools target the **active task only** by default.
-- To switch between tasks, use `switch_task(task_ref)`. It auto-archives the outgoing task and restores the target's objective from its archive. This replaces the multi-step `archive_task_state` + `set_handoff_state` workflow.
+- Most write tools accept optional `task_ref`. When omitted, they target the **active task** as a fallback.
+- In any concurrent, cross-task, or review-audit workflow, pass `task_ref` explicitly on writes. Do not rely on `switch_task(...)` plus ambient active state when another agent may be writing at the same time.
+- `record_decision`, `record_test_result`, `report_blocker`, and `update_next_actions` now support explicit `task_ref`, in addition to the existing review-finding and lane/report/message surfaces.
+- To switch between tasks for human-oriented workflow, use `switch_task(task_ref)`. It auto-archives the outgoing task and restores the target's objective from its archive. This replaces the multi-step `archive_task_state` + `set_handoff_state` workflow.
 - For in-place updates to the _current_ task (status, objective change), use `set_handoff_state(...)` directly.
-- **Exception — review finding tools**: `update_review_finding`, `reopen_review_finding`, `get_review_finding`, `list_review_findings`, and `get_review_findings_summary` accept an optional `task_ref` parameter. Pass it explicitly to read or write findings on a non-active task without switching active state. This avoids the disruptive active-task switching that multi-task verification workflows otherwise require.
+- Read/write finding tools still accept explicit `task_ref` for non-active task access. Prefer that over switching active state when verifying or fixing findings across multiple tasks.
 
 Before final response:
 
@@ -483,6 +487,8 @@ Before final response:
    ```
 
    Rules: (a) list every changed file with the specific function, class, route, or hook that was modified; (b) include concrete test counts, not just "tests pass"; (c) list schema column names, REST routes, TypeScript type changes, and PHP hook names explicitly so downstream agents can grep for them; (d) note any open threads or follow-ups; (e) if a section has no entries, write `- none.` instead of omitting the section; (f) freeform prose-only slice decisions are not acceptable.
+
+   Packet-backed review rule: if you expect another agent to review "the latest completed slice", the slice completion decision and nearest worker report together must be sufficient to derive a slice review packet. That means the slice must record concrete `changed_files`, verification commands, and any contract/doc touches in the same handoff window instead of relying on later branch archaeology.
 
 3. Treat the slice-completion format as a gate, not a suggestion. If a slice changes files and you cannot yet populate the structured decision with concrete changes, verification, and open threads, the slice is not ready to mark complete in handoff.
 4. Update singleton state via `set_handoff_state(..., expected_revision=<current>, actor={ ... })`.
@@ -602,6 +608,7 @@ How workers communicate with the orchestrator:
    - assumptions made
    - blockers or follow-ups
    - whether the lane is merge-ready
+   - enough changed-file and verification detail for packet-backed latest-slice review
 8. Preferred worker command: run `make lane-handoff` from the worktree root (or any app Makefile -- they auto-forward all `lane-*` targets to root via a pattern rule). It verifies lane scope, stages the lane-owned paths, creates a default commit whose subject begins with the lane name, shows lane status, and then submits the merge-ready report using inferred `TASK`, `LANE`, and default `SESSION` values.
 9. Worker handoff should be message-first. When a lane is merge-ready, `lane-handoff` now auto-sends an open `worker_to_orchestrator` lane message even if no explicit `MESSAGE` was passed.
 10. When a lane needs further guidance, submit a worker report with `STATUS=blocked` and a summary or blocker text that explains the ask. This blocked guidance path is allowed even when no lane commits exist yet, which is the correct behavior for read-only sandboxes or environment failures. The worker report path auto-sends an open `worker_to_orchestrator` message for that guidance request.

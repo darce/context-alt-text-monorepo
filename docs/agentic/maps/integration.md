@@ -14,6 +14,22 @@
 | 6        | `packages/shared-contracts/schemas/`               | JSON Schema definitions       |
 | 7        | `docs/agentic/diagrams/system-overview.mmd`        | High-level architecture       |
 
+## Detection vs Identification Boundary
+
+Face detection and face identification are intentionally separate responsibilities in this system.
+
+| Responsibility | Layer | Why it lives there |
+| --- | --- | --- |
+| Detect face bounding boxes | Browser / React UI | Keeps full images local and uses lightweight MediaPipe WASM |
+| Extract embeddings and identify people | Recognition service | Uses heavier models, persistent vector state, and tenant-gated backend access |
+| Persist labels, curation, and local projection | WordPress plugin | Owns operator workflows, local sync state, and capability checks |
+
+Guardrails:
+
+- Do not move identification into the browser.
+- Do not bypass the WordPress proxy for admin recognition flows.
+- Do not send full images to the backend when bbox- or media-id-based flows are sufficient.
+
 ## Request Flows
 
 ### Pull flow: React -> PHP -> FastAPI (reads, scan jobs)

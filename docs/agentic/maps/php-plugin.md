@@ -29,6 +29,7 @@
 | `SyncStatusController`       | `GET .../sync-status`, `POST .../sync/trigger`                                                                                                                                                                                                                                                                                                                                 | Sync health reads, manual sync trigger                                  |
 | `MediaIdentitiesController`  | `GET .../media-identities`                                                                                                                                                                                                                                                                                                                                                     | Local media-to-identity mappings                                        |
 | `XmpEmbedController`         | `POST .../xmp-embed`                                                                                                                                                                                                                                                                                                                                                           | XMP metadata write                                                      |
+| `RetentionController`        | `GET .../retention/status`, `PATCH .../retention/policy`, `POST .../retention/policy/preset`, `POST .../retention/export`, `GET .../retention/export/{job_id}/status`, `GET .../retention/export/{job_id}/data`, `POST .../retention/purge`, `POST .../retention/import`, `GET .../retention/audit` | Retention governance, export/import, purge, and lifecycle audit flows   |
 
 ### Sovereign Sync (`src/sovereign/sync/`)
 
@@ -65,6 +66,20 @@
 | `PngXmpInjector`                   | PNG-specific XMP manipulation            |
 | `XmpImageRegionPacketBuilder`      | Constructs XMP image region packets      |
 | `LocalProjectionFaceMetricsSource` | Reads face metrics from local projection |
+
+## Roster Auto-Resolve Behavior
+
+Current behavior:
+
+- High-confidence recognition matches can be auto-assigned to an existing roster entry.
+- The current implementation attaches the reference image and appends its embedding immediately.
+- There is no `pendingReferences` holding area or operator confirmation step before the embedding becomes part of the roster model.
+
+Implications:
+
+- This is acceptable for current controlled environments and operator-led testing.
+- It is not a review-gated or reversible pending-reference workflow.
+- Any future confirm/reject queue for auto-matched references is deferred work, not current runtime behavior.
 
 ## Test Entry Points
 

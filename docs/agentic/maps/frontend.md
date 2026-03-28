@@ -20,10 +20,13 @@
 | `DashboardPage`           | `js/admin/pages/DashboardPage.tsx`                 | Guidance, stats, sync health card              |
 | `WorkbenchPage`           | `js/admin/pages/WorkbenchPage.tsx`                 | Scan, clustering, sync coordination            |
 | `RosterPage`              | `js/admin/pages/RosterPage.tsx`                    | Identity roster grid/table                     |
+| `RetentionPage`           | `js/admin/pages/RetentionPage.tsx`                 | Retention policy, export/purge/import, audit timeline |
 | `SyncStatusIndicator`     | `js/admin/pages/workbench/SyncStatusIndicator.tsx` | Sync health badge with state-driven UX         |
 | `ConflictInbox`           | `js/admin/pages/workbench/ConflictInbox.tsx`       | Conflict list, detail, resolution actions      |
 | `DeadLetterPanel`         | `js/admin/pages/workbench/DeadLetterPanel.tsx`     | Failed outbox operations, retry/discard        |
 | `WorkbenchContext`        | `js/admin/pages/workbench/WorkbenchContext.tsx`     | `activeOverlay` state synced with `panel` URL param |
+
+Routes currently mounted in `App.tsx`: `/dashboard`, `/workbench`, `/roster`, and `/retention`.
 
 ### Sync Health States (`SyncHealth` union type)
 
@@ -41,6 +44,7 @@ Transient states (projecting, acknowledging, trigger pending) override `sync_hea
 | `syncApi`                 | `js/admin/api/recognition/syncApi.ts`       | Sync status, trigger sync                |
 | `scanApi`                 | `js/admin/api/recognition/scanApi.ts`       | Media scanning                           |
 | `identityApi`             | `js/admin/api/recognition/identityApi.ts`   | Identity queries                         |
+| `retentionApi`            | `js/admin/api/recognition/retentionApi.ts`  | Retention status, policy, export, purge, import, audit |
 
 ### API Types
 

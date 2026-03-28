@@ -1442,7 +1442,7 @@ wp cat-roster sync
 
 - [`roster_taxonomy_guide.md`](./roster_taxonomy_guide.md) — Full taxonomy documentation
 - [`face_recognition_tasks.md`](./face_recognition_tasks.md) — Recognition workflow overview
-- [`roster_auto_resolve_behavior.md`](./roster_auto_resolve_behavior.md) — Auto-matching behavior
+- [`../../../docs/agentic/maps/php-plugin.md`](../../../docs/agentic/maps/php-plugin.md) — Current auto-matching behavior and plugin context
 
 ## Support
 

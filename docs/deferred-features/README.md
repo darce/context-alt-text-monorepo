@@ -9,6 +9,12 @@ This directory consolidates work that has been explicitly deferred during planni
 | [agentic-process-hardening-post-v0.3.0.md](agentic-process-hardening-post-v0.3.0.md) | `agentic-development-process-hardening-epic.md` (v0.3.0)                   | Post-v0.3.0 MCP productization, TUI follow-on, and model-eval backlog |
 | [sovereignty-and-compliance.md](sovereignty-and-compliance.md)                       | `recognition-state-reconciliation-and-offline-continuity-epic.md` (v0.2.0) | Tenant sovereignty tiers, encryption, and compliance                  |
 | [retention-and-audit-stretch.md](retention-and-audit-stretch.md)                     | `sync-completion-and-retention-hardening-epic.md` (v0.3.0)                 | Retention stretch goals deferred from v0.3.0                          |
+| [embedding-search-optimizations.md](embedding-search-optimizations.md)               | Historical MVP follow-on planning                                           | Future vector-index/search-performance roadmap                        |
+| [roster-pending-references.md](roster-pending-references.md)                         | Historical roster UX note                                                   | Deferred confirm/reject workflow for auto-matched references          |
+
+## Notes
+
+- Deferred features are design/backlog material, not operating rules. If a document is mainly future roadmap or proposed behavior, it belongs here instead of `docs/agentic/rules/`.
 
 ## Inclusion policy
 

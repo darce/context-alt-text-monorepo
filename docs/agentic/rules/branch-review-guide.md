@@ -48,6 +48,8 @@ Review only **uncommitted working-directory changes** (`git status` / `git diff 
 
 For a full branch audit before merge, use `git diff --name-only main...HEAD` instead.
 
+When the ask is "review the latest completed implementation slice", prefer the MCP-backed slice review packet instead of current branch diff. Use the packet-backed path first, and treat branch diff as fallback only when no valid slice packet exists.
+
 ### Automated Review
 
 This guide is also consumed as prompt input by `review_runner.py` (`make review-run TASK=<task> LANE=<lane>`), which feeds the checklist text to an LLM reviewer. Because the guide serves this dual role (human-readable checklist and machine-readable prompt), structural or wording changes here directly affect automated review fidelity. The orchestrator daemon (`make orchestrator-daemon`) dispatches findings produced by automated reviews to the correct worker lanes via `make handoff-dispatch`.
@@ -80,8 +82,20 @@ Required intake details:
 - relevant contracts/ADRs/rules
 - verification commands already run, if any
 - review mode: normal branch review or release-audit escalation
+- scope source: `slice_packet` when reviewing the latest completed slice, otherwise `branch_diff`
 
 Do not bulk-load unrelated docs, lane chatter, or historical artifacts unless the branch cannot be reviewed correctly without them.
+
+### Latest-Slice Review Preference
+
+For cross-agent post-implementation review, use the latest-slice packet query before reading git diff:
+
+1. Request the latest completed slice packet for the active task, optionally scoped by lane.
+2. Use packet `changed_files` as the authoritative review file set when the packet returns `scope_source="slice_packet"`.
+3. Confirm the packet still carries concrete verification evidence and contract/doc touches from the completed slice.
+4. Fall back to branch diff only when no valid packet exists, and call that lower-trust path out explicitly in review output.
+
+Do not reconstruct the "latest slice" from chat memory, recent commits, or a dirty branch when MCP packet state is available.
 
 ## Fresh Verification Evidence
 

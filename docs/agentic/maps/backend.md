@@ -72,6 +72,8 @@
 3. Assignment: `recognition/application/assignment/` (gate + checks)
 4. Clustering: `recognition/application/clustering/`
 
+Deferred search/index evolution work is tracked outside the rules set in [../deferred-features/embedding-search-optimizations.md](../deferred-features/embedding-search-optimizations.md).
+
 ### Modify assignment validation
 
 The assignment module is **well-structured** with Strategy pattern:

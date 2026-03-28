@@ -1,21 +1,22 @@
-%% Workbench recognition + clustering flow (React Query + WP REST)
+%% Updated: 2026-03-28
+%% Workbench scan + confirm flow (React Query + WP REST)
 
 flowchart TD
     user([Admin]) --> workbench[WorkbenchPage]
 
     subgraph UI["Workbench UI"]
-        workbench --> mediaSelection[MediaSelection]
-        workbench --> scanPanel[ScanActionPanel]
-        workbench --> batchPanel[BatchPanel]
-        workbench --> confirmPanel[ConfirmPanel\nIdentityClusterList + SuggestionReviewPanel]
+        workbench --> syncIndicator[SyncStatusIndicator]
+        workbench --> scanTab[ScanTabContent]
+        workbench --> confirmTab[ConfirmTabContent]
+        workbench --> overlay[ConflictInbox / DeadLetterPanel]
     end
 
-    subgraph Hooks["React Query hooks"]
-        scanPanel --> useScan[useScanIdentities]
-        scanPanel --> useStatus[useScanStatus/useMultiScanStatus]
-        batchPanel --> useClusterMutation[useClusterIdentities]
-        confirmPanel --> useClusters[useRecognitionClusters]
-        confirmPanel --> useClusterSuggestions[useClusterSuggestions]
+    subgraph State["Workbench context + hooks"]
+        workbench --> context[WorkbenchContext]
+        context --> mediaHooks[useWorkbenchMedia + useMediaSelectionState + useWorkbenchFilters]
+        context --> stateMachine[useJobStateMachine]
+        overlay --> overlayHooks[useConflicts + useOutboxOperations + useSyncStatus]
+        confirmTab --> reviewHooks[useRecognitionClusters + useClusterSuggestions]
     end
 
     subgraph Cache["React Query Cache"]
@@ -23,54 +24,58 @@ flowchart TD
     end
 
     subgraph WPAPI["WP REST (proxy endpoints)"]
-        postAnalyze["POST /recognition/analyze"]
-        getJobs["GET /recognition/jobs/{id}"]
-        postCluster["POST /recognition/clustering/jobs"]
-        getClusters["GET /recognition/clusters + /clusters/labels"]
-        getIdSuggestions["GET /recognition/identities/{id}/suggestions"]
-        postSuggestions["POST /recognition/suggestions/{id}/{action}"]
+        workbenchMedia["GET /acx/v1/workbench/media"]
+        postAnalyze["POST /acx/v1/recognition/analyze"]
+        getJobs["GET /acx/v1/recognition/jobs/{id}"]
+        postCluster["POST /acx/v1/recognition/cluster"]
+        getClusters["GET /acx/v1/recognition/clusters"]
+        getSuggestions["GET /acx/v1/recognition/suggestions"]
+        getConflicts["GET /acx/v1/recognition/conflicts"]
+        getOutbox["GET /acx/v1/recognition/outbox"]
+        getSync["GET /acx/v1/recognition/sync-status"]
     end
 
     subgraph Remote["Recognition Service"]
-        analyze["/recognition/analyze"]
-        jobs["/recognition/jobs/{id}"]
-        clustering["/recognition/clustering/jobs"]
-        clusters["/recognition/clusters"]
-        suggestions["/recognition/suggestions"]
+        analyze["/analyze"]
+        jobs["/jobs/{id}"]
+        cluster["/clustering/jobs or cluster mutations"]
+        clusters["/clusters"]
+        suggestions["/suggestions"]
+        conflicts["sync conflict + outbox surfaces"]
     end
 
-    %% Cache links
-    useScan --> queryClient
-    useStatus --> queryClient
-    useClusterMutation --> queryClient
-    useClusters --> queryClient
-    useClusterSuggestions --> queryClient
+    mediaHooks --> queryClient
+    stateMachine --> queryClient
+    overlayHooks --> queryClient
+    reviewHooks --> queryClient
 
-    %% API links
-    useScan --> postAnalyze
-    useStatus --> getJobs
-    useClusterMutation --> postCluster
-    useClusters --> getClusters
-    useClusterSuggestions --> getIdSuggestions
-    confirmPanel --> postSuggestions
+    mediaHooks --> workbenchMedia
+    stateMachine --> postAnalyze
+    stateMachine --> getJobs
+    stateMachine --> postCluster
+    reviewHooks --> getClusters
+    reviewHooks --> getSuggestions
+    overlayHooks --> getConflicts
+    overlayHooks --> getOutbox
+    overlayHooks --> getSync
 
-    %% Proxy links
     postAnalyze --> analyze
     getJobs --> jobs
-    postCluster --> clustering
+    postCluster --> cluster
     getClusters --> clusters
-    getIdSuggestions --> suggestions
-    postSuggestions --> suggestions
+    getSuggestions --> suggestions
+    getConflicts --> conflicts
+    getOutbox --> conflicts
+    getSync --> conflicts
 
-    %% Styling
     classDef ui fill:#ffffff,stroke:#000000,color:#000000,stroke-width:2px
     classDef hook fill:#f5f5f5,stroke:#000000,color:#000000,stroke-width:1px
     classDef cache fill:#e0e0e0,stroke:#000000,color:#000000,stroke-width:1px
     classDef api fill:#cccccc,stroke:#000000,color:#000000,stroke-width:1px
     classDef remote fill:#999999,stroke:#000000,color:#000000,stroke-width:1px
 
-    class workbench,mediaSelection,scanPanel,batchPanel,confirmPanel ui
-    class useScan,useStatus,useClusterMutation,useClusters,useClusterSuggestions hook
+    class workbench,syncIndicator,scanTab,confirmTab,overlay ui
+    class context,mediaHooks,stateMachine,overlayHooks,reviewHooks hook
     class queryClient cache
-    class postAnalyze,getJobs,postCluster,getClusters,getIdSuggestions,postSuggestions api
-    class analyze,jobs,clustering,clusters,suggestions remote
+    class workbenchMedia,postAnalyze,getJobs,postCluster,getClusters,getSuggestions,getConflicts,getOutbox,getSync api
+    class analyze,jobs,cluster,clusters,suggestions,conflicts remote

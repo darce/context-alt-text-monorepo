@@ -80,19 +80,19 @@ The purge service records a disposal audit event for each embedding vector delet
 
 ### Design Decisions
 
-| Decision                                                | Rationale                                                                             |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Delta ingest falls back to full snapshot on chain break | Avoids complex cursor repair logic; full snapshot is already proven                   |
-| Drift reconciliation requires operator confirmation     | Automatic correction could mask upstream bugs; operator trust requires visibility     |
+| Decision                                                                                                       | Rationale                                                                                                          |
+| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Delta ingest falls back to full snapshot on chain break                                                        | Avoids complex cursor repair logic; full snapshot is already proven                                                |
+| Drift reconciliation requires operator confirmation                                                            | Automatic correction could mask upstream bugs; operator trust requires visibility                                  |
 | Export version stays on the existing `schema_version` field unless an explicit schema migration says otherwise | Avoids inventing a duplicate `format_version` field and keeps the boundary honest about the current implementation |
-| Embedding disposal uses batch audit inserts             | Per-row insert would degrade purge throughput for tenants with millions of embeddings |
+| Embedding disposal uses batch audit inserts                                                                    | Per-row insert would degrade purge throughput for tenants with millions of embeddings                              |
 
 ### Data Model
 
 - **Delta cursor**: stored in `acx_sync_state` (WP options or sync_state table); canonical source is the recognition service's last-seen sequence number.
 - **Drift fingerprint**: computed by both sides from sorted record hashes; compared at reconciliation time.
 - **Export schema_version**: integer field in the export payload and the downloaded archive metadata; must also be surfaced consistently through the HTTP response envelope and WordPress proxy layer.
-- **Embedding disposal events**: rows in the existing `audit_events` table with `action = 'embedding_disposed'` and a `details` JSON column carrying the embedding ID and parent references.
+- **Embedding disposal events**: rows in the existing `audit_events` table with `event_type = 'embedding_disposed'` and embedding-specific data in the `payload` JSONB column (embedding ID, parent cluster/member references).
 
 ## Phased Delivery
 
@@ -167,7 +167,7 @@ Exit criteria:
 Deliverables:
 
 - Purge service updated to emit per-embedding audit events using batch inserts
-- Audit event schema extended with `embedding_disposed` action type and embedding-specific details
+- Audit event schema extended with `embedding_disposed` event type and embedding-specific payload
 - Audit timeline UI displays embedding disposal events
 - Performance benchmark confirming purge throughput stays within acceptable bounds
 
@@ -179,31 +179,31 @@ Exit criteria:
 
 ## External Dependencies
 
-| Dependency                                  | Owner      | Status      | Blocks  |
-| ------------------------------------------- | ---------- | ----------- | ------- |
+| Dependency                                                                   | Owner      | Status      | Blocks           |
+| ---------------------------------------------------------------------------- | ---------- | ----------- | ---------------- |
 | Shared delta and export contract definitions in `packages/shared-contracts/` | Backend    | Not started | Phase 1, Phase 3 |
-| WordPress hardening work for delta fallback and export-version propagation  | PHP Plugin | Not started | Phase 1, Phase 3 |
+| WordPress hardening work for delta fallback and export-version propagation   | PHP Plugin | Not started | Phase 1, Phase 3 |
 
 ## Review Path
 
 - Phase 1: cross-boundary branch review with backend/PHP contract focus
 - Phase 2: cross-boundary review plus release-style multi-lens audit because it adds a new reconciliation surface across backend, PHP, and UI
 - Phase 3: cross-boundary branch review with contract and retention-boundary focus
-- Phase 4: ordinary branch review plus targeted performance evidence review for purge throughput
+- Phase 4: cross-boundary branch review (backend purge service, audit persistence, WordPress audit timeline UI) plus targeted performance evidence review for purge throughput
 
 ## Code Anchors
 
-| Layer                    | File                                                                                              | Note                                              |
-| ------------------------ | ------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| Backend delta tests      | `apps/prototype-description-service/recognition/tests/unit/test_cluster_repository_delta_stub.py` | Existing integration tests for the working `get_delta()` path; filename is stale but coverage is real |
-| Backend retention router | `apps/prototype-description-service/recognition/interface_adapters/http/routers/retention.py`     | Export endpoints to propagate the agreed version field through the HTTP envelope |
-| Backend export service   | `apps/prototype-description-service/recognition/domain/services/export_service.py`                | Async export already emits `schema_version`; Phase 3 decides and propagates the canonical version field |
-| Backend purge service    | `apps/prototype-description-service/recognition/domain/services/purge_service.py`                 | Purge logic to emit per-embedding events          |
-| Backend audit service    | `apps/prototype-description-service/recognition/domain/services/audit_service.py`                 | Audit event recording                             |
+| Layer                    | File                                                                                              | Note                                                                                                                          |
+| ------------------------ | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Backend delta tests      | `apps/prototype-description-service/recognition/tests/unit/test_cluster_repository_delta_stub.py` | Existing integration tests for the working `get_delta()` path; filename is stale but coverage is real                         |
+| Backend retention router | `apps/prototype-description-service/recognition/interface_adapters/http/routers/retention.py`     | Export endpoints to propagate the agreed version field through the HTTP envelope                                              |
+| Backend export service   | `apps/prototype-description-service/recognition/domain/services/export_service.py`                | Async export already emits `schema_version`; Phase 3 decides and propagates the canonical version field                       |
+| Backend purge service    | `apps/prototype-description-service/recognition/domain/services/purge_service.py`                 | Purge logic to emit per-embedding events                                                                                      |
+| Backend audit service    | `apps/prototype-description-service/recognition/domain/services/audit_service.py`                 | Audit event recording                                                                                                         |
 | WP sync client           | `apps/prototype-wp-alt-context/src/sovereign/sync/class-snapshot-projector.php`                   | Snapshot projector already implements `project_delta()`; Phase 1 hardens contract/fallback semantics around the existing path |
-| WP sync state            | `apps/prototype-wp-alt-context/src/sovereign/repositories/class-sync-state-repository.php`        | Cursor storage                                    |
-| WP retention controller  | `apps/prototype-wp-alt-context/src/api/class-retention-controller.php`                            | Export proxy to forward version field             |
-| Frontend audit timeline  | `apps/prototype-wp-alt-context/js/admin/pages/retention/AuditTimeline.tsx`                        | UI to display embedding disposal events           |
+| WP sync state            | `apps/prototype-wp-alt-context/src/sovereign/repositories/class-sync-state-repository.php`        | Cursor storage                                                                                                                |
+| WP retention controller  | `apps/prototype-wp-alt-context/src/api/class-retention-controller.php`                            | Export proxy to forward version field                                                                                         |
+| Frontend audit timeline  | `apps/prototype-wp-alt-context/js/admin/pages/retention/AuditTimeline.tsx`                        | UI to display embedding disposal events                                                                                       |
 
 ---
 
@@ -238,7 +238,7 @@ Exit criteria:
 
 ## Phase 4: Embedding-Level Disposal Tracking -- not-started
 
-- [ ] Extend audit event schema with `embedding_disposed` action type
+- [ ] Extend audit events with `embedding_disposed` event type and embedding-specific payload
 - [ ] Update purge service to emit per-embedding audit events (batch inserts)
 - [ ] Update audit timeline UI to display embedding disposal events
 - [ ] Add performance benchmark for purge throughput with per-embedding logging

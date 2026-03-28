@@ -1,8 +1,8 @@
 # Self-Hosting & Multi-Server Connectivity (Epic)
 
-> **Status**: active -- provisioning phase
+> **Status**: active -- OCI baseline provisioned
 > **Parent**: [production-readiness-epic.md](./production-readiness-epic.md) Phase 6
-> **Revision**: Mar 2026 -- promoted from task doc to epic; added Oracle PAYG evaluation, user-account DB scope, WP demo page scope.
+> **Revision**: Mar 2026 -- promoted from task doc to epic; Oracle PAYG baseline now synced to provisioned `infra/oci/` state.
 
 Hosting architecture, provider evaluation, and deployment path for the recognition service backend, a future user-account database, and a WordPress demo frontend.
 
@@ -79,7 +79,7 @@ Based on the actual codebase (`pyproject.toml`, `api/main.py`, `recognition/conf
 | **opencv-python, pillow, numpy**    | Image processing                      | ~150MB                            | (included in API)                  | Shared dependency                    |
 | **WordPress + PHP 8.1+ + MySQL**    | Standard LAMP/LEMP                    | —                                 | —                                  | Shared hosting handles this          |
 
-> **Existing implementation reference:** `apps/archived-recognition-service/analysis/adapters/phi3_caption_adapter.py` and `shared/infrastructure/model_loaders/phi3_model_loader.py` contain a complete Phi-3.5 Vision adapter using `AutoModelForCausalLM` + `AutoProcessor` from HuggingFace `transformers`. The adapter supports CUDA, MPS (with CPU fallback), configurable attention implementations, 4-bit quantization, and Flash Attention 2 (CUDA-only, deferred). Settings are driven by `settings.yaml` under `caption_generator`.
+> **Existing implementation reference:** `apps/archived-recognition-service/analysis/adapters/phi3_caption_adapter.py` and `apps/archived-recognition-service/shared/infrastructure/model_loaders/phi3_model_loader.py` contain a complete Phi-3.5 Vision adapter using `AutoModelForCausalLM` + `AutoProcessor` from HuggingFace `transformers`. The adapter supports CUDA, MPS (with CPU fallback), configurable attention implementations, 4-bit quantization, and Flash Attention 2 (CUDA-only, deferred). Settings are driven by `settings.yaml` under `caption_generator`.
 
 **Two-phase resource profile:**
 
@@ -244,110 +244,81 @@ The description service in its current state runs **InsightFace only** (no VLM/P
 
 ---
 
-### OCI VM Provisioning Steps
+### OCI Provisioned Baseline
 
-This section documents the high-level procedure for provisioning a `VM.Standard.A1.Flex` instance on Oracle Cloud Infrastructure (OCI) using Terraform. The detailed task plan with file-by-file implementation is in `docs/tasks/5.0/oci-vm-provisioning-task-plan.md`.
+The Oracle Cloud baseline is no longer hypothetical. The Terraform module under `infra/oci/` has already provisioned the OCI footprint and emits live outputs for the backend URL, SSH command, instance ID, private IP, public IP, and VCN ID. This epic should track the architecture and the remaining deployment work, not duplicate transient instance-specific values from Terraform state.
 
-#### Prerequisites
-
-| Prerequisite       | Status   | Detail                                                            |
-| ------------------ | -------- | ----------------------------------------------------------------- |
-| OCI account (PAYG) | Required | Upgrade from Free Tier to PAYG for provisioning priority          |
-| OCI CLI            | Verified | v3.74.0 installed via Homebrew; config at `~/.oci/config`         |
-| Terraform          | Verified | v1.5.7 installed via Homebrew                                     |
-| API signing key    | Verified | Fingerprint `ac:72:f7:2f:d9:e9:a3:7b:9c:70:f1:46:b8:09:1c:d0`     |
-| SSH keypair        | Required | For instance access; generate or reuse existing                   |
-| OCI budget alerts  | Required | Configure $1 / $5 / $10 thresholds immediately after PAYG upgrade |
-
-#### Target Instance Specification
-
-| Resource             | Value                                                                              |
-| -------------------- | ---------------------------------------------------------------------------------- |
-| Shape                | `VM.Standard.A1.Flex` (ARM Ampere, Always Free)                                    |
-| OCPUs                | 4                                                                                  |
-| Memory               | 24 GB                                                                              |
-| Boot volume          | 200 GB                                                                             |
-| OS image             | `Canonical-Ubuntu-24.04-aarch64-2026.01.29-0`                                      |
-| Image OCID           | `ocid1.image.oc1.iad.aaaaaaaa5hgxi6voge43kultiindj3cbcnsimyatvlmq7wt5sbm6voo2ln3a` |
-| Region               | `us-ashburn-1` (home region, required for Always Free)                             |
-| Availability Domains | `saEG:US-ASHBURN-AD-1`, `AD-2`, `AD-3` (cycle all three for capacity)              |
-
-#### Infrastructure Layout
-
-New Terraform configuration will live at `infra/oci/` in the monorepo root:
+**Provisioned surfaces:**
 
 ```text
 infra/oci/
-  main.tf              # VCN, subnet, security list, compute instance
-  variables.tf         # Tenancy/user/compartment/SSH variables
-  outputs.tf           # Public IP, SSH command, backend URL
-  cloud-init.yaml      # Docker + Postgres + app service bootstrap
-  retry-apply.sh       # AD-cycling retry for "Out of host capacity"
-  terraform.tfvars.example  # Template (no secrets committed)
-  .gitignore           # Exclude .terraform/, *.tfstate*, terraform.tfvars
+  main.tf                 # VCN, subnet, route table, security list, compute instance
+  variables.tf            # OCI tenancy/user/SSH/input variables
+  outputs.tf              # backend_url, public_ip, private_ip, ssh_command, instance_id, vcn_id
+  cloud-init.yaml         # Docker/bootstrap/service scaffold and host hardening
+  retry-apply.sh          # AD-cycling retry with locking, backoff, timeout, notifications
+  terraform.tfvars.example
+  README.md
 ```
 
-#### Terraform Resources (High Level)
+#### Provisioned Terraform Footprint
 
-Adapted from the ACX OCI pattern pack in `docs/agentic/oci-example/` (sanitized, pattern-only):
+| Surface | Live configuration from `infra/oci/` |
+| ------- | ------------------------------------ |
+| Region | `us-ashburn-1` |
+| Shape | `VM.Standard.A1.Flex` |
+| CPU / RAM | `4` OCPUs / `24 GB` |
+| Boot volume | `200 GB` |
+| OS image | Ubuntu 24.04 ARM (`ubuntu_image_ocid` input) |
+| Network | VCN `10.0.0.0/16` + public subnet `10.0.1.0/24` |
+| Public ingress | HTTPS `443` to all, SSH `22` restricted to configured CIDRs |
+| Tags | `project=acx`, `env=production` |
+| Outputs | `backend_url`, `public_ip`, `private_ip`, `ssh_command`, `instance_id`, `vcn_id` |
 
-1. **Networking**: VCN (`10.0.0.0/16`) + public subnet (`10.0.1.0/24`) + internet gateway + route table
-2. **Security List**: Ingress SSH (22, restricted CIDR), HTTPS (443 public), optional app-port rule for temporary debug only; egress all
-3. **Compute**: `VM.Standard.A1.Flex` with 4 OCPU / 24 GB memory, 200 GB boot volume, cloud-init user data
-4. **Outputs**: Public IP, SSH command, backend URL
+#### Live Host Bootstrap from `cloud-init.yaml`
 
-#### Cloud-Init Bootstrap (High Level)
+The first-boot scaffold currently does all of the following:
 
-The cloud-init script configures the instance on first boot:
+1. Installs Docker from Docker's apt repository with GPG verification.
+2. Installs the Compose plugin, `fail2ban`, unattended upgrades, and host prerequisites.
+3. Writes `/etc/docker/daemon.json` with log rotation and `overlay2`.
+4. Creates `/opt/acx-backend/{secrets,logs,data/models,data/pgdata}`.
+5. Registers `acx-backend.service` to run `docker compose -f docker-compose.prod.yml up --remove-orphans` from `/opt/acx-backend/`.
+6. Enables UFW with only `22/tcp` and `443/tcp` open.
+7. Enables `fail2ban` and log rotation for `/opt/acx-backend/logs/*.log`.
+8. Installs, but does not enable by default, the Free Tier keepalive helper.
 
-1. **System updates** + unattended-upgrades
-2. **Docker + Docker Compose** installation (ARM64 packages)
-3. **fail2ban** for SSH brute-force protection
-4. **Application directory**: `/opt/acx-backend/` with `secrets/`, `logs/`, `data/` subdirs
-5. **Systemd service** (`acx-backend.service`) running `docker compose up` from `/opt/acx-backend/`
-6. **Log rotation** for Docker container logs (10MB max, 3 rotations)
-7. **Anti-idle keepalive** cron (every 6 hours) only when running on Free Tier mode; skip by default on PAYG
-8. **Firewall** (iptables/nftables): allow 22 (restricted) and 443; keep app port closed unless temporary debug mode is explicitly enabled
+#### Current Deployment Boundary
 
-#### Capacity Retry Strategy
+What is provisioned today:
 
-OCI ARM instances frequently return "Out of host capacity" errors, even on PAYG accounts. The retry strategy (adapted from `docs/agentic/oci-example/retry-apply.sh`) is AD-cycling with non-capacity failures aborting immediately:
+- OCI network and compute resources
+- host hardening and Docker runtime
+- application directory and systemd service scaffold
+- Terraform outputs for operator access
 
-1. Cycle through all 3 Availability Domains (`AD-1`, `AD-2`, `AD-3`)
-2. Run `terraform apply` with the current AD
-3. If "Out of host capacity" error: wait configurable interval (default 60s), try next AD
-4. If real error: abort immediately
-5. On success: send macOS notification, log the provisioned AD
-6. Support background (`nohup`) mode for unattended retries
+What is **not** provisioned by `infra/oci/` yet:
 
-#### Key OCI CLI Commands (Reference)
+- `docker-compose.prod.yml` and the application containers themselves
+- reverse proxy/TLS termination on the VM (for example Caddy or Nginx)
+- Postgres container deployment and backup automation
+- the WordPress demo host
+- backend application secrets and production env wiring
 
-```bash
-# List availability domains
-oci iam availability-domain list --compartment-id "$COMPARTMENT_OCID"
+This means the Oracle work should now be treated as **provisioned infrastructure plus pending application deployment**, not as an unstarted provisioning task.
 
-# List Ubuntu 24.04 ARM images
-oci compute image list \
-  --compartment-id "$COMPARTMENT_OCID" \
-  --operating-system "Canonical Ubuntu" \
-  --operating-system-version "24.04" \
-  --shape "VM.Standard.A1.Flex" \
-  --sort-by TIMECREATED --sort-order DESC --limit 5
+#### Retry/Capacity Strategy Implemented in `retry-apply.sh`
 
-# Check existing instances
-oci compute instance list --compartment-id "$COMPARTMENT_OCID" \
-  --lifecycle-state RUNNING
+The provisioner is more robust than the original epic sketch. The live script now provides:
 
-# Budget alert setup (after PAYG upgrade)
-oci budgets budget create \
-  --compartment-id "$TENANCY_OCID" \
-  --amount 5 --reset-period MONTHLY \
-  --target-type COMPARTMENT \
-  --targets "[\"$COMPARTMENT_OCID\"]" \
-  --display-name "acx-spend-alert"
-```
+1. AD cycling across `AD-1`, `AD-2`, and `AD-3`.
+2. retry classification for capacity, throttling, transient OCI failures, and hung applies.
+3. locking via `flock` or a portable lock-directory fallback.
+4. optional webhook notifications for unattended runs.
+5. preflight detection when the target instance already exists in Terraform state.
+6. configurable retry interval, exponential backoff, jitter, and per-attempt timeout.
 
-#### Differences from oci-example Reference
+#### Differences from `oci-example` That Are Now Actually Landed
 
 | Aspect        | oci-example (legacy source)               | ACX deployment                                                                      |
 | ------------- | ----------------------------------------- | ----------------------------------------------------------------------------------- |
@@ -355,34 +326,28 @@ oci budgets budget create \
 | OS image      | Ubuntu 22.04 aarch64                      | **Ubuntu 24.04 aarch64** (latest LTS)                                               |
 | App directory | `/opt/marketing-backend/`                 | **`/opt/acx-backend/`**                                                             |
 | Service name  | `marketing-backend.service`               | **`acx-backend.service`**                                                           |
-| Ports         | 3000 (Node.js)                            | **443 public via reverse proxy**, 8000 internal-only (or temporary debug allowlist) |
+| Ports         | 3000 (Node.js)                            | **443 public at the host boundary; application port still deferred to app compose** |
 | Runtime       | Node.js / Docker                          | **Python 3.12 / Docker**                                                            |
-| Database      | External                                  | **PostgreSQL 17 + pgvector (co-located in Docker Compose)**                         |
+| Database      | External                                  | **PostgreSQL 17 + pgvector intended as co-located container; not deployed yet**     |
 | Model cache   | N/A                                       | **`/opt/acx-backend/data/models/` (~600MB InsightFace)**                            |
-| Reverse proxy | None (direct port)                        | **Caddy** (auto-TLS, reverse proxy to :8000)                                        |
-| Repo hygiene  | Included project-specific artifacts/state | **Pattern-only pack; no tfstate/tfvars/log artifacts committed**                    |
+| Reverse proxy | None (direct port)                        | **Reverse proxy/TLS still pending; host opens 443 but does not install Caddy yet**  |
+| Repo hygiene  | Included project-specific artifacts/state | **Terraform module and retry tooling live in-repo under `infra/oci/`**              |
 
 ---
 
-### User-Account Database Scope (Not Yet Built)
+### Deferred Follow-On: User-Account Database
 
-The production system will require a user-account store separate from the recognition Postgres. This is **not yet designed** and is scoped here at the infrastructure level only.
+The production system will eventually require a user-account store separate from the recognition Postgres, but that work is **not part of the self-hosting implementation scope yet**.
 
-**What needs to exist:**
+Current decision:
 
-- Multi-tenant account records (WordPress site registrations, API key associations).
-- Billing/quota metadata (if/when usage limits are introduced).
-- Authentication state for API key lifecycle (creation, rotation, revocation).
+- self-hosting covers backend hosting, deployment topology, persistence, networking, and the WordPress demo boundary
+- account-system design is deferred until a dedicated ADR/epic names the canonical owner, contract surface, and rollout plan
 
-**Infrastructure options (to be decided):**
+Planning constraint:
 
-| Option                           | Hosting                       | Cost     | Notes                                                             |
-| -------------------------------- | ----------------------------- | -------- | ----------------------------------------------------------------- |
-| Same Postgres on backend VPS     | Co-located, separate database | $0       | Simplest. Adequate for MVP volumes.                               |
-| Managed Postgres (Neon/Supabase) | External                      | $0-25/mo | Better if account DB needs higher availability than inference DB. |
-| Separate micro-VPS               | Dedicated                     | ~$3-5/mo | Overkill for MVP.                                                 |
-
-**Recommendation for MVP:** Add a second database in the same Postgres instance on the backend VPS. Separate logical databases (`acx_recognition`, `acx_accounts`) sharing the same Postgres server. Migrate to managed DB only when operational requirements demand it.
+- do not treat `acx_accounts` or any future account database as an implementation requirement for closing this epic
+- if account storage becomes necessary before this epic closes, add a dedicated account-system plan first rather than extending this hosting epic ad hoc
 
 ---
 
@@ -400,9 +365,9 @@ A publicly accessible WordPress instance running the ACX plugin for demonstratio
 
 **Recommendation:** Cheap shared PHP hosting (~$2-5/mo) is the most economical option that maintains clean separation. The backend VPS should be dedicated to inference + DB. If budget is the absolute priority and demo traffic is minimal, WP on the Oracle VPS is viable but adds operational complexity.
 
-**Phase 1 recommendation: Hetzner CX22 (€4.35/mo).** 4GB RAM is sufficient for FastAPI + InsightFace + Postgres.
+**Current baseline:** OCI PAYG on `VM.Standard.A1.Flex` is already provisioned for the backend host and has enough headroom for the current InsightFace-only service.
 
-**Phase 2 recommendation: Hetzner CX32 (€7.49/mo) with INT4 quantization** or **CX42 (~€14/mo) for FP16.** If Oracle Cloud Free Tier ARM compatibility is confirmed, use that instead — 24GB RAM at $0/mo is unmatched.
+**Fallback / alternative path:** Hetzner CX22 remains the simplest paid fallback if Oracle reliability or ARM dependency support becomes a problem. For Phase 2 VLM work, Hetzner CX32/CX42 or a separate GPU host remain the clearer upgrade paths than overloading the WordPress tier.
 
 **Setup pattern:**
 
@@ -713,12 +678,12 @@ Per-second = L4 GPU **0.0001867** + CPU (4 × **0.000018**) + RAM (16 × **0.000
 
 ### Server Provisioning (Oracle Cloud PAYG)
 
-- [ ] Create Oracle Cloud account and upgrade to PAYG
+- [x] Create Oracle Cloud account and upgrade to PAYG
 - [ ] Configure budget alerts ($1 / $5 / $10 thresholds)
-- [ ] Provision `VM.Standard.A1.Flex` instance (4 ARM cores / 24GB RAM / 200GB disk)
+- [x] Provision `VM.Standard.A1.Flex` instance (4 ARM cores / 24GB RAM / 200GB disk)
 - [ ] Verify ARM compatibility: run full dependency install + integration test suite
-- [ ] Install Docker + Docker Compose on the instance
-- [ ] Configure firewall rules (ingress: 443/HTTPS only; SSH via OCI bastion or VPN)
+- [x] Bootstrap Docker + Docker Compose installation through `cloud-init.yaml`
+- [x] Configure base firewall rules (ingress: 443 public; SSH restricted by configured CIDRs)
 - [ ] Set up DNS + TLS (Cloudflare free tier or Caddy auto-TLS)
 - [ ] Deploy recognition service via Docker Compose
 - [ ] Verify InsightFace model download + cache persistence across container restart

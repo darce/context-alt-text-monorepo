@@ -123,7 +123,6 @@ Choose your domain to load targeted context. **Always load the testing guide** a
 | Codex custom MCP attachment          | [codex-custom-mcp-playbook.md](codex-custom-mcp-playbook.md)                                                |
 | Lane decomposition / orchestration   | [worktree-codex-playbook.md](worktree-codex-playbook.md) + [lane-scoped-context.md](lane-scoped-context.md) |
 
-
 ## Agent Startup Protocol
 
 Use this checklist at session start, whether you are entering from a cold start, resuming a task mid-slice, or inheriting a lane from another agent.

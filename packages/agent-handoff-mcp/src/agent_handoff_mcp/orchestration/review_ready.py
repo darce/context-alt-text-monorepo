@@ -14,6 +14,7 @@ from agent_handoff_mcp import (
     handoff_close_check,
 )
 from agent_handoff_mcp.config import RuntimeConfig
+from agent_handoff_mcp.enums import ReviewKind, ReviewScopeSource
 from agent_handoff_mcp.runtime import configure_runtime
 
 
@@ -38,9 +39,12 @@ class ReviewReadyResult:
     open_findings: int
     open_blockers: int
     current_task_in_sync: bool
+    current_commit_summary_present: bool
     tests_recent_count: int
     has_test_evidence: bool
     contract_violation: bool
+    scope_source: ReviewScopeSource
+    review_kind: ReviewKind
     boundary_files: list[str]
     contract_files: list[str]
     reasons: list[str]
@@ -82,6 +86,8 @@ def evaluate_review_ready(
     base_ref: str,
     base_sha: str,
     changed_files: list[str],
+    scope_source: ReviewScopeSource,
+    review_kind: ReviewKind,
     review: dict[str, Any],
     state: dict[str, Any],
     close: dict[str, Any],
@@ -98,6 +104,9 @@ def evaluate_review_ready(
     current_task_in_sync = bool(
         close.get("checks", {}).get("current_task_sync", {}).get("is_in_sync")
     )
+    current_commit_summary_present = not bool(
+        close.get("checks", {}).get("current_commit_handoff", {}).get("is_violation")
+    )
     tests_recent = state.get("tests_recent", []) or []
     has_test_evidence = len(tests_recent) > 0
     contract_violation = bool(boundary_files and not contract_files)
@@ -109,6 +118,8 @@ def evaluate_review_ready(
         reasons.append(f"{open_blockers} open blocker(s)")
     if not current_task_in_sync:
         reasons.append("CURRENT_TASK.md is out of sync with handoff state")
+    if not current_commit_summary_present:
+        reasons.append("no structured slice-completion summary recorded for the current commit")
     if not has_test_evidence:
         reasons.append("no recorded test evidence in handoff state")
     if contract_violation:
@@ -122,9 +133,12 @@ def evaluate_review_ready(
         open_findings=open_findings,
         open_blockers=open_blockers,
         current_task_in_sync=current_task_in_sync,
+        current_commit_summary_present=current_commit_summary_present,
         tests_recent_count=len(tests_recent),
         has_test_evidence=has_test_evidence,
         contract_violation=contract_violation,
+        scope_source=scope_source,
+        review_kind=review_kind,
         boundary_files=boundary_files,
         contract_files=contract_files,
         reasons=reasons,
@@ -139,6 +153,10 @@ def render_review_ready(result: ReviewReadyResult) -> str:
         f"Open findings: {result.open_findings}",
         f"Open blockers: {result.open_blockers}",
         f"CURRENT_TASK sync: {'ok' if result.current_task_in_sync else 'stale'}",
+        "Current commit summary: "
+        f"{'present' if result.current_commit_summary_present else 'missing'}",
+        f"Review kind: {result.review_kind}",
+        f"Scope source: {result.scope_source}",
         "Test evidence: "
         f"{'present' if result.has_test_evidence else 'missing'} "
         f"({result.tests_recent_count} recent record(s))",
@@ -156,12 +174,24 @@ def render_review_ready(result: ReviewReadyResult) -> str:
     return "\n".join(lines)
 
 
+def _load_latest_slice_packet(task_ref: str, review_kind: str | None) -> dict[str, Any]:
+    from agent_handoff_mcp import get_latest_slice_review_packet  # noqa: PLC0415
+
+    payload = _load_ok_payload(
+        "get_latest_slice_review_packet",
+        get_latest_slice_review_packet(task_ref=task_ref, review_kind=review_kind),
+    )
+    return payload["packet"]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--orchestrator-root", required=True)
     parser.add_argument("--worktree-root", required=True)
     parser.add_argument("--task-ref", required=True)
     parser.add_argument("--review-base", required=True)
+    parser.add_argument("--latest-slice", action="store_true")
+    parser.add_argument("--review-kind", choices=("branch", "planning"))
     args = parser.parse_args()
 
     orchestrator_root = Path(args.orchestrator_root).resolve()
@@ -171,6 +201,7 @@ def main() -> int:
 
     try:
         base_sha = _run_git("merge-base", args.review_base, "HEAD", cwd=worktree_root)
+        current_sha = _run_git("rev-parse", "HEAD", cwd=worktree_root)
     except subprocess.CalledProcessError:
         print(
             f"REVIEW_BASE '{args.review_base}' does not resolve to a merge-base from {worktree_root}.",
@@ -178,10 +209,21 @@ def main() -> int:
         )
         return 1
 
-    changed = _run_git("diff", "--name-only", f"{base_sha}..HEAD", cwd=worktree_root)
-    changed_files = [line for line in changed.splitlines() if line.strip()]
+    scope_source = ReviewScopeSource.BRANCH_DIFF
+    review_kind = ReviewKind(args.review_kind or ReviewKind.BRANCH.value)
+    changed_files: list[str]
 
     try:
+        if args.latest_slice:
+            packet = _load_latest_slice_packet(args.task_ref, args.review_kind)
+            changed_files = list(packet.get("changed_files") or [])
+            scope_source = ReviewScopeSource(
+                str(packet.get("scope_source") or ReviewScopeSource.SLICE_PACKET.value)
+            )
+            review_kind = ReviewKind(str(packet.get("review_kind") or review_kind.value))
+        else:
+            changed = _run_git("diff", "--name-only", f"{base_sha}..HEAD", cwd=worktree_root)
+            changed_files = [line for line in changed.splitlines() if line.strip()]
         review = _load_ok_payload(
             "get_review_findings_summary",
             get_review_findings_summary(task_ref=args.task_ref),
@@ -192,7 +234,7 @@ def main() -> int:
         )
         close = _load_ok_payload(
             "handoff_close_check",
-            handoff_close_check(task_ref=args.task_ref),
+            handoff_close_check(task_ref=args.task_ref, current_commit_sha=current_sha),
         )
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
@@ -203,6 +245,8 @@ def main() -> int:
         base_ref=args.review_base,
         base_sha=base_sha,
         changed_files=changed_files,
+        scope_source=scope_source,
+        review_kind=review_kind,
         review=review,
         state=state,
         close=close,

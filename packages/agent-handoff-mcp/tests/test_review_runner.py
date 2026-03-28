@@ -330,6 +330,9 @@ def test_run_review_dry_run_returns_full_shape(tmp_path: Path) -> None:
     assert "prompt" in result
     assert result["changed_files"] == ["a.py"]
     assert result["stack_guides"] == ["rules/testing-python.md"]
+    assert result["scope_source"] == "branch_diff"
+    assert result["review_kind"] == "branch"
+    assert result["scope_reason"] is None
 
 
 def test_run_review_delegates_to_adapter(tmp_path: Path) -> None:
@@ -361,7 +364,152 @@ def test_run_review_delegates_to_adapter(tmp_path: Path) -> None:
 
     assert result["summary"] == "Clean review."
     assert result["converged"] is True
+    assert result["scope_source"] == "branch_diff"
+    assert result["scope_reason"] is None
     mock_adapter.execute.assert_called_once()
+
+
+def test_run_review_uses_latest_slice_packet_when_requested(tmp_path: Path) -> None:
+    module = _load_review_runner_module()
+    import unittest.mock as mock
+
+    raw_result = {
+        "findings": [],
+        "summary": "Clean review.",
+    }
+    mock_result = mock.Mock()
+    mock_result.raw_payload = raw_result
+    mock_adapter = mock.Mock()
+    mock_adapter.execute.return_value = mock_result
+
+    mock_ahm = mock.MagicMock()
+    mock_ahm.RuntimeConfig.for_workspace.return_value = mock.MagicMock()
+    mock_ahm.configure_runtime = mock.MagicMock()
+    mock_ahm.get_latest_slice_review_packet.return_value = json.dumps(
+        {
+            "ok": True,
+            "packet": {
+                "changed_files": ["docs/tasks/12.0/slice-review-packet-and-cross-agent-review-task-plan.md"],
+                "review_kind": "planning",
+                "scope_source": "slice_packet",
+            },
+        }
+    )
+
+    with (
+        mock.patch.object(module, "_changed_files", return_value=["src/main.py"]),
+        mock.patch.object(module, "_diff_stat", return_value="1 file changed"),
+        mock.patch.object(module, "_detect_stack_guides", return_value=[]),
+        mock.patch.object(module, "get_adapter", return_value=mock_adapter),
+        mock.patch.object(module, "get_lane_config", return_value={}),
+        mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}),
+    ):
+        result = module.run_review(
+            worktree_path=tmp_path,
+            task_ref="agentic-development-process-hardening-epic",
+            orchestrator_root=tmp_path,
+            use_latest_slice=True,
+            review_kind="planning",
+        )
+
+    assert result["changed_files"] == ["docs/tasks/12.0/slice-review-packet-and-cross-agent-review-task-plan.md"]
+    assert result["review_kind"] == "planning"
+    assert result["scope_source"] == "slice_packet"
+    assert result["scope_reason"] is None
+
+
+def test_run_review_uses_planning_guide_for_latest_planning_slice(tmp_path: Path) -> None:
+    module = _load_review_runner_module()
+    import unittest.mock as mock
+
+    raw_result = {
+        "findings": [],
+        "summary": "Clean planning review.",
+    }
+    mock_result = mock.Mock()
+    mock_result.raw_payload = raw_result
+    mock_adapter = mock.Mock()
+    mock_adapter.execute.return_value = mock_result
+
+    mock_ahm = mock.MagicMock()
+    mock_ahm.RuntimeConfig.for_workspace.return_value = mock.MagicMock()
+    mock_ahm.configure_runtime = mock.MagicMock()
+    mock_ahm.get_latest_slice_review_packet.return_value = json.dumps(
+        {
+            "ok": True,
+            "packet": {
+                "changed_files": ["docs/tasks/12.0/slice-review-packet-and-cross-agent-review-task-plan.md"],
+                "review_kind": "planning",
+                "scope_source": "slice_packet",
+            },
+        }
+    )
+
+    with (
+        mock.patch.object(module, "_changed_files", return_value=["src/main.py"]),
+        mock.patch.object(module, "_diff_stat", return_value="1 file changed"),
+        mock.patch.object(module, "_detect_stack_guides", return_value=[]),
+        mock.patch.object(module, "get_adapter", return_value=mock_adapter),
+        mock.patch.object(module, "get_lane_config", return_value={}),
+        mock.patch.object(module, "_read_guide", side_effect=lambda filename: f"GUIDE:{filename}"),
+        mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}),
+    ):
+        result = module.run_review(
+            worktree_path=tmp_path,
+            task_ref="agentic-development-process-hardening-epic",
+            orchestrator_root=tmp_path,
+            use_latest_slice=True,
+            review_kind="planning",
+        )
+
+    assert result["summary"] == "Clean planning review."
+    prompt = mock_adapter.execute.call_args.kwargs["prompt"]
+    assert "GUIDE:planning-review-guide.md" in prompt
+    assert "GUIDE:branch-review-guide.md" not in prompt
+
+
+def test_run_review_falls_back_to_branch_diff_when_no_slice_packet_exists(tmp_path: Path) -> None:
+    module = _load_review_runner_module()
+    import unittest.mock as mock
+
+    raw_result = {
+        "findings": [],
+        "summary": "Clean review.",
+    }
+    mock_result = mock.Mock()
+    mock_result.raw_payload = raw_result
+    mock_adapter = mock.Mock()
+    mock_adapter.execute.return_value = mock_result
+
+    mock_ahm = mock.MagicMock()
+    mock_ahm.RuntimeConfig.for_workspace.return_value = mock.MagicMock()
+    mock_ahm.configure_runtime = mock.MagicMock()
+    mock_ahm.get_latest_slice_review_packet.return_value = json.dumps(
+        {
+            "ok": False,
+            "error": "No matching slice review packet found.",
+        }
+    )
+
+    with (
+        mock.patch.object(module, "_changed_files", return_value=["src/main.py"]),
+        mock.patch.object(module, "_diff_stat", return_value="1 file changed"),
+        mock.patch.object(module, "_detect_stack_guides", return_value=["branch-review-python.md"]),
+        mock.patch.object(module, "get_adapter", return_value=mock_adapter),
+        mock.patch.object(module, "get_lane_config", return_value={}),
+        mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}),
+    ):
+        result = module.run_review(
+            worktree_path=tmp_path,
+            task_ref="agentic-development-process-hardening-epic",
+            orchestrator_root=tmp_path,
+            use_latest_slice=True,
+        )
+
+    assert result["changed_files"] == ["src/main.py"]
+    assert result["review_kind"] == "branch"
+    assert result["scope_source"] == "branch_diff"
+    assert result["scope_reason"] == "No matching slice review packet found."
 
 
 def test_run_review_record_findings_records_ids_and_line_refs(tmp_path: Path) -> None:

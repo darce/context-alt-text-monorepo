@@ -39,6 +39,16 @@ class ReviewMode(StrEnum):
     RELEASE_AUDIT = "release_audit"
 
 
+class ReviewKind(StrEnum):
+    BRANCH = "branch"
+    PLANNING = "planning"
+
+
+class ReviewScopeSource(StrEnum):
+    SLICE_PACKET = "slice_packet"
+    BRANCH_DIFF = "branch_diff"
+
+
 class LaneStatus(StrEnum):
     PLANNED = "planned"
     ACTIVE = "active"
@@ -90,6 +100,7 @@ class WorkerEventName(StrEnum):
     REASONING_EFFORT_SELECTED = "reasoning_effort_selected"
     EXEC_SPAWNED = "exec_spawned"
     EXEC_HEARTBEAT = "exec_heartbeat"
+    SUBAGENT_TURN_OBSERVED = "subagent_turn_observed"
     SUBAGENT_TURN_COMPLETE = "subagent_turn_complete"
     EXEC_START = "exec_start"
     EXEC_FAILED = "exec_failed"
@@ -102,6 +113,7 @@ class WorkerEventName(StrEnum):
     REVIEW_START = "review_start"
     REVIEW_FAILED = "review_failed"
     REVIEW_COMPLETE = "review_complete"
+    ACE_REFLECT_DETECTED = "ace_reflect_detected"
     ACE_REFLECT_ERROR = "ace_reflect_error"
     FINDING_DIFF = "finding_diff"
     VERIFICATION_START = "verification_start"

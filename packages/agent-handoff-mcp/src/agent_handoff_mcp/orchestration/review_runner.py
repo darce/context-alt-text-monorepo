@@ -8,21 +8,25 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, TypedDict
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
+PACKAGE_SRC = Path(__file__).resolve().parents[2]
+if str(PACKAGE_SRC) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_SRC))
 
-from backend_registry import get_adapter
-from backend_registry import get_backend_choices
-from backend_registry import get_backend_spec
-from backend_registry import validate_backend
-from _env import WORKER_REASONING_EFFORT_CHOICES
-from _env import apply_backend_runtime_hints
-from lane_manifest import get_lane_config
+from agent_handoff_mcp.orchestration.backend_registry import get_adapter
+from agent_handoff_mcp.orchestration.backend_registry import get_backend_choices
+from agent_handoff_mcp.orchestration.backend_registry import get_backend_spec
+from agent_handoff_mcp.orchestration.backend_registry import validate_backend
+from agent_handoff_mcp.enums import ReviewKind, ReviewScopeSource
+from agent_handoff_mcp.orchestration._env import WORKER_REASONING_EFFORT_CHOICES
+from agent_handoff_mcp.orchestration._env import apply_backend_runtime_hints
+from agent_handoff_mcp.orchestration.lane_manifest import get_lane_config
 
-REPO_ROOT = SCRIPT_DIR.parents[4]
+if TYPE_CHECKING:
+    from agent_handoff_mcp.core import ReviewFindingDetails, WriteActor
+
+REPO_ROOT = PACKAGE_SRC.parents[2]
 RULES_DIR = REPO_ROOT / "docs" / "agentic" / "rules"
 
 BACKEND_CHOICES = get_backend_choices()
@@ -166,11 +170,23 @@ def _read_guide(filename: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+class ReviewScope(TypedDict):
+    changed_files: list[str]
+    review_kind: ReviewKind
+    scope_source: ReviewScopeSource
+    scope_reason: str | None
+
+
+def _guide_heading(filename: str) -> str:
+    return Path(filename).stem.replace("-", " ").replace("_", " ").upper()
+
+
 def _build_review_prompt(
     *,
     changed_files: list[str],
     diff_stat: str,
     stack_guides: list[str],
+    main_guide_filename: str = "branch-review-guide.md",
     lane_id: str | None = None,
 ) -> str:
     """Assemble the full review prompt from guide content, stack guides, and diff context."""
@@ -183,16 +199,16 @@ def _build_review_prompt(
         sections.append(f"\nLane: {lane_id}")
 
     # Main review guide
-    main_guide = _read_guide("branch-review-guide.md")
+    main_guide = _read_guide(main_guide_filename)
     if main_guide:
-        sections.append("\n--- BRANCH REVIEW GUIDE ---\n")
+        sections.append(f"\n--- {_guide_heading(main_guide_filename)} ---\n")
         sections.append(main_guide)
 
     # Stack-specific guides
     for guide_name in stack_guides:
         guide_content = _read_guide(guide_name)
         if guide_content:
-            sections.append(f"\n--- {guide_name.upper()} ---\n")
+            sections.append(f"\n--- {_guide_heading(guide_name)} ---\n")
             sections.append(guide_content)
 
     # Changed files
@@ -217,6 +233,58 @@ def _build_review_prompt(
     )
 
     return "\n".join(sections)
+
+
+def _resolve_review_scope(
+    *,
+    worktree_path: Path,
+    task_ref: str | None,
+    orchestrator_root: Path | None,
+    review_kind: ReviewKind | str | None,
+    use_latest_slice: bool,
+) -> ReviewScope:
+    preferred_review_kind = ReviewKind(review_kind) if review_kind is not None else ReviewKind.BRANCH
+    if use_latest_slice and task_ref and orchestrator_root is not None:
+        from agent_handoff_mcp import RuntimeConfig, configure_runtime, get_latest_slice_review_packet
+
+        runtime = RuntimeConfig.for_workspace(
+            orchestrator_root,
+            state_dir=orchestrator_root / ".task-state",
+            current_task_path=orchestrator_root / "CURRENT_TASK.md",
+            exports_dir=orchestrator_root / ".task-state" / "exports",
+        )
+        configure_runtime(runtime)
+        payload = json.loads(
+            get_latest_slice_review_packet(
+                task_ref=task_ref,
+                review_kind=preferred_review_kind.value,
+            )
+        )
+        if payload.get("ok"):
+            packet = payload["packet"]
+            return {
+                "changed_files": list(packet.get("changed_files") or []),
+                "review_kind": ReviewKind(
+                    str(packet.get("review_kind") or ReviewKind.BRANCH.value)
+                ),
+                "scope_source": ReviewScopeSource(
+                    str(packet.get("scope_source") or ReviewScopeSource.SLICE_PACKET.value)
+                ),
+                "scope_reason": None,
+            }
+        return {
+            "changed_files": _changed_files(worktree_path),
+            "review_kind": preferred_review_kind,
+            "scope_source": ReviewScopeSource.BRANCH_DIFF,
+            "scope_reason": str(payload.get("error") or "latest slice packet lookup failed"),
+        }
+
+    return {
+        "changed_files": _changed_files(worktree_path),
+        "review_kind": preferred_review_kind,
+        "scope_source": ReviewScopeSource.BRANCH_DIFF,
+        "scope_reason": None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +378,7 @@ def _record_findings(
     for i, finding in enumerate(findings):
         finding_id = _generate_finding_id(lane_id, i, finding)
 
-        details: dict[str, Any] = {}
+        details: ReviewFindingDetails = {}
         if "line_start" in finding and isinstance(finding["line_start"], int):
             details["line_start"] = finding["line_start"]
         if "line_end" in finding and isinstance(finding["line_end"], int):
@@ -318,7 +386,7 @@ def _record_findings(
         if "fix" in finding and isinstance(finding["fix"], str):
             details["fix"] = finding["fix"]
 
-        actor: dict[str, Any] = {}
+        actor: WriteActor = {}
         if lane_id:
             actor["lane_id"] = lane_id
 
@@ -352,13 +420,15 @@ def run_review(
     backend: str = "codex-cli",
     reasoning_effort: str | None = None,
     model: str | None = None,
+    review_kind: ReviewKind | str | None = None,
+    use_latest_slice: bool = False,
     record_findings: bool = False,
     dry_run: bool = False,
     progress_callback: Callable[..., None] | None = None,
 ) -> dict[str, Any]:
     """Run a full review cycle: discover changes, build prompt, execute Codex, validate, optionally record."""
     # 1. Load manifest for overrides
-    lane_cfg = {}
+    lane_cfg: dict[str, Any] = {}
     if task_ref and lane_id:
         lane_cfg = get_lane_config(task_ref, lane_id, orchestrator_root=str(orchestrator_root) if orchestrator_root else None) or {}
 
@@ -372,20 +442,32 @@ def run_review(
 
     env = None
     if orchestrator_root is not None:
-        from _env import pythonpath_env
+        from agent_handoff_mcp.orchestration._env import pythonpath_env
 
         env = pythonpath_env(orchestrator_root, task_ref=task_ref, lane_id=lane_id)
     elif reasoning_effort:
         env = {}
     if env is not None:
         apply_backend_runtime_hints(env, reasoning_effort=reasoning_effort)
-    changed = _changed_files(worktree_path)
+    scope = _resolve_review_scope(
+        worktree_path=worktree_path,
+        task_ref=task_ref,
+        orchestrator_root=orchestrator_root,
+        review_kind=review_kind,
+        use_latest_slice=use_latest_slice,
+    )
+    changed = scope["changed_files"]
     stat = _diff_stat(worktree_path)
     guides = _detect_stack_guides(changed)
     prompt = _build_review_prompt(
         changed_files=changed,
         diff_stat=stat,
         stack_guides=guides,
+        main_guide_filename=(
+            "planning-review-guide.md"
+            if scope["review_kind"] == ReviewKind.PLANNING
+            else "branch-review-guide.md"
+        ),
         lane_id=lane_id,
     )
 
@@ -399,6 +481,9 @@ def run_review(
             "converged": True,
             "changed_files": changed,
             "stack_guides": guides,
+            "review_kind": scope["review_kind"],
+            "scope_source": scope["scope_source"],
+            "scope_reason": scope["scope_reason"],
         }
 
     # Get adapter and execute
@@ -421,6 +506,9 @@ def run_review(
         "converged": findings_converged(validated["findings"]),
         "changed_files": changed,
         "stack_guides": guides,
+        "review_kind": scope["review_kind"],
+        "scope_source": scope["scope_source"],
+        "scope_reason": scope["scope_reason"],
     }
 
     if record_findings:
@@ -474,6 +562,16 @@ def _parse_args() -> argparse.Namespace:
     )
     run_parser.add_argument("--model", help="Explicit model to use (e.g. gpt-5.4-mini).")
     run_parser.add_argument(
+        "--review-kind",
+        choices=("branch", "planning"),
+        help="Preferred review workflow. Packet-backed planning reviews only match docs-only slices.",
+    )
+    run_parser.add_argument(
+        "--latest-slice",
+        action="store_true",
+        help="Resolve changed files from the latest completed slice packet when available, with branch-diff fallback.",
+    )
+    run_parser.add_argument(
         "--record-findings",
         action="store_true",
         help="Record findings into MCP before returning.",
@@ -510,6 +608,8 @@ def main() -> int:
         backend=args.backend,
         reasoning_effort=args.reasoning_effort,
         model=args.model,
+        review_kind=args.review_kind,
+        use_latest_slice=args.latest_slice,
         record_findings=args.record_findings,
         dry_run=args.dry_run,
     )

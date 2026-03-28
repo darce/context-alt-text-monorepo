@@ -25,6 +25,7 @@ from agent_handoff_mcp.orchestration.ace_metrics import (
     _phase_timing,
     _planning_drift,
     _process_health,
+    _slice_review_adoption,
     _sparkline,
     _stale_artifact_metrics,
     _token_burn,
@@ -152,7 +153,7 @@ class TestBuildSnapshotZeroData:
             "timestamp", "task_ref", "token_burn", "context_pressure",
             "fts5_retrieval", "lane_health", "process_health", "handoff_memory",
             "planning_drift", "stale_artifact_rate", "archive_rate", "ctx7_adoption",
-            "phase_timing", "ace_documentation",
+            "phase_timing", "slice_review_adoption", "ace_documentation",
         }
         assert required_keys.issubset(snapshot.keys())
 
@@ -279,6 +280,16 @@ class TestRenderMarkdown:
                 "exec": {"count": 0, "total": 0.0, "mean": 0.0, "max": 0.0},
                 "review": {"count": 0, "total": 0.0, "mean": 0.0, "max": 0.0},
             },
+            "slice_review_adoption": {
+                "data_available": False,
+                "total_reviews": 0,
+                "packet_backed_reviews": 0,
+                "branch_diff_fallback_reviews": 0,
+                "planning_reviews": 0,
+                "branch_reviews": 0,
+                "packet_backed_adoption_rate": None,
+                "branch_diff_fallback_rate": None,
+            },
             "ace_documentation": {
                 "data_available": False,
                 "total_strategy_bullets": 0,
@@ -323,9 +334,14 @@ class TestRenderMarkdown:
             "## Archive Cadence",
             "## ctx7 Adoption",
             "## Phase Timing",
+            "## Slice Review Adoption",
             "## Documentation Fitness",
         ]:
             assert section in md, f"Missing section: {section}"
+
+    def test_slice_review_adoption_missing_data_sentinel(self) -> None:
+        md = render_markdown(self._base_snapshot())
+        assert "No review-complete events recorded with scope-source metadata yet" in md
 
 
 class TestDerivedMetrics:
@@ -490,6 +506,25 @@ class TestDerivedMetrics:
         assert result["unique_library_ids"] == 2
         assert result["reuse_ratio"] == 1.5
         assert result["library_ids"] == ["/openai/openai", "/vercel/next.js"]
+
+    def test_slice_review_adoption_counts_packet_and_fallback_reviews(self) -> None:
+        result = _slice_review_adoption(
+            [
+                {"event": "review_complete", "scope_source": "slice_packet", "review_kind": "planning"},
+                {"event": "review_complete", "scope_source": "slice_packet", "review_kind": "branch"},
+                {"event": "review_complete", "scope_source": "branch_diff", "review_kind": "branch"},
+                {"event": "exec_complete", "exec_seconds": 3.0},
+            ]
+        )
+
+        assert result["data_available"] is True
+        assert result["total_reviews"] == 3
+        assert result["packet_backed_reviews"] == 2
+        assert result["branch_diff_fallback_reviews"] == 1
+        assert result["planning_reviews"] == 1
+        assert result["branch_reviews"] == 2
+        assert result["packet_backed_adoption_rate"] == 0.667
+        assert result["branch_diff_fallback_rate"] == 0.333
 
 
 class TestProcessHealth:

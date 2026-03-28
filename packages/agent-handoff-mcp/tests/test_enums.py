@@ -1,6 +1,16 @@
 from __future__ import annotations
 
-from agent_handoff_mcp import build_write_actor
+import re
+from pathlib import Path
+
+from agent_handoff_mcp import (
+    ReviewFindingDetails,
+    ReviewKind,
+    ReviewScopeSource,
+    SliceReviewPacket,
+    WriteActor,
+    build_write_actor,
+)
 from agent_handoff_mcp import core as handoff_core
 from agent_handoff_mcp.enums import (
     ActionStatus,
@@ -29,6 +39,8 @@ def test_enum_values_match_core_validation_sets() -> None:
     assert handoff_core.REVIEW_FINDING_STATUSES == frozenset(_enum_values(FindingStatus))
     assert handoff_core.REVIEW_FINDING_SEVERITIES == frozenset(_enum_values(FindingSeverity))
     assert handoff_core.REVIEW_MODES == frozenset(_enum_values(ReviewMode))
+    assert handoff_core.REVIEW_KINDS == frozenset(_enum_values(ReviewKind))
+    assert handoff_core.REVIEW_SCOPE_SOURCES == frozenset(_enum_values(ReviewScopeSource))
     assert handoff_core.LANE_STATUSES == frozenset(_enum_values(LaneStatus))
     assert handoff_core.REPORT_STATUSES == frozenset(_enum_values(ReportStatus))
     assert handoff_core.MESSAGE_STATUSES == frozenset(_enum_values(MessageStatus))
@@ -83,8 +95,43 @@ def test_build_write_actor_returns_empty_dict_for_blank_inputs() -> None:
     assert build_write_actor(agent=" ", branch=None, commit_sha="", lane_id="\n") == {}
 
 
+def test_public_review_packet_types_are_importable_from_package_root() -> None:
+    assert ReviewFindingDetails.__name__ == "ReviewFindingDetails"
+    assert WriteActor.__name__ == "WriteActor"
+    assert SliceReviewPacket.__name__ == "SliceReviewPacket"
+    assert ReviewKind.PLANNING == "planning"
+    assert ReviewScopeSource.SLICE_PACKET == "slice_packet"
+
+
 def test_worker_event_names_include_runtime_log_vocabulary() -> None:
-    assert WorkerEventName.CYCLE_START == "cycle_start"
-    assert WorkerEventName.EXEC_COMPLETE == "exec_complete"
-    assert WorkerEventName.REVIEW_COMPLETE == "review_complete"
-    assert WorkerEventName.CONTEXT_PRESSURE == "context_pressure"
+    runtime_sources = (
+        Path(handoff_core.__file__).resolve().parent / "orchestration" / "worker_daemon.py",
+        Path(handoff_core.__file__).resolve().parent / "orchestration" / "adapters" / "codex_cli.py",
+        Path(handoff_core.__file__).resolve().parent / "orchestration" / "adapters" / "claude_code.py",
+        Path(handoff_core.__file__).resolve().parent / "orchestration" / "adapters" / "codex_subagent.py",
+        Path(handoff_core.__file__).resolve().parent / "orchestration" / "adapters" / "local_model.py",
+    )
+    joined = "\n".join(path.read_text(encoding="utf-8") for path in runtime_sources)
+
+    for member in WorkerEventName:
+        assert f"WorkerEventName.{member.name}" in joined
+
+
+def test_runtime_event_strings_are_backed_by_worker_event_enum() -> None:
+    runtime_sources = (
+        Path(handoff_core.__file__).resolve().parent / "orchestration" / "worker_daemon.py",
+        Path(handoff_core.__file__).resolve().parent / "orchestration" / "ace_metrics.py",
+    )
+    allowed_values = {member.value for member in WorkerEventName}
+    observed_values: set[str] = set()
+
+    for path in runtime_sources:
+        text = path.read_text(encoding="utf-8")
+        observed_values.update(re.findall(r'if\s+event\s*==\s*"([^"]+)"', text))
+        observed_values.update(re.findall(r'e\.get\("event"\)\s*==\s*"([^"]+)"', text))
+        observed_values.update(re.findall(r'"INFO",\s*"([^"]+)"', text))
+        observed_values.update(re.findall(r'"WARNING",\s*"([^"]+)"', text))
+        observed_values.update(re.findall(r'"ERROR",\s*"([^"]+)"', text))
+
+    observed_values.discard("event")
+    assert observed_values <= allowed_values

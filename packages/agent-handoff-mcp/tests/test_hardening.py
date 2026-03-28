@@ -182,6 +182,23 @@ class TestFreshCloseChecks:
                 actor={"agent": "tester", "branch": "feature/review", "commit_sha": "newsha"},
             )
         )
+        _parse(
+            mcp_server.record_decision(
+                session="review",
+                decision="slice_complete_fresh_tests",
+                rationale=(
+                    "## Changes\n"
+                    "- packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py: fresh-test gate ; verified current commit evidence.\n\n"
+                    "## Verification\n"
+                    "- pytest current: pass.\n\n"
+                    "## Schema / Contract Changes\n"
+                    "- none.\n\n"
+                    "## Open Threads\n"
+                    "- none."
+                ),
+                actor={"agent": "tester", "branch": "feature/review", "commit_sha": "newsha"},
+            )
+        )
         _parse(mcp_server.generate_current_task_md(write_file=True))
 
         response = _parse(

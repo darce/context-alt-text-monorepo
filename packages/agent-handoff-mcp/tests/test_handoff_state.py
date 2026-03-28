@@ -41,6 +41,26 @@ def test_runtime_config_defaults_to_workspace_task_state() -> None:
     assert runtime.exports_dir == workspace_root / ".task-state" / "exports"
 
 
+def test_mandatory_slice_decision_headings_constant_is_stable() -> None:
+    assert handoff_core.MANDATORY_SLICE_DECISION_HEADINGS == (
+        "## Changes",
+        "## Verification",
+        "## Schema / Contract Changes",
+        "## Open Threads",
+    )
+
+
+def test_summarize_test_result_falls_back_to_last_line() -> None:
+    result = (
+        "============================= test session starts =============================\n"
+        "platform darwin -- Python 3.12.0\n"
+        "collected 3 items\n"
+        "3 passed in 0.12s\n"
+    )
+
+    assert handoff_core._summarize_test_result(result) == "3 passed in 0.12s"
+
+
 def _parse(payload: str) -> dict:
     import typing
 
@@ -148,6 +168,175 @@ def test_plan_cursor_crud_round_trip(isolated_handoff: dict) -> None:
         )
     )
     assert listed["returned"] == 1
+
+
+def test_get_latest_slice_review_packet_returns_branch_packet(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="slice-review-packet",
+            objective="Test latest slice review packet lookup",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.upsert_worktree_lane(
+            task_ref="slice-review-packet",
+            lane_id="backend-domain",
+            worktree_path="/tmp/backend-domain",
+            branch="tooling/review-hardening",
+            status="active",
+        )
+    )
+    _parse(
+        mcp_server.upsert_plan_cursor(
+            task_ref="slice-review-packet",
+            plan_item_id="slice-1",
+            lane_id="backend-domain",
+            state="completed",
+            summary="Backend slice complete",
+        )
+    )
+    _parse(
+        mcp_server.record_worker_report(
+            task_ref="slice-review-packet",
+            lane_id="backend-domain",
+            session="slice-1",
+            summary="Implemented backend slice",
+            changed_files=[
+                "packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py",
+                "docs/agentic/contracts/agent-handoff-mcp.md",
+            ],
+            test_commands=["pytest packages/agent-handoff-mcp/tests/test_handoff_state.py -q"],
+            merge_ready=True,
+        )
+    )
+    _parse(
+        mcp_server.record_decision(
+            session="slice-1",
+            decision="slice_complete_packet_lookup",
+            rationale="## Changes\n- Added packet lookup.\n\n## Verification\n- pytest.\n\n## Schema / Contract Changes\n- Contract updated.\n\n## Open Threads\n- none.",
+            actor={"lane_id": "backend-domain"},
+        )
+    )
+
+    payload = _parse(mcp_server.get_latest_slice_review_packet(task_ref="slice-review-packet"))
+
+    assert payload["ok"] is True
+    assert payload["packet"]["slice_label"] == "packet_lookup"
+    assert payload["packet"]["review_kind"] == "branch"
+    assert payload["packet"]["scope_source"] == "slice_packet"
+    assert payload["packet"]["plan_item_id"] == "slice-1"
+    assert payload["packet"]["contract_files"] == ["docs/agentic/contracts/agent-handoff-mcp.md"]
+    assert "packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py" in payload["packet"]["changed_files"]
+
+
+def test_get_latest_slice_review_packet_filters_to_planning_slices(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="slice-review-packet-planning",
+            objective="Test planning slice packet lookup",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.upsert_worktree_lane(
+            task_ref="slice-review-packet-planning",
+            lane_id="docs-lane",
+            worktree_path="/tmp/docs-lane",
+            branch="tooling/review-hardening",
+            status="active",
+        )
+    )
+    _parse(
+        mcp_server.record_worker_report(
+            task_ref="slice-review-packet-planning",
+            lane_id="docs-lane",
+            session="slice-docs",
+            summary="Updated planning docs",
+            changed_files=[
+                "docs/tasks/12.0/slice-review-packet-and-cross-agent-review-task-plan.md",
+                "docs/agentic/rules/planning-review-guide.md",
+            ],
+            test_commands=["rg -n \"slice review packet\" docs/agentic/rules/planning-review-guide.md"],
+            merge_ready=True,
+        )
+    )
+    _parse(
+        mcp_server.record_decision(
+            session="slice-docs",
+            decision="slice_complete_docs_packet",
+            rationale="## Changes\n- Updated docs.\n\n## Verification\n- rg.\n\n## Schema / Contract Changes\n- none.\n\n## Open Threads\n- none.",
+            actor={"lane_id": "docs-lane"},
+        )
+    )
+
+    planning_payload = _parse(
+        mcp_server.get_latest_slice_review_packet(
+            task_ref="slice-review-packet-planning",
+            review_kind="planning",
+        )
+    )
+
+    assert planning_payload["ok"] is True
+    assert planning_payload["packet"]["review_kind"] == "planning"
+    assert planning_payload["packet"]["review_guide_path"].endswith("planning-review-guide.md")
+
+
+def test_get_latest_slice_review_packet_returns_error_when_no_matching_slice_exists(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="slice-review-packet-empty",
+            objective="No slice packet yet",
+            status="in_progress",
+        )
+    )
+
+    payload = _parse(mcp_server.get_latest_slice_review_packet(task_ref="slice-review-packet-empty"))
+
+    assert payload["ok"] is False
+    assert payload["error"] == "No matching slice review packet found."
+
+
+def test_get_latest_slice_review_packet_uses_decision_rationale_when_worker_report_missing(
+    isolated_handoff: dict,
+) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="slice-review-rationale-fallback",
+            objective="Use structured slice decisions as packet fallback",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.record_decision(
+            session="slice-rationale",
+            decision="slice_complete_rationale_fallback",
+            rationale=(
+                "## Changes\n"
+                "- packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/review_runner.py: run_review ; packet-backed dispatch.\n"
+                "- docs/agentic/rules/branch-review-guide.md: latest-slice review intake ; guidance update.\n"
+                "\n## Verification\n"
+                "- pytest packages/agent-handoff-mcp/tests/test_review_runner.py -q: passed.\n"
+                "\n## Schema / Contract Changes\n"
+                "- docs/agentic/contracts/agent-handoff-mcp.md: latest slice packet query documented.\n"
+                "\n## Open Threads\n"
+                "- none.\n"
+            ),
+            actor={"lane_id": "backend-domain"},
+        )
+    )
+
+    payload = _parse(
+        mcp_server.get_latest_slice_review_packet(task_ref="slice-review-rationale-fallback")
+    )
+
+    assert payload["ok"] is True
+    assert payload["packet"]["scope_source"] == "slice_packet"
+    assert payload["packet"]["review_kind"] == "branch"
+    assert payload["packet"]["changed_files"] == [
+        "packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/review_runner.py",
+        "docs/agentic/rules/branch-review-guide.md",
+    ]
 
 
 def test_set_handoff_state_revision_conflict(isolated_handoff: dict) -> None:
@@ -781,6 +970,34 @@ def test_get_lane_activity_archival_format_returns_compact_summary(isolated_hand
         "pass_rate": 0.5,
     }
     assert "retention contract" in activity["summary"]["decisions"]["latest_rationale_excerpt"]
+
+
+def test_record_test_result_summarizes_multiline_output(isolated_handoff: dict) -> None:
+    initialized = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="test-results",
+            objective="Summarize verification output",
+            status="in_progress",
+        )
+    )
+    assert initialized["ok"] is True
+
+    recorded = _parse(
+        mcp_server.record_test_result(
+            session="s-test-summary",
+            command="python3 -m pytest",
+            passed=True,
+            result=(
+                "============================= test session starts =============================\n"
+                "collected 55 items\n"
+                "packages/agent-handoff-mcp/tests/test_handoff_state.py .....\n"
+                "============================== 55 passed in 7.02s =============================="
+            ),
+            actor={"agent": "codex", "branch": "tooling/review-hardening", "commit_sha": "abc123"},
+        )
+    )
+
+    assert recorded["test"]["result"] == "============================== 55 passed in 7.02s =============================="
 
 
 def test_get_lane_activity_archival_format_truncates_long_decision_rationale(isolated_handoff: dict) -> None:
@@ -1426,6 +1643,83 @@ def test_update_review_finding_cross_task(isolated_handoff: dict) -> None:
     assert reopened["finding"]["status"] == "open"
 
 
+def test_core_write_tools_accept_explicit_task_ref_cross_task(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="cross-write-a",
+            objective="Task A",
+            status="in_progress",
+        )
+    )
+
+    decision = _parse(
+        mcp_server.record_decision(
+            session="s-cross",
+            decision="slice_complete_cross_write_a",
+            rationale="## Changes\n- none.\n\n## Verification\n- none.\n\n## Schema / Contract Changes\n- none.\n\n## Open Threads\n- none.",
+            task_ref="cross-write-a",
+        )
+    )
+    assert decision["ok"] is True
+    assert decision["task_ref"] == "cross-write-a"
+
+    action = _parse(
+        mcp_server.update_next_actions(
+            operation="add",
+            action="Cross-task action",
+            priority=1,
+            task_ref="cross-write-a",
+        )
+    )
+    assert action["ok"] is True
+    assert action["task_ref"] == "cross-write-a"
+
+    blocker = _parse(
+        mcp_server.report_blocker(
+            operation="add",
+            description="Cross-task blocker",
+            task_ref="cross-write-a",
+        )
+    )
+    assert blocker["ok"] is True
+    assert blocker["task_ref"] == "cross-write-a"
+
+    test = _parse(
+        mcp_server.record_test_result(
+            session="s-cross",
+            command="pytest -q",
+            passed=True,
+            result="1 passed in 0.01s",
+            task_ref="cross-write-a",
+        )
+    )
+    assert test["ok"] is True
+    assert test["task_ref"] == "cross-write-a"
+
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="cross-write-b",
+            objective="Task B",
+            status="in_progress",
+            expected_revision=0,
+        )
+    )
+
+    hidden = _parse(mcp_server.get_handoff_state(verbose=True))
+    assert hidden["task_ref"] == "cross-write-b"
+    assert hidden["decisions_recent"] == []
+    assert hidden["actions_pending"] == []
+    assert hidden["blockers_open"] == []
+    assert hidden["tests_recent"] == []
+
+    explicit = _parse(mcp_server.get_handoff_state(task_ref="cross-write-a", verbose=True))
+    assert explicit["task_ref"] == "cross-write-a"
+    assert [row["decision"] for row in explicit["decisions_recent"]] == ["slice_complete_cross_write_a"]
+    assert [row["action"] for row in explicit["actions_pending"]] == ["Cross-task action"]
+    assert [row["description"] for row in explicit["blockers_open"]] == ["Cross-task blocker"]
+    assert [row["command"] for row in explicit["tests_recent"]] == ["pytest -q"]
+
+
 def test_lane_reports_and_messages_accept_explicit_task_ref_cross_task(isolated_handoff: dict) -> None:
     _parse(
         mcp_server.set_handoff_state(
@@ -1736,6 +2030,106 @@ def test_handoff_close_check_enforce_fails_then_passes(isolated_handoff: dict) -
     assert ready["ok"] is True
     assert ready["ready_to_close"] is True
     assert ready["checks"]["current_task_sync"]["is_in_sync"] is True
+
+
+def test_handoff_close_check_requires_structured_slice_summary_for_current_commit(
+    isolated_handoff: dict,
+) -> None:
+    initialized = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="docs-audit",
+            objective="Audit docs and record handoff",
+            status="in_progress",
+        )
+    )
+    assert initialized["ok"] is True
+
+    actor = {"agent": "codex", "branch": "tooling/review-hardening", "commit_sha": "abc123"}
+    _parse(
+        mcp_server.record_decision(
+            session="s-docs",
+            decision="note_only",
+            rationale="unstructured note",
+            actor=actor,
+        )
+    )
+
+    revision = int(initialized["active"]["revision"])
+    done = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="docs-audit",
+            objective="Audit docs and record handoff",
+            status="done",
+            expected_revision=revision,
+        )
+    )
+    assert done["ok"] is True
+
+    _parse(mcp_server.generate_current_task_md(task_ref="docs-audit", write_file=True))
+
+    missing = _parse(mcp_server.handoff_close_check(enforce=True, current_commit_sha="abc123"))
+    assert missing["ok"] is False
+    assert missing["ready_to_close"] is False
+    assert missing["checks"]["current_commit_handoff"]["is_violation"] is True
+
+    _parse(
+        mcp_server.record_decision(
+            session="s-docs",
+            decision="slice_complete_docs_audit",
+            rationale=(
+                "## Changes\n"
+                "- docs/agentic/rules/development-workflow.md: handoff policy ; required handoff for docs-only slices.\n\n"
+                "## Verification\n"
+                "- rg docs/agentic: 1 matched policy update.\n\n"
+                "## Schema / Contract Changes\n"
+                "- none.\n\n"
+                "## Open Threads\n"
+                "- none."
+            ),
+            actor=actor,
+        )
+    )
+    _parse(mcp_server.generate_current_task_md(task_ref="docs-audit", write_file=True))
+
+    passing = _parse(mcp_server.handoff_close_check(enforce=True, current_commit_sha="abc123"))
+    assert passing["ok"] is True
+    assert passing["ready_to_close"] is True
+    assert passing["checks"]["current_commit_handoff"]["structured_slice_decision_count"] == 1
+
+
+def test_handoff_close_check_rejects_empty_structured_slice_sections_for_current_commit(
+    isolated_handoff: dict,
+) -> None:
+    initialized = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="docs-audit-empty",
+            objective="Audit docs and record handoff",
+            status="done",
+        )
+    )
+    assert initialized["ok"] is True
+
+    actor = {"agent": "codex", "branch": "tooling/review-hardening", "commit_sha": "abc123"}
+    _parse(
+        mcp_server.record_decision(
+            session="s-docs-empty",
+            decision="slice_complete_docs_audit_empty",
+            rationale=(
+                "## Changes\n"
+                "## Verification\n"
+                "## Schema / Contract Changes\n"
+                "## Open Threads\n"
+            ),
+            actor=actor,
+        )
+    )
+
+    response = _parse(mcp_server.handoff_close_check(enforce=True, current_commit_sha="abc123"))
+
+    assert response["ok"] is False
+    assert response["ready_to_close"] is False
+    assert response["checks"]["current_commit_handoff"]["is_violation"] is True
+    assert response["checks"]["current_commit_handoff"]["structured_slice_decision_count"] == 0
 
 
 # ---------------------------------------------------------------------------

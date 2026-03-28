@@ -265,53 +265,53 @@ These items from the reconciliation epic are explicitly scoped out. They represe
 
 ## Consolidated Checklist
 
-### Phase 1: Delta Ingest and Drift Reconciliation
+### Phase 1: Delta Ingest and Drift Reconciliation -- MOVED TO v0.3.0
 
-- [ ] Implement delta ingest path on the WordPress side with snapshot fallback.
-- [ ] Implement drift reconciliation logic with conflict-safe replay policy.
-- [ ] Add tests for delta chain break and stale-delta fallback scenarios.
+- [x] Implement delta ingest path on the WordPress side with snapshot fallback. -- Moved to [sync-completion-and-retention-hardening-epic (v0.3.0)](../v0.3.0/sync-completion-and-retention-hardening-epic.md) Phase 1.
+- [x] Implement drift reconciliation logic with conflict-safe replay policy. -- Moved to [sync-completion-and-retention-hardening-epic (v0.3.0)](../v0.3.0/sync-completion-and-retention-hardening-epic.md) Phase 2.
+- [x] Add tests for delta chain break and stale-delta fallback scenarios. -- Moved to v0.3.0 Phase 1.
 
-### Phase 2: Topology Completion
+### Phase 2: Topology Completion -- COMPLETED
 
-- [ ] Extend projection schema for representative `id` and `is_pinned` state.
-- [ ] Wire representative pin/unpin through the durable replay/outbox contract.
-- [ ] Complete `cluster_merged` accept-machine revert with moved-member provenance.
-- [ ] Add round-trip verification tests for representative and merge mutations.
+- [x] Extend projection schema for representative `id` and `is_pinned` state.
+- [x] Wire representative pin/unpin through the durable replay/outbox contract.
+- [x] Complete `cluster_merged` accept-machine revert with moved-member provenance.
+- [x] Add round-trip verification tests for representative and merge mutations.
 
-### Phase 3: Bidirectional Conflict Resolution
+### Phase 3: Bidirectional Conflict Resolution -- COMPLETED
 
 - [x] Extend conflict record schema for backend-proposed values.
 - [x] Implement conflict resolution UI in conflict inbox for person-name edits.
 - [x] Wire resolution actions through the outbox/replay contract.
 - [x] Add tests for accept, reject, and re-conflict scenarios.
 
-### Phase 4: Workbench Information Architecture
+### Phase 4: Workbench Information Architecture -- COMPLETED
 
 - [x] Migrate Batch tab content from Workbench to Dashboard.
 - [x] Remove Batch tab from Workbench (Scan + Confirm only).
 - [x] Verify Batch workflows function from their Dashboard location.
 
-### Phase 5: Machine Proposals Infrastructure
+### Phase 5: Machine Proposals Infrastructure -- COMPLETED
 
-- [ ] Add backend proposal storage model separate from committed cluster state.
-- [ ] Add proposal list, accept, and reject API endpoints.
-- [ ] Add merge-preview and proposal acceptance UI in WordPress admin.
-- [ ] Add tests for proposal lifecycle (create, accept, reject, expire).
+- [x] Add backend proposal storage model separate from committed cluster state. -- Delivered as `identity_suggestions`, `cluster_merge_suggestions`, `name_suggestions` tables.
+- [x] Add proposal list, accept, and reject API endpoints. -- Delivered via suggestions router + WP proxy controller.
+- [x] Add merge-preview and proposal acceptance UI in WordPress admin. -- Delivered via frontend suggestion hooks and API functions.
+- [x] Add tests for proposal lifecycle (create, accept, reject, expire).
 
-### Phase 6: Retention Stretch Goals
+### Phase 6: Retention Stretch Goals -- PARTIALLY COMPLETED; REMAINDER MOVED TO v0.3.0
 
-- [ ] Async/file-based export for large tenants.
-- [ ] Paginated full audit event log page with filtering.
-- [ ] Scheduled disposal worker (auto-purge on interval).
-- [ ] Export format versioning and import for cross-site migration.
-- [ ] Embedding-level disposal tracking.
-- [ ] Retention policy presets (e.g., "GDPR mode").
+- [x] Async/file-based export for large tenants.
+- [x] Paginated full audit event log page with filtering. -- Delivered via AuditTimeline component + audit REST endpoints.
+- [x] Scheduled disposal worker (auto-purge on interval).
+- [x] Export format versioning and import for cross-site migration. -- Export format versioning moved to [sync-completion-and-retention-hardening-epic (v0.3.0)](../v0.3.0/sync-completion-and-retention-hardening-epic.md) Phase 3.
+- [x] Embedding-level disposal tracking. -- Moved to [sync-completion-and-retention-hardening-epic (v0.3.0)](../v0.3.0/sync-completion-and-retention-hardening-epic.md) Phase 4.
+- [x] Retention policy presets (e.g., "GDPR mode").
 
-### Cross-Cutting: Worktree Lane Lifecycle Management
+### Cross-Cutting: Worktree Lane Lifecycle Management -- COMPLETED
 
-- [ ] Add `scripts/worktree-lane close` subcommand (worktree remove + branch delete + MCP status update).
-- [ ] Add `make lane-close` Makefile target with status and dirty-state guards.
-- [ ] Add `make lane-prune` batch cleanup target for all merged/closed lanes + Codex sandbox pruning.
-- [ ] Clean up Phase 5 worktree directories and branches (manual or via new tooling).
-- [ ] Optionally add `close_worktree_lane` MCP tool for MCP-native agents.
-- [ ] Optionally integrate auto-close into orchestrator daemon post-intake.
+- [x] Add `scripts/worktree-lane close` subcommand (worktree remove + branch delete + MCP status update).
+- [x] Add `make lane-close` Makefile target with status and dirty-state guards.
+- [x] Add `make lane-prune` batch cleanup target for all merged/closed lanes + Codex sandbox pruning.
+- [x] Clean up Phase 5 worktree directories and branches (manual or via new tooling).
+- [x] Optionally add `close_worktree_lane` MCP tool for MCP-native agents.
+- [x] Optionally integrate auto-close into orchestrator daemon post-intake.

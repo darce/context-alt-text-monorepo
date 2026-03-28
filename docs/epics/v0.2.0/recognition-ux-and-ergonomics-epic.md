@@ -333,5 +333,5 @@ Exit criteria:
 > Tracked in: [deferred-ux-ergonomics-post-epic-task-plan.md](../../tasks/5.0/deferred-ux-ergonomics-post-epic-task-plan.md) and [Sovereign Sync Expansion + Workbench UX Continuation](sovereign-sync-and-workbench-ux-epic.md)
 
 - [x] Action Scheduler integration (upgrade from WP cron drain) -- delivered in Phase 5.
-- [ ] Delta ingest and drift reconciliation -- moved to sovereign sync follow-on epic.
-- [ ] Bidirectional conflict resolution for person name edits -- moved to sovereign sync follow-on epic.
+- [x] Delta ingest and drift reconciliation -- moved to [sync-completion-and-retention-hardening-epic (v0.3.0)](../v0.3.0/sync-completion-and-retention-hardening-epic.md) Phases 1-2.
+- [x] Bidirectional conflict resolution for person name edits -- delivered in remaining-sync-workbench-and-retention-epic Phase 3.

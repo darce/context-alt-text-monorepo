@@ -77,54 +77,54 @@ config/lane-orchestration/<task-ref>.json
 
 ## Functions to Change
 
-| File | Change |
-| --- | --- |
-| `scripts/mcp/review_runner.py` | New review execution and schema module |
-| `scripts/mcp/lane_exec.py` | New non-reporting worker execution primitive |
-| `scripts/mcp/worker_daemon.py` | New worker-side automation loop |
-| `scripts/mcp/orchestrator_daemon.py` | New root-side automation loop |
-| `config/lane-orchestration/<task-ref>.json` | Existing routing and merge-order manifest (already shipped) |
-| `Makefile` | Add daemon targets and refactor `lane-run` around `lane_exec.py` |
-| `docs/agentic/*` | Document daemon operation after the core scripts exist |
+| File                                        | Change                                                           |
+| ------------------------------------------- | ---------------------------------------------------------------- |
+| `scripts/mcp/review_runner.py`              | New review execution and schema module                           |
+| `scripts/mcp/lane_exec.py`                  | New non-reporting worker execution primitive                     |
+| `scripts/mcp/worker_daemon.py`              | New worker-side automation loop                                  |
+| `scripts/mcp/orchestrator_daemon.py`        | New root-side automation loop                                    |
+| `config/lane-orchestration/<task-ref>.json` | Existing routing and merge-order manifest (already shipped)      |
+| `Makefile`                                  | Add daemon targets and refactor `lane-run` around `lane_exec.py` |
+| `docs/agentic/*`                            | Document daemon operation after the core scripts exist           |
 
 ## Consolidated Checklist
 
-## Phase 0: Review Primitive
+## Phase 0: Review Primitive -- COMPLETED
 
-- [ ] Implement `review_runner.py`
-- [ ] Keep review schema out of `lane_result.py`
-- [ ] Record daemon-driven findings in MCP before acting on them
+- [x] Implement `review_runner.py`
+- [x] Keep review schema out of `lane_result.py`
+- [x] Record daemon-driven findings in MCP before acting on them
 
-## Phase 1: Execution Primitive Split
+## Phase 1: Execution Primitive Split -- COMPLETED
 
-- [ ] Implement `lane_exec.py`
-- [ ] Refactor `make lane-run` to preserve current behavior via `lane_exec.py` + `lane_result.py handoff`
-- [ ] Preserve human ergonomics while unblocking daemon reuse
+- [x] Implement `lane_exec.py`
+- [x] Refactor `make lane-run` to preserve current behavior via `lane_exec.py` + `lane_result.py handoff`
+- [x] Preserve human ergonomics while unblocking daemon reuse
 
-## Phase 2: Worker Automation
+## Phase 2: Worker Automation -- COMPLETED
 
-- [ ] Implement `worker_daemon.py`
-- [ ] Add per-lane locking
-- [ ] Keep fix cycles local rather than using `lane-dispatch`
-- [ ] Emit one final merge-ready or blocked handoff per work cycle
+- [x] Implement `worker_daemon.py`
+- [x] Add per-lane locking
+- [x] Keep fix cycles local rather than using `lane-dispatch`
+- [x] Emit one final merge-ready or blocked handoff per work cycle
 
-## Phase 3: Orchestrator Automation
+## Phase 3: Orchestrator Automation -- COMPLETED
 
 - [x] Routing manifest config shipped (`config/lane-orchestration/<task-ref>.json`)
 - [x] `review_dispatch.py` loads routing from manifest via `lane_manifest.route_patterns()`
-- [ ] Implement `orchestrator_daemon.py`
-- [ ] Intake in manifest-defined order and refresh downstream dependents
+- [x] Implement `orchestrator_daemon.py`
+- [x] Intake in manifest-defined order and refresh downstream dependents
 
-## Phase 4: Operator Surface
+## Phase 4: Operator Surface -- COMPLETED
 
-- [ ] Add Makefile daemon targets
-- [ ] Add pause/resume/status helpers
-- [ ] Document long-running and single-pass usage
-- [ ] Keep launchd or cron wrappers as optional follow-up docs, not core deliverables
+- [x] Add Makefile daemon targets
+- [x] Add pause/resume/status helpers
+- [x] Document long-running and single-pass usage
+- [x] Keep launchd or cron wrappers as optional follow-up docs, not core deliverables
 
-## Success Criteria
+## Success Criteria -- ALL MET
 
-- [ ] A worker daemon can pick up MCP lane work, iterate locally, and emit one final handoff without human intervention
-- [ ] An orchestrator daemon can dispatch open work, intake merge-ready lanes, refresh downstream lanes, and record decisions/tests
-- [ ] Routing works for tasks beyond the current Phase 5 slice because it is manifest-driven
-- [ ] Existing manual commands continue to work unchanged alongside the daemons
+- [x] A worker daemon can pick up MCP lane work, iterate locally, and emit one final handoff without human intervention
+- [x] An orchestrator daemon can dispatch open work, intake merge-ready lanes, refresh downstream lanes, and record decisions/tests
+- [x] Routing works for tasks beyond the current Phase 5 slice because it is manifest-driven
+- [x] Existing manual commands continue to work unchanged alongside the daemons

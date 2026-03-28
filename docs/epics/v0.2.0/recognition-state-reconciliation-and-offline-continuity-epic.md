@@ -335,31 +335,31 @@ Exit criteria:
 - [x] Show local freshness and pending-sync state in dashboard and workbench.
 - [x] Add dead-letter management surface for failed outbox operations (inspect, retry, discard).
 
-## Phase 5: Retention, Export, and Audit Controls -- NOT STARTED
+## Phase 5: Retention, Export, and Audit Controls -- COMPLETED
 
 Depends on backend tenant policy infrastructure (retention mode fields, audit event tables) that does not yet exist. Scoped separately from Phase 4 so conflict/offline UX can ship independently.
 
-- [ ] Add low-frequency mutation parity for representative pin/unpin after representative metadata is projected locally.
-  This requires extending the backend snapshot/export and WordPress projection schema so representative `id` and `is_pinned` state survive sync, then wiring the existing manual pin endpoint into the durable replay/outbox contract. Do not ship this as a replay-only mutation before the local read model can reflect it.
-- [ ] Add backend tenant policy fields and migration support for retention/disposal posture.
-  Fields should cover `retention_mode`, working-state disposal eligibility/defaults, and last export/purge metadata needed for operator-visible status.
-- [ ] Add backend audit event storage for retention lifecycle actions.
-  Persist tenant-scoped events for retain/export/purge/disposal actions with actor, timestamp, scope, and payload metadata.
-- [ ] Add backend policy, export, purge, and audit HTTP endpoints.
-  Minimum surface: policy read endpoint, audit-event listing endpoint, export trigger endpoint, and purge trigger endpoint with admin-only enforcement.
-- [ ] Add backend service-layer enforcement for retention and disposal rules.
-  Projection acknowledgement and replay flows must be able to mark machine-derived working state as retained, disposable, exported, or purged and emit matching audit records transactionally.
-- [ ] Add tenant-visible retention mode metadata and audit reporting tied to sync status/admin surfaces.
-  The plugin should be able to read the backend policy/audit summary and expose retention mode, disposal state, and recent export/purge activity without direct database inspection.
-- [ ] Add export and purge controls, or admin-visible endpoints, for machine-derived biometric state.
-- [ ] Surface retain, export, and purge audit history where it affects operator trust in the projected state.
-- [ ] The MVP can credibly claim privacy-minimized retention and auditable handling of machine-derived biometric state.
+- [x] Add low-frequency mutation parity for representative pin/unpin after representative metadata is projected locally.
+      This requires extending the backend snapshot/export and WordPress projection schema so representative `id` and `is_pinned` state survive sync, then wiring the existing manual pin endpoint into the durable replay/outbox contract. Do not ship this as a replay-only mutation before the local read model can reflect it.
+- [x] Add backend tenant policy fields and migration support for retention/disposal posture.
+      Fields should cover `retention_mode`, working-state disposal eligibility/defaults, and last export/purge metadata needed for operator-visible status.
+- [x] Add backend audit event storage for retention lifecycle actions.
+      Persist tenant-scoped events for retain/export/purge/disposal actions with actor, timestamp, scope, and payload metadata.
+- [x] Add backend policy, export, purge, and audit HTTP endpoints.
+      Minimum surface: policy read endpoint, audit-event listing endpoint, export trigger endpoint, and purge trigger endpoint with admin-only enforcement.
+- [x] Add backend service-layer enforcement for retention and disposal rules.
+      Projection acknowledgement and replay flows must be able to mark machine-derived working state as retained, disposable, exported, or purged and emit matching audit records transactionally.
+- [x] Add tenant-visible retention mode metadata and audit reporting tied to sync status/admin surfaces.
+      The plugin should be able to read the backend policy/audit summary and expose retention mode, disposal state, and recent export/purge activity without direct database inspection.
+- [x] Add export and purge controls, or admin-visible endpoints, for machine-derived biometric state.
+- [x] Surface retain, export, and purge audit history where it affects operator trust in the projected state.
+- [x] The MVP can credibly claim privacy-minimized retention and auditable handling of machine-derived biometric state.
 
 ## Deferred (Post-v0.2.0)
 
-- [ ] Replace snapshot-heavy sync with richer delta ingest once the MVP replay model is stable.
-- [ ] Add backend-side storage and API support for first-class machine proposals separate from committed cluster state.
-- [ ] Add richer operator tooling for merge-preview and proposal acceptance workflows.
-- [ ] Explore tenant-level sovereignty tiers where WordPress becomes the authoritative long-term store for embeddings and machine proposals.
-- [ ] Add customer-controlled embedding authority, ephemeral compute APIs, and sovereignty-tier deployment modes.
-- [ ] Add tenant-level encryption, key-management hooks, and region-pinning compliance features.
+- [x] Replace snapshot-heavy sync with richer delta ingest once the MVP replay model is stable. -- Moved to [sync-completion-and-retention-hardening-epic (v0.3.0)](../v0.3.0/sync-completion-and-retention-hardening-epic.md) Phase 1.
+- [x] Add backend-side storage and API support for first-class machine proposals separate from committed cluster state. -- Delivered as suggestions infrastructure (`identity_suggestions`, `cluster_merge_suggestions`, `name_suggestions` tables + API).
+- [x] Add richer operator tooling for merge-preview and proposal acceptance workflows. -- Delivered via suggestions router, WP proxy, and frontend hooks.
+- [ ] Explore tenant-level sovereignty tiers where WordPress becomes the authoritative long-term store for embeddings and machine proposals. -- Deferred beyond v0.3.0.
+- [ ] Add customer-controlled embedding authority, ephemeral compute APIs, and sovereignty-tier deployment modes. -- Deferred beyond v0.3.0.
+- [ ] Add tenant-level encryption, key-management hooks, and region-pinning compliance features. -- Deferred beyond v0.3.0.

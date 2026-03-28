@@ -2,7 +2,7 @@
 
 ## Status
 
-Partially completed. Several items originally tracked here were delivered under the v0.2.0 reconciliation and UX task plans; remaining follow-on items stay planning-only.
+Closed. All items either delivered under v0.2.0 task plans or moved to [sync-completion-and-retention-hardening-epic (v0.3.0)](../v0.3.0/sync-completion-and-retention-hardening-epic.md).
 
 ## Objective
 
@@ -157,17 +157,17 @@ Exit criteria:
 
 - [x] Implement outbox schema + lifecycle.
 - [x] Migrate async sync execution to Action Scheduler.
-- [ ] Implement delta ingest path with snapshot fallback.
-- [ ] Implement drift reconciliation flow and conflict-safe replay policy.
-- [ ] Implement representative projection and pin/unpin replay parity.
-- [ ] Complete `cluster_merged` accept-machine revert contract with moved-member provenance.
-- [ ] Implement bidirectional conflict resolution for person-name edits.
+- [x] Implement delta ingest path with snapshot fallback. -- Moved to [sync-completion-and-retention-hardening-epic (v0.3.0)](../v0.3.0/sync-completion-and-retention-hardening-epic.md) Phase 1.
+- [x] Implement drift reconciliation flow and conflict-safe replay policy. -- Moved to [sync-completion-and-retention-hardening-epic (v0.3.0)](../v0.3.0/sync-completion-and-retention-hardening-epic.md) Phase 2.
+- [x] Implement representative projection and pin/unpin replay parity. -- Delivered.
+- [x] Complete `cluster_merged` accept-machine revert contract with moved-member provenance. -- Delivered.
+- [x] Implement bidirectional conflict resolution for person-name edits. -- Delivered.
 
 ### Track B: Workbench UX Continuation
 
 - [x] Build Dashboard page with live coverage data.
-- [ ] Migrate Batch functionality from Workbench tab to Dashboard.
-- [ ] Remove Batch tab from Workbench (reduce to Scan + Confirm).
+- [x] Migrate Batch functionality from Workbench tab to Dashboard.
+- [x] Remove Batch tab from Workbench (reduce to Scan + Confirm).
 - [x] Add Roster Entries CRUD operations (create, edit, delete).
 - [x] Clarify Entries vs Clusters in UI copy and structure.
 - [x] Add top-of-page previous/next media navigation controls.

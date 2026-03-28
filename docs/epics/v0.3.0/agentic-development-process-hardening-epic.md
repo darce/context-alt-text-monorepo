@@ -238,7 +238,7 @@ Exit criteria:
 ### Phase 4: MCP and Tooling Automation -- in-progress
 
 > **Status**: in-progress
-> **Task plans**: `docs/tasks/11.0/mcp-and-tooling-automation-task-plan.md`
+> **Task plans**: `docs/tasks/11.0/mcp-and-tooling-automation-task-plan.md`, `docs/tasks/12.0/slice-review-packet-and-cross-agent-review-task-plan.md`
 
 **Goal**: Move the highest-value process rules out of memory and into tools, templates, and automated review surfaces.
 
@@ -273,6 +273,7 @@ Deliverables:
   - prefer narrow doc queries over broad manual browsing
   - cache the resolved library id and last useful query in handoff or a lightweight task note so later sessions do not re-spend tokens rediscovering the same source
 - add an automated contract-gate helper that can fail review readiness when boundary-touching files changed without matching contract/doc/fixture evidence
+- add packet-backed cross-agent review intake so "review the latest completed slice" resolves file scope, review kind, and evidence from MCP state instead of current branch diff heuristics
 
 Exit criteria:
 
@@ -408,6 +409,7 @@ Exit criteria:
 - [x] Decide what repo-native branch and worktree gate should exist before review or merge.
 - [x] Add feasible CI and scripted guards for doc, contract, and runtime evidence.
 - [x] Reduce policy duplication across skills and README surfaces.
+- [ ] Add packet-backed latest-slice review intake so cross-agent review can use MCP-recorded slice scope instead of branch-diff inference.
 - [x] Keep `agent-handoff-mcp` contract and operator docs synchronized.
 
 ## Phase 5: Evaluation and Release Audit Layer -- complete

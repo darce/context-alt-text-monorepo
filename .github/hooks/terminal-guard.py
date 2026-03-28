@@ -18,6 +18,8 @@ Allowlisted terminal uses
   fetch, pull, log, checkout, merge, branch, tag, add, reset
 - Git metadata reads: diff --name-only, diff --shortstat, status -sb, ls-files (narrow forms only)
 - Read-only measurement: wc (line/word/byte counts)
+- In-place file edits: sed -i (when replace_string_in_file fails on large blocks)
+- File metadata inspection: ls (symlinks, permissions; list_dir lacks this)
 
 Everything else is default-denied.
 
@@ -94,8 +96,12 @@ _ALLOWLIST: list[re.Pattern[str]] = [
         # git rev-parse: read-only SHA / path resolution
         r"^git\s+rev-parse\b",
         r"^git\s+-C\s+\S+\s+rev-parse\b",
+        # In-place file edits (when replace_string_in_file fails on large blocks)
+        r"^sed\s+-i\b",
         # Read-only measurement
         r"^wc\b",
+        # File metadata inspection (symlinks, permissions; list_dir lacks this)
+        r"^ls\b",
         # Database shell (development-only tool for investigation queries)
         r"^bash\s+(\S+/)?scripts/db_shell\.sh\b",
         r"^(\./|\S+/)?scripts/db_shell\.sh\b",

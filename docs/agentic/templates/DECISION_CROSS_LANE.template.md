@@ -3,7 +3,7 @@
 > **Metadata** — fill in when creating a new doc from this template:
 >
 > - **Date**: [YYYY-MM-DD HH:MM EST]
-> - **Author**: [agent-name or handle]
+> - **Author**: {{MODEL_IDENTITY}}
 >
 > Use this template when one lane creates a dependency, blocker, or required follow-up for another lane.
 

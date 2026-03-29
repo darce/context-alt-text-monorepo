@@ -3,7 +3,7 @@
 > **Metadata** — fill in when creating a new doc from this template:
 >
 > - **Date**: [YYYY-MM-DD HH:MM EST]
-> - **Author**: [agent-name or handle]
+> - **Author**: {{MODEL_IDENTITY}}
 > - **Epic Short ID**: [2-5 uppercase letters; this becomes the task-plan prefix source]
 >
 > Use this template for multi-phase epics under `docs/epics/`.

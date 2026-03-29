@@ -81,6 +81,9 @@ Surface classes:
 | `update_lane_message`            | action        | no         | Mutates lane-message status.                                                                                                                                                       |
 | `list_lane_messages`             | query         | yes        | Lists lane messages.                                                                                                                                                               |
 | `list_lane_briefs`               | query         | yes        | Lists structured lane briefs.                                                                                                                                                      |
+| `record_turn_metric`             | action        | no         | Records one durable turn-metrics row, including exact-vs-estimated usage metadata, prompt-budget fields, and structured attribution payloads.                                     |
+| `list_turn_metrics`              | query         | yes        | Lists durable turn-metrics rows for the active or requested task, optionally filtered by lane, backend, model, or phase.                                                        |
+| `get_turn_metrics_summary`       | generator     | yes        | Aggregates turn-metrics rows into exact-vs-estimate coverage, pressure counts, and token totals by lane/backend/model.                                                           |
 | `get_plan_cursor`                | query         | yes        | Reads one durable plan cursor.                                                                                                                                                     |
 | `list_plan_cursors`              | query         | yes        | Lists plan cursor rows.                                                                                                                                                            |
 | `upsert_plan_cursor`             | action        | no         | Mutates plan cursor state; can enforce clean-slice gate.                                                                                                                           |
@@ -244,6 +247,37 @@ The current handoff schema does not support the following metrics without new st
 - `ctx7` token-cost reduction: requires prompt/tooling telemetry outside the current handoff DB schema
 
 Consumers should treat unknown keys as forward-compatible additions and should not require every section to have `data_available=true`; unavailable sections return explicit sentinel values rather than disappearing.
+
+### Turn Metrics Surfaces
+
+`turn_metrics` is the canonical per-turn ledger for token and prompt-budget telemetry. It exists so consumers can distinguish exact provider usage from preflight estimates without parsing decision prose or worker JSONL logs.
+
+Common stored fields:
+
+- Identity: `task_ref`, `lane_id`, `session`, `cycle`, `phase`, `backend`, `model`, `thread_id`, `turn_id`
+- Observed usage: `input_tokens`, `output_tokens`, `cached_input_tokens`, `reasoning_output_tokens`, `total_tokens`
+- Prompt-budget context: `model_context_window`, `prompt_tokens`, `prompt_chars`, `prompt_token_source`, `utilization_ratio`, `domain_signal_ratio`, `pressure_level`
+- Attribution payloads: `attribution`, `section_sizes`, `raw_usage`
+- Current attribution fields include additive booleans such as `used_ace_guidance`, `used_artifact_context`, `used_slice_packet`, `used_recent_lane_history`, `used_global_context`, and `used_ctx7`, plus `ctx7_query_count` when the caller/runtime explicitly reports it.
+- Usage exactness: `usage_source` with additive values `observed`, `tokenizer_estimate`, or `char_estimate`
+
+Exactness rules:
+
+- `usage_source="observed"` means the token totals came from a provider/backend response, not a local heuristic.
+- `prompt_token_source="observed"` means preflight tokenization used an explicitly supported exact tokenizer path for that backend/model combination.
+- `prompt_token_source="tokenizer_estimate"` means prompt tokens came from a tokenizer-backed estimate on a non-exact model path.
+- `prompt_token_source="char_estimate"` means prompt tokens came from the fallback character heuristic and must not be treated as exact.
+
+`get_turn_metrics_summary` returns:
+
+- `total_turns`
+- `usage_source_counts`
+- `prompt_token_source_counts`
+- `pressure_level_counts`
+- `total_tokens`
+- `prompt_tokens`
+- `by_lane_total_tokens`
+- `by_backend_model_total_tokens`
 
 Retry guidance:
 
@@ -458,8 +492,11 @@ agent-handoff-mcp --workspace-root <repo> handoff-search \
 - To switch between tasks, use `switch_task(task_ref)`. It auto-archives the outgoing task (full snapshot) and activates the target, restoring the objective from its archive when not provided. Idempotent if the target is already active.
 - For in-place updates to the _current_ task (status, objective change), use `set_handoff_state(...)` directly.
 - `set_handoff_state` requires `expected_revision` for updates.
-- The shared actor shape may include `lane_id` in addition to `agent`, `branch`, and `commit_sha`. When present, lane-aware write tools persist it on decisions, tests, blockers, actions, and review findings.
-- `build_write_actor(agent=None, branch=None, commit_sha=None, lane_id=None) -> WriteActor` is the public helper for constructing that normalized actor payload before passing it into write tools.
+- The shared actor shape may include `model`, `model_label`, `reasoning_level`, and `lane_id` in addition to `agent`, `branch`, and `commit_sha`. Only decisions persist the granular model fields today; other write surfaces continue to persist `agent` plus git provenance.
+- `build_write_actor(agent=None, model=None, model_label=None, reasoning_level=None, branch=None, commit_sha=None, lane_id=None) -> WriteActor` is the public helper for constructing that normalized actor payload before passing it into write tools.
+- `build_write_actor` derives the canonical `agent` display identity from model provenance when available: `"{model_label} {reasoning_level}"` when both are present, `model_label` when only the label is known, and the caller-provided `agent` only as a legacy fallback.
+- Known model labels are normalized for common backends (`claude-opus-4-0520` -> `Opus 4.6`, `claude-sonnet-4-20250514` -> `Sonnet 4`); unknown models pass through unchanged.
+- Decision rows now persist nullable `model`, `model_label`, and `reasoning_level` columns alongside `agent`. Treat the turn-metrics ledger as the canonical source for token consumption; decision rows carry model provenance only and do not duplicate per-turn token columns.
 - `record_decision`, `record_test_result`, `report_blocker`, and `update_next_actions` now accept optional `task_ref`, matching the existing cross-task targeting pattern already used by the review-finding and lane-message/report surfaces.
 - Write responses for `record_decision`, `record_test_result`, `report_blocker`, and `update_next_actions` echo the resolved `task_ref`. Treat that field as the authoritative write target in multi-agent flows.
 - `record_review_finding` accepts optional `details={ line_start?, line_end?, fix? }`.
@@ -705,7 +742,7 @@ Content is chunked by `content_type` before FTS5 indexing:
 `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_prompt.py` appends retrieved artifact snippets to worker prompts when context budget allows:
 
 1. After the base sections are rendered, `_measure_context_utilization()` produces a `pressure` value.
-   Pressure is classified using a char-per-token approximation of 4 (`prompt_tokens_approx = prompt_chars // 4`):
+   Pressure is classified from `prompt_tokens`, which may come from an exact supported tokenizer path (`prompt_token_source="observed"`), a tokenizer-backed estimate (`"tokenizer_estimate"`), or the char-per-token fallback (`"char_estimate"`):
    - `"high"`: `utilization_ratio > 0.40` AND `domain_signal_ratio < 0.50` — prompt is large relative to context window and less than half consists of domain-task content (assignment, runtime guidance, dependency briefs).
    - `"elevated"`: `utilization_ratio > 0.30` — prompt uses more than 30% of the configured context window.
    - `"normal"`: otherwise.

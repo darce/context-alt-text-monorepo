@@ -191,8 +191,10 @@ For every finding:
 After the review:
 
 1. Confirm findings with `list_review_findings` or `get_review_findings_summary`.
-2. If requested, patch the plan to resolve the findings.
-3. Include `Handoff updated: yes` in the final response.
+2. Record a verdict decision with `record_decision` summarizing the review (finding count by severity, verdict). **The verdict decision must cite the decision number of the artifact under review** (e.g., "review of decision #966") so the reviewed artifact and its review are bidirectionally linked in handoff search.
+3. If requested, patch the plan to resolve the findings.
+4. Regenerate `CURRENT_TASK.md`.
+5. Include `Handoff updated: yes` in the final response.
 
 ---
 

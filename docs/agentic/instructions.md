@@ -242,8 +242,17 @@ You are one of multiple concurrent agents. MCP handoff tools are required for ta
 Treat handoff state as a tiered memory system. Load only what is needed for the current slice.
 
 - Hot state: always load at startup. This includes the current objective, open findings, open blockers, latest verification, and latest 3 decisions.
+- `CURRENT_TASK.md` must expose the latest decision separately from the recent-decisions list so a resuming agent can see the last handoff at a glance.
 - Warm state: load on demand when the current slice needs it. This includes recent worker reports, recent lane activity, active artifacts tied to the current slice, and nearby plan-cursor history.
 - Cold state: retrieve only through targeted search. This includes archived findings, superseded plan cursors, verbose logs, and large artifacts.
+
+`task_ref` granularity:
+
+- Default to one `task_ref` per reviewable feature or task-plan implementation stream, not one per commit and not one for an entire multi-feature epic.
+- Use an epic-level `task_ref` for planning, decomposition, and cross-task coordination only. When implementation starts for a distinct task plan or feature stream, switch into that implementation task.
+- Stay on the same `task_ref` while the objective, acceptance criteria, and review packet are still obviously "the same work."
+- Switch `task_ref` when the active objective changes, when a separate review packet would be required, or when leaving the current task active would make `CURRENT_TASK.md` show the wrong latest decision for the work you are doing.
+- Do not create a new `task_ref` for every micro-slice inside the same task plan. Record multiple `slice_complete_*` decisions under the same implementation task until that task is actually done.
 
 Loading rules:
 
@@ -299,7 +308,8 @@ Handoff memory health, ctx7 adoption evaluation, and data pattern / latency revi
 During work:
 
 1. Record decisions in handoff as the work progresses. Every slice that changes files, including docs-only and no-plan slices, must end with a structured `slice_complete_*` decision. After recording, call `generate_current_task_md(...)` so the human-readable mirror stays current; do not defer this to session end.
-2. Add/update/complete task steps with `update_next_actions(..., actor={ ... })`.
+1.5. Do not leave `CURRENT_TASK.md` pointing at a stale slice. If the latest decision in `CURRENT_TASK.md` does not describe the files changed in the current turn, record the missing decision on the correct task and regenerate `CURRENT_TASK.md` before handing work off or asking for review.
+2. Close the slice in the trackers you touched. Complete or skip resolved MCP next actions, and if the work came from a `docs/tasks/` implementation plan, check off the slice items you actually finished before starting the next slice.
 3. Record blockers immediately with `report_blocker(..., actor={ ... })`.
 4. Record verification commands with `record_test_result(..., actor={ ... })`. Keep `result` as a concise proof line, not a full terminal log.
 5. Record/code-review findings with `record_review_finding(..., details={ line_start?, line_end?, fix? }, actor={ ... })`.

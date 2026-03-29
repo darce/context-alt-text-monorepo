@@ -22,6 +22,10 @@
 - Why this matters: [user impact or technical debt being addressed]
 - Related issue/PR: [link if applicable]
 
+## Latest Decision
+
+[Most recent decision summary and why it mattered]
+
 ## Progress
 
 ### Completed

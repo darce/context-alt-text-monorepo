@@ -443,7 +443,7 @@ Call `review-record` / `record_review_finding` with:
 
 1. Call `review-summary` / `get_review_findings_summary` to confirm severity/status counts for the task.
 2. Use `review-list --status all` / `list_review_findings(status="all")` if you need full finding-by-finding verification.
-3. Call `decision` / `record_decision` summarizing the review (finding count by severity, session ID).
+3. Call `decision` / `record_decision` summarizing the review (finding count by severity, session ID). **The verdict decision must cite the decision number of the artifact under review** (e.g., "review of decision #966") so the reviewed artifact and its review are bidirectionally linked in handoff search.
 4. Regenerate `CURRENT_TASK.md` if your workflow depends on it.
 5. If this review creates actionable lane work, run `make handoff-dispatch TASK=<task-ref>` from the orchestrator root after logging findings.
 6. If this review concludes the task, run `handoff_close_check(enforce=True)` before final handoff.
@@ -491,6 +491,13 @@ During a review cycle the **worker daemon** automatically scans new findings for
 
 When more than 5 entries accumulate in `ace_reflect_log.jsonl`, the **orchestrator daemon** emits an `ace_reflect_pending` advisory warning with the pending count and a hint to run `make ace-reflect`.
 
+Operational health states:
+
+- `defined`: ACE rules exist, but no detection log has been created yet or no counters have been applied.
+- `detecting`: detection records exist and at least one reflect-log entry is still pending apply.
+- `applied`: the reflect-log offset has caught up to the current log, so all logged detections have been processed.
+- `backfill needed`: historical review findings already reference `[sr-NNN]` / `[rg-NNN]`, but no reflect-log history exists yet. Seed ACE from those findings before assuming the process is idle.
+
 ### Applying Counter Updates
 
 From the orchestrator root, run:
@@ -505,6 +512,12 @@ This calls `ace_reflect.py __main__`, which:
 2. Increments the `helpful` or `harmful` counter on the matching bullet in the canonical instruction file (`docs/agentic/instructions.md`). `CLAUDE.md` and `GEMINI.md` are symlinks to the same file; do not list them separately.
 3. Records processed keys in a sidecar `.ace_dedup.json` file to prevent double-counting.
 4. Prints a summary: `processed=N  incremented=N  skipped=N`.
+
+The default path stays local and low-token:
+
+- daemon detection is local file/log work only
+- `make ace-reflect` is a local counter-apply step
+- any future model-backed ACE curation must remain optional and explicitly budgeted
 
 For findings that occurred outside a daemon cycle (e.g., manual reviews):
 

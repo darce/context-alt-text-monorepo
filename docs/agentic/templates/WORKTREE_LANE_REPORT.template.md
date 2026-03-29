@@ -6,7 +6,7 @@ Session: `{{SESSION}}`
 Branch: `{{BRANCH}}`
 Worktree: `{{WORKTREE_PATH}}`
 Date: `{{DATE_EST}}`
-Author: `{{AGENT_NAME}}`
+Author: `{{MODEL_IDENTITY}}`
 Status: `{{STATUS}}`
 Merge Ready: `{{MERGE_READY}}`
 

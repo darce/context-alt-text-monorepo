@@ -260,60 +260,60 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded the minimum authoritative rules, contracts, and handoff state before editing.
-- [ ] Confirmed whether backend/model exact-tokenization behavior requires `ctx7`.
-- [ ] Recorded compatibility expectations for new metrics storage and MCP read surfaces.
+- [x] Loaded the minimum authoritative rules, contracts, and handoff state before editing.
+- [x] Confirmed whether backend/model exact-tokenization behavior requires `ctx7`.
+- [x] Recorded compatibility expectations for new metrics storage and MCP read surfaces.
 
 ## Slice 1: Durable Turn Metrics Ledger
 
-- [ ] Added a durable turn-metrics schema and query helpers.
-- [ ] Exposed additive MCP read surfaces for turn metrics.
-- [ ] Reduced canonical dependence on token-usage decision prose.
-- [ ] Added storage/query tests.
+- [x] Added a durable turn-metrics schema and query helpers.
+- [x] Exposed additive MCP read surfaces for turn metrics.
+- [x] Reduced canonical dependence on token-usage decision prose.
+- [x] Added storage/query tests.
 
 ## Slice 2: Exactness and Context Measurement Upgrade
 
-- [ ] Tightened backend token-usage normalization contract with explicit source metadata.
-- [ ] Included `codex_subagent.py`, `local_model.py`, and `backend_registry.py` in Slice 2 backend coverage.
-- [ ] Replaced unlabeled rough context estimates with exact-or-labeled-estimate measurement.
-- [ ] Preserved both preflight pressure data and post-execution observed counts where available.
-- [ ] Added adapter and lane-prompt tests.
+- [x] Tightened backend token-usage normalization contract with explicit source metadata.
+- [x] Included `codex_subagent.py`, `local_model.py`, and `backend_registry.py` in Slice 2 backend coverage.
+- [x] Replaced unlabeled rough context estimates with exact-or-labeled-estimate measurement.
+- [x] Preserved both preflight pressure data and post-execution observed counts where available.
+- [x] Added adapter and lane-prompt tests.
 
 ## Slice 3: Tool Attribution and Prompt Breakdown
 
-- [ ] Added structured attribution fields for ACE, artifact retrieval, slice packets, lane history, and caller-reported `ctx7`.
-- [ ] Added prompt section-size breakdowns to durable metrics storage.
-- [ ] Verified attribution comes from runtime/prompt-building paths rather than prose inference.
+- [x] Added structured attribution fields for ACE, artifact retrieval, slice packets, lane history, and caller-reported `ctx7`.
+- [x] Added prompt section-size breakdowns to durable metrics storage.
+- [x] Verified attribution comes from runtime/prompt-building paths rather than prose inference.
 
 ## Slice 4: Retrospective Surfaces and Documentation
 
-- [ ] Updated `ace_metrics.py` / `get_metrics_summary` to use the stronger metrics ledger.
-- [ ] Documented exact vs estimated semantics in the MCP contract.
-- [ ] Updated retrospective guidance in `playbooks/ace-pruning-playbook.md`, with only a minimal `instructions.md` pointer if needed.
-- [ ] Verified retrospectives can answer tool-impact questions directly from MCP data.
+- [x] Updated `ace_metrics.py` / `get_metrics_summary` to use the stronger metrics ledger.
+- [x] Documented exact vs estimated semantics in the MCP contract.
+- [x] Updated retrospective guidance in `playbooks/ace-pruning-playbook.md`, with only a minimal `instructions.md` pointer if needed.
+- [x] Verified retrospectives can answer tool-impact questions directly from MCP data.
 
 ## Slice 5: ACE Process Health and Backfill
 
-- [ ] Added ACE process-health reporting for defined/detecting/applied states.
-- [ ] Added or documented a historical backfill path for rule-tagged findings.
-- [ ] Updated operator guidance so ACE’s default path is explicitly local and low-token.
-- [ ] Verified health surfaces can explain a missing `ace_reflect_log.jsonl`.
+- [x] Added ACE process-health reporting for defined/detecting/applied states.
+- [x] Added or documented a historical backfill path for rule-tagged findings.
+- [x] Updated operator guidance so ACE’s default path is explicitly local and low-token.
+- [x] Verified health surfaces can explain a missing `ace_reflect_log.jsonl`.
 
 ## Stretch Goals
 
-- [ ] Add backend-specific exact tokenizers for preflight prompt measurement where official model-tokenization support exists and is safe to depend on.
-- [ ] Add variance/drift reporting between preflight prompt estimates and post-execution observed input tokens.
-- [ ] Add an optional, explicitly budgeted model-backed ACE curation mode that runs only on threshold-triggered batch schedules and records its own token cost separately from the default local ACE path.
+- [x] Add backend-specific exact tokenizers for preflight prompt measurement where official model-tokenization support exists and is safe to depend on.
+- [x] Add variance/drift reporting between preflight prompt estimates and post-execution observed input tokens.
+- [x] Add an optional, explicitly budgeted model-backed ACE curation mode that runs only on threshold-triggered batch schedules and records its own token cost separately from the default local ACE path.
 
 ## Success Criteria
 
-- [ ] `agent-handoff-mcp` exposes durable per-turn token/context metrics instead of relying on JSONL scans and free-form decision prose.
-- [ ] Exact provider token usage is surfaced when available, and every remaining estimate is clearly labeled as an estimate.
-- [ ] Retrospective summaries can compare ACE, artifact retrieval, and other instrumented tool choices using structured token/context attribution rather than narrative guesswork, with `ctx7` included when callers report it through the new protocol.
-- [ ] Operators can tell whether ACE is merely defined, actively detecting, or fully applied, and can activate/backfill it without guessing or incurring hidden model-token cost.
-- [ ] `WriteActor.agent` carries the unified model identity (concatenated from model label + reasoning level) so decisions and metrics surfaces identify the actual model, not the harness.
-- [ ] Template `Author` fields use model identity (e.g., "Opus 4.6 high") as the canonical author convention.
-- [ ] Separate `model`, `model_label`, and `reasoning_level` fields on `WriteActor` provide granular metrics breakdowns while feeding the unified `agent` string.
+- [x] `agent-handoff-mcp` exposes durable per-turn token/context metrics instead of relying on JSONL scans and free-form decision prose.
+- [x] Exact provider token usage is surfaced when available, and every remaining estimate is clearly labeled as an estimate.
+- [x] Retrospective summaries can compare ACE, artifact retrieval, and other instrumented tool choices using structured token/context attribution rather than narrative guesswork, with `ctx7` included when callers report it through the new protocol.
+- [x] Operators can tell whether ACE is merely defined, actively detecting, or fully applied, and can activate/backfill it without guessing or incurring hidden model-token cost.
+- [x] `WriteActor.agent` carries the unified model identity (concatenated from model label + reasoning level) so decisions and metrics surfaces identify the actual model, not the harness.
+- [x] Template `Author` fields use model identity (e.g., "Opus 4.6 high") as the canonical author convention.
+- [x] Separate `model`, `model_label`, and `reasoning_level` fields on `WriteActor` provide granular metrics breakdowns while feeding the unified `agent` string.
 
 ---
 
@@ -448,14 +448,14 @@ For orchestrated worker turns, `worker_daemon.py` resolves the model from the ad
 
 ### Slice 6 Checklist
 
-- [ ] Extended `WriteActor` with `model`, `model_label`, `reasoning_level` fields.
-- [ ] Extended `BackendResult` with `response_model` and `reasoning_effort` fields.
-- [ ] `build_write_actor` derives unified `agent` string from `model_label` + `reasoning_level`.
-- [ ] `normalize_model_identity` helper produces the concatenated identity string.
-- [ ] Known-model label registry added for human-friendly model name normalization.
-- [ ] Each adapter extracts response model from backend output.
-- [ ] `agent` on decision records carries the unified model identity, not the harness name.
-- [ ] Token consumption remains canonical in the turn-metrics ledger, with linkage instead of per-decision token columns.
-- [ ] All template `Author` fields updated to use `{{MODEL_IDENTITY}}` (unified model identity).
-- [ ] Contract doc updates describe unified model identity derivation and granular field semantics.
-- [ ] Tests cover model normalization, identity concatenation, legacy fallback, and unknown-model pass-through.
+- [x] Extended `WriteActor` with `model`, `model_label`, `reasoning_level` fields.
+- [x] Extended `BackendResult` with `response_model` and `reasoning_effort` fields.
+- [x] `build_write_actor` derives unified `agent` string from `model_label` + `reasoning_level`.
+- [x] `normalize_model_identity` helper produces the concatenated identity string.
+- [x] Known-model label registry added for human-friendly model name normalization.
+- [x] Each adapter extracts response model from backend output.
+- [x] `agent` on decision records carries the unified model identity, not the harness name.
+- [x] Token consumption remains canonical in the turn-metrics ledger, with linkage instead of per-decision token columns.
+- [x] All template `Author` fields updated to use `{{MODEL_IDENTITY}}` (unified model identity).
+- [x] Contract doc updates describe unified model identity derivation and granular field semantics.
+- [x] Tests cover model normalization, identity concatenation, legacy fallback, and unknown-model pass-through.

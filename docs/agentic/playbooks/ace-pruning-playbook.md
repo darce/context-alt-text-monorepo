@@ -107,6 +107,8 @@ Ask:
 
 - are resolved library ids being reused across sessions?
   - search recent decisions for `ctx7 library id:` and repeated package names
+- are runtime-reported `ctx7` turns visible in metrics?
+  - inspect `get_metrics_summary` for the `tool_attribution` section and confirm `used_ctx7` / `ctx7_query_count` appear only when the caller/runtime explicitly reported them
 - are bulk upstream doc copies still appearing in repo docs or plans?
   - review instruction-file and task-plan changes for pasted vendor docs instead of targeted references
 - is targeted retrieval preferred over broad browsing?
@@ -120,8 +122,8 @@ Keep `ctx7` usage targeted:
 
 Token-cost boundary:
 
-- Treat `ctx7` token-cost reduction as a qualitative process goal unless a tool explicitly records prompt/tool token savings.
-- The current repo can measure `ctx7` adoption and reuse from handoff decisions; it cannot credibly measure prompt-token savings from those lookups yet.
+- Use runtime-reported turn attribution for prompt-growth analysis when it exists: `tool_attribution.used_ctx7`, `tool_attribution.ctx7_query_count_total`, and the prompt-token totals attached to those attributed turns.
+- Treat `ctx7` token-cost reduction as out of scope unless a tool explicitly records before/after savings; the current repo can measure adoption, reuse, and attributed prompt growth, but not counterfactual token savings.
 
 ---
 

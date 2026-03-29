@@ -222,10 +222,11 @@ Source-of-truth policy:
 2. Record session outcomes via MCP tools (`record_decision`, `update_next_actions`, `record_test_result`, `report_blocker`).
 3. Read compact snapshot at session start via `get_handoff_state`.
 4. Record a structured `slice_complete_<short_label>` decision for every completed slice, including docs-only or no-plan slices.
-5. Before close/final handoff, run `handoff_close_check(enforce=True, current_commit_sha=<HEAD>)` and resolve all failures.
-6. Before requesting branch review, run `make review-ready` from the current worktree and resolve all reported NOT READY reasons.
-7. Regenerate markdown view on demand via `generate_current_task_md`.
-8. Use template fallback only when MCP tooling is unavailable.
+5. Close the slice in every active tracker before moving on. Mark completed or skipped MCP next actions, update the relevant task-plan checklist boxes for the slice you just finished, and leave future-slice items open instead of carrying a fully stale checklist forward.
+6. Before close/final handoff, run `handoff_close_check(enforce=True, current_commit_sha=<HEAD>)` and resolve all failures.
+7. Before requesting branch review, run `make review-ready` from the current worktree and resolve all reported NOT READY reasons.
+8. Regenerate markdown view on demand via `generate_current_task_md`.
+9. Use template fallback only when MCP tooling is unavailable.
 
 **Template location:** [templates/CURRENT_TASK.template.md](../templates/CURRENT_TASK.template.md)
 

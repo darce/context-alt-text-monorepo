@@ -95,7 +95,66 @@ class CodexSubagentAdapter(BackendAdapter):
         if progress_callback:
             progress_callback(WorkerEventName.EXEC_COMPLETE, backend=self.name)
 
-        return BackendResult.from_dict(payload)
+        result = BackendResult.from_dict(payload)
+        token_usage = self._normalize_token_usage(payload.get("token_usage") or payload.get("usage"))
+        response_model = payload.get("response_model") or payload.get("model") or model
+        if token_usage is None:
+            if response_model is None and reasoning_effort is None:
+                return result
+            return BackendResult(
+                handoff_action=result.handoff_action,
+                summary=result.summary,
+                details=result.details,
+                tests_run=result.tests_run,
+                blockers=result.blockers,
+                changed_files=result.changed_files,
+                merge_ready=result.merge_ready,
+                token_usage=result.token_usage,
+                response_model=response_model,
+                reasoning_effort=reasoning_effort,
+                raw_payload=result.raw_payload,
+            )
+        return BackendResult(
+            handoff_action=result.handoff_action,
+            summary=result.summary,
+            details=result.details,
+            tests_run=result.tests_run,
+            blockers=result.blockers,
+            changed_files=result.changed_files,
+            merge_ready=result.merge_ready,
+            token_usage=token_usage,
+            response_model=response_model,
+            reasoning_effort=reasoning_effort,
+            raw_payload=result.raw_payload,
+        )
 
     def _call_runner(self, kwargs: dict[str, Any]) -> dict[str, Any] | str:
         return self.runner(**kwargs)
+
+    def _normalize_token_usage(self, payload: object) -> dict[str, Any] | None:
+        if not isinstance(payload, dict):
+            return None
+        if "last" in payload and "total" in payload:
+            usage = dict(payload)
+            usage.setdefault("usage_source", "observed")
+            return usage
+        input_tokens = int(payload.get("input_tokens") or payload.get("prompt_tokens") or 0)
+        output_tokens = int(payload.get("output_tokens") or payload.get("completion_tokens") or 0)
+        cached_input_tokens = int(payload.get("cached_input_tokens") or payload.get("cached_tokens") or 0)
+        reasoning_output_tokens = int(payload.get("reasoning_output_tokens") or payload.get("reasoning_tokens") or 0)
+        total_tokens = int(payload.get("total_tokens") or (input_tokens + output_tokens))
+        if total_tokens <= 0 and input_tokens <= 0 and output_tokens <= 0:
+            return None
+        breakdown = {
+            "cached_input_tokens": cached_input_tokens,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "reasoning_output_tokens": reasoning_output_tokens,
+            "total_tokens": total_tokens,
+        }
+        return {
+            "last": breakdown,
+            "total": breakdown,
+            "model_context_window": payload.get("model_context_window"),
+            "usage_source": "observed",
+        }

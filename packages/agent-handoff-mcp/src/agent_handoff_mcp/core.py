@@ -28,6 +28,9 @@ from .enums import (
     ReportStatus,
     ReviewMode,
     ReviewScopeSource,
+    normalize_model_identity,
+    normalize_model_label,
+    normalize_reasoning_level,
 )
 
 _FTS5_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
@@ -60,6 +63,12 @@ CREATE TABLE IF NOT EXISTS decisions (
     decision      TEXT NOT NULL,
     rationale     TEXT,
     agent         TEXT,
+    model         TEXT,
+    model_label   TEXT,
+    reasoning_level TEXT,
+    input_tokens  INTEGER,
+    output_tokens INTEGER,
+    total_tokens  INTEGER,
     branch        TEXT,
     commit_sha    TEXT,
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
@@ -228,6 +237,38 @@ CREATE TABLE IF NOT EXISTS plan_cursors (
     UNIQUE(task_ref, plan_item_id)
 );
 
+CREATE TABLE IF NOT EXISTS turn_metrics (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_ref      TEXT NOT NULL,
+    lane_id       TEXT,
+    session       TEXT NOT NULL,
+    cycle         INTEGER,
+    phase         TEXT NOT NULL,
+    backend       TEXT NOT NULL,
+    model         TEXT,
+    thread_id     TEXT,
+    turn_id       TEXT,
+    input_tokens  INTEGER,
+    output_tokens INTEGER,
+    cached_input_tokens INTEGER,
+    reasoning_output_tokens INTEGER,
+    total_tokens  INTEGER,
+    usage_source  TEXT
+                  CHECK (usage_source IN ('observed', 'tokenizer_estimate', 'char_estimate') OR usage_source IS NULL),
+    model_context_window INTEGER,
+    prompt_tokens INTEGER,
+    prompt_chars  INTEGER,
+    prompt_token_source TEXT
+                  CHECK (prompt_token_source IN ('observed', 'tokenizer_estimate', 'char_estimate') OR prompt_token_source IS NULL),
+    utilization_ratio REAL,
+    domain_signal_ratio REAL,
+    pressure_level TEXT,
+    attribution_json TEXT NOT NULL DEFAULT '{}',
+    section_sizes_json TEXT NOT NULL DEFAULT '{}',
+    raw_usage_json TEXT,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_decisions_task_created
     ON decisions(task_ref, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_blockers_task_status
@@ -248,6 +289,10 @@ CREATE INDEX IF NOT EXISTS idx_lane_messages_task_lane
     ON lane_messages(task_ref, lane_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_plan_cursors_task_state_lane
     ON plan_cursors(task_ref, state, lane_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_turn_metrics_task_lane_created
+    ON turn_metrics(task_ref, lane_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_turn_metrics_task_backend_model
+    ON turn_metrics(task_ref, backend, model, created_at DESC, id DESC);
 """
 
 DEFAULT_HANDOFF_LIMITS = {
@@ -288,6 +333,9 @@ SUBPROCESS_TIMEOUT = 10
 
 class WriteActor(TypedDict, total=False):
     agent: str
+    model: str
+    model_label: str
+    reasoning_level: str
     branch: str
     commit_sha: str
     lane_id: str
@@ -301,16 +349,31 @@ class ReviewFindingDetails(TypedDict, total=False):
 
 def build_write_actor(
     agent: str | None = None,
+    model: str | None = None,
+    model_label: str | None = None,
+    reasoning_level: str | None = None,
     branch: str | None = None,
     commit_sha: str | None = None,
     lane_id: str | None = None,
 ) -> WriteActor:
     actor: WriteActor = {}
+    normalized_model = _normalize_optional_text(model)
+    normalized_model_label = _normalize_optional_text(model_label) or normalize_model_label(normalized_model)
+    normalized_reasoning_level = normalize_reasoning_level(reasoning_level)
+    derived_agent = normalize_model_identity(normalized_model_label, normalized_reasoning_level)
     normalized_agent = _normalize_optional_text(agent)
     normalized_branch = _normalize_optional_text(branch)
     normalized_commit_sha = _normalize_optional_text(commit_sha)
     normalized_lane_id = _normalize_optional_text(lane_id)
-    if normalized_agent is not None:
+    if normalized_model is not None:
+        actor["model"] = normalized_model
+    if normalized_model_label is not None:
+        actor["model_label"] = normalized_model_label
+    if normalized_reasoning_level is not None:
+        actor["reasoning_level"] = normalized_reasoning_level
+    if derived_agent is not None:
+        actor["agent"] = derived_agent
+    elif normalized_agent is not None:
         actor["agent"] = normalized_agent
     if normalized_branch is not None:
         actor["branch"] = normalized_branch
@@ -642,6 +705,23 @@ def _decode_lane_message_row_dict(row: dict) -> dict:
     return row
 
 
+def _decode_turn_metric_row_dict(row: dict) -> dict:
+    for key, empty in (
+        ("attribution_json", {}),
+        ("section_sizes_json", {}),
+        ("raw_usage_json", None),
+    ):
+        raw_value = row.get(key)
+        if not isinstance(raw_value, str) or not raw_value.strip():
+            row[key.removesuffix("_json")] = empty
+            continue
+        try:
+            row[key.removesuffix("_json")] = json.loads(raw_value)
+        except json.JSONDecodeError:
+            row[key.removesuffix("_json")] = empty
+    return row
+
+
 def _resolve_task_ref(conn: sqlite3.Connection, task_ref: str | None) -> str:
     if task_ref:
         return task_ref
@@ -824,6 +904,12 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
         for table in ("decisions", "blockers", "next_actions", "verified_tests", "review_findings"):
             if not _has_column(conn, table, "lane_id"):
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN lane_id TEXT")
+        for column in ("model", "model_label", "reasoning_level"):
+            if not _has_column(conn, "decisions", column):
+                conn.execute(f"ALTER TABLE decisions ADD COLUMN {column} TEXT")
+        for column in ("input_tokens", "output_tokens", "total_tokens"):
+            if not _has_column(conn, "decisions", column):
+                conn.execute(f"ALTER TABLE decisions ADD COLUMN {column} INTEGER")
         # review_findings extra columns
         for column, sql in [
             ("resolution_notes", "ALTER TABLE review_findings ADD COLUMN resolution_notes TEXT"),
@@ -862,6 +948,51 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
         for column in ("model", "backend", "reasoning_effort"):
             if not _has_column(conn, "worktree_lanes", column):
                 conn.execute(f"ALTER TABLE worktree_lanes ADD COLUMN {column} TEXT")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS turn_metrics (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_ref      TEXT NOT NULL,
+                lane_id       TEXT,
+                session       TEXT NOT NULL,
+                cycle         INTEGER,
+                phase         TEXT NOT NULL,
+                backend       TEXT NOT NULL,
+                model         TEXT,
+                thread_id     TEXT,
+                turn_id       TEXT,
+                input_tokens  INTEGER,
+                output_tokens INTEGER,
+                cached_input_tokens INTEGER,
+                reasoning_output_tokens INTEGER,
+                total_tokens  INTEGER,
+                usage_source  TEXT
+                              CHECK (usage_source IN ('observed', 'tokenizer_estimate', 'char_estimate') OR usage_source IS NULL),
+                model_context_window INTEGER,
+                prompt_tokens INTEGER,
+                prompt_chars  INTEGER,
+                prompt_token_source TEXT
+                              CHECK (prompt_token_source IN ('observed', 'tokenizer_estimate', 'char_estimate') OR prompt_token_source IS NULL),
+                utilization_ratio REAL,
+                domain_signal_ratio REAL,
+                pressure_level TEXT,
+                attribution_json TEXT NOT NULL DEFAULT '{}',
+                section_sizes_json TEXT NOT NULL DEFAULT '{}',
+                raw_usage_json TEXT,
+                created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """
+        )
+        if not _has_index(conn, "turn_metrics", "idx_turn_metrics_task_lane_created"):
+            conn.execute(
+                "CREATE INDEX idx_turn_metrics_task_lane_created "
+                "ON turn_metrics(task_ref, lane_id, created_at DESC, id DESC)"
+            )
+        if not _has_index(conn, "turn_metrics", "idx_turn_metrics_task_backend_model"):
+            conn.execute(
+                "CREATE INDEX idx_turn_metrics_task_backend_model "
+                "ON turn_metrics(task_ref, backend, model, created_at DESC, id DESC)"
+            )
     except sqlite3.OperationalError as exc:
         if "locked" in str(exc).lower():
             import logging
@@ -876,6 +1007,33 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
             logging.getLogger("agent_handoff_mcp").warning("DB locked during unique index creation -- skipping")
             return
         raise
+
+
+def _collect_task_snapshot(conn: sqlite3.Connection, task_ref: str) -> dict:
+    active_row = conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone()
+    active = _row_to_dict(active_row) if active_row is not None and active_row["task_ref"] == task_ref else None
+
+    def _rows(query: str) -> list[dict]:
+        rows = [dict(row) for row in conn.execute(query, (task_ref,)).fetchall()]
+        if "lane_messages" in query:
+            return [_decode_lane_message_row_dict(row) for row in rows]
+        return rows
+
+    return {
+        "task_ref": task_ref,
+        "active": active,
+        "blockers": _rows("SELECT * FROM blockers WHERE task_ref = ? ORDER BY created_at DESC"),
+        "next_actions": _rows("SELECT * FROM next_actions WHERE task_ref = ? ORDER BY priority ASC, created_at ASC"),
+        "decisions": _rows("SELECT * FROM decisions WHERE task_ref = ? ORDER BY created_at DESC"),
+        "verified_tests": _rows("SELECT * FROM verified_tests WHERE task_ref = ? ORDER BY verified_at DESC"),
+        "review_findings": _rows(
+            "SELECT * FROM review_findings WHERE task_ref = ? ORDER BY CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, COALESCE(updated_at, created_at) DESC"
+        ),
+        "worktree_lanes": _rows("SELECT * FROM worktree_lanes WHERE task_ref = ? ORDER BY updated_at DESC, id DESC"),
+        "worker_reports": _rows("SELECT * FROM worker_reports WHERE task_ref = ? ORDER BY created_at DESC, id DESC"),
+        "lane_messages": _rows("SELECT * FROM lane_messages WHERE task_ref = ? ORDER BY updated_at DESC, id DESC"),
+        "plan_cursors": _rows("SELECT * FROM plan_cursors WHERE task_ref = ? ORDER BY updated_at DESC, id DESC"),
+    }
 
 
 def _resolve_awaitable(value: object) -> object:
@@ -988,11 +1146,30 @@ def _utcnow_iso() -> str:
     return datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _format_token_suffix(item: dict) -> str:
+    total = item.get("total_tokens")
+    if total is None:
+        return ""
+    if total >= 1000:
+        return f" [{total / 1000:.1f}K tok]"
+    return f" [{total} tok]"
+
+
 def _render_current_task_md(state: dict) -> str:
     active = state.get("active")
     _generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     if not active:
         return f"# CURRENT_TASK\n\n_DO NOT EDIT: generated from .task-state/handoff.db. Last generated: {_generated_at}_\n\nNo active handoff state found.\n"
+    decisions = state.get("decisions_recent", [])
+    latest_decision = decisions[0] if decisions else None
+
+    def _decision_line(item: dict) -> str:
+        parts = f"- [#{item.get('id')}] {item.get('decision')}"
+        if item.get("agent"):
+            parts += f" ({item.get('agent')})"
+        parts += _format_token_suffix(item)
+        return parts
+
     lines = [
         "# CURRENT_TASK",
         "",
@@ -1007,12 +1184,20 @@ def _render_current_task_md(state: dict) -> str:
         f"- revision: `{active.get('revision', 0)}`",
         f"- updated_at: `{active.get('updated_at', '')}`",
         "",
-        "## Open Blockers",
+        "## Latest Decision",
     ]
+    if latest_decision:
+        lines.append(_decision_line(latest_decision))
+    else:
+        lines.append("- None")
+    lines.extend([
+        "",
+        "## Open Blockers",
+    ])
     for section, empty_text, formatter in [
         ("blockers_open", "- None", lambda item: f"- [#{item.get('id')}] {item.get('description')}"),
         ("actions_pending", "- None", lambda item: f"- (P{item.get('priority')}) [#{item.get('id')}] {item.get('action')}"),
-        ("decisions_recent", "- None", lambda item: f"- [#{item.get('id')}] {item.get('decision')}" + (f" ({item.get('agent')})" if item.get('agent') else "")),
+        ("decisions_recent", "- None", _decision_line),
         ("tests_recent", "- None", lambda item: f"- [#{item.get('id')}] `{item.get('command')}` -> `{'pass' if item.get('passed') else 'fail'}`"),
     ]:
         items = state.get(section, [])
@@ -1075,11 +1260,26 @@ def _render_current_task_md(state: dict) -> str:
                 location = f"{finding.get('file_path')}:{finding.get('line_start')}" if finding.get("line_start") else finding.get("file_path")
                 lines.append(f"- [{finding.get('severity', '').upper()}] {finding.get('finding_id')}: {location} -- {finding.get('description')}")
 
+    # Token tally from decision-level annotations
+    token_decisions = [d for d in decisions if d.get("total_tokens") is not None]
+    if token_decisions:
+        total_tok = sum(d.get("total_tokens", 0) for d in token_decisions)
+        total_in = sum(d.get("input_tokens", 0) for d in token_decisions if d.get("input_tokens") is not None)
+        total_out = sum(d.get("output_tokens", 0) for d in token_decisions if d.get("output_tokens") is not None)
+        by_agent: dict[str, int] = {}
+        for d in token_decisions:
+            agent_key = d.get("agent") or "unknown"
+            by_agent[agent_key] = by_agent.get(agent_key, 0) + (d.get("total_tokens") or 0)
+        lines.extend(["", "## Token Summary"])
+        def _fmt_tok(n: int) -> str:
+            return f"{n / 1000:.1f}K" if n >= 1000 else str(n)
+        lines.append(f"- Decisions with tokens: {len(token_decisions)} ; Total: {_fmt_tok(total_tok)} (in: {_fmt_tok(total_in)}, out: {_fmt_tok(total_out)})")
+        agent_parts = " ; ".join(f"{a}: {_fmt_tok(t)}" for a, t in sorted(by_agent.items(), key=lambda x: -x[1]))
+        lines.append(f"- By agent: {agent_parts}")
+
     lines.append("")
     return "\n".join(lines)
 
-
-def _collect_task_snapshot(conn: sqlite3.Connection, task_ref: str) -> dict:
     active_row = conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone()
     active = _row_to_dict(active_row) if active_row is not None and active_row["task_ref"] == task_ref else None
 
@@ -1087,6 +1287,8 @@ def _collect_task_snapshot(conn: sqlite3.Connection, task_ref: str) -> dict:
         rows = [dict(row) for row in conn.execute(query, (task_ref,)).fetchall()]
         if "lane_messages" in query:
             return [_decode_lane_message_row_dict(row) for row in rows]
+        if "turn_metrics" in query:
+            return [_decode_turn_metric_row_dict(row) for row in rows]
         return rows
 
     return {
@@ -1103,6 +1305,7 @@ def _collect_task_snapshot(conn: sqlite3.Connection, task_ref: str) -> dict:
         "worker_reports": _rows("SELECT * FROM worker_reports WHERE task_ref = ? ORDER BY created_at DESC, id DESC"),
         "lane_messages": _rows("SELECT * FROM lane_messages WHERE task_ref = ? ORDER BY updated_at DESC, id DESC"),
         "plan_cursors": _rows("SELECT * FROM plan_cursors WHERE task_ref = ? ORDER BY updated_at DESC, id DESC"),
+        "turn_metrics": _rows("SELECT * FROM turn_metrics WHERE task_ref = ? ORDER BY created_at DESC, id DESC"),
     }
 
 
@@ -1111,6 +1314,8 @@ def _fetch_handoff_rows(conn: sqlite3.Connection, *, table: str, where_sql: str,
     payload = [dict(row) for row in rows]
     if table == "lane_messages":
         return [_decode_lane_message_row_dict(row) for row in payload]
+    if table == "turn_metrics":
+        return [_decode_turn_metric_row_dict(row) for row in payload]
     return payload
 
 
@@ -1307,8 +1512,15 @@ def _annotate_review_finding(row: dict[str, object], *, workspace_branch: str | 
     return finding
 
 
-def _resolve_write_actor(conn: sqlite3.Connection, actor: WriteActor | None) -> tuple[str | None, str | None, str | None, str | None]:
+def _resolve_write_actor(
+    conn: sqlite3.Connection,
+    actor: WriteActor | None,
+) -> tuple[str | None, str | None, str | None, str | None, str | None, str | None, str | None]:
     explicit_agent = _normalize_optional_text(actor.get("agent")) if actor else None
+    explicit_model = _normalize_optional_text(actor.get("model")) if actor else None
+    explicit_model_label = (_normalize_optional_text(actor.get("model_label")) if actor else None) or normalize_model_label(explicit_model)
+    explicit_reasoning_level = normalize_reasoning_level(actor.get("reasoning_level")) if actor else None
+    explicit_identity = normalize_model_identity(explicit_model_label, explicit_reasoning_level)
     explicit_branch = _normalize_optional_text(actor.get("branch")) if actor else None
     explicit_commit = _normalize_optional_text(actor.get("commit_sha")) if actor else None
     explicit_lane = _normalize_optional_text(actor.get("lane_id")) if actor else None
@@ -1320,10 +1532,13 @@ def _resolve_write_actor(conn: sqlite3.Connection, actor: WriteActor | None) -> 
     git_branch, git_commit = _detect_git_write_context()
     preferred_git_branch = git_branch if git_branch not in (None, "unknown-branch") else None
     return (
-        explicit_agent or active_agent or default_agent,
+        explicit_identity or explicit_agent or active_agent or default_agent,
         explicit_branch or preferred_git_branch or active_branch or git_branch,
         explicit_commit or git_commit or active_commit,
         explicit_lane,
+        explicit_model,
+        explicit_model_label,
+        explicit_reasoning_level,
     )
 
 
@@ -1333,11 +1548,24 @@ def _parse_review_finding_details(details: ReviewFindingDetails | None) -> tuple
     return details.get("line_start"), details.get("line_end"), details.get("fix")
 
 
-def _resolve_import_row_actor(row: dict, *, fallback_agent: str, fallback_branch: str, fallback_commit: str | None) -> tuple[str, str, str | None]:
+def _resolve_import_row_actor(
+    row: dict,
+    *,
+    fallback_agent: str,
+    fallback_branch: str,
+    fallback_commit: str | None,
+) -> tuple[str, str, str | None, str | None, str | None, str | None]:
+    model = _normalize_optional_text(row.get("model"))
+    model_label = _normalize_optional_text(row.get("model_label")) or normalize_model_label(model)
+    reasoning_level = normalize_reasoning_level(row.get("reasoning_level"))
+    derived_agent = normalize_model_identity(model_label, reasoning_level)
     return (
-        _normalize_optional_text(row.get("agent")) or fallback_agent,
+        derived_agent or _normalize_optional_text(row.get("agent")) or fallback_agent,
         _normalize_optional_text(row.get("branch")) or fallback_branch,
         _normalize_optional_text(row.get("commit_sha")) or fallback_commit,
+        model,
+        model_label,
+        reasoning_level,
     )
 
 
@@ -1501,7 +1729,7 @@ def _build_archival_lane_activity_summary(
 
 def _count_task_rows(conn: sqlite3.Connection, task_ref: str) -> dict[str, int]:
     counts: dict[str, int] = {}
-    for key in ("blockers", "next_actions", "decisions", "verified_tests", "review_findings", "worktree_lanes", "worker_reports", "lane_messages", "plan_cursors"):
+    for key in ("blockers", "next_actions", "decisions", "verified_tests", "review_findings", "worktree_lanes", "worker_reports", "lane_messages", "plan_cursors", "turn_metrics"):
         row = conn.execute(f"SELECT COUNT(*) AS count FROM {key} WHERE task_ref = ?", (task_ref,)).fetchone()
         counts[key] = int(row["count"]) if row else 0
     return counts
@@ -1527,7 +1755,7 @@ def set_handoff_state(task_ref: str, objective: str, status: str = "in_progress"
     if status not in HANDOFF_ACTIVE_STATUSES:
         return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(HANDOFF_ACTIVE_STATUSES))}"})
     with _get_db_connection() as conn:
-        agent, branch, commit_sha, _lane_id = _resolve_write_actor(conn, actor)
+        agent, branch, commit_sha, _lane_id, _model, _model_label, _reasoning_level = _resolve_write_actor(conn, actor)
         current = conn.execute("SELECT revision FROM handoff_state WHERE id = 1").fetchone()
         if current is None:
             conn.execute(
@@ -1731,6 +1959,260 @@ def list_worktree_lanes(task_ref: str | None = None, status: str = "all", limit:
                 "returned": len(rows),
                 "has_more": offset + len(rows) < total,
                 "lanes": rows,
+            }
+        )
+
+
+def record_turn_metric(
+    session: str,
+    phase: str,
+    backend: str,
+    cycle: int | None = None,
+    lane_id: str | None = None,
+    model: str | None = None,
+    thread_id: str | None = None,
+    turn_id: str | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    cached_input_tokens: int | None = None,
+    reasoning_output_tokens: int | None = None,
+    total_tokens: int | None = None,
+    usage_source: str | None = None,
+    model_context_window: int | None = None,
+    prompt_tokens: int | None = None,
+    prompt_chars: int | None = None,
+    prompt_token_source: str | None = None,
+    utilization_ratio: float | None = None,
+    domain_signal_ratio: float | None = None,
+    pressure_level: str | None = None,
+    attribution: dict[str, Any] | None = None,
+    section_sizes: dict[str, Any] | None = None,
+    raw_usage: dict[str, Any] | None = None,
+    actor: WriteActor | None = None,
+    task_ref: str | None = None,
+) -> str:
+    if _normalize_optional_text(session) is None:
+        return _json_response({"ok": False, "error": "session is required."})
+    normalized_phase = _normalize_optional_text(phase)
+    if normalized_phase is None:
+        return _json_response({"ok": False, "error": "phase is required."})
+    normalized_backend = _normalize_optional_text(backend)
+    if normalized_backend is None:
+        return _json_response({"ok": False, "error": "backend is required."})
+    valid_sources = {"observed", "tokenizer_estimate", "char_estimate"}
+    if usage_source is not None and usage_source not in valid_sources:
+        return _json_response({"ok": False, "error": "Invalid usage_source."})
+    if prompt_token_source is not None and prompt_token_source not in valid_sources:
+        return _json_response({"ok": False, "error": "Invalid prompt_token_source."})
+    with _get_db_connection() as conn:
+        resolved_task_ref = _resolve_task_ref(conn, task_ref)
+        _agent, _branch, _commit_sha, actor_lane_id, _model, _model_label, _reasoning_level = _resolve_write_actor(conn, actor)
+        resolved_lane_id = _normalize_optional_text(lane_id) or actor_lane_id
+        cur = conn.execute(
+            """
+            INSERT INTO turn_metrics (
+                task_ref, lane_id, session, cycle, phase, backend, model, thread_id, turn_id,
+                input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens,
+                total_tokens, usage_source, model_context_window, prompt_tokens, prompt_chars,
+                prompt_token_source, utilization_ratio, domain_signal_ratio, pressure_level,
+                attribution_json, section_sizes_json, raw_usage_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            """,
+            (
+                resolved_task_ref,
+                resolved_lane_id,
+                session,
+                cycle,
+                normalized_phase,
+                normalized_backend,
+                _normalize_optional_text(model),
+                _normalize_optional_text(thread_id),
+                _normalize_optional_text(turn_id),
+                input_tokens,
+                output_tokens,
+                cached_input_tokens,
+                reasoning_output_tokens,
+                total_tokens,
+                usage_source,
+                model_context_window,
+                prompt_tokens,
+                prompt_chars,
+                prompt_token_source,
+                utilization_ratio,
+                domain_signal_ratio,
+                _normalize_optional_text(pressure_level),
+                json.dumps(attribution or {}, sort_keys=True),
+                json.dumps(section_sizes or {}, sort_keys=True),
+                json.dumps(raw_usage, sort_keys=True) if raw_usage is not None else None,
+            ),
+        )
+        row = conn.execute("SELECT * FROM turn_metrics WHERE id = ?", (cur.lastrowid,)).fetchone()
+        return _json_response(
+            {
+                "ok": True,
+                "task_ref": resolved_task_ref,
+                "turn_metric": _decode_turn_metric_row_dict(_row_to_dict(row) or {}),
+            }
+        )
+
+
+def list_turn_metrics(
+    task_ref: str | None = None,
+    lane_id: str | None = None,
+    backend: str | None = None,
+    model: str | None = None,
+    phase: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> str:
+    limit = max(1, limit)
+    offset = max(0, offset)
+    with _get_db_connection() as conn:
+        resolved_task_ref = _resolve_task_ref(conn, task_ref)
+        params: list[object] = [resolved_task_ref]
+        where_sql = "task_ref = ?"
+        for field_name, value in (
+            ("lane_id", _normalize_optional_text(lane_id)),
+            ("backend", _normalize_optional_text(backend)),
+            ("model", _normalize_optional_text(model)),
+            ("phase", _normalize_optional_text(phase)),
+        ):
+            if value is None:
+                continue
+            where_sql += f" AND {field_name} = ?"
+            params.append(value)
+        total = int(
+            conn.execute(
+                f"SELECT COUNT(*) AS count FROM turn_metrics WHERE {where_sql}",
+                tuple(params),
+            ).fetchone()["count"]
+        )
+        if offset:
+            rows = conn.execute(
+                f"SELECT * FROM turn_metrics WHERE {where_sql} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                (*params, limit, offset),
+            ).fetchall()
+            rows = [_decode_turn_metric_row_dict(dict(row)) for row in rows]
+        else:
+            rows = _fetch_handoff_rows(
+                conn,
+                table="turn_metrics",
+                where_sql=where_sql,
+                order_sql="created_at DESC, id DESC",
+                limit=limit,
+                params=tuple(params),
+            )
+        return _json_response(
+            {
+                "ok": True,
+                "task_ref": resolved_task_ref,
+                "lane_id": _normalize_optional_text(lane_id),
+                "backend": _normalize_optional_text(backend),
+                "model": _normalize_optional_text(model),
+                "phase": _normalize_optional_text(phase),
+                "total_matching": total,
+                "returned": len(rows),
+                "has_more": offset + len(rows) < total,
+                "turn_metrics": rows,
+            }
+        )
+
+
+def get_turn_metrics_summary(
+    task_ref: str | None = None,
+    lane_id: str | None = None,
+) -> str:
+    with _get_db_connection() as conn:
+        resolved_task_ref = _resolve_task_ref(conn, task_ref)
+        normalized_lane_id = _normalize_optional_text(lane_id)
+        params: list[object] = [resolved_task_ref]
+        where_sql = "task_ref = ?"
+        if normalized_lane_id is not None:
+            where_sql += " AND lane_id = ?"
+            params.append(normalized_lane_id)
+
+        rows = conn.execute(
+            f"""
+            SELECT usage_source, prompt_token_source, pressure_level, backend, model, lane_id,
+                   total_tokens, prompt_tokens, input_tokens
+            FROM turn_metrics
+            WHERE {where_sql}
+            """,
+            tuple(params),
+        ).fetchall()
+        total_turns = len(rows)
+        usage_counts = {"observed": 0, "tokenizer_estimate": 0, "char_estimate": 0}
+        prompt_counts = {"observed": 0, "tokenizer_estimate": 0, "char_estimate": 0}
+        pressure_counts: dict[str, int] = {}
+        tokens_by_lane: dict[str, int] = {}
+        tokens_by_backend_model: dict[str, int] = {}
+        prompt_tokens_total = 0
+        total_tokens_total = 0
+        comparable_turns = 0
+        exact_preflight_turns = 0
+        estimated_preflight_turns = 0
+        drift_sum = 0
+        abs_drift_sum = 0
+        max_abs_drift = 0
+
+        for row in rows:
+            usage = row["usage_source"]
+            prompt_source = row["prompt_token_source"]
+            pressure_level = row["pressure_level"] or "unknown"
+            lane_key = str(row["lane_id"] or "unscoped")
+            backend_model_key = f"{row['backend']}::{row['model'] or 'default'}"
+            if isinstance(usage, str) and usage in usage_counts:
+                usage_counts[usage] += 1
+            if isinstance(prompt_source, str) and prompt_source in prompt_counts:
+                prompt_counts[prompt_source] += 1
+            pressure_counts[str(pressure_level)] = pressure_counts.get(str(pressure_level), 0) + 1
+            total_tokens_value = int(row["total_tokens"] or 0)
+            prompt_tokens_value = int(row["prompt_tokens"] or 0)
+            input_tokens_value = row["input_tokens"]
+            total_tokens_total += total_tokens_value
+            prompt_tokens_total += prompt_tokens_value
+            tokens_by_lane[lane_key] = tokens_by_lane.get(lane_key, 0) + total_tokens_value
+            tokens_by_backend_model[backend_model_key] = (
+                tokens_by_backend_model.get(backend_model_key, 0) + total_tokens_value
+            )
+            if prompt_tokens_value > 0 and input_tokens_value is not None:
+                comparable_turns += 1
+                drift = int(input_tokens_value) - prompt_tokens_value
+                drift_sum += drift
+                abs_drift = abs(drift)
+                abs_drift_sum += abs_drift
+                if abs_drift > max_abs_drift:
+                    max_abs_drift = abs_drift
+                if prompt_source == "observed":
+                    exact_preflight_turns += 1
+                elif isinstance(prompt_source, str):
+                    estimated_preflight_turns += 1
+
+        return _json_response(
+            {
+                "ok": True,
+                "task_ref": resolved_task_ref,
+                "lane_id": normalized_lane_id,
+                "summary": {
+                    "total_turns": total_turns,
+                    "usage_source_counts": usage_counts,
+                    "prompt_token_source_counts": prompt_counts,
+                    "pressure_level_counts": pressure_counts,
+                    "total_tokens": total_tokens_total,
+                    "prompt_tokens": prompt_tokens_total,
+                    "by_lane_total_tokens": tokens_by_lane,
+                    "by_backend_model_total_tokens": tokens_by_backend_model,
+                    "preflight_observed_drift": {
+                        "comparable_turns": comparable_turns,
+                        "exact_preflight_turns": exact_preflight_turns,
+                        "estimated_preflight_turns": estimated_preflight_turns,
+                        "net_token_drift": drift_sum,
+                        "mean_signed_token_drift": (round(drift_sum / comparable_turns, 3) if comparable_turns else None),
+                        "mean_absolute_token_drift": (round(abs_drift_sum / comparable_turns, 3) if comparable_turns else None),
+                        "max_absolute_token_drift": max_abs_drift if comparable_turns else None,
+                    },
+                },
             }
         )
 
@@ -2228,7 +2710,7 @@ def record_worker_report(
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         if _get_lane_row(conn, resolved_task_ref, normalized_lane_id) is None:
             return _json_response({"ok": False, "error": "Lane not found for task_ref."})
-        agent, branch, commit_sha, _actor_lane_id = _resolve_write_actor(conn, actor)
+        agent, branch, commit_sha, _actor_lane_id, _model, _model_label, _reasoning_level = _resolve_write_actor(conn, actor)
         cur = conn.execute(
             """
             INSERT INTO worker_reports (
@@ -2299,7 +2781,7 @@ def record_lane_message(
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         if _get_lane_row(conn, resolved_task_ref, normalized_lane_id) is None:
             return _json_response({"ok": False, "error": "Lane not found for task_ref."})
-        agent, branch, commit_sha, _actor_lane_id = _resolve_write_actor(conn, actor)
+        agent, branch, commit_sha, _actor_lane_id, _model, _model_label, _reasoning_level = _resolve_write_actor(conn, actor)
         cur = conn.execute(
             """
             INSERT INTO lane_messages (task_ref, lane_id, session, direction, subject, message, status, payload_json, agent, branch, commit_sha, created_at, updated_at)
@@ -2384,7 +2866,7 @@ def update_lane_message(
         row = conn.execute("SELECT * FROM lane_messages WHERE id = ? AND task_ref = ?", (message_id, resolved_task_ref)).fetchone()
         if row is None:
             return _json_response({"ok": False, "error": "Message not found for task_ref."})
-        agent, branch, commit_sha, _actor_lane_id = _resolve_write_actor(conn, actor)
+        agent, branch, commit_sha, _actor_lane_id, _model, _model_label, _reasoning_level = _resolve_write_actor(conn, actor)
         conn.execute(
             "UPDATE lane_messages SET status = ?, agent = COALESCE(agent, ?), branch = COALESCE(branch, ?), commit_sha = COALESCE(commit_sha, ?), updated_at = datetime('now') WHERE id = ? AND task_ref = ?",
             (status, agent, branch, commit_sha, message_id, resolved_task_ref),
@@ -2669,19 +3151,39 @@ def list_plan_cursors(
         )
 
 
-def record_decision(session: str, decision: str, rationale: str | None = None, actor: WriteActor | None = None, task_ref: str | None = None) -> str:
+def record_decision(session: str, decision: str, rationale: str | None = None, actor: WriteActor | None = None, task_ref: str | None = None, input_tokens: int | None = None, output_tokens: int | None = None, total_tokens: int | None = None) -> str:
     validation_error = _validate_decision_payload(decision, rationale)
     if validation_error is not None:
         return _json_response({"ok": False, "error": validation_error})
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
-        agent, branch, commit_sha, lane_id = _resolve_write_actor(conn, actor)
+        agent, branch, commit_sha, lane_id, model, model_label, reasoning_level = _resolve_write_actor(conn, actor)
         cur = conn.execute(
             """
-            INSERT INTO decisions (task_ref, lane_id, session, decision, rationale, agent, branch, commit_sha, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            INSERT INTO decisions (
+                task_ref, lane_id, session, decision, rationale, agent,
+                model, model_label, reasoning_level,
+                input_tokens, output_tokens, total_tokens,
+                branch, commit_sha, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
             """,
-            (resolved_task_ref, lane_id, session, decision, rationale, agent, branch, commit_sha),
+            (
+                resolved_task_ref,
+                lane_id,
+                session,
+                decision,
+                rationale,
+                agent,
+                model,
+                model_label,
+                reasoning_level,
+                input_tokens,
+                output_tokens,
+                total_tokens,
+                branch,
+                commit_sha,
+            ),
         )
         return _json_response(
             {
@@ -2698,7 +3200,7 @@ def update_next_actions(operation: str, action_id: int | None = None, action: st
         return _json_response({"ok": False, "error": f"Invalid operation. Valid: {', '.join(sorted(valid_operations))}"})
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
-        agent, branch, commit_sha, lane_id = _resolve_write_actor(conn, actor)
+        agent, branch, commit_sha, lane_id, _model, _model_label, _reasoning_level = _resolve_write_actor(conn, actor)
         if operation == "add":
             if not action:
                 return _json_response({"ok": False, "error": "action is required for add."})
@@ -2786,7 +3288,7 @@ def record_test_result(session: str, command: str, passed: bool, result: str | N
     summarized_result = _summarize_test_result(result)
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
-        agent, branch, commit_sha, lane_id = _resolve_write_actor(conn, actor)
+        agent, branch, commit_sha, lane_id, _model, _model_label, _reasoning_level = _resolve_write_actor(conn, actor)
         cur = conn.execute(
             """
             INSERT INTO verified_tests (task_ref, lane_id, command, passed, exit_code, result, session, agent, branch, commit_sha, verified_at)
@@ -2809,7 +3311,7 @@ def report_blocker(operation: str, description: str | None = None, blocker_id: i
         return _json_response({"ok": False, "error": f"Invalid operation. Valid: {', '.join(sorted(valid_operations))}"})
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
-        agent, branch, commit_sha, lane_id = _resolve_write_actor(conn, actor)
+        agent, branch, commit_sha, lane_id, _model, _model_label, _reasoning_level = _resolve_write_actor(conn, actor)
         if operation == "add":
             if not description:
                 return _json_response({"ok": False, "error": "description is required for add."})
@@ -2857,7 +3359,7 @@ def record_review_finding(session: str, finding_id: str, severity: str, file_pat
     line_start, line_end, fix = _parse_review_finding_details(details)
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
-        agent, branch, commit_sha, lane_id = _resolve_write_actor(conn, actor)
+        agent, branch, commit_sha, lane_id, _model, _model_label, _reasoning_level = _resolve_write_actor(conn, actor)
         existing = conn.execute("SELECT status FROM review_findings WHERE task_ref = ? AND finding_id = ?", (resolved_task_ref, finding_id)).fetchone()
         conn.execute(
             """
@@ -2924,7 +3426,7 @@ def update_review_finding(status: str, finding_id: str | None = None, finding_db
         return _json_response({"ok": False, "error": "verified_commit_sha is only supported when status='fixed'."})
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
-        agent, branch, commit_sha, lane_id = _resolve_write_actor(conn, actor)
+        agent, branch, commit_sha, lane_id, _model, _model_label, _reasoning_level = _resolve_write_actor(conn, actor)
         existing = conn.execute(
             "SELECT * FROM review_findings WHERE finding_id = ? AND task_ref = ?" if normalized_finding_id is not None else "SELECT * FROM review_findings WHERE id = ? AND task_ref = ?",
             (normalized_finding_id, resolved_task_ref) if normalized_finding_id is not None else (finding_db_id, resolved_task_ref),
@@ -3419,7 +3921,7 @@ def export_handoff_state(task_ref: str | None = None, output_path: str | None = 
         payload["current_task_markdown"] = _render_current_task_md(_build_current_task_state_from_snapshot(snapshot))
     destination = _resolve_output_path(output_path, resolved_task_ref)
     destination.write_text(json.dumps(payload, indent=2, sort_keys=True))
-    return _json_response({"ok": True, "task_ref": resolved_task_ref, "path": str(destination), "counts": {"blockers": len(snapshot["blockers"]), "next_actions": len(snapshot["next_actions"]), "decisions": len(snapshot["decisions"]), "verified_tests": len(snapshot["verified_tests"]), "review_findings": len(snapshot["review_findings"]), "worktree_lanes": len(snapshot["worktree_lanes"]), "worker_reports": len(snapshot["worker_reports"]), "lane_messages": len(snapshot["lane_messages"]), "plan_cursors": len(snapshot.get("plan_cursors", []))}})
+    return _json_response({"ok": True, "task_ref": resolved_task_ref, "path": str(destination), "counts": {"blockers": len(snapshot["blockers"]), "next_actions": len(snapshot["next_actions"]), "decisions": len(snapshot["decisions"]), "verified_tests": len(snapshot["verified_tests"]), "review_findings": len(snapshot["review_findings"]), "worktree_lanes": len(snapshot["worktree_lanes"]), "worker_reports": len(snapshot["worker_reports"]), "lane_messages": len(snapshot["lane_messages"]), "plan_cursors": len(snapshot.get("plan_cursors", [])), "turn_metrics": len(snapshot.get("turn_metrics", []))}})
 
 
 def _set_import_active_state(conn: sqlite3.Connection, task_ref: str, active: dict) -> None:
@@ -3451,6 +3953,7 @@ def _import_snapshot(conn: sqlite3.Connection, task_ref: str, snapshot: dict, mo
     reports = snapshot.get("worker_reports", [])
     messages = snapshot.get("lane_messages", [])
     plan_cursors = snapshot.get("plan_cursors", [])
+    turn_metrics = snapshot.get("turn_metrics", [])
     active = snapshot.get("active")
     now = _utcnow_iso().replace("T", " ").replace("Z", "")
     git_branch, git_commit = _detect_git_write_context()
@@ -3462,30 +3965,33 @@ def _import_snapshot(conn: sqlite3.Connection, task_ref: str, snapshot: dict, mo
         fallback_branch = _normalize_optional_text(active.get("updated_branch")) or fallback_branch
         fallback_commit = _normalize_optional_text(active.get("updated_commit_sha")) or fallback_commit
     if mode == "replace_task":
-        for table in ("blockers", "next_actions", "decisions", "verified_tests", "review_findings", "worktree_lanes", "worker_reports", "lane_messages", "plan_cursors"):
+        for table in ("blockers", "next_actions", "decisions", "verified_tests", "review_findings", "worktree_lanes", "worker_reports", "lane_messages", "plan_cursors", "turn_metrics"):
             conn.execute(f"DELETE FROM {table} WHERE task_ref = ?", (task_ref,))
     for row in blockers:
-        agent, branch, commit_sha = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
+        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
         conn.execute("INSERT INTO blockers (task_ref, lane_id, description, status, agent, branch, commit_sha, resolved_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, _resolve_import_lane_id(row), row.get("description", ""), row.get("status", "open"), agent, branch, commit_sha, row.get("resolved_at"), row.get("created_at") or now))
     for row in actions:
-        agent, branch, commit_sha = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
+        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
         conn.execute("INSERT INTO next_actions (task_ref, lane_id, action, priority, status, agent, branch, commit_sha, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, _resolve_import_lane_id(row), row.get("action", ""), int(row.get("priority", 100)), row.get("status", "pending"), agent, branch, commit_sha, row.get("created_at") or now, row.get("updated_at") or row.get("created_at") or now))
     for row in decisions:
-        agent, branch, commit_sha = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
-        conn.execute("INSERT INTO decisions (task_ref, lane_id, session, decision, rationale, agent, branch, commit_sha, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, _resolve_import_lane_id(row), row.get("session", "import"), row.get("decision", ""), row.get("rationale"), agent, branch, commit_sha, row.get("created_at") or now))
+        agent, branch, commit_sha, model, model_label, reasoning_level = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
+        conn.execute(
+            "INSERT INTO decisions (task_ref, lane_id, session, decision, rationale, agent, model, model_label, reasoning_level, input_tokens, output_tokens, total_tokens, branch, commit_sha, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (task_ref, _resolve_import_lane_id(row), row.get("session", "import"), row.get("decision", ""), row.get("rationale"), agent, model, model_label, reasoning_level, row.get("input_tokens"), row.get("output_tokens"), row.get("total_tokens"), branch, commit_sha, row.get("created_at") or now),
+        )
     for row in tests:
-        agent, branch, commit_sha = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
+        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
         conn.execute("INSERT INTO verified_tests (task_ref, lane_id, command, passed, exit_code, result, session, agent, branch, commit_sha, verified_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, _resolve_import_lane_id(row), row.get("command", ""), 1 if row.get("passed") else 0, row.get("exit_code"), row.get("result"), row.get("session", "import"), agent, branch, commit_sha, row.get("verified_at") or now))
     for row in findings:
-        agent, branch, commit_sha = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
+        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
         conn.execute("INSERT INTO review_findings (task_ref, lane_id, finding_id, severity, file_path, line_start, line_end, description, fix, status, review_mode, session, agent, branch, commit_sha, resolution_notes, reopen_count, last_reopen_reason, last_reopened_at, resolved_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, _resolve_import_lane_id(row), row.get("finding_id", ""), row.get("severity", "low"), row.get("file_path", ""), row.get("line_start"), row.get("line_end"), row.get("description", ""), row.get("fix"), row.get("status", "open"), row.get("review_mode"), row.get("session", "import"), agent, branch, commit_sha, row.get("resolution_notes"), int(row.get("reopen_count") or 0), row.get("last_reopen_reason"), row.get("last_reopened_at"), row.get("resolved_at"), row.get("created_at") or now, row.get("updated_at") or row.get("resolved_at") or row.get("created_at") or now))
     for row in lanes:
         conn.execute("INSERT INTO worktree_lanes (task_ref, lane_id, title, objective, worktree_path, branch, owner_agent, status, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, row.get("lane_id", ""), row.get("title"), row.get("objective"), row.get("worktree_path", ""), row.get("branch", ""), row.get("owner_agent"), row.get("status", "planned"), row.get("notes"), row.get("created_at") or now, row.get("updated_at") or row.get("created_at") or now))
     for row in reports:
-        agent, branch, commit_sha = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
+        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
         conn.execute("INSERT INTO worker_reports (task_ref, lane_id, session, summary, changed_files_json, test_commands_json, blockers_json, merge_ready, status, agent, branch, commit_sha, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, row.get("lane_id", ""), row.get("session", "import"), row.get("summary", ""), row.get("changed_files_json") or json.dumps(row.get("changed_files", [])), row.get("test_commands_json") or json.dumps(row.get("test_commands", [])), row.get("blockers_json") or json.dumps(row.get("blockers", [])), 1 if row.get("merge_ready") else 0, row.get("status", "submitted"), agent, branch, commit_sha, row.get("created_at") or now))
     for row in messages:
-        agent, branch, commit_sha = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
+        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
         payload_json = row.get("payload_json")
         payload = row.get("payload")
         if isinstance(payload, dict):
@@ -3515,9 +4021,58 @@ def _import_snapshot(conn: sqlite3.Connection, task_ref: str, snapshot: dict, mo
                 row.get("updated_at") or row.get("created_at") or now,
             ),
         )
+    for row in turn_metrics:
+        attribution_json = row.get("attribution_json")
+        if attribution_json is None:
+            attribution_json = json.dumps(row.get("attribution", {}), sort_keys=True)
+        section_sizes_json = row.get("section_sizes_json")
+        if section_sizes_json is None:
+            section_sizes_json = json.dumps(row.get("section_sizes", {}), sort_keys=True)
+        raw_usage_json = row.get("raw_usage_json")
+        if raw_usage_json is None and row.get("raw_usage") is not None:
+            raw_usage_json = json.dumps(row.get("raw_usage"), sort_keys=True)
+        conn.execute(
+            """
+            INSERT INTO turn_metrics (
+                task_ref, lane_id, session, cycle, phase, backend, model, thread_id, turn_id,
+                input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens,
+                total_tokens, usage_source, model_context_window, prompt_tokens, prompt_chars,
+                prompt_token_source, utilization_ratio, domain_signal_ratio, pressure_level,
+                attribution_json, section_sizes_json, raw_usage_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task_ref,
+                row.get("lane_id"),
+                row.get("session", "import"),
+                row.get("cycle"),
+                row.get("phase", "execution"),
+                row.get("backend", "unknown"),
+                row.get("model"),
+                row.get("thread_id"),
+                row.get("turn_id"),
+                row.get("input_tokens"),
+                row.get("output_tokens"),
+                row.get("cached_input_tokens"),
+                row.get("reasoning_output_tokens"),
+                row.get("total_tokens"),
+                row.get("usage_source"),
+                row.get("model_context_window"),
+                row.get("prompt_tokens"),
+                row.get("prompt_chars"),
+                row.get("prompt_token_source"),
+                row.get("utilization_ratio"),
+                row.get("domain_signal_ratio"),
+                row.get("pressure_level"),
+                attribution_json,
+                section_sizes_json,
+                raw_usage_json,
+                row.get("created_at") or now,
+            ),
+        )
     if set_active and isinstance(active, dict):
         _set_import_active_state(conn, task_ref, active)
-    return {"blockers": len(blockers), "next_actions": len(actions), "decisions": len(decisions), "verified_tests": len(tests), "review_findings": len(findings), "worktree_lanes": len(lanes), "worker_reports": len(reports), "lane_messages": len(messages), "plan_cursors": len(plan_cursors)}
+    return {"blockers": len(blockers), "next_actions": len(actions), "decisions": len(decisions), "verified_tests": len(tests), "review_findings": len(findings), "worktree_lanes": len(lanes), "worker_reports": len(reports), "lane_messages": len(messages), "plan_cursors": len(plan_cursors), "turn_metrics": len(turn_metrics)}
 
 
 def import_handoff_state(input_path: str, mode: str = "merge", set_active: bool = False, allow_destructive_clear: bool = False) -> str:
@@ -3540,7 +4095,7 @@ def import_handoff_state(input_path: str, mode: str = "merge", set_active: bool 
         missing_sections = [key for key in required_sections if key not in snapshot]
         if missing_sections:
             return _json_response({"ok": False, "error": f"Invalid replace_task payload: missing required snapshot sections {', '.join(missing_sections)}."})
-    for key in (*required_sections, "plan_cursors"):
+    for key in (*required_sections, "plan_cursors", "turn_metrics"):
         items = snapshot.get(key, [])
         if not isinstance(items, list):
             return _json_response({"ok": False, "error": f"Invalid import payload: snapshot.{key} must be an array."})
@@ -3552,7 +4107,7 @@ def import_handoff_state(input_path: str, mode: str = "merge", set_active: bool 
     with _get_db_connection() as conn:
         if mode == "replace_task" and not allow_destructive_clear:
             existing_counts = _count_task_rows(conn, task_ref)
-            incoming_counts = {key: len(snapshot.get(key, [])) for key in required_sections}
+            incoming_counts = {key: len(snapshot.get(key, [])) for key in (*required_sections, "plan_cursors", "turn_metrics")}
             potentially_cleared = [section for section, existing_count in existing_counts.items() if existing_count > 0 and incoming_counts.get(section, 0) == 0]
             if potentially_cleared:
                 return _json_response({"ok": False, "error": f"replace_task would clear existing handoff rows in sections: {', '.join(potentially_cleared)}. Re-run with allow_destructive_clear=true to confirm.", "existing_counts": existing_counts, "incoming_counts": incoming_counts})
@@ -3607,7 +4162,7 @@ def switch_task(task_ref: str, objective: str | None = None, status: str = "in_p
         return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(HANDOFF_ACTIVE_STATUSES))}"})
 
     with _get_db_connection() as conn:
-        agent, branch, commit_sha, _lane_id = _resolve_write_actor(conn, actor)
+        agent, branch, commit_sha, _lane_id, _model, _model_label, _reasoning_level = _resolve_write_actor(conn, actor)
         current = conn.execute("SELECT task_ref, objective, revision FROM handoff_state WHERE id = 1").fetchone()
 
         # Already active; nothing to do.

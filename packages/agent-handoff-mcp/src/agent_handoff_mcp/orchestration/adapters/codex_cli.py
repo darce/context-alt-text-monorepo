@@ -130,6 +130,8 @@ class CodexCliAdapter(BackendAdapter):
                 raise RuntimeError("codex exec completed but no result file was produced.")
 
             payload = json.loads(result_file.read_text())
+            response_model = payload.get("response_model") or payload.get("model") or model
+            reasoning_effort = kwargs.get("reasoning_effort")
 
             # Extract token usage from the result JSON or stdout
             token_usage = _extract_codex_usage(payload, completed.stdout)
@@ -139,6 +141,8 @@ class CodexCliAdapter(BackendAdapter):
                     backend="codex-cli",
                     phase="execution",
                     token_usage=token_usage,
+                    response_model=response_model,
+                    reasoning_effort=reasoning_effort,
                 )
 
             result = BackendResult.from_dict(payload)
@@ -152,6 +156,22 @@ class CodexCliAdapter(BackendAdapter):
                     changed_files=result.changed_files,
                     merge_ready=result.merge_ready,
                     token_usage=token_usage,
+                    response_model=response_model,
+                    reasoning_effort=reasoning_effort,
+                    raw_payload=result.raw_payload,
+                )
+            elif response_model is not None or reasoning_effort is not None:
+                result = BackendResult(
+                    handoff_action=result.handoff_action,
+                    summary=result.summary,
+                    details=result.details,
+                    tests_run=result.tests_run,
+                    blockers=result.blockers,
+                    changed_files=result.changed_files,
+                    merge_ready=result.merge_ready,
+                    token_usage=result.token_usage,
+                    response_model=response_model,
+                    reasoning_effort=reasoning_effort,
                     raw_payload=result.raw_payload,
                 )
             return result
@@ -266,4 +286,5 @@ def _normalize_flat_usage(usage: dict[str, Any]) -> dict[str, Any]:
         "total": breakdown,
         "model_context_window": usage.get("model_context_window")
         or usage.get("modelContextWindow"),
+        "usage_source": "observed",
     }

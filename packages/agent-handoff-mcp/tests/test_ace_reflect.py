@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agent_handoff_mcp.orchestration.ace_reflect import (
+    _run_model_curation,
     ace_apply_counters,
     ace_reflect_on_findings,
     classify_rule_reference,
@@ -231,6 +232,61 @@ class TestAceApplyCounters:
         offset_file = log.with_name(log.name + ".offset")
         data = json.loads(offset_file.read_text())
         assert data["processed_line_count"] == 3
+
+
+class TestModelBackedCuration:
+    def test_model_curation_skips_when_below_threshold(self, tmp_path: Path) -> None:
+        fp = _make_instruction_file(tmp_path)
+        result = _run_model_curation(
+            state_dir=tmp_path,
+            instruction_files=[fp],
+            reflect_log=tmp_path / "ace_reflect_log.jsonl",
+            backend="codex-cli",
+            model="gpt-5.4",
+            reasoning_effort="medium",
+            threshold=5,
+            budget_tokens=500,
+        )
+
+        assert result["status"] == "below_threshold"
+
+    def test_model_curation_records_separate_spend_when_triggered(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        fp = _make_instruction_file(
+            tmp_path,
+            "# Instructions\n\n- [sr-001] helpful=0 harmful=2 :: Do not relax compliance/lint scripts.\n",
+        )
+        reflect_log = tmp_path / "ace_reflect_log.jsonl"
+        reflect_log.write_text(
+            "\n".join(json.dumps({"finding_id": f"F-{idx}", "rule_id": "sr-001", "contradicts": False}) for idx in range(3)) + "\n",
+            encoding="utf-8",
+        )
+
+        class _Adapter:
+            def execute(self, **_: object):
+                return MagicMock(
+                    summary="Batch curation recommendations generated.",
+                    response_model="gpt-5.4",
+                    reasoning_effort="medium",
+                    token_usage={"total": {"total_tokens": 123}},
+                )
+
+        monkeypatch.setattr("agent_handoff_mcp.orchestration.ace_reflect.get_adapter", lambda _backend: _Adapter())
+
+        result = _run_model_curation(
+            state_dir=tmp_path,
+            instruction_files=[fp],
+            reflect_log=reflect_log,
+            backend="codex-cli",
+            model="gpt-5.4",
+            reasoning_effort="medium",
+            threshold=2,
+            budget_tokens=500,
+        )
+
+        assert result["status"] == "triggered"
+        log_rows = (tmp_path / "ace_curation_log.jsonl").read_text(encoding="utf-8").splitlines()
+        assert len(log_rows) == 1
+        assert json.loads(log_rows[0])["token_usage"]["total"]["total_tokens"] == 123
 
 
 # ---------------------------------------------------------------------------

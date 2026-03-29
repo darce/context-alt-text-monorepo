@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -25,6 +27,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from lane_manifest import get_lane_config
 from _env import extract_pyenv_version
+from backend_registry import get_backend_spec
 
 
 NO_WORK_MESSAGE = "No actionable lane inbox items."
@@ -549,12 +552,109 @@ def _artifact_context_section(
 
 
 _CHARS_PER_TOKEN_APPROX = 4
+_TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
+_TIKTOKEN_OPENAI_EXACT_MODEL_RE = re.compile(
+    r"^(gpt-(5|4\.1|4o)(?:[-\w.]*)?|o[134](?:[-\w.]*)?)$",
+    re.IGNORECASE,
+)
+_TIKTOKEN_OPENAI_ESTIMATE_MODEL_RE = re.compile(
+    r"^(gpt|o[134])[-\w.]*$",
+    re.IGNORECASE,
+)
+
+try:
+    import tiktoken
+except ImportError:  # pragma: no cover - exercised via monkeypatch tests
+    tiktoken = None  # type: ignore[assignment]
+
+
+def _normalize_model_name(model: str | None) -> str:
+    if not isinstance(model, str):
+        return ""
+    normalized = model.strip()
+    if not normalized:
+        return ""
+    for separator in (":", "@"):
+        if separator in normalized:
+            normalized = normalized.split(separator, 1)[0].strip()
+    return normalized
+
+
+def _supports_exact_tiktoken_model(model_name: str) -> bool:
+    """Return True only for model names with an explicit exact-tokenizer path."""
+    return bool(_TIKTOKEN_OPENAI_EXACT_MODEL_RE.match(model_name))
+
+
+def _prompt_token_count(
+    rendered_prompt: str,
+    *,
+    backend: str | None,
+    model: str | None,
+) -> tuple[int, str]:
+    prompt_chars = len(rendered_prompt)
+    fallback_tokens = prompt_chars // _CHARS_PER_TOKEN_APPROX
+    backend_name = (backend or "").strip()
+    model_name = _normalize_model_name(model)
+    if not backend_name or not model_name or tiktoken is None:
+        return fallback_tokens, "char_estimate"
+
+    try:
+        tokenizer_family = get_backend_spec(backend_name).capabilities.preflight_tokenizer_family
+    except RuntimeError:
+        tokenizer_family = None
+    if tokenizer_family != "tiktoken":
+        return fallback_tokens, "char_estimate"
+
+    if _supports_exact_tiktoken_model(model_name):
+        try:
+            encoding = tiktoken.encoding_for_model(model_name)
+            return len(encoding.encode(rendered_prompt)), "observed"
+        except Exception:  # noqa: BLE001
+            return fallback_tokens, "char_estimate"
+
+    if _TIKTOKEN_OPENAI_ESTIMATE_MODEL_RE.match(model_name):
+        try:
+            encoding = tiktoken.get_encoding("o200k_base")
+            return len(encoding.encode(rendered_prompt)), "tokenizer_estimate"
+        except Exception:  # noqa: BLE001
+            return fallback_tokens, "char_estimate"
+
+    return fallback_tokens, "char_estimate"
+
+
+def _env_flag(name: str) -> bool:
+    value = os.environ.get(name)
+    return isinstance(value, str) and value.strip().lower() in _TRUE_ENV_VALUES
+
+
+def _env_nonnegative_int(name: str) -> int:
+    raw_value = os.environ.get(name)
+    if not isinstance(raw_value, str) or not raw_value.strip():
+        return 0
+    try:
+        return max(0, int(raw_value.strip()))
+    except ValueError:
+        return 0
+
+
+def _runtime_attribution_from_env() -> dict[str, Any]:
+    ctx7_query_count = _env_nonnegative_int("AGENT_HANDOFF_CTX7_QUERY_COUNT")
+    used_ctx7 = _env_flag("AGENT_HANDOFF_USED_CTX7") or ctx7_query_count > 0
+    return {
+        "used_ace_guidance": _env_flag("AGENT_HANDOFF_ACE_GUIDANCE_USED"),
+        "used_ctx7": used_ctx7,
+        "ctx7_query_count": ctx7_query_count,
+    }
 
 
 def _measure_context_utilization(
     rendered_prompt: str,
     model_context_window: int,
     section_sizes: dict[str, int],
+    *,
+    attribution: dict[str, Any] | None = None,
+    backend: str | None = None,
+    model: str | None = None,
 ) -> dict:
     """Compute prompt context utilization metrics for a rendered prompt.
 
@@ -566,16 +666,21 @@ def _measure_context_utilization(
     Returns:
         A dict with keys:
         - ``prompt_chars``: total character count of the rendered prompt
-        - ``prompt_tokens_approx``: approximate token count (chars / 4)
-        - ``utilization_ratio``: prompt_tokens_approx / model_context_window
+        - ``prompt_tokens``: current prompt token count (estimated here via chars / 4)
+        - ``usage_source``: whether the prompt-token count is observed or estimated
+        - ``utilization_ratio``: prompt_tokens / model_context_window
         - ``domain_signal_ratio``: fraction of chars that are domain-signal
           sections (assignment, runtime_guidance, dependency_briefs)
         - ``pressure``: "high", "medium", or "low" pressure indicator
     """
     prompt_chars = len(rendered_prompt)
-    prompt_tokens_approx = prompt_chars // _CHARS_PER_TOKEN_APPROX
+    prompt_tokens, usage_source = _prompt_token_count(
+        rendered_prompt,
+        backend=backend,
+        model=model,
+    )
     utilization_ratio = (
-        prompt_tokens_approx / model_context_window if model_context_window > 0 else 0.0
+        prompt_tokens / model_context_window if model_context_window > 0 else 0.0
     )
 
     domain_keys = {"assignment", "runtime_guidance", "dependency_briefs"}
@@ -592,10 +697,15 @@ def _measure_context_utilization(
 
     return {
         "prompt_chars": prompt_chars,
-        "prompt_tokens_approx": prompt_tokens_approx,
+        "prompt_tokens": prompt_tokens,
+        "prompt_tokens_approx": prompt_tokens if usage_source != "observed" else None,
+        "usage_source": usage_source,
         "utilization_ratio": round(utilization_ratio, 4),
         "domain_signal_ratio": round(domain_signal_ratio, 4),
         "pressure": pressure,
+        "pressure_level": pressure,
+        "section_sizes": dict(section_sizes),
+        "attribution": dict(attribution or {}),
     }
 
 
@@ -797,6 +907,8 @@ def _build_prompt(
     include_lane_history: bool = False,
     include_global_context: bool = False,
     model_context_window: int = 128_000,
+    backend: str | None = None,
+    model: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Return ``(rendered_prompt, context_utilization_metrics)``."""
     state = _actionable_state(activity)
@@ -829,7 +941,24 @@ def _build_prompt(
         for k, v in sections.items()
         if isinstance(v, list)
     }
-    ctx_metrics = _measure_context_utilization(rendered, model_context_window, section_sizes)
+    runtime_attribution = _runtime_attribution_from_env()
+    attribution = {
+        "used_ace_guidance": runtime_attribution["used_ace_guidance"],
+        "used_artifact_context": False,
+        "used_slice_packet": bool(sections["dependency_briefs"]),
+        "used_recent_lane_history": include_lane_history,
+        "used_global_context": include_global_context,
+        "used_ctx7": runtime_attribution["used_ctx7"],
+        "ctx7_query_count": runtime_attribution["ctx7_query_count"],
+    }
+    ctx_metrics = _measure_context_utilization(
+        rendered,
+        model_context_window,
+        section_sizes,
+        attribution=attribution,
+        backend=backend,
+        model=model,
+    )
 
     # Budget-aware artifact retrieval: skip when context is already elevated
     artifact_context: list[str] = []
@@ -846,7 +975,15 @@ def _build_prompt(
         lines.extend(_render_section("Relevant Artifacts", artifact_context))
         rendered = "\n".join(lines)
         section_sizes["artifact_context"] = sum(len(line) for line in artifact_context)
-        ctx_metrics = _measure_context_utilization(rendered, model_context_window, section_sizes)
+        attribution["used_artifact_context"] = True
+        ctx_metrics = _measure_context_utilization(
+            rendered,
+            model_context_window,
+            section_sizes,
+            attribution=attribution,
+            backend=backend,
+            model=model,
+        )
 
     return rendered, ctx_metrics
 
@@ -877,12 +1014,24 @@ def main() -> int:
     if activity.get("ok") is not True:
         raise RuntimeError(f"Unable to load lane activity: {activity}")
 
-    # Load model_context_window from manifest (fall back to default)
+    # Load model_context_window and preferred backend/model from manifest (fall back to defaults)
     model_context_window = 128_000
+    preferred_backend: str | None = None
+    preferred_model: str | None = None
     try:
         from lane_manifest import get_lane_config as _get_lane_cfg
         _lcfg = _get_lane_cfg(args.task_ref, args.lane_id)
         model_context_window = int(_lcfg.get("model_context_window") or model_context_window)
+        preferred_backend = (
+            str(_lcfg.get("preferred_backend")).strip()
+            if _lcfg.get("preferred_backend")
+            else None
+        )
+        preferred_model = (
+            str(_lcfg.get("preferred_model")).strip()
+            if _lcfg.get("preferred_model")
+            else None
+        )
     except Exception:  # noqa: BLE001
         pass
 
@@ -896,6 +1045,8 @@ def main() -> int:
         include_lane_history=args.include_lane_history,
         include_global_context=args.include_global_context,
         model_context_window=model_context_window,
+        backend=preferred_backend,
+        model=preferred_model,
     )
     # Emit context utilization metrics to stderr so callers can capture without
     # polluting the prompt text that goes to stdout.

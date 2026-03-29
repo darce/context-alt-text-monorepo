@@ -80,6 +80,7 @@ def test_schema_bootstrap_is_idempotent(isolated_handoff: dict) -> None:
         "worker_reports",
         "lane_messages",
         "plan_cursors",
+        "turn_metrics",
     }
 
     # First bootstrap
@@ -88,7 +89,7 @@ def test_schema_bootstrap_is_idempotent(isolated_handoff: dict) -> None:
             row[0]
             for row in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
-                "('handoff_state','decisions','blockers','next_actions','verified_tests','review_findings','task_archives','worktree_lanes','worker_reports','lane_messages','plan_cursors')"
+                "('handoff_state','decisions','blockers','next_actions','verified_tests','review_findings','task_archives','worktree_lanes','worker_reports','lane_messages','plan_cursors','turn_metrics')"
             )
         }
 
@@ -98,16 +99,17 @@ def test_schema_bootstrap_is_idempotent(isolated_handoff: dict) -> None:
             row[0]
             for row in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
-                "('handoff_state','decisions','blockers','next_actions','verified_tests','review_findings','task_archives','worktree_lanes','worker_reports','lane_messages','plan_cursors')"
+                "('handoff_state','decisions','blockers','next_actions','verified_tests','review_findings','task_archives','worktree_lanes','worker_reports','lane_messages','plan_cursors','turn_metrics')"
             )
         }
         review_finding_columns = {row[1] for row in conn.execute("PRAGMA table_info(review_findings)").fetchall()}
         decision_columns = {row[1] for row in conn.execute("PRAGMA table_info(decisions)").fetchall()}
         plan_cursor_columns = {row[1] for row in conn.execute("PRAGMA table_info(plan_cursors)").fetchall()}
+        turn_metric_columns = {row[1] for row in conn.execute("PRAGMA table_info(turn_metrics)").fetchall()}
 
     assert first_tables == expected_tables
     assert second_tables == expected_tables
-    assert "lane_id" in decision_columns
+    assert {"lane_id", "model", "model_label", "reasoning_level"}.issubset(decision_columns)
     assert {
         "resolution_notes",
         "reopen_count",
@@ -117,6 +119,311 @@ def test_schema_bootstrap_is_idempotent(isolated_handoff: dict) -> None:
         "review_mode",
     }.issubset(review_finding_columns)
     assert {"plan_item_id", "state", "dispatch_count", "summary"}.issubset(plan_cursor_columns)
+    assert {"usage_source", "prompt_token_source", "attribution_json", "section_sizes_json"}.issubset(turn_metric_columns)
+
+
+def test_turn_metrics_round_trip_and_summary(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="turn-metrics-task",
+            objective="Track durable turn metrics",
+            status="in_progress",
+        )
+    )
+
+    created = _parse(
+        mcp_server.record_turn_metric(
+            task_ref="turn-metrics-task",
+            session="worker-backend",
+            lane_id="backend",
+            cycle=2,
+            phase="execution",
+            backend="codex-cli",
+            model="gpt-5.4",
+            input_tokens=101,
+            output_tokens=29,
+            cached_input_tokens=7,
+            reasoning_output_tokens=3,
+            total_tokens=130,
+            usage_source="observed",
+            prompt_tokens=120,
+            prompt_chars=480,
+            prompt_token_source="char_estimate",
+            pressure_level="elevated",
+            attribution={"used_artifact_context": True},
+            section_sizes={"assignment": 120, "artifact_context": 60},
+            raw_usage={"last": {"input_tokens": 101}},
+            actor={"lane_id": "backend"},
+        )
+    )
+
+    assert created["ok"] is True
+    metric = created["turn_metric"]
+    assert metric["usage_source"] == "observed"
+    assert metric["prompt_token_source"] == "char_estimate"
+    assert metric["attribution"]["used_artifact_context"] is True
+    assert metric["section_sizes"]["artifact_context"] == 60
+
+    listed = _parse(
+        mcp_server.list_turn_metrics(
+            task_ref="turn-metrics-task",
+            lane_id="backend",
+        )
+    )
+    assert listed["ok"] is True
+    assert listed["returned"] == 1
+    assert listed["turn_metrics"][0]["total_tokens"] == 130
+
+    summary = _parse(
+        mcp_server.get_turn_metrics_summary(
+            task_ref="turn-metrics-task",
+            lane_id="backend",
+        )
+    )
+    assert summary["ok"] is True
+    assert summary["summary"]["usage_source_counts"]["observed"] == 1
+    assert summary["summary"]["prompt_token_source_counts"]["char_estimate"] == 1
+    assert summary["summary"]["pressure_level_counts"]["elevated"] == 1
+    assert summary["summary"]["preflight_observed_drift"]["comparable_turns"] == 1
+    assert summary["summary"]["preflight_observed_drift"]["net_token_drift"] == -19
+
+
+def test_list_turn_metrics_applies_offset_without_dropping_rows(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="turn-metrics-pagination",
+            objective="List paginated turn metrics",
+            status="in_progress",
+        )
+    )
+
+    for cycle in range(3):
+        created = _parse(
+            mcp_server.record_turn_metric(
+                task_ref="turn-metrics-pagination",
+                session="worker-backend",
+                lane_id="backend",
+                cycle=cycle,
+                phase="execution",
+                backend="codex-cli",
+                model="gpt-5.4",
+                total_tokens=100 + cycle,
+                usage_source="observed",
+                prompt_tokens=90 + cycle,
+                prompt_chars=360 + cycle,
+                prompt_token_source="observed",
+                pressure_level="normal",
+            )
+        )
+        assert created["ok"] is True
+
+    listed = _parse(
+        mcp_server.list_turn_metrics(
+            task_ref="turn-metrics-pagination",
+            lane_id="backend",
+            limit=1,
+            offset=1,
+        )
+    )
+
+    assert listed["ok"] is True
+    assert listed["returned"] == 1
+    assert listed["has_more"] is True
+    assert listed["turn_metrics"][0]["cycle"] == 1
+
+
+def test_record_decision_persists_unified_model_identity_fields(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="decision-model-identity",
+            objective="Persist decision actor model identity",
+            status="in_progress",
+        )
+    )
+
+    recorded = _parse(
+        mcp_server.record_decision(
+            task_ref="decision-model-identity",
+            session="codex",
+            decision="slice_complete_model_identity",
+            rationale=(
+                "## Changes\n- added unified model identity.\n"
+                "## Verification\n- unit tests updated.\n"
+                "## Schema / Contract Changes\n- decisions store model provenance.\n"
+                "## Open Threads\n- none.\n"
+            ),
+            actor={
+                "model": "claude-opus-4-0520",
+                "reasoning_level": "high",
+            },
+        )
+    )
+
+    assert recorded["ok"] is True
+    decision = recorded["decision"]
+    assert decision["agent"] == "Opus 4.6 high"
+    assert decision["model"] == "claude-opus-4-0520"
+    assert decision["model_label"] == "Opus 4.6"
+    assert decision["reasoning_level"] == "high"
+
+
+def test_record_decision_preserves_legacy_agent_fallback(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="decision-legacy-agent",
+            objective="Keep legacy actors working",
+            status="in_progress",
+        )
+    )
+
+    recorded = _parse(
+        mcp_server.record_decision(
+            task_ref="decision-legacy-agent",
+            session="legacy",
+            decision="slice_complete_legacy_actor",
+            rationale=(
+                "## Changes\n- kept legacy agent fallback.\n"
+                "## Verification\n- unit tests updated.\n"
+                "## Schema / Contract Changes\n- none.\n"
+                "## Open Threads\n- none.\n"
+            ),
+            actor={"agent": "copilot-chat"},
+        )
+    )
+
+    assert recorded["ok"] is True
+    assert recorded["decision"]["agent"] == "copilot-chat"
+    assert recorded["decision"]["model"] is None
+
+
+def test_record_decision_with_token_counts(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="token-annotation-test",
+            objective="Test token annotation on decisions",
+            status="in_progress",
+        )
+    )
+
+    recorded = _parse(
+        mcp_server.record_decision(
+            task_ref="token-annotation-test",
+            session="copilot",
+            decision="slice_complete_token_test",
+            rationale=(
+                "## Changes\n- tested token fields.\n"
+                "## Verification\n- unit tests.\n"
+                "## Schema / Contract Changes\n- none.\n"
+                "## Open Threads\n- none.\n"
+            ),
+            actor={"model": "claude-opus-4-0520", "reasoning_level": "high"},
+            input_tokens=8500,
+            output_tokens=3200,
+            total_tokens=11700,
+        )
+    )
+
+    assert recorded["ok"] is True
+    decision = recorded["decision"]
+    assert decision["input_tokens"] == 8500
+    assert decision["output_tokens"] == 3200
+    assert decision["total_tokens"] == 11700
+    assert decision["agent"] == "Opus 4.6 high"
+
+
+def test_record_decision_without_tokens_leaves_nulls(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="token-null-test",
+            objective="No token fields",
+            status="in_progress",
+        )
+    )
+
+    recorded = _parse(
+        mcp_server.record_decision(
+            task_ref="token-null-test",
+            session="copilot",
+            decision="slice_complete_no_tokens",
+            rationale=(
+                "## Changes\n- no tokens.\n"
+                "## Verification\n- unit tests.\n"
+                "## Schema / Contract Changes\n- none.\n"
+                "## Open Threads\n- none.\n"
+            ),
+        )
+    )
+
+    assert recorded["ok"] is True
+    decision = recorded["decision"]
+    assert decision["input_tokens"] is None
+    assert decision["output_tokens"] is None
+    assert decision["total_tokens"] is None
+
+
+def test_current_task_md_shows_token_summary(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="token-render-test",
+            objective="Token summary rendering",
+            status="in_progress",
+        )
+    )
+
+    for i, tokens in enumerate([(5000, 2000, 7000), (10000, 4000, 14000)]):
+        _parse(
+            mcp_server.record_decision(
+                task_ref="token-render-test",
+                session="copilot",
+                decision=f"slice_complete_render_{i}",
+                rationale=(
+                    "## Changes\n- render test.\n"
+                    "## Verification\n- unit tests.\n"
+                    "## Schema / Contract Changes\n- none.\n"
+                    "## Open Threads\n- none.\n"
+                ),
+                actor={"model": "claude-opus-4-0520", "reasoning_level": "high"},
+                input_tokens=tokens[0],
+                output_tokens=tokens[1],
+                total_tokens=tokens[2],
+            )
+        )
+
+    _parse(mcp_server.generate_current_task_md(task_ref="token-render-test"))
+
+    md = isolated_handoff["current_task_path"].read_text()
+    assert "## Token Summary" in md
+    assert "21.0K" in md  # 7000 + 14000
+    assert "Opus 4.6 high" in md
+
+
+def test_current_task_md_omits_token_summary_when_no_tokens(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="no-token-render-test",
+            objective="No token summary",
+            status="in_progress",
+        )
+    )
+
+    _parse(
+        mcp_server.record_decision(
+            task_ref="no-token-render-test",
+            session="copilot",
+            decision="slice_complete_no_tok_render",
+            rationale=(
+                "## Changes\n- no tokens.\n"
+                "## Verification\n- unit tests.\n"
+                "## Schema / Contract Changes\n- none.\n"
+                "## Open Threads\n- none.\n"
+            ),
+        )
+    )
+
+    _parse(mcp_server.generate_current_task_md(task_ref="no-token-render-test"))
+
+    md = isolated_handoff["current_task_path"].read_text()
+    assert "## Token Summary" not in md
 
 
 def test_plan_cursor_crud_round_trip(isolated_handoff: dict) -> None:
@@ -1954,6 +2261,13 @@ def test_generate_current_task_md_with_nested_tool_wrapper(
             status="in_progress",
         )
     )
+    _parse(
+        mcp_server.record_decision(
+            session="nested-wrapper",
+            decision="slice_complete_nested_wrapper",
+            rationale="## Changes\n- none.\n\n## Verification\n- none.\n\n## Schema / Contract Changes\n- none.\n\n## Open Threads\n- none.",
+        )
+    )
 
     class NestedWrapper:
         def __init__(self, fn):
@@ -1971,6 +2285,8 @@ def test_generate_current_task_md_with_nested_tool_wrapper(
     assert payload["written"] is False
     assert "CURRENT_TASK" in payload["markdown"]
     assert "Nested wrapper objective" in payload["markdown"]
+    assert "Latest Decision" in payload["markdown"]
+    assert "slice_complete_nested_wrapper" in payload["markdown"]
 
 
 def test_handoff_close_check_allows_no_active_task_when_configured(isolated_handoff: dict) -> None:

@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .backend_registry import get_adapter
 
 # Pattern for ACE strategy bullets:
 # - [sr-001] helpful=2 harmful=0 :: rule text
@@ -335,6 +336,11 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print pruning candidates and bullet summary; do not write any files.",
     )
+    parser.add_argument("--model-curation-backend", default=None, help="Optional backend for explicitly budgeted batch ACE curation.")
+    parser.add_argument("--model-curation-model", default=None, help="Optional model override for model-backed ACE curation.")
+    parser.add_argument("--model-curation-reasoning-effort", default=None, help="Optional reasoning effort for model-backed ACE curation.")
+    parser.add_argument("--model-curation-threshold", type=int, default=5, help="Minimum pending or pruning-candidate count required before model-backed curation can run.")
+    parser.add_argument("--model-curation-budget-tokens", type=int, default=20000, help="Maximum cumulative token budget for model-backed ACE curation runs logged in this state-dir.")
     return parser.parse_args()
 
 
@@ -359,6 +365,101 @@ def _curation_report(instruction_files: list[Path]) -> None:
             print("  No pruning candidates.")
 
 
+def _append_curation_log(state_dir: Path, entry: dict[str, Any]) -> None:
+    log_path = state_dir / "ace_curation_log.jsonl"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry) + "\n")
+
+
+def _curation_token_total(state_dir: Path) -> int:
+    log_path = state_dir / "ace_curation_log.jsonl"
+    if not log_path.exists():
+        return 0
+    total = 0
+    for line in log_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        total += int(row.get("token_usage", {}).get("total", {}).get("total_tokens") or 0)
+    return total
+
+
+def _run_model_curation(
+    *,
+    state_dir: Path,
+    instruction_files: list[Path],
+    reflect_log: Path,
+    backend: str | None,
+    model: str | None,
+    reasoning_effort: str | None,
+    threshold: int,
+    budget_tokens: int,
+) -> dict[str, Any]:
+    pending_entries = sum(1 for line in reflect_log.read_text(encoding="utf-8").splitlines() if line.strip()) if reflect_log.exists() else 0
+    pruning_candidates = sum(len(identify_pruning_candidates(fp)) for fp in instruction_files if fp.exists())
+    trigger_size = max(pending_entries, pruning_candidates)
+    spent_tokens = _curation_token_total(state_dir)
+
+    if not backend:
+        return {"status": "disabled", "pending_entries": pending_entries, "pruning_candidates": pruning_candidates}
+    if trigger_size < threshold:
+        result = {"status": "below_threshold", "pending_entries": pending_entries, "pruning_candidates": pruning_candidates, "threshold": threshold, "budget_tokens": budget_tokens}
+        _append_curation_log(state_dir, result)
+        return result
+    if spent_tokens >= budget_tokens:
+        result = {"status": "budget_exhausted", "pending_entries": pending_entries, "pruning_candidates": pruning_candidates, "threshold": threshold, "budget_tokens": budget_tokens, "spent_tokens": spent_tokens}
+        _append_curation_log(state_dir, result)
+        return result
+
+    bullet_summaries: list[str] = []
+    for fp in instruction_files:
+        for candidate in identify_pruning_candidates(fp):
+            bullet_summaries.append(f"{candidate['rule_id']}: helpful={candidate['helpful']} harmful={candidate['harmful']} text={candidate['text']}")
+    prompt = (
+        "Review ACE rule evidence and propose curation actions.\n"
+        f"Pending reflect entries: {pending_entries}\n"
+        f"Pruning candidates: {pruning_candidates}\n"
+        "Pruning candidate summaries:\n"
+        + ("\n".join(f"- {item}" for item in bullet_summaries) if bullet_summaries else "- none")
+    )
+    schema = {
+        "type": "object",
+        "properties": {
+            "summary": {"type": "string"},
+            "recommendations": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["summary", "recommendations"],
+        "additionalProperties": False,
+    }
+    adapter = get_adapter(backend)
+    result = adapter.execute(
+        prompt=prompt,
+        schema=schema,
+        worktree_path=Path.cwd(),
+        model=model,
+        reasoning_effort=reasoning_effort,
+    )
+    entry = {
+        "timestamp": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat().replace("+00:00", "Z"),
+        "status": "triggered",
+        "backend": backend,
+        "model": model or result.response_model,
+        "reasoning_effort": reasoning_effort or result.reasoning_effort,
+        "threshold": threshold,
+        "budget_tokens": budget_tokens,
+        "pending_entries": pending_entries,
+        "pruning_candidates": pruning_candidates,
+        "summary": result.summary,
+        "token_usage": result.token_usage or {},
+    }
+    _append_curation_log(state_dir, entry)
+    return entry
+
+
 def main() -> int:
     args = _parse_args()
     state_dir = Path(args.state_dir)
@@ -377,6 +478,21 @@ def main() -> int:
     )
     if summary["total_processed"] == 0:
         print("  No pending entries in", reflect_log)
+    curation = _run_model_curation(
+        state_dir=state_dir,
+        instruction_files=instruction_files,
+        reflect_log=reflect_log,
+        backend=args.model_curation_backend,
+        model=args.model_curation_model,
+        reasoning_effort=args.model_curation_reasoning_effort,
+        threshold=max(1, args.model_curation_threshold),
+        budget_tokens=max(1, args.model_curation_budget_tokens),
+    )
+    if curation.get("status") == "triggered":
+        print(
+            "  model-curation:"
+            f" backend={curation.get('backend')} model={curation.get('model') or 'default'}"
+        )
     return 0
 
 

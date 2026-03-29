@@ -25,6 +25,8 @@ from agent_handoff_mcp.enums import (
     ReportStatus,
     ReviewMode,
     WorkerEventName,
+    normalize_model_identity,
+    normalize_model_label,
 )
 
 
@@ -91,8 +93,37 @@ def test_build_write_actor_normalizes_and_filters_empty_values() -> None:
     }
 
 
+def test_build_write_actor_derives_unified_model_identity_from_model_fields() -> None:
+    actor = build_write_actor(
+        model=" claude-opus-4-0520 ",
+        reasoning_level=" High ",
+        branch=" feature/model-identity ",
+    )
+
+    assert actor == {
+        "agent": "Opus 4.6 high",
+        "model": "claude-opus-4-0520",
+        "model_label": "Opus 4.6",
+        "reasoning_level": "high",
+        "branch": "feature/model-identity",
+    }
+
+
+def test_build_write_actor_keeps_unknown_models_human_readable() -> None:
+    actor = build_write_actor(model="custom-model-preview", reasoning_level="medium")
+
+    assert actor["agent"] == "custom-model-preview medium"
+    assert actor["model_label"] == "custom-model-preview"
+
+
 def test_build_write_actor_returns_empty_dict_for_blank_inputs() -> None:
     assert build_write_actor(agent=" ", branch=None, commit_sha="", lane_id="\n") == {}
+
+
+def test_model_identity_helpers_normalize_known_labels_and_skip_inherit() -> None:
+    assert normalize_model_label("claude-sonnet-4-20250514") == "Sonnet 4"
+    assert normalize_model_label("unknown-model") == "unknown-model"
+    assert normalize_model_identity("Opus 4.6", "inherit") == "Opus 4.6"
 
 
 def test_public_review_packet_types_are_importable_from_package_root() -> None:

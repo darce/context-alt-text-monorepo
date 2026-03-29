@@ -16,6 +16,8 @@ class BackendResult:
     changed_files: list[str] = field(default_factory=list)
     merge_ready: bool = False
     token_usage: dict[str, Any] | None = None
+    response_model: str | None = None
+    reasoning_effort: str | None = None
     raw_payload: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -32,6 +34,10 @@ class BackendResult:
         }
         if self.token_usage is not None:
             d["token_usage"] = self.token_usage
+        if self.response_model is not None:
+            d["response_model"] = self.response_model
+        if self.reasoning_effort is not None:
+            d["reasoning_effort"] = self.reasoning_effort
         return d
 
     @classmethod
@@ -46,6 +52,8 @@ class BackendResult:
             changed_files=data.get("changed_files") or [],
             merge_ready=bool(data.get("merge_ready", False)),
             token_usage=data.get("token_usage"),
+            response_model=data.get("response_model") or data.get("model"),
+            reasoning_effort=data.get("reasoning_effort"),
             raw_payload=data,
         )
 

@@ -3,6 +3,39 @@ from __future__ import annotations
 from enum import StrEnum
 
 
+_MODEL_LABEL_REGISTRY = {
+    "claude-opus-4-0520": "Opus 4.6",
+    "claude-sonnet-4-20250514": "Sonnet 4",
+    "gpt-5.4": "gpt-5.4",
+    "o3": "o3",
+}
+_NON_IDENTITY_REASONING_LEVELS = frozenset({"auto", "default", "inherit"})
+
+
+def normalize_model_label(model: str | None) -> str | None:
+    normalized = str(model or "").strip()
+    if not normalized:
+        return None
+    return _MODEL_LABEL_REGISTRY.get(normalized.lower(), normalized)
+
+
+def normalize_reasoning_level(reasoning_level: str | None) -> str | None:
+    normalized = str(reasoning_level or "").strip().lower()
+    if not normalized:
+        return None
+    return normalized
+
+
+def normalize_model_identity(model_label: str | None, reasoning_level: str | None) -> str | None:
+    normalized_label = str(model_label or "").strip() or None
+    normalized_reasoning = normalize_reasoning_level(reasoning_level)
+    if normalized_reasoning in _NON_IDENTITY_REASONING_LEVELS:
+        normalized_reasoning = None
+    if normalized_label and normalized_reasoning:
+        return f"{normalized_label} {normalized_reasoning}"
+    return normalized_label
+
+
 class HandoffStatus(StrEnum):
     IN_PROGRESS = "in_progress"
     BLOCKED = "blocked"

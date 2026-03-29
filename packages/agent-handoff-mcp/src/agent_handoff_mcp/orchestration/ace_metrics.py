@@ -29,6 +29,9 @@ from typing import Sequence
 from ..enums import ReviewKind, ReviewScopeSource, WorkerEventName
 
 
+_ACE_RULE_REFERENCE_RE = re.compile(r"\[(?:sr|rg)-\d{3}\]")
+
+
 # ---------------------------------------------------------------------------
 # JSONL log parsing
 # ---------------------------------------------------------------------------
@@ -60,11 +63,69 @@ def _collect_orchestrator_events(logs_dir: Path) -> list[dict]:
     return list(_iter_jsonl(logs_dir / "daemon" / "orchestrator.jsonl"))
 
 
+def _load_turn_metrics(state_dir: Path, task_ref: str) -> list[dict]:
+    handoff_db = state_dir / "handoff.db"
+    if not handoff_db.exists():
+        return []
+    try:
+        with sqlite3.connect(str(handoff_db)) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM turn_metrics
+                WHERE task_ref = ?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (task_ref,),
+            ).fetchall()
+    except sqlite3.Error:
+        return []
+
+    result: list[dict] = []
+    for row in rows:
+        payload = dict(row)
+        for key in ("attribution_json", "section_sizes_json", "raw_usage_json"):
+            raw_value = payload.get(key)
+            if isinstance(raw_value, str) and raw_value.strip():
+                try:
+                    payload[key.removesuffix("_json")] = json.loads(raw_value)
+                except json.JSONDecodeError:
+                    payload[key.removesuffix("_json")] = {}
+        result.append(payload)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Token burn aggregation
 # ---------------------------------------------------------------------------
 
-def _token_burn(worker_events: list[dict]) -> dict:
+def _token_burn(worker_events: list[dict], turn_metrics: list[dict] | None = None) -> dict:
+    if turn_metrics:
+        total = 0
+        by_lane: dict[str, int] = {}
+        by_source = {"observed": 0, "tokenizer_estimate": 0, "char_estimate": 0}
+        for row in turn_metrics:
+            tokens = int(row.get("total_tokens") or 0)
+            lane = str(row.get("lane_id") or "unknown")
+            total += tokens
+            by_lane[lane] = by_lane.get(lane, 0) + tokens
+            source = row.get("usage_source")
+            if isinstance(source, str) and source in by_source:
+                by_source[source] += 1
+        review_events = [e for e in worker_events if e.get("event") == WorkerEventName.REVIEW_COMPLETE]
+        converged_cycles = sum(1 for e in review_events if e.get("converged"))
+        total_review_cycles = len(review_events)
+        tpc = (total // converged_cycles) if converged_cycles > 0 else None
+        return {
+            "data_available": total > 0 or bool(turn_metrics),
+            "total_tokens": total,
+            "by_lane": by_lane,
+            "by_usage_source": by_source,
+            "converged_cycles": converged_cycles,
+            "total_review_cycles": total_review_cycles,
+            "tokens_per_converged_cycle": tpc,
+        }
     total = 0
     by_lane: dict[str, int] = {}
     converged_cycles = 0
@@ -87,6 +148,7 @@ def _token_burn(worker_events: list[dict]) -> dict:
         "data_available": total > 0,
         "total_tokens": total,
         "by_lane": by_lane,
+        "by_usage_source": {},
         "converged_cycles": converged_cycles,
         "total_review_cycles": total_review_cycles,
         "tokens_per_converged_cycle": tpc,
@@ -97,7 +159,27 @@ def _token_burn(worker_events: list[dict]) -> dict:
 # Context pressure trending
 # ---------------------------------------------------------------------------
 
-def _context_pressure(worker_events: list[dict]) -> dict:
+def _context_pressure(worker_events: list[dict], turn_metrics: list[dict] | None = None) -> dict:
+    if turn_metrics:
+        counts: dict[str, int] = {"normal": 0, "elevated": 0, "high": 0}
+        by_source = {"observed": 0, "tokenizer_estimate": 0, "char_estimate": 0}
+        latest = "normal"
+        for row in turn_metrics:
+            level = str(row.get("pressure_level") or "normal")
+            if level in counts:
+                counts[level] += 1
+                latest = level
+            prompt_source = row.get("prompt_token_source")
+            if isinstance(prompt_source, str) and prompt_source in by_source:
+                by_source[prompt_source] += 1
+        total = sum(counts.values())
+        return {
+            "data_available": total > 0,
+            "latest_pressure": latest,
+            "elevated_cycle_ratio": round(counts["elevated"] / total, 3) if total else 0.0,
+            "high_cycle_ratio": round(counts["high"] / total, 3) if total else 0.0,
+            "pressure_by_source": by_source,
+        }
     counts: dict[str, int] = {"normal": 0, "elevated": 0, "high": 0}
     latest = "normal"
     for e in worker_events:
@@ -113,7 +195,213 @@ def _context_pressure(worker_events: list[dict]) -> dict:
         "latest_pressure": latest,
         "elevated_cycle_ratio": round(counts["elevated"] / total, 3) if total else 0.0,
         "high_cycle_ratio": round(counts["high"] / total, 3) if total else 0.0,
+        "pressure_by_source": {},
     }
+
+
+# ---------------------------------------------------------------------------
+# Tool attribution
+# ---------------------------------------------------------------------------
+
+def _tool_attribution(turn_metrics: list[dict]) -> dict:
+    tracked_tools = (
+        "used_ace_guidance",
+        "used_artifact_context",
+        "used_slice_packet",
+        "used_recent_lane_history",
+        "used_global_context",
+        "used_ctx7",
+    )
+    by_tool = {
+        tool: {"turns": 0, "prompt_tokens": 0, "prompt_chars": 0, "total_tokens": 0}
+        for tool in tracked_tools
+    }
+    ctx7_query_count_total = 0
+    turns_with_ctx7_queries = 0
+
+    for row in turn_metrics:
+        attribution = row.get("attribution")
+        if not isinstance(attribution, dict):
+            continue
+        prompt_tokens = int(row.get("prompt_tokens") or 0)
+        prompt_chars = int(row.get("prompt_chars") or 0)
+        total_tokens = int(row.get("total_tokens") or 0)
+        for tool in tracked_tools:
+            if attribution.get(tool) is True:
+                by_tool[tool]["turns"] += 1
+                by_tool[tool]["prompt_tokens"] += prompt_tokens
+                by_tool[tool]["prompt_chars"] += prompt_chars
+                by_tool[tool]["total_tokens"] += total_tokens
+        query_count = attribution.get("ctx7_query_count")
+        if isinstance(query_count, int) and query_count > 0:
+            ctx7_query_count_total += query_count
+            turns_with_ctx7_queries += 1
+
+    return {
+        "data_available": bool(turn_metrics),
+        "by_tool": by_tool,
+        "ctx7_query_count_total": ctx7_query_count_total,
+        "turns_with_ctx7_queries": turns_with_ctx7_queries,
+    }
+
+
+def _preflight_observed_drift(turn_metrics: list[dict]) -> dict:
+    comparable_rows: list[dict[str, int | str]] = []
+    for row in turn_metrics:
+        prompt_tokens = row.get("prompt_tokens")
+        input_tokens = row.get("input_tokens")
+        if prompt_tokens is None or input_tokens is None:
+            continue
+        prompt_tokens_int = int(prompt_tokens)
+        input_tokens_int = int(input_tokens)
+        comparable_rows.append(
+            {
+                "prompt_tokens": prompt_tokens_int,
+                "input_tokens": input_tokens_int,
+                "drift_tokens": input_tokens_int - prompt_tokens_int,
+                "prompt_token_source": str(row.get("prompt_token_source") or "unknown"),
+            }
+        )
+
+    if not comparable_rows:
+        return {
+            "data_available": False,
+            "comparable_turns": 0,
+            "exact_preflight_turns": 0,
+            "estimated_preflight_turns": 0,
+            "mean_signed_token_drift": None,
+            "mean_absolute_token_drift": None,
+            "median_absolute_token_drift": None,
+            "max_absolute_token_drift": None,
+        }
+
+    drift_values = [int(row["drift_tokens"]) for row in comparable_rows]
+    abs_drift_values = [abs(value) for value in drift_values]
+    exact_preflight_turns = sum(1 for row in comparable_rows if row["prompt_token_source"] == "observed")
+    comparable_turns = len(comparable_rows)
+    estimated_preflight_turns = comparable_turns - exact_preflight_turns
+    return {
+        "data_available": True,
+        "comparable_turns": comparable_turns,
+        "exact_preflight_turns": exact_preflight_turns,
+        "estimated_preflight_turns": estimated_preflight_turns,
+        "mean_signed_token_drift": round(sum(drift_values) / comparable_turns, 3),
+        "mean_absolute_token_drift": round(sum(abs_drift_values) / comparable_turns, 3),
+        "median_absolute_token_drift": round(float(median(abs_drift_values)), 3),
+        "max_absolute_token_drift": max(abs_drift_values),
+    }
+
+
+def _ace_model_curation(state_dir: Path) -> dict:
+    log_path = state_dir / "ace_curation_log.jsonl"
+    entries = list(_iter_jsonl(log_path))
+    if not entries:
+        return {
+            "data_available": False,
+            "runs": 0,
+            "triggered_runs": 0,
+            "total_tokens": 0,
+            "latest_status": None,
+            "latest_backend": None,
+            "latest_model": None,
+        }
+    latest = entries[-1]
+    total_tokens = sum(int(entry.get("token_usage", {}).get("total", {}).get("total_tokens") or 0) for entry in entries)
+    return {
+        "data_available": True,
+        "runs": len(entries),
+        "triggered_runs": sum(1 for entry in entries if entry.get("status") == "triggered"),
+        "total_tokens": total_tokens,
+        "latest_status": latest.get("status"),
+        "latest_backend": latest.get("backend"),
+        "latest_model": latest.get("model"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# ACE process health
+# ---------------------------------------------------------------------------
+
+def _ace_process_health(task_ref: str, state_dir: Path, instruction_files: list[Path]) -> dict:
+    result: dict[str, object] = {
+        "data_available": False,
+        "status": "defined",
+        "rules_defined": False,
+        "reflect_log_exists": False,
+        "logged_detection_count": 0,
+        "pending_entry_count": 0,
+        "processed_entry_count": 0,
+        "last_apply_at": None,
+        "rule_tagged_findings": 0,
+        "backfill_needed": False,
+    }
+
+    # Import at call time (late binding) per rg-014
+    from .ace_reflect import parse_strategy_bullets  # noqa: PLC0415
+
+    rules_defined = any(parse_strategy_bullets(path) for path in instruction_files if path.exists())
+    result["rules_defined"] = rules_defined
+    result["data_available"] = rules_defined
+    if not rules_defined:
+        return result
+
+    reflect_log = state_dir / "ace_reflect_log.jsonl"
+    offset_file = reflect_log.with_name(reflect_log.name + ".offset")
+    result["reflect_log_exists"] = reflect_log.exists()
+
+    total_logged = 0
+    if reflect_log.exists():
+        try:
+            total_logged = sum(
+                1 for line in reflect_log.read_text(encoding="utf-8").splitlines() if line.strip()
+            )
+        except OSError:
+            total_logged = 0
+    result["logged_detection_count"] = total_logged
+
+    processed = 0
+    if offset_file.exists():
+        try:
+            processed = int(
+                json.loads(offset_file.read_text(encoding="utf-8")).get("processed_line_count", 0)
+            )
+            result["last_apply_at"] = datetime.fromtimestamp(
+                offset_file.stat().st_mtime, tz=timezone.utc
+            ).isoformat()
+        except (OSError, ValueError, json.JSONDecodeError):
+            processed = 0
+    result["processed_entry_count"] = processed
+    pending = max(0, total_logged - processed)
+    result["pending_entry_count"] = pending
+
+    handoff_db = state_dir / "handoff.db"
+    tagged_findings = 0
+    if handoff_db.exists():
+        try:
+            with sqlite3.connect(str(handoff_db)) as conn:
+                rows = conn.execute(
+                    "SELECT description FROM review_findings WHERE task_ref = ?",
+                    (task_ref,),
+                ).fetchall()
+            tagged_findings = sum(
+                1
+                for (description,) in rows
+                if isinstance(description, str) and _ACE_RULE_REFERENCE_RE.search(description)
+            )
+        except sqlite3.Error:
+            tagged_findings = 0
+    result["rule_tagged_findings"] = tagged_findings
+
+    backfill_needed = tagged_findings > 0 and total_logged == 0
+    result["backfill_needed"] = backfill_needed
+
+    if total_logged > 0 and pending > 0:
+        result["status"] = "detecting"
+    elif processed > 0 and pending == 0:
+        result["status"] = "applied"
+    else:
+        result["status"] = "defined"
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -799,13 +1087,18 @@ def build_snapshot(
     instruction_files: list[Path],
 ) -> dict:
     worker_events = _collect_worker_events(logs_dir)
+    turn_metrics = _load_turn_metrics(state_dir, task_ref)
     workspace_root = state_dir.parent
 
     snapshot = {
         "timestamp": datetime.now(tz=timezone.utc).isoformat(),
         "task_ref": task_ref,
-        "token_burn": _token_burn(worker_events),
-        "context_pressure": _context_pressure(worker_events),
+        "token_burn": _token_burn(worker_events, turn_metrics),
+        "context_pressure": _context_pressure(worker_events, turn_metrics),
+        "preflight_observed_drift": _preflight_observed_drift(turn_metrics),
+        "tool_attribution": _tool_attribution(turn_metrics),
+        "ace_process_health": _ace_process_health(task_ref, state_dir, instruction_files),
+        "ace_model_curation": _ace_model_curation(state_dir),
         "fts5_retrieval": _fts5_retrieval(state_dir),
         "lane_health": _lane_health(worker_events),
         "process_health": _process_health(task_ref, state_dir, workspace_root),
@@ -840,6 +1133,14 @@ def _render_token_efficiency(tb: dict) -> list[str]:
             f"- Converged cycles: {tb['converged_cycles']} / {tb['total_review_cycles']}",
             f"- Tokens per converged cycle: " + (f"**{tb['tokens_per_converged_cycle']:,}**" if tb["tokens_per_converged_cycle"] else "n/a"),
         ]
+        if tb.get("by_usage_source"):
+            usage_parts = [
+                f"{source}={count}"
+                for source, count in tb["by_usage_source"].items()
+                if count
+            ]
+            if usage_parts:
+                lines.append(f"- Usage-source coverage: {'  '.join(usage_parts)}")
         if tb["by_lane"]:
             lines.append("- By lane:")
             for lane, tokens in sorted(tb["by_lane"].items()):
@@ -852,12 +1153,37 @@ def _render_token_efficiency(tb: dict) -> list[str]:
 def _render_context_pressure(cp: dict) -> list[str]:
     lines = ["", "## Context Pressure"]
     if cp["data_available"]:
-        return lines + [
+        rendered = lines + [
             f"- Latest pressure: **{cp['latest_pressure']}**",
             f"- Elevated cycle ratio: {cp['elevated_cycle_ratio']:.1%}",
             f"- High cycle ratio: {cp['high_cycle_ratio']:.1%}",
         ]
+        if cp.get("pressure_by_source"):
+            source_parts = [
+                f"{source}={count}"
+                for source, count in cp["pressure_by_source"].items()
+                if count
+            ]
+            if source_parts:
+                rendered.append(f"- Pressure source coverage: {'  '.join(source_parts)}")
+        return rendered
     lines.append("_No context pressure events recorded._")
+    return lines
+
+
+def _render_preflight_observed_drift(drift: dict) -> list[str]:
+    lines = ["", "## Prompt Drift"]
+    if drift.get("data_available"):
+        return lines + [
+            f"- Comparable turns: {drift['comparable_turns']}",
+            f"- Exact preflight turns: {drift['exact_preflight_turns']}",
+            f"- Estimated preflight turns: {drift['estimated_preflight_turns']}",
+            "- Mean signed token drift: " + (f"{drift['mean_signed_token_drift']}" if drift.get("mean_signed_token_drift") is not None else "n/a"),
+            "- Mean absolute token drift: " + (f"{drift['mean_absolute_token_drift']}" if drift.get("mean_absolute_token_drift") is not None else "n/a"),
+            "- Median absolute token drift: " + (f"{drift['median_absolute_token_drift']}" if drift.get("median_absolute_token_drift") is not None else "n/a"),
+            "- Max absolute token drift: " + (f"{drift['max_absolute_token_drift']}" if drift.get("max_absolute_token_drift") is not None else "n/a"),
+        ]
+    lines.append("_No comparable preflight-vs-observed prompt data recorded yet._")
     return lines
 
 
@@ -871,6 +1197,68 @@ def _render_retrieval_activity(fts: dict) -> list[str]:
             f"- Handoff records: decisions={hrc['decisions']}  findings={hrc['findings']}  blockers={hrc['blockers']}  actions={hrc['actions']}",
         ]
     lines.append("_No database data available._")
+    return lines
+
+
+def _render_tool_attribution(tool_attribution: dict) -> list[str]:
+    lines = ["", "## Tool Attribution"]
+    if not tool_attribution.get("data_available"):
+        lines.append("_No turn-metrics attribution data recorded yet._")
+        return lines
+
+    by_tool = tool_attribution.get("by_tool", {})
+    rendered_any = False
+    for tool, payload in by_tool.items():
+        turns = int(payload.get("turns") or 0)
+        if turns <= 0:
+            continue
+        rendered_any = True
+        lines.append(
+            f"- `{tool}`: turns={turns}  prompt_tokens={int(payload.get('prompt_tokens') or 0):,}  total_tokens={int(payload.get('total_tokens') or 0):,}"
+        )
+    if tool_attribution.get("turns_with_ctx7_queries"):
+        lines.append(
+            f"- `ctx7_query_count`: turns={tool_attribution['turns_with_ctx7_queries']}  total_queries={tool_attribution['ctx7_query_count_total']}"
+        )
+        rendered_any = True
+    if not rendered_any:
+        lines.append("_No attributed turn usage recorded yet._")
+    return lines
+
+
+def _render_ace_process_health(ace_health: dict) -> list[str]:
+    lines = ["", "## ACE Process Health"]
+    if not ace_health.get("data_available"):
+        lines.append("_ACE rules are not defined in the loaded instruction files._")
+        return lines
+
+    lines.extend(
+        [
+            f"- Status: **{ace_health.get('status', 'defined')}**",
+            f"- Rules defined: {'yes' if ace_health.get('rules_defined') else 'no'}",
+            f"- Reflect log exists: {'yes' if ace_health.get('reflect_log_exists') else 'no'}",
+            f"- Logged detections: {int(ace_health.get('logged_detection_count') or 0)}",
+            f"- Pending entries: {int(ace_health.get('pending_entry_count') or 0)}",
+            f"- Rule-tagged findings: {int(ace_health.get('rule_tagged_findings') or 0)}",
+            f"- Backfill needed: {'yes' if ace_health.get('backfill_needed') else 'no'}",
+        ]
+    )
+    if ace_health.get("last_apply_at"):
+        lines.append(f"- Last apply: {ace_health['last_apply_at']}")
+    return lines
+
+
+def _render_ace_model_curation(curation: dict) -> list[str]:
+    lines = ["", "## ACE Model Curation"]
+    if curation.get("data_available"):
+        return lines + [
+            f"- Runs: {curation['runs']}",
+            f"- Triggered runs: {curation['triggered_runs']}",
+            f"- Separate token cost: {curation['total_tokens']:,}",
+            f"- Latest status: {curation['latest_status'] or 'n/a'}",
+            f"- Latest backend/model: {(curation['latest_backend'] or 'n/a')} / {(curation['latest_model'] or 'n/a')}",
+        ]
+    lines.append("_No model-backed ACE curation runs recorded. Default ACE remains local-only._")
     return lines
 
 
@@ -1029,6 +1417,10 @@ def render_markdown(snapshot: dict) -> str:
     for section_lines in (
         _render_token_efficiency(snapshot["token_burn"]),
         _render_context_pressure(snapshot["context_pressure"]),
+        _render_preflight_observed_drift(snapshot.get("preflight_observed_drift", {})),
+        _render_tool_attribution(snapshot.get("tool_attribution", {})),
+        _render_ace_process_health(snapshot.get("ace_process_health", {})),
+        _render_ace_model_curation(snapshot.get("ace_model_curation", {})),
         _render_retrieval_activity(snapshot["fts5_retrieval"]),
         _render_lane_stability(snapshot["lane_health"]),
         _render_process_health(snapshot.get("process_health", {})),

@@ -18,21 +18,40 @@ from pathlib import Path
 import pytest
 
 from agent_handoff_mcp.orchestration.ace_metrics import (
+    _ace_model_curation,
+    _ace_process_health,
     _archive_rate,
     _contract_co_change_signal,
     _ctx7_adoption,
     _handoff_memory,
     _phase_timing,
     _planning_drift,
+    _preflight_observed_drift,
     _process_health,
     _slice_review_adoption,
     _sparkline,
     _stale_artifact_metrics,
     _token_burn,
+    _tool_attribution,
     build_snapshot,
     render_markdown,
     render_sparklines,
 )
+
+
+_ACE_BULLETS = (
+    "# Instructions\n"
+    "\n"
+    "- [sr-001] helpful=0 harmful=0 :: Do not relax compliance/lint scripts.\n"
+    "- [sr-002] helpful=1 harmful=0 :: Use npm for Node.js.\n"
+    "- [rg-001] helpful=2 harmful=0 :: No type-shim masking.\n"
+)
+
+
+def _make_instruction_file(tmp_path: Path, content: str = "") -> Path:
+    fp = tmp_path / "instructions.md"
+    fp.write_text(content or _ACE_BULLETS, encoding="utf-8")
+    return fp
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +170,7 @@ class TestBuildSnapshotZeroData:
         )
         required_keys = {
             "timestamp", "task_ref", "token_burn", "context_pressure",
-            "fts5_retrieval", "lane_health", "process_health", "handoff_memory",
+            "tool_attribution", "ace_process_health", "fts5_retrieval", "lane_health", "process_health", "handoff_memory",
             "planning_drift", "stale_artifact_rate", "archive_rate", "ctx7_adoption",
             "phase_timing", "slice_review_adoption", "ace_documentation",
         }
@@ -212,6 +231,24 @@ class TestRenderMarkdown:
                 "latest_pressure": "normal",
                 "elevated_cycle_ratio": 0.0,
                 "high_cycle_ratio": 0.0,
+            },
+            "tool_attribution": {
+                "data_available": False,
+                "by_tool": {},
+                "ctx7_query_count_total": 0,
+                "turns_with_ctx7_queries": 0,
+            },
+            "ace_process_health": {
+                "data_available": False,
+                "status": "defined",
+                "rules_defined": False,
+                "reflect_log_exists": False,
+                "logged_detection_count": 0,
+                "pending_entry_count": 0,
+                "processed_entry_count": 0,
+                "last_apply_at": None,
+                "rule_tagged_findings": 0,
+                "backfill_needed": False,
             },
             "fts5_retrieval": {
                 "data_available": False,
@@ -325,6 +362,10 @@ class TestRenderMarkdown:
         for section in [
             "## Token Efficiency",
             "## Context Pressure",
+            "## Prompt Drift",
+            "## Tool Attribution",
+            "## ACE Process Health",
+            "## ACE Model Curation",
             "## Retrieval Activity",
             "## Lane Stability",
             "## Process Health",
@@ -345,6 +386,43 @@ class TestRenderMarkdown:
 
 
 class TestDerivedMetrics:
+    def test_preflight_observed_drift_summarizes_comparable_turns(self) -> None:
+        result = _preflight_observed_drift(
+            [
+                {"prompt_tokens": 100, "input_tokens": 120, "prompt_token_source": "char_estimate"},
+                {"prompt_tokens": 95, "input_tokens": 90, "prompt_token_source": "observed"},
+            ]
+        )
+
+        assert result["data_available"] is True
+        assert result["comparable_turns"] == 2
+        assert result["estimated_preflight_turns"] == 1
+        assert result["exact_preflight_turns"] == 1
+        assert result["mean_signed_token_drift"] == 7.5
+        assert result["max_absolute_token_drift"] == 20
+
+    def test_ace_model_curation_reads_separate_token_log(self, tmp_path: Path) -> None:
+        state_dir = tmp_path / ".task-state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "ace_curation_log.jsonl").write_text(
+            json.dumps(
+                {
+                    "status": "triggered",
+                    "backend": "codex-cli",
+                    "model": "gpt-5.4",
+                    "token_usage": {"total": {"total_tokens": 321}},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = _ace_model_curation(state_dir)
+
+        assert result["data_available"] is True
+        assert result["triggered_runs"] == 1
+        assert result["total_tokens"] == 321
+
     def _write_handoff_db(self, state_dir: Path) -> None:
         state_dir.mkdir(parents=True, exist_ok=True)
         db_path = state_dir / "handoff.db"
@@ -525,6 +603,112 @@ class TestDerivedMetrics:
         assert result["branch_reviews"] == 2
         assert result["packet_backed_adoption_rate"] == 0.667
         assert result["branch_diff_fallback_rate"] == 0.333
+
+    def test_tool_attribution_sums_turns_and_ctx7_queries(self) -> None:
+        result = _tool_attribution(
+            [
+                {
+                    "prompt_tokens": 120,
+                    "prompt_chars": 480,
+                    "total_tokens": 150,
+                    "attribution": {
+                        "used_artifact_context": True,
+                        "used_ctx7": True,
+                        "ctx7_query_count": 2,
+                    },
+                },
+                {
+                    "prompt_tokens": 90,
+                    "prompt_chars": 360,
+                    "total_tokens": 110,
+                    "attribution": {
+                        "used_ace_guidance": True,
+                        "used_slice_packet": True,
+                    },
+                },
+            ]
+        )
+
+        assert result["data_available"] is True
+        assert result["by_tool"]["used_artifact_context"]["turns"] == 1
+        assert result["by_tool"]["used_artifact_context"]["prompt_tokens"] == 120
+        assert result["by_tool"]["used_ace_guidance"]["total_tokens"] == 110
+        assert result["by_tool"]["used_ctx7"]["turns"] == 1
+        assert result["ctx7_query_count_total"] == 2
+        assert result["turns_with_ctx7_queries"] == 1
+
+    def test_ace_process_health_defined_when_rules_exist_but_no_log(self, tmp_path: Path) -> None:
+        state_dir = tmp_path / ".task-state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        instruction = _make_instruction_file(tmp_path)
+
+        result = _ace_process_health("task-1", state_dir, [instruction])
+
+        assert result["data_available"] is True
+        assert result["status"] == "defined"
+        assert result["backfill_needed"] is False
+
+    def test_ace_process_health_detecting_when_pending_entries_exist(self, tmp_path: Path) -> None:
+        state_dir = tmp_path / ".task-state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        instruction = _make_instruction_file(tmp_path)
+        reflect_log = state_dir / "ace_reflect_log.jsonl"
+        reflect_log.write_text(
+            json.dumps({"finding_id": "F-1", "rule_id": "sr-001", "contradicts": False}) + "\n",
+            encoding="utf-8",
+        )
+
+        result = _ace_process_health("task-1", state_dir, [instruction])
+
+        assert result["status"] == "detecting"
+        assert result["pending_entry_count"] == 1
+        assert result["reflect_log_exists"] is True
+
+    def test_ace_process_health_applied_when_offset_catches_up(self, tmp_path: Path) -> None:
+        state_dir = tmp_path / ".task-state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        instruction = _make_instruction_file(tmp_path)
+        reflect_log = state_dir / "ace_reflect_log.jsonl"
+        reflect_log.write_text(
+            json.dumps({"finding_id": "F-1", "rule_id": "sr-001", "contradicts": False}) + "\n",
+            encoding="utf-8",
+        )
+        reflect_log.with_name("ace_reflect_log.jsonl.offset").write_text(
+            json.dumps({"processed_line_count": 1}),
+            encoding="utf-8",
+        )
+
+        result = _ace_process_health("task-1", state_dir, [instruction])
+
+        assert result["status"] == "applied"
+        assert result["pending_entry_count"] == 0
+        assert result["last_apply_at"] is not None
+
+    def test_ace_process_health_flags_backfill_needed_for_tagged_findings_without_log(self, tmp_path: Path) -> None:
+        state_dir = tmp_path / ".task-state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        instruction = _make_instruction_file(tmp_path)
+        db_path = state_dir / "handoff.db"
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE review_findings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_ref TEXT NOT NULL,
+                    description TEXT
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO review_findings (task_ref, description) VALUES (?, ?)",
+                ("task-1", "Historical finding referencing [sr-001] without daemon logging."),
+            )
+
+        result = _ace_process_health("task-1", state_dir, [instruction])
+
+        assert result["status"] == "defined"
+        assert result["rule_tagged_findings"] == 1
+        assert result["backfill_needed"] is True
 
 
 class TestProcessHealth:

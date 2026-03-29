@@ -20,6 +20,7 @@ class BackendCapabilities:
     supports_sandbox: bool = False
     supports_sync_turn: bool = False
     supports_reasoning_effort: bool = False
+    preflight_tokenizer_family: str | None = None
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ BACKENDS: dict[str, BackendSpec] = {
             supports_structured_output=True,
             supports_sandbox=True,
             supports_sync_turn=False,
+            preflight_tokenizer_family="tiktoken",
         ),
     ),
     "codex-subagent": BackendSpec(
@@ -71,6 +73,7 @@ BACKENDS: dict[str, BackendSpec] = {
             supports_structured_output=True,
             supports_sandbox=True,
             supports_sync_turn=True,
+            preflight_tokenizer_family="tiktoken",
         ),
     ),
     "copilot-host": BackendSpec(
@@ -103,6 +106,7 @@ BACKENDS: dict[str, BackendSpec] = {
             supports_structured_output=True,
             supports_sandbox=True,
             supports_sync_turn=False,
+            preflight_tokenizer_family="tiktoken",
         ),
     ),
 }

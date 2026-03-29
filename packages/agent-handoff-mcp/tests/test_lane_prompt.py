@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -316,6 +317,146 @@ def test_build_prompt_reports_prompt_budget_for_optional_context_sections() -> N
 
     assert "Recent lane history contributes 2 item(s)" in prompt
     assert "Escalated task context contributes 1 item(s)" in prompt
+
+
+def test_build_prompt_returns_labeled_context_metrics() -> None:
+    module = _load_lane_prompt_module()
+    prompt, metrics = module._build_prompt(
+        {
+            "lane": {"branch": "codex/p5-backend-domain", "objective": "Objective"},
+            "messages": [
+                {
+                    "id": 1,
+                    "direction": "orchestrator_to_worker",
+                    "status": "open",
+                    "subject": "assignment",
+                    "message": "Implement the lane slice.",
+                }
+            ],
+            "actions": [],
+            "blockers": [],
+            "findings": [],
+            "reports": [],
+        },
+        task_ref="phase-5-retention-export-and-audit-controls",
+        lane_id="backend-domain",
+        worktree_path="/tmp/backend-domain",
+        orchestrator_root=REPO_ROOT,
+        include_lane_history=True,
+    )
+
+    assert prompt
+    assert metrics["usage_source"] == "char_estimate"
+    assert metrics["prompt_tokens"] == metrics["prompt_tokens_approx"]
+    assert metrics["pressure_level"] == metrics["pressure"]
+    assert metrics["attribution"]["used_recent_lane_history"] is True
+    assert "assignment" in metrics["section_sizes"]
+
+
+def test_measure_context_utilization_uses_exact_tokenizer_for_supported_backend_and_model() -> None:
+    module = _load_lane_prompt_module()
+
+    class _Encoding:
+        def encode(self, text: str) -> list[int]:
+            return list(range(max(1, len(text) // 10)))
+
+    module.tiktoken = SimpleNamespace(encoding_for_model=lambda _model: _Encoding())
+
+    metrics = module._measure_context_utilization(
+        "x" * 500,
+        10_000,
+        {"assignment": 500},
+        backend="codex-cli",
+        model="gpt-5-mini",
+    )
+
+    assert metrics["usage_source"] == "observed"
+    assert metrics["prompt_tokens"] == 50
+    assert metrics["prompt_tokens_approx"] is None
+
+
+def test_measure_context_utilization_labels_tokenizer_estimate_for_unsupported_openai_model() -> None:
+    module = _load_lane_prompt_module()
+
+    class _Encoding:
+        def encode(self, text: str) -> list[int]:
+            return list(range(max(1, len(text) // 8)))
+
+    module.tiktoken = SimpleNamespace(get_encoding=lambda _name: _Encoding())
+
+    metrics = module._measure_context_utilization(
+        "x" * 400,
+        10_000,
+        {"assignment": 400},
+        backend="local-model-openai",
+        model="gpt-custom-preview",
+    )
+
+    assert metrics["usage_source"] == "tokenizer_estimate"
+    assert metrics["prompt_tokens"] == 50
+    assert metrics["prompt_tokens_approx"] == 50
+
+
+def test_supports_exact_tiktoken_model_only_for_explicit_exact_models() -> None:
+    module = _load_lane_prompt_module()
+
+    assert module._supports_exact_tiktoken_model("gpt-5.4") is True
+    assert module._supports_exact_tiktoken_model("o4-mini") is True
+    assert module._supports_exact_tiktoken_model("gpt-custom-preview") is False
+
+
+def test_measure_context_utilization_falls_back_to_char_estimate_when_backend_has_no_tokenizer_path() -> None:
+    module = _load_lane_prompt_module()
+    module.tiktoken = SimpleNamespace(
+        encoding_for_model=lambda _model: (_ for _ in ()).throw(AssertionError("should not be called")),
+        get_encoding=lambda _name: (_ for _ in ()).throw(AssertionError("should not be called")),
+    )
+
+    metrics = module._measure_context_utilization(
+        "x" * 400,
+        10_000,
+        {"assignment": 400},
+        backend="claude-code",
+        model="claude-sonnet-4-5",
+    )
+
+    assert metrics["usage_source"] == "char_estimate"
+    assert metrics["prompt_tokens"] == 100
+    assert metrics["prompt_tokens_approx"] == 100
+
+
+def test_build_prompt_includes_runtime_reported_ctx7_and_ace_attribution(monkeypatch) -> None:
+    module = _load_lane_prompt_module()
+    monkeypatch.setenv("AGENT_HANDOFF_CTX7_QUERY_COUNT", "2")
+    monkeypatch.setenv("AGENT_HANDOFF_ACE_GUIDANCE_USED", "true")
+
+    prompt, metrics = module._build_prompt(
+        {
+            "lane": {"branch": "codex/p5-backend-domain", "objective": "Objective"},
+            "messages": [
+                {
+                    "id": 1,
+                    "direction": "orchestrator_to_worker",
+                    "status": "open",
+                    "subject": "assignment",
+                    "message": "Implement the lane slice.",
+                }
+            ],
+            "actions": [],
+            "blockers": [],
+            "findings": [],
+            "reports": [],
+        },
+        task_ref="phase-5-retention-export-and-audit-controls",
+        lane_id="backend-domain",
+        worktree_path="/tmp/backend-domain",
+        orchestrator_root=REPO_ROOT,
+    )
+
+    assert prompt
+    assert metrics["attribution"]["used_ace_guidance"] is True
+    assert metrics["attribution"]["used_ctx7"] is True
+    assert metrics["attribution"]["ctx7_query_count"] == 2
 
 
 def test_build_summary_lines_color_codes_actionable_items() -> None:

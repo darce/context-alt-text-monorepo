@@ -126,6 +126,7 @@ class ClaudeCodeAdapter(BackendAdapter):
 
             # The structured response wraps the result; extract the inner content
             payload = _extract_claude_result_payload(response)
+            response_model = response.get("model") or payload.get("model") or effective_model
 
             if progress_callback and token_usage:
                 progress_callback(
@@ -133,6 +134,8 @@ class ClaudeCodeAdapter(BackendAdapter):
                     backend="claude-code",
                     phase="execution",
                     token_usage=token_usage,
+                    response_model=response_model,
+                    reasoning_effort=reasoning_effort,
                 )
 
             if progress_callback:
@@ -150,6 +153,22 @@ class ClaudeCodeAdapter(BackendAdapter):
                     changed_files=result.changed_files,
                     merge_ready=result.merge_ready,
                     token_usage=token_usage,
+                    response_model=response_model,
+                    reasoning_effort=reasoning_effort,
+                    raw_payload=result.raw_payload,
+                )
+            elif response_model is not None or reasoning_effort is not None:
+                result = BackendResult(
+                    handoff_action=result.handoff_action,
+                    summary=result.summary,
+                    details=result.details,
+                    tests_run=result.tests_run,
+                    blockers=result.blockers,
+                    changed_files=result.changed_files,
+                    merge_ready=result.merge_ready,
+                    token_usage=result.token_usage,
+                    response_model=response_model,
+                    reasoning_effort=reasoning_effort,
                     raw_payload=result.raw_payload,
                 )
             return result
@@ -182,6 +201,7 @@ def _extract_claude_usage(response: dict[str, Any]) -> dict[str, Any] | None:
         "last": breakdown,
         "total": breakdown,
         "model_context_window": None,
+        "usage_source": "observed",
     }
 
 

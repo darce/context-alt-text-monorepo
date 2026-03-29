@@ -32,7 +32,7 @@ if str(PACKAGE_SRC) not in sys.path:
 from _env import WORKER_REASONING_EFFORT_CHOICES
 from _env import pythonpath_env
 from backend_registry import get_backend_choices
-from agent_handoff_mcp.enums import WorkerEventName
+from agent_handoff_mcp.enums import WorkerEventName, normalize_model_label
 from orchestrator_helpers import rotate_jsonl_if_needed, _combined_text, _json_load, _normalize_text
 
 _MAX_LOG_BYTES = 1_000_000
@@ -393,6 +393,9 @@ def _observability_entry(
 ) -> dict[str, Any]:
     token_usage = telemetry.get("token_usage")
     total_usage = token_usage.get("total") if isinstance(token_usage, dict) else None
+    last_usage = token_usage.get("last") if isinstance(token_usage, dict) else None
+    response_model = _normalize_text(telemetry.get("response_model")) or model
+    effective_reasoning = _normalize_text(telemetry.get("reasoning_effort")) or effective_reasoning_effort
     entry: dict[str, Any] = {
         "recorded_at": _utcnow_iso(),
         "task_ref": task_ref,
@@ -400,16 +403,26 @@ def _observability_entry(
         "cycle": cycle,
         "phase": phase,
         "backend": backend,
-        "model": model,
+        "model": response_model,
         "requested_reasoning_effort": requested_reasoning_effort,
-        "effective_reasoning_effort": effective_reasoning_effort,
+        "effective_reasoning_effort": effective_reasoning,
         "thread_id": telemetry.get("thread_id"),
         "turn_id": telemetry.get("turn_id"),
+        "response_model": response_model,
         "token_usage": token_usage,
         "token_usage_totals": {
+            "input_tokens": last_usage.get("input_tokens") if isinstance(last_usage, dict) else None,
+            "output_tokens": last_usage.get("output_tokens") if isinstance(last_usage, dict) else None,
+            "cached_input_tokens": (
+                last_usage.get("cached_input_tokens") if isinstance(last_usage, dict) else None
+            ),
             "total_tokens": total_usage.get("total_tokens") if isinstance(total_usage, dict) else None,
             "reasoning_output_tokens": (
                 total_usage.get("reasoning_output_tokens") if isinstance(total_usage, dict) else None
+            ),
+            "usage_source": token_usage.get("usage_source") if isinstance(token_usage, dict) else None,
+            "model_context_window": (
+                token_usage.get("model_context_window") if isinstance(token_usage, dict) else None
             ),
         },
     }
@@ -546,9 +559,19 @@ def _record_token_usage_to_handoff(
         reasoning_tokens = totals.get("reasoning_output_tokens") or 0
         token_usage = entry.get("token_usage") or {}
         last = token_usage.get("last") or {}
+        context_utilization = entry.get("context_utilization") or {}
+        observed_model = _normalize_text(entry.get("response_model")) or model
+        effective_reasoning = _normalize_text(entry.get("effective_reasoning_effort"))
+        model_label = normalize_model_label(observed_model)
+        actor = api.build_write_actor(
+            model=observed_model,
+            model_label=model_label,
+            reasoning_level=effective_reasoning,
+            lane_id=lane_id,
+        )
 
         rationale = (
-            f"cycle={cycle} phase={phase} backend={backend} model={model or 'default'} "
+            f"cycle={cycle} phase={phase} backend={backend} model={observed_model or 'default'} "
             f"total_tokens={total_tokens} "
             f"input={last.get('input_tokens', 'n/a')} "
             f"output={last.get('output_tokens', 'n/a')} "
@@ -560,7 +583,35 @@ def _record_token_usage_to_handoff(
             session=session,
             decision=f"token_usage_c{cycle}_{phase}",
             rationale=rationale,
-            actor=api.build_write_actor(agent=f"worker-{lane_id}"),
+            actor=actor,
+        )
+        api.record_turn_metric(
+            task_ref=task_ref,
+            session=session,
+            phase=phase,
+            backend=backend,
+            cycle=cycle,
+            lane_id=lane_id,
+            model=observed_model,
+            thread_id=entry.get("thread_id"),
+            turn_id=entry.get("turn_id"),
+            input_tokens=last.get("input_tokens"),
+            output_tokens=last.get("output_tokens"),
+            cached_input_tokens=last.get("cached_input_tokens"),
+            reasoning_output_tokens=totals.get("reasoning_output_tokens"),
+            total_tokens=total_tokens,
+            usage_source=token_usage.get("usage_source") or "observed",
+            model_context_window=token_usage.get("model_context_window"),
+            prompt_tokens=context_utilization.get("prompt_tokens"),
+            prompt_chars=context_utilization.get("prompt_chars"),
+            prompt_token_source=context_utilization.get("usage_source"),
+            utilization_ratio=context_utilization.get("utilization_ratio"),
+            domain_signal_ratio=context_utilization.get("domain_signal_ratio"),
+            pressure_level=context_utilization.get("pressure_level") or context_utilization.get("pressure"),
+            attribution=context_utilization.get("attribution"),
+            section_sizes=context_utilization.get("section_sizes"),
+            raw_usage=token_usage,
+            actor=actor,
         )
     except Exception:
         # Best-effort; do not break the execution pipeline for telemetry logging

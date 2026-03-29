@@ -45,6 +45,9 @@ get_lane_activity = core.get_lane_activity
 get_latest_slice_review_packet = core.get_latest_slice_review_packet
 list_lane_messages = core.list_lane_messages
 list_lane_briefs = core.list_lane_briefs
+record_turn_metric = core.record_turn_metric
+list_turn_metrics = core.list_turn_metrics
+get_turn_metrics_summary = core.get_turn_metrics_summary
 get_plan_cursor = core.get_plan_cursor
 list_next_actions = core.list_next_actions
 list_plan_cursors = core.list_plan_cursors
@@ -87,6 +90,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "update_lane_message": "Update the status of a lane message, such as closing or acknowledging it.",
     "list_lane_messages": "List lane messages for the active or requested task, optionally filtered by lane, direction, or status.",
     "list_lane_briefs": "List structured orchestrator-to-worker brief messages for the active or requested task.",
+    "record_turn_metric": "Record one durable turn-metrics row for the active or requested task, including usage source, prompt budget metadata, and attribution payloads.",
+    "list_turn_metrics": "List durable turn-metrics rows for the active or requested task, optionally filtered by lane, backend, model, or phase.",
+    "get_turn_metrics_summary": "Return an aggregated turn-metrics summary for the active or requested task, including exact-vs-estimate coverage and token totals.",
     "get_plan_cursor": "Fetch the durable plan-dispatch cursor for a specific task-plan item.",
     "list_plan_cursors": "List durable plan-dispatch cursor rows for the active or requested task, optionally filtered by state or lane.",
     "upsert_plan_cursor": "Create or update a durable task-plan cursor row recording dispatch, completion, skip, or escalation state; optionally enforce a clean-slice gate before the update.",
@@ -936,6 +942,9 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
         close_worktree_lane,
         list_worktree_lanes,
         get_lane_activity,
+        record_turn_metric,
+        list_turn_metrics,
+        get_turn_metrics_summary,
         list_next_actions,
         record_decision,
         update_next_actions,

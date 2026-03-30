@@ -87,9 +87,9 @@ This preserves the existing semantic signal that a decision is a slice completio
 
 ## Phased Delivery
 
-### Phase 1: Naming Spec and Template Update -- not-started
+### Phase 1: Naming Spec and Template Update -- complete
 
-> **Status**: not-started
+> **Status**: complete
 > **Task plans**: [E12-1. Naming Spec and Template Update](../../tasks/12.0/12.1/E12-1-naming-spec-and-template-update-task-plan.md)
 
 **Goal**: Define the compact naming scheme and make new epic/task/roadmap authoring follow it by default.
@@ -108,9 +108,9 @@ Exit criteria:
 - New task plan authors have one documented title pattern tied to the owning epic short id.
 - The templates no longer allow unnumbered new epic titles or unprefixed new task titles by omission.
 
-### Phase 2: Guidance Rollout -- not-started
+### Phase 2: Guidance Rollout -- complete
 
-> **Status**: not-started
+> **Status**: complete
 > **Task plans**: [E12-2. Guidance Rollout and Context Routing](../../tasks/12.0/12.1/E12-2-guidance-rollout-and-context-routing-task-plan.md)
 
 **Goal**: Synchronize the repo rules and author guidance with the naming scheme.
@@ -132,9 +132,9 @@ Exit criteria:
 - Guidance no longer implies that `slice_complete_<short_label>` alone is the full target format for new work.
 - The correct review guide or planning template can be chosen deterministically from the request type and target path.
 
-### Phase 3: MCP Enforcement and Parsing -- not-started
+### Phase 3: MCP Enforcement and Parsing -- complete
 
-> **Status**: not-started
+> **Status**: complete
 > **Task plans**: [E12-3. MCP Decision Enforcement and Context Router](../../tasks/12.0/12.1/E12-3-mcp-decision-enforcement-and-context-router-task-plan.md)
 
 **Goal**: Enforce the new decision-id format and make guide/template routing auditable.
@@ -154,9 +154,9 @@ Exit criteria:
 - Close/review gates still work for valid new slice-complete decisions.
 - Review/doc-authoring flows have one deterministic guide/template selection rule instead of relying on freeform prompt memory.
 
-### Phase 4: Migration Policy and Audit Pass -- not-started
+### Phase 4: Migration Policy and Audit Pass -- complete
 
-> **Status**: not-started
+> **Status**: complete
 > **Task plans**: [E12-4. Migration Policy and Audit Pass](../../tasks/12.0/12.1/E12-4-migration-policy-and-audit-pass-task-plan.md)
 
 **Goal**: Prevent partial rollout drift with one explicit grandfathering rule and one lightweight compliance checklist.
@@ -197,35 +197,35 @@ Exit criteria:
 
 # Consolidated Checklist
 
-## Phase 1: Naming Spec and Template Update -- not-started
+## Phase 1: Naming Spec and Template Update -- complete
 
-- [ ] Define the canonical `E<number>` epic title, epic short id, and task title formats
-- [ ] Update `EPIC.template.md`
-- [ ] Update `TASK_PLAN.template.md`
-- [ ] Update `ROADMAP.template.md`
-- [ ] Document the slice-prefix recommendation as optional-only
+- [x] Define the canonical `E<number>` epic title, epic short id, and task title formats
+- [x] Update `EPIC.template.md`
+- [x] Update `TASK_PLAN.template.md`
+- [x] Update `ROADMAP.template.md`
+- [x] Document the slice-prefix recommendation as optional-only
 
-## Phase 2: Guidance Rollout -- not-started
+## Phase 2: Guidance Rollout -- complete
 
-- [ ] Update `instructions.md`
-- [ ] Update `development-workflow.md`
-- [ ] Update any planning-review guidance that checks planning-doc hygiene
-- [ ] Add explicit context-routing rules for review guides and planning templates
-- [ ] Add examples for epic, task, decision, and context-routing cases
+- [x] Update `instructions.md`
+- [x] Update `development-workflow.md`
+- [x] Update any planning-review guidance that checks planning-doc hygiene
+- [x] Add explicit context-routing rules for review guides and planning templates
+- [x] Add examples for epic, task, decision, and context-routing cases
 
-## Phase 3: MCP Enforcement and Parsing -- not-started
+## Phase 3: MCP Enforcement and Parsing -- complete
 
-- [ ] Validate new decision ids in `record_decision`
-- [ ] Preserve slice-complete detection for close/review flows
-- [ ] Add parsing helpers for author tag and work reference
+- [x] Validate new decision ids in `record_decision`
+- [x] Preserve slice-complete detection for close/review flows
+- [x] Add parsing helpers for author tag and work reference
 - [ ] Add a context-routing helper or audit surface
 - [ ] Add doctor or audit output for malformed new decision ids and missing context routing
 
-## Phase 4: Migration Policy and Audit Pass -- not-started
+## Phase 4: Migration Policy and Audit Pass -- complete
 
-- [ ] Decide grandfathering scope for historical docs and decisions
-- [ ] Update any stale contract/rule text that still documents the old format
-- [ ] Add a reviewer audit checklist for new epics/task plans
+- [x] Decide grandfathering scope for historical docs and decisions
+- [x] Update any stale contract/rule text that still documents the old format
+- [x] Add a reviewer audit checklist for new epics/task plans
 
 ## Deferred (Post-v0.3.1)
 

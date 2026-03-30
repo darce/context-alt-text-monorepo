@@ -1,5 +1,9 @@
 ## Deferred (Document as Tech Debt)
 
+- [ ] **#14** Extract `_shared.py` (2053 lines, 85 defs) responsibility clusters into focused modules (`current_task_rendering.py`, `shared_write_context.py`, `shared_schema.py`, `shared_tool_adapters.py`) — _Evaluation: `docs/tasks/tech-debt/agent-handoff-mcp-shared-module-refactoring-evaluation.md`; first slice: rendering extraction. Gate: E12-9 orchestration split must complete first._
+
+- [ ] **#13** Migrate ~30 deprecated-alias call sites in `test_artifact_tools.py` and `test_handoff_state.py` to successor APIs, then delete the 5 Python alias functions from `core.py` — _Plan: `docs/tasks/12.0/deprecated-alias-test-migration.md` (E12-5 follow-up; aliases are not MCP-exposed but remain as Python callables until tests are updated)_
+
 - [ ] **#12** Add deterministic E2E/smoke automation path for sovereign WordPress flows — _Plan: `docs/tasks/tech-debt/e2e-smoke-automation-path.md` (Playwright + WP-CLI + reproducible outage testing, CI-ready)_
 - [ ] **#4** Extract lighter session-rebind in chunk loop instead of full `cluster_service_builder` rebuild (`clustering.py`) — _Defer: perf impact is marginal; avoid new abstraction until chunking pattern stabilizes_
 - [ ] **#5** Add lightweight ID-only cluster query for surfacing (avoid eager-loading reps/centroids when only IDs/labels needed) — _Defer: broader refactor; current limit=1000 is adequate; revisit when tenant cluster counts approach 500+_

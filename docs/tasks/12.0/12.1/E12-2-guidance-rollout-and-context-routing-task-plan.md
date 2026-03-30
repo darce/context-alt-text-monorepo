@@ -38,6 +38,7 @@ Even with updated templates, agents can still miss the scheme if the startup gui
 - [instructions.md](docs/agentic/instructions.md) already routes to review guides and templates, but the epic calls for more explicit naming and context-routing rules.
 - [development-workflow.md](docs/agentic/rules/development-workflow.md) is the natural execution-time rule surface for naming and handoff behavior, but it does not yet define the new reference grammar end to end.
 - [planning-review-guide.md](docs/agentic/rules/planning-review-guide.md) should eventually validate missing/malformed references, but that check is not yet documented.
+- Both review guides already require verdict-to-artifact cross-referencing, so this phase must update those examples if decision identifiers move from numeric references to structured ids.
 - The repo still needs a compact examples section that demonstrates one valid epic title, task title, decision id, and routing decision.
 
 ## Target Outcome
@@ -60,17 +61,20 @@ The repo guidance should say the same thing everywhere: new epics use `E<number>
 
 ## Proposed Solution
 
-Update the guidance surfaces in layers: keep `instructions.md` to a compact router, put naming/routing details in `development-workflow.md`, add planning-review checks to `planning-review-guide.md`, and add one compact examples block that matches the future runtime-enforced decision grammar.
+Update the guidance surfaces in layers: keep `instructions.md` to a compact router, put naming/routing details in `development-workflow.md`, add planning-review checks to `planning-review-guide.md`, update review cross-reference examples so they match the future structured decision grammar, and add one compact examples block that matches the runtime-enforced grammar planned in `E12-3`.
 
 ## Files and Surfaces to Change
 
-| Surface | File                                                                              | Change                                                                                 |
-| ------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| docs    | `docs/agentic/instructions.md`                                                    | Add compact naming/routing guidance without expanding cold-start scope                 |
-| docs    | `docs/agentic/rules/development-workflow.md`                                      | Add the canonical epic/task/decision naming rules and author workflow expectations     |
-| docs    | `docs/agentic/rules/planning-review-guide.md`                                     | Add checks for missing/malformed epic/task references and wrong template/guide routing |
-| docs    | `docs/agentic/rules/branch-review-guide.md`                                       | Clarify code-review routing boundary relative to planning review                       |
-| docs    | `docs/epics/v0.3.1/epic-task-reference-prefixing-and-handoff-enforcement-epic.md` | Mark Phase 2 task-plan linkage once scoped                                             |
+| Surface | File                                                                              | Change                                                                                                                              |
+| ------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| docs    | `docs/agentic/instructions.md`                                                    | Add compact naming/routing guidance without expanding cold-start scope                                                              |
+| docs    | `docs/agentic/rules/development-workflow.md`                                      | Add the canonical epic/task/decision naming rules and author workflow expectations                                                  |
+| docs    | `docs/agentic/rules/planning-review-guide.md`                                     | Add checks for missing/malformed epic/task references, wrong template/guide routing, and structured review cross-reference examples |
+| docs    | `docs/agentic/rules/branch-review-guide.md`                                       | Clarify code-review routing boundary relative to planning review                                                                    |
+| docs    | `docs/epics/v0.3.1/epic-task-reference-prefixing-and-handoff-enforcement-epic.md` | Mark Phase 2 task-plan linkage once scoped                                                                                          |
+
+Ownership note:
+`planning-review-guide.md` belongs to `E12-2`. `E12-4` should consume the resulting checklist/rules but not add a second overlapping edit path for that file.
 
 ## Related Files
 
@@ -111,6 +115,7 @@ Proof:
 Changes:
 
 - Update `planning-review-guide.md` and `branch-review-guide.md` to clarify review routing.
+- Update review cross-reference examples so verdict records still cite the artifact under review once decision ids use the structured grammar.
 - Add a short routing examples section covering branch review, planning review, epic creation, task-plan creation, and roadmap creation.
 - Sync the epic’s Phase 2 task-plan link once the task is created.
 
@@ -122,32 +127,32 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded the minimum authoritative guidance and epic scope before editing.
-- [ ] Confirmed the updated template wording from `E12-1` so guidance does not drift.
+- [x] Loaded the minimum authoritative guidance and epic scope before editing.
+- [x] Confirmed the updated template wording from `E12-1` so guidance does not drift.
 
 ## Slice 1: Naming Guidance Alignment
 
-- [ ] Updated `development-workflow.md`.
-- [ ] Updated `instructions.md` in a dispatcher-safe way.
-- [ ] Verified examples match the epic/template naming scheme.
+- [x] Updated `development-workflow.md`.
+- [x] Updated `instructions.md` in a dispatcher-safe way.
+- [x] Verified examples match the epic/template naming scheme.
 
 ## Slice 2: Review and Template Routing Rules
 
-- [ ] Updated `planning-review-guide.md`.
-- [ ] Updated `branch-review-guide.md`.
-- [ ] Added deterministic routing examples.
+- [x] Updated `planning-review-guide.md`.
+- [x] Updated `branch-review-guide.md`.
+- [x] Added deterministic routing examples.
 
 ## Review Readiness
 
-- [ ] Guidance surfaces agree on the same epic/task/decision grammar.
-- [ ] Cold-start routing remains concise.
-- [ ] Handoff decision records the guidance changes and verification evidence.
+- [x] Guidance surfaces agree on the same epic/task/decision grammar.
+- [x] Cold-start routing remains concise.
+- [x] Handoff decision records the guidance changes and verification evidence.
 
 ## Stretch Goals
 
-- [ ] Add a compact review checklist snippet for malformed work references once MCP enforcement lands.
+- [x] Add a compact review checklist snippet for malformed work references once MCP enforcement lands. (Done; `planning-review-guide.md` Naming and Reference Compliance section validates decision-id grammar.)
 
 ## Success Criteria
 
-- [ ] Agents can determine the correct guide or template from request intent and target path using repo guidance alone.
-- [ ] Naming rules in the guidance match the templates and the epic with no contradictory examples.
+- [x] Agents can determine the correct guide or template from request intent and target path using repo guidance alone.
+- [x] Naming rules in the guidance match the templates and the epic with no contradictory examples.

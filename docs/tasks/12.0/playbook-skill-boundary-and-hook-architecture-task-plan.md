@@ -1,6 +1,7 @@
 # ADPH-4. Playbook, Skill, and Hook Architecture Hardening
 
 > **Metadata**
+>
 > - **Date**: 2026-03-28 16:05 EDT
 > - **Author**: codex
 
@@ -57,6 +58,7 @@ At the same time, the repo already has several hook-like behaviors in the toolin
 ## Target Outcome
 
 The repo should clearly distinguish:
+
 - `rules/` for mandatory invariants
 - `playbooks/` for canonical agent-agnostic procedures
 - `skills/` for agent-specific wrappers/adapters
@@ -72,12 +74,12 @@ The hook model should also be explicit. `agent-handoff-mcp` and associated tooli
 
 ## Contract and Boundary Impact
 
-| Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
-| --- | --- | --- | --- | --- | --- |
-| Agentic docs IA | agentic-process docs | [instructions.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/instructions.md) and `docs/agentic/README.md` | Clarify ownership boundaries between rules, playbooks, and skills | Yes; additive and routing-safe | docs review |
-| Skill/playbook relationship | agent-specific wrappers | current `SKILL.md` files + playbooks | Convert skills into thin wrappers that explicitly cite canonical playbooks/rules, not duplicate them | Yes; current skills remain usable during migration | docs review |
-| Hook semantics | MCP/tooling | [agent-handoff-mcp.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/contracts/agent-handoff-mcp.md) | Define agent-agnostic hook semantics and expected durable outputs | Yes; start with documented semantics and additive tool support | pytest + contract doc |
-| Host-specific adapters | Codex-oriented docs | playbooks + skills + Make/MCP wrappers | Split portable semantics from Codex-specific attachment and execution guidance | Yes; Codex flows remain documented, but as adapters not canonical truth | docs review |
+| Boundary                    | Owner                   | Current Contract                                                                                                                 | Expected Change                                                                                      | Compatibility Needed?                                                   | Verification          |
+| --------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------- |
+| Agentic docs IA             | agentic-process docs    | [instructions.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/instructions.md) and `docs/agentic/README.md` | Clarify ownership boundaries between rules, playbooks, and skills                                    | Yes; additive and routing-safe                                          | docs review           |
+| Skill/playbook relationship | agent-specific wrappers | current `SKILL.md` files + playbooks                                                                                             | Convert skills into thin wrappers that explicitly cite canonical playbooks/rules, not duplicate them | Yes; current skills remain usable during migration                      | docs review           |
+| Hook semantics              | MCP/tooling             | [agent-handoff-mcp.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/contracts/agent-handoff-mcp.md)          | Define agent-agnostic hook semantics and expected durable outputs                                    | Yes; start with documented semantics and additive tool support          | pytest + contract doc |
+| Host-specific adapters      | Codex-oriented docs     | playbooks + skills + Make/MCP wrappers                                                                                           | Split portable semantics from Codex-specific attachment and execution guidance                       | Yes; Codex flows remain documented, but as adapters not canonical truth | docs review           |
 
 ## Proposed Solution
 
@@ -85,30 +87,30 @@ Implement this in four slices. First, classify the existing playbooks and skills
 
 ## Files and Surfaces to Change
 
-| Surface | File | Change |
-| --- | --- | --- |
-| docs | `docs/agentic/README.md` | Clarify the roles of rules, playbooks, skills, and host-specific adapters |
-| docs | `docs/agentic/playbooks/README.md` | Classify playbooks as canonical agent-agnostic procedures and move host-specific items out or relabel them |
-| docs | `docs/agentic/playbooks/worktree-codex-playbook.md` | Split into portable orchestration procedure plus Codex-specific adapter guidance |
-| docs | `docs/agentic/playbooks/codex-custom-mcp-playbook.md` | Reclassify as host-specific adapter/setup doc rather than canonical playbook |
-| docs | `docs/agentic/playbooks/lane-scoped-context.md` | Keep as portable context-playbook and align wording accordingly |
-| docs | `docs/agentic/skills/worktree-orchestrator/SKILL.md` | Thin further toward wrapper/trigger/owned-output guidance |
-| docs | `docs/agentic/skills/worktree-worker/SKILL.md` | Same wrapper-thinning and canonical references |
-| docs | `docs/agentic/contracts/agent-handoff-mcp.md` | Add hook semantics section for portable process hooks and durable outputs |
-| docs | `docs/agentic/instructions.md` | Update routing guidance so skills are wrappers and playbooks are canonical for shared procedure |
-| tooling | `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py` | Only if needed: expose or rename explicit hook-adjacent MCP surfaces for discoverability |
-| tooling | `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/worker_daemon.py` | Document/map existing hook-like events to the new semantics; code changes only if needed for clarity |
-| tooling | `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/review_ready.py` | Same mapping if hook semantics require additive visibility |
+| Surface | File                                                                              | Change                                                                                                     |
+| ------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| docs    | `docs/agentic/README.md`                                                          | Clarify the roles of rules, playbooks, skills, and host-specific adapters                                  |
+| docs    | `docs/agentic/playbooks/README.md`                                                | Classify playbooks as canonical agent-agnostic procedures and move host-specific items out or relabel them |
+| docs    | `docs/agentic/playbooks/worktree-codex-playbook.md`                               | Split into portable orchestration procedure plus Codex-specific adapter guidance                           |
+| docs    | `docs/agentic/playbooks/codex-custom-mcp-playbook.md`                             | Reclassify as host-specific adapter/setup doc rather than canonical playbook                               |
+| docs    | `docs/agentic/playbooks/lane-scoped-context.md`                                   | Keep as portable context-playbook and align wording accordingly                                            |
+| docs    | `docs/agentic/skills/worktree-orchestrator/SKILL.md`                              | Thin further toward wrapper/trigger/owned-output guidance                                                  |
+| docs    | `docs/agentic/skills/worktree-worker/SKILL.md`                                    | Same wrapper-thinning and canonical references                                                             |
+| docs    | `docs/agentic/contracts/agent-handoff-mcp.md`                                     | Add hook semantics section for portable process hooks and durable outputs                                  |
+| docs    | `docs/agentic/instructions.md`                                                    | Update routing guidance so skills are wrappers and playbooks are canonical for shared procedure            |
+| tooling | `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py`                         | Only if needed: expose or rename explicit hook-adjacent MCP surfaces for discoverability                   |
+| tooling | `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/worker_daemon.py` | Document/map existing hook-like events to the new semantics; code changes only if needed for clarity       |
+| tooling | `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/review_ready.py`  | Same mapping if hook semantics require additive visibility                                                 |
 
 ## Related Files
 
-| File | Note |
-| --- | --- |
-| `docs/agentic/playbooks/ace-pruning-playbook.md` | Strong example of agent-agnostic playbook content |
-| `docs/agentic/skills/daemon-lifecycle/SKILL.md` | Good example of agent-specific execution wrapper |
-| `mk/handoff.mk` | Existing shell wrappers around review/handoff/orchestration surfaces that may correspond to portable hook semantics |
-| `scripts/worktree-lane` | Current orchestration helper with both portable workflow logic and repo-specific command integration |
-| `docs/literature/process/agentfactory-book/` | Background source for tool/resource/prompt separation, execution-time injection, and playbook/skill ideas |
+| File                                             | Note                                                                                                                |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `docs/agentic/playbooks/ace-pruning-playbook.md` | Strong example of agent-agnostic playbook content                                                                   |
+| `docs/agentic/skills/daemon-lifecycle/SKILL.md`  | Good example of agent-specific execution wrapper                                                                    |
+| `mk/handoff.mk`                                  | Existing shell wrappers around review/handoff/orchestration surfaces that may correspond to portable hook semantics |
+| `scripts/worktree-lane`                          | Current orchestration helper with both portable workflow logic and repo-specific command integration                |
+| `docs/literature/process/agentfactory-book/`     | Background source for tool/resource/prompt separation, execution-time injection, and playbook/skill ideas           |
 
 ## Verification Strategy
 
@@ -204,41 +206,41 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded the minimum authoritative rules, contracts, and current playbooks/skills before editing.
-- [ ] Confirmed which existing playbooks are portable vs host-specific.
-- [ ] Recorded compatibility expectations for current skill-driven workflows.
+- [x] Loaded the minimum authoritative rules, contracts, and current playbooks/skills before editing.
+- [x] Confirmed which existing playbooks are portable vs host-specific.
+- [x] Recorded compatibility expectations for current skill-driven workflows.
 
 ## Slice 1: Classify and Reframe the Surfaces
 
-- [ ] Classified existing playbooks and skills by ownership/portability.
-- [ ] Updated top-level docs IA guidance.
-- [ ] Declared skills as wrappers, not canonical truth.
+- [x] Classified existing playbooks and skills by ownership/portability.
+- [x] Updated top-level docs IA guidance.
+- [x] Declared skills as wrappers, not canonical truth.
 
 ## Slice 2: Split Portable Procedure from Host-Specific Guidance
 
-- [ ] Separated portable orchestration procedure from Codex-specific guidance.
-- [ ] Reclassified host-specific setup docs appropriately.
-- [ ] Thinned skills toward wrapper/trigger/owned-output roles.
+- [x] Separated portable orchestration procedure from Codex-specific guidance.
+- [x] Reclassified host-specific setup docs appropriately.
+- [x] Thinned skills toward wrapper/trigger/owned-output roles.
 
 ## Slice 3: Define Portable Hook Semantics
 
-- [ ] Added a contract section for portable process hooks.
-- [ ] Mapped existing hook-like tooling behaviors into that model.
-- [ ] Defined durable outputs and operator visibility for each hook.
+- [x] Added a contract section for portable process hooks.
+- [x] Mapped existing hook-like tooling behaviors into that model.
+- [x] Defined durable outputs and operator visibility for each hook.
 
 ## Slice 4: Align Tooling and Guidance
 
-- [ ] Updated instructions/routing to reflect the new ownership model.
-- [ ] Updated doc/tooling references to explicit hook semantics.
-- [ ] Verified the resulting guidance works for both humans and agents.
+- [x] Updated instructions/routing to reflect the new ownership model.
+- [x] Updated doc/tooling references to explicit hook semantics.
+- [x] Verified the resulting guidance works for both humans and agents.
 
 ## Stretch Goals
 
-- [ ] Add an explicit hook-discovery MCP surface or doctor output describing which portable hook semantics are currently active.
-- [ ] Add a host-adapter directory structure that separates Codex-specific docs from future non-Codex adapters more clearly.
+- [x] Add an explicit hook-discovery MCP surface or doctor output describing which portable hook semantics are currently active.
+- [x] Add a host-adapter directory structure that separates Codex-specific docs from future non-Codex adapters more clearly.
 
 ## Success Criteria
 
-- [ ] Canonical operational procedure is clearly agent-agnostic and lives in playbooks/rules rather than in skills.
-- [ ] Skills are thin agent-specific wrappers that point back to canonical process docs.
-- [ ] MCP/tooling hooks are described as portable semantics with durable outputs, enabling agent-agnostic automation reasoning.
+- [x] Canonical operational procedure is clearly agent-agnostic and lives in playbooks/rules rather than in skills.
+- [x] Skills are thin agent-specific wrappers that point back to canonical process docs.
+- [x] MCP/tooling hooks are described as portable semantics with durable outputs, enabling agent-agnostic automation reasoning.

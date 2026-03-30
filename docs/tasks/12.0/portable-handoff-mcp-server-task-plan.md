@@ -2,7 +2,7 @@
 
 ## Problem Statement
 
-The current MCP setup is centered on [`scripts/mcp/unified_server.py`](/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/unified_server.py), which mixes handoff state, repo-intel helpers, and client-specific launch assumptions into one server. The project needs a properly packaged, portable MCP server whose sole job is agent handoff, plus a decomposition plan for the remaining non-handoff tools so they can become separate MCP servers later without dragging handoff state along with them.
+The current MCP setup is centered on [`scripts/mcp/unified_server.py`](/scripts/mcp/unified_server.py), which mixes handoff state, repo-intel helpers, and client-specific launch assumptions into one server. The project needs a properly packaged, portable MCP server whose sole job is agent handoff, plus a decomposition plan for the remaining non-handoff tools so they can become separate MCP servers later without dragging handoff state along with them.
 
 ## Workflow Principles
 
@@ -24,11 +24,11 @@ The current MCP setup is centered on [`scripts/mcp/unified_server.py`](/Users/da
 
 ## Current State Analysis
 
-- [`scripts/mcp/unified_server.py`](/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/unified_server.py) already contains the handoff SQL schema and task-state logic that should be reused as implementation input, even though packaging can start fresh.
+- [`scripts/mcp/unified_server.py`](/scripts/mcp/unified_server.py) already contains the handoff SQL schema and task-state logic that should be reused as implementation input, even though packaging can start fresh.
 - The same file also contains non-handoff helpers for WordPress lookup, React lookup, and docs/contracts/maps access, which makes the server name, packaging, and responsibility boundary unclear.
-- [`scripts/mcp/mcp-server.sh`](/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/mcp-server.sh) and [`.vscode/mcp.json`](/Users/daniel/Development/context-alt-text-monorepo/.vscode/mcp.json) are VS Code oriented launch adapters, not a portable installation story.
+- [`scripts/mcp/mcp-server.sh`](/scripts/mcp/mcp-server.sh) and [`.vscode/mcp.json`](/.vscode/mcp.json) are VS Code oriented launch adapters, not a portable installation story.
 - The current runtime assumes local shell execution details such as `bash`, `pyenv`, sourced `.env`, and macOS/Homebrew-style PATH setup.
-- The handoff database is currently modeled as workspace state under [`.task-state/handoff.db`](/Users/daniel/Development/context-alt-text-monorepo/.task-state/handoff.db), which is the correct ownership model for task history tied to a repo/worktree.
+- The handoff database is currently modeled as workspace state under [`.task-state/handoff.db`](/.task-state/handoff.db), which is the correct ownership model for task history tied to a repo/worktree.
 - MCP itself does not define where mutable server state lives. That decision is application-specific and should follow the ownership boundary of the data.
 - Generic file search/read tools already exist in most harnesses, so docs/contracts/maps helpers should only survive as future MCP stubs if they provide curated domain lookup that generic tools do not.
 - The current fallback workflow also depends on the large CLI surface in `unified_server.py`; a handoff-only package cannot drop that path unless the task explicitly replaces it with an equivalent CLI.
@@ -180,25 +180,25 @@ def main() -> None:
 | File | Line | Change |
 | --- | --- | --- |
 | `packages/agent-handoff-mcp/` | new | Create the installable handoff-only package with runtime config, MCP bootstrap, and CLI entrypoints. |
-| [`/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/unified_server.py`](/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/unified_server.py) | 1 | Extract handoff schema, migrations, runtime config, and MCP tool registration into a dedicated handoff package; leave only transitional compatibility or remove unified bootstrap entirely. |
-| [`/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/mcp-server.sh`](/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/mcp-server.sh) | 1 | Replace repo-specific launcher assumptions with a compatibility shim that invokes the packaged handoff server or generated adapter. |
-| [`/Users/daniel/Development/context-alt-text-monorepo/.vscode/mcp.json`](/Users/daniel/Development/context-alt-text-monorepo/.vscode/mcp.json) | 1 | Point VS Code at the packaged handoff server adapter instead of the unified repo script. |
-| [`/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/BOOTSTRAP.md`](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/BOOTSTRAP.md) | 1 | Replace unified-server setup guidance with handoff-server packaging, registration, and state-location guidance. |
-| [`/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/instructions.md`](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/instructions.md) | 1 | Update MCP fallback and handoff guidance to refer to the dedicated handoff server and its canonical state location. |
-| `/Users/daniel/Development/context-alt-text-monorepo/CLAUDE.md` | 152 | Update MCP handoff contract text and any server-name or tool-prefix assumptions. |
-| `/Users/daniel/Development/context-alt-text-monorepo/GEMINI.md` | 152 | Update MCP handoff contract text and any server-name or tool-prefix assumptions. |
+| [`/scripts/mcp/unified_server.py`](/scripts/mcp/unified_server.py) | 1 | Extract handoff schema, migrations, runtime config, and MCP tool registration into a dedicated handoff package; leave only transitional compatibility or remove unified bootstrap entirely. |
+| [`/scripts/mcp/mcp-server.sh`](/scripts/mcp/mcp-server.sh) | 1 | Replace repo-specific launcher assumptions with a compatibility shim that invokes the packaged handoff server or generated adapter. |
+| [`/.vscode/mcp.json`](/.vscode/mcp.json) | 1 | Point VS Code at the packaged handoff server adapter instead of the unified repo script. |
+| [`/docs/agentic/BOOTSTRAP.md`](/docs/agentic/BOOTSTRAP.md) | 1 | Replace unified-server setup guidance with handoff-server packaging, registration, and state-location guidance. |
+| [`/docs/agentic/instructions.md`](/docs/agentic/instructions.md) | 1 | Update MCP fallback and handoff guidance to refer to the dedicated handoff server and its canonical state location. |
+| `/CLAUDE.md` | 152 | Update MCP handoff contract text and any server-name or tool-prefix assumptions. |
+| ~~`/GEMINI.md`~~ | 152 | Update MCP handoff contract text and any server-name or tool-prefix assumptions. _(File deleted post-completion.)_ |
 | `apps/prototype-description-service/recognition/tests/unit/test_mcp_handoff_state.py` (historical location; tests now live under `packages/agent-handoff-mcp/tests/`) | 1 | Retarget the handoff tests to the extracted package/module boundaries and add packaging/runtime config coverage. |
 
 ## Related Files
 
 | File | Note |
 | --- | --- |
-| [`/Users/daniel/Development/context-alt-text-monorepo/docs/tasks/tech-debt/agent-handoff-state-mcp-implementation-plan.md`](/Users/daniel/Development/context-alt-text-monorepo/docs/tasks/tech-debt/agent-handoff-state-mcp-implementation-plan.md) | Original implementation plan whose schema and tool behavior should be preserved rather than redesigned. |
-| [`/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/templates/CURRENT_TASK.template.md`](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/templates/CURRENT_TASK.template.md) | Fallback markdown template; generated-task behavior still needs to align with this shape. |
-| [`/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/contracts/`](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/contracts/) | Docs/contracts/maps helpers should only become future MCP servers if they add curated lookup value beyond generic tooling. |
-| [`/Users/daniel/Development/context-alt-text-monorepo/scripts/README.md`](/Users/daniel/Development/context-alt-text-monorepo/scripts/README.md) | Needs updated MCP server inventory and launch guidance after decomposition. |
-| `/Users/daniel/Development/context-alt-text-monorepo/CLAUDE.md` | Current fallback instructions and tool-prefix assumptions are part of the rename/update surface. |
-| `/Users/daniel/Development/context-alt-text-monorepo/GEMINI.md` | Current fallback instructions and tool-prefix assumptions are part of the rename/update surface. |
+| [`/docs/tasks/tech-debt/agent-handoff-state-mcp-implementation-plan.md`](/docs/tasks/tech-debt/agent-handoff-state-mcp-implementation-plan.md) | Original implementation plan whose schema and tool behavior should be preserved rather than redesigned. |
+| [`/docs/agentic/templates/CURRENT_TASK.template.md`](/docs/agentic/templates/CURRENT_TASK.template.md) | Fallback markdown template; generated-task behavior still needs to align with this shape. |
+| [`/docs/agentic/contracts/`](/docs/agentic/contracts/) | Docs/contracts/maps helpers should only become future MCP servers if they add curated lookup value beyond generic tooling. |
+| [`/scripts/README.md`](/scripts/README.md) | Needs updated MCP server inventory and launch guidance after decomposition. |
+| `/CLAUDE.md` | Current fallback instructions and tool-prefix assumptions are part of the rename/update surface. |
+| ~~`/GEMINI.md`~~ | Current fallback instructions and tool-prefix assumptions are part of the rename/update surface. _(File deleted post-completion.)_ |
 
 ---
 
@@ -252,11 +252,11 @@ def main() -> None:
 
 Phase 3 resolution:
 
-- The explicit non-handoff classification now lives in [`repo-intel-mcp-candidates.md`](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/contracts/repo-intel-mcp-candidates.md).
+- The explicit non-handoff classification now lives in [`repo-intel-mcp-candidates.md`](/docs/agentic/contracts/repo-intel-mcp-candidates.md).
 - `trace_api_endpoint` is the only retained future candidate, and it should graduate only as part of a narrow `repo-intel` companion server.
 - All current docs, React, and WordPress helpers are dropped rather than re-packaged because they do not add curated value beyond native search/read/navigation tools.
 - No stub MCP servers are created in this phase because there is no validated contract beyond the single cross-boundary tracing workflow.
-- The portable handoff package is already quarantined from non-handoff tools because [`build_handoff_mcp()`](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py) only registers the handoff tool surface.
+- The portable handoff package is already quarantined from non-handoff tools because [`build_handoff_mcp()`](/packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py) only registers the handoff tool surface.
 
 ## Phase 4: Tests and Migration Safety
 
@@ -276,9 +276,9 @@ Phase 3 resolution:
 
 Stretch goal resolution for packaging:
 
-- The handoff server now ships with a console-script binary name, `agent-handoff-mcp`, via [`pyproject.toml`](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/pyproject.toml).
+- The handoff server now ships with a console-script binary name, `agent-handoff-mcp`, via [`pyproject.toml`](/packages/agent-handoff-mcp/pyproject.toml).
 - The recommended beta distribution model is a pinned git-tag install from the monorepo package subdirectory instead of a separate package registry.
-- [`mcp-server.sh`](/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/mcp-server.sh) now prefers the installed binary and falls back to the repo-local package source only for development worktrees.
+- [`mcp-server.sh`](/scripts/mcp/mcp-server.sh) now prefers the installed binary and falls back to the repo-local package source only for development worktrees.
 
 ## Success Criteria
 

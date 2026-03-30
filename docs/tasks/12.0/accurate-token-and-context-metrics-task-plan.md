@@ -48,12 +48,12 @@ ACE itself is also only partially observable today. The reflection code exists, 
 ## Current State Analysis
 
 - Exact token usage already exists in some adapters:
-  - [codex_cli.py](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/adapters/codex_cli.py) extracts and normalizes provider usage.
-  - [claude_code.py](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/adapters/claude_code.py) does the same for Claude CLI responses.
+  - [codex_cli.py](/packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/adapters/codex_cli.py) extracts and normalizes provider usage.
+  - [claude_code.py](/packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/adapters/claude_code.py) does the same for Claude CLI responses.
 - Backend coverage is incomplete today:
-  - [codex_subagent.py](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/adapters/codex_subagent.py) is currently a bridge pass-through and does not yet define a shared token-normalization contract of its own.
-  - [local_model.py](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/adapters/local_model.py) extracts message content from the OpenAI-compatible response but currently discards the upstream `usage` block instead of normalizing it.
-  - [backend_registry.py](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/backend_registry.py) registers all supported backends, so Slice 2 must account for the full adapter set rather than only the two adapters that already normalize usage.
+  - [codex_subagent.py](/packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/adapters/codex_subagent.py) is currently a bridge pass-through and does not yet define a shared token-normalization contract of its own.
+  - [local_model.py](/packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/adapters/local_model.py) extracts message content from the OpenAI-compatible response but currently discards the upstream `usage` block instead of normalizing it.
+  - [backend_registry.py](/packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/backend_registry.py) registers all supported backends, so Slice 2 must account for the full adapter set rather than only the two adapters that already normalize usage.
 - `worker_daemon.py` already writes per-turn observability state and emits `SUBAGENT_TURN_OBSERVED` events with token totals.
 - `ace_metrics.py` already reports `token_burn` and `context_pressure`, but `token_burn` reads JSONL worker events rather than a durable structured DB ledger, and `context_pressure` only aggregates warning events.
 - `lane_prompt.py` currently estimates prompt tokens as `len(prompt) // 4`, which is explicitly approximate and backend-agnostic.
@@ -69,8 +69,8 @@ ACE should also have an explicit operational health surface. Operators should be
 
 ## Context Loading
 
-- Rules: [instructions.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/instructions.md), [development-workflow.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/rules/development-workflow.md)
-- Contracts: [agent-handoff-mcp.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/contracts/agent-handoff-mcp.md)
+- Rules: [instructions.md](/docs/agentic/instructions.md), [development-workflow.md](/docs/agentic/rules/development-workflow.md)
+- Contracts: [agent-handoff-mcp.md](/docs/agentic/contracts/agent-handoff-mcp.md)
 - Handoff/MCP state: inspect recent `get_metrics_summary` output, token-usage decision records, and open findings under `agentic-development-process-hardening-epic`
 - External docs via `ctx7` only if: official tokenizer/model-usage documentation is needed for a backend-specific exact-tokenization path
 
@@ -78,7 +78,7 @@ ACE should also have an explicit operational health surface. Operators should be
 
 | Boundary                     | Owner                         | Current Contract                                                                                                        | Expected Change                                                                                                                                                 | Compatibility Needed?                                           | Verification            |
 | ---------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ----------------------- |
-| Worker observability ledger  | agentic-tooling               | [agent-handoff-mcp.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/contracts/agent-handoff-mcp.md) | Add a durable turn-metrics schema and MCP read surfaces for per-turn token/context usage                                                                        | Yes; additive schema and additive MCP tools only                | pytest + contract doc   |
+| Worker observability ledger  | agentic-tooling               | [agent-handoff-mcp.md](/docs/agentic/contracts/agent-handoff-mcp.md) | Add a durable turn-metrics schema and MCP read surfaces for per-turn token/context usage                                                                        | Yes; additive schema and additive MCP tools only                | pytest + contract doc   |
 | Adapter token normalization  | orchestration backends        | Current adapter-local usage normalization in `codex_cli.py` and `claude_code.py`                                        | Tighten the normalized token-usage contract and mark exactness/source explicitly                                                                                | Yes; retain existing normalized fields while extending metadata | unit tests              |
 | Context-pressure measurement | orchestration prompt builder  | `lane_prompt.py` approximate `chars / 4` estimator                                                                      | Replace unlabeled rough estimates with exact tokenization only on explicitly supported backend/model paths and explicit estimate source labels otherwise        | Yes; pressure output remains available but gets source metadata | pytest                  |
 | Retrospective metrics        | ACE / orchestration reporting | `ace_metrics.py` snapshot sections                                                                                      | Add structured token/context and tool-attribution sections that can support retrospective analysis, including caller-reported `ctx7` attribution when available | Yes; additive snapshot keys                                     | pytest + smoke snapshot |
@@ -141,7 +141,7 @@ Implement this in five slices. First, create a durable per-turn metrics ledger i
   - Run `make ace-reflect TASK=<task-ref>` and confirm the process-health surface reports `applied` with pending count cleared
   - Run one historical backfill path for existing rule-tagged findings and confirm ACE can transition from `defined` to `detecting`/`applied` without a new review cycle
 - Contract/fixture verification:
-  - Verify [agent-handoff-mcp.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/contracts/agent-handoff-mcp.md) documents which fields are exact, which are estimated, and how attribution flags are populated
+  - Verify [agent-handoff-mcp.md](/docs/agentic/contracts/agent-handoff-mcp.md) documents which fields are exact, which are estimated, and how attribution flags are populated
 - Manual verification:
   - Use MCP to inspect the latest turn metrics for a task and confirm tool-attribution fields show whether ACE guidance, `ctx7`, artifact retrieval, and slice packets were involved
 
@@ -225,7 +225,7 @@ Changes:
   - pressure by source type
   - tool-attributed token/context usage for ACE, artifact retrieval, slice-packet flows, and caller-reported `ctx7` where present
 - Update the MCP contract doc to define the new metrics schema and read surfaces.
-- Update [ace-pruning-playbook.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/playbooks/ace-pruning-playbook.md) so retrospective guidance references measurable signals rather than vague token-savings claims, and keep any `instructions.md` change to a minimal pointer only if routing needs it.
+- Update [ace-pruning-playbook.md](/docs/agentic/playbooks/ace-pruning-playbook.md) so retrospective guidance references measurable signals rather than vague token-savings claims, and keep any `instructions.md` change to a minimal pointer only if routing needs it.
 
 Proof:
 
@@ -347,6 +347,8 @@ Additionally, `BackendResult` has no `model` field. The model name used during e
 | `claude_code.py`          | Partial token counts (reasoning hardcoded 0)       | `response["model"]`, extended thinking tokens                  |
 | `local_model.py`          | Nothing; `data["usage"]` discarded                 | All token/model fields                                         |
 | `codex_subagent.py`       | Pass-through from bridge                           | No fallback extraction                                         |
+
+> **Note (2026-03-30):** The `_record_observability` row above reflects state at authoring time. Post-completion, `obs_ctx: ObservabilityContext` was made required and backward-compat flat params were removed (RE-L3).
 
 ### Target Convention
 

@@ -1,6 +1,7 @@
 # E12-4. Migration Policy and Audit Pass
 
 > **Metadata**
+>
 > - **Date**: 2026-03-28 16:55 EDT
 > - **Author**: codex
 > - **Owning Epic**: [epic-task-reference-prefixing-and-handoff-enforcement-epic.md](docs/epics/v0.3.1/epic-task-reference-prefixing-and-handoff-enforcement-epic.md)
@@ -45,23 +46,23 @@ The repo should have one explicit statement that historical planning docs and hi
 
 ## Proposed Solution
 
-Write the grandfathering rule where reviewers and implementers will actually see it, then add a short audit checklist for new epics, task plans, and decisions. Avoid broad historical rename policy and avoid planning a backfill unless a specific stale artifact is already causing confusion.
+Write the grandfathering rule where reviewers and implementers will actually see it, then align this phase with the checklist/routing guidance that lands in `E12-2` instead of creating a second owner for `planning-review-guide.md`. Avoid broad historical rename policy and avoid planning a backfill unless a specific stale artifact is already causing confusion.
 
 ## Files and Surfaces to Change
 
-| Surface | File | Change |
-| --- | --- | --- |
-| docs | `docs/agentic/rules/development-workflow.md` | Add one concise grandfathering rule and reviewer checklist references |
-| docs | `docs/agentic/rules/planning-review-guide.md` | Add a compact compliance audit checklist for new planning docs |
-| contract | `docs/agentic/contracts/agent-handoff-mcp.md` | Clarify that new decision writes are enforced while historical rows are grandfathered |
-| docs | `docs/epics/v0.3.1/epic-task-reference-prefixing-and-handoff-enforcement-epic.md` | Keep Phase 4 language aligned with the slimmed task scope |
+| Surface  | File                                                                              | Change                                                                                          |
+| -------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| docs     | `docs/agentic/rules/development-workflow.md`                                      | Add one concise grandfathering rule and reviewer checklist references                           |
+| docs     | `docs/agentic/rules/planning-review-guide.md`                                     | Verification-only: confirm the checklist added by `E12-2` remains sufficient for policy rollout |
+| contract | `docs/agentic/contracts/agent-handoff-mcp.md`                                     | Clarify that new decision writes are enforced while historical rows are grandfathered           |
+| docs     | `docs/epics/v0.3.1/epic-task-reference-prefixing-and-handoff-enforcement-epic.md` | Keep Phase 4 language aligned with the slimmed task scope                                       |
 
 ## Related Files
 
-| File | Note |
-| --- | --- |
-| `docs/agentic/instructions.md` | Should keep only concise routing/pointer text once the policy is finalized |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py` | Runtime behavior the grandfathering rule must match |
+| File                                                       | Note                                                                       |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `docs/agentic/instructions.md`                             | Should keep only concise routing/pointer text once the policy is finalized |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py` | Runtime behavior the grandfathering rule must match                        |
 
 ## Verification Strategy
 
@@ -94,28 +95,28 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded the current workflow, planning-review, and MCP contract surfaces before editing.
-- [ ] Confirmed the grandfathering rule matches actual new-write enforcement behavior.
+- [x] Loaded the current workflow, planning-review, and MCP contract surfaces before editing.
+- [x] Confirmed the grandfathering rule matches actual new-write enforcement behavior.
 
 ## Slice 1: Grandfathering Rule and Review Checklist
 
-- [ ] Documented a concise grandfathering rule in workflow/contract text.
-- [ ] Added a concise compliance checklist.
-- [ ] Updated stale old-format references that would confuse reviewers.
-- [ ] Kept the rule aligned with actual enforcement boundaries.
-- [ ] Kept the epic’s Phase 4 language aligned with this scope.
+- [x] Documented a concise grandfathering rule in workflow/contract text. (`development-workflow.md` Grandfathering Rule section; `agent-handoff-mcp.md` contract grandfathering paragraph.)
+- [x] Added a concise compliance checklist. (`development-workflow.md` New-Work Compliance Checklist; `planning-review-guide.md` Naming and Reference Compliance section.)
+- [x] Updated stale old-format references that would confuse reviewers.
+- [x] Kept the rule aligned with actual enforcement boundaries.
+- [x] Kept the epic's Phase 4 language aligned with this scope.
 
 ## Review Readiness
 
-- [ ] Historical grandfathering rule is explicit.
-- [ ] Reviewers have a practical checklist for new work.
-- [ ] Handoff decision records the policy/audit updates and verification evidence.
+- [x] Historical grandfathering rule is explicit.
+- [x] Reviewers have a practical checklist for new work.
+- [x] Handoff decision records the policy/audit updates and verification evidence.
 
 ## Stretch Goals
 
-- [ ] Add a future audit helper command only if the manual checklist proves too noisy.
+- [ ] Add a future audit helper command only if the manual checklist proves too noisy. (Deferred; manual checklist is adequate.)
 
 ## Success Criteria
 
-- [ ] The repo has a written grandfathering rule for historical docs/decisions and a clear new-write enforcement rule.
-- [ ] Reviewers can verify new epic/task/decision naming compliance from a lightweight checklist.
+- [x] The repo has a written grandfathering rule for historical docs/decisions and a clear new-write enforcement rule.
+- [x] Reviewers can verify new epic/task/decision naming compliance from a lightweight checklist.

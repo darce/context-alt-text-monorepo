@@ -1,3 +1,5 @@
+# pyright: reportUnusedImport=false, reportPrivateUsage=false
+
 """Backward-compatible re-export surface for agent_handoff_mcp.
 
 This module is the compatibility layer for consumers that import from
@@ -24,13 +26,50 @@ from __future__ import annotations
 import sqlite3  # noqa: F401 – kept for type annotations used in _annotate_review_finding
 
 # ---------------------------------------------------------------------------
-# Slice-decision helpers re-exported for core.py backward compat
+# Rendering cluster (extracted to current_task_rendering — E12-10 Slice 1)
 # ---------------------------------------------------------------------------
-from .slice_decision import (  # noqa: F401
-    classify_decision_id,
-    extract_slice_label,
-    is_canonical_decision,
-    is_slice_complete_decision,
+from .current_task_rendering import (  # noqa: F401
+    CurrentTaskRenderState,
+    DashboardTaskRow,
+    ReviewCoverageSummary,
+    TaskSnapshot,
+    _build_current_task_state_from_snapshot,
+    _collect_dashboard_rows,
+    _collect_task_snapshot,
+    _fetch_related_open_findings,
+    _fetch_related_open_findings_impl,
+    _format_token_suffix,
+    _render_coverage_section,
+    _render_current_task_md,
+    _render_dashboard_section,
+    _render_findings_section,
+    _render_lanes_section,
+    _render_token_summary_section,
+    _write_current_task_md_for_task,
+    _write_current_task_md_from_state,
+)
+
+# ---------------------------------------------------------------------------
+# Archival summary helpers (extracted to shared_archival — E12-10 Slice 7)
+# ---------------------------------------------------------------------------
+from .shared_archival import (  # noqa: F401
+    ArchivalSummaryBuilder,
+    _build_archival_decision_summary,
+    _build_archival_lane_activity_summary,
+    _build_archival_message_summary,
+    _build_archival_report_summary,
+    _build_archival_test_summary,
+    _count_by_value,
+)
+
+# ---------------------------------------------------------------------------
+# DB query utilities (extracted to shared_db_utils — E12-10 Slice 6)
+# ---------------------------------------------------------------------------
+from .shared_db_utils import (  # noqa: F401
+    _count_task_rows,
+    _fetch_handoff_rows,
+    _paginated_query,
+    _resolve_output_path,
 )
 
 # ---------------------------------------------------------------------------
@@ -38,6 +77,9 @@ from .slice_decision import (  # noqa: F401
 # (extracted to shared_primitives — E12-9 boundary cleanup)
 # ---------------------------------------------------------------------------
 from .shared_primitives import (  # noqa: F401
+    _FTS5_CONTROL_RE,
+    _VERIFIED_TEST_RESULT_HINT_RE,
+    _VERIFIED_TEST_RESULT_MAX_CHARS,
     ACTION_STATUSES,
     BATCH_CLOSE_THRESHOLD,
     BATCH_CLOSE_WINDOW_SECONDS,
@@ -65,9 +107,6 @@ from .shared_primitives import (  # noqa: F401
     PromptMetrics,
     ReviewFindingDetails,
     TokenUsage,
-    _FTS5_CONTROL_RE,
-    _VERIFIED_TEST_RESULT_HINT_RE,
-    _VERIFIED_TEST_RESULT_MAX_CHARS,
     _coerce_string_list,
     _current_task_path,
     _decode_lane_message_row_dict,
@@ -95,6 +134,37 @@ from .shared_primitives import (  # noqa: F401
 )
 
 # ---------------------------------------------------------------------------
+# Schema SQL strings + bootstrap (extracted to shared_schema — E12-10 Slice 3)
+# ---------------------------------------------------------------------------
+from .shared_schema import (  # noqa: F401
+    _HANDOFF_FTS_TRIGGERS_SQL,
+    HANDOFF_FTS_SCHEMA_SQL,
+    HANDOFF_SCHEMA_SQL,
+    _apply_handoff_migrations,
+    _backfill_handoff_fts,
+    _dedupe_review_findings,
+    _ensure_handoff_fts,
+    _ensure_review_findings_unique_index,
+    _get_db_connection,
+    _has_column,
+    _has_index,
+)
+
+# ---------------------------------------------------------------------------
+# Tool invocation helpers (extracted to shared_tool_adapters — E12-10 Slice 5)
+# ---------------------------------------------------------------------------
+from .shared_tool_adapters import (  # noqa: F401
+    _FnWrappedTool,
+    _FunctionWrappedTool,
+    _FuncWrappedTool,
+    _invoke_tool,
+    _normalize_tool_result,
+    _resolve_awaitable,
+    _RunnableTool,
+    _unwrap_tool_candidate,
+)
+
+# ---------------------------------------------------------------------------
 # Write-context cluster (extracted to shared_write_context — E12-10 Slice 2)
 # ---------------------------------------------------------------------------
 from .shared_write_context import (  # noqa: F401
@@ -112,80 +182,14 @@ from .shared_write_context import (  # noqa: F401
 )
 
 # ---------------------------------------------------------------------------
-# Schema SQL strings + bootstrap (extracted to shared_schema — E12-10 Slice 3)
+# Slice-decision helpers re-exported for core.py backward compat
 # ---------------------------------------------------------------------------
-from .shared_schema import (  # noqa: F401
-    HANDOFF_FTS_SCHEMA_SQL,
-    HANDOFF_SCHEMA_SQL,
-    _HANDOFF_FTS_TRIGGERS_SQL,
-    _apply_handoff_migrations,
-    _backfill_handoff_fts,
-    _dedupe_review_findings,
-    _ensure_handoff_fts,
-    _ensure_review_findings_unique_index,
-    _get_db_connection,
-    _has_column,
-    _has_index,
+from .slice_decision import (  # noqa: F401
+    classify_decision_id,
+    extract_slice_label,
+    is_canonical_decision,
+    is_slice_complete_decision,
 )
-
-# ---------------------------------------------------------------------------
-# DB query utilities (extracted to shared_db_utils — E12-10 Slice 6)
-# ---------------------------------------------------------------------------
-from .shared_db_utils import (  # noqa: F401
-    _count_task_rows,
-    _fetch_handoff_rows,
-    _paginated_query,
-    _resolve_output_path,
-)
-
-# ---------------------------------------------------------------------------
-# Rendering cluster (extracted to current_task_rendering — E12-10 Slice 1)
-# ---------------------------------------------------------------------------
-from .current_task_rendering import (  # noqa: F401
-    CurrentTaskRenderState,
-    ReviewCoverageSummary,
-    TaskSnapshot,
-    _build_current_task_state_from_snapshot,
-    _collect_task_snapshot,
-    _fetch_related_open_findings,
-    _fetch_related_open_findings_impl,
-    _format_token_suffix,
-    _render_coverage_section,
-    _render_current_task_md,
-    _render_findings_section,
-    _render_lanes_section,
-    _render_token_summary_section,
-    _write_current_task_md_for_task,
-    _write_current_task_md_from_state,
-)
-
-# ---------------------------------------------------------------------------
-# Archival summary helpers (extracted to shared_archival — E12-10 Slice 7)
-# ---------------------------------------------------------------------------
-from .shared_archival import (  # noqa: F401
-    ArchivalSummaryBuilder,
-    _build_archival_decision_summary,
-    _build_archival_lane_activity_summary,
-    _build_archival_message_summary,
-    _build_archival_report_summary,
-    _build_archival_test_summary,
-    _count_by_value,
-)
-
-# ---------------------------------------------------------------------------
-# Tool invocation helpers (extracted to shared_tool_adapters — E12-10 Slice 5)
-# ---------------------------------------------------------------------------
-from .shared_tool_adapters import (  # noqa: F401
-    _FnWrappedTool,
-    _FunctionWrappedTool,
-    _FuncWrappedTool,
-    _invoke_tool,
-    _normalize_tool_result,
-    _resolve_awaitable,
-    _RunnableTool,
-    _unwrap_tool_candidate,
-)
-
 
 # ---------------------------------------------------------------------------
 # _annotate_review_finding — must remain here to avoid a circular import.
@@ -210,4 +214,3 @@ def _annotate_review_finding(
     _classify_fn = _resolve_core_override("_classify_commit_relation", _classify_commit_relation)
     finding["workspace_commit_relation"] = _classify_fn(finding_commit_sha, workspace_commit_sha)
     return finding
-

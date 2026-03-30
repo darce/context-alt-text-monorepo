@@ -34,7 +34,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TypedDict
+from typing import TypedDict, cast
 
 from .enums import (
     ActionStatus,
@@ -349,7 +349,7 @@ def _resolve_current_lane_row(conn: sqlite3.Connection, task_ref: str) -> sqlite
         if raw_path is None:
             continue
         if _normalize_path_for_match(raw_path) == workspace_path:
-            return row  # type: ignore[return-value]
+            return cast(sqlite3.Row, row)
     return None
 
 

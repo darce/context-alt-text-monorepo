@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-
 _MODEL_LABEL_REGISTRY = {
     "claude-opus-4-0520": "Opus 4.6",
     "claude-sonnet-4-20250514": "Sonnet 4",

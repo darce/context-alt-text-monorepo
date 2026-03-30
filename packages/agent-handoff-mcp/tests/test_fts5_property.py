@@ -1,19 +1,19 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
 import sqlite3
-from tempfile import TemporaryDirectory
+from contextlib import contextmanager
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from agent_handoff_mcp import api as mcp_server
 from agent_handoff_mcp import core as handoff_core
-from agent_handoff_mcp.core import _FTS5_CONTROL_RE
 from agent_handoff_mcp.artifact_index import _FTS5_SPECIAL_RE, _build_fts5_match_query
 from agent_handoff_mcp.config import RuntimeConfig
+from agent_handoff_mcp.core import _FTS5_CONTROL_RE
 
 
 def _parse(payload: str | dict) -> dict:
@@ -27,7 +27,7 @@ def _new_fts_conn() -> sqlite3.Connection:
     conn.execute("CREATE VIRTUAL TABLE docs USING fts5(body)")
     conn.execute(
         "INSERT INTO docs(body) VALUES (?)",
-        ('phrase query unicode cafe emoji test retry policy leader election',),
+        ("phrase query unicode cafe emoji test retry policy leader election",),
     )
     return conn
 
@@ -46,6 +46,7 @@ def _isolated_runtime():
         )
         yield
 
+
 @settings(max_examples=40, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(st.text().filter(lambda value: bool(_FTS5_CONTROL_RE.sub(" ", value).strip())))
 def test_search_handoff_phrase_quotes_non_blank_terms(
@@ -60,6 +61,7 @@ def test_search_handoff_phrase_quotes_non_blank_terms(
         assert result["ok"] is True
         assert result["query"] == '"' + stripped.replace('"', '""') + '"'
 
+
 @settings(max_examples=25, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(st.lists(st.text(alphabet=[" ", "\t", "\n", "\r"]), min_size=1, max_size=4))
 def test_search_handoff_blank_queries_preserve_error_contract(
@@ -70,6 +72,7 @@ def test_search_handoff_blank_queries_preserve_error_contract(
 
         assert result["ok"] is False
         assert result["error"] == "All query strings are empty after stripping."
+
 
 @settings(max_examples=100, deadline=None)
 @given(st.lists(st.text(), min_size=1, max_size=4))
@@ -86,7 +89,8 @@ def test_build_fts5_match_query_executes_without_error(queries: list[str]) -> No
     for cleaned in cleaned_parts:
         for term in cleaned.split():
             assert not _FTS5_SPECIAL_RE.search(term)
-            assert f'"{term.replace("\"", "\"\"")}"' in match_query
+            escaped_term = term.replace('"', '""')
+            assert f'"{escaped_term}"' in match_query
 
     if len(cleaned_parts) == 1:
         assert " OR " not in match_query
@@ -95,6 +99,7 @@ def test_build_fts5_match_query_executes_without_error(queries: list[str]) -> No
 
     with _new_fts_conn() as conn:
         conn.execute("SELECT count(*) FROM docs WHERE docs MATCH ?", (match_query,)).fetchone()
+
 
 @settings(max_examples=40, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(st.text(alphabet=st.sampled_from(["c", "a", "f", "e", " ", '"', ":", "-", "😀", "界", "\u0301"]), min_size=1))

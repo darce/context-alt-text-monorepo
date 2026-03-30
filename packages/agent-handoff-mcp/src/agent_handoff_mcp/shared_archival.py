@@ -15,6 +15,7 @@ Imports from _shared are done at function level (late imports) to avoid a circul
 module dependency: _shared.py re-exports from this module at its top level, so
 module-level imports here would create a deadlock when this module is loaded first.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -93,7 +94,9 @@ class ArchivalSummaryBuilder:
         return {
             "count": int(decisions_total_row["count"]) if decisions_total_row else 0,
             "latest_rationale_excerpt": _excerpt_text(
-                str(latest_decision_row["rationale"]) if latest_decision_row and latest_decision_row["rationale"] is not None else None
+                str(latest_decision_row["rationale"])
+                if latest_decision_row and latest_decision_row["rationale"] is not None
+                else None
             ),
         }
 

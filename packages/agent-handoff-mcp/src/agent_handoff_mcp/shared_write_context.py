@@ -19,11 +19,12 @@ Imports from _shared are done at function level (late imports) to avoid a circul
 module dependency: _shared.py re-exports from this module at its end, so module-level
 imports in this file would create a deadlock when this module is loaded first.
 """
+
 from __future__ import annotations
 
 import os
-import subprocess
 import sqlite3
+import subprocess
 from dataclasses import dataclass
 from typing import Any, TypedDict
 
@@ -79,6 +80,7 @@ def _resolve_core_override(attr_name: str, fallback: Any) -> Any:
     function uses a single, tested code path.
     """
     import sys  # noqa: PLC0415
+
     _core_mod = sys.modules.get("agent_handoff_mcp.core")
     fn = getattr(_core_mod, attr_name, None) if _core_mod is not None else None
     return fn if fn is not None else fallback
@@ -250,14 +252,18 @@ def _resolve_write_actor(
 
     explicit_agent = _normalize_optional_text(actor.get("agent")) if actor else None
     explicit_model = _normalize_optional_text(actor.get("model")) if actor else None
-    explicit_model_label = (_normalize_optional_text(actor.get("model_label")) if actor else None) or normalize_model_label(explicit_model)
+    explicit_model_label = (
+        _normalize_optional_text(actor.get("model_label")) if actor else None
+    ) or normalize_model_label(explicit_model)
     explicit_reasoning_level = normalize_reasoning_level(actor.get("reasoning_level")) if actor else None
     explicit_identity = normalize_model_identity(explicit_model_label, explicit_reasoning_level)
     explicit_branch = _normalize_optional_text(actor.get("branch")) if actor else None
     explicit_commit = _normalize_optional_text(actor.get("commit_sha")) if actor else None
     explicit_lane = _normalize_optional_text(actor.get("lane_id")) if actor else None
     default_agent = _normalize_optional_text(os.environ.get("AGENT_HANDOFF_DEFAULT_AGENT")) or "codex"
-    active = conn.execute("SELECT updated_by, updated_branch, updated_commit_sha FROM handoff_state WHERE id = 1").fetchone()
+    active = conn.execute(
+        "SELECT updated_by, updated_branch, updated_commit_sha FROM handoff_state WHERE id = 1"
+    ).fetchone()
     active_agent = _normalize_optional_text(active["updated_by"]) if active is not None else None
     active_branch = _normalize_optional_text(active["updated_branch"]) if active is not None else None
     active_commit = _normalize_optional_text(active["updated_commit_sha"]) if active is not None else None

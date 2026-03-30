@@ -7,6 +7,7 @@ backward-compatible access.
 No imports from .core (circular). Only imports from standard library,
 .runtime, .enums, .slice_decision, .artifact_index.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -22,7 +23,6 @@ from pathlib import Path
 from threading import Thread
 from typing import Any, Awaitable, Callable, Protocol, TypedDict, cast, runtime_checkable
 
-from .runtime import get_runtime_config
 from .enums import (
     ActionStatus,
     BlockerStatus,
@@ -33,14 +33,15 @@ from .enums import (
     LaneStatus,
     MessageStatus,
     PlanCursorState,
-    ReviewKind,
     ReportStatus,
+    ReviewKind,
     ReviewMode,
     ReviewScopeSource,
     normalize_model_identity,
     normalize_model_label,
     normalize_reasoning_level,
 )
+from .runtime import get_runtime_config
 from .slice_decision import (
     classify_decision_id,  # noqa: F401 – re-exported for core.py
     extract_slice_label,  # noqa: F401 – re-exported for core.py
@@ -107,17 +108,17 @@ SUBPROCESS_TIMEOUT = 10
 
 # Write-context cluster — re-exported from shared_write_context.py (E12-10 Slice 2)
 from .shared_write_context import (  # noqa: F401, E402
-    WriteActor,
     ResolvedWriteContext,
-    _resolve_core_override,
-    build_write_actor,
-    _first_non_empty_env,
-    _run_cmd,
-    _detect_git_write_context,
-    _git_is_ancestor,
+    WriteActor,
     _classify_commit_relation,
-    _workspace_git_context,
+    _detect_git_write_context,
+    _first_non_empty_env,
+    _git_is_ancestor,
+    _resolve_core_override,
     _resolve_write_actor,
+    _run_cmd,
+    _workspace_git_context,
+    build_write_actor,
 )
 
 
@@ -178,20 +179,18 @@ def _exports_dir() -> Path:
 # ---------------------------------------------------------------------------
 
 from .shared_schema import (  # noqa: E402
-    HANDOFF_SCHEMA_SQL,
-    HANDOFF_FTS_SCHEMA_SQL,
     _HANDOFF_FTS_TRIGGERS_SQL,
-    _has_column,
-    _has_index,
+    HANDOFF_FTS_SCHEMA_SQL,
+    HANDOFF_SCHEMA_SQL,
+    _apply_handoff_migrations,
     _backfill_handoff_fts,
+    _dedupe_review_findings,
     _ensure_handoff_fts,
     _ensure_review_findings_unique_index,
-    _dedupe_review_findings,
-    _apply_handoff_migrations,
     _get_db_connection,
+    _has_column,
+    _has_index,
 )
-
-
 
 # ---------------------------------------------------------------------------
 # Core text utilities
@@ -270,12 +269,11 @@ def _resolve_task_ref(conn: sqlite3.Connection, task_ref: str | None) -> str:
 # DB query utilities — re-exported from shared_db_utils.py (E12-10 Slice 6)
 # ---------------------------------------------------------------------------
 from .shared_db_utils import (  # noqa: F401, E402
+    _count_task_rows,
     _fetch_handoff_rows,
     _paginated_query,
-    _count_task_rows,
     _resolve_output_path,
 )
-
 
 # ---------------------------------------------------------------------------
 # Datetime utilities
@@ -437,21 +435,12 @@ def _validate_decision_payload(decision: str, rationale: str | None) -> str | No
             "New writes must use <author_tag>_slice_complete_<work_ref>_<slug>."
         )
     if decision.startswith("slice_complete_"):
-        return (
-            "Malformed slice-complete id. New writes must use "
-            "<author_tag>_slice_complete_<work_ref>_<slug>."
-        )
+        return "Malformed slice-complete id. New writes must use <author_tag>_slice_complete_<work_ref>_<slug>."
     if "_slice_complete_" in decision and not is_prefixed_slice_complete_decision(decision):
-        return (
-            "Malformed slice-complete id. Expected "
-            "<author_tag>_slice_complete_<work_ref>_<slug>."
-        )
+        return "Malformed slice-complete id. Expected <author_tag>_slice_complete_<work_ref>_<slug>."
     if is_slice_complete_decision(decision) and not _has_structured_slice_summary(str(rationale or "")):
         headings = ", ".join(MANDATORY_SLICE_DECISION_HEADINGS)
-        return (
-            "slice_complete_* decisions require a structured rationale with non-empty sections for: "
-            f"{headings}."
-        )
+        return f"slice_complete_* decisions require a structured rationale with non-empty sections for: {headings}."
     return None
 
 
@@ -460,7 +449,9 @@ def _validate_decision_payload(decision: str, rationale: str | None) -> str | No
 # ---------------------------------------------------------------------------
 
 
-def _annotate_review_finding(row: dict[str, object], *, workspace_branch: str | None, workspace_commit_sha: str | None) -> dict[str, object]:
+def _annotate_review_finding(
+    row: dict[str, object], *, workspace_branch: str | None, workspace_commit_sha: str | None
+) -> dict[str, object]:
     finding = dict(row)
     finding_branch = _normalize_optional_text(finding.get("branch"))
     finding_commit_sha = _normalize_optional_text(finding.get("commit_sha"))
@@ -514,54 +505,49 @@ def _resolve_import_lane_id(row: dict) -> str | None:
 # ---------------------------------------------------------------------------
 # Archival summary helpers — re-exported from shared_archival.py (E12-10 Slice 7)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Snapshot helpers
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Rendering cluster — re-exported from current_task_rendering.py (E12-10 Slice 1)
+# ---------------------------------------------------------------------------
+from .current_task_rendering import (  # noqa: F401, E402
+    CurrentTaskRenderState,
+    ReviewCoverageSummary,
+    TaskSnapshot,
+    _build_current_task_state_from_snapshot,
+    _collect_task_snapshot,
+    _fetch_related_open_findings,
+    _fetch_related_open_findings_impl,
+    _format_token_suffix,
+    _render_coverage_section,
+    _render_current_task_md,
+    _render_findings_section,
+    _render_lanes_section,
+    _render_token_summary_section,
+    _write_current_task_md_for_task,
+    _write_current_task_md_from_state,
+)
 from .shared_archival import (  # noqa: F401, E402
-    _count_by_value,
     ArchivalSummaryBuilder,
     _build_archival_decision_summary,
+    _build_archival_lane_activity_summary,
+    _build_archival_message_summary,
     _build_archival_report_summary,
     _build_archival_test_summary,
-    _build_archival_message_summary,
-    _build_archival_lane_activity_summary,
+    _count_by_value,
 )
-
 
 # ---------------------------------------------------------------------------
 # Tool invocation helpers — re-exported from shared_tool_adapters.py (E12-10 Slice 5)
 # ---------------------------------------------------------------------------
 from .shared_tool_adapters import (  # noqa: F401, E402
-    _resolve_awaitable,
-    _normalize_tool_result,
     _FnWrappedTool,
     _FunctionWrappedTool,
     _FuncWrappedTool,
+    _invoke_tool,
+    _normalize_tool_result,
+    _resolve_awaitable,
     _RunnableTool,
     _unwrap_tool_candidate,
-    _invoke_tool,
-)
-
-
-# ---------------------------------------------------------------------------
-# Snapshot helpers
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Rendering cluster — re-exported from current_task_rendering.py (E12-10 Slice 1)
-# ---------------------------------------------------------------------------
-from .current_task_rendering import (  # noqa: F401, E402
-    TaskSnapshot,
-    ReviewCoverageSummary,
-    CurrentTaskRenderState,
-    _collect_task_snapshot,
-    _build_current_task_state_from_snapshot,
-    _write_current_task_md_for_task,
-    _write_current_task_md_from_state,
-    _fetch_related_open_findings_impl,
-    _fetch_related_open_findings,
-    _format_token_suffix,
-    _render_lanes_section,
-    _render_findings_section,
-    _render_coverage_section,
-    _render_token_summary_section,
-    _render_current_task_md,
 )

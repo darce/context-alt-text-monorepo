@@ -20,6 +20,46 @@ from .runtime import get_runtime_config
 
 _log = logging.getLogger("agent_handoff_mcp")
 
+# Schema version sentinel used to skip redundant DDL on warm starts.
+# IMPORTANT: Bump this integer whenever a new migration is added to
+# _apply_handoff_migrations(). The bootstrap gate short-circuits when
+# PRAGMA user_version >= HANDOFF_SCHEMA_VERSION, so un-bumped migrations
+# will be silently skipped on databases that were already bootstrapped.
+HANDOFF_SCHEMA_VERSION = 1
+_HANDOFF_REQUIRED_TABLES = frozenset(
+    {
+        "handoff_state",
+        "decisions",
+        "blockers",
+        "next_actions",
+        "verified_tests",
+        "task_archives",
+        "review_findings",
+        "worktree_lanes",
+        "worker_reports",
+        "lane_messages",
+        "plan_cursors",
+        "turn_metrics",
+    }
+)
+_HANDOFF_REQUIRED_FTS_TABLES = frozenset({"decisions_fts", "findings_fts", "blockers_fts", "actions_fts"})
+_HANDOFF_REQUIRED_FTS_TRIGGERS = frozenset(
+    {
+        "decisions_fts_insert",
+        "decisions_fts_update",
+        "decisions_fts_delete",
+        "findings_fts_insert",
+        "findings_fts_update",
+        "findings_fts_delete",
+        "blockers_fts_insert",
+        "blockers_fts_update",
+        "blockers_fts_delete",
+        "actions_fts_insert",
+        "actions_fts_update",
+        "actions_fts_delete",
+    }
+)
+
 # ---------------------------------------------------------------------------
 # DDL — schema SQL
 # ---------------------------------------------------------------------------
@@ -438,6 +478,29 @@ def _has_index(conn: sqlite3.Connection, table_name: str, index_name: str) -> bo
     return any(str(row["name"]) == index_name for row in rows)
 
 
+def _sqlite_objects_exist(conn: sqlite3.Connection, object_type: str, names: frozenset[str]) -> bool:
+    rows = conn.execute(
+        f"SELECT name FROM sqlite_master WHERE type = ? AND name IN ({','.join('?' for _ in names)})",
+        (object_type, *sorted(names)),
+    ).fetchall()
+    return {str(row["name"]) for row in rows} == names
+
+
+def _handoff_schema_bootstrapped(conn: sqlite3.Connection) -> bool:
+    user_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if user_version < HANDOFF_SCHEMA_VERSION:
+        return False
+    return _sqlite_objects_exist(conn, "table", _HANDOFF_REQUIRED_TABLES)
+
+
+def _handoff_fts_bootstrapped(conn: sqlite3.Connection) -> bool:
+    return _sqlite_objects_exist(conn, "table", _HANDOFF_REQUIRED_FTS_TABLES) and _sqlite_objects_exist(
+        conn,
+        "trigger",
+        _HANDOFF_REQUIRED_FTS_TRIGGERS,
+    )
+
+
 # ---------------------------------------------------------------------------
 # FTS bootstrap
 # ---------------------------------------------------------------------------
@@ -492,6 +555,12 @@ def _backfill_handoff_fts(conn: sqlite3.Connection) -> None:
 
 def _ensure_handoff_fts(conn: sqlite3.Connection) -> None:
     """Create FTS5 virtual tables, insert/update/delete triggers, and backfill existing rows."""
+    if _handoff_fts_bootstrapped(conn):
+        # Existing installations can end up with empty FTS tables after manual
+        # cleanup or partial recovery. Re-run the idempotent backfill so search
+        # remains self-healing without requiring a schema rebuild.
+        _backfill_handoff_fts(conn)
+        return
     try:
         conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_handoff_probe USING fts5(body)")
         conn.execute("DROP TABLE IF EXISTS _fts5_handoff_probe")
@@ -511,7 +580,8 @@ def _ensure_handoff_fts(conn: sqlite3.Connection) -> None:
         if _fts_created != _fts_expected:
             _log.warning(
                 "FTS tables partially created (%s of %s); skipping trigger/backfill setup.",
-                len(_fts_created), len(_fts_expected),
+                len(_fts_created),
+                len(_fts_expected),
             )
             return
         conn.executescript(_HANDOFF_FTS_TRIGGERS_SQL)
@@ -521,9 +591,7 @@ def _ensure_handoff_fts(conn: sqlite3.Connection) -> None:
         if "locked" in errstr or "no such table" in errstr:
             _log.warning("Handoff FTS setup skipped (%s); will retry on next connection.", exc)
         elif "vtable constructor failed" in errstr:
-            _log.warning(
-                "Handoff FTS5 vtable corrupt (%s); dropping and recreating FTS tables.", exc
-            )
+            _log.warning("Handoff FTS5 vtable corrupt (%s); dropping and recreating FTS tables.", exc)
             for _fts_table in ("decisions_fts", "findings_fts", "blockers_fts", "actions_fts"):
                 conn.execute(f"DROP TABLE IF EXISTS {_fts_table}")
             conn.executescript(HANDOFF_FTS_SCHEMA_SQL)
@@ -666,8 +734,9 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
                 conn.execute(sql)
                 needs_backfill = True
         if not needs_backfill:
-            needs_backfill = conn.execute(
-                """
+            needs_backfill = (
+                conn.execute(
+                    """
                 SELECT 1
                 FROM review_findings
                 WHERE reopen_count IS NULL
@@ -675,7 +744,9 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
                    OR TRIM(updated_at) = ''
                 LIMIT 1
                 """
-            ).fetchone() is not None
+                ).fetchone()
+                is not None
+            )
         if needs_backfill:
             conn.execute(
                 """
@@ -739,9 +810,7 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
             )
     except sqlite3.OperationalError as exc:
         if "locked" in str(exc).lower():
-            _log.warning(
-                "DB locked during migration -- skipping (PRAGMA busy_timeout should prevent this)"
-            )
+            _log.warning("DB locked during migration -- skipping (PRAGMA busy_timeout should prevent this)")
             return
         raise
     try:
@@ -766,8 +835,10 @@ def _get_db_connection() -> sqlite3.Connection:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA busy_timeout=5000;")
-        conn.executescript(HANDOFF_SCHEMA_SQL)
-        _apply_handoff_migrations(conn)
+        if not _handoff_schema_bootstrapped(conn):
+            conn.executescript(HANDOFF_SCHEMA_SQL)
+            _apply_handoff_migrations(conn)
+            conn.execute(f"PRAGMA user_version = {HANDOFF_SCHEMA_VERSION}")
         _ensure_handoff_fts(conn)
     except Exception:
         conn.close()

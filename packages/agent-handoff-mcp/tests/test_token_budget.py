@@ -5,6 +5,7 @@ Covers:
 - check: returns empty list when all files are under budget; returns violating files when over
 - main: exit 0 on pass, exit 1 on violation; handles missing files gracefully
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -30,6 +31,7 @@ def _load_module():
 # _approx_tokens
 # ---------------------------------------------------------------------------
 
+
 class TestApproxTokens:
     def test_empty_string_returns_one(self) -> None:
         mod = _load_module()
@@ -52,6 +54,7 @@ class TestApproxTokens:
 # ---------------------------------------------------------------------------
 # check
 # ---------------------------------------------------------------------------
+
 
 class TestCheck:
     def test_file_under_budget_not_returned(self, tmp_path: Path) -> None:
@@ -89,7 +92,7 @@ class TestCheck:
         mod = _load_module()
         small = tmp_path / "small.md"
         large = tmp_path / "large.md"
-        small.write_text("a" * 100, encoding="utf-8")   # 25 tokens
+        small.write_text("a" * 100, encoding="utf-8")  # 25 tokens
         large.write_text("a" * 100_000, encoding="utf-8")  # 25,000 tokens
         result = mod.check([small, large], budget=2000)
         assert len(result) == 1
@@ -99,6 +102,7 @@ class TestCheck:
 # ---------------------------------------------------------------------------
 # main (CLI): exit code behavior
 # ---------------------------------------------------------------------------
+
 
 class TestMain:
     def test_exit_zero_all_files_under_budget(self, tmp_path: Path) -> None:

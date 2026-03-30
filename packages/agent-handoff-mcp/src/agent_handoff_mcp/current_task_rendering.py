@@ -15,12 +15,12 @@ Imports from _shared are done at function level (late imports) to avoid a circul
 module dependency: _shared.py re-exports from this module at its end, so module-level
 imports in this file would create a deadlock when this module is loaded first.
 """
+
 from __future__ import annotations
 
 import sqlite3
 from datetime import UTC, datetime
 from typing import NotRequired, TypedDict
-
 
 # ---------------------------------------------------------------------------
 # Typed containers
@@ -146,8 +146,12 @@ def _write_current_task_md_for_task(conn: sqlite3.Connection, task_ref: str) -> 
     snapshot = _collect_task_snapshot(conn, task_ref)
     state = _build_current_task_state_from_snapshot(snapshot)
     try:
-        from .review_findings import get_review_coverage as _get_review_coverage  # noqa: PLC0415 – late import to break circular
         import json as _json
+
+        from .review_findings import (
+            get_review_coverage as _get_review_coverage,  # noqa: PLC0415 – late import to break circular
+        )
+
         state["review_coverage"] = _json.loads(_get_review_coverage(task_ref=task_ref))
     except Exception:
         pass
@@ -211,7 +215,7 @@ def _format_token_suffix(item: dict) -> str:
     return f" [{total} tok]"
 
 
-def _render_lanes_section(state: dict) -> list[str]:
+def _render_lanes_section(state: CurrentTaskRenderState) -> list[str]:
     lines: list[str] = ["", "## Worktree Lanes"]
     lanes = state.get("worktree_lanes", [])
     if lanes:
@@ -224,16 +228,8 @@ def _render_lanes_section(state: dict) -> list[str]:
     lines.extend(["", "## Lane Dispatches"])
     lane_message_rows = state.get("lane_messages_open")
     if lane_message_rows is None:
-        lane_message_rows = [
-            message
-            for message in state.get("lane_messages", [])
-            if message.get("status") == "open"
-        ]
-    lane_messages = [
-        message
-        for message in lane_message_rows
-        if message.get("direction") == "orchestrator_to_worker"
-    ]
+        lane_message_rows = [message for message in state.get("lane_messages", []) if message.get("status") == "open"]
+    lane_messages = [message for message in lane_message_rows if message.get("direction") == "orchestrator_to_worker"]
     if lane_messages:
         for message in lane_messages:
             lane_id = message.get("lane_id", "?")
@@ -245,28 +241,40 @@ def _render_lanes_section(state: dict) -> list[str]:
     return lines
 
 
-def _render_findings_section(state: dict) -> list[str]:
+def _render_findings_section(state: CurrentTaskRenderState) -> list[str]:
     lines: list[str] = ["", "## Open Review Findings"]
     findings = state.get("findings_open", [])
     if findings:
         for finding in findings:
-            location = f"{finding.get('file_path')}:{finding.get('line_start')}" if finding.get("line_start") else finding.get("file_path")
-            lines.append(f"- [{finding.get('severity', '').upper()}] {finding.get('finding_id')}: {location} -- {finding.get('description')}")
+            location = (
+                f"{finding.get('file_path')}:{finding.get('line_start')}"
+                if finding.get("line_start")
+                else finding.get("file_path")
+            )
+            lines.append(
+                f"- [{finding.get('severity', '').upper()}] {finding.get('finding_id')}: {location} -- {finding.get('description')}"
+            )
     else:
         lines.append("- None")
     related = state.get("related_findings_open", {})
     if related:
         lines.extend(["", "## Related Open Review Findings"])
         for ref, ref_findings in related.items():
-            lines.append(f"")
+            lines.append("")
             lines.append(f"### {ref}")
             for finding in ref_findings:
-                location = f"{finding.get('file_path')}:{finding.get('line_start')}" if finding.get("line_start") else finding.get("file_path")
-                lines.append(f"- [{finding.get('severity', '').upper()}] {finding.get('finding_id')}: {location} -- {finding.get('description')}")
+                location = (
+                    f"{finding.get('file_path')}:{finding.get('line_start')}"
+                    if finding.get("line_start")
+                    else finding.get("file_path")
+                )
+                lines.append(
+                    f"- [{finding.get('severity', '').upper()}] {finding.get('finding_id')}: {location} -- {finding.get('description')}"
+                )
     return lines
 
 
-def _render_coverage_section(state: dict) -> list[str]:
+def _render_coverage_section(state: CurrentTaskRenderState) -> list[str]:
     """Render a `## Review Coverage` section when coverage data is in state."""
     coverage = state.get("review_coverage")
     if not coverage or not coverage.get("ok"):
@@ -282,9 +290,7 @@ def _render_coverage_section(state: dict) -> list[str]:
     else:
         lines.append("- latest verdict: none")
     sev = coverage.get("open_findings_by_severity", {})
-    lines.append(
-        f"- open findings: high={sev.get('high', 0)} medium={sev.get('medium', 0)} low={sev.get('low', 0)}"
-    )
+    lines.append(f"- open findings: high={sev.get('high', 0)} medium={sev.get('medium', 0)} low={sev.get('low', 0)}")
     lines.append(f"- reopened findings: {coverage.get('reopened_findings_count', 0)}")
     return lines
 
@@ -305,7 +311,9 @@ def _render_token_summary_section(decisions: list[dict]) -> list[str]:
         return f"{n / 1000:.1f}K" if n >= 1000 else str(n)
 
     lines: list[str] = ["", "## Token Summary"]
-    lines.append(f"- Decisions with tokens: {len(token_decisions)} ; Total: {_fmt_tok(total_tok)} (in: {_fmt_tok(total_in)}, out: {_fmt_tok(total_out)})")
+    lines.append(
+        f"- Decisions with tokens: {len(token_decisions)} ; Total: {_fmt_tok(total_tok)} (in: {_fmt_tok(total_in)}, out: {_fmt_tok(total_out)})"
+    )
     agent_parts = " ; ".join(f"{a}: {_fmt_tok(t)}" for a, t in sorted(by_agent.items(), key=lambda x: -x[1]))
     lines.append(f"- By agent: {agent_parts}")
     return lines
@@ -334,8 +342,7 @@ def _render_current_task_md(state: CurrentTaskRenderState) -> str:
 
     if not active:
         has_data = any(
-            state.get(key)
-            for key in ("decisions_recent", "findings_open", "blockers_open", "actions_pending")
+            state.get(key) for key in ("decisions_recent", "findings_open", "blockers_open", "actions_pending")
         )
         if not has_data:
             return f"# CURRENT_TASK\n\n_DO NOT EDIT: generated from .task-state/handoff.db. Last generated: {_generated_at}_\n\nNo active handoff state found.\n"
@@ -361,18 +368,20 @@ def _render_current_task_md(state: CurrentTaskRenderState) -> str:
             f"{active.get('objective', '')}",
             "",
         ]
-        focus_val = active.get('focus')
+        focus_val = active.get("focus")
         if focus_val:
             lines.extend(["## Current Focus", f"{focus_val}", ""])
-        lines.extend([
-            "## Active Status",
-            f"- task_ref: `{active.get('task_ref', '')}`",
-            f"- status: `{active.get('status', '')}`",
-            f"- revision: `{active.get('revision', 0)}`",
-            f"- updated_at: `{active.get('updated_at', '')}`",
-            "",
-            "## Latest Decision",
-        ])
+        lines.extend(
+            [
+                "## Active Status",
+                f"- task_ref: `{active.get('task_ref', '')}`",
+                f"- status: `{active.get('status', '')}`",
+                f"- revision: `{active.get('revision', 0)}`",
+                f"- updated_at: `{active.get('updated_at', '')}`",
+                "",
+                "## Latest Decision",
+            ]
+        )
     if latest_decision:
         lines.append(_decision_line(latest_decision))
     else:
@@ -380,11 +389,20 @@ def _render_current_task_md(state: CurrentTaskRenderState) -> str:
     lines.extend(["", "## Open Blockers"])
     for section, empty_text, formatter in [
         ("blockers_open", "- None", lambda item: f"- [#{item.get('id')}] {item.get('description')}"),
-        ("actions_pending", "- None", lambda item: f"- (P{item.get('priority')}) [#{item.get('id')}] {item.get('action')}"),
+        (
+            "actions_pending",
+            "- None",
+            lambda item: f"- (P{item.get('priority')}) [#{item.get('id')}] {item.get('action')}",
+        ),
         ("decisions_recent", "- None", _decision_line),
-        ("tests_recent", "- None", lambda item: f"- [#{item.get('id')}] `{_truncate_command(item.get('command', ''))}` -> `{'pass' if item.get('passed') else 'fail'}`"),
+        (
+            "tests_recent",
+            "- None",
+            lambda item: f"- [#{item.get('id')}] `{_truncate_command(item.get('command', ''))}` -> `{'pass' if item.get('passed') else 'fail'}`",
+        ),
     ]:
-        items = state.get(section, [])
+        raw_items = state.get(section, [])
+        items = raw_items if isinstance(raw_items, list) else []
         if section == "actions_pending":
             lines.extend(["", "## Pending Next Actions"])
         elif section == "decisions_recent":

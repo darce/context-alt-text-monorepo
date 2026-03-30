@@ -30,8 +30,7 @@ def test_vscode_adapter_points_to_repo_local_launcher_and_doctor_runs() -> None:
     ]
     assert server["env"]["PYENV_VERSION"] == "description-service"
     assert server["env"]["PYTHONPATH"] == (
-        "${workspaceFolder}/packages/agent-handoff-mcp/src:"
-        "${workspaceFolder}/packages/codex-subagent-bridge/src"
+        "${workspaceFolder}/packages/agent-handoff-mcp/src:${workspaceFolder}/packages/codex-subagent-bridge/src"
     )
 
     result = subprocess.run(

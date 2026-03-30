@@ -15,7 +15,6 @@ from agent_handoff_mcp import api as mcp_server
 from agent_handoff_mcp import core as handoff_core
 from agent_handoff_mcp.config import RuntimeConfig
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -216,16 +215,17 @@ def test_search_artifacts_scoped_by_lane(isolated_env: dict) -> None:
         assert hit["lane_id"] == "frontend"
 
 
-def test_search_artifacts_empty_queries_error(isolated_env: dict) -> None:
+def test_search_artifacts_empty_queries_returns_sources(isolated_env: dict) -> None:
+    _seed_tool_artifacts()
     result = _parse(handoff_core.search_artifacts(queries=[]))
-    assert result["ok"] is False
+    assert result["ok"] is True
+    assert result["mode"] == "sources"
+    assert isinstance(result["sources"], list)
 
 
 def test_search_artifacts_no_match_returns_empty_hits(isolated_env: dict) -> None:
     _seed_tool_artifacts()
-    result = _parse(
-        handoff_core.search_artifacts(queries=["xyzzy_nonexistent_9999"])
-    )
+    result = _parse(handoff_core.search_artifacts(queries=["xyzzy_nonexistent_9999"]))
     assert result["ok"] is True
     assert result["total"] == 0
     assert result["hits"] == []
@@ -239,7 +239,7 @@ def test_search_artifacts_respects_limit(isolated_env: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# get_artifact_source
+# get_artifact (successor to deprecated get_artifact_source)
 # ---------------------------------------------------------------------------
 
 
@@ -252,9 +252,7 @@ def test_get_artifact_source_found(isolated_env: dict) -> None:
             content=_LARGE_CONTENT,
         )
     )
-    result = _parse(
-        handoff_core.get_artifact_source(source_id=record["source_id"])
-    )
+    result = _parse(handoff_core.get_artifact(source_id=record["source_id"]))
     assert result["ok"] is True
     assert result["source"]["source_label"] == "get-test-doc"
     assert "chunk_count" in result["source"]
@@ -269,7 +267,7 @@ def test_get_artifact_source_found(isolated_env: dict) -> None:
 
 
 def test_get_artifact_source_not_found(isolated_env: dict) -> None:
-    result = _parse(handoff_core.get_artifact_source(source_id=99999))
+    result = _parse(handoff_core.get_artifact(source_id=99999))
     assert result["ok"] is False
     assert "not found" in result["error"].lower()
 
@@ -282,7 +280,7 @@ def test_get_artifact_source_by_task_and_label(isolated_env: dict) -> None:
         content=_LARGE_CONTENT,
     )
     result = _parse(
-        handoff_core.get_artifact_source(
+        handoff_core.get_artifact(
             task_ref="test-task",
             source_label="by-label-doc",
         )
@@ -292,18 +290,18 @@ def test_get_artifact_source_by_task_and_label(isolated_env: dict) -> None:
 
 
 def test_get_artifact_source_no_args_error(isolated_env: dict) -> None:
-    result = _parse(handoff_core.get_artifact_source())
+    result = _parse(handoff_core.get_artifact())
     assert result["ok"] is False
 
 
 # ---------------------------------------------------------------------------
-# list_artifact_sources
+# search_artifacts (no-query source listing; successor to deprecated list_artifact_sources)
 # ---------------------------------------------------------------------------
 
 
 def test_list_artifact_sources_returns_sources(isolated_env: dict) -> None:
     _seed_tool_artifacts()
-    result = _parse(handoff_core.list_artifact_sources(task_ref="test-task"))
+    result = _parse(handoff_core.search_artifacts(task_ref="test-task"))
     assert result["ok"] is True
     assert result["total"] >= 2
     for s in result["sources"]:
@@ -311,7 +309,7 @@ def test_list_artifact_sources_returns_sources(isolated_env: dict) -> None:
 
 
 def test_list_artifact_sources_empty_db(isolated_env: dict) -> None:
-    result = _parse(handoff_core.list_artifact_sources(task_ref="nonexistent"))
+    result = _parse(handoff_core.search_artifacts(task_ref="nonexistent"))
     assert result["ok"] is True
     assert result["total"] == 0
     assert result["sources"] == []
@@ -320,7 +318,7 @@ def test_list_artifact_sources_empty_db(isolated_env: dict) -> None:
 def test_list_artifact_sources_filters_by_lane(isolated_env: dict) -> None:
     _seed_tool_artifacts()
     result = _parse(
-        handoff_core.list_artifact_sources(
+        handoff_core.search_artifacts(
             task_ref="test-task",
             lane_id="backend",
         )
@@ -341,7 +339,7 @@ def test_purge_artifacts_by_task_ref(isolated_env: dict) -> None:
     assert result["ok"] is True
     assert result["purged_sources"] == 2
 
-    after = _parse(handoff_core.list_artifact_sources(task_ref="test-task"))
+    after = _parse(handoff_core.search_artifacts(task_ref="test-task"))
     assert after["total"] == 0
 
 
@@ -404,8 +402,7 @@ def test_run_doctor_includes_fts5_check(tmp_path: Path) -> None:
             coro.close()
         return ["record_artifact", "search_artifacts"]
 
-    with patch("agent_handoff_mcp.api.asyncio") as mock_async, \
-         patch("agent_handoff_mcp.api.subprocess") as mock_sub:
+    with patch("agent_handoff_mcp.api.asyncio") as mock_async, patch("agent_handoff_mcp.api.subprocess") as mock_sub:
         mock_async.run.side_effect = _drain_and_return_tools
         mock_sub.run.return_value = mock_proc
         result = mcp_server.run_doctor(runtime)
@@ -416,22 +413,24 @@ def test_run_doctor_includes_fts5_check(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# get_artifact_terms
+# get_artifact with include_terms (successor to deprecated get_artifact_terms)
 # ---------------------------------------------------------------------------
 
 
 def test_get_artifact_terms_returns_distinctive_words(isolated_env: dict) -> None:
     content = "\n".join(["authentication token validation security policy"] * 30)
-    rec = _parse(handoff_core.record_artifact(
-        source_kind="log",
-        source_label="auth-policy-log",
-        content=content,
-        content_type="text/plain",
-    ))
+    rec = _parse(
+        handoff_core.record_artifact(
+            source_kind="log",
+            source_label="auth-policy-log",
+            content=content,
+            content_type="text/plain",
+        )
+    )
     assert rec["ok"] is True
     source_id = rec["source_id"]
 
-    result = _parse(handoff_core.get_artifact_terms(source_id=source_id))
+    result = _parse(handoff_core.get_artifact(source_id=source_id, include_terms=True))
     assert result["ok"] is True
     assert result["source_id"] == source_id
     assert isinstance(result["terms"], list)
@@ -449,25 +448,26 @@ def test_get_artifact_terms_lookup_by_label(isolated_env: dict) -> None:
         content_type="text/plain",
     )
 
-    result = _parse(handoff_core.get_artifact_terms(
-        task_ref="test-task",
-        source_label="db-upgrade-log",
-    ))
+    result = _parse(
+        handoff_core.get_artifact(
+            task_ref="test-task",
+            source_label="db-upgrade-log",
+            include_terms=True,
+        )
+    )
     assert result["ok"] is True
     assert isinstance(result["terms"], list)
     assert any(t in ("database", "migration", "schema", "upgrade", "rollback") for t in result["terms"])
 
 
 def test_get_artifact_terms_returns_error_for_missing_source(isolated_env: dict) -> None:
-    result = _parse(handoff_core.get_artifact_terms(source_id=99999))
-    # Missing source_id returns empty terms rather than an error
-    # (get_distinctive_terms returns [] for missing source_id)
-    assert isinstance(result.get("terms"), list)
-    assert result.get("terms") == []
+    result = _parse(handoff_core.get_artifact(source_id=99999, include_terms=True))
+    assert result["ok"] is False
+    assert "not found" in result["error"].lower()
 
 
 def test_get_artifact_terms_requires_source_id_or_label(isolated_env: dict) -> None:
-    result = _parse(handoff_core.get_artifact_terms())
+    result = _parse(handoff_core.get_artifact(include_terms=True))
     assert result["ok"] is False
     assert "source_id" in result["error"] or "source_label" in result["error"]
 
@@ -499,7 +499,7 @@ def test_purge_artifacts_by_lane_id_via_tool(isolated_env: dict) -> None:
     assert result["ok"] is True
     assert result["purged_sources"] == 2
 
-    remaining = _parse(handoff_core.list_artifact_sources(task_ref="test-task"))
+    remaining = _parse(handoff_core.search_artifacts(task_ref="test-task"))
     assert remaining["total"] == 1
     assert remaining["sources"][0]["lane_id"] == "lane-b"
 
@@ -512,7 +512,7 @@ def test_purge_artifacts_by_app_root_via_tool(isolated_env: dict) -> None:
     assert result["ok"] is True
     assert result["purged_sources"] == 1
 
-    remaining = _parse(handoff_core.list_artifact_sources(task_ref="test-task"))
+    remaining = _parse(handoff_core.search_artifacts(task_ref="test-task"))
     assert remaining["total"] == 1
     assert remaining["sources"][0]["app_root"] == "/apps/svc-b"
 
@@ -525,7 +525,7 @@ def test_purge_artifacts_combined_filters_via_tool(isolated_env: dict) -> None:
     assert result["ok"] is True
     assert result["purged_sources"] == 1
 
-    remaining = _parse(handoff_core.list_artifact_sources(task_ref="test-task"))
+    remaining = _parse(handoff_core.search_artifacts(task_ref="test-task"))
     labels = [s["source_label"] for s in remaining["sources"]]
     assert "keep-this" in labels
     assert "del-this" not in labels

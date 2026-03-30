@@ -9,6 +9,7 @@ Extracted from _shared.py (Slice 5 of E12-10). Contains:
 
 All symbols are re-exported from _shared.py for backward compatibility.
 """
+
 from __future__ import annotations
 
 import asyncio

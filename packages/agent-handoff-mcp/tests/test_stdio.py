@@ -25,14 +25,10 @@ def test_stdio_server_lists_handoff_tools(tmp_path: Path) -> None:
     assert "get_handoff_state" in tool_names
     assert "record_review_finding" in tool_names
     assert "handoff_close_check" in tool_names
-    assert "record_lane_brief" in tool_names
-    assert "list_lane_briefs" in tool_names
-    assert "orchestrator_start" in tool_names
-    assert "orchestrator_status" in tool_names
-    assert "worker_start" in tool_names
-    assert "worker_status" in tool_names
-    assert "worker_event_history" in tool_names
-    assert "worker_resume" in tool_names
-    assert "worker_stop" in tool_names
-    assert "worker_start_all" in tool_names
-    assert "run_structured_turn" in tool_names
+    assert "load_session" in tool_names
+    assert "close_slice" in tool_names
+    # orchestration tools moved to agent-orchestrator-mcp
+    assert "record_lane_brief" not in tool_names
+    assert "orchestrator_start" not in tool_names
+    assert "worker_start" not in tool_names
+    assert "run_structured_turn" not in tool_names

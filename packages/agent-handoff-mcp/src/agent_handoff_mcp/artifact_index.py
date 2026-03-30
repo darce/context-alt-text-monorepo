@@ -13,7 +13,9 @@ import re
 import sqlite3
 from collections import Counter
 from pathlib import Path
-from typing import TypedDict
+from typing import TypedDict, cast
+
+_FTS5_AVAILABLE: bool | None = None
 
 
 class ArtifactChunk(TypedDict):
@@ -101,14 +103,24 @@ CREATE VIRTUAL TABLE IF NOT EXISTS artifact_chunks_fts USING fts5(
 
 def check_fts5_available(conn: sqlite3.Connection) -> bool:
     """Return True if the connected SQLite build supports FTS5."""
+    global _FTS5_AVAILABLE
+    if _FTS5_AVAILABLE is not None:
+        return _FTS5_AVAILABLE
     try:
-        conn.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_probe USING fts5(body)"
-        )
+        conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_probe USING fts5(body)")
         conn.execute("DROP TABLE IF EXISTS _fts5_probe")
-        return True
+        _FTS5_AVAILABLE = True
     except sqlite3.OperationalError:
-        return False
+        _FTS5_AVAILABLE = False
+    return _FTS5_AVAILABLE
+
+
+def _artifact_schema_bootstrapped(conn: sqlite3.Connection) -> bool:
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (?, ?)",
+        ("artifact_sources", "artifact_chunks_fts"),
+    ).fetchall()
+    return {str(row["name"]) for row in rows} == {"artifact_sources", "artifact_chunks_fts"}
 
 
 def get_artifact_db_connection(artifact_db_path: Path) -> sqlite3.Connection:
@@ -129,7 +141,8 @@ def get_artifact_db_connection(artifact_db_path: Path) -> sqlite3.Connection:
                 "Rebuild SQLite with SQLITE_ENABLE_FTS5 or use a Python distribution "
                 "that bundles FTS5 (e.g. system Python on macOS 10.15+ or major Linux distros)."
             )
-        conn.executescript(ARTIFACT_SCHEMA_SQL)
+        if not _artifact_schema_bootstrapped(conn):
+            conn.executescript(ARTIFACT_SCHEMA_SQL)
     except Exception:
         conn.close()
         raise
@@ -155,11 +168,7 @@ def _build_fts5_match_query(queries: list[str]) -> str | None:
         # Strip FTS5 metacharacters so callers don't need FTS5 syntax knowledge
         cleaned = _FTS5_SPECIAL_RE.sub(" ", q).strip()
         if cleaned:
-            terms = [
-                '"' + term.replace('"', '""') + '"'
-                for term in cleaned.split()
-                if term
-            ]
+            terms = ['"' + term.replace('"', '""') + '"' for term in cleaned.split() if term]
             if terms:
                 groups.append(" ".join(terms))
     if not groups:
@@ -197,9 +206,7 @@ def chunk_markdown(content: str, source_label: str) -> list[tuple[str, str]]:
     return chunks if chunks else [(source_label, content.strip())]
 
 
-def chunk_plaintext(
-    content: str, source_label: str, lines_per_chunk: int = 50
-) -> list[tuple[str, str]]:
+def chunk_plaintext(content: str, source_label: str, lines_per_chunk: int = 50) -> list[tuple[str, str]]:
     """Split plaintext into (title, body) chunks of up to *lines_per_chunk* lines."""
     lines = content.splitlines()
     if not lines:
@@ -213,11 +220,7 @@ def chunk_plaintext(
         if not body:
             continue
         part_num = idx // lines_per_chunk + 1
-        title = (
-            f"{source_label} (part {part_num}/{total_parts})"
-            if total_parts > 1
-            else source_label
-        )
+        title = f"{source_label} (part {part_num}/{total_parts})" if total_parts > 1 else source_label
         chunks.append((title, body))
 
     return chunks
@@ -249,9 +252,7 @@ def chunk_json(content: str, source_label: str) -> list[tuple[str, str]]:
     return chunks if chunks else chunk_plaintext(content, source_label)
 
 
-def chunk_content(
-    content: str, content_type: str, source_label: str
-) -> list[tuple[str, str]]:
+def chunk_content(content: str, content_type: str, source_label: str) -> list[tuple[str, str]]:
     """Dispatch to the appropriate chunker based on *content_type*."""
     ct = (content_type or "").lower()
     if "markdown" in ct or ct in ("text/md", "md", "text/markdown"):
@@ -274,20 +275,114 @@ def _content_hash(content: str) -> str:
 # Term extraction
 # ---------------------------------------------------------------------------
 
-_STOPWORDS: frozenset[str] = frozenset({
-    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
-    "of", "with", "by", "from", "up", "about", "into", "through", "during",
-    "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
-    "do", "does", "did", "will", "would", "could", "should", "may", "might",
-    "must", "shall", "can", "this", "that", "these", "those", "its",
-    "he", "she", "they", "we", "you", "me", "him", "her", "us", "them",
-    "what", "which", "who", "when", "where", "why", "how", "all", "each",
-    "every", "both", "few", "more", "most", "other", "some", "such",
-    "not", "only", "same", "so", "than", "too", "very", "as",
-    "if", "then", "else", "while", "after", "before", "since", "because",
-    "return", "def", "class", "import", "none", "true", "false",
-    "self", "test", "var", "let", "const", "get", "set",
-})
+_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "but",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+        "from",
+        "up",
+        "about",
+        "into",
+        "through",
+        "during",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "must",
+        "shall",
+        "can",
+        "this",
+        "that",
+        "these",
+        "those",
+        "its",
+        "he",
+        "she",
+        "they",
+        "we",
+        "you",
+        "me",
+        "him",
+        "her",
+        "us",
+        "them",
+        "what",
+        "which",
+        "who",
+        "when",
+        "where",
+        "why",
+        "how",
+        "all",
+        "each",
+        "every",
+        "both",
+        "few",
+        "more",
+        "most",
+        "other",
+        "some",
+        "such",
+        "not",
+        "only",
+        "same",
+        "so",
+        "than",
+        "too",
+        "very",
+        "as",
+        "if",
+        "then",
+        "else",
+        "while",
+        "after",
+        "before",
+        "since",
+        "because",
+        "return",
+        "def",
+        "class",
+        "import",
+        "none",
+        "true",
+        "false",
+        "self",
+        "test",
+        "var",
+        "let",
+        "const",
+        "get",
+        "set",
+    }
+)
 
 _WORD_RE: re.Pattern[str] = re.compile(r"\b[a-zA-Z][a-zA-Z0-9_-]{2,}\b")
 
@@ -317,11 +412,7 @@ def get_distinctive_terms(
         return []
 
     combined = " ".join(f"{r['title']} {r['body']}" for r in rows)
-    words = [
-        w.lower()
-        for w in _WORD_RE.findall(combined)
-        if w.lower() not in _STOPWORDS
-    ]
+    words = [w.lower() for w in _WORD_RE.findall(combined) if w.lower() not in _STOPWORDS]
     counts = Counter(words)
     return [term for term, _ in counts.most_common(top_n)]
 
@@ -367,7 +458,7 @@ def upsert_source(
                     "SELECT COUNT(*) FROM artifact_chunks_fts WHERE source_id = ?",
                     [str(existing["id"])],
                 ).fetchone()[0]
-                result: dict = {
+                result: ArtifactUpsertResult = {
                     "source_id": existing["id"],
                     "source_label": source_label,
                     "was_updated": False,
@@ -393,25 +484,28 @@ def upsert_source(
                     )
                     source_id: int = existing["id"]
                 else:
-                    source_id = conn.execute(
-                        """
+                    source_id = cast(
+                        int,
+                        conn.execute(
+                            """
                         INSERT INTO artifact_sources
                             (task_ref, lane_id, app_root, source_kind, source_label,
                              content_type, content_hash, metadata_json, summary)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        [
-                            task_ref,
-                            lane_id,
-                            app_root,
-                            source_kind,
-                            source_label,
-                            content_type,
-                            new_hash,
-                            metadata_json,
-                            summary,
-                        ],
-                    ).lastrowid  # type: ignore[assignment]
+                            [
+                                task_ref,
+                                lane_id,
+                                app_root,
+                                source_kind,
+                                source_label,
+                                content_type,
+                                new_hash,
+                                metadata_json,
+                                summary,
+                            ],
+                        ).lastrowid,
+                    )
 
                 # Delete stale FTS chunks and rebuild
                 conn.execute(
@@ -518,7 +612,7 @@ def search_artifacts(
         # Enrich with source_label and summary from the metadata table
         source_ids = list({r["source_id"] for r in rows})
         placeholders = ",".join("?" * len(source_ids))
-        source_map: dict[str, dict] = {
+        source_map: dict[str, dict[str, str | None]] = {
             str(r["id"]): {"source_label": r["source_label"], "summary": r["summary"]}
             for r in conn.execute(
                 f"SELECT id, source_label, summary FROM artifact_sources WHERE id IN ({placeholders})",
@@ -526,13 +620,13 @@ def search_artifacts(
             ).fetchall()
         }
 
-        results: list[dict] = []
+        results: list[ArtifactSearchResult] = []
         for r in rows:
             meta = source_map.get(r["source_id"], {})
             results.append(
                 {
                     "source_id": int(r["source_id"]),
-                    "source_label": meta.get("source_label", ""),
+                    "source_label": meta.get("source_label") or "",
                     "source_summary": meta.get("summary") or "",
                     "task_ref": r["task_ref"],
                     "lane_id": r["lane_id"] or None,
@@ -563,9 +657,7 @@ def get_artifact_source(
     conn = get_artifact_db_connection(artifact_db_path)
     try:
         if source_id is not None:
-            row = conn.execute(
-                "SELECT * FROM artifact_sources WHERE id = ?", [source_id]
-            ).fetchone()
+            row = conn.execute("SELECT * FROM artifact_sources WHERE id = ?", [source_id]).fetchone()
         elif task_ref and source_label:
             row = conn.execute(
                 """
@@ -581,10 +673,11 @@ def get_artifact_source(
         if row is None:
             return None
 
-        result = dict(row)
-        if result.get("metadata_json"):
+        result = cast(ArtifactSource, dict(row))
+        metadata_json = result.get("metadata_json")
+        if isinstance(metadata_json, str) and metadata_json:
             try:
-                result["metadata"] = _json.loads(result["metadata_json"])
+                result["metadata"] = _json.loads(metadata_json)
             except (ValueError, TypeError):
                 result["metadata"] = None
         else:
@@ -596,8 +689,7 @@ def get_artifact_source(
         ).fetchall()
         result["chunk_count"] = len(chunk_rows)
         result["chunks"] = [
-            {"chunk_order": i + 1, "title": row["title"], "body": row["body"]}
-            for i, row in enumerate(chunk_rows)
+            {"chunk_order": i + 1, "title": row["title"], "body": row["body"]} for i, row in enumerate(chunk_rows)
         ]
         return result
     finally:
@@ -638,7 +730,7 @@ def list_artifact_sources(
             f"SELECT * FROM artifact_sources {where} ORDER BY updated_at DESC LIMIT ? OFFSET ?",
             params,
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [cast(ArtifactSource, dict(r)) for r in rows]
     finally:
         conn.close()
 
@@ -680,12 +772,7 @@ def purge_artifacts(
     try:
         with conn:
             where = "WHERE " + " AND ".join(conditions)
-            ids = [
-                str(r[0])
-                for r in conn.execute(
-                    f"SELECT id FROM artifact_sources {where}", params
-                ).fetchall()
-            ]
+            ids = [str(r[0]) for r in conn.execute(f"SELECT id FROM artifact_sources {where}", params).fetchall()]
             if not ids:
                 return {"purged_sources": 0, "ok": True}
 
@@ -717,7 +804,7 @@ def maybe_record_artifact(
     artifact_db_path: Path,
     min_bytes: int = 4096,
     min_lines: int = 80,
-) -> dict | None:
+) -> ArtifactUpsertResult | None:
     """Index *content* only when it meets the configured size thresholds.
 
     Returns the upsert result dict if indexed, or None if below threshold.

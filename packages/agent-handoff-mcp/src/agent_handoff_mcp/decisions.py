@@ -4,14 +4,14 @@ Contains record_decision, update_next_actions, list_next_actions,
 record_test_result, report_blocker, handoff_close_check,
 and integrity helpers.
 """
+
 from __future__ import annotations
 
 import sqlite3
 
-from .slice_decision import classify_decision_id, is_slice_complete_decision
 from ._shared import (
     ACTION_STATUSES,
-    BLOCKER_STATUSES,
+    WriteActor,
     _build_current_task_state_from_snapshot,
     _collect_task_snapshot,
     _current_task_path,
@@ -19,15 +19,14 @@ from ._shared import (
     _has_structured_slice_summary,
     _json_response,
     _normalize_optional_text,
-    _paginated_query,
     _render_current_task_md,
     _resolve_task_ref,
     _resolve_write_actor,
     _row_to_dict,
     _summarize_test_result,
     _validate_decision_payload,
-    WriteActor,
 )
+from .slice_decision import classify_decision_id, is_slice_complete_decision
 
 
 def record_decision(
@@ -48,7 +47,9 @@ def record_decision(
         ctx = _resolve_write_actor(conn, actor)
         warnings: list[str] = []
         if not ctx.model and not ctx.model_label:
-            warnings.append("actor is missing model/model_label; decision will render without model identity. Pass actor.model and actor.model_label for accurate provenance.")
+            warnings.append(
+                "actor is missing model/model_label; decision will render without model identity. Pass actor.model and actor.model_label for accurate provenance."
+            )
         cur = conn.execute(
             """
             INSERT INTO decisions (
@@ -97,7 +98,9 @@ def update_next_actions(
 ) -> str:
     valid_operations = {"add", "update", "complete", "skip"}
     if operation not in valid_operations:
-        return _json_response({"ok": False, "error": f"Invalid operation. Valid: {', '.join(sorted(valid_operations))}"})
+        return _json_response(
+            {"ok": False, "error": f"Invalid operation. Valid: {', '.join(sorted(valid_operations))}"}
+        )
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         ctx = _resolve_write_actor(conn, actor)
@@ -109,38 +112,73 @@ def update_next_actions(
                 INSERT INTO next_actions (task_ref, lane_id, action, priority, status, agent, branch, commit_sha, created_at, updated_at)
                 VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, datetime('now'), datetime('now'))
                 """,
-                (resolved_task_ref, ctx.lane_id, action, priority if priority is not None else 100, ctx.agent, ctx.branch, ctx.commit_sha),
+                (
+                    resolved_task_ref,
+                    ctx.lane_id,
+                    action,
+                    priority if priority is not None else 100,
+                    ctx.agent,
+                    ctx.branch,
+                    ctx.commit_sha,
+                ),
             )
             return _json_response(
                 {
                     "ok": True,
                     "task_ref": resolved_task_ref,
                     "operation": operation,
-                    "action": _row_to_dict(conn.execute("SELECT * FROM next_actions WHERE id = ?", (cur.lastrowid,)).fetchone()),
+                    "action": _row_to_dict(
+                        conn.execute("SELECT * FROM next_actions WHERE id = ?", (cur.lastrowid,)).fetchone()
+                    ),
                 }
             )
         if action_id is None:
             return _json_response({"ok": False, "error": "action_id is required for update/complete/skip."})
-        existing = conn.execute("SELECT * FROM next_actions WHERE id = ? AND task_ref = ?", (action_id, resolved_task_ref)).fetchone()
+        existing = conn.execute(
+            "SELECT * FROM next_actions WHERE id = ? AND task_ref = ?", (action_id, resolved_task_ref)
+        ).fetchone()
         if existing is None:
             return _json_response({"ok": False, "error": "Action not found for task_ref."})
         if operation == "update":
             if action is None and priority is None and status is None:
-                return _json_response({"ok": False, "error": "At least one of action, priority, or status is required for update."})
+                return _json_response(
+                    {"ok": False, "error": "At least one of action, priority, or status is required for update."}
+                )
             use_status = status if status is not None else str(existing["status"])
             if use_status not in ACTION_STATUSES:
                 return _json_response({"ok": False, "error": "Invalid status value."})
-            conn.execute("UPDATE next_actions SET action = ?, priority = ?, status = ?, agent = ?, branch = ?, commit_sha = ?, lane_id = COALESCE(lane_id, ?), updated_at = datetime('now') WHERE id = ? AND task_ref = ?", (action if action is not None else str(existing["action"]), priority if priority is not None else int(existing["priority"]), use_status, ctx.agent, ctx.branch, ctx.commit_sha, ctx.lane_id, action_id, resolved_task_ref))
+            conn.execute(
+                "UPDATE next_actions SET action = ?, priority = ?, status = ?, agent = ?, branch = ?, commit_sha = ?, lane_id = COALESCE(lane_id, ?), updated_at = datetime('now') WHERE id = ? AND task_ref = ?",
+                (
+                    action if action is not None else str(existing["action"]),
+                    priority if priority is not None else int(existing["priority"]),
+                    use_status,
+                    ctx.agent,
+                    ctx.branch,
+                    ctx.commit_sha,
+                    ctx.lane_id,
+                    action_id,
+                    resolved_task_ref,
+                ),
+            )
         elif operation == "complete":
-            conn.execute("UPDATE next_actions SET status = 'done', agent = ?, branch = ?, commit_sha = ?, lane_id = COALESCE(lane_id, ?), updated_at = datetime('now') WHERE id = ? AND task_ref = ?", (ctx.agent, ctx.branch, ctx.commit_sha, ctx.lane_id, action_id, resolved_task_ref))
+            conn.execute(
+                "UPDATE next_actions SET status = 'done', agent = ?, branch = ?, commit_sha = ?, lane_id = COALESCE(lane_id, ?), updated_at = datetime('now') WHERE id = ? AND task_ref = ?",
+                (ctx.agent, ctx.branch, ctx.commit_sha, ctx.lane_id, action_id, resolved_task_ref),
+            )
         else:
-            conn.execute("UPDATE next_actions SET status = 'skipped', agent = ?, branch = ?, commit_sha = ?, lane_id = COALESCE(lane_id, ?), updated_at = datetime('now') WHERE id = ? AND task_ref = ?", (ctx.agent, ctx.branch, ctx.commit_sha, ctx.lane_id, action_id, resolved_task_ref))
+            conn.execute(
+                "UPDATE next_actions SET status = 'skipped', agent = ?, branch = ?, commit_sha = ?, lane_id = COALESCE(lane_id, ?), updated_at = datetime('now') WHERE id = ? AND task_ref = ?",
+                (ctx.agent, ctx.branch, ctx.commit_sha, ctx.lane_id, action_id, resolved_task_ref),
+            )
         return _json_response(
             {
                 "ok": True,
                 "task_ref": resolved_task_ref,
                 "operation": operation,
-                "action": _row_to_dict(conn.execute("SELECT * FROM next_actions WHERE id = ?", (action_id,)).fetchone()),
+                "action": _row_to_dict(
+                    conn.execute("SELECT * FROM next_actions WHERE id = ?", (action_id,)).fetchone()
+                ),
             }
         )
 
@@ -168,7 +206,11 @@ def list_next_actions(
         if status != "all":
             where_sql += " AND status = ?"
             params.append(status)
-        total = int(conn.execute(f"SELECT COUNT(*) AS count FROM next_actions WHERE {where_sql}", tuple(params)).fetchone()["count"])
+        total = int(
+            conn.execute(f"SELECT COUNT(*) AS count FROM next_actions WHERE {where_sql}", tuple(params)).fetchone()[
+                "count"
+            ]
+        )
         rows = [
             dict(row)
             for row in conn.execute(
@@ -208,13 +250,26 @@ def record_test_result(
             INSERT INTO verified_tests (task_ref, lane_id, command, passed, exit_code, result, session, agent, branch, commit_sha, verified_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
             """,
-            (resolved_task_ref, ctx.lane_id, command, 1 if passed else 0, exit_code, summarized_result, session, ctx.agent, ctx.branch, ctx.commit_sha),
+            (
+                resolved_task_ref,
+                ctx.lane_id,
+                command,
+                1 if passed else 0,
+                exit_code,
+                summarized_result,
+                session,
+                ctx.agent,
+                ctx.branch,
+                ctx.commit_sha,
+            ),
         )
         return _json_response(
             {
                 "ok": True,
                 "task_ref": resolved_task_ref,
-                "test": _row_to_dict(conn.execute("SELECT * FROM verified_tests WHERE id = ?", (cur.lastrowid,)).fetchone()),
+                "test": _row_to_dict(
+                    conn.execute("SELECT * FROM verified_tests WHERE id = ?", (cur.lastrowid,)).fetchone()
+                ),
             }
         )
 
@@ -228,7 +283,9 @@ def report_blocker(
 ) -> str:
     valid_operations = {"add", "resolve", "reopen"}
     if operation not in valid_operations:
-        return _json_response({"ok": False, "error": f"Invalid operation. Valid: {', '.join(sorted(valid_operations))}"})
+        return _json_response(
+            {"ok": False, "error": f"Invalid operation. Valid: {', '.join(sorted(valid_operations))}"}
+        )
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         ctx = _resolve_write_actor(conn, actor)
@@ -247,18 +304,28 @@ def report_blocker(
                     "ok": True,
                     "task_ref": resolved_task_ref,
                     "operation": operation,
-                    "blocker": _row_to_dict(conn.execute("SELECT * FROM blockers WHERE id = ?", (cur.lastrowid,)).fetchone()),
+                    "blocker": _row_to_dict(
+                        conn.execute("SELECT * FROM blockers WHERE id = ?", (cur.lastrowid,)).fetchone()
+                    ),
                 }
             )
         if blocker_id is None:
             return _json_response({"ok": False, "error": "blocker_id is required for resolve/reopen."})
-        existing = conn.execute("SELECT * FROM blockers WHERE id = ? AND task_ref = ?", (blocker_id, resolved_task_ref)).fetchone()
+        existing = conn.execute(
+            "SELECT * FROM blockers WHERE id = ? AND task_ref = ?", (blocker_id, resolved_task_ref)
+        ).fetchone()
         if existing is None:
             return _json_response({"ok": False, "error": "Blocker not found for task_ref."})
         if operation == "resolve":
-            conn.execute("UPDATE blockers SET status = 'resolved', resolved_at = datetime('now'), agent = ?, branch = ?, commit_sha = ?, lane_id = COALESCE(lane_id, ?) WHERE id = ? AND task_ref = ?", (ctx.agent, ctx.branch, ctx.commit_sha, ctx.lane_id, blocker_id, resolved_task_ref))
+            conn.execute(
+                "UPDATE blockers SET status = 'resolved', resolved_at = datetime('now'), agent = ?, branch = ?, commit_sha = ?, lane_id = COALESCE(lane_id, ?) WHERE id = ? AND task_ref = ?",
+                (ctx.agent, ctx.branch, ctx.commit_sha, ctx.lane_id, blocker_id, resolved_task_ref),
+            )
         else:
-            conn.execute("UPDATE blockers SET status = 'open', resolved_at = NULL, agent = ?, branch = ?, commit_sha = ?, lane_id = COALESCE(lane_id, ?) WHERE id = ? AND task_ref = ?", (ctx.agent, ctx.branch, ctx.commit_sha, ctx.lane_id, blocker_id, resolved_task_ref))
+            conn.execute(
+                "UPDATE blockers SET status = 'open', resolved_at = NULL, agent = ?, branch = ?, commit_sha = ?, lane_id = COALESCE(lane_id, ?) WHERE id = ? AND task_ref = ?",
+                (ctx.agent, ctx.branch, ctx.commit_sha, ctx.lane_id, blocker_id, resolved_task_ref),
+            )
         return _json_response(
             {
                 "ok": True,
@@ -272,18 +339,54 @@ def report_blocker(
 def _collect_task_provenance_integrity(conn: sqlite3.Connection, task_ref: str) -> dict:
     table_checks: dict[str, dict[str, object]] = {}
     total_issues = 0
-    for table_name in ("decisions", "blockers", "next_actions", "verified_tests", "review_findings", "worker_reports", "lane_messages"):
-        rows = conn.execute(f"SELECT id AS row_id, agent, branch, commit_sha FROM {table_name} WHERE task_ref = ? AND (agent IS NULL OR TRIM(agent) = '' OR branch IS NULL OR TRIM(branch) = '') ORDER BY id DESC", (task_ref,)).fetchall()
-        items = [{"row_id": int(row["row_id"]), "agent": row["agent"], "branch": row["branch"], "commit_sha": row["commit_sha"]} for row in rows]
+    for table_name in (
+        "decisions",
+        "blockers",
+        "next_actions",
+        "verified_tests",
+        "review_findings",
+        "worker_reports",
+        "lane_messages",
+    ):
+        rows = conn.execute(
+            f"SELECT id AS row_id, agent, branch, commit_sha FROM {table_name} WHERE task_ref = ? AND (agent IS NULL OR TRIM(agent) = '' OR branch IS NULL OR TRIM(branch) = '') ORDER BY id DESC",
+            (task_ref,),
+        ).fetchall()
+        items = [
+            {
+                "row_id": int(row["row_id"]),
+                "agent": row["agent"],
+                "branch": row["branch"],
+                "commit_sha": row["commit_sha"],
+            }
+            for row in rows
+        ]
         table_checks[table_name] = {"count": len(items), "items": items}
         total_issues += len(items)
-    active_row = conn.execute("SELECT updated_by, updated_branch, updated_commit_sha FROM handoff_state WHERE id = 1 AND task_ref = ?", (task_ref,)).fetchone()
+    active_row = conn.execute(
+        "SELECT updated_by, updated_branch, updated_commit_sha FROM handoff_state WHERE id = 1 AND task_ref = ?",
+        (task_ref,),
+    ).fetchone()
     active_missing = None
     if active_row is not None:
-        missing = _normalize_optional_text(active_row["updated_by"]) is None or _normalize_optional_text(active_row["updated_branch"]) is None
-        active_missing = {"count": 1 if missing else 0, "is_violation": missing, "updated_by": active_row["updated_by"], "updated_branch": active_row["updated_branch"], "updated_commit_sha": active_row["updated_commit_sha"]}
+        missing = (
+            _normalize_optional_text(active_row["updated_by"]) is None
+            or _normalize_optional_text(active_row["updated_branch"]) is None
+        )
+        active_missing = {
+            "count": 1 if missing else 0,
+            "is_violation": missing,
+            "updated_by": active_row["updated_by"],
+            "updated_branch": active_row["updated_branch"],
+            "updated_commit_sha": active_row["updated_commit_sha"],
+        }
         total_issues += 1 if missing else 0
-    return {"healthy": total_issues == 0, "total_issues": total_issues, "tables": table_checks, "active_state": active_missing}
+    return {
+        "healthy": total_issues == 0,
+        "total_issues": total_issues,
+        "tables": table_checks,
+        "active_state": active_missing,
+    }
 
 
 def _collect_commit_verification_data(
@@ -318,9 +421,7 @@ def _collect_commit_verification_data(
         commit_slice_decisions = [
             row for row in commit_slice_decisions if is_slice_complete_decision(str(row["decision"]))
         ]
-    structured = [
-        row for row in commit_slice_decisions if _has_structured_slice_summary(str(row["rationale"] or ""))
-    ]
+    structured = [row for row in commit_slice_decisions if _has_structured_slice_summary(str(row["rationale"] or ""))]
     return fresh_test_count, commit_slice_decisions, structured
 
 
@@ -380,7 +481,9 @@ def handoff_close_check(
         if task_ref is None:
             if active_row is None:
                 if allow_no_active_task:
-                    return _json_response({"ok": True, "ready_to_close": True, "skipped": True, "reason": "No active handoff task found."})
+                    return _json_response(
+                        {"ok": True, "ready_to_close": True, "skipped": True, "reason": "No active handoff task found."}
+                    )
                 return _json_response({"ok": False, "error": "No active handoff task found."})
             resolved_task_ref = str(active_row["task_ref"])
         else:
@@ -392,25 +495,38 @@ def handoff_close_check(
         open_blockers = [row for row in snapshot["blockers"] if row.get("status") == "open"]
         pending_actions = [row for row in snapshot["next_actions"] if row.get("status") == "pending"]
         open_findings = [row for row in snapshot["review_findings"] if row.get("status") == "open"]
-        fresh_test_count, current_commit_slice_decisions, structured_current_commit_decisions = _collect_commit_verification_data(
-            conn, resolved_task_ref, normalized_current_commit_sha, require_fresh_tests, require_current_commit_summary,
+        fresh_test_count, current_commit_slice_decisions, structured_current_commit_decisions = (
+            _collect_commit_verification_data(
+                conn,
+                resolved_task_ref,
+                normalized_current_commit_sha,
+                require_fresh_tests,
+                require_current_commit_summary,
+            )
         )
         from .review_findings import _collect_review_findings_integrity  # noqa: PLC0415
+
         review_integrity = _collect_review_findings_integrity(conn, resolved_task_ref, apply=False)
         provenance_integrity = _collect_task_provenance_integrity(conn, resolved_task_ref)
         expected_state = _build_current_task_state_from_snapshot(snapshot)
         # Hydrate coverage so the sync check matches what generate_current_task_md writes.
         _ref = resolved_task_ref
         try:
-            from .review_findings import get_review_coverage as _get_coverage  # noqa: PLC0415
             import json as _json  # noqa: PLC0415
+
+            from .review_findings import get_review_coverage as _get_coverage  # noqa: PLC0415
+
             expected_state["review_coverage"] = _json.loads(_get_coverage(task_ref=_ref))
         except Exception:
             pass
         expected_markdown = _render_current_task_md(expected_state)
         current_task_exists = _current_task_path().exists()
-        current_task_in_sync = bool(current_task_exists and active_task_matches and _current_task_path().read_text() == expected_markdown)
-    latest_structured_current_commit_decision = structured_current_commit_decisions[0] if structured_current_commit_decisions else None
+        current_task_in_sync = bool(
+            current_task_exists and active_task_matches and _current_task_path().read_text() == expected_markdown
+        )
+    latest_structured_current_commit_decision = (
+        structured_current_commit_decisions[0] if structured_current_commit_decisions else None
+    )
     failures = _evaluate_close_failures(
         active_task_matches=active_task_matches,
         active_status=active_status,
@@ -431,13 +547,33 @@ def handoff_close_check(
         "task_ref": resolved_task_ref,
         "ready_to_close": ready_to_close,
         "checks": {
-            "active_task": {"matches_target": active_task_matches, "status": active_status, "is_done": active_status == "done"},
-            "open_blockers": {"count": len(open_blockers), "is_violation": len(open_blockers) > 0, "items": open_blockers},
-            "pending_actions": {"count": len(pending_actions), "is_violation": len(pending_actions) > 0, "items": pending_actions},
-            "open_review_findings": {"count": len(open_findings), "is_violation": len(open_findings) > 0, "items": open_findings},
+            "active_task": {
+                "matches_target": active_task_matches,
+                "status": active_status,
+                "is_done": active_status == "done",
+            },
+            "open_blockers": {
+                "count": len(open_blockers),
+                "is_violation": len(open_blockers) > 0,
+                "items": open_blockers,
+            },
+            "pending_actions": {
+                "count": len(pending_actions),
+                "is_violation": len(pending_actions) > 0,
+                "items": pending_actions,
+            },
+            "open_review_findings": {
+                "count": len(open_findings),
+                "is_violation": len(open_findings) > 0,
+                "items": open_findings,
+            },
             "review_integrity": review_integrity,
             "write_provenance": provenance_integrity,
-            "current_task_sync": {"path": str(_current_task_path()), "exists": current_task_exists, "is_in_sync": current_task_in_sync},
+            "current_task_sync": {
+                "path": str(_current_task_path()),
+                "exists": current_task_exists,
+                "is_in_sync": current_task_in_sync,
+            },
             "fresh_tests": {
                 "required": require_fresh_tests,
                 "current_commit_sha": normalized_current_commit_sha,
@@ -449,8 +585,12 @@ def handoff_close_check(
                 "current_commit_sha": normalized_current_commit_sha,
                 "slice_decision_count": len(current_commit_slice_decisions),
                 "structured_slice_decision_count": len(structured_current_commit_decisions),
-                "latest_structured_decision_id": int(latest_structured_current_commit_decision["id"]) if latest_structured_current_commit_decision is not None else None,
-                "latest_structured_decision": str(latest_structured_current_commit_decision["decision"]) if latest_structured_current_commit_decision is not None else None,
+                "latest_structured_decision_id": int(latest_structured_current_commit_decision["id"])
+                if latest_structured_current_commit_decision is not None
+                else None,
+                "latest_structured_decision": str(latest_structured_current_commit_decision["decision"])
+                if latest_structured_current_commit_decision is not None
+                else None,
                 "is_violation": bool(require_current_commit_summary and not structured_current_commit_decisions),
             },
         },
@@ -500,8 +640,7 @@ def audit_decision_ids(
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         rows = conn.execute(
-            "SELECT id, decision, created_at, agent FROM decisions "
-            "WHERE task_ref = ? ORDER BY id DESC LIMIT ?",
+            "SELECT id, decision, created_at, agent FROM decisions WHERE task_ref = ? ORDER BY id DESC LIMIT ?",
             (resolved_task_ref, limit),
         ).fetchall()
 
@@ -518,13 +657,15 @@ def audit_decision_ids(
         category = classify_decision_id(decision_str)
         counts[category] += 1
         if category in report_categories:
-            violations.append({
-                "id": int(row["id"]),
-                "decision": decision_str,
-                "category": category,
-                "created_at": str(row["created_at"]),
-                "agent": row["agent"],
-            })
+            violations.append(
+                {
+                    "id": int(row["id"]),
+                    "decision": decision_str,
+                    "category": category,
+                    "created_at": str(row["created_at"]),
+                    "agent": row["agent"],
+                }
+            )
 
     total_inspected = len(rows)
     healthy = counts["malformed_slice"] == 0
@@ -536,8 +677,7 @@ def audit_decision_ids(
         )
     if counts["legacy_slice"]:
         summary_lines.append(
-            f"{counts['legacy_slice']} legacy slice_complete_* id(s) found; "
-            "grandfathered for read paths only."
+            f"{counts['legacy_slice']} legacy slice_complete_* id(s) found; grandfathered for read paths only."
         )
     if counts["freeform"] and "freeform" in report_categories:
         summary_lines.append(
@@ -547,12 +687,14 @@ def audit_decision_ids(
     if healthy and not summary_lines:
         summary_lines.append("All inspected decision ids conform to the canonical grammar.")
 
-    return _json_response({
-        "ok": True,
-        "task_ref": resolved_task_ref,
-        "healthy": healthy,
-        "total_inspected": total_inspected,
-        "counts": counts,
-        "violations": violations,
-        "summary": " ".join(summary_lines),
-    })
+    return _json_response(
+        {
+            "ok": True,
+            "task_ref": resolved_task_ref,
+            "healthy": healthy,
+            "total_inspected": total_inspected,
+            "counts": counts,
+            "violations": violations,
+            "summary": " ".join(summary_lines),
+        }
+    )

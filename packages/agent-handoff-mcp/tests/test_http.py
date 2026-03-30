@@ -19,13 +19,7 @@ def _free_port() -> int:
 
 def test_http_server_lists_handoff_tools(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[3]
-    launcher = (
-        repo_root
-        / "packages"
-        / "agent-handoff-mcp"
-        / "src"
-        / "agent_handoff_mcp_launcher.py"
-    ).resolve()
+    launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
     port = _free_port()
 
     proc = subprocess.Popen(
@@ -52,16 +46,14 @@ def test_http_server_lists_handoff_tools(tmp_path: Path) -> None:
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             try:
-                resp = httpx.get(f"http://127.0.0.1:{port}/", timeout=0.5)
+                httpx.get(f"http://127.0.0.1:{port}/", timeout=0.5)
                 # Any response means the server is listening
                 break
             except (httpx.ConnectError, httpx.ReadError):
                 time.sleep(0.2)
         else:
             proc.kill()
-            raise TimeoutError(
-                f"HTTP server did not start within 10s. stderr: {proc.stderr.read()!r}"
-            )
+            raise TimeoutError(f"HTTP server did not start within 10s. stderr: {proc.stderr.read()!r}")
 
         async def _run() -> list[str]:
             transport = StreamableHttpTransport(url=url)
@@ -73,8 +65,9 @@ def test_http_server_lists_handoff_tools(tmp_path: Path) -> None:
         assert "get_handoff_state" in tool_names
         assert "record_review_finding" in tool_names
         assert "handoff_close_check" in tool_names
-        assert "orchestrator_start" in tool_names
-        assert "orchestrator_single_cycle" in tool_names
+        # orchestrator tools moved to agent-orchestrator-mcp server
+        assert "orchestrator_start" not in tool_names
+        assert "load_session" in tool_names
     finally:
         proc.terminate()
         proc.wait(timeout=5)

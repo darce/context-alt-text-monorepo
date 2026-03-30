@@ -9,6 +9,7 @@ import pytest
 
 from agent_handoff_mcp import api as mcp_server
 from agent_handoff_mcp import core as handoff_core
+from agent_handoff_mcp import TokenUsage, PromptMetrics
 from agent_handoff_mcp.config import RuntimeConfig
 
 
@@ -140,16 +141,20 @@ def test_turn_metrics_round_trip_and_summary(isolated_handoff: dict) -> None:
             phase="execution",
             backend="codex-cli",
             model="gpt-5.4",
-            input_tokens=101,
-            output_tokens=29,
-            cached_input_tokens=7,
-            reasoning_output_tokens=3,
-            total_tokens=130,
-            usage_source="observed",
-            prompt_tokens=120,
-            prompt_chars=480,
-            prompt_token_source="char_estimate",
-            pressure_level="elevated",
+            token_usage=TokenUsage(
+                input_tokens=101,
+                output_tokens=29,
+                cached_input_tokens=7,
+                reasoning_output_tokens=3,
+                total_tokens=130,
+                usage_source="observed",
+            ),
+            prompt_metrics=PromptMetrics(
+                prompt_tokens=120,
+                prompt_chars=480,
+                prompt_token_source="char_estimate",
+                pressure_level="elevated",
+            ),
             attribution={"used_artifact_context": True},
             section_sizes={"assignment": 120, "artifact_context": 60},
             raw_usage={"last": {"input_tokens": 101}},
@@ -207,12 +212,16 @@ def test_list_turn_metrics_applies_offset_without_dropping_rows(isolated_handoff
                 phase="execution",
                 backend="codex-cli",
                 model="gpt-5.4",
-                total_tokens=100 + cycle,
-                usage_source="observed",
-                prompt_tokens=90 + cycle,
-                prompt_chars=360 + cycle,
-                prompt_token_source="observed",
-                pressure_level="normal",
+                token_usage=TokenUsage(
+                    total_tokens=100 + cycle,
+                    usage_source="observed",
+                ),
+                prompt_metrics=PromptMetrics(
+                    prompt_tokens=90 + cycle,
+                    prompt_chars=360 + cycle,
+                    prompt_token_source="observed",
+                    pressure_level="normal",
+                ),
             )
         )
         assert created["ok"] is True
@@ -245,7 +254,7 @@ def test_record_decision_persists_unified_model_identity_fields(isolated_handoff
         mcp_server.record_decision(
             task_ref="decision-model-identity",
             session="codex",
-            decision="slice_complete_model_identity",
+            decision="cdx_slice_complete_test_model_identity",
             rationale=(
                 "## Changes\n- added unified model identity.\n"
                 "## Verification\n- unit tests updated.\n"
@@ -280,7 +289,7 @@ def test_record_decision_preserves_legacy_agent_fallback(isolated_handoff: dict)
         mcp_server.record_decision(
             task_ref="decision-legacy-agent",
             session="legacy",
-            decision="slice_complete_legacy_actor",
+            decision="cdx_slice_complete_test_legacy_actor",
             rationale=(
                 "## Changes\n- kept legacy agent fallback.\n"
                 "## Verification\n- unit tests updated.\n"
@@ -309,7 +318,7 @@ def test_record_decision_with_token_counts(isolated_handoff: dict) -> None:
         mcp_server.record_decision(
             task_ref="token-annotation-test",
             session="copilot",
-            decision="slice_complete_token_test",
+            decision="cdx_slice_complete_test_token_test",
             rationale=(
                 "## Changes\n- tested token fields.\n"
                 "## Verification\n- unit tests.\n"
@@ -344,7 +353,7 @@ def test_record_decision_without_tokens_leaves_nulls(isolated_handoff: dict) -> 
         mcp_server.record_decision(
             task_ref="token-null-test",
             session="copilot",
-            decision="slice_complete_no_tokens",
+            decision="cdx_slice_complete_test_no_tokens",
             rationale=(
                 "## Changes\n- no tokens.\n"
                 "## Verification\n- unit tests.\n"
@@ -375,7 +384,7 @@ def test_current_task_md_shows_token_summary(isolated_handoff: dict) -> None:
             mcp_server.record_decision(
                 task_ref="token-render-test",
                 session="copilot",
-                decision=f"slice_complete_render_{i}",
+                decision=f"cdx_slice_complete_test_render_{i}",
                 rationale=(
                     "## Changes\n- render test.\n"
                     "## Verification\n- unit tests.\n"
@@ -410,7 +419,7 @@ def test_current_task_md_omits_token_summary_when_no_tokens(isolated_handoff: di
         mcp_server.record_decision(
             task_ref="no-token-render-test",
             session="copilot",
-            decision="slice_complete_no_tok_render",
+            decision="cdx_slice_complete_test_no_tok_render",
             rationale=(
                 "## Changes\n- no tokens.\n"
                 "## Verification\n- unit tests.\n"
@@ -520,7 +529,7 @@ def test_get_latest_slice_review_packet_returns_branch_packet(isolated_handoff: 
     _parse(
         mcp_server.record_decision(
             session="slice-1",
-            decision="slice_complete_packet_lookup",
+            decision="cdx_slice_complete_packet_packet_lookup",
             rationale="## Changes\n- Added packet lookup.\n\n## Verification\n- pytest.\n\n## Schema / Contract Changes\n- Contract updated.\n\n## Open Threads\n- none.",
             actor={"lane_id": "backend-domain"},
         )
@@ -529,7 +538,7 @@ def test_get_latest_slice_review_packet_returns_branch_packet(isolated_handoff: 
     payload = _parse(mcp_server.get_latest_slice_review_packet(task_ref="slice-review-packet"))
 
     assert payload["ok"] is True
-    assert payload["packet"]["slice_label"] == "packet_lookup"
+    assert payload["packet"]["slice_label"] == "packet_packet_lookup"
     assert payload["packet"]["review_kind"] == "branch"
     assert payload["packet"]["scope_source"] == "slice_packet"
     assert payload["packet"]["plan_item_id"] == "slice-1"
@@ -571,7 +580,7 @@ def test_get_latest_slice_review_packet_filters_to_planning_slices(isolated_hand
     _parse(
         mcp_server.record_decision(
             session="slice-docs",
-            decision="slice_complete_docs_packet",
+            decision="cdx_slice_complete_docs_docs_packet",
             rationale="## Changes\n- Updated docs.\n\n## Verification\n- rg.\n\n## Schema / Contract Changes\n- none.\n\n## Open Threads\n- none.",
             actor={"lane_id": "docs-lane"},
         )
@@ -617,7 +626,7 @@ def test_get_latest_slice_review_packet_uses_decision_rationale_when_worker_repo
     _parse(
         mcp_server.record_decision(
             session="slice-rationale",
-            decision="slice_complete_rationale_fallback",
+            decision="cdx_slice_complete_fallback_rationale_fallback",
             rationale=(
                 "## Changes\n"
                 "- packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/review_runner.py: run_review ; packet-backed dispatch.\n"
@@ -686,7 +695,111 @@ def test_set_handoff_state_revision_conflict(isolated_handoff: dict) -> None:
     assert conflict["current_revision"] == 1
 
 
-def test_blocker_constraints_enforced(isolated_handoff: dict) -> None:
+def test_set_handoff_state_preserves_objective_when_omitted(isolated_handoff: dict) -> None:
+    """When objective is None on update, the existing value is preserved."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="obj-preserve",
+            objective="Original objective",
+            status="in_progress",
+        )
+    )
+    updated = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="obj-preserve",
+            status="review",
+            expected_revision=0,
+        )
+    )
+    assert updated["ok"] is True
+    assert updated["active"]["objective"] == "Original objective"
+    assert updated["active"]["status"] == "review"
+
+
+def test_set_handoff_state_requires_objective_on_insert(isolated_handoff: dict) -> None:
+    """Creating a new handoff state without objective returns an error."""
+    result = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="no-obj",
+            status="in_progress",
+        )
+    )
+    assert result["ok"] is False
+    assert "objective is required" in result["error"]
+
+
+def test_set_handoff_state_explicit_objective_overrides(isolated_handoff: dict) -> None:
+    """When objective is explicitly passed on update, it overrides the stored value."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="obj-override",
+            objective="Original",
+            status="in_progress",
+        )
+    )
+    updated = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="obj-override",
+            objective="Deliberately changed",
+            status="in_progress",
+            expected_revision=0,
+        )
+    )
+    assert updated["ok"] is True
+    assert updated["active"]["objective"] == "Deliberately changed"
+
+
+def test_record_decision_warns_when_model_identity_missing(isolated_handoff: dict) -> None:
+    """Decisions without model/model_label get a warning in the response."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="warn-test",
+            objective="Test warnings",
+            status="in_progress",
+        )
+    )
+    result = _parse(
+        mcp_server.record_decision(
+            session="copilot",
+            decision="cdx_slice_complete_warn_test_model_warning",
+            rationale=(
+                "## Changes\n- none.\n"
+                "## Verification\n- none.\n"
+                "## Schema / Contract Changes\n- none.\n"
+                "## Open Threads\n- none.\n"
+            ),
+            actor={"agent": "codex"},
+        )
+    )
+    assert result["ok"] is True
+    assert "warnings" in result
+    assert any("model" in w for w in result["warnings"])
+
+
+def test_record_decision_no_warning_with_model(isolated_handoff: dict) -> None:
+    """Decisions with model identity do not produce warnings."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="no-warn-test",
+            objective="No warnings",
+            status="in_progress",
+        )
+    )
+    result = _parse(
+        mcp_server.record_decision(
+            session="copilot",
+            decision="cdx_slice_complete_warn_test_no_warning",
+            rationale=(
+                "## Changes\n- none.\n"
+                "## Verification\n- none.\n"
+                "## Schema / Contract Changes\n- none.\n"
+                "## Open Threads\n- none.\n"
+            ),
+            actor={"model": "claude-opus-4-0520", "model_label": "Opus 4.6", "reasoning_level": "high"},
+        )
+    )
+    assert result["ok"] is True
+    assert "warnings" not in result
     _parse(
         mcp_server.set_handoff_state(
             task_ref="4.12.0",
@@ -1727,9 +1840,10 @@ def test_update_review_finding_rejects_invalid_status_and_task_mismatch(isolated
             expected_revision=0,
         )
     )
-    mismatch = _parse(mcp_server.update_review_finding(finding_db_id=finding_id, status="fixed"))
-    assert mismatch["ok"] is False
-    assert mismatch["error"] == "Finding not found for task."
+    # Global lookup: finding_db_id is a unique PK, so omitting task_ref succeeds via global lookup
+    found = _parse(mcp_server.update_review_finding(finding_db_id=finding_id, status="fixed"))
+    assert found["ok"] is True
+    assert found["finding"]["status"] == "fixed"
 
 
 def test_record_review_finding_accepts_structured_details_and_actor_fallback(isolated_handoff: dict) -> None:
@@ -1879,13 +1993,20 @@ def test_get_review_finding_respects_task_scope(isolated_handoff: dict) -> None:
     )
     assert switched["ok"] is True
 
-    hidden = _parse(mcp_server.get_review_finding(finding_db_id=finding_db_id))
-    assert hidden["ok"] is False
-    assert hidden["error"] == "Finding not found for task."
+    # Global lookup: omitting task_ref finds the finding by db_id regardless of active task
+    found = _parse(mcp_server.list_review_findings(finding_db_id=finding_db_id))
+    assert found["ok"] is True
+    assert found["findings"][0]["finding_id"] == "M-8"
 
-    explicit = _parse(mcp_server.get_review_finding(finding_db_id=finding_db_id, task_ref="4.12.0"))
+    # Explicit task_ref still scopes correctly
+    explicit = _parse(mcp_server.list_review_findings(finding_db_id=finding_db_id, task_ref="4.12.0"))
     assert explicit["ok"] is True
-    assert explicit["finding"]["finding_id"] == "M-8"
+    assert explicit["findings"][0]["finding_id"] == "M-8"
+
+    # Explicit task_ref for wrong task returns not-found
+    wrong_task = _parse(mcp_server.list_review_findings(finding_db_id=finding_db_id, task_ref="4.12.1"))
+    assert wrong_task["ok"] is False
+    assert "Finding not found for task." in wrong_task["error"]
 
 
 def test_update_review_finding_cross_task(isolated_handoff: dict) -> None:
@@ -1917,16 +2038,17 @@ def test_update_review_finding_cross_task(isolated_handoff: dict) -> None:
         )
     )
 
-    # Without task_ref, finding is invisible to the new active task
-    hidden = _parse(
+    # Global lookup: omitting task_ref finds unique finding_id across all tasks
+    global_fixed = _parse(
         mcp_server.update_review_finding(
             finding_id="CU-1",
             status="fixed",
         )
     )
-    assert hidden["ok"] is False
+    assert global_fixed["ok"] is True
+    assert global_fixed["finding"]["status"] == "fixed"
 
-    # With explicit task_ref, update succeeds against the original task
+    # With explicit task_ref, update also succeeds against the original task
     fixed = _parse(
         mcp_server.update_review_finding(
             finding_id="CU-1",
@@ -1939,9 +2061,10 @@ def test_update_review_finding_cross_task(isolated_handoff: dict) -> None:
 
     # Reopen also works cross-task
     reopened = _parse(
-        mcp_server.reopen_review_finding(
+        mcp_server.update_review_finding(
             finding_id="CU-1",
-            reason="Needs re-check",
+            status="open",
+            reopen_reason="Needs re-check",
             task_ref="cross-update-a",
         )
     )
@@ -1962,7 +2085,7 @@ def test_core_write_tools_accept_explicit_task_ref_cross_task(isolated_handoff: 
     decision = _parse(
         mcp_server.record_decision(
             session="s-cross",
-            decision="slice_complete_cross_write_a",
+            decision="cdx_slice_complete_cross_write_cross_write_a",
             rationale="## Changes\n- none.\n\n## Verification\n- none.\n\n## Schema / Contract Changes\n- none.\n\n## Open Threads\n- none.",
             task_ref="cross-write-a",
         )
@@ -2021,7 +2144,7 @@ def test_core_write_tools_accept_explicit_task_ref_cross_task(isolated_handoff: 
 
     explicit = _parse(mcp_server.get_handoff_state(task_ref="cross-write-a", verbose=True))
     assert explicit["task_ref"] == "cross-write-a"
-    assert [row["decision"] for row in explicit["decisions_recent"]] == ["slice_complete_cross_write_a"]
+    assert [row["decision"] for row in explicit["decisions_recent"]] == ["cdx_slice_complete_cross_write_cross_write_a"]
     assert [row["action"] for row in explicit["actions_pending"]] == ["Cross-task action"]
     assert [row["description"] for row in explicit["blockers_open"]] == ["Cross-task blocker"]
     assert [row["command"] for row in explicit["tests_recent"]] == ["pytest -q"]
@@ -2244,7 +2367,7 @@ def test_archive_and_dashboard_summary(isolated_handoff: dict) -> None:
         assert conn.execute("SELECT COUNT(*) FROM decisions WHERE task_ref = '4.99.0'").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM next_actions WHERE task_ref = '4.99.0'").fetchone()[0] == 0
 
-    dashboard = _parse(mcp_server.get_handoff_dashboard(include_archived=True))
+    dashboard = _parse(mcp_server.get_handoff_state(view="dashboard", verbose=True))
     matching = [row for row in dashboard["tasks"] if row["task_ref"] == "4.99.0"]
     assert len(matching) == 1
     assert matching[0]["archived_at"] is not None
@@ -2264,7 +2387,7 @@ def test_generate_current_task_md_with_nested_tool_wrapper(
     _parse(
         mcp_server.record_decision(
             session="nested-wrapper",
-            decision="slice_complete_nested_wrapper",
+            decision="cdx_slice_complete_nested_nested_wrapper",
             rationale="## Changes\n- none.\n\n## Verification\n- none.\n\n## Schema / Contract Changes\n- none.\n\n## Open Threads\n- none.",
         )
     )
@@ -2286,7 +2409,7 @@ def test_generate_current_task_md_with_nested_tool_wrapper(
     assert "CURRENT_TASK" in payload["markdown"]
     assert "Nested wrapper objective" in payload["markdown"]
     assert "Latest Decision" in payload["markdown"]
-    assert "slice_complete_nested_wrapper" in payload["markdown"]
+    assert "cdx_slice_complete_nested_nested_wrapper" in payload["markdown"]
 
 
 def test_handoff_close_check_allows_no_active_task_when_configured(isolated_handoff: dict) -> None:
@@ -2391,7 +2514,7 @@ def test_handoff_close_check_requires_structured_slice_summary_for_current_commi
     _parse(
         mcp_server.record_decision(
             session="s-docs",
-            decision="slice_complete_docs_audit",
+            decision="cdx_slice_complete_docs_docs_audit",
             rationale=(
                 "## Changes\n"
                 "- docs/agentic/rules/development-workflow.md: handoff policy ; required handoff for docs-only slices.\n\n"
@@ -2429,7 +2552,7 @@ def test_handoff_close_check_rejects_empty_structured_slice_sections_for_current
     _parse(
         mcp_server.record_decision(
             session="s-docs-empty",
-            decision="slice_complete_docs_audit_empty",
+            decision="cdx_slice_complete_docs_docs_audit_empty",
             rationale=(
                 "## Changes\n"
                 "## Verification\n"
@@ -2462,7 +2585,7 @@ def test_record_decision_rejects_unstructured_slice_completion_rationale(isolate
     response = _parse(
         mcp_server.record_decision(
             session="slice-invalid",
-            decision="slice_complete_invalid_summary",
+            decision="cdx_slice_complete_docs_invalid_summary",
             rationale="single line summary only",
             actor=actor,
         )
@@ -2472,6 +2595,44 @@ def test_record_decision_rejects_unstructured_slice_completion_rationale(isolate
     assert "slice_complete_* decisions require a structured rationale" in response["error"]
 
     handoff = _parse(mcp_server.get_handoff_state(task_ref="slice-summary-validation"))
+    assert handoff["decisions_recent"] == []
+
+
+def test_record_decision_rejects_legacy_slice_completion_id_for_new_writes(
+    isolated_handoff: dict,
+) -> None:
+    initialized = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="slice-summary-legacy",
+            objective="Reject legacy ids for new writes",
+            status="in_progress",
+        )
+    )
+    assert initialized["ok"] is True
+
+    actor = {"agent": "codex", "branch": "tooling/review-hardening", "commit_sha": "abc123"}
+    response = _parse(
+        mcp_server.record_decision(
+            session="slice-legacy",
+            decision="slice_complete_legacy_summary",
+            rationale=(
+                "## Changes\n"
+                "- docs/README.md: updated navigation hub.\n\n"
+                "## Verification\n"
+                "- python3 docs audit: TOTAL 0.\n\n"
+                "## Schema / Contract Changes\n"
+                "- none.\n\n"
+                "## Open Threads\n"
+                "- none."
+            ),
+            actor=actor,
+        )
+    )
+
+    assert response["ok"] is False
+    assert "Legacy slice-complete ids are grandfathered" in response["error"]
+
+    handoff = _parse(mcp_server.get_handoff_state(task_ref="slice-summary-legacy"))
     assert handoff["decisions_recent"] == []
 
 
@@ -2489,7 +2650,7 @@ def test_record_decision_accepts_structured_slice_completion_rationale(isolated_
     response = _parse(
         mcp_server.record_decision(
             session="slice-valid",
-            decision="slice_complete_valid_summary",
+            decision="cdx_slice_complete_docs_valid_summary",
             rationale=(
                 "## Changes\n"
                 "- docs/README.md: updated navigation hub.\n\n"
@@ -2505,7 +2666,7 @@ def test_record_decision_accepts_structured_slice_completion_rationale(isolated_
     )
 
     assert response["ok"] is True
-    assert response["decision"]["decision"] == "slice_complete_valid_summary"
+    assert response["decision"]["decision"] == "cdx_slice_complete_docs_valid_summary"
 
 
 # ---------------------------------------------------------------------------
@@ -2698,6 +2859,104 @@ def test_generate_current_task_md_no_related_param(isolated_handoff: dict) -> No
     )
     md = payload["markdown"]
     assert "## Related Open Review Findings" not in md
+
+
+def test_generate_current_task_md_truncates_multiline_test_command(
+    isolated_handoff: dict,
+) -> None:
+    """Multi-line test commands are collapsed to a single line and capped at 120 chars."""
+    multiline_cmd = (
+        "ORCH_ROOT=\"$(dirname $(pwd))\" && make something && python3 - <<'PY'\n"
+        "from agent_handoff_mcp import list_plan_cursors\n"
+        "from agent_handoff_mcp.config import RuntimeConfig\n"
+        "cfg = RuntimeConfig(workspace_root=ORCH_ROOT)\n"
+        "cursors = list_plan_cursors(cfg, task_ref='my-task')\n"
+        "assert len(cursors) > 0, 'no cursors found'\n"
+        "PY"
+    )
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="cmd-truncate-test",
+            objective="Test command truncation",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.record_test_result(
+            task_ref="cmd-truncate-test",
+            session="copilot",
+            command=multiline_cmd,
+            result="7 passed",
+            passed=True,
+        )
+    )
+    payload = _parse(
+        mcp_server.generate_current_task_md(task_ref="cmd-truncate-test", write_file=False)
+    )
+    md = payload["markdown"]
+    rendered_cmd_lines = [l for l in md.splitlines() if "ORCH_ROOT" in l]
+    assert len(rendered_cmd_lines) == 1, "command must render on a single line"
+    rendered_line = rendered_cmd_lines[0]
+    assert "\n" not in rendered_line
+    assert " \u21a9 " in rendered_line, "collapsed newlines must appear as ↩ markers"
+    assert len(rendered_line) <= 160  # generous bound; command portion capped at 120
+
+
+# ---------------------------------------------------------------------------
+# Review Coverage section in generate_current_task_md
+# ---------------------------------------------------------------------------
+
+
+def test_generate_current_task_md_includes_review_coverage_section(isolated_handoff: dict) -> None:
+    """Coverage section appears when review runs exist for the task."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="cov-section-1",
+            objective="Test coverage section",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.record_review_run(
+            review_run_id="cov-section-run-001",
+            session="s1",
+            subject_path="docs/tasks/cov-test.md",
+            task_ref="cov-section-1",
+            verdict="pass_with_findings",
+        )
+    )
+    _parse(
+        mcp_server.record_review_finding(
+            task_ref="cov-section-1",
+            finding_id="cov-section-1-001",
+            session="s1",
+            severity="medium",
+            file_path="docs/tasks/cov-test.md",
+            description="Test finding",
+        )
+    )
+    payload = _parse(mcp_server.generate_current_task_md(task_ref="cov-section-1", write_file=False))
+    md = payload["markdown"]
+    assert "## Review Coverage" in md
+    assert "review runs: 1" in md
+    assert "latest verdict: pass_with_findings" in md
+    assert "open findings: high=0 medium=1 low=0" in md
+
+
+def test_generate_current_task_md_review_coverage_zero_runs(isolated_handoff: dict) -> None:
+    """Coverage section shows zero runs when no review runs exist for the task."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="cov-zero-1",
+            objective="No runs yet",
+            status="in_progress",
+        )
+    )
+    payload = _parse(mcp_server.generate_current_task_md(task_ref="cov-zero-1", write_file=False))
+    md = payload["markdown"]
+    assert "## Review Coverage" in md
+    assert "review runs: 0" in md
+    assert "latest verdict: none" in md
 
 
 # ---------------------------------------------------------------------------
@@ -2963,3 +3222,494 @@ def test_verification_evidence_too_long(isolated_handoff: dict) -> None:
     )
     assert rejected["ok"] is False
     assert "2000" in rejected["error"]
+
+
+# ---------------------------------------------------------------------------
+# Focus field tests
+# ---------------------------------------------------------------------------
+
+def test_set_handoff_state_focus_round_trip(isolated_handoff: dict) -> None:
+    """Focus can be set on insert, preserved when omitted, and cleared explicitly."""
+    created = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="focus-rt",
+            objective="Test focus",
+            status="in_progress",
+            focus="implementing slice 1",
+        )
+    )
+    assert created["ok"] is True
+    assert created["active"]["focus"] == "implementing slice 1"
+
+    # Omitting focus preserves existing value
+    updated = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="focus-rt",
+            status="in_progress",
+            expected_revision=0,
+        )
+    )
+    assert updated["ok"] is True
+    assert updated["active"]["focus"] == "implementing slice 1"
+
+    # Explicitly passing empty string clears it
+    cleared = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="focus-rt",
+            status="in_progress",
+            focus="",
+            expected_revision=1,
+        )
+    )
+    assert cleared["ok"] is True
+    assert cleared["active"].get("focus") in (None, "")
+
+
+def test_set_handoff_state_focus_default_none(isolated_handoff: dict) -> None:
+    """When no focus is passed on insert, it remains null."""
+    created = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="focus-none",
+            objective="No focus",
+            status="in_progress",
+        )
+    )
+    assert created["ok"] is True
+    assert created["active"].get("focus") is None
+
+
+def test_current_task_md_renders_focus_section(isolated_handoff: dict) -> None:
+    """CURRENT_TASK.md includes a Current Focus section when focus is set."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="focus-md",
+            objective="Doc focus test",
+            status="in_progress",
+            focus="working on E12-3 slice 1",
+        )
+    )
+    result = _parse(mcp_server.generate_current_task_md(task_ref="focus-md", write_file=True))
+    assert result["ok"] is True
+
+    md_path = isolated_handoff["current_task_path"]
+    content = md_path.read_text()
+    assert "## Current Focus" in content
+    assert "working on E12-3 slice 1" in content
+
+
+def test_current_task_md_omits_focus_when_null(isolated_handoff: dict) -> None:
+    """CURRENT_TASK.md does not render a focus section when focus is null."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="focus-null-md",
+            objective="No focus test",
+            status="in_progress",
+        )
+    )
+    result = _parse(mcp_server.generate_current_task_md(task_ref="focus-null-md", write_file=True))
+    assert result["ok"] is True
+
+    md_path = isolated_handoff["current_task_path"]
+    content = md_path.read_text()
+    assert "## Current Focus" not in content
+
+
+def test_switch_task_clears_focus_on_restore(isolated_handoff: dict) -> None:
+    """Switching away and back clears focus unless explicitly provided."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="sw-focus-a",
+            objective="Task A",
+            status="in_progress",
+            focus="deep in slice 2",
+        )
+    )
+    # Create second task and switch to it
+    _parse(
+        mcp_server.switch_task(
+            task_ref="sw-focus-b",
+            objective="Task B",
+            status="in_progress",
+        )
+    )
+    # Switch back to A; focus should be cleared (restored from archive without focus)
+    result = _parse(
+        mcp_server.switch_task(task_ref="sw-focus-a")
+    )
+    assert result["ok"] is True
+    assert result["active"].get("focus") is None
+
+    # Now switch with explicit focus
+    _parse(mcp_server.switch_task(task_ref="sw-focus-b"))
+    result2 = _parse(
+        mcp_server.switch_task(task_ref="sw-focus-a", focus="resuming slice 3")
+    )
+    assert result2["ok"] is True
+    assert result2["active"]["focus"] == "resuming slice 3"
+
+
+# ---------------------------------------------------------------------------
+# Decision grammar helpers tests
+# ---------------------------------------------------------------------------
+
+def test_is_slice_complete_legacy_format() -> None:
+    """Legacy slice_complete_* format is recognized."""
+    assert handoff_core.is_slice_complete_decision("slice_complete_foo") is True
+    assert handoff_core.is_slice_complete_decision("slice_complete_docs_audit") is True
+
+
+def test_is_slice_complete_prefixed_format() -> None:
+    """New prefixed format is recognized."""
+    assert handoff_core.is_slice_complete_decision("cdx_slice_complete_E12-1_gate_validation") is True
+    assert handoff_core.is_slice_complete_decision("cop_slice_complete_E12-3_close_check") is True
+    assert handoff_core.is_slice_complete_decision("gem_slice_complete_ADPH-3_metrics") is True
+
+
+def test_is_slice_complete_rejects_invalid() -> None:
+    """Non-slice-complete decisions are rejected."""
+    assert handoff_core.is_slice_complete_decision("note_only") is False
+    assert handoff_core.is_slice_complete_decision("review_complete") is False
+    assert handoff_core.is_slice_complete_decision("_slice_complete_bad") is False
+    assert handoff_core.is_slice_complete_decision("toolong_slice_complete_E12-1_foo") is False
+
+
+def test_extract_slice_label_legacy() -> None:
+    """Legacy format extracts the slug."""
+    assert handoff_core.extract_slice_label("slice_complete_docs_audit") == "docs_audit"
+
+
+def test_extract_slice_label_prefixed() -> None:
+    """Prefixed format extracts work_ref + slug."""
+    assert handoff_core.extract_slice_label("cdx_slice_complete_E12-1_gate_validation") == "E12-1_gate_validation"
+
+
+def test_validate_decision_accepts_prefixed_slice_complete(isolated_handoff: dict) -> None:
+    """record_decision accepts the new prefixed slice_complete format with structured rationale."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="grammar-test",
+            objective="Grammar test",
+            status="in_progress",
+        )
+    )
+    actor = {"agent": "test", "branch": "test", "commit_sha": "abc123"}
+    structured_rationale = (
+        "## Changes\n- core.py: is_slice_complete_decision ; added helper\n\n"
+        "## Verification\n- pytest: 5 passed\n\n"
+        "## Schema / Contract Changes\n- none.\n\n"
+        "## Open Threads\n- none."
+    )
+    result = _parse(
+        mcp_server.record_decision(
+            session="s-grammar",
+            decision="cdx_slice_complete_E12-3_grammar_helpers",
+            rationale=structured_rationale,
+            actor=actor,
+        )
+    )
+    assert result["ok"] is True
+
+
+def test_close_check_recognizes_prefixed_slice_complete(isolated_handoff: dict) -> None:
+    """handoff_close_check finds prefixed slice_complete decisions for close readiness."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="close-prefix",
+            objective="Close check prefixed",
+            status="done",
+        )
+    )
+    actor = {"agent": "test", "branch": "test", "commit_sha": "def456"}
+    structured_rationale = (
+        "## Changes\n- core.py: handoff_close_check ; updated query\n\n"
+        "## Verification\n- pytest: 3 passed\n\n"
+        "## Schema / Contract Changes\n- none.\n\n"
+        "## Open Threads\n- none."
+    )
+    _parse(
+        mcp_server.record_decision(
+            session="s-close",
+            decision="cop_slice_complete_E12-3_close_check_compat",
+            rationale=structured_rationale,
+            actor=actor,
+        )
+    )
+    _parse(mcp_server.generate_current_task_md(task_ref="close-prefix", write_file=True))
+
+    result = _parse(mcp_server.handoff_close_check(enforce=True, current_commit_sha="def456"))
+    assert result["ok"] is True
+    assert result["ready_to_close"] is True
+    assert result["checks"]["current_commit_handoff"]["structured_slice_decision_count"] >= 1
+
+
+# HANDOFF-REV-001 regression: generate_current_task_md for archived non-active task
+def test_generate_current_task_md_renders_archived_non_active_task(isolated_handoff: dict) -> None:
+    """generate_current_task_md renders the objective for an archived task that is no longer active."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="archived-render-task",
+            objective="Archived Task Objective",
+            status="done",
+        )
+    )
+    _parse(mcp_server.archive_task_state(task_ref="archived-render-task"))
+
+    # Make a different task active so archived-render-task is definitely not active.
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="current-active-task",
+            objective="Current Active Objective",
+            status="in_progress",
+        )
+    )
+
+    payload = _parse(
+        mcp_server.generate_current_task_md(task_ref="archived-render-task", write_file=False)
+    )
+    assert payload["ok"] is True
+    assert payload["task_ref"] == "archived-render-task"
+    assert payload["markdown"] is not None
+    assert "Archived Task Objective" in payload["markdown"]
+
+
+# HANDOFF-REV-002 regression: close_slice atomicity on set_handoff_state failure
+def test_close_slice_does_not_write_md_on_state_failure(isolated_handoff: dict) -> None:
+    """close_slice returns ok=False and leaves CURRENT_TASK.md untouched when set_handoff_state fails."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="close-atomic-test",
+            objective="Atomic slice test",
+            status="in_progress",
+        )
+    )
+
+    # Write a sentinel so we can verify the file is NOT overwritten.
+    sentinel = "SENTINEL_BEFORE_FAILED_CLOSE"
+    isolated_handoff["current_task_path"].write_text(sentinel)
+
+    # Provide a wrong expected_revision to force set_handoff_state to fail.
+    result = _parse(
+        mcp_server.close_slice(
+            session="s-atomic",
+            decision="non-slice-atomic-close-test",
+            expected_revision=9999,
+            task_ref="close-atomic-test",
+        )
+    )
+
+    assert result["ok"] is False
+    assert result["state_updated"] is False
+    assert result["current_task_md_written"] is False
+    assert isolated_handoff["current_task_path"].read_text() == sentinel
+
+
+# E12-5 review: load_session compound tool
+def test_load_session_merges_state_and_findings(isolated_handoff: dict) -> None:
+    """load_session returns combined handoff state + open findings in a single payload."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="ls-test",
+            objective="Load session compound test",
+            status="in_progress",
+        )
+    )
+    mcp_server.record_review_finding(
+        session="s-ls",
+        finding_id="ls-f1",
+        severity="medium",
+        file_path="some/file.py",
+        description="Test finding for load_session.",
+        task_ref="ls-test",
+    )
+
+    result = _parse(mcp_server.load_session(task_ref="ls-test"))
+
+    assert result["ok"] is True
+    assert result["task_ref"] == "ls-test"
+    # State is nested under "state" key
+    state = result["state"]
+    assert state["active"]["status"] == "in_progress"
+    assert state["active"]["objective"] == "Load session compound test"
+    # Open findings at top-level "open_findings"
+    findings = result["open_findings"]
+    assert isinstance(findings, list)
+    assert result["open_findings_count"] >= 1
+    assert any(f["finding_id"] == "ls-f1" for f in findings)
+
+
+# ---------------------------------------------------------------------------
+# classify_decision_id / audit_decision_ids (E12-3 stretch goal)
+# ---------------------------------------------------------------------------
+
+
+def test_classify_decision_id_canonical() -> None:
+    """Full canonical grammar is classified as 'canonical'."""
+    assert handoff_core.classify_decision_id("cdx_slice_complete_E12-1_gate_validation") == "canonical"
+    assert handoff_core.classify_decision_id("cop_review_complete_E12-3_audit") == "canonical"
+    assert handoff_core.classify_decision_id("cla_record_ADPH-4_fix_rev_001") == "canonical"
+    assert handoff_core.classify_decision_id("ab_foo_TASK-1_bar") == "canonical"
+
+
+def test_classify_decision_id_legacy_slice() -> None:
+    """Legacy slice_complete_* is classified as 'legacy_slice'."""
+    assert handoff_core.classify_decision_id("slice_complete_docs_audit") == "legacy_slice"
+    assert handoff_core.classify_decision_id("slice_complete_foo") == "legacy_slice"
+
+
+def test_classify_decision_id_malformed_slice() -> None:
+    """Ids containing slice_complete but violating the grammar are 'malformed_slice'."""
+    assert handoff_core.classify_decision_id("_slice_complete_bad") == "malformed_slice"
+    assert handoff_core.classify_decision_id("toolong_slice_complete_E12-1_foo") == "malformed_slice"
+    assert handoff_core.classify_decision_id("ABC_slice_complete_E12-1_foo") == "malformed_slice"
+
+
+def test_classify_decision_id_freeform() -> None:
+    """Ids with no slice_complete and no canonical form are 'freeform'."""
+    assert handoff_core.classify_decision_id("review_handoff_state_slice_audit") == "freeform"
+    assert handoff_core.classify_decision_id("note_only") == "freeform"
+    assert handoff_core.classify_decision_id("review_complete") == "freeform"
+
+
+def test_audit_decision_ids_healthy_when_all_canonical(isolated_handoff: dict) -> None:
+    """audit_decision_ids reports healthy=True when all decisions are canonical."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="audit-canonical",
+            objective="Canonical audit test",
+            status="in_progress",
+        )
+    )
+    structured_rationale = (
+        "## Changes\n- none.\n\n## Verification\n- pytest passed.\n\n"
+        "## Schema / Contract Changes\n- none.\n\n## Open Threads\n- none."
+    )
+    _parse(
+        mcp_server.record_decision(
+            session="s-audit",
+            decision="cdx_slice_complete_E12-3_canonical_check",
+            rationale=structured_rationale,
+            task_ref="audit-canonical",
+        )
+    )
+    _parse(
+        mcp_server.record_decision(
+            session="s-audit",
+            decision="cop_review_complete_E12-3_audit",
+            task_ref="audit-canonical",
+        )
+    )
+
+    result = _parse(mcp_server.audit_decision_ids(task_ref="audit-canonical"))
+
+    assert result["ok"] is True
+    assert result["task_ref"] == "audit-canonical"
+    assert result["healthy"] is True
+    assert result["counts"]["canonical"] == 2
+    assert result["counts"]["malformed_slice"] == 0
+    assert result["violations"] == []
+
+
+def test_audit_decision_ids_flags_malformed_slice(isolated_handoff: dict) -> None:
+    """audit_decision_ids reports healthy=False when a malformed slice_complete id exists."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="audit-bad",
+            objective="Malformed audit test",
+            status="in_progress",
+        )
+    )
+    # Insert a malformed decision by bypassing validation (direct DB write).
+    import sqlite3 as _sqlite3
+    db_path = isolated_handoff["db_path"]
+    with _sqlite3.connect(str(db_path)) as conn:
+        conn.execute(
+            "INSERT INTO decisions (task_ref, session, decision, created_at) "
+            "VALUES ('audit-bad', 's-bad', 'toolong_slice_complete_E12-1_foo', datetime('now'))"
+        )
+
+    result = _parse(mcp_server.audit_decision_ids(task_ref="audit-bad"))
+
+    assert result["ok"] is True
+    assert result["healthy"] is False
+    assert result["counts"]["malformed_slice"] >= 1
+    malformed_ids = [v["decision"] for v in result["violations"]]
+    assert "toolong_slice_complete_E12-1_foo" in malformed_ids
+
+
+def test_audit_decision_ids_legacy_slice_not_in_default_violations(isolated_handoff: dict) -> None:
+    """Legacy slice_complete_* rows appear in counts but not the default violations list."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="audit-legacy",
+            objective="Legacy audit test",
+            status="in_progress",
+        )
+    )
+    import sqlite3 as _sqlite3
+    db_path = isolated_handoff["db_path"]
+    with _sqlite3.connect(str(db_path)) as conn:
+        conn.execute(
+            "INSERT INTO decisions (task_ref, session, decision, created_at) "
+            "VALUES ('audit-legacy', 's-leg', 'slice_complete_old_format', datetime('now'))"
+        )
+
+    result = _parse(mcp_server.audit_decision_ids(task_ref="audit-legacy"))
+
+    assert result["ok"] is True
+    # Legacy rows are counted but not in the default violations list.
+    assert result["counts"]["legacy_slice"] >= 1
+    legacy_in_violations = [v for v in result["violations"] if v["category"] == "legacy_slice"]
+    assert legacy_in_violations == []
+
+
+def test_audit_decision_ids_include_categories_override(isolated_handoff: dict) -> None:
+    """include_categories=['legacy_slice'] reports legacy rows in violations."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="audit-legacy-override",
+            objective="Legacy include test",
+            status="in_progress",
+        )
+    )
+    import sqlite3 as _sqlite3
+    db_path = isolated_handoff["db_path"]
+    with _sqlite3.connect(str(db_path)) as conn:
+        conn.execute(
+            "INSERT INTO decisions (task_ref, session, decision, created_at) "
+            "VALUES ('audit-legacy-override', 's-lo', 'slice_complete_old_format', datetime('now'))"
+        )
+
+    result = _parse(
+        mcp_server.audit_decision_ids(
+            task_ref="audit-legacy-override",
+            include_categories=["legacy_slice"],
+        )
+    )
+
+    assert result["ok"] is True
+    assert any(v["category"] == "legacy_slice" for v in result["violations"])
+
+
+def test_audit_decision_ids_limit_is_respected(isolated_handoff: dict) -> None:
+    """audit_decision_ids only inspects up to limit rows."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="audit-limit",
+            objective="Limit audit test",
+            status="in_progress",
+        )
+    )
+    import sqlite3 as _sqlite3
+    db_path = isolated_handoff["db_path"]
+    with _sqlite3.connect(str(db_path)) as conn:
+        for i in range(10):
+            conn.execute(
+                "INSERT INTO decisions (task_ref, session, decision, created_at) "
+                "VALUES ('audit-limit', 's-lim', ?, datetime('now'))",
+                (f"freeform_decision_{i}",),
+            )
+
+    result = _parse(mcp_server.audit_decision_ids(task_ref="audit-limit", limit=5))
+
+    assert result["ok"] is True
+    assert result["total_inspected"] == 5

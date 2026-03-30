@@ -70,6 +70,7 @@ class FindingSeverity(StrEnum):
 class ReviewMode(StrEnum):
     BRANCH = "branch"
     RELEASE_AUDIT = "release_audit"
+    PLANNING = "planning"
 
 
 class ReviewKind(StrEnum):

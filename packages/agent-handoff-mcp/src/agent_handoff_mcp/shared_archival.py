@@ -21,6 +21,7 @@ from __future__ import annotations
 import sqlite3
 
 from .enums import FindingStatus, LaneMessageDirection, MessageStatus
+from .shared_primitives import _excerpt_text, _normalize_optional_text
 
 # Re-compute frozenset constants locally from enums (same values as in _shared.py)
 _REVIEW_FINDING_STATUSES: frozenset[str] = frozenset(s.value for s in FindingStatus)
@@ -37,9 +38,6 @@ def _count_by_value(
     lane_id: str,
     allowed_values: frozenset[str],
 ) -> dict[str, int]:
-    # Late import to break circular dependency with _shared.py
-    from ._shared import _normalize_optional_text  # noqa: PLC0415
-
     # This helper intentionally supports only the fixed archival-summary queries below.
     allowed_identifiers = {
         ("review_findings", "status"),
@@ -74,9 +72,6 @@ class ArchivalSummaryBuilder:
         self._lane_id = lane_id
 
     def decision_summary(self) -> dict[str, object]:
-        # Late import to break circular dependency with _shared.py
-        from ._shared import _excerpt_text  # noqa: PLC0415
-
         decisions_total_row = self._conn.execute(
             "SELECT COUNT(*) AS count FROM decisions WHERE task_ref = ? AND lane_id = ?",
             (self._task_ref, self._lane_id),

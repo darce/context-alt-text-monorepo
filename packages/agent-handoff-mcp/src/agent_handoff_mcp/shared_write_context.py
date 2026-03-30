@@ -34,6 +34,7 @@ from .enums import (
     normalize_reasoning_level,
 )
 from .runtime import get_runtime_config
+from .shared_primitives import _normalize_optional_text
 
 # Mirror the constant from _shared; defined here so this module has no
 # module-level dependency on _shared (avoids circular import).
@@ -100,8 +101,6 @@ def build_write_actor(
     commit_sha: str | None = None,
     lane_id: str | None = None,
 ) -> WriteActor:
-    from ._shared import _normalize_optional_text  # noqa: PLC0415
-
     actor: WriteActor = {}
     normalized_model = _normalize_optional_text(model)
     normalized_model_label = _normalize_optional_text(model_label) or normalize_model_label(normalized_model)
@@ -136,8 +135,6 @@ def build_write_actor(
 
 
 def _first_non_empty_env(*keys: str) -> str | None:
-    from ._shared import _normalize_optional_text  # noqa: PLC0415
-
     for key in keys:
         candidate = _normalize_optional_text(os.environ.get(key))
         if candidate is not None:
@@ -157,8 +154,6 @@ def _run_cmd(cmd: list[str], timeout: int = _SUBPROCESS_TIMEOUT) -> subprocess.C
 
 
 def _detect_git_write_context() -> tuple[str | None, str | None]:
-    from ._shared import _normalize_optional_text  # noqa: PLC0415
-
     branch = _first_non_empty_env(
         "AGENT_HANDOFF_DEFAULT_BRANCH",
         "GITHUB_HEAD_REF",
@@ -193,8 +188,6 @@ def _detect_git_write_context() -> tuple[str | None, str | None]:
 
 
 def _git_is_ancestor(ancestor_sha: str | None, descendant_sha: str | None) -> bool | None:
-    from ._shared import _normalize_optional_text  # noqa: PLC0415
-
     normalized_ancestor = _normalize_optional_text(ancestor_sha)
     normalized_descendant = _normalize_optional_text(descendant_sha)
     if normalized_ancestor is None or normalized_descendant is None:
@@ -213,8 +206,6 @@ def _git_is_ancestor(ancestor_sha: str | None, descendant_sha: str | None) -> bo
 
 
 def _classify_commit_relation(reference_sha: str | None, candidate_sha: str | None) -> str:
-    from ._shared import _normalize_optional_text  # noqa: PLC0415
-
     normalized_reference = _normalize_optional_text(reference_sha)
     normalized_candidate = _normalize_optional_text(candidate_sha)
     if normalized_reference is None or normalized_candidate is None:
@@ -248,8 +239,6 @@ def _resolve_write_actor(
     conn: sqlite3.Connection,
     actor: WriteActor | None,
 ) -> ResolvedWriteContext:
-    from ._shared import _normalize_optional_text  # noqa: PLC0415
-
     explicit_agent = _normalize_optional_text(actor.get("agent")) if actor else None
     explicit_model = _normalize_optional_text(actor.get("model")) if actor else None
     explicit_model_label = (

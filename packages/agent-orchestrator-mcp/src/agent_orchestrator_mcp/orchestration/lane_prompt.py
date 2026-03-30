@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -9,18 +10,28 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from agent_handoff_mcp import get_handoff_state  # test-patch surface; tests assign module.get_handoff_state
-
 from agent_orchestrator_mcp.lanes import get_lane_activity
 
-# test-patch surface: these names are patched by test_lane_prompt_artifacts.py via lp._ARTIFACT_SEARCH_AVAILABLE etc.
-try:
-    from agent_handoff_mcp import get_artifact as _mcp_get_artifact
-    from agent_handoff_mcp import search_artifacts as _mcp_search_artifacts
 
-    _ARTIFACT_SEARCH_AVAILABLE = True
-except ImportError:  # noqa: BLE001
-    _ARTIFACT_SEARCH_AVAILABLE = False
+def get_handoff_state(*args: Any, **kwargs: Any) -> Any:
+    from agent_handoff_mcp import get_handoff_state as _get_handoff_state
+
+    return _get_handoff_state(*args, **kwargs)
+
+
+def _mcp_get_artifact(*args: Any, **kwargs: Any) -> Any:
+    from agent_handoff_mcp import get_artifact as _get_artifact
+
+    return _get_artifact(*args, **kwargs)
+
+
+def _mcp_search_artifacts(*args: Any, **kwargs: Any) -> Any:
+    from agent_handoff_mcp import search_artifacts as _search_artifacts
+
+    return _search_artifacts(*args, **kwargs)
+
+# test-patch surface: these names are patched by test_lane_prompt_artifacts.py via lp._ARTIFACT_SEARCH_AVAILABLE etc.
+_ARTIFACT_SEARCH_AVAILABLE = importlib.util.find_spec("agent_handoff_mcp") is not None
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:

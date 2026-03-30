@@ -36,8 +36,8 @@ MCP_PYTHON = $(if $(MCP_PYENV_BIN),env PYENV_VERSION="$(MCP_PYENV_VERSION)" "$(M
 ORCHESTRATION_DIR := $(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration
 WORKTREE_ORCHESTRATION_DIR := $(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration
 LANE_CONFIG_CMD = $(MCP_PYTHON) "$(ORCHESTRATION_DIR)/lane_config.py"
-MCP_PYTHONPATH := $(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src:$(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
-WORKTREE_MCP_PYTHONPATH := $(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src:$(WORKTREE_ROOT_REAL)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
+MCP_PYTHONPATH := $(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src:$(ORCHESTRATOR_ROOT)/packages/agent-orchestrator-mcp/src:$(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
+WORKTREE_MCP_PYTHONPATH := $(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src:$(WORKTREE_ROOT_REAL)/packages/agent-orchestrator-mcp/src:$(WORKTREE_ROOT_REAL)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
 MCP_CMD = PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_handoff_mcp
 MCP_STATE_ARGS = --workspace-root "$(ORCHESTRATOR_ROOT)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports"
 PYTHON ?= $(MCP_PYTHON)
@@ -119,6 +119,7 @@ LANE_APP_TOOLING_PATHS := $(call lane_field,tooling_paths)
 # =============================================================================
 
 include $(ROOT_MAKEFILE_DIR)/mk/handoff.mk
+include $(ROOT_MAKEFILE_DIR)/mk/orchestrator.mk
 include $(ROOT_MAKEFILE_DIR)/mk/lane-guards.mk
 include $(ROOT_MAKEFILE_DIR)/mk/lane-lifecycle.mk
 include $(ROOT_MAKEFILE_DIR)/mk/lane-worker.mk

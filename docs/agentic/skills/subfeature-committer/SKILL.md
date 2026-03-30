@@ -1,6 +1,7 @@
 ---
 name: subfeature-committer
-description: Use when one finished slice is already isolated in the working tree and needs a single intentional commit without the broader grouping pass that commit2git performs.
+description: Commit one already-isolated finished slice. Use /commit2git instead when multiple slices need grouping.
+disable-model-invocation: true
 ---
 
 # Subfeature Committer

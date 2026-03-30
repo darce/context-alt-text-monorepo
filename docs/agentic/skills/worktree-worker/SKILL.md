@@ -1,6 +1,6 @@
 ---
 name: worktree-worker
-description: Use when implementing a delegated slice inside a worktree lane. Self-query lane scope from shared MCP state, stay inside owned paths, run lane-local tests, and hand back merge-ready reports/messages to the orchestrator.
+description: Execute a delegated slice inside a worktree lane. Query scope from MCP, stay in owned paths, run lane-local tests, hand back merge-ready reports.
 ---
 
 # Worktree Worker
@@ -23,7 +23,8 @@ Use this skill when you are implementing a delegated lane slice with a defined o
 
 - Use [../../instructions.md](../../instructions.md) for startup, handoff, and `ctx7` policy.
 - Use [../../rules/development-workflow.md](../../rules/development-workflow.md) for cross-boundary, slice, and review-readiness rules.
-- Treat this skill as the lane-worker execution recipe; shared process policy remains in the linked canonical docs.
+- Use [../../playbooks/worktree-orchestration-playbook.md](../../playbooks/worktree-orchestration-playbook.md) for the canonical lane lifecycle procedure (worker states, scope enforcement, handoff contract, health model).
+- This skill is an execution wrapper for this specific runtime. Shared process policy remains in the linked canonical docs above.
 
 ## Start-up checklist
 

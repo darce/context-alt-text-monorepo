@@ -1,6 +1,10 @@
 # Worktree Codex Playbook
 
-Use this playbook when operating multi-agent worktree lanes in this repo. Covers both orchestrator (human or lead agent) and worker (Codex or interactive agent) perspectives.
+> **Classification: host-specific adapter (Codex)**
+> This document covers Codex-specific bootstrap, execution backends, model/reasoning-effort configuration, and app-server session details. It is not the canonical procedure.
+> For the canonical agent-agnostic orchestration procedure, see [../worktree-orchestration-playbook.md](../worktree-orchestration-playbook.md).
+
+Use this adapter guide when setting up or operating multi-agent worktree lanes with the Codex execution backend. Covers both orchestrator and worker perspectives from a Codex-specific runtime standpoint.
 
 ## Goal
 
@@ -151,7 +155,7 @@ The orchestrator can control the execution model and reasoning effort for each l
 These are typically set in the lane manifest but can be overridden via MCP:
 
 ```bash
-agent-handoff-mcp dispatch_lane_work --task-ref <task> --lane-id <lane> --model o3-mini --reasoning-effort high
+agent-orchestrator-mcp dispatch_lane_work --task-ref <task> --lane-id <lane> --model o3-mini --reasoning-effort high
 ```
 
 ### Cost-Sensitive Lane Guidance
@@ -185,21 +189,23 @@ Important:
 - Build and test commands still need to be discoverable by the spawned agent. In practice that means keeping them in the repo instruction surface or rendering them directly into the lane/review prompt.
 - The reference bridge is safe for parallel daemon calls because each `run_subagent()` invocation starts its own short-lived `codex app-server` process; there is no shared in-process session state.
 
-146:
-147: ### Model Selection Guidance
-148:
-149: | Backend | Supported Models | Reasoning Effort Support |
-150: | --- | --- | --- |
-151: | `codex-cli` | `gpt-4o`, `gpt-4o-mini`, `o1-preview` | `low`, `medium`, `high` |
-152: | `codex-subagent` | `gpt-4o`, `o1-mini`, `o3-mini` | `low`, `medium`, `high`, `xhigh` |
-153: | `claude-code` | `claude-3-5-sonnet` (default) | Not applicable (model-driven) |
-154:
-155: **Note:** `xhigh` effort is only supported by the `codex-subagent` bridge today. Using `xhigh` with `codex-cli` will fall back to `high`.
-156:
-157: ### MCP orchestration commands
 
-For in-app agents that can call MCP tools directly, `agent-handoff-mcp` now exposes
-an orchestration control surface in addition to the existing handoff state tools.
+### Model Selection Guidance
+
+| Backend | Supported Models | Reasoning Effort Support |
+| --- | --- | --- |
+| `codex-cli` | `gpt-4o`, `gpt-4o-mini`, `o1-preview` | `low`, `medium`, `high` |
+| `codex-subagent` | `gpt-4o`, `o1-mini`, `o3-mini` | `low`, `medium`, `high`, `xhigh` |
+| `claude-code` | `claude-3-5-sonnet` (default) | Not applicable (model-driven) |
+
+**Note:** `xhigh` effort is only supported by the `codex-subagent` bridge today. Using `xhigh` with `codex-cli` will fall back to `high`.
+
+### MCP orchestration commands
+
+For in-app agents that can call MCP tools directly, `agent-orchestrator-mcp` serves
+the orchestration control surface. Attach `agent-orchestrator-mcp` **in addition to**
+`agent-handoff-mcp` when these tools are required. `agent-handoff-mcp` alone does not
+expose orchestration tools after the E12-5 server split.
 
 - `orchestrator_start(task_ref, backend, poll_interval, single_pass, model=None)`
 - `orchestrator_status()`

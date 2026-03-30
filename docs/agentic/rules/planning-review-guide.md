@@ -129,6 +129,14 @@ Planning review is still a document-and-codebase review, but the packet-backed f
 - [ ] Files listed for modification actually require code changes; verification-only files are flagged as such.
 - [ ] Code location references use function/target names, not brittle line numbers.
 
+### Naming and Reference Compliance
+
+- [ ] Epic title uses the `E<number>. <Title>` format with the correct global sequential index.
+- [ ] Epic declares an `Epic Short ID` near the top of the document.
+- [ ] Task plan title uses the `<EpicShortID>-<N>. <Title>` format matching the owning epic's short id.
+- [ ] Decision ids referenced in the plan follow the `<author_tag>_<kind>_<work_ref>_<slug>` grammar.
+- [ ] Historical docs and decisions are treated as grandfathered; the plan does not mandate retroactive renames unless a concrete artifact blocks tooling or review.
+
 ### Rollout and Testability
 
 - [ ] The plan can be implemented incrementally without leaving impossible intermediate states.
@@ -181,19 +189,27 @@ Use the same categories as branch review:
 
 ## MCP Handoff Integration (MANDATORY for Agents)
 
-For every finding:
+For every finding, call `record_review_finding` / `review-record` with:
 
-1. Record it with `record_review_finding` / `review-record`.
-2. Use the planning doc path as `file_path`.
-3. Set `line_start`/`line_end` to the plan lines that contain the stale assumption or contradictory scope.
-4. Include a concrete `fix` describing how to rewrite the plan.
+| Parameter     | Value                                                                                                                               |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `finding_id`  | Short ID matching the report (e.g., `E12-PLAN-01`)                                                                                  |
+| `severity`    | `high`, `medium`, or `low`                                                                                                          |
+| `file_path`   | Planning doc path (monorepo-relative)                                                                                               |
+| `description` | One-paragraph description with evidence from the plan                                                                               |
+| `session`     | Current session identifier                                                                                                          |
+| `task_ref`    | The task ref owning the plan (may differ from the currently active task; pass explicitly)                                           |
+| `details`     | Nested object: `{ "line_start"?: int, "line_end"?: int, "fix"?: str }` -- **must be nested, NOT top-level parameters**              |
+| `actor`       | Nested object: `{ "agent"?: str, "model"?: str, "model_label"?: str, "reasoning_level"?: str, "branch"?: str, "commit_sha"?: str }` |
+
+> **Schema contract**: `line_start`, `line_end`, and `fix` MUST be inside the `details` object. Passing them as top-level parameters fails with a schema validation error ("must NOT have additional properties").
 
 After the review:
 
 1. Confirm findings with `list_review_findings` or `get_review_findings_summary`.
 2. Record a verdict decision with `record_decision` summarizing the review (finding count by severity, verdict). **The verdict decision must cite the decision number of the artifact under review** (e.g., "review of decision #966") so the reviewed artifact and its review are bidirectionally linked in handoff search.
 3. If requested, patch the plan to resolve the findings.
-4. Regenerate `CURRENT_TASK.md`.
+4. Regenerate `CURRENT_TASK.md` using `generate_current_task_md(task_ref=<active-task-ref>)`. Always pass the **currently active** task's ref, NOT the reviewed plan's task ref. If findings were recorded against a non-active task (using explicit `task_ref` on write tools), still regenerate with the active task's ref so `CURRENT_TASK.md` reflects the live working state.
 5. Include `Handoff updated: yes` in the final response.
 
 ---

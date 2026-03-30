@@ -75,88 +75,83 @@ See [maps/tech-stack.md](maps/tech-stack.md) for the full library manifest.
 
 ---
 
-## MCP Server (Agent Tooling)
+## MCP Servers (Agent Tooling)
 
-The workspace-local MCP adapter now points at the repo-local
-`agent_handoff_mcp_launcher.py` entrypoint. VS Code manages the server lifecycle
-automatically.
+Two MCP servers are registered for this workspace. VS Code and Claude Code manage their lifecycles automatically via `.vscode/mcp.json` and `.mcp.json`.
 
-### How It Works
+### Core Ledger Server (`agent-handoff-mcp`)
+
+Handles task state, review findings, exports/imports, close checks, and artifacts (27 tools).
 
 ```text
 .vscode/mcp.json  →  python3 packages/agent-handoff-mcp/src/agent_handoff_mcp_launcher.py --workspace-root <repo> ... serve-stdio
 ```
 
-The packaged server is handoff-only: task state, review findings, exports/imports, dashboard, and close checks. The old repo-intel helpers remain a separate decomposition task and are not part of this package.
+### Orchestration Server (`agent-orchestrator-mcp`)
+
+Handles daemons, workers, lane management, plan cursors, and turn metrics (~38 tools).
+
+```text
+.vscode/mcp.json  →  python3 packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp_launcher.py --workspace-root <repo> ... serve-stdio
+```
+
+Both servers share `handoff.db` and `mcp-artifacts.db` on disk; SQLite WAL mode makes concurrent readers safe. Install both:
+
+```bash
+uv tool install ./packages/agent-handoff-mcp
+uv tool install ./packages/agent-orchestrator-mcp
+```
+
+The old repo-intel helpers remain a separate decomposition task and are not part of either package.
 
 ### Prerequisites
 
 - VS Code 1.99+ with Copilot (or other MCP-capable client)
 - `.vscode/mcp.json` already committed to the repo
 - Python 3.11+ environment
-- Repo-local package source at `packages/agent-handoff-mcp/src`
+- Repo-local package sources at `packages/agent-handoff-mcp/src` and `packages/agent-orchestrator-mcp/src`
 - Python resolved through pyenv or another Python 3.11+ environment with the
   package dependencies installed
 
 ### Install Options
 
-Local beta from a checked-out repo:
+Local install from a checked-out repo:
 
 ```bash
 uv tool install /path/to/context-alt-text-monorepo/packages/agent-handoff-mcp
+uv tool install /path/to/context-alt-text-monorepo/packages/agent-orchestrator-mcp
 ```
-
-Pinned git-tag install from the monorepo:
-
-```bash
-uv tool install "git+ssh://git@github.com/<org>/context-alt-text-monorepo.git@agent-handoff-mcp-v0.1.0#subdirectory=packages/agent-handoff-mcp"
-```
-
-This uses the package [`pyproject.toml`](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/pyproject.toml) as the canonical packaging contract. That is the right practice here because the install target is a real Python package living inside a monorepo subdirectory.
 
 ### Validation
 
-Command Palette → `MCP: List Servers` → "altcontext-mcp" should show the registered adapter.
+Command Palette → `MCP: List Servers` → both "altcontext-mcp" and "altcontext-orchestrator-mcp" should appear.
+
+```bash
+agent-handoff-mcp --workspace-root "$(pwd)" doctor       # 27 tools
+agent-orchestrator-mcp --workspace-root "$(pwd)" doctor  # ~38 tools
+```
 
 ### Available Tools
 
-This adapter exposes the handoff tool family only. Use editor-native tools for file search/read/navigation until the separate repo-intel MCP work lands.
+**`agent-handoff-mcp`** (core ledger, 27 tools): task state, decisions, findings, blockers, tests, actions, artifacts, export/import, close check, `load_session`, `close_slice`, `search_handoff`.
 
-Daemon-8 extended that surface with orchestration controls:
-
-- `orchestrator_start`
-- `orchestrator_status`
-- `orchestrator_stop`
-- `orchestrator_pause`
-- `orchestrator_resume`
-- `worker_start` (with optional `model`, `backend`, `reasoning_effort`)
-- `worker_start_all` (with optional `model`, `backend`)
-- `worker_status`
-- `worker_stop`
-- `worker_resume`
-- `run_structured_turn`
-- `dispatch_lane_work`
-- `list_available_backends`
-
-Task 8.0 (structured-memory search) added `search_handoff` for BM25/FTS5 search over canonical
-handoff records (decisions, findings, blockers, actions) without reading the full snapshot:
-
-- `search_handoff` -- keyword search scoped by `task_ref`, `lane_id`, and `record_types`; returns
-  `record_type`, `record_id`, `task_ref`, `lane_id`, `status`, and a ranked snippet per hit.
-
-These tools are intended for in-app agents that already have MCP access to the
-authoritative checkout. `run_structured_turn` is bridge-only and rejects
-`codex-cli`.
+**`agent-orchestrator-mcp`** (~38 tools): daemon lifecycle, workers, lane management, plan cursors, turn metrics, dispatch, backends, cross-task tools (`switch_task`, `get_review_findings_summary`, `reconcile_review_findings`, `get_latest_slice_review_packet`).
 
 Example CLI equivalents:
 
 ```bash
-agent-handoff-mcp --workspace-root "$(pwd)" orchestrator-start --task-ref <task-ref> --backend codex-cli --model o3-mini
-agent-handoff-mcp --workspace-root "$(pwd)" orchestrator-status
-agent-handoff-mcp --workspace-root "$(pwd)" orchestrator-pause
-agent-handoff-mcp --workspace-root "$(pwd)" orchestrator-resume
-agent-handoff-mcp --workspace-root "$(pwd)" orchestrator-stop
-agent-handoff-mcp --workspace-root "$(pwd)" run-structured-turn \
+# Core ledger
+agent-handoff-mcp --workspace-root "$(pwd)" state
+agent-handoff-mcp --workspace-root "$(pwd)" dashboard
+agent-handoff-mcp --workspace-root "$(pwd)" handoff-close-check
+
+# Orchestration
+agent-orchestrator-mcp --workspace-root "$(pwd)" orchestrator-start --task-ref <task-ref> --backend codex-cli --model o3-mini
+agent-orchestrator-mcp --workspace-root "$(pwd)" orchestrator-status
+agent-orchestrator-mcp --workspace-root "$(pwd)" orchestrator-pause
+agent-orchestrator-mcp --workspace-root "$(pwd)" orchestrator-resume
+agent-orchestrator-mcp --workspace-root "$(pwd)" orchestrator-stop
+agent-orchestrator-mcp --workspace-root "$(pwd)" run-structured-turn \
   --prompt-file /tmp/prompt.md \
   --schema-file /tmp/schema.json \
   --cwd /absolute/path/to/worktree \
@@ -167,12 +162,7 @@ agent-handoff-mcp --workspace-root "$(pwd)" run-structured-turn \
 For Codex app sessions on the same machine, prefer the checked-in project-scoped
 adapter at [`../../.codex/config.toml`](../../.codex/config.toml),
 which registers the local stdio server as `altcontext-mcp` with the required
-`PYENV_VERSION=description-service` and `PYTHONPATH` overrides for both the
-handoff MCP package and the Codex subagent bridge.
-
-Remote HTTP deployment for Codex custom MCP is intentionally tracked as follow-on
-work in daemon-9. Daemon-8's completed scope is the in-repo MCP tool surface and its
-CLI/stdio exposure.
+`PYENV_VERSION=description-service` and `PYTHONPATH` overrides.
 
 ### HTTP Transport (Codex Custom MCP)
 
@@ -196,7 +186,7 @@ curl -s http://127.0.0.1:8741/
 ```
 
 The default bind is `127.0.0.1` (localhost only, no auth). For remote access use SSH
-tunneling or a reverse proxy. See [playbooks/codex-custom-mcp-playbook.md](playbooks/codex-custom-mcp-playbook.md)
+tunneling or a reverse proxy. See [playbooks/host-adapters/codex-custom-mcp-playbook.md](playbooks/host-adapters/codex-custom-mcp-playbook.md)
 for the full attach-to-Codex walkthrough.
 
 ### Troubleshooting
@@ -232,15 +222,15 @@ Phase 5 (Verification & Handoff) follows implementation:
   - decisions: `3`
   - tests: `3`
   - findings: `10`
-- Write tools (`record_decision`, `update_next_actions`, `record_test_result`, `report_blocker`, `record_review_finding`, `update_review_finding`, `reopen_review_finding`) target the active task only.
-- To switch between tasks, use `switch_task(task_ref)`. It auto-archives the outgoing task and restores the target's objective from its archive. This replaces the multi-step `archive_task_state` + `set_handoff_state` workflow.
+- Write tools (`record_decision`, `update_next_actions`, `record_test_result`, `report_blocker`, `record_review_finding`, `update_review_finding`) target the active task only.
+- To switch between tasks, use `switch_task(task_ref)` on `agent-orchestrator-mcp`. It auto-archives the outgoing task and restores the target's objective from its archive. This replaces the multi-step `archive_task_state` + `set_handoff_state` workflow.
 - For in-place updates to the _current_ task (status, objective change), use `set_handoff_state(...)` directly.
 - Optional write provenance is passed as `actor={ "agent"?: str, "branch"?: str, "commit_sha"?: str }`.
 - Optional review finding details are passed as `details={ "line_start"?: int, "line_end"?: int, "fix"?: str }`.
 - `record_review_finding` is unique per `(task_ref, finding_id)`; re-recording the same logical finding updates the existing row and reopens it.
 - `update_review_finding` accepts `finding_id` (preferred logical key) or legacy `finding_db_id`; optional `resolution_notes` is required for `wontfix` / `deferred`, and `reopen_reason` is required for non-open -> `open` transitions.
-- `reopen_review_finding` is a thin wrapper over `update_review_finding(status="open", ...)` that always requires a reopen rationale.
-- `reconcile_review_findings` validates state integrity (duplicates, done+open mismatch, stale open findings, provenance completeness, reopen metadata coherence) and can apply safe dedupe fixes.
+- `update_review_finding` with `status="open"` and `reopen_reason` performs the reopen (the former `reopen_review_finding` wrapper is no longer MCP-exposed).
+- `reconcile_review_findings` (on `agent-orchestrator-mcp`) validates state integrity (duplicates, done+open mismatch, stale open findings, provenance completeness, reopen metadata coherence) and can apply safe dedupe fixes.
 - `handoff_close_check` runs closure gates, including write-provenance checks and current-commit slice-summary presence, and can fail hard with `enforce=True`.
 - Review finding write operations auto-refresh `CURRENT_TASK.md`.
 - `CURRENT_TASK.md` is a generated view only; if drift is detected, regenerate from DB state.

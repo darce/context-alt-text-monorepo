@@ -1,6 +1,7 @@
 ---
 name: rescue-lane
-description: Use when a lane branch is broken or blocked and needs a structured rescue flow with a new rescue branch, targeted cherry-picks, contract diff checks, verification, and MCP decision logging.
+description: Rescue a broken or blocked lane branch. Creates rescue branch, cherry-picks clean commits, verifies contracts, logs MCP decision.
+disable-model-invocation: true
 ---
 
 # Rescue Lane

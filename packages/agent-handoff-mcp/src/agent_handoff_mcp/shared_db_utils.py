@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Callable
 
 from .runtime import get_runtime_config
+from .shared_primitives import _decode_lane_message_row_dict, _decode_turn_metric_row_dict
 
 
 def _fetch_handoff_rows(
@@ -31,12 +32,6 @@ def _fetch_handoff_rows(
     limit: int,
     params: tuple[object, ...],
 ) -> list[dict]:
-    # Late imports to avoid circular dependency with _shared.py
-    from ._shared import (  # noqa: PLC0415
-        _decode_lane_message_row_dict,
-        _decode_turn_metric_row_dict,
-    )
-
     rows = conn.execute(
         f"SELECT * FROM {table} WHERE {where_sql} ORDER BY {order_sql} LIMIT ?",
         (*params, limit),

@@ -4,9 +4,14 @@ The hook operates in three tiers:
   1. Allowlist     → exit 0, no JSON output (pass through silently)
   2. Hard block    → permissionDecision "block" (deterministic native-tool violations)
   3. Default deny  → permissionDecision "ask"  (not allowlisted; gray area)
+
+Performance note: 77 of 85 tests call _check_command() directly (in-process, ~0ms each).
+The remaining 8 tests use _run_hook() (subprocess) only where stdin/stdout/exit-code or
+file I/O side-effects require full process isolation.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
@@ -15,6 +20,16 @@ from pathlib import Path
 import pytest
 
 HOOK_SCRIPT = Path(__file__).parent / "terminal-guard.py"
+
+# ---------------------------------------------------------------------------
+# Direct import of _check_command for in-process classification tests.
+# importlib is required because the filename contains a hyphen.
+# ---------------------------------------------------------------------------
+
+_spec = importlib.util.spec_from_file_location("terminal_guard", HOOK_SCRIPT)
+_mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
+_spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+_check_command = _mod._check_command
 
 
 def _run_hook(payload: dict, cwd: str | None = None) -> tuple[int, dict | None]:
@@ -68,13 +83,10 @@ def _run_hook(payload: dict, cwd: str | None = None) -> tuple[int, dict | None]:
 )
 def test_hard_block_violations(command: str, expected_tool: str) -> None:
     """Deterministic violations must be hard-blocked (not just advisory)."""
-    payload = {"tool_name": "run_in_terminal", "tool_input": {"command": command}}
-    exit_code, output = _run_hook(payload)
-    assert exit_code == 0, f"Expected exit 0, got {exit_code}"
-    assert output is not None, "Expected JSON output for violation"
-    decision = output["hookSpecificOutput"]["permissionDecision"]
+    result = _check_command(command)
+    assert result is not None, f"Expected a decision for: {command!r}"
+    decision, native_tool, reason = result
     assert decision == "block", f"Expected 'block', got '{decision}' for: {command!r}"
-    reason = output["hookSpecificOutput"]["permissionDecisionReason"]
     assert expected_tool in reason, f"Expected '{expected_tool}' in reason, got: {reason}"
 
 
@@ -88,7 +100,6 @@ def test_hard_block_violations(command: str, expected_tool: str) -> None:
     "command",
     [
         "echo hello",
-        "ls -la",
         "cd /tmp",
         "python --version",
         "python script.py",
@@ -99,12 +110,14 @@ def test_hard_block_violations(command: str, expected_tool: str) -> None:
 )
 def test_default_deny_unknown_commands(command: str) -> None:
     """Unknown commands not in the allowlist must be default-denied (ask)."""
-    payload = {"tool_name": "run_in_terminal", "tool_input": {"command": command}}
-    exit_code, output = _run_hook(payload)
-    assert exit_code == 0
-    assert output is not None, f"Expected JSON output for default-denied command: {command!r}"
-    decision = output["hookSpecificOutput"]["permissionDecision"]
+    result = _check_command(command)
+    assert result is not None, f"Expected JSON output for default-denied command: {command!r}"
+    decision, _, _ = result
     assert decision == "ask", f"Expected 'ask' for default deny, got '{decision}' for: {command!r}"
+
+
+def test_ls_is_allowlisted() -> None:
+    assert _check_command("ls -la") is None, "ls -la should pass through silently"
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +133,7 @@ def test_default_deny_unknown_commands(command: str) -> None:
         "pytest apps/prototype-description-service/ -x",
         "python -m pytest tests/ -v",
         "python3 -m pytest tests/ -v",
+        "/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest tests/test_lane_exec.py tests/test_lane_result.py -q 2>&1 | tee /tmp/pytest_lane_exec_result.txt",
         "npm test",
         "npm run test",
         "vitest run",
@@ -180,10 +194,8 @@ def test_default_deny_unknown_commands(command: str) -> None:
 )
 def test_allowlisted_commands_pass_through(command: str) -> None:
     """Allowlisted commands must pass through silently with no JSON output."""
-    payload = {"tool_name": "run_in_terminal", "tool_input": {"command": command}}
-    exit_code, output = _run_hook(payload)
-    assert exit_code == 0, f"Expected exit 0, got {exit_code}"
-    assert output is None, f"Expected no JSON output for allowlisted command {command!r}, got: {output}"
+    result = _check_command(command)
+    assert result is None, f"Expected None for allowlisted command {command!r}, got: {result}"
 
 
 # ---------------------------------------------------------------------------
@@ -192,16 +204,14 @@ def test_allowlisted_commands_pass_through(command: str) -> None:
 
 
 def test_git_status_bare_is_blocked() -> None:
-    payload = {"tool_name": "run_in_terminal", "tool_input": {"command": "git status"}}
-    _, output = _run_hook(payload)
-    assert output is not None
-    assert output["hookSpecificOutput"]["permissionDecision"] == "block"
+    result = _check_command("git status")
+    assert result is not None
+    decision, _, _ = result
+    assert decision == "block"
 
 
 def test_git_status_sb_is_allowed() -> None:
-    payload = {"tool_name": "run_in_terminal", "tool_input": {"command": "git status -sb"}}
-    _, output = _run_hook(payload)
-    assert output is None, "git status -sb should pass through silently"
+    assert _check_command("git status -sb") is None, "git status -sb should pass through silently"
 
 
 # ---------------------------------------------------------------------------
@@ -211,22 +221,23 @@ def test_git_status_sb_is_allowed() -> None:
 
 def test_tail_tmp_file_is_not_hard_blocked() -> None:
     """tail -n N /tmp/output.txt (redirect reads) must NOT hard-block; it gets default-deny (ask)."""
-    payload = {"tool_name": "run_in_terminal", "tool_input": {"command": "tail -n 5 /tmp/guard_tests.txt"}}
-    _, output = _run_hook(payload)
-    assert output is not None, "tail on /tmp/ should still trigger default-deny"
-    assert output["hookSpecificOutput"]["permissionDecision"] == "ask"
+    result = _check_command("tail -n 5 /tmp/guard_tests.txt")
+    assert result is not None, "tail on /tmp/ should still trigger default-deny"
+    decision, _, _ = result
+    assert decision == "ask"
 
 
 def test_tail_source_file_is_blocked() -> None:
     """tail -n N on a workspace source file must still hard-block."""
-    payload = {"tool_name": "run_in_terminal", "tool_input": {"command": "tail -n 20 src/main.py"}}
-    _, output = _run_hook(payload)
-    assert output is not None
-    assert output["hookSpecificOutput"]["permissionDecision"] == "block"
+    result = _check_command("tail -n 20 src/main.py")
+    assert result is not None
+    decision, _, _ = result
+    assert decision == "block"
 
 
 # ---------------------------------------------------------------------------
 # Telemetry: blocked and default-denied commands must be logged.
+# These tests require subprocess isolation (file I/O side-effects).
 # ---------------------------------------------------------------------------
 
 
@@ -266,7 +277,7 @@ def test_telemetry_not_written_on_allowlist(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Schema / robustness
+# Schema / robustness — these tests exercise main() and require subprocess.
 # ---------------------------------------------------------------------------
 
 

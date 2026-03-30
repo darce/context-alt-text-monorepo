@@ -15,11 +15,11 @@ Allowlisted terminal uses
 - Build: make <target>
 - pyenv
 - Git write / coordination / history: commit, push, rebase, cherry-pick, worktree, stash,
-  fetch, pull, log, checkout, merge, branch, tag, add, reset
-- Git metadata reads: diff --name-only, diff --shortstat, status -sb, ls-files (narrow forms only)
+  fetch, pull, log, checkout, merge, branch, tag, add, rm, mv, reset
+- Git metadata reads: diff --name-only, diff --shortstat, status -sb, ls-files, show --stat (narrow forms only)
 - Read-only measurement: wc (line/word/byte counts)
 - In-place file edits: sed -i (when replace_string_in_file fails on large blocks)
-- File metadata inspection: ls (symlinks, permissions; list_dir lacks this)
+- File/directory operations: ls (symlinks/permissions), mkdir (directory creation)
 
 Everything else is default-denied.
 
@@ -82,17 +82,25 @@ _ALLOWLIST: list[re.Pattern[str]] = [
         r"^git\s+tag\b",
         r"^git\s+add\b",
         r"^git\s+rm\b",
+        r"^git\s+mv\b",
         r"^git\s+reset\b",
+        # Directory creation
+        r"^mkdir\b",
         # git diff: metadata forms only (no full diff output)
         r"^git\s+diff\b.*--name-only\b",
         r"^git\s+diff\b.*--shortstat\b",
-        # git status: narrow concise form only; bare 'git status' is hard-blocked below
-        r"^git\s+status\s+-sb\b",
+        # git status: narrow concise forms only; bare 'git status' is hard-blocked below
+        r"^git\s+status\s+(-sb|--short|-s)\b",
+        r"^git\s+-C\s+\S+\s+status\s+(-sb|--short|-s)\b",
         # git ls-files: read-only file listing
         r"^git\s+ls-files\b",
+        r"^git\s+-C\s+\S+\s+ls-files\b",
         # git log: read-only history queries
         r"^git\s+log\b",
         r"^git\s+-C\s+\S+\s+log\b",
+        # git show --stat: read-only commit inspection (no native tool equivalent)
+        r"^git\s+show\s+--stat\b",
+        r"^git\s+-C\s+\S+\s+show\s+--stat\b",
         # git rev-parse: read-only SHA / path resolution
         r"^git\s+rev-parse\b",
         r"^git\s+-C\s+\S+\s+rev-parse\b",
@@ -100,6 +108,8 @@ _ALLOWLIST: list[re.Pattern[str]] = [
         r"^sed\s+-i\b",
         # Read-only measurement
         r"^wc\b",
+        # Process inspection (checking background test / server status)
+        r"^ps\b",
         # File metadata inspection (symlinks, permissions; list_dir lacks this)
         r"^ls\b",
         # Database shell (development-only tool for investigation queries)

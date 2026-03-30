@@ -509,14 +509,22 @@ def handoff_close_check(
         review_integrity = _collect_review_findings_integrity(conn, resolved_task_ref, apply=False)
         provenance_integrity = _collect_task_provenance_integrity(conn, resolved_task_ref)
         expected_state = _build_current_task_state_from_snapshot(snapshot)
+        from typing import cast as _cast  # noqa: PLC0415
+
+        from .current_task_rendering import (  # noqa: PLC0415
+            ReviewCoverageSummary,
+            _collect_dashboard_rows,
+        )
+
+        expected_state["dashboard_tasks"] = _collect_dashboard_rows(conn)
         # Hydrate coverage so the sync check matches what generate_current_task_md writes.
         _ref = resolved_task_ref
         try:
-            import json as _json  # noqa: PLC0415
+            from .review_findings import _collect_review_coverage  # noqa: PLC0415
 
-            from .review_findings import get_review_coverage as _get_coverage  # noqa: PLC0415
-
-            expected_state["review_coverage"] = _json.loads(_get_coverage(task_ref=_ref))
+            expected_state["review_coverage"] = _cast(
+                ReviewCoverageSummary, _collect_review_coverage(conn, task_ref=_ref)
+            )
         except Exception:
             pass
         expected_markdown = _render_current_task_md(expected_state)

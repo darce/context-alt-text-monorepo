@@ -1,5 +1,9 @@
 # Selective Memory and Evaluation Metrics Hardening
 
+> **Metadata**
+>
+> - **Task Ref**: `LEGACY-12-0-SELECTIVE-MEMORY-EVAL-METRICS`
+
 ## Objective
 
 Finish the remaining in-scope work from Phase 4 (3 unchecked items) and Phase 5 (4 unchecked items) of the agentic process-hardening epic. When complete, the epic should have no remaining active implementation items outside confirmed post-v0.3.0 deferrals.

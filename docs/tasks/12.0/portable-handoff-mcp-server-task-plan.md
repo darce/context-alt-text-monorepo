@@ -1,5 +1,9 @@
 # Portable Agent Handoff MCP Server
 
+> **Metadata**
+>
+> - **Task Ref**: `LEGACY-12-0-PORTABLE-HANDOFF-MCP-SERVER`
+
 ## Problem Statement
 
 The current MCP setup is centered on [`scripts/mcp/unified_server.py`](/scripts/mcp/unified_server.py), which mixes handoff state, repo-intel helpers, and client-specific launch assumptions into one server. The project needs a properly packaged, portable MCP server whose sole job is agent handoff, plus a decomposition plan for the remaining non-handoff tools so they can become separate MCP servers later without dragging handoff state along with them.

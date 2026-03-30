@@ -1,5 +1,9 @@
 # Implementation Plan: Agent-Agnostic Handoff State via MCP + SQLite
 
+> **Metadata**
+>
+> - **Task Ref**: `LEGACY-12-0-AGENT-HANDOFF-STATE-MCP`
+
 > Historical note: this document captures the original handoff-state plan that started in `scripts/mcp/unified_server.py`. The shipped implementation was later packaged into `agent-handoff-mcp`; use `docs/agentic/BOOTSTRAP.md`, `docs/agentic/contracts/agent-handoff-mcp.md`, and `packages/agent-handoff-mcp/src/` as the authoritative description of the final server surface and file layout.
 
 ## Problem Statement

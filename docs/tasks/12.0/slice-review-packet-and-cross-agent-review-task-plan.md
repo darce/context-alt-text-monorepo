@@ -1,5 +1,9 @@
 # Slice Review Packet and Cross-Agent Review Automation
 
+> **Metadata**
+>
+> - **Task Ref**: `LEGACY-12-0-SLICE-REVIEW-PACKET`
+
 ## Objective
 
 Make "review the last implementation slice" a reliable, MCP-backed workflow instead of a git-diff heuristic. When this task is complete, agents should be able to ask for the latest completed slice review packet and route that packet through the correct review guide without manual cherry-picking or file guessing.

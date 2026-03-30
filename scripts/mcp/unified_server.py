@@ -546,7 +546,7 @@ def _render_current_task_md(state: dict) -> str:
         "",
         "_DO NOT EDIT: generated from .task-state/handoff.db._",
         "",
-        f"## Objective",
+        "## Objective",
         f"{active.get('objective', '')}",
         "",
         "## Active Status",
@@ -1535,7 +1535,8 @@ def get_handoff_state(
         if active is not None and resolved_task_ref != active["task_ref"]:
             active = None
 
-        query_limit = lambda size: size if not verbose else 10000
+        def query_limit(size):
+            return size if not verbose else 10000
         blockers = _fetch_handoff_rows(
             conn,
             table="blockers",

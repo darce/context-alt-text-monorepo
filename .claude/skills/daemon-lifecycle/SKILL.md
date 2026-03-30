@@ -1,0 +1,1 @@
+../../../docs/agentic/skills/daemon-lifecycle/SKILL.md

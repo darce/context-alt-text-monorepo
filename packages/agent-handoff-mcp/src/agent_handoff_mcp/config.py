@@ -27,9 +27,7 @@ class RuntimeConfig:
     ) -> "RuntimeConfig":
         resolved_workspace_root = Path(workspace_root).expanduser().resolve()
         resolved_state_dir = (
-            Path(state_dir).expanduser().resolve()
-            if state_dir is not None
-            else resolved_workspace_root / ".task-state"
+            Path(state_dir).expanduser().resolve() if state_dir is not None else resolved_workspace_root / ".task-state"
         )
         resolved_current_task_path = (
             Path(current_task_path).expanduser().resolve()
@@ -37,9 +35,7 @@ class RuntimeConfig:
             else resolved_workspace_root / "CURRENT_TASK.md"
         )
         resolved_exports_dir = (
-            Path(exports_dir).expanduser().resolve()
-            if exports_dir is not None
-            else resolved_state_dir / "exports"
+            Path(exports_dir).expanduser().resolve() if exports_dir is not None else resolved_state_dir / "exports"
         )
         return cls(
             workspace_root=resolved_workspace_root,
@@ -57,9 +53,8 @@ class RuntimeConfig:
             raise RuntimeError("AGENT_HANDOFF_WORKSPACE_ROOT must be set or passed via --workspace-root")
 
         state_dir = getattr(args, "state_dir", None) or os.environ.get("AGENT_HANDOFF_STATE_DIR")
-        current_task_path = (
-            getattr(args, "current_task_path", None)
-            or os.environ.get("AGENT_HANDOFF_CURRENT_TASK_PATH")
+        current_task_path = getattr(args, "current_task_path", None) or os.environ.get(
+            "AGENT_HANDOFF_CURRENT_TASK_PATH"
         )
         exports_dir = getattr(args, "exports_dir", None) or os.environ.get("AGENT_HANDOFF_EXPORTS_DIR")
         return cls.for_workspace(

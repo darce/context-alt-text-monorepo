@@ -2,6 +2,7 @@
 
 Contains export_handoff_state, import_handoff_state, archive_task_state, switch_task.
 """
+
 from __future__ import annotations
 
 import json
@@ -32,21 +33,50 @@ from ._shared import (
 )
 
 
-def export_handoff_state(task_ref: str | None = None, output_path: str | None = None, include_markdown: bool = True) -> str:
+def export_handoff_state(
+    task_ref: str | None = None, output_path: str | None = None, include_markdown: bool = True
+) -> str:
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         snapshot = _collect_task_snapshot(conn, resolved_task_ref)
-    payload: dict[str, object] = {"export_version": 1, "task_ref": resolved_task_ref, "exported_at": _utcnow_iso(), "snapshot": snapshot}
+    payload: dict[str, object] = {
+        "export_version": 1,
+        "task_ref": resolved_task_ref,
+        "exported_at": _utcnow_iso(),
+        "snapshot": snapshot,
+    }
     if include_markdown:
         payload["current_task_markdown"] = _render_current_task_md(_build_current_task_state_from_snapshot(snapshot))
     destination = _resolve_output_path(output_path, resolved_task_ref)
     destination.write_text(json.dumps(payload, indent=2, sort_keys=True))
-    return _json_response({"ok": True, "task_ref": resolved_task_ref, "path": str(destination), "counts": {"blockers": len(snapshot["blockers"]), "next_actions": len(snapshot["next_actions"]), "decisions": len(snapshot["decisions"]), "verified_tests": len(snapshot["verified_tests"]), "review_findings": len(snapshot["review_findings"]), "worktree_lanes": len(snapshot["worktree_lanes"]), "worker_reports": len(snapshot["worker_reports"]), "lane_messages": len(snapshot["lane_messages"]), "plan_cursors": len(snapshot.get("plan_cursors", [])), "turn_metrics": len(snapshot.get("turn_metrics", []))}})
+    return _json_response(
+        {
+            "ok": True,
+            "task_ref": resolved_task_ref,
+            "path": str(destination),
+            "counts": {
+                "blockers": len(snapshot["blockers"]),
+                "next_actions": len(snapshot["next_actions"]),
+                "decisions": len(snapshot["decisions"]),
+                "verified_tests": len(snapshot["verified_tests"]),
+                "review_findings": len(snapshot["review_findings"]),
+                "worktree_lanes": len(snapshot["worktree_lanes"]),
+                "worker_reports": len(snapshot["worker_reports"]),
+                "lane_messages": len(snapshot["lane_messages"]),
+                "plan_cursors": len(snapshot.get("plan_cursors", [])),
+                "turn_metrics": len(snapshot.get("turn_metrics", [])),
+            },
+        }
+    )
 
 
 def _set_import_active_state(conn: sqlite3.Connection, task_ref: str, active: dict) -> None:
     git_branch, git_commit = _detect_git_write_context()
-    updated_by = _normalize_optional_text(active.get("updated_by")) or _normalize_optional_text(os.environ.get("AGENT_HANDOFF_DEFAULT_AGENT")) or "codex"
+    updated_by = (
+        _normalize_optional_text(active.get("updated_by"))
+        or _normalize_optional_text(os.environ.get("AGENT_HANDOFF_DEFAULT_AGENT"))
+        or "codex"
+    )
     updated_branch = _normalize_optional_text(active.get("updated_branch")) or git_branch or "unknown-branch"
     updated_commit_sha = _normalize_optional_text(active.get("updated_commit_sha")) or git_commit
     current = conn.execute("SELECT revision FROM handoff_state WHERE id = 1").fetchone()
@@ -57,10 +87,29 @@ def _set_import_active_state(conn: sqlite3.Connection, task_ref: str, active: di
                 id, task_ref, objective, focus, status, revision, updated_at, updated_by, updated_branch, updated_commit_sha
             ) VALUES (1, ?, ?, ?, ?, 0, datetime('now'), ?, ?, ?)
             """,
-            (task_ref, active.get("objective", ""), active.get("focus"), active.get("status", "in_progress"), updated_by, updated_branch, updated_commit_sha),
+            (
+                task_ref,
+                active.get("objective", ""),
+                active.get("focus"),
+                active.get("status", "in_progress"),
+                updated_by,
+                updated_branch,
+                updated_commit_sha,
+            ),
         )
         return
-    conn.execute("UPDATE handoff_state SET task_ref = ?, objective = ?, focus = ?, status = ?, revision = revision + 1, updated_at = datetime('now'), updated_by = ?, updated_branch = ?, updated_commit_sha = ? WHERE id = 1", (task_ref, active.get("objective", ""), active.get("focus"), active.get("status", "in_progress"), updated_by, updated_branch, updated_commit_sha))
+    conn.execute(
+        "UPDATE handoff_state SET task_ref = ?, objective = ?, focus = ?, status = ?, revision = revision + 1, updated_at = datetime('now'), updated_by = ?, updated_branch = ?, updated_commit_sha = ? WHERE id = 1",
+        (
+            task_ref,
+            active.get("objective", ""),
+            active.get("focus"),
+            active.get("status", "in_progress"),
+            updated_by,
+            updated_branch,
+            updated_commit_sha,
+        ),
+    )
 
 
 def _import_plan_cursors(conn: sqlite3.Connection, task_ref: str, rows: list[dict], now: str) -> None:
@@ -142,7 +191,9 @@ def _import_turn_metrics(conn: sqlite3.Connection, task_ref: str, rows: list[dic
         )
 
 
-def _import_snapshot(conn: sqlite3.Connection, task_ref: str, snapshot: dict, mode: str, set_active: bool) -> dict[str, int]:
+def _import_snapshot(
+    conn: sqlite3.Connection, task_ref: str, snapshot: dict, mode: str, set_active: bool
+) -> dict[str, int]:
     blockers = snapshot.get("blockers", [])
     actions = snapshot.get("next_actions", [])
     decisions = snapshot.get("decisions", [])
@@ -164,46 +215,217 @@ def _import_snapshot(conn: sqlite3.Connection, task_ref: str, snapshot: dict, mo
         fallback_branch = _normalize_optional_text(active.get("updated_branch")) or fallback_branch
         fallback_commit = _normalize_optional_text(active.get("updated_commit_sha")) or fallback_commit
     if mode == "replace_task":
-        for table in ("blockers", "next_actions", "decisions", "verified_tests", "review_findings", "worktree_lanes", "worker_reports", "lane_messages", "plan_cursors", "turn_metrics"):
+        for table in (
+            "blockers",
+            "next_actions",
+            "decisions",
+            "verified_tests",
+            "review_findings",
+            "worktree_lanes",
+            "worker_reports",
+            "lane_messages",
+            "plan_cursors",
+            "turn_metrics",
+        ):
             conn.execute(f"DELETE FROM {table} WHERE task_ref = ?", (task_ref,))
     for row in blockers:
-        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
-        conn.execute("INSERT INTO blockers (task_ref, lane_id, description, status, agent, branch, commit_sha, resolved_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, _resolve_import_lane_id(row), row.get("description", ""), row.get("status", "open"), agent, branch, commit_sha, row.get("resolved_at"), row.get("created_at") or now))
+        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(
+            row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit
+        )
+        conn.execute(
+            "INSERT INTO blockers (task_ref, lane_id, description, status, agent, branch, commit_sha, resolved_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                task_ref,
+                _resolve_import_lane_id(row),
+                row.get("description", ""),
+                row.get("status", "open"),
+                agent,
+                branch,
+                commit_sha,
+                row.get("resolved_at"),
+                row.get("created_at") or now,
+            ),
+        )
     for row in actions:
-        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
-        conn.execute("INSERT INTO next_actions (task_ref, lane_id, action, priority, status, agent, branch, commit_sha, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, _resolve_import_lane_id(row), row.get("action", ""), int(row.get("priority", 100)), row.get("status", "pending"), agent, branch, commit_sha, row.get("created_at") or now, row.get("updated_at") or row.get("created_at") or now))
+        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(
+            row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit
+        )
+        conn.execute(
+            "INSERT INTO next_actions (task_ref, lane_id, action, priority, status, agent, branch, commit_sha, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                task_ref,
+                _resolve_import_lane_id(row),
+                row.get("action", ""),
+                int(row.get("priority", 100)),
+                row.get("status", "pending"),
+                agent,
+                branch,
+                commit_sha,
+                row.get("created_at") or now,
+                row.get("updated_at") or row.get("created_at") or now,
+            ),
+        )
     for row in decisions:
-        agent, branch, commit_sha, model, model_label, reasoning_level = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
+        agent, branch, commit_sha, model, model_label, reasoning_level = _resolve_import_row_actor(
+            row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit
+        )
         conn.execute(
             "INSERT INTO decisions (task_ref, lane_id, session, decision, rationale, agent, model, model_label, reasoning_level, input_tokens, output_tokens, total_tokens, branch, commit_sha, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (task_ref, _resolve_import_lane_id(row), row.get("session", "import"), row.get("decision", ""), row.get("rationale"), agent, model, model_label, reasoning_level, row.get("input_tokens"), row.get("output_tokens"), row.get("total_tokens"), branch, commit_sha, row.get("created_at") or now),
+            (
+                task_ref,
+                _resolve_import_lane_id(row),
+                row.get("session", "import"),
+                row.get("decision", ""),
+                row.get("rationale"),
+                agent,
+                model,
+                model_label,
+                reasoning_level,
+                row.get("input_tokens"),
+                row.get("output_tokens"),
+                row.get("total_tokens"),
+                branch,
+                commit_sha,
+                row.get("created_at") or now,
+            ),
         )
     for row in tests:
-        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
-        conn.execute("INSERT INTO verified_tests (task_ref, lane_id, command, passed, exit_code, result, session, agent, branch, commit_sha, verified_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, _resolve_import_lane_id(row), row.get("command", ""), 1 if row.get("passed") else 0, row.get("exit_code"), row.get("result"), row.get("session", "import"), agent, branch, commit_sha, row.get("verified_at") or now))
+        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(
+            row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit
+        )
+        conn.execute(
+            "INSERT INTO verified_tests (task_ref, lane_id, command, passed, exit_code, result, session, agent, branch, commit_sha, verified_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                task_ref,
+                _resolve_import_lane_id(row),
+                row.get("command", ""),
+                1 if row.get("passed") else 0,
+                row.get("exit_code"),
+                row.get("result"),
+                row.get("session", "import"),
+                agent,
+                branch,
+                commit_sha,
+                row.get("verified_at") or now,
+            ),
+        )
     for row in findings:
-        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
-        conn.execute("INSERT INTO review_findings (task_ref, lane_id, finding_id, severity, file_path, line_start, line_end, description, fix, status, review_mode, session, agent, branch, commit_sha, resolution_notes, reopen_count, last_reopen_reason, last_reopened_at, resolved_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, _resolve_import_lane_id(row), row.get("finding_id", ""), row.get("severity", "low"), row.get("file_path", ""), row.get("line_start"), row.get("line_end"), row.get("description", ""), row.get("fix"), row.get("status", "open"), row.get("review_mode"), row.get("session", "import"), agent, branch, commit_sha, row.get("resolution_notes"), int(row.get("reopen_count") or 0), row.get("last_reopen_reason"), row.get("last_reopened_at"), row.get("resolved_at"), row.get("created_at") or now, row.get("updated_at") or row.get("resolved_at") or row.get("created_at") or now))
+        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(
+            row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit
+        )
+        conn.execute(
+            "INSERT INTO review_findings (task_ref, lane_id, finding_id, severity, file_path, line_start, line_end, description, fix, status, review_mode, session, agent, branch, commit_sha, resolution_notes, reopen_count, last_reopen_reason, last_reopened_at, resolved_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                task_ref,
+                _resolve_import_lane_id(row),
+                row.get("finding_id", ""),
+                row.get("severity", "low"),
+                row.get("file_path", ""),
+                row.get("line_start"),
+                row.get("line_end"),
+                row.get("description", ""),
+                row.get("fix"),
+                row.get("status", "open"),
+                row.get("review_mode"),
+                row.get("session", "import"),
+                agent,
+                branch,
+                commit_sha,
+                row.get("resolution_notes"),
+                int(row.get("reopen_count") or 0),
+                row.get("last_reopen_reason"),
+                row.get("last_reopened_at"),
+                row.get("resolved_at"),
+                row.get("created_at") or now,
+                row.get("updated_at") or row.get("resolved_at") or row.get("created_at") or now,
+            ),
+        )
     for row in lanes:
-        conn.execute("INSERT INTO worktree_lanes (task_ref, lane_id, title, objective, worktree_path, branch, owner_agent, status, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, row.get("lane_id", ""), row.get("title"), row.get("objective"), row.get("worktree_path", ""), row.get("branch", ""), row.get("owner_agent"), row.get("status", "planned"), row.get("notes"), row.get("created_at") or now, row.get("updated_at") or row.get("created_at") or now))
+        conn.execute(
+            "INSERT INTO worktree_lanes (task_ref, lane_id, title, objective, worktree_path, branch, owner_agent, status, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                task_ref,
+                row.get("lane_id", ""),
+                row.get("title"),
+                row.get("objective"),
+                row.get("worktree_path", ""),
+                row.get("branch", ""),
+                row.get("owner_agent"),
+                row.get("status", "planned"),
+                row.get("notes"),
+                row.get("created_at") or now,
+                row.get("updated_at") or row.get("created_at") or now,
+            ),
+        )
     for row in reports:
-        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
-        conn.execute("INSERT INTO worker_reports (task_ref, lane_id, session, summary, changed_files_json, test_commands_json, blockers_json, merge_ready, status, agent, branch, commit_sha, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, row.get("lane_id", ""), row.get("session", "import"), row.get("summary", ""), row.get("changed_files_json") or json.dumps(row.get("changed_files", [])), row.get("test_commands_json") or json.dumps(row.get("test_commands", [])), row.get("blockers_json") or json.dumps(row.get("blockers", [])), 1 if row.get("merge_ready") else 0, row.get("status", "submitted"), agent, branch, commit_sha, row.get("created_at") or now))
+        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(
+            row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit
+        )
+        conn.execute(
+            "INSERT INTO worker_reports (task_ref, lane_id, session, summary, changed_files_json, test_commands_json, blockers_json, merge_ready, status, agent, branch, commit_sha, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                task_ref,
+                row.get("lane_id", ""),
+                row.get("session", "import"),
+                row.get("summary", ""),
+                row.get("changed_files_json") or json.dumps(row.get("changed_files", [])),
+                row.get("test_commands_json") or json.dumps(row.get("test_commands", [])),
+                row.get("blockers_json") or json.dumps(row.get("blockers", [])),
+                1 if row.get("merge_ready") else 0,
+                row.get("status", "submitted"),
+                agent,
+                branch,
+                commit_sha,
+                row.get("created_at") or now,
+            ),
+        )
     for row in messages:
-        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
+        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(
+            row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit
+        )
         payload_json = row.get("payload_json")
         payload = row.get("payload")
         if isinstance(payload, dict):
             payload_json = json.dumps(payload, sort_keys=True)
-        conn.execute("INSERT INTO lane_messages (task_ref, lane_id, session, direction, subject, message, status, payload_json, agent, branch, commit_sha, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, row.get("lane_id", ""), row.get("session", "import"), row.get("direction", "worker_to_orchestrator"), row.get("subject"), row.get("message", ""), row.get("status", "open"), payload_json, agent, branch, commit_sha, row.get("created_at") or now, row.get("updated_at") or row.get("created_at") or now))
+        conn.execute(
+            "INSERT INTO lane_messages (task_ref, lane_id, session, direction, subject, message, status, payload_json, agent, branch, commit_sha, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                task_ref,
+                row.get("lane_id", ""),
+                row.get("session", "import"),
+                row.get("direction", "worker_to_orchestrator"),
+                row.get("subject"),
+                row.get("message", ""),
+                row.get("status", "open"),
+                payload_json,
+                agent,
+                branch,
+                commit_sha,
+                row.get("created_at") or now,
+                row.get("updated_at") or row.get("created_at") or now,
+            ),
+        )
     _import_plan_cursors(conn, task_ref, plan_cursors, now)
     _import_turn_metrics(conn, task_ref, turn_metrics, now)
     if set_active and isinstance(active, dict):
         _set_import_active_state(conn, task_ref, active)
-    return {"blockers": len(blockers), "next_actions": len(actions), "decisions": len(decisions), "verified_tests": len(tests), "review_findings": len(findings), "worktree_lanes": len(lanes), "worker_reports": len(reports), "lane_messages": len(messages), "plan_cursors": len(plan_cursors), "turn_metrics": len(turn_metrics)}
+    return {
+        "blockers": len(blockers),
+        "next_actions": len(actions),
+        "decisions": len(decisions),
+        "verified_tests": len(tests),
+        "review_findings": len(findings),
+        "worktree_lanes": len(lanes),
+        "worker_reports": len(reports),
+        "lane_messages": len(messages),
+        "plan_cursors": len(plan_cursors),
+        "turn_metrics": len(turn_metrics),
+    }
 
 
-def import_handoff_state(input_path: str, mode: str = "merge", set_active: bool = False, allow_destructive_clear: bool = False) -> str:
+def import_handoff_state(
+    input_path: str, mode: str = "merge", set_active: bool = False, allow_destructive_clear: bool = False
+) -> str:
     if mode not in {"merge", "replace_task"}:
         return _json_response({"ok": False, "error": "Invalid mode. Valid: merge, replace_task."})
     source = Path(input_path)
@@ -218,32 +440,79 @@ def import_handoff_state(input_path: str, mode: str = "merge", set_active: bool 
     task_ref = payload.get("task_ref") or snapshot.get("task_ref")
     if not task_ref:
         return _json_response({"ok": False, "error": "Missing task_ref in import payload."})
-    required_sections = ("blockers", "next_actions", "decisions", "verified_tests", "review_findings", "worktree_lanes", "worker_reports", "lane_messages")
+    required_sections = (
+        "blockers",
+        "next_actions",
+        "decisions",
+        "verified_tests",
+        "review_findings",
+        "worktree_lanes",
+        "worker_reports",
+        "lane_messages",
+    )
     if mode == "replace_task":
         missing_sections = [key for key in required_sections if key not in snapshot]
         if missing_sections:
-            return _json_response({"ok": False, "error": f"Invalid replace_task payload: missing required snapshot sections {', '.join(missing_sections)}."})
+            return _json_response(
+                {
+                    "ok": False,
+                    "error": f"Invalid replace_task payload: missing required snapshot sections {', '.join(missing_sections)}.",
+                }
+            )
     for key in (*required_sections, "plan_cursors", "turn_metrics"):
         items = snapshot.get(key, [])
         if not isinstance(items, list):
             return _json_response({"ok": False, "error": f"Invalid import payload: snapshot.{key} must be an array."})
         for item in items:
             if not isinstance(item, dict):
-                return _json_response({"ok": False, "error": f"Invalid import payload: items in snapshot.{key} must be objects."})
+                return _json_response(
+                    {"ok": False, "error": f"Invalid import payload: items in snapshot.{key} must be objects."}
+                )
     if "active" in snapshot and snapshot["active"] is not None and not isinstance(snapshot["active"], dict):
         return _json_response({"ok": False, "error": "Invalid import payload: snapshot.active must be an object."})
     with _get_db_connection() as conn:
         if mode == "replace_task" and not allow_destructive_clear:
             existing_counts = _count_task_rows(conn, task_ref)
-            incoming_counts = {key: len(snapshot.get(key, [])) for key in (*required_sections, "plan_cursors", "turn_metrics")}
-            potentially_cleared = [section for section, existing_count in existing_counts.items() if existing_count > 0 and incoming_counts.get(section, 0) == 0]
+            incoming_counts = {
+                key: len(snapshot.get(key, [])) for key in (*required_sections, "plan_cursors", "turn_metrics")
+            }
+            potentially_cleared = [
+                section
+                for section, existing_count in existing_counts.items()
+                if existing_count > 0 and incoming_counts.get(section, 0) == 0
+            ]
             if potentially_cleared:
-                return _json_response({"ok": False, "error": f"replace_task would clear existing handoff rows in sections: {', '.join(potentially_cleared)}. Re-run with allow_destructive_clear=true to confirm.", "existing_counts": existing_counts, "incoming_counts": incoming_counts})
+                return _json_response(
+                    {
+                        "ok": False,
+                        "error": f"replace_task would clear existing handoff rows in sections: {', '.join(potentially_cleared)}. Re-run with allow_destructive_clear=true to confirm.",
+                        "existing_counts": existing_counts,
+                        "incoming_counts": incoming_counts,
+                    }
+                )
         counts = _import_snapshot(conn, task_ref=task_ref, snapshot=snapshot, mode=mode, set_active=set_active)
-    return _json_response({"ok": True, "task_ref": task_ref, "mode": mode, "set_active": set_active, "allow_destructive_clear": allow_destructive_clear, "counts": counts})
+    return _json_response(
+        {
+            "ok": True,
+            "task_ref": task_ref,
+            "mode": mode,
+            "set_active": set_active,
+            "allow_destructive_clear": allow_destructive_clear,
+            "counts": counts,
+        }
+    )
 
 
-def archive_task_state(task_ref: str | None = None, notes: str | None = None, archive_by: str | None = None, archive_branch: str | None = None, archive_commit_sha: str | None = None, clear_active_if_matches: bool = True, prune_working_rows: bool = False, allow_destructive_clear: bool = False) -> str:
+def archive_task_state(
+    task_ref: str | None = None,
+    notes: str | None = None,
+    archive_by: str | None = None,
+    archive_branch: str | None = None,
+    archive_commit_sha: str | None = None,
+    clear_active_if_matches: bool = True,
+    prune_working_rows: bool = False,
+    allow_destructive_clear: bool = False,
+) -> str:
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         snapshot = _collect_task_snapshot(conn, resolved_task_ref)
@@ -251,7 +520,13 @@ def archive_task_state(task_ref: str | None = None, notes: str | None = None, ar
             working_counts = _count_task_rows(conn, resolved_task_ref)
             non_zero_sections = [section for section, count in working_counts.items() if count > 0]
             if non_zero_sections:
-                return _json_response({"ok": False, "error": f"prune_working_rows would clear handoff rows in sections: {', '.join(non_zero_sections)}. Re-run with allow_destructive_clear=true to confirm.", "existing_counts": working_counts})
+                return _json_response(
+                    {
+                        "ok": False,
+                        "error": f"prune_working_rows would clear handoff rows in sections: {', '.join(non_zero_sections)}. Re-run with allow_destructive_clear=true to confirm.",
+                        "existing_counts": working_counts,
+                    }
+                )
         conn.execute(
             """
             INSERT INTO task_archives (task_ref, archived_at, archived_by, archived_branch, archived_commit_sha, notes, snapshot_json)
@@ -264,7 +539,14 @@ def archive_task_state(task_ref: str | None = None, notes: str | None = None, ar
                 notes = excluded.notes,
                 snapshot_json = excluded.snapshot_json
             """,
-            (resolved_task_ref, archive_by, archive_branch, archive_commit_sha, notes, json.dumps(snapshot, sort_keys=True)),
+            (
+                resolved_task_ref,
+                archive_by,
+                archive_branch,
+                archive_commit_sha,
+                notes,
+                json.dumps(snapshot, sort_keys=True),
+            ),
         )
         active_cleared = False
         if clear_active_if_matches:
@@ -274,13 +556,37 @@ def archive_task_state(task_ref: str | None = None, notes: str | None = None, ar
                 active_cleared = True
         pruned = False
         if prune_working_rows:
-            for table in ("decisions", "blockers", "next_actions", "verified_tests", "review_findings", "worktree_lanes", "worker_reports", "lane_messages", "plan_cursors"):
+            for table in (
+                "decisions",
+                "blockers",
+                "next_actions",
+                "verified_tests",
+                "review_findings",
+                "worktree_lanes",
+                "worker_reports",
+                "lane_messages",
+                "plan_cursors",
+            ):
                 conn.execute(f"DELETE FROM {table} WHERE task_ref = ?", (resolved_task_ref,))
             pruned = True
-    return _json_response({"ok": True, "task_ref": resolved_task_ref, "active_cleared": active_cleared, "pruned_working_rows": pruned, "allow_destructive_clear": allow_destructive_clear})
+    return _json_response(
+        {
+            "ok": True,
+            "task_ref": resolved_task_ref,
+            "active_cleared": active_cleared,
+            "pruned_working_rows": pruned,
+            "allow_destructive_clear": allow_destructive_clear,
+        }
+    )
 
 
-def switch_task(task_ref: str, objective: str | None = None, focus: str | None = None, status: str = "in_progress", actor: WriteActor | None = None) -> str:
+def switch_task(
+    task_ref: str,
+    objective: str | None = None,
+    focus: str | None = None,
+    status: str = "in_progress",
+    actor: WriteActor | None = None,
+) -> str:
     """Switch the active task, archiving the current one if different.
 
     If the target task was previously archived, its objective is restored
@@ -289,7 +595,9 @@ def switch_task(task_ref: str, objective: str | None = None, focus: str | None =
     unless explicitly provided.
     """
     if status not in HANDOFF_ACTIVE_STATUSES:
-        return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(HANDOFF_ACTIVE_STATUSES))}"})
+        return _json_response(
+            {"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(HANDOFF_ACTIVE_STATUSES))}"}
+        )
 
     with _get_db_connection() as conn:
         ctx = _resolve_write_actor(conn, actor)
@@ -303,7 +611,9 @@ def switch_task(task_ref: str, objective: str | None = None, focus: str | None =
         # Resolve objective for the target task.
         resolved_objective = objective
         if resolved_objective is None:
-            archive_row = conn.execute("SELECT snapshot_json FROM task_archives WHERE task_ref = ?", (task_ref,)).fetchone()
+            archive_row = conn.execute(
+                "SELECT snapshot_json FROM task_archives WHERE task_ref = ?", (task_ref,)
+            ).fetchone()
             if archive_row is not None:
                 try:
                     snapshot = json.loads(archive_row["snapshot_json"])
@@ -313,7 +623,12 @@ def switch_task(task_ref: str, objective: str | None = None, focus: str | None =
                 except (json.JSONDecodeError, TypeError):
                     pass
         if resolved_objective is None:
-            return _json_response({"ok": False, "error": "Cannot determine objective for the target task. Pass --objective explicitly or archive the current task first."})
+            return _json_response(
+                {
+                    "ok": False,
+                    "error": "Cannot determine objective for the target task. Pass --objective explicitly or archive the current task first.",
+                }
+            )
 
         # Archive the outgoing task so it can be restored later.
         archived_previous = False
@@ -333,7 +648,14 @@ def switch_task(task_ref: str, objective: str | None = None, focus: str | None =
                     notes = excluded.notes,
                     snapshot_json = excluded.snapshot_json
                 """,
-                (previous_task_ref, ctx.agent, ctx.branch, ctx.commit_sha, f"Auto-archived by switch_task to {task_ref}", json.dumps(snapshot, sort_keys=True)),
+                (
+                    previous_task_ref,
+                    ctx.agent,
+                    ctx.branch,
+                    ctx.commit_sha,
+                    f"Auto-archived by switch_task to {task_ref}",
+                    json.dumps(snapshot, sort_keys=True),
+                ),
             )
             archived_previous = True
 

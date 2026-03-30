@@ -12,6 +12,7 @@ Imports from _shared are done at function level (late imports) to avoid a circul
 module dependency: _shared.py re-exports from this module at its top level, so
 module-level imports here would create a deadlock when this module is loaded first.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -59,11 +60,7 @@ def _paginated_query(
     row_decoder: Callable[[dict], dict] = dict,
 ) -> tuple[int, list[dict]]:
     """Run a COUNT then a paginated SELECT, returning (total, rows)."""
-    total = int(
-        conn.execute(
-            f"SELECT COUNT(*) AS count FROM {table} WHERE {where_sql}", params
-        ).fetchone()["count"]
-    )
+    total = int(conn.execute(f"SELECT COUNT(*) AS count FROM {table} WHERE {where_sql}", params).fetchone()["count"])
     rows = [
         row_decoder(dict(row))
         for row in conn.execute(
@@ -88,9 +85,7 @@ def _count_task_rows(conn: sqlite3.Connection, task_ref: str) -> dict[str, int]:
         "plan_cursors",
         "turn_metrics",
     ):
-        row = conn.execute(
-            f"SELECT COUNT(*) AS count FROM {key} WHERE task_ref = ?", (task_ref,)
-        ).fetchone()
+        row = conn.execute(f"SELECT COUNT(*) AS count FROM {key} WHERE task_ref = ?", (task_ref,)).fetchone()
         counts[key] = int(row["count"]) if row else 0
     return counts
 

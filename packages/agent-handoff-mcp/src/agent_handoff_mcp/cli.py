@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from ._shared import ReviewFindingDetails
 from .api import (
     ArgSpec,
     archive_task_state,
@@ -63,6 +64,7 @@ def _auto_dispatch(handler: Callable[..., Any], cli_args: list[ArgSpec]) -> Call
     Use ``_CLI_DISPATCH_OVERRIDES`` for tools that require custom logic (negations, dict
     construction, file reading, etc.).
     """
+
     def dispatch(args: argparse.Namespace) -> Any:
         kwargs: dict[str, Any] = {}
         for spec in cli_args:
@@ -72,6 +74,7 @@ def _auto_dispatch(handler: Callable[..., Any], cli_args: list[ArgSpec]) -> Call
                 dest = spec.dest or spec.name
             kwargs[dest] = getattr(args, dest, None)
         return handler(**kwargs)
+
     return dispatch
 
 
@@ -114,10 +117,8 @@ def _add_arg(sub: argparse.ArgumentParser, spec: ArgSpec) -> None:
 # (negations, dict construction, file reading) need an explicit function here.
 
 
-
-
 def _dispatch_review_record(args: argparse.Namespace) -> Any:
-    details: dict[str, int | str] = {}
+    details: ReviewFindingDetails = {}
     if args.line_start is not None:
         details["line_start"] = args.line_start
     if args.line_end is not None:
@@ -218,33 +219,35 @@ def _build_cli_registry() -> list[CliEntry]:
         )
 
     # CLI-only extras: artifact variants with slightly different arg shapes.
-    registry.extend([
-        # --- artifact extras (CLI variants with slightly different arg shapes) ---
-        CliEntry(
-            name="artifact-list",
-            dispatch=_dispatch_artifact_list,
-            description="List artifact sources.",
-            args=[
-                ArgSpec("--task-ref"),
-                ArgSpec("--lane-id"),
-                ArgSpec("--app-root"),
-                ArgSpec("--source-kind"),
-                ArgSpec("--limit", type=int, default=50),
-                ArgSpec("--offset", type=int, default=0),
-            ],
-        ),
-        CliEntry(
-            name="artifact-terms",
-            dispatch=_dispatch_artifact_terms,
-            description="Return artifact with distinctive terms.",
-            args=[
-                ArgSpec("--source-id", type=int),
-                ArgSpec("--task-ref"),
-                ArgSpec("--source-label"),
-                ArgSpec("--top-n", type=int, default=10),
-            ],
-        ),
-    ])
+    registry.extend(
+        [
+            # --- artifact extras (CLI variants with slightly different arg shapes) ---
+            CliEntry(
+                name="artifact-list",
+                dispatch=_dispatch_artifact_list,
+                description="List artifact sources.",
+                args=[
+                    ArgSpec("--task-ref"),
+                    ArgSpec("--lane-id"),
+                    ArgSpec("--app-root"),
+                    ArgSpec("--source-kind"),
+                    ArgSpec("--limit", type=int, default=50),
+                    ArgSpec("--offset", type=int, default=0),
+                ],
+            ),
+            CliEntry(
+                name="artifact-terms",
+                dispatch=_dispatch_artifact_terms,
+                description="Return artifact with distinctive terms.",
+                args=[
+                    ArgSpec("--source-id", type=int),
+                    ArgSpec("--task-ref"),
+                    ArgSpec("--source-label"),
+                    ArgSpec("--top-n", type=int, default=10),
+                ],
+            ),
+        ]
+    )
 
     return registry
 
@@ -267,11 +270,14 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("serve-stdio")
     http_parser = subparsers.add_parser("serve-http")
     http_parser.add_argument(
-        "--host", default="127.0.0.1",
+        "--host",
+        default="127.0.0.1",
         help="Host address to bind to (default: 127.0.0.1)",
     )
     http_parser.add_argument(
-        "--port", type=int, default=8741,
+        "--port",
+        type=int,
+        default=8741,
         help="Port to bind to (default: 8741)",
     )
     subparsers.add_parser("doctor")
@@ -298,7 +304,9 @@ def main() -> None:
         return
     if args.subcommand == "serve-http":
         build_handoff_mcp(config).run(
-            transport="streamable-http", host=args.host, port=args.port,
+            transport="streamable-http",
+            host=args.host,
+            port=args.port,
         )
         return
     if args.subcommand == "doctor":

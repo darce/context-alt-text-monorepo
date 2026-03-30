@@ -3,18 +3,14 @@ from __future__ import annotations
 import re
 
 LEGACY_SLICE_COMPLETE_RE = re.compile(r"^slice_complete_\w+$")
-PREFIXED_SLICE_COMPLETE_RE = re.compile(
-    r"^[a-z]{2,4}_slice_complete_[A-Za-z0-9_-]+_\w+$"
-)
+PREFIXED_SLICE_COMPLETE_RE = re.compile(r"^[a-z]{2,4}_slice_complete_[A-Za-z0-9_-]+_\w+$")
 
 # Full canonical grammar: <author_tag>_<decision_kind>_<work_ref>_<slug>
 # - author_tag:    [a-z]{2,4}
 # - decision_kind: one or more underscore-delimited lowercase words, e.g. slice_complete
 # - work_ref:      task/epic reference, e.g. E12-1, ADPH-4, or any alphanumeric+hyphen token
 # - slug:          [a-z0-9][a-z0-9_]* (at least one char, starts with alphanumeric)
-CANONICAL_DECISION_RE = re.compile(
-    r"^[a-z]{2,4}_[a-z][a-z0-9_]*_[A-Za-z0-9][A-Za-z0-9_-]*_[a-z0-9][a-z0-9_]*$"
-)
+CANONICAL_DECISION_RE = re.compile(r"^[a-z]{2,4}_[a-z][a-z0-9_]*_[A-Za-z0-9][A-Za-z0-9_-]*_[a-z0-9][a-z0-9_]*$")
 
 
 def is_legacy_slice_complete_decision(decision: str) -> bool:
@@ -61,7 +57,7 @@ def classify_decision_id(decision: str) -> str:
 def extract_slice_label(decision: str) -> str:
     """Extract the label payload from a slice-complete decision id."""
     if is_legacy_slice_complete_decision(decision):
-        return decision[len("slice_complete_"):]
+        return decision[len("slice_complete_") :]
     parts = decision.split("_slice_complete_", 1)
     if len(parts) == 2:
         return parts[1]

@@ -25,7 +25,6 @@ from agent_handoff_mcp.artifact_index import (
     upsert_source,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -408,9 +407,7 @@ def test_get_artifact_source_by_id(artifact_db: Path) -> None:
         content="Content here\n" * 10,
         artifact_db_path=artifact_db,
     )
-    source = get_artifact_source(
-        source_id=result["source_id"], artifact_db_path=artifact_db
-    )
+    source = get_artifact_source(source_id=result["source_id"], artifact_db_path=artifact_db)
     assert source is not None
     assert source["source_label"] == "readme"
     assert source["task_ref"] == "task-1"
@@ -438,9 +435,7 @@ def test_get_artifact_source_by_task_and_label(artifact_db: Path) -> None:
         content="# Notes\nSome notes\n" * 5,
         artifact_db_path=artifact_db,
     )
-    source = get_artifact_source(
-        task_ref="task-X", source_label="notes", artifact_db_path=artifact_db
-    )
+    source = get_artifact_source(task_ref="task-X", source_label="notes", artifact_db_path=artifact_db)
     assert source is not None
     assert source["source_label"] == "notes"
     assert "chunks" in source
@@ -448,9 +443,7 @@ def test_get_artifact_source_by_task_and_label(artifact_db: Path) -> None:
 
 
 def test_get_artifact_source_not_found_returns_none(artifact_db: Path) -> None:
-    source = get_artifact_source(
-        source_id=99999, artifact_db_path=artifact_db
-    )
+    source = get_artifact_source(source_id=99999, artifact_db_path=artifact_db)
     assert source is None
 
 
@@ -543,9 +536,7 @@ def test_purge_artifacts_removes_fts_chunks(artifact_db: Path) -> None:
     purge_artifacts(task_ref="task-cleanup", artifact_db_path=artifact_db)
 
     # After purge, source should be gone
-    source = get_artifact_source(
-        source_id=result["source_id"], artifact_db_path=artifact_db
-    )
+    source = get_artifact_source(source_id=result["source_id"], artifact_db_path=artifact_db)
     assert source is None
 
     # And search should return no results
@@ -631,10 +622,7 @@ def test_schema_bootstrap_is_idempotent(artifact_db: Path) -> None:
     conn1.close()
     conn2 = get_artifact_db_connection(artifact_db)
     tables = {
-        row[0]
-        for row in conn2.execute(
-            "SELECT name FROM sqlite_master WHERE type IN ('table', 'shadow')"
-        ).fetchall()
+        row[0] for row in conn2.execute("SELECT name FROM sqlite_master WHERE type IN ('table', 'shadow')").fetchall()
     }
     conn2.close()
     assert "artifact_sources" in tables

@@ -3,11 +3,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import agent_orchestrator_mcp
+
 from agent_handoff_mcp import (
     ReviewFindingDetails,
     ReviewKind,
     ReviewScopeSource,
-    SliceReviewPacket,
     WriteActor,
     build_write_actor,
 )
@@ -129,18 +130,17 @@ def test_model_identity_helpers_normalize_known_labels_and_skip_inherit() -> Non
 def test_public_review_packet_types_are_importable_from_package_root() -> None:
     assert ReviewFindingDetails.__name__ == "ReviewFindingDetails"
     assert WriteActor.__name__ == "WriteActor"
-    assert SliceReviewPacket.__name__ == "SliceReviewPacket"
     assert ReviewKind.PLANNING == "planning"
     assert ReviewScopeSource.SLICE_PACKET == "slice_packet"
 
 
 def test_worker_event_names_include_runtime_log_vocabulary() -> None:
     runtime_sources = (
-        Path(handoff_core.__file__).resolve().parent / "orchestration" / "worker_daemon.py",
-        Path(handoff_core.__file__).resolve().parent / "orchestration" / "adapters" / "codex_cli.py",
-        Path(handoff_core.__file__).resolve().parent / "orchestration" / "adapters" / "claude_code.py",
-        Path(handoff_core.__file__).resolve().parent / "orchestration" / "adapters" / "codex_subagent.py",
-        Path(handoff_core.__file__).resolve().parent / "orchestration" / "adapters" / "local_model.py",
+        Path(agent_orchestrator_mcp.__file__).resolve().parent / "orchestration" / "worker_daemon.py",
+        Path(agent_orchestrator_mcp.__file__).resolve().parent / "orchestration" / "adapters" / "codex_cli.py",
+        Path(agent_orchestrator_mcp.__file__).resolve().parent / "orchestration" / "adapters" / "claude_code.py",
+        Path(agent_orchestrator_mcp.__file__).resolve().parent / "orchestration" / "adapters" / "codex_subagent.py",
+        Path(agent_orchestrator_mcp.__file__).resolve().parent / "orchestration" / "adapters" / "local_model.py",
     )
     joined = "\n".join(path.read_text(encoding="utf-8") for path in runtime_sources)
 
@@ -150,8 +150,8 @@ def test_worker_event_names_include_runtime_log_vocabulary() -> None:
 
 def test_runtime_event_strings_are_backed_by_worker_event_enum() -> None:
     runtime_sources = (
-        Path(handoff_core.__file__).resolve().parent / "orchestration" / "worker_daemon.py",
-        Path(handoff_core.__file__).resolve().parent / "orchestration" / "ace_metrics.py",
+        Path(agent_orchestrator_mcp.__file__).resolve().parent / "orchestration" / "worker_daemon.py",
+        Path(agent_orchestrator_mcp.__file__).resolve().parent / "orchestration" / "ace_metrics.py",
     )
     allowed_values = {member.value for member in WorkerEventName}
     observed_values: set[str] = set()

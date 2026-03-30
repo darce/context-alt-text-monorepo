@@ -4,7 +4,6 @@ from contextvars import ContextVar
 
 from .config import RuntimeConfig
 
-
 _runtime_config: ContextVar[RuntimeConfig | None] = ContextVar("agent_handoff_runtime_config", default=None)
 
 

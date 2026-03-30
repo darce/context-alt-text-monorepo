@@ -13,11 +13,10 @@ from typing import Any, Callable
 from fastmcp import FastMCP
 from fastmcp.client import Client, PythonStdioTransport
 
-from .config import RuntimeConfig
 from . import core
+from .config import RuntimeConfig
 from .core import PromptMetrics, ResolvedWriteContext, TokenUsage
 from .runtime import configure_runtime, get_runtime_config, reset_runtime_config
-
 
 record_decision = core.record_decision
 build_write_actor = core.build_write_actor
@@ -101,9 +100,9 @@ class ArgSpec:
     required: bool = False
     help: str = ""
     choices: list[str] | None = None
-    action: str | None = None   # e.g. "store_true", "append"
+    action: str | None = None  # e.g. "store_true", "append"
     nargs: str | None = None
-    dest: str | None = None     # override argparse dest
+    dest: str | None = None  # override argparse dest
 
 
 # Choices used by both the tool registry and CLI for worker reasoning effort.
@@ -549,9 +548,8 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
     _apply_tool_descriptions()
     for entry in _build_tool_registry():
         if entry.deprecated_since is not None:
-            entry.handler.__doc__ = (
-                f"[DEPRECATED since {entry.deprecated_since}] "
-                + (entry.handler.__doc__ or entry.description)
+            entry.handler.__doc__ = f"[DEPRECATED since {entry.deprecated_since}] " + (
+                entry.handler.__doc__ or entry.description
             )
         mcp.add_tool(entry.handler)
     return mcp
@@ -564,11 +562,10 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
 
     # FTS5 availability check - hard requirement for artifact indexing
     import sqlite3 as _sqlite3
+
     with _sqlite3.connect(":memory:") as _fts5_probe:
         try:
-            _fts5_probe.execute(
-                "CREATE VIRTUAL TABLE _fts5_test USING fts5(body)"
-            )
+            _fts5_probe.execute("CREATE VIRTUAL TABLE _fts5_test USING fts5(body)")
             _fts5_probe.execute("DROP TABLE IF EXISTS _fts5_test")
             fts5_available = True
         except _sqlite3.OperationalError:
@@ -658,7 +655,6 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
     # for observable evidence of each one's durable output in this workspace.
     ace_reflect_log = config.state_dir / "ace_reflect_log.jsonl"
     worker_log_dir = config.workspace_root / "logs" / "worker-daemon"
-    orchestrator_log = config.workspace_root / "logs" / "daemon" / "orchestrator.jsonl"
     worker_logs_found = any(worker_log_dir.glob("worker-*.jsonl")) if worker_log_dir.exists() else False
     portable_hook_semantics = [
         {

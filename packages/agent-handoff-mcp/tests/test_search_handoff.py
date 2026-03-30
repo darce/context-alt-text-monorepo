@@ -20,7 +20,6 @@ from agent_handoff_mcp import api as mcp_server
 from agent_handoff_mcp import core as handoff_core
 from agent_handoff_mcp.config import RuntimeConfig
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -101,15 +100,11 @@ def test_vtable_constructor_failure_auto_recovers(isolated_env: dict) -> None:
         assert expected in names, f"FTS table {expected!r} not recreated after recovery."
 
     # Backfilled decision must be searchable.
-    result = _parse(
-        handoff_core.search_handoff(queries=["auto-recovery test policy"])
-    )
+    result = _parse(handoff_core.search_handoff(queries=["auto-recovery test policy"]))
     assert result["ok"] is True
     assert any("auto-recovery" in r["snippet"] for r in result["results"]), (
         "Expected backfilled decision to appear in search after FTS recovery."
     )
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -209,16 +204,12 @@ def test_update_trigger_decision(isolated_env: dict) -> None:
         )
 
     # Old text must no longer match.
-    old_result = _parse(
-        handoff_core.search_handoff(queries=["circuit breaker design"], record_types=["decision"])
-    )
+    old_result = _parse(handoff_core.search_handoff(queries=["circuit breaker design"], record_types=["decision"]))
     assert old_result["ok"] is True
     assert all(r.get("record_id") != row_id for r in old_result["results"])
 
     # New text must match.
-    new_result = _parse(
-        handoff_core.search_handoff(queries=["bulkhead isolation"], record_types=["decision"])
-    )
+    new_result = _parse(handoff_core.search_handoff(queries=["bulkhead isolation"], record_types=["decision"]))
     assert new_result["ok"] is True
     assert any(r["record_id"] == row_id for r in new_result["results"])
 
@@ -234,18 +225,14 @@ def test_delete_trigger_decision(isolated_env: dict) -> None:
     row_id = res["decision"]["id"]
 
     # Verify indexed before deletion.
-    pre_search = _parse(
-        handoff_core.search_handoff(queries=["canary deployment"], record_types=["decision"])
-    )
+    pre_search = _parse(handoff_core.search_handoff(queries=["canary deployment"], record_types=["decision"]))
     assert any(r["record_id"] == row_id for r in pre_search["results"])
 
     # Delete the row directly to exercise the DELETE trigger.
     with handoff_core._get_db_connection() as conn:
         conn.execute("DELETE FROM decisions WHERE id = ?", (row_id,))
 
-    post_search = _parse(
-        handoff_core.search_handoff(queries=["canary deployment"], record_types=["decision"])
-    )
+    post_search = _parse(handoff_core.search_handoff(queries=["canary deployment"], record_types=["decision"]))
     assert all(r.get("record_id") != row_id for r in post_search["results"])
 
 
@@ -338,9 +325,7 @@ def test_search_all_record_types_by_default(isolated_env: dict) -> None:
     handoff_core.record_decision(session="s1", decision="omniquery alpha unique designword")
     handoff_core.report_blocker(operation="add", description="omniquery beta unique designword")
 
-    result = _parse(
-        handoff_core.search_handoff(queries=["omniquery"])
-    )
+    result = _parse(handoff_core.search_handoff(queries=["omniquery"]))
     assert result["ok"] is True
     assert len(result["record_types_searched"]) == 4
     types_in_results = {r["record_type"] for r in result["results"]}
@@ -377,9 +362,7 @@ def test_search_handoff_invalid_record_type_returns_error(isolated_env: dict) ->
 
 
 def test_search_handoff_no_match_returns_empty_list(isolated_env: dict) -> None:
-    result = _parse(
-        handoff_core.search_handoff(queries=["zxqjfnoexistsanywhere99999"])
-    )
+    result = _parse(handoff_core.search_handoff(queries=["zxqjfnoexistsanywhere99999"]))
     assert result["ok"] is True
     assert result["results"] == []
     assert result["total"] == 0
@@ -391,9 +374,7 @@ def test_search_handoff_multi_word_query_phrase(isolated_env: dict) -> None:
         session="s1",
         decision="strict distributed consensus protocol with leader election",
     )
-    result = _parse(
-        handoff_core.search_handoff(queries=["leader election"], record_types=["decision"])
-    )
+    result = _parse(handoff_core.search_handoff(queries=["leader election"], record_types=["decision"]))
     assert result["ok"] is True
     assert result["results"]
 
@@ -435,9 +416,7 @@ def test_backfill_indexes_pre_trigger_rows(isolated_env: dict) -> None:
 def test_search_query_with_double_quote_does_not_error(isolated_env: dict) -> None:
     """A double-quote inside a query term must not produce an FTS5 parse error."""
     handoff_core.record_decision(session="s1", decision='the foo"bar pattern is discouraged')
-    result = _parse(
-        handoff_core.search_handoff(queries=['foo"bar'], record_types=["decision"])
-    )
+    result = _parse(handoff_core.search_handoff(queries=['foo"bar'], record_types=["decision"]))
     # Must return ok (not an FTS5 OperationalError).
     assert result["ok"] is True
 
@@ -445,9 +424,7 @@ def test_search_query_with_double_quote_does_not_error(isolated_env: dict) -> No
 def test_search_query_with_colon_does_not_activate_column_filter(isolated_env: dict) -> None:
     """A colon in a query must be treated as a literal, not FTS5 column-filter syntax."""
     handoff_core.record_decision(session="s1", decision="leader:election protocol design")
-    result = _parse(
-        handoff_core.search_handoff(queries=["leader:election"], record_types=["decision"])
-    )
+    result = _parse(handoff_core.search_handoff(queries=["leader:election"], record_types=["decision"]))
     assert result["ok"] is True
     assert result["results"], "Colon must not prevent matching; row must be returned."
 
@@ -455,9 +432,7 @@ def test_search_query_with_colon_does_not_activate_column_filter(isolated_env: d
 def test_search_query_with_hyphen_does_not_activate_not_operator(isolated_env: dict) -> None:
     """A hyphen prefix in a query must not activate FTS5 NOT semantics."""
     handoff_core.record_decision(session="s1", decision="retry-policy exponential backoff")
-    result = _parse(
-        handoff_core.search_handoff(queries=["retry-policy"], record_types=["decision"])
-    )
+    result = _parse(handoff_core.search_handoff(queries=["retry-policy"], record_types=["decision"]))
     assert result["ok"] is True
     assert result["results"], "Hyphen must not suppress the matching row via NOT."
 
@@ -479,12 +454,9 @@ def test_search_defaults_to_active_task_excludes_other_tasks(isolated_env: dict)
             "VALUES ('other-task', 's1', 'zeta scopetest uniquekeyword other', datetime('now'))"
         )
 
-    result = _parse(
-        handoff_core.search_handoff(queries=["zeta scopetest uniquekeyword"], record_types=["decision"])
-    )
+    result = _parse(handoff_core.search_handoff(queries=["zeta scopetest uniquekeyword"], record_types=["decision"]))
     assert result["ok"] is True
     assert result["results"], "Must return at least the active-task record."
     assert all(r["task_ref"] == "test-task" for r in result["results"]), (
         "Cross-task leakage: results must not include records from 'other-task'."
     )
-

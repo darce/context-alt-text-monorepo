@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 
 from agent_handoff_mcp import api as mcp_server
-from agent_handoff_mcp.config import RuntimeConfig
 from agent_handoff_mcp._shared import _get_db_connection, _render_current_task_md
+from agent_handoff_mcp.config import RuntimeConfig
 
 
 def _parse(raw: str) -> dict:
@@ -157,14 +157,22 @@ def test_list_review_findings_global_ambiguity_error(isolated_handoff: dict) -> 
     _parse(mcp_server.set_handoff_state(task_ref="task-A", objective="A", status="in_progress"))
     _parse(
         mcp_server.record_review_finding(
-            session="s1", finding_id="DUP-001", severity="low",
-            file_path="f.py", description="dup under A", task_ref="task-A",
+            session="s1",
+            finding_id="DUP-001",
+            severity="low",
+            file_path="f.py",
+            description="dup under A",
+            task_ref="task-A",
         )
     )
     _parse(
         mcp_server.record_review_finding(
-            session="s1", finding_id="DUP-001", severity="low",
-            file_path="f.py", description="dup under B", task_ref="task-B",
+            session="s1",
+            finding_id="DUP-001",
+            severity="low",
+            file_path="f.py",
+            description="dup under B",
+            task_ref="task-B",
         )
     )
 
@@ -178,12 +186,18 @@ def test_list_review_findings_global_ambiguity_error(isolated_handoff: dict) -> 
 def test_list_review_findings_explicit_task_ref_still_scopes(isolated_handoff: dict) -> None:
     """When task_ref is explicit, list_review_findings still scopes to that task."""
     _parse(mcp_server.set_handoff_state(task_ref="task-A", objective="A", status="in_progress"))
-    db_id_a = int(_parse(
-        mcp_server.record_review_finding(
-            session="s1", finding_id="SCOPED-001", severity="low",
-            file_path="f.py", description="under A", task_ref="task-A",
-        )
-    )["finding"]["id"])
+    db_id_a = int(
+        _parse(
+            mcp_server.record_review_finding(
+                session="s1",
+                finding_id="SCOPED-001",
+                severity="low",
+                file_path="f.py",
+                description="under A",
+                task_ref="task-A",
+            )
+        )["finding"]["id"]
+    )
 
     result = _parse(mcp_server.list_review_findings(finding_db_id=db_id_a, task_ref="task-B"))
     assert result["ok"] is False
@@ -200,8 +214,12 @@ def test_update_review_finding_global_lookup(isolated_handoff: dict) -> None:
     _parse(mcp_server.set_handoff_state(task_ref="task-A", objective="A", status="in_progress"))
     _parse(
         mcp_server.record_review_finding(
-            session="s1", finding_id="UPD-GLOBAL-001", severity="medium",
-            file_path="f.py", description="update global", task_ref="task-A",
+            session="s1",
+            finding_id="UPD-GLOBAL-001",
+            severity="medium",
+            file_path="f.py",
+            description="update global",
+            task_ref="task-A",
         )
     )
     _parse(mcp_server.set_handoff_state(task_ref="task-B", objective="B", status="in_progress", expected_revision=0))
@@ -215,18 +233,28 @@ def test_update_review_finding_global_ambiguity_error(isolated_handoff: dict) ->
     """update_review_finding returns ambiguity error when finding_id is not unique globally."""
     _parse(
         mcp_server.record_review_finding(
-            session="s1", finding_id="UPD-DUP-001", severity="low",
-            file_path="f.py", description="dup A", task_ref="task-X",
+            session="s1",
+            finding_id="UPD-DUP-001",
+            severity="low",
+            file_path="f.py",
+            description="dup A",
+            task_ref="task-X",
         )
     )
     _parse(
         mcp_server.record_review_finding(
-            session="s1", finding_id="UPD-DUP-001", severity="low",
-            file_path="f.py", description="dup B", task_ref="task-Y",
+            session="s1",
+            finding_id="UPD-DUP-001",
+            severity="low",
+            file_path="f.py",
+            description="dup B",
+            task_ref="task-Y",
         )
     )
 
-    result = _parse(mcp_server.update_review_finding(finding_id="UPD-DUP-001", status="wontfix", resolution_notes="dup"))
+    result = _parse(
+        mcp_server.update_review_finding(finding_id="UPD-DUP-001", status="wontfix", resolution_notes="dup")
+    )
     assert result["ok"] is False
     assert "Ambiguous" in result["error"]
 
@@ -256,8 +284,11 @@ def test_repo_scoped_finding_visible_via_global_lookup(isolated_handoff: dict) -
     """Repo-scoped findings are retrievable via global lookup by finding_id."""
     _parse(
         mcp_server.record_review_finding(
-            session="s1", finding_id="REPO-002", severity="low",
-            file_path="docs/plan.md", description="Repo finding",
+            session="s1",
+            finding_id="REPO-002",
+            severity="low",
+            file_path="docs/plan.md",
+            description="Repo finding",
             task_ref="__repo__",
         )
     )
@@ -271,8 +302,11 @@ def test_repo_scoped_finding_not_in_task_scoped_list(isolated_handoff: dict) -> 
     _parse(mcp_server.set_handoff_state(task_ref="real-task", objective="obj", status="in_progress"))
     _parse(
         mcp_server.record_review_finding(
-            session="s1", finding_id="REPO-003", severity="low",
-            file_path="docs/plan.md", description="Repo finding",
+            session="s1",
+            finding_id="REPO-003",
+            severity="low",
+            file_path="docs/plan.md",
+            description="Repo finding",
             task_ref="__repo__",
         )
     )
@@ -411,18 +445,22 @@ def test_record_review_run_rejects_invalid_subject_kind(isolated_handoff: dict) 
 def test_list_review_runs_paginates_and_filters_by_task_ref(isolated_handoff: dict) -> None:
     """list_review_runs returns only runs matching task_ref."""
     for i in range(3):
-        _parse(mcp_server.record_review_run(
-            review_run_id=f"E12-8-run-{i}",
+        _parse(
+            mcp_server.record_review_run(
+                review_run_id=f"E12-8-run-{i}",
+                session="s",
+                subject_path="docs/plan.md",
+                task_ref="E12-8",
+            )
+        )
+    _parse(
+        mcp_server.record_review_run(
+            review_run_id="OTHER-run-1",
             session="s",
-            subject_path="docs/plan.md",
-            task_ref="E12-8",
-        ))
-    _parse(mcp_server.record_review_run(
-        review_run_id="OTHER-run-1",
-        session="s",
-        subject_path="docs/other.md",
-        task_ref="OTHER-TASK",
-    ))
+            subject_path="docs/other.md",
+            task_ref="OTHER-TASK",
+        )
+    )
     result = _parse(mcp_server.list_review_runs(task_ref="E12-8"))
     assert result["ok"] is True
     assert result["total_matching"] == 3
@@ -430,12 +468,24 @@ def test_list_review_runs_paginates_and_filters_by_task_ref(isolated_handoff: di
 
 
 def test_list_review_runs_filters_by_verdict(isolated_handoff: dict) -> None:
-    _parse(mcp_server.record_review_run(
-        review_run_id="v-pass", session="s", subject_path="docs/p.md", verdict="pass", task_ref="T-1",
-    ))
-    _parse(mcp_server.record_review_run(
-        review_run_id="v-fail", session="s", subject_path="docs/p.md", verdict="fail", task_ref="T-1",
-    ))
+    _parse(
+        mcp_server.record_review_run(
+            review_run_id="v-pass",
+            session="s",
+            subject_path="docs/p.md",
+            verdict="pass",
+            task_ref="T-1",
+        )
+    )
+    _parse(
+        mcp_server.record_review_run(
+            review_run_id="v-fail",
+            session="s",
+            subject_path="docs/p.md",
+            verdict="fail",
+            task_ref="T-1",
+        )
+    )
     result = _parse(mcp_server.list_review_runs(task_ref="T-1", verdict="pass"))
     assert result["ok"] is True
     assert result["total_matching"] == 1
@@ -443,12 +493,20 @@ def test_list_review_runs_filters_by_verdict(isolated_handoff: dict) -> None:
 
 
 def test_list_review_runs_filter_by_subject_path(isolated_handoff: dict) -> None:
-    _parse(mcp_server.record_review_run(
-        review_run_id="sp-1", session="s", subject_path="docs/alpha.md",
-    ))
-    _parse(mcp_server.record_review_run(
-        review_run_id="sp-2", session="s", subject_path="docs/beta.md",
-    ))
+    _parse(
+        mcp_server.record_review_run(
+            review_run_id="sp-1",
+            session="s",
+            subject_path="docs/alpha.md",
+        )
+    )
+    _parse(
+        mcp_server.record_review_run(
+            review_run_id="sp-2",
+            session="s",
+            subject_path="docs/beta.md",
+        )
+    )
     result = _parse(mcp_server.list_review_runs(subject_path="docs/alpha.md"))
     assert result["ok"] is True
     assert result["total_matching"] == 1
@@ -457,24 +515,36 @@ def test_list_review_runs_filter_by_subject_path(isolated_handoff: dict) -> None
 
 def test_get_review_coverage_by_task_ref(isolated_handoff: dict) -> None:
     """get_review_coverage returns run_count and finding counts for a task_ref."""
-    _parse(mcp_server.record_review_run(
-        review_run_id="cov-run-1", session="s", subject_path="docs/e.md",
-        verdict="pass_with_findings", task_ref="COV-TASK",
-    ))
-    _parse(mcp_server.record_review_run(
-        review_run_id="cov-run-2", session="s", subject_path="docs/e.md",
-        verdict="pass", task_ref="COV-TASK",
-    ))
+    _parse(
+        mcp_server.record_review_run(
+            review_run_id="cov-run-1",
+            session="s",
+            subject_path="docs/e.md",
+            verdict="pass_with_findings",
+            task_ref="COV-TASK",
+        )
+    )
+    _parse(
+        mcp_server.record_review_run(
+            review_run_id="cov-run-2",
+            session="s",
+            subject_path="docs/e.md",
+            verdict="pass",
+            task_ref="COV-TASK",
+        )
+    )
     # Record two open findings linked to the task
     for i in range(2):
-        _parse(mcp_server.record_review_finding(
-            session="s",
-            finding_id=f"COV-F-{i}",
-            severity="medium",
-            file_path="docs/e.md",
-            description=f"finding {i}",
-            task_ref="COV-TASK",
-        ))
+        _parse(
+            mcp_server.record_review_finding(
+                session="s",
+                finding_id=f"COV-F-{i}",
+                severity="medium",
+                file_path="docs/e.md",
+                description=f"finding {i}",
+                task_ref="COV-TASK",
+            )
+        )
     result = _parse(mcp_server.get_review_coverage(task_ref="COV-TASK"))
     assert result["ok"] is True
     assert result["run_count"] == 2
@@ -501,10 +571,13 @@ def test_get_review_coverage_no_runs_returns_zero_counts(isolated_handoff: dict)
 
 def test_get_review_coverage_by_subject_path(isolated_handoff: dict) -> None:
     """When only subject_path is given, coverage is derived through review_run_id links."""
-    _parse(mcp_server.record_review_run(
-        review_run_id="sp-cov-run", session="s",
-        subject_path="docs/target.md",
-    ))
+    _parse(
+        mcp_server.record_review_run(
+            review_run_id="sp-cov-run",
+            session="s",
+            subject_path="docs/target.md",
+        )
+    )
     result = _parse(mcp_server.get_review_coverage(subject_path="docs/target.md"))
     assert result["ok"] is True
     assert result["run_count"] == 1

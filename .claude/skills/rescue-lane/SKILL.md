@@ -1,0 +1,1 @@
+../../../docs/agentic/skills/rescue-lane/SKILL.md

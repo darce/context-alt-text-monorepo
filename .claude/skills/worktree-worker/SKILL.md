@@ -1,0 +1,1 @@
+../../../docs/agentic/skills/worktree-worker/SKILL.md

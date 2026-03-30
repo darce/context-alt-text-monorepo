@@ -1,0 +1,1 @@
+../../../docs/agentic/skills/commit2git/SKILL.md

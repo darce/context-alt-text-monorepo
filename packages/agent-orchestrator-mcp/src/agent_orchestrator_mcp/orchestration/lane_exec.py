@@ -9,6 +9,7 @@ side-effects -- callers decide what to do with the result file.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import subprocess
@@ -26,16 +27,17 @@ from backend_registry import get_adapter, get_backend_choices, validate_backend
 from bootstrap_lane import _bootstrap as bootstrap_lane
 from lane_manifest import get_lane_config
 
-try:
-    from agent_handoff_mcp import artifact_index as _artifact_index
-    from agent_handoff_mcp.config import RuntimeConfig as _ArtifactRuntimeConfig
-
-    _ARTIFACT_INDEX_AVAILABLE = True
-except ImportError:  # noqa: BLE001
-    _ARTIFACT_INDEX_AVAILABLE = False
-
 
 BACKEND_CHOICES = get_backend_choices()
+
+
+def _load_artifact_index_runtime() -> tuple[Any, Any] | None:
+    if importlib.util.find_spec("agent_handoff_mcp") is None:
+        return None
+    from agent_handoff_mcp import artifact_index  # noqa: PLC0415
+    from agent_handoff_mcp.config import RuntimeConfig  # noqa: PLC0415
+
+    return artifact_index, RuntimeConfig
 
 
 # ---------------------------------------------------------------------------
@@ -370,13 +372,15 @@ def _compress_large_result_details(
     compact excerpt plus a ``details_artifact_ref`` field so callers can retrieve
     the full content on demand.  Non-fatal; returns the original dict on any error.
     """
-    if not _ARTIFACT_INDEX_AVAILABLE:
+    artifact_runtime = _load_artifact_index_runtime()
+    if artifact_runtime is None:
         return result_data
+    artifact_index, artifact_runtime_config = artifact_runtime
     details = result_data.get("details") or ""
     if not isinstance(details, str):
         return result_data
     try:
-        art_config = _ArtifactRuntimeConfig.for_workspace(orchestrator_root)
+        art_config = artifact_runtime_config.for_workspace(orchestrator_root)
         artifact_db_path = art_config.artifact_db_path
         min_bytes = art_config.artifact_index_min_bytes
         min_lines = art_config.artifact_index_min_lines
@@ -388,7 +392,7 @@ def _compress_large_result_details(
         return result_data
     source_label = f"{lane_id}-exec-details"
     try:
-        index_result = _artifact_index.maybe_record_artifact(
+        index_result = artifact_index.maybe_record_artifact(
             task_ref=task_ref,
             lane_id=lane_id,
             app_root=None,

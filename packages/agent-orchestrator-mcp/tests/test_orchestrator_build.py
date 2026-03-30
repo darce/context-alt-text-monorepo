@@ -100,10 +100,10 @@ def test_orchestrator_crud_tools_importable():
     assert callable(list_plan_cursors)
 
 
-def test_scripts_mcp_dir_points_to_orchestration():
-    """_scripts_mcp_dir() should resolve to agent_handoff_mcp's orchestration directory."""
-    from agent_orchestrator_mcp.api import _scripts_mcp_dir
+def test_orchestration_dir_points_to_orchestration():
+    """_orchestration_dir() should resolve to the package-local orchestration directory."""
+    from agent_orchestrator_mcp.api import _orchestration_dir
 
-    scripts_dir = _scripts_mcp_dir()
+    scripts_dir = _orchestration_dir()
     assert scripts_dir.exists(), f"orchestration dir not found: {scripts_dir}"
     assert (scripts_dir / "orchestrator_daemon.py").exists()

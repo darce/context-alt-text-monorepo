@@ -204,16 +204,22 @@ def _build_tool_registry() -> list[ToolEntry]:
     ]
 
 
-def _scripts_mcp_dir() -> Path:
-    """Return the path to the orchestration scripts directory (agent_orchestrator_mcp/orchestration/)."""
+def _orchestration_dir() -> Path:
+    """Return the path to the agent_orchestrator_mcp/orchestration/ package directory."""
     return Path(__file__).resolve().parent / "orchestration"
 
 
-def _import_scripts_mcp_module(name: str) -> Any:
-    scripts_dir = _scripts_mcp_dir()
-    if str(scripts_dir) not in sys.path:
-        sys.path.insert(0, str(scripts_dir))
-    return importlib.import_module(name)
+def _import_orchestration_module(name: str) -> Any:
+    """Import a module from agent_orchestrator_mcp.orchestration by bare name.
+
+    Keeps the orchestration/ directory on sys.path so the orchestration
+    scripts that rely on bare sibling imports (e.g. ``backend_adapter``)
+    continue to work after being imported as a proper subpackage.
+    """
+    orchestration_dir = _orchestration_dir()
+    if str(orchestration_dir) not in sys.path:
+        sys.path.insert(0, str(orchestration_dir))
+    return importlib.import_module(f"agent_orchestrator_mcp.orchestration.{name}")
 
 
 def _handoff_pythonpath() -> str:
@@ -239,7 +245,7 @@ def _orchestrator_paths() -> dict[str, Path]:
         "pause_path": state_dir / "daemon-paused",
         "log_dir": config.workspace_root / "logs" / "daemon",
         "log_path": config.workspace_root / "logs" / "daemon" / "orchestrator.jsonl",
-        "script_path": _scripts_mcp_dir() / "orchestrator_daemon.py",
+        "script_path": _orchestration_dir() / "orchestrator_daemon.py",
     }
 
 
@@ -251,12 +257,12 @@ def _worker_paths() -> dict[str, Path]:
         "workspace_root": config.workspace_root,
         "state_dir": state_dir,
         "log_dir": log_dir,
-        "script_path": _scripts_mcp_dir() / "worker_daemon.py",
+        "script_path": _orchestration_dir() / "worker_daemon.py",
     }
 
 
 def _worker_lane_config(task_ref: str, lane_id: str) -> dict[str, Any]:
-    lane_manifest = _import_scripts_mcp_module("lane_manifest")
+    lane_manifest = _import_orchestration_module("lane_manifest")
     lane = lane_manifest.get_lane_config(task_ref, lane_id, orchestrator_root=str(get_runtime_config().workspace_root))
     if not isinstance(lane, dict):
         raise RuntimeError(f"Lane '{lane_id}' is not defined in the manifest for task '{task_ref}'.")
@@ -337,7 +343,7 @@ def orchestrator_start(
 ) -> str:
     paths = _orchestrator_paths()
     try:
-        backend_registry = _import_scripts_mcp_module("backend_registry")
+        backend_registry = _import_orchestration_module("backend_registry")
         backend_name = backend_registry.validate_backend(backend)
     except RuntimeError as exc:
         return core._json_response({"ok": False, "error": str(exc)})
@@ -406,7 +412,7 @@ def orchestrator_start(
 
 def orchestrator_status() -> str:
     paths = _orchestrator_paths()
-    orchestrator_daemon = _import_scripts_mcp_module("orchestrator_daemon")
+    orchestrator_daemon = _import_orchestration_module("orchestrator_daemon")
     status = orchestrator_daemon.daemon_status(paths["state_dir"], paths["log_dir"])
     pid = None
     lock_info = status.get("lock")
@@ -438,7 +444,7 @@ def orchestrator_status() -> str:
 
 def orchestrator_pause() -> str:
     paths = _orchestrator_paths()
-    orchestrator_daemon = _import_scripts_mcp_module("orchestrator_daemon")
+    orchestrator_daemon = _import_orchestration_module("orchestrator_daemon")
     orchestrator_daemon.daemon_pause(paths["state_dir"])
     return core._json_response(
         {
@@ -451,7 +457,7 @@ def orchestrator_pause() -> str:
 
 def orchestrator_resume() -> str:
     paths = _orchestrator_paths()
-    orchestrator_daemon = _import_scripts_mcp_module("orchestrator_daemon")
+    orchestrator_daemon = _import_orchestration_module("orchestrator_daemon")
     orchestrator_daemon.daemon_resume(paths["state_dir"])
     return core._json_response(
         {
@@ -513,7 +519,7 @@ def orchestrator_single_cycle(
     """Run one orchestrator cycle synchronously (dispatch, poll, intake, verify)."""
     paths = _orchestrator_paths()
     try:
-        backend_registry = _import_scripts_mcp_module("backend_registry")
+        backend_registry = _import_orchestration_module("backend_registry")
         backend_name = backend_registry.validate_backend(backend)
     except RuntimeError as exc:
         return core._json_response({"ok": False, "error": str(exc)})
@@ -582,10 +588,10 @@ def worker_start(
 ) -> str:
     paths = _worker_paths()
     try:
-        backend_registry = _import_scripts_mcp_module("backend_registry")
+        backend_registry = _import_orchestration_module("backend_registry")
         backend_name = backend_registry.validate_backend(backend)
         lane = _worker_lane_config(task_ref, lane_id)
-        worker_daemon_ctl = _import_scripts_mcp_module("worker_daemon_ctl")
+        worker_daemon_ctl = _import_orchestration_module("worker_daemon_ctl")
     except RuntimeError as exc:
         return core._json_response({"ok": False, "error": str(exc)})
 
@@ -620,7 +626,7 @@ def worker_start(
 
 def worker_status(task_ref: str, lane_id: str) -> str:
     paths = _worker_paths()
-    worker_daemon_ctl = _import_scripts_mcp_module("worker_daemon_ctl")
+    worker_daemon_ctl = _import_orchestration_module("worker_daemon_ctl")
     payload = worker_daemon_ctl.daemon_status(
         state_dir=paths["state_dir"],
         log_dir=paths["log_dir"],
@@ -641,7 +647,7 @@ def worker_event_history(
     event_name: str | None = None,
 ) -> str:
     paths = _worker_paths()
-    worker_daemon_ctl = _import_scripts_mcp_module("worker_daemon_ctl")
+    worker_daemon_ctl = _import_orchestration_module("worker_daemon_ctl")
     payload = worker_daemon_ctl.daemon_event_history(
         state_dir=paths["state_dir"],
         log_dir=paths["log_dir"],
@@ -658,7 +664,7 @@ def worker_event_history(
 
 def worker_stop(task_ref: str, lane_id: str, force: bool = False) -> str:
     paths = _worker_paths()
-    worker_daemon_ctl = _import_scripts_mcp_module("worker_daemon_ctl")
+    worker_daemon_ctl = _import_orchestration_module("worker_daemon_ctl")
     payload = worker_daemon_ctl.daemon_stop(
         state_dir=paths["state_dir"],
         log_dir=paths["log_dir"],
@@ -671,7 +677,7 @@ def worker_stop(task_ref: str, lane_id: str, force: bool = False) -> str:
 
 def worker_resume(task_ref: str, lane_id: str) -> str:
     paths = _worker_paths()
-    worker_daemon_ctl = _import_scripts_mcp_module("worker_daemon_ctl")
+    worker_daemon_ctl = _import_orchestration_module("worker_daemon_ctl")
     payload = worker_daemon_ctl.daemon_resume(
         state_dir=paths["state_dir"],
         log_dir=paths["log_dir"],
@@ -691,8 +697,8 @@ def worker_start_all(
     model: str | None = None,
 ) -> str:
     try:
-        lane_manifest = _import_scripts_mcp_module("lane_manifest")
-        orchestrator_lanes = _import_scripts_mcp_module("orchestrator_lanes")
+        lane_manifest = _import_orchestration_module("lane_manifest")
+        orchestrator_lanes = _import_orchestration_module("orchestrator_lanes")
         merge_order_fn = getattr(lane_manifest, "merge_order", None)
         manifest_order = merge_order_fn(task_ref) if callable(merge_order_fn) else []
         lane_ids = manifest_order or lane_manifest.list_lanes(task_ref)
@@ -820,7 +826,7 @@ def run_structured_turn(
     timeout_seconds: float = 120.0,
 ) -> str:
     try:
-        backend_registry = _import_scripts_mcp_module("backend_registry")
+        backend_registry = _import_orchestration_module("backend_registry")
         backend_name = backend_registry.validate_backend(backend)
         spec = backend_registry.get_backend_spec(backend_name)
         if spec.kind == "cli":
@@ -932,7 +938,7 @@ def dispatch_lane_work(
 
 def list_available_backends() -> str:
     try:
-        backend_registry = _import_scripts_mcp_module("backend_registry")
+        backend_registry = _import_orchestration_module("backend_registry")
         backends = {}
         for name, spec in backend_registry.BACKENDS.items():
             backends[name] = {

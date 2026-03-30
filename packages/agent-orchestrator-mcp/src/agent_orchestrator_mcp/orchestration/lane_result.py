@@ -2,21 +2,43 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-try:
-    from agent_handoff_mcp.api import configure_runtime as _configure_runtime
-    from agent_handoff_mcp.config import RuntimeConfig as _RuntimeConfig
 
-    from agent_orchestrator_mcp.lanes import record_lane_message as _record_lane_message
+def _lane_message_available() -> bool:
+    return importlib.util.find_spec("agent_handoff_mcp") is not None
 
-    _LANE_MSG_AVAILABLE = True
-except ImportError:
-    _LANE_MSG_AVAILABLE = False
+
+def _record_artifact_lane_message(
+    *,
+    orchestrator_root: Path,
+    task_ref: str,
+    lane_id: str,
+    session: str,
+    details: str,
+    artifact_ref: Any,
+) -> None:
+    from agent_handoff_mcp.api import configure_runtime  # noqa: PLC0415
+    from agent_handoff_mcp.config import RuntimeConfig  # noqa: PLC0415
+
+    from agent_orchestrator_mcp.lanes import record_lane_message  # noqa: PLC0415
+
+    configure_runtime(RuntimeConfig.for_workspace(orchestrator_root))
+    record_lane_message(
+        task_ref=task_ref,
+        lane_id=lane_id,
+        session=session,
+        direction="worker_to_orchestrator",
+        message=details,
+        subject=f"{lane_id} handoff",
+        status="open",
+        payload={"artifacts": [str(artifact_ref)]},
+    )
 
 
 def _parse_args() -> argparse.Namespace:
@@ -213,19 +235,16 @@ def main() -> int:
             print(f"lane-result: non-critical step failed (exit {completed.returncode}), continuing")
 
     artifact_ref = result.get("details_artifact_ref")
-    if artifact_ref is not None and _LANE_MSG_AVAILABLE:
+    if artifact_ref is not None and _lane_message_available():
         details = _normalize_text(result.get("details"))
         try:
-            _configure_runtime(_RuntimeConfig.for_workspace(Path(args.orchestrator_root).expanduser().resolve()))
-            _record_lane_message(
+            _record_artifact_lane_message(
+                orchestrator_root=Path(args.orchestrator_root).expanduser().resolve(),
                 task_ref=args.task_ref,
                 lane_id=args.lane_id,
                 session=args.session,
-                direction="worker_to_orchestrator",
-                message=details,
-                subject=f"{args.lane_id} handoff",
-                status="open",
-                payload={"artifacts": [str(artifact_ref)]},
+                details=details,
+                artifact_ref=artifact_ref,
             )
         except Exception as exc:  # noqa: BLE001
             print(f"lane-result: warning: artifact-carrying lane message failed: {exc}", file=sys.stderr)

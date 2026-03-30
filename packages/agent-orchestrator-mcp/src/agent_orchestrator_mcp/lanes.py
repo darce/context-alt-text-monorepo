@@ -9,7 +9,7 @@ import json
 import sqlite3
 from typing import Any
 
-from agent_handoff_mcp._shared import (
+from agent_handoff_mcp.shared_primitives import (
     CLOSEABLE_LANE_STATUSES,
     LANE_MESSAGE_DIRECTIONS,
     LANE_STATUSES,
@@ -18,23 +18,21 @@ from agent_handoff_mcp._shared import (
     REVIEW_KINDS,
     PromptMetrics,
     TokenUsage,
-    WriteActor,
-    _build_archival_lane_activity_summary,
     _decode_lane_message_row_dict,
     _decode_turn_metric_row_dict,
-    _fetch_handoff_rows,
-    _get_db_connection,
     _json_response,
     _normalize_lane_message_payload,
     _normalize_optional_text,
-    _paginated_query,
     _resolve_current_lane_row,
     _resolve_task_ref,
-    _resolve_write_actor,
     _row_to_dict,
     _workspace_root,
-    _write_current_task_md_for_task,
 )
+from agent_handoff_mcp.shared_write_context import WriteActor, _resolve_write_actor
+from agent_handoff_mcp.shared_schema import _get_db_connection
+from agent_handoff_mcp.shared_db_utils import _fetch_handoff_rows, _paginated_query
+from agent_handoff_mcp.shared_archival import _build_archival_lane_activity_summary
+from agent_handoff_mcp.current_task_rendering import _write_current_task_md_for_task
 
 
 def _get_lane_row(conn: sqlite3.Connection, task_ref: str, lane_id: str) -> sqlite3.Row | None:

@@ -88,6 +88,17 @@ The Workbench page uses URL-synced overlay state via the `panel` query param to 
 
 ---
 
+## Sovereign Read Model
+
+The WordPress plugin must derive all UI state from its own local projection tables (`wp_acx_clusters`, `wp_acx_identity_members`, `wp_acx_sync_state`, `wp_acx_persons`). Do not use the FastAPI backend as a runtime HTTP proxy for read operations.
+
+- Dashboard, roster, and conflict UX query local projection tables via `acx/v1/` REST endpoints.
+- Backend snapshots and deltas are imported into local projection, not proxied at read time.
+- If local projection is unavailable, degrade gracefully (empty state or "unavailable" indicator). Do not fall back to live backend reads.
+- See [ADR-003](../adrs/ADR-003-wordpress-local-authority-and-durable-outbox-replay.md) for the full rationale.
+
+---
+
 ## Accessibility Requirements
 
 Meet WCAG 2.1 AA; test with axe-core (zero critical violations). Query elements by accessible role (`getByRole`), not by test ID.

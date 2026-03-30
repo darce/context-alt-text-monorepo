@@ -156,8 +156,8 @@ If a task seems to require external changes, STOP and propose an alternative wit
 - [rg-008] helpful=1 harmful=0 :: **Config files: validate at load time.** JSON/YAML config consumed by multiple modules must be structurally validated at load time. Fail fast on missing or malformed required keys instead of silently returning empty defaults.
 - [rg-009] helpful=1 harmful=0 :: **No task-specific logic in generic modules.** If a generic utility contains `if task_ref == "some-task"` or hardcoded domain strings for a specific task, extract that logic to a config-driven policy module or the task's manifest. It becomes dead code once the task is done.
 - [rg-010] helpful=1 harmful=0 :: **IDE tool output may be stale after external writes.** Editor-integrated `read_file` and `grep_search` tools read from the IDE's in-memory file model, not from disk. After git operations (rebase, cherry-pick, merge, worktree intake) or edits by other agents/terminals, the model can lag behind the filesystem. When a review finding seems surprising, cross-check with a terminal command (`grep -n`, `wc -l`, `sed -n`) before recording it. This caused an entire review cycle of false positives against `scripts/mcp/orchestrator_daemon.py` (IDE showed ~700 lines, disk had 850).
-- [rg-013] helpful=1 harmful=0 :: **core.py must remain pure handoff-state CRUD.** No orchestration imports, no subprocess calls, no lock management. Enforce during code review.
-- [rg-014] helpful=1 harmful=0 :: **Orchestration modules must use late-binding imports** (function-level) for `agent_handoff_mcp` symbols to preserve the clean split seam and avoid load-time coupling.
+- [rg-013] helpful=1 harmful=0 :: **`agent_handoff_mcp/core.py` must remain pure handoff-state CRUD.** No orchestration imports, no subprocess calls, no lock management. Scope: `packages/agent-handoff-mcp/`. Enforce during code review.
+- [rg-014] helpful=1 harmful=0 :: **`agent_orchestrator_mcp` modules must use late-binding imports** (function-level) for `agent_handoff_mcp` symbols to preserve the clean split seam and avoid load-time coupling. Scope: `packages/agent-orchestrator-mcp/`.
 - [rg-015] helpful=1 harmful=0 :: **Boundary adapters must not invent contract metadata.** When a controller/client/adapter wraps or normalizes remote payloads, every envelope field (`limit`, `offset`, `total`, `data_source`, status/projection metadata) must come from the request, the upstream payload, or an explicitly documented fallback. Never fabricate pagination or provenance metadata from convenience guesses like `count(payload)` unless the contract explicitly defines that derivation. If the upstream shape violates the expected contract, return an explicit error instead of silently supporting both shapes.
 - [rg-016] helpful=0 harmful=0 :: **PHP runtime autoload parity must match tests.** New runtime classes added under `apps/prototype-wp-alt-context/src/` with WordPress-style filenames (`class-*.php`, `interface-*.php`) are not PSR-4 autoloadable via Composer by default. When a new class is introduced in this naming scheme, either add the explicit `require_once` from the owning runtime entrypoint or use a PSR-4-compliant filename, and verify with a real runtime-style check such as `php -r "require 'vendor/autoload.php'; var_export(class_exists('AltContext\\\\Foo\\\\Bar'));"`
 
@@ -179,16 +179,7 @@ Agents in this project run in two environments with different tool surfaces. Usi
 
 Reserve terminal for operations with no native-tool equivalent: test execution, `make` targets, `pyenv` commands, `git commit`/`push`/`rebase`.
 
-**Codex agents** (OpenAI Codex harness, `codex exec`, `codex-subagent-bridge`) run in sandboxed Linux containers with terminal + filesystem + MCP only. They do **not** have VS Code extension tools (`get_changed_files`, `get_errors`, `grep_search`, `semantic_search`, `read_file` as a VS Code API). Codex agents must use terminal equivalents with output discipline:
-
-| Task               | Codex equivalent                                | Output discipline                      |
-| ------------------ | ----------------------------------------------- | -------------------------------------- |
-| List changed files | `git diff --name-only HEAD`                     | Pipe through `head -50` if large       |
-| Read diffs         | `git diff HEAD -- <path>`                       | Target specific files, not whole-tree  |
-| Read file contents | `cat <file>` or `sed -n '<range>p' <file>`      | Read targeted ranges, not entire files |
-| Search code        | `grep -rn '<pattern>' <path>`                   | Scope to directory, limit with `head`  |
-| Lint / type errors | `PYENV_VERSION=description-service mypy <path>` | Filter to errors only                  |
-| Diff stats         | `git diff --shortstat HEAD`                     | One-line output                        |
+**Codex agents** (OpenAI Codex harness, `codex exec`, `codex-subagent-bridge`) run in sandboxed Linux containers with terminal + filesystem + MCP only. They do not have VS Code extension tools. Terminal equivalents and output discipline for Codex: [playbooks/codex-custom-mcp-playbook.md](playbooks/codex-custom-mcp-playbook.md#tool-discipline).
 
 **Terminal output discipline** (both environments, when terminal is required):
 
@@ -230,6 +221,16 @@ Reserve terminal for operations with no native-tool equivalent: test execution, 
 
 > [!WARNING]
 > The `cat_*` and `alt_context_*` prefixes are **legacy**. If encountered in code or documentation, update them to `acx_*`.
+
+### Epic, Task, and Decision Naming
+
+New epics, task plans, and handoff decisions follow the compact reference scheme defined in [development-workflow.md](rules/development-workflow.md#epic-task-and-decision-naming):
+
+- Epic titles: `E<number>. <Title>`
+- Task plan titles: `<EpicShortID>-<N>. <Title>` (e.g., `E12-1. Naming Spec`)
+- Slice-complete decisions: `<author_tag>_slice_complete_<work_ref>_<slug>` (e.g., `cdx_slice_complete_E12-1_gate_validation`)
+
+When creating or reviewing planning artifacts, load the correct template or review guide per the [context routing table](rules/development-workflow.md#context-routing-for-reviews).
 
 ### MCP Handoff Contract (MANDATORY)
 
@@ -303,67 +304,36 @@ Fallback and caching:
 
 ## Periodic Health Reviews
 
-Handoff memory health, ctx7 adoption evaluation, and data pattern / latency review are periodic-pruning-workflow tasks. Full checklists and healthy/unhealthy pattern definitions: [playbooks/ace-pruning-playbook.md](playbooks/ace-pruning-playbook.md).
+Full during-work and end-of-slice checklists, healthy/unhealthy pattern definitions, and memory health review: [playbooks/ace-pruning-playbook.md](playbooks/ace-pruning-playbook.md).
 
-During work:
+Key gates (always active, every slice):
 
-1. Record decisions in handoff as the work progresses. Every slice that changes files, including docs-only and no-plan slices, must end with a structured `slice_complete_*` decision. After recording, call `generate_current_task_md(...)` so the human-readable mirror stays current; do not defer this to session end.
-1.5. Do not leave `CURRENT_TASK.md` pointing at a stale slice. If the latest decision in `CURRENT_TASK.md` does not describe the files changed in the current turn, record the missing decision on the correct task and regenerate `CURRENT_TASK.md` before handing work off or asking for review.
-2. Close the slice in the trackers you touched. Complete or skip resolved MCP next actions, and if the work came from a `docs/tasks/` implementation plan, check off the slice items you actually finished before starting the next slice.
-3. Record blockers immediately with `report_blocker(..., actor={ ... })`.
-4. Record verification commands with `record_test_result(..., actor={ ... })`. Keep `result` as a concise proof line, not a full terminal log.
-5. Record/code-review findings with `record_review_finding(..., details={ line_start?, line_end?, fix? }, actor={ ... })`.
-6. Update finding status with `update_review_finding(..., actor={ ... })`.
-7. Validate review state using `get_review_findings_summary(...)` and `list_review_findings(...)` (not direct `sqlite3` queries).
+1. Every slice that changes files must end with a structured `slice_complete_*` decision. Format: [templates/slice-complete-template.md](templates/slice-complete-template.md). The format is enforced at write time.
+2. After recording, call `generate_current_task_md(task_ref=<active-task-ref>)`. Always pass the currently active task's ref.
+3. Do not leave `CURRENT_TASK.md` pointing at a stale slice. If the latest decision does not describe the files changed this turn, record the missing decision before handoff.
+4. Update singleton state via `set_handoff_state(..., expected_revision=<current>, actor={ ... })`.
+5. Include a one-line status marker in the response: `Handoff updated: yes`.
 
 Write-tool targeting rule:
 
-- Most write tools accept optional `task_ref`. When omitted, they target the **active task** as a fallback.
-- In any concurrent, cross-task, or review-audit workflow, pass `task_ref` explicitly on writes. Do not rely on `switch_task(...)` plus ambient active state when another agent may be writing at the same time.
-- `record_decision`, `record_test_result`, `report_blocker`, and `update_next_actions` now support explicit `task_ref`, in addition to the existing review-finding and lane/report/message surfaces.
-- To switch between tasks for human-oriented workflow, use `switch_task(task_ref)`. It auto-archives the outgoing task and restores the target's objective from its archive. This replaces the multi-step `archive_task_state` + `set_handoff_state` workflow.
-- For in-place updates to the _current_ task (status, objective change), use `set_handoff_state(...)` directly.
-- Read/write finding tools still accept explicit `task_ref` for non-active task access. Prefer that over switching active state when verifying or fixing findings across multiple tasks.
+- Most write tools accept optional `task_ref`. When omitted, they target the active task.
+- In concurrent, cross-task, or review-audit workflows, pass `task_ref` explicitly on writes.
+- `record_decision`, `record_test_result`, `report_blocker`, and `update_next_actions` all support explicit `task_ref`.
+- To switch tasks, use `switch_task(task_ref)`. For in-place updates to the current task, use `set_handoff_state(...)`.
 
-Before final response:
+During-work discipline (abbreviated):
 
-1. Mark completed/skipped actions via `update_next_actions(...)`.
-2. Record a **slice completion summary** via `record_decision(decision="slice_complete_<short_label>", rationale=<summary>, actor={ ... })`. The rationale is the canonical artifact for multi-turn task continuation; a future agent told to "review the last N slices" will read these decisions in reverse chronological order. `record_decision(...)` now rejects malformed `slice_complete_*` writes at write time, so treat the structure below as required input, not formatting advice. Use this structured format:
-
-   ```
-   ## Changes
-   - <file_path>: <function_or_class_name> ; <what changed>
-   - <file_path>: <route_or_endpoint> ; <what changed>
-
-   ## Verification
-   - pytest <path>: <N> passed
-   - vitest <path>: <N> passed
-   - mypy: <N> source files clean
-
-   ## Schema / Contract Changes
-   - <table.column> added/removed/renamed
-   - <REST route> added/removed ; <method> <path>
-   - <TypeScript type> field added: <field_name>: <type>
-
-   ## Open Threads
-   - <what the next agent should pick up>
-   ```
-
-   Rules: (a) list every changed file with the specific function, class, route, or hook that was modified; (b) include concrete test counts, not just "tests pass"; (c) list schema column names, REST routes, TypeScript type changes, and PHP hook names explicitly so downstream agents can grep for them; (d) note any open threads or follow-ups; (e) if a section has no entries, write `- none.` instead of omitting the section; (f) freeform prose-only slice decisions are not acceptable.
-
-   Packet-backed review rule: if you expect another agent to review "the latest completed slice", the slice completion decision and nearest worker report together must be sufficient to derive a slice review packet. That means the slice must record concrete `changed_files`, verification commands, and any contract/doc touches in the same handoff window instead of relying on later branch archaeology.
-
-3. Treat the slice-completion format as a gate, not a suggestion. If a slice changes files and you cannot yet populate the structured decision with concrete changes, verification, and open threads, the slice is not ready to mark complete in handoff.
-4. Update singleton state via `set_handoff_state(..., expected_revision=<current>, actor={ ... })`.
-5. Regenerate `CURRENT_TASK.md` using `generate_current_task_md(...)`.
-6. Include a one-line status marker in the response: `Handoff updated: yes`.
+- Record blockers immediately: `report_blocker(..., actor={ ... })`.
+- Record verification: `record_test_result(..., actor={ ... })`. Keep `result` as a concise proof line.
+- Record findings: `record_review_finding(..., details={ line_start?, line_end?, fix? }, actor={ ... })`. When logging **3 or more findings** in a single review pass, use `batch_record_review_findings` instead — one atomic write, one `CURRENT_TASK.md` flush, per-item results returned.
+- Validate review state with `get_review_findings_summary(...)` and `list_review_findings(...)`, not direct `sqlite3`.
 
 Read discipline:
 
 - Do not query `.task-state/handoff.db` directly when MCP tools are available.
-- Use `get_handoff_state` for active-task snapshot, `get_review_findings_summary` for counts, and `list_review_findings`/`get_review_finding` for detailed review verification.
-- `get_review_finding` accepts either `finding_db_id` (integer PK) or `finding_id` (human-readable string like `"H-OCI-28"`). Prefer `finding_id` when referencing findings from review output.
-- `get_review_finding`, `list_review_findings`, and `get_review_findings_summary` accept an optional `task_ref` to query findings on a non-active task. Use this instead of switching active state when verifying findings across multiple tasks.
+- Use `get_handoff_state` for active-task snapshot, `get_review_findings_summary` (on `agent-orchestrator-mcp`) for counts, and `list_review_findings` for detailed review verification.
+- `list_review_findings(finding_id=...)` accepts either `finding_id` (human-readable string like `"H-OCI-28"`) for a single-finding lookup. Prefer `finding_id` when referencing findings from review output.
+- `list_review_findings` and `get_review_findings_summary` accept an optional `task_ref` to query findings on a non-active task. Use this instead of switching active state when verifying findings across multiple tasks.
 - Do **not** use legacy `scripts/mcp/unified_server.py` handoff tools or CLI subcommands. The only supported handoff surface is the packaged `agent-handoff-mcp` binary described in [contracts/agent-handoff-mcp.md](contracts/agent-handoff-mcp.md).
 
 State integrity invariants:
@@ -386,30 +356,12 @@ Completion gate:
 
 Use this pattern when a user explicitly asks for parallel agents/worktrees, or when the task naturally splits into independent backend/frontend/PHP lanes with clear contracts.
 
-For all operational commands, recipes, worker communication, merge procedures, and automated orchestration via Codex subagents, see [playbooks/worktree-codex-playbook.md](playbooks/worktree-codex-playbook.md). For lane-scoped context construction and prompt budgets, see [playbooks/lane-scoped-context.md](playbooks/lane-scoped-context.md).
+For all operational commands, recipes, decomposition rules, domain guardrails, worker communication, merge procedures, and automated orchestration via Codex subagents, see:
 
-Decomposition rules for the orchestrating agent:
+- [playbooks/worktree-codex-playbook.md](playbooks/worktree-codex-playbook.md) -- decomposition rules, domain guardrails, worker recipes, merge procedures
+- [playbooks/lane-scoped-context.md](playbooks/lane-scoped-context.md) -- lane-scoped context construction and prompt budgets
 
-1. Keep the orchestrator in the current repo root/branch. Worker agents implement in sibling Git worktrees on `codex/*` branches.
-2. Split work only along stable seams: path ownership, API contract ownership, or test ownership. Do not delegate two workers to the same file set unless the user explicitly accepts merge churn.
-3. Give each worker lane a bounded brief: objective, owned paths, required contracts/docs, required tests, explicit non-goals, and merge readiness criteria.
-4. Keep shared plan/checklist truth centralized. The orchestrator owns final checklist updates, MCP review triage, cross-lane decisions, and merge order unless a worker is explicitly assigned one documentation block.
-5. Prefer lanes that can be verified independently. Good seams in this repo are backend domain/schema, backend HTTP, WordPress proxy, frontend UI, and orchestrator-root review dispatch.
-6. Treat workflow tooling as orchestrator-owned. Propagate changes into worker lanes with `make lane-refresh` instead of hand-copying files.
-7. Define task-aware lane orchestration in `config/lane-orchestration/<task-ref>.json`. Start from `make lane-manifest-init` so the manifest creation path stays generic across tasks.
-8. Manifest scaffolds must emit every field the runtime reads, even if initially empty. An omitted field is invisible to operators and silently breaks runtime consumers.
-9. Derive computable manifest fields at load time instead of requiring manual duplication.
-
-Domain guardrails for worker lanes:
-
-1. Workers may edit only files inside their lane's owned paths.
-2. If a required fix falls outside the lane's owned paths, record a blocker or lane message for the orchestrator instead of editing another domain.
-3. Workers must not "helpfully" patch sibling-lane files, shared contracts, or checklist truth unless explicitly assigned.
-4. Before handoff, workers should verify changed files with `git diff --name-only` from their worktree and confirm the list stays inside lane scope.
-5. Orchestrators should reject or selectively intake any out-of-scope file changes during merge review.
-6. Merge-ready worker handoff must be commit-based. Dirty worktrees are not a valid handoff artifact; commit or stash lane work before reporting it.
-7. If a lane needs to catch up with orchestrator changes, use `make lane-refresh` instead of copying files across worktrees.
-8. `make lane-refresh` updates worker lanes from committed orchestrator branch state only. If root workflow tooling is still uncommitted, commit it on the orchestrator branch before refreshing workers.
+Summary: orchestrator stays on root branch; workers own `codex/*` branches with bounded path scope; lane manifest lives in `config/lane-orchestration/<task-ref>.json`; use `make lane-refresh` to propagate orchestrator changes; dirty worktrees are not valid handoff artifacts.
 
 ### Branch Review Trigger (MANDATORY)
 
@@ -426,7 +378,7 @@ When a user request matches any of these patterns, **load and follow** [rules/br
 2. Read the relevant stack guide(s) based on files in the diff.
 3. Walk the common checklist + stack-specific checklist, citing files and lines.
 4. Classify each finding using the defined categories (ANTIPATTERN / DEAD_CODE / COMPLEXITY / GAP) and severities (HIGH / MEDIUM / LOW).
-5. Call `record_review_finding(..., details={ line_start?, line_end?, fix? }, actor={ ... })` for each finding.
+5. Record findings in MCP handoff. Use `record_review_finding(...)` for 1–2 findings; use `batch_record_review_findings(findings=[...], actor={ ... }, task_ref=...)` for 3 or more (atomic write, single `CURRENT_TASK.md` flush, per-item results).
 6. Produce the markdown report using the template.
 7. Call `record_decision(..., actor={ ... })` summarizing the review + `generate_current_task_md(...)`.
 

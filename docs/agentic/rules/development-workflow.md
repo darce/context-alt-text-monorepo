@@ -124,11 +124,11 @@ When a task plan includes a "Lane Decomposition" section, use the multi-agent or
 
 ### Choosing the Execution Path
 
-| Condition | Execution path |
-| --- | --- |
+| Condition                                                  | Execution path                                             |
+| ---------------------------------------------------------- | ---------------------------------------------------------- |
 | Codex harness detected + `codex-subagent-bridge` available | MCP worker lifecycle tools with `backend="codex-subagent"` |
-| Shell-only + worktrees available | `make lane-open` / `make lane-run` / `make lane-handoff` |
-| Single-agent, no decomposition needed | Standard slice checklist above (no lanes) |
+| Shell-only + worktrees available                           | `make lane-open` / `make lane-run` / `make lane-handoff`   |
+| Single-agent, no decomposition needed                      | Standard slice checklist above (no lanes)                  |
 
 ### Orchestrator Responsibilities
 
@@ -154,10 +154,88 @@ Operational notes:
 
 ### References
 
-- Full playbook: [../playbooks/worktree-codex-playbook.md](../playbooks/worktree-codex-playbook.md)
+- Full playbook: [../playbooks/host-adapters/worktree-codex-playbook.md](../playbooks/host-adapters/worktree-codex-playbook.md)
 - Lane-scoped context and prompt budgets: [../playbooks/lane-scoped-context.md](../playbooks/lane-scoped-context.md)
 - Worker lifecycle MCP tools: [../contracts/agent-handoff-mcp.md](../contracts/agent-handoff-mcp.md)
 - Lane brief template: [../templates/WORKTREE_LANE_BRIEF.template.md](../templates/WORKTREE_LANE_BRIEF.template.md)
+
+---
+
+## Epic, Task, and Decision Naming
+
+### Epic Titles
+
+New epics use a global sequential index in the title:
+
+```text
+E12. Epic and Task Reference Prefixing and Handoff Enforcement (v0.3.1)
+```
+
+Each epic declares an `Epic Short ID` (e.g., `E12`) near the top of the document. This short id namespaces all task references under that epic.
+
+### Task Plan Titles
+
+Task plan titles use the owning epic's short id plus a local sequential index:
+
+```text
+E12-1. Naming Spec and Template Update
+E12-3. MCP Decision Enforcement and Context Router
+```
+
+### Decision IDs
+
+Handoff decision ids carry an author tag and a work reference. For slice-complete decisions the canonical form is:
+
+```text
+<author_tag>_slice_complete_<work_ref>_<slug>
+```
+
+- `author_tag`: 2-4 lowercase letters identifying the authoring agent (e.g., `cdx`, `cop`, `cla`, `gem`)
+- `work_ref`: the task reference such as `E12-1` or another recognized task ref
+- `slug`: a descriptive lowercase label using `[a-z0-9_]+`
+
+Example: `cdx_slice_complete_E12-1_gate_validation`
+
+The legacy `slice_complete_<slug>` format is grandfathered for historical rows. New writes should use the prefixed form.
+
+### Slice References
+
+Slices within a task plan use existing `Slice 1`, `Slice 2`, etc. headings. The compact cross-doc form `E12-1/S1` is optional and should be used only when citing a specific slice from another document or handoff entry.
+
+### Templates
+
+When creating new planning artifacts, load the corresponding template:
+
+| Artifact  | Template                                                    |
+| --------- | ----------------------------------------------------------- |
+| Epic      | [EPIC.template.md](../templates/EPIC.template.md)           |
+| Task plan | [TASK_PLAN.template.md](../templates/TASK_PLAN.template.md) |
+| Roadmap   | [ROADMAP.template.md](../templates/ROADMAP.template.md)     |
+
+### Context Routing for Reviews
+
+When the request is a review, load the matching guide based on the target artifact:
+
+| Request intent                          | Guide to load                                        |
+| --------------------------------------- | ---------------------------------------------------- |
+| Code review, branch diff, PR review     | [branch-review-guide.md](branch-review-guide.md)     |
+| Epic, task plan, roadmap, or ADR review | [planning-review-guide.md](planning-review-guide.md) |
+
+When the request is to create or update a planning artifact, load the matching template from the table above.
+
+### Grandfathering Rule
+
+Historical planning documents and historical handoff decision rows are grandfathered by default. Do not plan or execute retroactive renames unless a specific artifact concretely blocks review, tooling, or MCP enforcement. The naming rules above apply to **new** work only.
+
+### New-Work Compliance Checklist
+
+Reviewers can verify naming compliance for new artifacts with this short checklist:
+
+1. Epic title starts with `E<number>.` and contains the correct global sequential index.
+2. Epic declares an `Epic Short ID` field near the top.
+3. Task plan title starts with `<EpicShortID>-<N>.` matching the owning epic.
+4. Slice-complete decisions use the `<author_tag>_slice_complete_<work_ref>_<slug>` grammar.
+5. Historical docs and decision rows that predate the scheme are left as-is unless they cause a concrete blocker.
 
 ---
 
@@ -221,7 +299,7 @@ Source-of-truth policy:
 1. Initialize or update active task via MCP `set_handoff_state`.
 2. Record session outcomes via MCP tools (`record_decision`, `update_next_actions`, `record_test_result`, `report_blocker`).
 3. Read compact snapshot at session start via `get_handoff_state`.
-4. Record a structured `slice_complete_<short_label>` decision for every completed slice, including docs-only or no-plan slices.
+4. Record a structured slice-complete decision for every completed slice using the [decision naming grammar](#decision-ids), including docs-only or no-plan slices.
 5. Close the slice in every active tracker before moving on. Mark completed or skipped MCP next actions, update the relevant task-plan checklist boxes for the slice you just finished, and leave future-slice items open instead of carrying a fully stale checklist forward.
 6. Before close/final handoff, run `handoff_close_check(enforce=True, current_commit_sha=<HEAD>)` and resolve all failures.
 7. Before requesting branch review, run `make review-ready` from the current worktree and resolve all reported NOT READY reasons.

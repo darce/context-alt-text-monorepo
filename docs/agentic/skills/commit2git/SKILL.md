@@ -1,6 +1,7 @@
 ---
 name: commit2git
-description: Use when uncommitted changes on the current Git branch need to be split into clean commits by completed sub-feature, slice, or reviewable refactor. Inspect modified and untracked files, group only coherent completed work, stage each group deliberately, and write meaningful commit messages. If operating from a linked Git worktree, prefix each commit subject with the worktree name.
+description: Split uncommitted changes into clean commits grouped by completed slice or sub-feature. Inspects diffs, stages deliberately, writes meaningful messages. Worktree-aware.
+disable-model-invocation: true
 ---
 
 # Commit2Git

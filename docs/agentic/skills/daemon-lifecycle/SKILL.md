@@ -1,6 +1,7 @@
 ---
 name: daemon-lifecycle
-description: Use when an agent needs to start, stop, pause, resume, inspect, or recover the orchestrator or worker daemons without rediscovering lock-file and status-file behavior from source.
+description: Start, stop, pause, resume, inspect, or recover orchestrator and worker daemons. Handles lock files, PID checks, and status files.
+argument-hint: "[start|stop|pause|resume|inspect] [orchestrator|worker]"
 ---
 
 # Daemon Lifecycle

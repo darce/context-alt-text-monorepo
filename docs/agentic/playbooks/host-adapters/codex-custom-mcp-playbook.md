@@ -1,4 +1,7 @@
-# Codex Custom MCP Playbook
+# Codex Custom MCP Setup
+
+> **Classification: host-specific adapter (Codex)**
+> This document describes how to attach `agent-handoff-mcp` to a Codex session. It is a platform setup guide, not a canonical portable playbook.
 
 Attach `agent-handoff-mcp` to a Codex session as a custom MCP so handoff and orchestration tools appear as first-class tools.
 
@@ -58,7 +61,7 @@ asyncio.run(check())
 "
 ```
 
-Expected minimum tool list:
+Expected minimum tool list (handoff server only):
 
 - `get_handoff_state`
 - `set_handoff_state`
@@ -66,9 +69,11 @@ Expected minimum tool list:
 - `update_next_actions`
 - `record_review_finding`
 - `handoff_close_check`
-- `orchestrator_start`
-- `orchestrator_status`
-- `run_structured_turn`
+
+Orchestration tools (`orchestrator_start`, `orchestrator_status`, `run_structured_turn`,
+`dispatch_lane_work`, `worker_start`, `worker_stop`, `switch_task`, etc.) are served by
+`agent-orchestrator-mcp`, not by `agent-handoff-mcp`. Attach `agent-orchestrator-mcp`
+separately when orchestration control is needed.
 
 ## 3. Attach in Codex
 
@@ -92,7 +97,7 @@ Custom MCP tools are loaded at session start. An already-running session will **
 
 ## 5. Confirm tools are visible
 
-In the new Codex session, the MCP tools should appear as first-class tools. Verify by asking the session to call `orchestrator_status()` or `get_handoff_state()`.
+In the new Codex session, the MCP tools should appear as first-class tools. Verify by asking the session to call `get_handoff_state()`. If orchestration tools are also needed, confirm `agent-orchestrator-mcp` is attached separately and call `orchestrator_status()` from that server.
 
 ## Security
 
@@ -112,6 +117,6 @@ A first-class auth layer may be added in a future task.
 
 ## Related
 
-- [BOOTSTRAP.md](../BOOTSTRAP.md) -- MCP server setup and testing commands
+- [BOOTSTRAP.md](../../BOOTSTRAP.md) -- MCP server setup and testing commands
 - [worktree-codex-playbook.md](worktree-codex-playbook.md) -- worktree lane orchestration
-- [instructions.md](../instructions.md) -- cold-start development instructions
+- [instructions.md](../../instructions.md) -- cold-start development instructions

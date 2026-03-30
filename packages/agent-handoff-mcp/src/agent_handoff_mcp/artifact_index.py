@@ -13,6 +13,59 @@ import re
 import sqlite3
 from collections import Counter
 from pathlib import Path
+from typing import TypedDict
+
+
+class ArtifactChunk(TypedDict):
+    chunk_order: int
+    title: str
+    body: str
+
+
+class ArtifactSource(TypedDict, total=False):
+    """Typed shape of an artifact source record (returned by get_artifact_source / list_artifact_sources)."""
+
+    id: int
+    task_ref: str
+    lane_id: str | None
+    app_root: str | None
+    source_kind: str
+    source_label: str
+    content_type: str
+    content_hash: str
+    metadata_json: str | None
+    summary: str | None
+    created_at: str
+    updated_at: str
+    # Fields added by get_artifact_source (not present in list_artifact_sources rows)
+    metadata: dict | None
+    chunk_count: int
+    chunks: list[ArtifactChunk]
+
+
+class ArtifactSearchResult(TypedDict):
+    """Typed shape of a single FTS search hit (returned by search_artifacts)."""
+
+    source_id: int
+    source_label: str
+    source_summary: str
+    task_ref: str
+    lane_id: str | None
+    app_root: str | None
+    source_kind: str
+    content_type: str
+    title: str
+    snippet: str
+    rank: float
+
+
+class ArtifactUpsertResult(TypedDict):
+    """Typed shape of the result returned by upsert_source."""
+
+    source_id: int
+    source_label: str
+    was_updated: bool
+    chunk_count: int
 
 
 ARTIFACT_SCHEMA_SQL = """
@@ -290,7 +343,7 @@ def upsert_source(
     content: str,
     metadata: dict | None = None,
     artifact_db_path: Path,
-) -> dict:
+) -> ArtifactUpsertResult:
     """Insert or replace an artifact source and re-index its FTS5 chunks.
 
     If the content hash matches an existing source, the source and its chunks
@@ -409,7 +462,7 @@ def search_artifacts(
     content_type: str | None = None,
     limit: int = 10,
     artifact_db_path: Path,
-) -> list[dict]:
+) -> list[ArtifactSearchResult]:
     """Search artifact chunks by relevance with optional scope filters.
 
     Returns a list of hit dicts containing source metadata, chunk title,
@@ -502,7 +555,7 @@ def get_artifact_source(
     task_ref: str | None = None,
     source_label: str | None = None,
     artifact_db_path: Path,
-) -> dict | None:
+) -> ArtifactSource | None:
     """Return the full artifact source record, or None if not found.
 
     Lookup priority: *source_id* > (*task_ref* + *source_label*).
@@ -560,7 +613,7 @@ def list_artifact_sources(
     limit: int = 50,
     offset: int = 0,
     artifact_db_path: Path,
-) -> list[dict]:
+) -> list[ArtifactSource]:
     """Return a paginated list of artifact sources matching the given filters."""
     conn = get_artifact_db_connection(artifact_db_path)
     try:

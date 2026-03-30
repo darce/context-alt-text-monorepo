@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from threading import Thread
-from typing import Any, Awaitable, Protocol, cast, runtime_checkable
+from typing import Any, Awaitable, Protocol, runtime_checkable
 
 
 def _resolve_awaitable(value: object) -> object:

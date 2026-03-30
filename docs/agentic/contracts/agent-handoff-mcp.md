@@ -372,9 +372,9 @@ Fallback subcommands:
 - `artifact-purge`
 - `handoff-search`
 
-Orchestration subcommands (`lane-upsert`, `lane-list`, `lane-activity`, `lane-brief`, `lane-message`, `lane-report`, `orchestrator-start`, `worker-start`, `dispatch-lane-work`, `single-cycle`, `run-structured-turn`, etc.) are served by `agent-orchestrator-mcp` as the canonical MCP tool surface. See [`agent-orchestrator-mcp.md`](agent-orchestrator-mcp.md).
+Orchestration subcommands (`orchestrator-start`, `worker-start`, `dispatch`, `orchestrator-cycle`, `worker-events`, `list-backends`, `metrics`, etc.) are served exclusively by `agent-orchestrator-mcp`. See [`agent-orchestrator-mcp.md`](agent-orchestrator-mcp.md).
 
-**CLI surface note:** These subcommands are intentionally retained in `agent-handoff-mcp`'s CLI as a convenience and debugging fallback. The boundary split applies to the **MCP tool surface only** — `agent-handoff-mcp` exposes 27 MCP tools covering task state, findings, artifacts, and handoff close checks; orchestration and lane-management MCP tools are exclusively on `agent-orchestrator-mcp`. The CLI fallback surface of `agent-handoff-mcp` continues to expose lane and orchestration subcommands for local debug use without requiring a running `agent-orchestrator-mcp` instance.
+**CLI surface note:** `agent-handoff-mcp` CLI is ledger-only. It exposes `serve-stdio`, `serve-http`, `doctor`, `dashboard`, and the 27 ledger MCP tools as CLI wrappers. All orchestration and lane-management commands are exclusively on `agent-orchestrator-mcp`.
 
 ## HTTP Transport
 

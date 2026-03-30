@@ -1,6 +1,6 @@
-## Deferred (Document as Tech Debt)
+# Deferred (Document as Tech Debt)
 
-- [ ] **#14** Extract `_shared.py` (2053 lines, 85 defs) responsibility clusters into focused modules (`current_task_rendering.py`, `shared_write_context.py`, `shared_schema.py`, `shared_tool_adapters.py`) — _Evaluation: `docs/tasks/tech-debt/agent-handoff-mcp-shared-module-refactoring-evaluation.md`; first slice: rendering extraction. Gate: E12-9 orchestration split must complete first._
+- [ ] **#14** Complete the post-refactor package-boundary cleanup after `_shared.py` extraction; migrate `agent-orchestrator-mcp` imports off `agent_handoff_mcp._shared` and relocate orchestration-owned bootstrap helpers that still sit on the handoff side — _Tracked by `docs/tasks/12.0/12.1/E12-9-orchestration-physical-separation-task-plan.md`; the focused shared modules already landed, so this item now covers only the remaining cross-package follow-on._
 
 - [ ] **#13** Migrate ~30 deprecated-alias call sites in `test_artifact_tools.py` and `test_handoff_state.py` to successor APIs, then delete the 5 Python alias functions from `core.py` — _Plan: `docs/tasks/12.0/deprecated-alias-test-migration.md` (E12-5 follow-up; aliases are not MCP-exposed but remain as Python callables until tests are updated)_
 

@@ -332,49 +332,33 @@ All execution backends MUST implement the `BackendAdapter` protocol defined in `
 Primary entrypoints:
 
 - `agent-orchestrator-mcp --workspace-root <repo> serve-stdio`
-- `agent-orchestrator-mcp --workspace-root <repo> serve-http`
 - `agent-orchestrator-mcp --workspace-root <repo> doctor`
 
-Fallback subcommands:
+Operational subcommands (all require `--workspace-root`):
 
-- `lane-upsert`
-- `lane-list`
-- `lane-activity`
-- `lane-brief`
-- `lane-brief-list`
-- `lane-report`
-- `lane-report-list`
-- `lane-message`
-- `lane-message-update`
-- `lane-message-list`
-- `review-summary`
-- `reconcile-findings`
-- `switch`
-- `plan-cursor-get`
-- `plan-cursor-list`
-- `plan-cursor-upsert`
-- `turn-metric-record`
-- `turn-metric-list`
-- `turn-metrics-summary`
-- `dispatch-lane-work`
-- `single-cycle`
-- `orchestrator-start`, `orchestrator-status`, `orchestrator-stop`, `orchestrator-pause`, `orchestrator-resume`
-- `worker-start`, `worker-status`, `worker-stop`, `worker-resume`, `worker-start-all`
-- `worker-event-history`
-- `run-structured-turn`
+**Orchestrator daemon**
+- `orchestrator-start --task-ref <ref> [--backend codex-cli] [--poll-interval 60] [--single-pass] [--worker-start-mode mcp] [--worker-reasoning-effort auto] [--model <model>]`
+- `orchestrator-status`
+- `orchestrator-pause`
+- `orchestrator-resume`
+- `orchestrator-stop [--force] [--wait 5.0]`
+- `orchestrator-cycle --task-ref <ref> [--backend codex-cli] [--dry-run] [--timeout 300.0] [--worker-start-mode mcp] [--worker-reasoning-effort auto] [--model <model>]`
+
+**Worker daemon**
+- `worker-start --task-ref <ref> --lane-id <id> [--backend codex-subagent] [--poll-interval 30] [--single-pass] [--session <name>] [--session-mode fresh_turn] [--reasoning-effort inherit] [--model <model>]`
+- `worker-status --task-ref <ref> --lane-id <id>`
+- `worker-stop --task-ref <ref> --lane-id <id> [--force]`
+- `worker-resume --task-ref <ref> --lane-id <id>`
+- `worker-start-all --task-ref <ref> [--backend codex-subagent] [--poll-interval 30] [--single-pass] [--session-mode fresh_turn] [--reasoning-effort inherit] [--model <model>]`
+- `worker-events --task-ref <ref> --lane-id <id> [--limit 50] [--event-name <name>]`
+
+**Lane and dispatch**
+- `dispatch --lane-id <id> [--task-ref <ref>] [--model <model>] [--backend <backend>] [--reasoning-effort <effort>] [--start-worker]`
+
+**Metadata**
+- `list-backends`
+- `metrics [--task-ref <ref>] [--format markdown|json]`
 
 ## HTTP Transport
 
-`serve-http` starts the orchestration MCP server over FastMCP's `streamable-http` transport.
-
-Current runtime behavior:
-
-- host: `127.0.0.1`
-- port: `8742` (distinct from core ledger server port `8000`)
-- endpoint path: `/mcp`
-
-Example:
-
-```bash
-agent-orchestrator-mcp --workspace-root /path/to/repo serve-http --port 8742
-```
+HTTP transport (`serve-http`) is not yet implemented for the orchestration server. Use `serve-stdio` for both VS Code and Codex sessions. The core ledger server (`agent-handoff-mcp`) provides `serve-http` on port `8741` if HTTP transport is needed.

@@ -621,6 +621,17 @@ The package has 788 tests, providing a strong safety net for refactoring. The te
 
 ## Recommended Refactoring Sequence
 
+### Phase Status Snapshot
+
+| Phase | Original focus | Implementing task(s) | Current status | Notes |
+| --- | --- | --- | --- | --- |
+| 1 | Extract guards from `update_review_finding` | E12-5 | Complete | Guard extraction landed in `review_findings.py`. |
+| 2 | Parameter objects | E12-5 | Complete | `TokenUsage`, `PromptMetrics`, and typed write-context surfaces landed. |
+| 3 | Pagination helper | E12-5 | Complete | `_paginated_query()` now lives in `shared_db_utils.py`. |
+| 4 | Split `core.py` into domain modules | E12-10 | Complete with plan deviation | Proposed `lanes.py` extraction was intentionally skipped; lane logic was distributed across `shared_primitives.py`, `shared_archival.py`, `current_task_rendering.py`, and `decisions.py` to avoid circular imports. |
+| 5 | Tool registration pipeline | E12-5, E12-9 | Complete | `agent-handoff-mcp` is registry-driven; `agent-orchestrator-mcp` CLI ownership landed later in E12-9, so the suggested Phase 5b deferral is now closed out. |
+| 6 | Daemon loop decomposition | E12-6 | Complete | Orchestrator and worker loops were decomposed into smaller phase helpers. |
+
 Ordered by payoff and safety. Each phase can be completed independently. All phases benefit from the existing 788-test safety net.
 
 ### Phase 1: Extract Guards from update_review_finding (H2)
@@ -668,6 +679,8 @@ Split `core.py` into 6-7 focused modules. Suggested extraction order:
 5. `lanes.py` -- lane CRUD, worker reports, messages
 6. `handoff_state.py` -- singleton state CRUD
 
+Status note: the proposed standalone `lanes.py` extraction was not adopted. During implementation, lane-related logic was split across `shared_primitives.py`, `shared_archival.py`, `current_task_rendering.py`, and `decisions.py` instead. That deviation was intentional because it preserved cleaner domain boundaries and avoided introducing a new circular-import hub.
+
 Keep `core.py` as a ~500-line handoff helper module (DB connection, normalization, write actor resolution, git-context helpers) without moving MCP registration or orchestration concerns into it, preserving `rg-013`.
 
 ### Phase 5: Tool Registration Pipeline (H4, H6)
@@ -676,7 +689,7 @@ Keep `core.py` as a ~500-line handoff helper module (DB connection, normalizatio
 **Effort:** Medium
 **Risk:** Medium (CLI interface changes require careful backward compatibility)
 
-> **Note (post-E12-5):** `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/api.py` (921 lines, created by E12-5) has the same H4 tool-registration pattern at comparable scale. Phase 5 should assess and remediate both packages simultaneously, or explicitly defer the orchestrator package as Phase 5b.
+> **Disposition note (post-E12-9):** The suggested Phase 5b deferral is no longer active. `agent-orchestrator-mcp` now owns its operational CLI surface directly, so there is no remaining tech-debt item required for the earlier CLI-ownership gap.
 
 1. Define a tool registry data structure mapping tool names to handlers, argument specs, and descriptions.
 2. Generate both `build_handoff_mcp()` registrations and CLI subparsers from the same registry.

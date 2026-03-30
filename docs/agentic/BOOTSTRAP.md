@@ -151,12 +151,12 @@ agent-orchestrator-mcp --workspace-root "$(pwd)" orchestrator-status
 agent-orchestrator-mcp --workspace-root "$(pwd)" orchestrator-pause
 agent-orchestrator-mcp --workspace-root "$(pwd)" orchestrator-resume
 agent-orchestrator-mcp --workspace-root "$(pwd)" orchestrator-stop
-agent-orchestrator-mcp --workspace-root "$(pwd)" run-structured-turn \
-  --prompt-file /tmp/prompt.md \
-  --schema-file /tmp/schema.json \
-  --cwd /absolute/path/to/worktree \
+agent-orchestrator-mcp --workspace-root "$(pwd)" dispatch \
+  --lane-id <lane-id> \
+  --task-ref <task-ref> \
   --backend codex-subagent \
-  --model gpt-5.4-mini
+  --model gpt-5.4-mini \
+  --start-worker
 ```
 
 For Codex app sessions on the same machine, prefer the checked-in project-scoped

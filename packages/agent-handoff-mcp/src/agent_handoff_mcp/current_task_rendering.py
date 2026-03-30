@@ -22,6 +22,10 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import NotRequired, TypedDict
 
+from .runtime import get_runtime_config
+from .shared_primitives import _decode_lane_message_row_dict, _decode_turn_metric_row_dict, _row_to_dict
+from .shared_schema import _get_db_connection
+
 # ---------------------------------------------------------------------------
 # Typed containers
 # ---------------------------------------------------------------------------
@@ -78,14 +82,6 @@ class CurrentTaskRenderState(TypedDict):
 
 
 def _collect_task_snapshot(conn: sqlite3.Connection, task_ref: str) -> TaskSnapshot:
-    # Late imports: _shared defines these before re-exporting from this module,
-    # but importing them at module-level here creates a circular import.
-    from ._shared import (  # noqa: PLC0415
-        _decode_lane_message_row_dict,
-        _decode_turn_metric_row_dict,
-        _row_to_dict,
-    )
-
     active_row = conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone()
     active = _row_to_dict(active_row) if active_row is not None and active_row["task_ref"] == task_ref else None
 
@@ -141,8 +137,6 @@ def _build_current_task_state_from_snapshot(snapshot: TaskSnapshot) -> CurrentTa
 
 
 def _write_current_task_md_for_task(conn: sqlite3.Connection, task_ref: str) -> None:
-    from ._shared import _current_task_path  # noqa: PLC0415
-
     snapshot = _collect_task_snapshot(conn, task_ref)
     state = _build_current_task_state_from_snapshot(snapshot)
     try:
@@ -155,13 +149,11 @@ def _write_current_task_md_for_task(conn: sqlite3.Connection, task_ref: str) -> 
         state["review_coverage"] = _json.loads(_get_review_coverage(task_ref=task_ref))
     except Exception:
         pass
-    _current_task_path().write_text(_render_current_task_md(state))
+    get_runtime_config().current_task_path.write_text(_render_current_task_md(state))
 
 
 def _write_current_task_md_from_state(task_ref: str) -> None:
     """Write CURRENT_TASK.md for a task using the internal DB write path."""
-    from ._shared import _get_db_connection  # noqa: PLC0415
-
     with _get_db_connection() as conn:
         _write_current_task_md_for_task(conn, task_ref)
 
@@ -193,8 +185,6 @@ def _fetch_related_open_findings_impl(conn: sqlite3.Connection, task_refs: list[
 
 def _fetch_related_open_findings(task_refs: list[str]) -> dict[str, list[dict]]:
     """Query open review findings for multiple task_refs, grouped by task_ref."""
-    from ._shared import _get_db_connection  # noqa: PLC0415
-
     if not task_refs:
         return {}
     with _get_db_connection() as conn:

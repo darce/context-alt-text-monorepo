@@ -258,7 +258,43 @@ def test_search_scoped_by_task_ref_returns_matching_task(isolated_env: dict) -> 
     )
     assert result["ok"] is True
     assert result["results"]
-    assert all(r["task_ref"] == "test-task" for r in result["results"])
+
+
+def test_search_handoff_defaults_to_active_task_scope(isolated_env: dict) -> None:
+    """Omitting task_ref should use the active task instead of returning cross-task hits."""
+    handoff_core.record_decision(
+        session="s1",
+        decision="alpha active task decision",
+        task_ref="test-task",
+    )
+    handoff_core.record_decision(
+        session="s1",
+        decision="alpha unrelated task decision",
+        task_ref="other-task",
+    )
+
+    result = _parse(handoff_core.search_handoff(queries=["alpha"], record_types=["decision"]))
+
+    assert result["ok"] is True
+    assert result["results"]
+    assert {row["task_ref"] for row in result["results"]} == {"test-task"}
+
+
+def test_search_handoff_treats_punctuation_as_literal_text(isolated_env: dict) -> None:
+    """Quoted punctuation should not break the FTS query parser."""
+    handoff_core.record_decision(
+        session="s1",
+        decision='leader:election keeps foo"bar stable',
+        task_ref="test-task",
+    )
+
+    colon_result = _parse(handoff_core.search_handoff(queries=["leader:election"], record_types=["decision"]))
+    quote_result = _parse(handoff_core.search_handoff(queries=['foo"bar'], record_types=["decision"]))
+
+    assert colon_result["ok"] is True
+    assert any(row["record_type"] == "decision" for row in colon_result["results"])
+    assert quote_result["ok"] is True
+    assert any(row["record_type"] == "decision" for row in quote_result["results"])
 
 
 def test_search_scoped_by_task_ref_excludes_other_tasks(isolated_env: dict) -> None:

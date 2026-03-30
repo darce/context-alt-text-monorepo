@@ -50,14 +50,19 @@ from .api import (
 )
 
 
-def _build_config(workspace_root: Path) -> RuntimeConfig:
-    state_dir = workspace_root / ".task-state"
+def _build_config(
+    workspace_root: Path,
+    state_dir: Path | None = None,
+    current_task_path: Path | None = None,
+    exports_dir: Path | None = None,
+) -> RuntimeConfig:
+    state_dir = state_dir or (workspace_root / ".task-state")
     return RuntimeConfig(
         workspace_root=workspace_root,
         state_dir=state_dir,
         db_path=state_dir / "handoff.db",
-        current_task_path=workspace_root / "CURRENT_TASK.md",
-        exports_dir=state_dir / "exports",
+        current_task_path=current_task_path or (workspace_root / "CURRENT_TASK.md"),
+        exports_dir=exports_dir or (state_dir / "exports"),
         artifact_db_path=state_dir / "mcp-artifacts.db",
     )
 
@@ -77,6 +82,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=Path.cwd(),
         help="Workspace root directory (default: cwd).",
     )
+    parser.add_argument("--state-dir", type=Path, default=None,
+                        help="State directory (default: <workspace-root>/.task-state).")
+    parser.add_argument("--current-task-path", type=Path, default=None,
+                        help="CURRENT_TASK.md path (default: <workspace-root>/CURRENT_TASK.md).")
+    parser.add_argument("--exports-dir", type=Path, default=None,
+                        help="Exports directory (default: <state-dir>/exports).")
     subparsers = parser.add_subparsers(dest="command")
 
     # --- serve ---
@@ -177,7 +188,12 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
-    config = _build_config(args.workspace_root)
+    config = _build_config(
+        args.workspace_root,
+        state_dir=args.state_dir,
+        current_task_path=args.current_task_path,
+        exports_dir=args.exports_dir,
+    )
     configure_runtime(config)
 
     cmd = args.command

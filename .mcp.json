@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "agent-handoff-mcp": {
+      "type": "stdio",
+      "command": "agent-handoff-mcp",
+      "args": [
+        "--workspace-root",
+        "/Users/daniel/Development/context-alt-text-monorepo",
+        "serve-stdio"
+      ],
+      "env": {}
+    },
+    "agent-orchestrator-mcp": {
+      "type": "stdio",
+      "command": "agent-orchestrator-mcp",
+      "args": [
+        "--workspace-root",
+        "/Users/daniel/Development/context-alt-text-monorepo",
+        "serve-stdio"
+      ],
+      "env": {}
+    }
+  }
+}

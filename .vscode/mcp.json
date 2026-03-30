@@ -25,6 +25,27 @@
         "PYENV_ROOT": "${env:PYENV_ROOT}",
         "PYTHONPATH": "${workspaceFolder}/packages/agent-handoff-mcp/src:${workspaceFolder}/packages/codex-subagent-bridge/src"
       }
+    },
+    "altcontext-orchestrator-mcp": {
+      "command": "${env:HOME}/.pyenv/versions/description-service/bin/python3",
+      "args": [
+        "${workspaceFolder}/packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp_launcher.py",
+        "--workspace-root",
+        "${workspaceFolder}",
+        "--state-dir",
+        "${workspaceFolder}/.task-state",
+        "--current-task-path",
+        "${workspaceFolder}/CURRENT_TASK.md",
+        "--exports-dir",
+        "${workspaceFolder}/.task-state/exports",
+        "serve-stdio"
+      ],
+      "env": {
+        "PATH": "${env:PYENV_ROOT}/bin:${env:PYENV_ROOT}/shims:/usr/local/bin:${env:PATH}",
+        "PYENV_VERSION": "description-service",
+        "PYENV_ROOT": "${env:PYENV_ROOT}",
+        "PYTHONPATH": "${workspaceFolder}/packages/agent-handoff-mcp/src:${workspaceFolder}/packages/agent-orchestrator-mcp/src:${workspaceFolder}/packages/codex-subagent-bridge/src"
+      }
     }
   }
 }

@@ -1,5 +1,7 @@
 # Implementation Plan: Agent-Agnostic Handoff State via MCP + SQLite
 
+> Historical note: this document captures the original handoff-state plan that started in `scripts/mcp/unified_server.py`. The shipped implementation was later packaged into `agent-handoff-mcp`; use `docs/agentic/BOOTSTRAP.md`, `docs/agentic/contracts/agent-handoff-mcp.md`, and `packages/agent-handoff-mcp/src/` as the authoritative description of the final server surface and file layout.
+
 ## Problem Statement
 
 `CURRENT_TASK.md` is used inconsistently across agent sessions, causing redundant context reads, token-heavy handoffs, and stale state.
@@ -22,9 +24,9 @@ The project needs a structured, low-token, agent-agnostic handoff mechanism that
 
 ## Current State Analysis
 
-- `/Users/daniel/Development/context-alt-text-monorepo/CURRENT_TASK.md` is comprehensive but expensive to read repeatedly.
+- `/CURRENT_TASK.md` is comprehensive but expensive to read repeatedly.
 - Session logs and checklist edits are manual and can drift from real execution state.
-- Existing MCP server (`scripts/mcp/unified_server.py`) already provides domain context tools and is the best insertion point for handoff tooling.
+- At plan inception, `scripts/mcp/unified_server.py` was the handoff entry point and the intended insertion point for the first implementation pass. The final shipped work was later packaged into `agent-handoff-mcp`.
 - No structured store currently exists for blocker lifecycle, test verification history, or next-action prioritization.
 
 ## Proposed Solution
@@ -38,9 +40,9 @@ Add a lightweight SQLite-backed handoff subsystem exposed via six MCP tools in `
 5. `record_test_result`
 6. `report_blocker`
 
-Persist state in `/Users/daniel/Development/context-alt-text-monorepo/.task-state/handoff.db`.
-Keep the database local by default (`.gitignore`), and generate `/Users/daniel/Development/context-alt-text-monorepo/CURRENT_TASK.md` from structured state for human review.
-Current custom MCP server tool count is 10; after this change it becomes 16 custom tools.
+Persist state in `/.task-state/handoff.db`.
+Keep the database local by default (`.gitignore`), and generate `/CURRENT_TASK.md` from structured state for human review.
+At plan inception, the custom MCP server tool count was 10 and the initial target was 16 tools. The shipped implementation was later packaged as `agent-handoff-mcp` and now exposes 27 tools; see `docs/agentic/BOOTSTRAP.md` for the current inventory.
 Editor-native tools (for example, `find_definition`, `search_code`, `read_file`) remain outside this count and should be documented separately.
 
 ## Schema (v1)
@@ -176,7 +178,7 @@ For write tools, `task_ref` is optional: if omitted, the tool defaults to the cu
 - Add a generator path in MCP to render markdown from sqlite state.
 - Keep file human-readable and deterministic.
 - Add top banner: `DO NOT EDIT: generated from .task-state/handoff.db`.
-- Trigger mode: explicit invocation only (no implicit render on every write), to avoid extra I/O and token churn during frequent mutations.
+- Trigger mode: keep an explicit render path for deterministic regeneration. The shipped package also regenerates `CURRENT_TASK.md` on selected write paths so task state stays synchronized without requiring a separate manual render after every mutation.
 - Section order:
   1. Objective
   2. Active status
@@ -229,19 +231,19 @@ WHERE handoff_state.revision = ?;
 
 | File | Line | Change |
 | --- | --- | --- |
-| `/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/unified_server.py` | 1 | Add sqlite initialization, schema bootstrap, and 6 MCP handoff tools. |
-| `/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/mcp-server.sh` | 1 | Confirm environment exposes writable path for `.task-state/` (no behavior change expected). |
-| `/Users/daniel/Development/context-alt-text-monorepo/.gitignore` | 1 | Ignore `.task-state/` and any temporary exports. |
-| `/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/BOOTSTRAP.md` | 1 | Update MCP inventory from 10 to 16 custom tools, document new handoff tools and state file location, and list editor-native tools (`find_definition`, `search_code`, etc.) separately. |
-| `/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/instructions.md` | 1 | Update workflow guidance: use MCP handoff tools as source of truth; `CURRENT_TASK.md` is generated. |
+| `/scripts/mcp/unified_server.py` | 1 | Add sqlite initialization, schema bootstrap, and 6 MCP handoff tools. |
+| `/scripts/mcp/mcp-server.sh` | 1 | Confirm environment exposes writable path for `.task-state/` (no behavior change expected). |
+| `/.gitignore` | 1 | Ignore `.task-state/` and any temporary exports. |
+| `/docs/agentic/BOOTSTRAP.md` | 1 | Update MCP inventory from 10 to 16 custom tools, document new handoff tools and state file location, and list editor-native tools (`find_definition`, `search_code`, etc.) separately. |
+| `/docs/agentic/instructions.md` | 1 | Update workflow guidance: use MCP handoff tools as source of truth; `CURRENT_TASK.md` is generated. |
 
 ## Related Files
 
 | File | Note |
 | --- | --- |
-| `/Users/daniel/Development/context-alt-text-monorepo/.vscode/mcp.json` | Existing server wiring; no server registration changes expected. |
-| `/Users/daniel/Development/context-alt-text-monorepo/CURRENT_TASK.md` | Becomes generated output from sqlite state. |
-| `/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/templates/CURRENT_TASK.template.md` | Keep for fallback/manual mode; mark as secondary path. |
+| `/.vscode/mcp.json` | Existing server wiring; no server registration changes expected. |
+| `/CURRENT_TASK.md` | Becomes generated output from sqlite state. |
+| `/docs/agentic/templates/CURRENT_TASK.template.md` | Keep for fallback/manual mode; mark as secondary path. |
 
 ## Token Budget and ROI (Verified)
 
@@ -303,7 +305,7 @@ Note: `~250,000` daily savings is achievable only under stricter assumptions (fo
 
 ## Phase 0: Scaffolding
 
-- [x] Add sqlite bootstrap helpers in `unified_server.py` (connection, pragmas, schema init).
+- [x] Add sqlite bootstrap helpers in the initial `unified_server.py` prototype path; final implementation later moved to the packaged `agent-handoff-mcp` modules.
 - [x] Add typed request/response contracts for each new MCP handoff tool.
 - [x] Implemented full tool behavior directly (stubs superseded).
 - [x] Add `.task-state/` to `.gitignore`.
@@ -328,7 +330,8 @@ Note: `~250,000` daily savings is achievable only under stricter assumptions (fo
 ## Phase 3: Generated Markdown View
 
 - [x] Implement markdown renderer from DB state to `CURRENT_TASK.md`.
-- [x] Add explicit render trigger (manual invocation), not automatic render on every write.
+- [x] Keep an explicit render trigger available for deterministic regeneration.
+- [x] Regenerate `CURRENT_TASK.md` automatically on selected write paths in the shipped package so the generated view stays synchronized with task-state mutations.
 - [x] Add deterministic ordering and `DO NOT EDIT` header.
 - [x] Ensure generated output mirrors compact MCP state categories.
 
@@ -338,7 +341,7 @@ Note: `~250,000` daily savings is achievable only under stricter assumptions (fo
 - [x] Add tests for revision conflict behavior.
 - [x] Add tests for blocker/action status constraints.
 - [x] Add tests for compact response token discipline (top-N behavior).
-- [x] Update `docs/agentic/BOOTSTRAP.md` with usage examples and updated tool count (21 custom MCP tools).
+- [x] Update `docs/agentic/BOOTSTRAP.md` with usage examples and the current packaged handoff-server tool count (27 tools).
 - [x] Update `docs/agentic/instructions.md` workflow guidance.
 
 ## Stretch Goals

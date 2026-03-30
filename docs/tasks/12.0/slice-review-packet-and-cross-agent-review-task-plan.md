@@ -33,8 +33,8 @@ What is missing is one authoritative review packet for each completed slice: a s
 
 ## Current State Analysis
 
-- `record_decision` already standardizes slice completion through `decision="slice_complete_<short_label>"` and required rationale headings in [agent-handoff-mcp.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/contracts/agent-handoff-mcp.md).
-- `record_worker_report` already stores `changed_files`, `test_commands`, blockers, and merge-readiness in [core.py](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py).
+- `record_decision` already standardizes slice completion through `decision="slice_complete_<short_label>"` and required rationale headings in [agent-handoff-mcp.md](/docs/agentic/contracts/agent-handoff-mcp.md).
+- `record_worker_report` already stores `changed_files`, `test_commands`, blockers, and merge-readiness in [core.py](/packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py).
 - `get_lane_activity` already aggregates lane-level decisions, tests, findings, worker reports, and messages, including `format="archival"`.
 - `review_runner.py` and `review_ready.py` still determine changed files from live git diff state in the worktree, not from a completed-slice packet.
 - `branch-review-guide.md` and `planning-review-guide.md` already distinguish review intent, but no MCP helper currently resolves "the latest completed slice" into the correct file set and guide choice.
@@ -46,8 +46,8 @@ Each completed slice produces one review packet in MCP. A reviewing agent can re
 
 ## Context Loading
 
-- Rules: [planning-review-guide.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/rules/planning-review-guide.md), [branch-review-guide.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/rules/branch-review-guide.md), [instructions.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/instructions.md)
-- Contracts: [agent-handoff-mcp.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/contracts/agent-handoff-mcp.md)
+- Rules: [planning-review-guide.md](/docs/agentic/rules/planning-review-guide.md), [branch-review-guide.md](/docs/agentic/rules/branch-review-guide.md), [instructions.md](/docs/agentic/instructions.md)
+- Contracts: [agent-handoff-mcp.md](/docs/agentic/contracts/agent-handoff-mcp.md)
 - Handoff/MCP state: inspect current `slice_complete_*` decision conventions, `record_worker_report` payload shape, and recent review-readiness/tooling decisions under `agentic-development-process-hardening-epic`
 - External docs via `ctx7` only if: MCP server/tool resource design patterns need current upstream confirmation beyond local repo guidance
 
@@ -55,9 +55,9 @@ Each completed slice produces one review packet in MCP. A reviewing agent can re
 
 | Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
 | --- | --- | --- | --- | --- | --- |
-| Slice-completion handoff | agentic-tooling | [agent-handoff-mcp.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/contracts/agent-handoff-mcp.md) | Add canonical slice review packet requirements tied to slice completion | Yes; existing slice-completion decisions still valid while packet fields are additive | pytest + contract doc |
-| Review intake/query surface | agentic-tooling | [agent-handoff-mcp.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/contracts/agent-handoff-mcp.md) | Add MCP query/helper for latest slice review packet, implemented through a dedicated orchestration helper module rather than growing `core.py` further | Yes; existing branch-diff review flow remains supported | pytest + CLI/proof run |
-| Review runner dispatch | agentic-tooling | [branch-review-guide.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/rules/branch-review-guide.md), [planning-review-guide.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/rules/planning-review-guide.md) | Route packet-backed review to the correct guide and trust recorded file scope first | Yes; branch-diff fallback retained | pytest + smoke run |
+| Slice-completion handoff | agentic-tooling | [agent-handoff-mcp.md](/docs/agentic/contracts/agent-handoff-mcp.md) | Add canonical slice review packet requirements tied to slice completion | Yes; existing slice-completion decisions still valid while packet fields are additive | pytest + contract doc |
+| Review intake/query surface | agentic-tooling | [agent-handoff-mcp.md](/docs/agentic/contracts/agent-handoff-mcp.md) | Add MCP query/helper for latest slice review packet, implemented through a dedicated orchestration helper module rather than growing `core.py` further | Yes; existing branch-diff review flow remains supported | pytest + CLI/proof run |
+| Review runner dispatch | agentic-tooling | [branch-review-guide.md](/docs/agentic/rules/branch-review-guide.md), [planning-review-guide.md](/docs/agentic/rules/planning-review-guide.md) | Route packet-backed review to the correct guide and trust recorded file scope first | Yes; branch-diff fallback retained | pytest + smoke run |
 
 ## Proposed Solution
 
@@ -96,7 +96,7 @@ Add a first-class slice review packet to MCP and make review tooling consume it.
 - Runtime-parity / environment checks:
   - Run the review helper from a worktree with both a packet-backed slice and a branch-diff fallback path
 - Contract/fixture verification:
-  - Verify [agent-handoff-mcp.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/contracts/agent-handoff-mcp.md) documents the packet fields, required slice-completion linkage, and fallback semantics
+  - Verify [agent-handoff-mcp.md](/docs/agentic/contracts/agent-handoff-mcp.md) documents the packet fields, required slice-completion linkage, and fallback semantics
 - Manual verification:
   - From a dirty branch with at least two completed slices, confirm "review latest slice" resolves only the last slice packet files rather than all branch changes
 
@@ -108,7 +108,7 @@ Add a first-class slice review packet to MCP and make review tooling consume it.
 
 Changes:
 
-- Add the packet contract to [agent-handoff-mcp.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/contracts/agent-handoff-mcp.md), including:
+- Add the packet contract to [agent-handoff-mcp.md](/docs/agentic/contracts/agent-handoff-mcp.md), including:
   - `slice_label`
   - `task_ref`
   - `lane_id`
@@ -161,8 +161,8 @@ Changes:
 
 - Update `review_runner.py` so a reviewer can request latest-slice review and have file scope come from the packet rather than current worktree diff
 - Route packet-backed review to:
-  - [branch-review-guide.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/rules/branch-review-guide.md) for implementation slices
-  - [planning-review-guide.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/rules/planning-review-guide.md) for planning/documentation slices
+  - [branch-review-guide.md](/docs/agentic/rules/branch-review-guide.md) for implementation slices
+  - [planning-review-guide.md](/docs/agentic/rules/planning-review-guide.md) for planning/documentation slices
 - Preserve the existing branch-diff path as explicit fallback when no valid packet exists
 - Update `review_ready.py` output or helper behavior so packet-backed review readiness and `scope_source` are visible
 
@@ -178,9 +178,9 @@ Proof:
 
 Changes:
 
-- Update [branch-review-guide.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/rules/branch-review-guide.md) so reviewing the latest implementation slice prefers MCP packet scope over branch diff
-- Update [planning-review-guide.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/rules/planning-review-guide.md) with the same rule for planning slices
-- Update [instructions.md](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/instructions.md) if needed so slice completion guidance explicitly requires enough worker-report evidence for packet derivation
+- Update [branch-review-guide.md](/docs/agentic/rules/branch-review-guide.md) so reviewing the latest implementation slice prefers MCP packet scope over branch diff
+- Update [planning-review-guide.md](/docs/agentic/rules/planning-review-guide.md) with the same rule for planning slices
+- Update [instructions.md](/docs/agentic/instructions.md) if needed so slice completion guidance explicitly requires enough worker-report evidence for packet derivation
 - Document packet-backed review as the preferred cross-agent handoff path for post-slice review
 
 Proof:

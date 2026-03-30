@@ -9,11 +9,11 @@
 
 ## Objective
 
-Define the compact epic/task reference scheme as executable authoring rules and encode it directly into the planning templates. When this task is complete, new epic, task-plan, and roadmap docs should start from templates that require the new naming model by default instead of relying on reviewer memory.
+Verify and close the template-alignment slice that already encoded the compact epic/task reference scheme into the live planning templates. New epic, task-plan, and roadmap docs should already start from templates that require the new naming model by default instead of relying on reviewer memory.
 
 ## Problem Statement
 
-The epic defines the target naming system, but the live templates still allow unnumbered epics, unprefixed task titles, and roadmap creation without an explicit routing contract. That leaves the most common authoring entrypoints misaligned with the intended scheme and makes later enforcement noisier than necessary.
+The original Phase 1 problem has already been addressed in the template surfaces, but this task plan still reads as if that work is pending. That stale framing creates false follow-up work and confuses later phases about whether template alignment is still an open dependency.
 
 ## Constraints
 
@@ -35,14 +35,14 @@ The epic defines the target naming system, but the live templates still allow un
 
 ## Current State Analysis
 
-- [EPIC.template.md](docs/agentic/templates/EPIC.template.md) does not yet require an `E<number>` title or a declared epic short id.
-- [TASK_PLAN.template.md](docs/agentic/templates/TASK_PLAN.template.md) still uses a generic `[TASK_TITLE]` placeholder with no enforced `<SID>-N.` pattern.
-- [ROADMAP.template.md](docs/agentic/templates/ROADMAP.template.md) exists, but the epic notes that roadmap creation must explicitly load it through the same routing model as epic/task creation.
-- The epic examples use `E12` as the local reference prefix for this workstream, but the authoring templates do not yet explain where that identifier belongs in a newly created epic.
+- [EPIC.template.md](docs/agentic/templates/EPIC.template.md) already requires the `E[GLOBAL_EPIC_INDEX]. [EPIC_TITLE]` title format and an `Epic Short ID` field.
+- [TASK_PLAN.template.md](docs/agentic/templates/TASK_PLAN.template.md) already requires `[EPIC_SHORT_ID]-[LOCAL_TASK_INDEX]. [TASK_TITLE]`.
+- [ROADMAP.template.md](docs/agentic/templates/ROADMAP.template.md) already includes the routing note that roadmap creation must explicitly load the roadmap template.
+- The remaining work for this slice is to keep the task plan and epic dependency chain honest by treating Phase 1 as delivered and verification-only.
 
 ## Target Outcome
 
-The planning templates should encode the reference scheme directly. Epic authors start from a template that requires `E<number>. Title` plus an `Epic Short ID` field; task authors start from a template that requires `<SID>-N. Title`; roadmap authors see an explicit note that roadmap creation must go through the roadmap template even though roadmap titles remain version-oriented. Slice references remain clearly optional.
+This task plan should accurately describe Phase 1 as complete. Epic authors already start from a template that requires `E<number>. Title` plus an `Epic Short ID` field; task authors already start from a template that requires `<SID>-N. Title`; roadmap authors already see an explicit note that roadmap creation must go through the roadmap template even though roadmap titles remain version-oriented.
 
 ## Context Loading
 
@@ -53,16 +53,14 @@ The planning templates should encode the reference scheme directly. Epic authors
 
 ## Proposed Solution
 
-Update the three planning templates so the naming/reference model is visible at the point of authoring. Add concise template notes for global epic numbering, epic short-id declaration, task-title formatting, and roadmap routing expectations. Keep the template changes purely structural and defer runtime validation to later tasks.
+Treat E12-1 as a completed prerequisite. Update this plan so it documents verification and handoff closure rather than re-describing already-landed template edits as pending implementation.
 
 ## Files and Surfaces to Change
 
 | Surface | File                                                                              | Change                                                                           |
 | ------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| docs    | `docs/agentic/templates/EPIC.template.md`                                         | Require `E<number>.` title format and a declared epic short-id field             |
-| docs    | `docs/agentic/templates/TASK_PLAN.template.md`                                    | Require `<epic_short_id>-<local_index>. <Title>` task titles                     |
-| docs    | `docs/agentic/templates/ROADMAP.template.md`                                      | Clarify that roadmap creation must explicitly route through the roadmap template |
-| docs    | `docs/epics/v0.3.1/epic-task-reference-prefixing-and-handoff-enforcement-epic.md` | Mark Phase 1 task-plan linkage once scoped                                       |
+| docs    | `docs/tasks/12.0/12.1/E12-1-naming-spec-and-template-update-task-plan.md`         | Mark the slice as already delivered and convert the plan to verification/closure |
+| docs    | `docs/epics/v0.3.1/epic-task-reference-prefixing-and-handoff-enforcement-epic.md` | Keep Phase 1 dependency wording aligned with the delivered state                 |
 
 ## Related Files
 
@@ -84,12 +82,13 @@ Update the three planning templates so the naming/reference model is visible at 
 
 ### Slice 1: Epic and Task Template Naming
 
-**Goal**: Encode epic/task reference rules directly into the two primary planning templates.
+**Goal**: Confirm the epic/task template naming slice is already delivered and close it cleanly.
 
 Changes:
 
-- Update `EPIC.template.md` to require `E<number>. <Title>` and `Epic Short ID`.
-- Update `TASK_PLAN.template.md` to require `<SID>-N. <Title>` and explain the local numbering rule.
+- Verify `EPIC.template.md` already requires `E<number>. <Title>` and `Epic Short ID`.
+- Verify `TASK_PLAN.template.md` already requires `<SID>-N. <Title>` and explain the local numbering rule.
+- Update this task plan to reflect the delivered state.
 
 Proof:
 
@@ -97,49 +96,49 @@ Proof:
 
 ### Slice 2: Roadmap Routing and Optional Slice Guidance
 
-**Goal**: Align the roadmap template and template notes with the rest of the naming model.
+**Goal**: Confirm the roadmap-routing note is already in place and close the remaining plan drift.
 
 Changes:
 
-- Update `ROADMAP.template.md` to require explicit template loading/routing for roadmap creation.
-- Add concise wording that slice references are optional rather than mandatory in headings/titles.
-- Sync the epic’s Phase 1 task-plan link once the task is created.
+- Verify `ROADMAP.template.md` already requires explicit template loading/routing for roadmap creation.
+- Verify slice references remain optional rather than mandatory in headings/titles.
+- Sync the epic’s Phase 1 dependency wording with the delivered state if needed.
 
 Proof:
 
 - Template text reflects roadmap routing and optional slice-reference guidance without introducing contradictory naming rules.
 
-# Consolidated Checklist
+## Consolidated Checklist
 
 ## Context and Ownership
 
-- [ ] Loaded the minimum authoritative rules, epic scope, and current templates before editing.
-- [ ] Confirmed no runtime/MCP enforcement is being promised in this template-only task.
+- [x] Loaded the minimum authoritative rules, epic scope, and current templates before editing.
+- [x] Confirmed no runtime/MCP enforcement is being promised in this template-only task.
 
 ## Slice 1: Epic and Task Template Naming
 
-- [ ] Updated `EPIC.template.md`.
-- [ ] Updated `TASK_PLAN.template.md`.
-- [ ] Verified the new title patterns are explicit in the templates.
+- [x] Verified `EPIC.template.md`.
+- [x] Verified `TASK_PLAN.template.md`.
+- [x] Verified the new title patterns are explicit in the templates.
 
 ## Slice 2: Roadmap Routing and Optional Slice Guidance
 
-- [ ] Updated `ROADMAP.template.md`.
-- [ ] Documented slice references as optional-only.
-- [ ] Linked Phase 1 back to this task plan from the epic.
+- [x] Verified `ROADMAP.template.md`.
+- [x] Verified slice references as optional-only.
+- [x] Linked Phase 1 back to this task plan from the epic.
 
 ## Review Readiness
 
-- [ ] Template changes are consistent with the epic naming spec.
-- [ ] No template now implies a contradictory title format.
-- [ ] Handoff decision records the template changes and verification evidence.
+- [x] Template changes are consistent with the epic naming spec.
+- [x] No template now implies a contradictory title format.
+- [x] Handoff decision records the template changes and verification evidence.
 
 ## Stretch Goals
 
-- [ ] Add short inline examples to the templates once the naming format is stable across guidance and MCP enforcement.
+- [x] Add short inline examples to the templates once the naming format is stable across guidance and MCP enforcement.
 
 ## Success Criteria
 
-- [ ] New epic authors see `E<number>` and epic short-id requirements directly in the epic template.
-- [ ] New task authors see the `<SID>-N.` title format directly in the task-plan template.
-- [ ] Roadmap authors are explicitly routed to the roadmap template without adopting the task-ref title scheme.
+- [x] New epic authors see `E<number>` and epic short-id requirements directly in the epic template.
+- [x] New task authors see the `<SID>-N.` title format directly in the task-plan template.
+- [x] Roadmap authors are explicitly routed to the roadmap template without adopting the task-ref title scheme.

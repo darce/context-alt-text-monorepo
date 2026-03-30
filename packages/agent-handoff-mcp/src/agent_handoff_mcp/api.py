@@ -10,14 +10,16 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from fastmcp import FastMCP
 from fastmcp.client import Client, PythonStdioTransport
 
 from .config import RuntimeConfig
 from . import core
+from .core import PromptMetrics, ResolvedWriteContext, TokenUsage
 from .runtime import configure_runtime, get_runtime_config, reset_runtime_config
 
 
@@ -27,18 +29,19 @@ update_next_actions = core.update_next_actions
 record_test_result = core.record_test_result
 report_blocker = core.report_blocker
 record_review_finding = core.record_review_finding
+batch_record_review_findings = core.batch_record_review_findings
 update_review_finding = core.update_review_finding
-reopen_review_finding = core.reopen_review_finding
 list_review_findings = core.list_review_findings
-get_review_finding = core.get_review_finding
 get_review_findings_summary = core.get_review_findings_summary
 reconcile_review_findings = core.reconcile_review_findings
+record_review_run = core.record_review_run
+list_review_runs = core.list_review_runs
+get_review_coverage = core.get_review_coverage
 handoff_close_check = core.handoff_close_check
 export_handoff_state = core.export_handoff_state
 import_handoff_state = core.import_handoff_state
 archive_task_state = core.archive_task_state
 switch_task = core.switch_task
-get_handoff_dashboard = core.get_handoff_dashboard
 set_handoff_state = core.set_handoff_state
 get_handoff_state = core.get_handoff_state
 get_lane_activity = core.get_lane_activity
@@ -63,16 +66,17 @@ close_worktree_lane = core.close_worktree_lane
 
 record_artifact = core.record_artifact
 search_artifacts = core.search_artifacts
-get_artifact_source = core.get_artifact_source
-get_artifact_terms = core.get_artifact_terms
-list_artifact_sources = core.list_artifact_sources
+get_artifact = core.get_artifact
 purge_artifacts = core.purge_artifacts
 search_handoff = core.search_handoff
+load_session = core.load_session
+close_slice = core.close_slice
+audit_decision_ids = core.audit_decision_ids
 
 
 TOOL_DESCRIPTIONS: dict[str, str] = {
     "set_handoff_state": "Set or update the active handoff task state with optimistic revision protection.",
-    "get_handoff_state": "Read the active or requested task handoff summary, including blockers, actions, tests, and findings.",
+    "get_handoff_state": "Read the active or requested task handoff summary, including blockers, actions, tests, and findings. Pass view='dashboard' for cross-task aggregation.",
     "upsert_worktree_lane": "Create or update worktree lane metadata for a task, including branch, status, and worktree path.",
     "close_worktree_lane": "Transition a worktree lane to merged or closed status. Accepts lane_id, optional status (merged|closed, default closed), optional notes, and optional task_ref.",
     "list_worktree_lanes": "List registered worktree lanes for the active or requested task.",
@@ -97,19 +101,23 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "list_plan_cursors": "List durable plan-dispatch cursor rows for the active or requested task, optionally filtered by state or lane.",
     "upsert_plan_cursor": "Create or update a durable task-plan cursor row recording dispatch, completion, skip, or escalation state; optionally enforce a clean-slice gate before the update.",
     "record_review_finding": "Record or reopen a review finding for a task with stable finding IDs, optional line metadata, and optional review_mode classification.",
+    "batch_record_review_findings": "Record or reopen multiple review findings in a single atomic write. Max 100 items per call. Returns per-item action results.",
     "update_review_finding": "Mark a review finding fixed, deferred, wontfix, or reopen it with notes.",
-    "reopen_review_finding": "Reopen a previously closed review finding with a reopen reason.",
-    "list_review_findings": "List review findings for the active or requested task, optionally filtered by status, severity, or review_mode.",
-    "get_review_finding": "Fetch a single review finding by stable finding ID or database ID.",
+    "list_review_findings": "List review findings for the active or requested task, optionally filtered by status, severity, or review_mode. Pass finding_id or finding_db_id to fetch a single finding globally without needing to know the owning task.",
     "get_review_findings_summary": "Return aggregate counts of review findings by status and severity for the active or requested task, optionally scoped by review_mode.",
     "reconcile_review_findings": "Compare open findings against current files and return a reconciliation summary for review workflows.",
+    "record_review_run": "Record a completed review pass in the review_runs ledger. Provide a unique review_run_id, subject_path, session, and optionally a verdict and verdict_decision.",
+    "list_review_runs": "List review-run ledger entries. Filter by task_ref, subject_path, review_mode, or verdict. Returns paginated results ordered by recency.",
+    "get_review_coverage": "Return a review-coverage summary for a task or subject artifact: run count, latest verdict, recent run ids, open findings by severity, and reopened-finding count. Provide task_ref, subject_path, or both.",
     "handoff_close_check": "Evaluate whether a task is ready to close based on open blockers, pending actions, open findings, lane state, and optional fresh-test requirements for the current commit.",
+    "audit_decision_ids": "Audit recent decision ids for grammar conformance. Classifies each id as canonical, legacy_slice, malformed_slice, or freeform and returns a summary with per-row detail for violations.",
     "generate_current_task_md": "Generate CURRENT_TASK.md from handoff state for the active or requested task.",
     "export_handoff_state": "Export the task handoff state to a portable JSON snapshot.",
     "import_handoff_state": "Import a previously exported handoff state snapshot into the local database.",
     "archive_task_state": "Archive completed task state from the live handoff tables into archive storage.",
     "switch_task": "Switch the active task in one step: auto-archives the outgoing task and activates the target, restoring its objective from the archive if available.",
-    "get_handoff_dashboard": "Return a broader handoff dashboard view across task state, lanes, findings, blockers, and reports.",
+    "load_session": "Load session context in one call: handoff state plus open review findings for the active or requested task.",
+    "close_slice": "Close a slice atomically: record decision, update handoff state, and generate CURRENT_TASK.md in one call.",
     "orchestrator_start": "Start the orchestrator daemon for the authoritative checkout and return its PID and lock path.",
     "orchestrator_status": "Return orchestrator daemon runtime status, including pause state, PID, last event, and cycle count.",
     "orchestrator_stop": "Stop the orchestrator daemon with SIGTERM, or SIGKILL when force=true.",
@@ -126,10 +134,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "dispatch_lane_work": "Update lane dispatch parameters (model, backend, effort) for the next execution cycle.",
     "list_available_backends": "List supported execution backends and their capabilities.",
     "record_artifact": "Index a large artifact (log, doc, payload, output) in the sidecar FTS5 database for later scoped retrieval.",
-    "search_artifacts": "Search indexed artifact chunks by relevance with optional task/lane/app/source filters and BM25 ranking.",
-    "get_artifact_source": "Return the full artifact source record for exact inspection by source_id or task_ref+source_label.",
-    "get_artifact_terms": "Return suggested retrieval query terms for a freshly indexed artifact source by extracting its most distinctive words.",
-    "list_artifact_sources": "List indexed artifact sources so operators and prompts can discover available evidence without reading raw content.",
+    "search_artifacts": "Search indexed artifact chunks by relevance with BM25 ranking. With no queries, lists artifact sources instead.",
+    "get_artifact": "Return the full artifact source record, optionally with distinctive terms. Lookup by source_id or task_ref+source_label.",
     "purge_artifacts": "Delete artifact sources and their FTS chunks to keep the sidecar database bounded after task archival, lane closure, or age-based expiry.",
     "search_handoff": "Search canonical handoff records (decisions, findings, blockers, actions) by keyword with BM25 ranking and optional task/lane/type scope filters.",
     "get_metrics_summary": "Return an ACE metrics snapshot for the active task covering token burn, context pressure, FTS5 retrieval, lane health, phase timing, and documentation fitness.",
@@ -145,6 +151,381 @@ def _apply_tool_descriptions() -> None:
         if existing and existing.strip():
             continue
         tool.__doc__ = description
+
+
+@dataclass
+class ArgSpec:
+    """Declarative specification for a single CLI argument."""
+
+    name: str
+    type: type = str
+    default: Any = None
+    required: bool = False
+    help: str = ""
+    choices: list[str] | None = None
+    action: str | None = None   # e.g. "store_true", "append"
+    nargs: str | None = None
+    dest: str | None = None     # override argparse dest
+
+
+# Choices used by both the tool registry and CLI for worker reasoning effort.
+_WORKER_REASONING_EFFORT_CHOICES = ("inherit", "auto", "low", "medium", "high", "xhigh")
+
+
+@dataclass
+class ToolEntry:
+    """Registry entry for a single MCP tool."""
+
+    name: str
+    handler: Callable[..., Any]
+    description: str
+    cli_args: list[ArgSpec] = field(default_factory=list)  # CLI argument specs (single source of truth)
+    cli_name: str | None = None  # CLI subcommand name; None = no CLI exposure
+    deprecated_since: str | None = None  # Version string; non-None appends [DEPRECATED] to description
+
+
+def _build_tool_registry() -> list[ToolEntry]:
+    """Build the handoff MCP tool registry (called lazily after all handlers defined)."""
+    _re = _WORKER_REASONING_EFFORT_CHOICES
+    return [
+        # Task state (2)
+        ToolEntry(
+            "set_handoff_state",
+            set_handoff_state,
+            TOOL_DESCRIPTIONS["set_handoff_state"],
+            cli_name="set",
+            cli_args=[
+                ArgSpec("--task-ref", required=True),
+                ArgSpec("--objective", help="Task objective."),
+                ArgSpec("--focus", help="Mutable current-focus text."),
+                ArgSpec("--status", default="in_progress"),
+                ArgSpec("--expected-revision", type=int),
+            ],
+        ),
+        ToolEntry(
+            "get_handoff_state",
+            get_handoff_state,
+            TOOL_DESCRIPTIONS["get_handoff_state"],
+            cli_name="state",
+            cli_args=[
+                ArgSpec("task_ref", nargs="?"),
+                ArgSpec("--verbose", action="store_true"),
+            ],
+        ),
+        # Decisions (1)
+        ToolEntry(
+            "record_decision",
+            record_decision,
+            TOOL_DESCRIPTIONS["record_decision"],
+            cli_name="decision",
+            cli_args=[
+                ArgSpec("--session", required=True),
+                ArgSpec("--decision", required=True),
+                ArgSpec("--rationale"),
+                ArgSpec("--task-ref"),
+            ],
+        ),
+        # Actions (2)
+        ToolEntry(
+            "update_next_actions",
+            update_next_actions,
+            TOOL_DESCRIPTIONS["update_next_actions"],
+            cli_name="action",
+            cli_args=[
+                ArgSpec("--operation", required=True, choices=["add", "update", "complete", "skip"]),
+                ArgSpec("--action-id", type=int),
+                ArgSpec("--text", dest="action", help="Action text (maps to handler param 'action')."),
+                ArgSpec("--priority", type=int),
+                ArgSpec("--status"),
+                ArgSpec("--task-ref"),
+            ],
+        ),
+        ToolEntry("list_next_actions", list_next_actions, TOOL_DESCRIPTIONS["list_next_actions"]),
+        # Tests / blockers (2)
+        ToolEntry(
+            "record_test_result",
+            record_test_result,
+            TOOL_DESCRIPTIONS["record_test_result"],
+            cli_name="test",
+            cli_args=[
+                ArgSpec("--session", required=True),
+                # dest="command" matches the handler param directly; "command" is safe as an arg
+                # dest because _build_parser() uses dest="subcommand" for the subparser, not "command".
+                ArgSpec("--command", dest="command", help="Test command."),
+                ArgSpec("--passed", action="store_true"),
+                ArgSpec("--result"),
+                ArgSpec("--exit-code", type=int),
+                ArgSpec("--task-ref"),
+            ],
+        ),
+        ToolEntry(
+            "report_blocker",
+            report_blocker,
+            TOOL_DESCRIPTIONS["report_blocker"],
+            cli_name="blocker",
+            cli_args=[
+                ArgSpec("--operation", required=True, choices=["add", "resolve", "reopen"]),
+                ArgSpec("--description"),
+                ArgSpec("--blocker-id", type=int),
+                ArgSpec("--task-ref"),
+            ],
+        ),
+        # Findings (4)
+        ToolEntry(
+            "record_review_finding",
+            record_review_finding,
+            TOOL_DESCRIPTIONS["record_review_finding"],
+            cli_name="review-record",
+            cli_args=[
+                ArgSpec("--session", required=True),
+                ArgSpec("--finding-id", required=True),
+                ArgSpec("--severity", required=True),
+                ArgSpec("--file-path", required=True),
+                ArgSpec("--description", required=True),
+                ArgSpec("--line-start", type=int),
+                ArgSpec("--line-end", type=int),
+                ArgSpec("--fix"),
+                ArgSpec("--task-ref"),
+            ],
+        ),
+        ToolEntry(
+            "batch_record_review_findings",
+            batch_record_review_findings,
+            TOOL_DESCRIPTIONS["batch_record_review_findings"],
+        ),
+        ToolEntry(
+            "update_review_finding",
+            update_review_finding,
+            TOOL_DESCRIPTIONS["update_review_finding"],
+            cli_name="review-update",
+            cli_args=[
+                ArgSpec("--status", required=True),
+                ArgSpec("--finding-id"),
+                ArgSpec("--finding-db-id", type=int),
+                ArgSpec("--resolution-notes"),
+                ArgSpec("--reopen-reason"),
+                ArgSpec("--verified-commit-sha"),
+                ArgSpec("--verification-evidence"),
+                ArgSpec("--task-ref"),
+                ArgSpec("--session"),
+            ],
+        ),
+        ToolEntry(
+            "list_review_findings",
+            list_review_findings,
+            TOOL_DESCRIPTIONS["list_review_findings"],
+            cli_name="review-list",
+            cli_args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--status", default="all"),
+                ArgSpec("--severity", default="all"),
+                ArgSpec("--limit", type=int, default=20),
+                ArgSpec("--offset", type=int, default=0),
+            ],
+        ),
+        # Review-run ledger (3)
+        ToolEntry(
+            "record_review_run",
+            record_review_run,
+            TOOL_DESCRIPTIONS["record_review_run"],
+            cli_name="review-run-record",
+            cli_args=[
+                ArgSpec("--review-run-id", required=True),
+                ArgSpec("--session", required=True),
+                ArgSpec("--subject-path", required=True),
+                ArgSpec("--subject-kind", default="task_plan"),
+                ArgSpec("--review-mode", default="planning"),
+                ArgSpec("--verdict"),
+                ArgSpec("--verdict-decision"),
+                ArgSpec("--task-ref"),
+            ],
+        ),
+        ToolEntry(
+            "list_review_runs",
+            list_review_runs,
+            TOOL_DESCRIPTIONS["list_review_runs"],
+            cli_name="review-run-list",
+            cli_args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--subject-path"),
+                ArgSpec("--review-mode"),
+                ArgSpec("--verdict"),
+                ArgSpec("--limit", type=int, default=20),
+                ArgSpec("--offset", type=int, default=0),
+            ],
+        ),
+        ToolEntry(
+            "get_review_coverage",
+            get_review_coverage,
+            TOOL_DESCRIPTIONS["get_review_coverage"],
+            cli_name="review-coverage",
+            cli_args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--subject-path"),
+            ],
+        ),
+        # Close check + CURRENT_TASK.md (2)
+        ToolEntry(
+            "handoff_close_check",
+            handoff_close_check,
+            TOOL_DESCRIPTIONS["handoff_close_check"],
+            cli_name="handoff-close-check",
+            cli_args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--allow-no-active-task", action="store_true"),
+                ArgSpec("--enforce", action="store_true"),
+                ArgSpec("--require-fresh-tests", action="store_true"),
+                ArgSpec("--current-commit-sha"),
+            ],
+        ),
+        ToolEntry(
+            "generate_current_task_md",
+            generate_current_task_md,
+            TOOL_DESCRIPTIONS["generate_current_task_md"],
+            cli_name="task",
+            cli_args=[
+                ArgSpec("task_ref", nargs="?"),
+                ArgSpec("--no-write", action="store_true"),
+            ],
+        ),
+        # Export / import / archive (3)
+        ToolEntry(
+            "export_handoff_state",
+            export_handoff_state,
+            TOOL_DESCRIPTIONS["export_handoff_state"],
+            cli_name="export",
+            cli_args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--output-path"),
+                ArgSpec("--no-markdown", action="store_true"),
+            ],
+        ),
+        ToolEntry(
+            "import_handoff_state",
+            import_handoff_state,
+            TOOL_DESCRIPTIONS["import_handoff_state"],
+            cli_name="import",
+            cli_args=[
+                ArgSpec("--input-path", required=True),
+                ArgSpec("--mode", default="merge"),
+                ArgSpec("--set-active", action="store_true"),
+                ArgSpec("--allow-destructive-clear", action="store_true"),
+            ],
+        ),
+        ToolEntry(
+            "archive_task_state",
+            archive_task_state,
+            TOOL_DESCRIPTIONS["archive_task_state"],
+            cli_name="archive",
+            cli_args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--notes"),
+                ArgSpec("--clear-active-if-matches", action="store_true"),
+                ArgSpec("--prune-working-rows", action="store_true"),
+                ArgSpec("--allow-destructive-clear", action="store_true"),
+            ],
+        ),
+        # Compound tools (3)
+        ToolEntry("load_session", load_session, TOOL_DESCRIPTIONS["load_session"]),
+        ToolEntry("close_slice", close_slice, TOOL_DESCRIPTIONS["close_slice"]),
+        ToolEntry(
+            "audit_decision_ids",
+            audit_decision_ids,
+            TOOL_DESCRIPTIONS["audit_decision_ids"],
+            cli_name="audit-decisions",
+            cli_args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--limit", type=int, default=50),
+                ArgSpec(
+                    "--include-categories",
+                    nargs="+",
+                    choices=["canonical", "legacy_slice", "malformed_slice", "freeform"],
+                    dest="include_categories",
+                    help="Categories to include in the violations list (default: malformed_slice freeform).",
+                ),
+            ],
+        ),
+        # Artifact tools (4)
+        ToolEntry(
+            "record_artifact",
+            record_artifact,
+            TOOL_DESCRIPTIONS["record_artifact"],
+            cli_name="artifact-record",
+            cli_args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--lane-id"),
+                ArgSpec("--app-root"),
+                ArgSpec("--source-kind", required=True),
+                ArgSpec("--source-label", required=True),
+                ArgSpec("--content-type", default="text/plain"),
+                ArgSpec("--summary"),
+                ArgSpec("--content-file", help="Path to a file whose contents will be used as the artifact content."),
+                ArgSpec("--content", help="Artifact content as a string."),
+            ],
+        ),
+        ToolEntry(
+            "search_artifacts",
+            search_artifacts,
+            TOOL_DESCRIPTIONS["search_artifacts"],
+            cli_name="artifact-search",
+            cli_args=[
+                ArgSpec("--query", action="append", dest="queries", required=True, help="Search term (repeatable)."),
+                ArgSpec("--task-ref"),
+                ArgSpec("--lane-id"),
+                ArgSpec("--app-root"),
+                ArgSpec("--source-kind"),
+                ArgSpec("--content-type"),
+                ArgSpec("--limit", type=int, default=10),
+            ],
+        ),
+        ToolEntry(
+            "get_artifact",
+            get_artifact,
+            TOOL_DESCRIPTIONS["get_artifact"],
+            cli_name="artifact-get",
+            cli_args=[
+                ArgSpec("--source-id", type=int),
+                ArgSpec("--task-ref"),
+                ArgSpec("--source-label"),
+            ],
+        ),
+        ToolEntry(
+            "purge_artifacts",
+            purge_artifacts,
+            TOOL_DESCRIPTIONS["purge_artifacts"],
+            cli_name="artifact-purge",
+            cli_args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--lane-id"),
+                ArgSpec("--app-root"),
+                ArgSpec("--older-than-days", type=int),
+            ],
+        ),
+        # Search (1)
+        ToolEntry(
+            "search_handoff",
+            search_handoff,
+            TOOL_DESCRIPTIONS["search_handoff"],
+            cli_name="handoff-search",
+            cli_args=[
+                ArgSpec(
+                    "--query",
+                    action="append",
+                    dest="queries",
+                    help="Search term (repeatable; multiple terms are OR-joined). At least one required.",
+                ),
+                ArgSpec("--task-ref", help="Scope results to a specific task."),
+                ArgSpec("--lane-id", help="Scope results to a specific lane."),
+                ArgSpec(
+                    "--record-types",
+                    nargs="+",
+                    choices=["decision", "finding", "blocker", "action"],
+                    help="Limit search to these record types (decision, finding, blocker, action).",
+                ),
+                ArgSpec("--limit", type=int, default=20, help="Max results (default 20, max 100)."),
+            ],
+        ),
+    ]
 
 
 def generate_current_task_md(
@@ -172,6 +553,27 @@ def generate_current_task_md(
         verbose=True,
     )
     state = json.loads(raw_state)
+
+    # If the requested task is not currently active, hydrate `active` from the
+    # archived snapshot so the renderer can display the objective, focus, and
+    # status instead of producing an empty stub.
+    if state.get("active") is None and task_ref is not None:
+        resolved_ref = state.get("task_ref", task_ref)
+        with core._get_db_connection() as conn:
+            archive_row = conn.execute(
+                "SELECT snapshot_json FROM task_archives WHERE task_ref = ?",
+                (resolved_ref,),
+            ).fetchone()
+            if archive_row is not None:
+                archived_snapshot = json.loads(archive_row["snapshot_json"])
+                state["active"] = archived_snapshot.get("active")
+
+    resolved_ref = state.get("task_ref")
+    if resolved_ref:
+        try:
+            state["review_coverage"] = json.loads(core.get_review_coverage(task_ref=resolved_ref))
+        except Exception:
+            pass
 
     if related_task_refs:
         refs = [r.strip() for r in related_task_refs.split(",") if r.strip()]
@@ -935,71 +1337,13 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
         ),
     )
     _apply_tool_descriptions()
-    for tool in [
-        set_handoff_state,
-        get_handoff_state,
-        upsert_worktree_lane,
-        close_worktree_lane,
-        list_worktree_lanes,
-        get_lane_activity,
-        record_turn_metric,
-        list_turn_metrics,
-        get_turn_metrics_summary,
-        list_next_actions,
-        record_decision,
-        update_next_actions,
-        record_test_result,
-        report_blocker,
-        record_worker_report,
-        record_lane_brief,
-        list_worker_reports,
-        record_lane_message,
-        update_lane_message,
-        list_lane_messages,
-        list_lane_briefs,
-        get_plan_cursor,
-        list_plan_cursors,
-        upsert_plan_cursor,
-        record_review_finding,
-        update_review_finding,
-        reopen_review_finding,
-        list_review_findings,
-        get_review_finding,
-        get_review_findings_summary,
-        reconcile_review_findings,
-        handoff_close_check,
-        generate_current_task_md,
-        export_handoff_state,
-        import_handoff_state,
-        archive_task_state,
-        switch_task,
-        get_handoff_dashboard,
-        orchestrator_start,
-        orchestrator_status,
-        orchestrator_stop,
-        orchestrator_pause,
-        orchestrator_resume,
-        orchestrator_single_cycle,
-        worker_start,
-        worker_status,
-        worker_event_history,
-        worker_stop,
-        worker_resume,
-        worker_start_all,
-        run_structured_turn,
-        dispatch_lane_work,
-        list_available_backends,
-        record_artifact,
-        search_artifacts,
-        get_artifact_source,
-        get_artifact_terms,
-        list_artifact_sources,
-        purge_artifacts,
-        search_handoff,
-        get_metrics_summary,
-        get_latest_slice_review_packet,
-    ]:
-        mcp.add_tool(tool)
+    for entry in _build_tool_registry():
+        if entry.deprecated_since is not None:
+            entry.handler.__doc__ = (
+                f"[DEPRECATED since {entry.deprecated_since}] "
+                + (entry.handler.__doc__ or entry.description)
+            )
+        mcp.add_tool(entry.handler)
     return mcp
 
 
@@ -1092,6 +1436,50 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
         )
         json.loads(cli_probe.stdout)
 
+    # Portable hook semantics discovery: enumerate defined hooks and check
+    # for observable evidence of each one's durable output in this workspace.
+    ace_reflect_log = config.state_dir / "ace_reflect_log.jsonl"
+    worker_log_dir = config.workspace_root / "logs" / "worker-daemon"
+    orchestrator_log = config.workspace_root / "logs" / "daemon" / "orchestrator.jsonl"
+    worker_logs_found = any(worker_log_dir.glob("worker-*.jsonl")) if worker_log_dir.exists() else False
+    portable_hook_semantics = [
+        {
+            "name": "after_review_findings_recorded",
+            "trigger": "worker-daemon review turn produces new findings",
+            "durable_output": ".task-state/ace_reflect_log.jsonl",
+            "evidence_path": str(ace_reflect_log),
+            "evidence_found": ace_reflect_log.exists(),
+        },
+        {
+            "name": "before_close_check",
+            "trigger": "handoff_close_check() is invoked",
+            "durable_output": "structured readiness verdict returned synchronously",
+            "evidence_path": "MCP tool handoff_close_check (always registered)",
+            "evidence_found": True,
+        },
+        {
+            "name": "after_worker_turn",
+            "trigger": "worker execution turn completes",
+            "durable_output": "logs/worker-daemon/worker-<lane>.jsonl",
+            "evidence_path": str(worker_log_dir),
+            "evidence_found": worker_logs_found,
+        },
+        {
+            "name": "after_task_switch",
+            "trigger": "switch_task() completes",
+            "durable_output": "CURRENT_TASK.md regenerated for new active task",
+            "evidence_path": str(config.current_task_path),
+            "evidence_found": config.current_task_path.exists(),
+        },
+        {
+            "name": "before_review_prompt_build",
+            "trigger": "orchestrator or review_runner prepares review prompt for a worker turn",
+            "durable_output": "scope_violation event in worker JSONL; prompt metadata in worker_event_history",
+            "evidence_path": str(worker_log_dir),
+            "evidence_found": worker_logs_found,
+        },
+    ]
+
     return {
         "ok": True,
         "workspace_root": str(config.workspace_root),
@@ -1111,4 +1499,5 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
             },
             "cli_fallback_startup": True,
         },
+        "portable_hook_semantics": portable_hook_semantics,
     }

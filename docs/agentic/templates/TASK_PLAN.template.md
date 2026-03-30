@@ -6,6 +6,12 @@
 > - **Author**: {{MODEL_IDENTITY}}
 > - **Owning Epic**: [path/to/epic.md]
 > - **Epic Short ID**: [must match the owning epic's declared `Epic Short ID`]
+> - **Review Coverage Target**: 2 _(optional — min number of review passes before this plan is considered implementation-ready; omit for spike/research tasks)_
+>
+> **Review coverage note:** Do not embed mutable review counts, finding totals, or run histories in this file.
+> Those are volatile; their canonical home is the handoff DB.
+> Use `get_review_coverage(task_ref=...)` or `list_review_runs(task_ref=...)` to query live coverage state.
+> The `Review Coverage Target` field above carries only your intent (minimum passes); actual coverage is always DB-generated.
 >
 > Use this template for all implementation plans under `docs/tasks/`.
 > Task plans describe executable work for one bounded objective.

@@ -519,7 +519,7 @@ def test_run_review_record_findings_records_ids_and_line_refs(tmp_path: Path) ->
     mock_ahm = mock.MagicMock()
     mock_ahm.RuntimeConfig.for_workspace.return_value = mock.MagicMock()
     mock_ahm.configure_runtime = mock.MagicMock()
-    mock_ahm.record_review_finding.return_value = json.dumps({"ok": True})
+    mock_ahm.batch_record_review_findings.return_value = json.dumps({"ok": True, "written": 1, "results": []})
 
     raw_result = {
         "findings": [
@@ -557,8 +557,8 @@ def test_run_review_record_findings_records_ids_and_line_refs(tmp_path: Path) ->
         )
 
     assert result["recorded_finding_ids"] == ["BACKEN-M-01"]
-    kwargs = mock_ahm.record_review_finding.call_args.kwargs
+    kwargs = mock_ahm.batch_record_review_findings.call_args.kwargs
     assert kwargs["task_ref"] == "daemon-1-review-runner"
-    assert kwargs["details"]["line_start"] == 10
-    assert kwargs["details"]["line_end"] == 12
-    assert kwargs["details"]["fix"] == "Validate the payload before use."
+    assert kwargs["findings"][0]["details"]["line_start"] == 10
+    assert kwargs["findings"][0]["details"]["line_end"] == 12
+    assert kwargs["findings"][0]["details"]["fix"] == "Validate the payload before use."

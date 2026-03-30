@@ -363,8 +363,9 @@ def _record_findings(
     lane_id: str | None = None,
     orchestrator_root: Path,
 ) -> list[str]:
-    """Record each finding into MCP. Returns list of finding IDs that were recorded."""
-    from agent_handoff_mcp import RuntimeConfig, configure_runtime, record_review_finding
+    """Record each finding into MCP atomically. Returns list of finding IDs that were recorded."""
+    import json as _json
+    from agent_handoff_mcp import RuntimeConfig, configure_runtime, batch_record_review_findings
 
     runtime = RuntimeConfig.for_workspace(
         orchestrator_root,
@@ -374,9 +375,15 @@ def _record_findings(
     )
     configure_runtime(runtime)
 
+    actor: WriteActor = {}
+    if lane_id:
+        actor["lane_id"] = lane_id
+
+    batch_items = []
     recorded_ids: list[str] = []
     for i, finding in enumerate(findings):
         finding_id = _generate_finding_id(lane_id, i, finding)
+        recorded_ids.append(finding_id)
 
         details: ReviewFindingDetails = {}
         if "line_start" in finding and isinstance(finding["line_start"], int):
@@ -386,21 +393,22 @@ def _record_findings(
         if "fix" in finding and isinstance(finding["fix"], str):
             details["fix"] = finding["fix"]
 
-        actor: WriteActor = {}
-        if lane_id:
-            actor["lane_id"] = lane_id
+        batch_items.append({
+            "finding_id": finding_id,
+            "severity": finding["severity"],
+            "file_path": finding["file_path"],
+            "description": f"[{finding['category']}] {finding['description']}",
+            "details": details if details else None,
+        })
 
-        record_review_finding(
-            session=session,
-            finding_id=finding_id,
-            severity=finding["severity"],
-            file_path=finding["file_path"],
-            description=f"[{finding['category']}] {finding['description']}",
-            details=details if details else None,
-            actor=actor if actor else None,
-            task_ref=task_ref,
-        )
-        recorded_ids.append(finding_id)
+    batch_result = _json.loads(batch_record_review_findings(
+        session=session,
+        findings=batch_items,
+        actor=actor if actor else None,
+        task_ref=task_ref,
+    ))
+    if not batch_result.get("ok"):
+        raise RuntimeError(f"batch_record_review_findings failed: {batch_result.get('error', 'unknown error')}")
 
     return recorded_ids
 

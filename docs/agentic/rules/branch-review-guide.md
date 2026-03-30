@@ -7,7 +7,7 @@
 
 **Start here:** This file covers universal process, common checklist, severity classification, and report template.
 
-For task plans, epics, roadmaps, ADRs, and other planning documents, use [planning-review-guide.md](planning-review-guide.md) instead of this guide.
+For task plans, epics, roadmaps, ADRs, and other planning documents, use [planning-review-guide.md](planning-review-guide.md) instead of this guide. The [context routing table](development-workflow.md#context-routing-for-reviews) defines which guide to load based on request intent.
 
 **Then load the relevant stack guide(s):**
 
@@ -375,7 +375,7 @@ Review is not complete when findings are merely written down. Each finding needs
 - Fixed findings: use `update_review_finding(status="fixed", ...)`.
 - Deferred findings: use `update_review_finding(status="deferred", resolution_notes=...)`.
 - Wontfix findings: use `update_review_finding(status="wontfix", resolution_notes=...)`.
-- Regressed or partially fixed findings: use `reopen_review_finding(...)`.
+- Regressed or partially fixed findings: use `update_review_finding(status="open", reopen_reason="...")`.
 - `record_decision(...)` may add rationale, but it does not replace the finding status update.
 
 Before declaring the review complete:
@@ -425,19 +425,37 @@ PYTHONPATH="packages/agent-handoff-mcp/src" python3 -m agent_handoff_mcp \
   --fix "Suggested remediation."
 ```
 
-### After Each Finding
+### Recording Findings: Single vs Batch
+
+When logging **3 or more findings** in a single review pass, use `batch_record_review_findings` instead of repeated `record_review_finding` calls. The batch tool writes all items in one SQLite transaction and triggers a single `CURRENT_TASK.md` flush at the end, avoiding N redundant file rewrites.
+
+```python
+# Preferred for 3+ findings
+batch_record_review_findings(
+    session="...",
+    task_ref="...",
+    findings=[
+        {"finding_id": "H-1", "severity": "high", "file_path": "...", "description": "..."},
+        {"finding_id": "M-2", "severity": "medium", "file_path": "...", "description": "...", "details": {...}},
+    ],
+)
+```
+
+Use single `record_review_finding` for 1–2 findings or when findings are discovered incrementally across separate tool calls.
+
+### After Each Finding (Single-Item Path)
 
 Call `review-record` / `record_review_finding` with:
 
-| Parameter     | Value                                                                    |
-| ------------- | ------------------------------------------------------------------------ |
-| `session`     | Current session identifier (e.g., `2026-02-20-copilot-review`)           |
-| `finding_id`  | Short ID matching the report (e.g., `H-1`, `M-2`, `L-3`)                 |
-| `severity`    | `high`, `medium`, or `low`                                               |
-| `file_path`   | Relative path from monorepo root                                         |
-| `description` | One-paragraph description with code references                           |
-| `details`     | Optional object: `{ "line_start"?: int, "line_end"?: int, "fix"?: str }` |
-| `actor`       | Optional object: `{ "agent"?: str, "branch"?: str, "commit_sha"?: str }` |
+| Parameter     | Value                                                                                                                                 |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `session`     | Current session identifier (e.g., `2026-02-20-copilot-review`)                                                                        |
+| `finding_id`  | Short ID matching the report (e.g., `H-1`, `M-2`, `L-3`)                                                                              |
+| `severity`    | `high`, `medium`, or `low`                                                                                                            |
+| `file_path`   | Relative path from monorepo root                                                                                                      |
+| `description` | One-paragraph description with code references                                                                                        |
+| `details`     | Optional object: `{ "line_start"?: int, "line_end"?: int, "fix"?: str }`                                                              |
+| `actor`       | Optional object: `{ "agent"?: str, "model"?: str, "model_label"?: str, "reasoning_level"?: str, "branch"?: str, "commit_sha"?: str }` |
 
 ### After All Findings Recorded
 

@@ -2,24 +2,24 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Callable
 
 from .api import (
+    ArgSpec,
     archive_task_state,
     build_handoff_mcp,
     configure_runtime,
     dispatch_lane_work,
     export_handoff_state,
     generate_current_task_md,
-    get_artifact_source,
-    get_artifact_terms,
-    get_handoff_dashboard,
+    get_artifact,
     get_handoff_state,
     get_lane_activity,
     get_review_findings_summary,
     handoff_close_check,
     import_handoff_state,
-    list_artifact_sources,
     list_lane_messages,
     list_lane_briefs,
     list_review_findings,
@@ -56,10 +56,11 @@ from .api import (
     worker_event_history,
     worker_status,
     worker_stop,
+    _WORKER_REASONING_EFFORT_CHOICES,
 )
 from .config import RuntimeConfig
 
-WORKER_REASONING_EFFORT_CHOICES = ("inherit", "auto", "low", "medium", "high", "xhigh")
+WORKER_REASONING_EFFORT_CHOICES = _WORKER_REASONING_EFFORT_CHOICES
 
 
 def _print_json(payload: str | dict) -> None:
@@ -69,6 +70,730 @@ def _print_json(payload: str | dict) -> None:
     print(json.dumps(payload, indent=2, sort_keys=True))
 
 
+# ---------------------------------------------------------------------------
+# Registry infrastructure
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CliEntry:
+    """Registry entry for a single CLI sub-command."""
+
+    name: str
+    dispatch: Callable[[argparse.Namespace], Any]
+    description: str = ""
+    args: list[ArgSpec] = field(default_factory=list)
+
+
+def _auto_dispatch(handler: Callable[..., Any], cli_args: list[ArgSpec]) -> Callable[[argparse.Namespace], Any]:
+    """Generate a dispatch function from ArgSpec definitions.
+
+    Works for tools where every ArgSpec dest matches the handler parameter name directly.
+    Use ``_CLI_DISPATCH_OVERRIDES`` for tools that require custom logic (negations, dict
+    construction, file reading, etc.).
+    """
+    def dispatch(args: argparse.Namespace) -> Any:
+        kwargs: dict[str, Any] = {}
+        for spec in cli_args:
+            if spec.name.startswith("-"):
+                dest = spec.dest or spec.name.lstrip("-").replace("-", "_")
+            else:
+                dest = spec.dest or spec.name
+            kwargs[dest] = getattr(args, dest, None)
+        return handler(**kwargs)
+    return dispatch
+
+
+def _add_arg(sub: argparse.ArgumentParser, spec: ArgSpec) -> None:
+    """Add one ArgSpec to a subparser."""
+    is_positional = not spec.name.startswith("-")
+    kwargs: dict[str, Any] = {}
+    if spec.help:
+        kwargs["help"] = spec.help
+    if spec.action:
+        kwargs["action"] = spec.action
+        if spec.action == "store_true":
+            kwargs.setdefault("default", False)
+        elif spec.action == "append":
+            kwargs["default"] = spec.default if spec.default is not None else []
+    elif not is_positional:
+        if spec.type is not str:
+            kwargs["type"] = spec.type
+        kwargs["default"] = spec.default
+    else:
+        # positional — type and default handled by nargs
+        if spec.type is not str:
+            kwargs["type"] = spec.type
+    if not is_positional and spec.required:
+        kwargs["required"] = True
+    if spec.choices:
+        kwargs["choices"] = spec.choices
+    if spec.nargs:
+        kwargs["nargs"] = spec.nargs
+    if spec.dest and not is_positional:
+        kwargs["dest"] = spec.dest
+    sub.add_argument(spec.name, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Command dispatch functions
+# ---------------------------------------------------------------------------
+# Most MCP-registry tools are dispatched automatically via _auto_dispatch() in
+# _build_cli_registry(). Only tools that require custom argument handling
+# (negations, dict construction, file reading) need an explicit function here.
+
+
+
+
+def _dispatch_lane_upsert(args: argparse.Namespace) -> Any:
+    return upsert_worktree_lane(
+        task_ref=args.task_ref,
+        lane_id=args.lane_id,
+        worktree_path=args.worktree_path,
+        branch=args.branch,
+        title=args.title,
+        objective=args.objective,
+        owner_agent=args.owner_agent,
+        status=args.status,
+        model=args.model,
+        backend=args.backend,
+        reasoning_effort=args.reasoning_effort,
+        notes=args.notes,
+    )
+
+
+def _dispatch_lane_list(args: argparse.Namespace) -> Any:
+    return list_worktree_lanes(
+        task_ref=args.task_ref,
+        status=args.status,
+        limit=args.limit,
+        offset=args.offset,
+    )
+
+
+def _dispatch_lane_activity(args: argparse.Namespace) -> Any:
+    return get_lane_activity(
+        lane_id=args.lane_id,
+        task_ref=args.task_ref,
+        limit_decisions=args.limit_decisions,
+        limit_tests=args.limit_tests,
+        limit_blockers=args.limit_blockers,
+        limit_actions=args.limit_actions,
+        limit_findings=args.limit_findings,
+    )
+
+
+
+def _dispatch_lane_report(args: argparse.Namespace) -> Any:
+    return record_worker_report(
+        task_ref=args.task_ref,
+        lane_id=args.lane_id,
+        session=args.session,
+        summary=args.summary,
+        changed_files=args.changed_file,
+        test_commands=args.test_command,
+        blockers=args.blocker,
+        merge_ready=args.merge_ready,
+        status=args.status,
+    )
+
+
+def _dispatch_lane_report_list(args: argparse.Namespace) -> Any:
+    return list_worker_reports(
+        task_ref=args.task_ref,
+        lane_id=args.lane_id,
+        limit=args.limit,
+        offset=args.offset,
+    )
+
+
+def _dispatch_lane_message(args: argparse.Namespace) -> Any:
+    return record_lane_message(
+        task_ref=args.task_ref,
+        lane_id=args.lane_id,
+        session=args.session,
+        direction=args.direction,
+        message=args.message,
+        subject=args.subject,
+        status=args.status,
+        payload={"artifacts": args.artifact} if args.artifact else None,
+    )
+
+
+def _dispatch_lane_brief(args: argparse.Namespace) -> Any:
+    return record_lane_brief(
+        task_ref=args.task_ref,
+        lane_id=args.lane_id,
+        session=args.session,
+        source_lane=args.source_lane,
+        reason=args.reason,
+        summary=args.summary,
+        message=args.message,
+        required_actions=args.required_action,
+        artifacts=args.artifact,
+        status=args.status,
+    )
+
+
+def _dispatch_lane_message_update(args: argparse.Namespace) -> Any:
+    return update_lane_message(message_id=args.message_id, status=args.status, task_ref=args.task_ref)
+
+
+def _dispatch_lane_message_list(args: argparse.Namespace) -> Any:
+    return list_lane_messages(
+        task_ref=args.task_ref,
+        lane_id=args.lane_id,
+        status=args.status,
+        limit=args.limit,
+        offset=args.offset,
+    )
+
+
+def _dispatch_lane_brief_list(args: argparse.Namespace) -> Any:
+    return list_lane_briefs(
+        task_ref=args.task_ref,
+        lane_id=args.lane_id,
+        status=args.status,
+        limit=args.limit,
+        offset=args.offset,
+    )
+
+
+def _dispatch_review_record(args: argparse.Namespace) -> Any:
+    details: dict[str, int | str] = {}
+    if args.line_start is not None:
+        details["line_start"] = args.line_start
+    if args.line_end is not None:
+        details["line_end"] = args.line_end
+    if args.fix:
+        details["fix"] = args.fix
+    return record_review_finding(
+        session=args.session,
+        finding_id=args.finding_id,
+        severity=args.severity,
+        file_path=args.file_path,
+        description=args.description,
+        details=details or None,
+        task_ref=getattr(args, "task_ref", None),
+    )
+
+
+def _dispatch_review_summary(args: argparse.Namespace) -> Any:
+    return get_review_findings_summary(
+        task_ref=args.task_ref,
+        top_n_open=args.top_n_open,
+        top_n_recent_updates=args.top_n_recent_updates,
+    )
+
+
+def _dispatch_task(args: argparse.Namespace) -> Any:
+    return generate_current_task_md(task_ref=args.task_ref, write_file=not args.no_write)
+
+
+def _dispatch_export(args: argparse.Namespace) -> Any:
+    return export_handoff_state(
+        task_ref=args.task_ref,
+        output_path=args.output_path,
+        include_markdown=not args.no_markdown,
+    )
+
+
+def _dispatch_dispatch_lane_work(args: argparse.Namespace) -> Any:
+    return dispatch_lane_work(
+        task_ref=args.task_ref,
+        lane_id=args.lane_id,
+        model=args.model,
+        backend=args.backend,
+        reasoning_effort=args.reasoning_effort,
+    )
+
+
+def _dispatch_switch(args: argparse.Namespace) -> Any:
+    return switch_task(
+        task_ref=args.task_ref,
+        objective=args.objective,
+        focus=args.focus,
+        status=args.status,
+    )
+
+
+def _dispatch_orchestrator_start(args: argparse.Namespace) -> Any:
+    return orchestrator_start(
+        task_ref=args.task_ref,
+        backend=args.backend,
+        poll_interval=args.poll_interval,
+        worker_start_mode=args.worker_start_mode,
+        worker_reasoning_effort=args.worker_reasoning_effort,
+        single_pass=args.single_pass,
+    )
+
+
+def _dispatch_orchestrator_stop(args: argparse.Namespace) -> Any:
+    return orchestrator_stop(force=args.force)
+
+
+def _dispatch_worker_start(args: argparse.Namespace) -> Any:
+    return worker_start(
+        task_ref=args.task_ref,
+        lane_id=args.lane_id,
+        backend=args.backend,
+        poll_interval=args.poll_interval,
+        single_pass=args.single_pass,
+        session=args.session,
+        session_mode=args.session_mode,
+        reasoning_effort=args.reasoning_effort,
+        model=args.model,
+    )
+
+
+def _dispatch_worker_status(args: argparse.Namespace) -> Any:
+    return worker_status(task_ref=args.task_ref, lane_id=args.lane_id)
+
+
+def _dispatch_worker_event_history(args: argparse.Namespace) -> Any:
+    return worker_event_history(
+        task_ref=args.task_ref,
+        lane_id=args.lane_id,
+        limit=args.limit,
+        event_name=args.event_name,
+    )
+
+
+def _dispatch_worker_stop(args: argparse.Namespace) -> Any:
+    return worker_stop(task_ref=args.task_ref, lane_id=args.lane_id, force=args.force)
+
+
+def _dispatch_worker_resume(args: argparse.Namespace) -> Any:
+    return worker_resume(task_ref=args.task_ref, lane_id=args.lane_id)
+
+
+def _dispatch_worker_start_all(args: argparse.Namespace) -> Any:
+    return worker_start_all(
+        task_ref=args.task_ref,
+        backend=args.backend,
+        poll_interval=args.poll_interval,
+        single_pass=args.single_pass,
+        session_mode=args.session_mode,
+        reasoning_effort=args.reasoning_effort,
+        model=args.model,
+    )
+
+
+def _dispatch_run_structured_turn(args: argparse.Namespace) -> Any:
+    return run_structured_turn(
+        prompt=Path(args.prompt_file).read_text(),
+        schema=json.loads(Path(args.schema_file).read_text()),
+        cwd=args.cwd,
+        backend=args.backend,
+        timeout_seconds=args.timeout_seconds,
+    )
+
+
+def _dispatch_artifact_record(args: argparse.Namespace) -> Any:
+    content = args.content
+    if content is None and args.content_file:
+        content = Path(args.content_file).read_text()
+    return record_artifact(
+        task_ref=args.task_ref,
+        lane_id=args.lane_id,
+        app_root=args.app_root,
+        source_kind=args.source_kind,
+        source_label=args.source_label,
+        content=content or "",
+        content_type=args.content_type,
+        summary=args.summary,
+    )
+
+
+def _dispatch_artifact_list(args: argparse.Namespace) -> Any:
+    return search_artifacts(
+        task_ref=args.task_ref,
+        lane_id=args.lane_id,
+        app_root=args.app_root,
+        source_kind=args.source_kind,
+        limit=args.limit,
+        offset=args.offset,
+    )
+
+
+def _dispatch_artifact_terms(args: argparse.Namespace) -> Any:
+    return get_artifact(
+        source_id=args.source_id,
+        task_ref=args.task_ref,
+        source_label=args.source_label,
+        include_terms=True,
+        top_n_terms=args.top_n,
+    )
+
+
+# ---------------------------------------------------------------------------
+# CLI registry
+# ---------------------------------------------------------------------------
+
+# Tools that need custom dispatch logic (negation flags, dict construction,
+# or file-reading side effects). All other MCP tools use _auto_dispatch().
+_CLI_DISPATCH_OVERRIDES: dict[str, Callable[[argparse.Namespace], Any]] = {
+    "record_review_finding": _dispatch_review_record,
+    "generate_current_task_md": _dispatch_task,
+    "export_handoff_state": _dispatch_export,
+    "record_artifact": _dispatch_artifact_record,
+}
+
+
+def _build_cli_registry() -> list[CliEntry]:
+    from .api import _build_tool_registry  # noqa: PLC0415
+
+    _re = WORKER_REASONING_EFFORT_CHOICES
+
+    # Build entries for MCP tools that declare a cli_name.
+    registry: list[CliEntry] = []
+    for tool_entry in _build_tool_registry():
+        if tool_entry.cli_name is None:
+            continue
+        override = _CLI_DISPATCH_OVERRIDES.get(tool_entry.name)
+        dispatch_fn = override if override is not None else _auto_dispatch(tool_entry.handler, tool_entry.cli_args)
+        registry.append(
+            CliEntry(
+                name=tool_entry.cli_name,
+                dispatch=dispatch_fn,
+                description=tool_entry.description,
+                args=tool_entry.cli_args,
+            )
+        )
+
+    # CLI-only commands: lane management, orchestrator/worker daemons,
+    # extra artifact variants, and utility tools not in the MCP registry.
+    registry.extend([
+        # --- lane management (not in MCP tool registry) ---
+        CliEntry(
+            name="lane-upsert",
+            dispatch=_dispatch_lane_upsert,
+            description="Create or update a worktree lane.",
+            args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--lane-id", required=True),
+                ArgSpec("--worktree-path", required=True),
+                ArgSpec("--branch", required=True),
+                ArgSpec("--title"),
+                ArgSpec("--objective"),
+                ArgSpec("--owner-agent"),
+                ArgSpec("--status", default="planned"),
+                ArgSpec("--model"),
+                ArgSpec("--backend"),
+                ArgSpec("--reasoning-effort", choices=list(_re)),
+                ArgSpec("--notes"),
+            ],
+        ),
+        CliEntry(
+            name="lane-list",
+            dispatch=_dispatch_lane_list,
+            description="List registered worktree lanes.",
+            args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--status", default="all"),
+                ArgSpec("--limit", type=int, default=100),
+                ArgSpec("--offset", type=int, default=0),
+            ],
+        ),
+        CliEntry(
+            name="lane-activity",
+            dispatch=_dispatch_lane_activity,
+            description="Read lane activity summary.",
+            args=[
+                ArgSpec("--lane-id", required=True),
+                ArgSpec("--task-ref"),
+                ArgSpec("--limit-decisions", type=int, default=20),
+                ArgSpec("--limit-tests", type=int, default=20),
+                ArgSpec("--limit-blockers", type=int, default=20),
+                ArgSpec("--limit-actions", type=int, default=20),
+                ArgSpec("--limit-findings", type=int, default=20),
+            ],
+        ),
+        CliEntry(
+            name="lane-report",
+            dispatch=_dispatch_lane_report,
+            description="Record a worker report for a lane.",
+            args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--lane-id", required=True),
+                ArgSpec("--session", required=True),
+                ArgSpec("--summary", required=True),
+                ArgSpec("--changed-file", action="append", default=[]),
+                ArgSpec("--test-command", action="append", default=[]),
+                ArgSpec("--blocker", action="append", default=[]),
+                ArgSpec("--merge-ready", action="store_true"),
+                ArgSpec("--status", default="submitted"),
+            ],
+        ),
+        CliEntry(
+            name="lane-report-list",
+            dispatch=_dispatch_lane_report_list,
+            description="List worker reports.",
+            args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--lane-id"),
+                ArgSpec("--limit", type=int, default=20),
+                ArgSpec("--offset", type=int, default=0),
+            ],
+        ),
+        CliEntry(
+            name="lane-message",
+            dispatch=_dispatch_lane_message,
+            description="Create a lane message.",
+            args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--lane-id", required=True),
+                ArgSpec("--session", required=True),
+                ArgSpec("--direction", required=True),
+                ArgSpec("--message", required=True),
+                ArgSpec("--subject"),
+                ArgSpec("--status", default="open"),
+                ArgSpec("--artifact", action="append", default=[]),
+            ],
+        ),
+        CliEntry(
+            name="lane-brief",
+            dispatch=_dispatch_lane_brief,
+            description="Create a structured orchestrator-to-worker brief.",
+            args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--lane-id", required=True),
+                ArgSpec("--session", required=True),
+                ArgSpec("--source-lane", required=True),
+                ArgSpec("--reason", required=True),
+                ArgSpec("--summary", required=True),
+                ArgSpec("--message"),
+                ArgSpec("--required-action", action="append", default=[]),
+                ArgSpec("--artifact", action="append", default=[]),
+                ArgSpec("--status", default="open"),
+            ],
+        ),
+        CliEntry(
+            name="lane-message-update",
+            dispatch=_dispatch_lane_message_update,
+            description="Update the status of a lane message.",
+            args=[
+                ArgSpec("--message-id", type=int, required=True),
+                ArgSpec("--status", required=True),
+                ArgSpec("--task-ref"),
+            ],
+        ),
+        CliEntry(
+            name="lane-message-list",
+            dispatch=_dispatch_lane_message_list,
+            description="List lane messages.",
+            args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--lane-id"),
+                ArgSpec("--status", default="all"),
+                ArgSpec("--limit", type=int, default=20),
+                ArgSpec("--offset", type=int, default=0),
+            ],
+        ),
+        CliEntry(
+            name="lane-brief-list",
+            dispatch=_dispatch_lane_brief_list,
+            description="List lane briefs.",
+            args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--lane-id"),
+                ArgSpec("--status", default="open"),
+                ArgSpec("--limit", type=int, default=20),
+                ArgSpec("--offset", type=int, default=0),
+            ],
+        ),
+        # --- review extras ---
+        CliEntry(
+            name="review-summary",
+            dispatch=_dispatch_review_summary,
+            description="Return aggregate review finding counts.",
+            args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--top-n-open", type=int, default=10),
+                ArgSpec("--top-n-recent-updates", type=int, default=10),
+            ],
+        ),
+        # --- task switching ---
+        CliEntry(
+            name="switch",
+            dispatch=_dispatch_switch,
+            description="Switch active task (auto-archives the outgoing task).",
+            args=[
+                ArgSpec("task_ref", help="Task reference to activate."),
+                ArgSpec("--objective", help="Override objective."),
+                ArgSpec("--focus", help="Set current focus for the target task."),
+                ArgSpec("--status", default="in_progress"),
+            ],
+        ),
+        # --- lane work dispatch ---
+        CliEntry(
+            name="dispatch-lane-work",
+            dispatch=_dispatch_dispatch_lane_work,
+            description="Update lane dispatch parameters.",
+            args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--lane-id", required=True),
+                ArgSpec("--model"),
+                ArgSpec("--backend"),
+                ArgSpec("--reasoning-effort", choices=list(_re)),
+            ],
+        ),
+        # --- orchestrator daemon ---
+        CliEntry(
+            name="orchestrator-start",
+            dispatch=_dispatch_orchestrator_start,
+            description="Start the orchestrator daemon.",
+            args=[
+                ArgSpec("--task-ref", required=True),
+                ArgSpec("--backend", default="codex-cli"),
+                ArgSpec("--poll-interval", type=int, default=60),
+                ArgSpec("--worker-start-mode", default="mcp", choices=["mcp", "manual"]),
+                ArgSpec("--worker-reasoning-effort", default="auto", choices=list(_re)),
+                ArgSpec("--single-pass", action="store_true"),
+            ],
+        ),
+        CliEntry(
+            name="orchestrator-status",
+            dispatch=lambda args: orchestrator_status(),
+            description="Return orchestrator daemon status.",
+        ),
+        CliEntry(
+            name="orchestrator-stop",
+            dispatch=_dispatch_orchestrator_stop,
+            description="Stop the orchestrator daemon.",
+            args=[
+                ArgSpec("--force", action="store_true"),
+            ],
+        ),
+        CliEntry(
+            name="orchestrator-pause",
+            dispatch=lambda args: orchestrator_pause(),
+            description="Pause the orchestrator daemon.",
+        ),
+        CliEntry(
+            name="orchestrator-resume",
+            dispatch=lambda args: orchestrator_resume(),
+            description="Resume the orchestrator daemon.",
+        ),
+        # --- worker daemon ---
+        CliEntry(
+            name="worker-start",
+            dispatch=_dispatch_worker_start,
+            description="Start a lane worker daemon.",
+            args=[
+                ArgSpec("--task-ref", required=True),
+                ArgSpec("--lane-id", required=True),
+                ArgSpec("--backend", default="codex-subagent"),
+                ArgSpec("--model"),
+                ArgSpec("--poll-interval", type=int, default=30),
+                ArgSpec("--single-pass", action="store_true"),
+                ArgSpec("--session"),
+                ArgSpec("--session-mode", default="fresh_turn", choices=["fresh_turn", "shared_lane"]),
+                ArgSpec("--reasoning-effort", default="inherit", choices=list(_re)),
+            ],
+        ),
+        CliEntry(
+            name="worker-status",
+            dispatch=_dispatch_worker_status,
+            description="Return worker daemon status.",
+            args=[
+                ArgSpec("--task-ref", required=True),
+                ArgSpec("--lane-id", required=True),
+            ],
+        ),
+        CliEntry(
+            name="worker-event-history",
+            dispatch=_dispatch_worker_event_history,
+            description="Return recent worker-daemon events.",
+            args=[
+                ArgSpec("--task-ref", required=True),
+                ArgSpec("--lane-id", required=True),
+                ArgSpec("--limit", type=int, default=50),
+                ArgSpec("--event-name"),
+            ],
+        ),
+        CliEntry(
+            name="worker-stop",
+            dispatch=_dispatch_worker_stop,
+            description="Stop a lane worker daemon.",
+            args=[
+                ArgSpec("--task-ref", required=True),
+                ArgSpec("--lane-id", required=True),
+                ArgSpec("--force", action="store_true"),
+            ],
+        ),
+        CliEntry(
+            name="worker-resume",
+            dispatch=_dispatch_worker_resume,
+            description="Resume a stopped worker daemon.",
+            args=[
+                ArgSpec("--task-ref", required=True),
+                ArgSpec("--lane-id", required=True),
+            ],
+        ),
+        CliEntry(
+            name="worker-start-all",
+            dispatch=_dispatch_worker_start_all,
+            description="Start worker daemons for all lanes.",
+            args=[
+                ArgSpec("--task-ref", required=True),
+                ArgSpec("--backend", default="codex-subagent"),
+                ArgSpec("--model"),
+                ArgSpec("--poll-interval", type=int, default=30),
+                ArgSpec("--single-pass", action="store_true"),
+                ArgSpec("--session-mode", default="fresh_turn", choices=["fresh_turn", "shared_lane"]),
+                ArgSpec("--reasoning-effort", default="inherit", choices=list(_re)),
+            ],
+        ),
+        # --- structured turn ---
+        CliEntry(
+            name="run-structured-turn",
+            dispatch=_dispatch_run_structured_turn,
+            description="Execute one synchronous structured bridge turn.",
+            args=[
+                ArgSpec("--prompt-file", required=True),
+                ArgSpec("--schema-file", required=True),
+                ArgSpec("--cwd", required=True),
+                ArgSpec("--backend", default="codex-subagent"),
+                ArgSpec("--timeout-seconds", type=float, default=120.0),
+            ],
+        ),
+        # --- artifact extras (artifact-list and artifact-terms are CLI variants
+        #     of MCP tools with slightly different arg shapes) ---
+        CliEntry(
+            name="artifact-list",
+            dispatch=_dispatch_artifact_list,
+            description="List artifact sources.",
+            args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--lane-id"),
+                ArgSpec("--app-root"),
+                ArgSpec("--source-kind"),
+                ArgSpec("--limit", type=int, default=50),
+                ArgSpec("--offset", type=int, default=0),
+            ],
+        ),
+        CliEntry(
+            name="artifact-terms",
+            dispatch=_dispatch_artifact_terms,
+            description="Return artifact with distinctive terms.",
+            args=[
+                ArgSpec("--source-id", type=int),
+                ArgSpec("--task-ref"),
+                ArgSpec("--source-label"),
+                ArgSpec("--top-n", type=int, default=10),
+            ],
+        ),
+    ])
+
+    return registry
+
+
+# ---------------------------------------------------------------------------
+# Parser and main
+# ---------------------------------------------------------------------------
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Portable agent handoff MCP server")
     parser.add_argument("--workspace-root")
@@ -76,8 +801,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--current-task-path")
     parser.add_argument("--exports-dir")
 
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest="subcommand", required=True)
 
+    # Special-case commands not in the generic registry
     subparsers.add_parser("serve-stdio")
     http_parser = subparsers.add_parser("serve-http")
     http_parser.add_argument(
@@ -102,348 +828,11 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("doctor")
     subparsers.add_parser("dashboard").add_argument("--limit", type=int, default=20)
 
-    state_parser = subparsers.add_parser("state")
-    state_parser.add_argument("task_ref", nargs="?")
-    state_parser.add_argument("--verbose", action="store_true")
-
-    set_parser = subparsers.add_parser("set")
-    set_parser.add_argument("--task-ref", required=True)
-    set_parser.add_argument("--objective", required=True)
-    set_parser.add_argument("--status", default="in_progress")
-    set_parser.add_argument("--expected-revision", type=int)
-
-    decision_parser = subparsers.add_parser("decision")
-    decision_parser.add_argument("--session", required=True)
-    decision_parser.add_argument("--decision", required=True)
-    decision_parser.add_argument("--rationale")
-
-    action_parser = subparsers.add_parser("action")
-    action_parser.add_argument("--operation", required=True, choices=["add", "update", "complete", "skip"])
-    action_parser.add_argument("--action-id", type=int)
-    action_parser.add_argument("--text")
-    action_parser.add_argument("--priority", type=int)
-    action_parser.add_argument("--status")
-
-    lane_upsert_parser = subparsers.add_parser("lane-upsert")
-    lane_upsert_parser.add_argument("--task-ref")
-    lane_upsert_parser.add_argument("--lane-id", required=True)
-    lane_upsert_parser.add_argument("--worktree-path", required=True)
-    lane_upsert_parser.add_argument("--branch", required=True)
-    lane_upsert_parser.add_argument("--title")
-    lane_upsert_parser.add_argument("--objective")
-    lane_upsert_parser.add_argument("--owner-agent")
-    lane_upsert_parser.add_argument("--status", default="planned")
-    lane_upsert_parser.add_argument("--model")
-    lane_upsert_parser.add_argument("--backend")
-    lane_upsert_parser.add_argument("--reasoning-effort", choices=WORKER_REASONING_EFFORT_CHOICES)
-    lane_upsert_parser.add_argument("--notes")
-
-    lane_list_parser = subparsers.add_parser("lane-list")
-    lane_list_parser.add_argument("--task-ref")
-    lane_list_parser.add_argument("--status", default="all")
-    lane_list_parser.add_argument("--limit", type=int, default=100)
-    lane_list_parser.add_argument("--offset", type=int, default=0)
-
-    lane_activity_parser = subparsers.add_parser("lane-activity")
-    lane_activity_parser.add_argument("--lane-id", required=True)
-    lane_activity_parser.add_argument("--task-ref")
-    lane_activity_parser.add_argument("--limit-decisions", type=int, default=20)
-    lane_activity_parser.add_argument("--limit-tests", type=int, default=20)
-    lane_activity_parser.add_argument("--limit-blockers", type=int, default=20)
-    lane_activity_parser.add_argument("--limit-actions", type=int, default=20)
-    lane_activity_parser.add_argument("--limit-findings", type=int, default=20)
-
-    blocker_parser = subparsers.add_parser("blocker")
-    blocker_parser.add_argument("--operation", required=True, choices=["add", "resolve", "reopen"])
-    blocker_parser.add_argument("--description")
-    blocker_parser.add_argument("--blocker-id", type=int)
-
-    test_parser = subparsers.add_parser("test")
-    test_parser.add_argument("--session", required=True)
-    test_parser.add_argument("--command", dest="test_command", required=True)
-    test_parser.add_argument("--passed", action="store_true")
-    test_parser.add_argument("--result")
-    test_parser.add_argument("--exit-code", type=int)
-
-    report_parser = subparsers.add_parser("lane-report")
-    report_parser.add_argument("--task-ref")
-    report_parser.add_argument("--lane-id", required=True)
-    report_parser.add_argument("--session", required=True)
-    report_parser.add_argument("--summary", required=True)
-    report_parser.add_argument("--changed-file", action="append", default=[])
-    report_parser.add_argument("--test-command", action="append", default=[])
-    report_parser.add_argument("--blocker", action="append", default=[])
-    report_parser.add_argument("--merge-ready", action="store_true")
-    report_parser.add_argument("--status", default="submitted")
-
-    report_list_parser = subparsers.add_parser("lane-report-list")
-    report_list_parser.add_argument("--task-ref")
-    report_list_parser.add_argument("--lane-id")
-    report_list_parser.add_argument("--limit", type=int, default=20)
-    report_list_parser.add_argument("--offset", type=int, default=0)
-
-    message_parser = subparsers.add_parser("lane-message")
-    message_parser.add_argument("--task-ref")
-    message_parser.add_argument("--lane-id", required=True)
-    message_parser.add_argument("--session", required=True)
-    message_parser.add_argument("--direction", required=True)
-    message_parser.add_argument("--message", required=True)
-    message_parser.add_argument("--subject")
-    message_parser.add_argument("--status", default="open")
-    message_parser.add_argument("--artifact", action="append", default=[])
-
-    brief_parser = subparsers.add_parser("lane-brief")
-    brief_parser.add_argument("--task-ref")
-    brief_parser.add_argument("--lane-id", required=True)
-    brief_parser.add_argument("--session", required=True)
-    brief_parser.add_argument("--source-lane", required=True)
-    brief_parser.add_argument("--reason", required=True)
-    brief_parser.add_argument("--summary", required=True)
-    brief_parser.add_argument("--message")
-    brief_parser.add_argument("--required-action", action="append", default=[])
-    brief_parser.add_argument("--artifact", action="append", default=[])
-    brief_parser.add_argument("--status", default="open")
-
-    message_update_parser = subparsers.add_parser("lane-message-update")
-    message_update_parser.add_argument("--message-id", type=int, required=True)
-    message_update_parser.add_argument("--status", required=True)
-    message_update_parser.add_argument("--task-ref")
-
-    message_list_parser = subparsers.add_parser("lane-message-list")
-    message_list_parser.add_argument("--task-ref")
-    message_list_parser.add_argument("--lane-id")
-    message_list_parser.add_argument("--status", default="all")
-    message_list_parser.add_argument("--limit", type=int, default=20)
-    message_list_parser.add_argument("--offset", type=int, default=0)
-
-    brief_list_parser = subparsers.add_parser("lane-brief-list")
-    brief_list_parser.add_argument("--task-ref")
-    brief_list_parser.add_argument("--lane-id")
-    brief_list_parser.add_argument("--status", default="open")
-    brief_list_parser.add_argument("--limit", type=int, default=20)
-    brief_list_parser.add_argument("--offset", type=int, default=0)
-
-    review_record_parser = subparsers.add_parser("review-record")
-    review_record_parser.add_argument("--session", required=True)
-    review_record_parser.add_argument("--finding-id", required=True)
-    review_record_parser.add_argument("--severity", required=True)
-    review_record_parser.add_argument("--file-path", required=True)
-    review_record_parser.add_argument("--description", required=True)
-    review_record_parser.add_argument("--line-start", type=int)
-    review_record_parser.add_argument("--line-end", type=int)
-    review_record_parser.add_argument("--fix")
-    review_record_parser.add_argument("--task-ref")
-
-    review_update_parser = subparsers.add_parser("review-update")
-    review_update_parser.add_argument("--status", required=True)
-    review_update_parser.add_argument("--finding-id")
-    review_update_parser.add_argument("--finding-db-id", type=int)
-    review_update_parser.add_argument("--resolution-notes")
-    review_update_parser.add_argument("--reopen-reason")
-    review_update_parser.add_argument("--verified-commit-sha")
-    review_update_parser.add_argument("--verification-evidence")
-    review_update_parser.add_argument("--task-ref")
-    review_update_parser.add_argument("--session")
-
-    review_list_parser = subparsers.add_parser("review-list")
-    review_list_parser.add_argument("--task-ref")
-    review_list_parser.add_argument("--status", default="all")
-    review_list_parser.add_argument("--severity", default="all")
-    review_list_parser.add_argument("--limit", type=int, default=20)
-    review_list_parser.add_argument("--offset", type=int, default=0)
-
-    review_summary_parser = subparsers.add_parser("review-summary")
-    review_summary_parser.add_argument("--task-ref")
-    review_summary_parser.add_argument("--top-n-open", type=int, default=10)
-    review_summary_parser.add_argument("--top-n-recent-updates", type=int, default=10)
-
-    close_parser = subparsers.add_parser("handoff-close-check")
-    close_parser.add_argument("--task-ref")
-    close_parser.add_argument("--allow-no-active-task", action="store_true")
-    close_parser.add_argument("--enforce", action="store_true")
-    close_parser.add_argument("--require-fresh-tests", action="store_true")
-    close_parser.add_argument("--current-commit-sha")
-
-    task_parser = subparsers.add_parser("task")
-    task_parser.add_argument("task_ref", nargs="?")
-    task_parser.add_argument("--no-write", action="store_true")
-
-    export_parser = subparsers.add_parser("export")
-    export_parser.add_argument("--task-ref")
-    export_parser.add_argument("--output-path")
-    export_parser.add_argument("--no-markdown", action="store_true")
-
-    dispatch_parser = subparsers.add_parser("dispatch-lane-work")
-    dispatch_parser.add_argument("--task-ref")
-    dispatch_parser.add_argument("--lane-id", required=True)
-    dispatch_parser.add_argument("--model")
-    dispatch_parser.add_argument("--backend")
-    dispatch_parser.add_argument("--reasoning-effort", choices=WORKER_REASONING_EFFORT_CHOICES)
-
-    import_parser = subparsers.add_parser("import")
-    import_parser.add_argument("--input-path", required=True)
-    import_parser.add_argument("--mode", default="merge")
-    import_parser.add_argument("--set-active", action="store_true")
-    import_parser.add_argument("--allow-destructive-clear", action="store_true")
-
-    archive_parser = subparsers.add_parser("archive")
-    archive_parser.add_argument("--task-ref")
-    archive_parser.add_argument("--notes")
-    archive_parser.add_argument("--clear-active-if-matches", action="store_true")
-    archive_parser.add_argument("--prune-working-rows", action="store_true")
-    archive_parser.add_argument("--allow-destructive-clear", action="store_true")
-
-    switch_parser = subparsers.add_parser("switch", help="Switch active task (auto-archives the outgoing task).")
-    switch_parser.add_argument("task_ref", help="Task reference to activate.")
-    switch_parser.add_argument("--objective", help="Override objective (auto-resolved from archive if omitted).")
-    switch_parser.add_argument("--status", default="in_progress")
-
-    orchestrator_start_parser = subparsers.add_parser("orchestrator-start")
-    orchestrator_start_parser.add_argument("--task-ref", required=True)
-    orchestrator_start_parser.add_argument("--backend", default="codex-cli")
-    orchestrator_start_parser.add_argument("--poll-interval", type=int, default=60)
-    orchestrator_start_parser.add_argument("--worker-start-mode", default="mcp", choices=("mcp", "manual"))
-    orchestrator_start_parser.add_argument(
-        "--worker-reasoning-effort",
-        default="auto",
-        choices=WORKER_REASONING_EFFORT_CHOICES,
-    )
-    orchestrator_start_parser.add_argument("--single-pass", action="store_true")
-
-    subparsers.add_parser("orchestrator-status")
-
-    orchestrator_stop_parser = subparsers.add_parser("orchestrator-stop")
-    orchestrator_stop_parser.add_argument("--force", action="store_true")
-
-    subparsers.add_parser("orchestrator-pause")
-    subparsers.add_parser("orchestrator-resume")
-
-    worker_start_parser = subparsers.add_parser("worker-start")
-    worker_start_parser.add_argument("--task-ref", required=True)
-    worker_start_parser.add_argument("--lane-id", required=True)
-    worker_start_parser.add_argument("--backend", default="codex-subagent")
-    worker_start_parser.add_argument("--model")
-    worker_start_parser.add_argument("--poll-interval", type=int, default=30)
-    worker_start_parser.add_argument("--single-pass", action="store_true")
-    worker_start_parser.add_argument("--session")
-    worker_start_parser.add_argument("--session-mode", default="fresh_turn", choices=("fresh_turn", "shared_lane"))
-    worker_start_parser.add_argument(
-        "--reasoning-effort",
-        default="inherit",
-        choices=WORKER_REASONING_EFFORT_CHOICES,
-    )
-
-    worker_status_parser = subparsers.add_parser("worker-status")
-    worker_status_parser.add_argument("--task-ref", required=True)
-    worker_status_parser.add_argument("--lane-id", required=True)
-
-    worker_history_parser = subparsers.add_parser("worker-event-history")
-    worker_history_parser.add_argument("--task-ref", required=True)
-    worker_history_parser.add_argument("--lane-id", required=True)
-    worker_history_parser.add_argument("--limit", type=int, default=50)
-    worker_history_parser.add_argument("--event-name")
-
-    worker_stop_parser = subparsers.add_parser("worker-stop")
-    worker_stop_parser.add_argument("--task-ref", required=True)
-    worker_stop_parser.add_argument("--lane-id", required=True)
-    worker_stop_parser.add_argument("--force", action="store_true")
-
-    worker_resume_parser = subparsers.add_parser("worker-resume")
-    worker_resume_parser.add_argument("--task-ref", required=True)
-    worker_resume_parser.add_argument("--lane-id", required=True)
-
-    worker_start_all_parser = subparsers.add_parser("worker-start-all")
-    worker_start_all_parser.add_argument("--task-ref", required=True)
-    worker_start_all_parser.add_argument("--backend", default="codex-subagent")
-    worker_start_all_parser.add_argument("--model")
-    worker_start_all_parser.add_argument("--poll-interval", type=int, default=30)
-    worker_start_all_parser.add_argument("--single-pass", action="store_true")
-    worker_start_all_parser.add_argument("--session-mode", default="fresh_turn", choices=("fresh_turn", "shared_lane"))
-    worker_start_all_parser.add_argument(
-        "--reasoning-effort",
-        default="inherit",
-        choices=WORKER_REASONING_EFFORT_CHOICES,
-    )
-
-    turn_parser = subparsers.add_parser("run-structured-turn")
-    turn_parser.add_argument("--prompt-file", required=True)
-    turn_parser.add_argument("--schema-file", required=True)
-    turn_parser.add_argument("--cwd", required=True)
-    turn_parser.add_argument("--backend", default="codex-subagent")
-    turn_parser.add_argument("--timeout-seconds", type=float, default=120.0)
-
-    artifact_record_parser = subparsers.add_parser("artifact-record")
-    artifact_record_parser.add_argument("--task-ref")
-    artifact_record_parser.add_argument("--lane-id")
-    artifact_record_parser.add_argument("--app-root")
-    artifact_record_parser.add_argument("--source-kind", required=True)
-    artifact_record_parser.add_argument("--source-label", required=True)
-    artifact_record_parser.add_argument("--content-type", default="text/plain")
-    artifact_record_parser.add_argument("--summary")
-    artifact_record_parser.add_argument(
-        "--content-file",
-        help="Path to a file whose contents will be used as the artifact content.",
-    )
-    artifact_record_parser.add_argument(
-        "--content",
-        help="Artifact content as a string (use --content-file for large inputs).",
-    )
-
-    artifact_search_parser = subparsers.add_parser("artifact-search")
-    artifact_search_parser.add_argument("--query", dest="queries", action="append", required=True)
-    artifact_search_parser.add_argument("--task-ref")
-    artifact_search_parser.add_argument("--lane-id")
-    artifact_search_parser.add_argument("--app-root")
-    artifact_search_parser.add_argument("--source-kind")
-    artifact_search_parser.add_argument("--content-type")
-    artifact_search_parser.add_argument("--limit", type=int, default=10)
-
-    artifact_list_parser = subparsers.add_parser("artifact-list")
-    artifact_list_parser.add_argument("--task-ref")
-    artifact_list_parser.add_argument("--lane-id")
-    artifact_list_parser.add_argument("--app-root")
-    artifact_list_parser.add_argument("--source-kind")
-    artifact_list_parser.add_argument("--limit", type=int, default=50)
-    artifact_list_parser.add_argument("--offset", type=int, default=0)
-
-    artifact_get_parser = subparsers.add_parser("artifact-get")
-    artifact_get_parser.add_argument("--source-id", type=int)
-    artifact_get_parser.add_argument("--task-ref")
-    artifact_get_parser.add_argument("--source-label")
-
-    artifact_terms_parser = subparsers.add_parser("artifact-terms")
-    artifact_terms_parser.add_argument("--source-id", type=int)
-    artifact_terms_parser.add_argument("--task-ref")
-    artifact_terms_parser.add_argument("--source-label")
-    artifact_terms_parser.add_argument("--top-n", type=int, default=10)
-
-    artifact_purge_parser = subparsers.add_parser("artifact-purge")
-    artifact_purge_parser.add_argument("--task-ref")
-    artifact_purge_parser.add_argument("--lane-id")
-    artifact_purge_parser.add_argument("--app-root")
-    artifact_purge_parser.add_argument("--older-than-days", type=int)
-
-    handoff_search_parser = subparsers.add_parser(
-        "handoff-search",
-        help="Search canonical handoff records (decisions, findings, blockers, actions) by keyword (BM25/FTS5).",
-    )
-    handoff_search_parser.add_argument(
-        "--query",
-        action="append",
-        dest="queries",
-        metavar="TERM",
-        help="Search term (repeatable; multiple terms are OR-joined). At least one required.",
-    )
-    handoff_search_parser.add_argument("--task-ref", help="Scope results to a specific task.")
-    handoff_search_parser.add_argument("--lane-id", help="Scope results to a specific lane.")
-    handoff_search_parser.add_argument(
-        "--record-types",
-        nargs="+",
-        choices=["decision", "finding", "blocker", "action"],
-        metavar="TYPE",
-        help="Limit search to these record types (decision, finding, blocker, action).",
-    )
-    handoff_search_parser.add_argument("--limit", type=int, default=20, help="Max results (default 20, max 100).")
+    # Registry-driven commands
+    for entry in _build_cli_registry():
+        sub = subparsers.add_parser(entry.name, help=entry.description)
+        for spec in entry.args:
+            _add_arg(sub, spec)
 
     return parser
 
@@ -454,15 +843,16 @@ def main() -> None:
     config = RuntimeConfig.from_args(args)
     configure_runtime(config)
 
-    if args.command == "serve-stdio":
+    # Special-case commands
+    if args.subcommand == "serve-stdio":
         build_handoff_mcp(config).run(transport="stdio")
         return
-    if args.command == "serve-http":
+    if args.subcommand == "serve-http":
         build_handoff_mcp(config).run(
             transport="streamable-http", host=args.host, port=args.port,
         )
         return
-    if args.command == "single-cycle":
+    if args.subcommand == "single-cycle":
         _print_json(orchestrator_single_cycle(
             task_ref=args.task_ref,
             backend=args.backend,
@@ -472,460 +862,18 @@ def main() -> None:
             worker_reasoning_effort=args.worker_reasoning_effort,
         ))
         return
-    if args.command == "doctor":
+    if args.subcommand == "doctor":
         _print_json(run_doctor(config))
         return
-    if args.command == "dashboard":
-        _print_json(get_handoff_dashboard(limit=args.limit))
+    if args.subcommand == "dashboard":
+        _print_json(get_handoff_state(view="dashboard", top_n_findings=args.limit))
         return
-    if args.command == "state":
-        _print_json(get_handoff_state(task_ref=args.task_ref, verbose=args.verbose))
+
+    # Registry-driven dispatch
+    registry_map = {entry.name: entry for entry in _build_cli_registry()}
+    entry = registry_map.get(args.subcommand)
+    if entry is not None:
+        _print_json(entry.dispatch(args))
         return
-    if args.command == "set":
-        _print_json(
-            set_handoff_state(
-                task_ref=args.task_ref,
-                objective=args.objective,
-                status=args.status,
-                expected_revision=args.expected_revision,
-            )
-        )
-        return
-    if args.command == "decision":
-        _print_json(record_decision(session=args.session, decision=args.decision, rationale=args.rationale))
-        return
-    if args.command == "action":
-        _print_json(
-            update_next_actions(
-                operation=args.operation,
-                action_id=args.action_id,
-                action=args.text,
-                priority=args.priority,
-                status=args.status,
-            )
-        )
-        return
-    if args.command == "lane-upsert":
-        _print_json(
-            upsert_worktree_lane(
-                task_ref=args.task_ref,
-                lane_id=args.lane_id,
-                worktree_path=args.worktree_path,
-                branch=args.branch,
-                title=args.title,
-                objective=args.objective,
-                owner_agent=args.owner_agent,
-                status=args.status,
-                model=args.model,
-                backend=args.backend,
-                reasoning_effort=args.reasoning_effort,
-                notes=args.notes,
-            )
-        )
-        return
-    if args.command == "lane-list":
-        _print_json(
-            list_worktree_lanes(
-                task_ref=args.task_ref,
-                status=args.status,
-                limit=args.limit,
-                offset=args.offset,
-            )
-        )
-        return
-    if args.command == "lane-activity":
-        _print_json(
-            get_lane_activity(
-                lane_id=args.lane_id,
-                task_ref=args.task_ref,
-                limit_decisions=args.limit_decisions,
-                limit_tests=args.limit_tests,
-                limit_blockers=args.limit_blockers,
-                limit_actions=args.limit_actions,
-                limit_findings=args.limit_findings,
-            )
-        )
-        return
-    if args.command == "blocker":
-        _print_json(
-            report_blocker(
-                operation=args.operation,
-                description=args.description,
-                blocker_id=args.blocker_id,
-            )
-        )
-        return
-    if args.command == "test":
-        _print_json(
-            record_test_result(
-                session=args.session,
-                command=args.test_command,
-                passed=args.passed,
-                result=args.result,
-                exit_code=args.exit_code,
-            )
-        )
-        return
-    if args.command == "lane-report":
-        _print_json(
-            record_worker_report(
-                task_ref=args.task_ref,
-                lane_id=args.lane_id,
-                session=args.session,
-                summary=args.summary,
-                changed_files=args.changed_file,
-                test_commands=args.test_command,
-                blockers=args.blocker,
-                merge_ready=args.merge_ready,
-                status=args.status,
-            )
-        )
-        return
-    if args.command == "lane-report-list":
-        _print_json(
-            list_worker_reports(
-                task_ref=args.task_ref,
-                lane_id=args.lane_id,
-                limit=args.limit,
-                offset=args.offset,
-            )
-        )
-        return
-    if args.command == "lane-message":
-        _print_json(
-            record_lane_message(
-                task_ref=args.task_ref,
-                lane_id=args.lane_id,
-                session=args.session,
-                direction=args.direction,
-                message=args.message,
-                subject=args.subject,
-                status=args.status,
-                payload={"artifacts": args.artifact} if args.artifact else None,
-            )
-        )
-        return
-    if args.command == "lane-brief":
-        _print_json(
-            record_lane_brief(
-                task_ref=args.task_ref,
-                lane_id=args.lane_id,
-                session=args.session,
-                source_lane=args.source_lane,
-                reason=args.reason,
-                summary=args.summary,
-                message=args.message,
-                required_actions=args.required_action,
-                artifacts=args.artifact,
-                status=args.status,
-            )
-        )
-        return
-    if args.command == "lane-message-update":
-        _print_json(update_lane_message(message_id=args.message_id, status=args.status, task_ref=args.task_ref))
-        return
-    if args.command == "lane-message-list":
-        _print_json(
-            list_lane_messages(
-                task_ref=args.task_ref,
-                lane_id=args.lane_id,
-                status=args.status,
-                limit=args.limit,
-                offset=args.offset,
-            )
-        )
-        return
-    if args.command == "lane-brief-list":
-        _print_json(
-            list_lane_briefs(
-                task_ref=args.task_ref,
-                lane_id=args.lane_id,
-                status=args.status,
-                limit=args.limit,
-                offset=args.offset,
-            )
-        )
-        return
-    if args.command == "review-record":
-        details: dict[str, int | str] = {}
-        if args.line_start is not None:
-            details["line_start"] = args.line_start
-        if args.line_end is not None:
-            details["line_end"] = args.line_end
-        if args.fix:
-            details["fix"] = args.fix
-        _print_json(
-            record_review_finding(
-                session=args.session,
-                finding_id=args.finding_id,
-                severity=args.severity,
-                file_path=args.file_path,
-                description=args.description,
-                details=details or None,
-                task_ref=getattr(args, "task_ref", None),
-            )
-        )
-        return
-    if args.command == "review-update":
-        _print_json(
-            update_review_finding(
-                status=args.status,
-                finding_id=args.finding_id,
-                finding_db_id=args.finding_db_id,
-                resolution_notes=args.resolution_notes,
-                reopen_reason=args.reopen_reason,
-                verified_commit_sha=args.verified_commit_sha,
-                verification_evidence=args.verification_evidence,
-                task_ref=args.task_ref,
-                session=args.session,
-            )
-        )
-        return
-    if args.command == "review-list":
-        _print_json(
-            list_review_findings(
-                task_ref=args.task_ref,
-                status=args.status,
-                severity=args.severity,
-                limit=args.limit,
-                offset=args.offset,
-            )
-        )
-        return
-    if args.command == "review-summary":
-        _print_json(
-            get_review_findings_summary(
-                task_ref=args.task_ref,
-                top_n_open=args.top_n_open,
-                top_n_recent_updates=args.top_n_recent_updates,
-            )
-        )
-        return
-    if args.command == "handoff-close-check":
-        _print_json(
-            handoff_close_check(
-                task_ref=args.task_ref,
-                allow_no_active_task=args.allow_no_active_task,
-                enforce=args.enforce,
-                require_fresh_tests=args.require_fresh_tests,
-                current_commit_sha=args.current_commit_sha,
-            )
-        )
-        return
-    if args.command == "task":
-        _print_json(generate_current_task_md(task_ref=args.task_ref, write_file=not args.no_write))
-        return
-    if args.command == "export":
-        _print_json(
-            export_handoff_state(
-                task_ref=args.task_ref,
-                output_path=args.output_path,
-                include_markdown=not args.no_markdown,
-            )
-        )
-        return
-    if args.command == "import":
-        _print_json(
-            import_handoff_state(
-                input_path=args.input_path,
-                mode=args.mode,
-                set_active=args.set_active,
-                allow_destructive_clear=args.allow_destructive_clear,
-            )
-        )
-        return
-    if args.command == "dispatch-lane-work":
-        _print_json(
-            dispatch_lane_work(
-                task_ref=args.task_ref,
-                lane_id=args.lane_id,
-                model=args.model,
-                backend=args.backend,
-                reasoning_effort=args.reasoning_effort,
-            )
-        )
-        return
-    if args.command == "archive":
-        _print_json(
-            archive_task_state(
-                task_ref=args.task_ref,
-                notes=args.notes,
-                clear_active_if_matches=args.clear_active_if_matches,
-                prune_working_rows=args.prune_working_rows,
-                allow_destructive_clear=args.allow_destructive_clear,
-            )
-        )
-        return
-    if args.command == "switch":
-        _print_json(
-            switch_task(
-                task_ref=args.task_ref,
-                objective=args.objective,
-                status=args.status,
-            )
-        )
-        return
-    if args.command == "orchestrator-start":
-        _print_json(
-            orchestrator_start(
-                task_ref=args.task_ref,
-                backend=args.backend,
-                poll_interval=args.poll_interval,
-                worker_start_mode=args.worker_start_mode,
-                worker_reasoning_effort=args.worker_reasoning_effort,
-                single_pass=args.single_pass,
-            )
-        )
-        return
-    if args.command == "orchestrator-status":
-        _print_json(orchestrator_status())
-        return
-    if args.command == "orchestrator-stop":
-        _print_json(orchestrator_stop(force=args.force))
-        return
-    if args.command == "orchestrator-pause":
-        _print_json(orchestrator_pause())
-        return
-    if args.command == "orchestrator-resume":
-        _print_json(orchestrator_resume())
-        return
-    if args.command == "worker-start":
-        _print_json(
-            worker_start(
-                task_ref=args.task_ref,
-                lane_id=args.lane_id,
-                backend=args.backend,
-                poll_interval=args.poll_interval,
-                single_pass=args.single_pass,
-                session=args.session,
-                session_mode=args.session_mode,
-                reasoning_effort=args.reasoning_effort,
-                model=args.model,
-            )
-        )
-        return
-    if args.command == "worker-status":
-        _print_json(worker_status(task_ref=args.task_ref, lane_id=args.lane_id))
-        return
-    if args.command == "worker-event-history":
-        _print_json(
-            worker_event_history(
-                task_ref=args.task_ref,
-                lane_id=args.lane_id,
-                limit=args.limit,
-                event_name=args.event_name,
-            )
-        )
-        return
-    if args.command == "worker-stop":
-        _print_json(worker_stop(task_ref=args.task_ref, lane_id=args.lane_id, force=args.force))
-        return
-    if args.command == "worker-resume":
-        _print_json(worker_resume(task_ref=args.task_ref, lane_id=args.lane_id))
-        return
-    if args.command == "worker-start-all":
-        _print_json(
-            worker_start_all(
-                task_ref=args.task_ref,
-                backend=args.backend,
-                poll_interval=args.poll_interval,
-                single_pass=args.single_pass,
-                session_mode=args.session_mode,
-                reasoning_effort=args.reasoning_effort,
-                model=args.model,
-            )
-        )
-        return
-    if args.command == "run-structured-turn":
-        _print_json(
-            run_structured_turn(
-                prompt=Path(args.prompt_file).read_text(),
-                schema=json.loads(Path(args.schema_file).read_text()),
-                cwd=args.cwd,
-                backend=args.backend,
-                timeout_seconds=args.timeout_seconds,
-            )
-        )
-        return
-    if args.command == "artifact-record":
-        content = args.content
-        if content is None and args.content_file:
-            content = Path(args.content_file).read_text()
-        _print_json(
-            record_artifact(
-                task_ref=args.task_ref,
-                lane_id=args.lane_id,
-                app_root=args.app_root,
-                source_kind=args.source_kind,
-                source_label=args.source_label,
-                content=content or "",
-                content_type=args.content_type,
-                summary=args.summary,
-            )
-        )
-        return
-    if args.command == "artifact-search":
-        _print_json(
-            search_artifacts(
-                queries=args.queries,
-                task_ref=args.task_ref,
-                lane_id=args.lane_id,
-                app_root=args.app_root,
-                source_kind=args.source_kind,
-                content_type=args.content_type,
-                limit=args.limit,
-            )
-        )
-        return
-    if args.command == "artifact-list":
-        _print_json(
-            list_artifact_sources(
-                task_ref=args.task_ref,
-                lane_id=args.lane_id,
-                app_root=args.app_root,
-                source_kind=args.source_kind,
-                limit=args.limit,
-                offset=args.offset,
-            )
-        )
-        return
-    if args.command == "artifact-get":
-        _print_json(
-            get_artifact_source(
-                source_id=args.source_id,
-                task_ref=args.task_ref,
-                source_label=args.source_label,
-            )
-        )
-        return
-    if args.command == "artifact-terms":
-        _print_json(
-            get_artifact_terms(
-                source_id=args.source_id,
-                task_ref=args.task_ref,
-                source_label=args.source_label,
-                top_n=args.top_n,
-            )
-        )
-        return
-    if args.command == "artifact-purge":
-        _print_json(
-            purge_artifacts(
-                task_ref=args.task_ref,
-                lane_id=args.lane_id,
-                app_root=args.app_root,
-                older_than_days=args.older_than_days,
-            )
-        )
-        return
-    if args.command == "handoff-search":
-        _print_json(
-            search_handoff(
-                queries=args.queries,
-                task_ref=getattr(args, "task_ref", None),
-                lane_id=getattr(args, "lane_id", None),
-                record_types=getattr(args, "record_types", None),
-                limit=getattr(args, "limit", 20),
-            )
-        )
-        return
+
+    parser.error(f"Unknown command: {args.subcommand}")

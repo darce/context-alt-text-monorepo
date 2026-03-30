@@ -52,6 +52,7 @@ from ._shared import (  # noqa: F401
     WriteActor,
     _build_current_task_state_from_snapshot,
     _classify_commit_relation,
+    _collect_dashboard_rows,
     _collect_task_snapshot,
     _count_task_rows,
     # Git helpers (monkeypatched by tests via handoff_core.X)
@@ -314,10 +315,6 @@ def search_artifacts(
             return _json_response({"ok": True, "mode": "sources", "total": len(rows), "sources": rows})
         except RuntimeError as exc:
             return _json_response({"ok": False, "error": str(exc)})
-    if not isinstance(queries, list):
-        return _json_response(
-            {"ok": False, "error": "queries must be a list of strings or null/empty for source listing."}
-        )
     scope: dict[str, str | None] = {}
     if task_ref:
         with _get_db_connection() as conn:

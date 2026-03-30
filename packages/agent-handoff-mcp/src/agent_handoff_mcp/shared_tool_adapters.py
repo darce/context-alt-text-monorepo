@@ -25,7 +25,7 @@ def _resolve_awaitable(value: object) -> object:
     async def _await_value(awaitable: Awaitable[Any]) -> Any:
         return await awaitable
 
-    awaitable = cast(Awaitable[Any], value)
+    awaitable: Awaitable[Any] = value  # type: ignore[assignment]
     try:
         asyncio.get_running_loop()
     except RuntimeError:

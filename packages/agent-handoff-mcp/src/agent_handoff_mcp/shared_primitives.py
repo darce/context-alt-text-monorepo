@@ -349,7 +349,7 @@ def _resolve_current_lane_row(conn: sqlite3.Connection, task_ref: str) -> sqlite
         if raw_path is None:
             continue
         if _normalize_path_for_match(raw_path) == workspace_path:
-            return row
+            return row  # type: ignore[return-value]
     return None
 
 

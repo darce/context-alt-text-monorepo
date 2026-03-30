@@ -18,9 +18,10 @@ imports in this file would create a deadlock when this module is loaded first.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime
-from typing import NotRequired, TypedDict
+from typing import NotRequired, TypedDict, cast
 
 from .runtime import get_runtime_config
 from .shared_primitives import _decode_lane_message_row_dict, _decode_turn_metric_row_dict, _row_to_dict
@@ -59,6 +60,18 @@ class ReviewCoverageSummary(TypedDict, total=False):
     reopened_findings_count: int
 
 
+class DashboardTaskRow(TypedDict):
+    """Cross-task dashboard row rendered at the top of CURRENT_TASK.md."""
+
+    task_ref: str
+    status: str
+    last_activity: str | None
+    open_blockers: int
+    pending_actions: int
+    open_findings: int
+    archived_at: str | None
+
+
 class CurrentTaskRenderState(TypedDict):
     """Filtered, render-ready view of a task's handoff state."""
 
@@ -72,6 +85,7 @@ class CurrentTaskRenderState(TypedDict):
     worktree_lanes: list[dict]
     worker_reports_recent: list[dict]
     lane_messages_open: list[dict]
+    dashboard_tasks: NotRequired[list[DashboardTaskRow]]
     review_coverage: NotRequired[ReviewCoverageSummary | None]
     related_findings_open: NotRequired[dict[str, list[dict]]]
 
@@ -79,6 +93,124 @@ class CurrentTaskRenderState(TypedDict):
 # ---------------------------------------------------------------------------
 # Snapshot collection
 # ---------------------------------------------------------------------------
+
+
+def _collect_dashboard_rows(
+    conn: sqlite3.Connection, limit: int = 20, include_archived: bool = True
+) -> list[DashboardTaskRow]:
+    """Collect compact cross-task dashboard rows for CURRENT_TASK.md and dashboard view."""
+
+    limit = max(1, limit)
+    archive_union = (
+        "UNION ALL SELECT task_ref, archived_at AS updated_at FROM task_archives" if include_archived else ""
+    )
+    archived_filter = "" if include_archived else "WHERE archived.archived_at IS NULL"
+    rows = conn.execute(
+        """
+        WITH activity AS (
+            SELECT task_ref, updated_at FROM handoff_state WHERE id = 1
+            UNION ALL
+            SELECT task_ref, created_at AS updated_at FROM decisions
+            UNION ALL
+            SELECT task_ref, created_at AS updated_at FROM blockers
+            UNION ALL
+            SELECT task_ref, updated_at FROM next_actions
+            UNION ALL
+            SELECT task_ref, verified_at AS updated_at FROM verified_tests
+            UNION ALL
+            SELECT task_ref, COALESCE(updated_at, resolved_at, created_at) AS updated_at FROM review_findings
+            UNION ALL
+            SELECT task_ref, updated_at FROM worktree_lanes
+            UNION ALL
+            SELECT task_ref, created_at AS updated_at FROM worker_reports
+            UNION ALL
+            SELECT task_ref, updated_at FROM lane_messages
+        """
+        + archive_union
+        + """
+        ),
+        candidates AS (
+            SELECT task_ref, MAX(updated_at) AS last_activity
+            FROM activity
+            GROUP BY task_ref
+            ORDER BY MAX(updated_at) DESC
+            LIMIT ?
+        ),
+        blocker_counts AS (
+            SELECT task_ref, COUNT(*) AS open_blockers
+            FROM blockers
+            WHERE status = 'open'
+            GROUP BY task_ref
+        ),
+        action_counts AS (
+            SELECT task_ref, COUNT(*) AS pending_actions
+            FROM next_actions
+            WHERE status = 'pending'
+            GROUP BY task_ref
+        ),
+        finding_counts AS (
+            SELECT task_ref, COUNT(*) AS open_findings
+            FROM review_findings
+            WHERE status = 'open'
+            GROUP BY task_ref
+        ),
+        archived AS (
+            SELECT task_ref, archived_at, snapshot_json
+            FROM task_archives
+        ),
+        active_state AS (
+            SELECT task_ref, status
+            FROM handoff_state
+            WHERE id = 1
+        )
+        SELECT
+            candidates.task_ref,
+            candidates.last_activity,
+            COALESCE(blocker_counts.open_blockers, 0) AS open_blockers,
+            COALESCE(action_counts.pending_actions, 0) AS pending_actions,
+            COALESCE(finding_counts.open_findings, 0) AS open_findings,
+            archived.archived_at,
+            archived.snapshot_json,
+            active_state.status AS active_status
+        FROM candidates
+        LEFT JOIN blocker_counts ON blocker_counts.task_ref = candidates.task_ref
+        LEFT JOIN action_counts ON action_counts.task_ref = candidates.task_ref
+        LEFT JOIN finding_counts ON finding_counts.task_ref = candidates.task_ref
+        LEFT JOIN archived ON archived.task_ref = candidates.task_ref
+        LEFT JOIN active_state ON active_state.task_ref = candidates.task_ref
+        """
+        + archived_filter
+        + """
+        ORDER BY candidates.last_activity DESC
+        """,
+        (limit,),
+    ).fetchall()
+
+    dashboard_rows: list[DashboardTaskRow] = []
+    for row in rows:
+        task_ref = str(row["task_ref"])
+        archived_at = row["archived_at"]
+        status = row["active_status"] or ("archived" if archived_at else "active")
+        snapshot_json = row["snapshot_json"]
+        if archived_at and snapshot_json:
+            try:
+                archived_snapshot = json.loads(snapshot_json)
+                archived_active = archived_snapshot.get("active") or {}
+                status = archived_active.get("status") or status
+            except (TypeError, ValueError, json.JSONDecodeError):
+                pass
+        dashboard_rows.append(
+            {
+                "task_ref": task_ref,
+                "status": str(status),
+                "last_activity": row["last_activity"],
+                "open_blockers": int(row["open_blockers"] or 0),
+                "pending_actions": int(row["pending_actions"] or 0),
+                "open_findings": int(row["open_findings"] or 0),
+                "archived_at": archived_at,
+            }
+        )
+    return dashboard_rows
 
 
 def _collect_task_snapshot(conn: sqlite3.Connection, task_ref: str) -> TaskSnapshot:
@@ -139,14 +271,13 @@ def _build_current_task_state_from_snapshot(snapshot: TaskSnapshot) -> CurrentTa
 def _write_current_task_md_for_task(conn: sqlite3.Connection, task_ref: str) -> None:
     snapshot = _collect_task_snapshot(conn, task_ref)
     state = _build_current_task_state_from_snapshot(snapshot)
+    state["dashboard_tasks"] = _collect_dashboard_rows(conn)
     try:
-        import json as _json
-
         from .review_findings import (
-            get_review_coverage as _get_review_coverage,  # noqa: PLC0415 – late import to break circular
+            _collect_review_coverage,  # noqa: PLC0415 – late import to break circular
         )
 
-        state["review_coverage"] = _json.loads(_get_review_coverage(task_ref=task_ref))
+        state["review_coverage"] = cast(ReviewCoverageSummary, _collect_review_coverage(conn, task_ref=task_ref))
     except Exception:
         pass
     get_runtime_config().current_task_path.write_text(_render_current_task_md(state))
@@ -216,9 +347,7 @@ def _render_lanes_section(state: CurrentTaskRenderState) -> list[str]:
     else:
         lines.append("- None")
     lines.extend(["", "## Lane Dispatches"])
-    lane_message_rows = state.get("lane_messages_open")
-    if lane_message_rows is None:
-        lane_message_rows = [message for message in state.get("lane_messages", []) if message.get("status") == "open"]
+    lane_message_rows = state["lane_messages_open"]
     lane_messages = [message for message in lane_message_rows if message.get("direction") == "orchestrator_to_worker"]
     if lane_messages:
         for message in lane_messages:
@@ -285,6 +414,47 @@ def _render_coverage_section(state: CurrentTaskRenderState) -> list[str]:
     return lines
 
 
+def _format_dashboard_last_activity(last_activity: str | None) -> str:
+    if not last_activity:
+        return "-"
+    try:
+        timestamp = datetime.fromisoformat(last_activity.replace(" ", "T"))
+    except ValueError:
+        return last_activity
+    if timestamp.date() == datetime.now(UTC).date():
+        return timestamp.strftime("%H:%M")
+    return timestamp.strftime("%Y-%m-%d %H:%M")
+
+
+def _render_dashboard_section(tasks: list[DashboardTaskRow], active_task_ref: str | None) -> list[str]:
+    lines: list[str] = [
+        "",
+        "## All Tasks",
+        "",
+        "| | Task | Status | Findings | Blockers | Actions | Last Activity |",
+        "|---|---|---|---:|---:|---:|---|",
+    ]
+    if not tasks:
+        lines.append("| | _No tasks_ | - | 0 | 0 | 0 | - |")
+        return lines
+    for task in tasks:
+        task_ref = task.get("task_ref", "")
+        marker = "->" if active_task_ref and task_ref == active_task_ref else ""
+        task_label = f"**{task_ref}**" if marker else task_ref
+        lines.append(
+            "| {marker} | {task} | {status} | {findings} | {blockers} | {actions} | {last_activity} |".format(
+                marker=marker,
+                task=task_label,
+                status=task.get("status") or ("archived" if task.get("archived_at") else "active"),
+                findings=task.get("open_findings", 0),
+                blockers=task.get("open_blockers", 0),
+                actions=task.get("pending_actions", 0),
+                last_activity=_format_dashboard_last_activity(task.get("last_activity")),
+            )
+        )
+    return lines
+
+
 def _render_token_summary_section(decisions: list[dict]) -> list[str]:
     token_decisions = [d for d in decisions if d.get("total_tokens") is not None]
     if not token_decisions:
@@ -314,6 +484,7 @@ def _render_current_task_md(state: CurrentTaskRenderState) -> str:
     _generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     decisions = state.get("decisions_recent", [])
     latest_decision = decisions[0] if decisions else None
+    dashboard_tasks = state.get("dashboard_tasks", [])
 
     def _decision_line(item: dict) -> str:
         parts = f"- [#{item.get('id')}] {item.get('decision')}"
@@ -330,18 +501,25 @@ def _render_current_task_md(state: CurrentTaskRenderState) -> str:
             return single_line[:max_len] + "\u2026"
         return single_line
 
+    header_lines = [
+        "# CURRENT_TASK",
+        "",
+        f"_DO NOT EDIT: generated from .task-state/handoff.db. Last generated: {_generated_at}_",
+    ]
+    if dashboard_tasks:
+        header_lines.extend(_render_dashboard_section(dashboard_tasks, state.get("task_ref")))
+        header_lines.extend(["", "---", ""])
+    else:
+        header_lines.append("")
+
     if not active:
         has_data = any(
             state.get(key) for key in ("decisions_recent", "findings_open", "blockers_open", "actions_pending")
         )
         if not has_data:
-            return f"# CURRENT_TASK\n\n_DO NOT EDIT: generated from .task-state/handoff.db. Last generated: {_generated_at}_\n\nNo active handoff state found.\n"
+            return "\n".join(header_lines + ["No active handoff state found.", ""])
         task_ref_display = state.get("task_ref", "unknown")
-        lines: list[str] = [
-            "# CURRENT_TASK",
-            "",
-            f"_DO NOT EDIT: generated from .task-state/handoff.db. Last generated: {_generated_at}_",
-            "",
+        lines: list[str] = header_lines + [
             f"## Task Ref: `{task_ref_display}`",
             "",
             "> **Note**: No active `handoff_state` row for this task. Context assembled from available decisions, findings, blockers, and actions.",
@@ -349,11 +527,7 @@ def _render_current_task_md(state: CurrentTaskRenderState) -> str:
             "## Latest Decision",
         ]
     else:
-        lines = [
-            "# CURRENT_TASK",
-            "",
-            f"_DO NOT EDIT: generated from .task-state/handoff.db. Last generated: {_generated_at}_",
-            "",
+        lines = header_lines + [
             "## Objective",
             f"{active.get('objective', '')}",
             "",

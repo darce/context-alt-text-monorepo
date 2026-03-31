@@ -266,8 +266,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--tool-profile",
         default=None,
-        choices=["core", "full"],
-        help="MCP tool profile to expose: core (default, 16 tools) or full (all 27 tools).",
+        choices=["core", "extended"],
+        help="MCP tool profile to expose: core (16 tools) or extended (all 27 tools, default).",
     )
 
     subparsers = parser.add_subparsers(dest="subcommand", required=True)

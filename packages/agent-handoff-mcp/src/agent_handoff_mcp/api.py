@@ -502,9 +502,7 @@ def generate_current_task_md(
     state = json.loads(raw_state)
     with core._get_db_connection() as conn:
         state["dashboard_tasks"] = core._collect_dashboard_rows(conn)
-        state["related_findings_open"] = core._collect_all_open_findings(
-            conn, active_task_ref=state.get("task_ref")
-        )
+        state["related_findings_open"] = core._collect_all_open_findings(conn, active_task_ref=state.get("task_ref"))
         state["related_findings_deferred"] = core._collect_all_deferred_findings(
             conn, active_task_ref=state.get("task_ref")
         )
@@ -731,7 +729,7 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
                 "registry_counts": {
                     "core": _core_count,
                     "extended": _extended_count,
-                    "full": len(_registry),
+                    "total": len(_registry),
                 },
             },
             "cli_fallback_startup": True,

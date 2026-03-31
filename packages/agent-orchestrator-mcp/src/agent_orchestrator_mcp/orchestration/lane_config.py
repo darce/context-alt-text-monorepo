@@ -117,7 +117,7 @@ def _field_value(task_ref: str, lane_id: str, field: str, orchestrator_root: str
 
 
 def _task_candidates_for_lane(lane_id: str | None) -> list[str]:
-    tasks = list_task_refs()
+    tasks: list[str] = list(list_task_refs())
     if not lane_id:
         return tasks
     return [task_ref for task_ref in tasks if lane_id in list_lanes(task_ref)]
@@ -205,7 +205,7 @@ def resolve_task_choice(
             orchestrator_root=orchestrator_root,
         )
         if inferred:
-            return inferred
+            return str(inferred)
 
     lane_matches = _task_candidates_for_lane(lane_id)
     if len(lane_matches) == 1:

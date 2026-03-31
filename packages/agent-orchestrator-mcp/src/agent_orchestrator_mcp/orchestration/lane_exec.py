@@ -27,7 +27,6 @@ from backend_registry import get_adapter, get_backend_choices, validate_backend
 from bootstrap_lane import _bootstrap as bootstrap_lane
 from lane_manifest import get_lane_config
 
-
 BACKEND_CHOICES = get_backend_choices()
 
 

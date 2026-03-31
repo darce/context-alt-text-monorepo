@@ -9,6 +9,9 @@ import json
 import sqlite3
 from typing import Any
 
+from agent_handoff_mcp.current_task_rendering import _write_current_task_md_for_task
+from agent_handoff_mcp.shared_archival import _build_archival_lane_activity_summary
+from agent_handoff_mcp.shared_db_utils import _fetch_handoff_rows, _paginated_query
 from agent_handoff_mcp.shared_primitives import (
     CLOSEABLE_LANE_STATUSES,
     LANE_MESSAGE_DIRECTIONS,
@@ -28,18 +31,16 @@ from agent_handoff_mcp.shared_primitives import (
     _row_to_dict,
     _workspace_root,
 )
-from agent_handoff_mcp.shared_write_context import WriteActor, _resolve_write_actor
 from agent_handoff_mcp.shared_schema import _get_db_connection
-from agent_handoff_mcp.shared_db_utils import _fetch_handoff_rows, _paginated_query
-from agent_handoff_mcp.shared_archival import _build_archival_lane_activity_summary
-from agent_handoff_mcp.current_task_rendering import _write_current_task_md_for_task
+from agent_handoff_mcp.shared_write_context import WriteActor, _resolve_write_actor
 
 
 def _get_lane_row(conn: sqlite3.Connection, task_ref: str, lane_id: str) -> sqlite3.Row | None:
-    return conn.execute(
+    result: sqlite3.Row | None = conn.execute(
         "SELECT * FROM worktree_lanes WHERE task_ref = ? AND lane_id = ?",
         (task_ref, lane_id),
     ).fetchone()
+    return result
 
 
 def upsert_worktree_lane(

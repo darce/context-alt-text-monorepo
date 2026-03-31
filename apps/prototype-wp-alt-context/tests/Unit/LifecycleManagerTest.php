@@ -134,7 +134,136 @@ class LifecycleManagerTest extends TestCase
 
         $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
         $this->assertCount(14, $queries);
-        $this->assertStringNotContainsString('DROP TABLE', implode("\n", $queries));
+        $this->assertStringNotContainsString('DROP TABLE', \implode("\n", $queries));
+    }
+
+    public function testActivateImportsLegacyRosterDataBeforeRetiringOptions(): void
+    {
+        global $wpdb;
+
+        $this->setOption('acx_roster_entries', [
+            [
+                'id' => 7,
+                'name' => 'Ada Lovelace',
+                'tags' => ['analyst'],
+            ],
+        ]);
+        $this->setOption('acx_roster_assignments', [
+            'cluster-123' => [
+                'roster_entry_id' => 7,
+            ],
+        ]);
+        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE name = 'Ada Lovelace'"] = null;
+
+        $this->manager->activate();
+
+        $personInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_persons');
+        $this->assertStringContainsString("'Ada Lovelace'", $personInsert);
+        $this->assertStringContainsString('analyst', $personInsert);
+
+        $clusterUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_clusters SET person_id = 1');
+        $this->assertStringContainsString("cluster_uuid = 'cluster-123'", $clusterUpdate);
+
+        $this->assertFalse(get_option('acx_roster_entries'));
+        $this->assertFalse(get_option('acx_roster_assignments'));
+    }
+
+    public function testActivateKeepsLegacyRosterOptionsWhenAssignmentImportFails(): void
+    {
+        global $wpdb;
+
+        $legacyEntries = [
+            [
+                'id' => 9,
+                'name' => 'Grace Hopper',
+                'tags' => ['navy'],
+            ],
+        ];
+        $legacyAssignments = [
+            'cluster-999' => [
+                'roster_entry_id' => 9,
+            ],
+        ];
+
+        $this->setOption('acx_roster_entries', $legacyEntries);
+        $this->setOption('acx_roster_assignments', $legacyAssignments);
+        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE name = 'Grace Hopper'"] = null;
+        $wpdb->defaultUpdateResult = 0;
+
+        $this->manager->activate();
+
+        $personInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_persons');
+        $this->assertStringContainsString("'Grace Hopper'", $personInsert);
+        $clusterUpdate = $this->findQueryContaining($wpdb->queries, "WHERE cluster_uuid = 'cluster-999'");
+        $this->assertStringContainsString('UPDATE wp_acx_clusters SET person_id = 1', $clusterUpdate);
+
+        $this->assertSame($legacyEntries, get_option('acx_roster_entries'));
+        $this->assertSame($legacyAssignments, get_option('acx_roster_assignments'));
+    }
+
+    public function testActivateRetiresLegacyOptionsWhenAssignmentAlreadyMatchesImportedPerson(): void
+    {
+        global $wpdb;
+
+        $this->setOption('acx_roster_entries', [
+            [
+                'id' => 15,
+                'name' => 'Katherine Johnson',
+                'tags' => ['nasa'],
+            ],
+        ]);
+        $this->setOption('acx_roster_assignments', [
+            'cluster-321' => [
+                'roster_entry_id' => 15,
+            ],
+        ]);
+
+        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE name = 'Katherine Johnson'"] = 13;
+        $wpdb->queryResults["SELECT person_id FROM `wp_acx_clusters` WHERE cluster_uuid = 'cluster-321' LIMIT 1"] = 13;
+        $wpdb->defaultUpdateResult = 0;
+
+        $this->manager->activate();
+
+        $this->assertFalse(get_option('acx_roster_entries'));
+        $this->assertFalse(get_option('acx_roster_assignments'));
+        $this->assertSame(
+            "SELECT person_id FROM `wp_acx_clusters` WHERE cluster_uuid = 'cluster-321' LIMIT 1",
+            $this->findQueryContaining($wpdb->queries, 'SELECT person_id FROM `wp_acx_clusters` WHERE cluster_uuid = \'cluster-321\' LIMIT 1')
+        );
+    }
+
+    public function testActivateSkipsMalformedLegacyRosterDataAndStillRetiresOptions(): void
+    {
+        global $wpdb;
+
+        $this->setOption('acx_roster_entries', [
+            [
+                'id' => 21,
+                'name' => 'Dorothy Vaughan',
+                'tags' => ['nasa'],
+            ],
+            [
+                'id' => 22,
+                'name' => '   ',
+            ],
+        ]);
+        $this->setOption('acx_roster_assignments', [
+            'cluster-654' => [
+                'roster_entry_id' => 21,
+            ],
+            'cluster-invalid' => 'skip-me',
+        ]);
+        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE name = 'Dorothy Vaughan'"] = null;
+
+        $this->manager->activate();
+
+        $personInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_persons');
+        $this->assertStringContainsString("'Dorothy Vaughan'", $personInsert);
+        $clusterUpdate = $this->findQueryContaining($wpdb->queries, "WHERE cluster_uuid = 'cluster-654'");
+        $this->assertStringContainsString('UPDATE wp_acx_clusters SET person_id = 1', $clusterUpdate);
+
+        $this->assertFalse(get_option('acx_roster_entries'));
+        $this->assertFalse(get_option('acx_roster_assignments'));
     }
 
     /**
@@ -143,7 +272,7 @@ class LifecycleManagerTest extends TestCase
     public function testUninstallRemovesVersionOption(): void
     {
         $this->setOption('acx_version', '1.0.0');
-        $this->setOption('acx_installed', time());
+        $this->setOption('acx_installed', \time());
 
         $this->manager->uninstall();
 
@@ -159,7 +288,7 @@ class LifecycleManagerTest extends TestCase
     public function testUninstallRemovesInstallTimestamp(): void
     {
         $this->setOption('acx_version', '1.0.0');
-        $this->setOption('acx_installed', time());
+        $this->setOption('acx_installed', \time());
 
         $this->manager->uninstall();
 
@@ -171,8 +300,8 @@ class LifecycleManagerTest extends TestCase
 
     public function testDeactivateClearsSnapshotSyncSchedule(): void
     {
-        wp_schedule_single_event(time() + 300, 'acx_sync_pull_snapshot');
-		wp_schedule_single_event(time() + 300, 'acx_sync_drain_curation_outbox');
+        wp_schedule_single_event(\time() + 300, 'acx_sync_pull_snapshot');
+		wp_schedule_single_event(\time() + 300, 'acx_sync_drain_curation_outbox');
         $this->assertNotFalse(wp_next_scheduled('acx_sync_pull_snapshot'));
 		$this->assertNotFalse(wp_next_scheduled('acx_sync_drain_curation_outbox'));
 
@@ -194,8 +323,8 @@ class LifecycleManagerTest extends TestCase
 
     public function testUninstallClearsSnapshotSyncSchedule(): void
     {
-        wp_schedule_single_event(time() + 300, 'acx_sync_pull_snapshot');
-		wp_schedule_single_event(time() + 300, 'acx_sync_drain_curation_outbox');
+        wp_schedule_single_event(\time() + 300, 'acx_sync_pull_snapshot');
+		wp_schedule_single_event(\time() + 300, 'acx_sync_drain_curation_outbox');
         $this->assertNotFalse(wp_next_scheduled('acx_sync_pull_snapshot'));
 		$this->assertNotFalse(wp_next_scheduled('acx_sync_drain_curation_outbox'));
 
@@ -252,5 +381,16 @@ class LifecycleManagerTest extends TestCase
         $this->manager->uninstall();
         $this->assertFalse(get_option('acx_version'));
         $this->assertFalse(get_option('acx_installed'));
+    }
+
+    private function findQueryContaining(array $queries, string $needle): string
+    {
+        foreach ($queries as $query) {
+            if (str_contains($query, $needle)) {
+                return $query;
+            }
+        }
+
+        $this->fail(\sprintf('Could not find query containing "%s".', $needle));
     }
 }

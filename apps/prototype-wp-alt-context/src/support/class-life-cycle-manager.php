@@ -72,25 +72,94 @@ class LifecycleManager {
 		global $wpdb;
 		$table_persons  = $wpdb->prefix . 'acx_persons';
 		$table_clusters = $wpdb->prefix . 'acx_clusters';
+		$id_map         = array();
+		$migration_complete = true;
 
-		// 1. Import persons
-		$id_map = array(); // legacy_id -> new_db_id
 		foreach ( (array) $legacy_entries as $entry ) {
-			if ( ! isset( $entry['id'], $entry['name'] ) ) {
-				continue;
+			if ( ! $this->import_legacy_roster_entry( $entry, $table_persons, $wpdb, $id_map ) ) {
+				$migration_complete = false;
 			}
+		}
 
-			$legacy_id = (int) $entry['id'];
-			$name      = sanitize_text_field( (string) $entry['name'] );
-			$tags      = isset( $entry['tags'] ) ? (array) $entry['tags'] : array();
+		foreach ( (array) $legacy_assignments as $cluster_id => $data ) {
+			if ( ! $this->import_legacy_roster_assignment( $cluster_id, $data, $id_map, $table_persons, $table_clusters, $wpdb ) ) {
+				$migration_complete = false;
+			}
+		}
 
-			// Check if already exists by name to avoid duplicates
+		if ( ! $migration_complete ) {
+			return;
+		}
+
+		delete_option( 'acx_roster_entries' );
+		delete_option( 'acx_roster_assignments' );
+	}
+
+	private function import_legacy_roster_entry( mixed $entry, string $table_persons, object $wpdb, array &$id_map ): bool {
+		if ( ! is_array( $entry ) || ! isset( $entry['id'], $entry['name'] ) ) {
+			return true;
+		}
+
+		$legacy_id = (int) $entry['id'];
+		$name      = sanitize_text_field( (string) $entry['name'] );
+
+		if ( '' === trim( $name ) ) {
+			return true;
+		}
+
+		$tags        = isset( $entry['tags'] ) ? (array) $entry['tags'] : array();
+		$existing_id = $wpdb->get_var(
+			$wpdb->prepare( 'SELECT id FROM %i WHERE name = %s', $table_persons, $name )
+		);
+
+		if ( $existing_id ) {
+			$id_map[ $legacy_id ] = (int) $existing_id;
+			return true;
+		}
+
+		$person_uuid = wp_generate_uuid4();
+		$now         = current_time( 'mysql' );
+		$inserted    = $wpdb->insert(
+			$table_persons,
+			array(
+				'person_uuid' => $person_uuid,
+				'name'        => $name,
+				'tags'        => wp_json_encode( $tags ),
+				'created_at'  => $now,
+				'updated_at'  => $now,
+			)
+		);
+
+		if ( ! $inserted ) {
+			return false;
+		}
+
+		$id_map[ $legacy_id ] = (int) $wpdb->insert_id;
+		return true;
+	}
+
+	private function import_legacy_roster_assignment( mixed $legacy_cluster_id, mixed $data, array $id_map, string $table_persons, string $table_clusters, object $wpdb ): bool {
+		if ( ! is_array( $data ) ) {
+			return true;
+		}
+
+		$cluster_id = sanitize_text_field( (string) $legacy_cluster_id );
+		if ( '' === trim( $cluster_id ) ) {
+			return true;
+		}
+
+		$legacy_entry_id = isset( $data['roster_entry_id'] ) ? (int) $data['roster_entry_id'] : null;
+		$new_name        = isset( $data['new_entry_name'] ) ? sanitize_text_field( (string) $data['new_entry_name'] ) : '';
+		$final_person_id = null;
+
+		if ( $legacy_entry_id && isset( $id_map[ $legacy_entry_id ] ) ) {
+			$final_person_id = $id_map[ $legacy_entry_id ];
+		} elseif ( '' !== trim( $new_name ) ) {
 			$existing_id = $wpdb->get_var(
-				$wpdb->prepare( 'SELECT id FROM %i WHERE name = %s', $table_persons, $name )
+				$wpdb->prepare( 'SELECT id FROM %i WHERE name = %s', $table_persons, $new_name )
 			);
-
 			if ( $existing_id ) {
-				$id_map[ $legacy_id ] = (int) $existing_id;
+				$final_person_id = (int) $existing_id;
 			} else {
 				$person_uuid = wp_generate_uuid4();
 				$now         = current_time( 'mysql' );
@@ -98,70 +167,52 @@ class LifecycleManager {
 					$table_persons,
 					array(
 						'person_uuid' => $person_uuid,
-						'name'        => $name,
-						'tags'        => wp_json_encode( $tags ),
+						'name'        => $new_name,
+						'tags'        => wp_json_encode( array() ),
 						'created_at'  => $now,
 						'updated_at'  => $now,
 					)
 				);
-				if ( $inserted ) {
-					$id_map[ $legacy_id ] = (int) $wpdb->insert_id;
+
+				if ( ! $inserted ) {
+					return false;
 				}
+
+				$final_person_id = (int) $wpdb->insert_id;
 			}
 		}
 
-		// 2. Import assignments
-		foreach ( (array) $legacy_assignments as $cluster_id => $data ) {
-			$cluster_id = sanitize_text_field( (string) $cluster_id );
-			$legacy_eid = isset( $data['roster_entry_id'] ) ? (int) $data['roster_entry_id'] : null;
-			$new_name   = isset( $data['new_entry_name'] ) ? sanitize_text_field( (string) $data['new_entry_name'] ) : null;
-
-			$final_person_id = null;
-
-			if ( $legacy_eid && isset( $id_map[ $legacy_eid ] ) ) {
-				$final_person_id = $id_map[ $legacy_eid ];
-			} elseif ( $new_name ) {
-				// Handle entry names that weren't in entries yet
-				$existing_id = $wpdb->get_var(
-					$wpdb->prepare( 'SELECT id FROM %i WHERE name = %s', $table_persons, $new_name )
-				);
-				if ( $existing_id ) {
-					$final_person_id = (int) $existing_id;
-				} else {
-					$person_uuid = wp_generate_uuid4();
-					$now         = current_time( 'mysql' );
-					$inserted    = $wpdb->insert(
-						$table_persons,
-						array(
-							'person_uuid' => $person_uuid,
-							'name'        => $new_name,
-							'tags'        => wp_json_encode( array() ),
-							'created_at'  => $now,
-							'updated_at'  => $now,
-						)
-					);
-					if ( $inserted ) {
-						$final_person_id = (int) $wpdb->insert_id;
-					}
-				}
-			}
-
-			if ( $final_person_id ) {
-				$wpdb->update(
-					$table_clusters,
-					array(
-						'person_id' => $final_person_id,
-					),
-					array( 'cluster_uuid' => $cluster_id ),
-					array( '%d' ),
-					array( '%s' )
-				);
-			}
+		if ( null === $final_person_id ) {
+			return true;
 		}
 
-		// 3. Retire legacy options
-		delete_option( 'acx_roster_entries' );
-		delete_option( 'acx_roster_assignments' );
+		$updated = $wpdb->update(
+			$table_clusters,
+			array(
+				'person_id' => $final_person_id,
+			),
+			array( 'cluster_uuid' => $cluster_id ),
+			array( '%d' ),
+			array( '%s' )
+		);
+
+		if ( false === $updated ) {
+			return false;
+		}
+
+		if ( 0 === $updated ) {
+			return $this->legacy_assignment_already_imported( $cluster_id, $final_person_id, $table_clusters, $wpdb );
+		}
+
+		return true;
+	}
+
+	private function legacy_assignment_already_imported( string $cluster_id, int $final_person_id, string $table_clusters, object $wpdb ): bool {
+		$current_person_id = $wpdb->get_var(
+			$wpdb->prepare( 'SELECT person_id FROM %i WHERE cluster_uuid = %s LIMIT 1', $table_clusters, $cluster_id )
+		);
+
+		return null !== $current_person_id && $final_person_id === (int) $current_person_id;
 	}
 
 	/**

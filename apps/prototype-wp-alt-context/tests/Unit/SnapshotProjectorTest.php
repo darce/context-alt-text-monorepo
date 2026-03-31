@@ -170,6 +170,34 @@ class SnapshotProjectorTest extends TestCase
         $this->assertSame([], $snapshotEvents);
     }
 
+    public function testProjectTreatsEmptyClusterPayloadWithSnapshotVersionAsDeltaMerge(): void
+    {
+        global $wpdb;
+
+        $clustersRepo = new SnapshotProjectorClustersSpy();
+        $membersRepo = new SnapshotProjectorMembersSpy();
+        $syncRepo = new SnapshotProjectorSyncStateSpy();
+
+        $projector = new SnapshotProjector($clustersRepo, $membersRepo, $syncRepo);
+        $projector->project(
+            'tenant-delta-empty',
+            [
+                'snapshot_version' => 21,
+                'clusters' => [],
+                'members' => [],
+            ]
+        );
+
+        $this->assertContains('START TRANSACTION', $wpdb->queries);
+        $this->assertContains('COMMIT', $wpdb->queries);
+        $this->assertNotContains('ROLLBACK', $wpdb->queries);
+        $this->assertSame('tenant-delta-empty', $clustersRepo->tenantId);
+        $this->assertSame([], $clustersRepo->clusters);
+        $this->assertSame([], $membersRepo->members);
+        $this->assertSame(21, $syncRepo->snapshotVersion);
+        $this->assertSame('tenant-delta-empty', $syncRepo->refreshedTenantId);
+    }
+
     public function testProjectRecordsCuratedClusterDeletionConflictsAndRefreshesMetrics(): void
     {
         global $wpdb;

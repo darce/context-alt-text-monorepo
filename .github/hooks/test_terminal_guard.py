@@ -191,9 +191,11 @@ def test_ls_is_allowlisted() -> None:
         # Pipe output-control patterns
         "pytest tests/ | tail -n 40",
         "make test 2>&1 | tail -n 30",
-        # File deletion (non-recursive)
+        # File deletion (non-recursive and recursive without force)
         "rm tests/test_pytest_progress_heartbeat.py",
         "rm /tmp/pytest_output.txt",
+        "rm -r /Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/.hypothesis",
+        "rm -r .hypothesis",
     ],
 )
 def test_allowlisted_commands_pass_through(command: str) -> None:
@@ -216,6 +218,28 @@ def test_git_status_bare_is_blocked() -> None:
 
 def test_git_status_sb_is_allowed() -> None:
     assert _check_command("git status -sb") is None, "git status -sb should pass through silently"
+
+
+# ---------------------------------------------------------------------------
+# rm boundary: rm and rm -r allowed; rm -rf / rm -fr / rm -r -f denied.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm -rf /some/dir",
+        "rm -fr /some/dir",
+        "rm -r -f /some/dir",
+    ],
+)
+def test_rm_force_is_denied(command: str) -> None:
+    result = _check_command(command)
+    assert result is not None, f"Expected denial for {command!r}"
+
+
+def test_rm_recursive_without_force_is_allowed() -> None:
+    assert _check_command("rm -r .hypothesis") is None
 
 
 # ---------------------------------------------------------------------------

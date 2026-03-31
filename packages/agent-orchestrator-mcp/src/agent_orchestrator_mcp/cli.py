@@ -324,8 +324,7 @@ def main() -> None:
 
     # --- metrics ---
     if cmd == "metrics":
-        result = get_metrics_summary(task_ref=args.task_ref, output_format=args.output_format)
-        print(result)
+        print(get_metrics_summary(task_ref=args.task_ref, output_format=args.output_format))
         return
 
     parser.error(f"Unknown command: {cmd}")

@@ -58,7 +58,7 @@ def _route_lane(task_ref: str, file_path: str) -> str | None:
     normalized_path = file_path.strip()
     for pattern, lane_id in patterns:
         if normalized_path == pattern or normalized_path.startswith(pattern):
-            return lane_id
+            return str(lane_id)
     return None
 
 

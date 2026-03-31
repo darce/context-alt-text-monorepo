@@ -69,7 +69,7 @@ def _configure_runtime(orchestrator_root: Path) -> None:
 
 
 def _load_ok_payload(name: str, payload: str) -> dict[str, Any]:
-    data = json.loads(payload)
+    data: dict[str, Any] = json.loads(payload)
     if not data.get("ok"):
         error = data.get("error") or "unknown error"
         raise RuntimeError(f"MCP query failed: {name}: {error}")
@@ -172,7 +172,8 @@ def _load_latest_slice_packet(task_ref: str, review_kind: str | None) -> dict[st
         "get_latest_slice_review_packet",
         get_latest_slice_review_packet(task_ref=task_ref, review_kind=review_kind),
     )
-    return payload["packet"]
+    packet: dict[str, Any] = payload["packet"]
+    return packet
 
 
 def main() -> int:

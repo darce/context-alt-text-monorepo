@@ -40,7 +40,8 @@ def _run_handoff_dispatch(
     result = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
     if result.returncode != 0:
         raise RuntimeError(f"review_dispatch.py failed (exit {result.returncode}):\n{result.stderr.strip()}")
-    return _json_load(result.stdout)
+    data: dict[str, Any] = _json_load(result.stdout)
+    return data
 
 
 def _lane_has_unmerged_commits(
@@ -164,7 +165,7 @@ def _lane_has_capacity(task_ref: str, lane_id: str) -> bool:
         if isinstance(row, dict) and row.get("status") == "pending":
             return False
 
-    cursor_raw = list_plan_cursors(task_ref=task_ref, state="dispatched", lane_id=lane_id, limit=20)
+    cursor_raw: object = list_plan_cursors(task_ref=task_ref, state="dispatched", lane_id=lane_id, limit=20)
     if not isinstance(cursor_raw, str):
         return True
     cursor_payload = _json_load(cursor_raw)
@@ -179,7 +180,7 @@ def _complete_lane_plan_cursor(
     """Mark the newest dispatched plan cursor for a lane complete."""
     from agent_orchestrator_mcp.lanes import list_plan_cursors, upsert_plan_cursor  # noqa: PLC0415
 
-    payload_raw = list_plan_cursors(task_ref=task_ref, state="dispatched", lane_id=lane_id, limit=20)
+    payload_raw: object = list_plan_cursors(task_ref=task_ref, state="dispatched", lane_id=lane_id, limit=20)
     if not isinstance(payload_raw, str):
         return None
     payload = _json_load(payload_raw)

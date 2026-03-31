@@ -59,7 +59,8 @@ def _mcp_worker_status(
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=10)
         if result.returncode == 0 and result.stdout.strip():
-            return json.loads(result.stdout)
+            data: dict[str, Any] = json.loads(result.stdout)
+            return data
     except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
         pass
     return {"lane_id": lane_id, "worker_state": "unknown", "state_summary": "Could not retrieve status."}

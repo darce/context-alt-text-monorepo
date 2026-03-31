@@ -21,7 +21,8 @@ class LocalModelAdapter(BackendAdapter):
         try:
             req = urllib.request.Request(f"{self.base_url}/models", method="GET")
             with urllib.request.urlopen(req, timeout=2) as resp:
-                return resp.status == 200
+                status: int = resp.status
+                return status == 200
         except Exception:
             return False
 

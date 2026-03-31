@@ -149,6 +149,11 @@ const selectAll = useCallback((allIds: string[]) => {
   setSelectedIds(new Set(allIds));
 }, []);
 
+const retainVisible = useCallback((visibleIds: string[]) => {
+  const visibleSet = new Set(visibleIds);
+  setSelectedIds((prev) => new Set(Array.from(prev).filter((id) => visibleSet.has(id))));
+}, []);
+
 const isAllSelected = useCallback(
   (allIds: string[]) =>
     allIds.length > 0 && allIds.every((id) => selectedIds.has(id)),
@@ -173,15 +178,21 @@ interface BulkActionBarProps {
 
 ### Select-All Checkbox in Cluster Header
 
-Place select-all in the always-visible cluster section header in `RosterPage`, outside the `selection.count > 0` conditional. Use indeterminate state when some (but not all) are selected.
+Place select-all in the always-visible cluster section header in `RosterPage`, outside the `selection.count > 0` conditional. The control operates on the current visible cluster IDs only, and the page should prune hidden selections whenever the rendered cluster set changes so bulk actions never target stale IDs from an earlier result set. Use indeterminate state when some (but not all) visible clusters are selected.
 
 ```tsx
 // In RosterPage, inside the cluster tab header (always visible)
+useEffect(() => {
+  selection.retainVisible(clusterIds);
+}, [clusterIds, selection]);
+
+const selectedVisibleCount = clusterIds.filter((id) => selection.isSelected(id)).length;
+
 <div className="acx-roster__tab-header">
   <Checkbox
     checked={selection.isAllSelected(clusterIds)
       ? true
-      : selection.count > 0
+      : selectedVisibleCount > 0
         ? 'indeterminate'
         : false}
     onCheckedChange={() =>
@@ -304,7 +315,7 @@ Add `role="group"` and `aria-label` to the grid container. Keep `role="button"` 
 
 ---
 
-# Consolidated Checklist
+## Consolidated Checklist
 
 ## Phase 4a: Accessible Confirmation Dialogs
 
@@ -321,7 +332,7 @@ Add `role="group"` and `aria-label` to the grid container. Keep `role="button"` 
 - [x] **Test (red)**: `useClusterSelection` -- `selectAll` sets all IDs; `isAllSelected` returns true when all selected.
 - [x] **Implement**: add `selectAll(allIds)` and `isAllSelected(allIds)` methods to `useClusterSelection`.
 - [x] **Test (green)**: `selectAll` and `isAllSelected` work correctly.
-- [x] **Implement**: add "Select all" `Checkbox` in cluster section header in `RosterPage` (always visible, outside `selection.count > 0` conditional), wired to `selection.selectAll(clusterIds)` / `selection.clear()`. Support indeterminate state.
+- [x] **Implement**: add "Select all" `Checkbox` in cluster section header in `RosterPage` (always visible, outside `selection.count > 0` conditional), wired to `selection.selectAll(clusterIds)` / `selection.clear()`. Scope selection to current visible cluster IDs and prune hidden IDs when the rendered set changes. Support indeterminate state.
 - [x] **Implement**: add `isMerging`/`isDismissing` props to `BulkActionBar`; disable buttons and show spinner when pending.
 - [x] **Test (red)**: `BulkActionBar` -- merge button disabled and shows spinner when `isMerging` is true.
 - [x] **Test (green)**: loading states render correctly.
@@ -349,7 +360,7 @@ Add `role="group"` and `aria-label` to the grid container. Keep `role="button"` 
 
 - [x] Bulk merge/dismiss uses accessible Radix Dialog (with `onOpenChange`) instead of `window.confirm`.
 - [x] Confirmation dialog shows loading state during mutation.
-- [x] "Select all" checkbox in always-visible cluster header selects/deselects all visible clusters. Supports indeterminate state.
+- [x] "Select all" checkbox in always-visible cluster header selects/deselects all visible clusters. Hidden cluster IDs are pruned when the rendered cluster set changes, so bulk actions only target the current visible set. Supports indeterminate state.
 - [x] Bulk action bar buttons are disabled with spinner during pending mutations.
 - [x] Inline person creation from combobox: typing unknown name -> "Create [name]" button -> sets sentinel -> atomic commit creates person + assigns. No separate `useCreatePerson` call.
 - [x] Cluster grid container has `role="group"` with `aria-label`. Cards retain `role="button"` + `aria-pressed`.

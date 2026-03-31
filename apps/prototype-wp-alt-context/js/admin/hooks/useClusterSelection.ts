@@ -34,6 +34,27 @@ export const useClusterSelection = () => {
     setSelectedIds(new Set(allIds));
   }, []);
 
+  const retainVisible = useCallback((visibleIds: string[]) => {
+    const visibleSet = new Set(visibleIds);
+    setSelectedIds((prev) => {
+      if (prev.size === 0) {
+        return prev;
+      }
+
+      let changed = false;
+      const next = new Set<string>();
+      prev.forEach((id) => {
+        if (visibleSet.has(id)) {
+          next.add(id);
+          return;
+        }
+        changed = true;
+      });
+
+      return changed ? next : prev;
+    });
+  }, []);
+
   const isSelected = useCallback((id: string) => selectedIds.has(id), [selectedIds]);
 
   const isAllSelected = useCallback(
@@ -47,6 +68,7 @@ export const useClusterSelection = () => {
     selectRange,
     clear,
     selectAll,
+    retainVisible,
     isSelected,
     isAllSelected,
     count: selectedIds.size,

@@ -69,4 +69,21 @@ describe('useClusterSelection', () => {
 
     expect(result.current.isAllSelected(allIds)).toBe(false);
   });
+
+  it('retains only the currently visible ids', () => {
+    const { result } = renderHook(() => useClusterSelection());
+
+    act(() => {
+      result.current.selectAll(['cluster-1', 'cluster-2', 'cluster-3']);
+    });
+
+    act(() => {
+      result.current.retainVisible(['cluster-2']);
+    });
+
+    expect(Array.from(result.current.selectedIds)).toEqual(['cluster-2']);
+    expect(result.current.count).toBe(1);
+    expect(result.current.isSelected('cluster-1')).toBe(false);
+    expect(result.current.isSelected('cluster-2')).toBe(true);
+  });
 });

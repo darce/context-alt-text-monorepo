@@ -130,6 +130,7 @@ describe('RosterPage route container', () => {
     toggle: vi.fn(),
     selectRange: vi.fn(),
     selectAll: vi.fn(),
+    retainVisible: vi.fn(),
     clear: vi.fn(),
     isAllSelected: vi.fn(() => false),
     isSelected: vi.fn(() => false),
@@ -307,5 +308,15 @@ describe('RosterPage route container', () => {
     await userEvent.click(screen.getByRole('checkbox', { name: 'Select all clusters' }));
 
     expect(selectionState.selectAll).toHaveBeenCalledWith(['cluster-1']);
+  });
+
+  it('retains only currently visible clusters while the clusters tab is active', () => {
+    render(
+      <MemoryRouter initialEntries={['/?tab=clusters']}>
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    expect(selectionState.retainVisible).toHaveBeenCalledWith(['cluster-1']);
   });
 });

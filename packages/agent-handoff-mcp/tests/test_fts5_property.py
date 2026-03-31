@@ -6,6 +6,7 @@ Covers the same surface as the previous hypothesis property tests:
 - _build_fts5_match_query → valid FTS5 MATCH for all edge cases
 - Unicode, FTS5 operators, quoting, combining marks
 """
+
 from __future__ import annotations
 
 import json
@@ -58,6 +59,7 @@ def _isolated_runtime():
 # Phrase quoting: non-blank queries must produce a valid quoted FTS5 phrase
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "query",
     [
@@ -94,6 +96,7 @@ def test_search_handoff_phrase_quotes_non_blank_terms(query: str) -> None:
 # Blank queries: whitespace-only inputs must return the error contract
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "queries",
     [
@@ -114,6 +117,7 @@ def test_search_handoff_blank_queries_preserve_error_contract(queries: list[str]
 # ---------------------------------------------------------------------------
 # _build_fts5_match_query: edge cases that must produce valid or None output
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "queries",
@@ -174,6 +178,7 @@ def test_build_fts5_match_query_edge_cases(queries: list[str]) -> None:
 # ---------------------------------------------------------------------------
 # Unicode and special characters through full search pipeline
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "query",

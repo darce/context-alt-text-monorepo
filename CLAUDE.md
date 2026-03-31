@@ -54,6 +54,7 @@ This project has NO production users and NO existing data to preserve.
 ### MCP Handoff (MANDATORY)
 
 - Every code change must be logged with a `record_decision` entry before review or completion.
+- After recording the decision, notify the user that the handoff has been updated (e.g. "Handoff updated: decision `<id>` recorded."). This notification is mandatory — a response that makes code changes without both recording and notifying is incomplete.
 - A task response is incomplete if MCP handoff was not updated.
 - Slice completion format (enforced at write time): [docs/agentic/templates/slice-complete-template.md](docs/agentic/templates/slice-complete-template.md).
 - After every slice decision, call `generate_current_task_md(task_ref=<active-task-ref>)`.

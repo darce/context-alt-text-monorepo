@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from threading import Thread
-from typing import Any, Awaitable, Protocol, cast, runtime_checkable
+from typing import Any, Awaitable, Protocol, runtime_checkable
 
 
 def _resolve_awaitable(value: object) -> object:
@@ -25,7 +25,7 @@ def _resolve_awaitable(value: object) -> object:
     async def _await_value(awaitable: Awaitable[Any]) -> Any:
         return await awaitable
 
-    awaitable = cast(Awaitable[Any], value)
+    awaitable: Awaitable[Any] = value
     try:
         asyncio.get_running_loop()
     except RuntimeError:

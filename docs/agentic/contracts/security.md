@@ -212,4 +212,3 @@ $response = wp_remote_post($api_url . '/analyze', [
 ]);
 ```
 
-## Future Enhancements

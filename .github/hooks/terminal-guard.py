@@ -11,7 +11,7 @@ Algorithm
 
 Allowlisted terminal uses
 -------------------------
-- Tests: pytest, python -m pytest, absolute-python -m pytest, npm test/run test, vitest, playwright, phpunit
+- Tests: pytest, python -m pytest, python -u -m pytest, absolute-python -m pytest, npm test/run test, vitest, playwright, phpunit
 - Build: make <target>
 - pyenv
 - Git write / coordination / history: commit, push, rebase, cherry-pick, worktree, stash,
@@ -53,7 +53,7 @@ _ALLOWLIST: list[re.Pattern[str]] = [
     for p in [
         # Tests
         r"^pytest\b",
-        r"^(?:python3?|\S*/python(?:3(?:\.\d+)?)?)\s+-m\s+pytest\b",
+        r"^(?:python3?|\S*/python(?:3(?:\.\d+)?)?)\s+(?:-u\s+)?-m\s+pytest\b",
         r"^npm\s+test\b",
         r"^npm\s+run\s+test\b",
         r"^vitest\b",
@@ -110,6 +110,8 @@ _ALLOWLIST: list[re.Pattern[str]] = [
         r"^wc\b",
         # Process inspection (checking background test / server status)
         r"^ps\b",
+        # File deletion (simple rm; rm -rf is still caught by hard-block)
+        r"^rm\s+(?!-r)",
         # File metadata inspection (symlinks, permissions; list_dir lacks this)
         r"^ls\b",
         # Database shell (development-only tool for investigation queries)

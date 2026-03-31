@@ -133,6 +133,7 @@ def test_ls_is_allowlisted() -> None:
         "pytest apps/prototype-description-service/ -x",
         "python -m pytest tests/ -v",
         "python3 -m pytest tests/ -v",
+        "/Users/daniel/.pyenv/versions/description-service/bin/python -u -m pytest tests/ -q 2>&1 | tee /tmp/pytest_orchestrator_current.txt",
         "/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest tests/test_lane_exec.py tests/test_lane_result.py -q 2>&1 | tee /tmp/pytest_lane_exec_result.txt",
         "npm test",
         "npm run test",
@@ -190,6 +191,9 @@ def test_ls_is_allowlisted() -> None:
         # Pipe output-control patterns
         "pytest tests/ | tail -n 40",
         "make test 2>&1 | tail -n 30",
+        # File deletion (non-recursive)
+        "rm tests/test_pytest_progress_heartbeat.py",
+        "rm /tmp/pytest_output.txt",
     ],
 )
 def test_allowlisted_commands_pass_through(command: str) -> None:

@@ -8,6 +8,12 @@
 
 Finish the remaining in-scope work from Phase 4 (3 unchecked items) and Phase 5 (4 unchecked items) of the agentic process-hardening epic. When complete, the epic should have no remaining active implementation items outside confirmed post-v0.3.0 deferrals.
 
+## Historical Status
+
+- This task is now a historical implementation record rather than an active execution plan.
+- The originally planned work landed across the later package split: handoff-owned pieces live in `packages/agent-handoff-mcp/`, while lane-activity and ACE-metrics surfaces now live in `packages/agent-orchestrator-mcp/`.
+- Current readers should treat the sections below as a dated design snapshot and follow the current package ownership called out inline.
+
 ## Problem Statement
 
 Phase 4 has three open implementation items: (1) no structured progress/error/status semantics for process automation surfaces; status values are inline string literals in SQLite CHECK constraints with no Python-side enum types, (2) handoff actor provenance lacks a centralized builder; callers construct `WriteActor` dicts inline despite `_resolve_write_actor()` existing, and (3) no selective-memory MCP surfaces for archival summaries or lane-activity compression. Phase 5 has four open items for evaluation metrics and review loops that have no derivation paths defined.
@@ -36,18 +42,16 @@ Critically, `get_handoff_state()` in core.py already accepts configurable `top_n
 
 ## Current State Analysis
 
-- Phase 4 has three unchecked items:
-  1. "Define structured progress, error, and status semantics" -- status values are inline string sets (`HANDOFF_ACTIVE_STATUSES`, `REVIEW_FINDING_STATUSES`, etc. near the top of core.py) and SQLite CHECK constraints. Worker JSONL event names (`cycle_start`, `exec_complete`, etc.) are free-form strings.
-  2. "Normalize handoff actor provenance" -- `WriteActor` TypedDict and `_resolve_write_actor()` exist, but no public `build_write_actor()` factory for callers. The provenance integrity validator validates post-hoc but callers still build dicts inline.
-  3. "Add selective-memory MCP surfaces" -- `get_handoff_state` already serves as active-task brief with configurable limits. Missing: lane-activity compression helper, retention rules documentation. `archive_task_state()` and `purge_artifacts()` exist but have no documented retention policy.
-- Phase 5 has four unchecked items. The `build_snapshot()` function in ace_metrics.py has 8 sections (token_burn, context_pressure, fts5_retrieval, lane_health, process_health, handoff_memory, phase_timing, ace_documentation). The missing metrics are:
-  - `planning_drift`: derivable from `plan_cursors` table (dispatched vs completed/skipped ratio)
-  - `stale_artifact_rate`: derivable from `artifact_sources.created_at`/`updated_at` timestamps
-  - `archive_rate`: derivable from `task_archives.archived_at` timestamps
-  - `ctx7_adoption`: derivable by scanning `decisions.rationale` for "ctx7 library id:" prefix
-  - `runtime_parity`: NOT directly derivable; no `test_kind` column on `verified_tests`
-  - `performance_evidence`: NOT directly derivable; no structured field linking tests to perf benchmarks
-  - `resolved_from_hot_state`: NOT derivable; DB does not record agent retrieval strategy
+- The originally open Phase 4 items have since landed, but ownership is now split across packages:
+  1. Structured status semantics now live in `packages/agent-handoff-mcp/src/agent_handoff_mcp/enums.py`, including domain enums for plan cursors and worker event names.
+  2. Actor provenance now has a public `build_write_actor()` helper in `packages/agent-handoff-mcp/src/agent_handoff_mcp/shared_write_context.py`, re-exported through the package API.
+  3. Lane-scoped archival summaries now live on the orchestration side via `get_lane_activity(format="archival")` in `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/lanes.py`, with the compact retention-friendly shape documented in `docs/agentic/contracts/agent-orchestrator-mcp.md`.
+- The originally missing Phase 5 metrics also landed on the orchestration side. `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/ace_metrics.py` now includes:
+  - `planning_drift`
+  - `stale_artifact_rate`
+  - `archive_rate`
+  - `ctx7_adoption`
+- The remaining non-derivable metrics from the original plan (`runtime_parity`, `performance_evidence`, `resolved_from_hot_state`) still require future instrumentation rather than local derivation from the current schema.
 
 ## Target Outcome
 
@@ -65,9 +69,9 @@ Status values consolidated as Python StrEnums. Actor construction centralized. L
 
 | Boundary                    | Owner           | Current Contract                                                  | Expected Change                                                                             | Compatibility Needed?                                     | Verification                          |
 | --------------------------- | --------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------- |
-| Status enums + actor helper | agentic-tooling | `docs/agentic/contracts/agent-handoff-mcp.md`                     | Add `enums.py` module; add public `build_write_actor()` factory                             | Yes; existing string values preserved as StrEnum `.value` | pytest + mypy                         |
-| Lane-activity summary       | agentic-tooling | `docs/agentic/contracts/agent-handoff-mcp.md`                     | Add archival compression preset over existing `get_lane_activity`; document retention rules | Yes; additive response format on existing tool            | pytest + contract doc                 |
-| ACE metrics snapshot        | agentic-tooling | `docs/agentic/contracts/agent-handoff-mcp.md`                     | Add `planning_drift`, `stale_artifact_rate`, `archive_rate`, `ctx7_adoption` sections       | Yes; existing snapshot keys preserved                     | `test_ace_metrics.py` + live snapshot |
+| Status enums + actor helper | agent-handoff-mcp | `docs/agentic/contracts/agent-handoff-mcp.md`                   | Landed in `enums.py` plus public `build_write_actor()` helper                               | Yes; existing string values preserved as StrEnum `.value` | pytest + mypy                         |
+| Lane-activity summary       | agent-orchestrator-mcp | `docs/agentic/contracts/agent-orchestrator-mcp.md`         | Landed as `get_lane_activity(format="archival")` on the orchestration surface             | Yes; additive response format on existing tool            | pytest + contract doc                 |
+| ACE metrics snapshot        | agent-orchestrator-mcp | `docs/agentic/contracts/agent-orchestrator-mcp.md`         | Landed with `planning_drift`, `stale_artifact_rate`, `archive_rate`, `ctx7_adoption`       | Yes; existing snapshot keys preserved                     | `test_ace_metrics.py` + live snapshot |
 | Epic/deferred sync          | agentic-tooling | `docs/epics/v0.3.0/agentic-development-process-hardening-epic.md` | Check all remaining items or defer with rationale                                           | No; docs-only                                             | manual consistency review             |
 
 ## Proposed Solution
@@ -79,12 +83,15 @@ Land the remaining work in four slices. First, consolidate status values as StrE
 | Surface  | File                                                                            | Change                                                                                                                                                                                              |
 | -------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | tooling  | `packages/agent-handoff-mcp/src/agent_handoff_mcp/enums.py`                     | New module; StrEnum types for all status domains (HandoffStatus, BlockerStatus, ActionStatus, FindingStatus, FindingSeverity, ReviewMode, LaneStatus, ReportStatus, MessageStatus, PlanCursorState) |
-| tooling  | `packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py`                      | Replace inline `*_STATUSES` sets with enum references; add public `build_write_actor()` factory; extend `get_lane_activity()` with archival format                                                  |
-| tooling  | `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py`                       | No direct changes needed; bare alias `= core.get_lane_activity` auto-inherits the updated core.py signature via MCP auto-schema generation                                                          |
-| tooling  | `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/ace_metrics.py` | Add `_planning_drift()`, `_stale_artifact_metrics()`, `_archive_rate()`, `_ctx7_adoption()` collectors                                                                                              |
+| tooling  | `packages/agent-handoff-mcp/src/agent_handoff_mcp/shared_write_context.py`      | Landed public `build_write_actor()` factory; package API re-exports it for callers                                                                                                                |
+| tooling  | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/lanes.py`           | Landed `get_lane_activity(format="archival")` as the lane-scoped archival summary surface                                                                                                         |
+| tooling  | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/api.py`             | Re-exports the orchestration-owned lane-activity surface                                                                                                                                             |
+| tooling  | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/ace_metrics.py` | Landed `_planning_drift()`, `_stale_artifact_metrics()`, `_archive_rate()`, `_ctx7_adoption()` collectors                                                                                  |
 | test     | `packages/agent-handoff-mcp/tests/test_enums.py`                                | New; enum round-trip and string-value parity tests                                                                                                                                                  |
-| test     | `packages/agent-handoff-mcp/tests/test_ace_metrics.py`                          | Extend with new metric collector tests                                                                                                                                                              |
-| contract | `docs/agentic/contracts/agent-handoff-mcp.md`                                   | Document retention rules, new metric keys, narrowed scope for non-derivable metrics                                                                                                                 |
+| test     | `packages/agent-orchestrator-mcp/tests/test_ace_metrics.py`                     | Extend with new metric collector tests                                                                                                                                                              |
+| test     | `packages/agent-orchestrator-mcp/tests/test_lanes_and_handoff_state.py`         | Verify archival lane-activity summaries and retention-friendly response shape                                                                                                                       |
+| contract | `docs/agentic/contracts/agent-handoff-mcp.md`                                   | Document handoff-owned enum and actor-helper surfaces                                                                                                                                               |
+| contract | `docs/agentic/contracts/agent-orchestrator-mcp.md`                              | Document retention-friendly lane activity plus ACE metric keys and examples                                                                                                                         |
 | rules    | `docs/agentic/instructions.md`                                                  | Add data-pattern/latency review loop; update ctx7 evaluation language                                                                                                                               |
 | docs     | `docs/epics/v0.3.0/agentic-development-process-hardening-epic.md`               | Remove active/deferred ambiguity after implementation                                                                                                                                               |
 | docs     | `docs/deferred-features/agentic-process-hardening-post-v0.3.0.md`               | Hold true deferred backlog items from this epic                                                                                                                                                     |

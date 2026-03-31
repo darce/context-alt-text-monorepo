@@ -8,6 +8,12 @@
 
 The current MCP setup is centered on [`scripts/mcp/unified_server.py`](/scripts/mcp/unified_server.py), which mixes handoff state, repo-intel helpers, and client-specific launch assumptions into one server. The project needs a properly packaged, portable MCP server whose sole job is agent handoff, plus a decomposition plan for the remaining non-handoff tools so they can become separate MCP servers later without dragging handoff state along with them.
 
+## Historical Status
+
+- This task is complete and now serves as a historical design record for the extraction that landed.
+- The canonical handoff implementation now lives in `packages/agent-handoff-mcp/`; orchestration and lane surfaces moved to `packages/agent-orchestrator-mcp/` during the later server split.
+- `scripts/mcp/unified_server.py` remains only as a legacy shim and deprecation surface for removed handoff entrypoints; it is no longer the canonical handoff implementation.
+
 ## Workflow Principles
 
 - Handoff state is the product; repo-intel helpers are separate concerns and must not remain coupled to it.
@@ -28,14 +34,15 @@ The current MCP setup is centered on [`scripts/mcp/unified_server.py`](/scripts/
 
 ## Current State Analysis
 
-- [`scripts/mcp/unified_server.py`](/scripts/mcp/unified_server.py) already contains the handoff SQL schema and task-state logic that should be reused as implementation input, even though packaging can start fresh.
-- The same file also contains non-handoff helpers for WordPress lookup, React lookup, and docs/contracts/maps access, which makes the server name, packaging, and responsibility boundary unclear.
+- At authoring time [`scripts/mcp/unified_server.py`](/scripts/mcp/unified_server.py) contained the handoff SQL schema and task-state logic that served as extraction input for the packaged server.
+- The canonical handoff implementation now lives in `packages/agent-handoff-mcp/` (`shared_schema.py`, `api.py`, `cli.py`), while orchestration and lane-management surfaces live in `packages/agent-orchestrator-mcp/`.
+- [`scripts/mcp/unified_server.py`](/scripts/mcp/unified_server.py) now retains non-handoff helpers plus deprecation responses for removed handoff tools; it is no longer the implementation target for handoff behavior.
 - [`scripts/mcp/mcp-server.sh`](/scripts/mcp/mcp-server.sh) and [`.vscode/mcp.json`](/.vscode/mcp.json) are VS Code oriented launch adapters, not a portable installation story.
 - The current runtime assumes local shell execution details such as `bash`, `pyenv`, sourced `.env`, and macOS/Homebrew-style PATH setup.
 - The handoff database is currently modeled as workspace state under [`.task-state/handoff.db`](/.task-state/handoff.db), which is the correct ownership model for task history tied to a repo/worktree.
 - MCP itself does not define where mutable server state lives. That decision is application-specific and should follow the ownership boundary of the data.
 - Generic file search/read tools already exist in most harnesses, so docs/contracts/maps helpers should only survive as future MCP stubs if they provide curated domain lookup that generic tools do not.
-- The current fallback workflow also depends on the large CLI surface in `unified_server.py`; a handoff-only package cannot drop that path unless the task explicitly replaces it with an equivalent CLI.
+- At authoring time the fallback workflow still depended on the large CLI surface in `unified_server.py`; the landed package now provides the canonical handoff CLI surface directly.
 
 ## Proposed Solution
 
@@ -181,10 +188,12 @@ def main() -> None:
 
 ## Functions to Change
 
+Historical note: the table below captures the original authoring-time change surface. The landed implementation now lives primarily in `packages/agent-handoff-mcp/` and `packages/agent-orchestrator-mcp/`; `scripts/mcp/unified_server.py` is retained only as a legacy shim/deprecation surface.
+
 | File | Line | Change |
 | --- | --- | --- |
 | `packages/agent-handoff-mcp/` | new | Create the installable handoff-only package with runtime config, MCP bootstrap, and CLI entrypoints. |
-| [`/scripts/mcp/unified_server.py`](/scripts/mcp/unified_server.py) | 1 | Extract handoff schema, migrations, runtime config, and MCP tool registration into a dedicated handoff package; leave only transitional compatibility or remove unified bootstrap entirely. |
+| [`/scripts/mcp/unified_server.py`](/scripts/mcp/unified_server.py) | 1 | Historical extraction source at authoring time. The current file is a legacy shim/deprecation surface; canonical handoff schema/bootstrap/tool registration now live in `packages/agent-handoff-mcp/`, with orchestration surfaces in `packages/agent-orchestrator-mcp/`. |
 | [`/scripts/mcp/mcp-server.sh`](/scripts/mcp/mcp-server.sh) | 1 | Replace repo-specific launcher assumptions with a compatibility shim that invokes the packaged handoff server or generated adapter. |
 | [`/.vscode/mcp.json`](/.vscode/mcp.json) | 1 | Point VS Code at the packaged handoff server adapter instead of the unified repo script. |
 | [`/docs/agentic/BOOTSTRAP.md`](/docs/agentic/BOOTSTRAP.md) | 1 | Replace unified-server setup guidance with handoff-server packaging, registration, and state-location guidance. |

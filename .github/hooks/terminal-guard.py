@@ -110,8 +110,8 @@ _ALLOWLIST: list[re.Pattern[str]] = [
         r"^wc\b",
         # Process inspection (checking background test / server status)
         r"^ps\b",
-        # File deletion (simple rm; rm -rf is still caught by hard-block)
-        r"^rm\s+(?!-r)",
+        # File deletion (rm and rm -r allowed; force variants blocked)
+        r"^rm\s+(-r\s+)?(?!-)",
         # File metadata inspection (symlinks, permissions; list_dir lacks this)
         r"^ls\b",
         # Database shell (development-only tool for investigation queries)

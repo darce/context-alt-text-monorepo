@@ -8,20 +8,21 @@ export const useScrollRestoration = (componentKey: string): void => {
 
   useLayoutEffect(() => {
     const savedPos = sessionStorage.getItem(storageKey);
+    // Use requestAnimationFrame to ensure the DOM is fully rendered before scrolling.
+    // try/catch guards against throwing scrollTo implementations (e.g. jsdom).
     if (savedPos !== null) {
-      // Use setTimeout to ensure the DOM is fully rendered before scrolling
       window.requestAnimationFrame(() => {
-        window.scrollTo(0, parseInt(savedPos, 10));
+        try { window.scrollTo(0, parseInt(savedPos, 10)); } catch { /* partial DOM */ }
       });
     } else {
       window.requestAnimationFrame(() => {
-        window.scrollTo(0, 0);
+        try { window.scrollTo(0, 0); } catch { /* partial DOM */ }
       });
     }
 
     return () => {
       // Save on unmount or route change
-      sessionStorage.setItem(storageKey, window.scrollY.toString());
+      sessionStorage.setItem(storageKey, (window.scrollY ?? 0).toString());
     };
   }, [storageKey]);
 };

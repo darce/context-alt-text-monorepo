@@ -20,10 +20,12 @@ agent-handoff-mcp = "agent_handoff_mcp.cli:main"
 test = [
     "hypothesis>=6.0.0",
     "pytest>=8.0.0",
+    "pytest-timeout>=2.3.0",
 ]
 dev = [
     "hypothesis>=6.0.0",
     "pytest>=8.0.0",
+    "pytest-timeout>=2.3.0",
     "ruff>=0.11.0,<1.0.0",
     "mypy>=1.13.0,<2.0.0",
 ]
@@ -94,7 +96,10 @@ disable_error_code = ["method-assign", "arg-type"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+timeout = 30
+timeout_method = "thread"
 norecursedirs = [
+    ".hypothesis",
     ".pytest_cache",
     "build",
     "src/*.egg-info",

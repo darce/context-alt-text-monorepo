@@ -113,13 +113,10 @@ BACKENDS: dict[str, BackendSpec] = {}
 def register_backend(name: str, spec: BackendSpec) -> None:
     BACKENDS[name] = spec
 
-def detect_runtime() -> str | None:
-    """Return 'codex-native' if running inside a Codex sandbox, else None."""
-    # Probe Codex-set env vars or parent process markers.
-    for key in ("CODEX_SANDBOX_ENV", "CODEX_SESSION_ID"):
-        if os.environ.get(key):
-            return "codex-native"
-    return None
+# detect_runtime() — DEFERRED. Live-session reuse (attaching to a running Codex
+# sandbox) is explicitly out of scope for Daemon 8 (see Workflow Principles:
+# "Live-session reuse is deferred"). This pseudocode was speculative; the
+# implementation does not include it. Moved to daemon-9 scope.
 
 def resolve_bridge(name: str) -> Callable[..., dict]:
     spec = BACKENDS.get(name)
@@ -223,6 +220,8 @@ This host owns the authoritative checkout and all file-backed orchestration stat
 | `docs/tasks/6.0/daemon-6-autonomous-orchestrator-task-plan.md` | D6 established the daemon orchestration layer and `--backend` threading this task extends.                                                                                   |
 
 ---
+
+> **Implementation note — phase mapping:** During implementation the Proposed Solution phases were split and renumbered. Proposed Solution Phase 2 was split into Checklist Phase 2 (lifecycle commands: start/status/stop/pause/resume) and Checklist Phase 3 (execution turn: `run_structured_turn`). Proposed Solution Phase 2.5 (Remote HTTP MCP Topology) became Checklist Phase 4, and was subsequently completed in daemon-9. Proposed Solution Phase 3 (copilot-host stretch) was deferred entirely and does not appear in the Consolidated Checklist.
 
 # Consolidated Checklist
 

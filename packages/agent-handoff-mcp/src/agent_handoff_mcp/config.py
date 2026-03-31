@@ -15,6 +15,7 @@ class RuntimeConfig:
     artifact_db_path: Path
     artifact_index_min_bytes: int = 4096
     artifact_index_min_lines: int = 80
+    tool_profile: str = "core"  # "core" | "full"
 
     @classmethod
     def for_workspace(
@@ -24,6 +25,7 @@ class RuntimeConfig:
         state_dir: str | Path | None = None,
         current_task_path: str | Path | None = None,
         exports_dir: str | Path | None = None,
+        tool_profile: str = "core",
     ) -> "RuntimeConfig":
         resolved_workspace_root = Path(workspace_root).expanduser().resolve()
         resolved_state_dir = (
@@ -44,6 +46,7 @@ class RuntimeConfig:
             current_task_path=resolved_current_task_path,
             exports_dir=resolved_exports_dir,
             artifact_db_path=resolved_state_dir / "mcp-artifacts.db",
+            tool_profile=tool_profile,
         )
 
     @classmethod
@@ -57,9 +60,11 @@ class RuntimeConfig:
             "AGENT_HANDOFF_CURRENT_TASK_PATH"
         )
         exports_dir = getattr(args, "exports_dir", None) or os.environ.get("AGENT_HANDOFF_EXPORTS_DIR")
+        tool_profile = getattr(args, "tool_profile", None) or os.environ.get("AGENT_HANDOFF_TOOL_PROFILE", "core")
         return cls.for_workspace(
             workspace_root,
             state_dir=state_dir,
             current_task_path=current_task_path,
             exports_dir=exports_dir,
+            tool_profile=tool_profile,
         )

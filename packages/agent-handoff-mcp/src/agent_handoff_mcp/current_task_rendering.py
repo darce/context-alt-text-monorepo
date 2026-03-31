@@ -198,7 +198,10 @@ def _collect_dashboard_rows(
         archived_at = row["archived_at"]
         status = row["active_status"] or ("archived" if archived_at else "active")
         snapshot_json = row["snapshot_json"]
-        if archived_at and snapshot_json:
+        # If a task was archived in the past and later reactivated, the live
+        # handoff_state row is the operator-facing source of truth. Only fall
+        # back to archived snapshot status when there is no live active status.
+        if row["active_status"] is None and archived_at and snapshot_json:
             try:
                 archived_snapshot = json.loads(snapshot_json)
                 archived_active = archived_snapshot.get("active") or {}
@@ -219,9 +222,7 @@ def _collect_dashboard_rows(
     return dashboard_rows
 
 
-def _collect_all_open_findings(
-    conn: sqlite3.Connection, active_task_ref: str | None = None
-) -> dict[str, list[dict]]:
+def _collect_all_open_findings(conn: sqlite3.Connection, active_task_ref: str | None = None) -> dict[str, list[dict]]:
     """Collect all open review findings across all tasks, grouped by task_ref.
 
     Excludes active_task_ref whose findings are already in findings_open.
@@ -313,7 +314,9 @@ def _build_current_task_state_from_snapshot(snapshot: TaskSnapshot) -> CurrentTa
         "decisions_recent": snapshot["decisions"],
         "tests_recent": snapshot["verified_tests"],
         "findings_open": [row for row in snapshot["review_findings"] if row.get("status") == "open"],
-        "findings_deferred": [row for row in snapshot["review_findings"] if row.get("status") in ("deferred", "wontfix")],
+        "findings_deferred": [
+            row for row in snapshot["review_findings"] if row.get("status") in ("deferred", "wontfix")
+        ],
         "worktree_lanes": snapshot.get("worktree_lanes", []),
         "worker_reports_recent": snapshot.get("worker_reports", []),
         "lane_messages_open": [row for row in snapshot.get("lane_messages", []) if row.get("status") == "open"],
@@ -499,32 +502,52 @@ def _format_dashboard_last_activity(last_activity: str | None) -> str:
     return timestamp.strftime("%Y-%m-%d %H:%M")
 
 
+def _format_dashboard_task_ref(task_ref: str, width: int) -> str:
+    if len(task_ref) <= width:
+        return task_ref
+    if width <= 3:
+        return task_ref[:width]
+    return f"{task_ref[: width - 3]}..."
+
+
 def _render_dashboard_section(tasks: list[DashboardTaskRow], active_task_ref: str | None) -> list[str]:
-    lines: list[str] = [
-        "",
-        "## All Tasks",
-        "",
-        "| | Task | Status | Findings | Blockers | Actions | Last Activity |",
-        "|---|---|---|---:|---:|---:|---|",
-    ]
+    # Fixed-width ASCII table — avoids layout shifts on refresh.
+    col_task = 44
+    col_status = 13
+    col_find = 4
+    col_block = 5
+    col_act = 3
+    col_last = 16
+
+    header = (
+        f"  {'Task':<{col_task}}  {'Status':<{col_status}}  {'Find':>{col_find}}"
+        f"  {'Block':>{col_block}}  {'Act':>{col_act}}  {'Last':<{col_last}}"
+    )
+    sep = "\u2500"
+    separator = (
+        f"  {sep * col_task}  {sep * col_status}  {sep * col_find}"
+        f"  {sep * col_block}  {sep * col_act}  {sep * col_last}"
+    )
+
+    lines: list[str] = ["", "## All Tasks", "", "```", header, separator]
     if not tasks:
-        lines.append("| | _No tasks_ | - | 0 | 0 | 0 | - |")
+        lines.append(
+            f"  {'(no tasks)':<{col_task}}  {'-':<{col_status}}  {'0':>{col_find}}  {'0':>{col_block}}  {'0':>{col_act}}  {'-':<{col_last}}"
+        )
+        lines.append("```")
         return lines
     for task in tasks:
         task_ref = task.get("task_ref", "")
-        marker = "->" if active_task_ref and task_ref == active_task_ref else ""
-        task_label = f"**{task_ref}**" if marker else task_ref
+        is_active = active_task_ref and task_ref == active_task_ref
+        marker = "> " if is_active else "  "
+        task_cell = _format_dashboard_task_ref(task_ref, col_task)
+        status = task.get("status") or ("archived" if task.get("archived_at") else "active")
+        last = _format_dashboard_last_activity(task.get("last_activity"))
         lines.append(
-            "| {marker} | {task} | {status} | {findings} | {blockers} | {actions} | {last_activity} |".format(
-                marker=marker,
-                task=task_label,
-                status=task.get("status") or ("archived" if task.get("archived_at") else "active"),
-                findings=task.get("open_findings", 0),
-                blockers=task.get("open_blockers", 0),
-                actions=task.get("pending_actions", 0),
-                last_activity=_format_dashboard_last_activity(task.get("last_activity")),
-            )
+            f"{marker}{task_cell:<{col_task}}  {status:<{col_status}}  {task.get('open_findings', 0):>{col_find}}"
+            f"  {task.get('open_blockers', 0):>{col_block}}  {task.get('pending_actions', 0):>{col_act}}  {last:<{col_last}}"
         )
+    lines.append("```")
     return lines
 
 

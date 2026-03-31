@@ -43,6 +43,29 @@ def _parse(payload: str) -> dict:
     return typing.cast(dict, json.loads(payload))
 
 
+def _assert_dashboard_row(
+    md: str,
+    task_ref: str,
+    *,
+    status: str,
+    open_findings: int,
+    open_blockers: int,
+    pending_actions: int,
+    active: bool,
+) -> None:
+    row = next(
+        line
+        for line in md.splitlines()
+        if (line.startswith("> ") or line.startswith("  ")) and line[2:46].rstrip() == task_ref
+    )
+    assert row.startswith("> " if active else "  ")
+    cells = row[46:].split()
+    assert cells[0] == status
+    assert cells[1] == str(open_findings)
+    assert cells[2] == str(open_blockers)
+    assert cells[3] == str(pending_actions)
+
+
 def test_turn_metrics_round_trip_and_summary(isolated_handoff: dict) -> None:
     _parse(
         mcp_server.set_handoff_state(
@@ -1305,9 +1328,33 @@ def test_switch_task_regenerates_current_task_with_dashboard(isolated_handoff: d
 
     md = isolated_handoff["current_task_path"].read_text()
     assert "## All Tasks" in md
-    assert "| -> | **sw-dashboard-b** | in_progress | 0 | 0 | 0 |" in md
-    assert "sw-dashboard-a" in md
-    assert "sw-dashboard-other" in md
+    _assert_dashboard_row(
+        md,
+        "sw-dashboard-b",
+        status="in_progress",
+        open_findings=0,
+        open_blockers=0,
+        pending_actions=0,
+        active=True,
+    )
+    _assert_dashboard_row(
+        md,
+        "sw-dashboard-a",
+        status="in_progress",
+        open_findings=0,
+        open_blockers=0,
+        pending_actions=0,
+        active=False,
+    )
+    _assert_dashboard_row(
+        md,
+        "sw-dashboard-other",
+        status="active",
+        open_findings=1,
+        open_blockers=0,
+        pending_actions=0,
+        active=False,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ import pytest
 from agent_handoff_mcp import PromptMetrics, TokenUsage
 from agent_handoff_mcp import api as mcp_server
 from agent_handoff_mcp import core as handoff_core
+from agent_handoff_mcp import import_export as handoff_import_export
 from agent_handoff_mcp.config import RuntimeConfig
 
 
@@ -66,6 +67,31 @@ def _parse(payload: str) -> dict:
     import typing
 
     return typing.cast(dict, json.loads(payload))
+
+
+def _assert_dashboard_row(
+    md: str,
+    task_ref: str,
+    *,
+    status: str,
+    open_findings: int,
+    open_blockers: int,
+    pending_actions: int,
+    active: bool,
+) -> None:
+    row = next(
+        line
+        for line in md.splitlines()
+        if (line.startswith("> ") or line.startswith("  ")) and line[2:46].rstrip() == task_ref
+    )
+    assert row.startswith("> " if active else "  ")
+    task_cell = row[2:46].rstrip()
+    cells = row[46:].split()
+    assert task_cell == task_ref
+    assert cells[0] == status
+    assert cells[1] == str(open_findings)
+    assert cells[2] == str(open_blockers)
+    assert cells[3] == str(pending_actions)
 
 
 def test_schema_bootstrap_is_idempotent(isolated_handoff: dict) -> None:
@@ -1261,6 +1287,35 @@ def test_generate_current_task_md_with_nested_tool_wrapper(
     assert "cdx_slice_complete_nested_nested_wrapper" in payload["markdown"]
 
 
+def test_generate_current_task_md_prefers_live_status_over_archived_snapshot(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="reactivated-task",
+            objective="Original objective",
+            status="in_progress",
+        )
+    )
+    _parse(mcp_server.archive_task_state(task_ref="reactivated-task"))
+
+    switched = _parse(
+        handoff_import_export.switch_task(
+            task_ref="reactivated-task",
+            status="done",
+        )
+    )
+    assert switched["ok"] is True
+    assert switched["active"]["status"] == "done"
+
+    payload = _parse(mcp_server.generate_current_task_md(task_ref="reactivated-task", write_file=False))
+    md = payload["markdown"]
+
+    assert "> reactivated-task" in md
+    assert "done" in md
+    assert "in_progress" not in next(
+        line for line in md.splitlines() if "reactivated-task" in line and line.lstrip().startswith(">")
+    )
+
+
 def test_generate_current_task_md_includes_dashboard_header(isolated_handoff: dict) -> None:
     _parse(
         mcp_server.set_handoff_state(
@@ -1297,8 +1352,12 @@ def test_generate_current_task_md_includes_dashboard_header(isolated_handoff: di
     md = payload["markdown"]
 
     assert "## All Tasks" in md
-    assert "| -> | **E12-11** | in_progress | 0 | 0 | 0 |" in md
-    assert "|  | E12-10 | active | 1 | 0 | 0 |" in md
+    _assert_dashboard_row(
+        md, "E12-11", status="in_progress", open_findings=0, open_blockers=0, pending_actions=0, active=True
+    )
+    _assert_dashboard_row(
+        md, "E12-10", status="active", open_findings=1, open_blockers=0, pending_actions=0, active=False
+    )
     assert md.index("## All Tasks") < md.index("## Objective")
 
 
@@ -1327,8 +1386,12 @@ def test_internal_write_path_includes_dashboard_header(isolated_handoff: dict) -
 
     md = isolated_handoff["current_task_path"].read_text()
     assert "## All Tasks" in md
-    assert "| -> | **iw-dashboard** | in_progress | 0 | 0 | 0 |" in md
-    assert "|  | other-task | active | 1 | 0 | 0 |" in md
+    _assert_dashboard_row(
+        md, "iw-dashboard", status="in_progress", open_findings=0, open_blockers=0, pending_actions=0, active=True
+    )
+    _assert_dashboard_row(
+        md, "other-task", status="active", open_findings=1, open_blockers=0, pending_actions=0, active=False
+    )
 
 
 def test_handoff_close_check_allows_no_active_task_when_configured(isolated_handoff: dict) -> None:
@@ -2504,8 +2567,12 @@ def test_close_slice_writes_dashboard_header_on_success(isolated_handoff: dict) 
 
     md = isolated_handoff["current_task_path"].read_text()
     assert "## All Tasks" in md
-    assert "| -> | **close-dashboard** | in_progress | 0 | 0 | 0 |" in md
-    assert "|  | close-dashboard-other | active | 1 | 0 | 0 |" in md
+    _assert_dashboard_row(
+        md, "close-dashboard", status="in_progress", open_findings=0, open_blockers=0, pending_actions=0, active=True
+    )
+    _assert_dashboard_row(
+        md, "close-dashboard-other", status="active", open_findings=1, open_blockers=0, pending_actions=0, active=False
+    )
 
 
 # E12-5 review: load_session compound tool

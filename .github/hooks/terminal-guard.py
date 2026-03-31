@@ -21,6 +21,8 @@ Allowlisted terminal uses
 - In-place file edits: sed -i (when replace_string_in_file fails on large blocks)
 - File/directory operations: ls (symlinks/permissions), mkdir (directory creation)
 
+Commands that invoke `tee` are intentionally not allowlisted, even when the base command is a test runner. In this workspace `tee` can freeze the integrated terminal, so those commands require explicit confirmation.
+
 Everything else is default-denied.
 
 Exit codes
@@ -104,6 +106,8 @@ _ALLOWLIST: list[re.Pattern[str]] = [
         # git rev-parse: read-only SHA / path resolution
         r"^git\s+rev-parse\b",
         r"^git\s+-C\s+\S+\s+rev-parse\b",
+        # commit/worktree preflight: current checkout identity chain used by commit2git
+        r"^pwd\s*&&\s*git\s+rev-parse\s+--show-toplevel\s*&&\s*git\s+branch\s+--show-current\s*&&\s*git\s+rev-parse\s+--git-dir\s*&&\s*git\s+rev-parse\s+--git-common-dir\b",
         # In-place file edits (when replace_string_in_file fails on large blocks)
         r"^sed\s+-i\b",
         # Read-only measurement
@@ -267,6 +271,14 @@ def _check_command(command: str) -> tuple[str, str, str] | None:
     """
     stripped = _strip_env_prefix(command.strip())
     base = _base_command(stripped)
+
+    if re.search(r"(?:^|[|;&])\s*tee\b", stripped):
+        reason = (
+            f"[terminal-guard] NOT IN ALLOWLIST: {base[:80]!r}\n"
+            "Commands using `tee` are not silently allowed in this workspace because `tee` can freeze the integrated terminal.\n"
+            "Run the test directly, or redirect once to /tmp/<suite>.txt and inspect it with `read_file` if capture is required."
+        )
+        return "ask", "direct terminal output", reason
 
     # 1. Allowlist: unambiguously correct terminal use.
     for pattern in _ALLOWLIST:

@@ -11,14 +11,14 @@ Is the task one of these exact four categories?
 - `git commit` / `git push` / `git rebase` / `git cherry-pick` / `git worktree`
 - `pyenv` commands
 
-**YES** — Terminal is allowed. Pipe output: `| tail -n 40`. Never redirect with `>` AND `2>&1` in the same command.
+**YES** — Terminal is allowed. Prefer direct, focused test runs. Use `| tail -n 40` only when the command is noisy.
 
-**TEST RUNS (MANDATORY):** Always use `tee /tmp/<suite>.txt` then `read_file`. Never rely on terminal output alone:
+**TEST RUNS (MANDATORY):** Run the narrowest direct test command that proves the change. Do not use `tee`; it can freeze the integrated terminal in this workspace.
 
-- Python: `cd <app-dir> && pyenv exec python -m pytest <path> -q 2>&1 | tee /tmp/pytest_<suite>.txt`
-- Vitest: `cd <app-dir> && npx vitest run <path> 2>&1 | tee /tmp/vitest_<suite>.txt`
-- PHP: `cd <app-dir> && vendor/bin/phpunit <path> 2>&1 | tee /tmp/phpunit_<suite>.txt`
-- Then: `read_file("/tmp/pytest_<suite>.txt")`. Never `cat` in terminal.
+- Python: `cd <app-dir> && pyenv exec python -m pytest <path> -q`
+- Vitest: `cd <app-dir> && npx vitest run <path>`
+- PHP: `cd <app-dir> && vendor/bin/phpunit <path>`
+- If a test run needs captured output, redirect once to `/tmp/<suite>.txt` with `> /tmp/<suite>.txt 2>&1`, then inspect it with `read_file`. Never `cat` the file in terminal.
 - Background terminals lack pyenv; only use the foreground terminal for Python tests.
 
 **NO** — Stop. Use the native tool:

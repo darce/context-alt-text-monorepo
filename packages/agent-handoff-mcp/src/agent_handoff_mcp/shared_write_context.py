@@ -103,7 +103,18 @@ def build_write_actor(
 ) -> WriteActor:
     actor: WriteActor = {}
     normalized_model = _normalize_optional_text(model)
-    normalized_model_label = _normalize_optional_text(model_label) or normalize_model_label(normalized_model)
+    explicit_model_label = _normalize_optional_text(model_label)
+    derived_model_label = normalize_model_label(normalized_model)
+    if (
+        explicit_model_label is not None
+        and derived_model_label is not None
+        and explicit_model_label != derived_model_label
+    ):
+        raise ValueError(
+            "actor.model_label does not match the canonical label for actor.model: "
+            f"{explicit_model_label!r} != {derived_model_label!r}"
+        )
+    normalized_model_label = explicit_model_label or derived_model_label
     normalized_reasoning_level = normalize_reasoning_level(reasoning_level)
     derived_agent = normalize_model_identity(normalized_model_label, normalized_reasoning_level)
     normalized_agent = _normalize_optional_text(agent)
@@ -241,9 +252,18 @@ def _resolve_write_actor(
 ) -> ResolvedWriteContext:
     explicit_agent = _normalize_optional_text(actor.get("agent")) if actor else None
     explicit_model = _normalize_optional_text(actor.get("model")) if actor else None
-    explicit_model_label = (
-        _normalize_optional_text(actor.get("model_label")) if actor else None
-    ) or normalize_model_label(explicit_model)
+    explicit_model_label = _normalize_optional_text(actor.get("model_label")) if actor else None
+    derived_model_label = normalize_model_label(explicit_model)
+    if (
+        explicit_model_label is not None
+        and derived_model_label is not None
+        and explicit_model_label != derived_model_label
+    ):
+        raise ValueError(
+            "actor.model_label does not match the canonical label for actor.model: "
+            f"{explicit_model_label!r} != {derived_model_label!r}"
+        )
+    explicit_model_label = explicit_model_label or derived_model_label
     explicit_reasoning_level = normalize_reasoning_level(actor.get("reasoning_level")) if actor else None
     explicit_identity = normalize_model_identity(explicit_model_label, explicit_reasoning_level)
     explicit_branch = _normalize_optional_text(actor.get("branch")) if actor else None

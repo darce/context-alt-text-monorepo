@@ -281,6 +281,7 @@ Source-of-truth policy:
 
 - `.task-state/handoff.db` is authoritative for agent state.
 - `CURRENT_TASK.md` is derived output; never hand-edit it as the canonical tracker.
+- `CURRENT_TASK.md` includes a cross-task dashboard header plus the active task's detail section, so task switches should not erase visibility into other in-flight work.
 - If markdown drifts from DB, regenerate (`generate_current_task_md`) and continue from DB state.
 
 **When to use:**
@@ -297,13 +298,13 @@ Source-of-truth policy:
 **Workflow:**
 
 1. Initialize or update active task via MCP `set_handoff_state`.
-2. Record session outcomes via MCP tools (`record_decision`, `update_next_actions`, `record_test_result`, `report_blocker`).
+2. Record session outcomes via MCP tools (`record_decision`, `update_next_actions`, `record_test_result`, `report_blocker`). After every `record_decision` that covers a code change, notify the user that the handoff has been updated (e.g. "Handoff updated: decision `<id>` recorded."). This notification is mandatory.
 3. Read compact snapshot at session start via `get_handoff_state`.
 4. Record a structured slice-complete decision for every completed slice using the [decision naming grammar](#decision-ids), including docs-only or no-plan slices.
 5. Close the slice in every active tracker before moving on. Mark completed or skipped MCP next actions, update the relevant task-plan checklist boxes for the slice you just finished, and leave future-slice items open instead of carrying a fully stale checklist forward.
 6. Before close/final handoff, run `handoff_close_check(enforce=True, current_commit_sha=<HEAD>)` and resolve all failures.
 7. Before requesting branch review, run `make review-ready` from the current worktree and resolve all reported NOT READY reasons.
-8. Regenerate markdown view on demand via `generate_current_task_md`.
+8. Regenerate markdown view on demand via `generate_current_task_md`; confirm the dashboard header and active-task detail both reflect the latest DB state.
 9. Use template fallback only when MCP tooling is unavailable.
 
 **Template location:** [templates/CURRENT_TASK.template.md](../templates/CURRENT_TASK.template.md)

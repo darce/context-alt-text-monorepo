@@ -102,9 +102,9 @@ def test_build_write_actor_derives_unified_model_identity_from_model_fields() ->
     )
 
     assert actor == {
-        "agent": "Opus 4.6 high",
+        "agent": "Claude Opus 4 high",
         "model": "claude-opus-4-0520",
-        "model_label": "Opus 4.6",
+        "model_label": "Claude Opus 4",
         "reasoning_level": "high",
         "branch": "feature/model-identity",
     }
@@ -122,9 +122,19 @@ def test_build_write_actor_returns_empty_dict_for_blank_inputs() -> None:
 
 
 def test_model_identity_helpers_normalize_known_labels_and_skip_inherit() -> None:
-    assert normalize_model_label("claude-sonnet-4-20250514") == "Sonnet 4"
+    assert normalize_model_label("claude-sonnet-4-20250514") == "Claude Sonnet 4"
+    assert normalize_model_label("gpt-5.4") == "GPT-5.4"
     assert normalize_model_label("unknown-model") == "unknown-model"
-    assert normalize_model_identity("Opus 4.6", "inherit") == "Opus 4.6"
+    assert normalize_model_identity("Claude Opus 4", "inherit") == "Claude Opus 4"
+
+
+def test_build_write_actor_rejects_non_canonical_explicit_model_label() -> None:
+    try:
+        build_write_actor(model="claude-opus-4-0520", model_label="Opus 4.6")
+    except ValueError as exc:
+        assert "canonical label" in str(exc)
+    else:
+        raise AssertionError("expected build_write_actor to reject non-canonical explicit model labels")
 
 
 def test_public_review_packet_types_are_importable_from_package_root() -> None:

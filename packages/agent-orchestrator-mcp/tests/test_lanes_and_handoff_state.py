@@ -1273,6 +1273,43 @@ def test_switch_task_clears_focus_on_restore(isolated_handoff: dict) -> None:
     assert result2["active"]["focus"] == "resuming slice 3"
 
 
+def test_switch_task_regenerates_current_task_with_dashboard(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="sw-dashboard-a",
+            objective="Task A dashboard state",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.record_review_finding(
+            task_ref="sw-dashboard-other",
+            session="sw-dash-find",
+            finding_id="SW-DASH-01",
+            severity="medium",
+            file_path="docs/switch.md",
+            description="Cross-task context survives switch_task regeneration",
+        )
+    )
+
+    result = _parse(
+        mcp_server.switch_task(
+            task_ref="sw-dashboard-b",
+            objective="Task B dashboard state",
+            status="in_progress",
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["current_task_md_regen"] == "ok"
+
+    md = isolated_handoff["current_task_path"].read_text()
+    assert "## All Tasks" in md
+    assert "| -> | **sw-dashboard-b** | in_progress | 0 | 0 | 0 |" in md
+    assert "sw-dashboard-a" in md
+    assert "sw-dashboard-other" in md
+
+
 # ---------------------------------------------------------------------------
 # Decision grammar helpers tests
 # ---------------------------------------------------------------------------

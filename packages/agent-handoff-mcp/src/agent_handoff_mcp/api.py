@@ -468,16 +468,15 @@ def _build_tool_registry() -> list[ToolEntry]:
 def generate_current_task_md(
     task_ref: str | None = None,
     write_file: bool = True,
-    related_task_refs: str | None = None,
 ) -> str:
     """Generate CURRENT_TASK.md for the active task.
 
     Args:
         task_ref: The task to render. Defaults to the active task.
         write_file: Write the markdown to disk.
-        related_task_refs: Comma-separated task_ref values whose open review
-            findings should also appear in the output, grouped under
-            "Related Open Review Findings".
+
+    Open review findings from all other tasks are always included in the
+    rendered output, grouped by task_ref under "## Open Review Findings".
     """
     raw_state = core._invoke_tool(
         get_handoff_state,
@@ -490,6 +489,21 @@ def generate_current_task_md(
         verbose=True,
     )
     state = json.loads(raw_state)
+    with core._get_db_connection() as conn:
+        state["dashboard_tasks"] = core._collect_dashboard_rows(conn)
+        state["related_findings_open"] = core._collect_all_open_findings(
+            conn, active_task_ref=state.get("task_ref")
+        )
+        state["related_findings_deferred"] = core._collect_all_deferred_findings(
+            conn, active_task_ref=state.get("task_ref")
+        )
+        if state.get("task_ref"):
+            try:
+                from .review_findings import _collect_review_coverage  # noqa: PLC0415
+
+                state["review_coverage"] = _collect_review_coverage(conn, task_ref=state["task_ref"])
+            except Exception:
+                pass
 
     # If the requested task is not currently active, hydrate `active` from the
     # archived snapshot so the renderer can display the objective, focus, and
@@ -504,20 +518,6 @@ def generate_current_task_md(
             if archive_row is not None:
                 archived_snapshot = json.loads(archive_row["snapshot_json"])
                 state["active"] = archived_snapshot.get("active")
-
-    resolved_ref = state.get("task_ref")
-    if resolved_ref:
-        try:
-            state["review_coverage"] = json.loads(core.get_review_coverage(task_ref=resolved_ref))
-        except Exception:
-            pass
-
-    if related_task_refs:
-        refs = [r.strip() for r in related_task_refs.split(",") if r.strip()]
-        active_ref = state.get("task_ref", "")
-        refs = [r for r in refs if r != active_ref]
-        if refs:
-            state["related_findings_open"] = core._fetch_related_open_findings(refs)
 
     markdown = core._render_current_task_md(state)
     current_task_path = get_runtime_config().current_task_path

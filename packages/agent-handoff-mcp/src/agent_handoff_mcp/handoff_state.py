@@ -225,83 +225,9 @@ def get_handoff_state(
 
 
 def _get_handoff_dashboard_view(limit: int = 20, include_archived: bool = True) -> str:
-    limit = max(1, limit)
-    archive_union = (
-        "UNION ALL SELECT task_ref, archived_at AS updated_at FROM task_archives" if include_archived else ""
-    )
-    archived_filter = "" if include_archived else "WHERE archived.archived_at IS NULL"
     with _get_db_connection() as conn:
-        rows = conn.execute(
-            """
-            WITH activity AS (
-                SELECT task_ref, created_at AS updated_at FROM decisions
-                UNION ALL
-                SELECT task_ref, created_at AS updated_at FROM blockers
-                UNION ALL
-                SELECT task_ref, updated_at FROM next_actions
-                UNION ALL
-                SELECT task_ref, verified_at AS updated_at FROM verified_tests
-                UNION ALL
-                SELECT task_ref, COALESCE(updated_at, resolved_at, created_at) AS updated_at FROM review_findings
-                UNION ALL
-                SELECT task_ref, updated_at FROM worktree_lanes
-                UNION ALL
-                SELECT task_ref, created_at AS updated_at FROM worker_reports
-                UNION ALL
-                SELECT task_ref, updated_at FROM lane_messages
-                """
-            + archive_union
-            + """
-            ),
-            candidates AS (
-                SELECT task_ref, MAX(updated_at) AS last_activity
-                FROM activity
-                GROUP BY task_ref
-                ORDER BY MAX(updated_at) DESC
-                LIMIT ?
-            ),
-            blocker_counts AS (
-                SELECT task_ref, COUNT(*) AS open_blockers
-                FROM blockers
-                WHERE status = 'open'
-                GROUP BY task_ref
-            ),
-            action_counts AS (
-                SELECT task_ref, COUNT(*) AS pending_actions
-                FROM next_actions
-                WHERE status = 'pending'
-                GROUP BY task_ref
-            ),
-            finding_counts AS (
-                SELECT task_ref, COUNT(*) AS open_findings
-                FROM review_findings
-                WHERE status = 'open'
-                GROUP BY task_ref
-            ),
-            archived AS (
-                SELECT task_ref, archived_at
-                FROM task_archives
-            )
-            SELECT
-                candidates.task_ref,
-                candidates.last_activity,
-                COALESCE(blocker_counts.open_blockers, 0) AS open_blockers,
-                COALESCE(action_counts.pending_actions, 0) AS pending_actions,
-                COALESCE(finding_counts.open_findings, 0) AS open_findings,
-                archived.archived_at
-            FROM candidates
-            LEFT JOIN blocker_counts ON blocker_counts.task_ref = candidates.task_ref
-            LEFT JOIN action_counts ON action_counts.task_ref = candidates.task_ref
-            LEFT JOIN finding_counts ON finding_counts.task_ref = candidates.task_ref
-            LEFT JOIN archived ON archived.task_ref = candidates.task_ref
-            """
-            + archived_filter
-            + """
-            ORDER BY candidates.last_activity DESC
-            """,
-            (limit,),
-        ).fetchall()
+        from .current_task_rendering import _collect_dashboard_rows  # noqa: PLC0415
+
+        rows = _collect_dashboard_rows(conn, limit=limit, include_archived=include_archived)
         active = conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone()
-        return _json_response(
-            {"ok": True, "view": "dashboard", "active": _row_to_dict(active), "tasks": [dict(row) for row in rows]}
-        )
+        return _json_response({"ok": True, "view": "dashboard", "active": _row_to_dict(active), "tasks": rows})

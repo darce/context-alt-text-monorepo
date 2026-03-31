@@ -154,9 +154,9 @@ def test_record_decision_persists_unified_model_identity_fields(isolated_handoff
 
     assert recorded["ok"] is True
     decision = recorded["decision"]
-    assert decision["agent"] == "Opus 4.6 high"
+    assert decision["agent"] == "Claude Opus 4 high"
     assert decision["model"] == "claude-opus-4-0520"
-    assert decision["model_label"] == "Opus 4.6"
+    assert decision["model_label"] == "Claude Opus 4"
     assert decision["reasoning_level"] == "high"
 
 
@@ -221,7 +221,7 @@ def test_record_decision_with_token_counts(isolated_handoff: dict) -> None:
     assert decision["input_tokens"] == 8500
     assert decision["output_tokens"] == 3200
     assert decision["total_tokens"] == 11700
-    assert decision["agent"] == "Opus 4.6 high"
+    assert decision["agent"] == "Claude Opus 4 high"
 
 
 def test_record_decision_without_tokens_leaves_nulls(isolated_handoff: dict) -> None:
@@ -287,7 +287,7 @@ def test_current_task_md_shows_token_summary(isolated_handoff: dict) -> None:
     md = isolated_handoff["current_task_path"].read_text()
     assert "## Token Summary" in md
     assert "21.0K" in md  # 7000 + 14000
-    assert "Opus 4.6 high" in md
+    assert "Claude Opus 4 high" in md
 
 
 def test_current_task_md_omits_token_summary_when_no_tokens(isolated_handoff: dict) -> None:
@@ -459,7 +459,7 @@ def test_record_decision_no_warning_with_model(isolated_handoff: dict) -> None:
                 "## Schema / Contract Changes\n- none.\n"
                 "## Open Threads\n- none.\n"
             ),
-            actor={"model": "claude-opus-4-0520", "model_label": "Opus 4.6", "reasoning_level": "high"},
+            actor={"model": "claude-opus-4-0520", "model_label": "Claude Opus 4", "reasoning_level": "high"},
         )
     )
     assert result["ok"] is True
@@ -1212,6 +1212,15 @@ def test_archive_and_dashboard_summary(isolated_handoff: dict) -> None:
     hidden = [row for row in dashboard_no_archive["tasks"] if row["task_ref"] == "4.99.0"]
     assert len(hidden) == 0
 
+    # (a) Status is recovered from archived snapshot JSON; task was archived with status="done".
+    assert matching[0]["status"] == "done"
+
+    # (b) Archived task status renders correctly in the CURRENT_TASK.md dashboard table.
+    _parse(mcp_server.set_handoff_state(task_ref="post-archive", objective="post-archive placeholder", status="active"))
+    rendered = _parse(mcp_server.generate_current_task_md(task_ref="post-archive", write_file=False))
+    assert "4.99.0" in rendered["markdown"]
+    assert "done" in rendered["markdown"]
+
 
 def test_generate_current_task_md_with_nested_tool_wrapper(
     isolated_handoff: dict,
@@ -1250,6 +1259,76 @@ def test_generate_current_task_md_with_nested_tool_wrapper(
     assert "Nested wrapper objective" in payload["markdown"]
     assert "Latest Decision" in payload["markdown"]
     assert "cdx_slice_complete_nested_nested_wrapper" in payload["markdown"]
+
+
+def test_generate_current_task_md_includes_dashboard_header(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="E12-11",
+            objective="Dashboard active task",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.record_decision(
+            session="dash-1",
+            task_ref="E12-11",
+            decision="cop_slice_complete_E12-11_dashboard_header",
+            rationale=(
+                "## Changes\n- CURRENT_TASK.md header.\n\n"
+                "## Verification\n- unit tests.\n\n"
+                "## Schema / Contract Changes\n- none.\n\n"
+                "## Open Threads\n- none."
+            ),
+        )
+    )
+    _parse(
+        mcp_server.record_review_finding(
+            task_ref="E12-10",
+            session="dash-2",
+            finding_id="E12-10-OPEN",
+            severity="medium",
+            file_path="docs/task.md",
+            description="Second task stays visible in dashboard",
+        )
+    )
+
+    payload = _parse(mcp_server.generate_current_task_md(task_ref="E12-11", write_file=False))
+    md = payload["markdown"]
+
+    assert "## All Tasks" in md
+    assert "| -> | **E12-11** | in_progress | 0 | 0 | 0 |" in md
+    assert "|  | E12-10 | active | 1 | 0 | 0 |" in md
+    assert md.index("## All Tasks") < md.index("## Objective")
+
+
+def test_internal_write_path_includes_dashboard_header(isolated_handoff: dict) -> None:
+    from agent_handoff_mcp._shared import _write_current_task_md_from_state
+
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="iw-dashboard",
+            objective="Internal write path dashboard",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.record_review_finding(
+            task_ref="other-task",
+            session="iw-dash",
+            finding_id="IW-DASH-01",
+            severity="low",
+            file_path="docs/x.md",
+            description="Visible in dashboard table",
+        )
+    )
+
+    _write_current_task_md_from_state("iw-dashboard")
+
+    md = isolated_handoff["current_task_path"].read_text()
+    assert "## All Tasks" in md
+    assert "| -> | **iw-dashboard** | in_progress | 0 | 0 | 0 |" in md
+    assert "|  | other-task | active | 1 | 0 | 0 |" in md
 
 
 def test_handoff_close_check_allows_no_active_task_when_configured(isolated_handoff: dict) -> None:
@@ -1510,7 +1589,7 @@ def test_record_decision_accepts_structured_slice_completion_rationale(isolated_
 
 
 def test_generate_current_task_md_includes_related_findings(isolated_handoff: dict) -> None:
-    """Open findings from related tasks appear under a grouped section."""
+    """Open findings from all other tasks always appear grouped by task_ref."""
     # Set up the active task
     _parse(
         mcp_server.set_handoff_state(
@@ -1579,14 +1658,12 @@ def test_generate_current_task_md_includes_related_findings(isolated_handoff: di
         mcp_server.generate_current_task_md(
             task_ref="daemon-3",
             write_file=False,
-            related_task_refs="daemon-1,daemon-2",
         )
     )
     assert payload["ok"] is True
     md = payload["markdown"]
     assert "## Open Review Findings" in md
     assert "D3-01" in md
-    assert "## Related Open Review Findings" in md
     assert "### daemon-1" in md
     assert "D1-01" in md
     assert "### daemon-2" in md
@@ -1594,7 +1671,7 @@ def test_generate_current_task_md_includes_related_findings(isolated_handoff: di
 
 
 def test_generate_current_task_md_related_excludes_active_task(isolated_handoff: dict) -> None:
-    """If the active task_ref appears in related_task_refs, it is deduplicated."""
+    """Active task findings are never duplicated in the cross-task section."""
     _parse(
         mcp_server.set_handoff_state(
             task_ref="daemon-3",
@@ -1617,7 +1694,6 @@ def test_generate_current_task_md_related_excludes_active_task(isolated_handoff:
         mcp_server.generate_current_task_md(
             task_ref="daemon-3",
             write_file=False,
-            related_task_refs="daemon-3",
         )
     )
     md = payload["markdown"]
@@ -1627,7 +1703,7 @@ def test_generate_current_task_md_related_excludes_active_task(isolated_handoff:
 
 
 def test_generate_current_task_md_related_skips_resolved(isolated_handoff: dict) -> None:
-    """Resolved findings from related tasks should not appear."""
+    """Resolved findings from other tasks do not appear in the output."""
     # Create daemon-1 task first and resolve a finding while it is active
     init1 = _parse(
         mcp_server.set_handoff_state(
@@ -1669,7 +1745,6 @@ def test_generate_current_task_md_related_skips_resolved(isolated_handoff: dict)
         mcp_server.generate_current_task_md(
             task_ref="daemon-3",
             write_file=False,
-            related_task_refs="daemon-1",
         )
     )
     md = payload["markdown"]
@@ -1677,8 +1752,8 @@ def test_generate_current_task_md_related_skips_resolved(isolated_handoff: dict)
     assert "## Related Open Review Findings" not in md
 
 
-def test_generate_current_task_md_no_related_param(isolated_handoff: dict) -> None:
-    """When related_task_refs is not provided, no related section appears."""
+def test_generate_current_task_md_no_other_open_findings(isolated_handoff: dict) -> None:
+    """When no other tasks have open findings, no cross-task subheadings appear."""
     _parse(
         mcp_server.set_handoff_state(
             task_ref="daemon-3",
@@ -1843,6 +1918,44 @@ def test_internal_write_path_includes_review_coverage(isolated_handoff: dict) ->
     )
 
     _write_current_task_md_from_state("iw-cov-test")
+
+    md = isolated_handoff["current_task_path"].read_text()
+    assert "## Review Coverage" in md
+    assert "review runs: 1" in md
+
+
+def test_internal_write_path_reuses_existing_connection_for_review_coverage(
+    isolated_handoff: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: the internal write path must not reopen the DB via the public coverage tool."""
+    from agent_handoff_mcp import review_findings
+    from agent_handoff_mcp._shared import _get_db_connection, _write_current_task_md_for_task
+
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="iw-cov-inline",
+            objective="Inline coverage reuse",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.record_review_run(
+            review_run_id="RUN-IW-INLINE-001",
+            session="s-iw-inline",
+            task_ref="iw-cov-inline",
+            subject_path="src/inline.py",
+            review_mode="branch",
+            verdict="pass",
+        )
+    )
+
+    def _unexpected_public_helper(*args: object, **kwargs: object) -> str:
+        raise AssertionError("public get_review_coverage should not be called from _write_current_task_md_for_task")
+
+    monkeypatch.setattr(review_findings, "get_review_coverage", _unexpected_public_helper)
+
+    with _get_db_connection() as conn:
+        _write_current_task_md_for_task(conn, "iw-cov-inline")
 
     md = isolated_handoff["current_task_path"].read_text()
     assert "## Review Coverage" in md
@@ -2350,6 +2463,49 @@ def test_close_slice_does_not_write_md_on_state_failure(isolated_handoff: dict) 
     assert result["state_updated"] is False
     assert result["current_task_md_written"] is False
     assert isolated_handoff["current_task_path"].read_text() == sentinel
+
+
+def test_close_slice_writes_dashboard_header_on_success(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="close-dashboard",
+            objective="Close slice dashboard proof",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.record_review_finding(
+            task_ref="close-dashboard-other",
+            session="close-dash-find",
+            finding_id="CLOSE-DASH-01",
+            severity="low",
+            file_path="docs/close.md",
+            description="Other task stays visible after close_slice regeneration",
+        )
+    )
+
+    result = _parse(
+        mcp_server.close_slice(
+            session="close-dash",
+            decision="cop_slice_complete_E12-11_close_slice_dashboard_regen",
+            rationale=(
+                "## Changes\n- verify close_slice dashboard regeneration.\n\n"
+                "## Verification\n- unit test.\n\n"
+                "## Schema / Contract Changes\n- none.\n\n"
+                "## Open Threads\n- none."
+            ),
+            task_ref="close-dashboard",
+            expected_revision=0,
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["current_task_md_written"] is True
+
+    md = isolated_handoff["current_task_path"].read_text()
+    assert "## All Tasks" in md
+    assert "| -> | **close-dashboard** | in_progress | 0 | 0 | 0 |" in md
+    assert "|  | close-dashboard-other | active | 1 | 0 | 0 |" in md
 
 
 # E12-5 review: load_session compound tool

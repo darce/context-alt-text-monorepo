@@ -1144,68 +1144,76 @@ def get_review_coverage(
     if task_ref is None and subject_path is None:
         return _json_response({"ok": False, "error": "Provide at least one of task_ref or subject_path."})
     with _get_db_connection() as conn:
-        # --- runs ---
-        run_where_parts: list[str] = []
-        run_params: list[object] = []
-        if task_ref is not None:
-            run_where_parts.append("task_ref = ?")
-            run_params.append(task_ref)
-        if subject_path is not None:
-            run_where_parts.append("subject_path = ?")
-            run_params.append(subject_path)
-        run_where_sql = " AND ".join(run_where_parts)
-        runs = [
-            dict(row)
-            for row in conn.execute(
-                f"SELECT * FROM review_runs WHERE {run_where_sql} ORDER BY reviewed_at DESC, id DESC",
-                tuple(run_params),
-            ).fetchall()
-        ]
-        run_count = len(runs)
-        latest_run = runs[0] if runs else None
-        latest_verdict = latest_run["verdict"] if latest_run else None
-        latest_review_run_id = latest_run["review_run_id"] if latest_run else None
-        recent_run_ids = [r["review_run_id"] for r in runs[:5]]
+        payload = _collect_review_coverage(conn, task_ref=task_ref, subject_path=subject_path)
+    return _json_response(payload)
 
-        # --- open findings by severity ---
-        open_severity_counts: dict[str, int] = {"high": 0, "medium": 0, "low": 0}
-        reopened_count = 0
-        if task_ref is not None:
-            # task_ref is the most direct link to findings
-            for row in conn.execute(
-                "SELECT severity, COUNT(*) AS cnt FROM review_findings WHERE task_ref = ? AND status = 'open' GROUP BY severity",
-                (task_ref,),
-            ).fetchall():
-                open_severity_counts[str(row["severity"])] = int(row["cnt"])
-            row = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM review_findings WHERE task_ref = ? AND reopen_count > 0",
-                (task_ref,),
-            ).fetchone()
-            reopened_count = int(row["cnt"]) if row else 0
-        elif runs:
-            # subject_path only: join findings through review_run_id
-            run_ids = [r["review_run_id"] for r in runs]
-            placeholders = ",".join("?" * len(run_ids))
-            for row in conn.execute(
-                f"SELECT severity, COUNT(*) AS cnt FROM review_findings WHERE review_run_id IN ({placeholders}) AND status = 'open' GROUP BY severity",
-                tuple(run_ids),
-            ).fetchall():
-                open_severity_counts[str(row["severity"])] = int(row["cnt"])
-            row = conn.execute(
-                f"SELECT COUNT(*) AS cnt FROM review_findings WHERE review_run_id IN ({placeholders}) AND reopen_count > 0",
-                tuple(run_ids),
-            ).fetchone()
-            reopened_count = int(row["cnt"]) if row else 0
-    return _json_response(
-        {
-            "ok": True,
-            "task_ref": task_ref,
-            "subject_path": subject_path,
-            "run_count": run_count,
-            "latest_review_run_id": latest_review_run_id,
-            "latest_verdict": latest_verdict,
-            "recent_run_ids": recent_run_ids,
-            "open_findings_by_severity": open_severity_counts,
-            "reopened_findings_count": reopened_count,
-        }
-    )
+
+def _collect_review_coverage(
+    conn: sqlite3.Connection,
+    *,
+    task_ref: str | None = None,
+    subject_path: str | None = None,
+) -> dict[str, object]:
+    if task_ref is None and subject_path is None:
+        return {"ok": False, "error": "Provide at least one of task_ref or subject_path."}
+
+    run_where_parts: list[str] = []
+    run_params: list[object] = []
+    if task_ref is not None:
+        run_where_parts.append("task_ref = ?")
+        run_params.append(task_ref)
+    if subject_path is not None:
+        run_where_parts.append("subject_path = ?")
+        run_params.append(subject_path)
+    run_where_sql = " AND ".join(run_where_parts)
+    runs = [
+        dict(row)
+        for row in conn.execute(
+            f"SELECT * FROM review_runs WHERE {run_where_sql} ORDER BY reviewed_at DESC, id DESC",
+            tuple(run_params),
+        ).fetchall()
+    ]
+    run_count = len(runs)
+    latest_run = runs[0] if runs else None
+    latest_verdict = latest_run["verdict"] if latest_run else None
+    latest_review_run_id = latest_run["review_run_id"] if latest_run else None
+    recent_run_ids = [r["review_run_id"] for r in runs[:5]]
+
+    open_severity_counts: dict[str, int] = {"high": 0, "medium": 0, "low": 0}
+    reopened_count = 0
+    if task_ref is not None:
+        for row in conn.execute(
+            "SELECT severity, COUNT(*) AS cnt FROM review_findings WHERE task_ref = ? AND status = 'open' GROUP BY severity",
+            (task_ref,),
+        ).fetchall():
+            open_severity_counts[str(row["severity"])] = int(row["cnt"])
+        row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM review_findings WHERE task_ref = ? AND reopen_count > 0",
+            (task_ref,),
+        ).fetchone()
+        reopened_count = int(row["cnt"]) if row else 0
+    elif runs:
+        run_ids = [r["review_run_id"] for r in runs]
+        placeholders = ",".join("?" * len(run_ids))
+        for row in conn.execute(
+            f"SELECT severity, COUNT(*) AS cnt FROM review_findings WHERE review_run_id IN ({placeholders}) AND status = 'open' GROUP BY severity",
+            tuple(run_ids),
+        ).fetchall():
+            open_severity_counts[str(row["severity"])] = int(row["cnt"])
+        row = conn.execute(
+            f"SELECT COUNT(*) AS cnt FROM review_findings WHERE review_run_id IN ({placeholders}) AND reopen_count > 0",
+            tuple(run_ids),
+        ).fetchone()
+        reopened_count = int(row["cnt"]) if row else 0
+
+    return {
+        "ok": True,
+        "task_ref": task_ref,
+        "subject_path": subject_path,
+        "run_count": run_count,
+        "latest_review_run_id": latest_review_run_id,
+        "latest_verdict": latest_verdict,
+        "recent_run_ids": recent_run_ids,
+        "open_findings_by_severity": open_severity_counts,
+        "reopened_findings_count": reopened_count,
+    }

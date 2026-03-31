@@ -6,7 +6,7 @@ boundary_owner: agentic-tooling
 
 ## Purpose
 
-`agent-handoff-mcp` is the portable MCP server for agent coordination state. After the E12-5/E12-6 split it exposes **27 tools** for task state, review findings, artifacts, export/import, and handoff close checks. Orchestration, daemon lifecycle, lane management, and turn metrics are served by [`agent-orchestrator-mcp`](agent-orchestrator-mcp.md).
+`agent-handoff-mcp` is the portable MCP server for agent coordination state. After the E12-5/E12-6 split it exposes **27 tools** in its full profile (**16 core**, **11 extended**) for task state, review findings, artifacts, export/import, and handoff close checks. Orchestration, daemon lifecycle, lane management, and turn metrics are served by [`agent-orchestrator-mcp`](agent-orchestrator-mcp.md).
 
 ## Runtime Configuration
 
@@ -18,6 +18,7 @@ Supported config inputs:
 - `--state-dir` or `AGENT_HANDOFF_STATE_DIR`
 - `--current-task-path` or `AGENT_HANDOFF_CURRENT_TASK_PATH`
 - `--exports-dir` or `AGENT_HANDOFF_EXPORTS_DIR`
+- `--tool-profile` or `AGENT_HANDOFF_TOOL_PROFILE` — `core` (default) or `full`; core exposes 16 daily-use ledger tools, full exposes all 27
 - `AGENT_HANDOFF_DEFAULT_AGENT`
 - `AGENT_HANDOFF_DEFAULT_BRANCH`
 - `AGENT_HANDOFF_DEFAULT_COMMIT_SHA`
@@ -28,6 +29,8 @@ Default workspace-owned state:
 - artifact DB: `.task-state/mcp-artifacts.db`
 - exports: `.task-state/exports/`
 - generated markdown: `CURRENT_TASK.md`
+
+`CURRENT_TASK.md` now renders a compact cross-task dashboard header above the active task detail section. The dashboard is derived from the same aggregated task-state query used by `get_handoff_state(view="dashboard")`, so switching tasks preserves visibility into other active or recently active tasks without creating extra files.
 
 Runtime bootstrap:
 
@@ -79,12 +82,13 @@ Surface classes:
 | `list_review_runs`             | query         | yes        | Lists `review_runs` ledger entries. Filter by `task_ref`, `subject_path`, `review_mode`, or `verdict`. Paginated, ordered by recency.                                                                                                         |
 | `get_review_coverage`          | query         | yes        | Coverage summary for a task or artifact: run count, latest verdict, recent run ids, open findings by severity, reopened count. Provide `task_ref`, `subject_path`, or both.                                                                   |
 | `handoff_close_check`          | generator     | yes        | Derived readiness verdict from current state.                                                                                                                                                                                                 |
-| `generate_current_task_md`     | generator     | no         | Renders deterministic markdown and writes `CURRENT_TASK.md` by default.                                                                                                                                                                       |
+| `generate_current_task_md`     | generator     | no         | Renders deterministic markdown and writes `CURRENT_TASK.md` by default. Output includes a cross-task dashboard header plus the existing active-task detail section.                                                                            |
 | `export_handoff_state`         | generator     | yes        | Produces portable snapshot output.                                                                                                                                                                                                            |
 | `import_handoff_state`         | action        | no         | Imports snapshot into local DB; destructive in replace modes.                                                                                                                                                                                 |
 | `archive_task_state`           | action        | no         | Moves active state into archive storage.                                                                                                                                                                                                      |
 | `load_session`                 | query         | yes        | **Compound**: calls `get_handoff_state` + `list_review_findings(status="open")` in one invocation. Use at session start to minimise round trips.                                                                                              |
 | `close_slice`                  | action        | no         | **Compound**: calls `record_decision` + `set_handoff_state` + `generate_current_task_md` in one invocation. Use at slice completion to write evidence atomically.                                                                             |
+| `audit_decision_ids`           | query         | yes        | Audits recent decision IDs for grammar conformance. Returns canonical/malformed/freeform classifications per ID.                                                                                                                              |
 | `record_artifact`              | action        | no         | Indexes artifact content into sidecar FTS store.                                                                                                                                                                                              |
 | `search_artifacts`             | generator     | yes        | Returns ranked snippets from indexed artifacts. Empty `queries` returns a source listing (replaces the former `list_artifact_sources`).                                                                                                       |
 | `get_artifact`                 | query         | yes        | Reads stored artifact record; pass `include_terms=true` for term derivation (replaces `get_artifact_source` and `get_artifact_terms`).                                                                                                        |
@@ -287,6 +291,43 @@ agent-handoff-mcp --workspace-root <repo> handoff-search \
 - FTS5 tables not initialized (FTS5 unavailable): returns `{"ok": false, "error": "..."}`. Run
   `doctor` to diagnose.
 
+## `get_handoff_state` Dashboard View Response Shape
+
+When called with `view="dashboard"`, `get_handoff_state` returns:
+
+```json
+{
+  "ok": true,
+  "view": "dashboard",
+  "active": { "task_ref": "E12-11", "status": "in_progress", "..." : "..." },
+  "tasks": [
+    {
+      "task_ref": "E12-11",
+      "status": "in_progress",
+      "last_activity": "2026-03-30 23:50:30",
+      "open_blockers": 0,
+      "pending_actions": 0,
+      "open_findings": 6,
+      "archived_at": null
+    }
+  ]
+}
+```
+
+`tasks[]` field reference:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `task_ref` | `string` | Task reference identifier |
+| `status` | `string` | For the active task: live `handoff_state.status`. For archived tasks: recovered from the archived snapshot's `active.status` when available, else `"archived"`. For non-active, non-archived tasks: `"active"` as fallback. |
+| `last_activity` | `string \| null` | ISO datetime of the most recent ledger entry across decisions, blockers, next_actions, verified_tests, review_findings, worktree_lanes, worker_reports, and lane_messages. Also includes `handoff_state.updated_at` for the currently active task as a baseline anchor (see behavioral note below). |
+| `open_blockers` | `integer` | Count of blockers with `status = 'open'` |
+| `pending_actions` | `integer` | Count of next_actions with `status = 'pending'` |
+| `open_findings` | `integer` | Count of review_findings with `status = 'open'` |
+| `archived_at` | `string \| null` | ISO datetime of archival; `null` for non-archived tasks |
+
+**Behavioral note on `last_activity`:** `_collect_dashboard_rows` includes `handoff_state.updated_at` (the `id = 1` row, i.e. the active task) as an activity source. This gives the currently active task a recent-activity anchor even when it has no separate ledger entries. The prior `_get_handoff_dashboard_view` implementation did not include this source; the difference is intentional.
+
 ## Request Shape Notes
 
 - Most write tools accept optional `task_ref`. When omitted, they target the active task as a fallback.
@@ -366,6 +407,7 @@ Fallback subcommands:
 - `export`
 - `import`
 - `archive`
+- `audit-decisions`
 - `artifact-record`
 - `artifact-search`
 - `artifact-get`
@@ -374,7 +416,7 @@ Fallback subcommands:
 
 Orchestration subcommands (`orchestrator-start`, `worker-start`, `dispatch`, `orchestrator-cycle`, `worker-events`, `list-backends`, `metrics`, etc.) are served exclusively by `agent-orchestrator-mcp`. See [`agent-orchestrator-mcp.md`](agent-orchestrator-mcp.md).
 
-**CLI surface note:** `agent-handoff-mcp` CLI is ledger-only. It exposes `serve-stdio`, `serve-http`, `doctor`, `dashboard`, and the 27 ledger MCP tools as CLI wrappers. All orchestration and lane-management commands are exclusively on `agent-orchestrator-mcp`.
+**CLI surface note:** `agent-handoff-mcp` CLI is ledger-only. It exposes `serve-stdio`, `serve-http`, `doctor`, `dashboard`, and the 27 ledger MCP tools as CLI wrappers, plus two CLI-only artifact variants (`artifact-list`, `artifact-terms`). All orchestration and lane-management commands are exclusively on `agent-orchestrator-mcp`.
 
 ## HTTP Transport
 
@@ -443,7 +485,7 @@ Host-specific integrations (e.g. Codex skill wrappers, VS Code callbacks) trigge
 
 **Side effects allowed:** `CURRENT_TASK.md` regeneration. `generate_current_task_md` runs for the new active task so the human-readable mirror reflects the switch immediately.
 
-**Required durable output:** Updated `CURRENT_TASK.md` with the new task's latest decision, objective, and open findings. If regeneration fails, the failure must be surfaced in the `switch_task` response, not silently swallowed.
+**Required durable output:** Updated `CURRENT_TASK.md` with the dashboard header plus the new task's latest decision, objective, and open findings in the detail section. If regeneration fails, the failure must be surfaced in the `switch_task` response, not silently swallowed.
 
 **Operator visibility:** `CURRENT_TASK.md` must be current after `switch_task` returns. If the file appears stale, run `generate_current_task_md(task_ref=<new-task>)` explicitly.
 

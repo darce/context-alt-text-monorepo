@@ -133,8 +133,8 @@ def test_ls_is_allowlisted() -> None:
         "pytest apps/prototype-description-service/ -x",
         "python -m pytest tests/ -v",
         "python3 -m pytest tests/ -v",
-        "/Users/daniel/.pyenv/versions/description-service/bin/python -u -m pytest tests/ -q 2>&1 | tee /tmp/pytest_orchestrator_current.txt",
-        "/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest tests/test_lane_exec.py tests/test_lane_result.py -q 2>&1 | tee /tmp/pytest_lane_exec_result.txt",
+        "/Users/daniel/.pyenv/versions/description-service/bin/python -u -m pytest tests/ -q | tail -n 40",
+        "/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest tests/test_lane_exec.py tests/test_lane_result.py -q",
         "npm test",
         "npm run test",
         "vitest run",
@@ -185,6 +185,7 @@ def test_ls_is_allowlisted() -> None:
         "git rev-parse HEAD",
         "git rev-parse --show-toplevel",
         "git -C /Users/daniel/Development/context-alt-text-monorepo rev-parse HEAD",
+        "pwd && git rev-parse --show-toplevel && git branch --show-current && git rev-parse --git-dir && git rev-parse --git-common-dir",
         # Read-only measurement
         "wc -l /tmp/bd_product_diff.patch",
         "wc -lw apps/prototype-description-service/recognition/domain/suggestion.py",
@@ -240,6 +241,22 @@ def test_rm_force_is_denied(command: str) -> None:
 
 def test_rm_recursive_without_force_is_allowed() -> None:
     assert _check_command("rm -r .hypothesis") is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pytest tests/ -q 2>&1 | tee /tmp/pytest_output.txt",
+        "vendor/bin/phpunit tests/Unit/SnapshotProjectorTest.php | tee /tmp/phpunit_snapshot.txt",
+        "npx vitest run js/admin/hooks/__tests__/useClusterSelection.test.ts | tee /tmp/vitest_selection.txt",
+    ],
+)
+def test_tee_commands_require_confirmation(command: str) -> None:
+    result = _check_command(command)
+    assert result is not None, f"Expected tee command to require confirmation: {command!r}"
+    decision, _, reason = result
+    assert decision == "ask"
+    assert "tee" in reason
 
 
 # ---------------------------------------------------------------------------

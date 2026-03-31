@@ -18,12 +18,29 @@ from __future__ import annotations
 
 import os
 import uuid
-from unittest.mock import AsyncMock, call
+from collections.abc import AsyncGenerator
+from unittest.mock import AsyncMock
 
 import pytest
+import pytest_asyncio
+from sqlalchemy import event, text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from db.models import Tenant
+from db.settings import get_database_settings
+from recognition.application.assignment.gate import AssignmentGate
+from recognition.application.discovery.centroid import CentroidDiscovery
+from recognition.application.discovery.graph.discovery import GraphDiscovery
+from recognition.application.discovery.representative import RepresentativeDiscovery
 from recognition.application.orchestration.cluster_service import ClusterService
+from recognition.application.persistence.assignment_writer import AssignmentWriter
+from recognition.application.settings import ClusteringSettings
+from recognition.application.suggestions.service import SuggestionService
+from recognition.infrastructure.clustering.hdbscan_adapter import HdbscanGraphAlgorithm
+from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
+from recognition.infrastructure.repositories.member_repository import SqlAlchemyMemberRepository
+from recognition.infrastructure.repositories.suggestion_repository import SqlAlchemySuggestionRepository
 
 # ---------------------------------------------------------------------------
 # Helper: identities for multi-chunk test
@@ -56,6 +73,107 @@ def _make_media_identity_rows(tenant_id: uuid.UUID, count: int, db_session) -> l
             )
         )
     return rows
+
+
+def _resolve_postgres_test_dsn() -> str:
+    explicit_dsn = os.environ.get("POSTGRES_TEST_URL")
+    if explicit_dsn:
+        return explicit_dsn
+
+    return get_database_settings().postgres_dsn
+
+
+@pytest_asyncio.fixture
+async def postgres_db_session() -> AsyncGenerator[AsyncSession, None]:
+    """Provide a Postgres-backed session with schema and RLS checks for seam regression tests."""
+
+    engine = create_async_engine(_resolve_postgres_test_dsn(), pool_pre_ping=True)
+
+    try:
+        async with engine.connect() as connection:
+            try:
+                table_exists = await connection.scalar(
+                    text("SELECT to_regclass('public.recognition_events') IS NOT NULL")
+                )
+                if not table_exists:
+                    pytest.skip(
+                        "recognition_events table is not present; run scripts/reset_dev_db.sh before the Postgres RLS regression test"
+                    )
+
+                rls_enabled = await connection.scalar(
+                    text("SELECT relrowsecurity FROM pg_class WHERE oid = 'public.recognition_events'::regclass")
+                )
+                if not rls_enabled:
+                    pytest.skip(
+                        "recognition_events RLS policies are not active; reset the local Postgres schema before running this regression test"
+                    )
+            except SQLAlchemyError as exc:
+                pytest.skip(f"Postgres RLS regression environment is unavailable: {exc}")
+
+            outer_transaction = await connection.begin()
+            session_factory = async_sessionmaker(bind=connection, expire_on_commit=False)
+
+            async with session_factory() as session:
+                await session.begin_nested()
+
+                @event.listens_for(session.sync_session, "after_transaction_end")
+                def _restart_savepoint(sess, transaction):
+                    if transaction.nested and not transaction._parent.nested:
+                        sess.begin_nested()
+
+                try:
+                    yield session
+                finally:
+                    await session.rollback()
+
+            await outer_transaction.rollback()
+    except SQLAlchemyError as exc:
+        pytest.skip(f"Postgres RLS regression environment is unavailable: {exc}")
+    finally:
+        await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def postgres_tenant(postgres_db_session: AsyncSession) -> Tenant:
+    """Insert a tenant row into the Postgres-backed regression session."""
+
+    tenant = Tenant(site_url=f"http://postgres-rls-{uuid.uuid4().hex}.test")
+    postgres_db_session.add(tenant)
+    await postgres_db_session.commit()
+    await postgres_db_session.refresh(tenant)
+    return tenant
+
+
+@pytest.fixture
+def postgres_cluster_service(postgres_db_session: AsyncSession, postgres_tenant: Tenant) -> ClusterService:
+    """Build a ClusterService against the Postgres-backed session used by the seam regression."""
+
+    settings = ClusteringSettings()
+    cluster_repository = SqlAlchemyClusterRepository(postgres_db_session)
+    member_repository = SqlAlchemyMemberRepository(postgres_db_session, tenant_id=postgres_tenant.id)
+    assignment_writer = AssignmentWriter(settings, cluster_repository, member_repository)
+    suggestion_repository = SqlAlchemySuggestionRepository(postgres_db_session)
+
+    gate = AssignmentGate(settings, cluster_repository)
+    rep_discovery = RepresentativeDiscovery(settings)
+    centroid_discovery = CentroidDiscovery(settings)
+    graph_discovery = GraphDiscovery(settings, HdbscanGraphAlgorithm())
+    suggestions = SuggestionService(
+        suggestion_repository,
+        tenant_id=str(postgres_tenant.id),
+        cluster_repository=cluster_repository,
+    )
+
+    return ClusterService(
+        gate=gate,
+        representative_discovery=rep_discovery,
+        centroid_discovery=centroid_discovery,
+        graph_discovery=graph_discovery,
+        assignment_writer=assignment_writer,
+        suggestion_service=suggestions,
+        logger=None,
+        session=postgres_db_session,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -117,23 +235,13 @@ async def test_orchestrator_restores_context_after_each_chunk_commit(
 
 
 # ---------------------------------------------------------------------------
-# Postgres regression test (requires real Postgres with RLS policies)
+# Postgres regression test (uses the service's standard Postgres settings when available)
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.skipif(
-    not os.environ.get("POSTGRES_TEST_URL"),
-    reason=(
-        "Requires POSTGRES_TEST_URL pointing to a Postgres instance with RLS "
-        "policies active.  The default test suite uses SQLite in-memory which "
-        "does not support SET LOCAL or row-level security."
-    ),
-)
 @pytest.mark.asyncio
 async def test_multi_chunk_clustering_does_not_fail_rls_on_second_chunk(
-    db_session,
-    tenant: Tenant,
-    cluster_service: ClusterService,
+    postgres_db_session: AsyncSession,
+    postgres_tenant: Tenant,
+    postgres_cluster_service: ClusterService,
 ) -> None:
     """Postgres-backed regression: chunk 2+ must not raise InsufficientPrivilegeError.
 
@@ -151,13 +259,13 @@ async def test_multi_chunk_clustering_does_not_fail_rls_on_second_chunk(
     - set_tenant_context + enable_rls_bypass are called after each chunk commit
     - autoflush inserts succeed because the bypass flag is still set
     """
-    identity_rows = _make_media_identity_rows(tenant.id, 12, db_session)
-    db_session.add_all(identity_rows)
-    await db_session.commit()
+    identity_rows = _make_media_identity_rows(postgres_tenant.id, 12, postgres_db_session)
+    postgres_db_session.add_all(identity_rows)
+    await postgres_db_session.commit()
 
     # Should complete without InsufficientPrivilegeError
-    result = await cluster_service.cluster_unclustered_identities(
-        tenant_id=str(tenant.id),
+    result = await postgres_cluster_service.cluster_unclustered_identities(
+        tenant_id=str(postgres_tenant.id),
         job_id=None,
     )
     assert result.completed == 12

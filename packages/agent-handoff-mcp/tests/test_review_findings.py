@@ -17,6 +17,29 @@ def _parse(raw: str) -> dict:
     return json.loads(raw)
 
 
+def _assert_dashboard_row(
+    md: str,
+    task_ref: str,
+    *,
+    status: str,
+    open_findings: int,
+    open_blockers: int,
+    pending_actions: int,
+    active: bool,
+) -> None:
+    row = next(
+        line
+        for line in md.splitlines()
+        if (line.startswith("> ") or line.startswith("  ")) and line[2:46].rstrip() == task_ref
+    )
+    assert row.startswith("> " if active else "  ")
+    cells = row[46:].split()
+    assert cells[0] == status
+    assert cells[1] == str(open_findings)
+    assert cells[2] == str(open_blockers)
+    assert cells[3] == str(pending_actions)
+
+
 @pytest.fixture()
 def isolated_handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     state_dir = tmp_path / ".task-state"
@@ -378,7 +401,7 @@ def test_render_current_task_md_with_findings_but_no_active(isolated_handoff: di
 def test_render_dashboard_section_handles_zero_one_and_multiple_tasks() -> None:
     empty_lines = _render_dashboard_section([], active_task_ref=None)
     assert "## All Tasks" in empty_lines
-    assert any("_No tasks_" in line for line in empty_lines)
+    assert any("(no tasks)" in line for line in empty_lines)
 
     single_lines = _render_dashboard_section(
         [
@@ -394,7 +417,15 @@ def test_render_dashboard_section_handles_zero_one_and_multiple_tasks() -> None:
         ],
         active_task_ref="E12-11",
     )
-    assert any("| -> | **E12-11** | active | 2 | 0 | 1 |" in line for line in single_lines)
+    _assert_dashboard_row(
+        "\n".join(single_lines),
+        "E12-11",
+        status="active",
+        open_findings=2,
+        open_blockers=0,
+        pending_actions=1,
+        active=True,
+    )
 
     multiple_lines = _render_dashboard_section(
         [
@@ -419,8 +450,48 @@ def test_render_dashboard_section_handles_zero_one_and_multiple_tasks() -> None:
         ],
         active_task_ref="E12-9",
     )
-    assert any("| -> | **E12-9** | active | 0 | 0 | 0 |" in line for line in multiple_lines)
-    assert any("|  | __repo__ | archived | 3 | 1 | 2 |" in line for line in multiple_lines)
+    multiple_md = "\n".join(multiple_lines)
+    _assert_dashboard_row(
+        multiple_md,
+        "E12-9",
+        status="active",
+        open_findings=0,
+        open_blockers=0,
+        pending_actions=0,
+        active=True,
+    )
+    _assert_dashboard_row(
+        multiple_md,
+        "__repo__",
+        status="archived",
+        open_findings=3,
+        open_blockers=1,
+        pending_actions=2,
+        active=False,
+    )
+
+
+def test_render_dashboard_section_truncates_long_task_refs() -> None:
+    long_task_ref = "rls-tenant-context-restoration-after-chunk-commit"
+
+    lines = _render_dashboard_section(
+        [
+            {
+                "task_ref": long_task_ref,
+                "status": "done",
+                "last_activity": "2026-03-31 05:50:00",
+                "open_blockers": 0,
+                "pending_actions": 0,
+                "open_findings": 0,
+                "archived_at": None,
+            }
+        ],
+        active_task_ref=long_task_ref,
+    )
+
+    row = next(line for line in lines if line.startswith("> "))
+    assert row[2:46] == f"{long_task_ref[:41]}..."
+    assert row[46:].split()[:4] == ["done", "0", "0", "0"]
 
 
 def test_render_current_task_md_prepends_dashboard_section() -> None:
@@ -466,9 +537,25 @@ def test_render_current_task_md_prepends_dashboard_section() -> None:
     md = _render_current_task_md(state)
 
     assert "## All Tasks" in md
-    assert "| -> | **E12-11** | in_progress | 0 | 0 | 0 |" in md
-    assert "|  | E12-10 | archived | 3 | 1 | 2 |" in md
-    assert "---\n\n## Objective\nRender dashboard above detail section" in md
+    _assert_dashboard_row(
+        md,
+        "E12-11",
+        status="in_progress",
+        open_findings=0,
+        open_blockers=0,
+        pending_actions=0,
+        active=True,
+    )
+    _assert_dashboard_row(
+        md,
+        "E12-10",
+        status="archived",
+        open_findings=3,
+        open_blockers=1,
+        pending_actions=2,
+        active=False,
+    )
+    assert "## Objective\nRender dashboard above detail section" in md
 
 
 def test_render_current_task_md_keeps_detail_section_additive() -> None:

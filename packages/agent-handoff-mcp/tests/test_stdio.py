@@ -57,7 +57,7 @@ def test_stdio_server_lists_handoff_tools(tmp_path: Path) -> None:
             return sorted(tool.name for tool in tools)
 
     tool_names = asyncio.run(_run())
-    # Default launch uses core profile — all core tools present.
+    # Default launch uses extended profile — all tools present.
     assert "get_handoff_state" in tool_names
     assert "record_review_finding" in tool_names
     assert "handoff_close_check" in tool_names
@@ -71,14 +71,14 @@ def test_stdio_server_lists_handoff_tools(tmp_path: Path) -> None:
 
 
 def test_stdio_core_profile_excludes_extended_tools(tmp_path: Path) -> None:
-    """Default (core) profile must include all 16 core tools and exclude all 11 extended."""
+    """Explicit --tool-profile core must include all 16 core tools and exclude all 11 extended."""
     repo_root = Path(__file__).resolve().parents[3]
     launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
 
     async def _run() -> set[str]:
         transport = PythonStdioTransport(
             script_path=launcher,
-            args=["--workspace-root", str(repo_root), "serve-stdio"],
+            args=["--workspace-root", str(repo_root), "--tool-profile", "core", "serve-stdio"],
             cwd=str(repo_root),
             log_file=tmp_path / "core-profile-smoke.log",
         )
@@ -88,31 +88,31 @@ def test_stdio_core_profile_excludes_extended_tools(tmp_path: Path) -> None:
 
     tool_names = asyncio.run(_run())
     missing_core = _CORE_TOOLS - tool_names
-    assert not missing_core, f"Core tools missing from default profile: {missing_core}"
+    assert not missing_core, f"Core tools missing from core profile: {missing_core}"
     present_extended = _EXTENDED_ONLY_TOOLS & tool_names
     assert not present_extended, f"Extended tools incorrectly present in core profile: {present_extended}"
     assert len(tool_names) == 16
 
 
-def test_stdio_full_profile_exposes_all_27_tools(tmp_path: Path) -> None:
-    """--tool-profile full must expose all 27 tools."""
+def test_stdio_extended_profile_exposes_all_27_tools(tmp_path: Path) -> None:
+    """--tool-profile extended must expose all 27 tools."""
     repo_root = Path(__file__).resolve().parents[3]
     launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
 
     async def _run() -> set[str]:
         transport = PythonStdioTransport(
             script_path=launcher,
-            args=["--workspace-root", str(repo_root), "--tool-profile", "full", "serve-stdio"],
+            args=["--workspace-root", str(repo_root), "--tool-profile", "extended", "serve-stdio"],
             cwd=str(repo_root),
-            log_file=tmp_path / "full-profile-smoke.log",
+            log_file=tmp_path / "extended-profile-smoke.log",
         )
         async with Client(transport) as client:
             tools = await client.list_tools()
             return {tool.name for tool in tools}
 
     tool_names = asyncio.run(_run())
-    assert _CORE_TOOLS <= tool_names, f"Core tools missing from full profile: {_CORE_TOOLS - tool_names}"
+    assert _CORE_TOOLS <= tool_names, f"Core tools missing from extended profile: {_CORE_TOOLS - tool_names}"
     assert _EXTENDED_ONLY_TOOLS <= tool_names, (
-        f"Extended tools missing from full profile: {_EXTENDED_ONLY_TOOLS - tool_names}"
+        f"Extended tools missing from extended profile: {_EXTENDED_ONLY_TOOLS - tool_names}"
     )
     assert len(tool_names) == 27

@@ -410,6 +410,9 @@ def test_run_doctor_includes_fts5_check(tmp_path: Path) -> None:
     assert result["ok"] is True
     assert result["checks"]["fts5_available"] is True
     assert "artifact_db_path" in result
+    registry_counts = result["checks"]["stdio_startup"]["registry_counts"]
+    assert set(registry_counts) == {"core", "extended", "total"}
+    assert all(isinstance(count, int) and count > 0 for count in registry_counts.values())
 
 
 # ---------------------------------------------------------------------------

@@ -98,8 +98,8 @@ def test_generic_stdio_adapter_launches_packaged_server(tmp_path: Path) -> None:
     assert "list_review_findings" in tool_names
 
 
-def test_default_adapter_profile_is_core_and_full_profile_has_27_tools(tmp_path: Path) -> None:
-    """Default launch (no --tool-profile) yields 16 core tools; --tool-profile full yields 27."""
+def test_default_adapter_profile_is_extended_and_core_has_16_tools(tmp_path: Path) -> None:
+    """Default launch (no --tool-profile) yields 27 extended tools; --tool-profile core yields 16."""
     repo_root = Path(__file__).resolve().parents[3]
     launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
 
@@ -114,8 +114,8 @@ def test_default_adapter_profile_is_core_and_full_profile_has_27_tools(tmp_path:
         async with Client(transport) as client:
             return len(await client.list_tools())
 
-    core_count = asyncio.run(_count([], "core-count.log"))
-    full_count = asyncio.run(_count(["--tool-profile", "full"], "full-count.log"))
+    default_count = asyncio.run(_count([], "default-count.log"))
+    core_count = asyncio.run(_count(["--tool-profile", "core"], "core-count.log"))
 
+    assert default_count == 27, f"Expected 27 default (extended) tools, got {default_count}"
     assert core_count == 16, f"Expected 16 core tools, got {core_count}"
-    assert full_count == 27, f"Expected 27 full tools, got {full_count}"

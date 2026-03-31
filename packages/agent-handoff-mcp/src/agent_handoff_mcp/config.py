@@ -4,6 +4,9 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+_DEFAULT_TOOL_PROFILE = "extended"
+_VALID_TOOL_PROFILES = ("core", "extended")
+
 
 @dataclass(frozen=True)
 class RuntimeConfig:
@@ -15,7 +18,11 @@ class RuntimeConfig:
     artifact_db_path: Path
     artifact_index_min_bytes: int = 4096
     artifact_index_min_lines: int = 80
-    tool_profile: str = "core"  # "core" | "full"
+    tool_profile: str = _DEFAULT_TOOL_PROFILE  # "core" | "extended"
+
+    def __post_init__(self) -> None:
+        if self.tool_profile not in _VALID_TOOL_PROFILES:
+            raise ValueError(f"Invalid tool_profile: {self.tool_profile!r}")
 
     @classmethod
     def for_workspace(
@@ -25,8 +32,8 @@ class RuntimeConfig:
         state_dir: str | Path | None = None,
         current_task_path: str | Path | None = None,
         exports_dir: str | Path | None = None,
-        tool_profile: str = "core",
-    ) -> "RuntimeConfig":
+        tool_profile: str | None = None,
+    ) -> RuntimeConfig:
         resolved_workspace_root = Path(workspace_root).expanduser().resolve()
         resolved_state_dir = (
             Path(state_dir).expanduser().resolve() if state_dir is not None else resolved_workspace_root / ".task-state"
@@ -46,25 +53,20 @@ class RuntimeConfig:
             current_task_path=resolved_current_task_path,
             exports_dir=resolved_exports_dir,
             artifact_db_path=resolved_state_dir / "mcp-artifacts.db",
-            tool_profile=tool_profile,
+            tool_profile=tool_profile or _DEFAULT_TOOL_PROFILE,
         )
 
     @classmethod
-    def from_args(cls, args: object) -> "RuntimeConfig":
+    def from_args(cls, args: object) -> RuntimeConfig:
         workspace_root = getattr(args, "workspace_root", None) or os.environ.get("AGENT_HANDOFF_WORKSPACE_ROOT")
         if not workspace_root:
             raise RuntimeError("AGENT_HANDOFF_WORKSPACE_ROOT must be set or passed via --workspace-root")
 
-        state_dir = getattr(args, "state_dir", None) or os.environ.get("AGENT_HANDOFF_STATE_DIR")
-        current_task_path = getattr(args, "current_task_path", None) or os.environ.get(
-            "AGENT_HANDOFF_CURRENT_TASK_PATH"
-        )
-        exports_dir = getattr(args, "exports_dir", None) or os.environ.get("AGENT_HANDOFF_EXPORTS_DIR")
-        tool_profile = getattr(args, "tool_profile", None) or os.environ.get("AGENT_HANDOFF_TOOL_PROFILE", "core")
         return cls.for_workspace(
             workspace_root,
-            state_dir=state_dir,
-            current_task_path=current_task_path,
-            exports_dir=exports_dir,
-            tool_profile=tool_profile,
+            state_dir=getattr(args, "state_dir", None) or os.environ.get("AGENT_HANDOFF_STATE_DIR"),
+            current_task_path=getattr(args, "current_task_path", None)
+            or os.environ.get("AGENT_HANDOFF_CURRENT_TASK_PATH"),
+            exports_dir=getattr(args, "exports_dir", None) or os.environ.get("AGENT_HANDOFF_EXPORTS_DIR"),
+            tool_profile=getattr(args, "tool_profile", None) or os.environ.get("AGENT_HANDOFF_TOOL_PROFILE"),
         )

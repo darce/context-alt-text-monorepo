@@ -2,6 +2,8 @@ import os
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 from agent_handoff_mcp.config import RuntimeConfig
 
 
@@ -16,16 +18,16 @@ def test_runtime_config_defaults_to_workspace_state() -> None:
     assert runtime.exports_dir == root / ".task-state" / "exports"
 
 
-def test_runtime_config_default_tool_profile_is_core() -> None:
+def test_runtime_config_default_tool_profile_is_extended() -> None:
     root = Path("/tmp/agent-handoff").resolve()
     runtime = RuntimeConfig.for_workspace(root)
-    assert runtime.tool_profile == "core"
+    assert runtime.tool_profile == "extended"
 
 
-def test_runtime_config_tool_profile_override() -> None:
+def test_runtime_config_tool_profile_override_to_core() -> None:
     root = Path("/tmp/agent-handoff").resolve()
-    runtime = RuntimeConfig.for_workspace(root, tool_profile="full")
-    assert runtime.tool_profile == "full"
+    runtime = RuntimeConfig.for_workspace(root, tool_profile="core")
+    assert runtime.tool_profile == "core"
 
 
 def test_runtime_config_from_args_reads_tool_profile_env() -> None:
@@ -38,9 +40,25 @@ def test_runtime_config_from_args_reads_tool_profile_env() -> None:
         exports_dir = None
         tool_profile = None
 
-    with mock.patch.dict(os.environ, {"AGENT_HANDOFF_TOOL_PROFILE": "full"}):
+    with mock.patch.dict(os.environ, {"AGENT_HANDOFF_TOOL_PROFILE": "core"}):
         runtime = RuntimeConfig.from_args(FakeArgs())
-    assert runtime.tool_profile == "full"
+    assert runtime.tool_profile == "core"
+
+
+def test_runtime_config_from_args_defaults_to_extended() -> None:
+    root = Path("/tmp/agent-handoff").resolve()
+
+    class FakeArgs:
+        workspace_root = str(root)
+        state_dir = None
+        current_task_path = None
+        exports_dir = None
+        tool_profile = None
+
+    with mock.patch.dict(os.environ, {}, clear=True):
+        os.environ["AGENT_HANDOFF_WORKSPACE_ROOT"] = str(root)
+        runtime = RuntimeConfig.from_args(FakeArgs())
+    assert runtime.tool_profile == "extended"
 
 
 def test_runtime_config_from_args_cli_flag_takes_precedence() -> None:
@@ -51,8 +69,25 @@ def test_runtime_config_from_args_cli_flag_takes_precedence() -> None:
         state_dir = None
         current_task_path = None
         exports_dir = None
-        tool_profile = "full"
+        tool_profile = "extended"
 
     with mock.patch.dict(os.environ, {"AGENT_HANDOFF_TOOL_PROFILE": "core"}):
         runtime = RuntimeConfig.from_args(FakeArgs())
-    assert runtime.tool_profile == "full"
+    assert runtime.tool_profile == "extended"
+
+
+def test_runtime_config_rejects_invalid_tool_profile() -> None:
+    root = Path("/tmp/agent-handoff").resolve()
+
+    with mock.patch.dict(os.environ, {"AGENT_HANDOFF_TOOL_PROFILE": "invalid"}):
+        with mock.patch.dict(os.environ, {"AGENT_HANDOFF_WORKSPACE_ROOT": str(root)}, clear=False):
+
+            class FakeArgs:
+                workspace_root = str(root)
+                state_dir = None
+                current_task_path = None
+                exports_dir = None
+                tool_profile = None
+
+            with pytest.raises(ValueError, match="Invalid tool_profile"):
+                RuntimeConfig.from_args(FakeArgs())

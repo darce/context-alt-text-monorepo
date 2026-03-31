@@ -10,7 +10,7 @@
 
 ---
 
-# E12-11. CURRENT_TASK.md Dashboard View
+## E12-11. CURRENT_TASK.md Dashboard View
 
 ## Objective
 
@@ -44,15 +44,17 @@ The MCP state layer has no data loss — `handoff.db` is durable and `get_handof
 
 ## Current State Analysis
 
-- `_render_current_task_md` in `current_task_rendering.py` (line 312) renders only the active task's state. It receives a `CurrentTaskRenderState` dict and returns a Markdown string.
-- `_get_handoff_dashboard_view` in `handoff_state.py` (line 227) runs a single SQL query that aggregates `last_activity`, `open_blockers`, `pending_actions`, `open_findings`, and `archived_at` for all tasks. Returns JSON.
-- `generate_current_task_md` in `api.py` (line 468) is the MCP tool entry point. It calls `get_handoff_state` for the active task, then calls `_render_current_task_md`. It does not query dashboard data.
-- The `_write_current_task_md_for_task` helper in `current_task_rendering.py` (line 139) is the internal write path used by `close_slice` and other compound tools. It also does not include dashboard data.
-- The dashboard query is a single SQL CTE that completes in <10ms on the current DB size. Adding it to every render path has negligible performance impact.
+_Note: Slice 1 of this task is already implemented. The analysis below reflects the post-implementation state._
+
+- `_render_current_task_md` in `current_task_rendering.py` renders the active task's state and calls `_render_dashboard_section` when `dashboard_tasks` is present. It receives a `CurrentTaskRenderState` dict and returns a Markdown string.
+- `_collect_dashboard_rows` in `current_task_rendering.py` owns the dashboard aggregation SQL CTE. `_get_handoff_dashboard_view` in `handoff_state.py` delegates to it. Dependency direction: `_collect_dashboard_rows` is the source; `_get_handoff_dashboard_view` calls it (inverted from the original plan's "reusing the CTE from `_get_handoff_dashboard_view`" description).
+- `generate_current_task_md` in `api.py` already queries dashboard rows and includes them in the render state.
+- `_write_current_task_md_for_task` in `current_task_rendering.py` is the internal write path used by `close_slice` and other compound tools. It already queries and passes dashboard data.
+- The dashboard query is a single SQL CTE that completes in <10ms on the current DB size. Performance impact is negligible.
 
 ## Target Outcome
 
-Every `CURRENT_TASK.md` regeneration — whether via `generate_current_task_md`, `close_slice`, `switch_task`, or `_write_current_task_md_for_task` — includes a compact dashboard table at the top showing all active tasks with their status, open findings, blockers, and last activity. The active task row is marked with `**bold**` or `→` prefix. The existing per-task detail section follows unchanged below a horizontal rule.
+Every `CURRENT_TASK.md` regeneration — whether via `generate_current_task_md`, `close_slice`, `switch_task`, or `_write_current_task_md_for_task` — includes a compact dashboard table at the top showing all active tasks with their status, open findings, blockers, and last activity. The active task row is marked with `**bold**` or `->` prefix. The existing per-task detail section follows unchanged below a horizontal rule.
 
 Example rendered output:
 
@@ -63,11 +65,11 @@ _DO NOT EDIT: generated from .task-state/handoff.db. Last generated: 2026-03-30 
 
 ## All Tasks
 
-| | Task | Status | Findings | Blockers | Actions | Last Activity |
-|---|------|--------|----------|----------|---------|---------------|
-| → | E12-9 | in_progress | 0 | 0 | 0 | 20:50 |
-| | E12-10 | in_progress | 7 open | 0 | 0 | 20:59 |
-| | __repo__ | — | 0 | 0 | 0 | 04:52 |
+|     | Task     | Status      | Findings | Blockers | Actions | Last Activity |
+| --- | -------- | ----------- | -------- | -------- | ------- | ------------- |
+| ->  | E12-9    | in_progress | 0        | 0        | 0       | 20:50         |
+|     | E12-10   | in_progress | 7 open   | 0        | 0       | 20:59         |
+|     | **repo** | —           | 0        | 0        | 0       | 04:52         |
 
 ---
 
@@ -85,10 +87,10 @@ Finish the physical separation between...
 
 ## Contract and Boundary Impact
 
-| Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
-| --- | --- | --- | --- | --- | --- |
-| `CURRENT_TASK.md` format | agentic-tooling | [docs/agentic/rules/development-workflow.md](../../../agentic/rules/development-workflow.md) | Additive: dashboard table prepended above existing content | yes — existing parsers/consumers see the same detail section below the new header | handoff close check + manual inspection |
-| `generate_current_task_md` tool | agentic-tooling | [docs/agentic/contracts/agent-handoff-mcp.md](../../../agentic/contracts/agent-handoff-mcp.md) | No signature change; output includes dashboard section | yes — tool signature unchanged | pytest |
+| Boundary                        | Owner           | Current Contract                                                                               | Expected Change                                            | Compatibility Needed?                                                             | Verification                            |
+| ------------------------------- | --------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------- | --------------------------------------- |
+| `CURRENT_TASK.md` format        | agentic-tooling | [docs/agentic/rules/development-workflow.md](../../../agentic/rules/development-workflow.md)   | Additive: dashboard table prepended above existing content | yes — existing parsers/consumers see the same detail section below the new header | handoff close check + manual inspection |
+| `generate_current_task_md` tool | agentic-tooling | [docs/agentic/contracts/agent-handoff-mcp.md](../../../agentic/contracts/agent-handoff-mcp.md) | No signature change; output includes dashboard section     | yes — tool signature unchanged                                                    | pytest                                  |
 
 ## Proposed Solution
 
@@ -98,23 +100,23 @@ The dashboard data is fetched via a lightweight SQL query (reusing the CTE from 
 
 ## Files and Surfaces to Change
 
-| Surface | File | Change |
-| --- | --- | --- |
+| Surface | File                                                                         | Change                                                                                                                                  |
+| ------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | backend | `packages/agent-handoff-mcp/src/agent_handoff_mcp/current_task_rendering.py` | Add `_render_dashboard_section(tasks, active_task_ref)` function; add `DashboardTaskRow` TypedDict; call from `_render_current_task_md` |
-| backend | `packages/agent-handoff-mcp/src/agent_handoff_mcp/current_task_rendering.py` | Update `_write_current_task_md_for_task` to query dashboard data and pass to renderer |
-| backend | `packages/agent-handoff-mcp/src/agent_handoff_mcp/current_task_rendering.py` | Update `CurrentTaskRenderState` to include optional `dashboard_tasks` field |
-| backend | `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py` | Update `generate_current_task_md` to query dashboard data and include in state |
-| docs | `docs/agentic/contracts/agent-handoff-mcp.md` | Note that `CURRENT_TASK.md` now includes a dashboard header |
-| tests | `packages/agent-handoff-mcp/tests/` | Add test for dashboard section rendering; verify existing tests still pass |
+| backend | `packages/agent-handoff-mcp/src/agent_handoff_mcp/current_task_rendering.py` | Update `_write_current_task_md_for_task` to query dashboard data and pass to renderer                                                   |
+| backend | `packages/agent-handoff-mcp/src/agent_handoff_mcp/current_task_rendering.py` | Update `CurrentTaskRenderState` to include optional `dashboard_tasks` field                                                             |
+| backend | `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py`                    | Update `generate_current_task_md` to query dashboard data and include in state                                                          |
+| docs    | `docs/agentic/contracts/agent-handoff-mcp.md`                                | Note that `CURRENT_TASK.md` now includes a dashboard header                                                                             |
+| tests   | `packages/agent-handoff-mcp/tests/`                                          | Add test for dashboard section rendering; verify existing tests still pass                                                              |
 
 ## Related Files
 
-| File | Note |
-| --- | --- |
+| File                                                                | Note                                                                       |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | `packages/agent-handoff-mcp/src/agent_handoff_mcp/handoff_state.py` | Contains `_get_handoff_dashboard_view` with the existing dashboard SQL CTE |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/_shared.py` | Re-exports rendering functions for backward compatibility |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py` | Re-exports `_render_current_task_md`; must not gain new logic per `rg-013` |
-| `CURRENT_TASK.md` | The generated output file |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/_shared.py`       | Re-exports rendering functions for backward compatibility                  |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py`          | Re-exports `_render_current_task_md`; must not gain new logic per `rg-013` |
+| `CURRENT_TASK.md`                                                   | The generated output file                                                  |
 
 ## Verification Strategy
 
@@ -122,7 +124,7 @@ The dashboard data is fetched via a lightweight SQL query (reusing the CTE from 
   - `PYENV_VERSION=description-service pytest packages/agent-handoff-mcp/tests/ -x -q`
 - Contract/fixture verification:
   - `_render_dashboard_section` returns valid Markdown table for 0, 1, and N tasks
-  - Active task row is marked with `→` indicator
+  - Active task row is marked with `->` indicator
   - Archived tasks show `archived` in the status column
   - Dashboard section appears before the detail section in the rendered output
   - Existing `_render_current_task_md` output for the detail section is unchanged (diff only adds lines above)
@@ -151,7 +153,7 @@ Changes:
 Proof:
 
 - New unit test: `_render_dashboard_section` with 0, 1, 3 tasks produces valid Markdown.
-- New unit test: active task row has `→` marker.
+- New unit test: active task row has `->` marker.
 - New unit test: archived task shows `archived` status.
 - Existing test suite passes unchanged (detail section output is identical).
 - `generate_current_task_md` produces a file with the dashboard section visible at the top.
@@ -169,50 +171,50 @@ Changes:
 
 Proof:
 
-- `close_slice` produces a `CURRENT_TASK.md` with dashboard section.
-- Manual: switch between two tasks, confirm dashboard persists in both regenerations.
+- Automated: `test_close_slice_writes_dashboard_header_on_success` proves `close_slice` regenerates `CURRENT_TASK.md` with the dashboard section.
+- Automated: `test_switch_task_regenerates_current_task_with_dashboard` proves task switches preserve cross-task visibility in regenerated output.
 - Contract doc accurately describes the new output format.
 
 ---
 
-# Consolidated Checklist
+## Consolidated Checklist
 
 ## Context and Ownership
 
-- [ ] Loaded the `current_task_rendering.py` module and understood the render pipeline.
-- [ ] Confirmed `_get_handoff_dashboard_view` SQL CTE shape matches the data needed for the table.
-- [ ] Confirmed `rg-013`: no new logic added to `core.py`.
+- [x] Loaded the `current_task_rendering.py` module and understood the render pipeline.
+- [x] Confirmed `_get_handoff_dashboard_view` SQL CTE shape matches the data needed for the table.
+- [x] Confirmed `rg-013`: no new logic added to `core.py`.
 
-## Slice 1: Dashboard Rendering
+### Checklist: Slice 1 Dashboard Rendering
 
-- [ ] `DashboardTaskRow` TypedDict defined.
-- [ ] `_collect_dashboard_rows(conn)` implemented using the dashboard CTE.
-- [ ] `_render_dashboard_section(tasks, active_task_ref)` renders a valid Markdown table.
-- [ ] `CurrentTaskRenderState` extended with optional `dashboard_tasks` field.
-- [ ] `_render_current_task_md` calls `_render_dashboard_section` when data is present.
-- [ ] `_write_current_task_md_for_task` queries and passes dashboard rows.
-- [ ] `generate_current_task_md` queries and passes dashboard rows.
-- [ ] Unit tests cover 0/1/N tasks, active marker, archived status.
-- [ ] Existing test suite passes unchanged.
+- [x] `DashboardTaskRow` TypedDict defined.
+- [x] `_collect_dashboard_rows(conn)` implemented using the dashboard CTE.
+- [x] `_render_dashboard_section(tasks, active_task_ref)` renders a valid Markdown table.
+- [x] `CurrentTaskRenderState` extended with optional `dashboard_tasks` field.
+- [x] `_render_current_task_md` calls `_render_dashboard_section` when data is present.
+- [x] `_write_current_task_md_for_task` queries and passes dashboard rows.
+- [x] `generate_current_task_md` queries and passes dashboard rows.
+- [x] Unit tests cover 0/1/N tasks, active marker, archived status.
+- [x] Existing test suite passes unchanged.
 
-## Slice 2: Contract and Integration
+### Checklist: Slice 2 Contract and Integration
 
-- [ ] Contract doc (`agent-handoff-mcp.md`) updated.
-- [ ] Workflow doc (`development-workflow.md`) updated.
-- [ ] `close_slice` write path produces dashboard section.
-- [ ] `switch_task` regeneration produces dashboard section.
+- [x] Contract doc (`agent-handoff-mcp.md`) updated.
+- [x] Workflow doc (`development-workflow.md`) updated.
+- [x] `close_slice` write path produces dashboard section.
+- [x] `switch_task` regeneration produces dashboard section.
 - [ ] Handoff decision recorded with slice-complete template.
 
 ## Review Readiness
 
-- [ ] No boundary-touching implementation is left without matching contract/doc/fixture evidence.
-- [ ] The detail section output is byte-identical to pre-change output (dashboard is purely additive).
+- [x] No boundary-touching implementation is left without matching contract/doc/fixture evidence.
+- [x] The detail section output is byte-identical to pre-change output (dashboard is purely additive).
 - [ ] Handoff decision records the change, verification, and contract update.
 
 ## Success Criteria
 
-- [ ] Every `CURRENT_TASK.md` regeneration includes a cross-task dashboard table at the top.
-- [ ] The active task row is visually marked in the table.
-- [ ] Switching tasks preserves visibility of all other tasks in the dashboard section.
-- [ ] No new files are created — the dashboard renders inside the existing `CURRENT_TASK.md`.
+- [x] Every `CURRENT_TASK.md` regeneration includes a cross-task dashboard table at the top.
+- [x] The active task row is visually marked in the table.
+- [x] Switching tasks preserves visibility of all other tasks in the dashboard section.
+- [x] No new files are created; the dashboard renders inside the existing `CURRENT_TASK.md`.
 - [ ] Existing tests, close checks, and contract expectations are unbroken.

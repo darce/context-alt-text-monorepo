@@ -82,12 +82,14 @@ class CurrentTaskRenderState(TypedDict):
     decisions_recent: list[dict]
     tests_recent: list[dict]
     findings_open: list[dict]
+    findings_deferred: list[dict]
     worktree_lanes: list[dict]
     worker_reports_recent: list[dict]
     lane_messages_open: list[dict]
     dashboard_tasks: NotRequired[list[DashboardTaskRow]]
     review_coverage: NotRequired[ReviewCoverageSummary | None]
     related_findings_open: NotRequired[dict[str, list[dict]]]
+    related_findings_deferred: NotRequired[dict[str, list[dict]]]
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +110,10 @@ def _collect_dashboard_rows(
     rows = conn.execute(
         """
         WITH activity AS (
+            -- Include handoff_state.updated_at for the active task so it always has a
+            -- recent-activity anchor even when it has no decisions, actions, or other
+            -- ledger entries. Intentional behavioral difference from the prior
+            -- _get_handoff_dashboard_view, which excluded this source.
             SELECT task_ref, updated_at FROM handoff_state WHERE id = 1
             UNION ALL
             SELECT task_ref, created_at AS updated_at FROM decisions
@@ -213,6 +219,56 @@ def _collect_dashboard_rows(
     return dashboard_rows
 
 
+def _collect_all_open_findings(
+    conn: sqlite3.Connection, active_task_ref: str | None = None
+) -> dict[str, list[dict]]:
+    """Collect all open review findings across all tasks, grouped by task_ref.
+
+    Excludes active_task_ref whose findings are already in findings_open.
+    """
+    if active_task_ref:
+        rows = conn.execute(
+            "SELECT * FROM review_findings WHERE status = 'open' AND task_ref != ? "
+            "ORDER BY task_ref, CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, created_at DESC",
+            (active_task_ref,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM review_findings WHERE status = 'open' "
+            "ORDER BY task_ref, CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, created_at DESC"
+        ).fetchall()
+    grouped: dict[str, list[dict]] = {}
+    for row in rows:
+        d = dict(row)
+        grouped.setdefault(d["task_ref"], []).append(d)
+    return grouped
+
+
+def _collect_all_deferred_findings(
+    conn: sqlite3.Connection, active_task_ref: str | None = None
+) -> dict[str, list[dict]]:
+    """Collect all deferred/wontfix review findings across all tasks, grouped by task_ref.
+
+    Excludes active_task_ref whose findings are already in findings_deferred.
+    """
+    if active_task_ref:
+        rows = conn.execute(
+            "SELECT * FROM review_findings WHERE status IN ('deferred', 'wontfix') AND task_ref != ? "
+            "ORDER BY task_ref, CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, created_at DESC",
+            (active_task_ref,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM review_findings WHERE status IN ('deferred', 'wontfix') "
+            "ORDER BY task_ref, CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, created_at DESC"
+        ).fetchall()
+    grouped: dict[str, list[dict]] = {}
+    for row in rows:
+        d = dict(row)
+        grouped.setdefault(d["task_ref"], []).append(d)
+    return grouped
+
+
 def _collect_task_snapshot(conn: sqlite3.Connection, task_ref: str) -> TaskSnapshot:
     active_row = conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone()
     active = _row_to_dict(active_row) if active_row is not None and active_row["task_ref"] == task_ref else None
@@ -257,6 +313,7 @@ def _build_current_task_state_from_snapshot(snapshot: TaskSnapshot) -> CurrentTa
         "decisions_recent": snapshot["decisions"],
         "tests_recent": snapshot["verified_tests"],
         "findings_open": [row for row in snapshot["review_findings"] if row.get("status") == "open"],
+        "findings_deferred": [row for row in snapshot["review_findings"] if row.get("status") in ("deferred", "wontfix")],
         "worktree_lanes": snapshot.get("worktree_lanes", []),
         "worker_reports_recent": snapshot.get("worker_reports", []),
         "lane_messages_open": [row for row in snapshot.get("lane_messages", []) if row.get("status") == "open"],
@@ -272,6 +329,8 @@ def _write_current_task_md_for_task(conn: sqlite3.Connection, task_ref: str) -> 
     snapshot = _collect_task_snapshot(conn, task_ref)
     state = _build_current_task_state_from_snapshot(snapshot)
     state["dashboard_tasks"] = _collect_dashboard_rows(conn)
+    state["related_findings_open"] = _collect_all_open_findings(conn, active_task_ref=task_ref)
+    state["related_findings_deferred"] = _collect_all_deferred_findings(conn, active_task_ref=task_ref)
     try:
         from .review_findings import (
             _collect_review_coverage,  # noqa: PLC0415 – late import to break circular
@@ -361,35 +420,49 @@ def _render_lanes_section(state: CurrentTaskRenderState) -> list[str]:
 
 
 def _render_findings_section(state: CurrentTaskRenderState) -> list[str]:
+    active_ref = state.get("task_ref")
+
+    def _finding_line(finding: dict, show_status: bool = False) -> str:
+        location = (
+            f"{finding.get('file_path')}:{finding.get('line_start')}"
+            if finding.get("line_start")
+            else finding.get("file_path")
+        )
+        status_prefix = f"[{finding.get('status', '').upper()}] " if show_status else ""
+        return f"- {status_prefix}[{finding.get('severity', '').upper()}] {finding.get('finding_id')}: {location} -- {finding.get('description')}"
+
+    # --- Open findings ---
     lines: list[str] = ["", "## Open Review Findings"]
-    findings = state.get("findings_open", [])
-    if findings:
-        for finding in findings:
-            location = (
-                f"{finding.get('file_path')}:{finding.get('line_start')}"
-                if finding.get("line_start")
-                else finding.get("file_path")
-            )
-            lines.append(
-                f"- [{finding.get('severity', '').upper()}] {finding.get('finding_id')}: {location} -- {finding.get('description')}"
-            )
-    else:
+    active_findings = state.get("findings_open", [])
+    related_open = state.get("related_findings_open", {})
+
+    if not active_findings and not related_open:
         lines.append("- None")
-    related = state.get("related_findings_open", {})
-    if related:
-        lines.extend(["", "## Related Open Review Findings"])
-        for ref, ref_findings in related.items():
-            lines.append("")
-            lines.append(f"### {ref}")
-            for finding in ref_findings:
-                location = (
-                    f"{finding.get('file_path')}:{finding.get('line_start')}"
-                    if finding.get("line_start")
-                    else finding.get("file_path")
-                )
-                lines.append(
-                    f"- [{finding.get('severity', '').upper()}] {finding.get('finding_id')}: {location} -- {finding.get('description')}"
-                )
+    else:
+        use_subheadings = bool(related_open)
+        if active_findings:
+            if use_subheadings and active_ref:
+                lines.extend(["", f"### {active_ref}"])
+            lines.extend(_finding_line(f) for f in active_findings)
+        for ref, ref_findings in related_open.items():
+            lines.extend(["", f"### {ref}"])
+            lines.extend(_finding_line(f) for f in ref_findings)
+
+    # --- Deferred / wontfix findings ---
+    active_deferred = state.get("findings_deferred", [])
+    related_deferred = state.get("related_findings_deferred", {})
+
+    if active_deferred or related_deferred:
+        lines.extend(["", "## Deferred / Won't Fix Findings"])
+        use_subheadings_d = bool(related_deferred)
+        if active_deferred:
+            if use_subheadings_d and active_ref:
+                lines.extend(["", f"### {active_ref}"])
+            lines.extend(_finding_line(f, show_status=True) for f in active_deferred)
+        for ref, ref_findings in related_deferred.items():
+            lines.extend(["", f"### {ref}"])
+            lines.extend(_finding_line(f, show_status=True) for f in ref_findings)
+
     return lines
 
 

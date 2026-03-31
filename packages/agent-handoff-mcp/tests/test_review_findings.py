@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from agent_handoff_mcp import api as mcp_server
-from agent_handoff_mcp._shared import _get_db_connection, _render_current_task_md
+from agent_handoff_mcp._shared import _get_db_connection, _render_current_task_md, _render_dashboard_section
 from agent_handoff_mcp.config import RuntimeConfig
 
 
@@ -373,6 +373,150 @@ def test_render_current_task_md_with_findings_but_no_active(isolated_handoff: di
     md = current_task_path.read_text()
     assert "No active handoff state found." not in md
     assert "E12-render-findings" in md
+
+
+def test_render_dashboard_section_handles_zero_one_and_multiple_tasks() -> None:
+    empty_lines = _render_dashboard_section([], active_task_ref=None)
+    assert "## All Tasks" in empty_lines
+    assert any("_No tasks_" in line for line in empty_lines)
+
+    single_lines = _render_dashboard_section(
+        [
+            {
+                "task_ref": "E12-11",
+                "status": "active",
+                "last_activity": "2026-03-30 21:10:00",
+                "open_blockers": 0,
+                "pending_actions": 1,
+                "open_findings": 2,
+                "archived_at": None,
+            }
+        ],
+        active_task_ref="E12-11",
+    )
+    assert any("| -> | **E12-11** | active | 2 | 0 | 1 |" in line for line in single_lines)
+
+    multiple_lines = _render_dashboard_section(
+        [
+            {
+                "task_ref": "E12-9",
+                "status": "active",
+                "last_activity": "2026-03-30 20:50:00",
+                "open_blockers": 0,
+                "pending_actions": 0,
+                "open_findings": 0,
+                "archived_at": None,
+            },
+            {
+                "task_ref": "__repo__",
+                "status": "archived",
+                "last_activity": "2026-03-30 04:52:00",
+                "open_blockers": 1,
+                "pending_actions": 2,
+                "open_findings": 3,
+                "archived_at": "2026-03-30 04:52:00",
+            },
+        ],
+        active_task_ref="E12-9",
+    )
+    assert any("| -> | **E12-9** | active | 0 | 0 | 0 |" in line for line in multiple_lines)
+    assert any("|  | __repo__ | archived | 3 | 1 | 2 |" in line for line in multiple_lines)
+
+
+def test_render_current_task_md_prepends_dashboard_section() -> None:
+    state: dict = {
+        "task_ref": "E12-11",
+        "active": {
+            "task_ref": "E12-11",
+            "objective": "Render dashboard above detail section",
+            "status": "in_progress",
+            "revision": 3,
+            "updated_at": "2026-03-30 21:15:00",
+        },
+        "dashboard_tasks": [
+            {
+                "task_ref": "E12-11",
+                "status": "in_progress",
+                "last_activity": "2026-03-30 21:15:00",
+                "open_blockers": 0,
+                "pending_actions": 0,
+                "open_findings": 0,
+                "archived_at": None,
+            },
+            {
+                "task_ref": "E12-10",
+                "status": "archived",
+                "last_activity": "2026-03-30 20:59:00",
+                "open_blockers": 1,
+                "pending_actions": 2,
+                "open_findings": 3,
+                "archived_at": "2026-03-30 21:00:00",
+            },
+        ],
+        "decisions_recent": [],
+        "findings_open": [],
+        "blockers_open": [],
+        "actions_pending": [],
+        "tests_recent": [],
+        "worktree_lanes": [],
+        "worker_reports_recent": [],
+        "lane_messages_open": [],
+    }
+
+    md = _render_current_task_md(state)
+
+    assert "## All Tasks" in md
+    assert "| -> | **E12-11** | in_progress | 0 | 0 | 0 |" in md
+    assert "|  | E12-10 | archived | 3 | 1 | 2 |" in md
+    assert "---\n\n## Objective\nRender dashboard above detail section" in md
+
+
+def test_render_current_task_md_keeps_detail_section_additive() -> None:
+    base_state: dict = {
+        "task_ref": "E12-11",
+        "active": {
+            "task_ref": "E12-11",
+            "objective": "Keep detail section unchanged",
+            "status": "in_progress",
+            "revision": 5,
+            "updated_at": "2026-03-30 21:20:00",
+        },
+        "decisions_recent": [
+            {
+                "id": 1,
+                "decision": "cop_slice_complete_E12-11_additive_detail",
+                "agent": "copilot",
+            }
+        ],
+        "findings_open": [],
+        "blockers_open": [],
+        "actions_pending": [],
+        "tests_recent": [],
+        "worktree_lanes": [],
+        "worker_reports_recent": [],
+        "lane_messages_open": [],
+    }
+
+    without_dashboard = _render_current_task_md(base_state)
+    with_dashboard = _render_current_task_md(
+        {
+            **base_state,
+            "dashboard_tasks": [
+                {
+                    "task_ref": "E12-11",
+                    "status": "in_progress",
+                    "last_activity": "2026-03-30 21:20:00",
+                    "open_blockers": 0,
+                    "pending_actions": 0,
+                    "open_findings": 0,
+                    "archived_at": None,
+                }
+            ],
+        }
+    )
+
+    detail_start = without_dashboard.index("## Objective")
+    assert with_dashboard[with_dashboard.index("## Objective") :] == without_dashboard[detail_start:]
 
 
 # ---------------------------------------------------------------------------

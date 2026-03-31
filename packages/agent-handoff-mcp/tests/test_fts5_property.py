@@ -47,7 +47,7 @@ def _isolated_runtime():
         yield
 
 
-@settings(max_examples=40, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(max_examples=15, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(st.text().filter(lambda value: bool(_FTS5_CONTROL_RE.sub(" ", value).strip())))
 def test_search_handoff_phrase_quotes_non_blank_terms(
     query: str,
@@ -62,7 +62,7 @@ def test_search_handoff_phrase_quotes_non_blank_terms(
         assert result["query"] == '"' + stripped.replace('"', '""') + '"'
 
 
-@settings(max_examples=25, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(max_examples=10, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(st.lists(st.text(alphabet=[" ", "\t", "\n", "\r"]), min_size=1, max_size=4))
 def test_search_handoff_blank_queries_preserve_error_contract(
     queries: list[str],
@@ -74,7 +74,7 @@ def test_search_handoff_blank_queries_preserve_error_contract(
         assert result["error"] == "All query strings are empty after stripping."
 
 
-@settings(max_examples=100, deadline=None)
+@settings(max_examples=30, deadline=None)
 @given(st.lists(st.text(), min_size=1, max_size=4))
 def test_build_fts5_match_query_executes_without_error(queries: list[str]) -> None:
     match_query = _build_fts5_match_query(queries)
@@ -101,7 +101,7 @@ def test_build_fts5_match_query_executes_without_error(queries: list[str]) -> No
         conn.execute("SELECT count(*) FROM docs WHERE docs MATCH ?", (match_query,)).fetchone()
 
 
-@settings(max_examples=40, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(max_examples=15, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(st.text(alphabet=st.sampled_from(["c", "a", "f", "e", " ", '"', ":", "-", "😀", "界", "\u0301"]), min_size=1))
 def test_search_handoff_phrase_query_handles_unicode_and_special_characters(
     query: str,

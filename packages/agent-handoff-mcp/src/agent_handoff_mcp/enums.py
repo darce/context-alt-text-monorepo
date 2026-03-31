@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 
-_MODEL_LABEL_REGISTRY = {
-    "claude-opus-4-0520": "Opus 4.6",
-    "claude-sonnet-4-20250514": "Sonnet 4",
-    "gpt-5.4": "gpt-5.4",
-    "o3": "o3",
-}
+_MODEL_LABEL_PATTERNS = (
+    (
+        re.compile(r"^claude-(opus|sonnet|haiku)-(\d+(?:\.\d+)?)(?:[-_].*)?$", re.IGNORECASE),
+        lambda match: f"Claude {match.group(1).title()} {match.group(2)}",
+    ),
+    (
+        re.compile(r"^gpt-(\d+(?:\.\d+)?)(?:[-_].*)?$", re.IGNORECASE),
+        lambda match: f"GPT-{match.group(1)}",
+    ),
+    (
+        re.compile(r"^(o\d+)(?:[-_].*)?$", re.IGNORECASE),
+        lambda match: match.group(1).lower(),
+    ),
+)
 _NON_IDENTITY_REASONING_LEVELS = frozenset({"auto", "default", "inherit"})
 
 
@@ -15,7 +24,11 @@ def normalize_model_label(model: str | None) -> str | None:
     normalized = str(model or "").strip()
     if not normalized:
         return None
-    return _MODEL_LABEL_REGISTRY.get(normalized.lower(), normalized)
+    for pattern, render_label in _MODEL_LABEL_PATTERNS:
+        match = pattern.match(normalized)
+        if match is not None:
+            return render_label(match)
+    return normalized
 
 
 def normalize_reasoning_level(reasoning_level: str | None) -> str | None:

@@ -14,6 +14,7 @@ from ._shared import (
     HANDOFF_ACTIVE_STATUSES,
     WriteActor,
     _build_current_task_state_from_snapshot,
+    _collect_dashboard_rows,
     _collect_task_snapshot,
     _count_task_rows,
     _detect_git_write_context,
@@ -39,6 +40,7 @@ def export_handoff_state(
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         snapshot = _collect_task_snapshot(conn, resolved_task_ref)
+        dashboard_tasks = _collect_dashboard_rows(conn)
     payload: dict[str, object] = {
         "export_version": 1,
         "task_ref": resolved_task_ref,
@@ -46,7 +48,9 @@ def export_handoff_state(
         "snapshot": snapshot,
     }
     if include_markdown:
-        payload["current_task_markdown"] = _render_current_task_md(_build_current_task_state_from_snapshot(snapshot))
+        render_state = _build_current_task_state_from_snapshot(snapshot)
+        render_state["dashboard_tasks"] = dashboard_tasks
+        payload["current_task_markdown"] = _render_current_task_md(render_state)
     destination = _resolve_output_path(output_path, resolved_task_ref)
     destination.write_text(json.dumps(payload, indent=2, sort_keys=True))
     return _json_response(

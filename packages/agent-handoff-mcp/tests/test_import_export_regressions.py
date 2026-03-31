@@ -39,7 +39,9 @@ def workspace_pair(tmp_path: Path) -> dict[str, Path]:
 def test_export_and_import_handoff_state_round_trip(workspace_pair: dict[str, Path]) -> None:
     export_path = workspace_pair["source"] / ".task-state" / "exports" / "round-trip.json"
 
-    _parse(mcp_server.set_handoff_state(task_ref="round-trip", objective="Round trip export/import", status="in_progress"))
+    _parse(
+        mcp_server.set_handoff_state(task_ref="round-trip", objective="Round trip export/import", status="in_progress")
+    )
     _parse(mcp_server.record_decision(session="s1", decision="round_trip_decision", rationale="kept"))
     _parse(mcp_server.record_test_result(session="s1", command="pytest", passed=True, result="1 passed in 0.01s"))
     _parse(
@@ -122,7 +124,7 @@ def test_import_handoff_state_prefers_decoded_lane_message_payload(workspace_pai
                             "subject": "payload",
                             "message": "decoded wins",
                             "status": "open",
-                            "payload_json": "{\"source\": \"stale\"}",
+                            "payload_json": '{"source": "stale"}',
                             "payload": {"source": "decoded", "count": 2},
                         }
                     ],

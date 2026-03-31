@@ -237,7 +237,7 @@ def _handoff_pythonpath() -> str:
 
 def _orchestrator_paths() -> dict[str, Path]:
     config = get_runtime_config()
-    state_dir = config.workspace_root / ".task-state"
+    state_dir = config.state_dir
     return {
         "workspace_root": config.workspace_root,
         "state_dir": state_dir,
@@ -251,7 +251,7 @@ def _orchestrator_paths() -> dict[str, Path]:
 
 def _worker_paths() -> dict[str, Path]:
     config = get_runtime_config()
-    state_dir = config.workspace_root / ".task-state"
+    state_dir = config.state_dir
     log_dir = config.workspace_root / "logs" / "worker-daemon"
     return {
         "workspace_root": config.workspace_root,
@@ -367,6 +367,8 @@ def orchestrator_start(
         "run",
         "--orchestrator-root",
         str(paths["workspace_root"]),
+        "--state-dir",
+        str(paths["state_dir"]),
         "--task-ref",
         task_ref,
         "--backend",

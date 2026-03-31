@@ -143,6 +143,42 @@ def test_worker_start_returns_pid_and_paths(tmp_path: Path) -> None:
     assert kwargs["reasoning_effort"] == "inherit"
 
 
+def test_worker_start_uses_runtime_state_dir(tmp_path: Path) -> None:
+    custom_state_dir = tmp_path / "custom-state"
+    api.configure_runtime(
+        api.RuntimeConfig.for_workspace(
+            tmp_path,
+            state_dir=custom_state_dir,
+            current_task_path=tmp_path / "CURRENT_TASK.md",
+            exports_dir=custom_state_dir / "exports",
+        )
+    )
+    fake_registry = mock.Mock()
+    fake_registry.validate_backend.return_value = "codex-subagent"
+    fake_lane_manifest = mock.Mock()
+    fake_lane_manifest.get_lane_config.return_value = {
+        "worktree_path": str(tmp_path / "backend-domain"),
+    }
+    fake_ctl = mock.Mock()
+    fake_ctl.daemon_start.return_value = {"ok": True, "pid": 6789}
+    (tmp_path / "backend-domain").mkdir()
+
+    def _import(name: str):
+        if name == "backend_registry":
+            return fake_registry
+        if name == "lane_manifest":
+            return fake_lane_manifest
+        if name == "worker_daemon_ctl":
+            return fake_ctl
+        raise AssertionError(name)
+
+    with mock.patch.object(api, "_import_orchestration_module", side_effect=_import):
+        payload = _parse(api.worker_start(task_ref="daemon-10", lane_id="backend-domain"))
+
+    assert payload["ok"] is True
+    assert fake_ctl.daemon_start.call_args.kwargs["state_dir"] == custom_state_dir
+
+
 def test_worker_start_passes_shared_lane_session_mode(tmp_path: Path) -> None:
     _configure_runtime(tmp_path)
     fake_registry = mock.Mock()

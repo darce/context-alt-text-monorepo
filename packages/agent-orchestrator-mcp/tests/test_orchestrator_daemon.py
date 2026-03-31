@@ -881,6 +881,7 @@ def test_main_run_errors_clearly_when_task_inference_is_ambiguous(
         single_pass=True,
         backend="codex-cli",
         dry_run=True,
+        state_dir=None,
     )
     with mock.patch.object(mod, "_parse_args", return_value=args):
         with mock.patch.object(
@@ -904,6 +905,7 @@ def test_main_run_threads_backend_to_orchestrator_loop(tmp_path: Path) -> None:
         worker_reasoning_effort="auto",
         model=None,
         dry_run=True,
+        state_dir=None,
     )
     mock_lock = mock.Mock()
     mock_lock.acquire.return_value = True
@@ -922,6 +924,7 @@ def test_main_run_threads_backend_to_orchestrator_loop(tmp_path: Path) -> None:
         worker_reasoning_effort="auto",
         model=None,
         dry_run=True,
+        state_dir=tmp_path.resolve() / ".task-state",
     )
     mock_lock.release.assert_called_once()
 

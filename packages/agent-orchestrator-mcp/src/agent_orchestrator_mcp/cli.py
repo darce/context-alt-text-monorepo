@@ -56,14 +56,11 @@ def _build_config(
     current_task_path: Path | None = None,
     exports_dir: Path | None = None,
 ) -> RuntimeConfig:
-    state_dir = state_dir or (workspace_root / ".task-state")
-    return RuntimeConfig(
-        workspace_root=workspace_root,
+    return RuntimeConfig.for_workspace(
+        workspace_root,
         state_dir=state_dir,
-        db_path=state_dir / "handoff.db",
-        current_task_path=current_task_path or (workspace_root / "CURRENT_TASK.md"),
-        exports_dir=exports_dir or (state_dir / "exports"),
-        artifact_db_path=state_dir / "mcp-artifacts.db",
+        current_task_path=current_task_path,
+        exports_dir=exports_dir,
     )
 
 

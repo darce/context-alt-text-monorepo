@@ -1091,12 +1091,13 @@ def _build_orchestrator_context(
     worker_start_mode: str,
     worker_reasoning_effort: str,
     model: str | None,
+    state_dir: Path | None = None,
 ) -> OrchestratorContext:
     """Configure MCP runtime and build an OrchestratorContext ready for the loop."""
     from agent_handoff_mcp import RuntimeConfig, configure_runtime  # noqa: PLC0415
     from lane_manifest import merge_order as manifest_merge_order  # noqa: PLC0415
 
-    state_dir = orchestrator_root / ".task-state"
+    state_dir = state_dir or orchestrator_root / ".task-state"
     log_dir = orchestrator_root / "logs" / "daemon"
     run_id = str(uuid.uuid4())
 
@@ -1213,6 +1214,7 @@ def orchestrator_loop(
     worker_start_mode: str = "mcp",
     worker_reasoning_effort: str = "auto",
     model: str | None = None,
+    state_dir: Path | None = None,
 ) -> int:
     """Main daemon loop.  Returns 0 on clean exit, 1 on failure."""
     ctx = _build_orchestrator_context(
@@ -1225,6 +1227,7 @@ def orchestrator_loop(
         worker_start_mode,
         worker_reasoning_effort,
         model,
+        state_dir=state_dir,
     )
     while True:
         result = _run_orchestrator_cycle(ctx)
@@ -1257,6 +1260,9 @@ def _parse_args() -> argparse.Namespace:
         "--worker-reasoning-effort", default="auto", help="Reasoning effort for spawned workers (default: auto)."
     )
     run_parser.add_argument("--model", help="Execution model to use for worker spawning.")
+    run_parser.add_argument(
+        "--state-dir", default=None, help="State directory. Defaults to <orchestrator-root>/.task-state."
+    )
 
     pause_parser = sub.add_parser("pause", help="Pause the daemon.")
     pause_parser.add_argument("--state-dir", required=True)
@@ -1327,7 +1333,7 @@ def main() -> int:
 
     if args.command == "run":
         orchestrator_root = Path(args.orchestrator_root).expanduser().resolve()
-        state_dir = orchestrator_root / ".task-state"
+        state_dir = Path(args.state_dir).expanduser().resolve() if args.state_dir else orchestrator_root / ".task-state"
 
         lock = OrchestratorLock(state_dir)
         if not lock.acquire():
@@ -1352,6 +1358,7 @@ def main() -> int:
                 worker_start_mode=args.worker_start_mode,
                 worker_reasoning_effort=args.worker_reasoning_effort,
                 model=args.model,
+                state_dir=state_dir,
             )
         finally:
             lock.release()

@@ -18,12 +18,10 @@ agent-handoff-mcp = "agent_handoff_mcp.cli:main"
 
 [project.optional-dependencies]
 test = [
-    "hypothesis>=6.0.0",
     "pytest>=8.0.0",
     "pytest-timeout>=2.3.0",
 ]
 dev = [
-    "hypothesis>=6.0.0",
     "pytest>=8.0.0",
     "pytest-timeout>=2.3.0",
     "ruff>=0.11.0,<1.0.0",
@@ -99,7 +97,6 @@ testpaths = ["tests"]
 timeout = 30
 timeout_method = "thread"
 norecursedirs = [
-    ".hypothesis",
     ".pytest_cache",
     "build",
     "src/*.egg-info",

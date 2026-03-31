@@ -62,6 +62,7 @@ const selectionState = {
   toggle: vi.fn(),
   selectRange: vi.fn(),
   selectAll: vi.fn(),
+  retainVisible: vi.fn(),
   clear: vi.fn(),
   isAllSelected: vi.fn(() => false),
   isSelected: vi.fn(() => false),

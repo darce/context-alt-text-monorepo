@@ -32,6 +32,9 @@ export const RosterPage = (): React.JSX.Element => {
 
   const selection = useClusterSelection();
   const clearSelection = selection.clear;
+  const retainVisibleSelection = selection.retainVisible;
+  const isClusterSelected = selection.isSelected;
+  const areAllVisibleClustersSelected = selection.isAllSelected;
 
   const clustersQuery = useRecognitionClusters({ limit: 20 });
   const clusters = React.useMemo(() => clustersQuery.data ?? [], [clustersQuery.data]);
@@ -41,6 +44,14 @@ export const RosterPage = (): React.JSX.Element => {
   React.useEffect(() => {
     clearSelection();
   }, [activeTab, clearSelection]);
+
+  React.useEffect(() => {
+    if (activeTab !== ROSTER_TABS.clusters.id || clustersQuery.data === undefined) {
+      return;
+    }
+
+    retainVisibleSelection(clusterIds);
+  }, [activeTab, clusterIds, clustersQuery.data, retainVisibleSelection]);
 
   const selectedCluster = React.useMemo(
     () => clusters.find((cluster) => cluster.id === selectedClusterId) ?? null,
@@ -155,14 +166,22 @@ export const RosterPage = (): React.JSX.Element => {
     [setConfirmAction],
   );
 
-  const selectAllState = selection.isAllSelected(clusterIds) ? true : selection.count > 0 ? 'indeterminate' : false;
+  const selectedVisibleCount = React.useMemo(
+    () => clusterIds.reduce((count, id) => (isClusterSelected(id) ? count + 1 : count), 0),
+    [clusterIds, isClusterSelected],
+  );
+  const selectAllState = areAllVisibleClustersSelected(clusterIds)
+    ? true
+    : selectedVisibleCount > 0
+      ? 'indeterminate'
+      : false;
   const handleSelectAllClusters = React.useCallback(() => {
-    if (selection.isAllSelected(clusterIds)) {
+    if (areAllVisibleClustersSelected(clusterIds)) {
       selection.clear();
       return;
     }
     selection.selectAll(clusterIds);
-  }, [clusterIds, selection]);
+  }, [areAllVisibleClustersSelected, clusterIds, selection]);
 
   const confirmDialogCopy =
     confirmAction === 'merge'

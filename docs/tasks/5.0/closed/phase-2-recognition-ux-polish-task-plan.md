@@ -279,7 +279,7 @@ export const useClusterSelection = () => {
 
 ---
 
-# Consolidated Checklist
+## Consolidated Checklist
 
 ## Delivery Guardrail
 
@@ -301,8 +301,8 @@ export const useClusterSelection = () => {
 - [x] **Test (red)**: `PersonCrudTest` -- GET reads from table, not option.
 - [x] **Implement**: rewrite `get_roster_entries()` to query `wp_acx_persons` table.
 - [x] **Test (green)**: GET returns persons from table. Empty table returns empty array.
-- [x] **Implement**: retire `acx_roster_entries` and `acx_roster_assignments` options in `activate()`.
-- [x] **Test**: activation deletes legacy options after import to table.
+- [x] **Implement**: one-time idempotent activation import from `acx_roster_entries` / `acx_roster_assignments`; retire both options only after successful import into table-backed persons and cluster assignments.
+- [x] **Test**: activation deletes legacy options after successful import to table and can safely retire them on a rerun when assignments are already imported.
 - [x] **Test**: imported legacy persons receive stable `person_uuid` values before options are retired.
 - [x] **Implement**: label derivation -- assigning person_id sets cluster display label to person name.
 
@@ -319,7 +319,7 @@ export const useClusterSelection = () => {
 - [x] **Implement**: create form with name input and optional tags, wired to `useCreatePerson`.
 - [x] **Test (green)**: submitting form calls mutation; new person appears in table after invalidation.
 
-## Phase 2b: Dashboard Buildout
+## Phase 2b: Dashboard Buildout Checklist
 
 - [x] **Test (red)**: `DashboardPage` -- renders identity stats panel with roster count and pending review count.
 - [x] **Implement**: `GET /acx/v1/dashboard/stats` endpoint querying local projection tables and WordPress-local media metadata only.
@@ -333,7 +333,7 @@ export const useClusterSelection = () => {
 - [x] **Test (green)**: guidance card adapts text based on stats.
 - [x] **Enhance**: recent activity panel with job duration and direct link to results.
 
-## Phase 2c: Recognition UX Polish
+## Phase 2c: Recognition UX Polish Checklist
 
 - [x] **Test (red)**: `useClusterSelection` -- toggle adds/removes cluster ID from set.
 - [x] **Implement**: `useClusterSelection` hook with toggle, selectRange, clear.
@@ -353,7 +353,7 @@ export const useClusterSelection = () => {
 - [x] **Wire**: toast notifications for all mutation outcomes (merge, split, reassign, commit, dismiss).
 - [x] **Implement**: metadata display in `ClusterDrawerPanel` (face count, confidence range, creation date).
 
-## Phase 2d: Explanatory Copy
+## Phase 2d: Explanatory Copy Checklist
 
 - [x] Add "People are known identities..." header copy to `RosterPage`.
 - [x] Update empty state in `RosterEntriesSection` with actionable message: "No people yet. Add one manually or assign a cluster."

@@ -1545,6 +1545,14 @@ if (!isset($GLOBALS['wpdb'])) {
         public $mockVar = null;
         public int $insert_id = 0;
         public int $rows_affected = 0;
+        /** @var mixed */
+        public $defaultInsertResult = 1;
+        /** @var array<string,mixed> */
+        public array $insertResults = [];
+        /** @var mixed */
+        public $defaultUpdateResult = 1;
+        /** @var array<string,mixed> */
+        public array $updateResults = [];
 
         public function query($sql)
         {
@@ -1701,11 +1709,27 @@ if (!isset($GLOBALS['wpdb'])) {
 
             $this->queries[] = $sql;
 
+            $result = $this->defaultInsertResult;
+            if (array_key_exists($sql, $this->insertResults)) {
+                $result = $this->insertResults[$sql];
+            }
+
+            if ($result === false || $result === null) {
+                $this->rows_affected = 0;
+                return $result;
+            }
+
+            if (is_int($result)) {
+                $this->rows_affected = $result;
+            } else {
+                $this->rows_affected = 1;
+            }
+
             if ($this->insert_id === 0) {
                 $this->insert_id = 1;
             }
 
-            return 1;
+            return $result;
         }
 
         public function update(string $table, array $data, array $where, $format = null, $whereFormat = null)
@@ -1741,7 +1765,23 @@ if (!isset($GLOBALS['wpdb'])) {
 
             $this->queries[] = $sql;
 
-            return 1;
+            $result = $this->defaultUpdateResult;
+            if (array_key_exists($sql, $this->updateResults)) {
+                $result = $this->updateResults[$sql];
+            }
+
+            if ($result === false || $result === null) {
+                $this->rows_affected = 0;
+                return $result;
+            }
+
+            if (is_int($result)) {
+                $this->rows_affected = $result;
+                return $result;
+            }
+
+            $this->rows_affected = 1;
+            return $result;
         }
 
         public function delete(string $table, array $where, $whereFormat = null)
@@ -1778,6 +1818,10 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->mockVar = null;
             $this->insert_id = 0;
             $this->rows_affected = 0;
+            $this->defaultInsertResult = 1;
+            $this->insertResults = [];
+            $this->defaultUpdateResult = 1;
+            $this->updateResults = [];
         }
     }
 

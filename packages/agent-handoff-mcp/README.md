@@ -104,8 +104,7 @@ Useful CLI checks:
 agent-handoff-mcp --workspace-root /path/to/workspace doctor
 agent-handoff-mcp --workspace-root /path/to/workspace state
 agent-handoff-mcp --workspace-root /path/to/workspace review-list
-agent-handoff-mcp --workspace-root /path/to/workspace lane-list
-agent-handoff-mcp --workspace-root /path/to/workspace switch <task_ref>
+agent-handoff-mcp --workspace-root /path/to/workspace handoff-close-check
 ```
 
 Source-tree execution without installation:
@@ -146,62 +145,56 @@ Source checkout adapter:
 }
 ```
 
-## Multi-Worktree Workflow
-
-Create a lane for each worker worktree:
-
-```bash
-agent-handoff-mcp --workspace-root /path/to/workspace lane-upsert \
-  --lane-id backend-http \
-  --worktree-path /path/to/workspace-backend-http \
-  --branch codex/backend-http \
-  --status active
-```
-
-Submit a structured handback:
-
-```bash
-agent-handoff-mcp --workspace-root /path/to/workspace lane-report \
-  --lane-id backend-http \
-  --session backend-http \
-  --summary "Retention router slice is merge-ready." \
-  --changed-file src/example.py \
-  --test-command "pytest tests/test_example.py -q" \
-  --merge-ready
-```
-
-Send an explicit lane message:
-
-```bash
-agent-handoff-mcp --workspace-root /path/to/workspace lane-message \
-  --lane-id backend-http \
-  --session backend-http \
-  --direction worker_to_orchestrator \
-  --subject "Ready for review" \
-  --message "Backend HTTP lane is ready for branch review."
-```
-
-Inspect one lane without replaying the whole task history:
-
-```bash
-agent-handoff-mcp --workspace-root /path/to/workspace lane-activity --lane-id backend-http
-```
-
 ## Tool Surface
 
-Common lane and handoff commands include:
+`agent-handoff-mcp` exposes a **core profile** (16 tools) by default and a **full profile** (27 tools) on request.
 
-- `lane-upsert`
-- `lane-list`
-- `lane-activity`
-- `lane-report`
-- `lane-report-list`
-- `lane-message`
-- `lane-message-update`
-- `lane-message-list`
-- `switch`
+Use `--tool-profile full` to enable all 27 tools:
 
-For callers, the surface is easiest to reason about in three classes:
+```bash
+agent-handoff-mcp --workspace-root /path/to/workspace --tool-profile full serve-stdio
+```
+
+### Core profile (16 tools — daily ledger workflows)
+
+| CLI name | MCP tool |
+| --- | --- |
+| `state` | `get_handoff_state` |
+| `set` | `set_handoff_state` |
+| `decision` | `record_decision` |
+| `action` | `update_next_actions` |
+| `test` | `record_test_result` |
+| `blocker` | `report_blocker` |
+| `review-record` | `record_review_finding` |
+| *(no CLI)* | `batch_record_review_findings` |
+| `review-update` | `update_review_finding` |
+| `review-list` | `list_review_findings` |
+| `review-run-record` | `record_review_run` |
+| `review-run-list` | `list_review_runs` |
+| `handoff-close-check` | `handoff_close_check` |
+| `task` | `generate_current_task_md` |
+| *(no CLI)* | `load_session` |
+| *(no CLI)* | `close_slice` |
+
+### Extended profile (11 tools — admin and low-frequency)
+
+| CLI name | MCP tool |
+| --- | --- |
+| *(no CLI)* | `list_next_actions` |
+| `review-coverage` | `get_review_coverage` |
+| `audit-decisions` | `audit_decision_ids` |
+| `export` | `export_handoff_state` |
+| `import` | `import_handoff_state` |
+| `archive` | `archive_task_state` |
+| `artifact-record` | `record_artifact` |
+| `artifact-search` | `search_artifacts` |
+| `artifact-get` | `get_artifact` |
+| `artifact-purge` | `purge_artifacts` |
+| `handoff-search` | `search_handoff` |
+
+CLI-only extras (not part of MCP registry): `artifact-list`, `artifact-terms`.
+
+Surface classes:
 
 - `action`: mutates canonical state; do not blind-retry
 - `query`: read-only inspection of canonical state; usually safe to retry

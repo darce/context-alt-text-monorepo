@@ -263,6 +263,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--state-dir")
     parser.add_argument("--current-task-path")
     parser.add_argument("--exports-dir")
+    parser.add_argument(
+        "--tool-profile",
+        default=None,
+        choices=["core", "full"],
+        help="MCP tool profile to expose: core (default, 16 tools) or full (all 27 tools).",
+    )
 
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
 

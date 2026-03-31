@@ -96,3 +96,26 @@ def test_generic_stdio_adapter_launches_packaged_server(tmp_path: Path) -> None:
     tool_names = asyncio.run(_run())
     assert "get_handoff_state" in tool_names
     assert "list_review_findings" in tool_names
+
+
+def test_default_adapter_profile_is_core_and_full_profile_has_27_tools(tmp_path: Path) -> None:
+    """Default launch (no --tool-profile) yields 16 core tools; --tool-profile full yields 27."""
+    repo_root = Path(__file__).resolve().parents[3]
+    launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
+
+    async def _count(extra_args: list[str], log_name: str) -> int:
+        transport = PythonStdioTransport(
+            script_path=launcher,
+            args=["--workspace-root", str(repo_root)] + extra_args + ["serve-stdio"],
+            cwd=str(repo_root),
+            python_cmd=sys.executable,
+            log_file=tmp_path / log_name,
+        )
+        async with Client(transport) as client:
+            return len(await client.list_tools())
+
+    core_count = asyncio.run(_count([], "core-count.log"))
+    full_count = asyncio.run(_count(["--tool-profile", "full"], "full-count.log"))
+
+    assert core_count == 16, f"Expected 16 core tools, got {core_count}"
+    assert full_count == 27, f"Expected 27 full tools, got {full_count}"

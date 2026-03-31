@@ -49,33 +49,33 @@ audit_decision_ids = core.audit_decision_ids
 
 
 TOOL_DESCRIPTIONS: dict[str, str] = {
-    "set_handoff_state": "Set or update the active handoff task state with optimistic revision protection.",
-    "get_handoff_state": "Read the active or requested task handoff summary, including blockers, actions, tests, and findings. Pass view='dashboard' for cross-task aggregation.",
-    "list_next_actions": "List next-action rows for the active or requested task, optionally filtered by lane or status.",
-    "record_decision": "Record an orchestrator or worker decision in the handoff ledger for the active task.",
-    "update_next_actions": "Add, update, complete, or skip next-action items for the active task.",
-    "record_test_result": "Record the result of a verification command for the active task.",
-    "report_blocker": "Add, resolve, or reopen a blocker for the active task.",
-    "record_review_finding": "Record or reopen a review finding for a task with stable finding IDs, optional line metadata, and optional review_mode classification.",
-    "batch_record_review_findings": "Record or reopen multiple review findings in a single atomic write. Max 100 items per call. Returns per-item action results.",
+    "set_handoff_state": "Update the active task state (objective, focus, status). Optimistic revision guard.",
+    "get_handoff_state": "Read task handoff summary (blockers, actions, findings). Pass view='dashboard' for cross-task view.",
+    "list_next_actions": "List next-action items, optionally filtered by lane or status.",
+    "record_decision": "Record a decision in the handoff ledger.",
+    "update_next_actions": "Add, update, complete, or skip next-action items.",
+    "record_test_result": "Record a verification command result.",
+    "report_blocker": "Add, resolve, or reopen a blocker.",
+    "record_review_finding": "Record or reopen a single review finding with stable ID, line metadata, and review_mode.",
+    "batch_record_review_findings": "Record or reopen multiple review findings atomically. Max 100 items per call.",
     "update_review_finding": "Mark a review finding fixed, deferred, wontfix, or reopen it with notes.",
-    "list_review_findings": "List review findings for the active or requested task, optionally filtered by status, severity, or review_mode. Pass finding_id or finding_db_id to fetch a single finding globally without needing to know the owning task.",
-    "record_review_run": "Record a completed review pass in the review_runs ledger. Provide a unique review_run_id, subject_path, session, and optionally a verdict and verdict_decision.",
-    "list_review_runs": "List review-run ledger entries. Filter by task_ref, subject_path, review_mode, or verdict. Returns paginated results ordered by recency.",
-    "get_review_coverage": "Return a review-coverage summary for a task or subject artifact: run count, latest verdict, recent run ids, open findings by severity, and reopened-finding count. Provide task_ref, subject_path, or both.",
-    "handoff_close_check": "Evaluate whether a task is ready to close based on open blockers, pending actions, open findings, lane state, and optional fresh-test requirements for the current commit.",
-    "audit_decision_ids": "Audit recent decision ids for grammar conformance. Classifies each id as canonical, legacy_slice, malformed_slice, or freeform and returns a summary with per-row detail for violations.",
-    "generate_current_task_md": "Generate CURRENT_TASK.md from handoff state for the active or requested task.",
+    "list_review_findings": "List review findings filtered by status, severity, or review_mode. Pass finding_id to fetch a single finding globally.",
+    "record_review_run": "Record a completed review pass in the ledger.",
+    "list_review_runs": "List review-run ledger entries. Filter by task_ref, subject_path, review_mode, or verdict.",
+    "get_review_coverage": "Return review-coverage summary: run count, verdict, open findings by severity.",
+    "handoff_close_check": "Check task readiness to close: blockers, pending actions, findings, and optional fresh-test gate.",
+    "audit_decision_ids": "Audit decision IDs for grammar conformance. Returns canonical/malformed/freeform classifications.",
+    "generate_current_task_md": "Generate CURRENT_TASK.md for the active task.",
     "export_handoff_state": "Export the task handoff state to a portable JSON snapshot.",
     "import_handoff_state": "Import a previously exported handoff state snapshot into the local database.",
     "archive_task_state": "Archive completed task state from the live handoff tables into archive storage.",
-    "load_session": "Load session context in one call: handoff state plus open review findings for the active or requested task.",
-    "close_slice": "Close a slice atomically: record decision, update handoff state, and generate CURRENT_TASK.md in one call.",
-    "record_artifact": "Index a large artifact (log, doc, payload, output) in the sidecar FTS5 database for later scoped retrieval.",
-    "search_artifacts": "Search indexed artifact chunks by relevance with BM25 ranking. With no queries, lists artifact sources instead.",
-    "get_artifact": "Return the full artifact source record, optionally with distinctive terms. Lookup by source_id or task_ref+source_label.",
-    "purge_artifacts": "Delete artifact sources and their FTS chunks to keep the sidecar database bounded after task archival, lane closure, or age-based expiry.",
-    "search_handoff": "Search canonical handoff records (decisions, findings, blockers, actions) by keyword with BM25 ranking and optional task/lane/type scope filters.",
+    "load_session": "Load session: handoff state plus open findings in one call.",
+    "close_slice": "Close a slice atomically: decision + state update + CURRENT_TASK.md.",
+    "record_artifact": "Index a large artifact in the sidecar FTS5 database for scoped retrieval.",
+    "search_artifacts": "Search artifact chunks by BM25 relevance.",
+    "get_artifact": "Return artifact source record. Lookup by source_id or task_ref+source_label.",
+    "purge_artifacts": "Delete artifact sources and FTS chunks (post-archival cleanup).",
+    "search_handoff": "Search decisions, findings, blockers, actions by keyword with BM25 ranking.",
 }
 
 
@@ -119,6 +119,7 @@ class ToolEntry:
     cli_args: list[ArgSpec] = field(default_factory=list)  # CLI argument specs (single source of truth)
     cli_name: str | None = None  # CLI subcommand name; None = no CLI exposure
     deprecated_since: str | None = None  # Version string; non-None appends [DEPRECATED] to description
+    profile: str = "core"  # "core" | "extended" — controls which MCP surface the tool is included in
 
 
 def _build_tool_registry() -> list[ToolEntry]:
@@ -177,7 +178,7 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--task-ref"),
             ],
         ),
-        ToolEntry("list_next_actions", list_next_actions, TOOL_DESCRIPTIONS["list_next_actions"]),
+        ToolEntry("list_next_actions", list_next_actions, TOOL_DESCRIPTIONS["list_next_actions"], profile="extended"),
         # Tests / blockers (2)
         ToolEntry(
             "record_test_result",
@@ -295,6 +296,7 @@ def _build_tool_registry() -> list[ToolEntry]:
             "get_review_coverage",
             get_review_coverage,
             TOOL_DESCRIPTIONS["get_review_coverage"],
+            profile="extended",
             cli_name="review-coverage",
             cli_args=[
                 ArgSpec("--task-ref"),
@@ -330,6 +332,7 @@ def _build_tool_registry() -> list[ToolEntry]:
             "export_handoff_state",
             export_handoff_state,
             TOOL_DESCRIPTIONS["export_handoff_state"],
+            profile="extended",
             cli_name="export",
             cli_args=[
                 ArgSpec("--task-ref"),
@@ -341,6 +344,7 @@ def _build_tool_registry() -> list[ToolEntry]:
             "import_handoff_state",
             import_handoff_state,
             TOOL_DESCRIPTIONS["import_handoff_state"],
+            profile="extended",
             cli_name="import",
             cli_args=[
                 ArgSpec("--input-path", required=True),
@@ -353,6 +357,7 @@ def _build_tool_registry() -> list[ToolEntry]:
             "archive_task_state",
             archive_task_state,
             TOOL_DESCRIPTIONS["archive_task_state"],
+            profile="extended",
             cli_name="archive",
             cli_args=[
                 ArgSpec("--task-ref"),
@@ -369,6 +374,7 @@ def _build_tool_registry() -> list[ToolEntry]:
             "audit_decision_ids",
             audit_decision_ids,
             TOOL_DESCRIPTIONS["audit_decision_ids"],
+            profile="extended",
             cli_name="audit-decisions",
             cli_args=[
                 ArgSpec("--task-ref"),
@@ -387,6 +393,7 @@ def _build_tool_registry() -> list[ToolEntry]:
             "record_artifact",
             record_artifact,
             TOOL_DESCRIPTIONS["record_artifact"],
+            profile="extended",
             cli_name="artifact-record",
             cli_args=[
                 ArgSpec("--task-ref"),
@@ -404,6 +411,7 @@ def _build_tool_registry() -> list[ToolEntry]:
             "search_artifacts",
             search_artifacts,
             TOOL_DESCRIPTIONS["search_artifacts"],
+            profile="extended",
             cli_name="artifact-search",
             cli_args=[
                 ArgSpec("--query", action="append", dest="queries", required=True, help="Search term (repeatable)."),
@@ -419,6 +427,7 @@ def _build_tool_registry() -> list[ToolEntry]:
             "get_artifact",
             get_artifact,
             TOOL_DESCRIPTIONS["get_artifact"],
+            profile="extended",
             cli_name="artifact-get",
             cli_args=[
                 ArgSpec("--source-id", type=int),
@@ -430,6 +439,7 @@ def _build_tool_registry() -> list[ToolEntry]:
             "purge_artifacts",
             purge_artifacts,
             TOOL_DESCRIPTIONS["purge_artifacts"],
+            profile="extended",
             cli_name="artifact-purge",
             cli_args=[
                 ArgSpec("--task-ref"),
@@ -443,6 +453,7 @@ def _build_tool_registry() -> list[ToolEntry]:
             "search_handoff",
             search_handoff,
             TOOL_DESCRIPTIONS["search_handoff"],
+            profile="extended",
             cli_name="handoff-search",
             cli_args=[
                 ArgSpec(
@@ -547,6 +558,8 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
     )
     _apply_tool_descriptions()
     for entry in _build_tool_registry():
+        if config.tool_profile == "core" and entry.profile == "extended":
+            continue
         if entry.deprecated_since is not None:
             entry.handler.__doc__ = f"[DEPRECATED since {entry.deprecated_since}] " + (
                 entry.handler.__doc__ or entry.description
@@ -651,6 +664,10 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
         )
         json.loads(cli_probe.stdout)
 
+    _registry = _build_tool_registry()
+    _core_count = sum(1 for e in _registry if e.profile == "core")
+    _extended_count = sum(1 for e in _registry if e.profile == "extended")
+
     # Portable hook semantics discovery: enumerate defined hooks and check
     # for observable evidence of each one's durable output in this workspace.
     ace_reflect_log = config.state_dir / "ace_reflect_log.jsonl"
@@ -710,6 +727,12 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
             "stdio_startup": {
                 "ok": True,
                 "tool_count": len(stdio_tools),
+                "tool_profile": config.tool_profile,
+                "registry_counts": {
+                    "core": _core_count,
+                    "extended": _extended_count,
+                    "full": len(_registry),
+                },
             },
             "cli_fallback_startup": True,
         },

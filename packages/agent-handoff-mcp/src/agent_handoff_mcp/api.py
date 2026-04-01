@@ -50,7 +50,7 @@ audit_decision_ids = core.audit_decision_ids
 
 TOOL_DESCRIPTIONS: dict[str, str] = {
     "set_handoff_state": "Update the active task state (objective, focus, status). Optimistic revision guard.",
-    "get_handoff_state": "Read task handoff summary (blockers, actions, findings). Pass view='dashboard' for cross-task view.",
+    "get_handoff_state": "Read task handoff summary (blockers, actions, findings). Pass view='dashboard' for cross-task view. Pass sections='decisions_recent,findings_open' to select specific sections; active and limits are always included. Pass sections='identity' for an identity-only response (active + limits, no data sections). Pass detail='summary' to truncate long rationale and verification fields.",
     "list_next_actions": "List next-action items, optionally filtered by lane or status.",
     "record_decision": "Record a decision in the handoff ledger.",
     "update_next_actions": "Add, update, complete, or skip next-action items.",
@@ -59,7 +59,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "record_review_finding": "Record or reopen a single review finding with stable ID, line metadata, and review_mode.",
     "batch_record_review_findings": "Record or reopen multiple review findings atomically. Max 100 items per call.",
     "update_review_finding": "Mark a review finding fixed, deferred, wontfix, or reopen it with notes.",
-    "list_review_findings": "List review findings filtered by status, severity, or review_mode. Pass finding_id to fetch a single finding globally.",
+    "list_review_findings": "List review findings filtered by status, severity, or review_mode. Pass finding_id to fetch a single finding globally. Pass detail='summary' to truncate long text fields.",
     "record_review_run": "Record a completed review pass in the ledger.",
     "list_review_runs": "List review-run ledger entries. Filter by task_ref, subject_path, review_mode, or verdict.",
     "get_review_coverage": "Return review-coverage summary: run count, verdict, open findings by severity.",
@@ -69,7 +69,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "export_handoff_state": "Export the task handoff state to a portable JSON snapshot.",
     "import_handoff_state": "Import a previously exported handoff state snapshot into the local database.",
     "archive_task_state": "Archive completed task state from the live handoff tables into archive storage.",
-    "load_session": "Load session: handoff state plus open findings in one call.",
+    "load_session": "Load session context: get_handoff_state + list_review_findings(open) in one call. Pass sections to shape the nested state payload and detail to shape both state and findings.",
     "close_slice": "Close a slice atomically: decision + state update + CURRENT_TASK.md.",
     "record_artifact": "Index a large artifact in the sidecar FTS5 database for scoped retrieval.",
     "search_artifacts": "Search artifact chunks by BM25 relevance.",
@@ -120,6 +120,8 @@ class ToolEntry:
     cli_name: str | None = None  # CLI subcommand name; None = no CLI exposure
     deprecated_since: str | None = None  # Version string; non-None appends [DEPRECATED] to description
     profile: str = "core"  # "core" | "extended" — controls which MCP surface the tool is included in
+    surface_class: str = "action"  # "query" | "action" | "generator" — matches contract taxonomy
+    entity_family: str = "handoff_state"  # "handoff_state" | "review_findings" | "review_runs" | "artifacts" | "session" | "lifecycle"
 
 
 def _build_tool_registry() -> list[ToolEntry]:
@@ -139,6 +141,8 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--status", default="in_progress"),
                 ArgSpec("--expected-revision", type=int),
             ],
+            surface_class="action",
+            entity_family="handoff_state",
         ),
         ToolEntry(
             "get_handoff_state",
@@ -148,7 +152,11 @@ def _build_tool_registry() -> list[ToolEntry]:
             cli_args=[
                 ArgSpec("task_ref", nargs="?"),
                 ArgSpec("--verbose", action="store_true"),
+                ArgSpec("--sections", help="Comma-separated sections to include (e.g. 'decisions_recent,findings_open'). Use 'identity' for identity-only (active + limits)."),
+                ArgSpec("--detail", default="full", choices=["full", "summary"], help="Detail level: full or summary"),
             ],
+            surface_class="query",
+            entity_family="handoff_state",
         ),
         # Decisions (1)
         ToolEntry(
@@ -162,6 +170,8 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--rationale"),
                 ArgSpec("--task-ref"),
             ],
+            surface_class="action",
+            entity_family="handoff_state",
         ),
         # Actions (2)
         ToolEntry(
@@ -177,8 +187,10 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--status"),
                 ArgSpec("--task-ref"),
             ],
+            surface_class="action",
+            entity_family="handoff_state",
         ),
-        ToolEntry("list_next_actions", list_next_actions, TOOL_DESCRIPTIONS["list_next_actions"], profile="extended"),
+        ToolEntry("list_next_actions", list_next_actions, TOOL_DESCRIPTIONS["list_next_actions"], profile="extended", surface_class="query", entity_family="handoff_state"),
         # Tests / blockers (2)
         ToolEntry(
             "record_test_result",
@@ -195,6 +207,8 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--exit-code", type=int),
                 ArgSpec("--task-ref"),
             ],
+            surface_class="action",
+            entity_family="handoff_state",
         ),
         ToolEntry(
             "report_blocker",
@@ -207,6 +221,8 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--blocker-id", type=int),
                 ArgSpec("--task-ref"),
             ],
+            surface_class="action",
+            entity_family="handoff_state",
         ),
         # Findings (4)
         ToolEntry(
@@ -225,11 +241,15 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--fix"),
                 ArgSpec("--task-ref"),
             ],
+            surface_class="action",
+            entity_family="review_findings",
         ),
         ToolEntry(
             "batch_record_review_findings",
             batch_record_review_findings,
             TOOL_DESCRIPTIONS["batch_record_review_findings"],
+            surface_class="action",
+            entity_family="review_findings",
         ),
         ToolEntry(
             "update_review_finding",
@@ -247,6 +267,8 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--task-ref"),
                 ArgSpec("--session"),
             ],
+            surface_class="action",
+            entity_family="review_findings",
         ),
         ToolEntry(
             "list_review_findings",
@@ -259,7 +281,10 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--severity", default="all"),
                 ArgSpec("--limit", type=int, default=20),
                 ArgSpec("--offset", type=int, default=0),
+                ArgSpec("--detail", default="full", choices=["full", "summary"], help="Detail level: full or summary"),
             ],
+            surface_class="query",
+            entity_family="review_findings",
         ),
         # Review-run ledger (3)
         ToolEntry(
@@ -277,6 +302,8 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--verdict-decision"),
                 ArgSpec("--task-ref"),
             ],
+            surface_class="action",
+            entity_family="review_runs",
         ),
         ToolEntry(
             "list_review_runs",
@@ -291,6 +318,8 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--limit", type=int, default=20),
                 ArgSpec("--offset", type=int, default=0),
             ],
+            surface_class="query",
+            entity_family="review_runs",
         ),
         ToolEntry(
             "get_review_coverage",
@@ -302,6 +331,8 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--task-ref"),
                 ArgSpec("--subject-path"),
             ],
+            surface_class="query",
+            entity_family="review_runs",
         ),
         # Close check + CURRENT_TASK.md (2)
         ToolEntry(
@@ -316,6 +347,8 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--require-fresh-tests", action="store_true"),
                 ArgSpec("--current-commit-sha"),
             ],
+            surface_class="generator",
+            entity_family="lifecycle",
         ),
         ToolEntry(
             "generate_current_task_md",
@@ -326,6 +359,8 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("task_ref", nargs="?"),
                 ArgSpec("--no-write", action="store_true"),
             ],
+            surface_class="generator",
+            entity_family="lifecycle",
         ),
         # Export / import / archive (3)
         ToolEntry(
@@ -339,6 +374,8 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--output-path"),
                 ArgSpec("--no-markdown", action="store_true"),
             ],
+            surface_class="generator",
+            entity_family="lifecycle",
         ),
         ToolEntry(
             "import_handoff_state",
@@ -352,6 +389,8 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--set-active", action="store_true"),
                 ArgSpec("--allow-destructive-clear", action="store_true"),
             ],
+            surface_class="action",
+            entity_family="lifecycle",
         ),
         ToolEntry(
             "archive_task_state",
@@ -366,10 +405,12 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--prune-working-rows", action="store_true"),
                 ArgSpec("--allow-destructive-clear", action="store_true"),
             ],
+            surface_class="action",
+            entity_family="lifecycle",
         ),
         # Compound tools (3)
-        ToolEntry("load_session", load_session, TOOL_DESCRIPTIONS["load_session"]),
-        ToolEntry("close_slice", close_slice, TOOL_DESCRIPTIONS["close_slice"]),
+        ToolEntry("load_session", load_session, TOOL_DESCRIPTIONS["load_session"], surface_class="query", entity_family="session"),
+        ToolEntry("close_slice", close_slice, TOOL_DESCRIPTIONS["close_slice"], surface_class="action", entity_family="lifecycle"),
         ToolEntry(
             "audit_decision_ids",
             audit_decision_ids,
@@ -387,6 +428,8 @@ def _build_tool_registry() -> list[ToolEntry]:
                     help="Categories to include in the violations list (default: malformed_slice freeform).",
                 ),
             ],
+            surface_class="query",
+            entity_family="handoff_state",
         ),
         # Artifact tools (4)
         ToolEntry(
@@ -406,6 +449,8 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--content-file", help="Path to a file whose contents will be used as the artifact content."),
                 ArgSpec("--content", help="Artifact content as a string."),
             ],
+            surface_class="action",
+            entity_family="artifacts",
         ),
         ToolEntry(
             "search_artifacts",
@@ -422,6 +467,8 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--content-type"),
                 ArgSpec("--limit", type=int, default=10),
             ],
+            surface_class="generator",
+            entity_family="artifacts",
         ),
         ToolEntry(
             "get_artifact",
@@ -434,6 +481,8 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--task-ref"),
                 ArgSpec("--source-label"),
             ],
+            surface_class="query",
+            entity_family="artifacts",
         ),
         ToolEntry(
             "purge_artifacts",
@@ -447,6 +496,8 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--app-root"),
                 ArgSpec("--older-than-days", type=int),
             ],
+            surface_class="action",
+            entity_family="artifacts",
         ),
         # Search (1)
         ToolEntry(
@@ -455,6 +506,8 @@ def _build_tool_registry() -> list[ToolEntry]:
             TOOL_DESCRIPTIONS["search_handoff"],
             profile="extended",
             cli_name="handoff-search",
+            surface_class="generator",
+            entity_family="handoff_state",
             cli_args=[
                 ArgSpec(
                     "--query",

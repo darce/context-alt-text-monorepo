@@ -625,6 +625,10 @@ def update_review_finding(
         )
 
 
+_FINDING_SUMMARY_FIELDS = ("description", "fix", "resolution_notes", "verification_evidence")
+_FINDING_SUMMARY_TRUNCATE = 200
+
+
 def list_review_findings(
     task_ref: str | None = None,
     status: str = "all",
@@ -634,7 +638,21 @@ def list_review_findings(
     review_mode: str | None = None,
     finding_id: str | None = None,
     finding_db_id: int | None = None,
+    detail: str = "full",
 ) -> str:
+    if detail not in ("full", "summary"):
+        detail = "full"
+
+    def _apply_finding_detail(finding: dict) -> dict:
+        if detail != "summary":
+            return finding
+        out = dict(finding)
+        for field in _FINDING_SUMMARY_FIELDS:
+            value = out.get(field)
+            if isinstance(value, str) and len(value) > _FINDING_SUMMARY_TRUNCATE:
+                out[field] = value[:_FINDING_SUMMARY_TRUNCATE] + "..."
+        return out
+
     if finding_id is not None or finding_db_id is not None:
         if finding_id is not None and finding_db_id is not None:
             return _json_response({"ok": False, "error": "Pass exactly one of finding_id or finding_db_id, not both."})
@@ -680,8 +698,12 @@ def list_review_findings(
                 if row is None:
                     return _json_response({"ok": False, "error": "Finding not found for task."})
             workspace_git = _workspace_git_context()
-            finding = _annotate_review_finding(
-                dict(row), workspace_branch=workspace_git["branch"], workspace_commit_sha=workspace_git["commit_sha"]
+            finding = _apply_finding_detail(
+                _annotate_review_finding(
+                    dict(row),
+                    workspace_branch=workspace_git["branch"],
+                    workspace_commit_sha=workspace_git["commit_sha"],
+                )
             )
             return _json_response(
                 {
@@ -741,10 +763,12 @@ def list_review_findings(
             severity_counts[str(row["severity"])] = int(row["count"])
     workspace_git = _workspace_git_context()
     findings = [
-        _annotate_review_finding(
-            row,
-            workspace_branch=workspace_git["branch"],
-            workspace_commit_sha=workspace_git["commit_sha"],
+        _apply_finding_detail(
+            _annotate_review_finding(
+                row,
+                workspace_branch=workspace_git["branch"],
+                workspace_commit_sha=workspace_git["commit_sha"],
+            )
         )
         for row in raw_findings
     ]

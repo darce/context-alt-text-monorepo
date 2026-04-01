@@ -588,6 +588,151 @@ def test_get_handoff_state_compact_defaults_enforced(isolated_handoff: dict) -> 
     assert len(verbose["tests_recent"]) == 7
 
 
+def test_get_handoff_state_sections_filter(isolated_handoff: dict) -> None:
+    """sections parameter limits which keys appear in the response."""
+    _parse(mcp_server.set_handoff_state(task_ref="sec-test", objective="Sections test", status="in_progress"))
+    _parse(mcp_server.record_decision(session="s1", decision="d1"))
+    _parse(mcp_server.report_blocker(operation="add", description="b1"))
+
+    # Request only decisions_recent
+    result = _parse(mcp_server.get_handoff_state(sections="decisions_recent"))
+    assert result["ok"] is True
+    assert result["task_ref"] == "sec-test"
+    assert "active" in result  # Always present
+    assert "limits" in result  # Always present
+    assert "decisions_recent" in result
+    assert len(result["decisions_recent"]) >= 1
+    # Unrequested sections should be absent
+    assert "blockers_open" not in result
+    assert "actions_pending" not in result
+    assert "tests_recent" not in result
+    assert "findings_open" not in result
+    assert "worktree_lanes" not in result
+
+    # Request multiple sections
+    result2 = _parse(mcp_server.get_handoff_state(sections="blockers_open,decisions_recent"))
+    assert "blockers_open" in result2
+    assert "decisions_recent" in result2
+    assert "tests_recent" not in result2
+
+
+def test_get_handoff_state_sections_invalid_stripped(isolated_handoff: dict) -> None:
+    """Invalid section names are stripped; remaining valid ones still work."""
+    _parse(mcp_server.set_handoff_state(task_ref="strip-test", objective="Strip test", status="in_progress"))
+    _parse(mcp_server.report_blocker(operation="add", description="b1"))
+
+    # Mix of valid and invalid — valid one still returned
+    result = _parse(mcp_server.get_handoff_state(sections="blockers_open,typo_name"))
+    assert "blockers_open" in result
+    assert "decisions_recent" not in result
+
+    # All invalid — identity-only response (active + limits, no data sections)
+    result2 = _parse(mcp_server.get_handoff_state(sections="bogus,nope"))
+    assert result2["ok"] is True
+    assert "active" in result2
+    assert "limits" in result2
+    assert "blockers_open" not in result2
+    assert "decisions_recent" not in result2
+    assert "findings_open" not in result2
+
+
+def test_get_handoff_state_sections_identity_token(isolated_handoff: dict) -> None:
+    """The reserved 'identity' token explicitly requests identity-only (active + limits)."""
+    _parse(mcp_server.set_handoff_state(task_ref="id-tok", objective="Identity token test", status="in_progress"))
+    _parse(mcp_server.report_blocker(operation="add", description="b1"))
+    _parse(mcp_server.record_decision(session="s", decision="d_test_identity", rationale=(
+        "## Changes\n- identity token.\n## Verification\n- tested.\n"
+        "## Schema / Contract Changes\n- none.\n## Open Threads\n- none.\n"
+    )))
+
+    # Explicit identity token — only active + limits returned
+    result = _parse(mcp_server.get_handoff_state(sections="identity"))
+    assert result["ok"] is True
+    assert "active" in result
+    assert "limits" in result
+    assert "blockers_open" not in result
+    assert "decisions_recent" not in result
+    assert "findings_open" not in result
+
+    # Identity token takes precedence over other section names
+    result2 = _parse(mcp_server.get_handoff_state(sections="identity,blockers_open,decisions_recent"))
+    assert result2["ok"] is True
+    assert "active" in result2
+    assert "blockers_open" not in result2
+    assert "decisions_recent" not in result2
+
+    # Case-insensitive
+    result3 = _parse(mcp_server.get_handoff_state(sections="IDENTITY"))
+    assert result3["ok"] is True
+    assert "active" in result3
+    assert "blockers_open" not in result3
+
+
+def test_get_handoff_state_sections_lane_messages_resolves_lane(isolated_handoff: dict) -> None:
+    """Requesting lane_messages_open without current_lane still scopes to active lane."""
+    _parse(
+        mcp_server.set_handoff_state(task_ref="lm-test", objective="Lane messages scoping test", status="in_progress")
+    )
+    # The key assertion: lane_messages_open is returned without error
+    # even when current_lane is not in the sections filter.
+    result = _parse(mcp_server.get_handoff_state(sections="lane_messages_open"))
+    assert result["ok"] is True
+    assert "lane_messages_open" in result
+    assert "current_lane" not in result  # Not requested
+    assert isinstance(result["lane_messages_open"], list)
+
+
+def test_get_handoff_state_sections_none_returns_all(isolated_handoff: dict) -> None:
+    """sections=None (default) returns all sections."""
+    _parse(mcp_server.set_handoff_state(task_ref="all-test", objective="All sections test", status="in_progress"))
+    result = _parse(mcp_server.get_handoff_state())
+    assert "blockers_open" in result
+    assert "actions_pending" in result
+    assert "decisions_recent" in result
+    assert "tests_recent" in result
+    assert "findings_open" in result
+    assert "worktree_lanes" in result
+    assert "worker_reports_recent" in result
+    assert "lane_messages_open" in result
+    assert "current_lane" in result
+
+
+def test_get_handoff_state_detail_summary_truncates(isolated_handoff: dict) -> None:
+    """detail='summary' truncates long rationale text."""
+    _parse(mcp_server.set_handoff_state(task_ref="det-test", objective="Detail test", status="in_progress"))
+    long_rationale = "A" * 500
+    _parse(mcp_server.record_decision(session="s1", decision="d1", rationale=long_rationale))
+
+    # Full detail preserves the full text
+    full = _parse(mcp_server.get_handoff_state(detail="full"))
+    assert len(full["decisions_recent"][0]["rationale"]) == 500
+
+    # Summary truncates
+    summary = _parse(mcp_server.get_handoff_state(detail="summary"))
+    rationale = summary["decisions_recent"][0]["rationale"]
+    assert rationale.endswith("...")
+    assert len(rationale) == 203  # 200 chars + "..."
+
+
+def test_get_handoff_state_detail_summary_preserves_short_text(isolated_handoff: dict) -> None:
+    """detail='summary' does not truncate text shorter than the threshold."""
+    _parse(mcp_server.set_handoff_state(task_ref="short-test", objective="Short text test", status="in_progress"))
+    _parse(mcp_server.record_decision(session="s1", decision="d1", rationale="Short rationale"))
+
+    summary = _parse(mcp_server.get_handoff_state(detail="summary"))
+    assert summary["decisions_recent"][0]["rationale"] == "Short rationale"
+
+
+def test_get_handoff_state_invalid_detail_falls_back_to_full(isolated_handoff: dict) -> None:
+    """Invalid detail value falls back to 'full'."""
+    _parse(mcp_server.set_handoff_state(task_ref="inv-test", objective="Invalid detail test", status="in_progress"))
+    long_rationale = "B" * 500
+    _parse(mcp_server.record_decision(session="s1", decision="d1", rationale=long_rationale))
+
+    result = _parse(mcp_server.get_handoff_state(detail="bogus"))
+    assert len(result["decisions_recent"][0]["rationale"]) == 500
+
+
 def test_new_writes_prefer_current_git_context_over_stale_handoff_state(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-b", "review-branch"], cwd=tmp_path, check=True, capture_output=True, text=True)
     subprocess.run(["git", "config", "user.name", "Codex"], cwd=tmp_path, check=True, capture_output=True, text=True)
@@ -1359,6 +1504,8 @@ def test_generate_current_task_md_includes_dashboard_header(isolated_handoff: di
         md, "E12-10", status="active", open_findings=1, open_blockers=0, pending_actions=0, active=False
     )
     assert md.index("## All Tasks") < md.index("## Objective")
+    assert "- epic_ref: `E12`" in md
+    assert "- task_ref: `E12-11`" in md
 
 
 def test_internal_write_path_includes_dashboard_header(isolated_handoff: dict) -> None:

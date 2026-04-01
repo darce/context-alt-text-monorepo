@@ -92,6 +92,26 @@ class CurrentTaskRenderState(TypedDict):
     related_findings_deferred: NotRequired[dict[str, list[dict]]]
 
 
+def _infer_epic_ref(task_ref: str | None) -> str | None:
+    """Infer an epic short id from task refs like ``E13-1``.
+
+    Keep this intentionally conservative; only emit an epic when the task ref
+    clearly follows the `<EpicShortID>-<N>` task-plan convention.
+    """
+
+    normalized = (task_ref or "").strip()
+    if not normalized:
+        return None
+    prefix, separator, remainder = normalized.partition("-")
+    if not separator or not remainder:
+        return None
+    if not prefix.startswith("E") or not prefix[1:].isdigit():
+        return None
+    if not remainder[0].isdigit():
+        return None
+    return prefix
+
+
 # ---------------------------------------------------------------------------
 # Snapshot collection
 # ---------------------------------------------------------------------------
@@ -582,6 +602,15 @@ def _render_current_task_md(state: CurrentTaskRenderState) -> str:
     latest_decision = decisions[0] if decisions else None
     dashboard_tasks = state.get("dashboard_tasks", [])
 
+    def _task_identity_lines(task_ref: str | None) -> list[str]:
+        identity_lines: list[str] = []
+        epic_ref = _infer_epic_ref(task_ref)
+        if epic_ref:
+            identity_lines.append(f"- epic_ref: `{epic_ref}`")
+        if task_ref:
+            identity_lines.append(f"- task_ref: `{task_ref}`")
+        return identity_lines
+
     def _decision_line(item: dict) -> str:
         parts = f"- [#{item.get('id')}] {item.get('decision')}"
         if item.get("agent"):
@@ -616,7 +645,8 @@ def _render_current_task_md(state: CurrentTaskRenderState) -> str:
             return "\n".join(header_lines + ["No active handoff state found.", ""])
         task_ref_display = state.get("task_ref", "unknown")
         lines: list[str] = header_lines + [
-            f"## Task Ref: `{task_ref_display}`",
+            "## Task Context",
+            *_task_identity_lines(task_ref_display),
             "",
             "> **Note**: No active `handoff_state` row for this task. Context assembled from available decisions, findings, blockers, and actions.",
             "",
@@ -634,7 +664,7 @@ def _render_current_task_md(state: CurrentTaskRenderState) -> str:
         lines.extend(
             [
                 "## Active Status",
-                f"- task_ref: `{active.get('task_ref', '')}`",
+                *_task_identity_lines(str(active.get("task_ref", ""))),
                 f"- status: `{active.get('status', '')}`",
                 f"- revision: `{active.get('revision', 0)}`",
                 f"- updated_at: `{active.get('updated_at', '')}`",

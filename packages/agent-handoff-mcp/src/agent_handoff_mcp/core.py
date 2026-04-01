@@ -408,14 +408,23 @@ def purge_artifacts(
 
 
 # Compound tools (cross-module orchestration)
-def load_session(task_ref: str | None = None) -> str:
-    """Load session context: get_handoff_state + list_review_findings(open) in one call."""
-    state_raw = get_handoff_state(task_ref=task_ref)
+def load_session(
+    task_ref: str | None = None,
+    sections: str | None = None,
+    detail: str = "full",
+) -> str:
+    """Load session context: get_handoff_state + list_review_findings(open) in one call.
+
+    Passes ``sections`` and ``detail`` through to ``get_handoff_state`` and
+    ``detail`` through to ``list_review_findings`` so callers can reduce
+    payload size without making two separate calls.
+    """
+    state_raw = get_handoff_state(task_ref=task_ref, sections=sections, detail=detail)
     state = json.loads(state_raw)
     if not state.get("ok"):
         return state_raw
     resolved_task_ref = state.get("task_ref")
-    findings_raw = list_review_findings(task_ref=resolved_task_ref, status="open")
+    findings_raw = list_review_findings(task_ref=resolved_task_ref, status="open", detail=detail)
     findings = json.loads(findings_raw)
     return _json_response(
         {

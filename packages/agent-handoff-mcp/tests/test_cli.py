@@ -83,6 +83,83 @@ def test_state_review_list_and_close_check_cli_smoke(tmp_path: Path, capsys) -> 
     assert close_payload["ready_to_close"] is False
 
 
+def test_state_cli_sections_flag(tmp_path: Path, capsys) -> None:
+    """--sections limits which data sections appear in CLI output."""
+    api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
+    json.loads(api.set_handoff_state(task_ref="sec-cli", objective="sections cli smoke"))
+    json.loads(api.record_decision(session="s1", decision="d1"))
+    json.loads(api.report_blocker(operation="add", description="b1"))
+
+    payload = _run_cli(
+        ["agent-handoff-mcp", "--workspace-root", str(tmp_path), "state", "--sections", "decisions_recent"],
+        capsys,
+    )
+    assert payload["ok"] is True
+    assert "active" in payload
+    assert "limits" in payload
+    assert "decisions_recent" in payload
+    assert "blockers_open" not in payload
+
+    # Identity-only: explicit 'identity' token → only active + limits
+    identity = _run_cli(
+        ["agent-handoff-mcp", "--workspace-root", str(tmp_path), "state", "--sections", "identity"],
+        capsys,
+    )
+    assert identity["ok"] is True
+    assert "active" in identity
+    assert "limits" in identity
+    assert "blockers_open" not in identity
+    assert "decisions_recent" not in identity
+
+
+def test_state_cli_detail_flag(tmp_path: Path, capsys) -> None:
+    """--detail summary truncates long fields via CLI."""
+    api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
+    json.loads(api.set_handoff_state(task_ref="det-cli", objective="detail cli smoke"))
+    json.loads(api.record_decision(session="s1", decision="d1", rationale="R" * 500))
+
+    full = _run_cli(
+        ["agent-handoff-mcp", "--workspace-root", str(tmp_path), "state", "--detail", "full"],
+        capsys,
+    )
+    assert len(full["decisions_recent"][0]["rationale"]) == 500
+
+    summary = _run_cli(
+        ["agent-handoff-mcp", "--workspace-root", str(tmp_path), "state", "--detail", "summary"],
+        capsys,
+    )
+    assert summary["decisions_recent"][0]["rationale"].endswith("...")
+    assert len(summary["decisions_recent"][0]["rationale"]) == 203
+
+
+def test_review_list_cli_detail_flag(tmp_path: Path, capsys) -> None:
+    """review-list --detail summary truncates long finding fields via CLI."""
+    api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
+    json.loads(api.set_handoff_state(task_ref="rl-det", objective="review-list detail smoke"))
+    json.loads(
+        api.record_review_finding(
+            session="cli",
+            finding_id="M-1",
+            severity="medium",
+            file_path="README.md",
+            description="D" * 500,
+        )
+    )
+
+    full = _run_cli(
+        ["agent-handoff-mcp", "--workspace-root", str(tmp_path), "review-list", "--detail", "full"],
+        capsys,
+    )
+    assert len(full["findings"][0]["description"]) == 500
+
+    summary = _run_cli(
+        ["agent-handoff-mcp", "--workspace-root", str(tmp_path), "review-list", "--detail", "summary"],
+        capsys,
+    )
+    assert summary["findings"][0]["description"].endswith("...")
+    assert len(summary["findings"][0]["description"]) == 203
+
+
 def test_review_update_cli_accepts_explicit_task_ref(tmp_path: Path, capsys) -> None:
     api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
     json.loads(api.set_handoff_state(task_ref="task-a", objective="task a"))

@@ -331,6 +331,7 @@ During-work discipline (abbreviated):
 - Record blockers immediately: `report_blocker(..., actor={ ... })`.
 - Record verification: `record_test_result(..., actor={ ... })`. Keep `result` as a concise proof line.
 - Record findings: `record_review_finding(..., details={ line_start?, line_end?, fix? }, actor={ ... })`. When logging **3 or more findings** in a single review pass, use `batch_record_review_findings` instead — one atomic write, one `CURRENT_TASK.md` flush, per-item results returned.
+- **Regenerate `CURRENT_TASK.md`** after any state-changing handoff operation — not just slice completions. This includes `record_decision`, `update_review_finding` (status changes), `report_blocker`, and `batch_record_review_findings`. Call `generate_current_task_md(task_ref=<active-task-ref>)` so the human-readable mirror stays current.
 - Validate review state with `get_review_findings_summary(...)` and `list_review_findings(...)`, not direct `sqlite3`.
 
 Read discipline:

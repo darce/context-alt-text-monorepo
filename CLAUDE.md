@@ -59,7 +59,7 @@ This project has NO production users and NO existing data to preserve.
 - After recording the decision, notify the user that the handoff has been updated (e.g. "Handoff updated: decision `<id>` recorded."). This notification is mandatory — a response that makes code changes without both recording and notifying is incomplete.
 - A task response is incomplete if MCP handoff was not updated.
 - Slice completion format (enforced at write time): [docs/agentic/templates/slice-complete-template.md](docs/agentic/templates/slice-complete-template.md).
-- After every slice decision, call `generate_current_task_md(task_ref=<active-task-ref>)`.
+- After every state-changing handoff operation (`record_decision`, `update_review_finding`, `report_blocker`, `batch_record_review_findings`), call `generate_current_task_md(task_ref=<active-task-ref>)`.
 - When logging **3 or more review findings** in a single review pass, use `batch_record_review_findings` instead of repeated `record_review_finding` calls — one atomic write, one `CURRENT_TASK.md` flush, per-item results returned.
 - Full handoff protocol: [docs/agentic/instructions.md](docs/agentic/instructions.md#mcp-handoff-contract-mandatory).
 

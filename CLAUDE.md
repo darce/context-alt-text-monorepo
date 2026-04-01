@@ -2,7 +2,7 @@
 
 > **Cold-start dispatcher for coding agents.** Full protocol: [docs/agentic/instructions.md](docs/agentic/instructions.md).
 
-**Epic**: `docs/epics/v0.2.0/remaining-sync-workbench-and-retention-epic.md` · **Roadmap**: `docs/roadmaps/roadmap-v4.md`
+**Active epics**: `docs/epics/v0.3.1/agent-handoff-mcp-packaging-epic.md` · `docs/epics/v0.3.1/self-hosting-epic.md`
 
 ---
 
@@ -24,12 +24,13 @@ If MCP unavailable: read `CURRENT_TASK.md` as stale fallback. Record blocker whe
 
 ## Role Selection
 
-| Role                          | Context Map                                             | Guidelines                                                                            | Testing Guide                                                           | Tech Stack                                                                              | Key Entry Points                      |
-| ----------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------- |
-| **Backend (Python)**          | [maps/backend.md](docs/agentic/maps/backend.md)         | [rules/backend-python-guidelines.md](docs/agentic/rules/backend-python-guidelines.md) | [rules/testing-python.md](docs/agentic/rules/testing-python.md)         | [maps/tech-stack.md#backend-python](docs/agentic/maps/tech-stack.md#backend-python)     | `apps/prototype-description-service/` |
-| **Frontend (React/TS)**       | [maps/frontend.md](docs/agentic/maps/frontend.md)       | [rules/frontend-guidelines.md](docs/agentic/rules/frontend-guidelines.md)             | [rules/testing-typescript.md](docs/agentic/rules/testing-typescript.md) | [maps/tech-stack.md#frontend-reactts](docs/agentic/maps/tech-stack.md#frontend-reactts) | `apps/prototype-wp-alt-context/js/`   |
-| **PHP Plugin**                | [maps/php-plugin.md](docs/agentic/maps/php-plugin.md)   | [rules/backend-php-guidelines.md](docs/agentic/rules/backend-php-guidelines.md)       | [rules/testing-php.md](docs/agentic/rules/testing-php.md)               | [maps/tech-stack.md#php-plugin](docs/agentic/maps/tech-stack.md#php-plugin)             | `apps/prototype-wp-alt-context/src/`  |
-| **Cross-Service Integration** | [maps/integration.md](docs/agentic/maps/integration.md) | [contracts/](docs/agentic/contracts/)                                                 | [rules/testing-principles.md](docs/agentic/rules/testing-principles.md) | [maps/tech-stack.md#orchestration](docs/agentic/maps/tech-stack.md#orchestration)       | `docs/agentic/contracts/`             |
+| Role                            | Context Map                                                    | Guidelines                                                                            | Testing Guide                                                           | Tech Stack                                                                              | Key Entry Points                      |
+| ------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------- |
+| **Backend (Python)**            | [maps/backend.md](docs/agentic/maps/backend.md)                | [rules/backend-python-guidelines.md](docs/agentic/rules/backend-python-guidelines.md) | [rules/testing-python.md](docs/agentic/rules/testing-python.md)         | [maps/tech-stack.md#backend-python](docs/agentic/maps/tech-stack.md#backend-python)     | `apps/prototype-description-service/` |
+| **Frontend (React/TS)**         | [maps/frontend.md](docs/agentic/maps/frontend.md)              | [rules/frontend-guidelines.md](docs/agentic/rules/frontend-guidelines.md)             | [rules/testing-typescript.md](docs/agentic/rules/testing-typescript.md) | [maps/tech-stack.md#frontend-reactts](docs/agentic/maps/tech-stack.md#frontend-reactts) | `apps/prototype-wp-alt-context/js/`   |
+| **PHP Plugin**                  | [maps/php-plugin.md](docs/agentic/maps/php-plugin.md)          | [rules/backend-php-guidelines.md](docs/agentic/rules/backend-php-guidelines.md)       | [rules/testing-php.md](docs/agentic/rules/testing-php.md)               | [maps/tech-stack.md#php-plugin](docs/agentic/maps/tech-stack.md#php-plugin)             | `apps/prototype-wp-alt-context/src/`  |
+| **Cross-Service Integration**   | [maps/integration.md](docs/agentic/maps/integration.md)        | [contracts/](docs/agentic/contracts/)                                                 | [rules/testing-principles.md](docs/agentic/rules/testing-principles.md) | [maps/tech-stack.md#orchestration](docs/agentic/maps/tech-stack.md#orchestration)       | `docs/agentic/contracts/`             |
+| **Infrastructure / Deployment** | [self-hosting-epic.md](docs/epics/v0.3.1/self-hosting-epic.md) | [development-workflow.md](docs/agentic/rules/development-workflow.md)                 | [testing-principles.md](docs/agentic/rules/testing-principles.md)       | [maps/tech-stack.md#orchestration](docs/agentic/maps/tech-stack.md#orchestration)       | `infra/oci/`                          |
 
 Additional routing: see [docs/agentic/instructions.md](docs/agentic/instructions.md#additional-routing).
 
@@ -41,7 +42,8 @@ Additional routing: see [docs/agentic/instructions.md](docs/agentic/instructions
 
 > **You may ONLY modify files within this monorepo.**
 
-Allowed: `apps/prototype-wp-alt-context/`, `apps/prototype-description-service/`, `packages/`, `docs/`, `scripts/`.
+Allowed: `apps/prototype-wp-alt-context/`, `apps/prototype-description-service/`, `packages/` (only package directories present in this checkout), `docs/`, `scripts/`.
+If `agent-handoff-mcp` has been extracted into the standalone `darce/mcp-agent-handoff` repo, treat that external repo as out of bounds unless the workspace is opened there directly.
 Never modify WordPress core, LocalWP config, `~/Local Sites/`, or system config files.
 
 ### Greenfield Policy
@@ -86,7 +88,7 @@ This project has NO production users and NO existing data to preserve.
 - [rg-008] helpful=1 harmful=0 :: Config files: validate at load time. Fail fast on missing or malformed required keys.
 - [rg-009] helpful=1 harmful=0 :: No task-specific logic in generic modules. Extract to config-driven policy or the task's manifest.
 - [rg-010] helpful=1 harmful=0 :: IDE tool output may be stale after external writes (git rebase, worktree ops). Cross-check with terminal before recording a finding.
-- [rg-013] helpful=1 harmful=0 :: `core.py` must remain pure handoff-state CRUD. No orchestration imports, no subprocess calls, no lock management.
+- [rg-013] helpful=1 harmful=0 :: `core.py` must remain pure handoff-state CRUD. No orchestration imports, no subprocess calls, no lock management. Scope: the checked-in `agent-handoff-mcp` package in the active workspace, or the standalone checkout if that repo is opened directly.
 - [rg-014] helpful=1 harmful=0 :: Orchestration modules must use late-binding imports (function-level) for `agent_handoff_mcp` symbols.
 - [rg-015] helpful=1 harmful=0 :: Boundary adapters must not invent contract metadata. Every envelope field must come from the request, upstream payload, or an explicitly documented fallback.
 - [rg-016] helpful=0 harmful=0 :: PHP runtime autoload parity must match tests. Verify with `php -r "require 'vendor/autoload.php'; var_export(class_exists(...));"`.

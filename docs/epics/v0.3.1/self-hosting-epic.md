@@ -1,5 +1,6 @@
-# Self-Hosting & Multi-Server Connectivity (Epic)
+# E14. Self-Hosting & Multi-Server Connectivity (Epic)
 
+> **Epic Short ID**: E14
 > **Status**: active -- OCI baseline provisioned
 > **Parent**: [production-readiness-epic.md](./production-readiness-epic.md) Phase 6
 > **Revision**: Mar 2026 -- promoted from task doc to epic; Oracle PAYG baseline now synced to provisioned `infra/oci/` state.
@@ -693,6 +694,8 @@ Per-second = L4 GPU **0.0001867** + CPU (4 × **0.000018**) + RAM (16 × **0.000
 - [ ] End-to-end smoke test: WP plugin -> backend API -> recognition -> response
 
 ### Phase 0: Scaffolding
+
+> **Task plan**: [E14-1](../../tasks/14.0/E14-1-deploy-description-service-to-oci-task-plan.md) covers only the recognition-only deployment scaffolding items in this phase: the production Dockerfile, `docker-compose.prod.yml`, and the persisted `/data/cache` runtime path. The `Phi3CaptionAdapter`, `[vlm]` dependency group, and `HF_HOME` / `TORCH_HOME` work remain follow-on scope and are not owned by E14-1.
 
 - [ ] Create `apps/prototype-description-service/Dockerfile` (production-grade, multi-stage: base → recognition-only → recognition+vlm)
 - [ ] Create `apps/prototype-description-service/docker-compose.prod.yml` (API + Postgres + volume mounts)

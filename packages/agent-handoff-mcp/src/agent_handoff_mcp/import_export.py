@@ -1,6 +1,7 @@
 """Import/export domain module.
 
-Contains export_handoff_state, import_handoff_state, archive_task_state, switch_task.
+Contains export_handoff_state, import_handoff_state, archive_task_state,
+update_task_status, and switch_task.
 """
 
 from __future__ import annotations
@@ -8,10 +9,13 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from collections.abc import Mapping
 from pathlib import Path
 
 from ._shared import (
     HANDOFF_ACTIVE_STATUSES,
+    ResolvedWriteContext,
+    TaskSnapshot,
     WriteActor,
     _build_current_task_state_from_snapshot,
     _collect_dashboard_rows,
@@ -31,7 +35,39 @@ from ._shared import (
     _utcnow_iso,
     _workspace_root,
     _write_current_task_md_for_task,
+    build_write_actor,
 )
+
+
+def _persist_task_archive_snapshot(
+    conn: sqlite3.Connection,
+    *,
+    task_ref: str,
+    snapshot: TaskSnapshot | Mapping[str, object],
+    ctx: ResolvedWriteContext,
+    notes: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO task_archives (task_ref, archived_at, archived_by, archived_branch, archived_commit_sha, notes, snapshot_json)
+        VALUES (?, datetime('now'), ?, ?, ?, ?, ?)
+        ON CONFLICT(task_ref) DO UPDATE SET
+            archived_at = datetime('now'),
+            archived_by = excluded.archived_by,
+            archived_branch = excluded.archived_branch,
+            archived_commit_sha = excluded.archived_commit_sha,
+            notes = excluded.notes,
+            snapshot_json = excluded.snapshot_json
+        """,
+        (
+            task_ref,
+            ctx.agent,
+            ctx.branch,
+            ctx.commit_sha,
+            notes,
+            json.dumps(snapshot, sort_keys=True),
+        ),
+    )
 
 
 def export_handoff_state(
@@ -520,6 +556,14 @@ def archive_task_state(
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         snapshot = _collect_task_snapshot(conn, resolved_task_ref)
+        ctx = _resolve_write_actor(
+            conn,
+            build_write_actor(
+                agent=archive_by,
+                branch=archive_branch,
+                commit_sha=archive_commit_sha,
+            ),
+        )
         if prune_working_rows and not allow_destructive_clear:
             working_counts = _count_task_rows(conn, resolved_task_ref)
             non_zero_sections = [section for section, count in working_counts.items() if count > 0]
@@ -531,26 +575,12 @@ def archive_task_state(
                         "existing_counts": working_counts,
                     }
                 )
-        conn.execute(
-            """
-            INSERT INTO task_archives (task_ref, archived_at, archived_by, archived_branch, archived_commit_sha, notes, snapshot_json)
-            VALUES (?, datetime('now'), ?, ?, ?, ?, ?)
-            ON CONFLICT(task_ref) DO UPDATE SET
-                archived_at = datetime('now'),
-                archived_by = excluded.archived_by,
-                archived_branch = excluded.archived_branch,
-                archived_commit_sha = excluded.archived_commit_sha,
-                notes = excluded.notes,
-                snapshot_json = excluded.snapshot_json
-            """,
-            (
-                resolved_task_ref,
-                archive_by,
-                archive_branch,
-                archive_commit_sha,
-                notes,
-                json.dumps(snapshot, sort_keys=True),
-            ),
+        _persist_task_archive_snapshot(
+            conn,
+            task_ref=resolved_task_ref,
+            snapshot=snapshot,
+            ctx=ctx,
+            notes=notes or f"Archived {resolved_task_ref}",
         )
         active_cleared = False
         if clear_active_if_matches:
@@ -582,6 +612,137 @@ def archive_task_state(
             "allow_destructive_clear": allow_destructive_clear,
         }
     )
+
+
+def update_task_status(
+    task_ref: str,
+    status: str,
+    expected_revision: int | None = None,
+    actor: WriteActor | None = None,
+) -> str:
+    """Update task status for the active task or an archived/inactive task snapshot."""
+    if status not in HANDOFF_ACTIVE_STATUSES:
+        return _json_response(
+            {"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(HANDOFF_ACTIVE_STATUSES))}"}
+        )
+
+    with _get_db_connection() as conn:
+        ctx = _resolve_write_actor(conn, actor)
+        active_row = conn.execute(
+            "SELECT * FROM handoff_state WHERE id = 1 AND task_ref = ?",
+            (task_ref,),
+        ).fetchone()
+
+        if active_row is not None:
+            current_revision = int(active_row["revision"])
+            if expected_revision is None:
+                return _json_response(
+                    {
+                        "ok": False,
+                        "error": "expected_revision is required for updates to the active task.",
+                        "current_revision": current_revision,
+                        "task_ref": task_ref,
+                    }
+                )
+            if expected_revision != current_revision:
+                return _json_response(
+                    {
+                        "ok": False,
+                        "error": "Revision conflict.",
+                        "expected_revision": expected_revision,
+                        "current_revision": current_revision,
+                        "task_ref": task_ref,
+                    }
+                )
+
+            conn.execute(
+                """
+                UPDATE handoff_state
+                SET status = ?, revision = revision + 1, updated_at = datetime('now'),
+                    updated_by = ?, updated_branch = ?, updated_commit_sha = ?
+                WHERE id = 1 AND task_ref = ? AND revision = ?
+                """,
+                (status, ctx.agent, ctx.branch, ctx.commit_sha, task_ref, expected_revision),
+            )
+            active = _row_to_dict(conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone())
+            try:
+                _write_current_task_md_for_task(conn, task_ref)
+                regen = "ok"
+            except Exception as exc:  # noqa: BLE001
+                regen = str(exc)
+            result: dict[str, object] = {
+                "ok": True,
+                "task_ref": task_ref,
+                "status": status,
+                "updated_scope": "active",
+                "active": active,
+                "current_task_md_regen": "ok" if regen == "ok" else "failed",
+            }
+            if regen != "ok":
+                result["current_task_md_regen_error"] = regen
+            return _json_response(result)
+
+        archive_row = conn.execute(
+            "SELECT snapshot_json FROM task_archives WHERE task_ref = ?",
+            (task_ref,),
+        ).fetchone()
+        if archive_row is None:
+            return _json_response(
+                {
+                    "ok": False,
+                    "error": "Task is neither active nor archived; switch to it or archive it before updating its inactive status.",
+                    "task_ref": task_ref,
+                }
+            )
+
+        try:
+            snapshot = json.loads(archive_row["snapshot_json"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return _json_response(
+                {
+                    "ok": False,
+                    "error": "Archived snapshot is invalid JSON.",
+                    "task_ref": task_ref,
+                }
+            )
+
+        active_block = snapshot.get("active")
+        if not isinstance(active_block, dict):
+            active_block = {"task_ref": task_ref}
+            snapshot["active"] = active_block
+        active_block["task_ref"] = task_ref
+        active_block["status"] = status
+        active_block["updated_by"] = ctx.agent
+        active_block["updated_branch"] = ctx.branch
+        active_block["updated_commit_sha"] = ctx.commit_sha
+        _persist_task_archive_snapshot(
+            conn,
+            task_ref=task_ref,
+            snapshot=snapshot,
+            ctx=ctx,
+            notes=f"Updated archived status to {status}",
+        )
+
+        active_task_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
+        regen_result = "skipped"
+        if active_task_row is not None:
+            try:
+                _write_current_task_md_for_task(conn, str(active_task_row["task_ref"]))
+                regen_result = "ok"
+            except Exception as exc:  # noqa: BLE001
+                regen_result = str(exc)
+
+        result = {
+            "ok": True,
+            "task_ref": task_ref,
+            "status": status,
+            "updated_scope": "archived",
+            "current_task_md_regen": "ok" if regen_result == "ok" else regen_result,
+        }
+        if regen_result not in {"ok", "skipped"}:
+            result["current_task_md_regen"] = "failed"
+            result["current_task_md_regen_error"] = regen_result
+        return _json_response(result)
 
 
 def switch_task(

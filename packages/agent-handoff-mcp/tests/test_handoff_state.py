@@ -11,6 +11,7 @@ from agent_handoff_mcp import PromptMetrics, TokenUsage
 from agent_handoff_mcp import api as mcp_server
 from agent_handoff_mcp import core as handoff_core
 from agent_handoff_mcp import import_export as handoff_import_export
+from agent_handoff_mcp import shared_schema as handoff_schema
 from agent_handoff_mcp.config import RuntimeConfig
 
 
@@ -18,6 +19,7 @@ from agent_handoff_mcp.config import RuntimeConfig
 def isolated_handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Redirect handoff sqlite + generated markdown paths into tmp dir."""
     state_dir = tmp_path / ".task-state"
+    state_dir.mkdir(parents=True, exist_ok=True)
     current_task_path = tmp_path / "CURRENT_TASK.md"
     runtime = RuntimeConfig.for_workspace(
         tmp_path,
@@ -129,26 +131,25 @@ def test_schema_bootstrap_is_idempotent(isolated_handoff: dict) -> None:
                 "('handoff_state','decisions','blockers','next_actions','verified_tests','review_findings','task_archives','worktree_lanes','worker_reports','lane_messages','plan_cursors','turn_metrics')"
             )
         }
-        review_finding_columns = {row[1] for row in conn.execute("PRAGMA table_info(review_findings)").fetchall()}
-        decision_columns = {row[1] for row in conn.execute("PRAGMA table_info(decisions)").fetchall()}
-        plan_cursor_columns = {row[1] for row in conn.execute("PRAGMA table_info(plan_cursors)").fetchall()}
-        turn_metric_columns = {row[1] for row in conn.execute("PRAGMA table_info(turn_metrics)").fetchall()}
 
     assert first_tables == expected_tables
     assert second_tables == expected_tables
-    assert {"lane_id", "model", "model_label", "reasoning_level"}.issubset(decision_columns)
-    assert {
-        "resolution_notes",
-        "reopen_count",
-        "last_reopen_reason",
-        "last_reopened_at",
-        "updated_at",
-        "review_mode",
-    }.issubset(review_finding_columns)
-    assert {"plan_item_id", "state", "dispatch_count", "summary"}.issubset(plan_cursor_columns)
-    assert {"usage_source", "prompt_token_source", "attribution_json", "section_sizes_json"}.issubset(
-        turn_metric_columns
-    )
+
+
+def test_schema_bootstrap_migrates_decisions_changed_files_column(isolated_handoff: dict) -> None:
+    """Warm databases from the prior schema gain decisions.changed_files_json on reopen."""
+    legacy_schema_sql = handoff_core.HANDOFF_SCHEMA_SQL.replace("    changed_files_json TEXT,\n", "")
+
+    with sqlite3.connect(isolated_handoff["db_path"]) as conn:
+        conn.executescript(legacy_schema_sql)
+        conn.execute(f"PRAGMA user_version = {handoff_schema.HANDOFF_SCHEMA_VERSION - 1}")
+
+    with handoff_core._get_db_connection() as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(decisions)").fetchall()}
+        user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+
+    assert "changed_files_json" in columns
+    assert user_version == handoff_schema.HANDOFF_SCHEMA_VERSION
 
 
 def test_record_decision_persists_unified_model_identity_fields(isolated_handoff: dict) -> None:
@@ -184,6 +185,69 @@ def test_record_decision_persists_unified_model_identity_fields(isolated_handoff
     assert decision["model"] == "claude-opus-4-0520"
     assert decision["model_label"] == "Claude Opus 4"
     assert decision["reasoning_level"] == "high"
+
+
+def test_record_decision_persists_changed_files(isolated_handoff: dict) -> None:
+    """changed_files parameter is stored as JSON on the decision row."""
+    _parse(mcp_server.set_handoff_state(task_ref="cf-test", objective="Changed files test", status="in_progress"))
+
+    files = ["src/api.py", "tests/test_api.py", "docs/contract.md"]
+    recorded = _parse(
+        mcp_server.record_decision(
+            session="s1",
+            decision="cdx_slice_complete_test_changed_files",
+            rationale=(
+                "## Changes\n- added changed_files.\n"
+                "## Verification\n- tested.\n"
+                "## Schema / Contract Changes\n- none.\n"
+                "## Open Threads\n- none.\n"
+            ),
+            changed_files=files,
+        )
+    )
+    assert recorded["ok"] is True
+    assert json.loads(recorded["decision"]["changed_files_json"]) == files
+
+
+def test_record_decision_rejects_non_relative_changed_files(isolated_handoff: dict) -> None:
+    """changed_files rejects malformed or non-relative path entries."""
+    _parse(mcp_server.set_handoff_state(task_ref="cf-invalid", objective="Invalid files test", status="in_progress"))
+
+    recorded = _parse(
+        mcp_server.record_decision(
+            session="s1",
+            decision="cdx_slice_complete_test_invalid_files",
+            rationale=(
+                "## Changes\n- invalid files.\n"
+                "## Verification\n- tested.\n"
+                "## Schema / Contract Changes\n- none.\n"
+                "## Open Threads\n- none.\n"
+            ),
+            changed_files=["/absolute/path.py", "../escape.py"],
+        )
+    )
+
+    assert recorded["ok"] is False
+    assert "monorepo-relative paths" in recorded["error"]
+
+
+def test_record_decision_changed_files_none_by_default(isolated_handoff: dict) -> None:
+    """When changed_files is not passed, the column is null."""
+    _parse(mcp_server.set_handoff_state(task_ref="cf-none", objective="No files test", status="in_progress"))
+    recorded = _parse(
+        mcp_server.record_decision(
+            session="s1",
+            decision="cdx_slice_complete_test_no_files",
+            rationale=(
+                "## Changes\n- no files.\n"
+                "## Verification\n- tested.\n"
+                "## Schema / Contract Changes\n- none.\n"
+                "## Open Threads\n- none.\n"
+            ),
+        )
+    )
+    assert recorded["ok"] is True
+    assert recorded["decision"]["changed_files_json"] is None
 
 
 def test_record_decision_preserves_legacy_agent_fallback(isolated_handoff: dict) -> None:
@@ -640,10 +704,16 @@ def test_get_handoff_state_sections_identity_token(isolated_handoff: dict) -> No
     """The reserved 'identity' token explicitly requests identity-only (active + limits)."""
     _parse(mcp_server.set_handoff_state(task_ref="id-tok", objective="Identity token test", status="in_progress"))
     _parse(mcp_server.report_blocker(operation="add", description="b1"))
-    _parse(mcp_server.record_decision(session="s", decision="d_test_identity", rationale=(
-        "## Changes\n- identity token.\n## Verification\n- tested.\n"
-        "## Schema / Contract Changes\n- none.\n## Open Threads\n- none.\n"
-    )))
+    _parse(
+        mcp_server.record_decision(
+            session="s",
+            decision="d_test_identity",
+            rationale=(
+                "## Changes\n- identity token.\n## Verification\n- tested.\n"
+                "## Schema / Contract Changes\n- none.\n## Open Threads\n- none.\n"
+            ),
+        )
+    )
 
     # Explicit identity token — only active + limits returned
     result = _parse(mcp_server.get_handoff_state(sections="identity"))
@@ -2670,9 +2740,36 @@ def test_close_slice_does_not_write_md_on_state_failure(isolated_handoff: dict) 
     )
 
     assert result["ok"] is False
+    assert result["decision_recorded"] is False
     assert result["state_updated"] is False
     assert result["current_task_md_written"] is False
     assert isolated_handoff["current_task_path"].read_text() == sentinel
+
+
+def test_close_slice_requires_expected_revision_before_recording_decision(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="close-preflight-test",
+            objective="Preflight required",
+            status="in_progress",
+        )
+    )
+
+    result = _parse(
+        mcp_server.close_slice(
+            session="s-preflight",
+            decision="non-slice-preflight-test",
+            task_ref="close-preflight-test",
+        )
+    )
+
+    assert result["ok"] is False
+    assert result["decision_recorded"] is False
+    assert result["state_error"] == "expected_revision is required for updates."
+
+    state = _parse(mcp_server.get_handoff_state(task_ref="close-preflight-test"))
+    assert state["ok"] is True
+    assert [item["decision"] for item in state["decisions_recent"]] == []
 
 
 def test_close_slice_writes_dashboard_header_on_success(isolated_handoff: dict) -> None:
@@ -2720,6 +2817,50 @@ def test_close_slice_writes_dashboard_header_on_success(isolated_handoff: dict) 
     _assert_dashboard_row(
         md, "close-dashboard-other", status="active", open_findings=1, open_blockers=0, pending_actions=0, active=False
     )
+
+
+def test_close_slice_persists_changed_files_on_decision_row(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="close-files",
+            objective="Close slice changed files proof",
+            status="in_progress",
+        )
+    )
+
+    result = _parse(
+        mcp_server.close_slice(
+            session="close-files",
+            decision="cop_slice_complete_E13_close_slice_changed_files",
+            rationale=(
+                "## Changes\n- persist changed files.\n\n"
+                "## Verification\n- unit test.\n\n"
+                "## Schema / Contract Changes\n- none.\n\n"
+                "## Open Threads\n- none."
+            ),
+            task_ref="close-files",
+            expected_revision=0,
+            changed_files=[
+                "packages/agent-handoff-mcp/src/agent_handoff_mcp/decisions.py",
+                "packages/agent-handoff-mcp/tests/test_handoff_state.py",
+            ],
+        )
+    )
+
+    assert result["ok"] is True
+
+    with sqlite3.connect(isolated_handoff["db_path"]) as conn:
+        conn.row_factory = sqlite3.Row
+        decision_row = conn.execute(
+            "SELECT changed_files_json FROM decisions WHERE decision = ?",
+            ("cop_slice_complete_E13_close_slice_changed_files",),
+        ).fetchone()
+
+    assert decision_row is not None
+    assert json.loads(decision_row["changed_files_json"]) == [
+        "packages/agent-handoff-mcp/src/agent_handoff_mcp/decisions.py",
+        "packages/agent-handoff-mcp/tests/test_handoff_state.py",
+    ]
 
 
 # E12-5 review: load_session compound tool

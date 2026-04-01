@@ -7,7 +7,10 @@ and integrity helpers.
 
 from __future__ import annotations
 
+import json
 import sqlite3
+from collections.abc import Sequence
+from pathlib import PurePosixPath
 
 from ._shared import (
     ACTION_STATUSES,
@@ -29,6 +32,29 @@ from ._shared import (
 from .slice_decision import classify_decision_id, is_slice_complete_decision
 
 
+def _normalize_changed_files_payload(changed_files: Sequence[object] | None) -> tuple[list[str] | None, str | None]:
+    """Validate and normalize optional changed-file paths for decision rows."""
+
+    if changed_files is None:
+        return None, None
+
+    normalized_paths: list[str] = []
+    for raw_path in changed_files:
+        if not isinstance(raw_path, str):
+            return None, "changed_files must be a list of non-empty monorepo-relative path strings."
+        candidate = raw_path.strip().replace("\\", "/")
+        pure_path = PurePosixPath(candidate)
+        if (
+            not candidate
+            or pure_path.is_absolute()
+            or not pure_path.parts
+            or any(part == ".." for part in pure_path.parts)
+        ):
+            return None, "changed_files must contain only non-empty monorepo-relative paths."
+        normalized_paths.append("/".join(part for part in pure_path.parts if part not in ("", ".")))
+    return normalized_paths, None
+
+
 def record_decision(
     session: str,
     decision: str,
@@ -38,10 +64,14 @@ def record_decision(
     input_tokens: int | None = None,
     output_tokens: int | None = None,
     total_tokens: int | None = None,
+    changed_files: list[str] | None = None,
 ) -> str:
     validation_error = _validate_decision_payload(decision, rationale)
     if validation_error is not None:
         return _json_response({"ok": False, "error": validation_error})
+    normalized_changed_files, changed_files_error = _normalize_changed_files_payload(changed_files)
+    if changed_files_error is not None:
+        return _json_response({"ok": False, "error": changed_files_error})
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         ctx = _resolve_write_actor(conn, actor)
@@ -50,15 +80,16 @@ def record_decision(
             warnings.append(
                 "actor is missing model/model_label; decision will render without model identity. Pass actor.model and actor.model_label for accurate provenance."
             )
+        changed_files_json = json.dumps(normalized_changed_files) if normalized_changed_files is not None else None
         cur = conn.execute(
             """
             INSERT INTO decisions (
                 task_ref, lane_id, session, decision, rationale, agent,
                 model, model_label, reasoning_level,
                 input_tokens, output_tokens, total_tokens,
-                branch, commit_sha, created_at
+                branch, commit_sha, changed_files_json, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
             """,
             (
                 resolved_task_ref,
@@ -75,6 +106,7 @@ def record_decision(
                 total_tokens,
                 ctx.branch,
                 ctx.commit_sha,
+                changed_files_json,
             ),
         )
         result: dict = {

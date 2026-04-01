@@ -30,6 +30,7 @@ from .api import (
     set_handoff_state,
     update_next_actions,
     update_review_finding,
+    update_task_status,
 )
 from .config import RuntimeConfig
 from .core import PromptMetrics, ResolvedWriteContext, ReviewFindingDetails, TokenUsage, WriteActor
@@ -73,6 +74,7 @@ __all__ = [
     "search_artifacts",
     "search_handoff",
     "set_handoff_state",
+    "update_task_status",
     "update_next_actions",
     "update_review_finding",
 ]

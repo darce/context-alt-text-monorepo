@@ -6,7 +6,7 @@ boundary_owner: agentic-tooling
 
 ## Purpose
 
-`agent-handoff-mcp` is the portable MCP server for agent coordination state. After the E12-5/E12-6 split it exposes **27 tools** in its full profile (**16 core**, **11 extended**) for task state, review findings, artifacts, export/import, and handoff close checks. Orchestration, daemon lifecycle, lane management, and turn metrics are served by [`agent-orchestrator-mcp`](agent-orchestrator-mcp.md).
+`agent-handoff-mcp` is the portable MCP server for agent coordination state. After the E12-5/E12-6 split it exposes **28 tools** in its extended profile (**16 core**, **12 extended**) for task state, review findings, artifacts, export/import, and handoff close checks. Orchestration, daemon lifecycle, lane management, and turn metrics are served by [`agent-orchestrator-mcp`](agent-orchestrator-mcp.md).
 
 ## Runtime Configuration
 
@@ -18,7 +18,7 @@ Supported config inputs:
 - `--state-dir` or `AGENT_HANDOFF_STATE_DIR`
 - `--current-task-path` or `AGENT_HANDOFF_CURRENT_TASK_PATH`
 - `--exports-dir` or `AGENT_HANDOFF_EXPORTS_DIR`
-- `--tool-profile` or `AGENT_HANDOFF_TOOL_PROFILE` — `core` (default) or `full`; core exposes 16 daily-use ledger tools, full exposes all 27
+- `--tool-profile` or `AGENT_HANDOFF_TOOL_PROFILE` — `extended` (default) or `core`; extended exposes all 28 tools and core exposes the 16 daily-use ledger tools
 - `AGENT_HANDOFF_DEFAULT_AGENT`
 - `AGENT_HANDOFF_DEFAULT_BRANCH`
 - `AGENT_HANDOFF_DEFAULT_COMMIT_SHA`
@@ -67,35 +67,36 @@ Surface classes:
 - `query`: read-only inspection of canonical state. Safe to retry when transport/runtime is healthy.
 - `generator`: derives a report, search result, reconciliation result, or rendered artifact from current state. Usually safe to retry unless the tool also writes a file by default.
 
-| Tool                           | Surface class | Idempotent | Notes                                                                                                                                                                                                                                         |
-| ------------------------------ | ------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `set_handoff_state`            | action        | no         | Updates active task state with optimistic revision guard.                                                                                                                                                                                     |
-| `get_handoff_state`            | query         | yes        | Canonical task-state read. Pass `view="dashboard"` for a cross-task aggregation (replaces the former `get_handoff_dashboard`). For task views, `sections` accepts a comma-separated subset of task-state sections; `active` and `limits` remain always included. `detail` accepts `full` (default) or `summary` to truncate long rationale and verification fields without changing the default payload shape. |
-| `record_decision`              | action        | no         | Appends decision ledger state.                                                                                                                                                                                                                |
-| `update_next_actions`          | action        | no         | Creates or mutates action rows.                                                                                                                                                                                                               |
-| `list_next_actions`            | query         | yes        | Lists canonical action rows.                                                                                                                                                                                                                  |
-| `record_test_result`           | action        | no         | Appends verification evidence.                                                                                                                                                                                                                |
-| `report_blocker`               | action        | no         | Adds, resolves, or reopens blockers.                                                                                                                                                                                                          |
-| `record_review_finding`        | action        | no         | Creates or reopens review findings.                                                                                                                                                                                                           |
-| `batch_record_review_findings` | action        | no         | Records or reopens multiple findings atomically (single transaction, single `CURRENT_TASK.md` flush). Max 100 items. Returns per-item `action`/`reopened` results. Prefer over `record_review_finding` when logging ≥ 3 findings in one pass. |
-| `update_review_finding`        | action        | no         | Changes finding status or resolution metadata. Pass `reopen_reason` for non-open → open transitions (replaces the former `reopen_review_finding`).                                                                                            |
-| `list_review_findings`         | query         | yes        | Lists findings with filters. Pass `finding_id` or `finding_db_id` for global single-finding lookup (returns the row regardless of owning task; pass `task_ref` to scope). `detail` accepts `full` (default) or `summary`; summary mode truncates long finding body fields while preserving the existing filters and default full-detail behavior. |
-| `record_review_run`            | action        | no         | Records a completed review pass in the `review_runs` ledger. Requires unique `review_run_id`, `session`, `subject_path`. `verdict` and `verdict_decision` are optional at record time.                                                        |
-| `list_review_runs`             | query         | yes        | Lists `review_runs` ledger entries. Filter by `task_ref`, `subject_path`, `review_mode`, or `verdict`. Paginated, ordered by recency.                                                                                                         |
-| `get_review_coverage`          | query         | yes        | Coverage summary for a task or artifact: run count, latest verdict, recent run ids, open findings by severity, reopened count. Provide `task_ref`, `subject_path`, or both.                                                                   |
-| `handoff_close_check`          | generator     | yes        | Derived readiness verdict from current state.                                                                                                                                                                                                 |
-| `generate_current_task_md`     | generator     | no         | Renders deterministic markdown and writes `CURRENT_TASK.md` by default. Output includes a cross-task dashboard header plus the existing active-task detail section.                                                                            |
-| `export_handoff_state`         | generator     | yes        | Produces portable snapshot output.                                                                                                                                                                                                            |
-| `import_handoff_state`         | action        | no         | Imports snapshot into local DB; destructive in replace modes.                                                                                                                                                                                 |
-| `archive_task_state`           | action        | no         | Moves active state into archive storage.                                                                                                                                                                                                      |
-| `load_session`                 | query         | yes        | **Compound**: calls `get_handoff_state` + `list_review_findings(status="open")` in one invocation. Use at session start to minimise round trips. `sections` is passed through only to the nested `state` payload from `get_handoff_state`; `detail` is passed through to both nested state and findings. Defaults preserve the pre-parameterization full payload behavior. |
-| `close_slice`                  | action        | no         | **Compound**: calls `record_decision` + `set_handoff_state` + `generate_current_task_md` in one invocation. Use at slice completion to write evidence atomically.                                                                             |
-| `audit_decision_ids`           | query         | yes        | Audits recent decision IDs for grammar conformance. Returns canonical/malformed/freeform classifications per ID.                                                                                                                              |
-| `record_artifact`              | action        | no         | Indexes artifact content into sidecar FTS store.                                                                                                                                                                                              |
-| `search_artifacts`             | generator     | yes        | Returns ranked snippets from indexed artifacts. Empty `queries` returns a source listing (replaces the former `list_artifact_sources`).                                                                                                       |
-| `get_artifact`                 | query         | yes        | Reads stored artifact record; pass `include_terms=true` for term derivation (replaces `get_artifact_source` and `get_artifact_terms`).                                                                                                        |
-| `purge_artifacts`              | action        | no         | Deletes stored artifact rows and FTS chunks.                                                                                                                                                                                                  |
-| `search_handoff`               | generator     | yes        | Returns ranked snippets over handoff FTS tables.                                                                                                                                                                                              |
+| Tool | Surface class | Idempotent | Notes |
+| --- | --- | --- | --- |
+| `set_handoff_state` | action | no | Updates active task state with optimistic revision guard. |
+| `get_handoff_state` | query | yes | Canonical task-state read. Pass `view="dashboard"` for a cross-task aggregation (replaces the former `get_handoff_dashboard`). For task views, `sections` accepts a comma-separated subset of task-state sections; `active` and `limits` remain always included. `detail` accepts `full` (default) or `summary` to truncate long rationale and verification fields without changing the default payload shape. |
+| `record_decision` | action | no | Appends decision ledger state. |
+| `update_next_actions` | action | no | Creates or mutates action rows. |
+| `list_next_actions` | query | yes | Lists canonical action rows. |
+| `record_test_result` | action | no | Appends verification evidence. |
+| `report_blocker` | action | no | Adds, resolves, or reopens blockers. |
+| `record_review_finding` | action | no | Creates or reopens review findings. |
+| `batch_record_review_findings` | action | no | Records or reopens multiple findings atomically (single transaction, single `CURRENT_TASK.md` flush). Max 100 items. Returns per-item `action`/`reopened` results. Prefer over `record_review_finding` when logging ≥ 3 findings in one pass. |
+| `update_review_finding` | action | no | Changes finding status or resolution metadata. Pass `reopen_reason` for non-open → open transitions (replaces the former `reopen_review_finding`). |
+| `list_review_findings` | query | yes | Lists findings with filters. Pass `finding_id` or `finding_db_id` for global single-finding lookup (returns the row regardless of owning task; pass `task_ref` to scope). `detail` accepts `full` (default) or `summary`; summary mode truncates long finding body fields while preserving the existing filters and default full-detail behavior. |
+| `record_review_run` | action | no | Records a completed review pass in the `review_runs` ledger. Requires unique `review_run_id`, `session`, `subject_path`. `verdict` and `verdict_decision` are optional at record time. |
+| `list_review_runs` | query | yes | Lists `review_runs` ledger entries. Filter by `task_ref`, `subject_path`, `review_mode`, or `verdict`. Paginated, ordered by recency. |
+| `get_review_coverage` | query | yes | Coverage summary for a task or artifact: run count, latest verdict, recent run ids, open findings by severity, reopened count. Provide `task_ref`, `subject_path`, or both. |
+| `handoff_close_check` | generator | yes | Derived readiness verdict from current state. |
+| `generate_current_task_md` | generator | no | Renders deterministic markdown and writes `CURRENT_TASK.md` by default. Output includes a cross-task dashboard header plus the existing active-task detail section. |
+| `export_handoff_state` | generator | yes | Produces portable snapshot output. |
+| `import_handoff_state` | action | no | Imports snapshot into local DB; destructive in replace modes. |
+| `archive_task_state` | action | no | Moves active state into archive storage. |
+| `load_session` | query | yes | **Compound**: calls `get_handoff_state` + `list_review_findings(status="open")` in one invocation. Use at session start to minimise round trips. `sections` is passed through only to the nested `state` payload from `get_handoff_state`; `detail` is passed through to both nested state and findings. Defaults preserve the pre-parameterization full payload behavior. |
+| `close_slice` | action | no | **Compound**: records a slice-complete decision, re-applies the active task as `in_progress`, and regenerates `CURRENT_TASK.md`. Requires `expected_revision` when the target task is currently active. Accepts the same optional `changed_files` list as `record_decision` and passes it through to the nested decision write. |
+| `update_task_status` | action | no | Updates task status without recording a slice decision. For the active task this requires `expected_revision`; for archived tasks it updates the archived snapshot status used by dashboard rendering. |
+| `audit_decision_ids` | query | yes | Audits recent decision IDs for grammar conformance. Returns canonical/malformed/freeform classifications per ID. |
+| `record_artifact` | action | no | Indexes artifact content into sidecar FTS store. |
+| `search_artifacts` | generator | yes | Returns ranked snippets from indexed artifacts. Empty `queries` returns a source listing (replaces the former `list_artifact_sources`). `detail` accepts `full` (default) or `summary`, and `fields` accepts a comma-separated per-row projection for either search hits or source listings. |
+| `get_artifact` | query | yes | Reads stored artifact record; pass `include_terms=true` for term derivation (replaces `get_artifact_source` and `get_artifact_terms`). `detail` accepts `full` (default) or `summary`, and `fields` accepts a comma-separated projection over the returned `source` object. |
+| `purge_artifacts` | action | no | Deletes stored artifact rows and FTS chunks. |
+| `search_handoff` | generator | yes | Returns ranked snippets over handoff FTS tables. `detail` accepts `full` (default) or `summary`, and `fields` accepts a comma-separated per-result projection. |
 
 Cross-task and review-summary tools (`switch_task`, `get_latest_slice_review_packet`, `get_review_findings_summary`, `reconcile_review_findings`) are registered on `agent-orchestrator-mcp`. See [`agent-orchestrator-mcp.md`](agent-orchestrator-mcp.md).
 
@@ -193,6 +194,43 @@ Recovery:
 - record verification with `record_test_result` instead of prose-only rationale
 - regenerate `CURRENT_TASK.md` after decision writes when the workflow requires it
 
+## Artifact Read Shaping
+
+The artifact read surfaces now support the same additive compact-read pattern used by the handoff state and review-finding reads:
+
+```python
+search_artifacts(
+    queries: list[str] | None = None,
+    task_ref: str | None = None,
+    lane_id: str | None = None,
+    app_root: str | None = None,
+    source_kind: str | None = None,
+    content_type: str | None = None,
+    limit: int = 10,
+    offset: int = 0,
+    detail: str = "full",
+    fields: str | None = None,
+) -> str
+
+get_artifact(
+    source_id: int | None = None,
+    task_ref: str | None = None,
+    source_label: str | None = None,
+    include_terms: bool = False,
+    top_n_terms: int = 10,
+    detail: str = "full",
+    fields: str | None = None,
+) -> str
+```
+
+- `detail="summary"` truncates long artifact text fields (`summary`, `source_summary`, `snippet`, and `metadata_json`) without changing the default full-detail behavior.
+- `get_artifact(detail="summary")` also returns only the first three chunk previews while preserving `chunk_count` for the full source.
+- `fields` is a comma-separated projection over the per-row payload. `search_artifacts` interprets it against the active mode:
+  - search mode: hit fields such as `source_id`, `source_label`, `title`, `snippet`
+  - source-list mode: source fields such as `id`, `task_ref`, `source_label`, `summary`
+  - artifact fetch: source fields such as `source_label`, `chunk_count`, `chunks`
+- Invalid field names are stripped. If none remain, the tool falls back to a compact identity shape instead of failing.
+
 ## Structured Handoff Search (`search_handoff`)
 
 `search_handoff` provides BM25/FTS5 full-text search over the four canonical handoff record
@@ -239,6 +277,8 @@ search_handoff(
     lane_id: str | None = None,
     record_types: list[str] | None = None,  # subset of ["decision", "finding", "blocker", "action"]
     limit: int = 20,                         # max 200
+    detail: str = "full",
+    fields: str | None = None,
 ) -> str:
 ```
 
@@ -246,6 +286,8 @@ search_handoff(
   automatically phrase-quoted (`"term with spaces"`) for precise adjacency matching.
 - **record_types**: Defaults to all four types when omitted.
 - **limit**: Clamped to [1, 200]. Results across all searched types are merged and re-ranked.
+- **detail**: `full` preserves the compact FTS snippet returned by SQLite. `summary` truncates that snippet further for startup-friendly reads.
+- **fields**: Optional comma-separated projection over result rows, for example `record_type,snippet`.
 
 ### Response Shape
 
@@ -271,6 +313,7 @@ search_handoff(
 - `status` is `null` for decisions (no status column); `open` / `fixed` / etc. for others.
 - `snippet` uses FTS5 `snippet()` with a 12-token window; result is compact, not full body.
 - Results are sorted by BM25 rank (best match first); ties break by insertion order.
+- Invalid `fields` values are stripped. If none remain, the result rows fall back to `record_type`, `record_id`, `task_ref`, and `snippet`.
 
 ### CLI Subcommand
 
@@ -339,12 +382,15 @@ When called with `view="dashboard"`, `get_handoff_state` returns:
 - Slice-completion decisions must use the prefixed decision grammar `<author_tag>_slice_complete_<work_ref>_<slug>` for new writes. The legacy `slice_complete_<short_label>` format is grandfathered for historical rows and recognized by all read paths (close-check, slice-review packet derivation). New writes should use the prefixed form. Both formats require a structured rationale with the four headings `## Changes`, `## Verification`, `## Schema / Contract Changes`, and `## Open Threads`.
 - `record_decision` requires a `session` string as its first positional argument (MCP path) or `--session` flag (CLI path). Use a stable, human-readable identifier such as `"<agent>-<task-slug>"` or `"<agent>-<short-description>"`. The field is NOT auto-populated from context; omitting it causes a `Missing required argument` validation error.
 - `record_decision(...)` rejects slice-complete writes at write time when the rationale is missing those headings or any section is empty. This is enforced before the row is inserted.
+- `record_decision` accepts optional `changed_files` (list of monorepo-relative paths touched by this slice). Stored as `changed_files_json` on the decision row. When present, the slice-review packet uses this list directly instead of parsing file paths from the rationale text. Pass this parameter on every slice-completion decision to give reviewers an explicit, structured scope.
 - Historical decision rows that predate the prefixed naming scheme are grandfathered. MCP read paths (close-check, slice-review packet, handoff search) recognize both formats. Do not plan retroactive renames of historical rows.
 - The structured rationale is mandatory even for docs-only slices. Use `- none.` for empty sections rather than omitting headings.
 - Handoff consumers should treat prose-only completion decisions as malformed process output that must be corrected before the slice is considered fully handed off.
 - To switch between tasks, use `switch_task(task_ref)` on `agent-orchestrator-mcp`. It auto-archives the outgoing task (full snapshot) and activates the target, restoring the objective from its archive when not provided. Idempotent if the target is already active.
 - For in-place updates to the _current_ task (status, objective change, focus update), use `set_handoff_state(...)` directly.
 - `set_handoff_state` requires `expected_revision` for updates. Accepts optional `focus` for mutable per-slice working context. `objective` is optional on updates (preserved when omitted). `focus` is preserved when omitted on updates; pass an empty string to clear it explicitly.
+- `close_slice` is a slice-completion helper, not a task-closure helper. It keeps the target task `in_progress` and now preflights the active-task revision guard before recording a decision.
+- Use `update_task_status(task_ref, status, expected_revision=...)` when you need to mark a task `done` or otherwise correct status without writing a slice-completion decision. Archived-task updates do not require `expected_revision` because they update the archived snapshot rather than the live singleton row.
 - The shared actor shape may include `model`, `model_label`, `reasoning_level`, and `lane_id` in addition to `agent`, `branch`, and `commit_sha`. Only decisions persist the granular model fields today; other write surfaces continue to persist `agent` plus git provenance.
 - `build_write_actor(agent=None, model=None, model_label=None, reasoning_level=None, branch=None, commit_sha=None, lane_id=None) -> WriteActor` is the public helper for constructing that normalized actor payload before passing it into write tools.
 - `build_write_actor` derives the canonical `agent` display identity from model provenance when available: `"{model_label} {reasoning_level}"` when both are present, `model_label` when only the label is known, and the caller-provided `agent` only as a legacy fallback.
@@ -374,7 +420,7 @@ When called with `view="dashboard"`, `get_handoff_state` returns:
 - When `current_commit_sha` is provided, `handoff_close_check` also verifies that at least one structured `slice_complete_*` decision exists for that commit. Treat missing current-commit slice summaries as a close/review gate failure, including for docs-only slices.
 - `record_test_result.result` is a concise verification-summary field, not a full log sink. Keep short proof lines such as `55 passed in 7.02s`, `diff-check clean`, or `REVIEW READY: READY`; store longer output in artifacts/files instead of the `verified_tests` table.
 - `import_handoff_state(mode="replace_task")` rejects destructive clears unless `allow_destructive_clear=true`.
-- `close_slice` requires a `session` string (same as `record_decision`). Pass `task_ref` explicitly in multi-task flows. `focus` updates the active-task working context after the decision is recorded.
+- `close_slice` requires a `session` string (same as `record_decision`). Pass `task_ref` explicitly in multi-task flows. `focus` updates the active-task working context after the decision is recorded. `changed_files` accepts the same optional list of monorepo-relative paths as `record_decision` and persists it on the underlying decision row.
 
 ## CLI Fallback
 
@@ -421,7 +467,7 @@ Fallback subcommands:
 
 Orchestration subcommands (`orchestrator-start`, `worker-start`, `dispatch`, `orchestrator-cycle`, `worker-events`, `list-backends`, `metrics`, etc.) are served exclusively by `agent-orchestrator-mcp`. See [`agent-orchestrator-mcp.md`](agent-orchestrator-mcp.md).
 
-**CLI surface note:** `agent-handoff-mcp` CLI is ledger-only. It exposes `serve-stdio`, `serve-http`, `doctor`, `dashboard`, and the 27 ledger MCP tools as CLI wrappers, plus two CLI-only artifact variants (`artifact-list`, `artifact-terms`). All orchestration and lane-management commands are exclusively on `agent-orchestrator-mcp`.
+**CLI surface note:** `agent-handoff-mcp` CLI is ledger-only. It exposes `serve-stdio`, `serve-http`, `doctor`, `dashboard`, and the 28 ledger MCP tools as CLI wrappers, plus two CLI-only artifact variants (`artifact-list`, `artifact-terms`). All orchestration and lane-management commands are exclusively on `agent-orchestrator-mcp`.
 
 ## HTTP Transport
 

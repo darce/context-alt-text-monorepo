@@ -369,6 +369,34 @@ def test_search_all_record_types_by_default(isolated_env: dict) -> None:
     assert "blocker" in types_in_results
 
 
+def test_search_handoff_fields_project_results(isolated_env: dict) -> None:
+    handoff_core.record_decision(session="s1", decision="projection keyword decision")
+
+    result = _parse(handoff_core.search_handoff(queries=["projection keyword"], fields="record_type,snippet"))
+
+    assert result["ok"] is True
+    assert result["results"]
+    for row in result["results"]:
+        assert set(row) <= {"record_type", "snippet"}
+        assert "record_type" in row
+        assert "snippet" in row
+
+
+def test_search_handoff_detail_summary_truncates_snippet(isolated_env: dict) -> None:
+    long_token = "ultralongtoken1234567890"
+    decision_text = " ".join([long_token] * 10 + ["needle"] + [long_token] * 10)
+    handoff_core.record_decision(session="s1", decision=decision_text)
+
+    full = _parse(handoff_core.search_handoff(queries=["needle"], record_types=["decision"], detail="full"))
+    summary = _parse(handoff_core.search_handoff(queries=["needle"], record_types=["decision"], detail="summary"))
+
+    assert full["ok"] is True
+    assert summary["ok"] is True
+    assert len(full["results"][0]["snippet"]) > 80
+    assert summary["results"][0]["snippet"].endswith("...")
+    assert len(summary["results"][0]["snippet"]) == 83
+
+
 # ---------------------------------------------------------------------------
 # Error handling
 # ---------------------------------------------------------------------------

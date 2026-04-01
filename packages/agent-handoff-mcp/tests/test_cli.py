@@ -160,6 +160,158 @@ def test_review_list_cli_detail_flag(tmp_path: Path, capsys) -> None:
     assert len(summary["findings"][0]["description"]) == 203
 
 
+def test_artifact_search_cli_fields_flag(tmp_path: Path, capsys) -> None:
+    api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
+    json.loads(api.set_handoff_state(task_ref="artifact-search-cli", objective="artifact search cli"))
+    json.loads(
+        api.record_artifact(
+            task_ref="artifact-search-cli",
+            source_kind="log",
+            source_label="artifact-search-log",
+            content="column missing\n" * 120,
+            summary="backend artifact search summary",
+        )
+    )
+
+    payload = _run_cli(
+        [
+            "agent-handoff-mcp",
+            "--workspace-root",
+            str(tmp_path),
+            "artifact-search",
+            "--query",
+            "column missing",
+            "--fields",
+            "source_id,title,snippet",
+        ],
+        capsys,
+    )
+
+    assert payload["ok"] is True
+    assert payload["hits"]
+    assert set(payload["hits"][0]) <= {"source_id", "title", "snippet"}
+
+
+def test_artifact_list_cli_fields_flag(tmp_path: Path, capsys) -> None:
+    api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
+    json.loads(api.set_handoff_state(task_ref="artifact-list-cli", objective="artifact list cli"))
+    json.loads(
+        api.record_artifact(
+            task_ref="artifact-list-cli",
+            source_kind="log",
+            source_label="artifact-list-log",
+            content="list payload\n" * 120,
+            summary="artifact list summary",
+        )
+    )
+
+    payload = _run_cli(
+        [
+            "agent-handoff-mcp",
+            "--workspace-root",
+            str(tmp_path),
+            "artifact-list",
+            "--task-ref",
+            "artifact-list-cli",
+            "--fields",
+            "source_label,summary",
+        ],
+        capsys,
+    )
+
+    assert payload["ok"] is True
+    assert payload["sources"]
+    assert set(payload["sources"][0]) <= {"source_label", "summary"}
+
+
+def test_artifact_get_cli_detail_and_fields_flags(tmp_path: Path, capsys) -> None:
+    api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
+    json.loads(api.set_handoff_state(task_ref="artifact-get-cli", objective="artifact get cli"))
+    recorded = json.loads(
+        api.record_artifact(
+            task_ref="artifact-get-cli",
+            source_kind="doc",
+            source_label="artifact-get-doc",
+            content=("chunk body\n" * 200),
+        )
+    )
+
+    payload = _run_cli(
+        [
+            "agent-handoff-mcp",
+            "--workspace-root",
+            str(tmp_path),
+            "artifact-get",
+            "--source-id",
+            str(recorded["source_id"]),
+            "--detail",
+            "summary",
+            "--fields",
+            "source_label,chunk_count",
+        ],
+        capsys,
+    )
+
+    assert payload["ok"] is True
+    assert set(payload["source"]) <= {"source_label", "chunk_count"}
+    assert payload["source"]["source_label"] == "artifact-get-doc"
+
+
+def test_handoff_search_cli_fields_flag(tmp_path: Path, capsys) -> None:
+    api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
+    json.loads(api.set_handoff_state(task_ref="handoff-search-cli", objective="handoff search cli"))
+    json.loads(api.record_decision(session="cli", decision="handoff search keyword"))
+
+    payload = _run_cli(
+        [
+            "agent-handoff-mcp",
+            "--workspace-root",
+            str(tmp_path),
+            "handoff-search",
+            "--query",
+            "handoff search",
+            "--fields",
+            "record_type,snippet",
+        ],
+        capsys,
+    )
+
+    assert payload["ok"] is True
+    assert payload["results"]
+    assert set(payload["results"][0]) <= {"record_type", "snippet"}
+
+
+def test_decision_cli_changed_files_flag(tmp_path: Path, capsys) -> None:
+    """decision --changed-files persists structured scope metadata."""
+    api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
+    json.loads(api.set_handoff_state(task_ref="dec-cli", objective="decision cli changed files"))
+
+    payload = _run_cli(
+        [
+            "agent-handoff-mcp",
+            "--workspace-root",
+            str(tmp_path),
+            "decision",
+            "--session",
+            "cli",
+            "--decision",
+            "cop_slice_complete_decision_cli_changed_files",
+            "--rationale",
+            "## Changes\n- cli.\n## Verification\n- tested.\n## Schema / Contract Changes\n- none.\n## Open Threads\n- none.",
+            "--changed-files",
+            "packages/agent-handoff-mcp/src/agent_handoff_mcp/decisions.py",
+            "packages/agent-handoff-mcp/tests/test_cli.py",
+        ],
+        capsys,
+    )
+
+    assert payload["ok"] is True
+    assert json.loads(payload["decision"]["changed_files_json"]) == [
+        "packages/agent-handoff-mcp/src/agent_handoff_mcp/decisions.py",
+        "packages/agent-handoff-mcp/tests/test_cli.py",
+    ]
+
+
 def test_review_update_cli_accepts_explicit_task_ref(tmp_path: Path, capsys) -> None:
     api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
     json.loads(api.set_handoff_state(task_ref="task-a", objective="task a"))

@@ -147,12 +147,12 @@ Source checkout adapter:
 
 ## Tool Surface
 
-`agent-handoff-mcp` exposes a **core profile** (16 tools) by default and a **full profile** (27 tools) on request.
+`agent-handoff-mcp` exposes an **extended profile** (28 tools) by default and a **core profile** (16 tools) on request.
 
-Use `--tool-profile full` to enable all 27 tools:
+Use `--tool-profile extended` to enable all 28 tools explicitly:
 
 ```bash
-agent-handoff-mcp --workspace-root /path/to/workspace --tool-profile full serve-stdio
+agent-handoff-mcp --workspace-root /path/to/workspace --tool-profile extended serve-stdio
 ```
 
 ### Core profile (16 tools — daily ledger workflows)
@@ -186,6 +186,7 @@ agent-handoff-mcp --workspace-root /path/to/workspace --tool-profile full serve-
 | `export` | `export_handoff_state` |
 | `import` | `import_handoff_state` |
 | `archive` | `archive_task_state` |
+| `task-status` | `update_task_status` |
 | `artifact-record` | `record_artifact` |
 | `artifact-search` | `search_artifacts` |
 | `artifact-get` | `get_artifact` |

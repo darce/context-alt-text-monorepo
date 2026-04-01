@@ -172,6 +172,8 @@ def _dispatch_artifact_list(args: argparse.Namespace) -> Any:
         source_kind=args.source_kind,
         limit=args.limit,
         offset=args.offset,
+        detail=args.detail,
+        fields=args.fields,
     )
 
 
@@ -182,6 +184,8 @@ def _dispatch_artifact_terms(args: argparse.Namespace) -> Any:
         source_label=args.source_label,
         include_terms=True,
         top_n_terms=args.top_n,
+        detail=args.detail,
+        fields=args.fields,
     )
 
 
@@ -233,6 +237,8 @@ def _build_cli_registry() -> list[CliEntry]:
                     ArgSpec("--source-kind"),
                     ArgSpec("--limit", type=int, default=50),
                     ArgSpec("--offset", type=int, default=0),
+                    ArgSpec("--detail", default="full", choices=["full", "summary"]),
+                    ArgSpec("--fields", help="Comma-separated fields to keep in each listed source."),
                 ],
             ),
             CliEntry(
@@ -244,6 +250,8 @@ def _build_cli_registry() -> list[CliEntry]:
                     ArgSpec("--task-ref"),
                     ArgSpec("--source-label"),
                     ArgSpec("--top-n", type=int, default=10),
+                    ArgSpec("--detail", default="full", choices=["full", "summary"]),
+                    ArgSpec("--fields", help="Comma-separated fields to keep in the returned source."),
                 ],
             ),
         ]
@@ -267,7 +275,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--tool-profile",
         default=None,
         choices=["core", "extended"],
-        help="MCP tool profile to expose: core (16 tools) or extended (all 27 tools, default).",
+        help="MCP tool profile to expose: core (16 tools) or extended (all 28 tools, default).",
     )
 
     subparsers = parser.add_subparsers(dest="subcommand", required=True)

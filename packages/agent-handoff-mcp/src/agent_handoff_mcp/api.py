@@ -8,33 +8,36 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Annotated, Any, Callable, Literal, cast
 
 from fastmcp import FastMCP
 from fastmcp.client import Client, PythonStdioTransport
+from pydantic import BaseModel, Field
 
 from . import core
+from ._shared import WriteActor
 from .config import RuntimeConfig
 from .core import PromptMetrics, ResolvedWriteContext, TokenUsage
 from .runtime import configure_runtime, get_runtime_config, reset_runtime_config
 
-record_decision = core.record_decision
+_core_record_decision = core.record_decision
 build_write_actor = core.build_write_actor
-update_next_actions = core.update_next_actions
-record_test_result = core.record_test_result
-report_blocker = core.report_blocker
+_core_update_next_actions = core.update_next_actions
+_core_record_test_result = core.record_test_result
+_core_report_blocker = core.report_blocker
 record_review_finding = core.record_review_finding
 batch_record_review_findings = core.batch_record_review_findings
-update_review_finding = core.update_review_finding
+_core_update_review_finding = core.update_review_finding
 list_review_findings = core.list_review_findings
-record_review_run = core.record_review_run
+_core_record_review_run = core.record_review_run
 list_review_runs = core.list_review_runs
 get_review_coverage = core.get_review_coverage
 handoff_close_check = core.handoff_close_check
 export_handoff_state = core.export_handoff_state
 import_handoff_state = core.import_handoff_state
 archive_task_state = core.archive_task_state
-set_handoff_state = core.set_handoff_state
+_core_update_task_status = core.update_task_status
+_core_set_handoff_state = core.set_handoff_state
 get_handoff_state = core.get_handoff_state
 list_next_actions = core.list_next_actions
 
@@ -44,7 +47,7 @@ get_artifact = core.get_artifact
 purge_artifacts = core.purge_artifacts
 search_handoff = core.search_handoff
 load_session = core.load_session
-close_slice = core.close_slice
+_core_close_slice = core.close_slice
 audit_decision_ids = core.audit_decision_ids
 
 
@@ -52,7 +55,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "set_handoff_state": "Update the active task state (objective, focus, status). Optimistic revision guard.",
     "get_handoff_state": "Read task handoff summary (blockers, actions, findings). Pass view='dashboard' for cross-task view. Pass sections='decisions_recent,findings_open' to select specific sections; active and limits are always included. Pass sections='identity' for an identity-only response (active + limits, no data sections). Pass detail='summary' to truncate long rationale and verification fields.",
     "list_next_actions": "List next-action items, optionally filtered by lane or status.",
-    "record_decision": "Record a decision in the handoff ledger.",
+    "record_decision": "Record a decision in the handoff ledger. Pass changed_files as a list of monorepo-relative paths touched by this slice for structured review scope.",
     "update_next_actions": "Add, update, complete, or skip next-action items.",
     "record_test_result": "Record a verification command result.",
     "report_blocker": "Add, resolve, or reopen a blocker.",
@@ -69,14 +72,350 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "export_handoff_state": "Export the task handoff state to a portable JSON snapshot.",
     "import_handoff_state": "Import a previously exported handoff state snapshot into the local database.",
     "archive_task_state": "Archive completed task state from the live handoff tables into archive storage.",
+    "update_task_status": "Update a task status without recording a slice decision. For the active task this requires expected_revision; for archived tasks it updates the archived snapshot status used by the dashboard.",
     "load_session": "Load session context: get_handoff_state + list_review_findings(open) in one call. Pass sections to shape the nested state payload and detail to shape both state and findings.",
-    "close_slice": "Close a slice atomically: decision + state update + CURRENT_TASK.md.",
+    "close_slice": "Record a slice-complete decision, keep the task status in_progress, and regenerate CURRENT_TASK.md. Requires expected_revision when the target task is currently active. Pass changed_files to persist structured review scope on the nested decision write.",
     "record_artifact": "Index a large artifact in the sidecar FTS5 database for scoped retrieval.",
-    "search_artifacts": "Search artifact chunks by BM25 relevance.",
-    "get_artifact": "Return artifact source record. Lookup by source_id or task_ref+source_label.",
+    "search_artifacts": "Search artifact chunks by BM25 relevance. Empty queries return a source listing. Pass detail='summary' to truncate summaries and snippets, and fields='source_label,summary' or fields='source_id,title,snippet' to project per-source or per-hit fields.",
+    "get_artifact": "Return artifact source record. Lookup by source_id or task_ref+source_label. Pass detail='summary' for truncated chunk previews and fields='source_label,chunk_count' to project source fields.",
     "purge_artifacts": "Delete artifact sources and FTS chunks (post-archival cleanup).",
-    "search_handoff": "Search decisions, findings, blockers, actions by keyword with BM25 ranking.",
+    "search_handoff": "Search decisions, findings, blockers, actions by keyword with BM25 ranking. Pass detail='summary' to truncate snippets and fields='record_type,snippet' to project per-result fields.",
 }
+
+
+class WriteActorInput(BaseModel):
+    agent: Annotated[
+        str | None,
+        Field(
+            description="Optional stable agent identity override. Omit to derive it from model metadata when available."
+        ),
+    ] = None
+    model: Annotated[
+        str | None,
+        Field(description="Canonical model slug for the writing agent, for example 'gpt-5.4'."),
+    ] = None
+    model_label: Annotated[
+        str | None,
+        Field(description="Canonical human-readable label for model; must match the normalized label for actor.model."),
+    ] = None
+    reasoning_level: Annotated[
+        str | None,
+        Field(description="Reasoning effort label used to derive agent identity and provenance."),
+    ] = None
+    branch: Annotated[
+        str | None,
+        Field(description="Git branch override for the write provenance."),
+    ] = None
+    commit_sha: Annotated[
+        str | None,
+        Field(description="Git commit SHA override for the write provenance."),
+    ] = None
+    lane_id: Annotated[
+        str | None,
+        Field(description="Optional worktree lane identifier for the write provenance."),
+    ] = None
+
+
+TaskRefParam = Annotated[
+    str | None,
+    Field(description="Optional task reference override. When omitted, the active task is used."),
+]
+
+ActorParam = Annotated[
+    WriteActorInput | None,
+    Field(description="Optional structured provenance override for the write operation."),
+]
+
+DecisionChangedFilesParam = Annotated[
+    list[str] | None,
+    Field(description="Optional monorepo-relative paths touched by this slice."),
+]
+
+
+def _dump_actor(actor: WriteActorInput | dict[str, Any] | None) -> WriteActor | None:
+    if actor is None:
+        return None
+    actor_model = WriteActorInput.model_validate(actor) if isinstance(actor, dict) else actor
+    return cast(
+        WriteActor,
+        {key: value for key, value in actor_model.model_dump(exclude_none=True).items() if isinstance(value, str)},
+    )
+
+
+def set_handoff_state(
+    task_ref: Annotated[
+        str, Field(description="Task reference whose active handoff state should be created or updated.")
+    ],
+    objective: Annotated[
+        str | None,
+        Field(description="Task objective. Required only when creating a brand-new handoff state row."),
+    ] = None,
+    focus: Annotated[
+        str | None,
+        Field(description="Current working focus for the task. Omit to keep the existing focus."),
+    ] = None,
+    status: Annotated[
+        str,
+        Field(description="Active handoff status, typically in_progress, blocked, review, or done."),
+    ] = "in_progress",
+    expected_revision: Annotated[
+        int | None,
+        Field(description="Optimistic concurrency guard. Required when updating an existing handoff row."),
+    ] = None,
+    actor: ActorParam = None,
+) -> str:
+    return _core_set_handoff_state(
+        task_ref=task_ref,
+        objective=objective,
+        focus=focus,
+        status=status,
+        expected_revision=expected_revision,
+        actor=_dump_actor(actor),
+    )
+
+
+def update_task_status(
+    task_ref: Annotated[
+        str,
+        Field(description="Task reference whose status should be updated, whether active or archived."),
+    ],
+    status: Annotated[
+        Literal["in_progress", "blocked", "review", "done"],
+        Field(description="New task status to persist on the active row or archived snapshot."),
+    ],
+    expected_revision: Annotated[
+        int | None,
+        Field(description="Optimistic concurrency guard for active-task updates. Not used for archived-task updates."),
+    ] = None,
+    actor: ActorParam = None,
+) -> str:
+    return _core_update_task_status(
+        task_ref=task_ref,
+        status=status,
+        expected_revision=expected_revision,
+        actor=_dump_actor(actor),
+    )
+
+
+def record_decision(
+    session: Annotated[str, Field(description="Session identifier for the decision write.")],
+    decision: Annotated[str, Field(description="Stable decision identifier to persist in the ledger.")],
+    rationale: Annotated[
+        str | None,
+        Field(description="Optional markdown rationale explaining the decision, verification, and open threads."),
+    ] = None,
+    actor: ActorParam = None,
+    task_ref: TaskRefParam = None,
+    input_tokens: Annotated[int | None, Field(description="Optional prompt token count for this slice.")] = None,
+    output_tokens: Annotated[int | None, Field(description="Optional completion token count for this slice.")] = None,
+    total_tokens: Annotated[int | None, Field(description="Optional total token count for this slice.")] = None,
+    changed_files: DecisionChangedFilesParam = None,
+) -> str:
+    return _core_record_decision(
+        session=session,
+        decision=decision,
+        rationale=rationale,
+        actor=_dump_actor(actor),
+        task_ref=task_ref,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        changed_files=changed_files,
+    )
+
+
+def update_next_actions(
+    operation: Annotated[
+        Literal["add", "update", "complete", "skip"],
+        Field(description="Mutation to apply to the next-actions table."),
+    ],
+    action_id: Annotated[
+        int | None,
+        Field(description="Existing action id. Required for update, complete, and skip operations."),
+    ] = None,
+    action: Annotated[
+        str | None,
+        Field(description="Action text. Required for add; optional replacement text for update."),
+    ] = None,
+    priority: Annotated[
+        int | None,
+        Field(description="Optional priority value. Lower numbers sort first; defaults to 100 on add."),
+    ] = None,
+    status: Annotated[
+        Literal["pending", "done", "skipped"] | None,
+        Field(description="Optional explicit status override. Only used for update operations."),
+    ] = None,
+    actor: ActorParam = None,
+    task_ref: TaskRefParam = None,
+) -> str:
+    return _core_update_next_actions(
+        operation=operation,
+        action_id=action_id,
+        action=action,
+        priority=priority,
+        status=status,
+        actor=_dump_actor(actor),
+        task_ref=task_ref,
+    )
+
+
+def record_test_result(
+    session: Annotated[str, Field(description="Session identifier for the verification run.")],
+    command: Annotated[str, Field(description="Verification command that was executed.")],
+    passed: Annotated[bool, Field(description="Whether the verification command passed.")],
+    result: Annotated[
+        str | None,
+        Field(description="Optional stdout or summarized verification evidence for the command."),
+    ] = None,
+    exit_code: Annotated[int | None, Field(description="Optional process exit code for the command.")] = None,
+    actor: ActorParam = None,
+    task_ref: TaskRefParam = None,
+) -> str:
+    return _core_record_test_result(
+        session=session,
+        command=command,
+        passed=passed,
+        result=result,
+        exit_code=exit_code,
+        actor=_dump_actor(actor),
+        task_ref=task_ref,
+    )
+
+
+def report_blocker(
+    operation: Annotated[
+        Literal["add", "resolve", "reopen"],
+        Field(description="Blocker mutation to perform."),
+    ],
+    description: Annotated[
+        str | None,
+        Field(description="Blocker description. Required when adding a new blocker."),
+    ] = None,
+    blocker_id: Annotated[
+        int | None,
+        Field(description="Existing blocker id. Required for resolve and reopen."),
+    ] = None,
+    actor: ActorParam = None,
+    task_ref: TaskRefParam = None,
+) -> str:
+    return _core_report_blocker(
+        operation=operation,
+        description=description,
+        blocker_id=blocker_id,
+        actor=_dump_actor(actor),
+        task_ref=task_ref,
+    )
+
+
+def update_review_finding(
+    status: Annotated[
+        Literal["open", "fixed", "deferred", "wontfix"],
+        Field(description="New finding status to apply."),
+    ],
+    finding_id: Annotated[
+        str | None,
+        Field(description="Stable finding identifier. Provide this or finding_db_id."),
+    ] = None,
+    finding_db_id: Annotated[
+        int | None,
+        Field(description="Numeric database id alternative to finding_id."),
+    ] = None,
+    resolution_notes: Annotated[
+        str | None,
+        Field(description="Optional notes describing how the finding was resolved or dispositioned."),
+    ] = None,
+    reopen_reason: Annotated[
+        str | None,
+        Field(description="Required when moving a non-open finding back to open."),
+    ] = None,
+    task_ref: TaskRefParam = None,
+    session: Annotated[str | None, Field(description="Optional session identifier for the update.")] = None,
+    actor: ActorParam = None,
+    verified_commit_sha: Annotated[
+        str | None,
+        Field(description="Optional commit SHA that verified a fixed finding."),
+    ] = None,
+    verification_evidence: Annotated[
+        str | None,
+        Field(description="Optional verification evidence used when closing a finding as fixed."),
+    ] = None,
+) -> str:
+    return _core_update_review_finding(
+        status=status,
+        finding_id=finding_id,
+        finding_db_id=finding_db_id,
+        resolution_notes=resolution_notes,
+        reopen_reason=reopen_reason,
+        task_ref=task_ref,
+        session=session,
+        actor=_dump_actor(actor),
+        verified_commit_sha=verified_commit_sha,
+        verification_evidence=verification_evidence,
+    )
+
+
+def record_review_run(
+    review_run_id: Annotated[str, Field(description="Globally unique review run identifier.")],
+    session: Annotated[str, Field(description="Session identifier for the review run.")],
+    subject_path: Annotated[str, Field(description="Workspace-relative path reviewed in this run.")],
+    subject_kind: Annotated[
+        Literal["task_plan", "epic", "branch", "adr", "roadmap", "other"],
+        Field(description="Kind of artifact reviewed in this run."),
+    ] = "task_plan",
+    review_mode: Annotated[str, Field(description="Review mode label, for example planning or branch.")] = "planning",
+    verdict: Annotated[
+        Literal["pass", "pass_with_findings", "fail", "conditional_pass"] | None,
+        Field(description="Optional review verdict to store with the run."),
+    ] = None,
+    verdict_decision: Annotated[
+        str | None,
+        Field(description="Optional decision id or summary that explains the verdict."),
+    ] = None,
+    task_ref: TaskRefParam = None,
+    actor: ActorParam = None,
+) -> str:
+    return _core_record_review_run(
+        review_run_id=review_run_id,
+        session=session,
+        subject_path=subject_path,
+        subject_kind=subject_kind,
+        review_mode=review_mode,
+        verdict=verdict,
+        verdict_decision=verdict_decision,
+        task_ref=task_ref,
+        actor=_dump_actor(actor),
+    )
+
+
+def close_slice(
+    session: Annotated[str, Field(description="Session identifier for the slice completion write.")],
+    decision: Annotated[str, Field(description="Stable slice-complete decision identifier.")],
+    rationale: Annotated[
+        str | None,
+        Field(description="Optional markdown rationale for the slice completion decision."),
+    ] = None,
+    actor: ActorParam = None,
+    expected_revision: Annotated[
+        int | None,
+        Field(description="Optimistic concurrency guard passed to the nested handoff-state update."),
+    ] = None,
+    task_ref: TaskRefParam = None,
+    focus: Annotated[
+        str | None,
+        Field(description="Optional new focus to store on the task after recording the decision."),
+    ] = None,
+    changed_files: DecisionChangedFilesParam = None,
+) -> str:
+    return _core_close_slice(
+        session=session,
+        decision=decision,
+        rationale=rationale,
+        actor=_dump_actor(actor),
+        expected_revision=expected_revision,
+        task_ref=task_ref,
+        focus=focus,
+        changed_files=changed_files,
+    )
 
 
 def _apply_tool_descriptions() -> None:
@@ -121,7 +460,9 @@ class ToolEntry:
     deprecated_since: str | None = None  # Version string; non-None appends [DEPRECATED] to description
     profile: str = "core"  # "core" | "extended" — controls which MCP surface the tool is included in
     surface_class: str = "action"  # "query" | "action" | "generator" — matches contract taxonomy
-    entity_family: str = "handoff_state"  # "handoff_state" | "review_findings" | "review_runs" | "artifacts" | "session" | "lifecycle"
+    entity_family: str = (
+        "handoff_state"  # "handoff_state" | "review_findings" | "review_runs" | "artifacts" | "session" | "lifecycle"
+    )
 
 
 def _build_tool_registry() -> list[ToolEntry]:
@@ -152,7 +493,10 @@ def _build_tool_registry() -> list[ToolEntry]:
             cli_args=[
                 ArgSpec("task_ref", nargs="?"),
                 ArgSpec("--verbose", action="store_true"),
-                ArgSpec("--sections", help="Comma-separated sections to include (e.g. 'decisions_recent,findings_open'). Use 'identity' for identity-only (active + limits)."),
+                ArgSpec(
+                    "--sections",
+                    help="Comma-separated sections to include (e.g. 'decisions_recent,findings_open'). Use 'identity' for identity-only (active + limits).",
+                ),
                 ArgSpec("--detail", default="full", choices=["full", "summary"], help="Detail level: full or summary"),
             ],
             surface_class="query",
@@ -169,6 +513,12 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--decision", required=True),
                 ArgSpec("--rationale"),
                 ArgSpec("--task-ref"),
+                ArgSpec(
+                    "--changed-files",
+                    nargs="+",
+                    dest="changed_files",
+                    help="Monorepo-relative paths touched by this slice.",
+                ),
             ],
             surface_class="action",
             entity_family="handoff_state",
@@ -190,7 +540,14 @@ def _build_tool_registry() -> list[ToolEntry]:
             surface_class="action",
             entity_family="handoff_state",
         ),
-        ToolEntry("list_next_actions", list_next_actions, TOOL_DESCRIPTIONS["list_next_actions"], profile="extended", surface_class="query", entity_family="handoff_state"),
+        ToolEntry(
+            "list_next_actions",
+            list_next_actions,
+            TOOL_DESCRIPTIONS["list_next_actions"],
+            profile="extended",
+            surface_class="query",
+            entity_family="handoff_state",
+        ),
         # Tests / blockers (2)
         ToolEntry(
             "record_test_result",
@@ -408,9 +765,35 @@ def _build_tool_registry() -> list[ToolEntry]:
             surface_class="action",
             entity_family="lifecycle",
         ),
+        ToolEntry(
+            "update_task_status",
+            update_task_status,
+            TOOL_DESCRIPTIONS["update_task_status"],
+            profile="extended",
+            cli_name="task-status",
+            cli_args=[
+                ArgSpec("--task-ref", required=True),
+                ArgSpec("--status", required=True),
+                ArgSpec("--expected-revision"),
+            ],
+            surface_class="action",
+            entity_family="lifecycle",
+        ),
         # Compound tools (3)
-        ToolEntry("load_session", load_session, TOOL_DESCRIPTIONS["load_session"], surface_class="query", entity_family="session"),
-        ToolEntry("close_slice", close_slice, TOOL_DESCRIPTIONS["close_slice"], surface_class="action", entity_family="lifecycle"),
+        ToolEntry(
+            "load_session",
+            load_session,
+            TOOL_DESCRIPTIONS["load_session"],
+            surface_class="query",
+            entity_family="session",
+        ),
+        ToolEntry(
+            "close_slice",
+            close_slice,
+            TOOL_DESCRIPTIONS["close_slice"],
+            surface_class="action",
+            entity_family="lifecycle",
+        ),
         ToolEntry(
             "audit_decision_ids",
             audit_decision_ids,
@@ -466,6 +849,8 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--source-kind"),
                 ArgSpec("--content-type"),
                 ArgSpec("--limit", type=int, default=10),
+                ArgSpec("--detail", default="full", choices=["full", "summary"], help="Detail level: full or summary"),
+                ArgSpec("--fields", help="Comma-separated fields to keep in each search hit."),
             ],
             surface_class="generator",
             entity_family="artifacts",
@@ -480,6 +865,8 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--source-id", type=int),
                 ArgSpec("--task-ref"),
                 ArgSpec("--source-label"),
+                ArgSpec("--detail", default="full", choices=["full", "summary"], help="Detail level: full or summary"),
+                ArgSpec("--fields", help="Comma-separated fields to keep in the returned source."),
             ],
             surface_class="query",
             entity_family="artifacts",
@@ -524,6 +911,8 @@ def _build_tool_registry() -> list[ToolEntry]:
                     help="Limit search to these record types (decision, finding, blocker, action).",
                 ),
                 ArgSpec("--limit", type=int, default=20, help="Max results (default 20, max 100)."),
+                ArgSpec("--detail", default="full", choices=["full", "summary"], help="Detail level: full or summary"),
+                ArgSpec("--fields", help="Comma-separated fields to keep in each result row."),
             ],
         ),
     ]

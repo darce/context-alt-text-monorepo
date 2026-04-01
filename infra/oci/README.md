@@ -122,6 +122,106 @@ cd /opt/acx-backend
 sudo docker compose logs -f
 ```
 
+## Operations
+
+### Accessing the VM
+
+```bash
+ssh ubuntu@129.213.40.111
+```
+
+If SSH times out, your public IP has likely changed (residential ISP). Update the security list:
+
+```bash
+# Check your current IP
+curl -s checkip.amazonaws.com
+
+# Update terraform.tfvars with the new IP, then:
+cd infra/oci
+terraform apply -auto-approve -target=oci_core_security_list.acx_security_list
+```
+
+See `docs/tasks/tech-debt/dynamic-ip-ssh-access.md` for permanent solutions (Tailscale recommended).
+
+### Service Management
+
+```bash
+# Start/stop/restart the application stack
+sudo systemctl start acx-backend
+sudo systemctl stop acx-backend
+sudo systemctl restart acx-backend
+
+# Check service status
+sudo systemctl status acx-backend
+
+# View container logs (from /opt/acx-backend)
+cd /opt/acx-backend
+docker compose -f docker-compose.prod.yml logs -f          # all services
+docker compose -f docker-compose.prod.yml logs api --tail 50  # api only
+docker compose -f docker-compose.prod.yml logs worker --tail 50
+docker compose -f docker-compose.prod.yml logs postgres --tail 50
+
+# Container status
+docker compose -f docker-compose.prod.yml ps
+```
+
+### Health Checks
+
+```bash
+# From outside (use -k for self-signed internal TLS)
+curl -k https://129.213.40.111/health
+curl -k https://129.213.40.111/recognition/health
+
+# From inside the VM (via Docker network)
+docker compose -f docker-compose.prod.yml exec caddy wget -qO- http://api:8000/health
+
+# Postgres readiness
+docker compose -f docker-compose.prod.yml exec postgres pg_isready -U acx_app
+```
+
+### Deploying Updates
+
+Build and push a new image from `apps/prototype-description-service/`:
+
+```bash
+# On local Mac (Apple Silicon)
+source ~/.zshrc
+docker build --platform linux/arm64 -t iad.ocir.io/idu2kqqe2jxy/acx-backend:latest .
+docker push iad.ocir.io/idu2kqqe2jxy/acx-backend:latest
+
+# On VM
+ssh ubuntu@129.213.40.111
+cd /opt/acx-backend
+docker compose -f docker-compose.prod.yml pull
+sudo systemctl restart acx-backend
+```
+
+### VM Layout
+
+```
+/opt/acx-backend/
+├── .env -> secrets/.env          # symlink for docker compose
+├── docker-compose.prod.yml       # production stack definition
+├── Caddyfile                     # reverse proxy config
+├── secrets/
+│   └── .env                      # production secrets (chmod 600)
+├── data/
+│   ├── pgdata/                   # Postgres data (persists across restarts)
+│   └── models/                   # InsightFace model cache (persists across restarts)
+├── db/
+│   └── docker-prod-init/
+│       └── 001-extensions.sql    # Postgres extension bootstrap
+└── logs/                         # application logs
+```
+
+### Container Registry (OCIR)
+
+- Registry: `iad.ocir.io`
+- Namespace: `idu2kqqe2jxy`
+- Repository: `acx-backend`
+- Full image: `iad.ocir.io/idu2kqqe2jxy/acx-backend:latest`
+- Auth: OCI auth token, username `idu2kqqe2jxy/<email>`
+
 ## Security Note
 
 - The default security list restricts SSH to the CIDRs defined in `ssh_allowed_cidrs`.

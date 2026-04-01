@@ -1,0 +1,39 @@
+# Tests and dev tooling
+tests/
+recognition/tests/
+roster/tests/
+scene/tests/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build artifacts
+*.egg-info/
+__pycache__/
+*.pyc
+build/
+dist/
+
+# Local data and caches
+data/
+logs/
+*.log
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!.env.prod.example
+
+# Docker compose files (not needed inside the image)
+docker-compose*.yml
+Caddyfile
+
+# IDE and OS
+.vscode/
+.idea/
+.DS_Store
+
+# Documentation
+README.md
+Makefile

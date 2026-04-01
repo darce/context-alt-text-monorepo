@@ -4,7 +4,7 @@
 
 > **On first load / cold start**: also read [BOOTSTRAP.md](BOOTSTRAP.md) for testing commands, MCP server setup, and handoff state defaults.
 
-**Epic**: `docs/epics/v0.2.0/remaining-sync-workbench-and-retention-epic.md` · **Roadmap**: `docs/roadmaps/roadmap-v4.md`
+**Active epics**: [../epics/v0.3.1/agent-handoff-mcp-packaging-epic.md](../epics/v0.3.1/agent-handoff-mcp-packaging-epic.md) · [../epics/v0.3.1/self-hosting-epic.md](../epics/v0.3.1/self-hosting-epic.md)
 
 ---
 
@@ -38,6 +38,7 @@ Choose your domain to load targeted context. Always load the matching testing gu
 | **Frontend (React/TS)**       | [maps/frontend.md](maps/frontend.md)       | [rules/frontend-guidelines.md](rules/frontend-guidelines.md)             | [rules/testing-typescript.md](rules/testing-typescript.md) | [maps/tech-stack.md#frontend-reactts](maps/tech-stack.md#frontend-reactts) | `apps/prototype-wp-alt-context/js/`   |
 | **PHP Plugin**                | [maps/php-plugin.md](maps/php-plugin.md)   | [rules/backend-php-guidelines.md](rules/backend-php-guidelines.md)       | [rules/testing-php.md](rules/testing-php.md)               | [maps/tech-stack.md#php-plugin](maps/tech-stack.md#php-plugin)             | `apps/prototype-wp-alt-context/src/`  |
 | **Cross-Service Integration** | [maps/integration.md](maps/integration.md) | [contracts/](contracts/)                                                 | [rules/testing-principles.md](rules/testing-principles.md) | [maps/tech-stack.md#orchestration](maps/tech-stack.md#orchestration)       | `docs/agentic/contracts/`             |
+| **Infrastructure / Deployment** | [../epics/v0.3.1/self-hosting-epic.md](../epics/v0.3.1/self-hosting-epic.md) | [rules/development-workflow.md](rules/development-workflow.md) | [rules/testing-principles.md](rules/testing-principles.md) | [maps/tech-stack.md#orchestration](maps/tech-stack.md#orchestration) | `../../infra/oci/` |
 
 ### Additional Routing
 
@@ -97,9 +98,11 @@ These rules are **universal** and apply to every task regardless of domain.
 
 - `apps/prototype-wp-alt-context/`
 - `apps/prototype-description-service/`
-- `packages/`
+- `packages/` (only the package directories present in this checkout)
 - `docs/`
 - `scripts/`
+
+If `agent-handoff-mcp` has been extracted into its standalone `darce/mcp-agent-handoff` repository, treat that repo as external and out of bounds unless the workspace is opened there directly.
 
 **Never modify:**
 
@@ -156,7 +159,7 @@ If a task seems to require external changes, STOP and propose an alternative wit
 - [rg-008] helpful=1 harmful=0 :: **Config files: validate at load time.** JSON/YAML config consumed by multiple modules must be structurally validated at load time. Fail fast on missing or malformed required keys instead of silently returning empty defaults.
 - [rg-009] helpful=1 harmful=0 :: **No task-specific logic in generic modules.** If a generic utility contains `if task_ref == "some-task"` or hardcoded domain strings for a specific task, extract that logic to a config-driven policy module or the task's manifest. It becomes dead code once the task is done.
 - [rg-010] helpful=1 harmful=0 :: **IDE tool output may be stale after external writes.** Editor-integrated `read_file` and `grep_search` tools read from the IDE's in-memory file model, not from disk. After git operations (rebase, cherry-pick, merge, worktree intake) or edits by other agents/terminals, the model can lag behind the filesystem. When a review finding seems surprising, cross-check with a terminal command (`grep -n`, `wc -l`, `sed -n`) before recording it. This caused an entire review cycle of false positives against `scripts/mcp/orchestrator_daemon.py` (IDE showed ~700 lines, disk had 850).
-- [rg-013] helpful=1 harmful=0 :: **`agent_handoff_mcp/core.py` must remain pure handoff-state CRUD.** No orchestration imports, no subprocess calls, no lock management. Scope: `packages/agent-handoff-mcp/`. Enforce during code review.
+- [rg-013] helpful=1 harmful=0 :: **`agent_handoff_mcp/core.py` must remain pure handoff-state CRUD.** No orchestration imports, no subprocess calls, no lock management. Scope: the checked-in `agent-handoff-mcp` package in the active workspace (currently `packages/agent-handoff-mcp/`; after extraction, the standalone checkout if that repo is opened directly). Enforce during code review.
 - [rg-014] helpful=1 harmful=0 :: **`agent_orchestrator_mcp` modules must use late-binding imports** (function-level) for `agent_handoff_mcp` symbols to preserve the clean split seam and avoid load-time coupling. Scope: `packages/agent-orchestrator-mcp/`.
 - [rg-015] helpful=1 harmful=0 :: **Boundary adapters must not invent contract metadata.** When a controller/client/adapter wraps or normalizes remote payloads, every envelope field (`limit`, `offset`, `total`, `data_source`, status/projection metadata) must come from the request, the upstream payload, or an explicitly documented fallback. Never fabricate pagination or provenance metadata from convenience guesses like `count(payload)` unless the contract explicitly defines that derivation. If the upstream shape violates the expected contract, return an explicit error instead of silently supporting both shapes.
 - [rg-016] helpful=0 harmful=0 :: **PHP runtime autoload parity must match tests.** New runtime classes added under `apps/prototype-wp-alt-context/src/` with WordPress-style filenames (`class-*.php`, `interface-*.php`) are not PSR-4 autoloadable via Composer by default. When a new class is introduced in this naming scheme, either add the explicit `require_once` from the owning runtime entrypoint or use a PSR-4-compliant filename, and verify with a real runtime-style check such as `php -r "require 'vendor/autoload.php'; var_export(class_exists('AltContext\\\\Foo\\\\Bar'));"`
@@ -266,6 +269,8 @@ Canonical handoff runtime:
 - Use `agent-handoff-mcp` exclusively for handoff state.
 - Do not use handoff tools or CLI subcommands from `scripts/mcp/unified_server.py`; they are deprecated and fail by design.
 - The legacy unified server is now repo-intel-only.
+- Current monorepo installs use the checked-in package path. After E13 extraction, the canonical external source is the private git+ssh repo `darce/mcp-agent-handoff`; keep the same binary shape and use [contracts/agent-handoff-mcp.md](contracts/agent-handoff-mcp.md) as the live install reference.
+- Retirement of `scripts/mcp/unified_server.py` is tracked in [../tasks/tech-debt/unified-server-retirement.md](../tasks/tech-debt/unified-server-retirement.md).
 
 Primary binary shape:
 
@@ -334,7 +339,7 @@ Read discipline:
 - Use `get_handoff_state` for active-task snapshot, `get_review_findings_summary` (on `agent-orchestrator-mcp`) for counts, and `list_review_findings` for detailed review verification.
 - `list_review_findings(finding_id=...)` accepts either `finding_id` (human-readable string like `"H-OCI-28"`) for a single-finding lookup. Prefer `finding_id` when referencing findings from review output.
 - `list_review_findings` and `get_review_findings_summary` accept an optional `task_ref` to query findings on a non-active task. Use this instead of switching active state when verifying findings across multiple tasks.
-- Do **not** use legacy `scripts/mcp/unified_server.py` handoff tools or CLI subcommands. The only supported handoff surface is the packaged `agent-handoff-mcp` binary described in [contracts/agent-handoff-mcp.md](contracts/agent-handoff-mcp.md).
+- Do **not** use legacy `scripts/mcp/unified_server.py` handoff tools or CLI subcommands. The only supported handoff surface is the packaged `agent-handoff-mcp` binary described in [contracts/agent-handoff-mcp.md](contracts/agent-handoff-mcp.md). See [../tasks/tech-debt/unified-server-retirement.md](../tasks/tech-debt/unified-server-retirement.md) for the tracked removal follow-up.
 
 State integrity invariants:
 

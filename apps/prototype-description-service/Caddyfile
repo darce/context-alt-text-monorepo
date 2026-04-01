@@ -1,0 +1,10 @@
+# Caddy reverse proxy for prototype-description-service.
+# For IP-only access (no domain), use internal TLS.
+# Replace :443 with your domain when DNS is configured.
+
+:443 {
+	tls internal {
+		on_demand
+	}
+	reverse_proxy api:8000
+}

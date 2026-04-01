@@ -1,0 +1,63 @@
+# Production compose stack for OCI VM deployment.
+# Managed by systemd unit acx-backend.service on the VM.
+# Usage: docker compose -f docker-compose.prod.yml up -d
+#
+# Requires a .env file in the project directory (same dir as this file).
+# On the VM: ln -s /opt/acx-backend/secrets/.env /opt/acx-backend/.env
+# Locally:   copy .env.prod.example to .env and fill in values.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - /opt/acx-backend/data/pgdata:/var/lib/postgresql/data
+      - ./db/docker-prod-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    image: iad.ocir.io/idu2kqqe2jxy/acx-backend:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+    volumes:
+      - /opt/acx-backend/data/models:/data/cache
+    expose:
+      - "8000"
+
+  worker:
+    image: iad.ocir.io/idu2kqqe2jxy/acx-backend:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    volumes:
+      - /opt/acx-backend/data/models:/data/cache
+    command: ["python", "-m", "recognition.worker.scan_worker"]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

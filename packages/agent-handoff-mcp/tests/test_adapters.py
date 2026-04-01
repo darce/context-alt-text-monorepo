@@ -117,5 +117,5 @@ def test_default_adapter_profile_is_extended_and_core_has_16_tools(tmp_path: Pat
     default_count = asyncio.run(_count([], "default-count.log"))
     core_count = asyncio.run(_count(["--tool-profile", "core"], "core-count.log"))
 
-    assert default_count == 27, f"Expected 27 default (extended) tools, got {default_count}"
+    assert default_count == 28, f"Expected 28 default (extended) tools, got {default_count}"
     assert core_count == 16, f"Expected 16 core tools, got {core_count}"

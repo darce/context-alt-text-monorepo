@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any
 
 from fastmcp.client import Client, PythonStdioTransport
 
@@ -33,6 +34,7 @@ _EXTENDED_ONLY_TOOLS = {
     "export_handoff_state",
     "import_handoff_state",
     "archive_task_state",
+    "update_task_status",
     "record_artifact",
     "search_artifacts",
     "get_artifact",
@@ -115,4 +117,117 @@ def test_stdio_extended_profile_exposes_all_27_tools(tmp_path: Path) -> None:
     assert _EXTENDED_ONLY_TOOLS <= tool_names, (
         f"Extended tools missing from extended profile: {_EXTENDED_ONLY_TOOLS - tool_names}"
     )
-    assert len(tool_names) == 27
+    assert len(tool_names) == 28
+
+
+def _collect_schema_types(schema: dict[str, Any], root_schema: dict[str, Any]) -> set[str]:
+    collected: set[str] = set()
+    schema_type = schema.get("type")
+    if isinstance(schema_type, str):
+        collected.add(schema_type)
+    elif isinstance(schema_type, list):
+        collected.update(item for item in schema_type if isinstance(item, str))
+    for key in ("anyOf", "oneOf", "allOf"):
+        for entry in schema.get(key, []):
+            if isinstance(entry, dict):
+                collected.update(_collect_schema_types(entry, root_schema))
+    ref = schema.get("$ref")
+    if isinstance(ref, str) and ref.startswith("#/$defs/"):
+        def_name = ref.split("/", 2)[-1]
+        target = root_schema.get("$defs", {}).get(def_name)
+        if isinstance(target, dict):
+            collected.update(_collect_schema_types(target, root_schema))
+    return collected
+
+
+def _resolve_schema_object(schema: dict[str, Any], root_schema: dict[str, Any]) -> dict[str, Any] | None:
+    schema_type = schema.get("type")
+    if schema_type == "object":
+        return schema
+    ref = schema.get("$ref")
+    if isinstance(ref, str) and ref.startswith("#/$defs/"):
+        def_name = ref.split("/", 2)[-1]
+        target = root_schema.get("$defs", {}).get(def_name)
+        if isinstance(target, dict):
+            return _resolve_schema_object(target, root_schema)
+    for key in ("anyOf", "oneOf", "allOf"):
+        for entry in schema.get(key, []):
+            if isinstance(entry, dict):
+                resolved = _resolve_schema_object(entry, root_schema)
+                if resolved is not None:
+                    return resolved
+    return None
+
+
+def test_stdio_update_next_actions_schema_is_agent_discoverable(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
+
+    async def _run() -> dict[str, Any]:
+        transport = PythonStdioTransport(
+            script_path=launcher,
+            args=["--workspace-root", str(repo_root), "serve-stdio"],
+            cwd=str(repo_root),
+            log_file=tmp_path / "stdio-schema-update-next-actions.log",
+        )
+        async with Client(transport) as client:
+            tools = await client.list_tools()
+            tool = next(tool for tool in tools if tool.name == "update_next_actions")
+            return tool.inputSchema
+
+    schema = asyncio.run(_run())
+    properties = schema["properties"]
+
+    assert schema["type"] == "object"
+    assert schema["required"] == ["operation"]
+    assert properties["operation"]["enum"] == ["add", "update", "complete", "skip"]
+    assert "Mutation to apply" in properties["operation"]["description"]
+
+    action_id_types = _collect_schema_types(properties["action_id"], schema)
+    assert {"integer", "null"} <= action_id_types
+    priority_types = _collect_schema_types(properties["priority"], schema)
+    assert {"integer", "null"} <= priority_types
+
+    status_property = properties["status"]
+    assert set(status_property["anyOf"][0]["enum"]) == {"pending", "done", "skipped"}
+    assert "Only used for update operations" in status_property["description"]
+
+    actor_types = _collect_schema_types(properties["actor"], schema)
+    assert {"object", "null"} <= actor_types
+    actor_object = _resolve_schema_object(properties["actor"], schema)
+    assert actor_object is not None
+    assert {"agent", "model", "model_label", "reasoning_level", "branch", "commit_sha", "lane_id"} <= set(
+        actor_object["properties"].keys()
+    )
+    assert "structured provenance override" in properties["actor"]["description"]
+
+
+def test_stdio_record_decision_schema_exposes_changed_files_and_actor(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
+
+    async def _run() -> dict[str, Any]:
+        transport = PythonStdioTransport(
+            script_path=launcher,
+            args=["--workspace-root", str(repo_root), "serve-stdio"],
+            cwd=str(repo_root),
+            log_file=tmp_path / "stdio-schema-record-decision.log",
+        )
+        async with Client(transport) as client:
+            tools = await client.list_tools()
+            tool = next(tool for tool in tools if tool.name == "record_decision")
+            return tool.inputSchema
+
+    schema = asyncio.run(_run())
+    properties = schema["properties"]
+
+    assert set(schema["required"]) == {"session", "decision"}
+    changed_files_types = _collect_schema_types(properties["changed_files"], schema)
+    assert {"array", "null"} <= changed_files_types
+    assert "monorepo-relative paths" in properties["changed_files"]["description"]
+
+    actor_types = _collect_schema_types(properties["actor"], schema)
+    assert {"object", "null"} <= actor_types
+    actor_object = _resolve_schema_object(properties["actor"], schema)
+    assert actor_object is not None
+    assert "Canonical human-readable label" in actor_object["properties"]["model_label"]["description"]

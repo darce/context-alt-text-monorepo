@@ -25,7 +25,7 @@ _log = logging.getLogger("agent_handoff_mcp")
 # _apply_handoff_migrations(). The bootstrap gate short-circuits when
 # PRAGMA user_version >= HANDOFF_SCHEMA_VERSION, so un-bumped migrations
 # will be silently skipped on databases that were already bootstrapped.
-HANDOFF_SCHEMA_VERSION = 1
+HANDOFF_SCHEMA_VERSION = 2
 _HANDOFF_REQUIRED_TABLES = frozenset(
     {
         "handoff_state",
@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS decisions (
     total_tokens  INTEGER,
     branch        TEXT,
     commit_sha    TEXT,
+    changed_files_json TEXT,
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -762,6 +763,8 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
                 conn.execute(f"ALTER TABLE worktree_lanes ADD COLUMN {column} TEXT")
         if not _has_column(conn, "handoff_state", "focus"):
             conn.execute("ALTER TABLE handoff_state ADD COLUMN focus TEXT")
+        if not _has_column(conn, "decisions", "changed_files_json"):
+            conn.execute("ALTER TABLE decisions ADD COLUMN changed_files_json TEXT")
         # TODO(E12-9-followon): turn_metrics DDL belongs in agent-orchestrator-mcp bootstrap.
         conn.execute(
             """

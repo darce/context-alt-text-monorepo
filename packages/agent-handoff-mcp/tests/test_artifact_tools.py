@@ -238,6 +238,17 @@ def test_search_artifacts_respects_limit(isolated_env: dict) -> None:
     assert len(result["hits"]) <= 1
 
 
+def test_search_artifacts_fields_project_hits(isolated_env: dict) -> None:
+    _seed_tool_artifacts()
+    result = _parse(handoff_core.search_artifacts(queries=["column missing"], fields="source_id,title,snippet"))
+    assert result["ok"] is True
+    assert result["hits"]
+    for hit in result["hits"]:
+        assert set(hit) <= {"source_id", "title", "snippet"}
+        assert "source_id" in hit
+        assert "snippet" in hit
+
+
 # ---------------------------------------------------------------------------
 # get_artifact (successor to deprecated get_artifact_source)
 # ---------------------------------------------------------------------------
@@ -294,6 +305,37 @@ def test_get_artifact_source_no_args_error(isolated_env: dict) -> None:
     assert result["ok"] is False
 
 
+def test_get_artifact_detail_summary_limits_chunk_preview(isolated_env: dict) -> None:
+    record = _parse(
+        handoff_core.record_artifact(
+            task_ref="test-task",
+            source_kind="doc",
+            source_label="summary-doc",
+            content=_LARGE_CONTENT,
+        )
+    )
+    result = _parse(handoff_core.get_artifact(source_id=record["source_id"], detail="summary"))
+    assert result["ok"] is True
+    assert result["source"]["chunk_count"] > len(result["source"]["chunks"])
+    assert len(result["source"]["chunks"]) == 3
+    assert all(len(chunk["body"]) <= 203 for chunk in result["source"]["chunks"])
+
+
+def test_get_artifact_fields_project_source(isolated_env: dict) -> None:
+    record = _parse(
+        handoff_core.record_artifact(
+            task_ref="test-task",
+            source_kind="doc",
+            source_label="projected-doc",
+            content=_LARGE_CONTENT,
+        )
+    )
+    result = _parse(handoff_core.get_artifact(source_id=record["source_id"], fields="source_label,chunk_count"))
+    assert result["ok"] is True
+    assert set(result["source"]) <= {"source_label", "chunk_count"}
+    assert result["source"]["source_label"] == "projected-doc"
+
+
 # ---------------------------------------------------------------------------
 # search_artifacts (no-query source listing; successor to deprecated list_artifact_sources)
 # ---------------------------------------------------------------------------
@@ -326,6 +368,16 @@ def test_list_artifact_sources_filters_by_lane(isolated_env: dict) -> None:
     assert result["ok"] is True
     for s in result["sources"]:
         assert s["lane_id"] == "backend"
+
+
+def test_list_artifact_sources_fields_project_sources(isolated_env: dict) -> None:
+    _seed_tool_artifacts()
+    result = _parse(handoff_core.search_artifacts(task_ref="test-task", fields="source_label,summary"))
+    assert result["ok"] is True
+    assert result["sources"]
+    for source in result["sources"]:
+        assert set(source) <= {"source_label", "summary"}
+        assert "source_label" in source
 
 
 # ---------------------------------------------------------------------------

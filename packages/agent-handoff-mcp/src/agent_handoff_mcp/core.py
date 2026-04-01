@@ -105,6 +105,7 @@ from .import_export import (  # noqa: F401
     export_handoff_state,
     import_handoff_state,
     switch_task,
+    update_task_status,
 )
 from .review_findings import (  # noqa: F401
     _check_batch_close_guard,
@@ -135,6 +136,120 @@ _RECORD_TYPE_FTS_MAP: dict[str, tuple[str, bool]] = {
     "action": ("actions_fts", True),
 }
 
+_VALID_DETAIL_LEVELS: frozenset[str] = frozenset({"full", "summary"})
+_ARTIFACT_TEXT_SUMMARY_TRUNCATE = 200
+_ARTIFACT_CHUNK_TITLE_SUMMARY_TRUNCATE = 120
+_ARTIFACT_CHUNK_SUMMARY_LIMIT = 3
+_HANDOFF_SEARCH_SUMMARY_TRUNCATE = 80
+
+_VALID_ARTIFACT_HIT_FIELDS: frozenset[str] = frozenset(
+    {
+        "source_id",
+        "source_label",
+        "source_summary",
+        "task_ref",
+        "lane_id",
+        "app_root",
+        "source_kind",
+        "content_type",
+        "title",
+        "snippet",
+        "rank",
+    }
+)
+_VALID_ARTIFACT_SOURCE_LIST_FIELDS: frozenset[str] = frozenset(
+    {
+        "id",
+        "task_ref",
+        "lane_id",
+        "app_root",
+        "source_kind",
+        "source_label",
+        "content_type",
+        "content_hash",
+        "metadata_json",
+        "summary",
+        "created_at",
+        "updated_at",
+    }
+)
+_VALID_ARTIFACT_GET_FIELDS: frozenset[str] = _VALID_ARTIFACT_SOURCE_LIST_FIELDS | frozenset(
+    {"metadata", "chunk_count", "chunks"}
+)
+_VALID_HANDOFF_SEARCH_FIELDS: frozenset[str] = frozenset(
+    {"record_type", "record_id", "task_ref", "lane_id", "status", "snippet"}
+)
+
+_ARTIFACT_HIT_IDENTITY_FIELDS: frozenset[str] = frozenset({"source_id", "source_label", "title", "snippet"})
+_ARTIFACT_SOURCE_IDENTITY_FIELDS: frozenset[str] = frozenset(
+    {"id", "task_ref", "source_label", "source_kind", "content_type"}
+)
+_ARTIFACT_GET_IDENTITY_FIELDS: frozenset[str] = frozenset(
+    {"id", "task_ref", "source_label", "source_kind", "content_type", "chunk_count"}
+)
+_HANDOFF_SEARCH_IDENTITY_FIELDS: frozenset[str] = frozenset({"record_type", "record_id", "task_ref", "snippet"})
+
+
+def _normalize_detail(detail: str) -> str:
+    return detail if detail in _VALID_DETAIL_LEVELS else "full"
+
+
+def _parse_projection_fields(fields: str | None, valid_fields: frozenset[str]) -> frozenset[str] | None:
+    if fields is None:
+        return None
+    requested = frozenset(part.strip().lower() for part in fields.split(",") if part.strip())
+    return requested & valid_fields
+
+
+def _truncate_text(value: object, limit: int) -> object:
+    if isinstance(value, str) and len(value) > limit:
+        return value[:limit] + "..."
+    return value
+
+
+def _project_mapping(
+    mapping: dict[str, object],
+    requested_fields: frozenset[str] | None,
+    identity_fields: frozenset[str],
+) -> dict[str, object]:
+    if requested_fields is None:
+        allowed_fields: frozenset[str] | None = None
+    else:
+        allowed_fields = requested_fields or identity_fields
+    return {key: value for key, value in mapping.items() if allowed_fields is None or key in allowed_fields}
+
+
+def _summarize_artifact_hit(hit: dict[str, object]) -> dict[str, object]:
+    summarized = dict(hit)
+    summarized["source_summary"] = _truncate_text(summarized.get("source_summary"), _ARTIFACT_TEXT_SUMMARY_TRUNCATE)
+    summarized["snippet"] = _truncate_text(summarized.get("snippet"), _ARTIFACT_TEXT_SUMMARY_TRUNCATE)
+    return summarized
+
+
+def _summarize_artifact_source(source: dict[str, object]) -> dict[str, object]:
+    summarized = dict(source)
+    summarized["summary"] = _truncate_text(summarized.get("summary"), _ARTIFACT_TEXT_SUMMARY_TRUNCATE)
+    summarized["metadata_json"] = _truncate_text(summarized.get("metadata_json"), _ARTIFACT_TEXT_SUMMARY_TRUNCATE)
+    chunks = summarized.get("chunks")
+    if isinstance(chunks, list):
+        chunk_preview: list[object] = []
+        for chunk in chunks[:_ARTIFACT_CHUNK_SUMMARY_LIMIT]:
+            if isinstance(chunk, dict):
+                summarized_chunk = dict(chunk)
+                summarized_chunk["title"] = _truncate_text(
+                    summarized_chunk.get("title"),
+                    _ARTIFACT_CHUNK_TITLE_SUMMARY_TRUNCATE,
+                )
+                summarized_chunk["body"] = _truncate_text(
+                    summarized_chunk.get("body"),
+                    _ARTIFACT_TEXT_SUMMARY_TRUNCATE,
+                )
+                chunk_preview.append(summarized_chunk)
+            else:
+                chunk_preview.append(chunk)
+        summarized["chunks"] = chunk_preview
+    return summarized
+
 
 def search_handoff(
     queries: list[str] | None = None,
@@ -142,10 +257,14 @@ def search_handoff(
     lane_id: str | None = None,
     record_types: list[str] | None = None,
     limit: int = 20,
+    detail: str = "full",
+    fields: str | None = None,
 ) -> str:
     """Search canonical handoff records by keyword with optional scope filters."""
     if not queries:
         return _json_response({"ok": False, "error": "queries must be a non-empty list of search terms."})
+    detail = _normalize_detail(detail)
+    requested_fields = _parse_projection_fields(fields, _VALID_HANDOFF_SEARCH_FIELDS)
 
     validated_types: list[str]
     if record_types is None:
@@ -232,12 +351,17 @@ def search_handoff(
                 )
 
     results.sort(key=lambda r: r["_rank"])
-    for r in results:
-        r.pop("_rank")
+    shaped_results: list[dict[str, object]] = []
+    for result in results[:clamped_limit]:
+        shaped = dict(result)
+        shaped.pop("_rank", None)
+        if detail == "summary":
+            shaped["snippet"] = _truncate_text(shaped.get("snippet"), _HANDOFF_SEARCH_SUMMARY_TRUNCATE)
+        shaped_results.append(_project_mapping(shaped, requested_fields, _HANDOFF_SEARCH_IDENTITY_FIELDS))
     return _json_response(
         {
             "ok": True,
-            "results": results[:clamped_limit],
+            "results": shaped_results,
             "total": len(results),
             "query": fts_query,
             "record_types_searched": validated_types,
@@ -296,10 +420,14 @@ def search_artifacts(
     content_type: str | None = None,
     limit: int = 10,
     offset: int = 0,
+    detail: str = "full",
+    fields: str | None = None,
 ) -> str:
     """Search indexed artifact chunks, or list sources when no queries given."""
     config = get_runtime_config()
+    detail = _normalize_detail(detail)
     if not queries:
+        requested_fields = _parse_projection_fields(fields, _VALID_ARTIFACT_SOURCE_LIST_FIELDS)
         resolved_task_ref: str | None = None
         if task_ref:
             with _get_db_connection() as conn:
@@ -314,9 +442,18 @@ def search_artifacts(
                 offset=max(0, int(offset)),
                 artifact_db_path=config.artifact_db_path,
             )
-            return _json_response({"ok": True, "mode": "sources", "total": len(rows), "sources": rows})
+            shaped_rows = [
+                _project_mapping(
+                    _summarize_artifact_source(dict(row)) if detail == "summary" else dict(row),
+                    requested_fields,
+                    _ARTIFACT_SOURCE_IDENTITY_FIELDS,
+                )
+                for row in rows
+            ]
+            return _json_response({"ok": True, "mode": "sources", "total": len(rows), "sources": shaped_rows})
         except RuntimeError as exc:
             return _json_response({"ok": False, "error": str(exc)})
+    requested_fields = _parse_projection_fields(fields, _VALID_ARTIFACT_HIT_FIELDS)
     scope: dict[str, str | None] = {}
     if task_ref:
         with _get_db_connection() as conn:
@@ -334,7 +471,15 @@ def search_artifacts(
             limit=max(1, int(limit)),
             artifact_db_path=config.artifact_db_path,
         )
-        return _json_response({"ok": True, "mode": "search", "total": len(hits), "hits": hits})
+        shaped_hits = [
+            _project_mapping(
+                _summarize_artifact_hit(dict(hit)) if detail == "summary" else dict(hit),
+                requested_fields,
+                _ARTIFACT_HIT_IDENTITY_FIELDS,
+            )
+            for hit in hits
+        ]
+        return _json_response({"ok": True, "mode": "search", "total": len(hits), "hits": shaped_hits})
     except RuntimeError as exc:
         return _json_response({"ok": False, "error": str(exc)})
 
@@ -345,9 +490,13 @@ def get_artifact(
     source_label: str | None = None,
     include_terms: bool = False,
     top_n_terms: int = 10,
+    detail: str = "full",
+    fields: str | None = None,
 ) -> str:
     """Return the full artifact source record, optionally with distinctive terms."""
     config = get_runtime_config()
+    detail = _normalize_detail(detail)
+    requested_fields = _parse_projection_fields(fields, _VALID_ARTIFACT_GET_FIELDS)
     if source_id is None and not (task_ref and source_label):
         return _json_response({"ok": False, "error": "Provide source_id or both task_ref and source_label."})
     resolved_task_ref: str | None = None
@@ -363,7 +512,12 @@ def get_artifact(
         )
         if source is None:
             return _json_response({"ok": False, "error": "Artifact source not found."})
-        payload: dict[str, object] = {"ok": True, "source": source}
+        shaped_source = _project_mapping(
+            _summarize_artifact_source(dict(source)) if detail == "summary" else dict(source),
+            requested_fields,
+            _ARTIFACT_GET_IDENTITY_FIELDS,
+        )
+        payload: dict[str, object] = {"ok": True, "source": shaped_source}
         if include_terms:
             resolved_source_id = source["id"]
             terms = artifact_index.get_distinctive_terms(
@@ -445,10 +599,68 @@ def close_slice(
     expected_revision: int | None = None,
     task_ref: str | None = None,
     focus: str | None = None,
+    changed_files: list[str] | None = None,
 ) -> str:
-    """Close a slice: record_decision + set_handoff_state + generate CURRENT_TASK.md."""
+    """Record a slice-complete decision, keep the task in progress, and regenerate CURRENT_TASK.md."""
+    with _get_db_connection() as conn:
+        resolved_task_ref = _resolve_task_ref(conn, task_ref)
+        active_row = conn.execute(
+            "SELECT revision FROM handoff_state WHERE id = 1 AND task_ref = ?",
+            (resolved_task_ref,),
+        ).fetchone()
+
+    if active_row is not None:
+        current_revision = int(active_row["revision"])
+        if expected_revision is None:
+            return _json_response(
+                {
+                    "ok": False,
+                    "task_ref": resolved_task_ref,
+                    "decision_recorded": False,
+                    "state_updated": False,
+                    "state_error": "expected_revision is required for updates.",
+                    "current_revision": current_revision,
+                    "current_task_md_written": False,
+                }
+            )
+        if expected_revision != current_revision:
+            return _json_response(
+                {
+                    "ok": False,
+                    "task_ref": resolved_task_ref,
+                    "decision_recorded": False,
+                    "state_updated": False,
+                    "state_error": "Revision conflict.",
+                    "expected_revision": expected_revision,
+                    "current_revision": current_revision,
+                    "current_task_md_written": False,
+                }
+            )
+    else:
+        with _get_db_connection() as conn2:
+            archived = conn2.execute(
+                "SELECT 1 FROM task_archives WHERE task_ref = ?",
+                (resolved_task_ref,),
+            ).fetchone()
+        if archived is not None:
+            return _json_response(
+                {
+                    "ok": False,
+                    "task_ref": resolved_task_ref,
+                    "decision_recorded": False,
+                    "state_updated": False,
+                    "state_error": "Cannot close a slice on an archived task. Switch to it first or use update_task_status.",
+                    "current_task_md_written": False,
+                }
+            )
+
     decision_raw = record_decision(
-        session=session, decision=decision, rationale=rationale, actor=actor, task_ref=task_ref
+        session=session,
+        decision=decision,
+        rationale=rationale,
+        actor=actor,
+        task_ref=task_ref,
+        changed_files=changed_files,
     )
     decision_result = json.loads(decision_raw)
     if not decision_result.get("ok"):

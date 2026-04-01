@@ -97,6 +97,32 @@ def test_switch_task_clears_focus_on_restore(workspace_pair: dict[str, Path]) ->
     assert restored["active"]["focus"] is None
 
 
+def test_update_task_status_updates_archived_snapshot_and_dashboard(workspace_pair: dict[str, Path]) -> None:
+    _configure_runtime(workspace_pair["source"])
+
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="task-a",
+            objective="Archive me",
+            status="in_progress",
+        )
+    )
+    _parse(mcp_server.record_decision(session="archive-status", decision="task_a_decision", rationale="note"))
+    _parse(mcp_server.archive_task_state(task_ref="task-a"))
+    _parse(mcp_server.set_handoff_state(task_ref="task-b", objective="Keep current", status="in_progress"))
+
+    updated = _parse(mcp_server.update_task_status(task_ref="task-a", status="done"))
+
+    assert updated["ok"] is True
+    assert updated["updated_scope"] == "archived"
+
+    payload = _parse(mcp_server.generate_current_task_md(task_ref="task-b", write_file=False))
+    assert payload["ok"] is True
+    assert "> task-b" in payload["markdown"]
+    assert "task-a" in payload["markdown"]
+    assert "done" in payload["markdown"]
+
+
 def test_import_handoff_state_prefers_decoded_lane_message_payload(workspace_pair: dict[str, Path]) -> None:
     payload_path = workspace_pair["source"] / "decoded-payload.json"
     payload_path.write_text(

@@ -211,7 +211,7 @@ Proof:
 
 - [x] `get_handoff_state` supports a true identity-only hot-state read without falling back to the full payload.
 - [x] Compact read modes can omit unused metadata or fields, not just truncate long strings.
-- [ ] Human-oriented summary strings are added only where structured compact projections are still too heavy.
+- [x] Human-oriented summary strings are added only where structured compact projections are still too heavy.
 - [x] CLI, stdio, and HTTP coverage prove the compact read modes end-to-end.
 
 ## Review Readiness
@@ -222,7 +222,7 @@ Proof:
 
 ## Stretch Goals
 
-- [ ] Extend the same projection/detail pattern to artifact or search read surfaces only if the handoff read-surface work proves the pattern ergonomic.
+- [x] Extend the same projection/detail pattern to artifact or search read surfaces only if the handoff read-surface work proves the pattern ergonomic.
 
 ## Success Criteria
 

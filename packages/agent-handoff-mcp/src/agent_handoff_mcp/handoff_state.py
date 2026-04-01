@@ -103,6 +103,59 @@ def set_handoff_state(
         )
 
 
+_VALID_SECTIONS = frozenset(
+    {
+        # 'active' and 'limits' are always included as cheap identity data
+        # and are not selectable/excludable via the sections parameter.
+        "current_lane",
+        "blockers_open",
+        "actions_pending",
+        "decisions_recent",
+        "tests_recent",
+        "findings_open",
+        "worktree_lanes",
+        "worker_reports_recent",
+        "lane_messages_open",
+    }
+)
+
+_VALID_DETAIL_LEVELS = frozenset({"full", "summary"})
+
+_SUMMARY_TRUNCATE_LENGTH = 200
+
+
+def _truncate_for_summary(row: dict, fields: tuple[str, ...]) -> dict:
+    """Return a shallow copy with long text fields truncated."""
+    out = dict(row)
+    for field in fields:
+        value = out.get(field)
+        if isinstance(value, str) and len(value) > _SUMMARY_TRUNCATE_LENGTH:
+            out[field] = value[:_SUMMARY_TRUNCATE_LENGTH] + "..."
+    return out
+
+
+_IDENTITY_TOKEN = "identity"
+
+
+def _parse_sections(sections: str | None) -> frozenset[str] | None:
+    """Parse a comma-separated sections string. Returns None for 'all'.
+
+    The reserved token ``identity`` explicitly requests an identity-only
+    response (active + limits only, no data sections). When ``identity``
+    is present, all other tokens are ignored.
+
+    Invalid section names are silently dropped. If no valid names remain
+    after filtering, returns an empty frozenset (same identity-only shape).
+    Callers that want all sections should pass sections=None (the default).
+    """
+    if sections is None:
+        return None
+    parts = frozenset(s.strip().lower() for s in sections.split(",") if s.strip())
+    if _IDENTITY_TOKEN in parts:
+        return frozenset()
+    return parts & _VALID_SECTIONS
+
+
 def get_handoff_state(
     task_ref: str | None = None,
     top_n_blockers: int = DEFAULT_HANDOFF_LIMITS["blockers"],
@@ -113,17 +166,26 @@ def get_handoff_state(
     verbose: bool = False,
     view: str = "task",
     include_archived: bool = True,
+    sections: str | None = None,
+    detail: str = "full",
 ) -> str:
+    if detail not in _VALID_DETAIL_LEVELS:
+        detail = "full"
     if view == "dashboard":
         return _get_handoff_dashboard_view(
             limit=top_n_findings if top_n_findings != DEFAULT_HANDOFF_LIMITS["findings"] else 20,
             include_archived=include_archived,
         )
+    requested_sections = _parse_sections(sections)
     top_n_blockers = max(1, top_n_blockers)
     top_n_actions = max(1, top_n_actions)
     top_n_decisions = max(1, top_n_decisions)
     top_n_tests = max(1, top_n_tests)
     top_n_findings = max(1, top_n_findings)
+
+    def _want(section: str) -> bool:
+        return requested_sections is None or section in requested_sections
+
     with _get_db_connection() as conn:
         active_row = conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone()
         if active_row is None and task_ref is None:
@@ -132,96 +194,131 @@ def get_handoff_state(
         active = _row_to_dict(active_row) if active_row is not None else None
         if active is not None and resolved_task_ref != active["task_ref"]:
             active = None
-        current_lane_row = _resolve_current_lane_row(conn, resolved_task_ref)
-        current_lane = _row_to_dict(current_lane_row)
 
         def query_limit(size: int) -> int:
             return size if not verbose else 10000
 
-        lane_messages_where_sql = "task_ref = ? AND status = 'open'"
-        lane_messages_params: tuple[object, ...] = (resolved_task_ref,)
-        if current_lane_row is not None:
-            lane_messages_where_sql += " AND lane_id = ?"
-            lane_messages_params = (resolved_task_ref, str(current_lane_row["lane_id"]))
-        return _json_response(
-            {
-                "ok": True,
-                "limits": {
-                    "blockers": top_n_blockers,
-                    "actions": top_n_actions,
-                    "decisions": top_n_decisions,
-                    "tests": top_n_tests,
-                    "findings": top_n_findings,
-                },
-                "task_ref": resolved_task_ref,
-                "active": active,
-                "current_lane": current_lane,
-                "blockers_open": _fetch_handoff_rows(
-                    conn,
-                    table="blockers",
-                    where_sql="task_ref = ? AND status = 'open'",
-                    order_sql="created_at DESC",
-                    limit=query_limit(top_n_blockers),
-                    params=(resolved_task_ref,),
-                ),
-                "actions_pending": _fetch_handoff_rows(
-                    conn,
-                    table="next_actions",
-                    where_sql="task_ref = ? AND status = 'pending'",
-                    order_sql="priority ASC, created_at ASC",
-                    limit=query_limit(top_n_actions),
-                    params=(resolved_task_ref,),
-                ),
-                "decisions_recent": _fetch_handoff_rows(
-                    conn,
-                    table="decisions",
-                    where_sql="task_ref = ?",
-                    order_sql="created_at DESC",
-                    limit=query_limit(top_n_decisions),
-                    params=(resolved_task_ref,),
-                ),
-                "tests_recent": _fetch_handoff_rows(
-                    conn,
-                    table="verified_tests",
-                    where_sql="task_ref = ?",
-                    order_sql="verified_at DESC",
-                    limit=query_limit(top_n_tests),
-                    params=(resolved_task_ref,),
-                ),
-                "findings_open": _fetch_handoff_rows(
-                    conn,
-                    table="review_findings",
-                    where_sql="task_ref = ? AND status = 'open'",
-                    order_sql="CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, created_at DESC",
-                    limit=query_limit(top_n_findings),
-                    params=(resolved_task_ref,),
-                ),
-                "worktree_lanes": _fetch_handoff_rows(
-                    conn,
-                    table="worktree_lanes",
-                    where_sql="task_ref = ?",
-                    order_sql="updated_at DESC, id DESC",
-                    limit=50,
-                    params=(resolved_task_ref,),
-                ),
-                "worker_reports_recent": _fetch_handoff_rows(
-                    conn,
-                    table="worker_reports",
-                    where_sql="task_ref = ?",
-                    order_sql="created_at DESC, id DESC",
-                    limit=query_limit(top_n_tests),
-                    params=(resolved_task_ref,),
-                ),
-                "lane_messages_open": _fetch_handoff_rows(
-                    conn,
-                    table="lane_messages",
-                    where_sql=lane_messages_where_sql,
-                    order_sql="updated_at DESC, id DESC",
-                    limit=50,
-                    params=lane_messages_params,
-                ),
-            }
-        )
+        def _apply_detail(rows: list[dict], fields: tuple[str, ...]) -> list[dict]:
+            if detail == "summary":
+                return [_truncate_for_summary(r, fields) for r in rows]
+            return rows
+
+        result: dict = {
+            "ok": True,
+            "task_ref": resolved_task_ref,
+        }
+
+        # Always include active and limits (cheap identity data)
+        result["active"] = active
+        result["limits"] = {
+            "blockers": top_n_blockers,
+            "actions": top_n_actions,
+            "decisions": top_n_decisions,
+            "tests": top_n_tests,
+            "findings": top_n_findings,
+        }
+
+        if _want("current_lane"):
+            current_lane_row = _resolve_current_lane_row(conn, resolved_task_ref)
+            result["current_lane"] = _row_to_dict(current_lane_row)
+        else:
+            current_lane_row = None
+
+        if _want("blockers_open"):
+            result["blockers_open"] = _fetch_handoff_rows(
+                conn,
+                table="blockers",
+                where_sql="task_ref = ? AND status = 'open'",
+                order_sql="created_at DESC",
+                limit=query_limit(top_n_blockers),
+                params=(resolved_task_ref,),
+            )
+
+        if _want("actions_pending"):
+            result["actions_pending"] = _fetch_handoff_rows(
+                conn,
+                table="next_actions",
+                where_sql="task_ref = ? AND status = 'pending'",
+                order_sql="priority ASC, created_at ASC",
+                limit=query_limit(top_n_actions),
+                params=(resolved_task_ref,),
+            )
+
+        if _want("decisions_recent"):
+            rows = _fetch_handoff_rows(
+                conn,
+                table="decisions",
+                where_sql="task_ref = ?",
+                order_sql="created_at DESC",
+                limit=query_limit(top_n_decisions),
+                params=(resolved_task_ref,),
+            )
+            result["decisions_recent"] = _apply_detail(rows, ("rationale",))
+
+        if _want("tests_recent"):
+            rows = _fetch_handoff_rows(
+                conn,
+                table="verified_tests",
+                where_sql="task_ref = ?",
+                order_sql="verified_at DESC",
+                limit=query_limit(top_n_tests),
+                params=(resolved_task_ref,),
+            )
+            result["tests_recent"] = _apply_detail(rows, ("command", "result"))
+
+        if _want("findings_open"):
+            rows = _fetch_handoff_rows(
+                conn,
+                table="review_findings",
+                where_sql="task_ref = ? AND status = 'open'",
+                order_sql="CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, created_at DESC",
+                limit=query_limit(top_n_findings),
+                params=(resolved_task_ref,),
+            )
+            result["findings_open"] = _apply_detail(
+                rows, ("description", "fix", "resolution_notes", "verification_evidence")
+            )
+
+        if _want("worktree_lanes"):
+            result["worktree_lanes"] = _fetch_handoff_rows(
+                conn,
+                table="worktree_lanes",
+                where_sql="task_ref = ?",
+                order_sql="updated_at DESC, id DESC",
+                limit=50,
+                params=(resolved_task_ref,),
+            )
+
+        if _want("worker_reports_recent"):
+            result["worker_reports_recent"] = _fetch_handoff_rows(
+                conn,
+                table="worker_reports",
+                where_sql="task_ref = ?",
+                order_sql="created_at DESC, id DESC",
+                limit=query_limit(top_n_tests),
+                params=(resolved_task_ref,),
+            )
+
+        if _want("lane_messages_open"):
+            # Always resolve lane for message scoping, even if current_lane
+            # section was not requested.
+            if current_lane_row is None:
+                current_lane_row = _resolve_current_lane_row(conn, resolved_task_ref)
+            lane_messages_where_sql = "task_ref = ? AND status = 'open'"
+            lane_messages_params: tuple[object, ...] = (resolved_task_ref,)
+            if current_lane_row is not None:
+                lane_messages_where_sql += " AND lane_id = ?"
+                lane_messages_params = (resolved_task_ref, str(current_lane_row["lane_id"]))
+            result["lane_messages_open"] = _fetch_handoff_rows(
+                conn,
+                table="lane_messages",
+                where_sql=lane_messages_where_sql,
+                order_sql="updated_at DESC, id DESC",
+                limit=50,
+                params=lane_messages_params,
+            )
+
+        return _json_response(result)
 
 
 def _get_handoff_dashboard_view(limit: int = 20, include_archived: bool = True) -> str:

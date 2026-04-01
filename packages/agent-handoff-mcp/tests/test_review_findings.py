@@ -11,6 +11,7 @@ import pytest
 from agent_handoff_mcp import api as mcp_server
 from agent_handoff_mcp._shared import _get_db_connection, _render_current_task_md, _render_dashboard_section
 from agent_handoff_mcp.config import RuntimeConfig
+from agent_handoff_mcp.current_task_rendering import _infer_epic_ref
 
 
 def _parse(raw: str) -> dict:
@@ -377,6 +378,13 @@ def test_render_current_task_md_with_decisions_but_no_active(isolated_handoff: d
     assert "test_decision_for_render" in md
 
 
+def test_infer_epic_ref_for_epic_task_plan_refs() -> None:
+    assert _infer_epic_ref("E13-1") == "E13"
+    assert _infer_epic_ref("E13-12-followup") == "E13"
+    assert _infer_epic_ref("E13") is None
+    assert _infer_epic_ref("phase-5-retention-export-and-audit-controls") is None
+
+
 def test_render_current_task_md_with_findings_but_no_active(isolated_handoff: dict) -> None:
     """When active is None but open findings exist, render produces a context view."""
     _parse(
@@ -556,6 +564,29 @@ def test_render_current_task_md_prepends_dashboard_section() -> None:
         active=False,
     )
     assert "## Objective\nRender dashboard above detail section" in md
+    assert "- epic_ref: `E12`" in md
+    assert "- task_ref: `E12-11`" in md
+
+
+def test_render_current_task_md_without_active_includes_epic_context() -> None:
+    state: dict = {
+        "task_ref": "E13-1",
+        "active": None,
+        "decisions_recent": [{"id": 1, "decision": "cop_slice_complete_E13-1_context_only"}],
+        "findings_open": [],
+        "blockers_open": [],
+        "actions_pending": [],
+        "tests_recent": [],
+        "worktree_lanes": [],
+        "worker_reports_recent": [],
+        "lane_messages_open": [],
+    }
+
+    md = _render_current_task_md(state)
+
+    assert "## Task Context" in md
+    assert "- epic_ref: `E13`" in md
+    assert "- task_ref: `E13-1`" in md
 
 
 def test_render_current_task_md_keeps_detail_section_additive() -> None:
@@ -813,3 +844,134 @@ def test_get_review_coverage_by_subject_path(isolated_handoff: dict) -> None:
     assert result["ok"] is True
     assert result["run_count"] == 1
     assert result["latest_review_run_id"] == "sp-cov-run"
+
+
+# ---------------------------------------------------------------------------
+# list_review_findings detail parameter
+# ---------------------------------------------------------------------------
+
+
+def test_list_review_findings_detail_summary_truncates(isolated_handoff: dict) -> None:
+    """detail='summary' truncates long description text in findings."""
+    _parse(
+        mcp_server.set_handoff_state(task_ref="rf-det", objective="Review finding detail test", status="in_progress")
+    )
+    long_desc = "D" * 500
+    _parse(
+        mcp_server.record_review_finding(
+            session="s1",
+            finding_id="rf-det-1",
+            severity="medium",
+            file_path="some/file.py",
+            description=long_desc,
+            task_ref="rf-det",
+        )
+    )
+
+    full = _parse(mcp_server.list_review_findings(task_ref="rf-det", detail="full"))
+    assert len(full["findings"][0]["description"]) == 500
+
+    summary = _parse(mcp_server.list_review_findings(task_ref="rf-det", detail="summary"))
+    desc = summary["findings"][0]["description"]
+    assert desc.endswith("...")
+    assert len(desc) == 203
+
+
+def test_list_review_findings_detail_summary_single_lookup(isolated_handoff: dict) -> None:
+    """detail='summary' also works for single-finding lookup by finding_id."""
+    _parse(mcp_server.set_handoff_state(task_ref="rf-single", objective="Single finding detail", status="in_progress"))
+    long_desc = "E" * 500
+    _parse(
+        mcp_server.record_review_finding(
+            session="s1",
+            finding_id="rf-single-1",
+            severity="high",
+            file_path="a/b.py",
+            description=long_desc,
+            task_ref="rf-single",
+        )
+    )
+
+    summary = _parse(mcp_server.list_review_findings(finding_id="rf-single-1", task_ref="rf-single", detail="summary"))
+    assert summary["ok"] is True
+    assert summary["findings"][0]["description"].endswith("...")
+    assert len(summary["findings"][0]["description"]) == 203
+
+
+def test_load_session_passes_detail_through(isolated_handoff: dict) -> None:
+    """load_session passes detail parameter to both get_handoff_state and list_review_findings."""
+    _parse(mcp_server.set_handoff_state(task_ref="ls-det", objective="Load session detail", status="in_progress"))
+    long_rationale = "R" * 500
+    _parse(mcp_server.record_decision(session="s1", decision="d1", rationale=long_rationale))
+    long_desc = "F" * 500
+    _parse(
+        mcp_server.record_review_finding(
+            session="s1",
+            finding_id="ls-det-1",
+            severity="medium",
+            file_path="x.py",
+            description=long_desc,
+            task_ref="ls-det",
+        )
+    )
+
+    result = _parse(mcp_server.load_session(task_ref="ls-det", detail="summary"))
+    assert result["ok"] is True
+    # State decisions should be truncated
+    state = result["state"]
+    assert state["decisions_recent"][0]["rationale"].endswith("...")
+    # Findings should be truncated
+    assert result["open_findings"][0]["description"].endswith("...")
+
+
+def test_load_session_passes_sections_through(isolated_handoff: dict) -> None:
+    """load_session passes sections through to the nested get_handoff_state payload."""
+    _parse(mcp_server.set_handoff_state(task_ref="ls-sec", objective="Load session sections", status="in_progress"))
+    _parse(mcp_server.record_decision(session="s1", decision="d1"))
+    _parse(mcp_server.report_blocker(operation="add", description="b1"))
+    _parse(
+        mcp_server.record_review_finding(
+            session="s1",
+            finding_id="ls-sec-1",
+            severity="medium",
+            file_path="x.py",
+            description="Open finding preserved by load_session",
+            task_ref="ls-sec",
+        )
+    )
+
+    result = _parse(mcp_server.load_session(task_ref="ls-sec", sections="decisions_recent"))
+    assert result["ok"] is True
+
+    state = result["state"]
+    assert "active" in state
+    assert "limits" in state
+    assert "decisions_recent" in state
+    assert "blockers_open" not in state
+    assert result["open_findings"][0]["finding_id"] == "ls-sec-1"
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "surface_class", "entity_family"),
+    [
+        ("get_handoff_state", "query", "handoff_state"),
+        ("list_review_findings", "query", "review_findings"),
+        ("handoff_close_check", "generator", "lifecycle"),
+        ("generate_current_task_md", "generator", "lifecycle"),
+        ("export_handoff_state", "generator", "lifecycle"),
+        ("load_session", "query", "session"),
+        ("close_slice", "action", "lifecycle"),
+        ("search_artifacts", "generator", "artifacts"),
+        ("search_handoff", "generator", "handoff_state"),
+    ],
+)
+def test_tool_registry_metadata_matches_contract_taxonomy(
+    tool_name: str,
+    surface_class: str,
+    entity_family: str,
+) -> None:
+    """Representative registry metadata stays aligned with the documented taxonomy."""
+    registry = {entry.name: entry for entry in mcp_server._build_tool_registry()}
+
+    assert registry[tool_name].surface_class == surface_class
+    assert registry[tool_name].entity_family == entity_family

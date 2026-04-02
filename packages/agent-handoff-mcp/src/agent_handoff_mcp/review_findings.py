@@ -36,6 +36,22 @@ from ._shared import (
 )
 
 
+def _write_current_task_md_for_active_context(conn: sqlite3.Connection, fallback_task_ref: str) -> None:
+    """Regenerate CURRENT_TASK.md for the active task when one exists.
+
+    Review findings are often recorded against non-active tasks during review
+    passes. CURRENT_TASK.md should stay anchored to the active task and render
+    cross-task findings in the aggregated sections rather than switching to the
+    last task whose finding row was touched.
+    """
+
+    active_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
+    render_task_ref = (
+        str(active_row["task_ref"]) if active_row is not None and active_row["task_ref"] else fallback_task_ref
+    )
+    _write_current_task_md_for_task(conn, render_task_ref)
+
+
 def _classify_commit_relation(reference_sha: str | None, candidate_sha: str | None) -> str:
     """Delegate to _shared, but allow monkeypatching via core module namespace."""
     from . import core as _core  # noqa: PLC0415 – late import to avoid circular, enables monkeypatching
@@ -256,7 +272,7 @@ def record_review_finding(
         row = conn.execute(
             "SELECT * FROM review_findings WHERE task_ref = ? AND finding_id = ?", (resolved_task_ref, finding_id)
         ).fetchone()
-        _write_current_task_md_for_task(conn, resolved_task_ref)
+        _write_current_task_md_for_active_context(conn, resolved_task_ref)
         payload: dict[str, object] = {"ok": True, "finding": _row_to_dict(row)}
         if existing is not None and str(existing["status"]) != "open":
             payload["reopened"] = True
@@ -388,7 +404,7 @@ def batch_record_review_findings(
                     item_result["action"] = "updated"
             results.append(item_result)
 
-        _write_current_task_md_for_task(conn, resolved_task_ref)
+        _write_current_task_md_for_active_context(conn, resolved_task_ref)
 
     return _json_response(
         {
@@ -459,7 +475,7 @@ def _apply_finding_update(
         ),
     )
     row = conn.execute("SELECT * FROM review_findings WHERE id = ?", (target_db_id,)).fetchone()
-    _write_current_task_md_for_task(conn, resolved_task_ref)
+    _write_current_task_md_for_active_context(conn, resolved_task_ref)
     payload: dict[str, object] = {
         "ok": True,
         "finding": _row_to_dict(row),
@@ -998,7 +1014,7 @@ def reconcile_review_findings(task_ref: str | None = None, apply: bool = False) 
             and int(report["checks"]["duplicates"]["deduped_rows_removed"]) > 0
             and report["checks"]["done_with_open_findings"]["active_status"] is not None
         ):
-            _write_current_task_md_for_task(conn, resolved_task_ref)
+            _write_current_task_md_for_active_context(conn, resolved_task_ref)
     return _json_response(
         {"ok": True, "task_ref": resolved_task_ref, "healthy": report["healthy"], "checks": report["checks"]}
     )

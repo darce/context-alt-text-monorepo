@@ -71,7 +71,7 @@ def _persist_task_archive_snapshot(
 
 
 def export_handoff_state(
-    task_ref: str | None = None, output_path: str | None = None, include_markdown: bool = True
+    task_ref: str | None = None, output_path: str | None = None, include_markdown: bool = False
 ) -> str:
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)

@@ -256,10 +256,15 @@ def _collect_dashboard_rows(
     return dashboard_rows
 
 
-def _collect_all_open_findings(conn: sqlite3.Connection, active_task_ref: str | None = None) -> dict[str, list[dict]]:
-    """Collect all open review findings across all tasks, grouped by task_ref.
+def _collect_all_open_findings(
+    conn: sqlite3.Connection,
+    active_task_ref: str | None = None,
+    max_per_task: int = 5,
+) -> dict[str, list[dict]]:
+    """Collect open review findings across all tasks, grouped by task_ref.
 
     Excludes active_task_ref whose findings are already in findings_open.
+    Returns at most *max_per_task* findings per task_ref group.
     """
     if active_task_ref:
         rows = conn.execute(
@@ -275,16 +280,22 @@ def _collect_all_open_findings(conn: sqlite3.Connection, active_task_ref: str | 
     grouped: dict[str, list[dict]] = {}
     for row in rows:
         d = dict(row)
-        grouped.setdefault(d["task_ref"], []).append(d)
+        ref = d["task_ref"]
+        bucket = grouped.setdefault(ref, [])
+        if len(bucket) < max_per_task:
+            bucket.append(d)
     return grouped
 
 
 def _collect_all_deferred_findings(
-    conn: sqlite3.Connection, active_task_ref: str | None = None
+    conn: sqlite3.Connection,
+    active_task_ref: str | None = None,
+    max_per_task: int = 5,
 ) -> dict[str, list[dict]]:
-    """Collect all deferred/wontfix review findings across all tasks, grouped by task_ref.
+    """Collect deferred/wontfix review findings across all tasks, grouped by task_ref.
 
     Excludes active_task_ref whose findings are already in findings_deferred.
+    Returns at most *max_per_task* findings per task_ref group.
     """
     if active_task_ref:
         rows = conn.execute(
@@ -300,7 +311,10 @@ def _collect_all_deferred_findings(
     grouped: dict[str, list[dict]] = {}
     for row in rows:
         d = dict(row)
-        grouped.setdefault(d["task_ref"], []).append(d)
+        ref = d["task_ref"]
+        bucket = grouped.setdefault(ref, [])
+        if len(bucket) < max_per_task:
+            bucket.append(d)
     return grouped
 
 

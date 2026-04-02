@@ -921,18 +921,21 @@ def _build_tool_registry() -> list[ToolEntry]:
 def generate_current_task_md(
     task_ref: str | None = None,
     write_file: bool = True,
+    max_cross_task_findings: int = 5,
 ) -> str:
     """Generate CURRENT_TASK.md for the active task.
 
     Args:
         task_ref: The task to render. Defaults to the active task.
         write_file: Write the markdown to disk.
+        max_cross_task_findings: Maximum findings per task_ref in cross-task
+            open and deferred sections. Default 5.
 
     Open review findings from all other tasks are always included in the
     rendered output, grouped by task_ref under "## Open Review Findings".
-    A durable "## All Review Findings History" section also includes fixed,
-    deferred, and wontfix findings across every task.
+    Active-task findings are uncapped.
     """
+    max_cross_task_findings = max(0, max_cross_task_findings)
     with core._get_db_connection() as conn:
         resolved_task_ref = task_ref
         if resolved_task_ref is None:
@@ -942,7 +945,9 @@ def generate_current_task_md(
         if resolved_task_ref is not None:
             from .current_task_rendering import _build_current_task_render_state  # noqa: PLC0415
 
-            state = _build_current_task_render_state(conn, resolved_task_ref)
+            state = _build_current_task_render_state(
+                conn, resolved_task_ref, max_cross_task_findings=max_cross_task_findings,
+            )
         else:
             state = {
                 "task_ref": None,
@@ -957,9 +962,12 @@ def generate_current_task_md(
                 "worker_reports_recent": [],
                 "lane_messages_open": [],
                 "dashboard_tasks": core._collect_dashboard_rows(conn),
-                "related_findings_open": core._collect_all_open_findings(conn),
-                "related_findings_deferred": core._collect_all_deferred_findings(conn),
-                "findings_history_all": core._collect_all_findings_history(conn),
+                "related_findings_open": core._collect_all_open_findings(
+                    conn, max_per_task=max_cross_task_findings,
+                ),
+                "related_findings_deferred": core._collect_all_deferred_findings(
+                    conn, max_per_task=max_cross_task_findings,
+                ),
             }
 
     # If the requested task is not currently active, hydrate `active` from the

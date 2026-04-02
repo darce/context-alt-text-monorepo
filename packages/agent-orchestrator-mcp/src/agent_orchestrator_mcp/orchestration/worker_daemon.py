@@ -616,12 +616,13 @@ def _record_token_usage_to_handoff(
         observed_model = _normalize_text(entry.get("response_model")) or model
         effective_reasoning = _normalize_text(entry.get("effective_reasoning_effort"))
         model_label = normalize_model_label(observed_model)
-        actor = api.build_write_actor(
+        actor_payload = api.build_write_actor(
             model=observed_model,
             model_label=model_label,
             reasoning_level=effective_reasoning,
             lane_id=lane_id,
         )
+        actor = api.WriteActorInput.model_validate(actor_payload)
 
         rationale = (
             f"cycle={cycle} phase={phase} backend={backend} model={observed_model or 'default'} "
@@ -668,7 +669,7 @@ def _record_token_usage_to_handoff(
             attribution=context_utilization.get("attribution"),
             section_sizes=context_utilization.get("section_sizes"),
             raw_usage=token_usage,
-            actor=actor,
+            actor=actor_payload,
         )
     except Exception:
         # Best-effort; do not break the execution pipeline for telemetry logging

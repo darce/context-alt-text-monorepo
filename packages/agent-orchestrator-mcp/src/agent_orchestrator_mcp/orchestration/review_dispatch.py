@@ -9,7 +9,7 @@ import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -189,15 +189,23 @@ def _load_open_handoff_items(task_ref: str) -> dict[str, list[dict[str, Any]]]:
     return issue_sets
 
 
+def _normalize_action_status(value: object) -> Literal["pending", "done", "skipped"]:
+    if value == "done":
+        return "done"
+    if value == "skipped":
+        return "skipped"
+    return "pending"
+
+
 def _stamp_issue_to_lane(issue_kind: str, issue: dict[str, Any], lane_id: str, dispatch_session: str) -> None:
     from agent_handoff_mcp import (  # noqa: PLC0415
-        build_write_actor,
         report_blocker,
         update_next_actions,
         update_review_finding,
     )
+    from agent_handoff_mcp.api import WriteActorInput  # noqa: PLC0415
 
-    lane_actor = build_write_actor(lane_id=lane_id)
+    lane_actor = WriteActorInput(lane_id=lane_id)
     if issue_kind == "review_findings":
         result = _json_load(
             update_review_finding(
@@ -227,7 +235,7 @@ def _stamp_issue_to_lane(issue_kind: str, issue: dict[str, Any], lane_id: str, d
         update_next_actions(
             operation="update",
             action_id=int(issue["id"]),
-            status=str(issue.get("status") or "pending"),
+            status=_normalize_action_status(issue.get("status")),
             actor=lane_actor,
         )
     )

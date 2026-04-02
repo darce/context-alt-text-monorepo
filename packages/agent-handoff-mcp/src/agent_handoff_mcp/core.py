@@ -695,5 +695,7 @@ def close_slice(
             "state_updated": True,
             "state_error": None,
             "current_task_md_written": True,
+            "decision": decision_result.get("decision"),
+            "task_revision": state_result.get("active", {}).get("revision"),
         }
     )

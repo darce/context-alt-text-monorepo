@@ -63,6 +63,10 @@ This project has NO production users and NO existing data to preserve.
 - When logging **3 or more review findings** in a single review pass, use `batch_record_review_findings` instead of repeated `record_review_finding` calls — one atomic write, one `CURRENT_TASK.md` flush, per-item results returned.
 - Full handoff protocol: [docs/agentic/instructions.md](docs/agentic/instructions.md#mcp-handoff-contract-mandatory).
 
+### Git Commit Rules
+
+- **NEVER add `Co-Authored-By` trailers or any AI/model attribution to git commit messages.** This is a mandatory, permanent rule. Violations require history rewrite.
+
 ### Short Rules
 
 - [sr-001] helpful=2 harmful=0 :: Do not relax compliance/lint scripts to silence violations. Fix the offending code.

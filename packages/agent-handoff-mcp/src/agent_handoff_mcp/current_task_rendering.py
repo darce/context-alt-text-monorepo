@@ -393,15 +393,20 @@ def _build_current_task_state_from_snapshot(snapshot: TaskSnapshot) -> CurrentTa
     }
 
 
-def _build_current_task_render_state(conn: sqlite3.Connection, task_ref: str) -> CurrentTaskRenderState:
+def _build_current_task_render_state(
+    conn: sqlite3.Connection, task_ref: str, *, max_cross_task_findings: int = 5,
+) -> CurrentTaskRenderState:
     """Assemble the full CURRENT_TASK render state from the canonical task snapshot path."""
 
     snapshot = _collect_task_snapshot(conn, task_ref)
     state = _build_current_task_state_from_snapshot(snapshot)
     state["dashboard_tasks"] = _collect_dashboard_rows(conn)
-    state["related_findings_open"] = _collect_all_open_findings(conn, active_task_ref=task_ref)
-    state["related_findings_deferred"] = _collect_all_deferred_findings(conn, active_task_ref=task_ref)
-    state["findings_history_all"] = _collect_all_findings_history(conn)
+    state["related_findings_open"] = _collect_all_open_findings(
+        conn, active_task_ref=task_ref, max_per_task=max_cross_task_findings,
+    )
+    state["related_findings_deferred"] = _collect_all_deferred_findings(
+        conn, active_task_ref=task_ref, max_per_task=max_cross_task_findings,
+    )
     try:
         from .review_findings import (
             _collect_review_coverage,  # noqa: PLC0415 – late import to break circular

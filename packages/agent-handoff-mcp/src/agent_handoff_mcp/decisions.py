@@ -104,6 +104,7 @@ def record_decision(
                 input_tokens,
                 output_tokens,
                 total_tokens,
+                changed_files_json,
                 ctx.branch,
                 ctx.commit_sha,
                 changed_files_json,

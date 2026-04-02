@@ -1,11 +1,11 @@
-# E13-3. Parameterize Handoff MCP Read Surfaces
+# AHMCP-1. Parameterize Handoff MCP Read Surfaces
 
 > **Metadata**
 >
 > - **Date**: 2026-04-01
 > - **Author**: GPT-5.4
-> - **Owning Epic**: [docs/epics/v0.3.1/agent-handoff-mcp-packaging-epic.md](../../epics/v0.3.1/agent-handoff-mcp-packaging-epic.md)
-> - **Epic Short ID**: E13
+> - **Project**: `agent-handoff-mcp`
+> - **Task ID**: `AHMCP-1`
 > - **Review Coverage Target**: 2
 
 ---
@@ -22,7 +22,7 @@ Reduce MCP handoff schema and payload cost by expanding existing read tools with
 
 - Keep write and lifecycle tools explicit; do not collapse `record_decision`, `record_test_result`, `update_review_finding`, `close_slice`, or import/export actions behind generic mode flags.
 - Prefer additive, compatibility-managed parameterization for read tools before any tool removal or deprecation.
-- Preserve the current handoff contract semantics for task scoping, review-finding lookup, and CURRENT_TASK generation unless the task plan explicitly changes them.
+- Preserve the current handoff contract semantics for task scoping, review-finding lookup, and `CURRENT_TASK` generation unless the task plan explicitly changes them.
 - Keep core versus extended tool-profile behavior coherent; parameter changes must not silently move write-heavy or search-heavy surfaces between profiles.
 - CLI wrappers, MCP tool descriptions, tests, and contract docs must stay in sync with the live tool signatures.
 
@@ -57,8 +57,8 @@ The handoff server exposes one primary task-state read surface and one primary r
 
 - Rules: `docs/agentic/instructions.md`
 - Contracts: `docs/agentic/contracts/agent-handoff-mcp.md`
-- Handoff/MCP state: `task_ref=E13`; recent decision `ghc_design_note_handoff_tool_surface_parameterization`
-- External docs via `ctx7` only if: FastMCP tool-schema behavior or optional-argument encoding needs confirmation for list-valued/read-projection parameters
+- Handoff/MCP state: `task_ref=AHMCP-1`; recent decision `ghc_design_note_handoff_tool_surface_parameterization`
+- External docs via `ctx7` only if FastMCP tool-schema behavior or optional-argument encoding needs confirmation for list-valued/read-projection parameters
 
 ## Contract and Boundary Impact
 
@@ -170,7 +170,7 @@ Changes:
 
 - Add a true hot-state identity read path for `get_handoff_state` so callers can request only always-included task identity data without silently expanding back to the full task payload
 - Add field-level or metadata-level compact projection controls where they reduce parsing and prompt cost more than string truncation alone
-- Keep compact responses structured by default; add human-oriented summary strings only for explicitly human-facing read paths if structured projections still prove too heavy
+- Keep compact responses structured by default; add human-oriented summary strings only for explicitly human-facing read paths if structured compact projections still prove too heavy
 - Extend CLI and regression coverage so compact read modes are verified end-to-end, not just through direct Python calls
 
 Proof:

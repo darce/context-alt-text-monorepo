@@ -774,20 +774,23 @@ def switch_task(
             active = _row_to_dict(conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone())
             return _json_response({"ok": True, "already_active": True, "active": active})
 
-        # Resolve objective for the target task.
+        # Resolve objective and target_branch for the target task.
         resolved_objective = objective
-        if resolved_objective is None:
-            archive_row = conn.execute(
-                "SELECT snapshot_json FROM task_archives WHERE task_ref = ?", (task_ref,)
-            ).fetchone()
-            if archive_row is not None:
-                try:
-                    snapshot = json.loads(archive_row["snapshot_json"])
-                    active_block = snapshot.get("active")
-                    if isinstance(active_block, dict) and active_block.get("objective"):
+        resolved_target_branch = target_branch
+        archive_row = conn.execute(
+            "SELECT snapshot_json FROM task_archives WHERE task_ref = ?", (task_ref,)
+        ).fetchone()
+        if archive_row is not None:
+            try:
+                snapshot = json.loads(archive_row["snapshot_json"])
+                active_block = snapshot.get("active")
+                if isinstance(active_block, dict):
+                    if resolved_objective is None and active_block.get("objective"):
                         resolved_objective = active_block["objective"]
-                except (json.JSONDecodeError, TypeError):
-                    pass
+                    if resolved_target_branch is None and active_block.get("target_branch"):
+                        resolved_target_branch = active_block["target_branch"]
+            except (json.JSONDecodeError, TypeError):
+                pass
         if resolved_objective is None:
             return _json_response(
                 {
@@ -829,12 +832,12 @@ def switch_task(
         if current is None:
             conn.execute(
                 "INSERT INTO handoff_state (id, task_ref, objective, focus, status, target_branch, revision, updated_at, updated_by, updated_branch, updated_commit_sha) VALUES (1, ?, ?, ?, ?, ?, 0, datetime('now'), ?, ?, ?)",
-                (task_ref, resolved_objective, focus, status, target_branch, ctx.agent, ctx.branch, ctx.commit_sha),
+                (task_ref, resolved_objective, focus, status, resolved_target_branch, ctx.agent, ctx.branch, ctx.commit_sha),
             )
         else:
             conn.execute(
                 "UPDATE handoff_state SET task_ref = ?, objective = ?, focus = ?, status = ?, target_branch = ?, revision = revision + 1, updated_at = datetime('now'), updated_by = ?, updated_branch = ?, updated_commit_sha = ? WHERE id = 1",
-                (task_ref, resolved_objective, focus, status, target_branch, ctx.agent, ctx.branch, ctx.commit_sha),
+                (task_ref, resolved_objective, focus, status, resolved_target_branch, ctx.agent, ctx.branch, ctx.commit_sha),
             )
 
         active = _row_to_dict(conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone())

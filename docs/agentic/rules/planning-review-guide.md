@@ -7,6 +7,8 @@
 
 Use this guide when reviewing:
 
+- assessment reports
+- specs
 - task plans
 - epics
 - roadmaps
@@ -64,7 +66,7 @@ Before walking the checklist, load only the minimum planning packet:
 Required intake details:
 
 - planning document path
-- prerequisite spec/ADR/contracts
+- prerequisite assessment/spec/ADR/contracts
 - current implementation anchors
 - completed slices or dependency state
 - expected review mode after implementation: ordinary branch review, specialized module review, or release-style audit
@@ -133,7 +135,7 @@ Planning review is still a document-and-codebase review, but the packet-backed f
 
 - [ ] Epic title uses the `E<number>. <Title>` format with the correct global sequential index.
 - [ ] Epic declares an `Epic Short ID` near the top of the document.
-- [ ] Task plan title uses the `<EpicShortID>-<N>. <Title>` format matching the owning epic's short id.
+- [ ] Task plan title uses the `<EpicShortID>-<N>. <Title>` format matching the owning epic's short id, or a documented package/project-local task id when the plan is not epic-owned.
 - [ ] Decision ids referenced in the plan follow the `<author_tag>_<kind>_<work_ref>_<slug>` grammar.
 - [ ] Historical docs and decisions are treated as grandfathered; the plan does not mandate retroactive renames unless a concrete artifact blocks tooling or review.
 

@@ -175,12 +175,15 @@ Each epic declares an `Epic Short ID` (e.g., `E12`) near the top of the document
 
 ### Task Plan Titles
 
-Task plan titles use the owning epic's short id plus a local sequential index:
+Task plan titles use either the owning epic's short id plus a local sequential index, or a documented package/project-local task id when the work belongs to a standalone package/project rather than a monorepo epic:
 
 ```text
 E12-1. Naming Spec and Template Update
 E12-3. MCP Decision Enforcement and Context Router
+AHMCP-2. Bounded CURRENT_TASK Rendering and Mutation Output Cleanup
 ```
+
+Use the epic-owned form by default for monorepo task plans. Use the package/project-local form only when the work is explicitly owned by a standalone or package-local planning sequence.
 
 ### Decision IDs
 
@@ -206,20 +209,41 @@ Slices within a task plan use existing `Slice 1`, `Slice 2`, etc. headings. The 
 
 When creating new planning artifacts, load the corresponding template:
 
-| Artifact  | Template                                                    |
-| --------- | ----------------------------------------------------------- |
-| Epic      | [EPIC.template.md](../templates/EPIC.template.md)           |
-| Task plan | [TASK_PLAN.template.md](../templates/TASK_PLAN.template.md) |
-| Roadmap   | [ROADMAP.template.md](../templates/ROADMAP.template.md)     |
+| Artifact   | Template                                                          |
+| ---------- | ----------------------------------------------------------------- |
+| Assessment | [ASSESSMENT.template.md](../templates/ASSESSMENT.template.md)     |
+| Spec       | [SPEC.template.md](../templates/SPEC.template.md)                 |
+| ADR        | [ADR.template.md](../templates/ADR.template.md)                   |
+| Epic       | [EPIC.template.md](../templates/EPIC.template.md)                 |
+| Task plan  | [TASK_PLAN.template.md](../templates/TASK_PLAN.template.md)       |
+| Roadmap    | [ROADMAP.template.md](../templates/ROADMAP.template.md)           |
+
+### Planning Pipeline
+
+For complex, contract-breaking, or multi-task work, follow the full planning pipeline:
+
+```
+Assessment → Spec → [ADR] → Task Plan → Implementation
+```
+
+Full pipeline documentation with stage definitions, exit gates, and exemplars:
+[planning-pipeline.md](planning-pipeline.md).
+
+Quick reference — required gates between stages:
+
+- Assessment → Spec: findings must cite `file:line` in current code
+- Spec → Task Plan: at least one planning review pass with findings in MCP; all findings resolved
+- Spec → ADR: only when a spec item is explicitly design-uncertain
+- ADR → Task Plan: ADR reviewed before implementation tasks are created from it
 
 ### Context Routing for Reviews
 
 When the request is a review, load the matching guide based on the target artifact:
 
-| Request intent                          | Guide to load                                        |
-| --------------------------------------- | ---------------------------------------------------- |
-| Code review, branch diff, PR review     | [branch-review-guide.md](branch-review-guide.md)     |
-| Epic, task plan, roadmap, or ADR review | [planning-review-guide.md](planning-review-guide.md) |
+| Request intent | Guide to load |
+| --- | --- |
+| Code review, branch diff, PR review | [branch-review-guide.md](branch-review-guide.md) |
+| Assessment, spec, epic, task plan, roadmap, or ADR review | [planning-review-guide.md](planning-review-guide.md) |
 
 When the request is to create or update a planning artifact, load the matching template from the table above.
 
@@ -233,7 +257,7 @@ Reviewers can verify naming compliance for new artifacts with this short checkli
 
 1. Epic title starts with `E<number>.` and contains the correct global sequential index.
 2. Epic declares an `Epic Short ID` field near the top.
-3. Task plan title starts with `<EpicShortID>-<N>.` matching the owning epic.
+3. Task plan title starts with `<EpicShortID>-<N>.` matching the owning epic, or uses the declared package/project-local task id when the task is not epic-owned.
 4. Slice-complete decisions use the `<author_tag>_slice_complete_<work_ref>_<slug>` grammar.
 5. Historical docs and decision rows that predate the scheme are left as-is unless they cause a concrete blocker.
 

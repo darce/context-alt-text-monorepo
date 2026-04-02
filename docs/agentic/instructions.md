@@ -1,7 +1,6 @@
 # Development Instructions
 
 > **Cold-start document for coding agents.** Universal rules that cannot be deduced from code, configs, or linters. Domain-specific guidelines load via the routing table below.
-
 > **On first load / cold start**: also read [BOOTSTRAP.md](BOOTSTRAP.md) for testing commands, MCP server setup, and handoff state defaults.
 
 **Active epics**: [../epics/v0.3.1/agent-handoff-mcp-packaging-epic.md](../epics/v0.3.1/agent-handoff-mcp-packaging-epic.md) · [../epics/v0.3.1/self-hosting-epic.md](../epics/v0.3.1/self-hosting-epic.md)
@@ -32,12 +31,12 @@ This file is a dispatcher, not the architecture source of truth.
 
 Choose your domain to load targeted context. Always load the matching testing guide alongside the domain guidance.
 
-| Role                          | Context Map                                | Guidelines                                                               | Testing Guide                                              | Tech Stack (ctx7)                                                          | Key Entry Points                      |
-| ----------------------------- | ------------------------------------------ | ------------------------------------------------------------------------ | ---------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------- |
-| **Backend (Python)**          | [maps/backend.md](maps/backend.md)         | [rules/backend-python-guidelines.md](rules/backend-python-guidelines.md) | [rules/testing-python.md](rules/testing-python.md)         | [maps/tech-stack.md#backend-python](maps/tech-stack.md#backend-python)     | `apps/prototype-description-service/` |
-| **Frontend (React/TS)**       | [maps/frontend.md](maps/frontend.md)       | [rules/frontend-guidelines.md](rules/frontend-guidelines.md)             | [rules/testing-typescript.md](rules/testing-typescript.md) | [maps/tech-stack.md#frontend-reactts](maps/tech-stack.md#frontend-reactts) | `apps/prototype-wp-alt-context/js/`   |
-| **PHP Plugin**                | [maps/php-plugin.md](maps/php-plugin.md)   | [rules/backend-php-guidelines.md](rules/backend-php-guidelines.md)       | [rules/testing-php.md](rules/testing-php.md)               | [maps/tech-stack.md#php-plugin](maps/tech-stack.md#php-plugin)             | `apps/prototype-wp-alt-context/src/`  |
-| **Cross-Service Integration** | [maps/integration.md](maps/integration.md) | [contracts/](contracts/)                                                 | [rules/testing-principles.md](rules/testing-principles.md) | [maps/tech-stack.md#orchestration](maps/tech-stack.md#orchestration)       | `docs/agentic/contracts/`             |
+| Role | Context Map | Guidelines | Testing Guide | Tech Stack (ctx7) | Key Entry Points |
+| --- | --- | --- | --- | --- | --- |
+| **Backend (Python)** | [maps/backend.md](maps/backend.md) | [rules/backend-python-guidelines.md](rules/backend-python-guidelines.md) | [rules/testing-python.md](rules/testing-python.md) | [maps/tech-stack.md#backend-python](maps/tech-stack.md#backend-python) | `apps/prototype-description-service/` |
+| **Frontend (React/TS)** | [maps/frontend.md](maps/frontend.md) | [rules/frontend-guidelines.md](rules/frontend-guidelines.md) | [rules/testing-typescript.md](rules/testing-typescript.md) | [maps/tech-stack.md#frontend-reactts](maps/tech-stack.md#frontend-reactts) | `apps/prototype-wp-alt-context/js/` |
+| **PHP Plugin** | [maps/php-plugin.md](maps/php-plugin.md) | [rules/backend-php-guidelines.md](rules/backend-php-guidelines.md) | [rules/testing-php.md](rules/testing-php.md) | [maps/tech-stack.md#php-plugin](maps/tech-stack.md#php-plugin) | `apps/prototype-wp-alt-context/src/` |
+| **Cross-Service Integration** | [maps/integration.md](maps/integration.md) | [contracts/](contracts/) | [rules/testing-principles.md](rules/testing-principles.md) | [maps/tech-stack.md#orchestration](maps/tech-stack.md#orchestration) | `docs/agentic/contracts/` |
 | **Infrastructure / Deployment** | [../epics/v0.3.1/self-hosting-epic.md](../epics/v0.3.1/self-hosting-epic.md) | [rules/development-workflow.md](rules/development-workflow.md) | [rules/testing-principles.md](rules/testing-principles.md) | [maps/tech-stack.md#orchestration](maps/tech-stack.md#orchestration) | `../../infra/oci/` |
 
 ### Additional Routing
@@ -230,10 +229,17 @@ Reserve terminal for operations with no native-tool equivalent: test execution, 
 New epics, task plans, and handoff decisions follow the compact reference scheme defined in [development-workflow.md](rules/development-workflow.md#epic-task-and-decision-naming):
 
 - Epic titles: `E<number>. <Title>`
-- Task plan titles: `<EpicShortID>-<N>. <Title>` (e.g., `E12-1. Naming Spec`)
+- Task plan titles: `<EpicShortID>-<N>. <Title>` for epic-owned plans, or a documented package/project-local task id such as `AHMCP-2. ...` when the work is not owned by a monorepo epic
 - Slice-complete decisions: `<author_tag>_slice_complete_<work_ref>_<slug>` (e.g., `cdx_slice_complete_E12-1_gate_validation`)
 
 When creating or reviewing planning artifacts, load the correct template or review guide per the [context routing table](rules/development-workflow.md#context-routing-for-reviews).
+
+Planning artifact pipeline:
+
+- Start with an assessment when the problem surface still needs code-verified framing.
+- Write a spec before implementation task plans when the change affects a contract, output surface, or multi-slice design.
+- Insert an ADR only when a spec item is blocked on a design gate.
+- Create implementation task plans only after the upstream assessment/spec/ADR gates are reviewed.
 
 ### MCP Handoff Contract (MANDATORY)
 

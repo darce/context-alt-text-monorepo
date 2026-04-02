@@ -255,7 +255,7 @@ Exactness rules:
 
 ## Request Shape Notes
 
-- `switch_task(task_ref)` auto-archives the outgoing task (full snapshot) and activates the target, restoring the objective from its archive when not provided. Idempotent if the target is already active.
+- `switch_task(task_ref)` auto-archives the outgoing task (full snapshot) and activates the target, restoring the objective and `target_branch` from its archive when not provided. Pass `target_branch` explicitly to bind a task to its work branch at init time. Idempotent if the target is already active.
 - `upsert_plan_cursor` accepts optional `require_clean_slice`. When enabled, the update fails unless there are no open HIGH findings in the relevant lane/task scope and at least one recent `verified_tests` row exists since the cursor's prior update time.
 - `record_lane_message` / `update_lane_message` model orchestrator-to-worker and worker-to-orchestrator communication without relying on direct session chat.
 - `record_lane_message` accepts artifact refs in its payload; the CLI fallback exposes this as repeated `--artifact <source-id>` flags.
@@ -317,7 +317,7 @@ All execution backends MUST implement the `BackendAdapter` protocol defined in `
 
 ## Tool Signatures (Key)
 
-- `switch_task(task_ref: string, objective: string = None, focus: string = None, status: string = "in_progress", actor: object = None)`
+- `switch_task(task_ref: string, objective: string = None, focus: string = None, status: string = "in_progress", actor: object = None, target_branch: string = None)`
 - `orchestrator_start(task_ref: string, backend: string, poll_interval: float, single_pass: bool, model: string = None)`
 - `orchestrator_single_cycle(task_ref: string, backend: string, model: string = None, worker_start_mode: string = "mcp")`
 - `worker_start(task_ref: string, lane_id: string, backend: string, poll_interval: float, single_pass: bool, session_mode: string, model: string = None, reasoning_effort: string = None)`

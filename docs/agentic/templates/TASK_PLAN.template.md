@@ -4,8 +4,10 @@
 >
 > - **Date**: [YYYY-MM-DD HH:MM EST]
 > - **Author**: {{MODEL_IDENTITY}}
-> - **Owning Epic**: [path/to/epic.md]
-> - **Epic Short ID**: [must match the owning epic's declared `Epic Short ID`]
+> - **Owning Epic**: [path/to/epic.md] _(use for epic-owned task plans)_
+> - **Epic Short ID**: [must match the owning epic's declared `Epic Short ID`] _(use for epic-owned task plans)_
+> - **Project**: [package/project name] _(use for package-local or standalone task plans)_
+> - **Task ID**: [documented task id such as `AHMCP-2`] _(use for package-local or standalone task plans)_
 > - **Review Coverage Target**: 2 _(optional — min number of review passes before this plan is considered implementation-ready; omit for spike/research tasks)_
 >
 > **Review coverage note:** Do not embed mutable review counts, finding totals, or run histories in this file.
@@ -22,11 +24,16 @@
 >
 > Favor slices that each produce behavior plus proof. Avoid scaffold-only slices that add placeholders, skipped tests, or empty abstractions without executable value.
 > See `docs/agentic/instructions.md` and `docs/agentic/rules/planning-review-guide.md` for repo-wide planning rules.
-> Task-plan title prefixes are derived from the owning epic's declared `Epic Short ID`. Do not invent ad hoc prefixes or copy example ids from unrelated epics.
+> Use one identity model consistently:
+>
+> - **Epic-owned task plan**: title and references derive from the owning epic's declared `Epic Short ID`
+> - **Package-local / standalone task plan**: title and references use the declared `Task ID`
+>
+> Do not invent ad hoc prefixes or copy example ids from unrelated epics or packages.
 
 ---
 
-# [EPIC_SHORT_ID]-[LOCAL_TASK_INDEX]. [TASK_TITLE]
+## [WORK_REF]. [TASK_TITLE]
 
 ## Objective
 
@@ -166,7 +173,7 @@ make lane-manifest-init TASK=<task-ref> LANE_IDS='<lane-a lane-b>' TASK_PLAN=doc
 
 ---
 
-# Consolidated Checklist
+## Consolidated Checklist
 
 ## Context and Ownership
 
@@ -174,13 +181,13 @@ make lane-manifest-init TASK=<task-ref> LANE_IDS='<lane-a lane-b>' TASK_PLAN=doc
 - [ ] Confirmed whether external dependency context requires `ctx7`.
 - [ ] Recorded boundary ownership and compatibility expectations if any contract is touched.
 
-## Slice 1: [Title]
+### Checklist for Slice 1: [Title]
 
 - [ ] [Implementation step]
 - [ ] [Contract/docs/tests updated in same slice]
 - [ ] [Verification evidence captured]
 
-## Slice 2: [Title]
+### Checklist for Slice 2: [Title]
 
 - [ ] [Implementation step]
 - [ ] [Contract/docs/tests updated in same slice]

@@ -66,7 +66,7 @@ The OCI VM is fully provisioned (Docker, systemd unit, directory scaffold, firew
 - `.env.example` remains the local/dev template; `.env.prod.example` documents the production container/runtime shape.
 - `scripts/start_prototype_local.sh` and `scripts/reset_dev_db.sh` remain reference-only for local workflows and must not be copied into production behavior.
 - `db/docker-init/010-create-test-role.sql` remains local-debug/test-only and is excluded from production bootstrap.
-- Remaining follow-up work is post-deploy verification, especially the Slice 6 restart/reboot checks.
+- Post-deploy verification is complete; decisions `#1229` and `#1230` capture the successful restart/reboot checks, intact Postgres tables, healthy containers, and live endpoint reachability.
 
 ## Target Outcome
 
@@ -244,10 +244,10 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded epic Phase 0 scaffolding checklist
-- [ ] Verified VM is reachable: `ssh ubuntu@129.213.40.111`
-- [ ] Verified Docker is running on VM: `docker info`
-- [ ] Confirmed `/opt/acx-backend/` directory layout exists
+- [x] Loaded epic Phase 0 scaffolding checklist
+- [x] Verified VM is reachable: `ssh ubuntu@129.213.40.111`
+- [x] Verified Docker is running on VM: `docker info`
+- [x] Confirmed `/opt/acx-backend/` directory layout exists
 
 ### Checklist: Slice 1
 

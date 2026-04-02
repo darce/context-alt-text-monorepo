@@ -204,6 +204,18 @@
     &--placeholder {
       background-color: var(--acx-color-panel);
     }
+
+    &--skeleton {
+      background:
+        linear-gradient(
+          90deg,
+          var(--acx-color-panel) 0%,
+          var(--acx-color-surface-alt) 50%,
+          var(--acx-color-panel) 100%
+        );
+      background-size: 200% 100%;
+      animation: acx-workbench-skeleton 1.2s ease-in-out infinite;
+    }
   }
 
   &__media-title {
@@ -214,6 +226,89 @@
   &__media-alt {
     margin: var(--acx-space-4) 0 0;
     color: var(--acx-color-text-muted);
+  }
+
+  &__detail-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--acx-space-8);
+    margin-top: var(--acx-space-8);
+  }
+
+  &__detail-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.75rem;
+    padding: 0 var(--acx-space-8);
+    border-radius: 999px;
+    background-color: var(--acx-color-panel);
+    color: var(--acx-color-text-muted);
+    font-size: 0.8rem;
+
+    &--muted {
+      background-color: transparent;
+      border: 1px dashed var(--acx-color-border);
+    }
+
+    &--skeleton {
+      min-width: 6rem;
+      color: transparent;
+      background:
+        linear-gradient(
+          90deg,
+          var(--acx-color-panel) 0%,
+          var(--acx-color-surface-alt) 50%,
+          var(--acx-color-panel) 100%
+        );
+      background-size: 200% 100%;
+      animation: acx-workbench-skeleton 1.2s ease-in-out infinite;
+    }
+  }
+
+  &__skeleton-row {
+    pointer-events: none;
+  }
+
+  &__skeleton-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--acx-space-8);
+  }
+
+  &__skeleton {
+    display: inline-flex;
+    border-radius: var(--acx-space-8);
+    background:
+      linear-gradient(
+        90deg,
+        var(--acx-color-panel) 0%,
+        var(--acx-color-surface-alt) 50%,
+        var(--acx-color-panel) 100%
+      );
+    background-size: 200% 100%;
+    animation: acx-workbench-skeleton 1.2s ease-in-out infinite;
+
+    &--checkbox {
+      width: 1rem;
+      height: 1rem;
+      border-radius: 4px;
+    }
+
+    &--title {
+      width: min(18rem, 100%);
+      height: 1rem;
+    }
+
+    &--text {
+      width: min(12rem, 100%);
+      height: 0.875rem;
+    }
+
+    &--tag {
+      width: 5rem;
+      height: 1.5rem;
+      border-radius: 999px;
+    }
   }
 
   &__tags {
@@ -245,6 +340,16 @@
       border: 1px solid var(--acx-color-border);
       background-color: var(--acx-color-surface-alt);
     }
+  }
+}
+
+@keyframes acx-workbench-skeleton {
+  0% {
+    background-position: 200% 0;
+  }
+
+  100% {
+    background-position: -200% 0;
   }
 }
 

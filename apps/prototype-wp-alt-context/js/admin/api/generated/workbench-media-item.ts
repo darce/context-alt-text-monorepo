@@ -6,12 +6,6 @@ export interface WorkbenchMediaItem {
   status: 'missing' | 'complete';
   thumbnailUrl: string | null;
   altText: string | null;
-  mimeType: string;
   editUrl: string | null;
-  updatedAt: string;
-  dimensions: {
-    width: number | null;
-    height: number | null;
-  } | null;
   tags: string[];
 }

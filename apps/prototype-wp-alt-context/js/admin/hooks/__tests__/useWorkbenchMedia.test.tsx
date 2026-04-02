@@ -3,12 +3,18 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { fetchWorkbenchMedia, type WorkbenchMediaResponse } from '../../api/workbenchMediaApi';
+import {
+  fetchWorkbenchMedia,
+  fetchWorkbenchMediaDetail,
+  type WorkbenchMediaDetailResponse,
+  type WorkbenchMediaResponse,
+} from '../../api/workbenchMediaApi';
 import { useWorkbenchMedia } from '../useWorkbenchMedia';
 import * as recognitionApi from '../../api/recognition';
 
 vi.mock('../../api/workbenchMediaApi', () => ({
   fetchWorkbenchMedia: vi.fn(),
+  fetchWorkbenchMediaDetail: vi.fn(),
 }));
 
 vi.mock('../../api/recognition', () => ({
@@ -77,6 +83,10 @@ describe('useWorkbenchMedia', () => {
     const fetchMediaDeferred = createDeferred<WorkbenchMediaResponse>();
     fetchWorkbenchMediaMock.mockReturnValue(fetchMediaDeferred.promise);
 
+    const fetchWorkbenchMediaDetailMock = vi.mocked(fetchWorkbenchMediaDetail);
+    const fetchDetailDeferred = createDeferred<WorkbenchMediaDetailResponse>();
+    fetchWorkbenchMediaDetailMock.mockReturnValue(fetchDetailDeferred.promise);
+
     const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
     const identitiesDeferred = createDeferred<recognitionApi.MediaIdentitiesResponse>();
     fetchMediaIdentitiesMock.mockReturnValue(identitiesDeferred.promise);
@@ -93,6 +103,29 @@ describe('useWorkbenchMedia', () => {
     });
 
     await waitFor(() => expect(fetchMediaIdentitiesMock).toHaveBeenCalledWith([11, 12]));
+    await waitFor(() => expect(fetchWorkbenchMediaDetailMock).toHaveBeenCalledWith([11, 12]));
+
+    await act(async () => {
+      fetchDetailDeferred.resolve({
+        detailsByMedia: {
+          '11': {
+            id: 11,
+            mimeType: 'image/jpeg',
+            updatedAt: '2025-01-01T00:00:00Z',
+            dimensions: { width: 1200, height: 800 },
+            xmpPersistence: null,
+          },
+          '12': {
+            id: 12,
+            mimeType: 'image/png',
+            updatedAt: '2025-01-02T00:00:00Z',
+            dimensions: { width: 640, height: 480 },
+            xmpPersistence: null,
+          },
+        },
+      });
+      await fetchDetailDeferred.promise;
+    });
 
     await act(async () => {
       identitiesDeferred.resolve({
@@ -119,6 +152,8 @@ describe('useWorkbenchMedia', () => {
 
     const merged = result.current.itemsWithIdentities;
     expect(merged).toHaveLength(2);
+    expect(merged?.[0].mimeType).toBe('image/jpeg');
+    expect(merged?.[1].dimensions).toEqual({ width: 640, height: 480 });
     expect(merged?.[0].identities).toHaveLength(1);
     expect(merged?.[1].identities).toEqual([]);
 
@@ -128,11 +163,13 @@ describe('useWorkbenchMedia', () => {
   it('skips fetching when disabled', async () => {
     const { wrapper, queryClient } = createWrapper();
     const fetchWorkbenchMediaMock = vi.mocked(fetchWorkbenchMedia);
+    const fetchWorkbenchMediaDetailMock = vi.mocked(fetchWorkbenchMediaDetail);
 
     renderHook(() => useWorkbenchMedia({ page: 1, perPage: 10, enabled: false }), { wrapper });
 
     await waitFor(() => {
       expect(fetchWorkbenchMediaMock).not.toHaveBeenCalled();
+      expect(fetchWorkbenchMediaDetailMock).not.toHaveBeenCalled();
       expect(recognitionApi.fetchMediaIdentities).not.toHaveBeenCalled();
     });
 

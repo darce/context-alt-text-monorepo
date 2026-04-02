@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useMediaIdentities } from './useMediaIdentities';
 import {
+  fetchWorkbenchMediaDetail,
+  type WorkbenchMediaDetailResponse,
   fetchWorkbenchMedia,
   type WorkbenchMediaItem as WorkbenchMediaItemSchema,
   type WorkbenchMediaResponse as WorkbenchMediaApiResponse,
@@ -36,15 +38,23 @@ export const useWorkbenchMedia = ({ page, perPage, search, status = 'all', enabl
   });
 
   const mediaIds = mediaQuery.data?.items.map((item) => item.id) ?? [];
+  const detailQuery = useQuery<WorkbenchMediaDetailResponse, Error>({
+    queryKey: queryKeys.media.detailByIds(mediaIds),
+    queryFn: () => fetchWorkbenchMediaDetail(mediaIds),
+    placeholderData: (previousData) => previousData,
+    enabled: enabled && mediaIds.length > 0,
+  });
   const identitiesQuery = useMediaIdentities(mediaIds, enabled && mediaIds.length > 0);
 
   const itemsWithIdentities = useMemo(() => {
     const identitiesByMedia = identitiesQuery.data?.identities_by_media ?? {};
+    const detailsByMedia = detailQuery.data?.detailsByMedia ?? {};
     return mediaQuery.data?.items.map((item) => ({
       ...item,
+      ...detailsByMedia[String(item.id)],
       identities: identitiesByMedia[String(item.id)] ?? [],
     }));
-  }, [mediaQuery.data?.items, identitiesQuery.data]);
+  }, [detailQuery.data, mediaQuery.data?.items, identitiesQuery.data]);
 
   useEffect(() => {
     if (!mediaQuery.isSuccess) {
@@ -68,6 +78,7 @@ export const useWorkbenchMedia = ({ page, perPage, search, status = 'all', enabl
   return {
     ...mediaQuery,
     itemsWithIdentities,
+    detailQuery,
     identitiesQuery,
   };
 };

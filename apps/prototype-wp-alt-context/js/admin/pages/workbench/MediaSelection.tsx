@@ -37,9 +37,15 @@ export const MediaSelection = (): React.JSX.Element => {
   const areAllPageRowsChecked =
     items.length > 0 && items.every((item: WorkbenchMediaItem) => selection[item.id.toString()]);
   const identityQuery = mediaQuery.identitiesQuery;
+  const detailQuery = mediaQuery.detailQuery;
 
   const onToggleAll = (checked: boolean) => toggleAll(items, checked);
   const onToggleRow = (item: WorkbenchMediaItem, checked: boolean) => toggleRow(item, checked);
+  const detailStatusMessage = detailQuery.isLoading
+    ? __('Loading media details…', 'alt-context')
+    : detailQuery.isError
+      ? __('Unable to load media details.', 'alt-context')
+      : null;
   const identityStatusMessage = identityQuery.isLoading
     ? __('Loading identity data…', 'alt-context')
     : identityQuery.isError
@@ -88,6 +94,7 @@ export const MediaSelection = (): React.JSX.Element => {
             {renderRows({
               items,
               isLoading,
+              detailIsLoading: detailQuery.isPending || detailQuery.isFetching,
               onToggleRow,
               selection,
               identitiesDataSource: identityQuery.data?.data_source,
@@ -105,6 +112,16 @@ export const MediaSelection = (): React.JSX.Element => {
           labelId="acx-media-page-size-label-bottom"
         />
       </div>
+      {detailStatusMessage && (
+        <div className="acx-identity-status">
+          <span>{detailStatusMessage}</span>
+          {detailQuery.isError && (
+            <button type="button" className="acx-identity-status__retry" onClick={() => void detailQuery.refetch()}>
+              {__('Retry', 'alt-context')}
+            </button>
+          )}
+        </div>
+      )}
       {identityStatusMessage && (
         <div className="acx-identity-status">
           <span>{identityStatusMessage}</span>
@@ -276,6 +293,7 @@ const MediaSelectionPagination = ({
 const renderRows = ({
   items,
   isLoading,
+  detailIsLoading,
   onToggleRow,
   selection,
   identitiesDataSource,
@@ -283,17 +301,14 @@ const renderRows = ({
 }: {
   items: WorkbenchMediaItem[];
   isLoading: boolean;
+  detailIsLoading: boolean;
   onToggleRow: (item: WorkbenchMediaItem, checked: boolean) => void;
   selection: Record<string, boolean>;
   identitiesDataSource?: DataSource;
   onRetryIdentities?: () => void;
 }) => {
   if (isLoading && items.length === 0) {
-    return (
-      <tr>
-        <td colSpan={4}>{__('Loading media…', 'alt-context')}</td>
-      </tr>
-    );
+    return Array.from({ length: 5 }, (_, index) => <MediaSelectionSkeletonRow key={`skeleton-${index}`} />);
   }
 
   if (items.length === 0) {
@@ -308,6 +323,7 @@ const renderRows = ({
     const key = item.id.toString();
     const eagerLoad = index < 8;
     const thumbDimensions = item.thumbnailDimensions;
+    const detailReady = Boolean(item.mimeType || item.updatedAt || item.dimensions);
     return (
       <tr key={key}>
         <td>
@@ -345,6 +361,31 @@ const renderRows = ({
             </p>
             <p className="acx-media-selection__media-alt">{item.altText ?? __('No alt text yet', 'alt-context')}</p>
           </a>
+          <div className="acx-media-selection__detail-meta" aria-live="polite">
+            {detailReady ? (
+              <>
+                {item.mimeType ? <span className="acx-media-selection__detail-chip">{item.mimeType}</span> : null}
+                {item.dimensions ? (
+                  <span className="acx-media-selection__detail-chip">
+                    {sprintf(
+                      __('%d × %d px', 'alt-context'),
+                      item.dimensions.width ?? 0,
+                      item.dimensions.height ?? 0,
+                    )}
+                  </span>
+                ) : null}
+              </>
+            ) : detailIsLoading ? (
+              <>
+                <span className="acx-media-selection__detail-chip acx-media-selection__detail-chip--skeleton" />
+                <span className="acx-media-selection__detail-chip acx-media-selection__detail-chip--skeleton" />
+              </>
+            ) : (
+              <span className="acx-media-selection__detail-chip acx-media-selection__detail-chip--muted">
+                {__('Details unavailable', 'alt-context')}
+              </span>
+            )}
+          </div>
           <IdentityClusterList
             identities={item.identities ?? []}
             dataSource={identitiesDataSource}
@@ -368,3 +409,27 @@ const renderRows = ({
     );
   });
 };
+
+const MediaSelectionSkeletonRow = (): React.JSX.Element => (
+  <tr className="acx-media-selection__skeleton-row" aria-hidden="true">
+    <td>
+      <span className="acx-media-selection__skeleton acx-media-selection__skeleton--checkbox" />
+    </td>
+    <td className="acx-media-selection__thumb-cell">
+      <span className="acx-media-selection__thumb acx-media-selection__thumb--skeleton" />
+    </td>
+    <td>
+      <div className="acx-media-selection__skeleton-stack">
+        <span className="acx-media-selection__skeleton acx-media-selection__skeleton--title" />
+        <span className="acx-media-selection__skeleton acx-media-selection__skeleton--text" />
+        <div className="acx-media-selection__detail-meta">
+          <span className="acx-media-selection__detail-chip acx-media-selection__detail-chip--skeleton" />
+          <span className="acx-media-selection__detail-chip acx-media-selection__detail-chip--skeleton" />
+        </div>
+      </div>
+    </td>
+    <td>
+      <span className="acx-media-selection__skeleton acx-media-selection__skeleton--tag" />
+    </td>
+  </tr>
+);

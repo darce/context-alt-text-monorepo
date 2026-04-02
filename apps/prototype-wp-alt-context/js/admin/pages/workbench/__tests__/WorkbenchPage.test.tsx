@@ -220,6 +220,9 @@ describe('WorkbenchPage', () => {
     mockUseWorkbenchMedia.mockReturnValue({
       ...mediaQuery,
       itemsWithIdentities: [baseMediaItem],
+      detailQuery: createMockQuery({
+        data: { detailsByMedia: {} },
+      }),
       identitiesQuery: createMockQuery<MediaIdentitiesResponse>({
         data: { identities_by_media: {} },
         refetch: prefetchIdentities,
@@ -478,6 +481,9 @@ describe('WorkbenchPage', () => {
         refetch: vi.fn(),
       }),
       itemsWithIdentities: [baseMediaItem],
+      detailQuery: createMockQuery({
+        data: { detailsByMedia: {} },
+      }),
       identitiesQuery: createMockQuery<MediaIdentitiesResponse>({
         data: { identities_by_media: {} },
         refetch: prefetchIdentities,
@@ -519,6 +525,31 @@ describe('WorkbenchPage', () => {
     await waitFor(() => {
       expect(setPerPage).toHaveBeenCalledWith(100);
     });
+  });
+
+  it('renders skeleton rows while the shell query is pending', () => {
+    mockUseWorkbenchMedia.mockReturnValue({
+      ...createMockQuery<WorkbenchMediaResponse>({
+        data: undefined,
+        isPending: true,
+        isFetching: true,
+      }),
+      itemsWithIdentities: undefined,
+      detailQuery: createMockQuery({
+        data: undefined,
+        isPending: true,
+        isFetching: true,
+      }),
+      identitiesQuery: createMockQuery<MediaIdentitiesResponse>({
+        data: undefined,
+        isPending: true,
+        isFetching: true,
+      }),
+    });
+
+    const { container } = renderWorkbench();
+
+    expect(container.querySelectorAll('.acx-media-selection__skeleton-row')).toHaveLength(5);
   });
 
   it('renders the conflict inbox overlay from the panel query param', () => {

@@ -15,6 +15,8 @@ export const queryKeys = {
     all: ['media'] as const,
     identities: () => [...queryKeys.media.all, 'identities'] as const,
     identitiesByIds: (mediaIds: number[]) => [...queryKeys.media.identities(), mediaIds] as const,
+    details: () => [...queryKeys.media.all, 'details'] as const,
+    detailByIds: (mediaIds: number[]) => [...queryKeys.media.details(), mediaIds] as const,
     workbench: () => [...queryKeys.media.all, 'workbench'] as const,
     workbenchPage: (params: WorkbenchMediaParams) => [...queryKeys.media.workbench(), params] as const,
   },

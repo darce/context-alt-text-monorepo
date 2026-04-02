@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/class-media-detail-controller.php';
 require_once __DIR__ . '/../sovereign/sync/class-outbox-drain.php';
 require_once __DIR__ . '/../sovereign/sync/class-outbox-writer.php';
 require_once __DIR__ . '/../sovereign/sync/class-split-topology-command-drain.php';
@@ -77,6 +78,17 @@ class Api {
 				'callback'            => array( $this, 'get_workbench_media' ),
 				'permission_callback' => array( $this, 'can_view_media_queue' ),
 				'args'                => $this->get_workbench_media_args(),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/workbench/media/detail',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this->mediaDetailController, 'get_media_details' ),
+				'permission_callback' => array( $this, 'can_view_media_queue' ),
+				'args'                => $this->get_workbench_media_detail_args(),
 			)
 		);
 
@@ -228,10 +240,7 @@ class Api {
 				$thumb_height = is_array( $thumb_medium ) && isset( $thumb_medium[2] ) ? (int) $thumb_medium[2] : null;
 				$thumb_srcset = wp_get_attachment_image_srcset( $attachment_id, 'medium' );
 				$thumb_sizes  = wp_get_attachment_image_sizes( $attachment_id, 'medium' );
-				$meta     = wp_get_attachment_metadata( $attachment_id );
 				$terms    = wp_get_object_terms( $attachment_id, 'post_tag', array( 'fields' => 'names' ) );
-				$xmp_persist = get_post_meta( $attachment_id, 'acx_xmp_persist_last_result', true );
-				$xmp_persist_payload = is_array( $xmp_persist ) ? $xmp_persist : null;
 
 				return array(
 					'id'           => $attachment_id,
@@ -245,14 +254,7 @@ class Api {
 						'height' => $thumb_height,
 					),
 					'altText'      => '' === trim( (string) $alt_text ) ? null : $alt_text,
-					'mimeType'     => get_post_mime_type( $attachment_id ),
 					'editUrl'      => get_edit_post_link( $attachment_id, '' ),
-					'updatedAt'    => get_post_modified_time( 'c', true, $attachment_id ),
-					'dimensions'   => array(
-						'width'  => isset( $meta['width'] ) ? (int) $meta['width'] : null,
-						'height' => isset( $meta['height'] ) ? (int) $meta['height'] : null,
-					),
-					'xmpPersistence' => $xmp_persist_payload,
 					'tags'         => is_wp_error( $terms ) || ! is_array( $terms ) ? array() : array_values( $terms ),
 				);
 			},
@@ -301,6 +303,25 @@ class Api {
 				'type'        => 'string',
 				'default'     => 'all',
 				'enum'        => array( 'missing', 'all' ),
+			),
+		);
+	}
+
+	/**
+	 * Allowed query parameters for deferred workbench media detail loading.
+	 *
+	 * @return array<string,array<string,mixed>>
+	 */
+	private function get_workbench_media_detail_args(): array {
+		return array(
+			'ids' => array(
+				'description' => 'Attachment IDs to enrich after the initial shell paint.',
+				'type'        => 'array',
+				'required'    => false,
+				'items'       => array(
+					'type'    => 'integer',
+					'minimum' => 1,
+				),
 			),
 		);
 	}

@@ -1,0 +1,22 @@
+# Systemd unit for the ACX Caddy reverse proxy.
+# Routes all three environment subdomains.
+# Must start after environment stacks (they create the Docker networks Caddy joins).
+#
+# Install:
+#   sudo cp acx-caddy.service /etc/systemd/system/acx-caddy.service
+#   sudo systemctl daemon-reload && sudo systemctl enable acx-caddy.service
+
+[Unit]
+Description=ACX Caddy Reverse Proxy
+Requires=docker.service
+After=docker.service acx-prod.service acx-staging.service acx-dev.service
+
+[Service]
+Type=exec
+WorkingDirectory=/opt/acx-backend
+ExecStart=/usr/bin/docker compose -f docker-compose.caddy.yml up --remove-orphans
+ExecStop=/usr/bin/docker compose -f docker-compose.caddy.yml down
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

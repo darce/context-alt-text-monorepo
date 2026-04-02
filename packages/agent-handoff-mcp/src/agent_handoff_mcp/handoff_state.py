@@ -26,6 +26,7 @@ def set_handoff_state(
     status: str = "in_progress",
     expected_revision: int | None = None,
     actor: WriteActor | None = None,
+    target_branch: str | None = None,
 ) -> str:
     if status not in HANDOFF_ACTIVE_STATUSES:
         return _json_response(
@@ -33,7 +34,7 @@ def set_handoff_state(
         )
     with _get_db_connection() as conn:
         ctx = _resolve_write_actor(conn, actor)
-        current = conn.execute("SELECT revision, objective, focus FROM handoff_state WHERE id = 1").fetchone()
+        current = conn.execute("SELECT revision, objective, focus, target_branch FROM handoff_state WHERE id = 1").fetchone()
         if current is None:
             if objective is None:
                 return _json_response(
@@ -42,10 +43,10 @@ def set_handoff_state(
             conn.execute(
                 """
                 INSERT INTO handoff_state (
-                    id, task_ref, objective, focus, status, revision, updated_at, updated_by, updated_branch, updated_commit_sha
-                ) VALUES (1, ?, ?, ?, ?, 0, datetime('now'), ?, ?, ?)
+                    id, task_ref, objective, focus, status, target_branch, revision, updated_at, updated_by, updated_branch, updated_commit_sha
+                ) VALUES (1, ?, ?, ?, ?, ?, 0, datetime('now'), ?, ?, ?)
                 """,
-                (task_ref, objective, focus, status, ctx.agent, ctx.branch, ctx.commit_sha),
+                (task_ref, objective, focus, status, target_branch, ctx.agent, ctx.branch, ctx.commit_sha),
             )
             return _json_response(
                 {
@@ -66,10 +67,15 @@ def set_handoff_state(
         resolved_focus = (
             focus if focus is not None else (_normalize_optional_text(current["focus"]) if current["focus"] else None)
         )
+        resolved_target_branch = (
+            target_branch if target_branch is not None
+            else (_normalize_optional_text(current["target_branch"]) if current["target_branch"] else None)
+        )
         updated = conn.execute(
             """
             UPDATE handoff_state
-            SET task_ref = ?, objective = ?, focus = ?, status = ?, revision = revision + 1, updated_at = datetime('now'),
+            SET task_ref = ?, objective = ?, focus = ?, status = ?, target_branch = ?,
+                revision = revision + 1, updated_at = datetime('now'),
                 updated_by = ?, updated_branch = ?, updated_commit_sha = ?
             WHERE id = 1 AND revision = ?
             """,
@@ -78,6 +84,7 @@ def set_handoff_state(
                 resolved_objective,
                 resolved_focus,
                 status,
+                resolved_target_branch,
                 ctx.agent,
                 ctx.branch,
                 ctx.commit_sha,

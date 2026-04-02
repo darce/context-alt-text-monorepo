@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS handoff_state (
     focus             TEXT,
     status            TEXT NOT NULL DEFAULT 'in_progress'
                       CHECK (status IN ('in_progress', 'blocked', 'review', 'done')),
+    target_branch     TEXT,
     revision          INTEGER NOT NULL DEFAULT 0,
     updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
     updated_by        TEXT,
@@ -766,6 +767,8 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
             conn.execute("ALTER TABLE handoff_state ADD COLUMN focus TEXT")
         if not _has_column(conn, "decisions", "changed_files_json"):
             conn.execute("ALTER TABLE decisions ADD COLUMN changed_files_json TEXT")
+        if not _has_column(conn, "handoff_state", "target_branch"):
+            conn.execute("ALTER TABLE handoff_state ADD COLUMN target_branch TEXT")
         # TODO(E12-9-followon): turn_metrics DDL belongs in agent-orchestrator-mcp bootstrap.
         conn.execute(
             """

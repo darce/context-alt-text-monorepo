@@ -123,6 +123,29 @@ def test_update_task_status_updates_archived_snapshot_and_dashboard(workspace_pa
     assert "done" in payload["markdown"]
 
 
+def test_switch_task_preserves_target_branch_on_restore(workspace_pair: dict[str, Path]) -> None:
+    """target_branch survives switch-away / switch-back lifecycle."""
+    _configure_runtime(workspace_pair["source"])
+
+    init = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="task-a",
+            objective="Branch-bound task",
+            target_branch="feature/task-a-work",
+        )
+    )
+    assert init["ok"] is True
+    assert init["active"]["target_branch"] == "feature/task-a-work"
+
+    switched = _parse(handoff_core.switch_task(task_ref="task-b", objective="Task B"))
+    assert switched["ok"] is True
+
+    restored = _parse(handoff_core.switch_task(task_ref="task-a"))
+    assert restored["ok"] is True
+    assert restored["active"]["task_ref"] == "task-a"
+    assert restored["active"]["target_branch"] == "feature/task-a-work"
+
+
 def test_import_handoff_state_prefers_decoded_lane_message_payload(workspace_pair: dict[str, Path]) -> None:
     payload_path = workspace_pair["source"] / "decoded-payload.json"
     payload_path.write_text(

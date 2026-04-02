@@ -930,31 +930,37 @@ def generate_current_task_md(
 
     Open review findings from all other tasks are always included in the
     rendered output, grouped by task_ref under "## Open Review Findings".
+    A durable "## All Review Findings History" section also includes fixed,
+    deferred, and wontfix findings across every task.
     """
-    raw_state = core._invoke_tool(
-        get_handoff_state,
-        task_ref=task_ref,
-        top_n_blockers=50,
-        top_n_actions=50,
-        top_n_decisions=50,
-        top_n_tests=50,
-        top_n_findings=100,
-        verbose=True,
-    )
-    state = json.loads(raw_state)
     with core._get_db_connection() as conn:
-        state["dashboard_tasks"] = core._collect_dashboard_rows(conn)
-        state["related_findings_open"] = core._collect_all_open_findings(conn, active_task_ref=state.get("task_ref"))
-        state["related_findings_deferred"] = core._collect_all_deferred_findings(
-            conn, active_task_ref=state.get("task_ref")
-        )
-        if state.get("task_ref"):
-            try:
-                from .review_findings import _collect_review_coverage  # noqa: PLC0415
+        resolved_task_ref = task_ref
+        if resolved_task_ref is None:
+            active_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
+            resolved_task_ref = str(active_row["task_ref"]) if active_row is not None and active_row["task_ref"] else None
 
-                state["review_coverage"] = _collect_review_coverage(conn, task_ref=state["task_ref"])
-            except Exception:
-                pass
+        if resolved_task_ref is not None:
+            from .current_task_rendering import _build_current_task_render_state  # noqa: PLC0415
+
+            state = _build_current_task_render_state(conn, resolved_task_ref)
+        else:
+            state = {
+                "task_ref": None,
+                "active": None,
+                "blockers_open": [],
+                "actions_pending": [],
+                "decisions_recent": [],
+                "tests_recent": [],
+                "findings_open": [],
+                "findings_deferred": [],
+                "worktree_lanes": [],
+                "worker_reports_recent": [],
+                "lane_messages_open": [],
+                "dashboard_tasks": core._collect_dashboard_rows(conn),
+                "related_findings_open": core._collect_all_open_findings(conn),
+                "related_findings_deferred": core._collect_all_deferred_findings(conn),
+                "findings_history_all": core._collect_all_findings_history(conn),
+            }
 
     # If the requested task is not currently active, hydrate `active` from the
     # archived snapshot so the renderer can display the objective, focus, and

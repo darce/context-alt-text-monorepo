@@ -406,6 +406,33 @@ def test_render_current_task_md_with_findings_but_no_active(isolated_handoff: di
     assert "E12-render-findings" in md
 
 
+def test_cross_task_finding_write_keeps_current_task_on_active_task(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="E15-2",
+            objective="Active task should remain visible",
+            status="in_progress",
+        )
+    )
+
+    _parse(
+        mcp_server.record_review_finding(
+            session="cross-active",
+            task_ref="E14-2",
+            finding_id="CROSS-ACTIVE-001",
+            severity="medium",
+            file_path="docs/tasks/14.0/E14-2-multi-environment-deployment-task-plan.md",
+            description="Cross-task finding should render under related findings.",
+        )
+    )
+
+    md = isolated_handoff["current_task_path"].read_text()
+    assert "## Objective\nActive task should remain visible" in md
+    assert "- task_ref: `E15-2`" in md
+    assert "### E14-2" in md
+    assert "CROSS-ACTIVE-001" in md
+
+
 def test_render_dashboard_section_handles_zero_one_and_multiple_tasks() -> None:
     empty_lines = _render_dashboard_section([], active_task_ref=None)
     assert "## All Tasks" in empty_lines

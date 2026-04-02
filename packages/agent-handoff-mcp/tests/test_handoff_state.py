@@ -1977,8 +1977,9 @@ def test_generate_current_task_md_related_excludes_active_task(isolated_handoff:
         )
     )
     md = payload["markdown"]
-    # D3-01 should appear only once (in the main section), not duplicated
-    assert md.count("D3-01") == 1
+    open_section = md.split("## Open Review Findings", 1)[1].split("## All Review Findings History", 1)[0]
+    # D3-01 should appear only once in the open section, not duplicated as a related finding.
+    assert open_section.count("D3-01") == 1
     assert "## Related Open Review Findings" not in md
 
 
@@ -2028,8 +2029,61 @@ def test_generate_current_task_md_related_skips_resolved(isolated_handoff: dict)
         )
     )
     md = payload["markdown"]
-    assert "D1-FIXED" not in md
+    open_section = md.split("## Open Review Findings", 1)[1].split("## All Review Findings History", 1)[0]
+    assert "D1-FIXED" not in open_section
+    history_section = md.split("## All Review Findings History", 1)[1]
+    assert "D1-FIXED" in history_section
     assert "## Related Open Review Findings" not in md
+
+
+def test_generate_current_task_md_includes_all_findings_history_for_resolved_cross_task_findings(
+    isolated_handoff: dict,
+) -> None:
+    init1 = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="daemon-1",
+            objective="Related",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.record_review_finding(
+            task_ref="daemon-1",
+            session="s1",
+            finding_id="D1-HISTORY",
+            file_path="f.py",
+            description="Fixed finding retained in history",
+            severity="medium",
+        )
+    )
+    _parse(
+        mcp_server.update_review_finding(
+            finding_id="D1-HISTORY",
+            status="fixed",
+            resolution_notes="Done",
+        )
+    )
+    rev = init1["active"]["revision"]
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="daemon-3",
+            objective="Active",
+            status="in_progress",
+            expected_revision=rev,
+        )
+    )
+
+    payload = _parse(
+        mcp_server.generate_current_task_md(
+            task_ref="daemon-3",
+            write_file=False,
+        )
+    )
+    md = payload["markdown"]
+    assert "## All Review Findings History" in md
+    assert "### daemon-1" in md
+    assert "D1-HISTORY" in md
+    assert "[FIXED] [MEDIUM] D1-HISTORY" in md
 
 
 def test_generate_current_task_md_no_other_open_findings(isolated_handoff: dict) -> None:

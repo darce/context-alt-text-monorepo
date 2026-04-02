@@ -35,6 +35,7 @@ from .current_task_rendering import (  # noqa: F401
     TaskSnapshot,
     _build_current_task_state_from_snapshot,
     _collect_all_deferred_findings,
+    _collect_all_findings_history,
     _collect_all_open_findings,
     _collect_dashboard_rows,
     _collect_task_snapshot,

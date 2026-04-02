@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS decisions (
     input_tokens  INTEGER,
     output_tokens INTEGER,
     total_tokens  INTEGER,
+    changed_files_json TEXT NOT NULL DEFAULT '[]',
     branch        TEXT,
     commit_sha    TEXT,
     changed_files_json TEXT,

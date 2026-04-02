@@ -217,12 +217,13 @@ def _dispatch_plan_item(
     owned_paths_override: list[str] | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    from agent_handoff_mcp import build_write_actor, record_decision, update_next_actions  # noqa: PLC0415
+    from agent_handoff_mcp import record_decision, update_next_actions  # noqa: PLC0415
+    from agent_handoff_mcp.api import WriteActorInput  # noqa: PLC0415
 
     from agent_orchestrator_mcp.lanes import record_lane_message, upsert_plan_cursor  # noqa: PLC0415
 
     marker = f"[plan:{plan_item_id}]"
-    lane_actor = build_write_actor(lane_id=lane_id)
+    lane_actor = WriteActorInput(lane_id=lane_id)
     result = {
         "plan_item_id": plan_item_id,
         "lane_id": lane_id,

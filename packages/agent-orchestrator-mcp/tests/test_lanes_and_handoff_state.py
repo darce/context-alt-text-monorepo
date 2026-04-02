@@ -408,6 +408,50 @@ def test_get_latest_slice_review_packet_uses_decision_rationale_when_worker_repo
 
 
 
+def test_get_latest_slice_review_packet_prefers_decision_changed_files_over_rationale(
+    isolated_handoff: dict,
+) -> None:
+    """changed_files_json on the decision row takes precedence over rationale parsing."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="slice-review-decision-files",
+            objective="Test decision-row changed_files precedence",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.record_decision(
+            session="slice-decision-files",
+            decision="cdx_slice_complete_decision_files_test",
+            rationale=(
+                "## Changes\n"
+                "- docs/wrong-file-from-rationale.md: should not appear.\n"
+                "\n## Verification\n- ok\n"
+                "\n## Schema / Contract Changes\n- none\n"
+                "\n## Open Threads\n- none\n"
+            ),
+            changed_files=[
+                "packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py",
+                "docs/agentic/contracts/agent-handoff-mcp.md",
+            ],
+        )
+    )
+
+    payload = _parse(
+        mcp_server.get_latest_slice_review_packet(task_ref="slice-review-decision-files")
+    )
+
+    assert payload["ok"] is True
+    assert payload["packet"]["scope_source"] == "slice_packet"
+    assert payload["packet"]["changed_files"] == [
+        "packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py",
+        "docs/agentic/contracts/agent-handoff-mcp.md",
+    ]
+    assert payload["packet"]["contract_files"] == [
+        "docs/agentic/contracts/agent-handoff-mcp.md",
+    ]
+
+
 def test_worker_worktree_scopes_open_lane_messages_to_its_registered_lane(tmp_path: Path) -> None:
     orchestrator_root = tmp_path / "orchestrator"
     frontend_root = tmp_path / "orchestrator-p5-frontend"

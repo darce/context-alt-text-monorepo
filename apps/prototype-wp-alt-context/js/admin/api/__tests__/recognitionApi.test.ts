@@ -74,7 +74,7 @@ describe('recognitionApi', () => {
   });
 
   it('passes media IDs to fetchMediaIdentities', async () => {
-    fetchApiMock.mockResolvedValue({ identities_by_media: {} });
+    fetchApiMock.mockResolvedValue({ identities_by_media: {}, data_source: 'backend_proxy' });
     await fetchMediaIdentities([1, 2]);
     expect(fetchApiMock).toHaveBeenCalledTimes(1);
     const [endpoint] = fetchApiMock.mock.calls[0] ?? [];
@@ -90,7 +90,7 @@ describe('recognitionApi', () => {
   });
 
   it('sends nonce when fetching media identities', async () => {
-    fetchApiMock.mockResolvedValue({ identities_by_media: {} });
+    fetchApiMock.mockResolvedValue({ identities_by_media: {}, data_source: 'backend_proxy' });
     await fetchMediaIdentities([99]);
     expect(fetchApiMock).toHaveBeenCalledWith(
       expect.any(String),
@@ -109,6 +109,12 @@ describe('recognitionApi', () => {
     expect(result.data_source).toBe(DATA_SOURCE.BACKEND_PROXY);
   });
 
+  it('rejects media identity payloads without canonical metadata', async () => {
+    fetchApiMock.mockResolvedValue({ identities_by_media: {} });
+
+    await expect(fetchMediaIdentities([99])).rejects.toThrow('Media identities response must include a valid data_source.');
+  });
+
   it('normalizes top-unlabeled response metadata', async () => {
     fetchApiMock.mockResolvedValue({
       clusters: [],
@@ -121,6 +127,17 @@ describe('recognitionApi', () => {
 
     expect(result.data_source).toBe(DATA_SOURCE.UNAVAILABLE);
     expect(result.projection_status).toBe(PROJECTION_STATUS.BOOTSTRAPPING);
+  });
+
+  it('rejects top-unlabeled payloads without canonical metadata', async () => {
+    fetchApiMock.mockResolvedValue({
+      clusters: [],
+      singleton_count: 0,
+    });
+
+    await expect(fetchTopUnlabeledClusters('tenant-1', 20)).rejects.toThrow(
+      'Top-unlabeled clusters response must include a valid data_source.',
+    );
   });
 
   it('normalizes pending suggestion data_source metadata', async () => {
@@ -137,6 +154,19 @@ describe('recognitionApi', () => {
     expect(result.data_source).toBe(DATA_SOURCE.BACKEND_PROXY);
   });
 
+  it('rejects pending suggestion envelopes without canonical metadata', async () => {
+    fetchApiMock.mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 10,
+      offset: 0,
+    });
+
+    await expect(fetchPendingSuggestions(10, 0)).rejects.toThrow(
+      'Pending suggestions response must include a valid data_source.',
+    );
+  });
+
   it('normalizes pending name suggestion data_source metadata', async () => {
     fetchApiMock.mockResolvedValue({
       suggestions: [],
@@ -149,6 +179,19 @@ describe('recognitionApi', () => {
     const result = await fetchPendingNameSuggestions(0, 25, 0);
 
     expect(result.data_source).toBe(DATA_SOURCE.UNAVAILABLE);
+  });
+
+  it('rejects pending name suggestion envelopes without canonical metadata', async () => {
+    fetchApiMock.mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 25,
+      offset: 0,
+    });
+
+    await expect(fetchPendingNameSuggestions(0, 25, 0)).rejects.toThrow(
+      'Pending name suggestions response must include a valid data_source.',
+    );
   });
 
   it('calls updateClusterLabel with PATCH', async () => {
@@ -564,6 +607,8 @@ describe('recognitionApi', () => {
         },
       ],
       singleton_count: 4,
+      data_source: 'local_projection',
+      projection_status: 'available',
     });
 
     const result = await fetchTopUnlabeledClusters('tenant-1', 3);

@@ -1,4 +1,4 @@
-import { normalizeDataSource } from './types/dataSource';
+import { parseDataSource } from './types/dataSource';
 import type {
   BoundingBox,
   PendingMergeSuggestion,
@@ -53,20 +53,38 @@ export interface PendingMergeSuggestionApiResponse {
   cluster_b_representative_bbox?: BoundingBox | null;
 }
 
+const requireEnvelopeNumber = (value: unknown, fieldName: string, responseName: string): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`${responseName} must include a numeric ${fieldName}.`);
+  }
+
+  return value;
+};
+
+const requireSuggestionEnvelopeMetadata = (
+  response: PendingSuggestionsResponse | PendingMergeSuggestionsResponse,
+  responseName: string,
+) => {
+  const dataSource = parseDataSource(response.data_source);
+  if (!dataSource) {
+    throw new Error(`${responseName} must include a valid data_source.`);
+  }
+
+  return {
+    total: requireEnvelopeNumber(response.total, 'total', responseName),
+    limit: requireEnvelopeNumber(response.limit, 'limit', responseName),
+    offset: requireEnvelopeNumber(response.offset, 'offset', responseName),
+    data_source: dataSource,
+  };
+};
+
 export const mapPendingSuggestions = (
   response: PendingSuggestionsResponse,
-  limit: number,
-  offset: number,
 ): PendingSuggestionsResponse => {
+  const metadata = requireSuggestionEnvelopeMetadata(response, 'Pending suggestions response');
   const rawSuggestions = response.suggestions as PendingSuggestionApiResponse[] | undefined;
   if (!Array.isArray(rawSuggestions)) {
-    return {
-      suggestions: [],
-      total: 0,
-      limit: response.limit ?? limit,
-      offset: response.offset ?? offset,
-      data_source: normalizeDataSource(response.data_source),
-    };
+    throw new Error('Pending suggestions response must include a suggestions array.');
   }
 
   const suggestions = rawSuggestions.map((suggestion) => {
@@ -101,27 +119,17 @@ export const mapPendingSuggestions = (
 
   return {
     suggestions,
-    total: response.total ?? suggestions.length,
-    limit: response.limit ?? limit,
-    offset: response.offset ?? offset,
-    data_source: normalizeDataSource(response.data_source),
+    ...metadata,
   };
 };
 
 export const mapPendingMergeSuggestions = (
   response: PendingMergeSuggestionsResponse,
-  limit: number,
-  offset: number,
 ): PendingMergeSuggestionsResponse => {
+  const metadata = requireSuggestionEnvelopeMetadata(response, 'Pending merge suggestions response');
   const rawSuggestions = response.suggestions as PendingMergeSuggestionApiResponse[] | undefined;
   if (!Array.isArray(rawSuggestions)) {
-    return {
-      suggestions: [],
-      total: 0,
-      limit: response.limit ?? limit,
-      offset: response.offset ?? offset,
-      data_source: normalizeDataSource(response.data_source),
-    };
+    throw new Error('Pending merge suggestions response must include a suggestions array.');
   }
 
   const suggestions: PendingMergeSuggestion[] = rawSuggestions.map((suggestion) => ({
@@ -146,9 +154,6 @@ export const mapPendingMergeSuggestions = (
 
   return {
     suggestions,
-    total: response.total ?? suggestions.length,
-    limit: response.limit ?? limit,
-    offset: response.offset ?? offset,
-    data_source: normalizeDataSource(response.data_source),
+    ...metadata,
   };
 };

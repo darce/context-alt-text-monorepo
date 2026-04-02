@@ -14,9 +14,11 @@ use WP_REST_Request;
 use WP_REST_Response;
 
 use function absint;
+use function array_keys;
+use function count;
 use function is_array;
+use function range;
 use function rest_sanitize_boolean;
-use function trim;
 
 class MediaIdentitiesController extends AbstractRecognitionProxyController {
 	private const DATA_SOURCE_LOCAL_PROJECTION = 'local_projection';
@@ -115,38 +117,94 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 		}
 
 		if ( $response instanceof WP_REST_Response && 200 === $response->get_status() ) {
-			$data = $response->get_data();
-			if ( is_array( $data ) ) {
-				if ( isset( $data['identities_by_media'] ) && is_array( $data['identities_by_media'] ) ) {
-					$data['data_source'] = self::DATA_SOURCE_BACKEND_PROXY;
-					return new WP_REST_Response( $data, 200 );
-				}
-
-				$grouped = array();
-				foreach ( $data as $identity ) {
-					if ( isset( $identity['media_id'] ) ) {
-						$media_key = (string) $identity['media_id'];
-						if ( ! isset( $grouped[ $media_key ] ) ) {
-							$grouped[ $media_key ] = array();
-						}
-						$grouped[ $media_key ][] = $identity;
-					}
-				}
-				return new WP_REST_Response(
-					array(
-						'identities_by_media' => $grouped,
-						'data_source' => self::DATA_SOURCE_BACKEND_PROXY,
-					),
-					200
-				);
-			}
+			return $this->normalize_backend_media_identities_response( $response );
 		}
 
 		return $response;
 	}
 
+	private function normalize_backend_media_identities_response( WP_REST_Response $response ): WP_REST_Response|WP_Error {
+		$data = $response->get_data();
+
+		if ( ! is_array( $data ) ) {
+			return new WP_Error(
+				'invalid_media_identities_payload',
+				'Media identities payload must be a JSON array or identities_by_media envelope.',
+				array( 'status' => 502 )
+			);
+		}
+
+		if ( isset( $data['identities_by_media'] ) ) {
+			if ( ! is_array( $data['identities_by_media'] ) ) {
+				return new WP_Error(
+					'invalid_media_identities_payload',
+					'Media identities envelope must include an identities_by_media object.',
+					array( 'status' => 502 )
+				);
+			}
+
+			return new WP_REST_Response(
+				array(
+					'identities_by_media' => $data['identities_by_media'],
+					'data_source'        => self::DATA_SOURCE_BACKEND_PROXY,
+				),
+				200
+			);
+		}
+
+		if ( ! $this->is_list_payload( $data ) ) {
+			return new WP_Error(
+				'invalid_media_identities_payload',
+				'Media identities payload must be a JSON array or identities_by_media envelope.',
+				array( 'status' => 502 )
+			);
+		}
+
+		$grouped = array();
+		foreach ( $data as $identity ) {
+			if ( ! is_array( $identity ) ) {
+				return new WP_Error(
+					'invalid_media_identities_payload',
+					'Media identities list items must be objects with a media_id.',
+					array( 'status' => 502 )
+				);
+			}
+
+			$media_id = absint( $identity['media_id'] ?? 0 );
+			if ( $media_id <= 0 ) {
+				return new WP_Error(
+					'invalid_media_identities_payload',
+					'Media identities list items must include a valid media_id.',
+					array( 'status' => 502 )
+				);
+			}
+
+			$media_key = (string) $media_id;
+			if ( ! isset( $grouped[ $media_key ] ) ) {
+				$grouped[ $media_key ] = array();
+			}
+			$grouped[ $media_key ][] = $identity;
+		}
+
+		return new WP_REST_Response(
+			array(
+				'identities_by_media' => $grouped,
+				'data_source'        => self::DATA_SOURCE_BACKEND_PROXY,
+			),
+			200
+		);
+	}
+
 	private function should_use_local_projection( string $tenant_id ): bool {
 		return $this->should_use_local_projection_gate( $this->sync_state_repository, $tenant_id )
 			&& $this->members_repository->has_projection_rows_for_tenant( $tenant_id );
+	}
+
+	private function is_list_payload( array $data ): bool {
+		if ( array() === $data ) {
+			return true;
+		}
+
+		return array_keys( $data ) === range( 0, count( $data ) - 1 );
 	}
 }

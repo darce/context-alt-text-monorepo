@@ -1,6 +1,6 @@
 import { fetchRequiredApi, stripTrailingSlash } from '../../utils/http';
 import { getEndpoint, getConfig } from '../config';
-import { DATA_SOURCE, PROJECTION_STATUS, normalizeDataSource, normalizeProjectionStatus } from './types/dataSource';
+import { parseDataSource, parseProjectionStatus } from './types/dataSource';
 import type {
   ClusterListParams,
   ClusterSummary,
@@ -23,6 +23,14 @@ interface TopUnlabeledClustersResponsePayload {
   data_source?: string | null;
   projection_status?: string | null;
 }
+
+const requireTopUnlabeledNumber = (value: unknown, fieldName: string): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`Top-unlabeled clusters response must include a numeric ${fieldName}.`);
+  }
+
+  return value;
+};
 
 const normalizeOptionalUrl = (value: unknown): string | null => {
   if (typeof value !== 'string') {
@@ -102,10 +110,25 @@ export const fetchTopUnlabeledClusters = async (
     restNonce: getConfig().nonce,
     signal,
   });
+
+  if (!Array.isArray(payload.clusters)) {
+    throw new Error('Top-unlabeled clusters response must include a clusters array.');
+  }
+
+  const dataSource = parseDataSource(payload.data_source);
+  if (!dataSource) {
+    throw new Error('Top-unlabeled clusters response must include a valid data_source.');
+  }
+
+  const projectionStatus = parseProjectionStatus(payload.projection_status);
+  if (!projectionStatus) {
+    throw new Error('Top-unlabeled clusters response must include a valid projection_status.');
+  }
+
   return {
-    clusters: Array.isArray(payload.clusters) ? payload.clusters.map(normalizeTopUnlabeledCluster) : [],
-    singleton_count: Number.isFinite(payload.singleton_count) ? Number(payload.singleton_count) : 0,
-    data_source: normalizeDataSource(payload.data_source, DATA_SOURCE.LOCAL_PROJECTION),
-    projection_status: normalizeProjectionStatus(payload.projection_status, PROJECTION_STATUS.AVAILABLE),
+    clusters: payload.clusters.map(normalizeTopUnlabeledCluster),
+    singleton_count: requireTopUnlabeledNumber(payload.singleton_count, 'singleton_count'),
+    data_source: dataSource,
+    projection_status: projectionStatus,
   };
 };

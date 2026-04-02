@@ -423,6 +423,8 @@ When called with `view="dashboard"`, `get_handoff_state` returns:
 - `close_slice` requires a `session` string (same as `record_decision`). Pass `task_ref` explicitly in multi-task flows. `focus` updates the active-task working context after the decision is recorded. `changed_files` passes through to `record_decision` for structured review scope. The success response includes `decision` (full row) and `task_revision` (int) so callers can confirm state without a follow-up read.
 - `export_handoff_state` defaults to `include_markdown=False`. Pass `include_markdown=True` explicitly to embed CURRENT_TASK.md markdown in the export.
 - `generate_current_task_md` accepts `max_cross_task_findings` (default 5) to cap the number of cross-task findings rendered per task_ref. Active-task findings are uncapped. The "All Review Findings History" section has been removed from the default render; historical findings are available via `list_review_findings(status="all")`.
+- `set_handoff_state` accepts an optional `target_branch` parameter. When provided, it sets the task's intended work branch. When omitted on subsequent calls, the existing value is preserved. The field appears in `get_handoff_state` responses and in the CURRENT_TASK.md Active Status section.
+- `switch_task` (registered on `agent-orchestrator-mcp`) also accepts `target_branch`, set at task init time.
 
 ## CLI Fallback
 

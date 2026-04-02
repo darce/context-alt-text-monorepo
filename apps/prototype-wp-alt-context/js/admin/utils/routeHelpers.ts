@@ -1,4 +1,4 @@
-export type RoutePath = '/dashboard' | '/workbench' | '/roster' | '/retention';
+export type RoutePath = '/dashboard' | '/workbench' | '/roster' | '/retention' | '/settings';
 export const DEFAULT_ROUTE: RoutePath = '/dashboard';
 
 export const extractRouteFromHash = (): RoutePath | null => {
@@ -19,6 +19,10 @@ export const extractRouteFromHash = (): RoutePath | null => {
 
   if (path === '/retention') {
     return '/retention';
+  }
+
+  if (path === '/settings') {
+    return '/settings';
   }
 
   return null;

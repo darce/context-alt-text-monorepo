@@ -52,6 +52,7 @@ class Admin {
 		'alt-context-dashboard',
 		'alt-context-workbench',
 		'alt-context-roster',
+		'alt-context-settings',
 	);
 
 	private string $devServer;
@@ -239,10 +240,12 @@ class Admin {
 			return;
 		}
 
+		$settings_url = admin_url( 'admin.php?page=alt-context-settings' );
 		echo '<div class="notice notice-warning"><p>';
-		echo esc_html__(
-			'Alt Context is using the local recognition URL fallback (http://localhost:8000). Configure acx_recognition_url or ACX_RECOGNITION_URL for this environment.',
-			'alt-context'
+		printf(
+			/* translators: %s: URL to the settings page */
+			esc_html__( 'Alt Context is using the local recognition URL fallback (http://localhost:8000). %s to configure the Recognition API URL.', 'alt-context' ),
+			'<a href="' . esc_url( $settings_url ) . '">' . esc_html__( 'Go to Settings', 'alt-context' ) . '</a>'
 		);
 		echo '</p></div>';
 	}
@@ -298,6 +301,8 @@ class Admin {
 					'rosterPersons'                  => rest_url( 'acx/v1/roster/persons' ),
 					'rosterClusters'                 => rest_url( 'acx/v1/roster/clusters' ),
 					'dashboardStats'                 => rest_url( 'acx/v1/dashboard/stats' ),
+					'settings'                       => rest_url( 'acx/v1/settings' ),
+					'settingsTest'                   => rest_url( 'acx/v1/settings/test' ),
 				),
 			)
 		);

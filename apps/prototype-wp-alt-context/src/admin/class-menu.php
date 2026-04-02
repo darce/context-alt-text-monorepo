@@ -8,15 +8,18 @@ class Menu {
 	private DashboardPage $dashboardPage;
 	private WorkbenchPage $workbenchPage;
 	private RosterPage $rosterPage;
+	private SettingsPage $settingsPage;
 
 	public function __construct(
 		DashboardPage $dashboardPage,
 		WorkbenchPage $workbenchPage,
-		RosterPage $rosterPage
+		RosterPage $rosterPage,
+		SettingsPage $settingsPage
 	) {
 		$this->dashboardPage  = $dashboardPage;
 		$this->workbenchPage  = $workbenchPage;
 		$this->rosterPage = $rosterPage;
+		$this->settingsPage = $settingsPage;
 	}
 
 	public function init(): void {
@@ -60,6 +63,15 @@ class Menu {
 			'alt-context-roster',
 			array( $this, 'render_roster_page' )
 		);
+
+		add_submenu_page(
+			'alt-context-dashboard',
+			__( 'Alt Context Settings', 'alt-context' ),
+			__( 'Settings', 'alt-context' ),
+			'manage_options',
+			'alt-context-settings',
+			array( $this, 'render_settings_page' )
+		);
 	}
 
 	public function render_dashboard_page(): void {
@@ -72,5 +84,9 @@ class Menu {
 
 	public function render_roster_page(): void {
 		$this->rosterPage->render();
+	}
+
+	public function render_settings_page(): void {
+		$this->settingsPage->render();
 	}
 }

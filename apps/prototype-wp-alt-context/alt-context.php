@@ -30,6 +30,7 @@ use AltContext\Cli\XmpBackfillCommand;
 use AltContext\Media\XmpPersistenceFactory;
 use AltContext\Support\LifecycleManager;
 use AltContext\Admin\DashboardPage;
+use AltContext\Admin\SettingsPage;
 use AltContext\Admin\WorkbenchPage;
 use AltContext\Admin\RosterPage;
 use Dotenv\Dotenv;
@@ -115,7 +116,8 @@ function alt_context(): AltContext
 		new Menu(
 			new DashboardPage(),
 			new WorkbenchPage(),
-			new RosterPage()
+			new RosterPage(),
+			new SettingsPage()
 		),
 		new LifecycleManager(),
 		$attachmentXmpMetricsPersistor

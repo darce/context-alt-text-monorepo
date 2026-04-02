@@ -41,6 +41,10 @@ vi.mock('../pages/RosterPage', () => ({
   RosterPage: () => <div>Roster</div>,
 }));
 
+vi.mock('../pages/SettingsPage', () => ({
+  SettingsPage: () => <div>Settings</div>,
+}));
+
 vi.mock('../hooks/useRetentionStatus', () => ({
   useRetentionStatus: vi.fn(),
   useUpdateRetentionPolicy: vi.fn(),
@@ -127,6 +131,21 @@ describe('App route boot', () => {
     window.history.replaceState({}, '', '/wp-admin/admin.php?page=alt-context-retention');
 
     expect(determineInitialRoute()).toBe('/retention');
+  });
+
+  it('maps the settings admin page query arg to the settings route', () => {
+    window.history.replaceState({}, '', '/wp-admin/admin.php?page=alt-context-settings');
+
+    expect(determineInitialRoute()).toBe('/settings');
+  });
+
+  it('boots the settings page from the WordPress admin query arg', () => {
+    window.history.replaceState({}, '', '/wp-admin/admin.php?page=alt-context-settings');
+
+    render(<App />);
+
+    expect(window.location.hash).toBe('#/settings');
+    expect(screen.getByText('Settings')).toBeInTheDocument();
   });
 
   it('boots the retention page from the WordPress admin query arg and saves policy changes', async () => {

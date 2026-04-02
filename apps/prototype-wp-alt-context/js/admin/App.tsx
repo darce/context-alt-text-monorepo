@@ -5,6 +5,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { RetentionPage } from './pages/RetentionPage';
 import { WorkbenchPage } from './pages/WorkbenchPage';
 import { RosterPage } from './pages/RosterPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { ToastProvider } from './context/ToastContext';
 import { extractRouteFromHash, ensureHashInitialized, type RoutePath, DEFAULT_ROUTE } from './utils/routeHelpers';
@@ -60,6 +61,14 @@ export const App = (): React.JSX.Element => {
                 </ErrorBoundary>
               }
             />
+            <Route
+              path="/settings"
+              element={
+                <ErrorBoundary>
+                  <SettingsPage />
+                </ErrorBoundary>
+              }
+            />
             <Route path="*" element={<Navigate to={DEFAULT_ROUTE} replace />} />
           </Routes>
         </HashRouter>
@@ -87,6 +96,10 @@ export const determineInitialRoute = (): RoutePath => {
 
   if (page === 'alt-context-retention') {
     return '/retention';
+  }
+
+  if (page === 'alt-context-settings') {
+    return '/settings';
   }
 
   return DEFAULT_ROUTE;

@@ -47,12 +47,16 @@ use function wp_generate_uuid4;
 
 class Api {
 	private RecognitionController $recognitionController;
+	private MediaDetailController $mediaDetailController;
+	private SettingsController $settingsController;
 	private ?XmpEmbedController $xmpEmbedController;
 	private OutboxDrain $outboxDrain;
 	private SplitTopologyCommandDrain $splitTopologyCommandDrain;
 
 	public function __construct( ?XmpEmbedController $xmp_embed_controller = null, ?OutboxDrain $outbox_drain = null, ?SplitTopologyCommandDrain $split_topology_command_drain = null ) {
 		$this->recognitionController = new RecognitionController();
+		$this->mediaDetailController = new MediaDetailController();
+		$this->settingsController = new SettingsController();
 		$this->xmpEmbedController = $xmp_embed_controller;
 		$this->outboxDrain = $outbox_drain ?? new OutboxDrain();
 		$this->splitTopologyCommandDrain = $split_topology_command_drain ?? new SplitTopologyCommandDrain();
@@ -156,6 +160,7 @@ class Api {
 		);
 
 		$this->recognitionController->register_routes();
+		$this->settingsController->register_routes();
 		if ( $this->xmpEmbedController instanceof XmpEmbedController ) {
 			$this->xmpEmbedController->register_routes();
 		}

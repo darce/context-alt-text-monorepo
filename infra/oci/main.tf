@@ -64,6 +64,18 @@ resource "oci_core_security_list" "acx_security_list" {
     }
   }
 
+  # HTTP (Let's Encrypt ACME challenge + redirect to HTTPS)
+  ingress_security_rules {
+    description = "HTTP"
+    protocol    = "6"
+    source      = "0.0.0.0/0"
+    stateless   = false
+    tcp_options {
+      min = 80
+      max = 80
+    }
+  }
+
   # HTTPS
   ingress_security_rules {
     description = "HTTPS"

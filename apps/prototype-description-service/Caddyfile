@@ -1,10 +1,15 @@
-# Caddy reverse proxy for prototype-description-service.
-# For IP-only access (no domain), use internal TLS.
-# Replace :443 with your domain when DNS is configured.
+# Caddy reverse proxy for multi-environment deployment.
+# Each subdomain routes to the env-specific API alias on its Docker network.
+# Caddy auto-provisions Let's Encrypt TLS for all three subdomains.
 
-:443 {
-	tls internal {
-		on_demand
-	}
-	reverse_proxy api:8000
+api.altcontext.com {
+	reverse_proxy prod-api:8000
+}
+
+staging.api.altcontext.com {
+	reverse_proxy staging-api:8000
+}
+
+dev.api.altcontext.com {
+	reverse_proxy dev-api:8000
 }

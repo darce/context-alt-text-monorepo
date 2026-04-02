@@ -1,0 +1,33 @@
+# Standalone Caddy reverse proxy for multi-environment routing.
+# Joins all three environment networks and routes subdomains to env-specific API aliases.
+# Start after environment stacks are up (networks must exist).
+#
+# Usage: cd /opt/acx-backend && docker compose -f docker-compose.caddy.yml up -d
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - acx-prod-net
+      - acx-staging-net
+      - acx-dev-net
+
+networks:
+  acx-prod-net:
+    external: true
+  acx-staging-net:
+    external: true
+  acx-dev-net:
+    external: true
+
+volumes:
+  caddy_data:
+  caddy_config:

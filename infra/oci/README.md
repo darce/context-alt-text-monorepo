@@ -143,40 +143,57 @@ terraform apply -auto-approve -target=oci_core_security_list.acx_security_list
 
 See `docs/tasks/tech-debt/dynamic-ip-ssh-access.md` for permanent solutions (Tailscale recommended).
 
+### Environments
+
+Three isolated environments share the VM:
+
+| Environment | Subdomain | Image Tag | Systemd Unit |
+|-------------|-----------|-----------|--------------|
+| prod | `api.altcontext.com` | `:latest` | `acx-prod.service` |
+| staging | `staging.api.altcontext.com` | `:staging` | `acx-staging.service` |
+| dev | `dev.api.altcontext.com` | `:dev` | `acx-dev.service` |
+
+Caddy runs separately as `acx-caddy.service`, routing all three subdomains.
+
 ### Service Management
 
 ```bash
-# Start/stop/restart the application stack
-sudo systemctl start acx-backend
-sudo systemctl stop acx-backend
-sudo systemctl restart acx-backend
+# Per-environment control
+sudo systemctl start acx-prod       # (or acx-staging, acx-dev)
+sudo systemctl stop acx-staging
+sudo systemctl restart acx-dev
 
-# Check service status
-sudo systemctl status acx-backend
+# Caddy (reverse proxy for all envs)
+sudo systemctl restart acx-caddy
 
-# View container logs (from /opt/acx-backend)
+# Check all services
+sudo systemctl status acx-prod acx-staging acx-dev acx-caddy
+
+# View logs for a specific environment
+cd /opt/acx-backend/prod
+docker compose -f docker-compose.env.yml logs -f
+docker compose -f docker-compose.env.yml logs api --tail 50
+
+# Caddy logs
 cd /opt/acx-backend
-docker compose -f docker-compose.prod.yml logs -f          # all services
-docker compose -f docker-compose.prod.yml logs api --tail 50  # api only
-docker compose -f docker-compose.prod.yml logs worker --tail 50
-docker compose -f docker-compose.prod.yml logs postgres --tail 50
-
-# Container status
-docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.caddy.yml logs -f
 ```
 
 ### Health Checks
 
 ```bash
-# From outside (use -k for self-signed internal TLS)
-curl -k https://129.213.40.111/health
-curl -k https://129.213.40.111/recognition/health
+# All three environments
+curl https://api.altcontext.com/health
+curl https://staging.api.altcontext.com/health
+curl https://dev.api.altcontext.com/health
 
-# From inside the VM (via Docker network)
-docker compose -f docker-compose.prod.yml exec caddy wget -qO- http://api:8000/health
+# Recognition endpoint
+curl https://api.altcontext.com/recognition/health
 
-# Postgres readiness
-docker compose -f docker-compose.prod.yml exec postgres pg_isready -U acx_app
+# Postgres readiness per env
+docker exec acx-prod-postgres-1 pg_isready -U acx_app
+docker exec acx-staging-postgres-1 pg_isready -U acx_staging
+docker exec acx-dev-postgres-1 pg_isready -U acx_dev
 ```
 
 ### Deploying Updates
@@ -184,34 +201,51 @@ docker compose -f docker-compose.prod.yml exec postgres pg_isready -U acx_app
 Build and push a new image from `apps/prototype-description-service/`:
 
 ```bash
-# On local Mac (Apple Silicon)
+# Build on local Mac (Apple Silicon)
 source ~/.zshrc
-docker build --platform linux/arm64 -t iad.ocir.io/idu2kqqe2jxy/acx-backend:latest .
-docker push iad.ocir.io/idu2kqqe2jxy/acx-backend:latest
+cd apps/prototype-description-service
+docker build --platform linux/arm64 -t iad.ocir.io/idu2kqqe2jxy/acx-backend:dev .
+docker push iad.ocir.io/idu2kqqe2jxy/acx-backend:dev
 
-# On VM
-ssh ubuntu@129.213.40.111
-cd /opt/acx-backend
-docker compose -f docker-compose.prod.yml pull
-sudo systemctl restart acx-backend
+# Deploy to dev
+ssh ubuntu@129.213.40.111 'cd /opt/acx-backend/dev && docker compose -f docker-compose.env.yml pull && sudo systemctl restart acx-dev'
+```
+
+### Promoting Images
+
+```bash
+# Promote dev → staging (after dev testing)
+docker tag iad.ocir.io/idu2kqqe2jxy/acx-backend:dev iad.ocir.io/idu2kqqe2jxy/acx-backend:staging
+docker push iad.ocir.io/idu2kqqe2jxy/acx-backend:staging
+ssh ubuntu@129.213.40.111 'cd /opt/acx-backend/staging && docker compose -f docker-compose.env.yml pull && sudo systemctl restart acx-staging'
+
+# Promote staging → prod (after e2e verification on staging)
+docker tag iad.ocir.io/idu2kqqe2jxy/acx-backend:staging iad.ocir.io/idu2kqqe2jxy/acx-backend:latest
+docker push iad.ocir.io/idu2kqqe2jxy/acx-backend:latest
+ssh ubuntu@129.213.40.111 'cd /opt/acx-backend/prod && docker compose -f docker-compose.env.yml pull && sudo systemctl restart acx-prod'
 ```
 
 ### VM Layout
 
 ```
 /opt/acx-backend/
-├── .env -> secrets/.env          # symlink for docker compose
-├── docker-compose.prod.yml       # production stack definition
-├── Caddyfile                     # reverse proxy config
-├── secrets/
-│   └── .env                      # production secrets (chmod 600)
+├── Caddyfile                        # multi-subdomain reverse proxy config
+├── docker-compose.caddy.yml         # standalone Caddy (joins all env networks)
+├── prod/
+│   ├── .env -> secrets/.env
+│   ├── docker-compose.env.yml       # parameterized env template
+│   ├── secrets/.env                 # prod credentials (chmod 600)
+│   └── db/docker-prod-init/
+├── staging/                         # same structure as prod
+├── dev/                             # same structure as prod
 ├── data/
-│   ├── pgdata/                   # Postgres data (persists across restarts)
-│   └── models/                   # InsightFace model cache (persists across restarts)
-├── db/
-│   └── docker-prod-init/
-│       └── 001-extensions.sql    # Postgres extension bootstrap
-└── logs/                         # application logs
+│   ├── prod-pgdata/                 # prod Postgres (persists)
+│   ├── prod-models/                 # prod InsightFace cache (persists)
+│   ├── staging-pgdata/
+│   ├── staging-models/
+│   ├── dev-pgdata/
+│   └── dev-models/
+└── logs/
 ```
 
 ### Container Registry (OCIR)
@@ -219,7 +253,7 @@ sudo systemctl restart acx-backend
 - Registry: `iad.ocir.io`
 - Namespace: `idu2kqqe2jxy`
 - Repository: `acx-backend`
-- Full image: `iad.ocir.io/idu2kqqe2jxy/acx-backend:latest`
+- Image tags: `:latest` (prod), `:staging`, `:dev`
 - Auth: OCI auth token, username `idu2kqqe2jxy/<email>`
 
 ## Security Note

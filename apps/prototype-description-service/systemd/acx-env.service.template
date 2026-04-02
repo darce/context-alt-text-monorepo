@@ -1,0 +1,22 @@
+# Systemd unit template for an ACX environment stack.
+# Replace {{ENV}} with: prod, staging, or dev
+#
+# Install:
+#   sudo cp acx-env.service.template /etc/systemd/system/acx-{{ENV}}.service
+#   sed -i 's/{{ENV}}/prod/g' /etc/systemd/system/acx-prod.service
+#   sudo systemctl daemon-reload && sudo systemctl enable acx-prod.service
+
+[Unit]
+Description=ACX Backend - {{ENV}}
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=exec
+WorkingDirectory=/opt/acx-backend/{{ENV}}
+ExecStart=/usr/bin/docker compose -f docker-compose.env.yml up --remove-orphans
+ExecStop=/usr/bin/docker compose -f docker-compose.env.yml stop
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

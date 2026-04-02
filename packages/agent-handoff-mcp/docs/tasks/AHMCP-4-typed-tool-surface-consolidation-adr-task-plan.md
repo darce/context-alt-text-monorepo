@@ -6,6 +6,7 @@
 > - **Author**: GPT-5.4
 > - **Project**: `agent-handoff-mcp`
 > - **Task ID**: `AHMCP-4`
+> - **Target Branch**: `feature/ahmcp-4-tool-consolidation-adr`
 > - **Review Coverage Target**: 2
 
 **Status Note**: ADR-005 now exists as a substantive draft. This task plan is the planning and review wrapper that gets that ADR through review and leaves behind an implementation-ready gate for OC-005; it is not an implementation plan for live tool-surface consolidation.

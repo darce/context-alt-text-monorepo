@@ -365,6 +365,60 @@ def export_handoff_state(
 
 ---
 
+### OC-008: Task initiation with branch binding
+
+**Trace:** Planning pipeline review (PLAN-05)
+**Priority:** P1
+
+When a task is initialized via `switch_task`, the only branch information recorded is the write provenance (`updated_branch`) — which branch the write happened *from*. There is no way to declare "this task's work should happen on branch X." This means agents cannot discover the intended branch for a task from handoff state alone, and the planning pipeline's branch-per-task convention has no machine-readable anchor.
+
+**Change:** Add a `target_branch` column to `handoff_state` and a corresponding parameter to both `switch_task` (the task init/switch boundary) and `set_handoff_state` (for in-place updates). Include `target_branch` in the `active` section of `get_handoff_state` responses and in the CURRENT_TASK.md render header.
+
+**Before** (`shared_schema.py::handoff_state table`):
+```sql
+CREATE TABLE IF NOT EXISTS handoff_state (
+    id                INTEGER PRIMARY KEY CHECK (id = 1),
+    task_ref          TEXT NOT NULL,
+    objective         TEXT NOT NULL,
+    focus             TEXT,
+    status            TEXT NOT NULL DEFAULT 'in_progress',
+    revision          INTEGER NOT NULL DEFAULT 0,
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_by        TEXT,
+    updated_branch    TEXT,
+    updated_commit_sha TEXT
+);
+```
+
+**After:**
+```sql
+CREATE TABLE IF NOT EXISTS handoff_state (
+    id                INTEGER PRIMARY KEY CHECK (id = 1),
+    task_ref          TEXT NOT NULL,
+    objective         TEXT NOT NULL,
+    focus             TEXT,
+    status            TEXT NOT NULL DEFAULT 'in_progress',
+    target_branch     TEXT,
+    revision          INTEGER NOT NULL DEFAULT 0,
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_by        TEXT,
+    updated_branch    TEXT,
+    updated_commit_sha TEXT
+);
+```
+
+`switch_task` gains an optional `target_branch: str | None = None` parameter, set at task init. `set_handoff_state` also gains the parameter for in-place updates. When omitted on subsequent `set_handoff_state` calls, the existing value is preserved (not cleared).
+
+**Done when:**
+- `switch_task` accepts `target_branch` and persists it at task init
+- `set_handoff_state` accepts `target_branch` for in-place updates, preserving existing value when omitted
+- `get_handoff_state` includes `target_branch` in the `active` section
+- CURRENT_TASK.md render header includes `Target branch: <branch>` when set
+- `HANDOFF_SCHEMA_VERSION` bumped and migration added
+- Existing tests updated to cover the new field
+
+---
+
 ## Entity Payload Schemas
 
 Reference schemas for each entity family in the polymorphic `record` and `update` tools. These are the required and optional fields for the `payload` dict.
@@ -485,6 +539,7 @@ Reference schemas for each entity family in the polymorphic `record` and `update
   "objective": "string | null",
   "focus": "string | null",
   "status": "'in_progress' | 'blocked' | 'review' | 'done'",
+  "target_branch": "string | null",
   "expected_revision": "int | null"
 }
 ```
@@ -529,9 +584,10 @@ OC-001  Remove findings history from CURRENT_TASK.md     ~10 lines, independent
 OC-002  Cap cross-task findings                           ~20 lines, independent
 OC-003  Enrich close_slice response                       ~5 lines, independent
 OC-007  Default exports to include_markdown=false         1 line, independent
+OC-008  Task initiation with branch binding               schema + set/get/render, independent
 ```
 
-OC-001 through OC-003 can be parallelized. No dependencies between them.
+OC-001 through OC-003 and OC-008 can be parallelized. No dependencies between them.
 
 ### Tier 2 — Ready to implement after Tier 1 (mechanical, touches many files)
 

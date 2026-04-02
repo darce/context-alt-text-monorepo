@@ -8,6 +8,7 @@
 > - **Epic Short ID**: [must match the owning epic's declared `Epic Short ID`] _(use for epic-owned task plans)_
 > - **Project**: [package/project name] _(use for package-local or standalone task plans)_
 > - **Task ID**: [documented task id such as `AHMCP-2`] _(use for package-local or standalone task plans)_
+> - **Target Branch**: `feature/[task-id-slug]` _(advisory until OC-008; branch created at task start, passed to `switch_task(target_branch=...)` once implemented)_
 > - **Review Coverage Target**: 2 _(optional — min number of review passes before this plan is considered implementation-ready; omit for spike/research tasks)_
 >
 > **Review coverage note:** Do not embed mutable review counts, finding totals, or run histories in this file.

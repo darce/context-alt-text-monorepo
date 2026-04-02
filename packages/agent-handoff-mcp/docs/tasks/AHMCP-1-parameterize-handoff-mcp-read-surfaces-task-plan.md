@@ -6,6 +6,7 @@
 > - **Author**: GPT-5.4
 > - **Project**: `agent-handoff-mcp`
 > - **Task ID**: `AHMCP-1`
+> - **Target Branch**: `feature/ahmcp-1-parameterize-reads`
 > - **Review Coverage Target**: 2
 
 ---

@@ -741,6 +741,11 @@ def _render_current_task_md(state: CurrentTaskRenderState) -> str:
                 f"- status: `{active.get('status', '')}`",
                 f"- revision: `{active.get('revision', 0)}`",
                 f"- updated_at: `{active.get('updated_at', '')}`",
+                *(
+                    [f"- target_branch: `{active['target_branch']}`"]
+                    if active.get("target_branch")
+                    else []
+                ),
                 "",
                 "## Latest Decision",
             ]

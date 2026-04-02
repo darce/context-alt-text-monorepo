@@ -751,6 +751,7 @@ def switch_task(
     focus: str | None = None,
     status: str = "in_progress",
     actor: WriteActor | None = None,
+    target_branch: str | None = None,
 ) -> str:
     """Switch the active task, archiving the current one if different.
 
@@ -827,13 +828,13 @@ def switch_task(
         # Upsert the singleton to point at the target task.
         if current is None:
             conn.execute(
-                "INSERT INTO handoff_state (id, task_ref, objective, focus, status, revision, updated_at, updated_by, updated_branch, updated_commit_sha) VALUES (1, ?, ?, ?, ?, 0, datetime('now'), ?, ?, ?)",
-                (task_ref, resolved_objective, focus, status, ctx.agent, ctx.branch, ctx.commit_sha),
+                "INSERT INTO handoff_state (id, task_ref, objective, focus, status, target_branch, revision, updated_at, updated_by, updated_branch, updated_commit_sha) VALUES (1, ?, ?, ?, ?, ?, 0, datetime('now'), ?, ?, ?)",
+                (task_ref, resolved_objective, focus, status, target_branch, ctx.agent, ctx.branch, ctx.commit_sha),
             )
         else:
             conn.execute(
-                "UPDATE handoff_state SET task_ref = ?, objective = ?, focus = ?, status = ?, revision = revision + 1, updated_at = datetime('now'), updated_by = ?, updated_branch = ?, updated_commit_sha = ? WHERE id = 1",
-                (task_ref, resolved_objective, focus, status, ctx.agent, ctx.branch, ctx.commit_sha),
+                "UPDATE handoff_state SET task_ref = ?, objective = ?, focus = ?, status = ?, target_branch = ?, revision = revision + 1, updated_at = datetime('now'), updated_by = ?, updated_branch = ?, updated_commit_sha = ? WHERE id = 1",
+                (task_ref, resolved_objective, focus, status, target_branch, ctx.agent, ctx.branch, ctx.commit_sha),
             )
 
         active = _row_to_dict(conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone())

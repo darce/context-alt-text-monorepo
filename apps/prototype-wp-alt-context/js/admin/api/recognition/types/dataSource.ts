@@ -14,7 +14,7 @@ export const PROJECTION_STATUS = {
 
 export type ProjectionStatus = (typeof PROJECTION_STATUS)[keyof typeof PROJECTION_STATUS];
 
-export const normalizeDataSource = (value: unknown, fallback: DataSource = DATA_SOURCE.BACKEND_PROXY): DataSource => {
+export const parseDataSource = (value: unknown): DataSource | null => {
   if (
     value === DATA_SOURCE.LOCAL_PROJECTION ||
     value === DATA_SOURCE.BACKEND_PROXY ||
@@ -22,13 +22,11 @@ export const normalizeDataSource = (value: unknown, fallback: DataSource = DATA_
   ) {
     return value;
   }
-  return fallback;
+
+  return null;
 };
 
-export const normalizeProjectionStatus = (
-  value: unknown,
-  fallback: ProjectionStatus = PROJECTION_STATUS.AVAILABLE,
-): ProjectionStatus => {
+export const parseProjectionStatus = (value: unknown): ProjectionStatus | null => {
   if (
     value === PROJECTION_STATUS.AVAILABLE ||
     value === PROJECTION_STATUS.BOOTSTRAPPING ||
@@ -36,5 +34,7 @@ export const normalizeProjectionStatus = (
   ) {
     return value;
   }
-  return fallback;
+
+  return null;
 };
+

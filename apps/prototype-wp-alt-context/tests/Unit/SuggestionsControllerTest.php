@@ -166,6 +166,33 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame(1, $data['total'] ?? null);
     }
 
+    public function testGetPendingSuggestionsTotalDerivesFromArrayCountNotBackendField(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                ['id' => 's1', 'identity_id' => 'i1', 'status' => 'pending'],
+                ['id' => 's2', 'identity_id' => 'i2', 'status' => 'pending'],
+                ['id' => 's3', 'identity_id' => 'i3', 'status' => 'pending'],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/suggestions');
+        $request->set_param('limit', 25);
+        $request->set_param('offset', 0);
+        $response = $this->controller->get_pending_suggestions($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+
+        // total must be derived from count(items)=3, not from any backend field
+        $this->assertSame(3, $data['total']);
+        // limit and offset must come from the request parameters, not the backend
+        $this->assertSame(25, $data['limit']);
+        $this->assertSame(0, $data['offset']);
+        $this->assertSame('backend_proxy', $data['data_source']);
+    }
+
     public function testGetPendingSuggestionsRejectsUnexpectedEnvelopePayload(): void
     {
         $this->queueHttpResponse([
@@ -188,13 +215,18 @@ class SuggestionsControllerTest extends TestCase
         ]);
 
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/suggestions/merge');
+        $request->set_param('limit', 15);
+        $request->set_param('offset', 5);
         $response = $this->controller->get_pending_merge_suggestions($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $data = $response->get_data();
         $this->assertSame('backend_proxy', $data['data_source'] ?? null);
         $this->assertCount(1, $data['suggestions'] ?? []);
+        // total from count(items), limit/offset from request params
         $this->assertSame(1, $data['total'] ?? null);
+        $this->assertSame(15, $data['limit'] ?? null);
+        $this->assertSame(5, $data['offset'] ?? null);
     }
 
     public function testRegisterRoutesIncludesNameSuggestionEndpoints(): void

@@ -1,6 +1,6 @@
 import { fetchRequiredApi, stripTrailingSlash } from '../../utils/http';
 import { getEndpoint, getConfig, isDevMode } from '../config';
-import { DATA_SOURCE, normalizeDataSource } from './types/dataSource';
+import { DATA_SOURCE, parseDataSource } from './types/dataSource';
 import type {
   IdentitySuggestionsResponse,
   MediaIdentitiesResponse,
@@ -11,9 +11,26 @@ import type {
 import { mapPendingMergeSuggestions, mapPendingSuggestions } from './identitySuggestionMappers';
 import { createRecognitionTimeoutSignal } from './requestTimeout';
 
+const requireEnvelopeNumber = (value: unknown, fieldName: string, responseName: string): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`${responseName} must include a numeric ${fieldName}.`);
+  }
+
+  return value;
+};
+
+const requireCanonicalDataSource = (value: unknown, responseName: string) => {
+  const dataSource = parseDataSource(value);
+  if (!dataSource) {
+    throw new Error(`${responseName} must include a valid data_source.`);
+  }
+
+  return dataSource;
+};
+
 export const fetchMediaIdentities = async (mediaIds: number[]): Promise<MediaIdentitiesResponse> => {
   if (mediaIds.length === 0) {
-    return { identities_by_media: {}, data_source: DATA_SOURCE.LOCAL_PROJECTION };
+    throw new Error('fetchMediaIdentities requires at least one media ID. Use the hook\'s enabled guard to prevent empty calls.');
   }
 
   const endpoint = getEndpoint('recognitionMediaIdentities');
@@ -32,9 +49,17 @@ export const fetchMediaIdentities = async (mediaIds: number[]): Promise<MediaIde
     signal: createRecognitionTimeoutSignal(2_000),
   });
 
+  if (
+    typeof response.identities_by_media !== 'object' ||
+    response.identities_by_media === null ||
+    Array.isArray(response.identities_by_media)
+  ) {
+    throw new Error('Media identities response must include an identities_by_media object.');
+  }
+
   return {
-    identities_by_media: response.identities_by_media ?? {},
-    data_source: normalizeDataSource(response.data_source),
+    identities_by_media: response.identities_by_media,
+    data_source: requireCanonicalDataSource(response.data_source, 'Media identities response'),
   };
 };
 
@@ -63,7 +88,7 @@ export const fetchPendingSuggestions = async (limit = 10, offset = 0): Promise<P
     signal: createRecognitionTimeoutSignal(2_000),
   });
 
-  return mapPendingSuggestions(response, limit, offset);
+  return mapPendingSuggestions(response);
 };
 
 export const fetchPendingMergeSuggestions = async (
@@ -81,7 +106,7 @@ export const fetchPendingMergeSuggestions = async (
     signal: createRecognitionTimeoutSignal(2_000),
   });
 
-  return mapPendingMergeSuggestions(response, limit, offset);
+  return mapPendingMergeSuggestions(response);
 };
 
 export const fetchPendingNameSuggestions = async (
@@ -99,11 +124,17 @@ export const fetchPendingNameSuggestions = async (
     method: 'GET',
     restNonce: getConfig().nonce,
     signal: createRecognitionTimeoutSignal(2_000),
-  }).then((response) => ({
-    suggestions: response.suggestions ?? [],
-    total: response.total ?? 0,
-    limit: response.limit ?? limit,
-    offset: response.offset ?? offset,
-    data_source: normalizeDataSource(response.data_source),
-  }));
+  }).then((response) => {
+    if (!Array.isArray(response.suggestions)) {
+      throw new Error('Pending name suggestions response must include a suggestions array.');
+    }
+
+    return {
+      suggestions: response.suggestions,
+      total: requireEnvelopeNumber(response.total, 'total', 'Pending name suggestions response'),
+      limit: requireEnvelopeNumber(response.limit, 'limit', 'Pending name suggestions response'),
+      offset: requireEnvelopeNumber(response.offset, 'offset', 'Pending name suggestions response'),
+      data_source: requireCanonicalDataSource(response.data_source, 'Pending name suggestions response'),
+    };
+  });
 };

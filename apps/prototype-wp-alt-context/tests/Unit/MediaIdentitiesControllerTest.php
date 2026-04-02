@@ -138,6 +138,83 @@ class MediaIdentitiesControllerTest extends TestCase
         $this->assertSame(10, $this->getHttpCalls()[0]['args']['timeout'] ?? null);
     }
 
+    public function testMediaIdentitiesAnnotatesCanonicalBackendEnvelopeResponses(): void
+    {
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_media_ids(string $tenant_id, array $media_ids): array {
+                return [];
+            }
+        };
+
+        $syncRepo = new NullSyncStateRepository();
+
+        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"identities_by_media":{"22":[{"identity_id":"identity-1","media_id":22}]}}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/media-identities');
+        $request->set_param('media_ids', [22]);
+
+        $response = $controller->get_media_identities($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame('backend_proxy', $data['data_source'] ?? null);
+        $this->assertArrayHasKey('22', $data['identities_by_media'] ?? []);
+    }
+
+    public function testMediaIdentitiesRejectsUnexpectedObjectPayload(): void
+    {
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_media_ids(string $tenant_id, array $media_ids): array {
+                return [];
+            }
+        };
+
+        $syncRepo = new NullSyncStateRepository();
+
+        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"items":[]}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/media-identities');
+        $request->set_param('media_ids', [22]);
+
+        $response = $controller->get_media_identities($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_media_identities_payload', $response->get_error_code());
+    }
+
+    public function testMediaIdentitiesRejectsListItemsWithoutMediaId(): void
+    {
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_media_ids(string $tenant_id, array $media_ids): array {
+                return [];
+            }
+        };
+
+        $syncRepo = new NullSyncStateRepository();
+
+        $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '[{"identity_id":"identity-1"}]',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/media-identities');
+        $request->set_param('media_ids', [22]);
+
+        $response = $controller->get_media_identities($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_media_identities_payload', $response->get_error_code());
+    }
+
     public function testMediaIdentitiesFallsBackToBackendProxyWhenSyncStateExistsButProjectionRowsAreMissing(): void
     {
         $membersRepo = new class() extends NullIdentityMembersRepository {

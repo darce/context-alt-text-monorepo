@@ -234,7 +234,9 @@ def _build_packet_for_decision(
         commit_sha=decision_row.get("commit_sha"),
         decision_created_at=str(decision_row["created_at"]),
     )
-    changed_files = _normalize_json_list(matched_report.get("changed_files_json") if matched_report else None)
+    changed_files = _normalize_json_list(decision_row.get("changed_files_json"))
+    if not changed_files:
+        changed_files = _normalize_json_list(matched_report.get("changed_files_json") if matched_report else None)
     if not changed_files:
         changed_files = _extract_changed_files_from_rationale(decision_row.get("rationale"))
 

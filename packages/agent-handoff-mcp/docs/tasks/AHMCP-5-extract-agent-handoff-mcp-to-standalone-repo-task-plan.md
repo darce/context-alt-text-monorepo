@@ -1,11 +1,11 @@
-# E13-2. Extract agent-handoff-mcp to Standalone Repository
+# AHMCP-5. Extract agent-handoff-mcp to Standalone Repository
 
 > **Metadata**
 >
 > - **Date**: 2026-03-31
 > - **Author**: Claude Opus 4.6
-> - **Owning Epic**: [docs/epics/v0.3.1/agent-handoff-mcp-packaging-epic.md](../../epics/v0.3.1/agent-handoff-mcp-packaging-epic.md)
-> - **Epic Short ID**: E13
+> - **Project**: `agent-handoff-mcp`
+> - **Task ID**: `AHMCP-5`
 > - **Review Coverage Target**: 2
 
 ---
@@ -16,15 +16,15 @@ Extract `agent-handoff-mcp` from the monorepo into `darce/mcp-agent-handoff` on 
 
 ## Problem Statement
 
-`agent-handoff-mcp` is already architecturally separated from orchestration after E12-9, but extraction is still blocked by monorepo-coupled tooling. The root Makefile still stitches the MCP stack together via `PYTHONPATH` source paths, CI workflows and IDE configs still launch repo-local entrypoints, and orchestrator-owned helper modules still carry hardcoded monorepo paths (`SCRIPT_DIR.parents[4]`, `docs/agentic/rules/`, `config/lane-orchestration/`, `packages/agent-handoff-mcp/src/`). The remaining work is therefore not to move orchestration back out of handoff, but to finish de-coupling the live consumers and the orchestrator-owned helpers that still assume this repository layout.
+`agent-handoff-mcp` is already architecturally separated from orchestration after the earlier physical separation work, but extraction is still blocked by monorepo-coupled tooling. The root Makefile still stitches the MCP stack together via `PYTHONPATH` source paths, CI workflows and IDE configs still launch repo-local entrypoints, and orchestrator-owned helper modules still carry hardcoded monorepo paths (`SCRIPT_DIR.parents[4]`, `docs/agentic/rules/`, `config/lane-orchestration/`, `packages/agent-handoff-mcp/src/`). The remaining work is therefore not to move orchestration back out of handoff, but to finish de-coupling the live consumers and the orchestrator-owned helpers that still assume this repository layout.
 
 ## Constraints
 
 - `core.py` must remain pure handoff-state CRUD per `[rg-013]`.
 - Orchestration modules must use late-binding imports per `[rg-014]`.
 - Keep the extracted handoff package's runtime dependency surface minimal; the current package already depends on `fastmcp` and `tiktoken`, and no new extraction-only runtime dependency should be introduced without a concrete need.
-- The extracted repo must have no reference to "context alt text", "alt-context", or "acx". It is an agent-agnostic handoff server.
-- `shared-contracts` stays in the monorepo — it is application-domain, not MCP concern.
+- The extracted repo must have no reference to "context alt text", "alt-context", or `acx`. It is an agent-agnostic handoff server.
+- `shared-contracts` stays in the monorepo; it is application-domain, not MCP concern.
 - `agent-orchestrator-mcp` stays in the monorepo for now; it will consume the extracted package via git+ssh.
 - `codex-subagent-bridge` stays in the monorepo.
 - No backward-compatibility shims (greenfield policy).
@@ -32,21 +32,21 @@ Extract `agent-handoff-mcp` from the monorepo into `darce/mcp-agent-handoff` on 
 
 ## Workflow Principles
 
-- Start from the post-E12-9 boundary that already exists in this repo: `agent-handoff-mcp` stays ledger-only and `agent-orchestrator-mcp` keeps ownership of slice-review, lane, daemon, and path-coupled orchestration helpers.
+- Start from the already-completed handoff/orchestrator separation boundary; `agent-handoff-mcp` stays ledger-only and `agent-orchestrator-mcp` keeps ownership of slice-review, lane, daemon, and path-coupled orchestration helpers.
 - Complete the remaining in-monorepo prep slices before extraction, so changes are testable against the existing suite.
 - The extraction commit should be a clean snapshot, not a copy of monorepo git history.
 - Consumer rewiring in the monorepo happens in a single coordinated commit after the extracted repo is pushed.
 
 ## Terminology
 
-- **Core Handoff**: Portable modules (`core.py`, `config.py`, `runtime.py`, `enums.py`, `artifact_index.py`, `cli.py`, `api.py`) providing task-state CRUD, review findings, artifacts, search, export/import, and CURRENT_TASK.md generation.
+- **Core Handoff**: Portable modules (`core.py`, `config.py`, `runtime.py`, `enums.py`, `artifact_index.py`, `cli.py`, `api.py`) providing task-state CRUD, review findings, artifacts, search, export/import, and `CURRENT_TASK.md` generation.
 - **Orchestration tier**: Generic multi-agent layer (daemons, adapters, lane exec) that now lives in `agent-orchestrator-mcp` and remains in this monorepo for now.
 - **ACE**: Autonomous Coding Engine. Repo-specific playbook system. Stays in the monorepo; never ships in the extracted package.
 - **Consumer rewiring**: Updating all monorepo references (Makefile, CI, IDE configs, pyproject.toml) to install from git+ssh instead of source paths.
 
 ## Current State Analysis
 
-- E12-9 has already crossed the main package-boundary line: `agent-handoff-mcp` is ledger-only, has no `orchestration/` subpackage, and no longer exports orchestration helpers from its CLI, `api.py`, or `__init__.py`.
+- The package boundary work is already complete: `agent-handoff-mcp` is ledger-only, has no `orchestration/` subpackage, and no longer exports orchestration helpers from its CLI, `api.py`, or `__init__.py`.
 - `get_latest_slice_review_packet()` is now owned by `agent-orchestrator-mcp` (`lanes.py` and `api.py`), so this task must not move slice-review ownership back into handoff.
 - `packages/agent-handoff-mcp/pyproject.toml` already reflects a ledger package shape with ordinary `test` and `dev` extras; there is no handoff-local orchestration extra to introduce.
 - The remaining hardcoded monorepo path assumptions are orchestrator-owned: `lane_manifest.py` still derives `MANIFEST_DIR` from `SCRIPT_DIR.parents[4]`, `generate_lane_manifest.py` still derives its output root the same way, `review_ready.py` still hardcodes `packages/agent-handoff-mcp/src/` and contract/boundary prefixes, and runtime helpers in `agent_orchestrator_mcp/api.py` still assemble source-path `PYTHONPATH` values.
@@ -63,8 +63,7 @@ Extract `agent-handoff-mcp` from the monorepo into `darce/mcp-agent-handoff` on 
 
 - Rules: `docs/agentic/rules/backend-python-guidelines.md`
 - Contracts: `docs/agentic/contracts/` (verify no handoff-specific contracts break)
-- Epic: `docs/epics/v0.3.1/agent-handoff-mcp-packaging-epic.md` (phases 1-5, code anchors, design decisions)
-- Prior work: `docs/tasks/12.0/12.1/E12-9-orchestration-physical-separation-task-plan.md` (status of physical separation)
+- Prior separation work: `docs/tasks/12.0/12.1/E12-9-orchestration-physical-separation-task-plan.md`
 - Operator docs: `docs/agentic/BOOTSTRAP.md`, `docs/agentic/playbooks/`
 - Tech debt: `docs/tech-debt/migrate-pip-to-uv.md` (installer preference)
 
@@ -72,15 +71,15 @@ Extract `agent-handoff-mcp` from the monorepo into `darce/mcp-agent-handoff` on 
 
 | Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
 | --- | --- | --- | --- | --- | --- |
-| `agent-handoff-mcp` Python API | handoff core | `pyproject.toml` + `__init__.py` exports | Package location moves; import paths unchanged | No — greenfield policy | `pip install` from git+ssh, import test |
-| `agent-orchestrator-mcp` dependency | orchestrator | plain `agent-handoff-mcp` dependency plus local source-path fallback in package/root Makefiles | `agent-handoff-mcp @ git+ssh://...` in pyproject.toml; installed-package runtime in Makefiles | No — same Python API | orchestrator test suite passes |
+| `agent-handoff-mcp` Python API | handoff core | `pyproject.toml` + `__init__.py` exports | Package location moves; import paths unchanged | No; greenfield policy | `pip install` from git+ssh, import test |
+| `agent-orchestrator-mcp` dependency | orchestrator | plain `agent-handoff-mcp` dependency plus local source-path fallback in package/root Makefiles | `agent-handoff-mcp @ git+ssh://...` in pyproject.toml; installed-package runtime in Makefiles | No; same Python API | orchestrator test suite passes |
 | Makefile / package-local `PYTHONPATH` | monorepo build | source paths in root and package-local Makefiles | installed package or explicit bootstrap install; remove handoff source-path coupling | No | `make check-mcp` passes |
 | MCP server launch | IDE configs | source path to launcher script plus repo-local `PYTHONPATH` | installed entrypoint or installed launcher invocation with no monorepo source-path dependency | No | MCP server starts in VS Code / Claude Code |
 | Operator contracts and playbooks | docs | repo-local package install / source-path launch instructions | standalone-repo install instructions plus extracted-package consumer guidance | No | bootstrap and contract docs match live runtime |
 
 ## Proposed Solution
 
-Start from the already-separated E12-9 boundary. Keep `agent-handoff-mcp` ledger-only, fix the remaining monorepo-coupled helpers in `agent-orchestrator-mcp`, move live monorepo consumers off handoff source paths, then extract the clean ledger package snapshot to a new repo and rewire the monorepo to consume it via git+ssh. Any broader ACE or public-package follow-on remains deferred.
+Start from the already-separated package boundary. Keep `agent-handoff-mcp` ledger-only, fix the remaining monorepo-coupled helpers in `agent-orchestrator-mcp`, move live monorepo consumers off handoff source paths, then extract the clean ledger package snapshot to a new repo and rewire the monorepo to consume it via git+ssh. Any broader ACE or public-package follow-on remains deferred.
 
 ## Files and Surfaces to Change
 
@@ -238,9 +237,9 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded epic phases 1-5 and code anchors from owning epic
-- [ ] Confirmed E12-9 separation status is current
-- [ ] Verified no handoff-specific contracts in `docs/agentic/contracts/` will break
+- [ ] Loaded the project's active packaging phases and code anchors.
+- [ ] Confirmed the earlier handoff/orchestrator separation status is current.
+- [ ] Verified no handoff-specific contracts in `docs/agentic/contracts/` will break.
 
 ### Checklist: Slice 1
 

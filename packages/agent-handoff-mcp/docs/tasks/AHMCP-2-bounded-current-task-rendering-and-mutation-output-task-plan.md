@@ -6,13 +6,14 @@
 > - **Author**: GPT-5.4
 > - **Project**: `agent-handoff-mcp`
 > - **Task ID**: `AHMCP-2`
+> - **Target Branch**: `feature/ahmcp-2-bounded-rendering`
 > - **Review Coverage Target**: 2
 
 ---
 
 ## Objective
 
-Implement the Tier 1 output-contract v2 changes so `CURRENT_TASK.md` stops growing without bound, `close_slice` returns the decision and revision state callers need, and `export_handoff_state` stops embedding rendered markdown by default.
+Implement the Tier 1 output-contract v2 changes (OC-001, OC-002, OC-003, OC-007) so `CURRENT_TASK.md` stops growing without bound, `close_slice` returns the decision and revision state callers need, and `export_handoff_state` stops embedding rendered markdown by default. Additionally, implement OC-008 (task initiation with branch binding) as an independent additive slice.
 
 ## Problem Statement
 
@@ -22,7 +23,7 @@ If they do not land first, Tier 2 will wrap an already-wasteful render path and 
 
 ## Constraints
 
-- This task implements only Tier 1 items from the approved spec: OC-001, OC-002, OC-003, and OC-007.
+- This task implements Tier 1 items from the approved spec: OC-001, OC-002, OC-003, OC-007, and OC-008.
 - OC-004 response envelopes are out of scope here; Tier 1 should preserve the pre-envelope response contract except for the explicitly approved new fields on `close_slice` and the `generate_current_task_md` parameter addition.
 - Active-task open findings remain uncapped; the cap applies only to cross-task grouped findings.
 - `CURRENT_TASK.md` remains a bounded render artifact, not the canonical long-term history store for findings.
@@ -83,7 +84,7 @@ After this task:
 
 ## Proposed Solution
 
-Land the render cleanup and write/export confirmation work in three slices. First, cut the unbounded render state and cap cross-task findings at the render source. Second, thread the new cap through the public `generate_current_task_md` API and update the contract so callers can rely on it. Third, enrich the two remaining mutation/output surfaces that still force avoidable follow-up reads or mix render artifacts into canonical exports.
+Land the render cleanup and write/export confirmation work in four slices. First, cut the unbounded render state and cap cross-task findings at the render source. Second, thread the new cap through the public `generate_current_task_md` API and update the contract so callers can rely on it. Third, enrich the two remaining mutation/output surfaces that still force avoidable follow-up reads or mix render artifacts into canonical exports. Fourth, add `target_branch` to task state so tasks can declare their intended work branch.
 
 ## Files and Surfaces to Change
 
@@ -104,7 +105,7 @@ Land the render cleanup and write/export confirmation work in three slices. Firs
 | --- | --- |
 | `packages/agent-handoff-mcp/src/agent_handoff_mcp/_shared.py` | shared helpers may need minor alignment if render-state helpers are re-exported |
 | `packages/agent-handoff-mcp/tests/test_stdio.py` | no surface-count change expected, but tool signature additions should remain transport-safe |
-| `docs/tasks/tech-debt/agent-handoff-mcp-output-state-keeping-report.md` | original assessment that motivated the bounded render and canonical-export work |
+| `docs/assessments/agent-handoff-mcp-output-state-keeping-report.md` | original assessment that motivated the bounded render and canonical-export work |
 
 ## Verification Strategy
 
@@ -167,6 +168,26 @@ Proof:
 - `close_slice` regression tests assert both `decision` and `task_revision`
 - export/import regression tests prove markdown is absent by default and present only when requested
 
+### Slice 4: Task Initiation with Branch Binding
+
+**Goal**: Give tasks a declared target branch so agents can discover the intended work branch from handoff state.
+
+Changes:
+
+- Add `target_branch TEXT` column to `handoff_state` schema and bump `HANDOFF_SCHEMA_VERSION`
+- Add `target_branch` parameter to both `switch_task` (task init/switch boundary) and `set_handoff_state` (in-place update)
+- `switch_task` sets `target_branch` on init; `set_handoff_state` preserves existing value when omitted
+- Include `target_branch` in `get_handoff_state` active section (included via row dict)
+- Add `Target branch:` line to CURRENT_TASK.md render header when set
+- Update `docs/agentic/contracts/agent-handoff-mcp.md` with the new schema field
+- Update `docs/agentic/contracts/agent-orchestrator-mcp.md` with the `switch_task` signature change (`switch_task` is registered on the orchestrator surface)
+
+Proof:
+
+- `switch_task(task_ref="X", target_branch="feature/x")` persists and `get_handoff_state` returns it
+- `set_handoff_state` without `target_branch` preserves the existing value
+- CURRENT_TASK.md shows `Target branch: feature/x` in the header
+
 ## Lane-Ready Execution Brief
 
 ### Lanes
@@ -175,17 +196,20 @@ Proof:
 | --- | --- | --- |
 | `render-bounds` | `packages/agent-handoff-mcp/src/agent_handoff_mcp/current_task_rendering.py`, `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py`, `docs/agentic/contracts/agent-handoff-mcp.md` | `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_handoff_state.py -q -k "generate_current_task_md and (related or history or no_other_open_findings)"`; `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_review_findings.py -q -k "generate_current_task_md"` |
 | `lifecycle-export` | `packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py`, `packages/agent-handoff-mcp/src/agent_handoff_mcp/import_export.py` | `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_handoff_state.py -q -k "close_slice"`; `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_import_export_regressions.py -q` |
+| `branch-binding` | `packages/agent-handoff-mcp/src/agent_handoff_mcp/shared_schema.py`, `packages/agent-handoff-mcp/src/agent_handoff_mcp/handoff_state.py`, `packages/agent-handoff-mcp/src/agent_handoff_mcp/import_export.py` (switch_task), `packages/agent-handoff-mcp/src/agent_handoff_mcp/current_task_rendering.py` | `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_handoff_state.py -q -k "set_handoff_state or get_handoff_state or switch_task or generate_current_task_md"` |
 
 ### Merge Order
 
 1. `render-bounds`
 2. `lifecycle-export`
-3. Final integration pass to resolve any shared contract wording in `docs/agentic/contracts/agent-handoff-mcp.md`
+3. `branch-binding` (independent of 1 and 2 but ordered last to avoid merge conflicts in shared files)
+4. Final integration pass to resolve any shared contract wording in `docs/agentic/contracts/agent-handoff-mcp.md`
 
 ### Lane Notes
 
 - `render-bounds` owns the only public-signature change in Tier 1: `max_cross_task_findings` on `generate_current_task_md`.
 - `lifecycle-export` owns the two write/output changes that should not be blocked on the render edits.
+- `branch-binding` owns the schema migration and `target_branch` plumbing through `switch_task`, `set_handoff_state`, and the CURRENT_TASK render header.
 - Shared test files are intentionally not lane-owned; they are the proving surface for the code-owning lanes above.
 
 ---
@@ -217,6 +241,14 @@ Proof:
 - [ ] `export_handoff_state` defaults `include_markdown` to `False`.
 - [ ] Export and lifecycle regressions cover the new behavior.
 
+### Checklist: Slice 4
+
+- [ ] `handoff_state` schema has `target_branch` column.
+- [ ] `HANDOFF_SCHEMA_VERSION` bumped with migration.
+- [ ] `set_handoff_state` accepts and persists `target_branch`.
+- [ ] CURRENT_TASK.md render header shows the target branch.
+- [ ] Contract doc updated.
+
 ## Review Readiness
 
 - [ ] No Tier 1 behavior change is left undocumented in `docs/agentic/contracts/agent-handoff-mcp.md`.
@@ -229,3 +261,4 @@ Proof:
 - [ ] Cross-task findings render is bounded without hiding active-task open work.
 - [ ] `close_slice` callers can confirm the recorded decision and revision without an immediate follow-up read.
 - [ ] Default exports contain canonical handoff state without embedded markdown.
+- [ ] Tasks can declare a target branch at init, discoverable from handoff state and CURRENT_TASK.md.

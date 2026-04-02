@@ -6,6 +6,7 @@
 > - **Author**: Claude Opus 4.6
 > - **Project**: `agent-handoff-mcp`
 > - **Task ID**: `AHMCP-5`
+> - **Target Branch**: `feature/ahmcp-5-extract-standalone`
 > - **Review Coverage Target**: 2
 
 ---

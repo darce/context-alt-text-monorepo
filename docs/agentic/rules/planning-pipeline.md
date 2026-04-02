@@ -182,6 +182,7 @@ how to build and verify, not what to build (that's the spec's job).
 ### Required content
 
 - **Spec item references** — trace each slice back to a spec item ID
+- **Target branch** — the git branch for this task's work (e.g. `feature/ahmcp-2-bounded-rendering`)
 - **Slices** with goal, changes, and proof (not phases — see template)
 - **Verification strategy** with deterministic test commands
 - **Lane decomposition** (optional, for multi-agent work)
@@ -210,11 +211,28 @@ the template's "Owning Epic" with "Project" and "Epic Short ID" with "Task ID".
 The task ID prefix should be the package short name (e.g. `AHMCP` for
 `agent-handoff-mcp`).
 
+### Branch-per-task convention
+
+Each task plan declares a **target branch** in its metadata. The branch name
+follows `feature/[task-id-slug]` (e.g. `feature/ahmcp-2-bounded-rendering`).
+
+This creates a natural context layer alongside MCP handoff:
+`git log main..feature/ahmcp-2-bounded-rendering` shows the exact code delta
+for the task, while MCP tracks decisions, findings, and review state.
+PRs map 1:1 to task plans — reviewable as a unit.
+
+> **Advisory until OC-008 lands.** The `target_branch` field in task plan
+> metadata is advisory documentation today. Once OC-008 is implemented,
+> `switch_task` will accept a `target_branch` parameter and the handoff
+> state will include it in responses and CURRENT_TASK.md. Until then, branch
+> creation and naming are manual steps guided by the task plan metadata.
+
 ### Exit gate → Implementation
 
 | Criterion | Required? |
 |-----------|-----------|
 | Slices trace back to reviewed spec items | Yes |
+| Target branch declared in task plan metadata | Recommended |
 | Proof commands verified against current test suite | Yes |
 | Contract/docs changes included in same slices as behavior changes | Yes |
 
@@ -225,11 +243,51 @@ The task ID prefix should be the package short name (e.g. `AHMCP` for
 Implementation follows the standard [development workflow](development-workflow.md):
 TDD cycle, slice checklist, MCP handoff decisions, and review findings.
 
+### Task start workflow
+
+1. **Commit or finish current work** before switching (see safe switching below)
+2. Create the target branch from `main`: `git checkout -b <target_branch> main`
+3. Activate the MCP task: `switch_task(task_ref="...", objective="...")`
+4. Load the task plan and begin slice work
+
+> After OC-008: step 3 becomes `switch_task(task_ref="...", target_branch="<target_branch>", objective="...")`
+
+### Slice workflow
+
 Each completed slice records a `slice_complete_*` decision in MCP with:
 - Changes made
 - Verification evidence
 - Schema/contract changes (if any)
 - Open threads
+
+### Task completion workflow
+
+1. Final slice recorded with `close_slice`
+2. PR created from task branch to `main`
+3. PR maps 1:1 to the task plan — reviewable as a unit
+
+### Safe branch switching
+
+When switching between tasks (and therefore branches), always **commit before
+switching** — never stash.
+
+**Why commits over stashes:**
+- Stashes are unnamed, easily lost, and invisible to other agents or sessions
+- WIP commits are visible in `git log`, can be referenced by SHA, and are
+  automatically available when the agent returns to the branch
+- WIP commits can be squashed into clean commits before the PR is created
+- MCP handoff decisions reference `commit_sha` — stashed work has no SHA
+
+**Switching procedure:**
+1. Commit all current work: `git add -A && git commit -m "wip: <brief description>"`
+2. Record the switch in MCP if the task is changing: `switch_task(task_ref="<new-task>")`
+3. Check out the target branch: `git checkout <target_branch>`
+4. If the branch doesn't exist yet, create it: `git checkout -b <target_branch> main`
+
+**Returning to a task:**
+1. Check out the task branch: `git checkout <target_branch>`
+2. Activate the task in MCP: `switch_task(task_ref="<task-ref>")`
+3. Resume from the last WIP commit — the branch state is exactly where you left it
 
 ---
 

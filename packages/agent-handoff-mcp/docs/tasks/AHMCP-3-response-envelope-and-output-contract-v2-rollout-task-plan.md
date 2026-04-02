@@ -6,6 +6,7 @@
 > - **Author**: GPT-5.4
 > - **Project**: `agent-handoff-mcp`
 > - **Task ID**: `AHMCP-3`
+> - **Target Branch**: `feature/ahmcp-3-response-envelope`
 > - **Review Coverage Target**: 2
 
 ---

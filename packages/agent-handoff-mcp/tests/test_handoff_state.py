@@ -247,7 +247,7 @@ def test_record_decision_changed_files_none_by_default(isolated_handoff: dict) -
         )
     )
     assert recorded["ok"] is True
-    assert recorded["decision"]["changed_files_json"] is None
+    assert recorded["decision"]["changed_files_json"] == "[]"
 
 
 def test_record_decision_preserves_legacy_agent_fallback(isolated_handoff: dict) -> None:
@@ -1977,7 +1977,7 @@ def test_generate_current_task_md_related_excludes_active_task(isolated_handoff:
         )
     )
     md = payload["markdown"]
-    open_section = md.split("## Open Review Findings", 1)[1].split("## All Review Findings History", 1)[0]
+    open_section = md.split("## Open Review Findings", 1)[1]
     # D3-01 should appear only once in the open section, not duplicated as a related finding.
     assert open_section.count("D3-01") == 1
     assert "## Related Open Review Findings" not in md
@@ -2029,10 +2029,11 @@ def test_generate_current_task_md_related_skips_resolved(isolated_handoff: dict)
         )
     )
     md = payload["markdown"]
-    open_section = md.split("## Open Review Findings", 1)[1].split("## All Review Findings History", 1)[0]
-    assert "D1-FIXED" not in open_section
-    history_section = md.split("## All Review Findings History", 1)[1]
-    assert "D1-FIXED" in history_section
+    # OC-001: All Review Findings History section removed; fixed findings
+    # are no longer in the default render. They remain queryable via
+    # list_review_findings(status="all").
+    assert "## All Review Findings History" not in md
+    assert "D1-FIXED" not in md
     assert "## Related Open Review Findings" not in md
 
 
@@ -2080,10 +2081,10 @@ def test_generate_current_task_md_includes_all_findings_history_for_resolved_cro
         )
     )
     md = payload["markdown"]
-    assert "## All Review Findings History" in md
-    assert "### daemon-1" in md
-    assert "D1-HISTORY" in md
-    assert "[FIXED] [MEDIUM] D1-HISTORY" in md
+    # OC-001: All Review Findings History section removed from default render.
+    # Fixed findings from other tasks do not appear in CURRENT_TASK.md.
+    assert "## All Review Findings History" not in md
+    assert "D1-HISTORY" not in md
 
 
 def test_generate_current_task_md_no_other_open_findings(isolated_handoff: dict) -> None:

@@ -97,7 +97,6 @@ CREATE TABLE IF NOT EXISTS decisions (
     changed_files_json TEXT NOT NULL DEFAULT '[]',
     branch        TEXT,
     commit_sha    TEXT,
-    changed_files_json TEXT,
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

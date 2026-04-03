@@ -90,7 +90,6 @@ class CurrentTaskRenderState(TypedDict):
     review_coverage: NotRequired[ReviewCoverageSummary | None]
     related_findings_open: NotRequired[dict[str, list[dict]]]
     related_findings_deferred: NotRequired[dict[str, list[dict]]]
-    findings_history_all: NotRequired[dict[str, list[dict]]]
 
 
 def _normalize_current_task_markdown_for_compare(markdown: str) -> str:
@@ -318,27 +317,6 @@ def _collect_all_deferred_findings(
     return grouped
 
 
-def _collect_all_findings_history(conn: sqlite3.Connection) -> dict[str, list[dict]]:
-    """Collect all review findings across all tasks, grouped by task_ref.
-
-    This powers a durable history section in CURRENT_TASK.md so fixed and
-    deferred findings remain visible after they leave the hot open/deferred
-    slices.
-    """
-
-    rows = conn.execute(
-        "SELECT * FROM review_findings "
-        "ORDER BY task_ref, "
-        "CASE status WHEN 'open' THEN 0 WHEN 'deferred' THEN 1 WHEN 'wontfix' THEN 2 WHEN 'fixed' THEN 3 ELSE 4 END, "
-        "CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, "
-        "COALESCE(updated_at, resolved_at, created_at) DESC"
-    ).fetchall()
-    grouped: dict[str, list[dict]] = {}
-    for row in rows:
-        finding = dict(row)
-        grouped.setdefault(finding["task_ref"], []).append(finding)
-    return grouped
-
 
 def _collect_task_snapshot(conn: sqlite3.Connection, task_ref: str) -> TaskSnapshot:
     active_row = conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone()
@@ -546,16 +524,6 @@ def _render_findings_section(state: CurrentTaskRenderState) -> list[str]:
                 lines.extend(["", f"### {active_ref}"])
             lines.extend(_finding_line(f, show_status=True) for f in active_deferred)
         for ref, ref_findings in related_deferred.items():
-            lines.extend(["", f"### {ref}"])
-            lines.extend(_finding_line(f, show_status=True) for f in ref_findings)
-
-    # --- Durable all-status history ---
-    lines.extend(["", "## All Review Findings History"])
-    findings_history = state.get("findings_history_all", {})
-    if not findings_history:
-        lines.append("- None")
-    else:
-        for ref, ref_findings in findings_history.items():
             lines.extend(["", f"### {ref}"])
             lines.extend(_finding_line(f, show_status=True) for f in ref_findings)
 

@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class SplitStrategy(str, Enum):
+class SplitStrategy(StrEnum):
     """Strategy used to split a cluster."""
 
     HIERARCHICAL = "hierarchical"
     ANCHOR_FORCED = "anchor_forced"
 
 
-class SplitScope(str, Enum):
+class SplitScope(StrEnum):
     """Scope hint for split operations."""
 
     CLUSTER = "cluster"

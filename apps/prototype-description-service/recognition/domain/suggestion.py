@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
+from enum import Enum, StrEnum
 
 
 class SuggestionStatus(Enum):
@@ -18,7 +18,7 @@ class SuggestionStatus(Enum):
     EXPIRED = "expired"
 
 
-class SuggestedLabelSource(str, Enum):
+class SuggestedLabelSource(StrEnum):
     """Source of a suggested label."""
 
     IDENTITY = "identity"
@@ -35,7 +35,7 @@ class BulkAcceptResult:
     skipped_count: int = 0
 
 
-class SuggestionRefreshReason(str, Enum):
+class SuggestionRefreshReason(StrEnum):
     """Reason code for refreshing suggestion candidates."""
 
     BOOTSTRAP = "bootstrap"

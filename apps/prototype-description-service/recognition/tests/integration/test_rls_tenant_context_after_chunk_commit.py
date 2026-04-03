@@ -23,12 +23,22 @@ from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
+from asyncpg.exceptions import PostgresError
 from sqlalchemy import event, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from db.models import Tenant
-from db.settings import get_database_settings
+from db.settings import (
+    DEFAULT_ASYNC_DSN_TEMPLATE,
+    DEFAULT_DB_NAME,
+    DEFAULT_PGHOST,
+    DEFAULT_PGPASSWORD,
+    DEFAULT_PGPORT,
+    DEFAULT_PGUSER,
+    DatabaseSettings,
+    get_database_settings,
+)
 from recognition.application.assignment.gate import AssignmentGate
 from recognition.application.discovery.centroid import CentroidDiscovery
 from recognition.application.discovery.graph.discovery import GraphDiscovery
@@ -75,19 +85,42 @@ def _make_media_identity_rows(tenant_id: uuid.UUID, count: int, db_session) -> l
     return rows
 
 
+DEFAULT_POSTGRES_TEST_DSN = DEFAULT_ASYNC_DSN_TEMPLATE.format(
+    PGUSER=DEFAULT_PGUSER,
+    PGPASSWORD=DEFAULT_PGPASSWORD,
+    PGHOST=DEFAULT_PGHOST,
+    PGPORT=DEFAULT_PGPORT,
+    DB_NAME=DEFAULT_DB_NAME,
+)
+
+
+def _postgres_test_environment_error(exc: Exception) -> bool:
+    return isinstance(exc, (SQLAlchemyError, PostgresError, OSError))
+
+
 def _resolve_postgres_test_dsn() -> str:
     explicit_dsn = os.environ.get("POSTGRES_TEST_URL")
     if explicit_dsn:
         return explicit_dsn
 
-    return get_database_settings().postgres_dsn
+    resolved_dsn = get_database_settings().postgres_dsn
+    if os.environ.get("POSTGRES_DSN") is None and resolved_dsn == DEFAULT_POSTGRES_TEST_DSN:
+        return ""
+
+    return resolved_dsn
 
 
 @pytest_asyncio.fixture
 async def postgres_db_session() -> AsyncGenerator[AsyncSession, None]:
     """Provide a Postgres-backed session with schema and RLS checks for seam regression tests."""
 
-    engine = create_async_engine(_resolve_postgres_test_dsn(), pool_pre_ping=True)
+    postgres_dsn = _resolve_postgres_test_dsn()
+    if not postgres_dsn:
+        pytest.skip(
+            "Postgres RLS regression environment is not configured; set POSTGRES_TEST_URL or POSTGRES_DSN to run this regression test"
+        )
+
+    engine = create_async_engine(postgres_dsn, pool_pre_ping=True)
 
     try:
         async with engine.connect() as connection:
@@ -107,8 +140,10 @@ async def postgres_db_session() -> AsyncGenerator[AsyncSession, None]:
                     pytest.skip(
                         "recognition_events RLS policies are not active; reset the local Postgres schema before running this regression test"
                     )
-            except SQLAlchemyError as exc:
-                pytest.skip(f"Postgres RLS regression environment is unavailable: {exc}")
+            except Exception as exc:
+                if _postgres_test_environment_error(exc):
+                    pytest.skip(f"Postgres RLS regression environment is unavailable: {exc}")
+                raise
 
             outer_transaction = await connection.begin()
             session_factory = async_sessionmaker(bind=connection, expire_on_commit=False)
@@ -127,8 +162,10 @@ async def postgres_db_session() -> AsyncGenerator[AsyncSession, None]:
                     await session.rollback()
 
             await outer_transaction.rollback()
-    except SQLAlchemyError as exc:
-        pytest.skip(f"Postgres RLS regression environment is unavailable: {exc}")
+    except Exception as exc:
+        if _postgres_test_environment_error(exc):
+            pytest.skip(f"Postgres RLS regression environment is unavailable: {exc}")
+        raise
     finally:
         await engine.dispose()
 
@@ -232,6 +269,32 @@ async def test_orchestrator_restores_context_after_each_chunk_commit(
         # Signature: set_tenant_context(session, tenant_id_uuid)
         passed_uuid = c.args[1] if c.args else c.kwargs.get("tenant_id")
         assert passed_uuid == tenant_uuid, f"set_tenant_context called with wrong tenant UUID: {passed_uuid!r}"
+
+
+def test_resolve_postgres_test_dsn_returns_empty_when_no_real_postgres_config(monkeypatch) -> None:
+    monkeypatch.delenv("POSTGRES_TEST_URL", raising=False)
+    monkeypatch.delenv("POSTGRES_DSN", raising=False)
+    monkeypatch.setattr(
+        "recognition.tests.integration.test_rls_tenant_context_after_chunk_commit.get_database_settings",
+        lambda: DatabaseSettings(
+            postgres_dsn=DEFAULT_POSTGRES_TEST_DSN,
+            postgres_sync_dsn="postgresql+psycopg://context:context@localhost:5432/context_alt_text",
+            pgvector_dimension=512,
+            pool_size=20,
+            max_overflow=10,
+            pool_timeout=30,
+            pool_recycle=3600,
+        ),
+    )
+
+    assert _resolve_postgres_test_dsn() == ""
+
+
+def test_resolve_postgres_test_dsn_prefers_explicit_test_url(monkeypatch) -> None:
+    explicit_dsn = "postgresql+asyncpg://acx:secret@db.example.test:5432/acx_test"
+    monkeypatch.setenv("POSTGRES_TEST_URL", explicit_dsn)
+
+    assert _resolve_postgres_test_dsn() == explicit_dsn
 
 
 # ---------------------------------------------------------------------------

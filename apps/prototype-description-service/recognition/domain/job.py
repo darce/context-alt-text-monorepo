@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class JobStatus(str, Enum):
+class JobStatus(StrEnum):
     """Lifecycle states for orchestration jobs."""
 
     PENDING = "pending"
@@ -18,7 +18,7 @@ class JobStatus(str, Enum):
     FAILED = "failed"
 
 
-class JobType(str, Enum):
+class JobType(StrEnum):
     """Supported job categories."""
 
     ANALYZE = "analyze"
@@ -27,7 +27,7 @@ class JobType(str, Enum):
     SPLIT = "split"
 
 
-class JobPhase(str, Enum):
+class JobPhase(StrEnum):
     """High-level phase markers for progress reporting."""
 
     QUEUED = "queued"

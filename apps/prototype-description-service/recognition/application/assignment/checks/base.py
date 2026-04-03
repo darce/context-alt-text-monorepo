@@ -6,13 +6,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from recognition.application.assignment.candidate import AssignmentCandidate
 
 
-class CheckFailureKind(str, Enum):
+class CheckFailureKind(StrEnum):
     """Typed reason categories for failed assignment checks."""
 
     BLOCK = "block"

@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import uuid
-from enum import Enum
+from enum import StrEnum
 
 import numpy as np
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -267,7 +267,7 @@ async def create_cluster_for_identity(
     return updated
 
 
-class CurationActionType(str, Enum):
+class CurationActionType(StrEnum):
     FALSE_POSITIVE = "false_positive"
     FALSE_NEGATIVE = "false_negative"
     NEW_IDENTITY = "new_identity"

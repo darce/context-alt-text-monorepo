@@ -12,6 +12,7 @@ from typing import Any, cast
 from uuid import UUID
 
 import numpy as np
+from anyio import Path as AsyncPath
 from sqlalchemy import Select, and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -598,8 +599,9 @@ async def generate_canonical_report(
             load_predicted_labels,
         )
 
-        baseline_path = Path(compare_baseline_path)
-        if baseline_path.exists():
+        baseline_async_path = AsyncPath(compare_baseline_path)
+        if await baseline_async_path.exists():
+            baseline_path = Path(compare_baseline_path)
             if baseline_source_type == "predicted":
                 canonical_labels = load_predicted_labels(baseline_path)
                 baseline_source = f"{baseline_path} (predicted)"

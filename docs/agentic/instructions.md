@@ -241,6 +241,19 @@ Planning artifact pipeline:
 - Insert an ADR only when a spec item is blocked on a design gate.
 - Create implementation task plans only after the upstream assessment/spec/ADR gates are reviewed.
 
+Full pipeline documentation with stage definitions, exit gates, and exemplars: [rules/planning-pipeline.md](rules/planning-pipeline.md).
+
+### Branch-Per-Task Convention
+
+Each task plan declares a **target branch** in its metadata. When starting implementation:
+
+1. Create the branch from `main`: `git checkout -b <target_branch> main`
+2. Activate the MCP task: `switch_task(task_ref="...", objective="...")`
+3. Work on slices, committing to that branch
+4. On completion, create a PR from the task branch to `main`
+
+Always **commit before switching** branches — never stash. WIP commits are visible, referenceable, and squashable. See [rules/planning-pipeline.md](rules/planning-pipeline.md#safe-branch-switching) for the full switching procedure.
+
 ### MCP Handoff Contract (MANDATORY)
 
 You are one of multiple concurrent agents. MCP handoff tools are required for task state coordination.

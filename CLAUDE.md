@@ -17,6 +17,7 @@ On every session (cold start, mid-task re-entry, lane inherit):
 5. Verify contract surface before writing code ([contracts/](docs/agentic/contracts/)).
 6. Decide whether `ctx7` is needed (upstream library behavior; see ctx7 criteria in instructions.md).
 7. Ensure the work has an MCP task. If no active task fits, initialize one before editing.
+8. If starting a task plan, create its target branch from `main` and activate via `switch_task`. See [planning pipeline](docs/agentic/rules/planning-pipeline.md) for the full workflow.
 
 If MCP unavailable: read `CURRENT_TASK.md` as stale fallback. Record blocker when access returns. **Stop implementation work until MCP is available.**
 

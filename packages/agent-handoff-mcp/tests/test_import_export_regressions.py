@@ -74,6 +74,18 @@ def test_export_and_import_handoff_state_round_trip(workspace_pair: dict[str, Pa
     assert state["findings_open"][0]["finding_id"] == "ROUND-TRIP-001"
 
 
+def test_export_defaults_to_no_markdown(workspace_pair: dict[str, Path]) -> None:
+    """OC-007: export_handoff_state defaults to include_markdown=False."""
+    _configure_runtime(workspace_pair["source"])
+    _parse(
+        mcp_server.set_handoff_state(task_ref="export-default", objective="Test export default", status="in_progress")
+    )
+    exported = _parse(mcp_server.export_handoff_state(task_ref="export-default"))
+    assert exported["ok"] is True
+    payload = exported.get("data") or exported
+    assert "current_task_markdown" not in payload
+
+
 def test_switch_task_clears_focus_on_restore(workspace_pair: dict[str, Path]) -> None:
     _configure_runtime(workspace_pair["source"])
 

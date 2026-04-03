@@ -2862,6 +2862,12 @@ def test_close_slice_writes_dashboard_header_on_success(isolated_handoff: dict) 
 
     assert result["ok"] is True
     assert result["current_task_md_written"] is True
+    # OC-003: close_slice returns decision row and task_revision
+    assert isinstance(result["decision"], dict)
+    assert "id" in result["decision"]
+    assert "decision" in result["decision"]
+    assert isinstance(result["task_revision"], int)
+    assert result["task_revision"] >= 1
 
     md = isolated_handoff["current_task_path"].read_text()
     assert "## All Tasks" in md

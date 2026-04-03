@@ -995,14 +995,19 @@ def generate_current_task_md(
     if write_file:
         current_task_path.write_text(markdown)
 
-    return core._json_response(
-        {
-            "ok": True,
-            "task_ref": state.get("task_ref"),
+    resolved_ref = state.get("task_ref")
+    artifacts = [{"type": "current_task_md", "path": str(current_task_path), "written": write_file}] if write_file else []
+    return core._envelope(
+        ok=True,
+        tool="generate_current_task_md",
+        data={
+            "task_ref": resolved_ref,
             "path": str(current_task_path),
             "written": write_file,
             "markdown": markdown if not write_file else None,
-        }
+        },
+        task_ref=resolved_ref,
+        artifacts=artifacts,
     )
 
 

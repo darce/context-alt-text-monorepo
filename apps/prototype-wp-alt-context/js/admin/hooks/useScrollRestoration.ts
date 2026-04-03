@@ -12,11 +12,19 @@ export const useScrollRestoration = (componentKey: string): void => {
     // try/catch guards against throwing scrollTo implementations (e.g. jsdom).
     if (savedPos !== null) {
       window.requestAnimationFrame(() => {
-        try { window.scrollTo(0, parseInt(savedPos, 10)); } catch { /* partial DOM */ }
+        try {
+          window.scrollTo(0, parseInt(savedPos, 10));
+        } catch {
+          /* partial DOM */
+        }
       });
     } else {
       window.requestAnimationFrame(() => {
-        try { window.scrollTo(0, 0); } catch { /* partial DOM */ }
+        try {
+          window.scrollTo(0, 0);
+        } catch {
+          /* partial DOM */
+        }
       });
     }
 

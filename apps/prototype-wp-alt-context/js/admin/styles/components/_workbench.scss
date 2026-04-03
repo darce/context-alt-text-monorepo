@@ -206,13 +206,12 @@
     }
 
     &--skeleton {
-      background:
-        linear-gradient(
-          90deg,
-          var(--acx-color-panel) 0%,
-          var(--acx-color-surface-alt) 50%,
-          var(--acx-color-panel) 100%
-        );
+      background: linear-gradient(
+        90deg,
+        var(--acx-color-panel) 0%,
+        var(--acx-color-surface-alt) 50%,
+        var(--acx-color-panel) 100%
+      );
       background-size: 200% 100%;
       animation: acx-workbench-skeleton 1.2s ease-in-out infinite;
     }
@@ -253,13 +252,12 @@
     &--skeleton {
       min-width: 6rem;
       color: transparent;
-      background:
-        linear-gradient(
-          90deg,
-          var(--acx-color-panel) 0%,
-          var(--acx-color-surface-alt) 50%,
-          var(--acx-color-panel) 100%
-        );
+      background: linear-gradient(
+        90deg,
+        var(--acx-color-panel) 0%,
+        var(--acx-color-surface-alt) 50%,
+        var(--acx-color-panel) 100%
+      );
       background-size: 200% 100%;
       animation: acx-workbench-skeleton 1.2s ease-in-out infinite;
     }
@@ -278,13 +276,12 @@
   &__skeleton {
     display: inline-flex;
     border-radius: var(--acx-space-8);
-    background:
-      linear-gradient(
-        90deg,
-        var(--acx-color-panel) 0%,
-        var(--acx-color-surface-alt) 50%,
-        var(--acx-color-panel) 100%
-      );
+    background: linear-gradient(
+      90deg,
+      var(--acx-color-panel) 0%,
+      var(--acx-color-surface-alt) 50%,
+      var(--acx-color-panel) 100%
+    );
     background-size: 200% 100%;
     animation: acx-workbench-skeleton 1.2s ease-in-out infinite;
 

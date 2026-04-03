@@ -41,10 +41,10 @@ export const SettingsPage = (): React.JSX.Element => {
 
   const saveMutation = useMutation({
     mutationFn: saveSettings,
-    onSuccess: (data) => {
+    onSuccess: () => {
       setSaveMessage(__('Settings saved.', 'alt-context'));
       setApiKey('');
-      queryClient.invalidateQueries({ queryKey: ['settings'] });
+      void queryClient.invalidateQueries({ queryKey: ['settings'] });
     },
     onError: () => {
       setSaveMessage(__('Failed to save settings.', 'alt-context'));
@@ -135,9 +135,7 @@ export const SettingsPage = (): React.JSX.Element => {
                 />
                 <p className="description">
                   {SOURCE_LABELS[data.url_source] ?? data.url_source}
-                  {urlReadOnly && (
-                    <> &mdash; {__('read-only (override active)', 'alt-context')}</>
-                  )}
+                  {urlReadOnly && <> &mdash; {__('read-only (override active)', 'alt-context')}</>}
                 </p>
               </td>
             </tr>
@@ -157,9 +155,7 @@ export const SettingsPage = (): React.JSX.Element => {
                 />
                 <p className="description">
                   {SOURCE_LABELS[data.key_source] ?? data.key_source}
-                  {keyReadOnly && (
-                    <> &mdash; {__('read-only (override active)', 'alt-context')}</>
-                  )}
+                  {keyReadOnly && <> &mdash; {__('read-only (override active)', 'alt-context')}</>}
                 </p>
               </td>
             </tr>

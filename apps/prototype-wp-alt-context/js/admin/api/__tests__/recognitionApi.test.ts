@@ -112,7 +112,9 @@ describe('recognitionApi', () => {
   it('rejects media identity payloads without canonical metadata', async () => {
     fetchApiMock.mockResolvedValue({ identities_by_media: {} });
 
-    await expect(fetchMediaIdentities([99])).rejects.toThrow('Media identities response must include a valid data_source.');
+    await expect(fetchMediaIdentities([99])).rejects.toThrow(
+      'Media identities response must include a valid data_source.',
+    );
   });
 
   it('normalizes top-unlabeled response metadata', async () => {

@@ -37,4 +37,3 @@ export const parseProjectionStatus = (value: unknown): ProjectionStatus | null =
 
   return null;
 };
-

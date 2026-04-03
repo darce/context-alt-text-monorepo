@@ -31,6 +31,7 @@ import json
 import os
 import re
 import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -195,7 +196,7 @@ def _utcnow_iso() -> str:
     return datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _json_response(payload: dict) -> str:
+def _json_response(payload: Mapping[str, object]) -> str:
     return json.dumps(payload, indent=2, sort_keys=True)
 
 
@@ -203,28 +204,39 @@ def _envelope(
     *,
     ok: bool,
     tool: str,
-    data: dict,
+    data: Mapping[str, object],
     task_ref: str | None = None,
     entity: str | None = None,
     mutation: dict | None = None,
     artifacts: list[dict] | None = None,
     warnings: list[str] | None = None,
 ) -> str:
-    """Build a v2 response envelope. Call sites opt in by using this instead of _json_response."""
+    """Build a v2 response envelope.
+
+    The nested ``data`` block is the canonical v2 shape. We also mirror data
+    fields at the top level for in-process Python callers that still consume
+    the legacy flat shape.
+    """
     scope: dict[str, str | None] = {"task_ref": task_ref}
     if entity is not None:
         scope["entity"] = entity
+    payload: dict[str, object] = {
+        "ok": ok,
+        "schema_version": 2,
+        "tool": tool,
+        "scope": scope,
+        "data": dict(data),
+        "mutation": mutation,
+        "artifacts": artifacts or [],
+        "warnings": warnings or [],
+    }
+    for key, value in data.items():
+        if key not in payload:
+            payload[key] = value
+    if task_ref is not None and "task_ref" not in payload:
+        payload["task_ref"] = task_ref
     return json.dumps(
-        {
-            "ok": ok,
-            "schema_version": 2,
-            "tool": tool,
-            "scope": scope,
-            "data": data,
-            "mutation": mutation,
-            "artifacts": artifacts or [],
-            "warnings": warnings or [],
-        },
+        payload,
         indent=2,
         sort_keys=True,
     )

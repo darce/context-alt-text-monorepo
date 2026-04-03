@@ -133,8 +133,8 @@ def test_ls_is_allowlisted() -> None:
         "pytest apps/prototype-description-service/ -x",
         "python -m pytest tests/ -v",
         "python3 -m pytest tests/ -v",
-        "/Users/daniel/.pyenv/versions/description-service/bin/python -u -m pytest tests/ -q | tail -n 40",
-        "/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest tests/test_lane_exec.py tests/test_lane_result.py -q",
+        "${PYENV_ROOT:-$HOME/.pyenv}/versions/description-service/bin/python -u -m pytest tests/ -q | tail -n 40",
+        "${PYENV_ROOT:-$HOME/.pyenv}/versions/description-service/bin/python -m pytest tests/test_lane_exec.py tests/test_lane_result.py -q",
         "npm test",
         "npm run test",
         "vitest run",
@@ -167,24 +167,25 @@ def test_ls_is_allowlisted() -> None:
         # git status: narrow concise form only
         "git status -sb",
         # cd <path> && <allowlisted command> navigation prefix
-        "cd /Users/daniel/Development/context-alt-text-monorepo && make test-handoff",
+        "cd ${REPO_ROOT:-$PWD} && make test-handoff",
         "cd /repo && pytest tests/ -x",
         "cd /repo && make test-handoff > /tmp/out.txt 2>&1; tail -5 /tmp/out.txt",
         # cd + export combo (VS Code prepends cd <workspace> && before agent commands)
-        "cd /Users/daniel/Development/context-alt-text-monorepo && export PYTHONPATH=packages/agent-handoff-mcp/src:packages/codex-subagent-bridge/src && pytest tests/ -v 2>&1 | tail -60",
+        "cd ${REPO_ROOT:-$PWD} && export PYTHONPATH=packages/agent-handoff-mcp/src:packages/codex-subagent-bridge/src && pytest tests/ -v 2>&1 | tail -60",
         # Env-var prefixed commands
         "PYENV_VERSION=description-service pytest tests/ -x",
         "export PYTHONPATH=pkg/src && pytest tests/",
+        'REPO_ROOT="${REPO_ROOT:-$PWD}" && PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}" && PYENV_VERSION=description-service "$PYENV_ROOT/versions/description-service/bin/python" -m pytest "$REPO_ROOT/packages/agent-handoff-mcp/tests/test_import_export_regressions.py" -q',
         # git ls-files: read-only file listing
         "git ls-files --others --exclude-standard -- apps/prototype-description-service/",
         # git log: read-only history queries
         "git log --oneline -n 5",
         "git log --format='%H %s' -n 4 | head -n 4",
-        "git -C /Users/daniel/Development/context-alt-text-monorepo log --oneline -n 5",
+        "git -C ${REPO_ROOT:-$PWD} log --oneline -n 5",
         # git rev-parse: read-only SHA / path resolution
         "git rev-parse HEAD",
         "git rev-parse --show-toplevel",
-        "git -C /Users/daniel/Development/context-alt-text-monorepo rev-parse HEAD",
+        "git -C ${REPO_ROOT:-$PWD} rev-parse HEAD",
         "pwd && git rev-parse --show-toplevel && git branch --show-current && git rev-parse --git-dir && git rev-parse --git-common-dir",
         # Read-only measurement
         "wc -l /tmp/bd_product_diff.patch",
@@ -195,7 +196,7 @@ def test_ls_is_allowlisted() -> None:
         # File deletion (non-recursive and recursive without force)
         "rm tests/test_pytest_progress_heartbeat.py",
         "rm /tmp/pytest_output.txt",
-        "rm -r /Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/.hypothesis",
+        "rm -r ${REPO_ROOT:-$PWD}/packages/agent-handoff-mcp/.hypothesis",
         "rm -r .hypothesis",
     ],
 )

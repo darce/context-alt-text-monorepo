@@ -39,7 +39,7 @@ To add lane automation for a new task, add a new manifest first. The root `Makef
 
 ## Terminology
 
-- orchestrator root: the main repo checkout, usually `/Users/daniel/Development/context-alt-text-monorepo`
+- orchestrator root: the main repo checkout, usually `${REPO_ROOT:-$PWD}`
 - worker worktree: a sibling checkout created for one lane
 - task ref: the active MCP task, for example `phase-5-retention-export-and-audit-controls`
 - lane id: the worker slice name, for example `backend-domain`, `backend-http`, `wp-proxy`, or `frontend`
@@ -48,10 +48,10 @@ To add lane automation for a new task, add a new manifest first. The root `Makef
 
 Current worker worktree examples:
 
-- `/Users/daniel/Development/context-alt-text-monorepo-p5-backend-domain`
-- `/Users/daniel/Development/context-alt-text-monorepo-p5-backend-http`
-- `/Users/daniel/Development/context-alt-text-monorepo-p5-wp-proxy`
-- `/Users/daniel/Development/context-alt-text-monorepo-p5-frontend`
+- `${REPO_ROOT:-$PWD}-p5-backend-domain`
+- `${REPO_ROOT:-$PWD}-p5-backend-http`
+- `${REPO_ROOT:-$PWD}-p5-wp-proxy`
+- `${REPO_ROOT:-$PWD}-p5-frontend`
 
 Current lane examples:
 
@@ -107,7 +107,7 @@ All `lane-*` commands work from the repo root and from the app directories that 
 Bootstrap these pieces before relying on daemon-based orchestration or artifact retrieval:
 
 ```bash
-cd /Users/daniel/Development/context-alt-text-monorepo
+cd "${REPO_ROOT:-$PWD}"
 
 # MCP server package
 uv tool install ./packages/agent-handoff-mcp
@@ -300,7 +300,7 @@ Use `worker_event_history(task_ref, lane_id, limit=20)` via MCP to query recent 
 **Who:** Orchestrator. **When:** Starting a new worker slice.
 
 ```bash
-cd /Users/daniel/Development/context-alt-text-monorepo
+cd "${REPO_ROOT:-$PWD}"
 MODEL=o3-mini make lane-open TASK=<task-ref> LANE=<lane>
 ```
 
@@ -430,7 +430,7 @@ Notes:
 **Who:** Worker (agent or human). **When:** You want the lane to keep polling MCP and execute work automatically.
 
 ```bash
-cd /Users/daniel/Development/context-alt-text-monorepo-p5-backend-domain
+cd "${REPO_ROOT:-$PWD}-p5-backend-domain"
 make worker-daemon TASK=<task-ref> LANE=<lane>
 make worker-daemon TASK=<task-ref> LANE=<lane> BACKEND=codex-subagent
 ```
@@ -604,18 +604,19 @@ make state
 List plan cursors directly:
 
 ```bash
+REPO_ROOT="${REPO_ROOT:-$PWD}"
 PYTHONPATH="packages/agent-handoff-mcp/src" python3 -m agent_handoff_mcp \
-  --workspace-root /Users/daniel/Development/context-alt-text-monorepo \
-  --state-dir /Users/daniel/Development/context-alt-text-monorepo/.task-state \
-  --current-task-path /Users/daniel/Development/context-alt-text-monorepo/CURRENT_TASK.md \
-  --exports-dir /Users/daniel/Development/context-alt-text-monorepo/.task-state/exports \
+  --workspace-root "$REPO_ROOT" \
+  --state-dir "$REPO_ROOT/.task-state" \
+  --current-task-path "$REPO_ROOT/CURRENT_TASK.md" \
+  --exports-dir "$REPO_ROOT/.task-state/exports" \
   review-summary --task-ref <task-ref>
 
 PYTHONPATH="packages/agent-handoff-mcp/src" python3 -m agent_handoff_mcp \
-  --workspace-root /Users/daniel/Development/context-alt-text-monorepo \
-  --state-dir /Users/daniel/Development/context-alt-text-monorepo/.task-state \
-  --current-task-path /Users/daniel/Development/context-alt-text-monorepo/CURRENT_TASK.md \
-  --exports-dir /Users/daniel/Development/context-alt-text-monorepo/.task-state/exports \
+  --workspace-root "$REPO_ROOT" \
+  --state-dir "$REPO_ROOT/.task-state" \
+  --current-task-path "$REPO_ROOT/CURRENT_TASK.md" \
+  --exports-dir "$REPO_ROOT/.task-state/exports" \
   dashboard
 ```
 
@@ -641,7 +642,7 @@ Expected daemon log lines during plan-driven dispatch include:
 **Who:** Orchestrator. **When:** You want the singleton root daemon to keep dispatching, intaking, refreshing, and verifying automatically.
 
 ```bash
-cd /Users/daniel/Development/context-alt-text-monorepo
+cd "${REPO_ROOT:-$PWD}"
 make orchestrator-daemon
 make orchestrator-daemon BACKEND=codex-subagent
 ```
@@ -659,7 +660,7 @@ Items that cannot be auto-routed (ambiguous or no file path) are listed as `unma
 **Who:** Orchestrator. **When:** You want root to keep polling, dispatching, intaking, refreshing, and verifying automatically.
 
 ```bash
-cd /Users/daniel/Development/context-alt-text-monorepo
+cd "${REPO_ROOT:-$PWD}"
 make orchestrator-daemon TASK=<task-ref>
 ```
 
@@ -852,7 +853,7 @@ Use `make lane-run` for non-interactive worker runs instead of trying to push a 
 ### Worker is on the wrong branch
 
 ```bash
-cd /Users/daniel/Development/context-alt-text-monorepo
+cd "${REPO_ROOT:-$PWD}"
 make lane-refresh TASK=<task-ref> LANE=<lane>
 make lane-open TASK=<task-ref> LANE=<lane>
 ```

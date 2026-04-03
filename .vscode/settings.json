@@ -39,7 +39,7 @@
     "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "python.terminal.useEnvFile": true,
-  "python.defaultInterpreterPath": "/Users/daniel/.pyenv/versions/description-service/bin/python",
-  "makefile.configureOnOpen": false,
-  "python-envs.defaultEnvManager": "ms-python.python:pyenv"
+  "python.terminal.activateEnvironment": false,
+  "python.defaultInterpreterPath": "${env:HOME}/.pyenv/versions/description-service/bin/python",
+  "makefile.configureOnOpen": false
 }

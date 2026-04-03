@@ -70,13 +70,13 @@ Extract `agent-handoff-mcp` from the monorepo into `darce/mcp-agent-handoff` on 
 
 ## Contract and Boundary Impact
 
-| Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
-| --- | --- | --- | --- | --- | --- |
-| `agent-handoff-mcp` Python API | handoff core | `pyproject.toml` + `__init__.py` exports | Package location moves; import paths unchanged | No; greenfield policy | `pip install` from git+ssh, import test |
-| `agent-orchestrator-mcp` dependency | orchestrator | plain `agent-handoff-mcp` dependency plus local source-path fallback in package/root Makefiles | `agent-handoff-mcp @ git+ssh://...` in pyproject.toml; installed-package runtime in Makefiles | No; same Python API | orchestrator test suite passes |
-| Makefile / package-local `PYTHONPATH` | monorepo build | source paths in root and package-local Makefiles | installed package or explicit bootstrap install; remove handoff source-path coupling | No | `make check-mcp` passes |
-| MCP server launch | IDE configs | source path to launcher script plus repo-local `PYTHONPATH` | installed entrypoint or installed launcher invocation with no monorepo source-path dependency | No | MCP server starts in VS Code / Claude Code |
-| Operator contracts and playbooks | docs | repo-local package install / source-path launch instructions | standalone-repo install instructions plus extracted-package consumer guidance | No | bootstrap and contract docs match live runtime |
+| Boundary                              | Owner          | Current Contract                                                                               | Expected Change                                                                               | Compatibility Needed? | Verification                                   |
+| ------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | --------------------- | ---------------------------------------------- |
+| `agent-handoff-mcp` Python API        | handoff core   | `pyproject.toml` + `__init__.py` exports                                                       | Package location moves; import paths unchanged                                                | No; greenfield policy | `pip install` from git+ssh, import test        |
+| `agent-orchestrator-mcp` dependency   | orchestrator   | plain `agent-handoff-mcp` dependency plus local source-path fallback in package/root Makefiles | `agent-handoff-mcp @ git+ssh://...` in pyproject.toml; installed-package runtime in Makefiles | No; same Python API   | orchestrator test suite passes                 |
+| Makefile / package-local `PYTHONPATH` | monorepo build | source paths in root and package-local Makefiles                                               | installed package or explicit bootstrap install; remove handoff source-path coupling          | No                    | `make check-mcp` passes                        |
+| MCP server launch                     | IDE configs    | source path to launcher script plus repo-local `PYTHONPATH`                                    | installed entrypoint or installed launcher invocation with no monorepo source-path dependency | No                    | MCP server starts in VS Code / Claude Code     |
+| Operator contracts and playbooks      | docs           | repo-local package install / source-path launch instructions                                   | standalone-repo install instructions plus extracted-package consumer guidance                 | No                    | bootstrap and contract docs match live runtime |
 
 ## Proposed Solution
 
@@ -84,47 +84,47 @@ Start from the already-separated package boundary. Keep `agent-handoff-mcp` ledg
 
 ## Files and Surfaces to Change
 
-| Surface | File | Change |
-| --- | --- | --- |
-| Orchestrator path seams | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/lane_manifest.py` | Accept `manifest_dir` parameter |
-| Orchestrator path seams | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/generate_lane_manifest.py` | Stop deriving output root from monorepo-only `SCRIPT_DIR.parents[4]` |
-| Orchestrator path seams | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/review_runner.py` | Accept `rules_dir` parameter |
-| Orchestrator path seams | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/review_ready.py` | Accept `boundary_prefixes`, `contract_prefixes`, `contract_checklist_path` |
-| Runtime wiring | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/api.py` | Remove handoff source-path assumptions from runtime helpers |
-| Package metadata | `packages/agent-orchestrator-mcp/pyproject.toml` | Pin `agent-handoff-mcp` to git+ssh after extraction |
-| Package-local tooling | `packages/agent-orchestrator-mcp/Makefile` | Remove `../agent-handoff-mcp/src` fallback |
-| New repo | `~/Development/mcp-agent-handoff/` | Clean package snapshot + CI + README |
-| Makefile | `Makefile` (root) | Remove handoff from `MCP_PYTHONPATH`; use installed package |
-| Makefile | `mk/lane-worker.mk` | Replace direct CLI path invocations |
-| Makefile | `mk/handoff.mk` | Update `MCP_CMD` to use installed entrypoint |
-| Makefile | `mk/orchestrator.mk` | Use installed package runtime assumptions where needed |
-| CI | `.github/workflows/mcp-packages.yml` | Remove handoff job; extracted repo has its own CI |
-| CI | `.github/workflows/handoff-integrity.yml` | Install from git+ssh instead of local path |
-| IDE config | `.vscode/mcp.json` | Use installed entrypoint |
-| IDE config | `.mcp.json` | Use installed entrypoint |
-| IDE config | `.codex/config.toml` | Use installed entrypoint |
-| MCP script | `scripts/mcp/mcp-server.sh` | Use installed entrypoint |
-| Contracts and bootstrap | `docs/agentic/contracts/agent-handoff-mcp.md` | Remove repo-local source-path guidance; document extracted install |
-| Contracts and bootstrap | `docs/agentic/contracts/agent-orchestrator-mcp.md` | Update source-path/install guidance for extracted handoff dependency |
-| Contracts and bootstrap | `docs/agentic/BOOTSTRAP.md` | Update MCP install and launcher guidance |
-| Playbooks | `docs/agentic/playbooks/**/*.md` | Remove live operator references to `packages/agent-handoff-mcp/src` |
-| Package docs | `packages/agent-orchestrator-mcp/README.md` | Update dependency/install instructions |
-| Lane config | `config/lane-orchestration/*.json` | Remove `packages/agent-handoff-mcp` owned paths |
-| Cleanup | `packages/agent-handoff-mcp/` | Delete entire directory |
-| Cleanup | `packages/wp-testing-helpers/` | Delete (dead stub) |
-| Cleanup | `packages/Makefile` | Remove handoff forwarding targets |
+| Surface                 | File                                                                                                 | Change                                                                     |
+| ----------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Orchestrator path seams | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/lane_manifest.py`          | Accept `manifest_dir` parameter                                            |
+| Orchestrator path seams | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/generate_lane_manifest.py` | Stop deriving output root from monorepo-only `SCRIPT_DIR.parents[4]`       |
+| Orchestrator path seams | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/review_runner.py`          | Accept `rules_dir` parameter                                               |
+| Orchestrator path seams | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/review_ready.py`           | Accept `boundary_prefixes`, `contract_prefixes`, `contract_checklist_path` |
+| Runtime wiring          | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/api.py`                                  | Remove handoff source-path assumptions from runtime helpers                |
+| Package metadata        | `packages/agent-orchestrator-mcp/pyproject.toml`                                                     | Pin `agent-handoff-mcp` to git+ssh after extraction                        |
+| Package-local tooling   | `packages/agent-orchestrator-mcp/Makefile`                                                           | Remove `../agent-handoff-mcp/src` fallback                                 |
+| New repo                | `~/Development/mcp-agent-handoff/`                                                                   | Clean package snapshot + CI + README                                       |
+| Makefile                | `Makefile` (root)                                                                                    | Remove handoff from `MCP_PYTHONPATH`; use installed package                |
+| Makefile                | `mk/lane-worker.mk`                                                                                  | Replace direct CLI path invocations                                        |
+| Makefile                | `mk/handoff.mk`                                                                                      | Update `MCP_CMD` to use installed entrypoint                               |
+| Makefile                | `mk/orchestrator.mk`                                                                                 | Use installed package runtime assumptions where needed                     |
+| CI                      | `.github/workflows/mcp-packages.yml`                                                                 | Remove handoff job; extracted repo has its own CI                          |
+| CI                      | `.github/workflows/handoff-integrity.yml`                                                            | Install from git+ssh instead of local path                                 |
+| IDE config              | `.vscode/mcp.json`                                                                                   | Use installed entrypoint                                                   |
+| IDE config              | `.mcp.json`                                                                                          | Use installed entrypoint                                                   |
+| IDE config              | `.codex/config.toml`                                                                                 | Use installed entrypoint                                                   |
+| MCP script              | `scripts/mcp/mcp-server.sh`                                                                          | Use installed entrypoint                                                   |
+| Contracts and bootstrap | `docs/agentic/contracts/agent-handoff-mcp.md`                                                        | Remove repo-local source-path guidance; document extracted install         |
+| Contracts and bootstrap | `docs/agentic/contracts/agent-orchestrator-mcp.md`                                                   | Update source-path/install guidance for extracted handoff dependency       |
+| Contracts and bootstrap | `docs/agentic/BOOTSTRAP.md`                                                                          | Update MCP install and launcher guidance                                   |
+| Playbooks               | `docs/agentic/playbooks/**/*.md`                                                                     | Remove live operator references to `packages/agent-handoff-mcp/src`        |
+| Package docs            | `packages/agent-orchestrator-mcp/README.md`                                                          | Update dependency/install instructions                                     |
+| Lane config             | `config/lane-orchestration/*.json`                                                                   | Remove `packages/agent-handoff-mcp` owned paths                            |
+| Cleanup                 | `packages/agent-handoff-mcp/`                                                                        | Delete entire directory                                                    |
+| Cleanup                 | `packages/wp-testing-helpers/`                                                                       | Delete (dead stub)                                                         |
+| Cleanup                 | `packages/Makefile`                                                                                  | Remove handoff forwarding targets                                          |
 
 ## Related Files
 
-| File | Note |
-| --- | --- |
-| `docs/tech-debt/migrate-pip-to-uv.md` | Consider using `uv` for installs in updated Makefile targets |
+| File                                                                        | Note                                                                       |
+| --------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `docs/tech-debt/migrate-pip-to-uv.md`                                       | Consider using `uv` for installs in updated Makefile targets               |
 | `docs/tasks/12.0/12.1/E12-9-orchestration-physical-separation-task-plan.md` | Prior separation work; confirms handoff no longer re-exports orchestration |
-| `docs/agentic/contracts/agent-handoff-mcp.md` | Live contract for ledger-only handoff surface |
-| `docs/agentic/contracts/agent-orchestrator-mcp.md` | Live contract for slice-review and orchestration ownership |
-| `docs/agentic/BOOTSTRAP.md` | Live operator install and MCP launch guidance |
-| `README.md` | Update monorepo structure description |
-| `CLAUDE.md` | Update allowed paths list (remove `packages/agent-handoff-mcp`) |
+| `docs/agentic/contracts/agent-handoff-mcp.md`                               | Live contract for ledger-only handoff surface                              |
+| `docs/agentic/contracts/agent-orchestrator-mcp.md`                          | Live contract for slice-review and orchestration ownership                 |
+| `docs/agentic/BOOTSTRAP.md`                                                 | Live operator install and MCP launch guidance                              |
+| `README.md`                                                                 | Update monorepo structure description                                      |
+| `CLAUDE.md`                                                                 | Update allowed paths list (remove `packages/agent-handoff-mcp`)            |
 
 ## Verification Strategy
 
@@ -188,7 +188,7 @@ Proof:
 
 Changes:
 
-- Create `/Users/daniel/Development/mcp-agent-handoff/` with a clean snapshot of `packages/agent-handoff-mcp/`
+- Create `${MCP_AGENT_HANDOFF_ROOT:-$HOME/Development/mcp-agent-handoff}/` with a clean snapshot of `packages/agent-handoff-mcp/`
 - Strip monorepo-specific references and rewrite README/install guidance for a 3rd-party audience
 - Add `.github/workflows/ci.yml`, `.gitignore`, `LICENSE`, and package metadata needed for private git+ssh installs
 - `gh repo create darce/mcp-agent-handoff --private --source . --push`

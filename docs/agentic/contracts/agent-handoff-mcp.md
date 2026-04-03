@@ -37,7 +37,7 @@ For extracted-consumer setups, replace the local `uv tool install ./packages/age
 Runtime bootstrap:
 
 ```bash
-cd /Users/daniel/Development/context-alt-text-monorepo
+cd "${REPO_ROOT:-$PWD}"
 
 # Core ledger server
 uv tool install ./packages/agent-handoff-mcp

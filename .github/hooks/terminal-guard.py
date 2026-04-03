@@ -219,11 +219,13 @@ def _strip_env_prefix(cmd: str) -> str:
       export PYTHONPATH=src && pytest ...
       PYENV_VERSION=x pytest ...
       cd /repo && export VAR=val && pytest ...
+            REPO_ROOT=/repo && PYENV_ROOT=/env && python -m pytest ...
     """
     s = cmd.strip()
     _PREFIX_PATTERNS = [
         r"^cd\s+\S+\s*&&\s*",           # cd <path> &&
         r"^export\s+\w+=\S+\s*&&\s*",   # export VAR=value &&
+                r"^\w+=\S+\s*&&\s*",             # VAR=value &&
         r"^(\w+=\S+\s+)+",              # VAR=value inline prefix tokens
     ]
     # Loop until no pattern matches (handles cd && export && <cmd>).

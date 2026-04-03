@@ -317,7 +317,6 @@ def _collect_all_deferred_findings(
     return grouped
 
 
-
 def _collect_task_snapshot(conn: sqlite3.Connection, task_ref: str) -> TaskSnapshot:
     active_row = conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone()
     active = _row_to_dict(active_row) if active_row is not None and active_row["task_ref"] == task_ref else None
@@ -372,7 +371,10 @@ def _build_current_task_state_from_snapshot(snapshot: TaskSnapshot) -> CurrentTa
 
 
 def _build_current_task_render_state(
-    conn: sqlite3.Connection, task_ref: str, *, max_cross_task_findings: int = 5,
+    conn: sqlite3.Connection,
+    task_ref: str,
+    *,
+    max_cross_task_findings: int = 5,
 ) -> CurrentTaskRenderState:
     """Assemble the full CURRENT_TASK render state from the canonical task snapshot path."""
 
@@ -380,10 +382,14 @@ def _build_current_task_render_state(
     state = _build_current_task_state_from_snapshot(snapshot)
     state["dashboard_tasks"] = _collect_dashboard_rows(conn)
     state["related_findings_open"] = _collect_all_open_findings(
-        conn, active_task_ref=task_ref, max_per_task=max_cross_task_findings,
+        conn,
+        active_task_ref=task_ref,
+        max_per_task=max_cross_task_findings,
     )
     state["related_findings_deferred"] = _collect_all_deferred_findings(
-        conn, active_task_ref=task_ref, max_per_task=max_cross_task_findings,
+        conn,
+        active_task_ref=task_ref,
+        max_per_task=max_cross_task_findings,
     )
     try:
         from .review_findings import (
@@ -709,11 +715,7 @@ def _render_current_task_md(state: CurrentTaskRenderState) -> str:
                 f"- status: `{active.get('status', '')}`",
                 f"- revision: `{active.get('revision', 0)}`",
                 f"- updated_at: `{active.get('updated_at', '')}`",
-                *(
-                    [f"- target_branch: `{active['target_branch']}`"]
-                    if active.get("target_branch")
-                    else []
-                ),
+                *([f"- target_branch: `{active['target_branch']}`"] if active.get("target_branch") else []),
                 "",
                 "## Latest Decision",
             ]

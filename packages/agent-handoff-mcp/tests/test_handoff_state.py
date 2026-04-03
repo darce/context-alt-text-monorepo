@@ -66,9 +66,23 @@ def test_summarize_test_result_falls_back_to_last_line() -> None:
 
 
 def _parse(payload: str) -> dict:
-    import typing
+    """Parse JSON and flatten v2 envelope for backward-compatible test assertions.
 
-    return typing.cast(dict, json.loads(payload))
+    If the response has schema_version=2, merge data into the top level so
+    tests can access result["active"] instead of result["data"]["active"].
+    Envelope metadata (schema_version, tool, scope, mutation, artifacts, warnings)
+    remains accessible at the top level.
+    """
+    raw = json.loads(payload)
+    if isinstance(raw, dict) and raw.get("schema_version") == 2:
+        data = raw.get("data", {})
+        # Promote scope fields to top level for convenience
+        scope = raw.get("scope", {})
+        flat = {**raw, **data}
+        if "task_ref" not in flat and scope.get("task_ref"):
+            flat["task_ref"] = scope["task_ref"]
+        return flat
+    return raw
 
 
 def _assert_dashboard_row(
@@ -207,6 +221,10 @@ def test_record_decision_persists_changed_files(isolated_handoff: dict) -> None:
     )
     assert recorded["ok"] is True
     assert json.loads(recorded["decision"]["changed_files_json"]) == files
+    assert recorded["mutation"]["entity"] == "decision"
+    assert recorded["mutation"]["operation"] == "insert"
+    assert recorded["mutation"]["affected_ids"]
+    assert isinstance(recorded["mutation"]["task_revision"], int)
 
 
 def test_record_decision_rejects_non_relative_changed_files(isolated_handoff: dict) -> None:
@@ -553,7 +571,7 @@ def test_record_decision_no_warning_with_model(isolated_handoff: dict) -> None:
         )
     )
     assert result["ok"] is True
-    assert "warnings" not in result
+    assert not result.get("warnings")
     _parse(
         mcp_server.set_handoff_state(
             task_ref="4.12.0",
@@ -650,6 +668,47 @@ def test_get_handoff_state_compact_defaults_enforced(isolated_handoff: dict) -> 
     assert len(verbose["actions_pending"]) == 9
     assert len(verbose["decisions_recent"]) == 6
     assert len(verbose["tests_recent"]) == 7
+
+
+def test_v2_envelope_shape_on_read_surfaces(isolated_handoff: dict) -> None:
+    """Read surfaces return the v2 envelope with schema_version, tool, scope, data."""
+    _parse(mcp_server.set_handoff_state(task_ref="env-test", objective="Envelope shape", status="in_progress"))
+
+    # get_handoff_state
+    raw_state = json.loads(mcp_server.get_handoff_state(task_ref="env-test"))
+    assert raw_state["schema_version"] == 2
+    assert raw_state["tool"] == "get_handoff_state"
+    assert raw_state["scope"]["task_ref"] == "env-test"
+    assert "data" in raw_state
+    assert "active" in raw_state["data"]
+    assert "limits" in raw_state["data"]
+
+    # generate_current_task_md
+    raw_gen = json.loads(mcp_server.generate_current_task_md(task_ref="env-test", write_file=False))
+    assert raw_gen["schema_version"] == 2
+    assert raw_gen["tool"] == "generate_current_task_md"
+    assert raw_gen["scope"]["task_ref"] == "env-test"
+    assert "markdown" in raw_gen["data"]
+
+    # dashboard view
+    raw_dash = json.loads(mcp_server.get_handoff_state(view="dashboard"))
+    assert raw_dash["schema_version"] == 2
+    assert raw_dash["tool"] == "get_handoff_state"
+    assert "tasks" in raw_dash["data"]
+
+
+def test_v2_envelope_mirrors_legacy_top_level_fields_for_python_callers(isolated_handoff: dict) -> None:
+    _parse(mcp_server.set_handoff_state(task_ref="legacy-flat", objective="Legacy flat fields", status="in_progress"))
+
+    raw_state = json.loads(mcp_server.get_handoff_state(task_ref="legacy-flat"))
+    assert raw_state["schema_version"] == 2
+    assert raw_state["task_ref"] == "legacy-flat"
+    assert raw_state["active"] == raw_state["data"]["active"]
+    assert raw_state["limits"] == raw_state["data"]["limits"]
+
+    raw_error = json.loads(mcp_server.handoff_close_check(require_fresh_tests=True))
+    assert raw_error["ok"] is False
+    assert raw_error["error"] == raw_error["data"]["error"]
 
 
 def test_get_handoff_state_sections_filter(isolated_handoff: dict) -> None:
@@ -1133,6 +1192,10 @@ def test_record_review_finding_accepts_structured_details_and_actor_fallback(iso
     assert finding["fix"] == "Extract helper"
     assert finding["agent"] == "codex"
     assert finding["branch"] == "feature/demo"
+    assert created["mutation"]["entity"] == "finding"
+    assert created["mutation"]["operation"] == "upsert"
+    assert created["mutation"]["affected_ids"] == ["M-10"]
+    assert isinstance(created["mutation"]["task_revision"], int)
 
 
 def test_record_review_finding_rerecord_reopens_with_marker_reason(isolated_handoff: dict) -> None:
@@ -2947,10 +3010,11 @@ def test_load_session_merges_state_and_findings(isolated_handoff: dict) -> None:
 
     assert result["ok"] is True
     assert result["task_ref"] == "ls-test"
-    # State is nested under "state" key
+    # State is the full v2 envelope from get_handoff_state; data is nested.
     state = result["state"]
-    assert state["active"]["status"] == "in_progress"
-    assert state["active"]["objective"] == "Load session compound test"
+    state_data = state.get("data", state)
+    assert state_data["active"]["status"] == "in_progress"
+    assert state_data["active"]["objective"] == "Load session compound test"
     # Open findings at top-level "open_findings"
     findings = result["open_findings"]
     assert isinstance(findings, list)

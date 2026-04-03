@@ -14,7 +14,16 @@ from agent_handoff_mcp.config import RuntimeConfig
 
 
 def _parse(raw: str) -> dict:
-    return json.loads(raw)
+    """Parse JSON and flatten v2 envelope for backward-compatible test assertions."""
+    result = json.loads(raw)
+    if isinstance(result, dict) and result.get("schema_version") == 2:
+        data = result.get("data", {})
+        scope = result.get("scope", {})
+        flat = {**result, **data}
+        if "task_ref" not in flat and scope.get("task_ref"):
+            flat["task_ref"] = scope["task_ref"]
+        return flat
+    return result
 
 
 @pytest.fixture()

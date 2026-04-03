@@ -113,6 +113,7 @@ from .shared_primitives import (  # noqa: F401
     _current_task_path,
     _decode_lane_message_row_dict,
     _decode_turn_metric_row_dict,
+    _envelope,
     _excerpt_text,
     _exports_dir,
     _first_present,

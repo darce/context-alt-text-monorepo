@@ -20,6 +20,7 @@ from ._shared import (
     WriteActor,
     _annotate_review_finding,
     _dedupe_review_findings,
+    _envelope,
     _get_db_connection,
     _json_response,
     _normalize_optional_text,
@@ -50,6 +51,14 @@ def _write_current_task_md_for_active_context(conn: sqlite3.Connection, fallback
         str(active_row["task_ref"]) if active_row is not None and active_row["task_ref"] else fallback_task_ref
     )
     _write_current_task_md_for_task(conn, render_task_ref)
+
+
+def _current_task_revision(conn: sqlite3.Connection, task_ref: str) -> int | None:
+    row = conn.execute(
+        "SELECT revision FROM handoff_state WHERE id = 1 AND task_ref = ?",
+        (task_ref,),
+    ).fetchone()
+    return int(row["revision"]) if row is not None else None
 
 
 def _classify_commit_relation(reference_sha: str | None, candidate_sha: str | None) -> str:
@@ -212,13 +221,21 @@ def record_review_finding(
     review_mode: str | None = None,
 ) -> str:
     if severity not in REVIEW_FINDING_SEVERITIES:
-        return _json_response(
-            {"ok": False, "error": f"Invalid severity. Valid: {', '.join(sorted(REVIEW_FINDING_SEVERITIES))}"}
+        return _envelope(
+            ok=False,
+            tool="record_review_finding",
+            data={"error": f"Invalid severity. Valid: {', '.join(sorted(REVIEW_FINDING_SEVERITIES))}"},
+            entity="finding",
         )
     try:
         normalized_review_mode = _normalize_review_mode(review_mode)
     except ValueError as exc:
-        return _json_response({"ok": False, "error": str(exc)})
+        return _envelope(
+            ok=False,
+            tool="record_review_finding",
+            data={"error": str(exc)},
+            entity="finding",
+        )
     line_start, line_end, fix = _parse_review_finding_details(details)
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
@@ -273,10 +290,23 @@ def record_review_finding(
             "SELECT * FROM review_findings WHERE task_ref = ? AND finding_id = ?", (resolved_task_ref, finding_id)
         ).fetchone()
         _write_current_task_md_for_active_context(conn, resolved_task_ref)
-        payload: dict[str, object] = {"ok": True, "finding": _row_to_dict(row)}
+        data: dict[str, object] = {"finding": _row_to_dict(row)}
         if existing is not None and str(existing["status"]) != "open":
-            payload["reopened"] = True
-        return _json_response(payload)
+            data["reopened"] = True
+        task_revision = _current_task_revision(conn, resolved_task_ref)
+        return _envelope(
+            ok=True,
+            tool="record_review_finding",
+            data=data,
+            task_ref=resolved_task_ref,
+            entity="finding",
+            mutation={
+                "entity": "finding",
+                "operation": "upsert",
+                "affected_ids": [finding_id],
+                "task_revision": task_revision,
+            },
+        )
 
 
 _BATCH_MAX_SIZE = 100
@@ -299,31 +329,64 @@ def batch_record_review_findings(
 ) -> str:
     """Record or reopen multiple review findings in a single atomic write."""
     if len(findings) > _BATCH_MAX_SIZE:
-        return _json_response({"ok": False, "error": f"Batch exceeds maximum size of {_BATCH_MAX_SIZE} items."})
+        return _envelope(
+            ok=False,
+            tool="batch_record_review_findings",
+            data={"error": f"Batch exceeds maximum size of {_BATCH_MAX_SIZE} items."},
+            entity="finding",
+        )
     if not findings:
-        return _json_response({"ok": True, "task_ref": task_ref or "unknown", "written": 0, "results": []})
+        return _envelope(
+            ok=True,
+            tool="batch_record_review_findings",
+            data={"task_ref": task_ref or "unknown", "written": 0, "results": []},
+            task_ref=task_ref,
+            entity="finding",
+        )
 
     # Pre-validate all items before opening the transaction.
     for i, item in enumerate(findings):
         fid = item.get("finding_id")
         if not fid:
-            return _json_response({"ok": False, "error": f"Item {i} is missing finding_id."})
+            return _envelope(
+                ok=False,
+                tool="batch_record_review_findings",
+                data={"error": f"Item {i} is missing finding_id."},
+                entity="finding",
+            )
         sev = item.get("severity")
         if sev not in REVIEW_FINDING_SEVERITIES:
-            return _json_response(
-                {
-                    "ok": False,
+            return _envelope(
+                ok=False,
+                tool="batch_record_review_findings",
+                data={
                     "error": f"Item {i} (finding_id={fid!r}): Invalid severity. Valid: {', '.join(sorted(REVIEW_FINDING_SEVERITIES))}",
-                }
+                },
+                entity="finding",
             )
         if not item.get("file_path"):
-            return _json_response({"ok": False, "error": f"Item {i} (finding_id={fid!r}): missing file_path."})
+            return _envelope(
+                ok=False,
+                tool="batch_record_review_findings",
+                data={"error": f"Item {i} (finding_id={fid!r}): missing file_path."},
+                entity="finding",
+            )
         if not item.get("description"):
-            return _json_response({"ok": False, "error": f"Item {i} (finding_id={fid!r}): missing description."})
+            return _envelope(
+                ok=False,
+                tool="batch_record_review_findings",
+                data={"error": f"Item {i} (finding_id={fid!r}): missing description."},
+                entity="finding",
+            )
         try:
             _normalize_review_mode(item.get("review_mode"))
         except ValueError as exc:
-            return _json_response({"ok": False, "error": f"Item {i} (finding_id={fid!r}): {exc}"})
+            return _envelope(
+                ok=False,
+                tool="batch_record_review_findings",
+                data={"error": f"Item {i} (finding_id={fid!r}): {exc}"},
+                entity="finding",
+            )
 
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
@@ -406,13 +469,25 @@ def batch_record_review_findings(
 
         _write_current_task_md_for_active_context(conn, resolved_task_ref)
 
-    return _json_response(
-        {
-            "ok": True,
+    affected_ids = [item["finding_id"] for item in findings]
+    with _get_db_connection() as conn:
+        task_revision = _current_task_revision(conn, resolved_task_ref)
+    return _envelope(
+        ok=True,
+        tool="batch_record_review_findings",
+        data={
             "task_ref": resolved_task_ref,
             "written": len(findings),
             "results": results,
-        }
+        },
+        task_ref=resolved_task_ref,
+        entity="finding",
+        mutation={
+            "entity": "finding",
+            "operation": "batch_upsert",
+            "affected_ids": affected_ids,
+            "task_revision": task_revision,
+        },
     )
 
 
@@ -476,8 +551,7 @@ def _apply_finding_update(
     )
     row = conn.execute("SELECT * FROM review_findings WHERE id = ?", (target_db_id,)).fetchone()
     _write_current_task_md_for_active_context(conn, resolved_task_ref)
-    payload: dict[str, object] = {
-        "ok": True,
+    data: dict[str, object] = {
         "finding": _row_to_dict(row),
         "commit_guard": {
             "finding_commit_sha": finding_commit_sha,
@@ -489,11 +563,25 @@ def _apply_finding_update(
         },
     }
     if is_reopen_transition:
-        payload["reopened"] = True
-        payload["reopen_reason"] = normalized_reopen_reason
+        data["reopened"] = True
+        data["reopen_reason"] = normalized_reopen_reason
     if normalized_verification_evidence is not None:
-        payload["verification_evidence"] = normalized_verification_evidence
-    return _json_response(payload)
+        data["verification_evidence"] = normalized_verification_evidence
+    finding_id_str = str(existing["finding_id"])
+    task_revision = _current_task_revision(conn, resolved_task_ref)
+    return _envelope(
+        ok=True,
+        tool="update_review_finding",
+        data=data,
+        task_ref=resolved_task_ref,
+        entity="finding",
+        mutation={
+            "entity": "finding",
+            "operation": "update",
+            "affected_ids": [finding_id_str],
+            "task_revision": task_revision,
+        },
+    )
 
 
 def _validate_update_finding_input(
@@ -567,7 +655,12 @@ def update_review_finding(
         normalized_verification_evidence,
     )
     if input_error is not None:
-        return _json_response(input_error)
+        return _envelope(
+            ok=False,
+            tool="update_review_finding",
+            data={"error": input_error["error"]},
+            entity="finding",
+        )
     with _get_db_connection() as conn:
         ctx = _resolve_write_actor(conn, actor)
         if task_ref is None:
@@ -579,14 +672,21 @@ def update_review_finding(
             else:
                 rows = conn.execute("SELECT * FROM review_findings WHERE id = ?", (finding_db_id,)).fetchall()
             if not rows:
-                return _json_response({"ok": False, "error": "Finding not found."})
+                return _envelope(
+                    ok=False,
+                    tool="update_review_finding",
+                    data={"error": "Finding not found."},
+                    entity="finding",
+                )
             if len(rows) > 1:
                 candidate_scopes = sorted({str(r["task_ref"]) for r in rows})
-                return _json_response(
-                    {
-                        "ok": False,
+                return _envelope(
+                    ok=False,
+                    tool="update_review_finding",
+                    data={
                         "error": f"Ambiguous finding_id: {len(rows)} rows across task_refs {candidate_scopes}. Pass task_ref explicitly to disambiguate.",
-                    }
+                    },
+                    entity="finding",
                 )
             existing = rows[0]
             resolved_task_ref = str(existing["task_ref"])
@@ -601,30 +701,64 @@ def update_review_finding(
                 else (finding_db_id, resolved_task_ref),
             ).fetchone()
             if existing is None:
-                return _json_response({"ok": False, "error": "Finding not found for task."})
+                return _envelope(
+                    ok=False,
+                    tool="update_review_finding",
+                    data={"error": "Finding not found for task."},
+                    task_ref=resolved_task_ref,
+                    entity="finding",
+                )
         existing_status = str(existing["status"])
         is_reopen_transition = existing_status != "open" and status == "open"
         if is_reopen_transition and normalized_reopen_reason is None:
-            return _json_response({"ok": False, "error": "reopen_reason is required when reopening a finding."})
+            return _envelope(
+                ok=False,
+                tool="update_review_finding",
+                data={"error": "reopen_reason is required when reopening a finding."},
+                task_ref=resolved_task_ref,
+                entity="finding",
+            )
         if not is_reopen_transition and normalized_reopen_reason is not None:
-            return _json_response(
-                {"ok": False, "error": "reopen_reason is only valid when transitioning a finding back to open."}
+            return _envelope(
+                ok=False,
+                tool="update_review_finding",
+                data={"error": "reopen_reason is only valid when transitioning a finding back to open."},
+                task_ref=resolved_task_ref,
+                entity="finding",
             )
 
         if status == "fixed":
             guard_error = _check_reopen_escalation_guard(existing, normalized_verification_evidence)
             if guard_error is not None:
-                return _json_response(guard_error)
+                return _envelope(
+                    ok=False,
+                    tool="update_review_finding",
+                    data={k: v for k, v in guard_error.items() if k != "ok"},
+                    task_ref=resolved_task_ref,
+                    entity="finding",
+                )
         if status == "fixed" and normalized_verification_evidence is None:
             guard_error = _check_batch_close_guard(conn, resolved_task_ref, existing)
             if guard_error is not None:
-                return _json_response(guard_error)
+                return _envelope(
+                    ok=False,
+                    tool="update_review_finding",
+                    data={k: v for k, v in guard_error.items() if k != "ok"},
+                    task_ref=resolved_task_ref,
+                    entity="finding",
+                )
         if status == "fixed":
             guard_error = _check_commit_relation_guard(
                 existing, ctx.commit_sha, normalized_verified_commit_sha, ctx.branch, normalized_resolution_notes
             )
             if guard_error is not None:
-                return _json_response(guard_error)
+                return _envelope(
+                    ok=False,
+                    tool="update_review_finding",
+                    data={k: v for k, v in guard_error.items() if k != "ok"},
+                    task_ref=resolved_task_ref,
+                    entity="finding",
+                )
 
         return _apply_finding_update(
             conn,
@@ -671,7 +805,12 @@ def list_review_findings(
 
     if finding_id is not None or finding_db_id is not None:
         if finding_id is not None and finding_db_id is not None:
-            return _json_response({"ok": False, "error": "Pass exactly one of finding_id or finding_db_id, not both."})
+            return _envelope(
+                ok=False,
+                tool="list_review_findings",
+                data={"error": "Pass exactly one of finding_id or finding_db_id, not both."},
+                entity="finding",
+            )
         with _get_db_connection() as conn:
             if task_ref is None:
                 # Global lookup: skip active-task fallback when no task_ref provided.
@@ -680,19 +819,31 @@ def list_review_findings(
                 else:
                     normalized_fid = finding_id.strip() if isinstance(finding_id, str) else None
                     if not normalized_fid:
-                        return _json_response({"ok": False, "error": "finding_id must not be empty."})
+                        return _envelope(
+                            ok=False,
+                            tool="list_review_findings",
+                            data={"error": "finding_id must not be empty."},
+                            entity="finding",
+                        )
                     rows = conn.execute(
                         "SELECT * FROM review_findings WHERE finding_id = ?", (normalized_fid,)
                     ).fetchall()
                 if not rows:
-                    return _json_response({"ok": False, "error": "Finding not found."})
+                    return _envelope(
+                        ok=False,
+                        tool="list_review_findings",
+                        data={"error": "Finding not found."},
+                        entity="finding",
+                    )
                 if len(rows) > 1:
                     candidate_scopes = sorted({str(r["task_ref"]) for r in rows})
-                    return _json_response(
-                        {
-                            "ok": False,
+                    return _envelope(
+                        ok=False,
+                        tool="list_review_findings",
+                        data={
                             "error": f"Ambiguous finding_id: {len(rows)} rows across task_refs {candidate_scopes}. Pass task_ref explicitly to disambiguate.",
-                        }
+                        },
+                        entity="finding",
                     )
                 row = rows[0]
                 resolved_task_ref = str(row["task_ref"])
@@ -706,13 +857,25 @@ def list_review_findings(
                 else:
                     normalized_fid = finding_id.strip() if isinstance(finding_id, str) else None
                     if not normalized_fid:
-                        return _json_response({"ok": False, "error": "finding_id must not be empty."})
+                        return _envelope(
+                            ok=False,
+                            tool="list_review_findings",
+                            data={"error": "finding_id must not be empty."},
+                            task_ref=resolved_task_ref,
+                            entity="finding",
+                        )
                     row = conn.execute(
                         "SELECT * FROM review_findings WHERE finding_id = ? AND task_ref = ?",
                         (normalized_fid, resolved_task_ref),
                     ).fetchone()
                 if row is None:
-                    return _json_response({"ok": False, "error": "Finding not found for task."})
+                    return _envelope(
+                        ok=False,
+                        tool="list_review_findings",
+                        data={"error": "Finding not found for task."},
+                        task_ref=resolved_task_ref,
+                        entity="finding",
+                    )
             workspace_git = _workspace_git_context()
             finding = _apply_finding_detail(
                 _annotate_review_finding(
@@ -721,9 +884,10 @@ def list_review_findings(
                     workspace_commit_sha=workspace_git["commit_sha"],
                 )
             )
-            return _json_response(
-                {
-                    "ok": True,
+            return _envelope(
+                ok=True,
+                tool="list_review_findings",
+                data={
                     "task_ref": resolved_task_ref,
                     "workspace_git": workspace_git,
                     "filters": {"finding_id": finding_id, "finding_db_id": finding_db_id},
@@ -732,18 +896,35 @@ def list_review_findings(
                     "has_more": False,
                     "counts": {"status": {str(row["status"]): 1}, "severity": {str(row["severity"]): 1}},
                     "findings": [finding],
-                }
+                },
+                task_ref=resolved_task_ref,
+                entity="finding",
             )
     valid_statuses = {"all", *REVIEW_FINDING_STATUSES}
     if status not in valid_statuses:
-        return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(valid_statuses))}"})
+        return _envelope(
+            ok=False,
+            tool="list_review_findings",
+            data={"error": f"Invalid status. Valid: {', '.join(sorted(valid_statuses))}"},
+            entity="finding",
+        )
     valid_severities = {"all", *REVIEW_FINDING_SEVERITIES}
     if severity not in valid_severities:
-        return _json_response({"ok": False, "error": f"Invalid severity. Valid: {', '.join(sorted(valid_severities))}"})
+        return _envelope(
+            ok=False,
+            tool="list_review_findings",
+            data={"error": f"Invalid severity. Valid: {', '.join(sorted(valid_severities))}"},
+            entity="finding",
+        )
     try:
         normalized_review_mode = _normalize_review_mode(review_mode)
     except ValueError as exc:
-        return _json_response({"ok": False, "error": str(exc)})
+        return _envelope(
+            ok=False,
+            tool="list_review_findings",
+            data={"error": str(exc)},
+            entity="finding",
+        )
     limit = max(1, min(limit, 500))
     offset = max(0, offset)
     with _get_db_connection() as conn:
@@ -788,9 +969,10 @@ def list_review_findings(
         )
         for row in raw_findings
     ]
-    return _json_response(
-        {
-            "ok": True,
+    return _envelope(
+        ok=True,
+        tool="list_review_findings",
+        data={
             "task_ref": resolved_task_ref,
             "workspace_git": workspace_git,
             "filters": {
@@ -805,7 +987,9 @@ def list_review_findings(
             "has_more": (offset + len(findings)) < total,
             "counts": {"status": status_counts, "severity": severity_counts},
             "findings": findings,
-        }
+        },
+        task_ref=resolved_task_ref,
+        entity="finding",
     )
 
 
@@ -1050,35 +1234,68 @@ def record_review_run(
     session = (session or "").strip()
     subject_path = (subject_path or "").strip()
     if not review_run_id:
-        return _json_response({"ok": False, "error": "review_run_id is required."})
+        return _envelope(
+            ok=False,
+            tool="record_review_run",
+            data={"error": "review_run_id is required."},
+            entity="review_run",
+        )
     if not session:
-        return _json_response({"ok": False, "error": "session is required."})
+        return _envelope(
+            ok=False,
+            tool="record_review_run",
+            data={"error": "session is required."},
+            entity="review_run",
+        )
     if not subject_path:
-        return _json_response({"ok": False, "error": "subject_path is required."})
+        return _envelope(
+            ok=False,
+            tool="record_review_run",
+            data={"error": "subject_path is required."},
+            entity="review_run",
+        )
     if subject_kind not in _REVIEW_RUN_SUBJECT_KINDS:
-        return _json_response(
-            {
-                "ok": False,
+        return _envelope(
+            ok=False,
+            tool="record_review_run",
+            data={
                 "error": f"Invalid subject_kind '{subject_kind}'. Valid: {', '.join(sorted(_REVIEW_RUN_SUBJECT_KINDS))}",
-            }
+            },
+            entity="review_run",
         )
     try:
         normalized_review_mode = _normalize_review_mode(review_mode)
     except ValueError as exc:
-        return _json_response({"ok": False, "error": str(exc)})
+        return _envelope(
+            ok=False,
+            tool="record_review_run",
+            data={"error": str(exc)},
+            entity="review_run",
+        )
     if verdict is not None and verdict not in _REVIEW_RUN_VERDICTS:
-        return _json_response(
-            {"ok": False, "error": f"Invalid verdict '{verdict}'. Valid: {', '.join(sorted(_REVIEW_RUN_VERDICTS))}"}
+        return _envelope(
+            ok=False,
+            tool="record_review_run",
+            data={"error": f"Invalid verdict '{verdict}'. Valid: {', '.join(sorted(_REVIEW_RUN_VERDICTS))}"},
+            entity="review_run",
         )
     with _get_db_connection() as conn:
         resolved_actor = _resolve_write_actor(conn, actor)
+        resolved_task_ref = task_ref
+        if resolved_task_ref is None:
+            active_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
+            if active_row is not None and active_row["task_ref"]:
+                resolved_task_ref = str(active_row["task_ref"])
         existing = conn.execute("SELECT id FROM review_runs WHERE review_run_id = ?", (review_run_id,)).fetchone()
         if existing is not None:
-            return _json_response(
-                {
-                    "ok": False,
+            return _envelope(
+                ok=False,
+                tool="record_review_run",
+                data={
                     "error": f"review_run_id '{review_run_id}' already exists (id={existing['id']}). Use a unique id for each run.",
-                }
+                },
+                task_ref=resolved_task_ref,
+                entity="review_run",
             )
         conn.execute(
             """
@@ -1090,7 +1307,7 @@ def record_review_run(
             """,
             (
                 review_run_id,
-                task_ref,
+                resolved_task_ref,
                 subject_path,
                 subject_kind,
                 normalized_review_mode,
@@ -1105,7 +1322,20 @@ def record_review_run(
             ),
         )
         row = dict(conn.execute("SELECT * FROM review_runs WHERE review_run_id = ?", (review_run_id,)).fetchone())
-    return _json_response({"ok": True, "review_run": row})
+        task_revision = _current_task_revision(conn, resolved_task_ref) if resolved_task_ref is not None else None
+    return _envelope(
+        ok=True,
+        tool="record_review_run",
+        data={"review_run": row},
+        task_ref=resolved_task_ref,
+        entity="review_run",
+        mutation={
+            "entity": "review_run",
+            "operation": "insert",
+            "affected_ids": [review_run_id],
+            "task_revision": task_revision,
+        },
+    )
 
 
 def list_review_runs(
@@ -1122,15 +1352,23 @@ def list_review_runs(
     limit = max(1, min(limit, 100))
     offset = max(0, offset)
     if verdict is not None and verdict not in _REVIEW_RUN_VERDICTS:
-        return _json_response(
-            {"ok": False, "error": f"Invalid verdict '{verdict}'. Valid: {', '.join(sorted(_REVIEW_RUN_VERDICTS))}"}
+        return _envelope(
+            ok=False,
+            tool="list_review_runs",
+            data={"error": f"Invalid verdict '{verdict}'. Valid: {', '.join(sorted(_REVIEW_RUN_VERDICTS))}"},
+            entity="review_run",
         )
     normalized_review_mode: str | None = None
     if review_mode is not None:
         try:
             normalized_review_mode = _normalize_review_mode(review_mode)
         except ValueError as exc:
-            return _json_response({"ok": False, "error": str(exc)})
+            return _envelope(
+                ok=False,
+                tool="list_review_runs",
+                data={"error": str(exc)},
+                entity="review_run",
+            )
     with _get_db_connection() as conn:
         where_parts: list[str] = []
         params: list[object] = []
@@ -1151,9 +1389,10 @@ def list_review_runs(
             conn, "review_runs", where_sql, tuple(params), limit, offset, "reviewed_at DESC, id DESC"
         )
     runs = raw_runs
-    return _json_response(
-        {
-            "ok": True,
+    return _envelope(
+        ok=True,
+        tool="list_review_runs",
+        data={
             "filters": {
                 "task_ref": task_ref,
                 "subject_path": subject_path,
@@ -1166,7 +1405,9 @@ def list_review_runs(
             "returned": len(runs),
             "has_more": (offset + len(runs)) < total,
             "runs": runs,
-        }
+        },
+        task_ref=task_ref,
+        entity="review_run",
     )
 
 
@@ -1182,10 +1423,24 @@ def get_review_coverage(
     derived from the matched run ids.
     """
     if task_ref is None and subject_path is None:
-        return _json_response({"ok": False, "error": "Provide at least one of task_ref or subject_path."})
+        return _envelope(
+            ok=False,
+            tool="get_review_coverage",
+            data={"error": "Provide at least one of task_ref or subject_path."},
+            entity="review_coverage",
+        )
     with _get_db_connection() as conn:
         payload = _collect_review_coverage(conn, task_ref=task_ref, subject_path=subject_path)
-    return _json_response(payload)
+    is_ok = bool(payload.get("ok", False))
+    # Remove 'ok' from payload since _envelope handles it at the envelope level.
+    data = {k: v for k, v in payload.items() if k != "ok"}
+    return _envelope(
+        ok=is_ok,
+        tool="get_review_coverage",
+        data=data,
+        task_ref=task_ref,
+        entity="review_coverage",
+    )
 
 
 def _collect_review_coverage(

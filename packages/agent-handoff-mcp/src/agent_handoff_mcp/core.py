@@ -54,12 +54,12 @@ from ._shared import (  # noqa: F401
     _classify_commit_relation,
     _collect_all_deferred_findings,
     _collect_all_open_findings,
-    _envelope,
     _collect_dashboard_rows,
     _collect_task_snapshot,
     _count_task_rows,
     # Git helpers (monkeypatched by tests via handoff_core.X)
     _detect_git_write_context,
+    _envelope,
     _fetch_handoff_rows,
     _fetch_related_open_findings,
     # DB + resolution utilities
@@ -280,7 +280,9 @@ def search_handoff(
 ) -> str:
     """Search canonical handoff records by keyword with optional scope filters."""
     if not queries:
-        return _envelope(ok=False, tool="search_handoff", data={"error": "queries must be a non-empty list of search terms."})
+        return _envelope(
+            ok=False, tool="search_handoff", data={"error": "queries must be a non-empty list of search terms."}
+        )
     detail = _normalize_detail(detail)
     requested_fields = _parse_projection_fields(fields, _VALID_HANDOFF_SEARCH_FIELDS)
 
@@ -304,7 +306,9 @@ def search_handoff(
         if stripped:
             fts_terms.append('"' + stripped.replace('"', '""') + '"')
     if not fts_terms:
-        return _envelope(ok=False, tool="search_handoff", data={"error": "All query strings are empty after stripping."})
+        return _envelope(
+            ok=False, tool="search_handoff", data={"error": "All query strings are empty after stripping."}
+        )
     fts_query = " OR ".join(fts_terms)
 
     results: list[dict] = []
@@ -319,7 +323,9 @@ def search_handoff(
             return _envelope(
                 ok=False,
                 tool="search_handoff",
-                data={"error": "Structured FTS index is unavailable (FTS5 not enabled). Run 'agent-handoff-mcp doctor' to verify."},
+                data={
+                    "error": "Structured FTS index is unavailable (FTS5 not enabled). Run 'agent-handoff-mcp doctor' to verify."
+                },
             )
         effective_task_ref: str | None = task_ref
         if effective_task_ref is None:
@@ -532,7 +538,9 @@ def get_artifact(
     detail = _normalize_detail(detail)
     requested_fields = _parse_projection_fields(fields, _VALID_ARTIFACT_GET_FIELDS)
     if source_id is None and not (task_ref and source_label):
-        return _envelope(ok=False, tool="get_artifact", data={"error": "Provide source_id or both task_ref and source_label."})
+        return _envelope(
+            ok=False, tool="get_artifact", data={"error": "Provide source_id or both task_ref and source_label."}
+        )
     resolved_task_ref: str | None = None
     if task_ref:
         with _get_db_connection() as conn:
@@ -545,7 +553,9 @@ def get_artifact(
             artifact_db_path=config.artifact_db_path,
         )
         if source is None:
-            return _envelope(ok=False, tool="get_artifact", data={"error": "Artifact source not found."}, task_ref=resolved_task_ref)
+            return _envelope(
+                ok=False, tool="get_artifact", data={"error": "Artifact source not found."}, task_ref=resolved_task_ref
+            )
         shaped_source = _project_mapping(
             _summarize_artifact_source(dict(source)) if detail == "summary" else dict(source),
             requested_fields,
@@ -749,6 +759,10 @@ def close_slice(
             "task_revision": state_result.get("active", {}).get("revision"),
         },
         task_ref=resolved_task_ref,
-        mutation={"entity": "decision", "operation": "close_slice", "task_revision": state_result.get("active", {}).get("revision")},
+        mutation={
+            "entity": "decision",
+            "operation": "close_slice",
+            "task_revision": state_result.get("active", {}).get("revision"),
+        },
         artifacts=[{"type": "current_task_md", "path": "CURRENT_TASK.md", "written": True}],
     )

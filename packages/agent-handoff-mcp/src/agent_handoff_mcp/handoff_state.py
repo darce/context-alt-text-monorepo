@@ -12,7 +12,6 @@ from ._shared import (
     _envelope,
     _fetch_handoff_rows,
     _get_db_connection,
-    _json_response,
     _normalize_optional_text,
     _resolve_current_lane_row,
     _resolve_write_actor,
@@ -32,16 +31,22 @@ def set_handoff_state(
     _tool = "set_handoff_state"
     if status not in HANDOFF_ACTIVE_STATUSES:
         return _envelope(
-            ok=False, tool=_tool, task_ref=task_ref,
+            ok=False,
+            tool=_tool,
+            task_ref=task_ref,
             data={"error": f"Invalid status. Valid: {', '.join(sorted(HANDOFF_ACTIVE_STATUSES))}"},
         )
     with _get_db_connection() as conn:
         ctx = _resolve_write_actor(conn, actor)
-        current = conn.execute("SELECT revision, objective, focus, target_branch FROM handoff_state WHERE id = 1").fetchone()
+        current = conn.execute(
+            "SELECT revision, objective, focus, target_branch FROM handoff_state WHERE id = 1"
+        ).fetchone()
         if current is None:
             if objective is None:
                 return _envelope(
-                    ok=False, tool=_tool, task_ref=task_ref,
+                    ok=False,
+                    tool=_tool,
+                    task_ref=task_ref,
                     data={"error": "objective is required when creating a new handoff state."},
                 )
             conn.execute(
@@ -54,21 +59,29 @@ def set_handoff_state(
             )
             active = _row_to_dict(conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone())
             return _envelope(
-                ok=True, tool=_tool, task_ref=task_ref,
+                ok=True,
+                tool=_tool,
+                task_ref=task_ref,
                 data={"inserted": True, "active": active},
                 mutation={"entity": "handoff_state", "operation": "insert", "task_revision": 0},
             )
         if expected_revision is None:
             return _envelope(
-                ok=False, tool=_tool, task_ref=task_ref,
-                data={"error": "expected_revision is required for updates.", "current_revision": int(current["revision"])},
+                ok=False,
+                tool=_tool,
+                task_ref=task_ref,
+                data={
+                    "error": "expected_revision is required for updates.",
+                    "current_revision": int(current["revision"]),
+                },
             )
         resolved_objective = objective if objective is not None else str(current["objective"])
         resolved_focus = (
             focus if focus is not None else (_normalize_optional_text(current["focus"]) if current["focus"] else None)
         )
         resolved_target_branch = (
-            target_branch if target_branch is not None
+            target_branch
+            if target_branch is not None
             else (_normalize_optional_text(current["target_branch"]) if current["target_branch"] else None)
         )
         updated = conn.execute(
@@ -94,12 +107,27 @@ def set_handoff_state(
         if updated.rowcount == 0:
             latest = conn.execute("SELECT revision FROM handoff_state WHERE id = 1").fetchone()
             return _envelope(
-                ok=False, tool=_tool, task_ref=task_ref,
-                data={"error": "Revision conflict.", "expected_revision": expected_revision, "current_revision": int(latest["revision"]) if latest else None},
+                ok=False,
+                tool=_tool,
+                task_ref=task_ref,
+                data={
+                    "error": "Revision conflict.",
+                    "expected_revision": expected_revision,
+                    "current_revision": int(latest["revision"]) if latest else None,
+                },
             )
         active = _row_to_dict(conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone())
+        if active is None:
+            return _envelope(
+                ok=False,
+                tool=_tool,
+                task_ref=task_ref,
+                data={"error": "Active handoff state missing after update."},
+            )
         return _envelope(
-            ok=True, tool=_tool, task_ref=task_ref,
+            ok=True,
+            tool=_tool,
+            task_ref=task_ref,
             data={"updated": True, "active": active},
             mutation={"entity": "handoff_state", "operation": "update", "task_revision": active.get("revision")},
         )
@@ -191,7 +219,9 @@ def get_handoff_state(
     with _get_db_connection() as conn:
         active_row = conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone()
         if active_row is None and task_ref is None:
-            return _envelope(ok=True, tool="get_handoff_state", data={"active": None, "message": "No active handoff state."})
+            return _envelope(
+                ok=True, tool="get_handoff_state", data={"active": None, "message": "No active handoff state."}
+            )
         resolved_task_ref = task_ref or str(active_row["task_ref"])
         active = _row_to_dict(active_row) if active_row is not None else None
         if active is not None and resolved_task_ref != active["task_ref"]:

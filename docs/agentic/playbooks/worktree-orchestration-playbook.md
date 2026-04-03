@@ -16,7 +16,7 @@ Three durable layers underpin lane orchestration:
 
 ## Terminology
 
-- **orchestrator root**: the main repo checkout, e.g. `/Users/daniel/Development/context-alt-text-monorepo`
+- **orchestrator root**: the main repo checkout, e.g. `${REPO_ROOT:-$PWD}`
 - **worker worktree**: a sibling checkout created for one lane
 - **task ref**: the active MCP task, e.g. `phase-5-retention-export-and-audit-controls`
 - **lane id**: the worker slice name, e.g. `backend-domain`, `frontend`

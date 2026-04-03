@@ -139,7 +139,7 @@ If a task seems to require external changes, STOP and propose an alternative wit
 - [sr-007] helpful=2 harmful=0 :: Centralize domain status values as enums or `as const` objects (TypeScript), PHP backed enums, or Python `StrEnum`/`IntEnum`. Do not scatter magic string comparisons (`=== 'completed'`, `=== 'clustering'`) across files; import from a single canonical definition and use exhaustive switches where applicable.
 - [sr-008] helpful=1 harmful=0 :: When a hook, function, or constructor takes more than 8 destructured parameters, group them into 2-3 cohesive typed objects (e.g., state, actions, mutations). This prevents the "parameter slippery slope" that compounds with each new feature.
 - [sr-009] helpful=1 harmful=0 :: PHP controller methods that run transactions must use a shared `run_transactional(callable)` wrapper instead of inlining START TRANSACTION / COMMIT / ROLLBACK boilerplate.
-- [sr-010] helpful=1 harmful=0 :: For a full local-only development reset of both databases, use `make reset-local WP_PATH="<wordpress>/app/public" CONFIRM_LOCAL_RESET="RESET"` from the repo root. `WP_PATH` must point to the WordPress directory containing `wp-load.php` (for LocalWP here, typically `/Users/daniel/Development/wp-context-alt-text/app/public`). Never use this against non-local environments.
+- [sr-010] helpful=1 harmful=0 :: For a full local-only development reset of both databases, use `make reset-local WP_PATH="<wordpress>/app/public" CONFIRM_LOCAL_RESET="RESET"` from the repo root. `WP_PATH` must point to the WordPress directory containing `wp-load.php` (for LocalWP here, typically `${LOCAL_WP_ROOT:-$HOME/Development/wp-context-alt-text}/app/public`). Never use this against non-local environments.
 
 ### Cross-Branch Regression Guards
 
@@ -195,6 +195,9 @@ Reserve terminal for operations with no native-tool equivalent: test execution, 
 - If output exceeds expectations, redirect to `/tmp/<descriptive-name>.txt` and read with `read_file` (VS Code) or `sed -n` (Codex); do not re-run the command.
 - Long-lived terminal sessions accumulate scrollback. A new `run_in_terminal` call in a polluted session can return 16 KB+ of stale output from prior commands. Prefer short, filtered commands over long pipelines.
 - **Background terminals lack pyenv virtualenv activation.** Only use the foreground terminal (or a terminal where `pyenv activate` has been run) for Python test commands. If the foreground session has stale scrollback, the `tee /tmp/` pattern above solves it without needing a new terminal.
+- **Use env vars in commands and settings.** Do not hardcode user-local absolute filesystem paths such as `/Users/...` in commands, docs, or workspace configuration. Prefer `${workspaceFolder}`, `${env:HOME}`, `${PYENV_ROOT:-$HOME/.pyenv}`, and `${REPO_ROOT:-$PWD}`.
+- **Package-test Python harness workaround.** For `packages/agent-handoff-mcp/` and `packages/agent-orchestrator-mcp/`, do not invoke IDE Python environment setup helpers. The workspace should pin `${env:HOME}/.pyenv/versions/description-service/bin/python`; run package tests from the foreground terminal with `PYENV_VERSION=description-service`, `pyenv exec python`, or `${PYENV_ROOT:-$HOME/.pyenv}/versions/description-service/bin/python`. If the IDE shows `Configuring a Python Environment` or `Preparing` for those package paths, stop retrying the harness and ask the user to run the terminal command directly.
+  - Example: `REPO_ROOT="${REPO_ROOT:-$PWD}" && PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}" && PYENV_VERSION=description-service "$PYENV_ROOT/versions/description-service/bin/python" -m pytest "$REPO_ROOT/packages/agent-handoff-mcp/tests/test_import_export_regressions.py" -q`
 
 ### Task Document Rules
 

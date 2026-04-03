@@ -20,6 +20,8 @@ Is the task one of these exact four categories?
 - PHP: `cd <app-dir> && vendor/bin/phpunit <path>`
 - If a test run needs captured output, redirect once to `/tmp/<suite>.txt` with `> /tmp/<suite>.txt 2>&1`, then inspect it with `read_file`. Never `cat` the file in terminal.
 - Background terminals lack pyenv; only use the foreground terminal for Python tests.
+- Never hardcode user-local absolute filesystem paths such as `/Users/...` in commands, docs, or settings. Use environment variables such as `${env:HOME}`, `${workspaceFolder}`, `${PYENV_ROOT:-$HOME/.pyenv}`, and `${REPO_ROOT:-$PWD}` instead.
+- For `packages/agent-handoff-mcp` and `packages/agent-orchestrator-mcp`, do not invoke IDE Python environment-configuration tools. Use the foreground terminal with `PYENV_VERSION=description-service`, `pyenv exec python`, or `${PYENV_ROOT:-$HOME/.pyenv}/versions/description-service/bin/python`. If the harness stalls at `Configuring a Python Environment` or `Preparing`, stop retrying and ask the user to run the terminal command directly.
 
 **NO** — Stop. Use the native tool:
 

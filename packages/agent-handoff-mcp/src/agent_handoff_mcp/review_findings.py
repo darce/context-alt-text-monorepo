@@ -53,6 +53,14 @@ def _write_current_task_md_for_active_context(conn: sqlite3.Connection, fallback
     _write_current_task_md_for_task(conn, render_task_ref)
 
 
+def _current_task_revision(conn: sqlite3.Connection, task_ref: str) -> int | None:
+    row = conn.execute(
+        "SELECT revision FROM handoff_state WHERE id = 1 AND task_ref = ?",
+        (task_ref,),
+    ).fetchone()
+    return int(row["revision"]) if row is not None else None
+
+
 def _classify_commit_relation(reference_sha: str | None, candidate_sha: str | None) -> str:
     """Delegate to _shared, but allow monkeypatching via core module namespace."""
     from . import core as _core  # noqa: PLC0415 – late import to avoid circular, enables monkeypatching
@@ -285,13 +293,19 @@ def record_review_finding(
         data: dict[str, object] = {"finding": _row_to_dict(row)}
         if existing is not None and str(existing["status"]) != "open":
             data["reopened"] = True
+        task_revision = _current_task_revision(conn, resolved_task_ref)
         return _envelope(
             ok=True,
             tool="record_review_finding",
             data=data,
             task_ref=resolved_task_ref,
             entity="finding",
-            mutation={"entity": "finding", "operation": "upsert", "affected_ids": [finding_id]},
+            mutation={
+                "entity": "finding",
+                "operation": "upsert",
+                "affected_ids": [finding_id],
+                "task_revision": task_revision,
+            },
         )
 
 
@@ -456,6 +470,8 @@ def batch_record_review_findings(
         _write_current_task_md_for_active_context(conn, resolved_task_ref)
 
     affected_ids = [item["finding_id"] for item in findings]
+    with _get_db_connection() as conn:
+        task_revision = _current_task_revision(conn, resolved_task_ref)
     return _envelope(
         ok=True,
         tool="batch_record_review_findings",
@@ -466,7 +482,12 @@ def batch_record_review_findings(
         },
         task_ref=resolved_task_ref,
         entity="finding",
-        mutation={"entity": "finding", "operation": "batch_upsert", "affected_ids": affected_ids},
+        mutation={
+            "entity": "finding",
+            "operation": "batch_upsert",
+            "affected_ids": affected_ids,
+            "task_revision": task_revision,
+        },
     )
 
 
@@ -547,13 +568,19 @@ def _apply_finding_update(
     if normalized_verification_evidence is not None:
         data["verification_evidence"] = normalized_verification_evidence
     finding_id_str = str(existing["finding_id"])
+    task_revision = _current_task_revision(conn, resolved_task_ref)
     return _envelope(
         ok=True,
         tool="update_review_finding",
         data=data,
         task_ref=resolved_task_ref,
         entity="finding",
-        mutation={"entity": "finding", "operation": "update", "affected_ids": [finding_id_str]},
+        mutation={
+            "entity": "finding",
+            "operation": "update",
+            "affected_ids": [finding_id_str],
+            "task_revision": task_revision,
+        },
     )
 
 
@@ -1254,6 +1281,11 @@ def record_review_run(
         )
     with _get_db_connection() as conn:
         resolved_actor = _resolve_write_actor(conn, actor)
+        resolved_task_ref = task_ref
+        if resolved_task_ref is None:
+            active_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
+            if active_row is not None and active_row["task_ref"]:
+                resolved_task_ref = str(active_row["task_ref"])
         existing = conn.execute("SELECT id FROM review_runs WHERE review_run_id = ?", (review_run_id,)).fetchone()
         if existing is not None:
             return _envelope(
@@ -1262,7 +1294,7 @@ def record_review_run(
                 data={
                     "error": f"review_run_id '{review_run_id}' already exists (id={existing['id']}). Use a unique id for each run.",
                 },
-                task_ref=task_ref,
+                task_ref=resolved_task_ref,
                 entity="review_run",
             )
         conn.execute(
@@ -1275,7 +1307,7 @@ def record_review_run(
             """,
             (
                 review_run_id,
-                task_ref,
+                resolved_task_ref,
                 subject_path,
                 subject_kind,
                 normalized_review_mode,
@@ -1290,13 +1322,19 @@ def record_review_run(
             ),
         )
         row = dict(conn.execute("SELECT * FROM review_runs WHERE review_run_id = ?", (review_run_id,)).fetchone())
+        task_revision = _current_task_revision(conn, resolved_task_ref) if resolved_task_ref is not None else None
     return _envelope(
         ok=True,
         tool="record_review_run",
         data={"review_run": row},
-        task_ref=task_ref,
+        task_ref=resolved_task_ref,
         entity="review_run",
-        mutation={"entity": "review_run", "operation": "insert", "affected_ids": [review_run_id]},
+        mutation={
+            "entity": "review_run",
+            "operation": "insert",
+            "affected_ids": [review_run_id],
+            "task_revision": task_revision,
+        },
     )
 
 

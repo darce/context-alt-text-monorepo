@@ -697,6 +697,10 @@ def test_record_review_run_inserts_row(isolated_handoff: dict) -> None:
     assert run["subject_path"] == "docs/tasks/12.0/E12-8-plan.md"
     assert run["verdict"] == "pass_with_findings"
     assert run["task_ref"] == "E12-8"
+    assert result["mutation"]["entity"] == "review_run"
+    assert result["mutation"]["operation"] == "insert"
+    assert result["mutation"]["affected_ids"] == ["E12-8-review-1"]
+    assert result["mutation"]["task_revision"] is None
 
 
 def test_record_review_run_rejects_duplicate_id(isolated_handoff: dict) -> None:

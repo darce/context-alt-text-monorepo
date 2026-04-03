@@ -85,9 +85,7 @@ def test_export_and_import_handoff_state_round_trip(workspace_pair: dict[str, Pa
 def test_export_import_preserves_changed_files_json(workspace_pair: dict[str, Path]) -> None:
     """M-2/M-3: changed_files_json survives export/import round-trip."""
     export_path = workspace_pair["source"] / ".task-state" / "exports" / "changed-files-rt.json"
-    _parse(
-        mcp_server.set_handoff_state(task_ref="cf-rt", objective="Changed files round trip", status="in_progress")
-    )
+    _parse(mcp_server.set_handoff_state(task_ref="cf-rt", objective="Changed files round trip", status="in_progress"))
     _parse(
         mcp_server.record_decision(
             session="s1",
@@ -100,15 +98,27 @@ def test_export_import_preserves_changed_files_json(workspace_pair: dict[str, Pa
     assert exported["ok"] is True
 
     _configure_runtime(workspace_pair["target"])
-    imported = _parse(
-        mcp_server.import_handoff_state(input_path=str(export_path), mode="merge", set_active=True)
-    )
+    imported = _parse(mcp_server.import_handoff_state(input_path=str(export_path), mode="merge", set_active=True))
     assert imported["ok"] is True
 
     state = _parse(mcp_server.get_handoff_state(task_ref="cf-rt"))
     decision = state["decisions_recent"][0]
     import json as _json
+
     assert set(_json.loads(decision["changed_files_json"])) == {"src/core.py", "docs/contract.md"}
+
+
+def test_switch_task_returns_full_mutation_shape(workspace_pair: dict[str, Path]) -> None:
+    _configure_runtime(workspace_pair["source"])
+    _parse(mcp_server.set_handoff_state(task_ref="task-a", objective="Task A", status="in_progress"))
+
+    switched = _parse(handoff_core.switch_task(task_ref="task-b", objective="Task B"))
+
+    assert switched["ok"] is True
+    assert switched["mutation"]["entity"] == "handoff_state"
+    assert switched["mutation"]["operation"] == "switch_task"
+    assert switched["mutation"]["affected_ids"] == ["task-b"]
+    assert isinstance(switched["mutation"]["task_revision"], int)
 
 
 def test_export_defaults_to_no_markdown(workspace_pair: dict[str, Path]) -> None:
@@ -138,6 +148,8 @@ def test_switch_task_clears_focus_on_restore(workspace_pair: dict[str, Path]) ->
 
     switched = _parse(handoff_core.switch_task(task_ref="task-b", objective="Task B objective"))
     assert switched["ok"] is True
+    assert switched["active"]["task_ref"] == "task-b"
+    assert switched["active"]["focus"] is None
 
     restored = _parse(handoff_core.switch_task(task_ref="task-a"))
     assert restored["ok"] is True

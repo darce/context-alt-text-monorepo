@@ -221,6 +221,10 @@ def test_record_decision_persists_changed_files(isolated_handoff: dict) -> None:
     )
     assert recorded["ok"] is True
     assert json.loads(recorded["decision"]["changed_files_json"]) == files
+    assert recorded["mutation"]["entity"] == "decision"
+    assert recorded["mutation"]["operation"] == "insert"
+    assert recorded["mutation"]["affected_ids"]
+    assert isinstance(recorded["mutation"]["task_revision"], int)
 
 
 def test_record_decision_rejects_non_relative_changed_files(isolated_handoff: dict) -> None:
@@ -691,6 +695,20 @@ def test_v2_envelope_shape_on_read_surfaces(isolated_handoff: dict) -> None:
     assert raw_dash["schema_version"] == 2
     assert raw_dash["tool"] == "get_handoff_state"
     assert "tasks" in raw_dash["data"]
+
+
+def test_v2_envelope_mirrors_legacy_top_level_fields_for_python_callers(isolated_handoff: dict) -> None:
+    _parse(mcp_server.set_handoff_state(task_ref="legacy-flat", objective="Legacy flat fields", status="in_progress"))
+
+    raw_state = json.loads(mcp_server.get_handoff_state(task_ref="legacy-flat"))
+    assert raw_state["schema_version"] == 2
+    assert raw_state["task_ref"] == "legacy-flat"
+    assert raw_state["active"] == raw_state["data"]["active"]
+    assert raw_state["limits"] == raw_state["data"]["limits"]
+
+    raw_error = json.loads(mcp_server.handoff_close_check(require_fresh_tests=True))
+    assert raw_error["ok"] is False
+    assert raw_error["error"] == raw_error["data"]["error"]
 
 
 def test_get_handoff_state_sections_filter(isolated_handoff: dict) -> None:
@@ -1174,6 +1192,10 @@ def test_record_review_finding_accepts_structured_details_and_actor_fallback(iso
     assert finding["fix"] == "Extract helper"
     assert finding["agent"] == "codex"
     assert finding["branch"] == "feature/demo"
+    assert created["mutation"]["entity"] == "finding"
+    assert created["mutation"]["operation"] == "upsert"
+    assert created["mutation"]["affected_ids"] == ["M-10"]
+    assert isinstance(created["mutation"]["task_revision"], int)
 
 
 def test_record_review_finding_rerecord_reopens_with_marker_reason(isolated_handoff: dict) -> None:

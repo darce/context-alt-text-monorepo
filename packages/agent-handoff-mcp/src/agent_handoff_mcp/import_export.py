@@ -470,7 +470,9 @@ def import_handoff_state(
     input_path: str, mode: str = "merge", set_active: bool = False, allow_destructive_clear: bool = False
 ) -> str:
     if mode not in {"merge", "replace_task"}:
-        return _envelope(ok=False, tool="import_handoff_state", data={"error": "Invalid mode. Valid: merge, replace_task."})
+        return _envelope(
+            ok=False, tool="import_handoff_state", data={"error": "Invalid mode. Valid: merge, replace_task."}
+        )
     source = Path(input_path)
     if not source.is_absolute():
         source = _workspace_root() / source
@@ -479,7 +481,9 @@ def import_handoff_state(
     payload = json.loads(source.read_text())
     snapshot = payload.get("snapshot")
     if not isinstance(snapshot, dict):
-        return _envelope(ok=False, tool="import_handoff_state", data={"error": "Invalid import payload: snapshot must be an object."})
+        return _envelope(
+            ok=False, tool="import_handoff_state", data={"error": "Invalid import payload: snapshot must be an object."}
+        )
     task_ref = payload.get("task_ref") or snapshot.get("task_ref")
     if not task_ref:
         return _envelope(ok=False, tool="import_handoff_state", data={"error": "Missing task_ref in import payload."})
@@ -506,7 +510,11 @@ def import_handoff_state(
     for key in (*required_sections, "plan_cursors", "turn_metrics"):
         items = snapshot.get(key, [])
         if not isinstance(items, list):
-            return _envelope(ok=False, tool="import_handoff_state", data={"error": f"Invalid import payload: snapshot.{key} must be an array."})
+            return _envelope(
+                ok=False,
+                tool="import_handoff_state",
+                data={"error": f"Invalid import payload: snapshot.{key} must be an array."},
+            )
         for item in items:
             if not isinstance(item, dict):
                 return _envelope(
@@ -515,7 +523,11 @@ def import_handoff_state(
                     data={"error": f"Invalid import payload: items in snapshot.{key} must be objects."},
                 )
     if "active" in snapshot and snapshot["active"] is not None and not isinstance(snapshot["active"], dict):
-        return _envelope(ok=False, tool="import_handoff_state", data={"error": "Invalid import payload: snapshot.active must be an object."})
+        return _envelope(
+            ok=False,
+            tool="import_handoff_state",
+            data={"error": "Invalid import payload: snapshot.active must be an object."},
+        )
     with _get_db_connection() as conn:
         if mode == "replace_task" and not allow_destructive_clear:
             existing_counts = _count_task_rows(conn, task_ref)
@@ -549,7 +561,14 @@ def import_handoff_state(
             "counts": counts,
         },
         task_ref=task_ref,
-        mutation={"entity": "handoff_state", "operation": f"import_{mode}"},
+        mutation={
+            "entity": "handoff_state",
+            "operation": f"import_{mode}",
+            "affected_ids": [task_ref],
+            "task_revision": snapshot.get("active", {}).get("revision")
+            if isinstance(snapshot.get("active"), dict)
+            else None,
+        },
     )
 
 
@@ -624,7 +643,12 @@ def archive_task_state(
             "allow_destructive_clear": allow_destructive_clear,
         },
         task_ref=resolved_task_ref,
-        mutation={"entity": "task_archive", "operation": "archive"},
+        mutation={
+            "entity": "task_archive",
+            "operation": "archive",
+            "affected_ids": [resolved_task_ref],
+            "task_revision": None,
+        },
     )
 
 
@@ -684,6 +708,13 @@ def update_task_status(
                 (status, ctx.agent, ctx.branch, ctx.commit_sha, task_ref, expected_revision),
             )
             active = _row_to_dict(conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone())
+            if active is None:
+                return _envelope(
+                    ok=False,
+                    tool="update_task_status",
+                    data={"error": "Active handoff state missing after status update."},
+                    task_ref=task_ref,
+                )
             try:
                 _write_current_task_md_for_task(conn, task_ref)
                 regen = "ok"
@@ -702,7 +733,12 @@ def update_task_status(
                 tool="update_task_status",
                 data=data,
                 task_ref=task_ref,
-                mutation={"entity": "handoff_state", "operation": "update_status", "task_revision": active.get("revision")},
+                mutation={
+                    "entity": "handoff_state",
+                    "operation": "update_status",
+                    "affected_ids": [task_ref],
+                    "task_revision": active.get("revision"),
+                },
                 artifacts=[{"type": "file", "path": "CURRENT_TASK.md"}] if regen == "ok" else None,
             )
 
@@ -771,7 +807,12 @@ def update_task_status(
             tool="update_task_status",
             data=data_archived,
             task_ref=task_ref,
-            mutation={"entity": "task_archive", "operation": "update_status"},
+            mutation={
+                "entity": "task_archive",
+                "operation": "update_status",
+                "affected_ids": [task_ref],
+                "task_revision": None,
+            },
             artifacts=[{"type": "file", "path": "CURRENT_TASK.md"}] if regen_result == "ok" else None,
         )
 
@@ -806,14 +847,15 @@ def switch_task(
         # Already active; nothing to do.
         if current is not None and str(current["task_ref"]) == task_ref:
             active = _row_to_dict(conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone())
-            return _envelope(ok=True, tool="switch_task", data={"already_active": True, "active": active}, task_ref=task_ref)
+            return _envelope(
+                ok=True, tool="switch_task", data={"already_active": True, "active": active}, task_ref=task_ref
+            )
 
         # Resolve objective and target_branch for the target task.
         resolved_objective = objective
         resolved_target_branch = target_branch
-        archive_row = conn.execute(
-            "SELECT snapshot_json FROM task_archives WHERE task_ref = ?", (task_ref,)
-        ).fetchone()
+        resolved_focus = focus
+        archive_row = conn.execute("SELECT snapshot_json FROM task_archives WHERE task_ref = ?", (task_ref,)).fetchone()
         if archive_row is not None:
             try:
                 snapshot = json.loads(archive_row["snapshot_json"])
@@ -823,6 +865,8 @@ def switch_task(
                         resolved_objective = active_block["objective"]
                     if resolved_target_branch is None and active_block.get("target_branch"):
                         resolved_target_branch = active_block["target_branch"]
+                    if focus is None:
+                        resolved_focus = None
             except (json.JSONDecodeError, TypeError):
                 pass
         if resolved_objective is None:
@@ -862,21 +906,45 @@ def switch_task(
                     json.dumps(snapshot, sort_keys=True),
                 ),
             )
-            archived_previous = True
 
         # Upsert the singleton to point at the target task.
         if current is None:
             conn.execute(
                 "INSERT INTO handoff_state (id, task_ref, objective, focus, status, target_branch, revision, updated_at, updated_by, updated_branch, updated_commit_sha) VALUES (1, ?, ?, ?, ?, ?, 0, datetime('now'), ?, ?, ?)",
-                (task_ref, resolved_objective, focus, status, resolved_target_branch, ctx.agent, ctx.branch, ctx.commit_sha),
+                (
+                    task_ref,
+                    resolved_objective,
+                    resolved_focus,
+                    status,
+                    resolved_target_branch,
+                    ctx.agent,
+                    ctx.branch,
+                    ctx.commit_sha,
+                ),
             )
         else:
             conn.execute(
                 "UPDATE handoff_state SET task_ref = ?, objective = ?, focus = ?, status = ?, target_branch = ?, revision = revision + 1, updated_at = datetime('now'), updated_by = ?, updated_branch = ?, updated_commit_sha = ? WHERE id = 1",
-                (task_ref, resolved_objective, focus, status, resolved_target_branch, ctx.agent, ctx.branch, ctx.commit_sha),
+                (
+                    task_ref,
+                    resolved_objective,
+                    resolved_focus,
+                    status,
+                    resolved_target_branch,
+                    ctx.agent,
+                    ctx.branch,
+                    ctx.commit_sha,
+                ),
             )
 
         active = _row_to_dict(conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone())
+        if active is None:
+            return _envelope(
+                ok=False,
+                tool="switch_task",
+                data={"error": "Active handoff state missing after task switch."},
+                task_ref=task_ref,
+            )
         regen_error: str | None = None
         try:
             _write_current_task_md_for_task(conn, task_ref)
@@ -896,6 +964,11 @@ def switch_task(
             tool="switch_task",
             data=switch_data,
             task_ref=task_ref,
-            mutation={"entity": "handoff_state", "operation": "switch_task", "task_revision": active.get("revision")},
+            mutation={
+                "entity": "handoff_state",
+                "operation": "switch_task",
+                "affected_ids": [task_ref],
+                "task_revision": active.get("revision"),
+            },
             artifacts=[{"type": "file", "path": "CURRENT_TASK.md"}] if regen_error is None else None,
         )

@@ -945,13 +945,17 @@ def generate_current_task_md(
         resolved_task_ref = task_ref
         if resolved_task_ref is None:
             active_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
-            resolved_task_ref = str(active_row["task_ref"]) if active_row is not None and active_row["task_ref"] else None
+            resolved_task_ref = (
+                str(active_row["task_ref"]) if active_row is not None and active_row["task_ref"] else None
+            )
 
         if resolved_task_ref is not None:
             from .current_task_rendering import _build_current_task_render_state  # noqa: PLC0415
 
             state = _build_current_task_render_state(
-                conn, resolved_task_ref, max_cross_task_findings=max_cross_task_findings,
+                conn,
+                resolved_task_ref,
+                max_cross_task_findings=max_cross_task_findings,
             )
         else:
             state = {
@@ -968,10 +972,12 @@ def generate_current_task_md(
                 "lane_messages_open": [],
                 "dashboard_tasks": core._collect_dashboard_rows(conn),
                 "related_findings_open": core._collect_all_open_findings(
-                    conn, max_per_task=max_cross_task_findings,
+                    conn,
+                    max_per_task=max_cross_task_findings,
                 ),
                 "related_findings_deferred": core._collect_all_deferred_findings(
-                    conn, max_per_task=max_cross_task_findings,
+                    conn,
+                    max_per_task=max_cross_task_findings,
                 ),
             }
 
@@ -996,7 +1002,9 @@ def generate_current_task_md(
         current_task_path.write_text(markdown)
 
     resolved_ref = state.get("task_ref")
-    artifacts = [{"type": "current_task_md", "path": str(current_task_path), "written": write_file}] if write_file else []
+    artifacts = (
+        [{"type": "current_task_md", "path": str(current_task_path), "written": write_file}] if write_file else []
+    )
     return core._envelope(
         ok=True,
         tool="generate_current_task_md",

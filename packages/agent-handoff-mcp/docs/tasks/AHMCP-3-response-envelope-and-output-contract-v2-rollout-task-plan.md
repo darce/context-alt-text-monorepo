@@ -6,7 +6,7 @@
 > - **Author**: GPT-5.4
 > - **Project**: `agent-handoff-mcp`
 > - **Task ID**: `AHMCP-3`
-> - **Target Branch**: `feature/ahmcp-3-response-envelope`
+> - **Target Branch**: `task/ahmcp-3-response-envelope`
 > - **Review Coverage Target**: 2
 
 ---
@@ -67,6 +67,7 @@ After this task:
 - Tier 1 prerequisite task: `packages/agent-handoff-mcp/docs/tasks/AHMCP-2-bounded-current-task-rendering-and-mutation-output-task-plan.md`
 - Contract: `docs/agentic/contracts/agent-handoff-mcp.md`
 - Response-shaping anchors:
+  - `packages/agent-handoff-mcp/src/agent_handoff_mcp/shared_primitives.py`
   - `packages/agent-handoff-mcp/src/agent_handoff_mcp/_shared.py`
   - `packages/agent-handoff-mcp/src/agent_handoff_mcp/handoff_state.py`
   - `packages/agent-handoff-mcp/src/agent_handoff_mcp/review_findings.py`

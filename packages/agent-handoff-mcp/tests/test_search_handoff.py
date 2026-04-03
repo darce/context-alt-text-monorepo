@@ -40,9 +40,16 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
 
 
 def _parse(payload: str | dict) -> dict:
-    if isinstance(payload, str):
-        return json.loads(payload)
-    return payload
+    """Parse JSON and flatten v2 envelope for backward-compatible test assertions."""
+    raw = json.loads(payload) if isinstance(payload, str) else payload
+    if isinstance(raw, dict) and raw.get("schema_version") == 2:
+        data = raw.get("data", {})
+        scope = raw.get("scope", {})
+        flat = {**raw, **data}
+        if "task_ref" not in flat and scope.get("task_ref"):
+            flat["task_ref"] = scope["task_ref"]
+        return flat
+    return raw
 
 
 # ---------------------------------------------------------------------------

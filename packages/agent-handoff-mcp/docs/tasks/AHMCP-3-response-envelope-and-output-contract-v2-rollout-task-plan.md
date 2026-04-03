@@ -94,13 +94,13 @@ After this task:
 
 ## Proposed Solution
 
-Introduce a shared envelope helper in the core response layer, migrate read/generator surfaces first, then migrate write/import/export surfaces to populate `scope`, `mutation`, `artifacts`, and `warnings` consistently. Finish by updating the published contract and bumping the package version to `0.2.0` in the same slice that completes the rollout.
+Add a new `_envelope()` helper in `shared_primitives.py` alongside the existing `_json_response()`. Each tool call site opts into the envelope by calling `_envelope()` instead of `_json_response()`, wrapping its current payload as `data`. This per-surface migration allows incremental verification: read surfaces first, then writes, then contract sync. `_json_response()` remains untouched until all call sites are migrated, at which point it can be removed or kept as an internal helper. Finish by updating the published contract and bumping the package version to `0.2.0` in the same slice that completes the rollout.
 
 ## Files and Surfaces to Change
 
 | Surface | File | Change |
 | --- | --- | --- |
-| Shared response helper | `packages/agent-handoff-mcp/src/agent_handoff_mcp/_shared.py` | add the v2 envelope helper and adapt `_json_response` delegation |
+| Shared response helper | `packages/agent-handoff-mcp/src/agent_handoff_mcp/shared_primitives.py` | add `_envelope()` helper alongside `_json_response()`; update `_shared.py` re-export if needed |
 | Task-state reads | `packages/agent-handoff-mcp/src/agent_handoff_mcp/handoff_state.py` | wrap task-state payloads in the v2 envelope |
 | Findings and review surfaces | `packages/agent-handoff-mcp/src/agent_handoff_mcp/review_findings.py` | wrap list/record/update/review-run responses and populate mutation metadata |
 | Lifecycle and generators | `packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py` | wrap generator/write responses and emit artifact metadata |
@@ -133,16 +133,17 @@ Introduce a shared envelope helper in the core response layer, migrate read/gene
 
 ## Slice Delivery
 
-### Slice 1: Add the Shared Envelope Helper and Migrate Read Surfaces
+### Slice 1: Add the Envelope Helper and Migrate Read Surfaces
 
-**Goal**: Establish the common v2 envelope and prove it on the most frequently consumed read/generator surfaces first.
+**Goal**: Establish the per-surface `_envelope()` helper and prove it on read/generator surfaces first.
 
 Changes:
 
-- Add the shared response-envelope helper in `_shared.py`
-- Migrate `get_handoff_state`, `generate_current_task_md`, and other hot-state read/generator surfaces to the new top-level shape
+- Add `_envelope()` in `shared_primitives.py` (not `_shared.py`) — call sites opt in individually
+- Migrate `get_handoff_state`, `generate_current_task_md`, and other hot-state read/generator surfaces from `_json_response()` to `_envelope()`
 - Populate `tool`, `scope`, and `warnings` consistently on migrated read surfaces
 - Update direct-call regression tests for read/generator payloads
+- Re-export `_envelope` from `_shared.py` if domain modules import through that layer
 
 Proof:
 
@@ -188,20 +189,21 @@ Proof:
 
 | Lane ID | Owned Files | Narrowest Proving Commands |
 | --- | --- | --- |
-| `envelope-read` | `packages/agent-handoff-mcp/src/agent_handoff_mcp/_shared.py`, `packages/agent-handoff-mcp/src/agent_handoff_mcp/handoff_state.py` | `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_handoff_state.py -q -k "get_handoff_state or generate_current_task_md"` |
-| `envelope-write` | `packages/agent-handoff-mcp/src/agent_handoff_mcp/review_findings.py`, `packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py`, `packages/agent-handoff-mcp/src/agent_handoff_mcp/import_export.py` | `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_review_findings.py -q -k "record_review_run or list_review_runs or get_review_coverage"`; `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_import_export_regressions.py -q` |
-| `surface-sync` | `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py`, `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py`, `packages/agent-handoff-mcp/pyproject.toml`, `packages/agent-handoff-mcp/README.md`, `docs/agentic/contracts/agent-handoff-mcp.md` | `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_cli.py -q`; `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_stdio.py::test_stdio_server_lists_handoff_tools packages/agent-handoff-mcp/tests/test_stdio.py::test_stdio_extended_profile_exposes_all_27_tools packages/agent-handoff-mcp/tests/test_http.py::test_http_server_lists_handoff_tools packages/agent-handoff-mcp/tests/test_adapters.py::test_default_adapter_profile_is_extended_and_core_has_16_tools -q` |
+| `envelope-read` | `packages/agent-handoff-mcp/src/agent_handoff_mcp/shared_primitives.py` (envelope helper), `packages/agent-handoff-mcp/src/agent_handoff_mcp/_shared.py` (re-export), `packages/agent-handoff-mcp/src/agent_handoff_mcp/handoff_state.py`, `packages/agent-handoff-mcp/tests/test_handoff_state.py` | `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_handoff_state.py -q -k "get_handoff_state or generate_current_task_md"` |
+| `envelope-write` | `packages/agent-handoff-mcp/src/agent_handoff_mcp/review_findings.py`, `packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py`, `packages/agent-handoff-mcp/src/agent_handoff_mcp/import_export.py`, `packages/agent-handoff-mcp/tests/test_review_findings.py`, `packages/agent-handoff-mcp/tests/test_import_export_regressions.py` | `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_review_findings.py -q -k "record_review_run or list_review_runs or get_review_coverage"`; `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_import_export_regressions.py -q` |
+| `surface-sync` | `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py`, `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py`, `packages/agent-handoff-mcp/pyproject.toml`, `packages/agent-handoff-mcp/README.md`, `docs/agentic/contracts/agent-handoff-mcp.md`, `packages/agent-handoff-mcp/tests/test_cli.py`, `packages/agent-handoff-mcp/tests/test_stdio.py`, `packages/agent-handoff-mcp/tests/test_http.py`, `packages/agent-handoff-mcp/tests/test_adapters.py` | `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_cli.py -q`; `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_stdio.py::test_stdio_server_lists_handoff_tools packages/agent-handoff-mcp/tests/test_stdio.py::test_stdio_extended_profile_exposes_all_27_tools packages/agent-handoff-mcp/tests/test_http.py::test_http_server_lists_handoff_tools packages/agent-handoff-mcp/tests/test_adapters.py::test_default_adapter_profile_is_extended_and_core_has_16_tools -q` |
 
 ### Merge Order
 
-1. `envelope-read`
+1. `envelope-read` (creates the `_envelope()` helper that `envelope-write` depends on)
 2. `envelope-write`
 3. `surface-sync`
 
 ### Lane Notes
 
+- `envelope-read` creates the shared `_envelope()` helper in `shared_primitives.py` — `envelope-write` depends on this, so they are sequential, not parallel.
 - `surface-sync` is intentionally last because it owns the published contract, package version bump, and transport-visible assertions.
-- `envelope-read` and `envelope-write` can land in parallel as long as both delegate to the shared envelope helper in `_shared.py`.
+- Each lane now owns its proving test files alongside its source files.
 
 ---
 

@@ -15,7 +15,6 @@ from pathlib import PurePosixPath
 from ._shared import (
     ACTION_STATUSES,
     WriteActor,
-    _build_current_task_state_from_snapshot,
     _collect_task_snapshot,
     _current_task_path,
     _get_db_connection,

@@ -6,6 +6,14 @@ import { SettingsPage } from '../SettingsPage';
 import type { SettingsResponse } from '../../api/settingsApi';
 import { createMockMutation, createMockQuery } from '../../test-utils/mockHooks';
 
+type QueryHookResult = ReturnType<typeof createMockQuery<SettingsResponse>>;
+type MutationHookResult = ReturnType<typeof createMockMutation>;
+
+const { mockUseQuery, mockUseMutation } = vi.hoisted(() => ({
+  mockUseQuery: vi.fn<() => QueryHookResult>(),
+  mockUseMutation: vi.fn<() => MutationHookResult>(),
+}));
+
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
 }));
@@ -24,16 +32,13 @@ vi.mock('../../api/config', () => ({
   }),
 }));
 
-const mockUseQuery = vi.fn();
-const mockUseMutation = vi.fn();
-
 vi.mock('@tanstack/react-query', async () => {
-  const actual = await vi.importActual('@tanstack/react-query');
+  const actual = await vi.importActual<typeof import('@tanstack/react-query')>('@tanstack/react-query');
   return {
     ...actual,
     useQueryClient: () => ({ invalidateQueries: vi.fn() }),
-    useQuery: (...args: unknown[]) => mockUseQuery(...args),
-    useMutation: (...args: unknown[]) => mockUseMutation(...args),
+    useQuery: mockUseQuery,
+    useMutation: mockUseMutation,
   };
 });
 

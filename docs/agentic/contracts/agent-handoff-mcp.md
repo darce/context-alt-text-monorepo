@@ -428,7 +428,7 @@ When called with `view="dashboard"`, `get_handoff_state` returns:
 
 ### v2 Response Envelope (OC-004)
 
-All tool responses are migrating to a common v2 envelope. Read surfaces (`get_handoff_state`, `generate_current_task_md`, `load_session`) already return the envelope. Write surfaces will follow in the same release.
+All public MCP tool responses use the v2 envelope as of package version `0.2.0`. Previous tool-specific top-level fields are nested under `data`.
 
 ```json
 {
@@ -454,7 +454,7 @@ All tool responses are migrating to a common v2 envelope. Read surfaces (`get_ha
 | `artifacts` | array | Render artifacts produced (e.g. `{ type, path, written }`) |
 | `warnings` | array | Diagnostic warnings |
 
-Tools not yet migrated to the envelope continue to return the v1 shape (top-level `ok` + tool-specific fields). Check `schema_version` to determine which shape a response uses.
+Internal utility functions (`get_review_findings_summary`, `reconcile_review_findings`) may still use the v1 shape. All public MCP-registered tools return the v2 envelope. Check `schema_version == 2` to confirm.
 
 ## CLI Fallback
 

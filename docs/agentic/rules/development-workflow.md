@@ -24,6 +24,12 @@ For every unit of work (feature slice, bug fix, refactor):
 14. **Regression trap sweep (handoff-learned)**: Verify stale/offline flows keep manual recovery, remote calls use shared timeout helpers, retry loops are per-cycle bounded, import/update paths preserve payload/provenance integrity, and reopened findings include explicit rationale
 15. **Escalate when risk warrants**: If the slice crosses audit triggers such as architecture transitions, multi-service state machines, persistence changes, or broad UI state surfaces, run the [Multi-Lens Audit Workflow](branch-review-guide.md#multi-lens-audit-workflow) instead of a single-lens branch review
 
+Package-test execution note:
+
+- For `packages/agent-handoff-mcp/` and `packages/agent-orchestrator-mcp/`, prefer terminal-first pytest commands with the pinned `description-service` interpreter instead of IDE Python environment setup.
+- Do not hardcode user-local absolute filesystem paths such as `/Users/...` in commands or examples; prefer environment variables such as `${PYENV_ROOT:-$HOME/.pyenv}` and `${REPO_ROOT:-$PWD}`.
+- Example: `REPO_ROOT="${REPO_ROOT:-$PWD}" && PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}" && PYENV_VERSION=description-service "$PYENV_ROOT/versions/description-service/bin/python" -m pytest "$REPO_ROOT/packages/agent-handoff-mcp/tests/test_import_export_regressions.py" -q`
+
 ---
 
 ## Gradual Layering

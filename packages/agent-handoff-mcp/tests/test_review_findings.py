@@ -15,7 +15,15 @@ from agent_handoff_mcp.current_task_rendering import _infer_epic_ref
 
 
 def _parse(raw: str) -> dict:
-    return json.loads(raw)
+    result = json.loads(raw)
+    if isinstance(result, dict) and result.get("schema_version") == 2:
+        data = result.get("data", {})
+        scope = result.get("scope", {})
+        flat = {**result, **data}
+        if "task_ref" not in flat and scope.get("task_ref"):
+            flat["task_ref"] = scope["task_ref"]
+        return flat
+    return result
 
 
 def _assert_dashboard_row(
@@ -689,6 +697,10 @@ def test_record_review_run_inserts_row(isolated_handoff: dict) -> None:
     assert run["subject_path"] == "docs/tasks/12.0/E12-8-plan.md"
     assert run["verdict"] == "pass_with_findings"
     assert run["task_ref"] == "E12-8"
+    assert result["mutation"]["entity"] == "review_run"
+    assert result["mutation"]["operation"] == "insert"
+    assert result["mutation"]["affected_ids"] == ["E12-8-review-1"]
+    assert result["mutation"]["task_revision"] is None
 
 
 def test_record_review_run_rejects_duplicate_id(isolated_handoff: dict) -> None:
@@ -944,9 +956,10 @@ def test_load_session_passes_detail_through(isolated_handoff: dict) -> None:
 
     result = _parse(mcp_server.load_session(task_ref="ls-det", detail="summary"))
     assert result["ok"] is True
-    # State decisions should be truncated
+    # State is a v2 envelope; decisions are in state.data
     state = result["state"]
-    assert state["decisions_recent"][0]["rationale"].endswith("...")
+    state_data = state.get("data", state)
+    assert state_data["decisions_recent"][0]["rationale"].endswith("...")
     # Findings should be truncated
     assert result["open_findings"][0]["description"].endswith("...")
 
@@ -971,10 +984,11 @@ def test_load_session_passes_sections_through(isolated_handoff: dict) -> None:
     assert result["ok"] is True
 
     state = result["state"]
-    assert "active" in state
-    assert "limits" in state
-    assert "decisions_recent" in state
-    assert "blockers_open" not in state
+    state_data = state.get("data", state)
+    assert "active" in state_data
+    assert "limits" in state_data
+    assert "decisions_recent" in state_data
+    assert "blockers_open" not in state_data
     assert result["open_findings"][0]["finding_id"] == "ls-sec-1"
 
 

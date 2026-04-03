@@ -37,7 +37,7 @@ For extracted-consumer setups, replace the local `uv tool install ./packages/age
 Runtime bootstrap:
 
 ```bash
-cd /Users/daniel/Development/context-alt-text-monorepo
+cd "${REPO_ROOT:-$PWD}"
 
 # Core ledger server
 uv tool install ./packages/agent-handoff-mcp
@@ -425,6 +425,36 @@ When called with `view="dashboard"`, `get_handoff_state` returns:
 - `generate_current_task_md` accepts `max_cross_task_findings` (default 5) to cap the number of cross-task findings rendered per task_ref. Active-task findings are uncapped. The "All Review Findings History" section has been removed from the default render; historical findings are available via `list_review_findings(status="all")`.
 - `set_handoff_state` accepts an optional `target_branch` parameter. When provided, it sets the task's intended work branch. When omitted on subsequent calls, the existing value is preserved. The field appears in `get_handoff_state` responses and in the CURRENT_TASK.md Active Status section.
 - `switch_task` (registered on `agent-orchestrator-mcp`) also accepts `target_branch`, set at task init time.
+
+### v2 Response Envelope (OC-004)
+
+All public MCP tool responses use the v2 envelope as of package version `0.2.0`. Previous tool-specific top-level fields are nested under `data`.
+
+```json
+{
+  "ok": true,
+  "schema_version": 2,
+  "tool": "get_handoff_state",
+  "scope": { "task_ref": "AHMCP-3" },
+  "data": { "active": {...}, "limits": {...}, ... },
+  "mutation": null,
+  "artifacts": [],
+  "warnings": []
+}
+```
+
+| Key | Type | Notes |
+|-----|------|-------|
+| `ok` | bool | Unchanged from v1 |
+| `schema_version` | int | Always `2` for v2 responses |
+| `tool` | string | Tool name that produced this response |
+| `scope.task_ref` | string/null | Resolved task reference |
+| `data` | object | Tool-specific payload (v1 top-level fields move here) |
+| `mutation` | object/null | Present on write responses: `{ entity, operation, affected_ids, task_revision }` |
+| `artifacts` | array | Render artifacts produced (e.g. `{ type, path, written }`) |
+| `warnings` | array | Diagnostic warnings |
+
+Internal utility functions (`get_review_findings_summary`, `reconcile_review_findings`) may still use the v1 shape. All public MCP-registered tools return the v2 envelope. Check `schema_version == 2` to confirm.
 
 ## CLI Fallback
 

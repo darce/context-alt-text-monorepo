@@ -100,9 +100,11 @@ Parameterize the existing read tools instead of inventing more narrowly scoped o
 
 ## Verification Strategy
 
+Use environment-variable-based commands only. Do not hardcode user-local absolute filesystem paths such as `/Users/...`; prefer `${PYENV_ROOT:-$HOME/.pyenv}` for interpreter paths.
+
 - Deterministic tests:
-  - `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_handoff_state.py packages/agent-handoff-mcp/tests/test_review_findings.py packages/agent-handoff-mcp/tests/test_cli.py -q`
-  - `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_stdio.py packages/agent-handoff-mcp/tests/test_http.py -q`
+  - `PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}" PYENV_VERSION=description-service "$PYENV_ROOT/versions/description-service/bin/python" -m pytest packages/agent-handoff-mcp/tests/test_handoff_state.py packages/agent-handoff-mcp/tests/test_review_findings.py packages/agent-handoff-mcp/tests/test_cli.py -q`
+  - `PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}" PYENV_VERSION=description-service "$PYENV_ROOT/versions/description-service/bin/python" -m pytest packages/agent-handoff-mcp/tests/test_stdio.py packages/agent-handoff-mcp/tests/test_http.py -q`
 - Runtime-parity / environment checks:
   - `agent-handoff-mcp --workspace-root "$(pwd)" doctor`
 - Contract/fixture verification:

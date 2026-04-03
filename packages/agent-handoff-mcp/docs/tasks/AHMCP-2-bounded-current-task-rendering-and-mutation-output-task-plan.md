@@ -109,12 +109,14 @@ Land the render cleanup and write/export confirmation work in four slices. First
 
 ## Verification Strategy
 
+Use environment-variable-based commands only. Do not hardcode user-local absolute filesystem paths such as `/Users/...`; prefer `${PYENV_ROOT:-$HOME/.pyenv}` for interpreter paths.
+
 - Lane `render-bounds`:
-  - `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_handoff_state.py -q -k "generate_current_task_md and (related or history or no_other_open_findings)"`
-  - `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_review_findings.py -q -k "generate_current_task_md"`
+  - `PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}" PYENV_VERSION=description-service "$PYENV_ROOT/versions/description-service/bin/python" -m pytest packages/agent-handoff-mcp/tests/test_handoff_state.py -q -k "generate_current_task_md and (related or history or no_other_open_findings)"`
+  - `PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}" PYENV_VERSION=description-service "$PYENV_ROOT/versions/description-service/bin/python" -m pytest packages/agent-handoff-mcp/tests/test_review_findings.py -q -k "generate_current_task_md"`
 - Lane `lifecycle-export`:
-  - `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_handoff_state.py -q -k "close_slice"`
-  - `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_import_export_regressions.py -q`
+  - `PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}" PYENV_VERSION=description-service "$PYENV_ROOT/versions/description-service/bin/python" -m pytest packages/agent-handoff-mcp/tests/test_handoff_state.py -q -k "close_slice"`
+  - `PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}" PYENV_VERSION=description-service "$PYENV_ROOT/versions/description-service/bin/python" -m pytest packages/agent-handoff-mcp/tests/test_import_export_regressions.py -q`
 - Manual verification:
   - inspect one cross-task-heavy render and confirm each non-active task group stays within the configured cap
 
@@ -194,9 +196,9 @@ Proof:
 
 | Lane ID | Owned Files | Narrowest Proving Commands |
 | --- | --- | --- |
-| `render-bounds` | `packages/agent-handoff-mcp/src/agent_handoff_mcp/current_task_rendering.py`, `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py`, `docs/agentic/contracts/agent-handoff-mcp.md` | `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_handoff_state.py -q -k "generate_current_task_md and (related or history or no_other_open_findings)"`; `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_review_findings.py -q -k "generate_current_task_md"` |
-| `lifecycle-export` | `packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py`, `packages/agent-handoff-mcp/src/agent_handoff_mcp/import_export.py` | `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_handoff_state.py -q -k "close_slice"`; `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_import_export_regressions.py -q` |
-| `branch-binding` | `packages/agent-handoff-mcp/src/agent_handoff_mcp/shared_schema.py`, `packages/agent-handoff-mcp/src/agent_handoff_mcp/handoff_state.py`, `packages/agent-handoff-mcp/src/agent_handoff_mcp/import_export.py` (switch_task), `packages/agent-handoff-mcp/src/agent_handoff_mcp/current_task_rendering.py` | `/Users/daniel/.pyenv/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_handoff_state.py -q -k "set_handoff_state or get_handoff_state or switch_task or generate_current_task_md"` |
+| `render-bounds` | `packages/agent-handoff-mcp/src/agent_handoff_mcp/current_task_rendering.py`, `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py`, `docs/agentic/contracts/agent-handoff-mcp.md` | `PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}" PYENV_VERSION=description-service "$PYENV_ROOT/versions/description-service/bin/python" -m pytest packages/agent-handoff-mcp/tests/test_handoff_state.py -q -k "generate_current_task_md and (related or history or no_other_open_findings)"`; `PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}" PYENV_VERSION=description-service "$PYENV_ROOT/versions/description-service/bin/python" -m pytest packages/agent-handoff-mcp/tests/test_review_findings.py -q -k "generate_current_task_md"` |
+| `lifecycle-export` | `packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py`, `packages/agent-handoff-mcp/src/agent_handoff_mcp/import_export.py` | `PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}" PYENV_VERSION=description-service "$PYENV_ROOT/versions/description-service/bin/python" -m pytest packages/agent-handoff-mcp/tests/test_handoff_state.py -q -k "close_slice"`; `PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}" PYENV_VERSION=description-service "$PYENV_ROOT/versions/description-service/bin/python" -m pytest packages/agent-handoff-mcp/tests/test_import_export_regressions.py -q` |
+| `branch-binding` | `packages/agent-handoff-mcp/src/agent_handoff_mcp/shared_schema.py`, `packages/agent-handoff-mcp/src/agent_handoff_mcp/handoff_state.py`, `packages/agent-handoff-mcp/src/agent_handoff_mcp/import_export.py` (switch_task), `packages/agent-handoff-mcp/src/agent_handoff_mcp/current_task_rendering.py` | `PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}" PYENV_VERSION=description-service "$PYENV_ROOT/versions/description-service/bin/python" -m pytest packages/agent-handoff-mcp/tests/test_handoff_state.py -q -k "set_handoff_state or get_handoff_state or switch_task or generate_current_task_md"` |
 
 ### Merge Order
 

@@ -59,6 +59,7 @@ from ._shared import (  # noqa: F401
     _count_task_rows,
     # Git helpers (monkeypatched by tests via handoff_core.X)
     _detect_git_write_context,
+    _envelope,
     _fetch_handoff_rows,
     _fetch_related_open_findings,
     # DB + resolution utilities
@@ -190,6 +191,23 @@ _ARTIFACT_GET_IDENTITY_FIELDS: frozenset[str] = frozenset(
 _HANDOFF_SEARCH_IDENTITY_FIELDS: frozenset[str] = frozenset({"record_type", "record_id", "task_ref", "snippet"})
 
 
+def _flatten_v2(parsed: dict) -> dict:
+    """Flatten a v2 envelope for internal cross-function consumption.
+
+    Merges ``data`` fields and ``scope.task_ref`` into the top level so that
+    compound tools like ``close_slice`` can access inner-tool results with the
+    same key paths that worked under v1.
+    """
+    if parsed.get("schema_version") != 2:
+        return parsed
+    data = parsed.get("data", {})
+    scope = parsed.get("scope", {})
+    flat: dict = {**parsed, **data}
+    if "task_ref" not in flat and scope.get("task_ref"):
+        flat["task_ref"] = scope["task_ref"]
+    return flat
+
+
 def _normalize_detail(detail: str) -> str:
     return detail if detail in _VALID_DETAIL_LEVELS else "full"
 
@@ -262,7 +280,9 @@ def search_handoff(
 ) -> str:
     """Search canonical handoff records by keyword with optional scope filters."""
     if not queries:
-        return _json_response({"ok": False, "error": "queries must be a non-empty list of search terms."})
+        return _envelope(
+            ok=False, tool="search_handoff", data={"error": "queries must be a non-empty list of search terms."}
+        )
     detail = _normalize_detail(detail)
     requested_fields = _parse_projection_fields(fields, _VALID_HANDOFF_SEARCH_FIELDS)
 
@@ -272,11 +292,10 @@ def search_handoff(
     else:
         invalid = set(record_types) - _VALID_RECORD_TYPES
         if invalid:
-            return _json_response(
-                {
-                    "ok": False,
-                    "error": f"Invalid record_types: {sorted(invalid)}. Valid: {sorted(_VALID_RECORD_TYPES)}.",
-                }
+            return _envelope(
+                ok=False,
+                tool="search_handoff",
+                data={"error": f"Invalid record_types: {sorted(invalid)}. Valid: {sorted(_VALID_RECORD_TYPES)}."},
             )
         validated_types = list(dict.fromkeys(record_types))
 
@@ -287,7 +306,9 @@ def search_handoff(
         if stripped:
             fts_terms.append('"' + stripped.replace('"', '""') + '"')
     if not fts_terms:
-        return _json_response({"ok": False, "error": "All query strings are empty after stripping."})
+        return _envelope(
+            ok=False, tool="search_handoff", data={"error": "All query strings are empty after stripping."}
+        )
     fts_query = " OR ".join(fts_terms)
 
     results: list[dict] = []
@@ -299,11 +320,12 @@ def search_handoff(
             > 0
         )
         if not tables_exist:
-            return _json_response(
-                {
-                    "ok": False,
-                    "error": "Structured FTS index is unavailable (FTS5 not enabled). Run 'agent-handoff-mcp doctor' to verify.",
-                }
+            return _envelope(
+                ok=False,
+                tool="search_handoff",
+                data={
+                    "error": "Structured FTS index is unavailable (FTS5 not enabled). Run 'agent-handoff-mcp doctor' to verify."
+                },
             )
         effective_task_ref: str | None = task_ref
         if effective_task_ref is None:
@@ -336,7 +358,7 @@ def search_handoff(
                     (*params, clamped_limit),
                 ).fetchall()
             except sqlite3.OperationalError as exc:
-                return _json_response({"ok": False, "error": f"FTS5 query error: {exc}"})
+                return _envelope(ok=False, tool="search_handoff", data={"error": f"FTS5 query error: {exc}"})
             for row in rows:
                 results.append(
                     {
@@ -358,14 +380,16 @@ def search_handoff(
         if detail == "summary":
             shaped["snippet"] = _truncate_text(shaped.get("snippet"), _HANDOFF_SEARCH_SUMMARY_TRUNCATE)
         shaped_results.append(_project_mapping(shaped, requested_fields, _HANDOFF_SEARCH_IDENTITY_FIELDS))
-    return _json_response(
-        {
-            "ok": True,
+    return _envelope(
+        ok=True,
+        tool="search_handoff",
+        data={
             "results": shaped_results,
             "total": len(results),
             "query": fts_query,
             "record_types_searched": validated_types,
-        }
+        },
+        task_ref=effective_task_ref,
     )
 
 
@@ -386,11 +410,11 @@ def record_artifact(
     sk = _normalize_optional_text(source_kind)
     sl = _normalize_optional_text(source_label)
     if sk is None:
-        return _json_response({"ok": False, "error": "source_kind is required."})
+        return _envelope(ok=False, tool="record_artifact", data={"error": "source_kind is required."})
     if sl is None:
-        return _json_response({"ok": False, "error": "source_label is required."})
+        return _envelope(ok=False, tool="record_artifact", data={"error": "source_label is required."})
     if not content:
-        return _json_response({"ok": False, "error": "content is required."})
+        return _envelope(ok=False, tool="record_artifact", data={"error": "content is required."})
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
     try:
@@ -406,9 +430,15 @@ def record_artifact(
             metadata=metadata,
             artifact_db_path=config.artifact_db_path,
         )
-        return _json_response({"ok": True, **result})
+        return _envelope(
+            ok=True,
+            tool="record_artifact",
+            data=result,
+            task_ref=resolved_task_ref,
+            mutation={"entity": "artifact_source", "operation": "upsert"},
+        )
     except RuntimeError as exc:
-        return _json_response({"ok": False, "error": str(exc)})
+        return _envelope(ok=False, tool="record_artifact", data={"error": str(exc)}, task_ref=resolved_task_ref)
 
 
 def search_artifacts(
@@ -450,9 +480,14 @@ def search_artifacts(
                 )
                 for row in rows
             ]
-            return _json_response({"ok": True, "mode": "sources", "total": len(rows), "sources": shaped_rows})
+            return _envelope(
+                ok=True,
+                tool="search_artifacts",
+                data={"mode": "sources", "total": len(rows), "sources": shaped_rows},
+                task_ref=resolved_task_ref,
+            )
         except RuntimeError as exc:
-            return _json_response({"ok": False, "error": str(exc)})
+            return _envelope(ok=False, tool="search_artifacts", data={"error": str(exc)}, task_ref=resolved_task_ref)
     requested_fields = _parse_projection_fields(fields, _VALID_ARTIFACT_HIT_FIELDS)
     scope: dict[str, str | None] = {}
     if task_ref:
@@ -479,9 +514,14 @@ def search_artifacts(
             )
             for hit in hits
         ]
-        return _json_response({"ok": True, "mode": "search", "total": len(hits), "hits": shaped_hits})
+        return _envelope(
+            ok=True,
+            tool="search_artifacts",
+            data={"mode": "search", "total": len(hits), "hits": shaped_hits},
+            task_ref=scope["task_ref"],
+        )
     except RuntimeError as exc:
-        return _json_response({"ok": False, "error": str(exc)})
+        return _envelope(ok=False, tool="search_artifacts", data={"error": str(exc)}, task_ref=scope["task_ref"])
 
 
 def get_artifact(
@@ -498,7 +538,9 @@ def get_artifact(
     detail = _normalize_detail(detail)
     requested_fields = _parse_projection_fields(fields, _VALID_ARTIFACT_GET_FIELDS)
     if source_id is None and not (task_ref and source_label):
-        return _json_response({"ok": False, "error": "Provide source_id or both task_ref and source_label."})
+        return _envelope(
+            ok=False, tool="get_artifact", data={"error": "Provide source_id or both task_ref and source_label."}
+        )
     resolved_task_ref: str | None = None
     if task_ref:
         with _get_db_connection() as conn:
@@ -511,13 +553,15 @@ def get_artifact(
             artifact_db_path=config.artifact_db_path,
         )
         if source is None:
-            return _json_response({"ok": False, "error": "Artifact source not found."})
+            return _envelope(
+                ok=False, tool="get_artifact", data={"error": "Artifact source not found."}, task_ref=resolved_task_ref
+            )
         shaped_source = _project_mapping(
             _summarize_artifact_source(dict(source)) if detail == "summary" else dict(source),
             requested_fields,
             _ARTIFACT_GET_IDENTITY_FIELDS,
         )
-        payload: dict[str, object] = {"ok": True, "source": shaped_source}
+        data: dict[str, object] = {"source": shaped_source}
         if include_terms:
             resolved_source_id = source["id"]
             terms = artifact_index.get_distinctive_terms(
@@ -525,11 +569,11 @@ def get_artifact(
                 artifact_db_path=config.artifact_db_path,
                 top_n=max(1, int(top_n_terms)),
             )
-            payload["source_id"] = resolved_source_id
-            payload["terms"] = terms
-        return _json_response(payload)
+            data["source_id"] = resolved_source_id
+            data["terms"] = terms
+        return _envelope(ok=True, tool="get_artifact", data=data, task_ref=resolved_task_ref)
     except RuntimeError as exc:
-        return _json_response({"ok": False, "error": str(exc)})
+        return _envelope(ok=False, tool="get_artifact", data={"error": str(exc)}, task_ref=resolved_task_ref)
 
 
 def purge_artifacts(
@@ -545,8 +589,10 @@ def purge_artifacts(
         with _get_db_connection() as conn:
             resolved_task_ref = _resolve_task_ref(conn, task_ref)
     if resolved_task_ref is None and lane_id is None and app_root is None and older_than_days is None:
-        return _json_response(
-            {"ok": False, "error": "Provide task_ref, lane_id, app_root, older_than_days, or a combination."}
+        return _envelope(
+            ok=False,
+            tool="purge_artifacts",
+            data={"error": "Provide task_ref, lane_id, app_root, older_than_days, or a combination."},
         )
     try:
         result = artifact_index.purge_artifacts(
@@ -556,9 +602,15 @@ def purge_artifacts(
             older_than_days=older_than_days,
             artifact_db_path=config.artifact_db_path,
         )
-        return _json_response(result)
+        return _envelope(
+            ok=True,
+            tool="purge_artifacts",
+            data=result,
+            task_ref=resolved_task_ref,
+            mutation={"entity": "artifact_source", "operation": "delete"},
+        )
     except RuntimeError as exc:
-        return _json_response({"ok": False, "error": str(exc)})
+        return _envelope(ok=False, tool="purge_artifacts", data={"error": str(exc)}, task_ref=resolved_task_ref)
 
 
 # Compound tools (cross-module orchestration)
@@ -574,20 +626,21 @@ def load_session(
     payload size without making two separate calls.
     """
     state_raw = get_handoff_state(task_ref=task_ref, sections=sections, detail=detail)
-    state = json.loads(state_raw)
+    state = _flatten_v2(json.loads(state_raw))
     if not state.get("ok"):
         return state_raw
-    resolved_task_ref = state.get("task_ref")
+    resolved_task_ref = state.get("scope", {}).get("task_ref") or state.get("task_ref")
     findings_raw = list_review_findings(task_ref=resolved_task_ref, status="open", detail=detail)
-    findings = json.loads(findings_raw)
-    return _json_response(
-        {
-            "ok": True,
-            "task_ref": resolved_task_ref,
+    findings = _flatten_v2(json.loads(findings_raw))
+    return _envelope(
+        ok=True,
+        tool="load_session",
+        data={
             "state": state,
             "open_findings": findings.get("findings", []) if findings.get("ok") else [],
             "open_findings_count": findings.get("total_matching", 0) if findings.get("ok") else 0,
-        }
+        },
+        task_ref=resolved_task_ref,
     )
 
 
@@ -612,29 +665,33 @@ def close_slice(
     if active_row is not None:
         current_revision = int(active_row["revision"])
         if expected_revision is None:
-            return _json_response(
-                {
-                    "ok": False,
-                    "task_ref": resolved_task_ref,
+            return _envelope(
+                ok=False,
+                tool="close_slice",
+                data={
+                    "error": "expected_revision is required for updates.",
+                    "state_error": "expected_revision is required for updates.",
                     "decision_recorded": False,
                     "state_updated": False,
-                    "state_error": "expected_revision is required for updates.",
                     "current_revision": current_revision,
                     "current_task_md_written": False,
-                }
+                },
+                task_ref=resolved_task_ref,
             )
         if expected_revision != current_revision:
-            return _json_response(
-                {
-                    "ok": False,
-                    "task_ref": resolved_task_ref,
+            return _envelope(
+                ok=False,
+                tool="close_slice",
+                data={
+                    "error": "Revision conflict.",
+                    "state_error": "Revision conflict.",
                     "decision_recorded": False,
                     "state_updated": False,
-                    "state_error": "Revision conflict.",
                     "expected_revision": expected_revision,
                     "current_revision": current_revision,
                     "current_task_md_written": False,
-                }
+                },
+                task_ref=resolved_task_ref,
             )
     else:
         with _get_db_connection() as conn2:
@@ -643,15 +700,17 @@ def close_slice(
                 (resolved_task_ref,),
             ).fetchone()
         if archived is not None:
-            return _json_response(
-                {
-                    "ok": False,
-                    "task_ref": resolved_task_ref,
+            return _envelope(
+                ok=False,
+                tool="close_slice",
+                data={
+                    "error": "Cannot close a slice on an archived task. Switch to it first or use update_task_status.",
+                    "state_error": "Cannot close a slice on an archived task. Switch to it first or use update_task_status.",
                     "decision_recorded": False,
                     "state_updated": False,
-                    "state_error": "Cannot close a slice on an archived task. Switch to it first or use update_task_status.",
                     "current_task_md_written": False,
-                }
+                },
+                task_ref=resolved_task_ref,
             )
 
     decision_raw = record_decision(
@@ -662,7 +721,7 @@ def close_slice(
         task_ref=task_ref,
         changed_files=changed_files,
     )
-    decision_result = json.loads(decision_raw)
+    decision_result = _flatten_v2(json.loads(decision_raw))
     if not decision_result.get("ok"):
         return decision_raw
     resolved_task_ref = str(decision_result.get("task_ref", task_ref))
@@ -673,28 +732,37 @@ def close_slice(
         expected_revision=expected_revision,
         actor=actor,
     )
-    state_result = json.loads(state_raw)
+    state_result = _flatten_v2(json.loads(state_raw))
     if not state_result.get("ok"):
-        return _json_response(
-            {
-                "ok": False,
-                "task_ref": resolved_task_ref,
+        return _envelope(
+            ok=False,
+            tool="close_slice",
+            data={
+                "error": state_result.get("error"),
+                "state_error": state_result.get("error"),
                 "decision_recorded": True,
                 "state_updated": False,
-                "state_error": state_result.get("error"),
                 "current_task_md_written": False,
-            }
+            },
+            task_ref=resolved_task_ref,
         )
     _write_current_task_md_from_state(resolved_task_ref)
-    return _json_response(
-        {
-            "ok": True,
-            "task_ref": resolved_task_ref,
+    return _envelope(
+        ok=True,
+        tool="close_slice",
+        data={
             "decision_recorded": True,
             "state_updated": True,
             "state_error": None,
             "current_task_md_written": True,
             "decision": decision_result.get("decision"),
             "task_revision": state_result.get("active", {}).get("revision"),
-        }
+        },
+        task_ref=resolved_task_ref,
+        mutation={
+            "entity": "decision",
+            "operation": "close_slice",
+            "task_revision": state_result.get("active", {}).get("revision"),
+        },
+        artifacts=[{"type": "current_task_md", "path": "CURRENT_TASK.md", "written": True}],
     )

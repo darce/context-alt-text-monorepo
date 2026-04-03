@@ -15,7 +15,15 @@ def _run_cli(argv: list[str], capsys) -> dict:
         cli.main()
     finally:
         sys.argv = original_argv
-    return json.loads(capsys.readouterr().out)
+    raw = json.loads(capsys.readouterr().out)
+    if isinstance(raw, dict) and raw.get("schema_version") == 2:
+        data = raw.get("data", {})
+        scope = raw.get("scope", {})
+        flat = {**raw, **data}
+        if "task_ref" not in flat and scope.get("task_ref"):
+            flat["task_ref"] = scope["task_ref"]
+        return flat
+    return raw
 
 
 def test_doctor_cli_reports_workspace_paths(tmp_path: Path, capsys) -> None:

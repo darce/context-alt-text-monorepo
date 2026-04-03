@@ -66,9 +66,23 @@ def test_summarize_test_result_falls_back_to_last_line() -> None:
 
 
 def _parse(payload: str) -> dict:
-    import typing
+    """Parse JSON and flatten v2 envelope for backward-compatible test assertions.
 
-    return typing.cast(dict, json.loads(payload))
+    If the response has schema_version=2, merge data into the top level so
+    tests can access result["active"] instead of result["data"]["active"].
+    Envelope metadata (schema_version, tool, scope, mutation, artifacts, warnings)
+    remains accessible at the top level.
+    """
+    raw = json.loads(payload)
+    if isinstance(raw, dict) and raw.get("schema_version") == 2:
+        data = raw.get("data", {})
+        # Promote scope fields to top level for convenience
+        scope = raw.get("scope", {})
+        flat = {**raw, **data}
+        if "task_ref" not in flat and scope.get("task_ref"):
+            flat["task_ref"] = scope["task_ref"]
+        return flat
+    return raw
 
 
 def _assert_dashboard_row(
@@ -2947,10 +2961,11 @@ def test_load_session_merges_state_and_findings(isolated_handoff: dict) -> None:
 
     assert result["ok"] is True
     assert result["task_ref"] == "ls-test"
-    # State is nested under "state" key
+    # State is the full v2 envelope from get_handoff_state; data is nested.
     state = result["state"]
-    assert state["active"]["status"] == "in_progress"
-    assert state["active"]["objective"] == "Load session compound test"
+    state_data = state.get("data", state)
+    assert state_data["active"]["status"] == "in_progress"
+    assert state_data["active"]["objective"] == "Load session compound test"
     # Open findings at top-level "open_findings"
     findings = result["open_findings"]
     assert isinstance(findings, list)

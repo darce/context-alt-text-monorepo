@@ -9,6 +9,7 @@ from ._shared import (
     DEFAULT_HANDOFF_LIMITS,
     HANDOFF_ACTIVE_STATUSES,
     WriteActor,
+    _envelope,
     _fetch_handoff_rows,
     _get_db_connection,
     _json_response,
@@ -196,7 +197,7 @@ def get_handoff_state(
     with _get_db_connection() as conn:
         active_row = conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone()
         if active_row is None and task_ref is None:
-            return _json_response({"ok": True, "active": None, "message": "No active handoff state."})
+            return _envelope(ok=True, tool="get_handoff_state", data={"active": None, "message": "No active handoff state."})
         resolved_task_ref = task_ref or str(active_row["task_ref"])
         active = _row_to_dict(active_row) if active_row is not None else None
         if active is not None and resolved_task_ref != active["task_ref"]:
@@ -325,7 +326,16 @@ def get_handoff_state(
                 params=lane_messages_params,
             )
 
-        return _json_response(result)
+        warnings = result.pop("warnings", []) or []
+        task_ref_val = result.pop("task_ref", resolved_task_ref)
+        result.pop("ok", None)
+        return _envelope(
+            ok=True,
+            tool="get_handoff_state",
+            data=result,
+            task_ref=task_ref_val,
+            warnings=warnings,
+        )
 
 
 def _get_handoff_dashboard_view(limit: int = 20, include_archived: bool = True) -> str:
@@ -334,4 +344,10 @@ def _get_handoff_dashboard_view(limit: int = 20, include_archived: bool = True) 
 
         rows = _collect_dashboard_rows(conn, limit=limit, include_archived=include_archived)
         active = conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone()
-        return _json_response({"ok": True, "view": "dashboard", "active": _row_to_dict(active), "tasks": rows})
+        active_dict = _row_to_dict(active)
+        return _envelope(
+            ok=True,
+            tool="get_handoff_state",
+            data={"view": "dashboard", "active": active_dict, "tasks": rows},
+            task_ref=active_dict.get("task_ref") if active_dict else None,
+        )

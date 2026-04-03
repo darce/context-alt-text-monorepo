@@ -13,7 +13,15 @@ from agent_handoff_mcp.config import RuntimeConfig
 
 
 def _parse(payload: str) -> dict:
-    return json.loads(payload)
+    raw = json.loads(payload)
+    if isinstance(raw, dict) and raw.get("schema_version") == 2:
+        data = raw.get("data", {})
+        scope = raw.get("scope", {})
+        flat = {**raw, **data}
+        if "task_ref" not in flat and scope.get("task_ref"):
+            flat["task_ref"] = scope["task_ref"]
+        return flat
+    return raw
 
 
 def _configure_runtime(workspace_root: Path) -> RuntimeConfig:

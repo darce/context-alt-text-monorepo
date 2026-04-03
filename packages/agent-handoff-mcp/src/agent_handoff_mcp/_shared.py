@@ -117,6 +117,7 @@ from .shared_primitives import (  # noqa: F401
     _exports_dir,
     _first_present,
     _has_structured_slice_summary,
+    _envelope,
     _json_response,
     _normalize_lane_message_payload,
     _normalize_optional_text,

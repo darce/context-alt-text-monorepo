@@ -54,6 +54,7 @@ from ._shared import (  # noqa: F401
     _classify_commit_relation,
     _collect_all_deferred_findings,
     _collect_all_open_findings,
+    _envelope,
     _collect_dashboard_rows,
     _collect_task_snapshot,
     _count_task_rows,
@@ -577,17 +578,18 @@ def load_session(
     state = json.loads(state_raw)
     if not state.get("ok"):
         return state_raw
-    resolved_task_ref = state.get("task_ref")
+    resolved_task_ref = state.get("scope", {}).get("task_ref") or state.get("task_ref")
     findings_raw = list_review_findings(task_ref=resolved_task_ref, status="open", detail=detail)
     findings = json.loads(findings_raw)
-    return _json_response(
-        {
-            "ok": True,
-            "task_ref": resolved_task_ref,
+    return _envelope(
+        ok=True,
+        tool="load_session",
+        data={
             "state": state,
             "open_findings": findings.get("findings", []) if findings.get("ok") else [],
             "open_findings_count": findings.get("total_matching", 0) if findings.get("ok") else 0,
-        }
+        },
+        task_ref=resolved_task_ref,
     )
 
 

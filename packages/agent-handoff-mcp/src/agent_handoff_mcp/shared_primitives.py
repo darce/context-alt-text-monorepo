@@ -199,6 +199,37 @@ def _json_response(payload: dict) -> str:
     return json.dumps(payload, indent=2, sort_keys=True)
 
 
+def _envelope(
+    *,
+    ok: bool,
+    tool: str,
+    data: dict,
+    task_ref: str | None = None,
+    entity: str | None = None,
+    mutation: dict | None = None,
+    artifacts: list[dict] | None = None,
+    warnings: list[str] | None = None,
+) -> str:
+    """Build a v2 response envelope. Call sites opt in by using this instead of _json_response."""
+    scope: dict[str, str | None] = {"task_ref": task_ref}
+    if entity is not None:
+        scope["entity"] = entity
+    return json.dumps(
+        {
+            "ok": ok,
+            "schema_version": 2,
+            "tool": tool,
+            "scope": scope,
+            "data": data,
+            "mutation": mutation,
+            "artifacts": artifacts or [],
+            "warnings": warnings or [],
+        },
+        indent=2,
+        sort_keys=True,
+    )
+
+
 def _excerpt_text(value: str | None, *, limit: int = 240) -> str | None:
     normalized = _normalize_optional_text(value)
     if normalized is None:

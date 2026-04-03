@@ -14,6 +14,7 @@ import type {
   MediaIdentitiesResponse,
 } from '../../../api/recognition';
 import { createMockMutation, createMockQuery } from '../../../test-utils/mockHooks';
+import type { WorkbenchMediaDetailResponse } from '../../../api/workbenchMediaApi';
 import { WorkbenchPage } from '../../WorkbenchPage';
 import { useWorkbenchMedia, type WorkbenchMediaResponse } from '../../../hooks/useWorkbenchMedia';
 import { useMediaSelectionState } from '../../../hooks/useMediaSelectionState';
@@ -131,6 +132,7 @@ describe('WorkbenchPage', () => {
     editUrl: '#',
     updatedAt: '2025-01-01T00:00:00Z',
     dimensions: { width: 800, height: 600 },
+    xmpPersistence: null,
     tags: [] as string[],
     identities: [],
   };
@@ -220,7 +222,7 @@ describe('WorkbenchPage', () => {
     mockUseWorkbenchMedia.mockReturnValue({
       ...mediaQuery,
       itemsWithIdentities: [baseMediaItem],
-      detailQuery: createMockQuery({
+      detailQuery: createMockQuery<WorkbenchMediaDetailResponse>({
         data: { detailsByMedia: {} },
       }),
       identitiesQuery: createMockQuery<MediaIdentitiesResponse>({
@@ -481,7 +483,7 @@ describe('WorkbenchPage', () => {
         refetch: vi.fn(),
       }),
       itemsWithIdentities: [baseMediaItem],
-      detailQuery: createMockQuery({
+      detailQuery: createMockQuery<WorkbenchMediaDetailResponse>({
         data: { detailsByMedia: {} },
       }),
       identitiesQuery: createMockQuery<MediaIdentitiesResponse>({
@@ -535,7 +537,7 @@ describe('WorkbenchPage', () => {
         isFetching: true,
       }),
       itemsWithIdentities: undefined,
-      detailQuery: createMockQuery({
+      detailQuery: createMockQuery<WorkbenchMediaDetailResponse>({
         data: undefined,
         isPending: true,
         isFetching: true,

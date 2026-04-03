@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  DATA_SOURCE,
-  PROJECTION_STATUS,
-  parseDataSource,
-  parseProjectionStatus,
-} from '../types/dataSource';
+import { DATA_SOURCE, PROJECTION_STATUS, parseDataSource, parseProjectionStatus } from '../types/dataSource';
+import type { PendingMergeSuggestionsResponse, PendingSuggestionsResponse } from '../types';
 import { mapPendingSuggestions, mapPendingMergeSuggestions } from '../identitySuggestionMappers';
 import { fetchMediaIdentities } from '../identityQueriesApi';
+
+const asPendingSuggestionsResponse = (value: Record<string, unknown>): PendingSuggestionsResponse =>
+  value as unknown as PendingSuggestionsResponse;
+
+const asPendingMergeSuggestionsResponse = (value: Record<string, unknown>): PendingMergeSuggestionsResponse =>
+  value as unknown as PendingMergeSuggestionsResponse;
 
 // ---------------------------------------------------------------------------
 // parseDataSource
@@ -48,22 +50,29 @@ describe('parseProjectionStatus', () => {
   });
 });
 
-
 // ---------------------------------------------------------------------------
 // mapPendingSuggestions — envelope metadata provenance
 // ---------------------------------------------------------------------------
 
 describe('mapPendingSuggestions', () => {
   it('preserves envelope metadata from a valid response', () => {
-    const response = {
-      suggestions: [{ id: 's1', identity_id: 'i1', cluster_id: 'c1', rep_similarity: 0.9, status: 'pending' }],
+    const response: PendingSuggestionsResponse = {
+      suggestions: [
+        {
+          id: 's1',
+          identity_id: 'i1',
+          suggested_cluster_id: 'c1',
+          representative_similarity: 0.9,
+          resolution: 'pending',
+        },
+      ],
       total: 1,
       limit: 25,
       offset: 0,
-      data_source: 'backend_proxy',
+      data_source: DATA_SOURCE.BACKEND_PROXY,
     };
 
-    const mapped = mapPendingSuggestions(response as any);
+    const mapped = mapPendingSuggestions(response);
     expect(mapped.total).toBe(1);
     expect(mapped.limit).toBe(25);
     expect(mapped.offset).toBe(0);
@@ -71,38 +80,38 @@ describe('mapPendingSuggestions', () => {
   });
 
   it('throws when total is missing', () => {
-    const response = {
+    const response = asPendingSuggestionsResponse({
       suggestions: [],
       limit: 25,
       offset: 0,
-      data_source: 'backend_proxy',
-    };
+      data_source: DATA_SOURCE.BACKEND_PROXY,
+    });
 
-    expect(() => mapPendingSuggestions(response as any)).toThrow('numeric total');
+    expect(() => mapPendingSuggestions(response)).toThrow('numeric total');
   });
 
   it('throws when data_source is invalid', () => {
-    const response = {
+    const response = asPendingSuggestionsResponse({
       suggestions: [],
       total: 0,
       limit: 25,
       offset: 0,
       data_source: 'invented',
-    };
+    });
 
-    expect(() => mapPendingSuggestions(response as any)).toThrow('valid data_source');
+    expect(() => mapPendingSuggestions(response)).toThrow('valid data_source');
   });
 
   it('throws when limit is not a number', () => {
-    const response = {
+    const response = asPendingSuggestionsResponse({
       suggestions: [],
       total: 0,
       limit: 'twenty-five',
       offset: 0,
-      data_source: 'backend_proxy',
-    };
+      data_source: DATA_SOURCE.BACKEND_PROXY,
+    });
 
-    expect(() => mapPendingSuggestions(response as any)).toThrow('numeric limit');
+    expect(() => mapPendingSuggestions(response)).toThrow('numeric limit');
   });
 });
 
@@ -112,29 +121,29 @@ describe('mapPendingSuggestions', () => {
 
 describe('mapPendingMergeSuggestions', () => {
   it('preserves envelope metadata from a valid response', () => {
-    const response = {
-      suggestions: [{ id: 'm1', source_cluster_id: 'a', target_cluster_id: 'b', similarity: 0.85, status: 'pending' }],
+    const response: PendingMergeSuggestionsResponse = {
+      suggestions: [{ id: 'm1', cluster_a_id: 'a', cluster_b_id: 'b', similarity: 0.85, status: 'pending' }],
       total: 1,
       limit: 10,
       offset: 0,
-      data_source: 'backend_proxy',
+      data_source: DATA_SOURCE.BACKEND_PROXY,
     };
 
-    const mapped = mapPendingMergeSuggestions(response as any);
+    const mapped = mapPendingMergeSuggestions(response);
     expect(mapped.total).toBe(1);
     expect(mapped.limit).toBe(10);
     expect(mapped.data_source).toBe('backend_proxy');
   });
 
   it('throws when data_source is missing', () => {
-    const response = {
+    const response = asPendingMergeSuggestionsResponse({
       suggestions: [],
       total: 0,
       limit: 10,
       offset: 0,
-    };
+    });
 
-    expect(() => mapPendingMergeSuggestions(response as any)).toThrow('valid data_source');
+    expect(() => mapPendingMergeSuggestions(response)).toThrow('valid data_source');
   });
 });
 

@@ -1,6 +1,6 @@
 import { fetchRequiredApi, stripTrailingSlash } from '../../utils/http';
 import { getEndpoint, getConfig, isDevMode } from '../config';
-import { DATA_SOURCE, parseDataSource } from './types/dataSource';
+import { parseDataSource } from './types/dataSource';
 import type {
   IdentitySuggestionsResponse,
   MediaIdentitiesResponse,
@@ -30,7 +30,9 @@ const requireCanonicalDataSource = (value: unknown, responseName: string) => {
 
 export const fetchMediaIdentities = async (mediaIds: number[]): Promise<MediaIdentitiesResponse> => {
   if (mediaIds.length === 0) {
-    throw new Error('fetchMediaIdentities requires at least one media ID. Use the hook\'s enabled guard to prevent empty calls.');
+    throw new Error(
+      "fetchMediaIdentities requires at least one media ID. Use the hook's enabled guard to prevent empty calls.",
+    );
   }
 
   const endpoint = getEndpoint('recognitionMediaIdentities');

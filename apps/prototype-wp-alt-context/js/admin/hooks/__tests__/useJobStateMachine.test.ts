@@ -4,7 +4,7 @@ import { useJobStateMachine } from '../useJobStateMachine';
 import { useJobPersistence } from '../useJobPersistence';
 import { useQueryClient } from '@tanstack/react-query';
 
-const createDeferred = <T,>() => {
+const createDeferred = <T>() => {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
   const promise = new Promise<T>((res, rej) => {

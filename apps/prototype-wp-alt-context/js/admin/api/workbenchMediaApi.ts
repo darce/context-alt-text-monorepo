@@ -22,7 +22,7 @@ export interface WorkbenchMediaItem extends WorkbenchMediaItemSchema {
   xmpPersistence?: Record<string, unknown> | null;
 }
 
-export interface WorkbenchMediaDetail extends WorkbenchMediaDetailSchema {}
+export type WorkbenchMediaDetail = WorkbenchMediaDetailSchema;
 
 export interface WorkbenchMediaResponse {
   items: WorkbenchMediaItem[];
@@ -31,7 +31,11 @@ export interface WorkbenchMediaResponse {
 }
 
 export interface WorkbenchMediaDetailResponse {
-	 detailsByMedia: Record<string, WorkbenchMediaDetail>;
+  detailsByMedia: Record<string, WorkbenchMediaDetail>;
+}
+
+interface WorkbenchMediaDetailApiResponse {
+  details_by_media: Record<string, WorkbenchMediaDetail>;
 }
 
 export type WorkbenchMediaStatus = 'all' | 'missing';
@@ -52,7 +56,7 @@ const isWorkbenchMediaResponse = (value: unknown): value is WorkbenchMediaRespon
       typeof (value as WorkbenchMediaResponse).totalPages === 'number',
   );
 
-const isWorkbenchMediaDetailResponse = (value: unknown): value is WorkbenchMediaDetailResponse =>
+const isWorkbenchMediaDetailResponse = (value: unknown): value is WorkbenchMediaDetailApiResponse =>
   Boolean(
     value &&
       typeof value === 'object' &&
@@ -111,6 +115,6 @@ export const fetchWorkbenchMediaDetail = async (mediaIds: number[]): Promise<Wor
   }
 
   return {
-    detailsByMedia: (payload as { details_by_media: Record<string, WorkbenchMediaDetail> }).details_by_media,
+    detailsByMedia: payload.details_by_media,
   };
 };

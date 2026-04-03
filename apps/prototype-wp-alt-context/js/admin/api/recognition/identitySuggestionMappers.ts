@@ -78,9 +78,7 @@ const requireSuggestionEnvelopeMetadata = (
   };
 };
 
-export const mapPendingSuggestions = (
-  response: PendingSuggestionsResponse,
-): PendingSuggestionsResponse => {
+export const mapPendingSuggestions = (response: PendingSuggestionsResponse): PendingSuggestionsResponse => {
   const metadata = requireSuggestionEnvelopeMetadata(response, 'Pending suggestions response');
   const rawSuggestions = response.suggestions as PendingSuggestionApiResponse[] | undefined;
   if (!Array.isArray(rawSuggestions)) {

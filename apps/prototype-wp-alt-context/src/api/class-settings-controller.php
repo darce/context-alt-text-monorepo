@@ -150,12 +150,13 @@ class SettingsController {
 
 		$status_code = (int) wp_remote_retrieve_response_code( $response );
 		$body        = wp_remote_retrieve_body( $response );
+		$decoded     = json_decode( $body, true );
 
 		return new WP_REST_Response(
 			array(
 				'connected'   => $status_code >= 200 && $status_code < 300,
 				'status_code' => $status_code,
-				'body'        => json_decode( $body, true ) ?: $body,
+				'body'        => null !== $decoded ? $decoded : $body,
 			),
 			200
 		);

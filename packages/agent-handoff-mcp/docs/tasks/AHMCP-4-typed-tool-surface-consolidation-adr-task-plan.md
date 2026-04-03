@@ -9,7 +9,7 @@
 > - **Target Branch**: `feature/ahmcp-4-tool-consolidation-adr`
 > - **Review Coverage Target**: 2
 
-**Status Note**: ADR-005 now exists as a substantive draft. This task plan is the planning and review wrapper that gets that ADR through review and leaves behind an implementation-ready gate for OC-005; it is not an implementation plan for live tool-surface consolidation.
+**Status Note**: ADR-005 now exists as the reviewed design artifact for OC-005. This task plan is the planning and review wrapper that got that ADR through review and leaves behind an implementation-ready gate for OC-005; it is not an implementation plan for live tool-surface consolidation.
 
 ---
 
@@ -19,9 +19,9 @@ Resolve OC-005 by producing and reviewing an ADR that chooses a typed tool-surfa
 
 ## Problem Statement
 
-The approved output-contract v2 spec deliberately leaves tool consolidation unresolved. It states the goal clearly, but it does not yet choose between the viable typed-dispatch models, does not bind the final tool count, and does not freeze the migration expectations for downstream surfaces that enumerate tool names. That is the correct current state: any implementation task created now would either guess at FastMCP schema behavior or overcommit to a preliminary mapping that the spec explicitly marks as ADR-gated.
+The output-contract v2 spec originally left tool consolidation unresolved on purpose. ADR-005 now resolves that design gate, but this task still needs its planning wrapper to reflect the reviewed state honestly: the ADR selects the typed-dispatch direction, the spec now carries ADR-backed guardrails, and the remaining output of AHMCP-4 is an implementation-ready design record rather than any live tool-surface rewrite.
 
-The next honest step is therefore not code. It is a design task that inventories the real tool families and downstream enumerators, evaluates typed-dispatch options against the live API/CLI/test surface, and produces an ADR plus a narrowed follow-on implementation direction.
+The next honest step is still not code. It is to leave behind aligned planning artifacts that inventory the real tool families and downstream enumerators, capture the chosen typed-dispatch model, and narrow the follow-on implementation direction without pretending the consolidation itself has landed.
 
 ## Constraints
 
@@ -47,8 +47,8 @@ The next honest step is therefore not code. It is a design task that inventories
 
 ## Current State Analysis
 
-- `packages/agent-handoff-mcp/docs/specs/agent-handoff-mcp-output-contract-v2-spec.md` contains a preliminary mapping and explicitly marks OC-005 as blocked on an ADR.
-- `docs/agentic/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md` now exists as the draft design artifact, so the remaining work in this task plan is review, approval, and alignment of the spec/task boundary around that ADR.
+- `packages/agent-handoff-mcp/docs/specs/agent-handoff-mcp-output-contract-v2-spec.md` now carries the ADR-backed OC-005 direction and implementation guardrails instead of leaving the design unresolved.
+- `docs/agentic/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md` now exists as the reviewed design artifact, so the remaining role of this task plan is to document the review-approved boundary between the ADR and the deferred implementation task.
 - `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py` is the source of truth for current tool registrations, descriptions, and argument schema exposure.
 - Transport tests such as `test_stdio.py`, `test_http.py`, `test_cli.py`, and `test_adapters.py` already enumerate expectations about the live tool surface and profile counts; any rename or consolidation has to migrate those surfaces deliberately.
 - `docs/agentic/contracts/agent-handoff-mcp.md` documents the current surface and will need a same-slice update once consolidation is implemented, but not before the ADR chooses the direction.
@@ -183,36 +183,36 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded the approved output-contract v2 spec and the live handoff tool catalog before designing.
-- [ ] Confirmed this task remains design-only; no live tool consolidation lands here.
-- [ ] Verified the ADR will preserve typed MCP schemas and not regress to opaque payload dispatch.
+- [x] Loaded the approved output-contract v2 spec and the live handoff tool catalog before designing.
+- [x] Confirmed this task remains design-only; no live tool consolidation lands here.
+- [x] Verified the ADR will preserve typed MCP schemas and not regress to opaque payload dispatch.
 
 ### Checklist: Slice 1
 
-- [ ] Current tool families are inventoried from `api.py`.
-- [ ] Downstream tool-name enumerators are inventoried from transport tests and contract docs.
-- [ ] Candidate versus non-candidate tool families are distinguished explicitly.
+- [x] Current tool families are inventoried from `api.py`.
+- [x] Downstream tool-name enumerators are inventoried from transport tests and contract docs.
+- [x] Candidate versus non-candidate tool families are distinguished explicitly.
 
 ### Checklist: Slice 2
 
-- [ ] Viable typed-dispatch approaches are compared.
-- [ ] Rejected opaque-payload dispatch is documented as rejected.
-- [ ] One design direction is chosen with explicit tradeoffs and migration scope.
+- [x] Viable typed-dispatch approaches are compared.
+- [x] Rejected opaque-payload dispatch is documented as rejected.
+- [x] One design direction is chosen with explicit tradeoffs and migration scope.
 
 ### Checklist: Slice 3
 
-- [ ] ADR-005 is finalized at the planned path.
-- [ ] The output-contract v2 spec is updated to cite ADR-005 and the chosen direction.
-- [ ] Implementation preconditions are explicit enough to support a follow-on implementation task.
+- [x] ADR-005 is finalized at the planned path.
+- [x] The output-contract v2 spec is updated to cite ADR-005 and the chosen direction.
+- [x] Implementation preconditions are explicit enough to support a follow-on implementation task.
 
 ## Review Readiness
 
-- [ ] No OC-005 implementation task is created before ADR-005 is reviewed.
-- [ ] The ADR inventory and migration scope are grounded in live code and tests.
-- [ ] Handoff decisions record the selected design direction and the deferred implementation boundary.
+- [x] No OC-005 implementation task is created before ADR-005 is reviewed.
+- [x] The ADR inventory and migration scope are grounded in live code and tests.
+- [x] Handoff decisions record the selected design direction and the deferred implementation boundary.
 
 ## Success Criteria
 
-- [ ] ADR-005 chooses the typed consolidation approach for OC-005.
-- [ ] The approved spec references ADR-005 and stops treating OC-005 as design-undefined.
-- [ ] A follow-on implementation task can be created without guessing at tool names, schema strategy, or downstream update scope.
+- [x] ADR-005 chooses the typed consolidation approach for OC-005.
+- [x] The approved spec references ADR-005 and stops treating OC-005 as design-undefined.
+- [x] A follow-on implementation task can be created without guessing at tool names, schema strategy, or downstream update scope.

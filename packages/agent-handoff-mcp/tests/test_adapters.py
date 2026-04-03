@@ -99,7 +99,7 @@ def test_generic_stdio_adapter_launches_packaged_server(tmp_path: Path) -> None:
 
 
 def test_default_adapter_profile_is_extended_and_core_has_16_tools(tmp_path: Path) -> None:
-    """Default launch (no --tool-profile) yields 27 extended tools; --tool-profile core yields 16."""
+    """Default launch (no --tool-profile) yields 28 extended tools; --tool-profile core yields 16."""
     repo_root = Path(__file__).resolve().parents[3]
     launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
 

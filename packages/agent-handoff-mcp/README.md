@@ -176,7 +176,7 @@ agent-handoff-mcp --workspace-root /path/to/workspace --tool-profile extended se
 | *(no CLI)* | `load_session` |
 | *(no CLI)* | `close_slice` |
 
-### Extended profile (11 tools — admin and low-frequency)
+### Extended profile (12 tools — admin and low-frequency)
 
 | CLI name | MCP tool |
 | --- | --- |

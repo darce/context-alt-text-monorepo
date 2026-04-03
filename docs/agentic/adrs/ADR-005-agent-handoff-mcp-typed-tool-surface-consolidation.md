@@ -12,7 +12,7 @@ Proposed
 
 The output-contract v2 work fixed the response-shape and state-keeping problems that were making `agent-handoff-mcp` noisy and stale across sessions. One architectural question remained intentionally unresolved: how far the tool surface should be consolidated, and by what typed-schema strategy.
 
-The current surface is large enough to carry real discovery and prompt-cost overhead. The live package exposes 28 tools in the extended profile and 16 in the core profile, as proven by the transport and adapter tests in `packages/agent-handoff-mcp/tests/test_stdio.py` and `packages/agent-handoff-mcp/tests/test_adapters.py`. The large surface is not accidental, however. Many tools have distinct audit semantics, distinct mutation guarantees, or distinct transport expectations, and flattening all of them behind one generic `record/update/list` interface would make the catalog smaller at the cost of weaker schemas and less legible semantics.
+The current surface is large enough to carry real discovery and prompt-cost overhead. The live registry in `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py` defines 28 `ToolEntry` rows, and the transport tests prove that this resolves to 28 tools in the extended profile and 16 tools in the core profile (`packages/agent-handoff-mcp/tests/test_stdio.py`, `packages/agent-handoff-mcp/tests/test_adapters.py`). The large surface is not accidental, however. Many tools have distinct audit semantics, distinct mutation guarantees, or distinct transport expectations, and flattening all of them behind one generic `record/update/list` interface would make the catalog smaller at the cost of weaker schemas and less legible semantics.
 
 The approved output-contract v2 spec already captured two hard constraints:
 
@@ -23,12 +23,42 @@ This ADR chooses the consolidation model that implementation should follow.
 
 ## Current Tool Inventory
 
-The live handoff package currently exposes these tool families:
+The live handoff package currently exposes these tool families. This inventory is derived from `_build_tool_registry()` in `api.py`, then cross-checked against the stdio/adapter profile-count tests.
 
-### Task state and lifecycle
+### Explicit lifecycle, state, and search tools to keep
 
 - `set_handoff_state`
 - `get_handoff_state`
+- `audit_decision_ids`
+- `search_handoff`
+
+These tools stay explicit because they anchor task lifecycle, state transitions, or cross-task search semantics that should remain obvious in the catalog.
+
+### Consolidation candidates by domain
+
+#### Event and action domains
+
+- `record_decision`
+- `record_test_result`
+- `report_blocker`
+- `update_next_actions`
+- `list_next_actions`
+
+### Review findings
+
+- `record_review_finding`
+- `batch_record_review_findings`
+- `update_review_finding`
+- `list_review_findings`
+
+### Review runs
+
+- `record_review_run`
+- `list_review_runs`
+- `get_review_coverage`
+
+### Lifecycle and generated artifacts
+
 - `update_task_status`
 - `load_session`
 - `close_slice`
@@ -37,33 +67,19 @@ The live handoff package currently exposes these tool families:
 - `export_handoff_state`
 - `import_handoff_state`
 - `archive_task_state`
-- `audit_decision_ids`
 
-### Next actions and event recording
-
-- `list_next_actions`
-- `update_next_actions`
-- `record_decision`
-- `record_test_result`
-- `report_blocker`
-
-### Review findings and review runs
-
-- `record_review_finding`
-- `batch_record_review_findings`
-- `update_review_finding`
-- `list_review_findings`
-- `record_review_run`
-- `list_review_runs`
-- `get_review_coverage`
-
-### Artifacts and search
+### Artifact indexing
 
 - `record_artifact`
 - `search_artifacts`
 - `get_artifact`
 - `purge_artifacts`
-- `search_handoff`
+
+### Current profile split
+
+- Core profile: 16 tools used for the daily ledger and review flow.
+- Extended profile: the 16 core tools plus 12 extended tools for exports, archive/import, search, artifact indexing, and coverage/audit utilities.
+- The ADR resolves consolidation shape, not immediate profile removal. Profile retention or removal must be treated as an explicit compatibility decision in the follow-on implementation task.
 
 ## Downstream Enumerators That Must Be Migrated Together
 
@@ -76,6 +92,9 @@ Any consolidation implementation will have to update these surfaces in the same 
 - `packages/agent-handoff-mcp/tests/test_http.py`; HTTP tool enumeration
 - `packages/agent-handoff-mcp/tests/test_adapters.py`; adapter expectations and profile counts
 - `docs/agentic/contracts/agent-handoff-mcp.md`; published tool contract
+- `packages/agent-handoff-mcp/README.md`; package installation and tool-surface guide
+- `docs/agentic/instructions.md`; startup protocol and supported packaged handoff surface
+- `CLAUDE.md`; mirrored handoff usage guidance for local agents
 
 This migration scope is one reason the decision must be taken at ADR level rather than improvised inside an implementation task.
 
@@ -111,6 +130,12 @@ The package will not move to one global `record`, `update`, or `list` tool. Inst
 8. **Retire `load_session` after the parameterized read surfaces are in place.**
    `load_session` remains only as a short-lived compatibility alias while clients move to the parameterized read path. It is not part of the long-term consolidated surface.
 
+9. **Treat profile removal as a separate compatibility decision.**
+   The initial OC-005 implementation may keep the current core/extended profile split while migrating names and schemas. If a later slice removes profiles, it must update the contract docs, README, transport tests, and launcher behavior in the same change rather than assuming profile deletion is free.
+
+10. **Validate FastMCP discriminated-union ergonomics before collapsing live tools.**
+   This ADR selects discriminated typed operation models as the design direction, but the implementation task must still verify that FastMCP exposes those unions with usable parameter schemas in the target clients before broad consolidation lands. If a specific domain produces unreadable or lossy tool schemas in practice, that domain must stay split or use a narrower variant shape rather than forcing the full ADR mapping through unsupported ergonomics.
+
 ### Target outcome
 
 The long-term extended surface should land in the **15 to 18 tool** range, not 12 by force. The goal is a smaller, clearer, still-typed catalog; not maximum collapse.
@@ -132,6 +157,10 @@ The families above already share obvious schema skeletons. Consolidating them by
 ### It gives implementation a bounded fallback
 
 If a specific domain tool produces unreadable FastMCP schemas in clients, only that domain needs to split back out. The package does not have to abandon the entire consolidation strategy.
+
+### It keeps FastMCP support risk explicit
+
+The design intentionally assumes discriminated typed operation models, but it does not pretend FastMCP client ergonomics are already proven for every domain. The implementation task must validate the live schema output before broad consolidation, and it has a bounded fallback if a domain-specific union proves too awkward in practice.
 
 ## Alternatives Considered
 
@@ -173,14 +202,14 @@ This would make the catalog smaller, but it would blur the distinction between q
 - No global cross-domain `record/update/list` tool may be introduced.
 - Every consolidated domain tool must expose typed operation models, not an opaque `payload: dict`.
 - `close_slice`, `generate_current_task_md`, `handoff_close_check`, `export_handoff_state`, `import_handoff_state`, `archive_task_state`, `audit_decision_ids`, and `search_handoff` stay explicit.
-- `docs/agentic/contracts/agent-handoff-mcp.md`, `api.py`, `cli.py`, `test_cli.py`, `test_stdio.py`, `test_http.py`, and `test_adapters.py` must be updated in the same implementation slice.
+- `docs/agentic/contracts/agent-handoff-mcp.md`, `packages/agent-handoff-mcp/README.md`, `docs/agentic/instructions.md`, `CLAUDE.md`, `api.py`, `cli.py`, `test_cli.py`, `test_stdio.py`, `test_http.py`, and `test_adapters.py` must be updated in the same implementation slice.
 - The implementation task should target a final extended profile count in the 15 to 18 range and justify any deviation.
 
 ## References
 
-- Spec: [packages/agent-handoff-mcp/docs/specs/agent-handoff-mcp-output-contract-v2-spec.md](../../packages/agent-handoff-mcp/docs/specs/agent-handoff-mcp-output-contract-v2-spec.md)
-- Task plan: [packages/agent-handoff-mcp/docs/tasks/AHMCP-4-typed-tool-surface-consolidation-adr-task-plan.md](../../packages/agent-handoff-mcp/docs/tasks/AHMCP-4-typed-tool-surface-consolidation-adr-task-plan.md)
+- Spec: [packages/agent-handoff-mcp/docs/specs/agent-handoff-mcp-output-contract-v2-spec.md](../../../packages/agent-handoff-mcp/docs/specs/agent-handoff-mcp-output-contract-v2-spec.md)
+- Task plan: [packages/agent-handoff-mcp/docs/tasks/AHMCP-4-typed-tool-surface-consolidation-adr-task-plan.md](../../../packages/agent-handoff-mcp/docs/tasks/AHMCP-4-typed-tool-surface-consolidation-adr-task-plan.md)
 - Related task plans:
-  - [packages/agent-handoff-mcp/docs/tasks/AHMCP-1-parameterize-handoff-mcp-read-surfaces-task-plan.md](../../packages/agent-handoff-mcp/docs/tasks/AHMCP-1-parameterize-handoff-mcp-read-surfaces-task-plan.md)
-  - [packages/agent-handoff-mcp/docs/tasks/AHMCP-2-bounded-current-task-rendering-and-mutation-output-task-plan.md](../../packages/agent-handoff-mcp/docs/tasks/AHMCP-2-bounded-current-task-rendering-and-mutation-output-task-plan.md)
-  - [packages/agent-handoff-mcp/docs/tasks/AHMCP-3-response-envelope-and-output-contract-v2-rollout-task-plan.md](../../packages/agent-handoff-mcp/docs/tasks/AHMCP-3-response-envelope-and-output-contract-v2-rollout-task-plan.md)
+  - [packages/agent-handoff-mcp/docs/tasks/AHMCP-1-parameterize-handoff-mcp-read-surfaces-task-plan.md](../../../packages/agent-handoff-mcp/docs/tasks/AHMCP-1-parameterize-handoff-mcp-read-surfaces-task-plan.md)
+  - [packages/agent-handoff-mcp/docs/tasks/AHMCP-2-bounded-current-task-rendering-and-mutation-output-task-plan.md](../../../packages/agent-handoff-mcp/docs/tasks/AHMCP-2-bounded-current-task-rendering-and-mutation-output-task-plan.md)
+  - [packages/agent-handoff-mcp/docs/tasks/AHMCP-3-response-envelope-and-output-contract-v2-rollout-task-plan.md](../../../packages/agent-handoff-mcp/docs/tasks/AHMCP-3-response-envelope-and-output-contract-v2-rollout-task-plan.md)

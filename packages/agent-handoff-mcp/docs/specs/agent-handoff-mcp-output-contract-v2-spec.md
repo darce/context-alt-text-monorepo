@@ -4,7 +4,7 @@
 
 **Date:** 2026-04-02
 **Status:** Draft
-**Assessment:** `docs/assessments/agent-handoff-mcp-output-state-keeping-report.md`
+**Assessment:** `packages/agent-handoff-mcp/docs/assessments/agent-handoff-mcp-output-state-keeping-report.md`
 **Package version target:** 0.2.0
 
 ---
@@ -17,7 +17,7 @@ This spec defines:
 1. Bounded CURRENT_TASK.md rendering (ready to implement)
 2. A common response envelope for all tools (ready to implement)
 3. Richer mutation responses from compound tools (ready to implement)
-4. A tool-surface consolidation target (12-18 tools, pending ADR — see OC-005)
+4. An ADR-backed tool-surface consolidation target (15-18 tools, see OC-005)
 
 **Constraints:** Greenfield. Breaking changes are free. Historic data can be normalized. No backward-compatibility shims.
 
@@ -212,103 +212,74 @@ Tool responses currently have ad-hoc shapes. Every response includes `ok` but no
 ### OC-005: Consolidate tool surface with typed polymorphic dispatch
 
 **Trace:** F6, report §Tool surface reduction
-**Priority:** P0 (design); implementation blocked until ADR is approved
-**Status:** Requires design ADR before implementation tasks are created
+**Priority:** P0 (design); implementation remains deferred to a follow-on task
+**Status:** ADR-005 now chooses the hybrid domain-tool direction; the spec item is design-resolved but not yet implemented
 
-The current 28-tool surface costs ~2,500 tokens of MCP catalog per session. Many tools share identical dispatch patterns (record X, list X, update X) differentiated only by entity type. The `--tool-profile` mechanism (core/extended) hides tools instead of removing them — agents can't discover or use tools they can't see.
+The current handoff registry exposes 28 tools in the extended profile and 16 tools in the core profile, as proven by the live registry and transport tests (`api.py`, `test_stdio.py`, `test_adapters.py`). Many tools share adjacent schemas and audit semantics by domain, but lifecycle/generator surfaces remain materially different from row-style list/update/write tools.
 
-**Goal:** Reduce the tool count significantly while preserving typed MCP schemas that give agents field-level contract information in the tool catalog.
+**Goal:** Reduce the extended-profile tool count into the ADR-backed 15-18 range while preserving typed MCP schemas that give agents field-level contract information in the tool catalog.
 
-#### Design constraint (from PLAN-01 review)
+#### ADR-backed design constraints
 
-The current package gets its schema affordances from strongly typed `Annotated` parameters in `api.py`. Any consolidation must preserve typed parameter schemas per entity family — not collapse them into an opaque `payload: dict`. Two viable approaches need evaluation in an ADR:
+The current package gets its schema affordances from strongly typed `Annotated` parameters in `api.py`. ADR-005 resolves the open design question and sets these constraints for the implementation task:
 
-**Option A — Typed union models:** Each polymorphic tool accepts a discriminated union of Pydantic models, one per entity family. The MCP catalog exposes the full typed schema for each variant. Agents see field names, types, and constraints directly.
+1. No global cross-domain `record/update/list` surface may be introduced.
+2. Consolidation must happen by domain using discriminated typed operation models.
+3. Lifecycle and generator tools remain explicit.
+4. `load_session` and `update_task_status` may become compatibility aliases during migration rather than permanent target tools.
+5. Profile retention or removal is a separate compatibility decision and is not implicitly settled by OC-005.
 
-```python
-class RecordDecisionPayload(BaseModel):
-    entity: Literal["decision"]
-    decision: str
-    rationale: str | None = None
-    changed_files: list[str] | None = None
-    # ...
-
-class RecordFindingPayload(BaseModel):
-    entity: Literal["finding"]
-    finding_id: str
-    description: str
-    file_path: str
-    severity: Literal["high", "medium", "low"]
-    # ...
-
-RecordPayload = RecordDecisionPayload | RecordFindingPayload | ...
-
-@mcp.tool()
-def record(payload: RecordPayload, session: str, task_ref: str | None = None, ...) -> str:
-    ...
-```
-
-**Option B — Grouped semantic tools:** Instead of 28 or 12, consolidate to ~16-18 tools by merging only tools with identical parameter shapes (e.g., `list_review_findings` + `list_next_actions` + `list_review_runs` share similar filter/pagination params). Keep tools with divergent schemas separate. This preserves full typing with less design risk.
-
-#### Target tool mapping (preliminary — subject to ADR)
+#### ADR-backed target mapping
 
 | # | New Tool | Absorbs | Dispatch | Entity/Scope Values |
 |---|----------|---------|----------|-------------------|
-| 1 | **`get_state`** | `get_handoff_state`, `load_session` | `view` | `task`, `session`, `dashboard` |
-| 2 | **`list`** | `list_review_findings`, `list_next_actions`, `list_review_runs`, `get_review_coverage`, `audit_decision_ids` | `entity` | `finding`, `action`, `review_run`, `coverage`, `decision` |
-| 3 | **`record`** | `record_decision`, `record_review_finding`, `batch_record_review_findings`, `report_blocker`, `record_test_result`, `record_review_run`, `record_artifact` | `entity` | `decision`, `finding`, `findings_batch`, `blocker`, `test`, `review_run`, `artifact` |
-| 4 | **`update`** | `update_review_finding`, `update_next_actions`, `set_handoff_state`, `update_task_status` | `entity` | `finding`, `actions`, `state`, `task_status` |
-| 5 | **`close_slice`** | *(stays)* | — | — |
-| 6 | **`render`** | `generate_current_task_md` | — | — |
-| 7 | **`check`** | `handoff_close_check` | — | — |
-| 8 | **`search`** | `search_handoff`, `search_artifacts` | `scope` | `handoff`, `artifacts` |
-| 9 | **`get_artifact`** | *(stays)* | — | — |
-| 10 | **`purge`** | `purge_artifacts` | — | — |
-| 11 | **`export`** | `export_handoff_state` | — | — |
-| 12 | **`transfer`** | `import_handoff_state`, `archive_task_state` | `operation` | `import`, `archive` |
+| 1 | **Explicit lifecycle / generator tools** | `get_handoff_state`, `set_handoff_state`, `close_slice`, `handoff_close_check`, `generate_current_task_md`, `export_handoff_state`, `import_handoff_state`, `archive_task_state`, `audit_decision_ids`, `search_handoff` | — | stays explicit |
+| 2 | **`record_event`** | `record_decision`, `record_test_result`, `report_blocker` | `event_kind` | `decision`, `test_result`, `blocker` |
+| 3 | **`next_actions`** | `list_next_actions`, `update_next_actions` | `operation` | `list`, `add`, `update`, `complete`, `skip` |
+| 4 | **`review_findings`** | `record_review_finding`, `batch_record_review_findings`, `update_review_finding`, `list_review_findings` | `operation` | `record`, `batch_record`, `update`, `list` |
+| 5 | **`review_runs`** | `record_review_run`, `list_review_runs`, `get_review_coverage` | `operation` | `record`, `list`, `coverage` |
+| 6 | **`artifacts`** | `record_artifact`, `search_artifacts`, `get_artifact`, `purge_artifacts` | `operation` | `record`, `search`, `get`, `purge` |
+| 7 | **Compatibility aliases to retire later** | `load_session`, `update_task_status` | — | temporary during migration |
 
-This mapping is preliminary. The ADR should evaluate whether the 28→12 target is achievable with typed schemas or whether a 28→16-18 target is more practical.
+This mapping reflects the ADR decision: consolidate genuinely homologous domains, keep lifecycle/generator surfaces explicit, and target a final extended profile in the 15-18 tool range rather than forcing a 28→12 collapse.
 
-#### Profile removal
+#### Profile handling
 
-Delete the `--tool-profile` / `AGENT_HANDOFF_TOOL_PROFILE` config option. Delete the `profile` field from the tool registry entry. Delete the conditional registration logic at `api.py:1006-1008`. All tools are always registered. This is independent of the consolidation target count and can proceed immediately.
+ADR-005 does not require immediate removal of the core/extended profile split. The follow-on implementation task may preserve the current profile contract while consolidating names and schemas, or it may explicitly remove profiles in the same slice if the contract docs, README, launcher behavior, and transport tests are updated together.
 
 #### Token budget (estimated)
 
 - Current: 28 tools x ~90 tokens = ~2,520 tokens
-- Target (12 tools): 12 x ~120 tokens = ~1,440 tokens (~43% reduction)
-- Target (16 tools): 16 x ~100 tokens = ~1,600 tokens (~37% reduction)
+- Target (15 tools): 15 x ~100-120 tokens = ~1,500-1,800 tokens
+- Target (18 tools): 18 x ~100 tokens = ~1,800 tokens
 
-Exact savings depend on the ADR outcome.
+Exact savings depend on the final tool count within the ADR-backed 15-18 range.
 
-#### ADR scope
+#### Consumer doc sync (from ADR-005 and planning review)
 
-The ADR must resolve:
-
-1. Typed unions vs grouped semantic tools vs hybrid
-2. Whether FastMCP supports discriminated union tool parameters in practice
-3. Final tool count and mapping
-4. How the MCP catalog renders union/variant schemas to agents
-
-#### Consumer doc sync (from PLAN-04 review)
-
-Implementation of OC-005 must include updating all downstream surfaces that enumerate the tool names:
+Implementation of OC-005 must include updating all downstream surfaces that enumerate the tool names or profile semantics:
 
 - `docs/agentic/contracts/agent-handoff-mcp.md` — tool surface table, profile docs
 - `packages/agent-handoff-mcp/README.md` — tool listing
 - `docs/agentic/instructions.md` — any tool name references in agent startup protocol
 - `CLAUDE.md` — if tool names appear in handoff protocol rules
+- `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py` — live registry and descriptions
+- `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py` — CLI subcommand exposure
+- `packages/agent-handoff-mcp/tests/test_cli.py` — CLI expectations
+- `packages/agent-handoff-mcp/tests/test_stdio.py` — stdio tool enumeration and profile counts
+- `packages/agent-handoff-mcp/tests/test_http.py` — HTTP tool enumeration
+- `packages/agent-handoff-mcp/tests/test_adapters.py` — adapter profile-count expectations
 
 These updates are part of the done criteria, not a deferred cleanup.
 
 **Done when:**
-- ADR approved with chosen consolidation approach
-- MCP server exposes the agreed tool count (all tools always registered, no profile split)
-- Every entity-specific handler is reachable through its polymorphic parent
+- ADR-005 remains the authoritative design reference for the implementation task
+- MCP server exposes the agreed consolidated surface in the 15-18 tool target range
+- Every entity-specific handler is reachable through its domain parent or an explicit kept tool
 - All tool parameters remain typed (no opaque `payload: dict`)
-- Consumer-facing contract doc and README updated to match new tool names
-- Existing test coverage migrated to new tool names
-- Package version bumped to 0.2.0
+- Consumer-facing contract docs, README, and startup guidance updated to match the new tool names and profile behavior
+- Existing transport/adapter/CLI test coverage migrated to the new tool names and counts
+- Package version bumped to `0.3.0` when the tool-surface break ships
 
 ---
 
@@ -600,23 +571,24 @@ OC-006  Package version bump to 0.2.0                     Ships with OC-004
 
 OC-004 should land after Tier 1 so the envelope doesn't need to be updated when Tier 1 changes handler return shapes. OC-006 (package version bump) ships with OC-004 — it marks the output contract break, not the tool consolidation.
 
-### Tier 3 — Blocked on ADR (architectural bet, design unresolved)
+### Tier 3 — ADR-backed implementation planning (architectural direction chosen)
 
 Design task: `packages/agent-handoff-mcp/docs/tasks/AHMCP-4-typed-tool-surface-consolidation-adr-task-plan.md`
 
 ADR: `docs/agentic/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md`
 
 ```
-OC-005  Tool surface consolidation                        Requires ADR on typed dispatch model
+OC-005  Tool surface consolidation                        ADR-005 chooses hybrid domain-tool consolidation
 ```
 
-OC-005 must not become an implementation task until the ADR resolves:
-1. Typed unions vs grouped semantic tools vs hybrid
-2. Whether FastMCP supports discriminated union parameters
-3. Final tool count
-4. Consumer doc sync scope
+OC-005 implementation must now follow ADR-005:
+1. Keep lifecycle/generator surfaces explicit
+2. Consolidate only the homologous domains (`record_event`, `next_actions`, `review_findings`, `review_runs`, `artifacts`)
+3. Preserve typed discriminated schemas per domain operation
+4. Retire `load_session` and `update_task_status` only as deliberate compatibility aliases
+5. Update every downstream enumerator and profile/count assertion in the same implementation slice
 
-Create the ADR as a design task, not an implementation task.
+AHMCP-4 remains the design/review task. The follow-on implementation task should now be created against this ADR-backed direction instead of re-opening the dispatch-model question.
 
 ## Spec-Review Gate
 
@@ -681,8 +653,8 @@ assert 'scope' in result, 'Missing scope key'
 print('OC-004 OK: envelope present')
 "
 
-# --- OC-005: Tool count (target TBD per ADR) ---
-# Deferred until ADR resolves final tool count
+# --- OC-005: Tool count (ADR-005 target 15-18 tools) ---
+# Deferred until the follow-on consolidation implementation lands
 
 # --- OC-006: Package version ---
 python -c "

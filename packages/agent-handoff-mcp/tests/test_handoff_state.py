@@ -666,6 +666,33 @@ def test_get_handoff_state_compact_defaults_enforced(isolated_handoff: dict) -> 
     assert len(verbose["tests_recent"]) == 7
 
 
+def test_v2_envelope_shape_on_read_surfaces(isolated_handoff: dict) -> None:
+    """Read surfaces return the v2 envelope with schema_version, tool, scope, data."""
+    _parse(mcp_server.set_handoff_state(task_ref="env-test", objective="Envelope shape", status="in_progress"))
+
+    # get_handoff_state
+    raw_state = json.loads(mcp_server.get_handoff_state(task_ref="env-test"))
+    assert raw_state["schema_version"] == 2
+    assert raw_state["tool"] == "get_handoff_state"
+    assert raw_state["scope"]["task_ref"] == "env-test"
+    assert "data" in raw_state
+    assert "active" in raw_state["data"]
+    assert "limits" in raw_state["data"]
+
+    # generate_current_task_md
+    raw_gen = json.loads(mcp_server.generate_current_task_md(task_ref="env-test", write_file=False))
+    assert raw_gen["schema_version"] == 2
+    assert raw_gen["tool"] == "generate_current_task_md"
+    assert raw_gen["scope"]["task_ref"] == "env-test"
+    assert "markdown" in raw_gen["data"]
+
+    # dashboard view
+    raw_dash = json.loads(mcp_server.get_handoff_state(view="dashboard"))
+    assert raw_dash["schema_version"] == 2
+    assert raw_dash["tool"] == "get_handoff_state"
+    assert "tasks" in raw_dash["data"]
+
+
 def test_get_handoff_state_sections_filter(isolated_handoff: dict) -> None:
     """sections parameter limits which keys appear in the response."""
     _parse(mcp_server.set_handoff_state(task_ref="sec-test", objective="Sections test", status="in_progress"))

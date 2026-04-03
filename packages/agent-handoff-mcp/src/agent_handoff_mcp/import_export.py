@@ -312,7 +312,7 @@ def _import_snapshot(
             row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit
         )
         conn.execute(
-            "INSERT INTO decisions (task_ref, lane_id, session, decision, rationale, agent, model, model_label, reasoning_level, input_tokens, output_tokens, total_tokens, branch, commit_sha, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO decisions (task_ref, lane_id, session, decision, rationale, agent, model, model_label, reasoning_level, input_tokens, output_tokens, total_tokens, changed_files_json, branch, commit_sha, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 task_ref,
                 _resolve_import_lane_id(row),
@@ -326,6 +326,7 @@ def _import_snapshot(
                 row.get("input_tokens"),
                 row.get("output_tokens"),
                 row.get("total_tokens"),
+                row.get("changed_files_json", "[]"),
                 branch,
                 commit_sha,
                 row.get("created_at") or now,
@@ -548,7 +549,7 @@ def import_handoff_state(
             "counts": counts,
         },
         task_ref=task_ref,
-        mutation={"action": mode, "set_active": set_active},
+        mutation={"entity": "handoff_state", "operation": f"import_{mode}"},
     )
 
 
@@ -623,7 +624,7 @@ def archive_task_state(
             "allow_destructive_clear": allow_destructive_clear,
         },
         task_ref=resolved_task_ref,
-        mutation={"action": "archive", "active_cleared": active_cleared, "pruned": pruned},
+        mutation={"entity": "task_archive", "operation": "archive"},
     )
 
 
@@ -701,7 +702,7 @@ def update_task_status(
                 tool="update_task_status",
                 data=data,
                 task_ref=task_ref,
-                mutation={"action": "update_status", "status": status, "scope": "active"},
+                mutation={"entity": "handoff_state", "operation": "update_status", "task_revision": active.get("revision")},
                 artifacts=[{"type": "file", "path": "CURRENT_TASK.md"}] if regen == "ok" else None,
             )
 
@@ -770,7 +771,7 @@ def update_task_status(
             tool="update_task_status",
             data=data_archived,
             task_ref=task_ref,
-            mutation={"action": "update_status", "status": status, "scope": "archived"},
+            mutation={"entity": "task_archive", "operation": "update_status"},
             artifacts=[{"type": "file", "path": "CURRENT_TASK.md"}] if regen_result == "ok" else None,
         )
 
@@ -895,6 +896,6 @@ def switch_task(
             tool="switch_task",
             data=switch_data,
             task_ref=task_ref,
-            mutation={"action": "switch", "previous_task_ref": previous_task_ref},
+            mutation={"entity": "handoff_state", "operation": "switch_task", "task_revision": active.get("revision")},
             artifacts=[{"type": "file", "path": "CURRENT_TASK.md"}] if regen_error is None else None,
         )

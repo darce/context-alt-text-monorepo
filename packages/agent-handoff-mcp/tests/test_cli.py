@@ -26,6 +26,19 @@ def _run_cli(argv: list[str], capsys) -> dict:
     return raw
 
 
+def _parse_response(raw: str) -> dict:
+    """Parse JSON and flatten v2 envelope for backward-compatible test assertions."""
+    result = json.loads(raw)
+    if isinstance(result, dict) and result.get("schema_version") == 2:
+        data = result.get("data", {})
+        scope = result.get("scope", {})
+        flat = {**result, **data}
+        if "task_ref" not in flat and scope.get("task_ref"):
+            flat["task_ref"] = scope["task_ref"]
+        return flat
+    return result
+
+
 def test_doctor_cli_reports_workspace_paths(tmp_path: Path, capsys) -> None:
     payload = _run_cli(
         [
@@ -235,7 +248,7 @@ def test_artifact_list_cli_fields_flag(tmp_path: Path, capsys) -> None:
 def test_artifact_get_cli_detail_and_fields_flags(tmp_path: Path, capsys) -> None:
     api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
     json.loads(api.set_handoff_state(task_ref="artifact-get-cli", objective="artifact get cli"))
-    recorded = json.loads(
+    recorded = _parse_response(
         api.record_artifact(
             task_ref="artifact-get-cli",
             source_kind="doc",

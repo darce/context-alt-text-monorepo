@@ -17,9 +17,9 @@ from ._shared import (
     WriteActor,
     _collect_task_snapshot,
     _current_task_path,
+    _envelope,
     _get_db_connection,
     _has_structured_slice_summary,
-    _json_response,
     _normalize_optional_text,
     _render_current_task_md,
     _resolve_task_ref,
@@ -67,10 +67,10 @@ def record_decision(
 ) -> str:
     validation_error = _validate_decision_payload(decision, rationale)
     if validation_error is not None:
-        return _json_response({"ok": False, "error": validation_error})
+        return _envelope(ok=False, tool="record_decision", data={"error": validation_error})
     normalized_changed_files, changed_files_error = _normalize_changed_files_payload(changed_files)
     if changed_files_error is not None:
-        return _json_response({"ok": False, "error": changed_files_error})
+        return _envelope(ok=False, tool="record_decision", data={"error": changed_files_error})
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         ctx = _resolve_write_actor(conn, actor)
@@ -108,14 +108,15 @@ def record_decision(
                 changed_files_json,
             ),
         )
-        result: dict = {
-            "ok": True,
-            "task_ref": resolved_task_ref,
-            "decision": _row_to_dict(conn.execute("SELECT * FROM decisions WHERE id = ?", (cur.lastrowid,)).fetchone()),
-        }
-        if warnings:
-            result["warnings"] = warnings
-        return _json_response(result)
+        decision_row = _row_to_dict(conn.execute("SELECT * FROM decisions WHERE id = ?", (cur.lastrowid,)).fetchone())
+        return _envelope(
+            ok=True,
+            tool="record_decision",
+            data={"decision": decision_row},
+            task_ref=resolved_task_ref,
+            mutation={"entity": "decision", "operation": "insert", "affected_ids": [cur.lastrowid]},
+            warnings=warnings if warnings else None,
+        )
 
 
 def update_next_actions(
@@ -129,15 +130,16 @@ def update_next_actions(
 ) -> str:
     valid_operations = {"add", "update", "complete", "skip"}
     if operation not in valid_operations:
-        return _json_response(
-            {"ok": False, "error": f"Invalid operation. Valid: {', '.join(sorted(valid_operations))}"}
+        return _envelope(
+            ok=False, tool="update_next_actions",
+            data={"error": f"Invalid operation. Valid: {', '.join(sorted(valid_operations))}"},
         )
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         ctx = _resolve_write_actor(conn, actor)
         if operation == "add":
             if not action:
-                return _json_response({"ok": False, "error": "action is required for add."})
+                return _envelope(ok=False, tool="update_next_actions", data={"error": "action is required for add."}, task_ref=resolved_task_ref)
             cur = conn.execute(
                 """
                 INSERT INTO next_actions (task_ref, lane_id, action, priority, status, agent, branch, commit_sha, created_at, updated_at)
@@ -153,31 +155,33 @@ def update_next_actions(
                     ctx.commit_sha,
                 ),
             )
-            return _json_response(
-                {
-                    "ok": True,
-                    "task_ref": resolved_task_ref,
-                    "operation": operation,
-                    "action": _row_to_dict(
-                        conn.execute("SELECT * FROM next_actions WHERE id = ?", (cur.lastrowid,)).fetchone()
-                    ),
-                }
+            action_row = _row_to_dict(
+                conn.execute("SELECT * FROM next_actions WHERE id = ?", (cur.lastrowid,)).fetchone()
+            )
+            return _envelope(
+                ok=True,
+                tool="update_next_actions",
+                data={"operation": operation, "action": action_row},
+                task_ref=resolved_task_ref,
+                mutation={"entity": "next_action", "operation": "insert", "affected_ids": [cur.lastrowid]},
             )
         if action_id is None:
-            return _json_response({"ok": False, "error": "action_id is required for update/complete/skip."})
+            return _envelope(ok=False, tool="update_next_actions", data={"error": "action_id is required for update/complete/skip."}, task_ref=resolved_task_ref)
         existing = conn.execute(
             "SELECT * FROM next_actions WHERE id = ? AND task_ref = ?", (action_id, resolved_task_ref)
         ).fetchone()
         if existing is None:
-            return _json_response({"ok": False, "error": "Action not found for task_ref."})
+            return _envelope(ok=False, tool="update_next_actions", data={"error": "Action not found for task_ref."}, task_ref=resolved_task_ref)
         if operation == "update":
             if action is None and priority is None and status is None:
-                return _json_response(
-                    {"ok": False, "error": "At least one of action, priority, or status is required for update."}
+                return _envelope(
+                    ok=False, tool="update_next_actions",
+                    data={"error": "At least one of action, priority, or status is required for update."},
+                    task_ref=resolved_task_ref,
                 )
             use_status = status if status is not None else str(existing["status"])
             if use_status not in ACTION_STATUSES:
-                return _json_response({"ok": False, "error": "Invalid status value."})
+                return _envelope(ok=False, tool="update_next_actions", data={"error": "Invalid status value."}, task_ref=resolved_task_ref)
             conn.execute(
                 "UPDATE next_actions SET action = ?, priority = ?, status = ?, agent = ?, branch = ?, commit_sha = ?, lane_id = COALESCE(lane_id, ?), updated_at = datetime('now') WHERE id = ? AND task_ref = ?",
                 (
@@ -202,15 +206,15 @@ def update_next_actions(
                 "UPDATE next_actions SET status = 'skipped', agent = ?, branch = ?, commit_sha = ?, lane_id = COALESCE(lane_id, ?), updated_at = datetime('now') WHERE id = ? AND task_ref = ?",
                 (ctx.agent, ctx.branch, ctx.commit_sha, ctx.lane_id, action_id, resolved_task_ref),
             )
-        return _json_response(
-            {
-                "ok": True,
-                "task_ref": resolved_task_ref,
-                "operation": operation,
-                "action": _row_to_dict(
-                    conn.execute("SELECT * FROM next_actions WHERE id = ?", (action_id,)).fetchone()
-                ),
-            }
+        action_row = _row_to_dict(
+            conn.execute("SELECT * FROM next_actions WHERE id = ?", (action_id,)).fetchone()
+        )
+        return _envelope(
+            ok=True,
+            tool="update_next_actions",
+            data={"operation": operation, "action": action_row},
+            task_ref=resolved_task_ref,
+            mutation={"entity": "next_action", "operation": operation, "affected_ids": [action_id]},
         )
 
 
@@ -223,7 +227,7 @@ def list_next_actions(
 ) -> str:
     valid_statuses = {"all", *ACTION_STATUSES}
     if status not in valid_statuses:
-        return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(valid_statuses))}"})
+        return _envelope(ok=False, tool="list_next_actions", data={"error": f"Invalid status. Valid: {', '.join(sorted(valid_statuses))}"})
     limit = max(1, limit)
     offset = max(0, offset)
     normalized_lane_id = _normalize_optional_text(lane_id)
@@ -249,17 +253,18 @@ def list_next_actions(
                 (*params, limit, offset),
             ).fetchall()
         ]
-        return _json_response(
-            {
-                "ok": True,
-                "task_ref": resolved_task_ref,
+        return _envelope(
+            ok=True,
+            tool="list_next_actions",
+            data={
                 "lane_id": normalized_lane_id,
                 "status": status,
                 "total_matching": total,
                 "returned": len(rows),
                 "has_more": offset + len(rows) < total,
                 "actions": rows,
-            }
+            },
+            task_ref=resolved_task_ref,
         )
 
 
@@ -294,14 +299,15 @@ def record_test_result(
                 ctx.commit_sha,
             ),
         )
-        return _json_response(
-            {
-                "ok": True,
-                "task_ref": resolved_task_ref,
-                "test": _row_to_dict(
-                    conn.execute("SELECT * FROM verified_tests WHERE id = ?", (cur.lastrowid,)).fetchone()
-                ),
-            }
+        test_row = _row_to_dict(
+            conn.execute("SELECT * FROM verified_tests WHERE id = ?", (cur.lastrowid,)).fetchone()
+        )
+        return _envelope(
+            ok=True,
+            tool="record_test_result",
+            data={"test": test_row},
+            task_ref=resolved_task_ref,
+            mutation={"entity": "verified_test", "operation": "insert", "affected_ids": [cur.lastrowid]},
         )
 
 
@@ -314,15 +320,16 @@ def report_blocker(
 ) -> str:
     valid_operations = {"add", "resolve", "reopen"}
     if operation not in valid_operations:
-        return _json_response(
-            {"ok": False, "error": f"Invalid operation. Valid: {', '.join(sorted(valid_operations))}"}
+        return _envelope(
+            ok=False, tool="report_blocker",
+            data={"error": f"Invalid operation. Valid: {', '.join(sorted(valid_operations))}"},
         )
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         ctx = _resolve_write_actor(conn, actor)
         if operation == "add":
             if not description:
-                return _json_response({"ok": False, "error": "description is required for add."})
+                return _envelope(ok=False, tool="report_blocker", data={"error": "description is required for add."}, task_ref=resolved_task_ref)
             cur = conn.execute(
                 """
                 INSERT INTO blockers (task_ref, lane_id, description, status, agent, branch, commit_sha, resolved_at, created_at)
@@ -330,23 +337,23 @@ def report_blocker(
                 """,
                 (resolved_task_ref, ctx.lane_id, description, ctx.agent, ctx.branch, ctx.commit_sha),
             )
-            return _json_response(
-                {
-                    "ok": True,
-                    "task_ref": resolved_task_ref,
-                    "operation": operation,
-                    "blocker": _row_to_dict(
-                        conn.execute("SELECT * FROM blockers WHERE id = ?", (cur.lastrowid,)).fetchone()
-                    ),
-                }
+            blocker_row = _row_to_dict(
+                conn.execute("SELECT * FROM blockers WHERE id = ?", (cur.lastrowid,)).fetchone()
+            )
+            return _envelope(
+                ok=True,
+                tool="report_blocker",
+                data={"operation": operation, "blocker": blocker_row},
+                task_ref=resolved_task_ref,
+                mutation={"entity": "blocker", "operation": "insert", "affected_ids": [cur.lastrowid]},
             )
         if blocker_id is None:
-            return _json_response({"ok": False, "error": "blocker_id is required for resolve/reopen."})
+            return _envelope(ok=False, tool="report_blocker", data={"error": "blocker_id is required for resolve/reopen."}, task_ref=resolved_task_ref)
         existing = conn.execute(
             "SELECT * FROM blockers WHERE id = ? AND task_ref = ?", (blocker_id, resolved_task_ref)
         ).fetchone()
         if existing is None:
-            return _json_response({"ok": False, "error": "Blocker not found for task_ref."})
+            return _envelope(ok=False, tool="report_blocker", data={"error": "Blocker not found for task_ref."}, task_ref=resolved_task_ref)
         if operation == "resolve":
             conn.execute(
                 "UPDATE blockers SET status = 'resolved', resolved_at = datetime('now'), agent = ?, branch = ?, commit_sha = ?, lane_id = COALESCE(lane_id, ?) WHERE id = ? AND task_ref = ?",
@@ -357,13 +364,13 @@ def report_blocker(
                 "UPDATE blockers SET status = 'open', resolved_at = NULL, agent = ?, branch = ?, commit_sha = ?, lane_id = COALESCE(lane_id, ?) WHERE id = ? AND task_ref = ?",
                 (ctx.agent, ctx.branch, ctx.commit_sha, ctx.lane_id, blocker_id, resolved_task_ref),
             )
-        return _json_response(
-            {
-                "ok": True,
-                "task_ref": resolved_task_ref,
-                "operation": operation,
-                "blocker": _row_to_dict(conn.execute("SELECT * FROM blockers WHERE id = ?", (blocker_id,)).fetchone()),
-            }
+        blocker_row = _row_to_dict(conn.execute("SELECT * FROM blockers WHERE id = ?", (blocker_id,)).fetchone())
+        return _envelope(
+            ok=True,
+            tool="report_blocker",
+            data={"operation": operation, "blocker": blocker_row},
+            task_ref=resolved_task_ref,
+            mutation={"entity": "blocker", "operation": operation, "affected_ids": [blocker_id]},
         )
 
 
@@ -505,17 +512,18 @@ def handoff_close_check(
 ) -> str:
     normalized_current_commit_sha = _normalize_optional_text(current_commit_sha)
     if require_fresh_tests and normalized_current_commit_sha is None:
-        return _json_response({"ok": False, "error": "current_commit_sha required when require_fresh_tests=True"})
+        return _envelope(ok=False, tool="handoff_close_check", data={"error": "current_commit_sha required when require_fresh_tests=True"})
     require_current_commit_summary = bool(normalized_current_commit_sha)
     with _get_db_connection() as conn:
         active_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
         if task_ref is None:
             if active_row is None:
                 if allow_no_active_task:
-                    return _json_response(
-                        {"ok": True, "ready_to_close": True, "skipped": True, "reason": "No active handoff task found."}
+                    return _envelope(
+                        ok=True, tool="handoff_close_check",
+                        data={"ready_to_close": True, "skipped": True, "reason": "No active handoff task found."},
                     )
-                return _json_response({"ok": False, "error": "No active handoff task found."})
+                return _envelope(ok=False, tool="handoff_close_check", data={"error": "No active handoff task found."})
             resolved_task_ref = str(active_row["task_ref"])
         else:
             resolved_task_ref = task_ref
@@ -570,9 +578,7 @@ def handoff_close_check(
         structured_decisions=structured_current_commit_decisions,
     )
     ready_to_close = len(failures) == 0
-    payload = {
-        "ok": not (enforce and not ready_to_close),
-        "task_ref": resolved_task_ref,
+    data: dict = {
         "ready_to_close": ready_to_close,
         "checks": {
             "active_task": {
@@ -625,13 +631,18 @@ def handoff_close_check(
         "failures": failures,
     }
     if enforce and not ready_to_close:
-        payload["error"] = "Handoff close checks failed."
+        data["error"] = "Handoff close checks failed."
     if require_fresh_tests and fresh_test_count == 0:
-        payload["stale_test"] = {
+        data["stale_test"] = {
             "current_commit_sha": normalized_current_commit_sha,
             "reason": "No verification rows recorded for the current commit.",
         }
-    return _json_response(payload)
+    return _envelope(
+        ok=not (enforce and not ready_to_close),
+        tool="handoff_close_check",
+        data=data,
+        task_ref=resolved_task_ref,
+    )
 
 
 def audit_decision_ids(
@@ -715,14 +726,15 @@ def audit_decision_ids(
     if healthy and not summary_lines:
         summary_lines.append("All inspected decision ids conform to the canonical grammar.")
 
-    return _json_response(
-        {
-            "ok": True,
-            "task_ref": resolved_task_ref,
+    return _envelope(
+        ok=True,
+        tool="audit_decision_ids",
+        data={
             "healthy": healthy,
             "total_inspected": total_inspected,
             "counts": counts,
             "violations": violations,
             "summary": " ".join(summary_lines),
-        }
+        },
+        task_ref=resolved_task_ref,
     )

@@ -567,7 +567,7 @@ def test_record_decision_no_warning_with_model(isolated_handoff: dict) -> None:
         )
     )
     assert result["ok"] is True
-    assert "warnings" not in result
+    assert not result.get("warnings")
     _parse(
         mcp_server.set_handoff_state(
             task_ref="4.12.0",

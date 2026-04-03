@@ -429,7 +429,7 @@ def record_artifact(
             tool="record_artifact",
             data=result,
             task_ref=resolved_task_ref,
-            mutation={"action": "upsert", "entity": "artifact_source"},
+            mutation={"entity": "artifact_source", "operation": "upsert"},
         )
     except RuntimeError as exc:
         return _envelope(ok=False, tool="record_artifact", data={"error": str(exc)}, task_ref=resolved_task_ref)
@@ -597,7 +597,7 @@ def purge_artifacts(
             tool="purge_artifacts",
             data=result,
             task_ref=resolved_task_ref,
-            mutation={"action": "delete", "entity": "artifact_source"},
+            mutation={"entity": "artifact_source", "operation": "delete"},
         )
     except RuntimeError as exc:
         return _envelope(ok=False, tool="purge_artifacts", data={"error": str(exc)}, task_ref=resolved_task_ref)
@@ -749,6 +749,6 @@ def close_slice(
             "task_revision": state_result.get("active", {}).get("revision"),
         },
         task_ref=resolved_task_ref,
-        mutation={"action": "close_slice", "entity": "decision"},
+        mutation={"entity": "decision", "operation": "close_slice", "task_revision": state_result.get("active", {}).get("revision")},
         artifacts=[{"type": "current_task_md", "path": "CURRENT_TASK.md", "written": True}],
     )

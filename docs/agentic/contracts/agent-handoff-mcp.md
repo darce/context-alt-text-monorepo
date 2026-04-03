@@ -426,6 +426,36 @@ When called with `view="dashboard"`, `get_handoff_state` returns:
 - `set_handoff_state` accepts an optional `target_branch` parameter. When provided, it sets the task's intended work branch. When omitted on subsequent calls, the existing value is preserved. The field appears in `get_handoff_state` responses and in the CURRENT_TASK.md Active Status section.
 - `switch_task` (registered on `agent-orchestrator-mcp`) also accepts `target_branch`, set at task init time.
 
+### v2 Response Envelope (OC-004)
+
+All tool responses are migrating to a common v2 envelope. Read surfaces (`get_handoff_state`, `generate_current_task_md`, `load_session`) already return the envelope. Write surfaces will follow in the same release.
+
+```json
+{
+  "ok": true,
+  "schema_version": 2,
+  "tool": "get_handoff_state",
+  "scope": { "task_ref": "AHMCP-3" },
+  "data": { "active": {...}, "limits": {...}, ... },
+  "mutation": null,
+  "artifacts": [],
+  "warnings": []
+}
+```
+
+| Key | Type | Notes |
+|-----|------|-------|
+| `ok` | bool | Unchanged from v1 |
+| `schema_version` | int | Always `2` for v2 responses |
+| `tool` | string | Tool name that produced this response |
+| `scope.task_ref` | string/null | Resolved task reference |
+| `data` | object | Tool-specific payload (v1 top-level fields move here) |
+| `mutation` | object/null | Present on write responses: `{ entity, operation, affected_ids, task_revision }` |
+| `artifacts` | array | Render artifacts produced (e.g. `{ type, path, written }`) |
+| `warnings` | array | Diagnostic warnings |
+
+Tools not yet migrated to the envelope continue to return the v1 shape (top-level `ok` + tool-specific fields). Check `schema_version` to determine which shape a response uses.
+
 ## CLI Fallback
 
 Primary entrypoints:

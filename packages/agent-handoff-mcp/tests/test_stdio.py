@@ -73,7 +73,7 @@ def test_stdio_server_lists_handoff_tools(tmp_path: Path) -> None:
 
 
 def test_stdio_core_profile_excludes_extended_tools(tmp_path: Path) -> None:
-    """Explicit --tool-profile core must include all 16 core tools and exclude all 11 extended."""
+    """Explicit --tool-profile core must include all 16 core tools and exclude all 12 extended."""
     repo_root = Path(__file__).resolve().parents[3]
     launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
 
@@ -96,8 +96,8 @@ def test_stdio_core_profile_excludes_extended_tools(tmp_path: Path) -> None:
     assert len(tool_names) == 16
 
 
-def test_stdio_extended_profile_exposes_all_27_tools(tmp_path: Path) -> None:
-    """--tool-profile extended must expose all 27 tools."""
+def test_stdio_extended_profile_exposes_all_28_tools(tmp_path: Path) -> None:
+    """--tool-profile extended must expose all 28 tools."""
     repo_root = Path(__file__).resolve().parents[3]
     launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
 

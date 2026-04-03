@@ -80,7 +80,7 @@ def record_decision(
             warnings.append(
                 "actor is missing model/model_label; decision will render without model identity. Pass actor.model and actor.model_label for accurate provenance."
             )
-        changed_files_json = json.dumps(normalized_changed_files) if normalized_changed_files is not None else None
+        changed_files_json = json.dumps(normalized_changed_files) if normalized_changed_files is not None else "[]"
         cur = conn.execute(
             """
             INSERT INTO decisions (
@@ -104,7 +104,6 @@ def record_decision(
                 input_tokens,
                 output_tokens,
                 total_tokens,
-                changed_files_json,
                 ctx.branch,
                 ctx.commit_sha,
                 changed_files_json,

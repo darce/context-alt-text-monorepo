@@ -163,6 +163,10 @@ def set_handoff_state(
         Field(description="Optimistic concurrency guard. Required when updating an existing handoff row."),
     ] = None,
     actor: ActorParam = None,
+    target_branch: Annotated[
+        str | None,
+        Field(description="Target git branch for this task. Preserved on update when omitted."),
+    ] = None,
 ) -> str:
     return _core_set_handoff_state(
         task_ref=task_ref,
@@ -171,6 +175,7 @@ def set_handoff_state(
         status=status,
         expected_revision=expected_revision,
         actor=_dump_actor(actor),
+        target_branch=target_branch,
     )
 
 

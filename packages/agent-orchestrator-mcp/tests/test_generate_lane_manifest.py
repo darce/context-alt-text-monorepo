@@ -127,3 +127,24 @@ def test_main_force_overwrites_existing_file(tmp_path: Path) -> None:
     rendered = json.loads(output.read_text())
     assert rendered["task_ref"] == "demo-task"
     assert "backend" in rendered["lanes"]
+
+
+def test_main_defaults_output_under_orchestrator_root(tmp_path: Path) -> None:
+    mod = _load_module()
+    orchestrator_root = tmp_path / "external-root"
+    argv = [
+        str(SCRIPT_PATH),
+        "--task-ref",
+        "demo-task",
+        "--lane",
+        "backend",
+        "--orchestrator-root",
+        str(orchestrator_root),
+    ]
+    with mock.patch.object(sys, "argv", argv):
+        assert mod.main() == 0
+
+    output = orchestrator_root / "config" / "lane-orchestration" / "demo-task.json"
+    rendered = json.loads(output.read_text())
+    assert rendered["task_ref"] == "demo-task"
+    assert rendered["lanes"]["backend"]["branch"] == "codex/demo-task-backend"

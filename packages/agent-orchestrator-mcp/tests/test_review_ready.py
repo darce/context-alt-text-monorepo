@@ -68,6 +68,37 @@ def test_evaluate_review_ready_uses_contract_files_to_clear_violation() -> None:
     assert result.contract_violation is False
 
 
+def test_evaluate_review_ready_accepts_custom_boundary_and_contract_paths() -> None:
+    result = evaluate_review_ready(
+        task_ref="task-ref",
+        base_ref="main",
+        base_sha="abcdef1234567890",
+        changed_files=[
+            "runtime-boundary/foo.py",
+            "runtime-contracts/foo.md",
+        ],
+        scope_source="slice_packet",
+        review_kind="branch",
+        review={"ok": True, "counts": {"status": {"open": 0}}},
+        state={"ok": True, "task_ref": "task-ref", "tests_recent": [{"id": 1}]},
+        close={
+            "ok": True,
+            "checks": {
+                "open_blockers": {"count": 0},
+                "current_task_sync": {"is_in_sync": True},
+            },
+        },
+        boundary_prefixes=("runtime-boundary/",),
+        contract_prefixes=("runtime-contracts/",),
+        contract_checklist_path="runtime-contracts/checklist.md",
+    )
+
+    assert result.ready is True
+    assert result.boundary_files == ["runtime-boundary/foo.py"]
+    assert result.contract_files == ["runtime-contracts/foo.md"]
+    assert result.contract_violation is False
+
+
 def test_render_review_ready_includes_not_ready_reasons() -> None:
     result = evaluate_review_ready(
         task_ref="task-ref",

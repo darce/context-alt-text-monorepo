@@ -7,20 +7,32 @@ from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[4]
-MANIFEST_DIR = REPO_ROOT / "config" / "lane-orchestration"
+DEFAULT_MANIFEST_DIR = REPO_ROOT / "config" / "lane-orchestration"
+MANIFEST_DIR = DEFAULT_MANIFEST_DIR
 
 REQUIRED_TOP_LEVEL_KEYS = ("task_ref", "merge_order", "lanes", "downstream")
 REQUIRED_LANE_KEYS = ("branch", "worktree_path", "owned_paths", "test_commands")
 
 
-def manifest_dir() -> Path:
+def _resolve_manifest_dir(*, orchestrator_root: str | None = None, manifest_dir: str | Path | None = None) -> Path:
+    if manifest_dir is not None:
+        return Path(manifest_dir).expanduser().resolve()
+    if MANIFEST_DIR != DEFAULT_MANIFEST_DIR:
+        return MANIFEST_DIR
+    if orchestrator_root:
+        return (Path(orchestrator_root).expanduser().resolve() / "config" / "lane-orchestration").resolve()
     return MANIFEST_DIR
 
 
-def list_task_refs() -> list[str]:
-    if not MANIFEST_DIR.exists():
+def manifest_dir(*, orchestrator_root: str | None = None, manifest_dir: str | Path | None = None) -> Path:
+    return _resolve_manifest_dir(orchestrator_root=orchestrator_root, manifest_dir=manifest_dir)
+
+
+def list_task_refs(*, orchestrator_root: str | None = None, manifest_dir: str | Path | None = None) -> list[str]:
+    resolved_dir = _resolve_manifest_dir(orchestrator_root=orchestrator_root, manifest_dir=manifest_dir)
+    if not resolved_dir.exists():
         return []
-    return sorted(path.stem for path in MANIFEST_DIR.glob("*.json"))
+    return sorted(path.stem for path in resolved_dir.glob("*.json"))
 
 
 def _require_key(container: dict[str, Any], key: str, *, path: Path, context: str) -> None:
@@ -295,8 +307,13 @@ def validate_manifest(data: dict[str, Any], path: Path) -> dict[str, Any]:
     return data
 
 
-def load_manifest(task_ref: str) -> dict[str, Any]:
-    path = MANIFEST_DIR / f"{task_ref}.json"
+def load_manifest(
+    task_ref: str,
+    *,
+    orchestrator_root: str | None = None,
+    manifest_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    path = _resolve_manifest_dir(orchestrator_root=orchestrator_root, manifest_dir=manifest_dir) / f"{task_ref}.json"
     if not path.exists():
         raise FileNotFoundError(f"lane manifest not found for task {task_ref}: {path}")
     data = json.loads(path.read_text())
@@ -305,16 +322,22 @@ def load_manifest(task_ref: str) -> dict[str, Any]:
     return validate_manifest(data, path)
 
 
-def list_lanes(task_ref: str) -> list[str]:
-    manifest = load_manifest(task_ref)
+def list_lanes(task_ref: str, *, orchestrator_root: str | None = None, manifest_dir: str | Path | None = None) -> list[str]:
+    manifest = load_manifest(task_ref, orchestrator_root=orchestrator_root, manifest_dir=manifest_dir)
     lanes = manifest.get("lanes", {})
     if not isinstance(lanes, dict):
         return []
     return sorted(lanes.keys())
 
 
-def _lane_manifest(task_ref: str, lane_id: str) -> dict[str, Any] | None:
-    lanes = load_manifest(task_ref).get("lanes", {})
+def _lane_manifest(
+    task_ref: str,
+    lane_id: str,
+    *,
+    orchestrator_root: str | None = None,
+    manifest_dir: str | Path | None = None,
+) -> dict[str, Any] | None:
+    lanes = load_manifest(task_ref, orchestrator_root=orchestrator_root, manifest_dir=manifest_dir).get("lanes", {})
     if not isinstance(lanes, dict):
         return None
     lane = lanes.get(lane_id)
@@ -326,7 +349,7 @@ def expand_path_template(template: str, *, orchestrator_root: str) -> str:
 
 
 def get_lane_config(task_ref: str, lane_id: str, *, orchestrator_root: str | None = None) -> dict[str, Any] | None:
-    lane = _lane_manifest(task_ref, lane_id)
+    lane = _lane_manifest(task_ref, lane_id, orchestrator_root=orchestrator_root)
     if lane is None:
         return None
     result = dict(lane)
@@ -362,12 +385,12 @@ def infer_lane_from_branch(branch: str, task_ref: str | None = None, *, orchestr
     if not branch:
         return ""
 
-    task_refs = [task_ref] if task_ref else list_task_refs()
+    task_refs = [task_ref] if task_ref else list_task_refs(orchestrator_root=orchestrator_root)
     matches: list[str] = []
     for candidate_task in task_refs:
         if not candidate_task:
             continue
-        manifest = load_manifest(candidate_task)
+        manifest = load_manifest(candidate_task, orchestrator_root=orchestrator_root)
         lanes = manifest.get("lanes", {})
         if not isinstance(lanes, dict):
             continue
@@ -391,8 +414,8 @@ def infer_task_from_branch_or_worktree(
     candidates: list[str] = []
     normalized_worktree = str(Path(worktree_path).expanduser().resolve()) if worktree_path else ""
 
-    for candidate_task in list_task_refs():
-        manifest = load_manifest(candidate_task)
+    for candidate_task in list_task_refs(orchestrator_root=orchestrator_root):
+        manifest = load_manifest(candidate_task, orchestrator_root=orchestrator_root)
         lanes = manifest.get("lanes", {})
         if not isinstance(lanes, dict):
             continue
@@ -415,8 +438,8 @@ def infer_task_from_branch_or_worktree(
     return ""
 
 
-def route_patterns(task_ref: str) -> list[tuple[str, str]]:
-    manifest = load_manifest(task_ref)
+def route_patterns(task_ref: str, *, orchestrator_root: str | None = None) -> list[tuple[str, str]]:
+    manifest = load_manifest(task_ref, orchestrator_root=orchestrator_root)
     routes = manifest.get("routing", [])
     lanes = manifest.get("lanes", {})
     if not isinstance(routes, list) or not routes:
@@ -432,8 +455,8 @@ def route_patterns(task_ref: str) -> list[tuple[str, str]]:
     return patterns
 
 
-def lane_route_hints(task_ref: str) -> dict[str, tuple[str, ...]]:
-    manifest = load_manifest(task_ref)
+def lane_route_hints(task_ref: str, *, orchestrator_root: str | None = None) -> dict[str, tuple[str, ...]]:
+    manifest = load_manifest(task_ref, orchestrator_root=orchestrator_root)
     lanes = manifest.get("lanes", {})
     if not isinstance(lanes, dict):
         return {}
@@ -462,17 +485,17 @@ def lane_route_hints(task_ref: str) -> dict[str, tuple[str, ...]]:
     return hints
 
 
-def merge_order(task_ref: str) -> list[str]:
-    manifest = load_manifest(task_ref)
+def merge_order(task_ref: str, *, orchestrator_root: str | None = None) -> list[str]:
+    manifest = load_manifest(task_ref, orchestrator_root=orchestrator_root)
     order = manifest.get("merge_order", [])
     if not isinstance(order, list):
         return []
     return [lane for lane in order if isinstance(lane, str)]
 
 
-def downstream_lanes(task_ref: str, lane_id: str) -> list[str]:
+def downstream_lanes(task_ref: str, lane_id: str, *, orchestrator_root: str | None = None) -> list[str]:
     """Return the declared downstream dependents for *lane_id*, or ``[]``."""
-    manifest = load_manifest(task_ref)
+    manifest = load_manifest(task_ref, orchestrator_root=orchestrator_root)
     downstream = manifest.get("downstream", {})
     if not isinstance(downstream, dict):
         return []
@@ -482,8 +505,8 @@ def downstream_lanes(task_ref: str, lane_id: str) -> list[str]:
     return [d for d in deps if isinstance(d, str)]
 
 
-def guidance_fallbacks(task_ref: str, lane_id: str) -> list[dict[str, Any]]:
-    lane = _lane_manifest(task_ref, lane_id)
+def guidance_fallbacks(task_ref: str, lane_id: str, *, orchestrator_root: str | None = None) -> list[dict[str, Any]]:
+    lane = _lane_manifest(task_ref, lane_id, orchestrator_root=orchestrator_root)
     if lane is None:
         return []
     fallbacks = lane.get("guidance_fallbacks", [])
@@ -493,7 +516,7 @@ def guidance_fallbacks(task_ref: str, lane_id: str) -> list[dict[str, Any]]:
 
 
 def task_plan_path(task_ref: str, *, orchestrator_root: str | None = None) -> str:
-    manifest = load_manifest(task_ref)
+    manifest = load_manifest(task_ref, orchestrator_root=orchestrator_root)
     raw = manifest.get("task_plan_path")
     if not isinstance(raw, str) or not raw.strip():
         return ""
@@ -504,8 +527,8 @@ def task_plan_path(task_ref: str, *, orchestrator_root: str | None = None) -> st
     return str((base / path).expanduser())
 
 
-def heading_to_lane(task_ref: str) -> dict[str, str]:
-    manifest = load_manifest(task_ref)
+def heading_to_lane(task_ref: str, *, orchestrator_root: str | None = None) -> dict[str, str]:
+    manifest = load_manifest(task_ref, orchestrator_root=orchestrator_root)
     value = manifest.get("heading_to_lane")
     if not isinstance(value, dict):
         return {}
@@ -516,8 +539,8 @@ def heading_to_lane(task_ref: str) -> dict[str, str]:
     return result
 
 
-def plan_routing_hints(task_ref: str) -> list[dict[str, str]]:
-    manifest = load_manifest(task_ref)
+def plan_routing_hints(task_ref: str, *, orchestrator_root: str | None = None) -> list[dict[str, str]]:
+    manifest = load_manifest(task_ref, orchestrator_root=orchestrator_root)
     value = manifest.get("plan_routing_hints")
     if not isinstance(value, list):
         return []

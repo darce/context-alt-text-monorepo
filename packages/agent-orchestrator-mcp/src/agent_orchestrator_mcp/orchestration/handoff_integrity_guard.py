@@ -16,8 +16,18 @@ import tempfile
 import uuid
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-MCP_PACKAGE_SRC = REPO_ROOT / "packages" / "agent-handoff-mcp" / "src"
+
+def _discover_repo_root() -> Path:
+    override = os.environ.get("ORCHESTRATOR_ROOT")
+    if override:
+        return Path(override).expanduser().resolve()
+    for candidate in Path(__file__).resolve().parents:
+        if (candidate / "packages" / "agent-orchestrator-mcp").is_dir():
+            return candidate
+    return Path.cwd().resolve()
+
+
+REPO_ROOT = _discover_repo_root()
 
 
 def _run_cli(
@@ -25,12 +35,11 @@ def _run_cli(
     env: dict[str, str],
     state_root: Path,
     expect_success: bool = True,
+    timeout_seconds: float = 15.0,
 ) -> dict:
     """Run the agent-handoff-mcp CLI and parse JSON output."""
     base_args = [
-        sys.executable,
-        "-m",
-        "agent_handoff_mcp",
+        "agent-handoff-mcp",
         "--workspace-root",
         str(state_root),
         "--state-dir",
@@ -40,14 +49,18 @@ def _run_cli(
         "--exports-dir",
         str(state_root / ".task-state" / "exports"),
     ]
-    proc = subprocess.run(
-        base_args + args,
-        cwd=str(REPO_ROOT),
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            base_args + args,
+            cwd=str(REPO_ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"Command timed out after {timeout_seconds:.1f}s: {' '.join(args)}") from exc
 
     payload: dict = {}
     stdout = proc.stdout.strip()
@@ -69,14 +82,13 @@ def _run_cli(
 
 
 def main() -> int:
-    if not MCP_PACKAGE_SRC.is_dir():
-        print(f"agent-handoff-mcp package not found at {MCP_PACKAGE_SRC}", file=sys.stderr)
+    if (REPO_ROOT / "packages" / "agent-orchestrator-mcp").is_dir() is False:
+        print(f"orchestrator repo root not found at {REPO_ROOT}", file=sys.stderr)
         return 1
 
     with tempfile.TemporaryDirectory(prefix="handoff-integrity-") as temp_dir:
         temp_root = Path(temp_dir)
         env = os.environ.copy()
-        env["PYTHONPATH"] = str(MCP_PACKAGE_SRC) + ((":" + env["PYTHONPATH"]) if env.get("PYTHONPATH") else "")
 
         task_ref = f"ci-handoff-{uuid.uuid4().hex[:8]}"
 
@@ -334,8 +346,12 @@ def main() -> int:
         if "allow_destructive_clear" not in (blocked_prune.get("error") or ""):
             raise RuntimeError(f"Expected prune failure to mention allow_destructive_clear, got: {blocked_prune}")
 
-        finding_still_present = _run_cli(["review-summary", "--task-ref", destructive_task_ref], env, temp_root)
-        open_count_before_ack = int((finding_still_present.get("counts", {}).get("status", {}).get("open", 0)))
+        finding_still_present = _run_cli(
+            ["review-list", "--task-ref", destructive_task_ref, "--status", "open"],
+            env,
+            temp_root,
+        )
+        open_count_before_ack = len(finding_still_present.get("findings") or [])
         if open_count_before_ack != 1:
             raise RuntimeError(
                 f"Expected finding to remain after blocked destructive operations, got: {finding_still_present}"
@@ -353,8 +369,12 @@ def main() -> int:
             env,
             temp_root,
         )
-        finding_cleared_after_ack = _run_cli(["review-summary", "--task-ref", destructive_task_ref], env, temp_root)
-        open_count_after_ack = int((finding_cleared_after_ack.get("counts", {}).get("status", {}).get("open", 0)))
+        finding_cleared_after_ack = _run_cli(
+            ["review-list", "--task-ref", destructive_task_ref, "--status", "open"],
+            env,
+            temp_root,
+        )
+        open_count_after_ack = len(finding_cleared_after_ack.get("findings") or [])
         if open_count_after_ack != 0:
             raise RuntimeError(
                 f"Expected acknowledged destructive replace to clear finding rows, got: {finding_cleared_after_ack}"

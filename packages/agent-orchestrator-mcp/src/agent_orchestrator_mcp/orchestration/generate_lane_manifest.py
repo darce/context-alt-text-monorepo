@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parents[4]
 DEFAULT_DONE = "Ready for orchestrator branch review with lane-local verification complete."
 
 
@@ -99,6 +98,11 @@ def _parse_args() -> argparse.Namespace:
         "--prefix", help="Optional short prefix used for default branch/worktree names instead of the full task ref."
     )
     parser.add_argument("--task-plan", help="Optional task plan path to include in required_docs.")
+    parser.add_argument(
+        "--orchestrator-root",
+        default=".",
+        help="Workspace root used to resolve the default config/lane-orchestration output directory.",
+    )
     parser.add_argument("--output", help="Optional output path. Defaults to config/lane-orchestration/<task-ref>.json.")
     parser.add_argument("--stdout", action="store_true", help="Print the generated manifest instead of writing it.")
     parser.add_argument("--force", action="store_true", help="Overwrite an existing output file.")
@@ -127,7 +131,9 @@ def main() -> int:
         print(rendered, end="")
         return 0
 
-    output = Path(args.output) if args.output else REPO_ROOT / "config" / "lane-orchestration" / f"{args.task_ref}.json"
+    orchestrator_root = Path(args.orchestrator_root).expanduser().resolve()
+    default_output = orchestrator_root / "config" / "lane-orchestration" / f"{args.task_ref}.json"
+    output = Path(args.output).expanduser() if args.output else default_output
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists() and not args.force:
         raise SystemExit(f"Refusing to overwrite existing manifest without --force: {output}")

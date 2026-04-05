@@ -187,6 +187,24 @@ def test_prompt_includes_diff_stat() -> None:
     assert "5 insertions(+), 2 deletions(-)" in prompt
 
 
+def test_prompt_uses_custom_rules_dir(tmp_path: Path) -> None:
+    module = _load_review_runner_module()
+    rules_dir = tmp_path / "rules"
+    rules_dir.mkdir()
+    (rules_dir / "branch-review-guide.md").write_text("CUSTOM MAIN GUIDE")
+    (rules_dir / "branch-review-python.md").write_text("CUSTOM PY GUIDE")
+
+    prompt = module._build_review_prompt(
+        changed_files=["src/main.py"],
+        diff_stat="1 file changed",
+        stack_guides=["branch-review-python.md"],
+        rules_dir=rules_dir,
+    )
+
+    assert "CUSTOM MAIN GUIDE" in prompt
+    assert "CUSTOM PY GUIDE" in prompt
+
+
 def test_prompt_no_diff_stat_section_when_empty() -> None:
     module = _load_review_runner_module()
     prompt = module._build_review_prompt(
@@ -455,8 +473,12 @@ def test_run_review_uses_planning_guide_for_latest_planning_slice(tmp_path: Path
         mock.patch.object(module, "_detect_stack_guides", return_value=[]),
         mock.patch.object(module, "get_adapter", return_value=mock_adapter),
         mock.patch.object(module, "get_lane_config", return_value={}),
-        mock.patch.object(module, "_read_guide", side_effect=lambda filename: f"GUIDE:{filename}"),
-        mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}),
+        mock.patch.object(
+            module,
+            "_read_guide",
+            side_effect=lambda filename, **_: f"GUIDE:{filename}",
+        ),
+        mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "agent_orchestrator_mcp.lanes": mock_ahm}),
     ):
         result = module.run_review(
             worktree_path=tmp_path,
@@ -470,6 +492,37 @@ def test_run_review_uses_planning_guide_for_latest_planning_slice(tmp_path: Path
     prompt = mock_adapter.execute.call_args.kwargs["prompt"]
     assert "GUIDE:planning-review-guide.md" in prompt
     assert "GUIDE:branch-review-guide.md" not in prompt
+
+
+def test_run_review_passes_rules_dir_to_prompt_builder(tmp_path: Path) -> None:
+    module = _load_review_runner_module()
+    import unittest.mock as mock
+
+    raw_result = {
+        "findings": [],
+        "summary": "Clean review.",
+    }
+    mock_result = mock.Mock()
+    mock_result.raw_payload = raw_result
+    mock_adapter = mock.Mock()
+    mock_adapter.execute.return_value = mock_result
+    rules_dir = tmp_path / "rules"
+
+    with (
+        mock.patch.object(module, "_changed_files", return_value=["src/main.py"]),
+        mock.patch.object(module, "_diff_stat", return_value="1 file changed"),
+        mock.patch.object(module, "_detect_stack_guides", return_value=["branch-review-python.md"]),
+        mock.patch.object(module, "get_adapter", return_value=mock_adapter),
+        mock.patch.object(module, "get_lane_config", return_value={}),
+        mock.patch.object(module, "_build_review_prompt", return_value="PROMPT") as build_prompt,
+    ):
+        module.run_review(
+            worktree_path=tmp_path,
+            dry_run=False,
+            rules_dir=rules_dir,
+        )
+
+    assert build_prompt.call_args.kwargs["rules_dir"] == rules_dir
 
 
 def test_run_review_falls_back_to_branch_diff_when_no_slice_packet_exists(tmp_path: Path) -> None:
@@ -501,7 +554,7 @@ def test_run_review_falls_back_to_branch_diff_when_no_slice_packet_exists(tmp_pa
         mock.patch.object(module, "_detect_stack_guides", return_value=["branch-review-python.md"]),
         mock.patch.object(module, "get_adapter", return_value=mock_adapter),
         mock.patch.object(module, "get_lane_config", return_value={}),
-        mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}),
+        mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "agent_orchestrator_mcp.lanes": mock_ahm}),
     ):
         result = module.run_review(
             worktree_path=tmp_path,

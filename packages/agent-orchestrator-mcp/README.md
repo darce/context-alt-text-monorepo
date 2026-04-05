@@ -9,19 +9,11 @@ MCP server for orchestration, lane management, worker daemons, review dispatch, 
 From the package root:
 
 ```bash
+python -m pip install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-handoff.git"
 python -m pip install -e ".[dev]"
 ```
 
 `agent-handoff-mcp` is a required dependency. `codex-subagent-bridge` remains optional unless you want the local bridge backend.
-
-### Current monorepo checkout
-
-Until extraction is complete, use the same package-root workflow from the monorepo copy:
-
-```bash
-cd /path/to/context-alt-text-monorepo/packages/agent-orchestrator-mcp
-python -m pip install -e ".[dev]"
-```
 
 ## Development
 
@@ -36,7 +28,7 @@ make test-orchestrator
 make check-orchestrator
 ```
 
-The package Makefile automatically adds sibling `../agent-handoff-mcp/src` and `../codex-subagent-bridge/src` paths when those checkouts exist. That keeps the current monorepo copy working while still allowing a clean standalone repo once dependencies are installed normally.
+The package Makefile keeps `codex-subagent-bridge` as an optional sibling source path for local bridge-backend development, but it expects `agent-handoff-mcp` to be installed as a normal package dependency.
 
 Direct commands also work:
 
@@ -75,4 +67,4 @@ For local source execution without installation:
 PYTHONPATH=src python -m agent_orchestrator_mcp --help
 ```
 
-If you are testing against sibling checkouts instead of installed dependencies, extend `PYTHONPATH` with those sibling `src` directories as needed.
+If you are testing against a sibling `codex-subagent-bridge` checkout instead of an installed bridge dependency, extend `PYTHONPATH` with that sibling `src` directory as needed.

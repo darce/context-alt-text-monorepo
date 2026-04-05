@@ -32,7 +32,7 @@ Default workspace-owned state:
 
 `CURRENT_TASK.md` now renders a compact cross-task dashboard header above the active task detail section. The dashboard is derived from the same aggregated task-state query used by `get_handoff_state(view="dashboard")`, so switching tasks preserves visibility into other active or recently active tasks without creating extra files.
 
-For extracted-consumer setups, replace the local `uv tool install ./packages/agent-handoff-mcp` step with the private git+ssh source for `darce/mcp-agent-handoff`; the installed binary shape stays the same.
+The monorepo now consumes `agent-handoff-mcp` from the private git+ssh source for `darce/mcp-agent-handoff`; the installed binary shape stays the same.
 
 Runtime bootstrap:
 
@@ -40,7 +40,7 @@ Runtime bootstrap:
 cd "${REPO_ROOT:-$PWD}"
 
 # Core ledger server
-uv tool install ./packages/agent-handoff-mcp
+uv tool install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-handoff.git"
 
 # Orchestration server (daemons, workers, lanes, metrics)
 uv tool install ./packages/agent-orchestrator-mcp
@@ -56,7 +56,6 @@ agent-orchestrator-mcp --workspace-root "$(pwd)" doctor
 Notes:
 
 - `doctor` hard-fails when the local SQLite build lacks FTS5; artifact indexing depends on it.
-- When running from repo source instead of an installed binary, use `PYTHONPATH="packages/agent-handoff-mcp/src:packages/codex-subagent-bridge/src" python3 -m agent_handoff_mcp ...`.
 - `dashboard-live` does not require optional UI packages. `dashboard-tui` uses Textual when installed, then `rich.live`, then plain text.
 
 ## MCP Tool Surface
@@ -149,7 +148,7 @@ print(sorted(TOOL_DESCRIPTIONS))
 
 Recovery:
 
-- treat `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py` as the live source of truth
+- treat the installed `agent-handoff-mcp` package and this contract as the live source of truth for the ledger surface in this monorepo
 - update stale docs, skills, or wrappers in the same slice
 - prefer minimal valid payloads when a write bounces on signature drift
 

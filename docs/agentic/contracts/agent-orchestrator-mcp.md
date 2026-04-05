@@ -32,6 +32,7 @@ Default workspace-owned state:
 Runtime bootstrap:
 
 ```bash
+uv tool install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-handoff.git"
 uv tool install ./packages/agent-orchestrator-mcp
 
 # Validate runtime wiring and orchestration/ directory resolution
@@ -41,7 +42,7 @@ agent-orchestrator-mcp --workspace-root "$(pwd)" doctor
 Notes:
 
 - `doctor` verifies the `orchestration/` directory, daemon script presence, and DB accessibility.
-- When running from repo source: `PYTHONPATH="packages/agent-handoff-mcp/src:packages/agent-orchestrator-mcp/src:packages/codex-subagent-bridge/src" python3 -m agent_orchestrator_mcp ...`.
+- When running from repo source: `PYTHONPATH="packages/agent-orchestrator-mcp/src:packages/codex-subagent-bridge/src" python3 -m agent_orchestrator_mcp ...`.
 
 ## MCP Tool Surface
 
@@ -313,7 +314,7 @@ Lane manifests at `config/lane-orchestration/<task-ref>.json` support these hard
 
 ## BackendAdapter Protocol
 
-All execution backends MUST implement the `BackendAdapter` protocol defined in `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/backend_registry.py`. This ensures consistent handling of `execute()` and `resolve_reasoning_effort()` across Codex, Claude, and local models.
+All execution backends MUST implement the `BackendAdapter` protocol defined in `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/backend_registry.py`. This ensures consistent handling of `execute()` and `resolve_reasoning_effort()` across Codex, Claude, and local models.
 
 ## Tool Signatures (Key)
 

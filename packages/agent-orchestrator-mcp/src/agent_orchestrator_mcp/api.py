@@ -219,20 +219,33 @@ def _import_orchestration_module(name: str) -> Any:
     orchestration_dir = _orchestration_dir()
     if str(orchestration_dir) not in sys.path:
         sys.path.insert(0, str(orchestration_dir))
+    bare_module = sys.modules.get(name)
+    if bare_module is not None:
+        return bare_module
     return importlib.import_module(f"agent_orchestrator_mcp.orchestration.{name}")
 
 
-def _handoff_pythonpath() -> str:
+def _runtime_pythonpath() -> str:
     package_root = Path(__file__).resolve().parents[4]
-    pythonpath_parts = [
-        str(package_root / "packages" / "agent-orchestrator-mcp" / "src"),
+    disallowed_parts = {
         str(package_root / "packages" / "agent-handoff-mcp" / "src"),
+        str(package_root / "packages" / "agent-orchestrator-mcp" / "src"),
+    }
+    pythonpath_parts = [
         str(package_root / "packages" / "codex-subagent-bridge" / "src"),
     ]
     existing = os.environ.get("PYTHONPATH")
     if existing:
-        pythonpath_parts.append(existing)
+        pythonpath_parts.extend(part for part in existing.split(":") if part and part not in disallowed_parts)
     return ":".join(part for part in pythonpath_parts if part)
+
+
+def _daemon_runtime_env() -> dict[str, str]:
+    env = dict(os.environ)
+    runtime_pythonpath = _runtime_pythonpath()
+    if runtime_pythonpath:
+        env["PYTHONPATH"] = runtime_pythonpath
+    return env
 
 
 def _orchestrator_paths() -> dict[str, Path]:
@@ -359,8 +372,7 @@ def orchestrator_start(
             }
         )
 
-    env = dict(os.environ)
-    env["PYTHONPATH"] = _handoff_pythonpath()
+    env = _daemon_runtime_env()
     cmd = [
         sys.executable,
         str(paths["script_path"]),
@@ -526,8 +538,7 @@ def orchestrator_single_cycle(
     except RuntimeError as exc:
         return core._json_response({"ok": False, "error": str(exc)})
 
-    env = dict(os.environ)
-    env["PYTHONPATH"] = _handoff_pythonpath()
+    env = _daemon_runtime_env()
     cmd = [
         sys.executable,
         str(paths["script_path"]),
@@ -615,7 +626,7 @@ def worker_start(
         worktree_path=worktree_path,
         session=session or f"{task_ref}-{lane_id}",
         python_executable=sys.executable,
-        pythonpath=_handoff_pythonpath(),
+        pythonpath=_runtime_pythonpath(),
         backend=backend_name,
         session_mode=session_mode,
         reasoning_effort=reasoning_effort,

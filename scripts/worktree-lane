@@ -52,11 +52,6 @@ resolve_python_command() {
 resolve_mcp_command() {
   resolve_python_command
 
-  if [ -f "$REPO_ROOT/packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py" ]; then
-    MCP_CMD=(env "PYTHONPATH=$REPO_ROOT/packages/agent-handoff-mcp/src${PYTHONPATH:+:$PYTHONPATH}" "${PYTHON_CMD[@]}" -m agent_handoff_mcp)
-    return
-  fi
-
   if command -v agent-handoff-mcp >/dev/null 2>&1; then
     MCP_CMD=(agent-handoff-mcp)
     return
@@ -67,11 +62,7 @@ resolve_mcp_command() {
     return
   fi
 
-  if [ -f "$REPO_ROOT/packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py" ]; then
-    die "required command not found: pyenv or python3"
-  fi
-
-  die "required command not found: agent-handoff-mcp"
+  die "required command not found: agent-handoff-mcp (install darce/mcp-agent-handoff first)"
 }
 
 git_root() {

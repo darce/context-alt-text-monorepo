@@ -6,9 +6,8 @@ args = ["-y", "@upstash/context7-mcp@2.1.4"]
 PATH = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 [mcp_servers."altcontext-mcp"]
-command = "python3"
+command = "agent-handoff-mcp"
 args = [
-  "/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp_launcher.py",
   "--workspace-root",
   "/Users/daniel/Development/context-alt-text-monorepo",
   "--state-dir",
@@ -23,4 +22,3 @@ cwd = "/Users/daniel/Development/context-alt-text-monorepo"
 
 [mcp_servers."altcontext-mcp".env]
 PYENV_VERSION = "description-service"
-PYTHONPATH = "/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src:/Users/daniel/Development/context-alt-text-monorepo/packages/codex-subagent-bridge/src"

@@ -235,8 +235,7 @@ dashboard-tui:
 # Usage: make artifact-search TASK=<task> QUERY="schema missing" [LANE=<lane-id>]
 artifact-search:
 	@$(if $(QUERY),,$(error QUERY is required: make artifact-search TASK=<task> QUERY="..."))
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py" \
-		--workspace-root "$(ORCHESTRATOR_ROOT)" \
+	@$(MCP_CMD) $(MCP_STATE_ARGS) \
 		artifact-search \
 		--query "$(QUERY)" \
 		$(if $(TASK),--task-ref "$(TASK)",) \
@@ -246,8 +245,7 @@ artifact-search:
 # List indexed artifact sources for the current task/lane
 # Usage: make artifact-list TASK=<task> [LANE=<lane-id>]
 artifact-list:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) "$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py" \
-		--workspace-root "$(ORCHESTRATOR_ROOT)" \
+	@$(MCP_CMD) $(MCP_STATE_ARGS) \
 		artifact-list \
 		$(if $(TASK),--task-ref "$(TASK)",) \
 		$(if $(LANE),--lane-id "$(LANE)",) \

@@ -3,7 +3,6 @@ name: Handoff Integrity
 on:
   pull_request:
     paths:
-      - "packages/agent-handoff-mcp/**"
       - "packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/handoff_integrity_guard.py"
       - "docs/agentic/BOOTSTRAP.md"
       - "docs/agentic/instructions.md"
@@ -16,7 +15,6 @@ on:
       - master
       - develop
     paths:
-      - "packages/agent-handoff-mcp/**"
       - "packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/handoff_integrity_guard.py"
       - "docs/agentic/BOOTSTRAP.md"
       - "docs/agentic/instructions.md"
@@ -39,7 +37,7 @@ jobs:
           cache: "pip"
 
       - name: Install agent-handoff-mcp
-        run: pip install -e packages/agent-handoff-mcp
+        run: pip install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-handoff.git"
 
       - name: Install agent-orchestrator-mcp
         run: pip install -e packages/agent-orchestrator-mcp
@@ -49,5 +47,5 @@ jobs:
 
       - name: Run handoff integrity guard
         run: |
-          PYTHONPATH="packages/agent-handoff-mcp/src:packages/agent-orchestrator-mcp/src" \
+          PYTHONPATH="packages/agent-orchestrator-mcp/src" \
             python packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/handoff_integrity_guard.py

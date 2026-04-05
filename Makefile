@@ -33,16 +33,15 @@ IN_ORCHESTRATOR_ROOT := $(if $(filter $(WORKTREE_ROOT_REAL),$(ORCHESTRATOR_ROOT)
 MCP_PYENV_VERSION ?= description-service
 MCP_PYENV_BIN := $(shell command -v pyenv 2>/dev/null || true)
 MCP_PYTHON = $(if $(MCP_PYENV_BIN),env PYENV_VERSION="$(MCP_PYENV_VERSION)" "$(MCP_PYENV_BIN)" exec python3,env PYENV_VERSION="$(MCP_PYENV_VERSION)" python3)
+MCP_RUNTIME_ENV = env PYENV_VERSION="$(MCP_PYENV_VERSION)"
 ORCHESTRATION_DIR := $(ORCHESTRATOR_ROOT)/packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration
 WORKTREE_ORCHESTRATION_DIR := $(WORKTREE_ROOT_REAL)/packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration
 LANE_CONFIG_CMD = $(MCP_PYTHON) "$(ORCHESTRATION_DIR)/lane_config.py"
-MCP_PYTHONPATH := $(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src:$(ORCHESTRATOR_ROOT)/packages/agent-orchestrator-mcp/src:$(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
-WORKTREE_MCP_PYTHONPATH := $(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src:$(WORKTREE_ROOT_REAL)/packages/agent-orchestrator-mcp/src:$(WORKTREE_ROOT_REAL)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
-MCP_CMD = PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_handoff_mcp
+MCP_PYTHONPATH := $(ORCHESTRATOR_ROOT)/packages/agent-orchestrator-mcp/src:$(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
+WORKTREE_MCP_PYTHONPATH := $(WORKTREE_ROOT_REAL)/packages/agent-orchestrator-mcp/src:$(WORKTREE_ROOT_REAL)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
+MCP_CMD = $(MCP_RUNTIME_ENV) agent-handoff-mcp
 MCP_STATE_ARGS = --workspace-root "$(ORCHESTRATOR_ROOT)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports"
 PYTHON ?= $(MCP_PYTHON)
-HANDOFF_SRC := packages/agent-handoff-mcp/src
-HANDOFF_TESTS := packages/agent-handoff-mcp/tests
 ORCHESTRATOR_SRC := packages/agent-orchestrator-mcp/src
 ORCHESTRATOR_TESTS := packages/agent-orchestrator-mcp/tests
 
@@ -143,19 +142,14 @@ help:
 	@echo "Cross-Repo Operations:"
 	@echo "  make check-all    - Run all checks (lint + types + tests)"
 	@echo "  make check-frontend - Run frontend checks (lint + types + arch + tests)"
-	@echo "  make check-mcp    - Run lint, mypy, and tests for the MCP Python packages"
-	@echo "  make check-handoff - Run lint, mypy, and tests for agent-handoff-mcp"
+	@echo "  make check-mcp    - Run lint, mypy, and tests for the monorepo MCP consumer package"
 	@echo "  make check-orchestrator - Run lint, mypy, and tests for agent-orchestrator-mcp"
 	@echo "  make lint-all     - Run linters for all apps"
-	@echo "  make lint-handoff - Run Ruff for agent-handoff-mcp"
 	@echo "  make lint-orchestrator - Run Ruff for agent-orchestrator-mcp"
-	@echo "  make format-handoff - Format agent-handoff-mcp with Ruff"
 	@echo "  make format-orchestrator - Format agent-orchestrator-mcp with Ruff"
-	@echo "  make mypy-handoff - Run mypy for agent-handoff-mcp"
 	@echo "  make mypy-orchestrator - Run mypy for agent-orchestrator-mcp"
 	@echo "  make fix-php-style - Auto-fix WordPress plugin PHPCS violations (manual)"
 	@echo "  make test-all     - Run tests for all apps"
-	@echo "  make test-handoff - Run agent-handoff-mcp tests"
 	@echo "  make test-orchestrator - Run agent-orchestrator-mcp tests"
 	@echo "  make clean-all    - Clean cache files in all apps"
 	@echo "  make reset-local  - Reset local backend DB + WordPress projection data (destructive, dev-only)"
@@ -245,15 +239,14 @@ check-all:
 		echo "✅ Lane-scoped checks passed for $(LANE)!"; \
 		else \
 			$(MAKE) lint-all; \
-			$(MAKE) mypy-handoff; \
 			$(MAKE) mypy-orchestrator; \
 			$(MAKE) test-all; \
 			echo ""; \
 			echo "✅ All monorepo checks passed!"; \
 		fi
 
-check-mcp: check-handoff check-orchestrator
-	@echo "✅ MCP package checks passed!"
+check-mcp: check-orchestrator
+	@echo "✅ MCP consumer checks passed!"
 
 check-frontend:
 	@set -eu; \
@@ -278,9 +271,6 @@ lint-all:
 		else \
 			echo "=== Linting Python (backend) ==="; \
 			( cd apps/prototype-description-service && make lint ); \
-			echo ""; \
-			echo "=== Linting Agent Handoff MCP ==="; \
-			$(MAKE) lint-handoff; \
 			echo ""; \
 			echo "=== Linting Agent Orchestrator MCP ==="; \
 			$(MAKE) lint-orchestrator; \
@@ -307,9 +297,6 @@ test-all:
 			echo "=== Testing Python (backend) ==="; \
 			( cd apps/prototype-description-service && make test ); \
 			echo ""; \
-			echo "=== Testing Agent Handoff MCP ==="; \
-			$(MAKE) test-handoff; \
-			echo ""; \
 			echo "=== Testing Agent Orchestrator MCP ==="; \
 			$(MAKE) test-orchestrator; \
 			echo ""; \
@@ -321,13 +308,9 @@ test-all:
 
 # Test the handoff/MCP package from the monorepo root.
 test-handoff:
-	@set -eu; \
-	if [ "$(IN_LANE_WORKTREE)" = "1" ]; then \
-		echo "Lane worktree detected ($(LANE)); agent-handoff-mcp tests are orchestrator-root tooling tests, so they are skipped here."; \
-		exit 0; \
-	fi; \
-	PYTHONPATH="$(MCP_PYTHONPATH)" \
-	$(PYTHON) -m pytest $(HANDOFF_TESTS) -q
+	@echo "agent-handoff-mcp is now verified in its standalone repository."
+	@echo "Run the handoff test suite from darce/mcp-agent-handoff instead of this monorepo."
+	@exit 1
 
 test-orchestrator:
 	@set -eu; \
@@ -339,43 +322,48 @@ test-orchestrator:
 	$(PYTHON) -m pytest $(ORCHESTRATOR_TESTS) -q
 
 lint-handoff:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" \
-	$(PYTHON) -m ruff check $(HANDOFF_SRC) $(HANDOFF_TESTS)
+	@echo "agent-handoff-mcp lint now runs in the standalone repository."
+	@echo "Run lint from darce/mcp-agent-handoff instead of this monorepo."
+	@exit 1
 
 lint-orchestrator:
 	@PYTHONPATH="$(MCP_PYTHONPATH)" \
 	$(PYTHON) -m ruff check $(ORCHESTRATOR_SRC) $(ORCHESTRATOR_TESTS)
 
 fix-lint-handoff:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" \
-	$(PYTHON) -m ruff check --fix $(HANDOFF_SRC) $(HANDOFF_TESTS)
+	@echo "agent-handoff-mcp lint fixes now run in the standalone repository."
+	@echo "Run fix-lint from darce/mcp-agent-handoff instead of this monorepo."
+	@exit 1
 
 fix-lint-orchestrator:
 	@PYTHONPATH="$(MCP_PYTHONPATH)" \
 	$(PYTHON) -m ruff check --fix $(ORCHESTRATOR_SRC) $(ORCHESTRATOR_TESTS)
 
-fix-lint-mcp: fix-lint-handoff fix-lint-orchestrator
+fix-lint-mcp: fix-lint-orchestrator
 
 format-handoff:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" \
-	$(PYTHON) -m ruff format $(HANDOFF_SRC) $(HANDOFF_TESTS)
+	@echo "agent-handoff-mcp formatting now runs in the standalone repository."
+	@echo "Run format from darce/mcp-agent-handoff instead of this monorepo."
+	@exit 1
 
 format-orchestrator:
 	@PYTHONPATH="$(MCP_PYTHONPATH)" \
 	$(PYTHON) -m ruff format $(ORCHESTRATOR_SRC) $(ORCHESTRATOR_TESTS)
 
 mypy-handoff:
-	@MYPYPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src:$(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src" \
-	PYTHONPATH="$(MCP_PYTHONPATH)" \
-	$(PYTHON) -m mypy $(HANDOFF_SRC)
+	@echo "agent-handoff-mcp type checking now runs in the standalone repository."
+	@echo "Run mypy from darce/mcp-agent-handoff instead of this monorepo."
+	@exit 1
 
 mypy-orchestrator:
-	@MYPYPATH="$(ORCHESTRATOR_ROOT)/packages/agent-orchestrator-mcp/src:$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src:$(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src" \
+	@MYPYPATH="$(ORCHESTRATOR_ROOT)/packages/agent-orchestrator-mcp/src:$(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src" \
 	PYTHONPATH="$(MCP_PYTHONPATH)" \
 	$(PYTHON) -m mypy --ignore-missing-imports $(ORCHESTRATOR_SRC)
 
-check-handoff: lint-handoff mypy-handoff test-handoff
-	@echo "✅ agent-handoff-mcp checks passed!"
+check-handoff:
+	@echo "agent-handoff-mcp is no longer checked from this monorepo."
+	@echo "Run checks from darce/mcp-agent-handoff instead."
+	@exit 1
 
 check-orchestrator: lint-orchestrator mypy-orchestrator test-orchestrator
 	@echo "✅ agent-orchestrator-mcp checks passed!"
@@ -470,7 +458,7 @@ dev-stop:
 # Print a markdown metrics snapshot for the current task.
 # Usage: make ace-metrics TASK=<task-ref>
 ace-metrics:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_handoff_mcp.orchestration.ace_metrics \
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.ace_metrics \
 		--task-ref "$(TASK)" \
 		--state-dir .task-state \
 		--logs-dir logs \
@@ -479,7 +467,7 @@ ace-metrics:
 # Print a JSON metrics snapshot (also appends to .task-state/metrics.jsonl).
 # Usage: make ace-metrics-json TASK=<task-ref>
 ace-metrics-json:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_handoff_mcp.orchestration.ace_metrics \
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.ace_metrics \
 		--task-ref "$(TASK)" \
 		--state-dir .task-state \
 		--logs-dir logs \
@@ -489,7 +477,7 @@ ace-metrics-json:
 # Must be run from the orchestrator root; never from daemon or worker context.
 # Usage: make ace-reflect TASK=<task-ref>
 ace-reflect:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_handoff_mcp.orchestration.ace_reflect \
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.ace_reflect \
 		--task-ref "$(TASK)" \
 		--state-dir .task-state \
 		--instruction-files docs/agentic/instructions.md
@@ -497,7 +485,7 @@ ace-reflect:
 # Show pruning candidates across instruction files.
 # Usage: make ace-curation-report
 ace-curation-report:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_handoff_mcp.orchestration.ace_reflect \
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.ace_reflect \
 		--task-ref "$(TASK)" \
 		--state-dir .task-state \
 		--instruction-files docs/agentic/instructions.md \
@@ -506,7 +494,7 @@ ace-curation-report:
 # Print time-series sparklines from accumulated metrics history.
 # Usage: make ace-trends TASK=<task-ref>
 ace-trends:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_handoff_mcp.orchestration.ace_metrics \
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.ace_metrics \
 		--task-ref "$(TASK)" \
 		--state-dir .task-state \
 		--sparklines

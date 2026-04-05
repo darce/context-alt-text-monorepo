@@ -1282,18 +1282,9 @@ class TestOwnedPathsOverrideNormalizer:
     """Verify that _normalize_lane_message_payload passes owned_paths_override through."""
 
     def _core(self):
-        import importlib.util as _iu
+        import importlib
 
-        mcp_root = REPO_ROOT / "packages" / "agent-handoff-mcp" / "src"
-        path = mcp_root / "agent_handoff_mcp" / "core.py"
-        spec = _iu.spec_from_file_location("agent_handoff_mcp.core", path)
-        if spec is None or spec.loader is None:
-            raise RuntimeError(f"Unable to load core.py from {path}")
-        mod = _iu.module_from_spec(spec)
-        if str(mcp_root) not in sys.path:
-            sys.path.insert(0, str(mcp_root))
-        spec.loader.exec_module(mod)
-        return mod
+        return importlib.import_module("agent_handoff_mcp.core")
 
     def test_owned_paths_override_normalized(self) -> None:
         """owned_paths_override list is preserved in normalized payload."""

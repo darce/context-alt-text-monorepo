@@ -84,7 +84,7 @@ Two MCP servers are registered for this workspace. VS Code and Claude Code manag
 Handles task state, review findings, exports/imports, close checks, and artifacts (27 tools).
 
 ```text
-.vscode/mcp.json  →  python3 packages/agent-handoff-mcp/src/agent_handoff_mcp_launcher.py --workspace-root <repo> ... serve-stdio
+.vscode/mcp.json  →  scripts/mcp/mcp-server.sh run  →  agent-handoff-mcp --workspace-root <repo> serve-stdio
 ```
 
 ### Orchestration Server (`agent-orchestrator-mcp`)
@@ -98,7 +98,7 @@ Handles daemons, workers, lane management, plan cursors, and turn metrics (~38 t
 Both servers share `handoff.db` and `mcp-artifacts.db` on disk; SQLite WAL mode makes concurrent readers safe. Install both:
 
 ```bash
-uv tool install ./packages/agent-handoff-mcp
+uv tool install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-handoff.git"
 uv tool install ./packages/agent-orchestrator-mcp
 ```
 
@@ -109,7 +109,7 @@ The old repo-intel helpers remain a separate decomposition task and are not part
 - VS Code 1.99+ with Copilot (or other MCP-capable client)
 - `.vscode/mcp.json` already committed to the repo
 - Python 3.11+ environment
-- Repo-local package sources at `packages/agent-handoff-mcp/src` and `packages/agent-orchestrator-mcp/src`
+- Installed `agent-handoff-mcp` plus the repo-local `packages/agent-orchestrator-mcp/src`
 - Python resolved through pyenv or another Python 3.11+ environment with the
   package dependencies installed
 
@@ -118,7 +118,7 @@ The old repo-intel helpers remain a separate decomposition task and are not part
 Local install from a checked-out repo:
 
 ```bash
-uv tool install /path/to/context-alt-text-monorepo/packages/agent-handoff-mcp
+uv tool install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-handoff.git"
 uv tool install /path/to/context-alt-text-monorepo/packages/agent-orchestrator-mcp
 ```
 
@@ -261,7 +261,7 @@ A count of `-1` for any table means the table is absent and structured search is
 
 `make lane-run` automates worker execution via `codex exec`. The pipeline:
 
-1. `packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/lane_prompt.py` renders an actionable worker prompt from MCP state (open lane messages, pending actions, open blockers, open findings).
+1. `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/lane_prompt.py` renders an actionable worker prompt from MCP state (open lane messages, pending actions, open blockers, open findings).
 2. `codex exec` runs in the lane worktree with that prompt.
 3. The worker outputs a structured JSON result matching the schema from `scripts/mcp/lane_result.py schema`.
 4. `scripts/mcp/lane_result.py handoff` converts the result into a `scripts/worktree-lane report` call.

@@ -15,7 +15,6 @@ context-alt-text-monorepo/
         prototype-description-service/  # Recognition service (Python FastAPI + InsightFace)
     packages/
         shared-contracts/               # JSON schemas for cross-service types
-        wp-testing-helpers/             # PHPUnit test utilities
     docs/
         agentic/                        # Agent-optimized docs (instructions, rules, contracts, diagrams)
         roadmaps/                       # Project roadmaps (v0.1.0 active, v3 vision, v4 placeholder)
@@ -80,6 +79,7 @@ make test              # pytest
 - Branch from `main`: `feature/<description>`, `fix/<description>`, `docs/<description>`
 - [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`
 - AI agents start at [docs/agentic/instructions.md](docs/agentic/instructions.md)
+- The canonical `agent-handoff-mcp` package now lives in the private `darce/mcp-agent-handoff` repository; this monorepo consumes it as an external dependency during the extraction rollout.
 
 ---
 

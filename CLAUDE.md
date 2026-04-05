@@ -44,7 +44,7 @@ Additional routing: see [docs/agentic/instructions.md](docs/agentic/instructions
 > **You may ONLY modify files within this monorepo.**
 
 Allowed: `apps/prototype-wp-alt-context/`, `apps/prototype-description-service/`, `packages/` (only package directories present in this checkout), `docs/`, `scripts/`.
-If `agent-handoff-mcp` has been extracted into the standalone `darce/mcp-agent-handoff` repo, treat that external repo as out of bounds unless the workspace is opened there directly.
+Treat the standalone `darce/mcp-agent-handoff` repo as out of bounds unless the workspace is opened there directly. `agent-handoff-mcp` no longer lives in this monorepo checkout.
 Never modify WordPress core, LocalWP config, `~/Local Sites/`, or system config files.
 
 ### Greenfield Policy
@@ -93,7 +93,7 @@ This project has NO production users and NO existing data to preserve.
 - [rg-008] helpful=1 harmful=0 :: Config files: validate at load time. Fail fast on missing or malformed required keys.
 - [rg-009] helpful=1 harmful=0 :: No task-specific logic in generic modules. Extract to config-driven policy or the task's manifest.
 - [rg-010] helpful=1 harmful=0 :: IDE tool output may be stale after external writes (git rebase, worktree ops). Cross-check with terminal before recording a finding.
-- [rg-013] helpful=1 harmful=0 :: `core.py` must remain pure handoff-state CRUD. No orchestration imports, no subprocess calls, no lock management. Scope: the checked-in `agent-handoff-mcp` package in the active workspace, or the standalone checkout if that repo is opened directly.
+- [rg-013] helpful=1 harmful=0 :: `core.py` must remain pure handoff-state CRUD. No orchestration imports, no subprocess calls, no lock management. Scope: the active `agent-handoff-mcp` checkout, whether that is the transitional in-repo copy during extraction work or the standalone checkout opened directly.
 - [rg-014] helpful=1 harmful=0 :: Orchestration modules must use late-binding imports (function-level) for `agent_handoff_mcp` symbols.
 - [rg-015] helpful=1 harmful=0 :: Boundary adapters must not invent contract metadata. Every envelope field must come from the request, upstream payload, or an explicitly documented fallback.
 - [rg-016] helpful=0 harmful=0 :: PHP runtime autoload parity must match tests. Verify with `php -r "require 'vendor/autoload.php'; var_export(class_exists(...));"`.

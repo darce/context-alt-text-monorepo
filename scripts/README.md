@@ -9,14 +9,14 @@ scripts/
 ├── localwp-db.sh          # Connect to LocalWP MySQL (auto-discovers socket)
 ├── worktree-lane          # Worktree + MCP helper for orchestrator/worker lanes
 └── mcp/
-    ├── mcp-server.sh       # Agent Handoff MCP launch shim (delegates to packages/agent-handoff-mcp)
+    ├── mcp-server.sh       # Agent Handoff MCP launch shim (delegates to installed agent-handoff-mcp)
     └── unified_server.py   # Legacy non-handoff/reference MCP implementation (deprecated)
 ```
 
 All orchestration Python modules (`ace_metrics`, `ace_reflect`, `worker_daemon`,
 `orchestrator_daemon`, backend adapters, etc.) live in
-[`packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/`](../packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/).
-Their tests live in [`packages/agent-handoff-mcp/tests/`](../packages/agent-handoff-mcp/tests/).
+[`packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/`](../packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/).
+Their tests live in [`packages/agent-orchestrator-mcp/tests/`](../packages/agent-orchestrator-mcp/tests/).
 
 ## localwp-db.sh
 
@@ -34,7 +34,7 @@ Supports `LOCALWP_SOCKET`, `LOCALWP_DB_NAME`, `LOCALWP_DB_USER`, `LOCALWP_DB_PAS
 
 Contains two files with distinct purposes:
 
-- **`mcp-server.sh`** -- launch shim used by `.vscode/mcp.json`. Prefers running the package from source (`packages/agent-handoff-mcp/`) so local branch fixes take effect immediately; falls back to an installed `agent-handoff-mcp` binary.
+- **`mcp-server.sh`** -- launch shim used by `.vscode/mcp.json`. Runs the installed `agent-handoff-mcp` entrypoint against the current workspace root.
 - **`unified_server.py`** -- legacy/reference implementation of the non-handoff repo-intel MCP workflow. It is no longer the handoff runtime and intentionally returns deprecation errors for all handoff tool calls. Retained only as a reference for any future non-handoff MCP extraction.
 
 `unified_server.py` is no longer the handoff runtime. It remains only as legacy/reference code for any future extraction of non-handoff repo-intel workflows.

@@ -992,17 +992,101 @@ def test_load_session_passes_sections_through(isolated_handoff: dict) -> None:
     assert result["open_findings"][0]["finding_id"] == "ls-sec-1"
 
 
+def test_review_findings_domain_tool_batch_record_and_list(isolated_handoff: dict) -> None:
+    _parse(mcp_server.set_handoff_state(task_ref="rf-domain", objective="Review findings domain", status="in_progress"))
+
+    written = _parse(
+        mcp_server.review_findings(
+            review={
+                "operation": "batch_record",
+                "session": "rf-domain",
+                "task_ref": "rf-domain",
+                "findings": [
+                    {
+                        "finding_id": "RF-001",
+                        "severity": "medium",
+                        "file_path": "a.py",
+                        "description": "First review finding.",
+                    },
+                    {
+                        "finding_id": "RF-002",
+                        "severity": "low",
+                        "file_path": "b.py",
+                        "description": "Second review finding.",
+                    },
+                ],
+            }
+        )
+    )
+    assert written["ok"] is True
+    assert written["written"] == 2
+
+    listed = _parse(
+        mcp_server.review_findings(
+            review={"operation": "list", "task_ref": "rf-domain", "status": "open", "detail": "summary"}
+        )
+    )
+    assert listed["ok"] is True
+    assert listed["total_matching"] == 2
+
+
+def test_review_runs_domain_tool_record_and_coverage(isolated_handoff: dict) -> None:
+    recorded = _parse(
+        mcp_server.review_runs(
+            review={
+                "operation": "record",
+                "review_run_id": "rr-domain-001",
+                "session": "rr-domain",
+                "subject_path": "docs/tasks/example.md",
+                "task_ref": "rr-domain",
+            }
+        )
+    )
+    assert recorded["ok"] is True
+    assert recorded["review_run"]["review_run_id"] == "rr-domain-001"
+
+    coverage = _parse(mcp_server.review_runs(review={"operation": "coverage", "task_ref": "rr-domain"}))
+    assert coverage["ok"] is True
+    assert coverage["run_count"] == 1
+
+
+def test_next_actions_domain_tool_add_and_list(isolated_handoff: dict) -> None:
+    _parse(mcp_server.set_handoff_state(task_ref="na-domain", objective="Next actions domain", status="in_progress"))
+
+    added = _parse(
+        mcp_server.next_actions(
+            action={
+                "operation": "add",
+                "task_ref": "na-domain",
+                "action": "Wire the next_actions domain tool",
+                "priority": 7,
+            }
+        )
+    )
+    assert added["ok"] is True
+    assert added["action"]["action"] == "Wire the next_actions domain tool"
+
+    listed = _parse(
+        mcp_server.next_actions(action={"operation": "list", "task_ref": "na-domain", "status": "pending", "limit": 10})
+    )
+    assert listed["ok"] is True
+    assert listed["returned"] == 1
+    assert listed["actions"][0]["action"] == "Wire the next_actions domain tool"
+
+
 @pytest.mark.parametrize(
     ("tool_name", "surface_class", "entity_family"),
     [
         ("get_handoff_state", "query", "handoff_state"),
-        ("list_review_findings", "query", "review_findings"),
+        ("next_actions", "action", "handoff_state"),
+        ("review_findings", "action", "review_findings"),
+        ("review_runs", "action", "review_runs"),
         ("handoff_close_check", "generator", "lifecycle"),
         ("generate_current_task_md", "generator", "lifecycle"),
         ("export_handoff_state", "generator", "lifecycle"),
         ("load_session", "query", "session"),
         ("close_slice", "action", "lifecycle"),
-        ("search_artifacts", "generator", "artifacts"),
+        ("artifacts", "action", "artifacts"),
         ("search_handoff", "generator", "handoff_state"),
     ],
 )

@@ -170,12 +170,12 @@ def test_ls_is_allowlisted() -> None:
         "cd ${REPO_ROOT:-$PWD} && make test-handoff",
         "cd /repo && pytest tests/ -x",
         "cd /repo && make test-handoff > /tmp/out.txt 2>&1; tail -5 /tmp/out.txt",
-        # cd + export combo (VS Code prepends cd <workspace> && before agent commands)
-        "cd ${REPO_ROOT:-$PWD} && export PYTHONPATH=packages/agent-handoff-mcp/src:packages/codex-subagent-bridge/src && pytest tests/ -v 2>&1 | tail -60",
+        # cd + env prefix combo (VS Code prepends cd <workspace> && before agent commands)
+        "cd ${REPO_ROOT:-$PWD} && PYENV_VERSION=description-service pytest tests/ -v 2>&1 | tail -60",
         # Env-var prefixed commands
         "PYENV_VERSION=description-service pytest tests/ -x",
         "export PYTHONPATH=pkg/src && pytest tests/",
-        'REPO_ROOT="${REPO_ROOT:-$PWD}" && PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}" && PYENV_VERSION=description-service "$PYENV_ROOT/versions/description-service/bin/python" -m pytest "$REPO_ROOT/packages/agent-handoff-mcp/tests/test_import_export_regressions.py" -q',
+        '${PYENV_ROOT:-$HOME/.pyenv}/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_import_export_regressions.py -q',
         # git ls-files: read-only file listing
         "git ls-files --others --exclude-standard -- apps/prototype-description-service/",
         # git log: read-only history queries

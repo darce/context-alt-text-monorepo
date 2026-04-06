@@ -23,12 +23,18 @@ except ImportError:
 
 def main():
     parser = argparse.ArgumentParser(description="Generate agent config from lane manifest.")
+    parser.add_argument(
+        "--orchestrator-root",
+        default=".",
+        help="Orchestrator workspace root used to resolve config/lane-orchestration manifests.",
+    )
     parser.add_argument("--task-ref", required=True, help="Task reference (e.g. 7.0/my-task)")
     parser.add_argument("--lane-id", required=True, help="Lane ID (e.g. frontend)")
     parser.add_argument("--output", type=Path, help="Optional output path (e.g. .agent/config.json)")
     args = parser.parse_args()
 
-    cfg = get_lane_config(args.task_ref, args.lane_id)
+    orchestrator_root = Path(args.orchestrator_root).expanduser().resolve()
+    cfg = get_lane_config(args.task_ref, args.lane_id, orchestrator_root=str(orchestrator_root))
     if not cfg:
         print(f"Error: Lane '{args.lane_id}' not found in manifest for task '{args.task_ref}'.")
         sys.exit(1)

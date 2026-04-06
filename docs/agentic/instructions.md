@@ -68,7 +68,7 @@ Use this checklist at session start, whether you are entering from a cold start,
 1. Query MCP handoff state first. Load the current task objective, open blockers, latest verification, and latest decisions with `get_handoff_state(task_ref="<task>")`.
 2. If you are working in a lane, load the lane inbox before editing. Use `make lane-inbox`, lane activity MCP reads, or the equivalent lane-status helper to pick up routed findings, blockers, and dispatch messages.
 3. Load role routing next. Choose the domain from the Role Selection table and read the linked context map, guidelines, and testing guide before touching code.
-4. Check open findings before proposing or repeating a fix. Use `list_review_findings(status="open")` so you do not re-raise known issues or miss already-assigned follow-up work.
+4. Check open findings before proposing or repeating a fix. Use `review_findings(review={"operation":"list","status":"open"})` so you do not re-raise known issues or miss already-assigned follow-up work.
 5. Verify the contract surface before implementation. If the task touches a service, language, schema, or MCP boundary, confirm the owning contract exists in [contracts/](contracts/) and load it before writing code. If no contract exists for the boundary, follow the Cross-Boundary Change Protocol in [rules/development-workflow.md](rules/development-workflow.md) to scaffold one before proceeding.
 6. Decide whether `ctx7` is needed. If the slice depends on upstream library or framework behavior, apply the `ctx7` entry criteria below before relying on memory or stale local notes.
 7. Ensure the work has an MCP task, even if there is no `docs/tasks/` plan. A task plan is optional; handoff state is not. If the current change does not fit the active task, switch to or initialize an ad hoc task before editing so the slice can be logged and reviewed.
@@ -158,7 +158,7 @@ If a task seems to require external changes, STOP and propose an alternative wit
 - [rg-008] helpful=1 harmful=0 :: **Config files: validate at load time.** JSON/YAML config consumed by multiple modules must be structurally validated at load time. Fail fast on missing or malformed required keys instead of silently returning empty defaults.
 - [rg-009] helpful=1 harmful=0 :: **No task-specific logic in generic modules.** If a generic utility contains `if task_ref == "some-task"` or hardcoded domain strings for a specific task, extract that logic to a config-driven policy module or the task's manifest. It becomes dead code once the task is done.
 - [rg-010] helpful=1 harmful=0 :: **IDE tool output may be stale after external writes.** Editor-integrated `read_file` and `grep_search` tools read from the IDE's in-memory file model, not from disk. After git operations (rebase, cherry-pick, merge, worktree intake) or edits by other agents/terminals, the model can lag behind the filesystem. When a review finding seems surprising, cross-check with a terminal command (`grep -n`, `wc -l`, `sed -n`) before recording it. This caused an entire review cycle of false positives against `scripts/mcp/orchestrator_daemon.py` (IDE showed ~700 lines, disk had 850).
-- [rg-013] helpful=1 harmful=0 :: **`agent_handoff_mcp/core.py` must remain pure handoff-state CRUD.** No orchestration imports, no subprocess calls, no lock management. Scope: the checked-in `agent-handoff-mcp` package in the active workspace (currently `packages/agent-handoff-mcp/`; after extraction, the standalone checkout if that repo is opened directly). Enforce during code review.
+- [rg-013] helpful=1 harmful=0 :: **`agent_handoff_mcp/core.py` must remain pure handoff-state CRUD.** No orchestration imports, no subprocess calls, no lock management. Scope: the standalone `agent-handoff-mcp` package available to the active workspace. Enforce during code review.
 - [rg-014] helpful=1 harmful=0 :: **`agent_orchestrator_mcp` modules must use late-binding imports** (function-level) for `agent_handoff_mcp` symbols to preserve the clean split seam and avoid load-time coupling. Scope: `packages/agent-orchestrator-mcp/`.
 - [rg-015] helpful=1 harmful=0 :: **Boundary adapters must not invent contract metadata.** When a controller/client/adapter wraps or normalizes remote payloads, every envelope field (`limit`, `offset`, `total`, `data_source`, status/projection metadata) must come from the request, the upstream payload, or an explicitly documented fallback. Never fabricate pagination or provenance metadata from convenience guesses like `count(payload)` unless the contract explicitly defines that derivation. If the upstream shape violates the expected contract, return an explicit error instead of silently supporting both shapes.
 - [rg-016] helpful=0 harmful=0 :: **PHP runtime autoload parity must match tests.** New runtime classes added under `apps/prototype-wp-alt-context/src/` with WordPress-style filenames (`class-*.php`, `interface-*.php`) are not PSR-4 autoloadable via Composer by default. When a new class is introduced in this naming scheme, either add the explicit `require_once` from the owning runtime entrypoint or use a PSR-4-compliant filename, and verify with a real runtime-style check such as `php -r "require 'vendor/autoload.php'; var_export(class_exists('AltContext\\\\Foo\\\\Bar'));"`
@@ -196,8 +196,7 @@ Reserve terminal for operations with no native-tool equivalent: test execution, 
 - Long-lived terminal sessions accumulate scrollback. A new `run_in_terminal` call in a polluted session can return 16 KB+ of stale output from prior commands. Prefer short, filtered commands over long pipelines.
 - **Background terminals lack pyenv virtualenv activation.** Only use the foreground terminal (or a terminal where `pyenv activate` has been run) for Python test commands. If the foreground session has stale scrollback, the `tee /tmp/` pattern above solves it without needing a new terminal.
 - **Use env vars in commands and settings.** Do not hardcode user-local absolute filesystem paths such as `/Users/...` in commands, docs, or workspace configuration. Prefer `${workspaceFolder}`, `${env:HOME}`, `${PYENV_ROOT:-$HOME/.pyenv}`, and `${REPO_ROOT:-$PWD}`.
-- **Package-test Python harness workaround.** For `packages/agent-handoff-mcp/` and `packages/agent-orchestrator-mcp/`, do not invoke IDE Python environment setup helpers. The workspace should pin `${env:HOME}/.pyenv/versions/description-service/bin/python`; run package tests from the foreground terminal with `PYENV_VERSION=description-service`, `pyenv exec python`, or `${PYENV_ROOT:-$HOME/.pyenv}/versions/description-service/bin/python`. If the IDE shows `Configuring a Python Environment` or `Preparing` for those package paths, stop retrying the harness and ask the user to run the terminal command directly.
-  - Example: `REPO_ROOT="${REPO_ROOT:-$PWD}" && PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}" && PYENV_VERSION=description-service "$PYENV_ROOT/versions/description-service/bin/python" -m pytest "$REPO_ROOT/packages/agent-handoff-mcp/tests/test_import_export_regressions.py" -q`
+- **Package-test Python harness workaround.** For `agent-orchestrator-mcp` in this monorepo and `agent-handoff-mcp` in its standalone checkout, do not invoke IDE Python environment setup helpers. The workspace should pin `${env:HOME}/.pyenv/versions/description-service/bin/python`; run package tests from the foreground terminal with `PYENV_VERSION=description-service`, `pyenv exec python`, or `${PYENV_ROOT:-$HOME/.pyenv}/versions/description-service/bin/python`. If the IDE shows `Configuring a Python Environment` or `Preparing` for those package paths, stop retrying the harness and ask the user to run the terminal command directly.
 
 ### Task Document Rules
 
@@ -345,23 +344,23 @@ Write-tool targeting rule:
 
 - Most write tools accept optional `task_ref`. When omitted, they target the active task.
 - In concurrent, cross-task, or review-audit workflows, pass `task_ref` explicitly on writes.
-- `record_decision`, `record_test_result`, `report_blocker`, and `update_next_actions` all support explicit `task_ref`.
+- `record_event` and `next_actions` support explicit `task_ref`. For `record_event`, pass it inside the typed `event` payload.
 - To switch tasks, use `switch_task(task_ref)`. For in-place updates to the current task, use `set_handoff_state(...)`.
 
 During-work discipline (abbreviated):
 
-- Record blockers immediately: `report_blocker(..., actor={ ... })`.
-- Record verification: `record_test_result(..., actor={ ... })`. Keep `result` as a concise proof line.
-- Record findings: `record_review_finding(..., details={ line_start?, line_end?, fix? }, actor={ ... })`. When logging **3 or more findings** in a single review pass, use `batch_record_review_findings` instead — one atomic write, one `CURRENT_TASK.md` flush, per-item results returned.
-- **Regenerate `CURRENT_TASK.md`** after any state-changing handoff operation — not just slice completions. This includes `record_decision`, `update_review_finding` (status changes), `report_blocker`, and `batch_record_review_findings`. Call `generate_current_task_md(task_ref=<active-task-ref>)` so the human-readable mirror stays current.
-- Validate review state with `get_review_findings_summary(...)` and `list_review_findings(...)`, not direct `sqlite3`.
+- Record blockers immediately: `record_event(event={event_kind: "blocker", task_ref: ..., actor: {...}, ...})`.
+- Record verification: `record_event(event={event_kind: "test_result", task_ref: ..., actor: {...}, ...})`. Keep `result` as a concise proof line.
+- Record findings with `review_findings(...)`. Use `review_findings(review={operation: "record", ...}, actor={ ... })` for 1-2 findings and `review_findings(review={operation: "batch_record", findings: [...], ...}, actor={ ... })` for 3 or more — one atomic write, one `CURRENT_TASK.md` flush, per-item results returned.
+- **Regenerate `CURRENT_TASK.md`** after any state-changing handoff operation — not just slice completions. This includes `record_event`, `review_findings(operation="update")`, and `review_findings(operation="batch_record")`. Call `generate_current_task_md(task_ref=<active-task-ref>)` so the human-readable mirror stays current.
+- Validate review state with `get_review_findings_summary(...)` and `review_findings(review={"operation":"list", ...})`, not direct `sqlite3`.
 
 Read discipline:
 
 - Do not query `.task-state/handoff.db` directly when MCP tools are available.
-- Use `get_handoff_state` for active-task snapshot, `get_review_findings_summary` (on `agent-orchestrator-mcp`) for counts, and `list_review_findings` for detailed review verification.
-- `list_review_findings(finding_id=...)` accepts either `finding_id` (human-readable string like `"H-OCI-28"`) for a single-finding lookup. Prefer `finding_id` when referencing findings from review output.
-- `list_review_findings` and `get_review_findings_summary` accept an optional `task_ref` to query findings on a non-active task. Use this instead of switching active state when verifying findings across multiple tasks.
+- Use `get_handoff_state` for active-task snapshot, `get_review_findings_summary` (on `agent-orchestrator-mcp`) for counts, and `review_findings(review={"operation":"list", ...})` for detailed review verification.
+- `review_findings(review={"operation":"list","finding_id":...})` accepts `finding_id` (human-readable string like `"H-OCI-28"`) for a single-finding lookup. Prefer `finding_id` when referencing findings from review output.
+- `review_findings(operation="list")` and `get_review_findings_summary` accept an optional `task_ref` to query findings on a non-active task. Use this instead of switching active state when verifying findings across multiple tasks.
 - Do **not** use legacy `scripts/mcp/unified_server.py` handoff tools or CLI subcommands. The only supported handoff surface is the packaged `agent-handoff-mcp` binary described in [contracts/agent-handoff-mcp.md](contracts/agent-handoff-mcp.md). See [../tasks/tech-debt/unified-server-retirement.md](../tasks/tech-debt/unified-server-retirement.md) for the tracked removal follow-up.
 
 State integrity invariants:
@@ -406,9 +405,9 @@ When a user request matches any of these patterns, **load and follow** [rules/br
 2. Read the relevant stack guide(s) based on files in the diff.
 3. Walk the common checklist + stack-specific checklist, citing files and lines.
 4. Classify each finding using the defined categories (ANTIPATTERN / DEAD_CODE / COMPLEXITY / GAP) and severities (HIGH / MEDIUM / LOW).
-5. Record findings in MCP handoff. Use `record_review_finding(...)` for 1–2 findings; use `batch_record_review_findings(findings=[...], actor={ ... }, task_ref=...)` for 3 or more (atomic write, single `CURRENT_TASK.md` flush, per-item results).
+5. Record findings in MCP handoff. Use `review_findings(review={"operation":"record", ...}, actor={ ... }, task_ref=...)` for 1-2 findings; use `review_findings(review={"operation":"batch_record", findings=[...], ...}, actor={ ... }, task_ref=...)` for 3 or more (atomic write, single `CURRENT_TASK.md` flush, per-item results).
 6. Produce the markdown report using the template.
-7. Call `record_decision(..., actor={ ... })` summarizing the review + `generate_current_task_md(...)`.
+7. Call `record_event(event={event_kind: "decision", actor: {...}, ...})` summarizing the review + `generate_current_task_md(...)`.
 
 **Do NOT** perform ad-hoc reviews. The guide exists to ensure consistent, structured, cross-agent-visible output.
 

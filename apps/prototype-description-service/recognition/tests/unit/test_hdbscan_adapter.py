@@ -5,6 +5,7 @@ from __future__ import annotations
 # Align with sklearn deprecation: use ensure_all_finite implementation for old alias.
 import importlib
 import importlib.util
+import inspect
 from typing import Any
 
 import numpy as np
@@ -25,6 +26,10 @@ except Exception:  # pragma: no cover - optional dependency for tests
 else:
     _orig_check_array = getattr(skl_validation, "check_array", None)
     ensure_all_finite = getattr(skl_validation, "ensure_all_finite", None)
+    _check_array_signature = inspect.signature(_orig_check_array) if _orig_check_array is not None else None
+    _supports_force_all_finite = (
+        _check_array_signature is not None and "force_all_finite" in _check_array_signature.parameters
+    )
 
     if ensure_all_finite is None:
 
@@ -57,8 +62,10 @@ else:
             if ensure_all_finite_arg is None and force_all_finite != "deprecated":
                 ensure_all_finite_arg = force_all_finite
 
-            kwargs["force_all_finite"] = "deprecated"
-            kwargs["ensure_all_finite"] = ensure_all_finite_arg
+            if _supports_force_all_finite:
+                kwargs["force_all_finite"] = "deprecated"
+            if ensure_all_finite_arg is not None:
+                kwargs["ensure_all_finite"] = ensure_all_finite_arg
             return _orig_check_array(*args, **kwargs)
 
         skl_validation.check_array = _check_array

@@ -96,9 +96,9 @@ def _build_textual_app(
                 "SUMMARY",
             )
             self._populate_table()
-            self.set_interval(interval, self._auto_refresh)
+            self.set_interval(interval, self._refresh_tick)
 
-        def _auto_refresh(self) -> None:
+        def _refresh_tick(self) -> None:
             self.refresh_count += 1
             self._populate_table()
 

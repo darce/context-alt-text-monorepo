@@ -18,19 +18,19 @@ def test_runtime_config_defaults_to_workspace_state() -> None:
     assert runtime.exports_dir == root / ".task-state" / "exports"
 
 
-def test_runtime_config_default_tool_profile_is_extended() -> None:
+def test_runtime_config_default_tool_profile_is_all() -> None:
     root = Path("/tmp/agent-handoff").resolve()
     runtime = RuntimeConfig.for_workspace(root)
-    assert runtime.tool_profile == "extended"
+    assert runtime.tool_profile == "all"
 
 
-def test_runtime_config_tool_profile_override_to_core() -> None:
+def test_runtime_config_legacy_tool_profile_override_to_core_normalizes_to_all() -> None:
     root = Path("/tmp/agent-handoff").resolve()
     runtime = RuntimeConfig.for_workspace(root, tool_profile="core")
-    assert runtime.tool_profile == "core"
+    assert runtime.tool_profile == "all"
 
 
-def test_runtime_config_from_args_reads_tool_profile_env() -> None:
+def test_runtime_config_from_args_reads_legacy_tool_profile_env_and_normalizes_to_all() -> None:
     root = Path("/tmp/agent-handoff").resolve()
 
     class FakeArgs:
@@ -42,10 +42,10 @@ def test_runtime_config_from_args_reads_tool_profile_env() -> None:
 
     with mock.patch.dict(os.environ, {"AGENT_HANDOFF_TOOL_PROFILE": "core"}):
         runtime = RuntimeConfig.from_args(FakeArgs())
-    assert runtime.tool_profile == "core"
+    assert runtime.tool_profile == "all"
 
 
-def test_runtime_config_from_args_defaults_to_extended() -> None:
+def test_runtime_config_from_args_defaults_to_all() -> None:
     root = Path("/tmp/agent-handoff").resolve()
 
     class FakeArgs:
@@ -58,10 +58,10 @@ def test_runtime_config_from_args_defaults_to_extended() -> None:
     with mock.patch.dict(os.environ, {}, clear=True):
         os.environ["AGENT_HANDOFF_WORKSPACE_ROOT"] = str(root)
         runtime = RuntimeConfig.from_args(FakeArgs())
-    assert runtime.tool_profile == "extended"
+    assert runtime.tool_profile == "all"
 
 
-def test_runtime_config_from_args_cli_flag_takes_precedence() -> None:
+def test_runtime_config_from_args_cli_flag_takes_precedence_but_normalizes_to_all() -> None:
     root = Path("/tmp/agent-handoff").resolve()
 
     class FakeArgs:
@@ -73,7 +73,7 @@ def test_runtime_config_from_args_cli_flag_takes_precedence() -> None:
 
     with mock.patch.dict(os.environ, {"AGENT_HANDOFF_TOOL_PROFILE": "core"}):
         runtime = RuntimeConfig.from_args(FakeArgs())
-    assert runtime.tool_profile == "extended"
+    assert runtime.tool_profile == "all"
 
 
 def test_runtime_config_rejects_invalid_tool_profile() -> None:

@@ -9,7 +9,7 @@ Attach `agent-handoff-mcp` to a Codex session as a custom MCP so handoff and orc
 
 - A machine with the authoritative repo checkout (the "authoritative checkout host")
 - Python 3.11+ with `fastmcp` and dependencies installed
-- The `packages/agent-handoff-mcp/` package source available (either installed or on `PYTHONPATH`)
+- The installed `agent-handoff-mcp` CLI available on the authoritative checkout host
 - Network reachability between the Codex session and the host (localhost, SSH tunnel, or VPN)
 
 ## 1. Start the MCP server
@@ -29,9 +29,7 @@ make mcp-serve-http HOST=0.0.0.0 PORT=9000
 Or call the launcher directly:
 
 ```bash
-python3 packages/agent-handoff-mcp/src/agent_handoff_mcp_launcher.py \
-  --workspace-root "$(pwd)" \
-  serve-http --host 127.0.0.1 --port 8741
+agent-handoff-mcp --workspace-root "$(pwd)" serve-http --host 127.0.0.1 --port 8741
 ```
 
 The server binds to localhost only by default. See **Security** below if you need remote access.

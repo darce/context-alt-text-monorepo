@@ -96,6 +96,32 @@ def test_list_task_refs_reads_fixture_manifest(manifest_module) -> None:
     assert manifest_module.list_task_refs() == ["demo-task"]
 
 
+def test_list_task_refs_respects_orchestrator_root_override(tmp_path: Path) -> None:
+    module = _load_lane_manifest_module()
+    orchestrator_root = tmp_path / "external-root"
+    manifest_dir = orchestrator_root / "config" / "lane-orchestration"
+    manifest_dir.mkdir(parents=True)
+    (manifest_dir / "override-task.json").write_text(
+        json.dumps(
+            {
+                "task_ref": "override-task",
+                "merge_order": ["backend"],
+                "lanes": {
+                    "backend": {
+                        "branch": "codex/override-backend",
+                        "worktree_path": "{orchestrator_root}/worktrees/override-backend",
+                        "owned_paths": [],
+                        "test_commands": [],
+                    }
+                },
+                "downstream": {"backend": []},
+            }
+        )
+    )
+
+    assert module.list_task_refs(orchestrator_root=str(orchestrator_root)) == ["override-task"]
+
+
 def test_infer_lane_from_branch_uses_fixture_manifest(manifest_module) -> None:
     lane_id = manifest_module.infer_lane_from_branch("codex/demo-frontend", "demo-task")
     assert lane_id == "frontend"
@@ -222,6 +248,47 @@ def test_route_patterns_derives_from_owned_paths_when_routing_empty(manifest_mod
     patterns = manifest_module.route_patterns("demo-task")
     assert ("apps/backend/", "backend") in patterns
     assert ("docs/demo.md", "backend") in patterns
+
+
+def test_downstream_and_guidance_fallbacks_accept_orchestrator_root_override(tmp_path: Path) -> None:
+    module = _load_lane_manifest_module()
+    orchestrator_root = tmp_path / "external-root"
+    manifest_dir = orchestrator_root / "config" / "lane-orchestration"
+    manifest_dir.mkdir(parents=True)
+    (manifest_dir / "override-task.json").write_text(
+        json.dumps(
+            {
+                "task_ref": "override-task",
+                "merge_order": ["backend", "frontend"],
+                "lanes": {
+                    "backend": {
+                        "branch": "codex/override-backend",
+                        "worktree_path": "{orchestrator_root}/worktrees/override-backend",
+                        "owned_paths": [],
+                        "test_commands": [],
+                        "guidance_fallbacks": [
+                            {
+                                "match_any": ["remaining backend slice"],
+                                "subject": "backend next slice",
+                                "message": "Finish the backend slice.",
+                            }
+                        ],
+                    },
+                    "frontend": {
+                        "branch": "codex/override-frontend",
+                        "worktree_path": "{orchestrator_root}/worktrees/override-frontend",
+                        "owned_paths": [],
+                        "test_commands": [],
+                    },
+                },
+                "downstream": {"backend": ["frontend"], "frontend": []},
+            }
+        )
+    )
+
+    assert module.downstream_lanes("override-task", "backend", orchestrator_root=str(orchestrator_root)) == ["frontend"]
+    fallbacks = module.guidance_fallbacks("override-task", "backend", orchestrator_root=str(orchestrator_root))
+    assert fallbacks[0]["subject"] == "backend next slice"
 
 
 def test_lane_route_hints_include_branch_and_path_tokens(manifest_module) -> None:

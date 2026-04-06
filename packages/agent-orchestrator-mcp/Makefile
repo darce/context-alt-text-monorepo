@@ -5,9 +5,6 @@ MYPY_TARGETS := src
 PYTEST_TARGETS := tests
 
 LOCAL_PYTHONPATH := $(PACKAGE_ROOT)/src
-ifneq ($(wildcard $(PACKAGE_ROOT)/../agent-handoff-mcp/src),)
-LOCAL_PYTHONPATH := $(LOCAL_PYTHONPATH):$(PACKAGE_ROOT)/../agent-handoff-mcp/src
-endif
 ifneq ($(wildcard $(PACKAGE_ROOT)/../codex-subagent-bridge/src),)
 LOCAL_PYTHONPATH := $(LOCAL_PYTHONPATH):$(PACKAGE_ROOT)/../codex-subagent-bridge/src
 endif

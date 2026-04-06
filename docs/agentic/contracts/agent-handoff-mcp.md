@@ -6,7 +6,7 @@ boundary_owner: agentic-tooling
 
 ## Purpose
 
-`agent-handoff-mcp` is the portable MCP server for agent coordination state. After the E12-5/E12-6 split it exposes **28 tools** in its extended profile (**16 core**, **12 extended**) for task state, review findings, artifacts, export/import, and handoff close checks. Orchestration, daemon lifecycle, lane management, and turn metrics are served by [`agent-orchestrator-mcp`](agent-orchestrator-mcp.md).
+`agent-handoff-mcp` is the portable MCP server for agent coordination state. After the AHMCP-6 event, review, next-action, and artifact-domain consolidation plus profile-removal stretch work, it exposes a single **17-tool** MCP surface for task state, review findings, artifacts, export/import, and handoff close checks. Orchestration, daemon lifecycle, lane management, and turn metrics are served by [`agent-orchestrator-mcp`](agent-orchestrator-mcp.md).
 
 ## Runtime Configuration
 
@@ -18,7 +18,7 @@ Supported config inputs:
 - `--state-dir` or `AGENT_HANDOFF_STATE_DIR`
 - `--current-task-path` or `AGENT_HANDOFF_CURRENT_TASK_PATH`
 - `--exports-dir` or `AGENT_HANDOFF_EXPORTS_DIR`
-- `--tool-profile` or `AGENT_HANDOFF_TOOL_PROFILE` — `extended` (default) or `core`; extended exposes all 28 tools and core exposes the 16 daily-use ledger tools
+- `--tool-profile` or `AGENT_HANDOFF_TOOL_PROFILE` — legacy compatibility input. `all`, `core`, and `extended` are accepted, but all launches now expose the same 17-tool surface.
 - `AGENT_HANDOFF_DEFAULT_AGENT`
 - `AGENT_HANDOFF_DEFAULT_BRANCH`
 - `AGENT_HANDOFF_DEFAULT_COMMIT_SHA`
@@ -32,7 +32,7 @@ Default workspace-owned state:
 
 `CURRENT_TASK.md` now renders a compact cross-task dashboard header above the active task detail section. The dashboard is derived from the same aggregated task-state query used by `get_handoff_state(view="dashboard")`, so switching tasks preserves visibility into other active or recently active tasks without creating extra files.
 
-For extracted-consumer setups, replace the local `uv tool install ./packages/agent-handoff-mcp` step with the private git+ssh source for `darce/mcp-agent-handoff`; the installed binary shape stays the same.
+The monorepo now consumes `agent-handoff-mcp` from the private git+ssh source for `darce/mcp-agent-handoff`; the installed binary shape stays the same.
 
 Runtime bootstrap:
 
@@ -40,7 +40,7 @@ Runtime bootstrap:
 cd "${REPO_ROOT:-$PWD}"
 
 # Core ledger server
-uv tool install ./packages/agent-handoff-mcp
+uv tool install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-handoff.git"
 
 # Orchestration server (daemons, workers, lanes, metrics)
 uv tool install ./packages/agent-orchestrator-mcp
@@ -56,7 +56,6 @@ agent-orchestrator-mcp --workspace-root "$(pwd)" doctor
 Notes:
 
 - `doctor` hard-fails when the local SQLite build lacks FTS5; artifact indexing depends on it.
-- When running from repo source instead of an installed binary, use `PYTHONPATH="packages/agent-handoff-mcp/src:packages/codex-subagent-bridge/src" python3 -m agent_handoff_mcp ...`.
 - `dashboard-live` does not require optional UI packages. `dashboard-tui` uses Textual when installed, then `rich.live`, then plain text.
 
 ## MCP Tool Surface
@@ -71,31 +70,20 @@ Surface classes:
 | --- | --- | --- | --- |
 | `set_handoff_state` | action | no | Updates active task state with optimistic revision guard. |
 | `get_handoff_state` | query | yes | Canonical task-state read. Pass `view="dashboard"` for a cross-task aggregation (replaces the former `get_handoff_dashboard`). For task views, `sections` accepts a comma-separated subset of task-state sections; `active` and `limits` remain always included. `detail` accepts `full` (default) or `summary` to truncate long rationale and verification fields without changing the default payload shape. |
-| `record_decision` | action | no | Appends decision ledger state. |
-| `update_next_actions` | action | no | Creates or mutates action rows. |
-| `list_next_actions` | query | yes | Lists canonical action rows. |
-| `record_test_result` | action | no | Appends verification evidence. |
-| `report_blocker` | action | no | Adds, resolves, or reopens blockers. |
-| `record_review_finding` | action | no | Creates or reopens review findings. |
-| `batch_record_review_findings` | action | no | Records or reopens multiple findings atomically (single transaction, single `CURRENT_TASK.md` flush). Max 100 items. Returns per-item `action`/`reopened` results. Prefer over `record_review_finding` when logging ≥ 3 findings in one pass. |
-| `update_review_finding` | action | no | Changes finding status or resolution metadata. Pass `reopen_reason` for non-open → open transitions (replaces the former `reopen_review_finding`). |
-| `list_review_findings` | query | yes | Lists findings with filters. Pass `finding_id` or `finding_db_id` for global single-finding lookup (returns the row regardless of owning task; pass `task_ref` to scope). `detail` accepts `full` (default) or `summary`; summary mode truncates long finding body fields while preserving the existing filters and default full-detail behavior. |
-| `record_review_run` | action | no | Records a completed review pass in the `review_runs` ledger. Requires unique `review_run_id`, `session`, `subject_path`. `verdict` and `verdict_decision` are optional at record time. |
-| `list_review_runs` | query | yes | Lists `review_runs` ledger entries. Filter by `task_ref`, `subject_path`, `review_mode`, or `verdict`. Paginated, ordered by recency. |
-| `get_review_coverage` | query | yes | Coverage summary for a task or artifact: run count, latest verdict, recent run ids, open findings by severity, reopened count. Provide `task_ref`, `subject_path`, or both. |
+| `record_event` | action | no | Appends decision/test-result/blocker state through a typed `event` payload. `event.event_kind` selects the variant and required fields. |
+| `next_actions` | action | no | Typed next-actions domain surface. `action.operation` selects `list`, `add`, `update`, `complete`, or `skip`. |
+| `review_findings` | action | no | Typed review-findings domain surface. `review.operation` selects `record`, `batch_record`, `update`, or `list`. Preserves atomic batch semantics and list filters on one tool. |
+| `review_runs` | action | no | Typed review-runs domain surface. `review.operation` selects `record`, `list`, or `coverage`. |
 | `handoff_close_check` | generator | yes | Derived readiness verdict from current state. |
 | `generate_current_task_md` | generator | no | Renders deterministic markdown and writes `CURRENT_TASK.md` by default. Output includes a cross-task dashboard header plus the existing active-task detail section. |
 | `export_handoff_state` | generator | yes | Produces portable snapshot output. |
 | `import_handoff_state` | action | no | Imports snapshot into local DB; destructive in replace modes. |
 | `archive_task_state` | action | no | Moves active state into archive storage. |
-| `load_session` | query | yes | **Compound**: calls `get_handoff_state` + `list_review_findings(status="open")` in one invocation. Use at session start to minimise round trips. `sections` is passed through only to the nested `state` payload from `get_handoff_state`; `detail` is passed through to both nested state and findings. Defaults preserve the pre-parameterization full payload behavior. |
-| `close_slice` | action | no | **Compound**: records a slice-complete decision, re-applies the active task as `in_progress`, and regenerates `CURRENT_TASK.md`. Requires `expected_revision` when the target task is currently active. Accepts the same optional `changed_files` list as `record_decision` and passes it through to the nested decision write. |
+| `load_session` | query | yes | **Compound**: calls `get_handoff_state` + `review_findings(review={"operation":"list","status":"open"})` in one invocation. Use at session start to minimise round trips. `sections` is passed through only to the nested `state` payload from `get_handoff_state`; `detail` is passed through to both nested state and findings. Defaults preserve the pre-parameterization full payload behavior. |
+| `close_slice` | action | no | **Compound**: records a slice-complete decision, re-applies the active task as `in_progress`, and regenerates `CURRENT_TASK.md`. Requires `expected_revision` when the target task is currently active. Accepts the same optional `changed_files` list as the decision variant of `record_event` and passes it through to the nested decision write. |
 | `update_task_status` | action | no | Updates task status without recording a slice decision. For the active task this requires `expected_revision`; for archived tasks it updates the archived snapshot status used by dashboard rendering. |
 | `audit_decision_ids` | query | yes | Audits recent decision IDs for grammar conformance. Returns canonical/malformed/freeform classifications per ID. |
-| `record_artifact` | action | no | Indexes artifact content into sidecar FTS store. |
-| `search_artifacts` | generator | yes | Returns ranked snippets from indexed artifacts. Empty `queries` returns a source listing (replaces the former `list_artifact_sources`). `detail` accepts `full` (default) or `summary`, and `fields` accepts a comma-separated per-row projection for either search hits or source listings. |
-| `get_artifact` | query | yes | Reads stored artifact record; pass `include_terms=true` for term derivation (replaces `get_artifact_source` and `get_artifact_terms`). `detail` accepts `full` (default) or `summary`, and `fields` accepts a comma-separated projection over the returned `source` object. |
-| `purge_artifacts` | action | no | Deletes stored artifact rows and FTS chunks. |
+| `artifacts` | action | no | Typed artifacts domain surface. `artifact.operation` selects `record`, `search`, `get`, or `purge`. Search mode supports both ranked hits and source-list mode when `queries` is omitted or empty; get mode supports `include_terms=true`. |
 | `search_handoff` | generator | yes | Returns ranked snippets over handoff FTS tables. `detail` accepts `full` (default) or `summary`, and `fields` accepts a comma-separated per-result projection. |
 
 Cross-task and review-summary tools (`switch_task`, `get_latest_slice_review_packet`, `get_review_findings_summary`, `reconcile_review_findings`) are registered on `agent-orchestrator-mcp`. See [`agent-orchestrator-mcp.md`](agent-orchestrator-mcp.md).
@@ -149,7 +137,7 @@ print(sorted(TOOL_DESCRIPTIONS))
 
 Recovery:
 
-- treat `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py` as the live source of truth
+- treat the installed `agent-handoff-mcp` package and this contract as the live source of truth for the ledger surface in this monorepo
 - update stale docs, skills, or wrappers in the same slice
 - prefer minimal valid payloads when a write bounces on signature drift
 
@@ -185,13 +173,13 @@ Checks:
 ```bash
 agent-handoff-mcp --workspace-root /path/to/repo doctor
 agent-handoff-mcp --workspace-root /path/to/repo state
-agent-handoff-mcp --workspace-root /path/to/repo review-list
+agent-handoff-mcp --workspace-root /path/to/repo review-findings --operation list
 ```
 
 Recovery:
 
 - reissue the write with the live signature and minimal valid payload
-- record verification with `record_test_result` instead of prose-only rationale
+- record verification with `record_event(event={event_kind=\"test_result\", ...})` instead of prose-only rationale
 - regenerate `CURRENT_TASK.md` after decision writes when the workflow requires it
 
 ## Artifact Read Shaping
@@ -199,33 +187,17 @@ Recovery:
 The artifact read surfaces now support the same additive compact-read pattern used by the handoff state and review-finding reads:
 
 ```python
-search_artifacts(
-    queries: list[str] | None = None,
-    task_ref: str | None = None,
-    lane_id: str | None = None,
-    app_root: str | None = None,
-    source_kind: str | None = None,
-    content_type: str | None = None,
-    limit: int = 10,
-    offset: int = 0,
-    detail: str = "full",
-    fields: str | None = None,
-) -> str
-
-get_artifact(
-    source_id: int | None = None,
-    task_ref: str | None = None,
-    source_label: str | None = None,
-    include_terms: bool = False,
-    top_n_terms: int = 10,
-    detail: str = "full",
-    fields: str | None = None,
+artifacts(
+    artifact={
+        "operation": "search" | "get",
+        ...
+    }
 ) -> str
 ```
 
 - `detail="summary"` truncates long artifact text fields (`summary`, `source_summary`, `snippet`, and `metadata_json`) without changing the default full-detail behavior.
-- `get_artifact(detail="summary")` also returns only the first three chunk previews while preserving `chunk_count` for the full source.
-- `fields` is a comma-separated projection over the per-row payload. `search_artifacts` interprets it against the active mode:
+- `artifacts(operation="get", detail="summary")` also returns only the first three chunk previews while preserving `chunk_count` for the full source.
+- `fields` is a comma-separated projection over the per-row payload. `artifacts(operation="search")` interprets it against the active mode:
   - search mode: hit fields such as `source_id`, `source_label`, `title`, `snippet`
   - source-list mode: source fields such as `id`, `task_ref`, `source_label`, `summary`
   - artifact fetch: source fields such as `source_label`, `chunk_count`, `chunks`
@@ -380,9 +352,9 @@ When called with `view="dashboard"`, `get_handoff_state` returns:
 - Live MCP tool signatures are authoritative over examples, templates, or prior-session memory. Prefer the minimal valid payload for write operations unless a richer payload is required by the current signature.
 - If a write call fails validation, treat it as signature drift. Retry once with the minimal payload accepted by the live signature, then update the stale contract/rule/template in the same slice so the bounce does not recur.
 - Slice-completion decisions must use the prefixed decision grammar `<author_tag>_slice_complete_<work_ref>_<slug>` for new writes. The legacy `slice_complete_<short_label>` format is grandfathered for historical rows and recognized by all read paths (close-check, slice-review packet derivation). New writes should use the prefixed form. Both formats require a structured rationale with the four headings `## Changes`, `## Verification`, `## Schema / Contract Changes`, and `## Open Threads`.
-- `record_decision` requires a `session` string as its first positional argument (MCP path) or `--session` flag (CLI path). Use a stable, human-readable identifier such as `"<agent>-<task-slug>"` or `"<agent>-<short-description>"`. The field is NOT auto-populated from context; omitting it causes a `Missing required argument` validation error.
-- `record_decision(...)` rejects slice-complete writes at write time when the rationale is missing those headings or any section is empty. This is enforced before the row is inserted.
-- `record_decision` accepts optional `changed_files` (list of monorepo-relative paths touched by this slice). Stored as `changed_files_json` on the decision row. When present, the slice-review packet uses this list directly instead of parsing file paths from the rationale text. Pass this parameter on every slice-completion decision to give reviewers an explicit, structured scope.
+- `record_event(event={event_kind="decision", ...})` requires a `session` string in the nested decision variant (MCP path) or `--session` flag on the `event --event-kind decision` CLI path. Use a stable, human-readable identifier such as `"<agent>-<task-slug>"` or `"<agent>-<short-description>"`. The field is NOT auto-populated from context; omitting it causes validation failure.
+- The `decision` variant of `record_event(...)` rejects slice-complete writes at write time when the rationale is missing those headings or any section is empty. This is enforced before the row is inserted.
+- The `decision` variant of `record_event` accepts optional `changed_files` (list of monorepo-relative paths touched by this slice). Stored as `changed_files_json` on the decision row. When present, the slice-review packet uses this list directly instead of parsing file paths from the rationale text. Pass this parameter on every slice-completion decision to give reviewers an explicit, structured scope.
 - Historical decision rows that predate the prefixed naming scheme are grandfathered. MCP read paths (close-check, slice-review packet, handoff search) recognize both formats. Do not plan retroactive renames of historical rows.
 - The structured rationale is mandatory even for docs-only slices. Use `- none.` for empty sections rather than omitting headings.
 - Handoff consumers should treat prose-only completion decisions as malformed process output that must be corrected before the slice is considered fully handed off.
@@ -396,33 +368,33 @@ When called with `view="dashboard"`, `get_handoff_state` returns:
 - `build_write_actor` derives the canonical `agent` display identity from model provenance when available: `"{model_label} {reasoning_level}"` when both are present, `model_label` when only the label is known, and the caller-provided `agent` only as a legacy fallback.
 - Known model labels are normalized for common backends (`claude-opus-4-0520` -> `Opus 4.6`, `claude-sonnet-4-20250514` -> `Sonnet 4`); unknown models pass through unchanged.
 - Decision rows now persist nullable `model`, `model_label`, and `reasoning_level` columns alongside `agent`. Treat the turn-metrics ledger on `agent-orchestrator-mcp` as the canonical source for token consumption; decision rows carry model provenance only and do not duplicate per-turn token columns.
-- `record_decision`, `record_test_result`, `report_blocker`, and `update_next_actions` now accept optional `task_ref`, matching the existing cross-task targeting pattern.
-- Write responses for `record_decision`, `record_test_result`, `report_blocker`, and `update_next_actions` echo the resolved `task_ref`. Treat that field as the authoritative write target in multi-agent flows.
-- `record_review_finding` accepts optional `details={ line_start?, line_end?, fix? }`.
-- `record_review_finding` also accepts optional `review_mode` with values `branch`, `release_audit`, or `planning`.
-- `record_review_finding` accepts `task_ref="__repo__"` to record a repo-scoped finding that is not owned by any one implementation task. Task-scoped listing queries exclude `__repo__` rows unless repo scope is explicitly included.
-- `batch_record_review_findings` accepts `session`, `findings` (list of `BatchFindingItem`), optional `actor`, and optional `task_ref`. Each `BatchFindingItem` requires `finding_id`, `severity`, `file_path`, and `description`; `review_mode` and `details` are optional. Maximum 100 items per call; larger batches return `ok: false` without writing. All items are pre-validated (severity, review_mode, required fields) before the transaction opens — a single invalid item rejects the entire batch. Returns `{ ok, task_ref, written, results: [{ finding_id, action, reopened? }] }`. Use this tool instead of repeated `record_review_finding` calls when logging 3 or more findings in a single review pass.
+- `record_event` and `next_actions` accept optional `task_ref`, matching the existing cross-task targeting pattern. For `record_event`, `task_ref` lives inside the typed `event` payload.
+- Write responses for `record_event` and `next_actions` echo the resolved `task_ref`. Treat that field as the authoritative write target in multi-agent flows.
+- `review_findings(review={"operation":"record", ...})` accepts optional `details={ line_start?, line_end?, fix? }`.
+- `review_findings(review={"operation":"record", ...})` also accepts optional `review_mode` with values `branch`, `release_audit`, or `planning`.
+- `review_findings(review={"operation":"record", ...})` accepts `task_ref="__repo__"` to record a repo-scoped finding that is not owned by any one implementation task. Task-scoped listing queries exclude `__repo__` rows unless repo scope is explicitly included.
+- `review_findings(review={"operation":"batch_record", ...})` accepts `session`, `findings` (list of `BatchFindingItem`), optional `actor`, and optional `task_ref`. Each `BatchFindingItem` requires `finding_id`, `severity`, `file_path`, and `description`; `review_mode` and `details` are optional. Maximum 100 items per call; larger batches return `ok: false` without writing. All items are pre-validated (severity, review_mode, required fields) before the transaction opens — a single invalid item rejects the entire batch. Returns `{ ok, task_ref, written, results: [{ finding_id, action, reopened? }] }`. Use this operation instead of repeated single-record writes when logging 3 or more findings in a single review pass.
 - `get_handoff_state` accepts optional `sections` and `detail` on task views. `sections` is a comma-separated subset of task-state sections; invalid names are silently dropped, and if no valid names remain the response contains only identity data (`active` + `limits`, no data sections). The reserved token `sections="identity"` explicitly requests the same identity-only shape; when present it takes precedence over any other section names. `active` and `limits` are always included and are not selectable or suppressible. Pass `sections=None` (the default) to receive the full task payload. `detail="summary"` truncates long rationale, command, result, and finding text fields while keeping the default `detail="full"` response backward-compatible.
-- `update_review_finding` accepts exactly one of `finding_id` or `finding_db_id`.
-- `update_review_finding` requires `resolution_notes` for `wontfix` and `deferred`.
-- `update_review_finding` requires `reopen_reason` when changing a non-open finding back to `open`.
-- `update_review_finding`: when `task_ref` is omitted and `finding_id` or `finding_db_id` is provided, the lookup is global. If exactly one row matches, the update is applied to that row regardless of active task. If multiple rows share the same `finding_id`, an explicit ambiguity error listing the candidate scopes is returned.
-- `list_review_findings`: when `finding_id` or `finding_db_id` is provided and `task_ref` is omitted, the lookup is global — the active-task fallback is skipped. If more than one row shares the same `finding_id` across different task scopes, an explicit ambiguity error is returned. To scope the lookup to a specific task, pass `task_ref` explicitly.
+- `review_findings(review={"operation":"update", ...})` accepts exactly one of `finding_id` or `finding_db_id`.
+- `review_findings(review={"operation":"update", ...})` requires `resolution_notes` for `wontfix` and `deferred`.
+- `review_findings(review={"operation":"update", ...})` requires `reopen_reason` when changing a non-open finding back to `open`.
+- `review_findings(review={"operation":"update", ...})`: when `task_ref` is omitted and `finding_id` or `finding_db_id` is provided, the lookup is global. If exactly one row matches, the update is applied to that row regardless of active task. If multiple rows share the same `finding_id`, an explicit ambiguity error listing the candidate scopes is returned.
+- `review_findings(review={"operation":"list", ...})`: when `finding_id` or `finding_db_id` is provided and `task_ref` is omitted, the lookup is global — the active-task fallback is skipped. If more than one row shares the same `finding_id` across different task scopes, an explicit ambiguity error is returned. To scope the lookup to a specific task, pass `task_ref` explicitly.
 - `finding_id` naming convention: prefix with the owning task-ref or review scope to minimize cross-scope collisions (e.g., `E12-3-001`, `REVIEW-COVERAGE-E12-3-001`). Global uniqueness is not schema-enforced; ambiguity errors serve as the collision safety net. Repo-scoped findings should use the `__repo__` task-ref prefix or the review subject path as the prefix.
-- `list_review_findings` accepts optional `review_mode`; `branch` includes rows where `review_mode IS NULL` for backward compatibility.
-- `list_review_findings` accepts optional `detail="full"|"summary"`. Summary mode truncates long `description`, `fix`, `resolution_notes`, and `verification_evidence` fields while preserving the same filters, counts, and lookup rules.
-- `load_session` accepts optional `sections` and `detail`. `sections` is passed only to the nested `state` payload returned by `get_handoff_state`; `detail` is passed to both `get_handoff_state` and `list_review_findings(status="open")` so the combined response can be trimmed without changing default compatibility behavior.
-- `record_review_run` requires `review_run_id` (must be globally unique in the ledger), `session`, and `subject_path`. `subject_kind` defaults to `task_plan`; valid values are `task_plan`, `epic`, `branch`, `adr`, `roadmap`, `other`. `review_mode` defaults to `planning`; valid values are `branch`, `release_audit`, `planning`. `verdict` is optional; valid values are `pass`, `pass_with_findings`, `fail`, `conditional_pass`. `verdict_decision` is optional and should hold the stable decision string from `record_decision` (not the integer id). `task_ref` is optional and links the run to a task scope.
-- `list_review_runs` is unscoped by default (returns all runs). Pass `task_ref` to scope to a task, `subject_path` to scope to an artifact, `review_mode` to filter by review type, or `verdict` to filter by outcome. Max 100 per page.
-- `get_review_coverage` requires at least one of `task_ref` or `subject_path`. When `task_ref` is given, finding counts come from the `task_ref` column on `review_findings`. When only `subject_path` is given, finding counts are derived via the `review_run_id` link from matching runs. Returns: `run_count`, `latest_review_run_id`, `latest_verdict`, `recent_run_ids` (last 5), `open_findings_by_severity` (dict of high/medium/low counts), `reopened_findings_count`.
-- `get_review_coverage` with `task_ref="REVIEW-COVERAGE"` is a supported backward-compatible query pattern; the returned counts will be zero until repo-scoped findings are migrated from the pseudo-task bucket.
-- Use `record_review_run` at the end of each planning or branch review to record the verdict and link it to the reviewed artifact. Then pass `review_run_id` on each `record_review_finding` call to link findings to their run.
+- `review_findings(review={"operation":"list", ...})` accepts optional `review_mode`; `branch` includes rows where `review_mode IS NULL` for backward compatibility.
+- `review_findings(review={"operation":"list", ...})` accepts optional `detail="full"|"summary"`. Summary mode truncates long `description`, `fix`, `resolution_notes`, and `verification_evidence` fields while preserving the same filters, counts, and lookup rules.
+- `load_session` accepts optional `sections` and `detail`. `sections` is passed only to the nested `state` payload returned by `get_handoff_state`; `detail` is passed to both `get_handoff_state` and `review_findings(review={"operation":"list","status":"open"})` so the combined response can be trimmed without changing default compatibility behavior.
+- `review_runs(review={"operation":"record", ...})` requires `review_run_id` (must be globally unique in the ledger), `session`, and `subject_path`. `subject_kind` defaults to `task_plan`; valid values are `task_plan`, `epic`, `branch`, `adr`, `roadmap`, `other`. `review_mode` defaults to `planning`; valid values are `branch`, `release_audit`, `planning`. `verdict` is optional; valid values are `pass`, `pass_with_findings`, `fail`, `conditional_pass`. `verdict_decision` is optional and should hold the stable decision string from the decision variant of `record_event` (not the integer id). `task_ref` is optional and links the run to a task scope.
+- `review_runs(review={"operation":"list", ...})` is unscoped by default (returns all runs). Pass `task_ref` to scope to a task, `subject_path` to scope to an artifact, `review_mode` to filter by review type, or `verdict` to filter by outcome. Max 100 per page.
+- `review_runs(review={"operation":"coverage", ...})` requires at least one of `task_ref` or `subject_path`. When `task_ref` is given, finding counts come from the `task_ref` column on `review_findings`. When only `subject_path` is given, finding counts are derived via the `review_run_id` link from matching runs. Returns: `run_count`, `latest_review_run_id`, `latest_verdict`, `recent_run_ids` (last 5), `open_findings_by_severity` (dict of high/medium/low counts), `reopened_findings_count`.
+- `review_runs(review={"operation":"coverage","task_ref":"REVIEW-COVERAGE"})` is a supported backward-compatible query pattern; the returned counts will be zero until repo-scoped findings are migrated from the pseudo-task bucket.
+- Use `review_runs(review={"operation":"record", ...})` at the end of each planning or branch review to record the verdict and link it to the reviewed artifact. Then pass `review_run_id` on each `review_findings(review={"operation":"record", ...})` call to link findings to their run.
 - When `current_commit_sha` is provided, `handoff_close_check` also verifies that at least one structured `slice_complete_*` decision exists for that commit. Treat missing current-commit slice summaries as a close/review gate failure, including for docs-only slices.
-- `record_test_result.result` is a concise verification-summary field, not a full log sink. Keep short proof lines such as `55 passed in 7.02s`, `diff-check clean`, or `REVIEW READY: READY`; store longer output in artifacts/files instead of the `verified_tests` table.
+- The `test_result` variant's `result` field on `record_event` is a concise verification-summary field, not a full log sink. Keep short proof lines such as `55 passed in 7.02s`, `diff-check clean`, or `REVIEW READY: READY`; store longer output in artifacts/files instead of the `verified_tests` table.
 - `import_handoff_state(mode="replace_task")` rejects destructive clears unless `allow_destructive_clear=true`.
-- `close_slice` requires a `session` string (same as `record_decision`). Pass `task_ref` explicitly in multi-task flows. `focus` updates the active-task working context after the decision is recorded. `changed_files` passes through to `record_decision` for structured review scope. The success response includes `decision` (full row) and `task_revision` (int) so callers can confirm state without a follow-up read.
+- `close_slice` requires a `session` string (same as the decision variant of `record_event`). Pass `task_ref` explicitly in multi-task flows. `focus` updates the active-task working context after the decision is recorded. `changed_files` passes through to the decision variant of `record_event` for structured review scope. The success response includes `decision` (full row) and `task_revision` (int) so callers can confirm state without a follow-up read.
 - `export_handoff_state` defaults to `include_markdown=False`. Pass `include_markdown=True` explicitly to embed CURRENT_TASK.md markdown in the export.
-- `generate_current_task_md` accepts `max_cross_task_findings` (default 5) to cap the number of cross-task findings rendered per task_ref. Active-task findings are uncapped. The "All Review Findings History" section has been removed from the default render; historical findings are available via `list_review_findings(status="all")`.
+- `generate_current_task_md` accepts `max_cross_task_findings` (default 5) to cap the number of cross-task findings rendered per task_ref. Active-task findings are uncapped. The "All Review Findings History" section has been removed from the default render; historical findings are available via `review_findings(review={"operation":"list","status":"all"})`.
 - `set_handoff_state` accepts an optional `target_branch` parameter. When provided, it sets the task's intended work branch. When omitted on subsequent calls, the existing value is preserved. The field appears in `get_handoff_state` responses and in the CURRENT_TASK.md Active Status section.
 - `switch_task` (registered on `agent-orchestrator-mcp`) also accepts `target_branch`, set at task init time.
 
@@ -472,36 +444,30 @@ Fallback subcommands:
 - `decision` — requires `--session` and `--decision`; `--rationale` is optional but mandatory for `slice_complete_*` decisions:
 
   ```bash
-  agent-handoff-mcp --workspace-root <repo> decision \
+  agent-handoff-mcp --workspace-root <repo> event \
+    --event-kind decision \
     --session "<agent>-<task-slug>" \
     --decision "cdx_slice_complete_<work_ref>_<slug>" \
     --rationale "## Changes\n..."
   ```
 
-- `action`
+- `next-actions`
 - `blocker`
 - `test`
-- `review-record`
-- `review-update`
-- `review-list`
-- `review-run-record`
-- `review-run-list`
-- `review-coverage`
+- `review-findings`
+- `review-runs`
 - `handoff-close-check`
 - `task`
 - `export`
 - `import`
 - `archive`
 - `audit-decisions`
-- `artifact-record`
-- `artifact-search`
-- `artifact-get`
-- `artifact-purge`
+- `artifacts`
 - `handoff-search`
 
 Orchestration subcommands (`orchestrator-start`, `worker-start`, `dispatch`, `orchestrator-cycle`, `worker-events`, `list-backends`, `metrics`, etc.) are served exclusively by `agent-orchestrator-mcp`. See [`agent-orchestrator-mcp.md`](agent-orchestrator-mcp.md).
 
-**CLI surface note:** `agent-handoff-mcp` CLI is ledger-only. It exposes `serve-stdio`, `serve-http`, `doctor`, `dashboard`, and the 28 ledger MCP tools as CLI wrappers, plus two CLI-only artifact variants (`artifact-list`, `artifact-terms`). All orchestration and lane-management commands are exclusively on `agent-orchestrator-mcp`.
+**CLI surface note:** `agent-handoff-mcp` CLI is ledger-only. It exposes `serve-stdio`, `serve-http`, `doctor`, `dashboard`, and the 17 ledger MCP tools as CLI wrappers, plus two CLI-only artifact variants (`artifact-list`, `artifact-terms`). All orchestration and lane-management commands are exclusively on `agent-orchestrator-mcp`.
 
 ## HTTP Transport
 
@@ -530,7 +496,7 @@ Host-specific integrations (e.g. Codex skill wrappers, VS Code callbacks) trigge
 
 ### `after_review_findings_recorded`
 
-**Trigger:** The worker-daemon review pipeline (`worker_daemon.py`) completes a review turn that produces one or more new findings. This hook fires in the daemon review path only; it does not fire on every individual `record_review_finding` MCP tool call.
+**Trigger:** The worker-daemon review pipeline (`worker_daemon.py`) completes a review turn that produces one or more new findings. This hook fires in the daemon review path only; it does not fire on every individual `review_findings(operation="record")` MCP tool call.
 
 **Side effects allowed:** ACE reflection detection. The worker daemon scans the batch of new findings for `[sr-NNN]` or `[rg-NNN]` rule references and appends pending evidence entries to `.task-state/ace_reflect_log.jsonl`.
 

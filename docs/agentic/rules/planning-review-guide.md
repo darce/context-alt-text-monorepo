@@ -139,6 +139,17 @@ Planning review is still a document-and-codebase review, but the packet-backed f
 - [ ] Decision ids referenced in the plan follow the `<author_tag>_<kind>_<work_ref>_<slug>` grammar.
 - [ ] Historical docs and decisions are treated as grandfathered; the plan does not mandate retroactive renames unless a concrete artifact blocks tooling or review.
 
+### Planning Pipeline and Lifecycle Compliance
+
+Full pipeline reference: [planning-pipeline.md](planning-pipeline.md). Epic lifecycle reference: [development-workflow.md](development-workflow.md#planning-pipeline-and-document-lifecycle).
+
+- [ ] **Pipeline stage appropriate.** The artifact matches its pipeline position: assessments surface problems without prescribing solutions, specs define testable changes, ADRs resolve design uncertainty, task plans define executable slices. Artifacts that mix responsibilities across stages should be split.
+- [ ] **Upstream traceability present.** Spec items trace to assessment findings. Task plan slices trace to spec items or epic phase deliverables. ADRs reference the blocked spec item. If the plan skips stages (e.g., direct task plan without spec), the justification is stated or the work is small/well-understood enough that the skip is self-evident.
+- [ ] **Exit gates satisfied for upstream stages.** A task plan derived from a spec should not be created until the spec's review gate has been passed. A task plan derived from an ADR should not be created until the ADR is reviewed. Check MCP for review evidence if claimed.
+- [ ] **Epic-to-task decomposition sound.** Each epic phase maps to one or more task plans. Task plans do not span multiple epic phases unless explicitly justified. Phase ordering in the epic matches task plan dependency ordering.
+- [ ] **Target branch declared.** Task plans declare a `Target Branch` in metadata (e.g., `feature/e15-1-security-baseline`). Code implementation must happen on this branch, not on `main`. Plans that omit a target branch should be flagged.
+- [ ] **Version directory consistent.** Epics are filed under `docs/epics/v<version>/` matching their target release milestone. Task plans reference the correct epic path. Carry-forward notes are present when work migrated from an older epic.
+
 ### Rollout and Testability
 
 - [ ] The plan can be implemented incrementally without leaving impossible intermediate states.

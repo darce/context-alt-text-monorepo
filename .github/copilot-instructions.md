@@ -35,6 +35,22 @@ Is the task one of these exact four categories?
 
 Terminal output is **stale**. Native tools read live IDE state and never accumulate scrollback. When in doubt, use the native tool.
 
+## Branch Isolation — Mandatory
+
+Code files under `apps/` or `packages/` must not be edited on `main`.
+
+- Enforced in the VS Code harness by `.github/hooks/guard-main-branch.py` via `.github/hooks/terminal-guard.json`
+- Enforced in the Claude harness by `scripts/hooks/guard-main-branch.sh` via `.claude/settings.json`
+- Allowed on `main`: docs, markdown, planning artifacts, settings, Makefiles, and other non-code config
+
+If you inherit dirty code changes on `main`, move them to a feature branch or stash them before starting new implementation work.
+
+Before editing code, use one of these isolation tiers:
+
+1. `git checkout -b feature/<task-id>-<slug>` for single-agent work
+2. Worktree isolation for delegated subtasks
+3. Lane orchestration for multi-agent parallel work
+
 ---
 
 # Project Instructions

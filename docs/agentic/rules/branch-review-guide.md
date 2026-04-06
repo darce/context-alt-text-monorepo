@@ -127,6 +127,14 @@ Apply this gate whenever the reviewed diff changes a documented boundary payload
 
 These items apply regardless of language. Stack-specific items are in the language guides linked above.
 
+### Branch Isolation
+
+Reference: [development-workflow.md](development-workflow.md#branch-isolation-protocol-mandatory).
+
+- [ ] **Code changes are not on `main`** — the branch under review is a feature branch, not `main`. Code-file edits committed directly to `main` are a workflow defect. If the diff is against `main` and includes code files under `apps/` or `packages/`, flag it as HIGH.
+- [ ] **Branch name matches task plan** — the branch name follows `feature/<task-id>-<slug>` and matches the `Target Branch` declared in the owning task plan. Mismatches between the task plan's declared branch and the actual branch being reviewed indicate task-tracking drift.
+- [ ] **No stale cross-branch bleed** — the diff does not include unrelated changes inherited from a dirty `main` working tree. If the branch diff contains files that the task plan does not claim to touch, investigate whether they are branch bleed from a prior session.
+
 ### Correctness
 
 - [ ] **Migration ↔ Model parity** — constraints match between migration and ORM model.

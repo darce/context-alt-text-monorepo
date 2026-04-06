@@ -1,6 +1,39 @@
 # Development Workflow
 
-> Load this document for detailed workflow procedures: scaffolding, TDD cycle, commit conventions, and review preparation.
+> Load this document for detailed workflow procedures: branch isolation, scaffolding, TDD cycle, commit conventions, and review preparation.
+
+---
+
+## Branch Isolation Protocol (MANDATORY)
+
+**Code files must never be edited on the `main` branch.** This rule is enforced in both harnesses:
+
+- **VS Code Copilot**: `.github/hooks/terminal-guard.json` runs `.github/hooks/guard-main-branch.py` on every `PreToolUse` event and blocks `apply_patch` / `create_file` requests that target code files under `apps/` or `packages/` while the current branch is `main`.
+- **Claude Code**: `.claude/settings.json` runs `scripts/hooks/guard-main-branch.sh` for `Edit|Write` requests and applies the same policy.
+
+Protected code extensions: `*.py`, `*.ts`, `*.tsx`, `*.js`, `*.jsx`, `*.php`, `*.sql`, `*.sh`, `*.css`, `*.scss`.
+
+**Allowed on `main`:** documentation, planning artifacts, configuration files, Makefiles, markdown, and settings. These are legitimate planning-phase edits that do not risk dirty working tree bleed.
+
+**Before any code edit:**
+
+1. Create a feature branch: `git checkout -b feature/<task-id>-<slug>`
+2. Or use Claude Code worktree isolation: `Agent` tool with `isolation: "worktree"`
+3. Or use the full lane orchestration: `make lane-open TASK=<task> LANE=<lane>`
+
+**If you inherit dirty code changes on `main`:** stop and move them to a feature branch or stash them before starting new implementation work. Uncommitted code on `main` is branch bleed; treat it as a workflow defect, not a normal starting state.
+
+**Why this matters:** Uncommitted code changes on `main` bleed into every subsequent agent session. An agent that starts work on `main` inherits stale diffs from prior sessions, leading to accidental commits of unrelated changes, merge conflicts, and broken bisectability. Branch isolation eliminates this class of error.
+
+**Isolation tiers** (choose based on task complexity):
+
+| Tier                       | Mechanism                                 | When to use                                                    |
+| -------------------------- | ----------------------------------------- | -------------------------------------------------------------- |
+| **Feature branch**         | `git checkout -b feature/<id>-<slug>`     | Single-agent, single-task work                                 |
+| **Worktree (Claude Code)** | `Agent` tool with `isolation: "worktree"` | Delegated subtasks that should not touch the main working tree |
+| **Lane orchestration**     | `make lane-open` + `make lane-handoff`    | Multi-agent parallel work with scope enforcement               |
+
+The harness guard implementations live at `.github/hooks/guard-main-branch.py` and `scripts/hooks/guard-main-branch.sh`. If a hook incorrectly blocks a legitimate edit, fix the scope or extension classification; do not normalize code edits on `main` as acceptable.
 
 ---
 
@@ -215,21 +248,22 @@ Slices within a task plan use existing `Slice 1`, `Slice 2`, etc. headings. The 
 
 When creating new planning artifacts, load the corresponding template:
 
-| Artifact   | Template                                                          |
-| ---------- | ----------------------------------------------------------------- |
-| Assessment | [ASSESSMENT.template.md](../templates/ASSESSMENT.template.md)     |
-| Spec       | [SPEC.template.md](../templates/SPEC.template.md)                 |
-| ADR        | [ADR.template.md](../templates/ADR.template.md)                   |
-| Epic       | [EPIC.template.md](../templates/EPIC.template.md)                 |
-| Task plan  | [TASK_PLAN.template.md](../templates/TASK_PLAN.template.md)       |
-| Roadmap    | [ROADMAP.template.md](../templates/ROADMAP.template.md)           |
+| Artifact   | Template                                                      |
+| ---------- | ------------------------------------------------------------- |
+| Assessment | [ASSESSMENT.template.md](../templates/ASSESSMENT.template.md) |
+| Spec       | [SPEC.template.md](../templates/SPEC.template.md)             |
+| ADR        | [ADR.template.md](../templates/ADR.template.md)               |
+| Epic       | [EPIC.template.md](../templates/EPIC.template.md)             |
+| Task plan  | [TASK_PLAN.template.md](../templates/TASK_PLAN.template.md)   |
+| Roadmap    | [ROADMAP.template.md](../templates/ROADMAP.template.md)       |
 
-### Planning Pipeline
+### Planning Pipeline and Document Lifecycle
 
-For complex, contract-breaking, or multi-task work, follow the full planning pipeline:
+Work flows through a layered document lifecycle. Not every layer is required for every piece of work -- small changes skip directly to a task plan or implementation. The full pipeline exists to prevent premature implementation of complex or boundary-crossing work.
 
 ```
-Assessment → Spec → [ADR] → Task Plan → Implementation
+Epic (optional umbrella)
+  └─ Assessment → Spec → [ADR] → Task Plan → Implementation → Review
 ```
 
 Full pipeline documentation with stage definitions, exit gates, and exemplars:
@@ -242,13 +276,47 @@ Quick reference — required gates between stages:
 - Spec → ADR: only when a spec item is explicitly design-uncertain
 - ADR → Task Plan: ADR reviewed before implementation tasks are created from it
 
+#### Where Epics Fit
+
+Epics sit above the per-change pipeline. An epic defines the destination, phase ordering, and exit criteria for a capability or process change that spans multiple task plans. Each epic phase may trigger its own assessment → spec → task plan pipeline as the work is decomposed.
+
+| Artifact      | Scope                                                                                       | Location                                           |
+| ------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| **Epic**      | Multi-phase capability; groups task plans under a shared objective and delivery sequence    | `docs/epics/v<version>/`                           |
+| **Task plan** | Executable implementation slices for one bounded unit of work under an epic (or standalone) | `docs/tasks/<N>.0/` or package-local `docs/tasks/` |
+
+**When to create an epic:**
+
+- Work will take more than one task plan to complete
+- Work spans multiple delivery phases with ordering dependencies
+- Multiple agents or sessions will contribute to the same objective
+
+**When to skip the epic and go straight to a task plan:**
+
+- Single-phase work with a clear scope and no phase dependencies
+- Bug fixes, small features, or debt cleanup that fits in one task plan
+
+#### Computing the Next Epic Number
+
+Epic numbers are globally sequential across all `docs/epics/**/*-epic.md` files. To determine the next number:
+
+1. Scan all epic files for the highest `E<number>` in the title.
+2. Increment by one. Do not recycle numbers from closed or archived epics.
+3. Use the new number in the epic title (`E<N>. <Title>`) and declare it as the `Epic Short ID`.
+
+The epic number is permanent once assigned. If an epic is cancelled, its number is retired, not reused.
+
+#### Version Directories
+
+Epics are filed under `docs/epics/v<version>/` where the version reflects the release milestone the epic targets. When remaining work from an older version is consolidated into a new epic, the new epic goes in the new version directory and the old epic gets a carry-forward note.
+
 ### Context Routing for Reviews
 
 When the request is a review, load the matching guide based on the target artifact:
 
-| Request intent | Guide to load |
-| --- | --- |
-| Code review, branch diff, PR review | [branch-review-guide.md](branch-review-guide.md) |
+| Request intent                                            | Guide to load                                        |
+| --------------------------------------------------------- | ---------------------------------------------------- |
+| Code review, branch diff, PR review                       | [branch-review-guide.md](branch-review-guide.md)     |
 | Assessment, spec, epic, task plan, roadmap, or ADR review | [planning-review-guide.md](planning-review-guide.md) |
 
 When the request is to create or update a planning artifact, load the matching template from the table above.

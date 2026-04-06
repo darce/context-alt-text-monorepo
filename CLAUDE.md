@@ -2,7 +2,7 @@
 
 > **Cold-start dispatcher for coding agents.** Full protocol: [docs/agentic/instructions.md](docs/agentic/instructions.md).
 
-**Active epics**: `docs/epics/v0.3.1/agent-handoff-mcp-packaging-epic.md` · `docs/epics/v0.3.1/self-hosting-epic.md`
+**Active epics**: `docs/epics/v0.4.0/public-demo-launch-readiness-epic.md` (E15) · `docs/epics/v0.3.1/self-hosting-epic.md` (E14)
 
 ---
 
@@ -38,6 +38,13 @@ Additional routing: see [docs/agentic/instructions.md](docs/agentic/instructions
 ---
 
 ## Critical Rules
+
+### Branch Isolation Rule
+
+> **Code files must NOT be edited on the `main` branch.**
+
+A `PreToolUse` hook enforces this in both harnesses: VS Code runs `.github/hooks/guard-main-branch.py` via `.github/hooks/terminal-guard.json`, and Claude Code runs `scripts/hooks/guard-main-branch.sh` via `.claude/settings.json`. Code-file edits under `apps/` or `packages/` are blocked on `main`. Create a feature branch (`git checkout -b feature/<task-id>-<slug>`) before any code edit. Docs, configs, and planning artifacts are allowed on `main`.
+See [development-workflow.md](docs/agentic/rules/development-workflow.md#branch-isolation-protocol-mandatory) for isolation tiers and rationale.
 
 ### Plugin Boundary Rule
 

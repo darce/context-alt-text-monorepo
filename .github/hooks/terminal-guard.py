@@ -64,6 +64,7 @@ _ALLOWLIST: list[re.Pattern[str]] = [
         r"^phpunit\b",
         r"^\./vendor/bin/phpunit\b",
         r"^vendor/bin/phpunit\b",
+        r'^"?\S*/vendor/bin/phpunit"?\b',
         # Build
         r"^make\b",
         # pyenv
@@ -103,9 +104,11 @@ _ALLOWLIST: list[re.Pattern[str]] = [
         # git show --stat: read-only commit inspection (no native tool equivalent)
         r"^git\s+show\s+--stat\b",
         r"^git\s+-C\s+\S+\s+show\s+--stat\b",
-        # git rev-parse: read-only SHA / path resolution
+        # git rev-parse / rev-list: read-only SHA, path, and commit-count resolution
         r"^git\s+rev-parse\b",
         r"^git\s+-C\s+\S+\s+rev-parse\b",
+        r"^git\s+rev-list\b",
+        r"^git\s+-C\s+\S+\s+rev-list\b",
         # commit/worktree preflight: current checkout identity chain used by commit2git
         r"^pwd\s*&&\s*git\s+rev-parse\s+--show-toplevel\s*&&\s*git\s+branch\s+--show-current\s*&&\s*git\s+rev-parse\s+--git-dir\s*&&\s*git\s+rev-parse\s+--git-common-dir\b",
         # In-place file edits (when replace_string_in_file fails on large blocks)
@@ -215,6 +218,8 @@ def _strip_env_prefix(cmd: str) -> str:
     """Strip leading shell env-var assignments and navigation prefixes.
 
     Handles (in any combination/order):
+      setopt errexit && git stash ...
+            MAIN_ROOT="$(git rev-parse --show-toplevel | sed ...)" && vendor/bin/phpunit ...
       cd /absolute/path && make ...
       export PYTHONPATH=src && pytest ...
       PYENV_VERSION=x pytest ...
@@ -223,9 +228,11 @@ def _strip_env_prefix(cmd: str) -> str:
     """
     s = cmd.strip()
     _PREFIX_PATTERNS = [
+        r"^setopt(?:\s+\S+)+\s*&&\s*",  # setopt errexit &&
         r"^cd\s+\S+\s*&&\s*",           # cd <path> &&
         r"^export\s+\w+=\S+\s*&&\s*",   # export VAR=value &&
-                r"^\w+=\S+\s*&&\s*",             # VAR=value &&
+        r'^\w+=(?:"[^"]*"|\'[^\']*\'|\S+)\s*&&\s*',  # VAR="value with spaces|pipes" &&
+        r"^\w+=\S+\s*&&\s*",            # VAR=value &&
         r"^(\w+=\S+\s+)+",              # VAR=value inline prefix tokens
     ]
     # Loop until no pattern matches (handles cd && export && <cmd>).

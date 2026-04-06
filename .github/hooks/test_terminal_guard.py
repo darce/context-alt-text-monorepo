@@ -30,6 +30,7 @@ _spec = importlib.util.spec_from_file_location("terminal_guard", HOOK_SCRIPT)
 _mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
 _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
 _check_command = _mod._check_command
+_strip_env_prefix = _mod._strip_env_prefix
 
 
 def _run_hook(payload: dict, cwd: str | None = None) -> tuple[int, dict | None]:
@@ -120,6 +121,20 @@ def test_ls_is_allowlisted() -> None:
     assert _check_command("ls -la") is None, "ls -la should pass through silently"
 
 
+def test_strip_env_prefix_handles_setopt_wrapped_git_rescue_command() -> None:
+    result = _strip_env_prefix(
+        'setopt errexit && REPO_ROOT="${REPO_ROOT:-$PWD}" && AUTH_BRANCH="feature/bug-401-recognition-auth-header" && git stash push -m auth401-rescue -- apps/prototype-description-service/recognition/interface_adapters/http/deps/auth.py apps/prototype-description-service/recognition/tests/api/test_authentication.py'
+    )
+    assert result.startswith("git stash push -m auth401-rescue")
+
+
+def test_strip_env_prefix_handles_quoted_command_substitution_assignment() -> None:
+    result = _strip_env_prefix(
+        'MAIN_ROOT="$(git rev-parse --show-toplevel | sed \'s/-auth401$//\')" && "$MAIN_ROOT/apps/prototype-wp-alt-context/vendor/bin/phpunit" tests/Unit/ProxyRequestTest.php'
+    )
+    assert result.startswith('"$MAIN_ROOT/apps/prototype-wp-alt-context/vendor/bin/phpunit"')
+
+
 # ---------------------------------------------------------------------------
 # Tier 1: Allowlist — commands whose terminal use is unambiguously correct.
 # Hook must pass through silently (exit 0, no JSON output).
@@ -139,6 +154,7 @@ def test_ls_is_allowlisted() -> None:
         "npm run test",
         "vitest run",
         "phpunit tests/",
+        'MAIN_ROOT="$(git rev-parse --show-toplevel | sed \'s/-auth401$//\')" && "$MAIN_ROOT/apps/prototype-wp-alt-context/vendor/bin/phpunit" tests/Unit/ProxyRequestTest.php',
         # Build
         "make test-handoff",
         "make lint",
@@ -151,6 +167,7 @@ def test_ls_is_allowlisted() -> None:
         "git cherry-pick abc123",
         "git worktree add ../lane -b codex/task-lane",
         "git stash",
+        'setopt errexit && REPO_ROOT="${REPO_ROOT:-$PWD}" && AUTH_BRANCH="feature/bug-401-recognition-auth-header" && git stash push -m auth401-rescue -- apps/prototype-description-service/recognition/interface_adapters/http/deps/auth.py apps/prototype-description-service/recognition/tests/api/test_authentication.py && git worktree add ../context-alt-text-monorepo-auth401 -b "$AUTH_BRANCH"',
         "git log --oneline -5",
         "git fetch origin",
         "git pull --rebase",
@@ -182,10 +199,11 @@ def test_ls_is_allowlisted() -> None:
         "git log --oneline -n 5",
         "git log --format='%H %s' -n 4 | head -n 4",
         "git -C ${REPO_ROOT:-$PWD} log --oneline -n 5",
-        # git rev-parse: read-only SHA / path resolution
+        # git rev-parse / rev-list: read-only SHA, path, and commit-count resolution
         "git rev-parse HEAD",
         "git rev-parse --show-toplevel",
         "git -C ${REPO_ROOT:-$PWD} rev-parse HEAD",
+        "git rev-list --count main..feature/branch-isolation-guardrails",
         "pwd && git rev-parse --show-toplevel && git branch --show-current && git rev-parse --git-dir && git rev-parse --git-common-dir",
         # Read-only measurement
         "wc -l /tmp/bd_product_diff.patch",

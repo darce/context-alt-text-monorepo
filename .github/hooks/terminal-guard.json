@@ -3,6 +3,11 @@
     "PreToolUse": [
       {
         "type": "command",
+        "command": "python3 .github/hooks/guard-main-branch.py",
+        "timeout": 5
+      },
+      {
+        "type": "command",
         "command": "python3 .github/hooks/terminal-guard.py",
         "timeout": 5
       }

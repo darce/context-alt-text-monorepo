@@ -197,7 +197,7 @@ def _utcnow_iso() -> str:
 
 
 def _json_response(payload: Mapping[str, object]) -> str:
-    return json.dumps(payload, indent=2, sort_keys=True)
+    return json.dumps(payload, sort_keys=True)
 
 
 def _envelope(
@@ -213,9 +213,10 @@ def _envelope(
 ) -> str:
     """Build a v2 response envelope.
 
-    The nested ``data`` block is the canonical v2 shape. We also mirror data
-    fields at the top level for in-process Python callers that still consume
-    the legacy flat shape.
+    The nested ``data`` block is the canonical v2 shape.  Compact
+    serialization: no indentation, null/empty fields stripped, no
+    legacy field mirroring.  In-process callers that need flat access
+    should use ``_flatten_v2()`` in ``core.py``.
     """
     scope: dict[str, str | None] = {"task_ref": task_ref}
     if entity is not None:
@@ -226,20 +227,16 @@ def _envelope(
         "tool": tool,
         "scope": scope,
         "data": dict(data),
-        "mutation": mutation,
-        "artifacts": artifacts or [],
-        "warnings": warnings or [],
     }
-    for key, value in data.items():
-        if key not in payload:
-            payload[key] = value
-    if task_ref is not None and "task_ref" not in payload:
+    if mutation is not None:
+        payload["mutation"] = mutation
+    if artifacts:
+        payload["artifacts"] = artifacts
+    if warnings:
+        payload["warnings"] = warnings
+    if task_ref is not None:
         payload["task_ref"] = task_ref
-    return json.dumps(
-        payload,
-        indent=2,
-        sort_keys=True,
-    )
+    return json.dumps(payload, sort_keys=True)
 
 
 def _excerpt_text(value: str | None, *, limit: int = 240) -> str | None:

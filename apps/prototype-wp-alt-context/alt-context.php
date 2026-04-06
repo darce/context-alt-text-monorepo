@@ -85,7 +85,7 @@ if (!is_readable($altContextAutoload)) {
 
 require_once $altContextAutoload;
 
-$dotenv = Dotenv::createImmutable(ACX_PLUGIN_DIR);
+$dotenv = Dotenv::createImmutable(ACX_PLUGIN_DIR, ['.env', '.env.local']);
 $dotenv->safeLoad();
 
 function acx_define_env_constant(string $constantName, array $envNames, ?callable $normalizer = null): void

@@ -221,7 +221,11 @@ def test_stdio_record_event_schema_exposes_discriminated_variants(tmp_path: Path
     assert schema["required"] == ["event"]
 
     event_schema = schema["properties"]["event"]
-    assert event_schema["discriminator"]["propertyName"] == "event_kind"
+    # FastMCP 3.x may strip the Pydantic/OpenAPI discriminator key from the
+    # MCP JSON Schema, but the oneOf variants and their event_kind const
+    # fields must still be present for agent discovery.
+    if "discriminator" in event_schema:
+        assert event_schema["discriminator"]["propertyName"] == "event_kind"
     assert len(event_schema["oneOf"]) == 3
 
     event_variants = {

@@ -23,6 +23,7 @@ class ProxyRequestTest extends TestCase
         parent::setUp();
 
         $this->setOption('acx_recognition_url', 'http://localhost:8000');
+        $this->setOption('acx_recognition_api_key', 'test-key');
         $this->setOption('acx_tier', 'free');
 
         $this->controller = new RecognitionController();
@@ -325,6 +326,24 @@ PHP;
         $calls = $this->getHttpCalls();
         $this->assertCount(1, $calls);
         $this->assertSame('filtered-api-key', $calls[0]['args']['headers']['X-API-Key'] ?? null);
+    }
+
+    public function testProxyRequestReturnsErrorWhenApiKeyMissing(): void
+    {
+        $this->setOption('acx_recognition_api_key', '');
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $request->set_body_params(['media_ids' => [1]]);
+
+        // Stub attachment metadata so build_media_items doesn't bail early
+        $GLOBALS['__ac_attachment_urls'][1] = 'http://example.com/image.jpg';
+        $GLOBALS['__ac_attachment_mimes'][1] = 'image/jpeg';
+        $GLOBALS['__ac_attachment_metadata'][1] = ['width' => 100, 'height' => 100];
+
+        $result = $this->controller->analyze_media($request);
+
+        $this->assertInstanceOf(WP_Error::class, $result);
+        $this->assertSame('recognition_api_key_missing', $result->get_error_code());
     }
 
     /**

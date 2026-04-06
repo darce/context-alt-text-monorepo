@@ -59,6 +59,7 @@ This project has NO production users and NO existing data to preserve.
 - Every code change must be logged with a `record_event(event={event_kind: "decision", actor: {...}, ...})` entry before review or completion.
 - After recording the decision, notify the user that the handoff has been updated (e.g. "Handoff updated: decision `<id>` recorded."). This notification is mandatory — a response that makes code changes without both recording and notifying is incomplete.
 - A task response is incomplete if MCP handoff was not updated.
+- When a task is finished, set status to `done` via `update_task_status(task_ref=..., status="done")` before or after archiving. `close_slice` keeps status `in_progress` — it does not close the task. `archive_task_state` preserves whatever status the task had; archiving while `in_progress` leaves the dashboard permanently stale.
 - Slice completion format (enforced at write time): [docs/agentic/templates/slice-complete-template.md](docs/agentic/templates/slice-complete-template.md).
 - After every state-changing handoff operation (`record_event`, `review_findings(operation="update")`, `review_findings(operation="batch_record")`), call `generate_current_task_md(task_ref=<active-task-ref>)`.
 - When logging **3 or more review findings** in a single review pass, use `review_findings(review={"operation":"batch_record", ...})` instead of repeated `review_findings(review={"operation":"record", ...})` calls — one atomic write, one `CURRENT_TASK.md` flush, per-item results returned.

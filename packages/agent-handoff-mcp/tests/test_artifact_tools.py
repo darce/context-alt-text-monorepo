@@ -163,6 +163,52 @@ def test_record_artifact_with_lane_and_app_root(isolated_env: dict) -> None:
     assert result["ok"] is True
 
 
+def test_artifacts_domain_tool_record_search_get_and_purge(isolated_env: dict) -> None:
+    recorded = _parse(
+        mcp_server.artifacts(
+            artifact={
+                "operation": "record",
+                "task_ref": "test-task",
+                "source_kind": "doc",
+                "source_label": "domain-artifact",
+                "content": _LARGE_CONTENT,
+                "summary": "domain artifact summary",
+            }
+        )
+    )
+    assert recorded["ok"] is True
+    source_id = recorded["source_id"]
+
+    searched = _parse(
+        mcp_server.artifacts(
+            artifact={
+                "operation": "search",
+                "queries": ["output text"],
+                "task_ref": "test-task",
+                "fields": "source_id,title,snippet",
+            }
+        )
+    )
+    assert searched["ok"] is True
+    assert searched["hits"]
+
+    fetched = _parse(
+        mcp_server.artifacts(
+            artifact={
+                "operation": "get",
+                "source_id": source_id,
+                "detail": "summary",
+                "fields": "source_label,chunk_count",
+            }
+        )
+    )
+    assert fetched["ok"] is True
+    assert fetched["source"]["source_label"] == "domain-artifact"
+
+    purged = _parse(mcp_server.artifacts(artifact={"operation": "purge", "task_ref": "test-task"}))
+    assert purged["ok"] is True
+
+
 # ---------------------------------------------------------------------------
 # search_artifacts
 # ---------------------------------------------------------------------------

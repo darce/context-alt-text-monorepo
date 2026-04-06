@@ -54,6 +54,7 @@ get_latest_slice_review_packet = _lanes.get_latest_slice_review_packet
 # a unified orchestration+ledger API surface.
 # ---------------------------------------------------------------------------
 from agent_handoff_mcp.api import (  # noqa: E402,F401
+    artifacts,
     archive_task_state,
     batch_record_review_findings,
     build_write_actor,
@@ -65,12 +66,16 @@ from agent_handoff_mcp.api import (  # noqa: E402,F401
     import_handoff_state,
     list_next_actions,
     list_review_findings,
+    next_actions,
     record_artifact,
     record_decision,
+    record_event,
     record_review_finding,
     record_review_run,
     record_test_result,
     report_blocker,
+    review_findings,
+    review_runs,
     set_handoff_state,
     update_next_actions,
     update_review_finding,

@@ -736,7 +736,9 @@ def _render_current_task_md(state: CurrentTaskRenderState) -> str:
         (
             "tests_recent",
             "- None",
-            lambda item: f"- [#{item.get('id')}] `{_truncate_command(item.get('command', ''))}` -> `{'pass' if item.get('passed') else 'fail'}`",
+            lambda item: (
+                f"- [#{item.get('id')}] `{_truncate_command(item.get('command', ''))}` -> `{'pass' if item.get('passed') else 'fail'}`"
+            ),
         ),
     ]:
         raw_items = state.get(section, [])

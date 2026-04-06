@@ -26,7 +26,7 @@ cp .env.example .env
 
 | Variable            | Purpose                                                                                                 | Default                                                                |
 | ------------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `POSTGRES_DSN`      | Async SQLAlchemy DSN used by the FastAPI app                                                            | `postgresql+asyncpg://context:context@localhost:5432/context_alt_text` |
+| `POSTGRES_DSN`      | Async SQLAlchemy DSN used by the FastAPI app                                                            | `postgresql+asyncpg://context:context@localhost:5432/context_alt_text_service` |
 | `POSTGRES_SYNC_DSN` | Optional sync DSN for Alembic. If omitted we derive it from `POSTGRES_DSN`.                             | same host/DB via psycopg                                               |
 | `PGVECTOR_DIM`      | Embedding dimension stored in `media_faces.embedding`. Keep at 1024 unless the embedding model changes. | `1024`                                                                 |
 
@@ -48,22 +48,22 @@ pyenv shell description-service
 pip install -e .
 
 # 3. Prepare PostgreSQL
-createdb context_alt_text             # or use psql -c "CREATE DATABASE ..."
-psql -d context_alt_text -c 'CREATE EXTENSION IF NOT EXISTS vector;'
+createdb context_alt_text_service             # or use psql -c "CREATE DATABASE ..."
+psql -d context_alt_text_service -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 
 # 4. Apply the baseline migration
 alembic -c db/alembic.ini upgrade head
 
 ## 3.1 Dedicated database owner (optional but recommended)
 
-For local development and CI we prefer a role that owns `context_alt_text` so
+For local development and CI we prefer a role that owns `context_alt_text_service` so
 you can safely run migrations and schema drops without touching your personal
 PostgreSQL user. After creating the database above, switch the owner with:
 
 ```sql
 CREATE ROLE context_service WITH LOGIN PASSWORD 'change-me' CREATEDB;
-GRANT ALL PRIVILEGES ON DATABASE context_alt_text TO context_service;
-ALTER DATABASE context_alt_text OWNER TO context_service;
+GRANT ALL PRIVILEGES ON DATABASE context_alt_text_service TO context_service;
+ALTER DATABASE context_alt_text_service OWNER TO context_service;
 ````
 
 When you run `psql postgres` afterwards, `\\l` should show the new owner in
@@ -90,9 +90,9 @@ cd apps/prototype-description-service
 pyenv shell description-service                   # if not already active
 
 # (Option A) Drop & recreate the database completely
-psql -c 'DROP DATABASE IF EXISTS context_alt_text;'
-psql -c 'CREATE DATABASE context_alt_text;'
-psql -d context_alt_text -c 'CREATE EXTENSION IF NOT EXISTS vector;'
+psql -c 'DROP DATABASE IF EXISTS context_alt_text_service;'
+psql -c 'CREATE DATABASE context_alt_text_service;'
+psql -d context_alt_text_service -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 
 # (Option B) Keep the DB but rollback objects
 alembic -c db/alembic.ini downgrade base

@@ -95,7 +95,7 @@ stop:
 
 # Reset local database (db-reset is an alias)
 reset db-reset:
-	@./scripts/reset_dev_db.sh
+	@ALLOW_DEV_DB_RESET="$${ALLOW_DEV_DB_RESET:-1}" ./scripts/reset_dev_db.sh
 	@echo "✓ Local database reset"
 
 # Run all checks and tests

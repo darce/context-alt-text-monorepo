@@ -33,15 +33,27 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ENV_FILE="${PROJECT_ROOT}/.env"
+EXAMPLE_ENV_FILE="${PROJECT_ROOT}/.env.example"
+
+ORIGINAL_ALLOW_DEV_DB_RESET="${ALLOW_DEV_DB_RESET-}"
 
 if [[ ! -f "${ENV_FILE}" ]]; then
-  echo "[reset-dev-db] Missing ${ENV_FILE}. Copy .env.example first." >&2
-  exit 1
+  if [[ -f "${EXAMPLE_ENV_FILE}" ]]; then
+    cp "${EXAMPLE_ENV_FILE}" "${ENV_FILE}"
+    echo "[reset-dev-db] Bootstrapped ${ENV_FILE} from ${EXAMPLE_ENV_FILE}." >&2
+  else
+    echo "[reset-dev-db] Missing ${ENV_FILE}. Create it before retrying." >&2
+    exit 1
+  fi
 fi
 
 set -a
 source "${ENV_FILE}"
 set +a
+
+if [[ -n "${ORIGINAL_ALLOW_DEV_DB_RESET}" ]]; then
+  export ALLOW_DEV_DB_RESET="${ORIGINAL_ALLOW_DEV_DB_RESET}"
+fi
 
 ENV_MODE_VALUE="${ENV_MODE:-local}"
 if [[ "${ENV_MODE_VALUE}" != "local" && "${ENV_MODE_VALUE}" != "development" ]]; then
@@ -57,12 +69,12 @@ fi
 # Resolve DB connection info directly from environment
 DB_HOST="${PGHOST:-localhost}"
 DB_PORT="${PGPORT:-5432}"
-DB_USER="${PGUSER:-}"
-DB_PASS="${PGPASSWORD:-}"
+DB_USER="${PGUSER:-${APP_PGUSER:-}}"
+DB_PASS="${PGPASSWORD:-${APP_PGPASSWORD:-}}"
 DB_NAME="${DB_NAME:-}"
 
-if [[ -z "${DB_USER}" || -z "${DB_NAME}" ]]; then
-  echo "[reset-dev-db] PGUSER and DB_NAME must be set in .env for this script." >&2
+if [[ -z "${DB_USER}" || -z "${DB_PASS}" || -z "${DB_NAME}" ]]; then
+  echo "[reset-dev-db] PGUSER/PGPASSWORD (or APP_PGUSER/APP_PGPASSWORD) and DB_NAME must be set in ${ENV_FILE}." >&2
   exit 1
 fi
 

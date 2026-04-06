@@ -4,7 +4,7 @@ Utility scripts for local development and testing.
 
 ## Directory Structure
 
-```
+```text
 scripts/
 ├── db_shell.sh                 # Database shell access (used by /db-query workflow)
 ├── reset_dev_db.sh             # Database reset (used by /db-reset workflow)
@@ -67,6 +67,7 @@ Resets the development database by dropping and recreating it with fresh migrati
 
 **What it does:**
 
+- Bootstraps `.env` from `.env.example` when a clean checkout has no local env yet
 - Drops and recreates the database
 - Runs Alembic migrations
 - Creates the `recognition_test_user` for RLS testing
@@ -74,8 +75,10 @@ Resets the development database by dropping and recreating it with fresh migrati
 
 **Safety:**
 
-- Requires `ALLOW_DEV_DB_RESET=1` in `.env`
-- Only runs if `ENVIRONMENT=development`
+- Direct script usage requires `ALLOW_DEV_DB_RESET=1` in `.env` or the shell environment
+- `make reset` exports `ALLOW_DEV_DB_RESET=1` automatically because the target is already explicitly destructive and local-only
+- Only runs if `ENV_MODE=local` or `ENV_MODE=development`
+- Uses the canonical `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`DB_NAME` variables from `.env`
 
 ## Test User Setup
 

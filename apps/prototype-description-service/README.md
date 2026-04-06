@@ -19,12 +19,14 @@ uvicorn api.main:app --reload
 Face detection requires InsightFace which has platform-specific installation:
 
 **Linux x86_64** (including Hugging Face Spaces):
+
 ```bash
 pip install -e ".[face]"      # CPU
 pip install -e ".[gpu]"       # GPU (CUDA)
 ```
 
 **macOS Apple Silicon**:
+
 ```bash
 # InsightFace requires compilation with correct SDK paths
 ./scripts/install_insightface_mac.sh
@@ -33,24 +35,40 @@ pip install -e ".[dev]"
 
 Without InsightFace installed, the service falls back to stub detectors that generate synthetic embeddings (useful for testing, not production).
 
+### Database (Local PostgreSQL reset contract)
 
-### Database (Dockerized Postgres + pgvector)
-
-A disposable Postgres instance is bundled via Compose so every developer has the
-same schema/extension setup:
+The default local reset path targets a local PostgreSQL instance on
+`localhost:5432` and uses the credentials from `.env`:
 
 ```bash
 cd apps/prototype-description-service
-docker compose -f docker-compose.db.yml down -v
-docker compose -f docker-compose.db.yml up -d postgres   # start container (reads PGxxx vars from .env)
-./scripts/reset_dev_db.sh                                 # drop + recreate schema with current .env credentials
+cp .env.example .env
+make postgres-start   # starts Homebrew PostgreSQL if needed
+make reset            # bootstraps .env on first run, recreates DB, runs Alembic
 ```
 
-The Compose service forwards port `55432` (`localhost:55432`) and picks up
-`PGUSER/PGPASSWORD/DB_NAME` from `.env`. `reset_dev_db.sh` now drives the
-container directly (creates the configured user, recreates the database,
-adds pgvector, and runs Alembic) so there is no need for a host-side Postgres.
-Stop it with `docker compose -f docker-compose.db.yml down`.
+The checked-in `.env.example` already publishes the canonical local
+`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`DB_NAME` contract. `make reset`
+exports `ALLOW_DEV_DB_RESET=1` for the destructive local reset, while direct
+`./scripts/reset_dev_db.sh` usage still requires you to opt in explicitly.
+
+If `.env` is missing, the reset script bootstraps it from `.env.example` before
+continuing. The script then verifies local mode, recreates the configured
+database and role, enables `pgvector`, and runs Alembic migrations.
+
+An optional disposable Compose database is still available via
+`docker-compose.db.yml`, but it is not the default reset path. If you use it,
+set `PGPORT=55432` in `.env` before running the reset so the script targets the
+container instead of the native local server:
+
+```bash
+cd apps/prototype-description-service
+cp .env.example .env
+docker compose -f docker-compose.db.yml up -d postgres
+PGPORT=55432 make reset
+```
+
+Stop the container with `docker compose -f docker-compose.db.yml down`.
 
 Need alternative instructions (manual psql workflow)? See
 [`db/README.md`](db/README.md).
@@ -67,7 +85,6 @@ package with dev extras, sources `.env`, enforces the cache paths, and
 manages the uvicorn lifecycle).
 
 ## Cache Configuration
-
 
 The recognition pipeline downloads sizable model assets (InsightFace, HuggingFace,
 Torch, YOLO, etc.). To avoid polluting your primary disk we keep all caches on an
@@ -132,6 +149,9 @@ make test
 
 # Format, typecheck, and test (for CI)
 make ci
+
+# Reset the local database
+make reset
 
 # Install dependencies
 make install

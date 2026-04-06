@@ -199,10 +199,11 @@ def test_strip_env_prefix_handles_quoted_command_substitution_assignment() -> No
         "git log --oneline -n 5",
         "git log --format='%H %s' -n 4 | head -n 4",
         "git -C ${REPO_ROOT:-$PWD} log --oneline -n 5",
-        # git rev-parse: read-only SHA / path resolution
+        # git rev-parse / rev-list: read-only SHA, path, and commit-count resolution
         "git rev-parse HEAD",
         "git rev-parse --show-toplevel",
         "git -C ${REPO_ROOT:-$PWD} rev-parse HEAD",
+        "git rev-list --count main..feature/branch-isolation-guardrails",
         "pwd && git rev-parse --show-toplevel && git branch --show-current && git rev-parse --git-dir && git rev-parse --git-common-dir",
         # Read-only measurement
         "wc -l /tmp/bd_product_diff.patch",

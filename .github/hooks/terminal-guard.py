@@ -104,9 +104,11 @@ _ALLOWLIST: list[re.Pattern[str]] = [
         # git show --stat: read-only commit inspection (no native tool equivalent)
         r"^git\s+show\s+--stat\b",
         r"^git\s+-C\s+\S+\s+show\s+--stat\b",
-        # git rev-parse: read-only SHA / path resolution
+        # git rev-parse / rev-list: read-only SHA, path, and commit-count resolution
         r"^git\s+rev-parse\b",
         r"^git\s+-C\s+\S+\s+rev-parse\b",
+        r"^git\s+rev-list\b",
+        r"^git\s+-C\s+\S+\s+rev-list\b",
         # commit/worktree preflight: current checkout identity chain used by commit2git
         r"^pwd\s*&&\s*git\s+rev-parse\s+--show-toplevel\s*&&\s*git\s+branch\s+--show-current\s*&&\s*git\s+rev-parse\s+--git-dir\s*&&\s*git\s+rev-parse\s+--git-common-dir\b",
         # In-place file edits (when replace_string_in_file fails on large blocks)

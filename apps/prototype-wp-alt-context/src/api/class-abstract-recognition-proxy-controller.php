@@ -67,9 +67,14 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		);
 
 		$api_key = $this->get_recognition_api_key();
-		if ( '' !== $api_key ) {
-			$headers['X-API-Key'] = $api_key;
+		if ( '' === $api_key ) {
+			return new WP_Error(
+				'recognition_api_key_missing',
+				'Recognition API key is not configured. Set it in Settings > Alt Context, or define the ACX_RECOGNITION_API_KEY constant.',
+				array( 'status' => 500 )
+			);
 		}
+		$headers['X-API-Key'] = $api_key;
 
 		$policy = $this->get_proxy_policy()->resolve( $method, $request_class );
 		$circuit_key = $this->build_circuit_breaker_key( $base_url );

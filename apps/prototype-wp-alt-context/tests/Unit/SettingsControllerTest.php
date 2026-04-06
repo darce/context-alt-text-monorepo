@@ -39,6 +39,7 @@ class SettingsControllerTest extends TestCase
     public function testGetSettingsReturnsDefaultSourceWhenNothingConfigured(): void
     {
         $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_api_key', '');
 
         $request = new WP_REST_Request('GET', '/acx/v1/settings');
         $response = $this->controller->get_settings($request);

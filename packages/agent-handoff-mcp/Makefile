@@ -1,4 +1,5 @@
-PYTHON ?= python3
+PYENV_ROOT ?= $(HOME)/.pyenv
+PYTHON ?= $(PYENV_ROOT)/versions/description-service/bin/python
 PACKAGE_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 RUFF_TARGETS := src tests
 MYPY_TARGETS := src

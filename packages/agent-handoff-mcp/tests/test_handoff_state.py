@@ -54,6 +54,80 @@ def test_mandatory_slice_decision_headings_constant_is_stable() -> None:
     )
 
 
+def test_record_event_domain_tool_dispatches_all_variants(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="record-event-task",
+            objective="Exercise record_event domain tool",
+            status="in_progress",
+        )
+    )
+
+    decision_result = _parse(
+        mcp_server.record_event(
+            event={
+                "event_kind": "decision",
+                "session": "record-event",
+                "decision": "record_event_dispatch_decision",
+                "rationale": "Domain tool decision dispatch proof.",
+                "task_ref": "record-event-task",
+                "changed_files": ["packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py"],
+            }
+        )
+    )
+    assert decision_result["ok"] is True
+    assert decision_result["decision"]["decision"] == "record_event_dispatch_decision"
+
+    test_result = _parse(
+        mcp_server.record_event(
+            event={
+                "event_kind": "test_result",
+                "session": "record-event",
+                "command": "pytest packages/agent-handoff-mcp/tests/test_handoff_state.py -q",
+                "passed": True,
+                "result": "1 passed in 0.01s",
+                "task_ref": "record-event-task",
+            }
+        )
+    )
+    assert test_result["ok"] is True
+    assert test_result["test"]["command"] == "pytest packages/agent-handoff-mcp/tests/test_handoff_state.py -q"
+
+    blocker_result = _parse(
+        mcp_server.record_event(
+            event={
+                "event_kind": "blocker",
+                "operation": "add",
+                "description": "record_event blocker dispatch proof",
+                "task_ref": "record-event-task",
+            }
+        )
+    )
+    assert blocker_result["ok"] is True
+    assert blocker_result["blocker"]["description"] == "record_event blocker dispatch proof"
+
+    with handoff_core._get_db_connection() as conn:
+        decision_row = conn.execute(
+            "SELECT decision FROM decisions WHERE task_ref = ? ORDER BY id DESC LIMIT 1",
+            ("record-event-task",),
+        ).fetchone()
+        test_row = conn.execute(
+            "SELECT command FROM verified_tests WHERE task_ref = ? ORDER BY id DESC LIMIT 1",
+            ("record-event-task",),
+        ).fetchone()
+        blocker_row = conn.execute(
+            "SELECT description FROM blockers WHERE task_ref = ? ORDER BY id DESC LIMIT 1",
+            ("record-event-task",),
+        ).fetchone()
+
+    assert decision_row is not None
+    assert decision_row["decision"] == "record_event_dispatch_decision"
+    assert test_row is not None
+    assert test_row["command"] == "pytest packages/agent-handoff-mcp/tests/test_handoff_state.py -q"
+    assert blocker_row is not None
+    assert blocker_row["description"] == "record_event blocker dispatch proof"
+
+
 def test_summarize_test_result_falls_back_to_last_line() -> None:
     result = (
         "============================= test session starts =============================\n"
@@ -1035,9 +1109,11 @@ def test_update_review_finding_requires_verified_descendant_commit(
     monkeypatch.setattr(
         handoff_core,
         "_classify_commit_relation",
-        lambda reference_sha, candidate_sha: "descendant"
-        if (reference_sha, candidate_sha) in {("abc123", "def456"), ("abc123", "abc123")}
-        else "unknown",
+        lambda reference_sha, candidate_sha: (
+            "descendant"
+            if (reference_sha, candidate_sha) in {("abc123", "def456"), ("abc123", "abc123")}
+            else "unknown"
+        ),
     )
 
     missing_verified_commit = _parse(
@@ -2046,6 +2122,48 @@ def test_generate_current_task_md_related_excludes_active_task(isolated_handoff:
     assert "## Related Open Review Findings" not in md
 
 
+def test_generate_current_task_md_caps_cross_task_findings_per_task(isolated_handoff: dict) -> None:
+    """Cross-task finding groups honor max_cross_task_findings per related task."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="daemon-active",
+            objective="Active",
+            status="in_progress",
+        )
+    )
+
+    for task_ref, finding_ids in {
+        "daemon-a": ["DA-01", "DA-02"],
+        "daemon-b": ["DB-01", "DB-02"],
+    }.items():
+        for finding_id in finding_ids:
+            _parse(
+                mcp_server.record_review_finding(
+                    task_ref=task_ref,
+                    session=f"{task_ref}-{finding_id}",
+                    finding_id=finding_id,
+                    file_path=f"{task_ref}.py",
+                    description=f"Finding {finding_id}",
+                    severity="low",
+                )
+            )
+
+    payload = _parse(
+        mcp_server.generate_current_task_md(
+            task_ref="daemon-active",
+            write_file=False,
+            max_cross_task_findings=1,
+        )
+    )
+
+    assert payload["ok"] is True
+    md = payload["markdown"]
+    assert "### daemon-a" in md
+    assert "### daemon-b" in md
+    assert ("DA-01" in md) ^ ("DA-02" in md)
+    assert ("DB-01" in md) ^ ("DB-02" in md)
+
+
 def test_generate_current_task_md_related_skips_resolved(isolated_handoff: dict) -> None:
     """Resolved findings from other tasks do not appear in the output."""
     # Create daemon-1 task first and resolve a finding while it is active
@@ -2326,7 +2444,9 @@ def test_internal_write_path_reuses_existing_connection_for_review_coverage(
     isolated_handoff: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Regression: the internal write path must not reopen the DB via the public coverage tool."""
-    from agent_handoff_mcp import review_findings
+    import importlib
+
+    _review_findings_mod = importlib.import_module("agent_handoff_mcp.review_findings")
     from agent_handoff_mcp._shared import _get_db_connection, _write_current_task_md_for_task
 
     _parse(
@@ -2350,7 +2470,7 @@ def test_internal_write_path_reuses_existing_connection_for_review_coverage(
     def _unexpected_public_helper(*args: object, **kwargs: object) -> str:
         raise AssertionError("public get_review_coverage should not be called from _write_current_task_md_for_task")
 
-    monkeypatch.setattr(review_findings, "get_review_coverage", _unexpected_public_helper)
+    monkeypatch.setattr(_review_findings_mod, "get_review_coverage", _unexpected_public_helper)
 
     with _get_db_connection() as conn:
         _write_current_task_md_for_task(conn, "iw-cov-inline")

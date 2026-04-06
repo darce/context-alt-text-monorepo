@@ -662,16 +662,25 @@ def test_orchestrator_single_cycle_handles_timeout(tmp_path: Path) -> None:
     assert "timed out" in payload["error"]
 
 
-def test_handoff_pythonpath_points_to_real_repo_sources() -> None:
-    parts = api._handoff_pythonpath().split(":")
-    expected_mcp = str(REPO_ROOT / "packages" / "agent-handoff-mcp" / "src")
+def test_runtime_pythonpath_only_requires_local_bridge_source() -> None:
+    parts = api._runtime_pythonpath().split(":")
     expected_bridge = str(REPO_ROOT / "packages" / "codex-subagent-bridge" / "src")
 
-    assert expected_mcp in parts
     assert expected_bridge in parts
-    assert Path(expected_mcp).exists()
     assert Path(expected_bridge).exists()
+    assert str(REPO_ROOT / "packages" / "agent-handoff-mcp" / "src") not in parts
+    assert str(REPO_ROOT / "packages" / "agent-orchestrator-mcp" / "src") not in parts
     assert all("/packages/packages/" not in part for part in parts)
+
+
+def test_daemon_runtime_env_does_not_inject_handoff_source_path(monkeypatch) -> None:
+    monkeypatch.setenv("PYTHONPATH", "/existing/pythonpath")
+    env = api._daemon_runtime_env()
+
+    assert str(REPO_ROOT / "packages" / "codex-subagent-bridge" / "src") in env["PYTHONPATH"]
+    assert "/existing/pythonpath" in env["PYTHONPATH"]
+    assert str(REPO_ROOT / "packages" / "agent-handoff-mcp" / "src") not in env["PYTHONPATH"]
+    assert str(REPO_ROOT / "packages" / "agent-orchestrator-mcp" / "src") not in env["PYTHONPATH"]
 
 
 def _mock_orchestrator_paths(tmp_path: Path) -> dict[str, Path]:

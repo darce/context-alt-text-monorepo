@@ -4,33 +4,31 @@ import argparse
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
-from ._shared import ReviewFindingDetails
 from .api import (
     ArgSpec,
+    ArtifactsParam,
+    NextActionsParam,
+    RecordEventParam,
+    ReviewFindingsParam,
+    ReviewRunsParam,
     archive_task_state,
+    artifacts,
     build_handoff_mcp,
     configure_runtime,
     export_handoff_state,
     generate_current_task_md,
-    get_artifact,
     get_handoff_state,
     handoff_close_check,
     import_handoff_state,
-    list_review_findings,
-    purge_artifacts,
-    record_artifact,
-    record_decision,
-    record_review_finding,
-    record_test_result,
-    report_blocker,
+    next_actions,
+    record_event,
+    review_findings,
+    review_runs,
     run_doctor,
-    search_artifacts,
     search_handoff,
     set_handoff_state,
-    update_next_actions,
-    update_review_finding,
 )
 from .config import RuntimeConfig
 
@@ -117,23 +115,208 @@ def _add_arg(sub: argparse.ArgumentParser, spec: ArgSpec) -> None:
 # (negations, dict construction, file reading) need an explicit function here.
 
 
-def _dispatch_review_record(args: argparse.Namespace) -> Any:
-    details: ReviewFindingDetails = {}
-    if args.line_start is not None:
-        details["line_start"] = args.line_start
-    if args.line_end is not None:
-        details["line_end"] = args.line_end
-    if args.fix:
-        details["fix"] = args.fix
-    return record_review_finding(
-        session=args.session,
-        finding_id=args.finding_id,
-        severity=args.severity,
-        file_path=args.file_path,
-        description=args.description,
-        details=details or None,
-        task_ref=getattr(args, "task_ref", None),
-    )
+def _dispatch_review_findings(args: argparse.Namespace) -> Any:
+    payload: dict[str, Any] = {"operation": args.operation}
+    if args.task_ref is not None:
+        payload["task_ref"] = args.task_ref
+
+    if args.operation == "record":
+        payload["session"] = args.session
+        payload["finding_id"] = args.finding_id
+        payload["severity"] = args.severity
+        payload["file_path"] = args.file_path
+        payload["description"] = args.description
+        details: dict[str, Any] = {}
+        if args.line_start is not None:
+            details["line_start"] = args.line_start
+        if args.line_end is not None:
+            details["line_end"] = args.line_end
+        if args.fix:
+            details["fix"] = args.fix
+        if details:
+            payload["details"] = details
+        if args.review_mode is not None:
+            payload["review_mode"] = args.review_mode
+    elif args.operation == "batch_record":
+        payload["session"] = args.session
+        findings_json = args.findings_json
+        if findings_json is None and args.findings_file:
+            findings_json = Path(args.findings_file).read_text()
+        payload["findings"] = json.loads(findings_json or "[]")
+    elif args.operation == "update":
+        payload["status"] = args.status
+        if args.finding_id is not None:
+            payload["finding_id"] = args.finding_id
+        if args.finding_db_id is not None:
+            payload["finding_db_id"] = args.finding_db_id
+        if args.resolution_notes is not None:
+            payload["resolution_notes"] = args.resolution_notes
+        if args.reopen_reason is not None:
+            payload["reopen_reason"] = args.reopen_reason
+        if args.verified_commit_sha is not None:
+            payload["verified_commit_sha"] = args.verified_commit_sha
+        if args.verification_evidence is not None:
+            payload["verification_evidence"] = args.verification_evidence
+        if args.session is not None:
+            payload["session"] = args.session
+    else:
+        if args.status is not None:
+            payload["status"] = args.status
+        if args.severity is not None:
+            payload["severity"] = args.severity
+        payload["limit"] = args.limit
+        payload["offset"] = args.offset
+        payload["detail"] = args.detail
+        if args.review_mode is not None:
+            payload["review_mode"] = args.review_mode
+        if args.finding_id is not None:
+            payload["finding_id"] = args.finding_id
+        if args.finding_db_id is not None:
+            payload["finding_db_id"] = args.finding_db_id
+
+    return review_findings(review=cast(ReviewFindingsParam, payload))
+
+
+def _dispatch_review_runs(args: argparse.Namespace) -> Any:
+    payload: dict[str, Any] = {"operation": args.operation}
+    if args.task_ref is not None:
+        payload["task_ref"] = args.task_ref
+
+    if args.operation == "record":
+        payload["review_run_id"] = args.review_run_id
+        payload["session"] = args.session
+        payload["subject_path"] = args.subject_path
+        payload["subject_kind"] = args.subject_kind
+        payload["review_mode"] = args.review_mode
+        if args.verdict is not None:
+            payload["verdict"] = args.verdict
+        if args.verdict_decision is not None:
+            payload["verdict_decision"] = args.verdict_decision
+    elif args.operation == "list":
+        if args.subject_path is not None:
+            payload["subject_path"] = args.subject_path
+        if args.review_mode is not None:
+            payload["review_mode"] = args.review_mode
+        if args.verdict is not None:
+            payload["verdict"] = args.verdict
+        payload["limit"] = args.limit
+        payload["offset"] = args.offset
+    else:
+        if args.subject_path is not None:
+            payload["subject_path"] = args.subject_path
+
+    return review_runs(review=cast(ReviewRunsParam, payload))
+
+
+def _dispatch_event_record(args: argparse.Namespace) -> Any:
+    payload: dict[str, Any] = {"event_kind": args.event_kind}
+    if args.task_ref is not None:
+        payload["task_ref"] = args.task_ref
+
+    if args.event_kind == "decision":
+        payload["session"] = args.session
+        payload["decision"] = args.decision
+        if args.rationale is not None:
+            payload["rationale"] = args.rationale
+        if args.input_tokens is not None:
+            payload["input_tokens"] = args.input_tokens
+        if args.output_tokens is not None:
+            payload["output_tokens"] = args.output_tokens
+        if args.total_tokens is not None:
+            payload["total_tokens"] = args.total_tokens
+        if args.changed_files:
+            payload["changed_files"] = args.changed_files
+    elif args.event_kind == "test_result":
+        payload["session"] = args.session
+        payload["command"] = args.command
+        payload["passed"] = args.passed
+        if args.result is not None:
+            payload["result"] = args.result
+        if args.exit_code is not None:
+            payload["exit_code"] = args.exit_code
+    else:
+        payload["operation"] = args.operation
+        if args.description is not None:
+            payload["description"] = args.description
+        if args.blocker_id is not None:
+            payload["blocker_id"] = args.blocker_id
+
+    return record_event(event=cast(RecordEventParam, payload))
+
+
+def _dispatch_next_actions(args: argparse.Namespace) -> Any:
+    payload: dict[str, Any] = {"operation": args.operation}
+    if args.task_ref is not None:
+        payload["task_ref"] = args.task_ref
+
+    if args.operation == "list":
+        if args.lane_id is not None:
+            payload["lane_id"] = args.lane_id
+        if args.status is not None:
+            payload["status"] = args.status
+        payload["limit"] = args.limit
+        payload["offset"] = args.offset
+    else:
+        if args.action_id is not None:
+            payload["action_id"] = args.action_id
+        if args.action is not None:
+            payload["action"] = args.action
+        if args.priority is not None:
+            payload["priority"] = args.priority
+        if args.status is not None and args.operation == "update":
+            payload["status"] = args.status
+
+    return next_actions(action=cast(NextActionsParam, payload))
+
+
+def _dispatch_artifacts(args: argparse.Namespace) -> Any:
+    payload: dict[str, Any] = {"operation": args.operation}
+    if args.task_ref is not None:
+        payload["task_ref"] = args.task_ref
+    if args.lane_id is not None:
+        payload["lane_id"] = args.lane_id
+    if args.app_root is not None:
+        payload["app_root"] = args.app_root
+
+    if args.operation == "record":
+        payload["source_kind"] = args.source_kind
+        payload["source_label"] = args.source_label
+        payload["content_type"] = args.content_type
+        if args.summary is not None:
+            payload["summary"] = args.summary
+        content = args.content
+        if content is None and args.content_file:
+            content = Path(args.content_file).read_text()
+        payload["content"] = content or ""
+        if args.metadata_json is not None:
+            payload["metadata"] = json.loads(args.metadata_json)
+    elif args.operation == "search":
+        if args.queries is not None:
+            payload["queries"] = args.queries
+        if args.source_kind is not None:
+            payload["source_kind"] = args.source_kind
+        if args.content_type is not None:
+            payload["content_type"] = args.content_type
+        payload["limit"] = args.limit
+        payload["offset"] = args.offset
+        payload["detail"] = args.detail
+        if args.fields is not None:
+            payload["fields"] = args.fields
+    elif args.operation == "get":
+        if args.source_id is not None:
+            payload["source_id"] = args.source_id
+        if args.source_label is not None:
+            payload["source_label"] = args.source_label
+        payload["include_terms"] = args.include_terms
+        payload["top_n_terms"] = args.top_n_terms
+        payload["detail"] = args.detail
+        if args.fields is not None:
+            payload["fields"] = args.fields
+    else:
+        if args.older_than_days is not None:
+            payload["older_than_days"] = args.older_than_days
+
+    return artifacts(artifact=cast(ArtifactsParam, payload))
 
 
 def _dispatch_task(args: argparse.Namespace) -> Any:
@@ -148,44 +331,34 @@ def _dispatch_export(args: argparse.Namespace) -> Any:
     )
 
 
-def _dispatch_artifact_record(args: argparse.Namespace) -> Any:
-    content = args.content
-    if content is None and args.content_file:
-        content = Path(args.content_file).read_text()
-    return record_artifact(
-        task_ref=args.task_ref,
-        lane_id=args.lane_id,
-        app_root=args.app_root,
-        source_kind=args.source_kind,
-        source_label=args.source_label,
-        content=content or "",
-        content_type=args.content_type,
-        summary=args.summary,
-    )
-
-
 def _dispatch_artifact_list(args: argparse.Namespace) -> Any:
-    return search_artifacts(
-        task_ref=args.task_ref,
-        lane_id=args.lane_id,
-        app_root=args.app_root,
-        source_kind=args.source_kind,
-        limit=args.limit,
-        offset=args.offset,
-        detail=args.detail,
-        fields=args.fields,
+    return artifacts(
+        artifact=cast(ArtifactsParam, {
+            "operation": "search",
+            "task_ref": args.task_ref,
+            "lane_id": args.lane_id,
+            "app_root": args.app_root,
+            "source_kind": args.source_kind,
+            "limit": args.limit,
+            "offset": args.offset,
+            "detail": args.detail,
+            "fields": args.fields,
+        })
     )
 
 
 def _dispatch_artifact_terms(args: argparse.Namespace) -> Any:
-    return get_artifact(
-        source_id=args.source_id,
-        task_ref=args.task_ref,
-        source_label=args.source_label,
-        include_terms=True,
-        top_n_terms=args.top_n,
-        detail=args.detail,
-        fields=args.fields,
+    return artifacts(
+        artifact=cast(ArtifactsParam, {
+            "operation": "get",
+            "source_id": args.source_id,
+            "task_ref": args.task_ref,
+            "source_label": args.source_label,
+            "include_terms": True,
+            "top_n_terms": args.top_n,
+            "detail": args.detail,
+            "fields": args.fields,
+        })
     )
 
 
@@ -196,10 +369,13 @@ def _dispatch_artifact_terms(args: argparse.Namespace) -> Any:
 # Tools that need custom dispatch logic (negation flags, dict construction,
 # or file-reading side effects). All other MCP tools use _auto_dispatch().
 _CLI_DISPATCH_OVERRIDES: dict[str, Callable[[argparse.Namespace], Any]] = {
-    "record_review_finding": _dispatch_review_record,
+    "record_event": _dispatch_event_record,
+    "next_actions": _dispatch_next_actions,
+    "review_findings": _dispatch_review_findings,
+    "review_runs": _dispatch_review_runs,
+    "artifacts": _dispatch_artifacts,
     "generate_current_task_md": _dispatch_task,
     "export_handoff_state": _dispatch_export,
-    "record_artifact": _dispatch_artifact_record,
 }
 
 
@@ -274,8 +450,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--tool-profile",
         default=None,
-        choices=["core", "extended"],
-        help="MCP tool profile to expose: core (16 tools) or extended (all 28 tools, default).",
+        choices=["all", "core", "extended"],
+        help="Legacy tool-profile selector. All launches now expose the same 17-tool surface; core/extended are accepted as deprecated aliases.",
     )
 
     subparsers = parser.add_subparsers(dest="subcommand", required=True)

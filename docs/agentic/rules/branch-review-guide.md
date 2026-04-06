@@ -409,7 +409,7 @@ Preferred pattern:
 Example:
 
 ```bash
-PYTHONPATH="packages/agent-handoff-mcp/src" python3 -m agent_handoff_mcp \
+agent-handoff-mcp \
   --workspace-root /abs/path/to/repo \
   --state-dir /abs/path/to/repo/.task-state \
   --current-task-path /abs/path/to/repo/CURRENT_TASK.md \

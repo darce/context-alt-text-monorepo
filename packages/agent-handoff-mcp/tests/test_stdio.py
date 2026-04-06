@@ -6,39 +6,28 @@ from typing import Any
 
 from fastmcp.client import Client, PythonStdioTransport
 
-# Core profile tools that must always be present in the default (core) launch.
+# Tool families that must always be present on the consolidated 17-tool surface.
 _CORE_TOOLS = {
     "get_handoff_state",
     "set_handoff_state",
-    "record_decision",
-    "update_next_actions",
-    "record_test_result",
-    "report_blocker",
-    "record_review_finding",
-    "batch_record_review_findings",
-    "update_review_finding",
-    "list_review_findings",
-    "record_review_run",
-    "list_review_runs",
+    "record_event",
+    "next_actions",
+    "review_findings",
+    "review_runs",
     "handoff_close_check",
     "generate_current_task_md",
     "load_session",
     "close_slice",
 }
 
-# Extended tools that must NOT appear in the default (core) profile.
+# Legacy extended-only tools from the old split; now always present too.
 _EXTENDED_ONLY_TOOLS = {
-    "list_next_actions",
-    "get_review_coverage",
     "audit_decision_ids",
     "export_handoff_state",
     "import_handoff_state",
     "archive_task_state",
     "update_task_status",
-    "record_artifact",
-    "search_artifacts",
-    "get_artifact",
-    "purge_artifacts",
+    "artifacts",
     "search_handoff",
 }
 
@@ -59,12 +48,15 @@ def test_stdio_server_lists_handoff_tools(tmp_path: Path) -> None:
             return sorted(tool.name for tool in tools)
 
     tool_names = asyncio.run(_run())
-    # Default launch uses extended profile — all tools present.
+    # Default launch now exposes the single 17-tool consolidated surface.
     assert "get_handoff_state" in tool_names
-    assert "record_review_finding" in tool_names
+    assert "record_event" in tool_names
+    assert "review_findings" in tool_names
+    assert "review_runs" in tool_names
     assert "handoff_close_check" in tool_names
     assert "load_session" in tool_names
     assert "close_slice" in tool_names
+    assert "record_decision" not in tool_names
     # orchestration tools moved to agent-orchestrator-mcp
     assert "record_lane_brief" not in tool_names
     assert "orchestrator_start" not in tool_names
@@ -72,8 +64,8 @@ def test_stdio_server_lists_handoff_tools(tmp_path: Path) -> None:
     assert "run_structured_turn" not in tool_names
 
 
-def test_stdio_core_profile_excludes_extended_tools(tmp_path: Path) -> None:
-    """Explicit --tool-profile core must include all 16 core tools and exclude all 12 extended."""
+def test_stdio_legacy_core_profile_still_exposes_all_17_tools(tmp_path: Path) -> None:
+    """Legacy --tool-profile core is accepted but now exposes the full 17-tool surface."""
     repo_root = Path(__file__).resolve().parents[3]
     launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
 
@@ -90,14 +82,14 @@ def test_stdio_core_profile_excludes_extended_tools(tmp_path: Path) -> None:
 
     tool_names = asyncio.run(_run())
     missing_core = _CORE_TOOLS - tool_names
-    assert not missing_core, f"Core tools missing from core profile: {missing_core}"
-    present_extended = _EXTENDED_ONLY_TOOLS & tool_names
-    assert not present_extended, f"Extended tools incorrectly present in core profile: {present_extended}"
-    assert len(tool_names) == 16
+    assert not missing_core, f"Core tools missing from legacy core launch: {missing_core}"
+    missing_extended = _EXTENDED_ONLY_TOOLS - tool_names
+    assert not missing_extended, f"Legacy extended tools missing from unified launch: {missing_extended}"
+    assert len(tool_names) == 17
 
 
-def test_stdio_extended_profile_exposes_all_28_tools(tmp_path: Path) -> None:
-    """--tool-profile extended must expose all 28 tools."""
+def test_stdio_extended_profile_exposes_all_17_tools(tmp_path: Path) -> None:
+    """Legacy --tool-profile extended still exposes the unified 17-tool surface."""
     repo_root = Path(__file__).resolve().parents[3]
     launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
 
@@ -117,7 +109,7 @@ def test_stdio_extended_profile_exposes_all_28_tools(tmp_path: Path) -> None:
     assert _EXTENDED_ONLY_TOOLS <= tool_names, (
         f"Extended tools missing from extended profile: {_EXTENDED_ONLY_TOOLS - tool_names}"
     )
-    assert len(tool_names) == 28
+    assert len(tool_names) == 17
 
 
 def _collect_schema_types(schema: dict[str, Any], root_schema: dict[str, Any]) -> set[str]:
@@ -159,7 +151,7 @@ def _resolve_schema_object(schema: dict[str, Any], root_schema: dict[str, Any]) 
     return None
 
 
-def test_stdio_update_next_actions_schema_is_agent_discoverable(tmp_path: Path) -> None:
+def test_stdio_next_actions_schema_exposes_discriminated_variants(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[3]
     launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
 
@@ -168,41 +160,48 @@ def test_stdio_update_next_actions_schema_is_agent_discoverable(tmp_path: Path) 
             script_path=launcher,
             args=["--workspace-root", str(repo_root), "serve-stdio"],
             cwd=str(repo_root),
-            log_file=tmp_path / "stdio-schema-update-next-actions.log",
+            log_file=tmp_path / "stdio-schema-next-actions.log",
         )
         async with Client(transport) as client:
             tools = await client.list_tools()
-            tool = next(tool for tool in tools if tool.name == "update_next_actions")
+            tool = next(tool for tool in tools if tool.name == "next_actions")
             return tool.inputSchema
 
     schema = asyncio.run(_run())
-    properties = schema["properties"]
+    assert schema["required"] == ["action"]
 
-    assert schema["type"] == "object"
-    assert schema["required"] == ["operation"]
-    assert properties["operation"]["enum"] == ["add", "update", "complete", "skip"]
-    assert "Mutation to apply" in properties["operation"]["description"]
+    action_schema = schema["properties"]["action"]
+    assert len(action_schema["oneOf"]) == 5
+    action_variants = {
+        variant["properties"]["operation"]["const"]: variant
+        for variant in action_schema["oneOf"]
+        if "properties" in variant and "operation" in variant["properties"]
+    }
+    assert set(action_variants) == {"list", "add", "update", "complete", "skip"}
 
-    action_id_types = _collect_schema_types(properties["action_id"], schema)
-    assert {"integer", "null"} <= action_id_types
-    priority_types = _collect_schema_types(properties["priority"], schema)
+    update_schema = action_variants["update"]
+    assert set(update_schema["required"]) == {"operation", "action_id"}
+    action_id_types = _collect_schema_types(update_schema["properties"]["action_id"], schema)
+    assert action_id_types == {"integer"}
+    priority_types = _collect_schema_types(update_schema["properties"]["priority"], schema)
     assert {"integer", "null"} <= priority_types
 
-    status_property = properties["status"]
+    status_property = update_schema["properties"]["status"]
     assert set(status_property["anyOf"][0]["enum"]) == {"pending", "done", "skipped"}
     assert "Only used for update operations" in status_property["description"]
 
-    actor_types = _collect_schema_types(properties["actor"], schema)
+    add_schema = action_variants["add"]
+    actor_types = _collect_schema_types(add_schema["properties"]["actor"], schema)
     assert {"object", "null"} <= actor_types
-    actor_object = _resolve_schema_object(properties["actor"], schema)
+    actor_object = _resolve_schema_object(add_schema["properties"]["actor"], schema)
     assert actor_object is not None
     assert {"agent", "model", "model_label", "reasoning_level", "branch", "commit_sha", "lane_id"} <= set(
         actor_object["properties"].keys()
     )
-    assert "structured provenance override" in properties["actor"]["description"]
+    assert "structured provenance override" in add_schema["properties"]["actor"]["description"]
 
 
-def test_stdio_record_decision_schema_exposes_changed_files_and_actor(tmp_path: Path) -> None:
+def test_stdio_record_event_schema_exposes_discriminated_variants(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[3]
     launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
 
@@ -211,23 +210,35 @@ def test_stdio_record_decision_schema_exposes_changed_files_and_actor(tmp_path: 
             script_path=launcher,
             args=["--workspace-root", str(repo_root), "serve-stdio"],
             cwd=str(repo_root),
-            log_file=tmp_path / "stdio-schema-record-decision.log",
+            log_file=tmp_path / "stdio-schema-record-event.log",
         )
         async with Client(transport) as client:
             tools = await client.list_tools()
-            tool = next(tool for tool in tools if tool.name == "record_decision")
+            tool = next(tool for tool in tools if tool.name == "record_event")
             return tool.inputSchema
 
     schema = asyncio.run(_run())
-    properties = schema["properties"]
+    assert schema["required"] == ["event"]
 
-    assert set(schema["required"]) == {"session", "decision"}
-    changed_files_types = _collect_schema_types(properties["changed_files"], schema)
+    event_schema = schema["properties"]["event"]
+    assert "discriminator" not in event_schema
+    assert len(event_schema["oneOf"]) == 3
+
+    event_variants = {
+        variant["properties"]["event_kind"]["const"]: variant
+        for variant in event_schema["oneOf"]
+        if "properties" in variant and "event_kind" in variant["properties"]
+    }
+    assert set(event_variants) == {"decision", "test_result", "blocker"}
+
+    decision_schema = event_variants["decision"]
+    assert set(decision_schema["required"]) == {"event_kind", "session", "decision"}
+    changed_files_types = _collect_schema_types(decision_schema["properties"]["changed_files"], schema)
     assert {"array", "null"} <= changed_files_types
-    assert "monorepo-relative paths" in properties["changed_files"]["description"]
+    assert "monorepo-relative paths" in decision_schema["properties"]["changed_files"]["description"]
 
-    actor_types = _collect_schema_types(properties["actor"], schema)
+    actor_types = _collect_schema_types(decision_schema["properties"]["actor"], schema)
     assert {"object", "null"} <= actor_types
-    actor_object = _resolve_schema_object(properties["actor"], schema)
+    actor_object = _resolve_schema_object(decision_schema["properties"]["actor"], schema)
     assert actor_object is not None
     assert "Canonical human-readable label" in actor_object["properties"]["model_label"]["description"]

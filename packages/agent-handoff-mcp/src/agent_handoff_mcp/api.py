@@ -12,12 +12,13 @@ from typing import Annotated, Any, Callable, Literal, cast
 
 from fastmcp import FastMCP
 from fastmcp.client import Client, PythonStdioTransport
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, TypeAdapter
 
 from . import core
 from ._shared import WriteActor
 from .config import RuntimeConfig
-from .core import PromptMetrics, ResolvedWriteContext, TokenUsage
+from .core import PromptMetrics, ResolvedWriteContext, ReviewFindingDetails, TokenUsage
+from .review_findings import BatchFindingItem
 from .runtime import configure_runtime, get_runtime_config, reset_runtime_config
 
 _core_record_decision = core.record_decision
@@ -54,18 +55,10 @@ audit_decision_ids = core.audit_decision_ids
 TOOL_DESCRIPTIONS: dict[str, str] = {
     "set_handoff_state": "Update the active task state (objective, focus, status). Optimistic revision guard.",
     "get_handoff_state": "Read task handoff summary (blockers, actions, findings). Pass view='dashboard' for cross-task view. Pass sections='decisions_recent,findings_open' to select specific sections; active and limits are always included. Pass sections='identity' for an identity-only response (active + limits, no data sections). Pass detail='summary' to truncate long rationale and verification fields.",
-    "list_next_actions": "List next-action items, optionally filtered by lane or status.",
-    "record_decision": "Record a decision in the handoff ledger. Pass changed_files as a list of monorepo-relative paths touched by this slice for structured review scope.",
-    "update_next_actions": "Add, update, complete, or skip next-action items.",
-    "record_test_result": "Record a verification command result.",
-    "report_blocker": "Add, resolve, or reopen a blocker.",
-    "record_review_finding": "Record or reopen a single review finding with stable ID, line metadata, and review_mode.",
-    "batch_record_review_findings": "Record or reopen multiple review findings atomically. Max 100 items per call.",
-    "update_review_finding": "Mark a review finding fixed, deferred, wontfix, or reopen it with notes.",
-    "list_review_findings": "List review findings filtered by status, severity, or review_mode. Pass finding_id to fetch a single finding globally. Pass detail='summary' to truncate long text fields.",
-    "record_review_run": "Record a completed review pass in the ledger.",
-    "list_review_runs": "List review-run ledger entries. Filter by task_ref, subject_path, review_mode, or verdict.",
-    "get_review_coverage": "Return review-coverage summary: run count, verdict, open findings by severity.",
+    "record_event": "Record a decision, verification result, or blocker mutation through one typed event surface. Set event.event_kind to 'decision', 'test_result', or 'blocker' to select the required fields.",
+    "next_actions": "List or mutate next-action items through one typed domain surface. Set action.operation to 'list', 'add', 'update', 'complete', or 'skip'.",
+    "review_findings": "Record, batch record, update, or list review findings through one typed domain surface. Set review.operation to 'record', 'batch_record', 'update', or 'list'.",
+    "review_runs": "Record, list, or summarize review-run coverage through one typed domain surface. Set review.operation to 'record', 'list', or 'coverage'.",
     "handoff_close_check": "Check task readiness to close: blockers, pending actions, findings, and optional fresh-test gate.",
     "audit_decision_ids": "Audit decision IDs for grammar conformance. Returns canonical/malformed/freeform classifications.",
     "generate_current_task_md": "Generate CURRENT_TASK.md for the active task.",
@@ -73,12 +66,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "import_handoff_state": "Import a previously exported handoff state snapshot into the local database.",
     "archive_task_state": "Archive completed task state from the live handoff tables into archive storage.",
     "update_task_status": "Update a task status without recording a slice decision. For the active task this requires expected_revision; for archived tasks it updates the archived snapshot status used by the dashboard.",
-    "load_session": "Load session context: get_handoff_state + list_review_findings(open) in one call. Pass sections to shape the nested state payload and detail to shape both state and findings.",
+    "load_session": "Load session context: get_handoff_state + review_findings(list open) in one call. Pass sections to shape the nested state payload and detail to shape both state and findings.",
     "close_slice": "Record a slice-complete decision, keep the task status in_progress, and regenerate CURRENT_TASK.md. Requires expected_revision when the target task is currently active. Pass changed_files to persist structured review scope on the nested decision write.",
-    "record_artifact": "Index a large artifact in the sidecar FTS5 database for scoped retrieval.",
-    "search_artifacts": "Search artifact chunks by BM25 relevance. Empty queries return a source listing. Pass detail='summary' to truncate summaries and snippets, and fields='source_label,summary' or fields='source_id,title,snippet' to project per-source or per-hit fields.",
-    "get_artifact": "Return artifact source record. Lookup by source_id or task_ref+source_label. Pass detail='summary' for truncated chunk previews and fields='source_label,chunk_count' to project source fields.",
-    "purge_artifacts": "Delete artifact sources and FTS chunks (post-archival cleanup).",
+    "artifacts": "Record, search, get, or purge artifact sources through one typed domain surface. Set artifact.operation to 'record', 'search', 'get', or 'purge'.",
     "search_handoff": "Search decisions, findings, blockers, actions by keyword with BM25 ranking. Pass detail='summary' to truncate snippets and fields='record_type,snippet' to project per-result fields.",
 }
 
@@ -132,6 +122,339 @@ DecisionChangedFilesParam = Annotated[
 ]
 
 
+class RecordDecisionEvent(BaseModel):
+    event_kind: Literal["decision"]
+    session: Annotated[str, Field(description="Session identifier for the decision write.")]
+    decision: Annotated[str, Field(description="Stable decision identifier to persist in the ledger.")]
+    rationale: Annotated[
+        str | None,
+        Field(description="Optional markdown rationale explaining the decision, verification, and open threads."),
+    ] = None
+    actor: ActorParam = None
+    task_ref: TaskRefParam = None
+    input_tokens: Annotated[int | None, Field(description="Optional prompt token count for this slice.")] = None
+    output_tokens: Annotated[int | None, Field(description="Optional completion token count for this slice.")] = None
+    total_tokens: Annotated[int | None, Field(description="Optional total token count for this slice.")] = None
+    changed_files: DecisionChangedFilesParam = None
+
+
+class RecordTestResultEvent(BaseModel):
+    event_kind: Literal["test_result"]
+    session: Annotated[str, Field(description="Session identifier for the verification run.")]
+    command: Annotated[str, Field(description="Verification command that was executed.")]
+    passed: Annotated[bool, Field(description="Whether the verification command passed.")]
+    result: Annotated[
+        str | None,
+        Field(description="Optional stdout or summarized verification evidence for the command."),
+    ] = None
+    exit_code: Annotated[int | None, Field(description="Optional process exit code for the command.")] = None
+    actor: ActorParam = None
+    task_ref: TaskRefParam = None
+
+
+class ReportBlockerEvent(BaseModel):
+    event_kind: Literal["blocker"]
+    operation: Annotated[
+        Literal["add", "resolve", "reopen"],
+        Field(description="Blocker mutation to perform."),
+    ]
+    description: Annotated[
+        str | None,
+        Field(description="Blocker description. Required when adding a new blocker."),
+    ] = None
+    blocker_id: Annotated[
+        int | None,
+        Field(description="Existing blocker id. Required for resolve and reopen."),
+    ] = None
+    actor: ActorParam = None
+    task_ref: TaskRefParam = None
+
+
+RecordEventParam = Annotated[
+    RecordDecisionEvent | RecordTestResultEvent | ReportBlockerEvent,
+    Field(discriminator="event_kind"),
+]
+
+_RECORD_EVENT_ADAPTER: TypeAdapter[RecordDecisionEvent | RecordTestResultEvent | ReportBlockerEvent] = TypeAdapter(RecordEventParam)
+
+
+class ReviewFindingDetailsInput(BaseModel):
+    line_start: Annotated[int | None, Field(description="Optional 1-based start line for the finding.")] = None
+    line_end: Annotated[int | None, Field(description="Optional 1-based end line for the finding.")] = None
+    fix: Annotated[str | None, Field(description="Optional suggested fix text.")] = None
+
+
+class ReviewFindingBatchItemInput(BaseModel):
+    finding_id: Annotated[str, Field(description="Stable finding identifier to persist or reopen.")]
+    severity: Annotated[Literal["high", "medium", "low"], Field(description="Finding severity.")]
+    file_path: Annotated[str, Field(description="Workspace-relative file path for the finding.")]
+    description: Annotated[str, Field(description="Human-readable finding description.")]
+    review_mode: Annotated[
+        Literal["branch", "release_audit", "planning"] | None,
+        Field(description="Optional review mode label for the finding."),
+    ] = None
+    details: Annotated[
+        ReviewFindingDetailsInput | None,
+        Field(description="Optional structured line/fix metadata for the finding."),
+    ] = None
+
+
+class ReviewFindingsRecordOp(BaseModel):
+    operation: Literal["record"]
+    session: Annotated[str, Field(description="Session identifier for the review-finding write.")]
+    finding_id: Annotated[str, Field(description="Stable finding identifier to persist or reopen.")]
+    severity: Annotated[Literal["high", "medium", "low"], Field(description="Finding severity.")]
+    file_path: Annotated[str, Field(description="Workspace-relative file path for the finding.")]
+    description: Annotated[str, Field(description="Human-readable finding description.")]
+    details: Annotated[
+        ReviewFindingDetailsInput | None,
+        Field(description="Optional structured line/fix metadata for the finding."),
+    ] = None
+    actor: ActorParam = None
+    task_ref: TaskRefParam = None
+    review_mode: Annotated[
+        Literal["branch", "release_audit", "planning"] | None,
+        Field(description="Optional review mode label for the finding."),
+    ] = None
+
+
+class ReviewFindingsBatchRecordOp(BaseModel):
+    operation: Literal["batch_record"]
+    session: Annotated[str, Field(description="Session identifier for the batch review-finding write.")]
+    findings: Annotated[
+        list[ReviewFindingBatchItemInput],
+        Field(description="One or more review findings to write atomically."),
+    ]
+    actor: ActorParam = None
+    task_ref: TaskRefParam = None
+
+
+class ReviewFindingsUpdateOp(BaseModel):
+    operation: Literal["update"]
+    status: Annotated[
+        Literal["open", "fixed", "deferred", "wontfix"],
+        Field(description="New finding status to apply."),
+    ]
+    finding_id: Annotated[str | None, Field(description="Stable finding identifier to update.")] = None
+    finding_db_id: Annotated[int | None, Field(description="Numeric finding id to update.")] = None
+    resolution_notes: Annotated[
+        str | None,
+        Field(description="Optional notes describing how the finding was resolved or dispositioned."),
+    ] = None
+    reopen_reason: Annotated[
+        str | None,
+        Field(description="Required when moving a non-open finding back to open."),
+    ] = None
+    task_ref: TaskRefParam = None
+    session: Annotated[str | None, Field(description="Optional session identifier for the update.")] = None
+    actor: ActorParam = None
+    verified_commit_sha: Annotated[
+        str | None,
+        Field(description="Optional commit SHA that verified a fixed finding."),
+    ] = None
+    verification_evidence: Annotated[
+        str | None,
+        Field(description="Optional verification evidence used when closing a finding as fixed."),
+    ] = None
+
+
+class ReviewFindingsListOp(BaseModel):
+    operation: Literal["list"]
+    task_ref: TaskRefParam = None
+    status: Annotated[str, Field(description="Finding status filter.")] = "all"
+    severity: Annotated[str, Field(description="Finding severity filter.")] = "all"
+    limit: Annotated[int, Field(description="Maximum number of findings to return.")] = 100
+    offset: Annotated[int, Field(description="Pagination offset.")] = 0
+    review_mode: Annotated[
+        Literal["branch", "release_audit", "planning"] | None,
+        Field(description="Optional review-mode filter."),
+    ] = None
+    finding_id: Annotated[str | None, Field(description="Optional stable finding identifier lookup.")] = None
+    finding_db_id: Annotated[int | None, Field(description="Optional numeric finding id lookup.")] = None
+    detail: Annotated[
+        Literal["full", "summary"],
+        Field(description="Detail level for returned finding rows."),
+    ] = "full"
+
+
+ReviewFindingsParam = Annotated[
+    ReviewFindingsRecordOp | ReviewFindingsBatchRecordOp | ReviewFindingsUpdateOp | ReviewFindingsListOp,
+    Field(discriminator="operation"),
+]
+
+_REVIEW_FINDINGS_ADAPTER: TypeAdapter[ReviewFindingsRecordOp | ReviewFindingsBatchRecordOp | ReviewFindingsUpdateOp | ReviewFindingsListOp] = TypeAdapter(ReviewFindingsParam)
+
+
+class ReviewRunsRecordOp(BaseModel):
+    operation: Literal["record"]
+    review_run_id: Annotated[str, Field(description="Globally unique review run identifier.")]
+    session: Annotated[str, Field(description="Session identifier for the review run.")]
+    subject_path: Annotated[str, Field(description="Workspace-relative path reviewed in this run.")]
+    subject_kind: Annotated[
+        Literal["task_plan", "epic", "branch", "adr", "roadmap", "other"],
+        Field(description="Kind of artifact reviewed in this run."),
+    ] = "task_plan"
+    review_mode: Annotated[
+        Literal["branch", "release_audit", "planning"],
+        Field(description="Review mode label, for example planning or branch."),
+    ] = "planning"
+    verdict: Annotated[
+        Literal["pass", "pass_with_findings", "fail", "conditional_pass"] | None,
+        Field(description="Optional review verdict to store with the run."),
+    ] = None
+    verdict_decision: Annotated[
+        str | None,
+        Field(description="Optional decision id or summary that explains the verdict."),
+    ] = None
+    task_ref: TaskRefParam = None
+    actor: ActorParam = None
+
+
+class ReviewRunsListOp(BaseModel):
+    operation: Literal["list"]
+    task_ref: TaskRefParam = None
+    subject_path: Annotated[str | None, Field(description="Optional reviewed artifact path filter.")] = None
+    limit: Annotated[int, Field(description="Maximum number of review runs to return.")] = 20
+    offset: Annotated[int, Field(description="Pagination offset.")] = 0
+    review_mode: Annotated[
+        Literal["branch", "release_audit", "planning"] | None,
+        Field(description="Optional review-mode filter."),
+    ] = None
+    verdict: Annotated[
+        Literal["pass", "pass_with_findings", "fail", "conditional_pass"] | None,
+        Field(description="Optional verdict filter."),
+    ] = None
+
+
+class ReviewRunsCoverageOp(BaseModel):
+    operation: Literal["coverage"]
+    task_ref: TaskRefParam = None
+    subject_path: Annotated[str | None, Field(description="Optional reviewed artifact path scope.")] = None
+
+
+ReviewRunsParam = Annotated[
+    ReviewRunsRecordOp | ReviewRunsListOp | ReviewRunsCoverageOp,
+    Field(discriminator="operation"),
+]
+
+_REVIEW_RUNS_ADAPTER: TypeAdapter[ReviewRunsRecordOp | ReviewRunsListOp | ReviewRunsCoverageOp] = TypeAdapter(ReviewRunsParam)
+
+
+class NextActionsAddOp(BaseModel):
+    operation: Literal["add"]
+    action: Annotated[str, Field(description="Action text to add.")]
+    priority: Annotated[
+        int | None,
+        Field(description="Optional priority value. Lower numbers sort first; defaults to 100 on add."),
+    ] = None
+    actor: ActorParam = None
+    task_ref: TaskRefParam = None
+
+
+class NextActionsUpdateOp(BaseModel):
+    operation: Literal["update"]
+    action_id: Annotated[int, Field(description="Existing action id to update.")]
+    action: Annotated[str | None, Field(description="Optional replacement action text.")] = None
+    priority: Annotated[int | None, Field(description="Optional replacement priority value.")] = None
+    status: Annotated[
+        Literal["pending", "done", "skipped"] | None,
+        Field(description="Optional explicit status override. Only used for update operations."),
+    ] = None
+    actor: ActorParam = None
+    task_ref: TaskRefParam = None
+
+
+class NextActionsCompleteOp(BaseModel):
+    operation: Literal["complete"]
+    action_id: Annotated[int, Field(description="Existing action id to mark complete.")]
+    actor: ActorParam = None
+    task_ref: TaskRefParam = None
+
+
+class NextActionsSkipOp(BaseModel):
+    operation: Literal["skip"]
+    action_id: Annotated[int, Field(description="Existing action id to skip.")]
+    actor: ActorParam = None
+    task_ref: TaskRefParam = None
+
+
+class NextActionsListOp(BaseModel):
+    operation: Literal["list"]
+    task_ref: TaskRefParam = None
+    lane_id: Annotated[str | None, Field(description="Optional lane filter.")] = None
+    status: Annotated[
+        Literal["all", "pending", "done", "skipped"],
+        Field(description="Action status filter."),
+    ] = "all"
+    limit: Annotated[int, Field(description="Maximum number of actions to return.")] = 100
+    offset: Annotated[int, Field(description="Pagination offset.")] = 0
+
+
+NextActionsParam = Annotated[
+    NextActionsAddOp | NextActionsUpdateOp | NextActionsCompleteOp | NextActionsSkipOp | NextActionsListOp,
+    Field(discriminator="operation"),
+]
+
+_NEXT_ACTIONS_ADAPTER: TypeAdapter[NextActionsAddOp | NextActionsUpdateOp | NextActionsCompleteOp | NextActionsSkipOp | NextActionsListOp] = TypeAdapter(NextActionsParam)
+
+
+class ArtifactsRecordOp(BaseModel):
+    operation: Literal["record"]
+    source_kind: Annotated[str, Field(description="Artifact source kind.")]
+    source_label: Annotated[str, Field(description="Artifact source label.")]
+    content: Annotated[str, Field(description="Artifact content to index.")]
+    task_ref: TaskRefParam = None
+    lane_id: Annotated[str | None, Field(description="Optional lane scope.")] = None
+    app_root: Annotated[str | None, Field(description="Optional application root scope.")] = None
+    content_type: Annotated[str, Field(description="Artifact content type.")] = "text/plain"
+    summary: Annotated[str | None, Field(description="Optional artifact summary.")] = None
+    metadata: Annotated[dict[str, Any] | None, Field(description="Optional structured metadata.")] = None
+
+
+class ArtifactsSearchOp(BaseModel):
+    operation: Literal["search"]
+    queries: Annotated[
+        list[str] | None,
+        Field(description="Optional search queries. Omit or pass empty to list sources."),
+    ] = None
+    task_ref: TaskRefParam = None
+    lane_id: Annotated[str | None, Field(description="Optional lane scope.")] = None
+    app_root: Annotated[str | None, Field(description="Optional application root scope.")] = None
+    source_kind: Annotated[str | None, Field(description="Optional source-kind filter.")] = None
+    content_type: Annotated[str | None, Field(description="Optional content-type filter.")] = None
+    limit: Annotated[int, Field(description="Maximum number of hits or sources to return.")] = 10
+    offset: Annotated[int, Field(description="Pagination offset.")] = 0
+    detail: Annotated[Literal["full", "summary"], Field(description="Detail level for returned rows.")] = "full"
+    fields: Annotated[str | None, Field(description="Optional comma-separated field projection.")] = None
+
+
+class ArtifactsGetOp(BaseModel):
+    operation: Literal["get"]
+    source_id: Annotated[int | None, Field(description="Optional numeric source id lookup.")] = None
+    task_ref: TaskRefParam = None
+    source_label: Annotated[str | None, Field(description="Optional source label lookup within a task.")] = None
+    include_terms: Annotated[bool, Field(description="Whether to include distinctive terms.")] = False
+    top_n_terms: Annotated[int, Field(description="Maximum number of distinctive terms to return.")] = 10
+    detail: Annotated[Literal["full", "summary"], Field(description="Detail level for the returned source.")] = "full"
+    fields: Annotated[str | None, Field(description="Optional comma-separated field projection.")] = None
+
+
+class ArtifactsPurgeOp(BaseModel):
+    operation: Literal["purge"]
+    task_ref: TaskRefParam = None
+    lane_id: Annotated[str | None, Field(description="Optional lane scope.")] = None
+    app_root: Annotated[str | None, Field(description="Optional application root scope.")] = None
+    older_than_days: Annotated[int | None, Field(description="Optional age cutoff in days.")] = None
+
+
+ArtifactsParam = Annotated[
+    ArtifactsRecordOp | ArtifactsSearchOp | ArtifactsGetOp | ArtifactsPurgeOp,
+    Field(discriminator="operation"),
+]
+
+_ARTIFACTS_ADAPTER: TypeAdapter[ArtifactsRecordOp | ArtifactsSearchOp | ArtifactsGetOp | ArtifactsPurgeOp] = TypeAdapter(ArtifactsParam)
+
+
 def _dump_actor(actor: WriteActorInput | dict[str, Any] | None) -> WriteActor | None:
     if actor is None:
         return None
@@ -140,6 +463,51 @@ def _dump_actor(actor: WriteActorInput | dict[str, Any] | None) -> WriteActor | 
         WriteActor,
         {key: value for key, value in actor_model.model_dump(exclude_none=True).items() if isinstance(value, str)},
     )
+
+
+def _validate_record_event(
+    event: RecordEventParam | dict[str, Any],
+) -> RecordDecisionEvent | RecordTestResultEvent | ReportBlockerEvent:
+    return _RECORD_EVENT_ADAPTER.validate_python(event)
+
+
+def _dump_review_finding_details(details: ReviewFindingDetailsInput | dict[str, Any] | None) -> dict[str, Any] | None:
+    if details is None:
+        return None
+    details_model = ReviewFindingDetailsInput.model_validate(details) if isinstance(details, dict) else details
+    payload = details_model.model_dump(exclude_none=True)
+    return payload or None
+
+
+def _dump_batch_review_finding_item(item: ReviewFindingBatchItemInput) -> dict[str, Any]:
+    payload = item.model_dump(exclude_none=True)
+    if item.details is not None:
+        payload["details"] = _dump_review_finding_details(item.details)
+    return payload
+
+
+def _validate_review_findings(
+    review: ReviewFindingsParam | dict[str, Any],
+) -> ReviewFindingsRecordOp | ReviewFindingsBatchRecordOp | ReviewFindingsUpdateOp | ReviewFindingsListOp:
+    return _REVIEW_FINDINGS_ADAPTER.validate_python(review)
+
+
+def _validate_review_runs(
+    review: ReviewRunsParam | dict[str, Any],
+) -> ReviewRunsRecordOp | ReviewRunsListOp | ReviewRunsCoverageOp:
+    return _REVIEW_RUNS_ADAPTER.validate_python(review)
+
+
+def _validate_next_actions(
+    action: NextActionsParam | dict[str, Any],
+) -> NextActionsAddOp | NextActionsUpdateOp | NextActionsCompleteOp | NextActionsSkipOp | NextActionsListOp:
+    return _NEXT_ACTIONS_ADAPTER.validate_python(action)
+
+
+def _validate_artifacts(
+    artifact: ArtifactsParam | dict[str, Any],
+) -> ArtifactsRecordOp | ArtifactsSearchOp | ArtifactsGetOp | ArtifactsPurgeOp:
+    return _ARTIFACTS_ADAPTER.validate_python(artifact)
 
 
 def set_handoff_state(
@@ -229,6 +597,47 @@ def record_decision(
     )
 
 
+def record_event(
+    event: Annotated[
+        RecordEventParam,
+        Field(
+            description="Typed event payload. event_kind selects one of the decision, test_result, or blocker variants."
+        ),
+    ],
+) -> str:
+    event_payload = _validate_record_event(event)
+    resolved_actor = _dump_actor(event_payload.actor)
+    if isinstance(event_payload, RecordDecisionEvent):
+        return _core_record_decision(
+            session=event_payload.session,
+            decision=event_payload.decision,
+            rationale=event_payload.rationale,
+            actor=resolved_actor,
+            task_ref=event_payload.task_ref,
+            input_tokens=event_payload.input_tokens,
+            output_tokens=event_payload.output_tokens,
+            total_tokens=event_payload.total_tokens,
+            changed_files=event_payload.changed_files,
+        )
+    if isinstance(event_payload, RecordTestResultEvent):
+        return _core_record_test_result(
+            session=event_payload.session,
+            command=event_payload.command,
+            passed=event_payload.passed,
+            result=event_payload.result,
+            exit_code=event_payload.exit_code,
+            actor=resolved_actor,
+            task_ref=event_payload.task_ref,
+        )
+    return _core_report_blocker(
+        operation=event_payload.operation,
+        description=event_payload.description,
+        blocker_id=event_payload.blocker_id,
+        actor=resolved_actor,
+        task_ref=event_payload.task_ref,
+    )
+
+
 def update_next_actions(
     operation: Annotated[
         Literal["add", "update", "complete", "skip"],
@@ -261,6 +670,34 @@ def update_next_actions(
         status=status,
         actor=_dump_actor(actor),
         task_ref=task_ref,
+    )
+
+
+def next_actions(
+    action: Annotated[
+        NextActionsParam,
+        Field(
+            description="Typed next-actions payload. operation selects one of the list, add, update, complete, or skip variants."
+        ),
+    ],
+) -> str:
+    action_payload = _validate_next_actions(action)
+    if isinstance(action_payload, NextActionsListOp):
+        return list_next_actions(
+            task_ref=action_payload.task_ref,
+            lane_id=action_payload.lane_id,
+            status=action_payload.status,
+            limit=action_payload.limit,
+            offset=action_payload.offset,
+        )
+    return _core_update_next_actions(
+        operation=action_payload.operation,
+        action_id=getattr(action_payload, "action_id", None),
+        action=getattr(action_payload, "action", None),
+        priority=getattr(action_payload, "priority", None),
+        status=getattr(action_payload, "status", None),
+        actor=_dump_actor(getattr(action_payload, "actor", None)),
+        task_ref=getattr(action_payload, "task_ref", None),
     )
 
 
@@ -359,6 +796,60 @@ def update_review_finding(
     )
 
 
+def review_findings(
+    review: Annotated[
+        ReviewFindingsParam,
+        Field(
+            description="Typed review-findings payload. operation selects one of the record, batch_record, update, or list variants."
+        ),
+    ],
+) -> str:
+    review_payload = _validate_review_findings(review)
+    if isinstance(review_payload, ReviewFindingsRecordOp):
+        return record_review_finding(
+            session=review_payload.session,
+            finding_id=review_payload.finding_id,
+            severity=review_payload.severity,
+            file_path=review_payload.file_path,
+            description=review_payload.description,
+            details=cast(ReviewFindingDetails | None, _dump_review_finding_details(review_payload.details)),
+            actor=_dump_actor(review_payload.actor),
+            task_ref=review_payload.task_ref,
+            review_mode=review_payload.review_mode,
+        )
+    if isinstance(review_payload, ReviewFindingsBatchRecordOp):
+        return batch_record_review_findings(
+            session=review_payload.session,
+            findings=cast(list[BatchFindingItem], [_dump_batch_review_finding_item(item) for item in review_payload.findings]),
+            actor=_dump_actor(review_payload.actor),
+            task_ref=review_payload.task_ref,
+        )
+    if isinstance(review_payload, ReviewFindingsUpdateOp):
+        return _core_update_review_finding(
+            status=review_payload.status,
+            finding_id=review_payload.finding_id,
+            finding_db_id=review_payload.finding_db_id,
+            resolution_notes=review_payload.resolution_notes,
+            reopen_reason=review_payload.reopen_reason,
+            task_ref=review_payload.task_ref,
+            session=review_payload.session,
+            actor=_dump_actor(review_payload.actor),
+            verified_commit_sha=review_payload.verified_commit_sha,
+            verification_evidence=review_payload.verification_evidence,
+        )
+    return list_review_findings(
+        task_ref=review_payload.task_ref,
+        status=review_payload.status,
+        severity=review_payload.severity,
+        limit=review_payload.limit,
+        offset=review_payload.offset,
+        review_mode=review_payload.review_mode,
+        finding_id=review_payload.finding_id,
+        finding_db_id=review_payload.finding_db_id,
+        detail=review_payload.detail,
+    )
+
+
 def record_review_run(
     review_run_id: Annotated[str, Field(description="Globally unique review run identifier.")],
     session: Annotated[str, Field(description="Session identifier for the review run.")],
@@ -389,6 +880,94 @@ def record_review_run(
         verdict_decision=verdict_decision,
         task_ref=task_ref,
         actor=_dump_actor(actor),
+    )
+
+
+def review_runs(
+    review: Annotated[
+        ReviewRunsParam,
+        Field(
+            description="Typed review-runs payload. operation selects one of the record, list, or coverage variants."
+        ),
+    ],
+) -> str:
+    review_payload = _validate_review_runs(review)
+    if isinstance(review_payload, ReviewRunsRecordOp):
+        return _core_record_review_run(
+            review_run_id=review_payload.review_run_id,
+            session=review_payload.session,
+            subject_path=review_payload.subject_path,
+            subject_kind=review_payload.subject_kind,
+            review_mode=review_payload.review_mode,
+            verdict=review_payload.verdict,
+            verdict_decision=review_payload.verdict_decision,
+            task_ref=review_payload.task_ref,
+            actor=_dump_actor(review_payload.actor),
+        )
+    if isinstance(review_payload, ReviewRunsListOp):
+        return list_review_runs(
+            task_ref=review_payload.task_ref,
+            subject_path=review_payload.subject_path,
+            limit=review_payload.limit,
+            offset=review_payload.offset,
+            review_mode=review_payload.review_mode,
+            verdict=review_payload.verdict,
+        )
+    return get_review_coverage(
+        task_ref=review_payload.task_ref,
+        subject_path=review_payload.subject_path,
+    )
+
+
+def artifacts(
+    artifact: Annotated[
+        ArtifactsParam,
+        Field(
+            description="Typed artifacts payload. operation selects one of the record, search, get, or purge variants."
+        ),
+    ],
+) -> str:
+    artifact_payload = _validate_artifacts(artifact)
+    if isinstance(artifact_payload, ArtifactsRecordOp):
+        return record_artifact(
+            source_kind=artifact_payload.source_kind,
+            source_label=artifact_payload.source_label,
+            content=artifact_payload.content,
+            task_ref=artifact_payload.task_ref,
+            lane_id=artifact_payload.lane_id,
+            app_root=artifact_payload.app_root,
+            content_type=artifact_payload.content_type,
+            summary=artifact_payload.summary,
+            metadata=artifact_payload.metadata,
+        )
+    if isinstance(artifact_payload, ArtifactsSearchOp):
+        return search_artifacts(
+            queries=artifact_payload.queries,
+            task_ref=artifact_payload.task_ref,
+            lane_id=artifact_payload.lane_id,
+            app_root=artifact_payload.app_root,
+            source_kind=artifact_payload.source_kind,
+            content_type=artifact_payload.content_type,
+            limit=artifact_payload.limit,
+            offset=artifact_payload.offset,
+            detail=artifact_payload.detail,
+            fields=artifact_payload.fields,
+        )
+    if isinstance(artifact_payload, ArtifactsGetOp):
+        return get_artifact(
+            source_id=artifact_payload.source_id,
+            task_ref=artifact_payload.task_ref,
+            source_label=artifact_payload.source_label,
+            include_terms=artifact_payload.include_terms,
+            top_n_terms=artifact_payload.top_n_terms,
+            detail=artifact_payload.detail,
+            fields=artifact_payload.fields,
+        )
+    return purge_artifacts(
+        task_ref=artifact_payload.task_ref,
+        lane_id=artifact_payload.lane_id,
+        app_root=artifact_payload.app_root,
+        older_than_days=artifact_payload.older_than_days,
     )
 
 
@@ -507,78 +1086,31 @@ def _build_tool_registry() -> list[ToolEntry]:
             surface_class="query",
             entity_family="handoff_state",
         ),
-        # Decisions (1)
+        # Events (1)
         ToolEntry(
-            "record_decision",
-            record_decision,
-            TOOL_DESCRIPTIONS["record_decision"],
-            cli_name="decision",
+            "record_event",
+            record_event,
+            TOOL_DESCRIPTIONS["record_event"],
+            cli_name="event",
             cli_args=[
-                ArgSpec("--session", required=True),
-                ArgSpec("--decision", required=True),
+                ArgSpec("--event-kind", required=True, choices=["decision", "test_result", "blocker"]),
+                ArgSpec("--session"),
+                ArgSpec("--decision"),
                 ArgSpec("--rationale"),
-                ArgSpec("--task-ref"),
+                ArgSpec("--input-tokens", type=int),
+                ArgSpec("--output-tokens", type=int),
+                ArgSpec("--total-tokens", type=int),
                 ArgSpec(
                     "--changed-files",
                     nargs="+",
                     dest="changed_files",
                     help="Monorepo-relative paths touched by this slice.",
                 ),
-            ],
-            surface_class="action",
-            entity_family="handoff_state",
-        ),
-        # Actions (2)
-        ToolEntry(
-            "update_next_actions",
-            update_next_actions,
-            TOOL_DESCRIPTIONS["update_next_actions"],
-            cli_name="action",
-            cli_args=[
-                ArgSpec("--operation", required=True, choices=["add", "update", "complete", "skip"]),
-                ArgSpec("--action-id", type=int),
-                ArgSpec("--text", dest="action", help="Action text (maps to handler param 'action')."),
-                ArgSpec("--priority", type=int),
-                ArgSpec("--status"),
-                ArgSpec("--task-ref"),
-            ],
-            surface_class="action",
-            entity_family="handoff_state",
-        ),
-        ToolEntry(
-            "list_next_actions",
-            list_next_actions,
-            TOOL_DESCRIPTIONS["list_next_actions"],
-            profile="extended",
-            surface_class="query",
-            entity_family="handoff_state",
-        ),
-        # Tests / blockers (2)
-        ToolEntry(
-            "record_test_result",
-            record_test_result,
-            TOOL_DESCRIPTIONS["record_test_result"],
-            cli_name="test",
-            cli_args=[
-                ArgSpec("--session", required=True),
-                # dest="command" matches the handler param directly; "command" is safe as an arg
-                # dest because _build_parser() uses dest="subcommand" for the subparser, not "command".
                 ArgSpec("--command", dest="command", help="Test command."),
                 ArgSpec("--passed", action="store_true"),
                 ArgSpec("--result"),
                 ArgSpec("--exit-code", type=int),
-                ArgSpec("--task-ref"),
-            ],
-            surface_class="action",
-            entity_family="handoff_state",
-        ),
-        ToolEntry(
-            "report_blocker",
-            report_blocker,
-            TOOL_DESCRIPTIONS["report_blocker"],
-            cli_name="blocker",
-            cli_args=[
-                ArgSpec("--operation", required=True, choices=["add", "resolve", "reopen"]),
+                ArgSpec("--operation", choices=["add", "resolve", "reopen"]),
                 ArgSpec("--description"),
                 ArgSpec("--blocker-id", type=int),
                 ArgSpec("--task-ref"),
@@ -586,114 +1118,79 @@ def _build_tool_registry() -> list[ToolEntry]:
             surface_class="action",
             entity_family="handoff_state",
         ),
-        # Findings (4)
+        # Next actions (1)
         ToolEntry(
-            "record_review_finding",
-            record_review_finding,
-            TOOL_DESCRIPTIONS["record_review_finding"],
-            cli_name="review-record",
+            "next_actions",
+            next_actions,
+            TOOL_DESCRIPTIONS["next_actions"],
+            cli_name="next-actions",
             cli_args=[
-                ArgSpec("--session", required=True),
-                ArgSpec("--finding-id", required=True),
-                ArgSpec("--severity", required=True),
-                ArgSpec("--file-path", required=True),
-                ArgSpec("--description", required=True),
-                ArgSpec("--line-start", type=int),
-                ArgSpec("--line-end", type=int),
-                ArgSpec("--fix"),
+                ArgSpec("--operation", required=True, choices=["list", "add", "update", "complete", "skip"]),
+                ArgSpec("--action-id", type=int),
+                ArgSpec("--text", dest="action", help="Action text (maps to handler param 'action')."),
+                ArgSpec("--lane-id"),
+                ArgSpec("--priority", type=int),
+                ArgSpec("--status", choices=["all", "pending", "done", "skipped"]),
+                ArgSpec("--limit", type=int, default=100),
+                ArgSpec("--offset", type=int, default=0),
                 ArgSpec("--task-ref"),
             ],
             surface_class="action",
-            entity_family="review_findings",
+            entity_family="handoff_state",
         ),
+        # Review findings (1)
         ToolEntry(
-            "batch_record_review_findings",
-            batch_record_review_findings,
-            TOOL_DESCRIPTIONS["batch_record_review_findings"],
-            surface_class="action",
-            entity_family="review_findings",
-        ),
-        ToolEntry(
-            "update_review_finding",
-            update_review_finding,
-            TOOL_DESCRIPTIONS["update_review_finding"],
-            cli_name="review-update",
+            "review_findings",
+            review_findings,
+            TOOL_DESCRIPTIONS["review_findings"],
+            cli_name="review-findings",
             cli_args=[
-                ArgSpec("--status", required=True),
+                ArgSpec("--operation", required=True, choices=["record", "batch_record", "update", "list"]),
+                ArgSpec("--session"),
                 ArgSpec("--finding-id"),
+                ArgSpec("--severity", choices=["high", "medium", "low"]),
+                ArgSpec("--file-path"),
+                ArgSpec("--description"),
+                ArgSpec("--line-start", type=int),
+                ArgSpec("--line-end", type=int),
+                ArgSpec("--fix"),
+                ArgSpec("--findings-json"),
+                ArgSpec("--findings-file"),
+                ArgSpec("--status"),
                 ArgSpec("--finding-db-id", type=int),
                 ArgSpec("--resolution-notes"),
                 ArgSpec("--reopen-reason"),
                 ArgSpec("--verified-commit-sha"),
                 ArgSpec("--verification-evidence"),
+                ArgSpec("--review-mode"),
+                ArgSpec("--limit", type=int, default=20),
+                ArgSpec("--offset", type=int, default=0),
+                ArgSpec("--detail", default="full", choices=["full", "summary"], help="Detail level: full or summary"),
                 ArgSpec("--task-ref"),
-                ArgSpec("--session"),
             ],
             surface_class="action",
             entity_family="review_findings",
         ),
+        # Review runs (1)
         ToolEntry(
-            "list_review_findings",
-            list_review_findings,
-            TOOL_DESCRIPTIONS["list_review_findings"],
-            cli_name="review-list",
+            "review_runs",
+            review_runs,
+            TOOL_DESCRIPTIONS["review_runs"],
+            cli_name="review-runs",
             cli_args=[
-                ArgSpec("--task-ref"),
-                ArgSpec("--status", default="all"),
-                ArgSpec("--severity", default="all"),
-                ArgSpec("--limit", type=int, default=20),
-                ArgSpec("--offset", type=int, default=0),
-                ArgSpec("--detail", default="full", choices=["full", "summary"], help="Detail level: full or summary"),
-            ],
-            surface_class="query",
-            entity_family="review_findings",
-        ),
-        # Review-run ledger (3)
-        ToolEntry(
-            "record_review_run",
-            record_review_run,
-            TOOL_DESCRIPTIONS["record_review_run"],
-            cli_name="review-run-record",
-            cli_args=[
-                ArgSpec("--review-run-id", required=True),
-                ArgSpec("--session", required=True),
-                ArgSpec("--subject-path", required=True),
+                ArgSpec("--operation", required=True, choices=["record", "list", "coverage"]),
+                ArgSpec("--review-run-id"),
+                ArgSpec("--session"),
+                ArgSpec("--subject-path"),
                 ArgSpec("--subject-kind", default="task_plan"),
                 ArgSpec("--review-mode", default="planning"),
                 ArgSpec("--verdict"),
                 ArgSpec("--verdict-decision"),
+                ArgSpec("--limit", type=int, default=20),
+                ArgSpec("--offset", type=int, default=0),
                 ArgSpec("--task-ref"),
             ],
             surface_class="action",
-            entity_family="review_runs",
-        ),
-        ToolEntry(
-            "list_review_runs",
-            list_review_runs,
-            TOOL_DESCRIPTIONS["list_review_runs"],
-            cli_name="review-run-list",
-            cli_args=[
-                ArgSpec("--task-ref"),
-                ArgSpec("--subject-path"),
-                ArgSpec("--review-mode"),
-                ArgSpec("--verdict"),
-                ArgSpec("--limit", type=int, default=20),
-                ArgSpec("--offset", type=int, default=0),
-            ],
-            surface_class="query",
-            entity_family="review_runs",
-        ),
-        ToolEntry(
-            "get_review_coverage",
-            get_review_coverage,
-            TOOL_DESCRIPTIONS["get_review_coverage"],
-            profile="extended",
-            cli_name="review-coverage",
-            cli_args=[
-                ArgSpec("--task-ref"),
-                ArgSpec("--subject-path"),
-            ],
-            surface_class="query",
             entity_family="review_runs",
         ),
         # Close check + CURRENT_TASK.md (2)
@@ -819,73 +1316,33 @@ def _build_tool_registry() -> list[ToolEntry]:
             surface_class="query",
             entity_family="handoff_state",
         ),
-        # Artifact tools (4)
+        # Artifact tools (1)
         ToolEntry(
-            "record_artifact",
-            record_artifact,
-            TOOL_DESCRIPTIONS["record_artifact"],
+            "artifacts",
+            artifacts,
+            TOOL_DESCRIPTIONS["artifacts"],
             profile="extended",
-            cli_name="artifact-record",
+            cli_name="artifacts",
             cli_args=[
-                ArgSpec("--task-ref"),
-                ArgSpec("--lane-id"),
-                ArgSpec("--app-root"),
-                ArgSpec("--source-kind", required=True),
-                ArgSpec("--source-label", required=True),
-                ArgSpec("--content-type", default="text/plain"),
-                ArgSpec("--summary"),
-                ArgSpec("--content-file", help="Path to a file whose contents will be used as the artifact content."),
-                ArgSpec("--content", help="Artifact content as a string."),
-            ],
-            surface_class="action",
-            entity_family="artifacts",
-        ),
-        ToolEntry(
-            "search_artifacts",
-            search_artifacts,
-            TOOL_DESCRIPTIONS["search_artifacts"],
-            profile="extended",
-            cli_name="artifact-search",
-            cli_args=[
-                ArgSpec("--query", action="append", dest="queries", required=True, help="Search term (repeatable)."),
+                ArgSpec("--operation", required=True, choices=["record", "search", "get", "purge"]),
                 ArgSpec("--task-ref"),
                 ArgSpec("--lane-id"),
                 ArgSpec("--app-root"),
                 ArgSpec("--source-kind"),
-                ArgSpec("--content-type"),
-                ArgSpec("--limit", type=int, default=10),
-                ArgSpec("--detail", default="full", choices=["full", "summary"], help="Detail level: full or summary"),
-                ArgSpec("--fields", help="Comma-separated fields to keep in each search hit."),
-            ],
-            surface_class="generator",
-            entity_family="artifacts",
-        ),
-        ToolEntry(
-            "get_artifact",
-            get_artifact,
-            TOOL_DESCRIPTIONS["get_artifact"],
-            profile="extended",
-            cli_name="artifact-get",
-            cli_args=[
-                ArgSpec("--source-id", type=int),
-                ArgSpec("--task-ref"),
                 ArgSpec("--source-label"),
+                ArgSpec("--content-type", default="text/plain"),
+                ArgSpec("--summary"),
+                ArgSpec("--content-file", help="Path to a file whose contents will be used as the artifact content."),
+                ArgSpec("--content", help="Artifact content as a string."),
+                ArgSpec("--metadata-json"),
+                ArgSpec("--query", action="append", dest="queries", help="Search term (repeatable)."),
+                ArgSpec("--limit", type=int, default=10),
+                ArgSpec("--offset", type=int, default=0),
                 ArgSpec("--detail", default="full", choices=["full", "summary"], help="Detail level: full or summary"),
-                ArgSpec("--fields", help="Comma-separated fields to keep in the returned source."),
-            ],
-            surface_class="query",
-            entity_family="artifacts",
-        ),
-        ToolEntry(
-            "purge_artifacts",
-            purge_artifacts,
-            TOOL_DESCRIPTIONS["purge_artifacts"],
-            profile="extended",
-            cli_name="artifact-purge",
-            cli_args=[
-                ArgSpec("--task-ref"),
-                ArgSpec("--lane-id"),
-                ArgSpec("--app-root"),
+                ArgSpec("--fields", help="Comma-separated fields to keep in returned rows."),
+                ArgSpec("--source-id", type=int),
+                ArgSpec("--include-terms", action="store_true"),
+                ArgSpec("--top-n-terms", type=int, default=10),
                 ArgSpec("--older-than-days", type=int),
             ],
             surface_class="action",
@@ -1030,8 +1487,6 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
     )
     _apply_tool_descriptions()
     for entry in _build_tool_registry():
-        if config.tool_profile == "core" and entry.profile == "extended":
-            continue
         if entry.deprecated_since is not None:
             entry.handler.__doc__ = f"[DEPRECATED since {entry.deprecated_since}] " + (
                 entry.handler.__doc__ or entry.description

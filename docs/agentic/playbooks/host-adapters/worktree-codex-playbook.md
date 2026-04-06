@@ -110,7 +110,7 @@ Bootstrap these pieces before relying on daemon-based orchestration or artifact 
 cd "${REPO_ROOT:-$PWD}"
 
 # MCP server package
-uv tool install ./packages/agent-handoff-mcp
+uv tool install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-handoff.git"
 
 # Codex app-server bridge used by BACKEND=codex-subagent
 python3 -m pip install -e packages/codex-subagent-bridge
@@ -125,7 +125,6 @@ agent-handoff-mcp --workspace-root "$(pwd)" doctor
 Notes:
 
 - `dashboard-live` works without optional UI packages. `dashboard-tui` uses Textual when installed, falls back to `rich.live` when only `rich` is available, and finally to plain text.
-- If you are running from repo source instead of an installed `agent-handoff-mcp` binary, use `PYTHONPATH="packages/agent-handoff-mcp/src:packages/codex-subagent-bridge/src" python3 -m agent_handoff_mcp ...`.
 - Artifact retrieval requires SQLite FTS5. Treat a failing `doctor` as a blocker before starting continuous orchestration.
 
 ### Execution backends
@@ -139,7 +138,7 @@ Both daemons default to `BACKEND=codex-cli`.
 
 Backend dispatch is now registry-based, not duplicated per caller. The shared
 registry lives at
-[`backend_registry.py`](../../../packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/backend_registry.py).
+[`backend_registry.py`](../../../packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/backend_registry.py).
 `lane_exec.py`, `review_runner.py`, and the daemon CLI surfaces all read backend
 choices from that registry. New bridge backends should be added there instead of
 editing `if backend == ...` branches in multiple files.
@@ -605,14 +604,14 @@ List plan cursors directly:
 
 ```bash
 REPO_ROOT="${REPO_ROOT:-$PWD}"
-PYTHONPATH="packages/agent-handoff-mcp/src" python3 -m agent_handoff_mcp \
+agent-handoff-mcp \
   --workspace-root "$REPO_ROOT" \
   --state-dir "$REPO_ROOT/.task-state" \
   --current-task-path "$REPO_ROOT/CURRENT_TASK.md" \
   --exports-dir "$REPO_ROOT/.task-state/exports" \
   review-summary --task-ref <task-ref>
 
-PYTHONPATH="packages/agent-handoff-mcp/src" python3 -m agent_handoff_mcp \
+agent-handoff-mcp \
   --workspace-root "$REPO_ROOT" \
   --state-dir "$REPO_ROOT/.task-state" \
   --current-task-path "$REPO_ROOT/CURRENT_TASK.md" \
@@ -623,7 +622,7 @@ PYTHONPATH="packages/agent-handoff-mcp/src" python3 -m agent_handoff_mcp \
 For direct cursor inspection or override, use the Python API helpers from the orchestrator root:
 
 ```bash
-PYTHONPATH="packages/agent-handoff-mcp/src" python3 - <<'PY'
+python3 - <<'PY'
 from agent_handoff_mcp import list_plan_cursors, upsert_plan_cursor
 print(list_plan_cursors(task_ref="<task-ref>", state="all"))
 print(upsert_plan_cursor(task_ref="<task-ref>", plan_item_id="<plan-item-id>", state="skipped", summary="Operator skipped stuck item."))

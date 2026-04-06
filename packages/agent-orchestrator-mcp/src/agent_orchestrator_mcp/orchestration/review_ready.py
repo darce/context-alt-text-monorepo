@@ -11,16 +11,19 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from agent_handoff_mcp.enums import ReviewKind, ReviewScopeSource
 
-BOUNDARY_PREFIXES = (
+DEFAULT_BOUNDARY_PREFIXES = (
     "apps/",
-    "packages/agent-handoff-mcp/src/",
+    "packages/agent-orchestrator-mcp/src/",
     "packages/shared-contracts/schemas/",
 )
-CONTRACT_PREFIXES = (
+BOUNDARY_PREFIXES = DEFAULT_BOUNDARY_PREFIXES
+DEFAULT_CONTRACT_PREFIXES = (
     "docs/agentic/contracts/",
     "packages/shared-contracts/",
 )
-CONTRACT_CHECKLIST_PATH = "docs/agentic/rules/contract-change-checklist.md"
+CONTRACT_PREFIXES = DEFAULT_CONTRACT_PREFIXES
+DEFAULT_CONTRACT_CHECKLIST_PATH = "docs/agentic/rules/contract-change-checklist.md"
+CONTRACT_CHECKLIST_PATH = DEFAULT_CONTRACT_CHECKLIST_PATH
 
 
 @dataclass(frozen=True)
@@ -87,11 +90,12 @@ def evaluate_review_ready(
     review: dict[str, Any],
     state: dict[str, Any],
     close: dict[str, Any],
+    boundary_prefixes: tuple[str, ...] = BOUNDARY_PREFIXES,
+    contract_prefixes: tuple[str, ...] = CONTRACT_PREFIXES,
+    contract_checklist_path: str = CONTRACT_CHECKLIST_PATH,
 ) -> ReviewReadyResult:
-    boundary_files = [path for path in changed_files if path.startswith(BOUNDARY_PREFIXES)]
-    contract_files = [
-        path for path in changed_files if path.startswith(CONTRACT_PREFIXES) or path == CONTRACT_CHECKLIST_PATH
-    ]
+    boundary_files = [path for path in changed_files if path.startswith(boundary_prefixes)]
+    contract_files = [path for path in changed_files if path.startswith(contract_prefixes) or path == contract_checklist_path]
 
     open_findings = int(review.get("counts", {}).get("status", {}).get("open", 0))
     open_blockers = int(close.get("checks", {}).get("open_blockers", {}).get("count", 0))
@@ -184,6 +188,22 @@ def main() -> int:
     parser.add_argument("--review-base", required=True)
     parser.add_argument("--latest-slice", action="store_true")
     parser.add_argument("--review-kind", choices=("branch", "planning"))
+    parser.add_argument(
+        "--boundary-prefix",
+        action="append",
+        dest="boundary_prefixes",
+        help="Optional boundary-file prefix override. Repeat to add multiple prefixes.",
+    )
+    parser.add_argument(
+        "--contract-prefix",
+        action="append",
+        dest="contract_prefixes",
+        help="Optional contract-file prefix override. Repeat to add multiple prefixes.",
+    )
+    parser.add_argument(
+        "--contract-checklist-path",
+        help="Optional contract checklist path override.",
+    )
     args = parser.parse_args()
 
     orchestrator_root = Path(args.orchestrator_root).resolve()
@@ -244,6 +264,9 @@ def main() -> int:
         review=review,
         state=state,
         close=close,
+        boundary_prefixes=tuple(args.boundary_prefixes or BOUNDARY_PREFIXES),
+        contract_prefixes=tuple(args.contract_prefixes or CONTRACT_PREFIXES),
+        contract_checklist_path=args.contract_checklist_path or CONTRACT_CHECKLIST_PATH,
     )
     print(render_review_ready(result))
     return 0 if result.ready else 1

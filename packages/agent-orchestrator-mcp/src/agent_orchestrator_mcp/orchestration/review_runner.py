@@ -28,7 +28,8 @@ if TYPE_CHECKING:
     from agent_handoff_mcp.review_findings import BatchFindingItem
 
 REPO_ROOT = PACKAGE_SRC.parents[2]
-RULES_DIR = REPO_ROOT / "docs" / "agentic" / "rules"
+DEFAULT_RULES_DIR = REPO_ROOT / "docs" / "agentic" / "rules"
+RULES_DIR = DEFAULT_RULES_DIR
 
 BACKEND_CHOICES = get_backend_choices()
 
@@ -158,9 +159,19 @@ def _detect_stack_guides(changed_files: list[str]) -> list[str]:
     return list(guides.values())
 
 
-def _read_guide(filename: str) -> str:
+def _resolve_rules_dir(*, orchestrator_root: str | Path | None = None, rules_dir: str | Path | None = None) -> Path:
+    if rules_dir is not None:
+        return Path(rules_dir).expanduser().resolve()
+    if RULES_DIR != DEFAULT_RULES_DIR:
+        return RULES_DIR
+    if orchestrator_root:
+        return (Path(orchestrator_root).expanduser().resolve() / "docs" / "agentic" / "rules").resolve()
+    return RULES_DIR
+
+
+def _read_guide(filename: str, *, orchestrator_root: str | Path | None = None, rules_dir: str | Path | None = None) -> str:
     """Read a review guide file from the rules directory."""
-    guide_path = RULES_DIR / filename
+    guide_path = _resolve_rules_dir(orchestrator_root=orchestrator_root, rules_dir=rules_dir) / filename
     if not guide_path.is_file():
         return ""
     return guide_path.read_text()
@@ -189,6 +200,8 @@ def _build_review_prompt(
     stack_guides: list[str],
     main_guide_filename: str = "branch-review-guide.md",
     lane_id: str | None = None,
+    orchestrator_root: str | Path | None = None,
+    rules_dir: str | Path | None = None,
 ) -> str:
     """Assemble the full review prompt from guide content, stack guides, and diff context."""
     sections: list[str] = []
@@ -202,14 +215,14 @@ def _build_review_prompt(
         sections.append(f"\nLane: {lane_id}")
 
     # Main review guide
-    main_guide = _read_guide(main_guide_filename)
+    main_guide = _read_guide(main_guide_filename, orchestrator_root=orchestrator_root, rules_dir=rules_dir)
     if main_guide:
         sections.append(f"\n--- {_guide_heading(main_guide_filename)} ---\n")
         sections.append(main_guide)
 
     # Stack-specific guides
     for guide_name in stack_guides:
-        guide_content = _read_guide(guide_name)
+        guide_content = _read_guide(guide_name, orchestrator_root=orchestrator_root, rules_dir=rules_dir)
         if guide_content:
             sections.append(f"\n--- {_guide_heading(guide_name)} ---\n")
             sections.append(guide_content)
@@ -436,6 +449,7 @@ def run_review(
     record_findings: bool = False,
     dry_run: bool = False,
     progress_callback: Callable[..., None] | None = None,
+    rules_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Run a full review cycle: discover changes, build prompt, execute Codex, validate, optionally record."""
     from agent_handoff_mcp.enums import ReviewKind  # noqa: PLC0415
@@ -483,6 +497,8 @@ def run_review(
             "planning-review-guide.md" if scope["review_kind"] == ReviewKind.PLANNING else "branch-review-guide.md"
         ),
         lane_id=lane_id,
+        orchestrator_root=orchestrator_root,
+        rules_dir=rules_dir,
     )
 
     if dry_run:
@@ -562,6 +578,10 @@ def _parse_args() -> argparse.Namespace:
     run_parser.add_argument("--session", help="Session identifier (required with --record-findings).")
     run_parser.add_argument("--orchestrator-root", help="Orchestrator root path (required with --record-findings).")
     run_parser.add_argument(
+        "--rules-dir",
+        help="Optional review-rules directory override. Defaults to <orchestrator-root>/docs/agentic/rules.",
+    )
+    run_parser.add_argument(
         "--backend",
         default="codex-cli",
         choices=BACKEND_CHOICES,
@@ -606,6 +626,7 @@ def main() -> int:
 
     worktree_path = Path(args.worktree_path).expanduser().resolve()
     orchestrator_root = Path(args.orchestrator_root).expanduser().resolve() if args.orchestrator_root else None
+    rules_dir = Path(args.rules_dir).expanduser().resolve() if args.rules_dir else None
 
     result = run_review(
         worktree_path=worktree_path,
@@ -620,6 +641,7 @@ def main() -> int:
         use_latest_slice=args.latest_slice,
         record_findings=args.record_findings,
         dry_run=args.dry_run,
+        rules_dir=rules_dir,
     )
 
     print(json.dumps(result, indent=2))

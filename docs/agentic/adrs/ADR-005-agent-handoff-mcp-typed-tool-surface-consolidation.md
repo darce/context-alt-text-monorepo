@@ -2,7 +2,9 @@
 
 ## Status
 
-Proposed
+Implemented
+
+Implementation landed in `AHMCP-6` on 2026-04-05/06. The live handoff surface now exposes a single 17-tool registry, with the consolidated domain tools `record_event`, `review_findings`, `review_runs`, `next_actions`, and `artifacts`. Legacy `core` / `extended` profile inputs are retained only as compatibility aliases and no longer change the exported tool set.
 
 ## Date
 

@@ -70,10 +70,9 @@ def pythonpath_env(
     task_ref: str | None = None,
     lane_id: str | None = None,
 ) -> dict[str, str]:
-    """Return an env dict with repo-local MCP, writable temp, and lane runtime hints."""
+    """Return an env dict with local bridge paths, writable temp, and lane runtime hints."""
     env = os.environ.copy()
     pythonpath_parts = [
-        str(orchestrator_root / "packages" / "agent-handoff-mcp" / "src"),
         str(orchestrator_root / "packages" / "codex-subagent-bridge" / "src"),
     ]
     existing = env.get("PYTHONPATH", "")

@@ -103,7 +103,7 @@ Useful CLI checks:
 ```bash
 agent-handoff-mcp --workspace-root /path/to/workspace doctor
 agent-handoff-mcp --workspace-root /path/to/workspace state
-agent-handoff-mcp --workspace-root /path/to/workspace review-list
+agent-handoff-mcp --workspace-root /path/to/workspace review-findings --operation list
 agent-handoff-mcp --workspace-root /path/to/workspace handoff-close-check
 ```
 
@@ -147,51 +147,40 @@ Source checkout adapter:
 
 ## Tool Surface
 
-`agent-handoff-mcp` exposes an **extended profile** (28 tools) by default and a **core profile** (16 tools) on request.
+`agent-handoff-mcp` now exposes a single **17-tool** MCP surface.
 
-Use `--tool-profile extended` to enable all 28 tools explicitly:
+Legacy `--tool-profile all|core|extended` inputs are still accepted for compatibility, but they all expose the same tool set:
 
 ```bash
-agent-handoff-mcp --workspace-root /path/to/workspace --tool-profile extended serve-stdio
+agent-handoff-mcp --workspace-root /path/to/workspace --tool-profile core serve-stdio
 ```
 
-### Core profile (16 tools — daily ledger workflows)
+### Unified surface (17 tools)
 
 | CLI name | MCP tool |
 | --- | --- |
 | `state` | `get_handoff_state` |
 | `set` | `set_handoff_state` |
-| `decision` | `record_decision` |
-| `action` | `update_next_actions` |
-| `test` | `record_test_result` |
-| `blocker` | `report_blocker` |
-| `review-record` | `record_review_finding` |
-| *(no CLI)* | `batch_record_review_findings` |
-| `review-update` | `update_review_finding` |
-| `review-list` | `list_review_findings` |
-| `review-run-record` | `record_review_run` |
-| `review-run-list` | `list_review_runs` |
+| `event` | `record_event` |
+| `next-actions` | `next_actions` |
+| `review-findings` | `review_findings` |
+| `review-runs` | `review_runs` |
 | `handoff-close-check` | `handoff_close_check` |
 | `task` | `generate_current_task_md` |
 | *(no CLI)* | `load_session` |
 | *(no CLI)* | `close_slice` |
-
-### Extended profile (12 tools — admin and low-frequency)
-
-| CLI name | MCP tool |
-| --- | --- |
-| *(no CLI)* | `list_next_actions` |
-| `review-coverage` | `get_review_coverage` |
 | `audit-decisions` | `audit_decision_ids` |
 | `export` | `export_handoff_state` |
 | `import` | `import_handoff_state` |
 | `archive` | `archive_task_state` |
 | `task-status` | `update_task_status` |
-| `artifact-record` | `record_artifact` |
-| `artifact-search` | `search_artifacts` |
-| `artifact-get` | `get_artifact` |
-| `artifact-purge` | `purge_artifacts` |
+| `artifacts` | `artifacts` |
 | `handoff-search` | `search_handoff` |
+
+`record_event` uses a typed `event` payload with `event_kind="decision" | "test_result" | "blocker"` so each variant keeps its own required fields.
+`next_actions` uses `operation="list" | "add" | "update" | "complete" | "skip"`.
+`review_findings` uses `operation="record" | "batch_record" | "update" | "list"`.
+`review_runs` uses `operation="record" | "list" | "coverage"`.
 
 CLI-only extras (not part of MCP registry): `artifact-list`, `artifact-terms`.
 

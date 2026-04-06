@@ -115,14 +115,13 @@ def test_backend_choices_come_from_registry() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_pythonpath_env_includes_mcp_src() -> None:
+def test_pythonpath_env_includes_bridge_src_only() -> None:
     mod = _load_module()
     env = mod.pythonpath_env(
         REPO_ROOT, task_ref="phase-5-retention-export-and-audit-controls", lane_id="backend-domain"
     )
-    expected_mcp = str(REPO_ROOT / "packages" / "agent-handoff-mcp" / "src")
     expected_bridge = str(REPO_ROOT / "packages" / "codex-subagent-bridge" / "src")
-    assert expected_mcp in env["PYTHONPATH"]
+    assert str(REPO_ROOT / "packages" / "agent-handoff-mcp" / "src") not in env["PYTHONPATH"]
     assert expected_bridge in env["PYTHONPATH"]
     assert env["PYENV_VERSION"] == "description-service"
     assert env["TMPDIR"].endswith("/.task-state/tmp/backend-domain")

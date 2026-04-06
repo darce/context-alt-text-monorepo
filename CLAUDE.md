@@ -13,7 +13,7 @@ On every session (cold start, mid-task re-entry, lane inherit):
 1. Query MCP handoff state: `get_handoff_state(task_ref="<task>")`.
 2. If in a lane, run `make lane-inbox` to pick up routed findings and dispatch messages.
 3. Load role routing below; read the linked context map, guidelines, and testing guide.
-4. Check open findings: `list_review_findings(status="open")`.
+4. Check open findings: `review_findings(review={"operation":"list","status":"open"})`.
 5. Verify contract surface before writing code ([contracts/](docs/agentic/contracts/)).
 6. Decide whether `ctx7` is needed (upstream library behavior; see ctx7 criteria in instructions.md).
 7. Ensure the work has an MCP task. If no active task fits, initialize one before editing.
@@ -44,7 +44,7 @@ Additional routing: see [docs/agentic/instructions.md](docs/agentic/instructions
 > **You may ONLY modify files within this monorepo.**
 
 Allowed: `apps/prototype-wp-alt-context/`, `apps/prototype-description-service/`, `packages/` (only package directories present in this checkout), `docs/`, `scripts/`.
-If `agent-handoff-mcp` has been extracted into the standalone `darce/mcp-agent-handoff` repo, treat that external repo as out of bounds unless the workspace is opened there directly.
+Treat the standalone `darce/mcp-agent-handoff` repo as out of bounds unless the workspace is opened there directly. `agent-handoff-mcp` no longer lives in this monorepo checkout.
 Never modify WordPress core, LocalWP config, `~/Local Sites/`, or system config files.
 
 ### Greenfield Policy
@@ -56,12 +56,12 @@ This project has NO production users and NO existing data to preserve.
 
 ### MCP Handoff (MANDATORY)
 
-- Every code change must be logged with a `record_decision` entry before review or completion.
+- Every code change must be logged with a `record_event(event={event_kind: "decision", actor: {...}, ...})` entry before review or completion.
 - After recording the decision, notify the user that the handoff has been updated (e.g. "Handoff updated: decision `<id>` recorded."). This notification is mandatory — a response that makes code changes without both recording and notifying is incomplete.
 - A task response is incomplete if MCP handoff was not updated.
 - Slice completion format (enforced at write time): [docs/agentic/templates/slice-complete-template.md](docs/agentic/templates/slice-complete-template.md).
-- After every state-changing handoff operation (`record_decision`, `update_review_finding`, `report_blocker`, `batch_record_review_findings`), call `generate_current_task_md(task_ref=<active-task-ref>)`.
-- When logging **3 or more review findings** in a single review pass, use `batch_record_review_findings` instead of repeated `record_review_finding` calls — one atomic write, one `CURRENT_TASK.md` flush, per-item results returned.
+- After every state-changing handoff operation (`record_event`, `review_findings(operation="update")`, `review_findings(operation="batch_record")`), call `generate_current_task_md(task_ref=<active-task-ref>)`.
+- When logging **3 or more review findings** in a single review pass, use `review_findings(review={"operation":"batch_record", ...})` instead of repeated `review_findings(review={"operation":"record", ...})` calls — one atomic write, one `CURRENT_TASK.md` flush, per-item results returned.
 - Full handoff protocol: [docs/agentic/instructions.md](docs/agentic/instructions.md#mcp-handoff-contract-mandatory).
 
 ### Git Commit Rules
@@ -93,7 +93,7 @@ This project has NO production users and NO existing data to preserve.
 - [rg-008] helpful=1 harmful=0 :: Config files: validate at load time. Fail fast on missing or malformed required keys.
 - [rg-009] helpful=1 harmful=0 :: No task-specific logic in generic modules. Extract to config-driven policy or the task's manifest.
 - [rg-010] helpful=1 harmful=0 :: IDE tool output may be stale after external writes (git rebase, worktree ops). Cross-check with terminal before recording a finding.
-- [rg-013] helpful=1 harmful=0 :: `core.py` must remain pure handoff-state CRUD. No orchestration imports, no subprocess calls, no lock management. Scope: the checked-in `agent-handoff-mcp` package in the active workspace, or the standalone checkout if that repo is opened directly.
+- [rg-013] helpful=1 harmful=0 :: `core.py` must remain pure handoff-state CRUD. No orchestration imports, no subprocess calls, no lock management. Scope: the active `agent-handoff-mcp` checkout, whether that is the transitional in-repo copy during extraction work or the standalone checkout opened directly.
 - [rg-014] helpful=1 harmful=0 :: Orchestration modules must use late-binding imports (function-level) for `agent_handoff_mcp` symbols.
 - [rg-015] helpful=1 harmful=0 :: Boundary adapters must not invent contract metadata. Every envelope field must come from the request, upstream payload, or an explicitly documented fallback.
 - [rg-016] helpful=0 harmful=0 :: PHP runtime autoload parity must match tests. Verify with `php -r "require 'vendor/autoload.php'; var_export(class_exists(...));"`.

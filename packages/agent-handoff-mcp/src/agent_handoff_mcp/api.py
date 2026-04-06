@@ -1526,7 +1526,22 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
             entry.handler.__doc__ = f"[DEPRECATED since {entry.deprecated_since}] " + (
                 entry.handler.__doc__ or entry.description
             )
-        mcp.add_tool(entry.handler)
+        handler = entry.handler
+        # Wrap str-returning handlers so FastMCP receives a dict and
+        # serialises once, eliminating double-serialisation on the wire.
+        if handler.__annotations__.get("return") is str or (
+            not handler.__annotations__.get("return") and callable(handler)
+        ):
+            import functools as _ft
+
+            _orig = handler
+
+            @_ft.wraps(_orig)
+            def _dict_wrapper(*args: Any, _fn: Any = _orig, **kwargs: Any) -> dict:
+                return json.loads(_fn(*args, **kwargs))
+
+            handler = _dict_wrapper
+        mcp.add_tool(handler)
     return mcp
 
 

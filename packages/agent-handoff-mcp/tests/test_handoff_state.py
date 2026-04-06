@@ -771,18 +771,24 @@ def test_v2_envelope_shape_on_read_surfaces(isolated_handoff: dict) -> None:
     assert "tasks" in raw_dash["data"]
 
 
-def test_v2_envelope_mirrors_legacy_top_level_fields_for_python_callers(isolated_handoff: dict) -> None:
-    _parse(mcp_server.set_handoff_state(task_ref="legacy-flat", objective="Legacy flat fields", status="in_progress"))
+def test_v2_envelope_no_legacy_mirroring(isolated_handoff: dict) -> None:
+    """Compact envelope puts data in the ``data`` block only — no top-level mirrors."""
+    _parse(mcp_server.set_handoff_state(task_ref="compact-env", objective="Compact envelope", status="in_progress"))
 
-    raw_state = json.loads(mcp_server.get_handoff_state(task_ref="legacy-flat"))
+    raw_state = json.loads(mcp_server.get_handoff_state(task_ref="compact-env"))
     assert raw_state["schema_version"] == 2
-    assert raw_state["task_ref"] == "legacy-flat"
-    assert raw_state["active"] == raw_state["data"]["active"]
-    assert raw_state["limits"] == raw_state["data"]["limits"]
+    assert raw_state["task_ref"] == "compact-env"
+    # Canonical data block contains the payload
+    assert "active" in raw_state["data"]
+    assert "limits" in raw_state["data"]
+    # No legacy mirroring at top level
+    assert "active" not in raw_state
+    assert "limits" not in raw_state
 
     raw_error = json.loads(mcp_server.handoff_close_check(require_fresh_tests=True))
     assert raw_error["ok"] is False
-    assert raw_error["error"] == raw_error["data"]["error"]
+    assert "error" in raw_error["data"]
+    assert "error" not in raw_error  # no legacy mirror
 
 
 def test_get_handoff_state_sections_filter(isolated_handoff: dict) -> None:

@@ -135,6 +135,125 @@ PHP;
         $this->assertSame('secret-key-123', $calls[0]['args']['headers']['X-API-Key'] ?? null);
     }
 
+    public function testPluginBootstrapDefinesRecognitionConstantsFromEnvironment(): void
+    {
+        $script = <<<'PHP'
+putenv('ACX_RECOGNITION_BASE_URL=https://env.example');
+putenv('ACX_RECOGNITION_API_KEY=env-api-key');
+define('ABSPATH', getcwd() . '/');
+if (!function_exists('get_file_data')) {
+    function get_file_data($file, $default_headers)
+    {
+        return ['Version' => '0.0.2'];
+    }
+}
+if (!function_exists('plugin_dir_path')) {
+    function plugin_dir_path($file)
+    {
+        return dirname($file) . '/';
+    }
+}
+if (!function_exists('plugin_dir_url')) {
+    function plugin_dir_url($file)
+    {
+        return 'https://example.test/wp-content/plugins/alt-context/';
+    }
+}
+if (!function_exists('plugin_basename')) {
+    function plugin_basename($file)
+    {
+        return 'alt-context/alt-context.php';
+    }
+}
+if (!function_exists('esc_html__')) {
+    function esc_html__($value, $domain = null)
+    {
+        return $value;
+    }
+}
+if (!function_exists('wp_die')) {
+    function wp_die($message)
+    {
+        throw new RuntimeException((string) $message);
+    }
+}
+if (!function_exists('add_action')) {
+    function add_action($hook, $callback, $priority = 10, $accepted_args = 1)
+    {
+        return true;
+    }
+}
+if (!function_exists('register_activation_hook')) {
+    function register_activation_hook($file, $callback)
+    {
+        return true;
+    }
+}
+if (!function_exists('register_deactivation_hook')) {
+    function register_deactivation_hook($file, $callback)
+    {
+        return true;
+    }
+}
+if (!function_exists('register_uninstall_hook')) {
+    function register_uninstall_hook($file, $callback)
+    {
+        return true;
+    }
+}
+require 'alt-context.php';
+echo json_encode([
+    'url' => defined('ACX_RECOGNITION_URL') ? ACX_RECOGNITION_URL : null,
+    'key' => defined('ACX_RECOGNITION_API_KEY') ? ACX_RECOGNITION_API_KEY : null,
+]);
+PHP;
+
+        $command = sprintf(
+            'cd %s && %s -r %s',
+            escapeshellarg(__DIR__ . '/../../'),
+            escapeshellarg((string) PHP_BINARY),
+            escapeshellarg($script)
+        );
+
+        $output = shell_exec($command);
+        $data = json_decode(trim((string) $output), true);
+
+        $this->assertIsArray($data);
+        $this->assertSame('https://env.example', $data['url'] ?? null);
+        $this->assertSame('env-api-key', $data['key'] ?? null);
+    }
+
+    public function testAnalyzeRequestUsesDeterministicUuidTenantId(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][123] = 'http://example.test/media/123.jpg';
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'Accepted'],
+            'body' => '{"status":"queued"}',
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $request->set_param('media_ids', [123]);
+
+        $result = $this->controller->analyze_media($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $result);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+
+        $tenantId = $calls[0]['args']['headers']['X-Tenant-ID'] ?? '';
+        $payload = json_decode($calls[0]['body'] ?? '', true);
+
+        $this->assertMatchesRegularExpression(
+            '/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/',
+            $tenantId
+        );
+        $this->assertIsArray($payload);
+        $this->assertSame($tenantId, $payload['tenant_id'] ?? null);
+        $this->assertNotSame(md5((string) \get_site_url()), $tenantId);
+    }
+
     public function testProxyRequestUsesFilteredBaseUrlWhenOptionMissing(): void
     {
         $this->setOption('acx_recognition_url', '');

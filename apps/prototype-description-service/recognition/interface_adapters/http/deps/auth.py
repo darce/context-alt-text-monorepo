@@ -83,6 +83,26 @@ async def _lookup_api_key(
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid or missing API key")
 
 
+def _extract_authorization_api_key(header_value: str) -> str:
+    """Extract a bearer token from the Authorization header."""
+    scheme, _, token = header_value.partition(" ")
+    normalized_token = token.strip()
+    if scheme.lower() != "bearer" or not normalized_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid authorization scheme")
+    return normalized_token
+
+
+def _extract_api_key_header_value(header_value: str) -> str | None:
+    """Extract an API key from X-Api-Key, tolerating optional Bearer formatting."""
+    normalized_header = header_value.strip()
+    if not normalized_header:
+        return None
+    scheme, _, token = normalized_header.partition(" ")
+    if scheme.lower() == "bearer":
+        normalized_header = token.strip()
+    return normalized_header or None
+
+
 async def require_auth(
     authorization: str | None = Header(default=None, alias="Authorization"),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
@@ -94,17 +114,28 @@ async def require_auth(
     if not settings.auth_enabled:
         return AuthContext(token=None, tenant_claim=None, api_key_id=None, is_admin=False, enabled=False)
 
-    header_value = authorization
-    if settings.api_key_header.lower() != "authorization":
-        header_value = api_key_header_value or authorization
+    configured_header = settings.api_key_header.strip().lower()
+    api_key: str | None
 
-    if not header_value:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization header required")
+    if configured_header == "authorization":
+        if authorization:
+            api_key = _extract_authorization_api_key(authorization)
+        elif api_key_header_value:
+            api_key = _extract_api_key_header_value(api_key_header_value)
+        else:
+            api_key = None
+    else:
+        if api_key_header_value:
+            api_key = _extract_api_key_header_value(api_key_header_value)
+        elif authorization:
+            api_key = _extract_authorization_api_key(authorization)
+        else:
+            api_key = None
 
-    scheme, _, token = header_value.partition(" ")
-    api_key = token if scheme.lower() == "bearer" else None
     if not api_key:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid authorization scheme")
+        if authorization or api_key_header_value:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid authorization scheme")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization header required")
 
     tenant_claim, api_key_id, rate_limit_tier, is_admin = await _lookup_api_key(api_key, settings, session)
     if tenant_claim and x_tenant_id:

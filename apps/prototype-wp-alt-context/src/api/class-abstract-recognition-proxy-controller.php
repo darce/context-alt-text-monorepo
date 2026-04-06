@@ -22,8 +22,10 @@ use function in_array;
 use function is_wp_error;
 use function parse_url;
 use function set_transient;
+use function sprintf;
 use function strtotime;
 use function strtolower;
+use function substr;
 use function time;
 use function untrailingslashit;
 use function wp_json_encode;
@@ -129,7 +131,19 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 	}
 
 	protected function get_tenant_id(): string {
-		return md5( (string) get_site_url() );
+		$site_url  = untrailingslashit( strtolower( (string) get_site_url() ) );
+		$hash      = sha1( 'acx-site-tenant:' . $site_url );
+		$time_hi   = ( hexdec( substr( $hash, 12, 4 ) ) & 0x0fff ) | 0x5000;
+		$clock_seq = ( hexdec( substr( $hash, 16, 4 ) ) & 0x3fff ) | 0x8000;
+
+		return sprintf(
+			'%s-%s-%04x-%04x-%s',
+			substr( $hash, 0, 8 ),
+			substr( $hash, 8, 4 ),
+			$time_hi,
+			$clock_seq,
+			substr( $hash, 20, 12 )
+		);
 	}
 
 	protected function get_recognition_base_url(): string {

@@ -4,7 +4,8 @@
 >
 > - **Date**: 2026-04-06
 > - **Author**: GPT-5.4 high
-> - **Project**: prototype-description-service
+> - **Owning Epic**: [docs/epics/v0.4.0/public-demo-launch-readiness-epic.md](../../epics/v0.4.0/public-demo-launch-readiness-epic.md)
+> - **Epic Short ID**: E15
 > - **Task ID**: E15-4
 > - **Target Branch**: `feature/e15-4-local-reset-bootstrap-hardening`
 > - **Review Coverage Target**: 2

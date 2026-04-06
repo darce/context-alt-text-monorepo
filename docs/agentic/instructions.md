@@ -3,7 +3,7 @@
 > **Cold-start document for coding agents.** Universal rules that cannot be deduced from code, configs, or linters. Domain-specific guidelines load via the routing table below.
 > **On first load / cold start**: also read [BOOTSTRAP.md](BOOTSTRAP.md) for testing commands, MCP server setup, and handoff state defaults.
 
-**Active epics**: [../epics/v0.3.1/agent-handoff-mcp-packaging-epic.md](../epics/v0.3.1/agent-handoff-mcp-packaging-epic.md) · [../epics/v0.3.1/self-hosting-epic.md](../epics/v0.3.1/self-hosting-epic.md)
+**Active epics**: [../epics/v0.4.0/public-demo-launch-readiness-epic.md](../epics/v0.4.0/public-demo-launch-readiness-epic.md) (E15) · [../epics/v0.3.1/self-hosting-epic.md](../epics/v0.3.1/self-hosting-epic.md) (E14)
 
 ---
 
@@ -31,35 +31,36 @@ This file is a dispatcher, not the architecture source of truth.
 
 Choose your domain to load targeted context. Always load the matching testing guide alongside the domain guidance.
 
-| Role | Context Map | Guidelines | Testing Guide | Tech Stack (ctx7) | Key Entry Points |
-| --- | --- | --- | --- | --- | --- |
-| **Backend (Python)** | [maps/backend.md](maps/backend.md) | [rules/backend-python-guidelines.md](rules/backend-python-guidelines.md) | [rules/testing-python.md](rules/testing-python.md) | [maps/tech-stack.md#backend-python](maps/tech-stack.md#backend-python) | `apps/prototype-description-service/` |
-| **Frontend (React/TS)** | [maps/frontend.md](maps/frontend.md) | [rules/frontend-guidelines.md](rules/frontend-guidelines.md) | [rules/testing-typescript.md](rules/testing-typescript.md) | [maps/tech-stack.md#frontend-reactts](maps/tech-stack.md#frontend-reactts) | `apps/prototype-wp-alt-context/js/` |
-| **PHP Plugin** | [maps/php-plugin.md](maps/php-plugin.md) | [rules/backend-php-guidelines.md](rules/backend-php-guidelines.md) | [rules/testing-php.md](rules/testing-php.md) | [maps/tech-stack.md#php-plugin](maps/tech-stack.md#php-plugin) | `apps/prototype-wp-alt-context/src/` |
-| **Cross-Service Integration** | [maps/integration.md](maps/integration.md) | [contracts/](contracts/) | [rules/testing-principles.md](rules/testing-principles.md) | [maps/tech-stack.md#orchestration](maps/tech-stack.md#orchestration) | `docs/agentic/contracts/` |
-| **Infrastructure / Deployment** | [../epics/v0.3.1/self-hosting-epic.md](../epics/v0.3.1/self-hosting-epic.md) | [rules/development-workflow.md](rules/development-workflow.md) | [rules/testing-principles.md](rules/testing-principles.md) | [maps/tech-stack.md#orchestration](maps/tech-stack.md#orchestration) | `../../infra/oci/` |
+| Role                            | Context Map                                                                  | Guidelines                                                               | Testing Guide                                              | Tech Stack (ctx7)                                                          | Key Entry Points                      |
+| ------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------- |
+| **Backend (Python)**            | [maps/backend.md](maps/backend.md)                                           | [rules/backend-python-guidelines.md](rules/backend-python-guidelines.md) | [rules/testing-python.md](rules/testing-python.md)         | [maps/tech-stack.md#backend-python](maps/tech-stack.md#backend-python)     | `apps/prototype-description-service/` |
+| **Frontend (React/TS)**         | [maps/frontend.md](maps/frontend.md)                                         | [rules/frontend-guidelines.md](rules/frontend-guidelines.md)             | [rules/testing-typescript.md](rules/testing-typescript.md) | [maps/tech-stack.md#frontend-reactts](maps/tech-stack.md#frontend-reactts) | `apps/prototype-wp-alt-context/js/`   |
+| **PHP Plugin**                  | [maps/php-plugin.md](maps/php-plugin.md)                                     | [rules/backend-php-guidelines.md](rules/backend-php-guidelines.md)       | [rules/testing-php.md](rules/testing-php.md)               | [maps/tech-stack.md#php-plugin](maps/tech-stack.md#php-plugin)             | `apps/prototype-wp-alt-context/src/`  |
+| **Cross-Service Integration**   | [maps/integration.md](maps/integration.md)                                   | [contracts/](contracts/)                                                 | [rules/testing-principles.md](rules/testing-principles.md) | [maps/tech-stack.md#orchestration](maps/tech-stack.md#orchestration)       | `docs/agentic/contracts/`             |
+| **Infrastructure / Deployment** | [../epics/v0.3.1/self-hosting-epic.md](../epics/v0.3.1/self-hosting-epic.md) | [rules/development-workflow.md](rules/development-workflow.md)           | [rules/testing-principles.md](rules/testing-principles.md) | [maps/tech-stack.md#orchestration](maps/tech-stack.md#orchestration)       | `../../infra/oci/`                    |
 
 ### Additional Routing
 
-| Working on...                        | Load                                                                                                                                                |
-| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Writing tests (any language)         | [rules/testing-principles.md](rules/testing-principles.md) + language-specific guide                                                                |
-| React/TypeScript tests (Vitest)      | [rules/testing-typescript.md](rules/testing-typescript.md)                                                                                          |
-| Python tests (pytest)                | [rules/testing-python.md](rules/testing-python.md)                                                                                                  |
-| PHP tests (PHPUnit)                  | [rules/testing-php.md](rules/testing-php.md)                                                                                                        |
-| Workflow, commits, scaffolding       | [rules/development-workflow.md](rules/development-workflow.md)                                                                                      |
-| Branch review                        | [rules/branch-review-guide.md](rules/branch-review-guide.md)                                                                                        |
-| Planning document review             | [rules/planning-review-guide.md](rules/planning-review-guide.md)                                                                                    |
-| Component architecture patterns      | [rules/component-architecture-patterns.md](rules/component-architecture-patterns.md)                                                                |
-| Radix UI / accessibility primitives  | [rules/RADIX_UI_COMPONENT_GUIDE.md](rules/RADIX_UI_COMPONENT_GUIDE.md)                                                                              |
-| Roster auto-resolve current behavior | [maps/php-plugin.md](maps/php-plugin.md)                                                                                                            |
-| Deferred roster pending-review mode  | [../deferred-features/roster-pending-references.md](../deferred-features/roster-pending-references.md)                                              |
-| Deferred embedding search roadmap    | [../deferred-features/embedding-search-optimizations.md](../deferred-features/embedding-search-optimizations.md)                                    |
-| Detection vs identification boundary | [maps/integration.md](maps/integration.md)                                                                                                          |
-| Face/Identity nomenclature (ADR)     | [adrs/ADR-001-face-identity-nomenclature.md](adrs/ADR-001-face-identity-nomenclature.md)                                                            |
-| MCP tooling / testing commands       | [BOOTSTRAP.md](BOOTSTRAP.md)                                                                                                                        |
-| Codex custom MCP attachment          | [playbooks/codex-custom-mcp-playbook.md](playbooks/codex-custom-mcp-playbook.md)                                                                    |
-| Lane decomposition / orchestration   | [playbooks/worktree-codex-playbook.md](playbooks/worktree-codex-playbook.md) + [playbooks/lane-scoped-context.md](playbooks/lane-scoped-context.md) |
+| Working on...                          | Load                                                                                                                                                |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Writing tests (any language)           | [rules/testing-principles.md](rules/testing-principles.md) + language-specific guide                                                                |
+| React/TypeScript tests (Vitest)        | [rules/testing-typescript.md](rules/testing-typescript.md)                                                                                          |
+| Python tests (pytest)                  | [rules/testing-python.md](rules/testing-python.md)                                                                                                  |
+| PHP tests (PHPUnit)                    | [rules/testing-php.md](rules/testing-php.md)                                                                                                        |
+| Workflow, commits, scaffolding         | [rules/development-workflow.md](rules/development-workflow.md)                                                                                      |
+| Epic/task lifecycle, planning pipeline | [rules/development-workflow.md](rules/development-workflow.md) + [rules/planning-pipeline.md](rules/planning-pipeline.md)                           |
+| Branch review                          | [rules/branch-review-guide.md](rules/branch-review-guide.md)                                                                                        |
+| Planning document review               | [rules/planning-review-guide.md](rules/planning-review-guide.md)                                                                                    |
+| Component architecture patterns        | [rules/component-architecture-patterns.md](rules/component-architecture-patterns.md)                                                                |
+| Radix UI / accessibility primitives    | [rules/RADIX_UI_COMPONENT_GUIDE.md](rules/RADIX_UI_COMPONENT_GUIDE.md)                                                                              |
+| Roster auto-resolve current behavior   | [maps/php-plugin.md](maps/php-plugin.md)                                                                                                            |
+| Deferred roster pending-review mode    | [../deferred-features/roster-pending-references.md](../deferred-features/roster-pending-references.md)                                              |
+| Deferred embedding search roadmap      | [../deferred-features/embedding-search-optimizations.md](../deferred-features/embedding-search-optimizations.md)                                    |
+| Detection vs identification boundary   | [maps/integration.md](maps/integration.md)                                                                                                          |
+| Face/Identity nomenclature (ADR)       | [adrs/ADR-001-face-identity-nomenclature.md](adrs/ADR-001-face-identity-nomenclature.md)                                                            |
+| MCP tooling / testing commands         | [BOOTSTRAP.md](BOOTSTRAP.md)                                                                                                                        |
+| Codex custom MCP attachment            | [playbooks/codex-custom-mcp-playbook.md](playbooks/codex-custom-mcp-playbook.md)                                                                    |
+| Lane decomposition / orchestration     | [playbooks/worktree-codex-playbook.md](playbooks/worktree-codex-playbook.md) + [playbooks/lane-scoped-context.md](playbooks/lane-scoped-context.md) |
 
 ## Agent Startup Protocol
 
@@ -165,7 +166,7 @@ If a task seems to require external changes, STOP and propose an alternative wit
 
 ### Tool Selection Discipline
 
-> **Enforcement layer**: `.github/copilot-instructions.md` contains the mandatory decision tree and is auto-injected into every VS Code Copilot session. `.github/hooks/terminal-guard.py` intercepts `run_in_terminal` calls at the PreToolUse hook and asks for confirmation when a native tool equivalent exists.
+> **Enforcement layer**: `.github/copilot-instructions.md` contains the mandatory decision tree and branch-isolation rule and is auto-injected into every VS Code Copilot session. `.github/hooks/terminal-guard.py` intercepts `run_in_terminal` calls at the PreToolUse hook, and `.github/hooks/guard-main-branch.py` blocks code-file edits on `main` in the VS Code harness. Claude Code keeps the parallel branch-isolation hook in `.claude/settings.json`.
 
 Agents in this project run in two environments with different tool surfaces. Using the wrong tool for the environment wastes tokens and causes retries. This section exists because repeated terminal-output bloat (16 KB+ of stale scrollback per command) caused entire review sessions to choke on scope discovery that native tools could have resolved in one call.
 
@@ -251,10 +252,13 @@ Each task plan declares a **target branch** in its metadata. When starting imple
 
 1. Create the branch from `main`: `git checkout -b <target_branch> main`
 2. Activate the MCP task: `switch_task(task_ref="...", objective="...")`
-3. Work on slices, committing to that branch
-4. On completion, create a PR from the task branch to `main`
+3. Verify the current worktree and branch actually belong to that task before editing. If the active branch does not match the task's branch, switch first instead of carrying changes across tasks.
+4. Commit modified files on the branch that owns the task. Do not leave one task's code changes stranded on another task's branch.
+5. On completion, request review and merge the task branch back to `main` via PR; do not continue piling unrelated follow-up work onto the merged branch.
 
-Always **commit before switching** branches — never stash. WIP commits are visible, referenceable, and squashable. See [rules/planning-pipeline.md](rules/planning-pipeline.md#safe-branch-switching) for the full switching procedure.
+If you inherit dirty code changes on `main`, stop and isolate them before starting new implementation work. Move them to the correct feature branch or stash them only long enough to recover a clean starting point; do not normalize ongoing code edits on `main`.
+
+For normal task switching, always **commit before switching** branches; do not use stash as the routine handoff mechanism. WIP commits are visible, referenceable, and squashable. See [rules/planning-pipeline.md](rules/planning-pipeline.md#safe-branch-switching) for the full switching procedure.
 
 ### MCP Handoff Contract (MANDATORY)
 

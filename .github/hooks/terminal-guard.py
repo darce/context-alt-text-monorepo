@@ -64,6 +64,7 @@ _ALLOWLIST: list[re.Pattern[str]] = [
         r"^phpunit\b",
         r"^\./vendor/bin/phpunit\b",
         r"^vendor/bin/phpunit\b",
+        r'^"?\S*/vendor/bin/phpunit"?\b',
         # Build
         r"^make\b",
         # pyenv
@@ -215,6 +216,8 @@ def _strip_env_prefix(cmd: str) -> str:
     """Strip leading shell env-var assignments and navigation prefixes.
 
     Handles (in any combination/order):
+      setopt errexit && git stash ...
+            MAIN_ROOT="$(git rev-parse --show-toplevel | sed ...)" && vendor/bin/phpunit ...
       cd /absolute/path && make ...
       export PYTHONPATH=src && pytest ...
       PYENV_VERSION=x pytest ...
@@ -223,9 +226,11 @@ def _strip_env_prefix(cmd: str) -> str:
     """
     s = cmd.strip()
     _PREFIX_PATTERNS = [
+        r"^setopt(?:\s+\S+)+\s*&&\s*",  # setopt errexit &&
         r"^cd\s+\S+\s*&&\s*",           # cd <path> &&
         r"^export\s+\w+=\S+\s*&&\s*",   # export VAR=value &&
-                r"^\w+=\S+\s*&&\s*",             # VAR=value &&
+        r'^\w+=(?:"[^"]*"|\'[^\']*\'|\S+)\s*&&\s*',  # VAR="value with spaces|pipes" &&
+        r"^\w+=\S+\s*&&\s*",            # VAR=value &&
         r"^(\w+=\S+\s+)+",              # VAR=value inline prefix tokens
     ]
     # Loop until no pattern matches (handles cd && export && <cmd>).

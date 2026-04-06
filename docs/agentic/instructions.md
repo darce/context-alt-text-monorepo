@@ -379,6 +379,14 @@ Completion gate:
 
 - A task response is incomplete if MCP handoff was not updated.
 
+Task lifecycle:
+
+- When a task is finished (all slices complete, success criteria met), set its status to `done` via `update_task_status(task_ref=..., status="done")` before or after archiving.
+- `close_slice` keeps the task `in_progress` by design — it does not close the task.
+- `archive_task_state` snapshots the current task state into archive storage but preserves whatever status the task had at archive time. If you archive while still `in_progress`, the dashboard will permanently show `in_progress` for that task.
+- Correct close sequence: `update_task_status(task_ref=..., status="done")` then `archive_task_state(task_ref=...)`. The reverse order also works: archive first, then `update_task_status` updates the archived snapshot.
+- Non-archived, non-active tasks default to `active` in the CURRENT_TASK.md dashboard. This is a rendering fallback, not stored state. To clear orphaned tasks, archive them and set status to `done`.
+
 ### Multi-Agent Worktree Orchestration (MANDATORY for delegated implementation)
 
 Use this pattern when a user explicitly asks for parallel agents/worktrees, or when the task naturally splits into independent backend/frontend/PHP lanes with clear contracts.

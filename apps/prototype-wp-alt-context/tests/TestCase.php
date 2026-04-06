@@ -15,6 +15,9 @@ abstract class TestCase extends PHPUnitTestCase
     {
         parent::setUp();
         $this->resetGlobalState();
+        // Default recognition config so proxy controllers don't fail on missing API key.
+        // Individual tests override these when testing config resolution behavior.
+        $this->setOption('acx_recognition_api_key', 'test-key');
     }
 
     protected function tearDown(): void

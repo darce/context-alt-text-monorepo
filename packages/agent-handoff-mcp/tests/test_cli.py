@@ -84,7 +84,9 @@ def test_state_review_list_and_close_check_cli_smoke(tmp_path: Path, capsys) -> 
             "agent-handoff-mcp",
             "--workspace-root",
             str(tmp_path),
-            "review-list",
+            "review-findings",
+            "--operation",
+            "list",
         ],
         capsys,
     )
@@ -154,7 +156,7 @@ def test_state_cli_detail_flag(tmp_path: Path, capsys) -> None:
 
 
 def test_review_list_cli_detail_flag(tmp_path: Path, capsys) -> None:
-    """review-list --detail summary truncates long finding fields via CLI."""
+    """review-findings --operation list --detail summary truncates long fields via CLI."""
     api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
     json.loads(api.set_handoff_state(task_ref="rl-det", objective="review-list detail smoke"))
     json.loads(
@@ -168,13 +170,31 @@ def test_review_list_cli_detail_flag(tmp_path: Path, capsys) -> None:
     )
 
     full = _run_cli(
-        ["agent-handoff-mcp", "--workspace-root", str(tmp_path), "review-list", "--detail", "full"],
+        [
+            "agent-handoff-mcp",
+            "--workspace-root",
+            str(tmp_path),
+            "review-findings",
+            "--operation",
+            "list",
+            "--detail",
+            "full",
+        ],
         capsys,
     )
     assert len(full["findings"][0]["description"]) == 500
 
     summary = _run_cli(
-        ["agent-handoff-mcp", "--workspace-root", str(tmp_path), "review-list", "--detail", "summary"],
+        [
+            "agent-handoff-mcp",
+            "--workspace-root",
+            str(tmp_path),
+            "review-findings",
+            "--operation",
+            "list",
+            "--detail",
+            "summary",
+        ],
         capsys,
     )
     assert summary["findings"][0]["description"].endswith("...")
@@ -199,7 +219,9 @@ def test_artifact_search_cli_fields_flag(tmp_path: Path, capsys) -> None:
             "agent-handoff-mcp",
             "--workspace-root",
             str(tmp_path),
-            "artifact-search",
+            "artifacts",
+            "--operation",
+            "search",
             "--query",
             "column missing",
             "--fields",
@@ -262,7 +284,9 @@ def test_artifact_get_cli_detail_and_fields_flags(tmp_path: Path, capsys) -> Non
             "agent-handoff-mcp",
             "--workspace-root",
             str(tmp_path),
-            "artifact-get",
+            "artifacts",
+            "--operation",
+            "get",
             "--source-id",
             str(recorded["source_id"]),
             "--detail",
@@ -302,8 +326,8 @@ def test_handoff_search_cli_fields_flag(tmp_path: Path, capsys) -> None:
     assert set(payload["results"][0]) <= {"record_type", "snippet"}
 
 
-def test_decision_cli_changed_files_flag(tmp_path: Path, capsys) -> None:
-    """decision --changed-files persists structured scope metadata."""
+def test_event_cli_decision_variant_persists_changed_files(tmp_path: Path, capsys) -> None:
+    """event --event-kind decision persists structured scope metadata."""
     api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
     json.loads(api.set_handoff_state(task_ref="dec-cli", objective="decision cli changed files"))
 
@@ -312,6 +336,8 @@ def test_decision_cli_changed_files_flag(tmp_path: Path, capsys) -> None:
             "agent-handoff-mcp",
             "--workspace-root",
             str(tmp_path),
+            "event",
+            "--event-kind",
             "decision",
             "--session",
             "cli",
@@ -352,7 +378,9 @@ def test_review_update_cli_accepts_explicit_task_ref(tmp_path: Path, capsys) -> 
             "agent-handoff-mcp",
             "--workspace-root",
             str(tmp_path),
-            "review-update",
+            "review-findings",
+            "--operation",
+            "update",
             "--finding-id",
             "M-9",
             "--status",
@@ -388,9 +416,9 @@ def test_review_update_cli_accepts_verified_commit_sha(tmp_path: Path, capsys, m
     monkeypatch.setattr(
         handoff_core,
         "_classify_commit_relation",
-        lambda reference_sha, candidate_sha: "descendant"
-        if (reference_sha, candidate_sha) == ("abc123", "def456")
-        else "same",
+        lambda reference_sha, candidate_sha: (
+            "descendant" if (reference_sha, candidate_sha) == ("abc123", "def456") else "same"
+        ),
     )
 
     payload = _run_cli(
@@ -398,7 +426,9 @@ def test_review_update_cli_accepts_verified_commit_sha(tmp_path: Path, capsys, m
             "agent-handoff-mcp",
             "--workspace-root",
             str(tmp_path),
-            "review-update",
+            "review-findings",
+            "--operation",
+            "update",
             "--finding-id",
             "M-10",
             "--status",

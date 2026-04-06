@@ -184,6 +184,36 @@ def test_update_task_status_updates_archived_snapshot_and_dashboard(workspace_pa
     assert "done" in payload["markdown"]
 
 
+def test_update_task_status_active_task_preserves_state_via_set_handoff_state(workspace_pair: dict[str, Path]) -> None:
+    _configure_runtime(workspace_pair["source"])
+
+    created = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="active-status-task",
+            objective="Keep my objective",
+            focus="Keep my focus",
+            status="in_progress",
+        )
+    )
+    assert created["ok"] is True
+
+    updated = _parse(
+        mcp_server.update_task_status(
+            task_ref="active-status-task",
+            status="review",
+            expected_revision=0,
+        )
+    )
+
+    assert updated["ok"] is True
+    assert updated["updated_scope"] == "active"
+    assert updated["active"]["task_ref"] == "active-status-task"
+    assert updated["active"]["objective"] == "Keep my objective"
+    assert updated["active"]["focus"] == "Keep my focus"
+    assert updated["active"]["status"] == "review"
+    assert updated["active"]["revision"] == 1
+
+
 def test_switch_task_preserves_target_branch_on_restore(workspace_pair: dict[str, Path]) -> None:
     """target_branch survives switch-away / switch-back lifecycle."""
     _configure_runtime(workspace_pair["source"])

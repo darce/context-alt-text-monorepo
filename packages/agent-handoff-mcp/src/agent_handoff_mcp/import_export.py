@@ -675,46 +675,23 @@ def update_task_status(
         ).fetchone()
 
         if active_row is not None:
-            current_revision = int(active_row["revision"])
-            if expected_revision is None:
-                return _envelope(
-                    ok=False,
-                    tool="update_task_status",
-                    data={
-                        "error": "expected_revision is required for updates to the active task.",
-                        "current_revision": current_revision,
-                    },
-                    task_ref=task_ref,
-                )
-            if expected_revision != current_revision:
-                return _envelope(
-                    ok=False,
-                    tool="update_task_status",
-                    data={
-                        "error": "Revision conflict.",
-                        "expected_revision": expected_revision,
-                        "current_revision": current_revision,
-                    },
-                    task_ref=task_ref,
-                )
+            from .handoff_state import set_handoff_state as _set_handoff_state
 
-            conn.execute(
-                """
-                UPDATE handoff_state
-                SET status = ?, revision = revision + 1, updated_at = datetime('now'),
-                    updated_by = ?, updated_branch = ?, updated_commit_sha = ?
-                WHERE id = 1 AND task_ref = ? AND revision = ?
-                """,
-                (status, ctx.agent, ctx.branch, ctx.commit_sha, task_ref, expected_revision),
+            delegated_raw = _set_handoff_state(
+                task_ref=task_ref,
+                status=status,
+                expected_revision=expected_revision,
+                actor=actor,
             )
-            active = _row_to_dict(conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone())
-            if active is None:
+            delegated = json.loads(delegated_raw)
+            if not delegated.get("ok"):
                 return _envelope(
                     ok=False,
                     tool="update_task_status",
-                    data={"error": "Active handoff state missing after status update."},
+                    data=delegated.get("data", {}),
                     task_ref=task_ref,
                 )
+            active = delegated.get("data", {}).get("active") or delegated.get("active")
             try:
                 _write_current_task_md_for_task(conn, task_ref)
                 regen = "ok"

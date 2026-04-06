@@ -63,8 +63,14 @@ def test_http_server_lists_handoff_tools(tmp_path: Path) -> None:
 
         tool_names = asyncio.run(_run())
         assert "get_handoff_state" in tool_names
-        assert "record_review_finding" in tool_names
+        assert "record_event" in tool_names
+        assert "next_actions" in tool_names
+        assert "review_findings" in tool_names
+        assert "review_runs" in tool_names
+        assert "artifacts" in tool_names
         assert "handoff_close_check" in tool_names
+        assert "record_decision" not in tool_names
+        assert "update_next_actions" not in tool_names
         # orchestrator tools moved to agent-orchestrator-mcp server
         assert "orchestrator_start" not in tool_names
         assert "load_session" in tool_names

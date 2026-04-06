@@ -96,3 +96,48 @@ def test_valid_api_key_allows_request(monkeypatch) -> None:
     response = client.get("/recognition/clusters", headers=headers)
 
     assert response.status_code == 200
+
+
+def test_valid_x_api_key_header_allows_request_with_default_settings(monkeypatch) -> None:
+    """WordPress-style X-Api-Key headers should authenticate without an env override."""
+    client = _auth_client(FakeClusterService(), monkeypatch)
+    tenant_id = str(uuid.uuid4())
+
+    async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
+        assert api_key == "good-key"
+        return tenant_id, "api-key-id", "free", False
+
+    from recognition.interface_adapters.http.deps import auth
+
+    monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
+    headers = {
+        "X-Tenant-ID": tenant_id,
+        "X-Api-Key": "good-key",
+    }
+
+    response = client.get("/recognition/clusters", headers=headers)
+
+    assert response.status_code == 200
+
+
+def test_valid_x_api_key_header_allows_request_when_configured(monkeypatch) -> None:
+    """Explicit X-Api-Key configuration should accept the raw header value the WP proxy sends."""
+    monkeypatch.setenv("RECOGNITION_API_KEY_HEADER", "X-Api-Key")
+    client = _auth_client(FakeClusterService(), monkeypatch)
+    tenant_id = str(uuid.uuid4())
+
+    async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
+        assert api_key == "good-key"
+        return tenant_id, "api-key-id", "free", False
+
+    from recognition.interface_adapters.http.deps import auth
+
+    monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
+    headers = {
+        "X-Tenant-ID": tenant_id,
+        "X-Api-Key": "good-key",
+    }
+
+    response = client.get("/recognition/clusters", headers=headers)
+
+    assert response.status_code == 200

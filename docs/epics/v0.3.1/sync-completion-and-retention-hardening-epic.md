@@ -1,4 +1,6 @@
-# Sync Completion and Retention Hardening (v0.3.0)
+# E16. Sync Completion and Retention Hardening (v0.4.0)
+
+> **Epic Short ID**: E16
 
 ## Objective
 

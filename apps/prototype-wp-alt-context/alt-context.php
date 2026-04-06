@@ -88,10 +88,31 @@ require_once $altContextAutoload;
 $dotenv = Dotenv::createImmutable(ACX_PLUGIN_DIR);
 $dotenv->safeLoad();
 
-$viteServer = getenv('ACX_VITE_DEV_SERVER');
-if ($viteServer && !defined('ACX_VITE_DEV_SERVER')) {
-    define('ACX_VITE_DEV_SERVER', rtrim((string) $viteServer, '/'));
+function acx_define_env_constant(string $constantName, array $envNames, ?callable $normalizer = null): void
+{
+    if (defined($constantName)) {
+        return;
+    }
+
+    foreach ($envNames as $envName) {
+        $value = getenv($envName);
+        if (false === $value) {
+            continue;
+        }
+
+        $normalized = trim((string) $value);
+        if ('' === $normalized) {
+            continue;
+        }
+
+        define($constantName, null !== $normalizer ? $normalizer($normalized) : $normalized);
+        return;
+    }
 }
+
+acx_define_env_constant('ACX_VITE_DEV_SERVER', ['ACX_VITE_DEV_SERVER'], static fn (string $value): string => rtrim($value, '/'));
+acx_define_env_constant('ACX_RECOGNITION_URL', ['ACX_RECOGNITION_URL', 'ACX_RECOGNITION_BASE_URL'], static fn (string $value): string => rtrim($value, '/'));
+acx_define_env_constant('ACX_RECOGNITION_API_KEY', ['ACX_RECOGNITION_API_KEY']);
 
 /**
  * ------------------------------------------------------------------------

@@ -10,14 +10,13 @@ from pathlib import Path
 from fastmcp.client import Client, PythonStdioTransport
 
 
-def test_vscode_adapter_points_to_repo_local_launcher_and_doctor_runs() -> None:
+def test_vscode_adapter_points_to_installed_entrypoint_and_doctor_runs() -> None:
     repo_root = Path(__file__).resolve().parents[3]
     config = json.loads((repo_root / ".vscode" / "mcp.json").read_text())
 
     server = config["servers"]["altcontext-mcp"]
-    assert server["command"] == "${env:HOME}/.pyenv/versions/description-service/bin/python3"
+    assert server["command"] == "agent-handoff-mcp"
     assert server["args"] == [
-        "${workspaceFolder}/packages/agent-handoff-mcp/src/agent_handoff_mcp_launcher.py",
         "--workspace-root",
         "${workspaceFolder}",
         "--state-dir",
@@ -29,9 +28,8 @@ def test_vscode_adapter_points_to_repo_local_launcher_and_doctor_runs() -> None:
         "serve-stdio",
     ]
     assert server["env"]["PYENV_VERSION"] == "description-service"
-    assert server["env"]["PYTHONPATH"] == (
-        "${workspaceFolder}/packages/agent-handoff-mcp/src:${workspaceFolder}/packages/codex-subagent-bridge/src"
-    )
+    assert server["env"]["PYENV_ROOT"] == "${env:PYENV_ROOT}"
+    assert "PYTHONPATH" not in server["env"]
 
     result = subprocess.run(
         ["./scripts/mcp/mcp-server.sh", "doctor"],
@@ -45,15 +43,14 @@ def test_vscode_adapter_points_to_repo_local_launcher_and_doctor_runs() -> None:
     assert payload["workspace_root"] == str(repo_root)
 
 
-def test_project_codex_config_registers_local_stdio_adapter() -> None:
+def test_project_codex_config_registers_installed_stdio_adapter() -> None:
     repo_root = Path(__file__).resolve().parents[3]
     config = tomllib.loads((repo_root / ".codex" / "config.toml").read_text())
 
     server = config["mcp_servers"]["altcontext-mcp"]
-    assert server["command"] == "python3"
+    assert server["command"] == "agent-handoff-mcp"
     assert server["cwd"] == str(repo_root)
     assert server["args"] == [
-        str(repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py"),
         "--workspace-root",
         str(repo_root),
         "--state-dir",
@@ -65,10 +62,7 @@ def test_project_codex_config_registers_local_stdio_adapter() -> None:
         "serve-stdio",
     ]
     assert server["env"]["PYENV_VERSION"] == "description-service"
-    assert server["env"]["PYTHONPATH"] == (
-        f"{repo_root / 'packages' / 'agent-handoff-mcp' / 'src'}:"
-        f"{repo_root / 'packages' / 'codex-subagent-bridge' / 'src'}"
-    )
+    assert "PYTHONPATH" not in server["env"]
 
 
 def test_generic_stdio_adapter_launches_packaged_server(tmp_path: Path) -> None:
@@ -95,11 +89,14 @@ def test_generic_stdio_adapter_launches_packaged_server(tmp_path: Path) -> None:
 
     tool_names = asyncio.run(_run())
     assert "get_handoff_state" in tool_names
-    assert "list_review_findings" in tool_names
+    assert "next_actions" in tool_names
+    assert "review_findings" in tool_names
+    assert "artifacts" in tool_names
+    assert "review_runs" in tool_names
 
 
-def test_default_adapter_profile_is_extended_and_core_has_16_tools(tmp_path: Path) -> None:
-    """Default launch (no --tool-profile) yields 28 extended tools; --tool-profile core yields 16."""
+def test_legacy_tool_profile_flags_now_all_expose_the_same_17_tools(tmp_path: Path) -> None:
+    """Default/core/extended launches all expose the unified 17-tool surface."""
     repo_root = Path(__file__).resolve().parents[3]
     launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
 
@@ -116,6 +113,8 @@ def test_default_adapter_profile_is_extended_and_core_has_16_tools(tmp_path: Pat
 
     default_count = asyncio.run(_count([], "default-count.log"))
     core_count = asyncio.run(_count(["--tool-profile", "core"], "core-count.log"))
+    extended_count = asyncio.run(_count(["--tool-profile", "extended"], "extended-count.log"))
 
-    assert default_count == 28, f"Expected 28 default (extended) tools, got {default_count}"
-    assert core_count == 16, f"Expected 16 core tools, got {core_count}"
+    assert default_count == 17, f"Expected 17 default tools, got {default_count}"
+    assert core_count == 17, f"Expected 17 tools for legacy core launch, got {core_count}"
+    assert extended_count == 17, f"Expected 17 tools for legacy extended launch, got {extended_count}"

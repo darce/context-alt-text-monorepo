@@ -68,7 +68,7 @@ Use this checklist at session start, whether you are entering from a cold start,
 1. Query MCP handoff state first. Load the current task objective, open blockers, latest verification, and latest decisions with `get_handoff_state(task_ref="<task>")`.
 2. If you are working in a lane, load the lane inbox before editing. Use `make lane-inbox`, lane activity MCP reads, or the equivalent lane-status helper to pick up routed findings, blockers, and dispatch messages.
 3. Load role routing next. Choose the domain from the Role Selection table and read the linked context map, guidelines, and testing guide before touching code.
-4. Check open findings before proposing or repeating a fix. Use `list_review_findings(status="open")` so you do not re-raise known issues or miss already-assigned follow-up work.
+4. Check open findings before proposing or repeating a fix. Use `review_findings(review={"operation":"list","status":"open"})` so you do not re-raise known issues or miss already-assigned follow-up work.
 5. Verify the contract surface before implementation. If the task touches a service, language, schema, or MCP boundary, confirm the owning contract exists in [contracts/](contracts/) and load it before writing code. If no contract exists for the boundary, follow the Cross-Boundary Change Protocol in [rules/development-workflow.md](rules/development-workflow.md) to scaffold one before proceeding.
 6. Decide whether `ctx7` is needed. If the slice depends on upstream library or framework behavior, apply the `ctx7` entry criteria below before relying on memory or stale local notes.
 7. Ensure the work has an MCP task, even if there is no `docs/tasks/` plan. A task plan is optional; handoff state is not. If the current change does not fit the active task, switch to or initialize an ad hoc task before editing so the slice can be logged and reviewed.
@@ -344,23 +344,23 @@ Write-tool targeting rule:
 
 - Most write tools accept optional `task_ref`. When omitted, they target the active task.
 - In concurrent, cross-task, or review-audit workflows, pass `task_ref` explicitly on writes.
-- `record_decision`, `record_test_result`, `report_blocker`, and `update_next_actions` all support explicit `task_ref`.
+- `record_event` and `next_actions` support explicit `task_ref`. For `record_event`, pass it inside the typed `event` payload.
 - To switch tasks, use `switch_task(task_ref)`. For in-place updates to the current task, use `set_handoff_state(...)`.
 
 During-work discipline (abbreviated):
 
-- Record blockers immediately: `report_blocker(..., actor={ ... })`.
-- Record verification: `record_test_result(..., actor={ ... })`. Keep `result` as a concise proof line.
-- Record findings: `record_review_finding(..., details={ line_start?, line_end?, fix? }, actor={ ... })`. When logging **3 or more findings** in a single review pass, use `batch_record_review_findings` instead — one atomic write, one `CURRENT_TASK.md` flush, per-item results returned.
-- **Regenerate `CURRENT_TASK.md`** after any state-changing handoff operation — not just slice completions. This includes `record_decision`, `update_review_finding` (status changes), `report_blocker`, and `batch_record_review_findings`. Call `generate_current_task_md(task_ref=<active-task-ref>)` so the human-readable mirror stays current.
-- Validate review state with `get_review_findings_summary(...)` and `list_review_findings(...)`, not direct `sqlite3`.
+- Record blockers immediately: `record_event(event={event_kind: "blocker", task_ref: ..., actor: {...}, ...})`.
+- Record verification: `record_event(event={event_kind: "test_result", task_ref: ..., actor: {...}, ...})`. Keep `result` as a concise proof line.
+- Record findings with `review_findings(...)`. Use `review_findings(review={operation: "record", ...}, actor={ ... })` for 1-2 findings and `review_findings(review={operation: "batch_record", findings: [...], ...}, actor={ ... })` for 3 or more — one atomic write, one `CURRENT_TASK.md` flush, per-item results returned.
+- **Regenerate `CURRENT_TASK.md`** after any state-changing handoff operation — not just slice completions. This includes `record_event`, `review_findings(operation="update")`, and `review_findings(operation="batch_record")`. Call `generate_current_task_md(task_ref=<active-task-ref>)` so the human-readable mirror stays current.
+- Validate review state with `get_review_findings_summary(...)` and `review_findings(review={"operation":"list", ...})`, not direct `sqlite3`.
 
 Read discipline:
 
 - Do not query `.task-state/handoff.db` directly when MCP tools are available.
-- Use `get_handoff_state` for active-task snapshot, `get_review_findings_summary` (on `agent-orchestrator-mcp`) for counts, and `list_review_findings` for detailed review verification.
-- `list_review_findings(finding_id=...)` accepts either `finding_id` (human-readable string like `"H-OCI-28"`) for a single-finding lookup. Prefer `finding_id` when referencing findings from review output.
-- `list_review_findings` and `get_review_findings_summary` accept an optional `task_ref` to query findings on a non-active task. Use this instead of switching active state when verifying findings across multiple tasks.
+- Use `get_handoff_state` for active-task snapshot, `get_review_findings_summary` (on `agent-orchestrator-mcp`) for counts, and `review_findings(review={"operation":"list", ...})` for detailed review verification.
+- `review_findings(review={"operation":"list","finding_id":...})` accepts `finding_id` (human-readable string like `"H-OCI-28"`) for a single-finding lookup. Prefer `finding_id` when referencing findings from review output.
+- `review_findings(operation="list")` and `get_review_findings_summary` accept an optional `task_ref` to query findings on a non-active task. Use this instead of switching active state when verifying findings across multiple tasks.
 - Do **not** use legacy `scripts/mcp/unified_server.py` handoff tools or CLI subcommands. The only supported handoff surface is the packaged `agent-handoff-mcp` binary described in [contracts/agent-handoff-mcp.md](contracts/agent-handoff-mcp.md). See [../tasks/tech-debt/unified-server-retirement.md](../tasks/tech-debt/unified-server-retirement.md) for the tracked removal follow-up.
 
 State integrity invariants:
@@ -405,9 +405,9 @@ When a user request matches any of these patterns, **load and follow** [rules/br
 2. Read the relevant stack guide(s) based on files in the diff.
 3. Walk the common checklist + stack-specific checklist, citing files and lines.
 4. Classify each finding using the defined categories (ANTIPATTERN / DEAD_CODE / COMPLEXITY / GAP) and severities (HIGH / MEDIUM / LOW).
-5. Record findings in MCP handoff. Use `record_review_finding(...)` for 1–2 findings; use `batch_record_review_findings(findings=[...], actor={ ... }, task_ref=...)` for 3 or more (atomic write, single `CURRENT_TASK.md` flush, per-item results).
+5. Record findings in MCP handoff. Use `review_findings(review={"operation":"record", ...}, actor={ ... }, task_ref=...)` for 1-2 findings; use `review_findings(review={"operation":"batch_record", findings=[...], ...}, actor={ ... }, task_ref=...)` for 3 or more (atomic write, single `CURRENT_TASK.md` flush, per-item results).
 6. Produce the markdown report using the template.
-7. Call `record_decision(..., actor={ ... })` summarizing the review + `generate_current_task_md(...)`.
+7. Call `record_event(event={event_kind: "decision", actor: {...}, ...})` summarizing the review + `generate_current_task_md(...)`.
 
 **Do NOT** perform ad-hoc reviews. The guide exists to ensure consistent, structured, cross-agent-visible output.
 

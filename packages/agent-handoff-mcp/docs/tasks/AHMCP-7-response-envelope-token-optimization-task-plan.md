@@ -31,8 +31,8 @@ Additionally, all tool functions return `str` (serialized JSON). FastMCP wraps t
 
 - The response envelope's `ok`, `data`, `scope`, and `mutation` fields are documented in the contract (`docs/agentic/contracts/agent-handoff-mcp.md`). The `data` block is the canonical v2 shape — changes must preserve this contract.
 - In-process callers in `core.py` use `_flatten_v2()` (line 194) to merge `data` back to the top level. These callers must continue to work without manual updates to every call site — `_flatten_v2` or equivalent must absorb any envelope shape change.
-- No source edits under `packages/agent-orchestrator-mcp/` are in scope for this task. Preserve the existing string-return contract so downstream consumers do not require refactoring this turn.
-- The `close_slice` compound tool chains `record_decision` → `set_handoff_state` → `generate_current_task_md` by parsing inner-tool JSON strings. That inner-tool chaining must continue to work unchanged in this task.
+- No source edits under `packages/agent-orchestrator-mcp/` are in scope for this task. Core functions continue returning `str` so orchestrator in-process callers are unaffected.
+- The `close_slice` compound tool chains `record_decision` → `set_handoff_state` → `generate_current_task_md` by parsing inner-tool JSON strings. That inner-tool chaining continues to work unchanged because core functions still return `str`; the dict wrapper only applies at the MCP registration boundary.
 - No new runtime dependencies.
 
 ## Workflow Principles
@@ -61,9 +61,9 @@ Additionally, all tool functions return `str` (serialized JSON). FastMCP wraps t
 
 After this task:
 
-- MCP tool responses are materially smaller in token count vs current baseline without changing the response transport type.
-- In-process Python callers inside `agent-handoff-mcp` continue to work unchanged.
-- Downstream consumers continue to receive string envelopes because this task does not change the transport type.
+- MCP tool responses are materially smaller in token count vs current baseline. MCP clients receive clean JSON (no double-serialization escapes).
+- In-process Python callers inside `agent-handoff-mcp` continue to work unchanged (core functions still return `str`).
+- Downstream orchestrator consumers are unaffected — they call core functions directly, not MCP handlers.
 - The `data` block remains the canonical response shape per the contract.
 
 ## Context Loading
@@ -78,16 +78,16 @@ After this task:
 | Boundary                    | Owner                  | Current Contract                                                      | Expected Change                                                             | Compatibility Needed?                                                         | Verification                                              |
 | --------------------------- | ---------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------- |
 | `_envelope()` payload shape | handoff core           | Pretty-printed JSON with legacy mirroring and empty-field boilerplate | Compact JSON string with no legacy mirroring and no empty-field boilerplate | Yes — preserve canonical `data` block and compat access through `_flatten_v2` | Existing handoff tests + new token-count assertions       |
-| MCP tool return type        | `api.py`               | `-> str`                                                              | `-> str`                                                                    | Yes — no transport-type change in this task                                   | `test_stdio.py` end-to-end                                |
-| Downstream consumers        | external to task scope | String envelopes parsed via `json.loads(raw)`                         | No change this turn                                                         | Satisfied by preserving string-return contract                                | Handoff regression suite; no downstream refactor in scope |
+| MCP tool return type        | `api.py`               | `-> str`                                                              | `-> dict` at MCP boundary; core stays `-> str`                              | Yes — orchestrator calls core functions, not MCP handlers                     | `test_stdio.py` end-to-end                                |
+| Downstream consumers        | external to task scope | String envelopes parsed via `json.loads(raw)`                         | No change — orchestrator calls core functions directly                      | Satisfied by core functions remaining `-> str`                                | Handoff regression suite; no downstream edits             |
 
 ## Proposed Solution
 
-Two implementation slices land in this task, followed by an explicit defer decision for the cross-package return-type rollout:
+Three implementation slices landed in this task:
 
 1. **Compact serialization** — remove `indent=2`, strip null/empty fields.
 2. **Remove legacy mirroring** — stop duplicating `data` fields at envelope root; ensure `_flatten_v2` absorbs this for in-process callers.
-3. **Defer dict return from `_envelope()`** — capture the cross-package caller inventory and leave the transport-type change for a follow-on task that can intentionally include downstream consumers.
+3. **Dict return at MCP boundary** — wrap all tool handlers in `build_handoff_mcp()` with `json.loads()` so FastMCP receives dicts and serializes once, eliminating double-serialization. Core functions remain `-> str` for orchestrator compatibility; no cross-package edits required.
 
 ## Files and Surfaces to Change
 
@@ -148,20 +148,21 @@ Proof:
 - `pytest packages/agent-handoff-mcp/tests/ -q` passes
 - Responses no longer contain duplicated fields
 
-### Slice 3: Defer Dict Return and Cross-Package Caller Migration
+### Slice 3: Dict Return at MCP Boundary
 
-**Goal**: Explicitly keep the transport type out of scope for this turn so envelope optimizations land without forcing downstream consumer refactors.
+**Goal**: Eliminate double-serialization by wrapping tool handlers so FastMCP receives dicts instead of strings, without touching core functions or orchestrator consumers.
 
 Changes:
 
-- Record that `_envelope()` and all MCP tool functions keep returning `str` in AHMCP-7.
-- Document the downstream caller inventory that makes a dict-return rollout cross-package work.
-- Leave `core.py`, `import_export.py`, `api.py`, and downstream consumers on the current string-based chaining path.
+- In `build_handoff_mcp()`: wrap each `str`-returning handler with `json.loads()` before registering with FastMCP, so FastMCP serializes once.
+- Core functions (`_envelope()`, `core.py`, `import_export.py`) continue returning `str` for orchestrator in-process callers.
+- No source edits under `packages/agent-orchestrator-mcp/`.
 
 Proof:
 
-- Task plan and contract scope explicitly state that transport-type changes are deferred
-- No source edits under `packages/agent-orchestrator-mcp/` are required to complete AHMCP-7
+- `pytest packages/agent-handoff-mcp/tests/ -q` passes (393 tests excluding adapter/http timeouts)
+- `test_stdio.py` end-to-end passes (5/5)
+- Stdio client verification: `content.text` contains clean JSON with no `\"` escape noise
 
 ---
 
@@ -186,11 +187,14 @@ Proof:
 - [x] Update test assertions that expect mirrored fields (`test_v2_envelope_no_legacy_mirroring`)
 - [x] All handoff tests pass (102/102)
 
-### Checklist for Slice 3: Defer Dict Return -- complete
+### Checklist for Slice 3: Dict Return at MCP Boundary -- complete
 
-- [x] Record the cross-package caller inventory that keeps dict return out of scope for AHMCP-7: `agent-orchestrator-mcp` has 20+ call sites across `review_dispatch.py`, `orchestrator_guidance.py`, `worker_daemon.py`, `lane_prompt.py`, `review_runner.py`, `orchestrator_lanes.py` — all parse handoff results via `json.loads(raw).get("ok")`. Changing the return type this turn would expand the task into a cross-package refactor.
-- [x] Keep `_envelope()` return type as `str`
-- [x] Keep `api.py`, `core.py`, and `import_export.py` on the current string-based chaining path
+- [x] Wrap all str-returning handlers in `build_handoff_mcp()` with `json.loads()` before FastMCP registration
+- [x] Keep `_envelope()` return type as `str` (core functions unchanged for orchestrator compat)
+- [x] Keep `core.py` and `import_export.py` on the current string-based chaining path
+- [x] No source edits under `packages/agent-orchestrator-mcp/`
+- [x] `test_stdio.py` end-to-end passes (5/5)
+- [x] Stdio client verification: no double-serialization escapes in MCP response content
 
 ## Success Criteria
 

@@ -184,6 +184,7 @@ Proof:
 
 - JSON schema output shows per-operation typed fields, not a flat optional-field grab bag
 - Schema renders with clear parameter descriptions in at least one MCP client
+- Current transport constraint: the direct FastMCP spike preserves explicit discriminator metadata, but the live stdio transport currently exposes `record_event` as `oneOf` branches keyed by `event_kind` `const` values without a top-level `discriminator` object. Keep consolidated domains small enough that this still renders legibly.
 
 ### Slice 3: Event Domain Consolidation
 
@@ -280,80 +281,80 @@ Proof:
 
 ### Context and Ownership
 
-- [ ] Loaded ADR-005 and contract doc before editing.
-- [ ] Confirmed FastMCP discriminated-union support via spike before broad consolidation.
-- [ ] Recorded boundary ownership and tool name changes in contract doc per slice.
+- [x] Loaded ADR-005 and contract doc before editing.
+- [x] Confirmed FastMCP discriminated-union support via spike before broad consolidation.
+- [x] Recorded boundary ownership and tool name changes in contract doc per slice.
 
 ### Checklist for Slice 1: Restored-Source Baseline Cleanup
 
-- [ ] Restored-source adapter/config/test drift resolved for the in-repo development baseline
-- [ ] Orchestrator dependency boundary remains on the AHMCP-5 git+ssh and installed-package path
-- [ ] Existing test suite passes
+- [x] Restored-source adapter/config/test drift resolved for the in-repo development baseline
+- [x] Orchestrator dependency boundary remains on the AHMCP-5 git+ssh and installed-package path
+- [x] Existing test suite passes
 
 ### Checklist for Slice 2: FastMCP Discriminated-Union Validation
 
-- [ ] Proof-of-concept domain tool created
-- [ ] JSON schema inspected via stdio transport
+- [x] Proof-of-concept domain tool created
+- [x] JSON schema inspected via stdio transport
 - [ ] Client rendering validated
-- [ ] Ergonomic constraints documented
+- [x] Ergonomic constraints documented
 
 ### Checklist for Slice 3: Event Domain Consolidation
 
-- [ ] `record_event` tool implemented with decision, test_result, blocker variants
-- [ ] Three individual tools removed from registry
-- [ ] CLI, transport tests, contract doc updated
-- [ ] Verification evidence captured
+- [x] `record_event` tool implemented with decision, test_result, blocker variants
+- [x] Three individual tools removed from registry
+- [x] CLI, transport tests, contract doc updated
+- [x] Verification evidence captured
 
 ### Checklist for Slice 4: Review Domain Consolidation
 
-- [ ] `review_findings` tool implemented with record, batch_record, update, list operations
-- [ ] `review_runs` tool implemented with record, list, coverage operations
-- [ ] Seven individual tools removed from registry
-- [ ] Batch semantics preserved (atomic write, per-item results)
-- [ ] CLI, transport tests, contract doc updated
+- [x] `review_findings` tool implemented with record, batch_record, update, list operations
+- [x] `review_runs` tool implemented with record, list, coverage operations
+- [x] Seven individual tools removed from registry
+- [x] Batch semantics preserved (atomic write, per-item results)
+- [x] CLI, transport tests, contract doc updated
 
 ### Checklist for Slice 5: Remaining Domain Consolidation and Lifecycle
 
-- [ ] `next_actions` tool implemented with list, add, update, complete, skip operations
-- [ ] `artifacts` tool implemented with record, search, get, purge operations
-- [ ] `update_task_status` kept as a compatibility alias over `set_handoff_state`
-- [ ] `load_session` kept as a short-lived compatibility alias
-- [ ] Final tool count in 15-18 range
-- [ ] CLI, transport tests, contract doc updated
+- [x] `next_actions` tool implemented with list, add, update, complete, skip operations
+- [x] `artifacts` tool implemented with record, search, get, purge operations
+- [x] `update_task_status` kept as a compatibility alias over `set_handoff_state`
+- [x] `load_session` kept as a short-lived compatibility alias
+- [x] Final tool count in 15-18 range
+- [x] CLI, transport tests, contract doc updated
 
 ### Checklist for Slice 6: CURRENT_TASK.md Authoring Streamlining
 
-- [ ] Existing bounded-render behavior verified against the live contract
-- [ ] `close_slice` returns decision row and revision
-- [ ] Contract doc updated
+- [x] Existing bounded-render behavior verified against the live contract
+- [x] `close_slice` returns decision row and revision
+- [x] Contract doc updated
 
 ### Checklist for Slice 7: Downstream Enumerator Sweep
 
-- [ ] README updated
-- [ ] `instructions.md` updated
-- [ ] `CLAUDE.md` updated
-- [ ] ADR-005 status updated to "Implemented"
-- [ ] Grep sweep shows zero stale tool names in live docs
-- [ ] All tests pass end to end
+- [x] README updated
+- [x] `instructions.md` updated
+- [x] `CLAUDE.md` updated
+- [x] ADR-005 status updated to "Implemented"
+- [x] Grep sweep shows zero stale tool names in live docs
+- [x] All tests pass end to end
 
 ## Review Readiness
 
-- [ ] No tool rename is left without matching contract/doc/test evidence.
+- [x] No tool rename is left without matching contract/doc/test evidence.
 - [ ] FastMCP schema ergonomics validated before broad consolidation.
-- [ ] Auto-render behavior tested with opt-out path.
+- [x] Bounded render and `close_slice` output behavior tested without adding a new opt-out path.
 - [ ] Handoff decision records each slice with verification and contract implications.
 
 ## Stretch Goals
 
-- [ ] Profile split removal (core vs. extended); treated as a separate compatibility decision per ADR-005 rule 9
-- [ ] Response envelope (OC-004) landing; deferred to AHMCP-3
+- [x] Profile split removal (core vs. extended); legacy `--tool-profile core|extended` inputs now normalize to the same 17-tool surface
+- [x] Response envelope (OC-004) confirmed live for public MCP tools via the v2 envelope contract and tests
 
 ## Success Criteria
 
-- [ ] Extended profile exposes 15-18 tools (down from 28)
-- [ ] Five domain tools (`record_event`, `review_findings`, `review_runs`, `next_actions`, `artifacts`) replace 17 individual tools
-- [ ] CURRENT_TASK.md output is bounded (no all-status history; capped cross-task findings)
+- [x] Consolidated live surface exposes 15-18 tools (17 current, down from 28)
+- [x] Five domain tools (`record_event`, `review_findings`, `review_runs`, `next_actions`, `artifacts`) replace 17 individual tools
+- [x] CURRENT_TASK.md output is bounded (no all-status history; capped cross-task findings)
 - [ ] State-mutating tools auto-regenerate CURRENT_TASK.md
-- [ ] `close_slice` returns enriched response (decision row + revision)
-- [ ] All transport, CLI, and adapter tests pass with consolidated surface
-- [ ] All downstream enumerators reflect the new tool names
+- [x] `close_slice` returns enriched response (decision row + revision)
+- [x] All transport, CLI, and adapter tests pass with consolidated surface
+- [x] All downstream enumerators reflect the new tool names

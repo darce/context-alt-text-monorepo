@@ -402,29 +402,23 @@ When called with `view="dashboard"`, `get_handoff_state` returns:
 
 All public MCP tool responses use the v2 envelope as of package version `0.2.0`. Previous tool-specific top-level fields are nested under `data`.
 
+As of AHMCP-7, responses use compact serialization: no indentation, null/empty fields stripped, and no legacy field mirroring. The `data` block is the canonical payload; callers should read fields from `data`, not from top-level mirrors. In-process Python callers that need flat access should use `_flatten_v2()`.
+
 ```json
-{
-  "ok": true,
-  "schema_version": 2,
-  "tool": "get_handoff_state",
-  "scope": { "task_ref": "AHMCP-3" },
-  "data": { "active": {...}, "limits": {...}, ... },
-  "mutation": null,
-  "artifacts": [],
-  "warnings": []
-}
+{"ok":true,"schema_version":2,"tool":"get_handoff_state","scope":{"task_ref":"AHMCP-3"},"data":{"active":{...},"limits":{...},...},"task_ref":"AHMCP-3"}
 ```
 
 | Key | Type | Notes |
 |-----|------|-------|
-| `ok` | bool | Unchanged from v1 |
+| `ok` | bool | Always present |
 | `schema_version` | int | Always `2` for v2 responses |
 | `tool` | string | Tool name that produced this response |
 | `scope.task_ref` | string/null | Resolved task reference |
-| `data` | object | Tool-specific payload (v1 top-level fields move here) |
-| `mutation` | object/null | Present on write responses: `{ entity, operation, affected_ids, task_revision }` |
-| `artifacts` | array | Render artifacts produced (e.g. `{ type, path, written }`) |
-| `warnings` | array | Diagnostic warnings |
+| `data` | object | Tool-specific payload (canonical v2 shape) |
+| `task_ref` | string | Present when task_ref is non-null |
+| `mutation` | object | Present on write responses only: `{ entity, operation, affected_ids, task_revision }`. Omitted when null. |
+| `artifacts` | array | Present only when non-empty |
+| `warnings` | array | Present only when non-empty |
 
 Internal utility functions (`get_review_findings_summary`, `reconcile_review_findings`) may still use the v1 shape. All public MCP-registered tools return the v2 envelope. Check `schema_version == 2` to confirm.
 

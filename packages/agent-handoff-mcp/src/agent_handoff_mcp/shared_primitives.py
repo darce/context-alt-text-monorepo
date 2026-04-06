@@ -197,7 +197,7 @@ def _utcnow_iso() -> str:
 
 
 def _json_response(payload: Mapping[str, object]) -> str:
-    return json.dumps(payload, indent=2, sort_keys=True)
+    return json.dumps(payload, sort_keys=True)
 
 
 def _envelope(

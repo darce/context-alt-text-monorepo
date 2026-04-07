@@ -21,8 +21,10 @@ use function sanitize_text_field;
 use function set_transient;
 
 class SyncPullJob implements SyncPullJobInterface {
-	/** Cooldown after failed sync attempts to prevent rapid retry loops. */
-	private const SYNC_COOLDOWN_SECONDS = 30;
+	/** Cooldown after projection or auth failures. */
+	private const FAILED_SYNC_COOLDOWN_SECONDS = 30;
+	/** Short cooldown after transient connectivity failures to speed recovery. */
+	private const UNREACHABLE_SYNC_COOLDOWN_SECONDS = 5;
 	/** Tenant-specific cooldown key prefix used by perform() and bypass path writes. */
 	private const COOLDOWN_TRANSIENT_PREFIX = 'acx_sync_cooldown_';
 
@@ -76,7 +78,7 @@ class SyncPullJob implements SyncPullJobInterface {
 		$snapshot = $this->client->fetch_snapshot( $tenant_id );
 		if ( is_wp_error( $snapshot ) ) {
 			$this->sync_state_repository->set_last_sync_result( $tenant_id, SyncPullResult::UNREACHABLE );
-			set_transient( $transient_key, 1, self::SYNC_COOLDOWN_SECONDS );
+			set_transient( $transient_key, 1, self::UNREACHABLE_SYNC_COOLDOWN_SECONDS );
 			return SyncPullResult::unreachable();
 		}
 
@@ -84,7 +86,7 @@ class SyncPullJob implements SyncPullJobInterface {
 			$this->projector->project( $tenant_id, $snapshot );
 		} catch ( Throwable $throwable ) {
 			$this->sync_state_repository->set_last_sync_result( $tenant_id, SyncPullResult::FAILED );
-			set_transient( $transient_key, 1, self::SYNC_COOLDOWN_SECONDS );
+			set_transient( $transient_key, 1, self::FAILED_SYNC_COOLDOWN_SECONDS );
 			do_action(
 				'acx_sync_pull_failed',
 				array(

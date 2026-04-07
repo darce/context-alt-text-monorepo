@@ -109,7 +109,7 @@ class ClustersControllerTest extends TestCase
         $this->assertSame('http://example.test/media/101.jpg', $data['clusters'][0]['representatives'][0]['thumb_url']);
     }
 
-    public function testTopUnlabeledClustersReturnsEmptyArrayAndSchedulesBootstrapWhenProjectionUnavailable(): void
+    public function testTopUnlabeledClustersFallsBackToBackendProxyWhileProjectionBootstraps(): void
     {
         $syncRepo = new class() extends NullSyncStateRepository {
             public function get_snapshot_version(string $tenant_id): int {
@@ -121,11 +121,76 @@ class ClustersControllerTest extends TestCase
         };
         $controller = new ClustersController(null, null, $syncRepo, null, new ClusterResponseMapper(), new MemberResponseMapper());
 
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                [
+                    'id' => 'cluster-proxy-top',
+                    'label' => null,
+                    'identity_count' => 4,
+                    'representatives' => [],
+                ],
+            ]),
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'snapshot_version' => 0,
+                'clusters' => [],
+                'members' => [],
+                'empty' => true,
+            ]),
+        ]);
+
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
         $response = $controller->list_top_unlabeled_clusters($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $this->assertSame(200, $response->get_status());
+        $this->assertSame(
+            [
+                'clusters' => [
+                    [
+                        'id' => 'cluster-proxy-top',
+                        'label' => null,
+                        'identity_count' => 4,
+                        'representatives' => [],
+                    ],
+                ],
+                'singleton_count' => 0,
+                'data_source' => 'backend_proxy',
+                'projection_status' => 'bootstrapping',
+            ],
+            $response->get_data()
+        );
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(2, $calls);
+        $this->assertStringContainsString('/recognition/clusters/top-unlabeled', $calls[0]['url']);
+        $this->assertStringContainsString('/clusters/snapshot', $calls[1]['url']);
+        $this->assertCount(0, $GLOBALS['__ac_scheduled']);
+    }
+
+    public function testTopUnlabeledClustersSchedulesBootstrapWhenProxyAndProjectionAreUnavailable(): void
+    {
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int {
+                return 0;
+            }
+            public function get_last_updated(string $tenant_id): ?string {
+                return null;
+            }
+        };
+        $controller = new ClustersController(null, null, $syncRepo, null, new ClusterResponseMapper(), new MemberResponseMapper());
+
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
+        $response = $controller->list_top_unlabeled_clusters($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $this->assertSame(
             [
                 'clusters' => [],
@@ -136,12 +201,7 @@ class ClustersControllerTest extends TestCase
             $response->get_data()
         );
 
-        // Verify that the bootstrap sync hook was scheduled.
-        $tenant_id = md5((string) get_site_url());
-        $this->assertNotFalse(wp_next_scheduled('acx_bootstrap_sync', [$tenant_id]));
-
-        // Ensure no proxy/HTTP calls are made as part of the local projection strategy.
-        $this->assertCount(0, $this->getHttpCalls());
+        $this->assertCount(1, $GLOBALS['__ac_scheduled']);
     }
 
     public function testTopUnlabeledOfflineReturnsBareArray(): void
@@ -293,12 +353,16 @@ class ClustersControllerTest extends TestCase
         $this->assertSame('cluster-proxy', $data[0]['id']);
     }
 
-    public function testListClustersFallsBackToProxyWhenSyncStateExistsButProjectionRowsAreMissing(): void
+    public function testListClustersTreatsZeroRowsAsAuthoritativeWhenSyncStateWasInitialized(): void
     {
         $clustersRepo = new class() extends NullClustersRepository {
             public function has_projection_rows_for_tenant(string $tenant_id): bool
             {
                 return false;
+            }
+            public function list_for_tenant(string $tenant_id, int $limit = 50, int $offset = 0, array $filters = []): array
+            {
+                return [];
             }
         };
 
@@ -316,23 +380,14 @@ class ClustersControllerTest extends TestCase
         $syncSpy = new ClustersControllerSyncPullSpy();
         $controller = new ClustersController($clustersRepo, $membersRepo, $syncRepo, $syncSpy, new ClusterResponseMapper(), new MemberResponseMapper());
 
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => json_encode([
-                ['id' => 'cluster-proxy', 'label' => 'Proxied', 'identity_count' => 5],
-            ]),
-        ]);
-
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
         $response = $controller->list_clusters($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $data = $response->get_data();
-        $this->assertSame('cluster-proxy', $data[0]['id']);
-        $this->assertTrue($syncSpy->performedBypass);
-        $calls = $this->getHttpCalls();
-        $this->assertCount(1, $calls);
-        $this->assertStringContainsString('/recognition/clusters', $calls[0]['url']);
+        $this->assertSame([], $data);
+        $this->assertFalse($syncSpy->performedBypass);
+        $this->assertCount(0, $this->getHttpCalls());
     }
 
     public function testSuccessfulProxyReadTriggersInlineBootstrapSyncWithoutSchedulingCron(): void

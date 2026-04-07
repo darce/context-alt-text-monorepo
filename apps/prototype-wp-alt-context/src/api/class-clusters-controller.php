@@ -56,6 +56,7 @@ use function wp_schedule_single_event;
 
 class ClustersController extends AbstractRecognitionProxyController {
 	private const BOOTSTRAP_SYNC_HOOK = 'acx_bootstrap_sync';
+	private const DATA_SOURCE_BACKEND_PROXY = 'backend_proxy';
 	private const DATA_SOURCE_LOCAL_PROJECTION = 'local_projection';
 	private const DATA_SOURCE_UNAVAILABLE = 'unavailable';
 	private const PROJECTION_STATUS_AVAILABLE = 'available';
@@ -189,14 +190,41 @@ class ClustersController extends AbstractRecognitionProxyController {
 		$limit     = absint( $request->get_param( 'limit' ) ?? 10 );
 
 		if ( ! $this->should_use_local_projection( $tenant_id ) ) {
-			if ( false === wp_next_scheduled( self::BOOTSTRAP_SYNC_HOOK, array( $tenant_id ) ) ) {
-				wp_schedule_single_event( time(), self::BOOTSTRAP_SYNC_HOOK, array( $tenant_id ) );
+			$response = $this->proxy_request(
+				'GET',
+				'/recognition/clusters/top-unlabeled',
+				array(),
+				array(
+					'tenant_id' => $tenant_id,
+					'limit'     => $limit,
+				)
+			);
+			$response = $this->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
+
+			if ( $response instanceof WP_REST_Response && $response->get_status() >= 200 && $response->get_status() < 300 ) {
+				$data = $response->get_data();
+				if ( is_array( $data ) ) {
+					return new WP_REST_Response(
+						array(
+							'clusters'          => $data,
+							'singleton_count'   => 0,
+							'data_source'       => self::DATA_SOURCE_BACKEND_PROXY,
+							'projection_status' => self::PROJECTION_STATUS_BOOTSTRAPPING,
+						),
+						200
+					);
+				}
+			}
+
+			$args = array( $tenant_id );
+			if ( false === wp_next_scheduled( self::BOOTSTRAP_SYNC_HOOK, $args ) ) {
+				wp_schedule_single_event( time(), self::BOOTSTRAP_SYNC_HOOK, $args );
 			}
 			return new WP_REST_Response(
 				array(
-					'clusters' => array(),
-					'singleton_count' => 0,
-					'data_source' => self::DATA_SOURCE_UNAVAILABLE,
+					'clusters'          => array(),
+					'singleton_count'   => 0,
+					'data_source'       => self::DATA_SOURCE_UNAVAILABLE,
 					'projection_status' => self::PROJECTION_STATUS_BOOTSTRAPPING,
 				),
 				200
@@ -344,10 +372,6 @@ class ClustersController extends AbstractRecognitionProxyController {
 	private function should_use_local_projection( string $tenant_id ): bool {
 		$has_projection = $this->should_use_local_projection_gate( $this->sync_state_repository, $tenant_id );
 		if ( ! $has_projection ) {
-			return false;
-		}
-
-		if ( ! $this->clusters_repository->has_projection_rows_for_tenant( $tenant_id ) ) {
 			return false;
 		}
 

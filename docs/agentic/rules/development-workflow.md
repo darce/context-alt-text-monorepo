@@ -156,6 +156,7 @@ For every unit of work (feature slice, bug fix, refactor):
 13. **Self-review with bug-finding heuristics**: Walk your diff through the [Bug-Finding Heuristics](branch-review-guide.md#bug-finding-heuristics-universal) checklist
 14. **Regression trap sweep (handoff-learned)**: Verify stale/offline flows keep manual recovery, remote calls use shared timeout helpers, retry loops are per-cycle bounded, import/update paths preserve payload/provenance integrity, and reopened findings include explicit rationale
 15. **Escalate when risk warrants**: If the slice crosses audit triggers such as architecture transitions, multi-service state machines, persistence changes, or broad UI state surfaces, run the [Multi-Lens Audit Workflow](branch-review-guide.md#multi-lens-audit-workflow) instead of a single-lens branch review
+16. **End-of-turn user report must cite handoff evidence**: When a turn records a handoff decision, the final user-facing report for that turn must include the decision number (for example `Handoff decision: #1452`) so the chat summary and MCP trail stay explicitly linked.
 
 Package-test execution note:
 

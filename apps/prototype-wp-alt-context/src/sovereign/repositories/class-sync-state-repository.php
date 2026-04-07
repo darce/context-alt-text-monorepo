@@ -143,6 +143,10 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 		}
 
 		$normalized = trim( $value );
+		if ( '' === $normalized || '1970-01-01 00:00:00' === $normalized ) {
+			return null;
+		}
+
 		return '' !== $normalized ? $normalized : null;
 	}
 
@@ -165,18 +169,25 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 		}
 
 		$normalized_result = $this->normalize_sync_result( $result );
+		$updated_at        = SyncPullResult::OK === $normalized_result
+			? gmdate( 'Y-m-d H:i:s' )
+			: '1970-01-01 00:00:00';
 		$sql               = $this->prepare_query(
 			'INSERT INTO %i (stream_name, last_snapshot_version, last_sync_result, last_sync_attempted_at, updated_at)
 			VALUES (%s, 0, %s, %s, %s)
 			ON DUPLICATE KEY UPDATE
 				last_sync_result = VALUES(last_sync_result),
-				last_sync_attempted_at = VALUES(last_sync_attempted_at)',
+				last_sync_attempted_at = VALUES(last_sync_attempted_at),
+				updated_at = CASE
+					WHEN VALUES(last_sync_result) = \'ok\' THEN VALUES(updated_at)
+					ELSE updated_at
+				END',
 			array(
 				$this->table_name,
 				$this->stream_name_for_tenant( $normalized_tenant_id ),
 				$normalized_result,
 				gmdate( 'Y-m-d H:i:s' ),
-				'1970-01-01 00:00:00',
+				$updated_at,
 			)
 		);
 

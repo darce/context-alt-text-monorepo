@@ -133,7 +133,7 @@ class SnapshotProjectorTest extends TestCase
         $this->assertSame('empty_tenant_id', $warnings[0][0]);
     }
 
-    public function testProjectSkipsAllWritesForEmptySnapshotPayload(): void
+    public function testProjectMarksEmptySnapshotAsInitializedAndRefreshesMetrics(): void
     {
         $clustersRepo = new SnapshotProjectorClustersSpy();
         $membersRepo = new SnapshotProjectorMembersSpy();
@@ -165,8 +165,7 @@ class SnapshotProjectorTest extends TestCase
         $this->assertSame([], $clustersRepo->clusters);
         $this->assertSame([], $membersRepo->members);
         $this->assertSame(0, $syncRepo->snapshotVersion);
-        $this->assertNull($syncRepo->get_last_updated('tenant-empty'));
-        $this->assertSame('', $syncRepo->refreshedTenantId);
+        $this->assertSame('tenant-empty', $syncRepo->refreshedTenantId);
         $this->assertSame([], $snapshotEvents);
     }
 

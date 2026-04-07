@@ -73,6 +73,8 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 				|| ( empty( $clusters ) && 0 === $snapshot_version );
 
 			if ( $is_empty_snapshot ) {
+				$this->sync_state_repository->upsert_snapshot_version( $normalized_tenant_id, 0 );
+				$this->sync_state_repository->refresh_curation_metrics( $normalized_tenant_id );
 				$committed = false !== $wpdb->query( 'COMMIT' );
 				if ( ! $committed ) {
 					throw new RuntimeException( 'Snapshot projection failed to commit transaction.' );

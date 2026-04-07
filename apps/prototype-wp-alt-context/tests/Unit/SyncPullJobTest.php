@@ -127,6 +127,7 @@ class SyncPullJobTest extends TestCase
         $this->assertSame(SyncPullResult::UNREACHABLE, $result->status());
         $this->assertSame('', $projector->tenantId);
         $this->assertSame('unreachable', $syncRepo->get_last_sync_result('tenant-2'));
+        $this->assertSame(1, get_transient('acx_sync_cooldown_' . md5('tenant-2')));
     }
 
     public function testSyncPullReturnsFalseWhenProjectorThrows(): void
@@ -180,7 +181,7 @@ class SyncPullJobTest extends TestCase
 
     public function testSyncPullSkipsFetchWhenCooldownTransientIsSet(): void
     {
-        set_transient('acx_sync_cooldown_' . md5('tenant-cooldown'), 1, 30);
+        set_transient('acx_sync_cooldown_' . md5('tenant-cooldown'), 1, 5);
         $client = new SyncPullJobSnapshotClient([
             'snapshot_version' => 1,
             'clusters' => [],
@@ -196,6 +197,24 @@ class SyncPullJobTest extends TestCase
         $this->assertSame(SyncPullResult::SKIPPED, $result->status());
         $this->assertSame('', $projector->tenantId);
         $this->assertSame('failed', $syncRepo->get_last_sync_result('tenant-cooldown'));
+    }
+
+    public function testProjectionFailureUsesLongerCooldownThanUnreachableFetch(): void
+    {
+        $client = new SyncPullJobSnapshotClient([
+            'snapshot_version' => 12,
+            'clusters' => [['cluster_uuid' => 'cluster-1']],
+            'members' => [],
+        ]);
+        $projector = new SyncPullJobThrowingProjector();
+
+        $syncRepo = new SyncPullJobSyncStateSpy();
+        $job = new SyncPullJob($client, $projector, $syncRepo);
+
+        $result = $job->perform('tenant-failed-cooldown');
+
+        $this->assertSame(SyncPullResult::FAILED, $result->status());
+        $this->assertSame(1, get_transient('acx_sync_cooldown_' . md5('tenant-failed-cooldown')));
     }
 
     public function testSyncPullRetriesAfterTransientDeletion(): void

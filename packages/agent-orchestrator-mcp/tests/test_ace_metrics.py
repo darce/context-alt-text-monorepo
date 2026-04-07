@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from agent_orchestrator_mcp.orchestration.ace_metrics import (
+    _HOT_STATE_LIMITS,
     _ace_model_curation,
     _ace_process_health,
     _archive_rate,
@@ -1176,6 +1177,39 @@ class TestHandoffMemory:
         assert result["hot_state_size_bytes"] > 0
         assert result["total_decisions"] == 1
         assert result["total_findings"] == 1
+
+    def test_handoff_memory_keeps_broad_hot_state_read_for_metric_sampling(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state_dir = tmp_path / ".task-state"
+        self._write_handoff_db(state_dir)
+        calls: list[dict[str, object]] = []
+
+        def fake_get_handoff_state(**kwargs: object) -> str:
+            calls.append(dict(kwargs))
+            return json.dumps({"ok": True, "task_ref": "task-1", "findings_open": []})
+
+        monkeypatch.setattr("agent_handoff_mcp.core.get_handoff_state", fake_get_handoff_state)
+        monkeypatch.setattr("agent_handoff_mcp.runtime.configure_runtime", lambda _runtime: None)
+        monkeypatch.setattr("agent_handoff_mcp.runtime.get_runtime_config", lambda: None)
+        monkeypatch.setattr(
+            "agent_handoff_mcp.config.RuntimeConfig.for_workspace",
+            lambda *args, **kwargs: object(),
+        )
+
+        result = _handoff_memory("task-1", state_dir, tmp_path)
+
+        assert result["hot_state_size_bytes"] > 0
+        assert calls == [
+            {
+                "task_ref": "task-1",
+                "top_n_blockers": _HOT_STATE_LIMITS["blockers"],
+                "top_n_actions": _HOT_STATE_LIMITS["actions"],
+                "top_n_decisions": _HOT_STATE_LIMITS["decisions"],
+                "top_n_tests": _HOT_STATE_LIMITS["tests"],
+                "top_n_findings": _HOT_STATE_LIMITS["findings"],
+            }
+        ]
 
     def test_handoff_memory_returns_zero_counts_for_unknown_task(self, tmp_path: Path) -> None:
         state_dir = tmp_path / ".task-state"

@@ -711,6 +711,9 @@ def _handoff_memory(task_ref: str, state_dir: Path, workspace_root: Path) -> dic
                     exports_dir=state_dir / "exports",
                 )
             )
+            # Intentional broad read: this metric tracks the serialized hot-state
+            # footprint of the default bounded handoff snapshot, not the minimum
+            # payload needed by a specific orchestrator caller.
             hot_state = json.loads(
                 get_handoff_state(
                     task_ref=task_ref,

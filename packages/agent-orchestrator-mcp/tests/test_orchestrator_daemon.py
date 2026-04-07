@@ -807,6 +807,27 @@ def test_resolve_task_ref_falls_back_to_active_task(tmp_path: Path) -> None:
     mock_ahm.get_handoff_state.assert_called_once_with(sections="identity")
 
 
+def test_resolve_task_ref_accepts_identity_only_payload(tmp_path: Path) -> None:
+    mod = _load_module()
+    mock_ahm = mock.MagicMock()
+    mock_ahm.RuntimeConfig.for_workspace.return_value = mock.MagicMock()
+    mock_ahm.configure_runtime.return_value = None
+    mock_ahm.get_handoff_state.return_value = json.dumps({"ok": True, "task_ref": "identity-task"})
+    mock_manifest = mock.MagicMock()
+    mock_manifest.list_manifest_tasks.return_value = ["identity-task", "other-task"]
+    with mock.patch.dict(
+        sys.modules,
+        {
+            "agent_handoff_mcp": mock_ahm,
+            "agent_orchestrator_mcp.lanes": mock_ahm,
+            "agent_orchestrator_mcp.api": mock_ahm,
+            "lane_manifest": mock_manifest,
+        },
+    ):
+        assert mod._resolve_task_ref(tmp_path, None) == "identity-task"
+    mock_ahm.get_handoff_state.assert_called_once_with(sections="identity")
+
+
 def test_resolve_task_ref_falls_back_to_sole_manifest(tmp_path: Path) -> None:
     mod = _load_module()
     mock_ahm = mock.MagicMock()
@@ -825,6 +846,27 @@ def test_resolve_task_ref_falls_back_to_sole_manifest(tmp_path: Path) -> None:
         },
     ):
         assert mod._resolve_task_ref(tmp_path, None) == "only-task"
+
+
+def test_resolve_task_ref_falls_back_when_identity_payload_omits_task_ref(tmp_path: Path) -> None:
+    mod = _load_module()
+    mock_ahm = mock.MagicMock()
+    mock_ahm.RuntimeConfig.for_workspace.return_value = mock.MagicMock()
+    mock_ahm.configure_runtime.return_value = None
+    mock_ahm.get_handoff_state.return_value = json.dumps({"ok": True, "active": {"task_ref": "nested-only"}})
+    mock_manifest = mock.MagicMock()
+    mock_manifest.list_manifest_tasks.return_value = ["only-task"]
+    with mock.patch.dict(
+        sys.modules,
+        {
+            "agent_handoff_mcp": mock_ahm,
+            "agent_orchestrator_mcp.lanes": mock_ahm,
+            "agent_orchestrator_mcp.api": mock_ahm,
+            "lane_manifest": mock_manifest,
+        },
+    ):
+        assert mod._resolve_task_ref(tmp_path, None) == "only-task"
+    mock_ahm.get_handoff_state.assert_called_once_with(sections="identity")
 
 
 def test_resolve_task_ref_errors_when_ambiguous(tmp_path: Path) -> None:

@@ -4,7 +4,27 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/../sovereign/repositories/interface-sync-state-repository.php';
+require_once __DIR__ . '/../sovereign/repositories/class-sync-state-repository.php';
+require_once __DIR__ . '/../sovereign/repositories/class-clusters-repository.php';
+require_once __DIR__ . '/../sovereign/repositories/class-identity-members-repository.php';
+require_once __DIR__ . '/../sovereign/sync/interface-snapshot-projector.php';
+require_once __DIR__ . '/../sovereign/sync/class-snapshot-client.php';
+require_once __DIR__ . '/../sovereign/sync/class-snapshot-projector.php';
+require_once __DIR__ . '/../sovereign/sync/interface-sync-pull-job.php';
+require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job.php';
+require_once __DIR__ . '/../sovereign/sync/class-sync-pull-result.php';
+require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job-factory.php';
+
+use AltContext\Sovereign\Repositories\ClustersRepository;
+use AltContext\Sovereign\Repositories\IdentityMembersRepository;
+use AltContext\Sovereign\Repositories\SyncStateRepository;
+use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
+use AltContext\Sovereign\Sync\SnapshotClient;
+use AltContext\Sovereign\Sync\SyncPullJobFactory;
+use AltContext\Sovereign\Sync\SyncPullJobInterface;
 use AltContext\Support\BatchLimits;
+use Throwable;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -20,6 +40,7 @@ use function nocache_headers;
 use function sanitize_text_field;
 use function set_transient;
 use function sprintf;
+use function trim;
 use function wp_get_attachment_url;
 use function wp_json_encode;
 
@@ -29,6 +50,19 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 	private const REQUEST_CLASS_POST_SCAN_READ = 'post_scan_read';
 	private const JOB_MEDIA_IDS_TRANSIENT_PREFIX = 'acx_job_media_ids_';
 	private const JOB_TRACKING_TTL_SECONDS = 86400;
+	private SyncStateRepositoryInterface $sync_state_repository;
+	private ?SyncPullJobInterface $sync_pull_job;
+	private ?SyncPullJobFactory $sync_pull_job_factory;
+
+	public function __construct(
+		?SyncStateRepositoryInterface $sync_state_repository = null,
+		?SyncPullJobInterface $sync_pull_job = null,
+		?SyncPullJobFactory $sync_pull_job_factory = null
+	) {
+		$this->sync_state_repository = $sync_state_repository ?? new SyncStateRepository();
+		$this->sync_pull_job = $sync_pull_job;
+		$this->sync_pull_job_factory = $sync_pull_job_factory;
+	}
 
 	public function register_routes(): void {
 		register_rest_route(
@@ -168,6 +202,13 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			return $this->build_offline_job_status_response( $job_id );
 		}
 
+		if ( $response instanceof WP_REST_Response ) {
+			$data = $response->get_data();
+			if ( is_array( $data ) ) {
+				$this->maybe_trigger_projection_sync( $data );
+			}
+		}
+
 		return $response;
 	}
 
@@ -243,6 +284,7 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 				@flush();
 				break;
 			}
+			$this->maybe_trigger_projection_sync( $data );
 
 			$progress   = is_array( $data['progress'] ?? null ) ? $data['progress'] : array();
 			$completed  = absint( $progress['completed'] ?? 0 );
@@ -412,6 +454,53 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			),
 			200
 		);
+	}
+
+	/**
+	 * Trigger a local projection pull once the backend reports a completed clustering job
+	 * whose results have not yet been acknowledged locally.
+	 *
+	 * @param array<string,mixed> $job_payload
+	 */
+	private function maybe_trigger_projection_sync( array $job_payload ): void {
+		$status = sanitize_text_field( (string) ( $job_payload['status'] ?? '' ) );
+		$snapshot_version = absint( $job_payload['snapshot_version'] ?? 0 );
+		$acknowledged_at = trim( (string) ( $job_payload['projection_acknowledged_at'] ?? '' ) );
+
+		if ( 'completed' !== $status || $snapshot_version <= 0 || '' !== $acknowledged_at ) {
+			return;
+		}
+
+		$sync_pull_job = $this->resolve_sync_pull_job();
+		if ( null === $sync_pull_job ) {
+			return;
+		}
+
+		try {
+			$sync_pull_job->perform_bypass_cooldown( $this->get_tenant_id() );
+		} catch ( Throwable $throwable ) {
+			// Job status remains readable even when the background projection retry fails.
+		}
+	}
+
+	private function resolve_sync_pull_job(): ?SyncPullJobInterface {
+		if ( null !== $this->sync_pull_job ) {
+			return $this->sync_pull_job;
+		}
+
+		try {
+			$factory = $this->sync_pull_job_factory ?? new SyncPullJobFactory(
+				new ClustersRepository(),
+				new IdentityMembersRepository(),
+				$this->sync_state_repository,
+				new SnapshotClient()
+			);
+			$this->sync_pull_job = $factory->create();
+		} catch ( Throwable $throwable ) {
+			return null;
+		}
+
+		return $this->sync_pull_job;
 	}
 
 	public function validate_media_ids( $value, WP_REST_Request $request, string $param ): bool|WP_Error {

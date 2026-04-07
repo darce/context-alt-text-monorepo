@@ -52,6 +52,16 @@ class SyncStateRepositoryTest extends TestCase
         $this->assertSame('2026-02-14 01:02:03', $value);
     }
 
+    public function testGetLastUpdatedReturnsNullForEpochSentinel(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '1970-01-01 00:00:00';
+
+        $value = $this->repository->get_last_updated('tenant-sync');
+
+        $this->assertNull($value);
+    }
+
     public function testGetLastSyncResultDefaultsToOkWhenMissing(): void
     {
         global $wpdb;

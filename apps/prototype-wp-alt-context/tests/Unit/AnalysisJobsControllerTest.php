@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\AnalysisJobsController;
+use AltContext\Sovereign\Sync\SyncPullJobInterface;
+use AltContext\Sovereign\Sync\SyncPullResult;
 use AltContext\Tests\TestCase;
 use WP_REST_Request;
 
@@ -150,6 +152,38 @@ class AnalysisJobsControllerTest extends TestCase
         $this->assertSame('Recognition backend unavailable.', $data['message'] ?? null);
     }
 
+    public function testGetJobStatusTriggersProjectionSyncWhenBackendAwaitsAcknowledgement(): void
+    {
+        $syncSpy = new AnalysisJobsControllerSyncPullSpy();
+        $controller = new AnalysisJobsController(null, $syncSpy);
+
+        $jobId = '55555555-5555-5555-5555-555555555555';
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'id' => $jobId,
+                'status' => 'completed',
+                'type' => 'clustering',
+                'snapshot_version' => 22,
+                'source_job_id' => $jobId,
+                'projection_acknowledged_at' => null,
+                'progress' => [
+                    'completed' => 2,
+                    'total' => 2,
+                    'phase' => 'awaiting_projection',
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/' . $jobId);
+        $request->set_param('job_id', $jobId);
+        $response = $controller->get_job_status($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertTrue($syncSpy->performedBypass);
+        $this->assertNotSame('', $syncSpy->tenantIdBypass);
+    }
+
     public function testGetJobStatusForwardsCheckpointFieldsInProgressResponse(): void
     {
         $jobId = '44444444-4444-4444-4444-444444444444';
@@ -272,5 +306,23 @@ class AnalysisJobsControllerTest extends TestCase
         }
 
         return null;
+    }
+}
+
+class AnalysisJobsControllerSyncPullSpy implements SyncPullJobInterface
+{
+    public bool $performedBypass = false;
+    public string $tenantIdBypass = '';
+
+    public function perform(string $tenant_id): SyncPullResult
+    {
+        return SyncPullResult::ok();
+    }
+
+    public function perform_bypass_cooldown(string $tenant_id): SyncPullResult
+    {
+        $this->performedBypass = true;
+        $this->tenantIdBypass = $tenant_id;
+        return SyncPullResult::ok();
     }
 }

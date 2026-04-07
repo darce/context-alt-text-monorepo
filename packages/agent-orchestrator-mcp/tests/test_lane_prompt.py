@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+from agent_orchestrator_mcp.orchestration.handoff_read_shapes import global_context_kwargs
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ORCHESTRATION_DIR = Path(__file__).resolve().parents[1] / "src" / "agent_orchestrator_mcp" / "orchestration"
 SCRIPT_PATH = ORCHESTRATION_DIR / "lane_prompt.py"
@@ -283,17 +285,7 @@ def test_build_prompt_includes_global_context_only_when_requested() -> None:
     assert "Escalated Task Context:" in expanded_prompt
     assert "Update the shared rollout checklist." in expanded_prompt
     assert "Waiting on policy sign-off." in expanded_prompt
-    assert calls == [
-        {
-            "task_ref": "phase-5-retention-export-and-audit-controls",
-            "sections": module.GLOBAL_CONTEXT_SECTIONS,
-            "top_n_blockers": module.MAX_GLOBAL_ITEMS,
-            "top_n_actions": module.MAX_GLOBAL_ITEMS,
-            "top_n_decisions": module.MAX_GLOBAL_ITEMS,
-            "top_n_tests": module.MAX_GLOBAL_ITEMS,
-            "top_n_findings": module.MAX_GLOBAL_ITEMS,
-        }
-    ]
+    assert calls == [global_context_kwargs("phase-5-retention-export-and-audit-controls", limit=module.MAX_GLOBAL_ITEMS)]
 
 
 def test_build_prompt_reports_prompt_budget_for_optional_context_sections() -> None:

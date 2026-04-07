@@ -26,6 +26,8 @@ from pathlib import Path
 from statistics import median
 from typing import Sequence
 
+from .handoff_read_shapes import hot_state_metric_kwargs
+
 _ACE_RULE_REFERENCE_RE = re.compile(r"\[(?:sr|rg)-\d{3}\]")
 
 
@@ -714,16 +716,7 @@ def _handoff_memory(task_ref: str, state_dir: Path, workspace_root: Path) -> dic
             # Intentional broad read: this metric tracks the serialized hot-state
             # footprint of the default bounded handoff snapshot, not the minimum
             # payload needed by a specific orchestrator caller.
-            hot_state = json.loads(
-                get_handoff_state(
-                    task_ref=task_ref,
-                    top_n_blockers=_HOT_STATE_LIMITS["blockers"],
-                    top_n_actions=_HOT_STATE_LIMITS["actions"],
-                    top_n_decisions=_HOT_STATE_LIMITS["decisions"],
-                    top_n_tests=_HOT_STATE_LIMITS["tests"],
-                    top_n_findings=_HOT_STATE_LIMITS["findings"],
-                )
-            )
+            hot_state = json.loads(get_handoff_state(**hot_state_metric_kwargs(task_ref, limits=_HOT_STATE_LIMITS)))
         finally:
             if prior_runtime is not None:
                 configure_runtime(prior_runtime)

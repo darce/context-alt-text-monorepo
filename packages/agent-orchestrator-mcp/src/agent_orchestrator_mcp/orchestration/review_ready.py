@@ -11,6 +11,11 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from agent_handoff_mcp.enums import ReviewKind, ReviewScopeSource
 
+try:
+    from .handoff_read_shapes import review_ready_state_kwargs
+except ImportError:
+    from handoff_read_shapes import review_ready_state_kwargs
+
 DEFAULT_BOUNDARY_PREFIXES = (
     "apps/",
     "packages/agent-orchestrator-mcp/src/",
@@ -24,10 +29,6 @@ DEFAULT_CONTRACT_PREFIXES = (
 CONTRACT_PREFIXES = DEFAULT_CONTRACT_PREFIXES
 DEFAULT_CONTRACT_CHECKLIST_PATH = "docs/agentic/rules/contract-change-checklist.md"
 CONTRACT_CHECKLIST_PATH = DEFAULT_CONTRACT_CHECKLIST_PATH
-REVIEW_READY_STATE_SECTIONS = "identity,tests_recent"
-REVIEW_READY_TEST_LIMIT = 4
-
-
 @dataclass(frozen=True)
 class ReviewReadyResult:
     ready: bool
@@ -246,12 +247,7 @@ def main() -> int:
         )
         state = _load_ok_payload(
             "get_handoff_state",
-            get_handoff_state(
-                task_ref=args.task_ref,
-                sections=REVIEW_READY_STATE_SECTIONS,
-                detail="summary",
-                top_n_tests=REVIEW_READY_TEST_LIMIT,
-            ),
+            get_handoff_state(**review_ready_state_kwargs(args.task_ref)),
         )
         close = _load_ok_payload(
             "handoff_close_check",

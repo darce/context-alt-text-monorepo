@@ -113,6 +113,17 @@ Source-tree execution without installation:
 PYTHONPATH=src python -m agent_handoff_mcp --workspace-root /path/to/workspace serve-stdio
 ```
 
+## Token-Efficient Usage
+
+The v2 envelope is already compact, but callers still save the most tokens by shaping read responses deliberately:
+
+- Use `get_handoff_state(sections="identity")` for routine task checks instead of a full state fetch.
+- Use `detail="summary"` on read surfaces such as `get_handoff_state`, `load_session`, `review_findings`, `search_handoff`, and `artifacts` when truncated text is acceptable.
+- Use `top_n_*`, `limit=`, and `fields=` to cap read size instead of trimming large payloads client-side.
+- Read from the canonical `data` block rather than expecting legacy top-level mirrors.
+
+Package-local guidance and examples live in [docs/guides/token-efficient-usage.md](docs/guides/token-efficient-usage.md).
+
 ## Client Adapter Shape
 
 Installed console-script adapter:

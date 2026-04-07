@@ -39,6 +39,7 @@ from agent_orchestrator_mcp.orchestration.ace_metrics import (
     render_markdown,
     render_sparklines,
 )
+from agent_orchestrator_mcp.orchestration.handoff_read_shapes import hot_state_metric_kwargs
 
 _ACE_BULLETS = (
     "# Instructions\n"
@@ -1200,16 +1201,40 @@ class TestHandoffMemory:
         result = _handoff_memory("task-1", state_dir, tmp_path)
 
         assert result["hot_state_size_bytes"] > 0
-        assert calls == [
-            {
-                "task_ref": "task-1",
-                "top_n_blockers": _HOT_STATE_LIMITS["blockers"],
-                "top_n_actions": _HOT_STATE_LIMITS["actions"],
-                "top_n_decisions": _HOT_STATE_LIMITS["decisions"],
-                "top_n_tests": _HOT_STATE_LIMITS["tests"],
-                "top_n_findings": _HOT_STATE_LIMITS["findings"],
-            }
-        ]
+        assert calls == [hot_state_metric_kwargs("task-1", limits=_HOT_STATE_LIMITS)]
+
+
+def test_handoff_read_shape_helpers_expose_explicit_contract_bundles() -> None:
+    from agent_orchestrator_mcp.orchestration.handoff_read_shapes import (
+        active_task_identity_kwargs,
+        global_context_kwargs,
+        open_handoff_items_kwargs,
+        review_ready_state_kwargs,
+    )
+
+    assert active_task_identity_kwargs() == {"sections": "identity"}
+    assert open_handoff_items_kwargs("task-ref") == {
+        "task_ref": "task-ref",
+        "sections": "findings_open,blockers_open,actions_pending",
+        "top_n_blockers": 500,
+        "top_n_actions": 500,
+        "top_n_findings": 500,
+    }
+    assert review_ready_state_kwargs("task-ref") == {
+        "task_ref": "task-ref",
+        "sections": "identity,tests_recent",
+        "detail": "summary",
+        "top_n_tests": 4,
+    }
+    assert global_context_kwargs("task-ref", limit=6) == {
+        "task_ref": "task-ref",
+        "sections": "blockers_open,actions_pending,findings_open,decisions_recent,tests_recent",
+        "top_n_blockers": 6,
+        "top_n_actions": 6,
+        "top_n_decisions": 6,
+        "top_n_tests": 6,
+        "top_n_findings": 6,
+    }
 
     def test_handoff_memory_returns_zero_counts_for_unknown_task(self, tmp_path: Path) -> None:
         state_dir = tmp_path / ".task-state"

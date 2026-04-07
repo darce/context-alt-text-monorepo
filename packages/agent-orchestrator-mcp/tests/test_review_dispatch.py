@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from unittest import mock
 
+from agent_orchestrator_mcp.orchestration.handoff_read_shapes import open_handoff_items_kwargs
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ORCHESTRATION_DIR = Path(__file__).resolve().parents[1] / "src" / "agent_orchestrator_mcp" / "orchestration"
 SCRIPT_PATH = ORCHESTRATION_DIR / "review_dispatch.py"
@@ -125,10 +127,4 @@ def test_load_open_handoff_items_requests_only_dispatch_sections() -> None:
         "blockers": [{"id": 2}],
         "actions": [{"id": 3}],
     }
-    mock_ahm.get_handoff_state.assert_called_once_with(
-        task_ref="task-ref",
-        sections=module.OPEN_HANDOFF_SECTIONS,
-        top_n_blockers=500,
-        top_n_actions=500,
-        top_n_findings=500,
-    )
+    mock_ahm.get_handoff_state.assert_called_once_with(**open_handoff_items_kwargs("task-ref"))

@@ -124,7 +124,21 @@ function acx_define_env_constant(string $constantName, array $envNames, ?callabl
     }
 
     // Pass 2: Dotenv-loaded values in $_ENV / $_SERVER (.env, .env.local).
+    //
+    // $_ENV and $_SERVER are superglobals, so the WordPress
+    // Security.ValidatedSanitizedInput sniff flags reads from them as
+    // untrusted input. In this helper they are NOT user input: the values
+    // come from the plugin's own .env / .env.local files loaded by Dotenv
+    // createImmutable a few lines above, or from operator-controlled
+    // process env (Apache SetEnv, systemd Environment=, parent shell
+    // exports). Trim() casts to string and normalizes whitespace, which is
+    // the only normalization these config values need; we deliberately do
+    // not call sanitize_text_field() / wp_unslash() because (1) this helper
+    // runs during early plugin bootstrap and the test fixtures stub WP
+    // functions selectively, and (2) trimming would corrupt API keys or
+    // base URLs that legitimately contain characters those filters strip.
     foreach ($envNames as $envName) {
+        // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- env-loaded config, see comment above
         $value = $_ENV[$envName] ?? $_SERVER[$envName] ?? null;
         if (null === $value) {
             continue;

@@ -213,10 +213,11 @@ def _envelope(
 ) -> str:
     """Build a v2 response envelope.
 
-    The nested ``data`` block is the canonical v2 shape.  Compact
-    serialization: no indentation, null/empty fields stripped, no
-    legacy field mirroring.  In-process callers that need flat access
-    should use ``_flatten_v2()`` in ``core.py``.
+    The nested ``data`` block remains the canonical v2 shape. For
+    backward compatibility with existing Python callers and tests, the
+    same fields are also mirrored at the top level so legacy
+    ``result["foo"]`` access still works while ``result["data"]["foo"]``
+    stays available.
     """
     scope: dict[str, str | None] = {"task_ref": task_ref}
     if entity is not None:
@@ -236,6 +237,7 @@ def _envelope(
         payload["warnings"] = warnings
     if task_ref is not None:
         payload["task_ref"] = task_ref
+    payload.update(dict(data))
     return json.dumps(payload, sort_keys=True)
 
 

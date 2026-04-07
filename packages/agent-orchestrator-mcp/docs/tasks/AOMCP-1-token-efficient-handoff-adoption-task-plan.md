@@ -38,7 +38,7 @@ The token-optimization assessment in `packages/agent-orchestrator-mcp/docs/tech-
 ## Current State Analysis
 
 - `agent-handoff-mcp` already supports `sections="identity"`, `detail="summary"`, and bounded list parameters, and `AHMCP-7` already landed the compact envelope and dict-return transport changes.
-- `packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md` now exists as the package-owned usage guide, so orchestrator work can reference a stable source instead of restating parameter rules ad hoc.
+- The preferred caller guidance belongs in a package-owned `agent-handoff-mcp` guide, but this branch cannot assume that guide already exists. AOMCP-1 should treat it as an `AHMCP-*` prerequisite and reference it only once that dependency is present.
 - `agent-orchestrator-mcp` still has full-state reads in `_resolve_task_ref()` (`orchestrator_daemon.py`), `_load_open_handoff_items()` (`review_dispatch.py`), `_task_global_context()` (`lane_prompt.py`), and `review_ready.main()`.
 - Not every full read is a bug. `ace_metrics.py` intentionally samples hot-state size and should not be blindly optimized away if that would change the metric being measured.
 - There is no package-local task plan under `packages/agent-orchestrator-mcp/docs/tasks/` covering this adoption work yet, so the assessment’s recommendations do not currently map to executable slices.
@@ -53,7 +53,7 @@ The orchestrator package consistently uses shaped handoff reads where the call s
 - Rules: `docs/agentic/rules/backend-python-guidelines.md`
 - Rules: `docs/agentic/rules/testing-python.md`
 - Contracts: `docs/agentic/contracts/agent-handoff-mcp.md`
-- Package docs: `packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md`
+- Package docs: `packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md` only if/when the owning `AHMCP-*` dependency has landed; otherwise use `docs/agentic/contracts/agent-handoff-mcp.md` plus the assessment/task-plan dependency notes
 - Handoff/MCP state: `AOMCP-1`, `AHMCP-1`, `AHMCP-7`, latest assessment decision for `packages/agent-orchestrator-mcp/docs/tech-debt/mcp-token-optimization-assessment.md`
 - External docs via `ctx7` only if: upstream FastMCP runtime behavior changes again and the local contract/tests are insufficient to decide a caller-shaping strategy
 
@@ -62,7 +62,7 @@ The orchestrator package consistently uses shaped handoff reads where the call s
 | Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
 | --- | --- | --- | --- | --- | --- |
 | `agent-orchestrator-mcp` -> `agent-handoff-mcp` read calls | shared tooling boundary | `docs/agentic/contracts/agent-handoff-mcp.md` | No schema change; orchestrator callers adopt existing read-shaping parameters | Yes; behavior must stay identical while payloads get smaller | Unit tests on orchestrator call sites plus focused command-path assertions |
-| Token-usage guidance ownership | `agent-handoff-mcp` docs | `packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md` | Orchestrator docs reference package-owned guidance instead of re-documenting parameter semantics | Yes; avoid conflicting guidance surfaces | Doc review and path/reference checks |
+| Token-usage guidance ownership | `agent-handoff-mcp` docs | package-owned guide is the target steady-state; until that lands, AOMCP tracks it as an upstream dependency | Orchestrator docs reference package-owned guidance instead of re-documenting parameter semantics | Yes; avoid conflicting guidance surfaces and false assumptions about current files | Doc review and dependency-path checks |
 
 ## Proposed Solution
 
@@ -89,7 +89,7 @@ Implement the assessment follow-up in three slices. First, classify orchestrator
 | `packages/agent-orchestrator-mcp/docs/tech-debt/mcp-token-optimization-assessment.md` | Source assessment and recommendation inventory |
 | `packages/agent-handoff-mcp/docs/tasks/AHMCP-1-parameterize-handoff-mcp-read-surfaces-task-plan.md` | Owns server-side summary shaping and default semantics |
 | `packages/agent-handoff-mcp/docs/tasks/AHMCP-7-response-envelope-token-optimization-task-plan.md` | Owns compact envelope and transport-side token reductions |
-| `packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md` | Canonical package-owned caller guidance |
+| `packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md` | Target package-owned caller guidance; treat as upstream dependency until it exists on the implementation branch |
 | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/ace_metrics.py` | Likely intentional full-read path; verify before changing |
 
 ## Verification Strategy
@@ -127,7 +127,7 @@ Proof:
 Changes:
 
 - Update `review_ready.main()` to request only the handoff sections it actually consumes (`identity`, `tests_recent`) and cap `top_n_tests`
-- Update `lane_prompt._task_global_context()` to keep its existing bounded-item behavior aligned with explicit section selection and `MAX_GLOBAL_ITEMS`
+- Update `lane_prompt._task_global_context()` to keep its existing bounded-item behavior aligned with explicit section selection: `sections="blockers_open,actions_pending,findings_open,decisions_recent,tests_recent"` plus the existing `MAX_GLOBAL_ITEMS` caps
 - Verify each narrowed path still gets enough structure for downstream formatting and decision logic
 
 Proof:
@@ -141,7 +141,7 @@ Proof:
 Changes:
 
 - Add or update orchestrator-local documentation/comments only where needed to explain why a call site intentionally uses a shaped read
-- Reference `packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md` instead of duplicating parameter guidance
+- If the package-owned guide exists on the implementation branch, reference `packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md`; otherwise record that guidance ownership as an upstream `AHMCP-*` dependency instead of pretending the file is already available
 - Record any remaining server-side or contract-default recommendations as dependencies on `AHMCP-1` / `AHMCP-7`, not as orchestrator work
 
 Proof:
@@ -155,7 +155,7 @@ Proof:
 
 - [ ] Loaded the minimum authoritative rules, contracts, and handoff state before editing.
 - [ ] Confirmed that server-envelope changes remain owned by `AHMCP-7` and summary-shaping/default changes remain owned by `AHMCP-1`.
-- [ ] Recorded the package-owned `agent-handoff-mcp` usage guide as the canonical reference instead of duplicating it.
+- [ ] Recorded the package-owned `agent-handoff-mcp` usage guide as the canonical reference when available, or tracked its absence as an upstream `AHMCP-*` dependency instead of duplicating it.
 
 ### Checklist for Slice 1: Narrow Routine Reads
 
@@ -171,7 +171,7 @@ Proof:
 
 ### Checklist for Slice 3: Documentation, Auditability, and Follow-Up Boundaries
 
-- [ ] Any new orchestrator-facing guidance references the package-owned token-efficiency guide.
+- [ ] Any new orchestrator-facing guidance references the package-owned token-efficiency guide when available, or explicitly records that guide as an unmet upstream dependency.
 - [ ] Remaining server-owned recommendations are captured as dependencies rather than silently folded into orchestrator work.
 - [ ] Handoff decision records the verification evidence and any intentionally unchanged full-read paths.
 

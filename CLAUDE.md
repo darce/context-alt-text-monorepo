@@ -39,12 +39,21 @@ Additional routing: see [docs/agentic/instructions.md](docs/agentic/instructions
 
 ## Critical Rules
 
+### Pre-Merge Gate Rule
+
+> **No feature branch merges to `main` without a passing `handoff_close_check(enforce=True)`.**
+
+Every merge to `main` requires: (1) at least one review pass with findings recorded in MCP, (2) zero open findings on the task ref, (3) fresh `test_result` evidence tied to the current HEAD SHA, (4) `handoff_close_check(enforce=True)` passes, and (5) a slice-complete decision recorded. The check is enforced by the handoff DB; bypassing it via `enforce=False` defeats the gate. Open findings must be `fixed` or explicitly `deferred`/`wontfix` with rationale — never skipped.
+See [development-workflow.md § Pre-Merge Gate](docs/agentic/rules/development-workflow.md#pre-merge-gate-mandatory) for the full pre-merge sequence and recovery steps.
+
 ### Branch Isolation Rule
 
 > **Code files must NOT be edited on the `main` branch.**
 
 A `PreToolUse` hook enforces this in both harnesses: VS Code runs `.github/hooks/guard-main-branch.py` via `.github/hooks/terminal-guard.json`, and Claude Code runs `scripts/hooks/guard-main-branch.sh` via `.claude/settings.json`. Code-file edits under `apps/` or `packages/` are blocked on `main`. Create a feature branch (`git checkout -b feature/<task-id>-<slug>`) before any code edit. Docs, configs, and planning artifacts are allowed on `main`.
-See [development-workflow.md](docs/agentic/rules/development-workflow.md#branch-isolation-protocol-mandatory) for isolation tiers and rationale.
+
+**Worktree rule:** The root worktree stays on `main`. Always. Never check out `main` in a linked worktree. After merging a feature branch, return the root to `main` and delete the merged branch.
+See [development-workflow.md](docs/agentic/rules/development-workflow.md#branch-isolation-protocol-mandatory) for isolation tiers, worktree recovery, and rationale.
 
 ### Plugin Boundary Rule
 

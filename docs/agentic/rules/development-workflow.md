@@ -35,6 +35,106 @@ Protected code extensions: `*.py`, `*.ts`, `*.tsx`, `*.js`, `*.jsx`, `*.php`, `*
 
 The harness guard implementations live at `.github/hooks/guard-main-branch.py` and `scripts/hooks/guard-main-branch.sh`. If a hook incorrectly blocks a legitimate edit, fix the scope or extension classification; do not normalize code edits on `main` as acceptable.
 
+### Worktree Ownership Rule
+
+**The root worktree stays on `main`. Always. Linked worktrees are always on feature branches.**
+
+- Never check out `main` in a linked worktree (`git worktree add ... main` is forbidden).
+- Never leave the root worktree on a feature branch after merging -- switch it back to `main` immediately.
+- Git only allows one worktree per branch. If `main` is checked out in a linked worktree, every other agent and worktree loses access to `main`, blocking planning work, merges, and doc reads.
+
+**If `main` gets trapped in a linked worktree:**
+```bash
+git -C /path/to/linked-worktree checkout --detach HEAD   # free main
+git checkout main                                          # reclaim in root
+git worktree remove /path/to/linked-worktree              # clean up
+```
+
+**After merging a feature branch to `main`:**
+```bash
+git checkout main                  # return root to main
+git branch -d feature/<merged>     # delete the merged branch
+```
+
+---
+
+## Pre-Merge Gate (MANDATORY)
+
+> **No feature branch merges to `main` without a passing pre-merge gate. No exceptions.**
+
+Branch isolation gets the work onto a feature branch. The pre-merge gate enforces that the work has been **reviewed**, **verified**, and **logged in MCP handoff** before it lands on `main`. This rule exists because branches that merge fast and unreviewed cause the same class of regressions the branch isolation guard is meant to prevent (accidental commits, untested behavior, dirty state bleed).
+
+### Gate Requirements
+
+A feature branch is **merge-ready** only when **all** of the following are true:
+
+1. **At least one review pass on the active task ref**, with findings recorded in MCP handoff via `review_findings(operation="record"|"batch_record")`. The review can be a planning review (for docs-only branches) or a branch review (for code branches). The choice is enforced by [Context Routing for Reviews](#context-routing-for-reviews).
+2. **Zero open findings** on the task ref. Every recorded finding must be in status `fixed`, `deferred` (with rationale), or `wontfix` (with rationale). Verify with `review_findings(operation="list", status="open")`.
+3. **Fresh `test_result` evidence** for the current branch state, recorded via `record_event(event_kind="test_result", ...)`. The PHP/Python/TS branch-review guides specify which test commands satisfy this for each stack. "Fresh" means recorded against the current HEAD commit SHA.
+4. **`handoff_close_check(enforce=True, current_commit_sha=<HEAD>)` passes.** This is the canonical machine-checked gate. It verifies items 1-3 against the handoff DB and refuses to pass if anything is missing.
+5. **Slice-complete decision recorded** for the work landing in the merge, using the `<author_tag>_slice_complete_<work_ref>_<slug>` grammar.
+
+### Enforcement Mechanisms
+
+The gate is enforced by multiple guardrails — defense in depth, not a single point of failure:
+
+- **Handoff DB (authoritative).** `handoff_close_check(enforce=True)` is the canonical check. Any agent or operator merging without passing it is violating the protocol.
+- **Branch isolation hook.** `.claude/settings.json` and `.github/hooks/terminal-guard.json` already block code edits on `main`, which prevents the most common bypass (committing fixes directly to `main` to "skip" the gate).
+- **Documentation.** This section is referenced from [CLAUDE.md](../../../CLAUDE.md) Critical Rules so cold-start agents see it before any merge.
+- **Reviewer sign-off.** The reviewer recording the verdict decision must cite the decision number of the artifact under review (e.g. "review of decision #966") so the bidirectional link in handoff search makes the gate traceable.
+
+### Pre-Merge Sequence
+
+```
+On the feature branch, after final commit:
+
+1.  Run the stack-specific test suite. Record results:
+    record_event(event_kind="test_result", task_ref=..., command=..., passed=true,
+                 actor={..., commit_sha=<HEAD>})
+
+2.  Run review-ready and resolve all NOT READY reasons:
+    make review-ready
+
+3.  Request review (planning or branch, per Context Routing). Reviewer records
+    findings in MCP. Reviewer records verdict decision linking to the reviewed
+    artifact's decision number.
+
+4.  For each open finding: fix the issue, then close it with verification_evidence:
+    review_findings(operation="update", finding_id=..., status="fixed",
+                    verified_commit_sha=<HEAD>, verification_evidence=...)
+
+5.  Confirm zero open findings:
+    review_findings(operation="list", task_ref=..., status="open")
+    Expected: total_matching == 0
+
+6.  Record the slice-complete decision:
+    record_event(event_kind="decision", decision="<tag>_slice_complete_<work_ref>_<slug>",
+                 actor={..., commit_sha=<HEAD>})
+
+7.  Run the canonical close check:
+    handoff_close_check(enforce=True, current_commit_sha=<HEAD>)
+    Expected: ok=true, no failures
+
+8.  Merge the feature branch into main, return root to main, delete the feature branch.
+```
+
+### When the Gate May Be Skipped
+
+**Never.** Process exemptions normalize the very behavior the gate exists to prevent. If a finding genuinely cannot be fixed in this branch, mark it `deferred` with a written rationale and an explicit follow-up task ref — that satisfies item 2 (zero **open** findings) without skipping the gate.
+
+The only legitimate "skip" is for trivial documentation edits to files that have no associated review process (e.g., a typo fix in a README). Even then, the operator should record a brief decision in MCP so the audit trail remains intact.
+
+### Gate Failure Recovery
+
+If `handoff_close_check(enforce=True)` fails:
+
+- Read the failure reasons. Each is one of: missing review, open findings, stale test results, missing slice-complete decision, commit-SHA mismatch.
+- Resolve the underlying issue. Do not work around the check by passing `enforce=False` — that defeats the gate.
+- Re-run the check until it passes.
+- Only then merge.
+
+If a stale test_result event blocks the gate (e.g., test was run on an older commit), re-run the test suite and record a fresh `test_result` event tied to the current HEAD SHA. The check uses commit-SHA descendants to detect staleness.
+
 ---
 
 ## Slice Checklist

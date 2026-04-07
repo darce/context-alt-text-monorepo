@@ -37,6 +37,7 @@ The token-optimization assessment in `packages/agent-orchestrator-mcp/docs/tech-
 
 ## Current State Analysis
 
+- Slice 1 and Slice 2 are implemented on `feature/aomcp-1-token-efficient-handoff-adoption` at commit `336e3448a747f3dd2fe716d156b19d9952e68b89`, with focused pytest coverage pinning the narrowed caller envelopes.
 - `agent-handoff-mcp` already supports `sections="identity"`, `detail="summary"`, and bounded list parameters, and `AHMCP-7` already landed the compact envelope and dict-return transport changes.
 - The preferred caller guidance belongs in a package-owned `agent-handoff-mcp` guide, but this branch cannot assume that guide already exists. AOMCP-1 should treat it as an `AHMCP-*` prerequisite and reference it only once that dependency is present.
 - `agent-orchestrator-mcp` still has full-state reads in `_resolve_task_ref()` (`orchestrator_daemon.py`), `_load_open_handoff_items()` (`review_dispatch.py`), `_task_global_context()` (`lane_prompt.py`), and `review_ready.main()`.
@@ -153,27 +154,27 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded the minimum authoritative rules, contracts, and handoff state before editing.
-- [ ] Confirmed that server-envelope changes remain owned by `AHMCP-7` and summary-shaping/default changes remain owned by `AHMCP-1`.
-- [ ] Recorded the package-owned `agent-handoff-mcp` usage guide as the canonical reference when available, or tracked its absence as an upstream `AHMCP-*` dependency instead of duplicating it.
+- [x] Loaded the minimum authoritative rules, contracts, and handoff state before editing.
+- [x] Confirmed that server-envelope changes remain owned by `AHMCP-7` and summary-shaping/default changes remain owned by `AHMCP-1`.
+- [x] Recorded the package-owned `agent-handoff-mcp` usage guide as the canonical reference when available, or tracked its absence as an upstream `AHMCP-*` dependency instead of duplicating it.
 
 ### Checklist for Slice 1: Narrow Routine Reads
 
-- [ ] `_resolve_task_ref()` uses an identity-only handoff read.
-- [ ] `review_dispatch` requests only the open-item sections it consumes.
-- [ ] Tests prove the narrower reads preserve task resolution and dispatch behavior.
+- [x] `_resolve_task_ref()` uses an identity-only handoff read.
+- [x] `review_dispatch` requests only the open-item sections it consumes.
+- [x] Tests prove the narrower reads preserve task resolution and dispatch behavior.
 
 ### Checklist for Slice 2: Adopt Explicit Summary and Bounded Reads
 
-- [ ] `review_ready` requests only the sections it consumes and caps recent-test reads.
-- [ ] `lane_prompt` uses explicit section selection consistent with `MAX_GLOBAL_ITEMS`.
-- [ ] Tests prove the rendered outputs and readiness decisions remain unchanged.
+- [x] `review_ready` requests only the sections it consumes and caps recent-test reads.
+- [x] `lane_prompt` uses explicit section selection consistent with `MAX_GLOBAL_ITEMS`.
+- [x] Tests prove the rendered outputs and readiness decisions remain unchanged.
 
 ### Checklist for Slice 3: Documentation, Auditability, and Follow-Up Boundaries
 
-- [ ] Any new orchestrator-facing guidance references the package-owned token-efficiency guide when available, or explicitly records that guide as an unmet upstream dependency.
+- [x] Any new orchestrator-facing guidance references the package-owned token-efficiency guide when available, or explicitly records that guide as an unmet upstream dependency.
 - [ ] Remaining server-owned recommendations are captured as dependencies rather than silently folded into orchestrator work.
-- [ ] Handoff decision records the verification evidence and any intentionally unchanged full-read paths.
+- [x] Handoff decision records the verification evidence and any intentionally unchanged full-read paths.
 
 ## Review Readiness
 

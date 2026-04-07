@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import importlib
 import json
 
+import agent_handoff_mcp
 import pytest
 
 from agent_orchestrator_mcp.orchestration import review_ready as review_ready_module
@@ -11,6 +13,8 @@ from agent_orchestrator_mcp.orchestration.review_ready import (
     main,
     render_review_ready,
 )
+
+handoff_review_findings_module = importlib.import_module("agent_handoff_mcp.review_findings")
 
 
 def test_load_ok_payload_rejects_mcp_errors() -> None:
@@ -167,3 +171,66 @@ def test_main_reports_latest_slice_lookup_errors_without_traceback(
     captured = capsys.readouterr()
     assert exit_code == 1
     assert "MCP query failed: get_latest_slice_review_packet: No matching slice review packet found." in captured.err
+
+
+def test_main_requests_only_identity_and_recent_tests(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: dict[str, dict[str, object]] = {}
+
+    def fake_get_review_findings_summary(*, task_ref: str) -> str:
+        calls["review"] = {"task_ref": task_ref}
+        return json.dumps({"ok": True, "task_ref": task_ref, "counts": {"status": {"open": 0}}})
+
+    def fake_get_handoff_state(**kwargs: object) -> str:
+        calls["state"] = dict(kwargs)
+        return json.dumps({"ok": True, "task_ref": "task-ref", "tests_recent": [{"id": 1}]})
+
+    def fake_handoff_close_check(**kwargs: object) -> str:
+        calls["close"] = dict(kwargs)
+        return json.dumps(
+            {
+                "ok": True,
+                "checks": {
+                    "open_blockers": {"count": 0},
+                    "current_task_sync": {"is_in_sync": True},
+                    "current_commit_handoff": {"is_violation": False},
+                },
+            }
+        )
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "review_ready.py",
+            "--orchestrator-root",
+            "/tmp/orchestrator",
+            "--worktree-root",
+            "/tmp/worktree",
+            "--task-ref",
+            "task-ref",
+            "--review-base",
+            "main",
+        ],
+    )
+    monkeypatch.setattr(review_ready_module, "_configure_runtime", lambda _: None)
+    monkeypatch.setattr(review_ready_module, "_run_git", lambda *args, **kwargs: "abc123def456")
+    monkeypatch.setattr(agent_handoff_mcp, "get_handoff_state", fake_get_handoff_state)
+    monkeypatch.setattr(agent_handoff_mcp, "handoff_close_check", fake_handoff_close_check)
+    monkeypatch.setattr(
+        handoff_review_findings_module, "get_review_findings_summary", fake_get_review_findings_summary
+    )
+
+    exit_code = main()
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "REVIEW READY: READY" in captured.out
+    assert calls["review"] == {"task_ref": "task-ref"}
+    assert calls["state"] == {
+        "task_ref": "task-ref",
+        "sections": review_ready_module.REVIEW_READY_STATE_SECTIONS,
+        "detail": "summary",
+        "top_n_tests": review_ready_module.REVIEW_READY_TEST_LIMIT,
+    }
+    assert calls["close"] == {"task_ref": "task-ref", "current_commit_sha": "abc123def456"}

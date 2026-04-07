@@ -226,20 +226,26 @@ def test_build_prompt_includes_recent_lane_history_only_when_requested() -> None
 
 def test_build_prompt_includes_global_context_only_when_requested() -> None:
     module = _load_lane_prompt_module()
-    module.get_handoff_state = lambda **_: json.dumps(  # type: ignore[attr-defined]
-        {
-            "ok": True,
-            "actions_pending": [{"id": 90, "action": "Update the shared rollout checklist.", "lane_id": None}],
-            "blockers_open": [{"id": 91, "description": "Waiting on policy sign-off.", "lane_id": None}],
-            "findings_open": [
-                {"id": 92, "description": "Open cross-lane finding.", "severity": "medium", "lane_id": None}
-            ],
-            "decisions_recent": [
-                {"id": 93, "decision": "Use structured briefs for downstream lanes.", "lane_id": None}
-            ],
-            "tests_recent": [{"id": 94, "command": "pytest tests/test_cross_lane.py", "passed": 1, "lane_id": None}],
-        }
-    )
+    calls: list[dict[str, object]] = []
+
+    def fake_get_handoff_state(**kwargs: object) -> str:
+        calls.append(dict(kwargs))
+        return json.dumps(
+            {
+                "ok": True,
+                "actions_pending": [{"id": 90, "action": "Update the shared rollout checklist.", "lane_id": None}],
+                "blockers_open": [{"id": 91, "description": "Waiting on policy sign-off.", "lane_id": None}],
+                "findings_open": [
+                    {"id": 92, "description": "Open cross-lane finding.", "severity": "medium", "lane_id": None}
+                ],
+                "decisions_recent": [
+                    {"id": 93, "decision": "Use structured briefs for downstream lanes.", "lane_id": None}
+                ],
+                "tests_recent": [{"id": 94, "command": "pytest tests/test_cross_lane.py", "passed": 1, "lane_id": None}],
+            }
+        )
+
+    module.get_handoff_state = fake_get_handoff_state  # type: ignore[attr-defined]
     activity = {
         "lane": {"branch": "codex/p5-frontend", "objective": "Objective"},
         "messages": [
@@ -277,6 +283,17 @@ def test_build_prompt_includes_global_context_only_when_requested() -> None:
     assert "Escalated Task Context:" in expanded_prompt
     assert "Update the shared rollout checklist." in expanded_prompt
     assert "Waiting on policy sign-off." in expanded_prompt
+    assert calls == [
+        {
+            "task_ref": "phase-5-retention-export-and-audit-controls",
+            "sections": module.GLOBAL_CONTEXT_SECTIONS,
+            "top_n_blockers": module.MAX_GLOBAL_ITEMS,
+            "top_n_actions": module.MAX_GLOBAL_ITEMS,
+            "top_n_decisions": module.MAX_GLOBAL_ITEMS,
+            "top_n_tests": module.MAX_GLOBAL_ITEMS,
+            "top_n_findings": module.MAX_GLOBAL_ITEMS,
+        }
+    ]
 
 
 def test_build_prompt_reports_prompt_budget_for_optional_context_sections() -> None:

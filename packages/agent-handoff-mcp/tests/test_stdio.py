@@ -201,6 +201,86 @@ def test_stdio_next_actions_schema_exposes_discriminated_variants(tmp_path: Path
     assert "structured provenance override" in add_schema["properties"]["actor"]["description"]
 
 
+def test_stdio_tool_responses_return_native_dict_not_wrapped_string(tmp_path: Path) -> None:
+    """Regression test for AHMCP-7 double-serialization fix.
+
+    Tool handlers in core.py / decisions.py / handoff_state.py / review_findings.py
+    return JSON strings via _envelope() / _json_response() (so the orchestrator's
+    string-based protocol can still consume them). build_handoff_mcp() wraps
+    these handlers in a json.loads() shim so FastMCP receives dicts and the
+    MCP wire format carries native nested structures.
+
+    Two regressions have been seen here historically:
+
+    1. The wrapper conditional used `handler.__annotations__.get("return") is str`,
+       but `api.py` uses `from __future__ import annotations` (PEP 563) which
+       stores all annotations as strings. So the conditional `'str' is str`
+       was always False, and the wrapper was never applied. Tools shipped with
+       the original `-> str` return annotation, FastMCP marked them with
+       `x-fastmcp-wrap-result: True` in function_parsing.py:213-218, and tool.py's
+       convert_result() returned `structured_content={"result": <stringified JSON>}`.
+
+    2. Even when the wrapper was applied, it had a `*args/**kwargs` signature.
+       FastMCP rejects those in function_parsing.py:100-107. The wrapper now
+       sets `__signature__` explicitly to the original's parameters with
+       `return_annotation=dict`, satisfying all FastMCP checks.
+
+    A correct response has the native envelope shape:
+        {"ok": true, "data": {...}, "scope": {...}, "tool": "..."}
+
+    A double-serialized response is:
+        structured_content = {"result": "{\\"ok\\": true, \\"data\\": ...}"}
+
+    The MCP client deserializes structured_content into the call result; this
+    test asserts the structured shape directly, so a regression that wraps the
+    payload in {"result": "..."} fails immediately.
+    """
+    import json as _json
+
+    repo_root = Path(__file__).resolve().parents[3]
+    launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
+
+    async def _run() -> tuple[dict[str, Any], dict[str, Any] | None]:
+        transport = PythonStdioTransport(
+            script_path=launcher,
+            args=["--workspace-root", str(repo_root), "serve-stdio"],
+            cwd=str(repo_root),
+            log_file=tmp_path / "stdio-dict-response.log",
+        )
+        async with Client(transport) as client:
+            result = await client.call_tool("get_handoff_state", {"view": "dashboard"})
+            text_payload = _json.loads(result.content[0].text)
+            structured = result.structured_content
+            return text_payload, structured
+
+    text_payload, structured = asyncio.run(_run())
+
+    # Primary assertion: structured_content must be the native envelope, not
+    # `{"result": "<escaped JSON string>"}`. This is the path FastMCP wraps
+    # when it sees a non-object return type.
+    assert structured is not None, "Expected structured_content from FastMCP, got None"
+    assert not (
+        list(structured.keys()) == ["result"] and isinstance(structured["result"], str)
+    ), (
+        "Double-serialization regression: structured_content is "
+        f"{{'result': '<escaped JSON>'}} instead of a native dict. "
+        f"Got: {structured!r}"
+    )
+    assert "ok" in structured, (
+        f"structured_content missing 'ok' key — expected native envelope, got: {structured!r}"
+    )
+    assert "tool" in structured, (
+        f"structured_content missing 'tool' key — expected native envelope, got: {structured!r}"
+    )
+    assert structured["tool"] == "get_handoff_state"
+    assert structured["ok"] is True
+    assert "data" in structured
+
+    # Secondary assertion: text content payload should also be the native envelope.
+    assert "ok" in text_payload
+    assert text_payload["tool"] == "get_handoff_state"
+
+
 def test_stdio_record_event_schema_exposes_discriminated_variants(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[3]
     launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()

@@ -224,6 +224,119 @@ PHP;
         $this->assertSame('env-api-key', $data['key'] ?? null);
     }
 
+    /**
+     * Regression test for finding M-1 (decision #1431).
+     *
+     * The existing testPluginBootstrapDefinesRecognitionConstantsFromEnvironment
+     * test only seeds the process env via putenv(), which is the Pass 1 (getenv())
+     * path inside acx_define_env_constant(). It does NOT exercise the Pass 2
+     * fallback that reads Dotenv-loaded values from $_ENV / $_SERVER.
+     *
+     * Dotenv::createImmutable writes to $_ENV/$_SERVER but does NOT call putenv(),
+     * so getenv() returns false for values loaded from .env / .env.local. This
+     * test pre-seeds $_ENV in the child process (mimicking the post-Dotenv state)
+     * with no putenv() calls. After alt-context.php loads:
+     *   - Pass 1: getenv(ACX_RECOGNITION_URL) -> false; getenv(ACX_RECOGNITION_BASE_URL) -> false
+     *   - Pass 2: $_ENV[ACX_RECOGNITION_URL] -> the pre-seeded value -> constant defined
+     *
+     * Dotenv createImmutable mode does NOT overwrite existing $_ENV entries, so
+     * the pre-seeded values survive the safeLoad() call inside alt-context.php.
+     */
+    public function testPluginBootstrapDefinesRecognitionConstantsFromDotenvBackedEnvSuperglobal(): void
+    {
+        $script = <<<'PHP'
+$_ENV['ACX_RECOGNITION_URL'] = 'https://dotenv-env.example';
+$_ENV['ACX_RECOGNITION_API_KEY'] = 'dotenv-env-key';
+define('ABSPATH', getcwd() . '/');
+if (!function_exists('get_file_data')) {
+    function get_file_data($file, $default_headers)
+    {
+        return ['Version' => '0.0.2'];
+    }
+}
+if (!function_exists('plugin_dir_path')) {
+    function plugin_dir_path($file)
+    {
+        return dirname($file) . '/';
+    }
+}
+if (!function_exists('plugin_dir_url')) {
+    function plugin_dir_url($file)
+    {
+        return 'https://example.test/wp-content/plugins/alt-context/';
+    }
+}
+if (!function_exists('plugin_basename')) {
+    function plugin_basename($file)
+    {
+        return 'alt-context/alt-context.php';
+    }
+}
+if (!function_exists('esc_html__')) {
+    function esc_html__($value, $domain = null)
+    {
+        return $value;
+    }
+}
+if (!function_exists('wp_die')) {
+    function wp_die($message)
+    {
+        throw new RuntimeException((string) $message);
+    }
+}
+if (!function_exists('add_action')) {
+    function add_action($hook, $callback, $priority = 10, $accepted_args = 1)
+    {
+        return true;
+    }
+}
+if (!function_exists('register_activation_hook')) {
+    function register_activation_hook($file, $callback)
+    {
+        return true;
+    }
+}
+if (!function_exists('register_deactivation_hook')) {
+    function register_deactivation_hook($file, $callback)
+    {
+        return true;
+    }
+}
+if (!function_exists('register_uninstall_hook')) {
+    function register_uninstall_hook($file, $callback)
+    {
+        return true;
+    }
+}
+require 'alt-context.php';
+echo json_encode([
+    'url' => defined('ACX_RECOGNITION_URL') ? ACX_RECOGNITION_URL : null,
+    'key' => defined('ACX_RECOGNITION_API_KEY') ? ACX_RECOGNITION_API_KEY : null,
+    'getenv_url' => getenv('ACX_RECOGNITION_URL'),
+    'getenv_key' => getenv('ACX_RECOGNITION_API_KEY'),
+]);
+PHP;
+
+        $command = sprintf(
+            'cd %s && %s -r %s',
+            escapeshellarg(__DIR__ . '/../../'),
+            escapeshellarg((string) PHP_BINARY),
+            escapeshellarg($script)
+        );
+
+        $output = shell_exec($command);
+        $data = json_decode(trim((string) $output), true);
+
+        $this->assertIsArray($data);
+        // Pre-condition: getenv() must NOT see the values; if it did, the test
+        // would be exercising the same Pass 1 path as the existing test.
+        $this->assertFalse($data['getenv_url'], 'Pass 1 path leaked: getenv() saw the URL value');
+        $this->assertFalse($data['getenv_key'], 'Pass 1 path leaked: getenv() saw the KEY value');
+        // Actual assertion: constants must come from the $_ENV second-pass path.
+        $this->assertSame('https://dotenv-env.example', $data['url'] ?? null);
+        $this->assertSame('dotenv-env-key', $data['key'] ?? null);
+    }
+
     public function testAnalyzeRequestUsesDeterministicUuidTenantId(): void
     {
         $GLOBALS['__ac_attachment_urls'][123] = 'http://example.test/media/123.jpg';

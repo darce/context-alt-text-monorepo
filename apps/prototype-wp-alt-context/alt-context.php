@@ -94,17 +94,45 @@ function acx_define_env_constant(string $constantName, array $envNames, ?callabl
         return;
     }
 
+    // Two-pass resolution to handle the split between PHP's two env stores:
+    //
+    // - getenv() reflects the OS process environment (putenv(), Apache SetEnv,
+    //   systemd Environment=, parent shell exports). Dotenv createImmutable
+    //   does NOT call putenv(), so getenv() will not see values loaded from
+    //   .env / .env.local files.
+    // - $_ENV / $_SERVER are populated by Dotenv createImmutable and (when
+    //   variables_order includes E/S) by PHP at startup from the OS env.
+    //
+    // Precedence: real process env wins over file-loaded values, so an
+    // operator override via SetEnv or putenv beats whatever is in .env.local.
+    // Within each store we honor the alias order (canonical name first, then
+    // legacy aliases) so that fallbacks still work when no canonical value
+    // is set.
+
+    // Pass 1: real process env via getenv() (putenv, Apache, systemd, shell exports).
     foreach ($envNames as $envName) {
         $value = getenv($envName);
         if (false === $value) {
             continue;
         }
-
         $normalized = trim((string) $value);
         if ('' === $normalized) {
             continue;
         }
+        define($constantName, null !== $normalizer ? $normalizer($normalized) : $normalized);
+        return;
+    }
 
+    // Pass 2: Dotenv-loaded values in $_ENV / $_SERVER (.env, .env.local).
+    foreach ($envNames as $envName) {
+        $value = $_ENV[$envName] ?? $_SERVER[$envName] ?? null;
+        if (null === $value) {
+            continue;
+        }
+        $normalized = trim((string) $value);
+        if ('' === $normalized) {
+            continue;
+        }
         define($constantName, null !== $normalizer ? $normalizer($normalized) : $normalized);
         return;
     }

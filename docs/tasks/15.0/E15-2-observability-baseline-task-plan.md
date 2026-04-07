@@ -90,9 +90,9 @@ An operator at `https://api.altcontext.com/ready` sees a JSON response showing P
 ## Proposed Solution
 
 1. Replace `ContextualFormatter` with a JSON formatter (via `python-json-logger` or a minimal custom implementation). Keep `WatchedFileHandler` for rotation compatibility.
-2. Add correlation ID middleware that extracts `X-Request-ID` from the request header (or generates one), stores it in `contextvars`, and injects it into every log record and response header.
-3. Enhance health probes: `/health` checks DB + model cache; `/ready` adds worker liveness. Both unauthenticated.
-4. Add `prometheus-client` for request metrics: histogram for latency, counter for requests by status class, gauge for active connections. Expose via `/metrics`.
+2. Add correlation ID middleware that extracts `X-Request-ID` from the request header (or generates one), stores it in `contextvars`, and injects it into every log record and response header. **Backend-only scope:** the WP plugin proxy does not currently emit `X-Request-ID`. This task generates and echoes correlation IDs but does not depend on upstream WP behavior. End-to-end correlation through WP→backend is a follow-on plugin task once a WP-side request-ID emit lands.
+3. Enhance health probes: `/health` checks DB + model cache. `/ready` checks DB + model cache only -- **worker liveness is excluded** because the API and worker run as separate Docker Compose containers and the API container cannot inspect the worker process table without a defined cross-service heartbeat contract. Worker heartbeat is its own future task. Both endpoints unauthenticated. Both endpoints live at the **root level** in `api/main.py` (not under `/recognition`) so monitoring systems hit a stable contract regardless of subsystem routing.
+4. Add `prometheus-client` for request metrics: histogram for latency (buckets), counter for requests by status class, gauge for active connections. Expose via `/metrics`. **Percentiles (P50/P95/P99) are computed downstream by PromQL** (`histogram_quantile(0.95, ...)`); the metrics endpoint exposes raw histogram buckets, not pre-computed percentiles.
 
 ## Files and Surfaces to Change
 
@@ -101,10 +101,10 @@ An operator at `https://api.altcontext.com/ready` sees a JSON response showing P
 | Log config | `api/logging_config.py` | Replace `ContextualFormatter` with JSON formatter |
 | Correlation middleware | `recognition/interface_adapters/http/middleware/correlation.py` | New: extract/generate request ID, store in contextvars |
 | App wiring | `api/main.py` | Register correlation + metrics middleware |
-| Health router | `recognition/interface_adapters/http/routers/health.py` | Enhance checks, add `/ready` |
-| Subsystem health | `recognition/application/health.py` | Real dependency probes (DB, model cache) |
+| Root health/ready endpoints | `api/main.py` | Enhance existing root `/health` with dependency checks; add root `/ready` (both owned by `api/main.py`, not the recognition router) |
+| Subsystem health | `recognition/application/health.py` | Real dependency probes (DB, model cache) — invoked by root endpoints |
 | Metrics middleware | `recognition/interface_adapters/http/middleware/metrics.py` | New: request timing + counters |
-| Metrics endpoint | `api/main.py` or health router | `/metrics` Prometheus exposition |
+| Metrics endpoint | `api/main.py` | `/metrics` Prometheus ASGI app mount at root |
 | Dependencies | `pyproject.toml` | Add `python-json-logger`, `prometheus-client` |
 | Env template | `.env.prod.example` | Document any new config vars |
 | Exception handlers | `recognition/interface_adapters/http/exception_handlers.py` | Use contextvars correlation ID instead of per-handler generation |
@@ -129,68 +129,83 @@ An operator at `https://api.altcontext.com/ready` sees a JSON response showing P
   - `PYENV_VERSION=description-service pyenv exec python -m pytest recognition/tests/api/test_health_probes.py -v`
   - `PYENV_VERSION=description-service pyenv exec python -m pytest recognition/tests/api/test_metrics.py -v`
 - Runtime-parity:
-  - `curl https://api.altcontext.com/ready` returns JSON with dependency checks
-  - `curl https://api.altcontext.com/metrics` returns Prometheus text format
+  - `curl https://api.altcontext.com/health` returns enriched JSON with dependency checks
+  - `curl https://api.altcontext.com/ready` returns JSON with DB + model cache checks (worker liveness intentionally excluded)
+  - `curl https://api.altcontext.com/metrics` returns Prometheus text format with histogram buckets
+  - `histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))` produces a P95 latency value when run against the metrics endpoint
   - Log files contain valid JSON lines with `correlation_id` field
 - Manual verification:
   - `jq . < logs/recognition.log` parses every line without error
-  - `X-Request-ID` header in response matches correlation_id in corresponding log lines
+  - Backend-generated correlation IDs appear in both response headers (`X-Request-ID`) and log output for the same request
+  - Note: end-to-end WP→backend correlation requires a separate plugin task (out of scope for E15-2)
 
 ## Slice Delivery
 
-### Slice 1: Structured JSON Logging + Correlation ID Middleware
+### Slice 1: Structured JSON Logging + Backend-Generated Correlation IDs
 
-**Goal**: Every log record is a JSON object with a correlation ID that traces from request to response.
+**Goal**: Every log record is a JSON object with a backend-generated correlation ID. Each request gets a fresh ID (or echoes an upstream `X-Request-ID` header if one is supplied), the ID flows through every log record for the request lifecycle, and the same ID appears in the response header.
+
+**Scope boundary:** This slice generates and echoes correlation IDs at the backend boundary. The WP plugin proxy does not currently emit `X-Request-ID`, so end-to-end WP-to-backend continuity is **not** a success criterion of this task. A follow-on plugin task can add `X-Request-ID` emission to `class-abstract-recognition-proxy-controller.php` once the backend contract is in place.
 
 Changes:
 
 - Add `python-json-logger` to `pyproject.toml` dependencies.
 - Replace `ContextualFormatter` in `api/logging_config.py` with `pythonjsonlogger.json.JsonFormatter`. Preserve `WatchedFileHandler` and `RecognitionFilter`.
-- Add `recognition/interface_adapters/http/middleware/correlation.py`: middleware that extracts `X-Request-ID` or generates `req-<uuid7>`, stores in `contextvars.ContextVar`, adds to response headers.
+- Add `recognition/interface_adapters/http/middleware/correlation.py`: middleware that reads incoming `X-Request-ID` if present, otherwise generates `req-<uuid7>`, stores it in a `contextvars.ContextVar`, and adds it to the response headers.
 - Add a logging filter that injects the correlation ID from contextvars into every log record.
 - Update `exception_handlers.py` to read correlation ID from contextvars instead of generating per-handler.
 - Register middleware in `api/main.py`.
-- Add `recognition/tests/api/test_correlation.py`: correlation ID in response header, correlation ID in log output, generated when header absent, propagated when header present.
+- Add `recognition/tests/api/test_correlation.py`: ID in response header, ID in log output, generated when no header, echoed when header present, ID stable across multiple log lines for one request.
 
 Proof:
 
 - `pytest recognition/tests/api/test_correlation.py` passes
 - Log output is valid JSON with `correlation_id` field
+- Same ID appears in both the response header and all log lines for a single request
 
-### Slice 2: Enhanced Health and Readiness Probes
+### Slice 2: Root-Level Health and Readiness Probes (No Worker Liveness)
 
-**Goal**: `/health` and `/ready` check real dependencies; monitoring systems get actionable status.
+**Goal**: Root `/health` and `/ready` probes return structured dependency status. Both endpoints live in `api/main.py` and check what the API container can actually observe.
+
+**Scope boundary:** Worker liveness is **excluded** from `/ready` in this task. The API and scan worker run as separate Docker Compose services; the API container cannot inspect the worker process table, and no cross-service heartbeat contract exists yet. Adding a heartbeat (DB-backed or worker health endpoint) is its own follow-on task. This slice ships honest probes that only assert what the API process can verify.
 
 Changes:
 
-- Enhance `recognition/application/health.py` to check: DB connectivity (query), model cache directory exists and contains expected model files, pool stats within bounds.
-- Add `/ready` endpoint to `recognition/interface_adapters/http/routers/health.py` that includes all `/health` checks plus worker process liveness (check for running scan worker PID or recent heartbeat).
-- Both endpoints return structured JSON: `{status: "healthy"|"degraded"|"unhealthy", checks: [{name, status, detail}], timestamp}`.
+- Enhance `recognition/application/health.py` to check: DB connectivity (live query), model cache directory exists and contains expected InsightFace files, pool stats within bounds.
+- Update root `/health` in `api/main.py` to call the enhanced subsystem checks and return structured JSON: `{status: "healthy"|"degraded"|"unhealthy", checks: [{name, status, detail}], timestamp}`.
+- Add root `/ready` in `api/main.py` returning the same shape, with the same DB + model cache checks (no worker liveness).
 - Neither endpoint requires authentication.
-- Add `recognition/tests/api/test_health_probes.py`: healthy when all deps up, degraded when model cache missing, unhealthy when DB down, `/ready` reflects worker status.
+- Add `recognition/tests/api/test_health_probes.py`: healthy when all deps up, degraded when model cache missing, unhealthy when DB down. Worker-liveness assertions are intentionally absent.
 
 Proof:
 
 - `pytest recognition/tests/api/test_health_probes.py` passes
-- `/ready` returns dependency check details
+- `curl https://api.altcontext.com/health` and `/ready` return structured JSON with DB + model cache check details
+- `/ready` does NOT claim worker liveness; the response schema explicitly omits a worker check
 
-### Slice 3: Request Metrics and Operational Runbook
+### Slice 3: Request Metrics (Histogram Buckets) and Operational Runbook
 
-**Goal**: Operators can monitor request latency and error rates; a runbook documents the diagnostics flow.
+**Goal**: Operators can monitor request latency distribution and error rates. The metrics endpoint exposes Prometheus histogram buckets; percentiles are derived downstream via PromQL.
+
+**Why histogram buckets, not pre-computed percentiles:** Prometheus histograms emit `_bucket`, `_count`, and `_sum` series. P50/P95/P99 are computed by PromQL using `histogram_quantile()` against the buckets, not exposed directly by the metrics endpoint. The previous version of this plan claimed `/metrics` would expose percentiles directly, which is not how Prometheus histograms work. Switching to summary metrics would expose pre-computed quantiles but loses aggregability across instances and is the wrong tradeoff for this baseline.
 
 Changes:
 
 - Add `prometheus-client` to `pyproject.toml` dependencies.
-- Add `recognition/interface_adapters/http/middleware/metrics.py`: middleware that records request latency histogram (by method, path, status), request counter (by method, status class), active request gauge.
+- Add `recognition/interface_adapters/http/middleware/metrics.py`: middleware that records:
+  - `http_request_duration_seconds` Histogram (labels: `method`, `path`, `status`)
+  - `http_requests_total` Counter (labels: `method`, `status_class`)
+  - `http_requests_in_flight` Gauge
 - Expose `/metrics` endpoint via `prometheus_client.make_asgi_app()` mounted in `api/main.py`.
 - Register metrics middleware in `api/main.py`.
-- Add `recognition/tests/api/test_metrics.py`: metrics endpoint returns Prometheus text, latency histogram populated after requests, counter increments.
-- Write `docs/operations/observability-runbook.md`: how to check health, read structured logs, query metrics, trace a request by correlation ID, diagnose common failures.
+- Add `recognition/tests/api/test_metrics.py`: metrics endpoint returns Prometheus text, histogram bucket series populated after requests, counter increments by status class, in-flight gauge tracks concurrent requests.
+- Write `docs/operations/observability-runbook.md`: how to check health/ready, read structured logs, query metrics with PromQL examples (including the `histogram_quantile` formula for P50/P95/P99), trace a request by correlation ID, diagnose common failures.
 
 Proof:
 
 - `pytest recognition/tests/api/test_metrics.py` passes
 - Full test suite passes: `make check` from `apps/prototype-description-service/`
+- Runbook documents the PromQL formula for deriving P50/P95/P99 from the exposed histogram buckets
 - Runbook is sufficient for a new operator to diagnose a failed sync
 
 ---
@@ -215,10 +230,11 @@ Proof:
 ### Checklist for Slice 2: Health and Readiness Probes
 
 - [ ] Failing tests written first (`test_health_probes.py`)
-- [ ] `/health` checks DB + model cache
-- [ ] `/ready` checks DB + model cache + worker liveness
-- [ ] Both endpoints unauthenticated
-- [ ] Structured response schema documented
+- [ ] Root `/health` (in `api/main.py`) enriched with DB + model cache checks
+- [ ] Root `/ready` (in `api/main.py`) checks DB + model cache only -- no worker liveness
+- [ ] Both endpoints unauthenticated and at root level (not under `/recognition`)
+- [ ] Structured response schema documented in the runbook
+- [ ] Worker-liveness deferral noted in plan and runbook
 - [ ] All tests pass
 
 ### Checklist for Slice 3: Request Metrics and Runbook
@@ -239,7 +255,8 @@ Proof:
 ## Success Criteria
 
 - [ ] `jq . < logs/recognition.log` parses every line
-- [ ] `X-Request-ID` in response matches `correlation_id` in logs
-- [ ] `/ready` returns dependency check details including model cache and DB
-- [ ] `/metrics` exposes request latency P50/P95/P99 and error counts
+- [ ] Backend-generated correlation ID appears in both response header (`X-Request-ID`) and `correlation_id` field of every log line for the same request
+- [ ] Root `/health` and `/ready` (in `api/main.py`) return dependency check details for DB and model cache; worker liveness is intentionally excluded
+- [ ] `/metrics` exposes Prometheus histogram buckets for request duration and counters for requests by status class
+- [ ] Operator runbook documents the PromQL `histogram_quantile()` formula for deriving P50/P95/P99 from the histogram buckets
 - [ ] Operator can diagnose a failed sync from endpoints and logs alone

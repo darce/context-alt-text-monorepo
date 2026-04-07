@@ -85,27 +85,29 @@ The deployed API at `api.altcontext.com` enforces per-key rate limits (429 with 
 
 ## Proposed Solution
 
-1. Add a lightweight in-memory rate limiter middleware using a sliding-window counter keyed by API key hash. No external dependency needed; FastAPI middleware + `asyncio.Lock` + dict is sufficient for single-process MVP.
+1. **Rate limiting via dependency, not middleware.** The current call flow resolves the API key inside the `require_auth` FastAPI dependency (after middleware). Middleware cannot see `AuthContext.api_key_id`/`rate_limit_tier` without duplicating the auth/DB lookup. The correct seam is a `Depends(require_auth) → Depends(enforce_rate_limit)` chain that runs after authentication has resolved the key identity. Implementation: a `RateLimiter` dependency that reads `AuthContext` from the prior dependency, applies a sliding-window counter keyed by `api_key_id`, and raises `HTTPException(429, ...)` with `Retry-After` headers via the existing exception-handler pattern. Storage: in-memory dict with `asyncio.Lock` for single-process MVP.
 2. Add `CORSMiddleware` with `RECOGNITION_ALLOWED_ORIGINS` env var. Default to empty (deny all browser CORS) unless explicitly configured.
-3. Add `expires_at` and `revoked_at` columns to `ApiKey`. Modify `require_auth` to reject expired/revoked keys. Add admin endpoints for key creation and revocation.
+3. Add `expires_at` and `revoked_at` columns to `ApiKey`. Modify `require_auth` and `api_key_repository` to reject expired/revoked keys. Provision new keys via a documented operator CLI (`scripts/manage_api_keys.py`) and an out-of-band ceremony, **not** an HTTP admin router (the current `is_admin` flag is dev-key-only and cannot gate a production admin surface without first defining a real admin authority -- out of scope for this task).
 
 ## Files and Surfaces to Change
 
 | Surface | File | Change |
 |---------|------|--------|
-| Rate limiting middleware | `recognition/interface_adapters/http/middleware/rate_limit.py` | New: sliding-window rate limiter |
-| Auth dependency | `recognition/interface_adapters/http/deps/auth.py` | Add expiry/revocation checks |
-| Security config | `recognition/config/security.py` | Add `allowed_origins` field |
-| App wiring | `api/main.py` | Register CORSMiddleware + rate limit middleware |
+| Rate limit dependency | `recognition/interface_adapters/http/deps/rate_limit.py` | New: `enforce_rate_limit` dependency that consumes `AuthContext` from `require_auth` |
+| Auth dependency | `recognition/interface_adapters/http/deps/auth.py` | Add expiry/revocation checks; wire `Depends(require_auth)` upstream of rate limit |
+| Router wiring | `recognition/interface_adapters/http/routers/*.py` | Replace `Depends(require_auth)` with the chained `Depends(require_auth) + Depends(enforce_rate_limit)` on protected routers |
+| Security config | `recognition/config/security.py` | Add `allowed_origins` field; reuse existing `rate_limit_requests_per_minute` / `rate_limit_burst` |
+| App wiring | `api/main.py` | Register `CORSMiddleware` only (rate limit is dependency-based, not middleware) |
 | DB model | `db/models/tenant.py` | Add `expires_at`, `revoked_at` to ApiKey |
-| Schema migration | `db/migrations/versions/` | New migration for ApiKey columns |
-| API key repository | `recognition/infrastructure/repositories/api_key_repository.py` | Filter expired/revoked keys |
-| Admin router | `recognition/interface_adapters/http/routers/admin.py` | New: key creation/revocation endpoints |
-| Security contract | `docs/agentic/contracts/security.md` | Add rate limiting, CORS, rotation docs |
+| Schema | `db/migrations/versions/001_identity_schema.py` | Edit baseline (greenfield policy: no follow-on migration) |
+| API key repository | `recognition/infrastructure/repositories/api_key_repository.py` | Filter expired/revoked keys in lookup |
+| Operator CLI | `apps/prototype-description-service/scripts/manage_api_keys.py` | New: `create`, `list`, `revoke` subcommands operating directly against the DB |
+| Security contract | `docs/agentic/contracts/security.md` | Add rate limiting, CORS, rotation, and key-provisioning ceremony docs |
 | Env template | `.env.prod.example` | Add `RECOGNITION_ALLOWED_ORIGINS` |
 | Tests | `recognition/tests/api/test_rate_limiting.py` | New |
 | Tests | `recognition/tests/api/test_cors.py` | New |
-| Tests | `recognition/tests/api/test_key_rotation.py` | New |
+| Tests | `recognition/tests/api/test_key_rotation.py` | New (covers lifecycle + repository behavior, not HTTP admin) |
+| Tests | `recognition/tests/scripts/test_manage_api_keys.py` | New (CLI behavior) |
 
 ## Related Files
 
@@ -130,22 +132,25 @@ The deployed API at `api.altcontext.com` enforces per-key rate limits (429 with 
 
 ## Slice Delivery
 
-### Slice 1: Rate Limiting Middleware
+### Slice 1: Rate Limiting via Auth-Chained Dependency
 
-**Goal**: Enforce per-key rate limits with deterministic 429 responses.
+**Goal**: Enforce per-key rate limits with deterministic 429 responses, using a dependency seam that runs **after** `require_auth` resolves the key identity.
+
+**Why not middleware:** FastAPI middleware runs before route dependencies, so it cannot see `AuthContext.api_key_id` without duplicating the DB lookup that already happens in `require_auth`. The correct seam is a `Depends(enforce_rate_limit)` that consumes the resolved `AuthContext` from a chained `Depends(require_auth)`.
 
 Changes:
 
-- Add `recognition/interface_adapters/http/middleware/rate_limit.py`: sliding-window counter keyed by `api_key_hash`, configurable via `SecuritySettings`.
-- Wire middleware in `api/main.py`.
-- Return 429 with `Retry-After` header and `X-RateLimit-Remaining` / `X-RateLimit-Limit` headers on all responses.
-- Add `recognition/tests/api/test_rate_limiting.py` with tests for: under limit (200), at limit (429), burst handling, per-key isolation, `Retry-After` header presence.
+- Add `recognition/interface_adapters/http/deps/rate_limit.py` with `enforce_rate_limit(auth: AuthContext = Depends(require_auth))` -- sliding-window counter keyed by `auth.api_key_id`, applying `auth.rate_limit_tier` override if set, falling back to global `SecuritySettings.rate_limit_requests_per_minute`.
+- Raise `HTTPException(status_code=429, ...)` with `Retry-After` and `X-RateLimit-*` headers on breach. Use the existing exception handler pattern in `exception_handlers.py`.
+- Update protected routers (`analyze.py`, `clusters.py`, `retention.py`, etc.) to depend on `enforce_rate_limit` in addition to `require_auth`. The chained dependency naturally pulls the auth context.
+- Add `recognition/tests/api/test_rate_limiting.py` with tests for: under limit (200), at limit (429), burst handling, per-key isolation (different keys do not share counters), `Retry-After` header presence, tier override behavior.
 - Update `docs/agentic/contracts/security.md` rate limiting section.
 
 Proof:
 
 - `pytest recognition/tests/api/test_rate_limiting.py` passes
 - Rate limit headers present in integration test responses
+- Anonymous/disabled-auth requests bypass the limiter (auth disabled = no key identity = no per-key counter)
 
 ### Slice 2: CORS Origin Allowlist
 
@@ -164,27 +169,35 @@ Proof:
 - `pytest recognition/tests/api/test_cors.py` passes
 - Contract documents CORS behavior
 
-### Slice 3: Key Rotation and Lifecycle
+### Slice 3: Key Lifecycle, Rotation, and Operator CLI Provisioning
 
-**Goal**: Support no-downtime API key rotation with explicit revocation.
+**Goal**: Support no-downtime key rotation, explicit revocation, expiry, and an operator-side CLI for provisioning beta-tester keys -- without introducing an HTTP admin surface gated by an authority that does not yet exist.
+
+**Why not an HTTP admin router:** The current `is_admin` flag in `AuthContext` is set only for `RECOGNITION_ALLOWED_API_KEYS` dev keys -- DB-backed production keys always return `is_admin=False`. The security contract explicitly marks dev keys as local-only debugging keys. Building HTTP admin endpoints behind `is_admin` would either be unreachable in production (no admin keys exist) or would require shipping dev-key semantics into production, which contradicts the security baseline this task is meant to establish. A real production admin authority is a separate design concern out of scope for E15-1.
+
+**Operator workflow for this task:** beta-tester key provisioning happens via a CLI run by the operator with direct DB access. The CLI is a Python module under `scripts/manage_api_keys.py` that uses the existing repository layer. Once a future admin-authority design is settled, an HTTP admin surface can be added in a follow-up task.
 
 Changes:
 
 - Add `expires_at: datetime | None` and `revoked_at: datetime | None` to `ApiKey` model in `db/models/tenant.py`.
-- Update schema migration (`001_identity_schema.py` per greenfield policy) with the new columns.
-- Modify `api_key_repository.py` to filter expired/revoked keys in lookup.
-- Modify `auth.py` `require_auth` to reject expired/revoked keys with 401 and descriptive error.
-- Add `recognition/interface_adapters/http/routers/admin.py` with:
-  - `POST /admin/api-keys` (create key, returns raw key once, stores hash)
-  - `DELETE /admin/api-keys/{key_id}` (soft-revoke: sets `revoked_at`)
-- Gate admin endpoints behind `require_auth` + `is_admin` check.
-- Add `recognition/tests/api/test_key_rotation.py` with tests for: create key, use new key, revoke old key, expired key rejected, revoked key rejected, two keys valid simultaneously.
-- Update security contract rotation section.
+- Edit baseline schema `db/migrations/versions/001_identity_schema.py` with the new columns (greenfield policy: no follow-on migration file).
+- Modify `api_key_repository.py` to filter `revoked_at IS NOT NULL` and `expires_at < now()` keys in lookup.
+- Modify `auth.py` `require_auth` to surface expired/revoked rejections with a descriptive 401 detail.
+- Add `apps/prototype-description-service/scripts/manage_api_keys.py` CLI with subcommands:
+  - `create --tenant <id> [--expires-in <days>]` — generates a raw key, stores hash, prints the raw key once to stdout
+  - `list --tenant <id>` — prints active keys (id, last4, created_at, last_used_at, expires_at)
+  - `revoke --key-id <id>` — soft-revoke (sets `revoked_at`)
+- Add `recognition/tests/api/test_key_rotation.py`: expired key rejected, revoked key rejected, two keys valid simultaneously.
+- Add `recognition/tests/scripts/test_manage_api_keys.py`: CLI create/list/revoke happy paths, error cases, masking of stored hashes.
+- Update security contract: add the rotation/lifecycle behavior, the CLI provisioning ceremony, and an explicit note that an HTTP admin surface is deferred until a production admin authority is defined.
+- Document beta-tester onboarding flow in the security contract: operator runs `manage_api_keys.py create` for the tester's tenant, gives the raw key to the tester via a secure channel once, tester configures it in the plugin Settings page (which already accepts the key as a WP option).
 
 Proof:
 
 - `pytest recognition/tests/api/test_key_rotation.py` passes
+- `pytest recognition/tests/scripts/test_manage_api_keys.py` passes
 - Full test suite passes: `make check` from `apps/prototype-description-service/`
+- Security contract documents CLI ceremony and explicit deferral of HTTP admin surface
 
 ---
 
@@ -196,12 +209,13 @@ Proof:
 - [ ] Confirmed no external dependency context required via `ctx7`
 - [ ] Branch created: `feature/e15-1-security-baseline`
 
-### Checklist for Slice 1: Rate Limiting Middleware
+### Checklist for Slice 1: Rate Limiting via Auth-Chained Dependency
 
 - [ ] Failing tests written first (`test_rate_limiting.py`)
-- [ ] Middleware implemented (`middleware/rate_limit.py`)
-- [ ] Middleware wired in `api/main.py`
-- [ ] Rate limit headers in responses
+- [ ] `enforce_rate_limit` dependency implemented in `deps/rate_limit.py` (consumes `AuthContext` from chained `Depends(require_auth)`)
+- [ ] Protected routers updated to depend on `enforce_rate_limit`
+- [ ] Rate limit headers in responses (Retry-After, X-RateLimit-*)
+- [ ] Per-key counter isolation verified in tests
 - [ ] Security contract updated
 - [ ] All tests pass
 

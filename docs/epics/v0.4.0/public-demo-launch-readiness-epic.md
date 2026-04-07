@@ -12,12 +12,12 @@ Bring the deployed recognition service from "running on the server" to "publicly
 
 The backend is deployed and serving HTTPS at `api.altcontext.com` (E14-1 complete, all 6 slices verified), but four gaps prevent public exposure as a demo or MVP:
 
-1. **No security hardening.** API key validation, origin allowlist, and rate limiting are absent. The service is internet-reachable but not internet-safe.
+1. **Incomplete security hardening.** API key validation and tenant isolation already exist (`require_auth` in `apps/prototype-description-service/recognition/interface_adapters/http/deps/auth.py` enforces hashed-key lookup, tenant header matching, and write-access gating). What is missing: browser origin allowlist (CORS), per-key rate limiting, and a key lifecycle/rotation surface. The service is internet-reachable and authenticated but not yet rate-limited or origin-restricted.
 2. **No WordPress demo frontend.** There is no public-facing WP instance running the ACX plugin. The backend has no audience without a frontend.
 3. **No observability.** Failures are invisible without SSH and manual log inspection. Operators cannot answer "is it up?" or "why did this fail?" without server access.
 4. **No automated E2E regression path.** Manual smoke checks are the only validation. No automation prevents regressions across deploys.
 
-The recognition service, Docker stack, Caddy TLS proxy, persistent model cache, and database are all operational. The gap is entirely about hardening, frontend provisioning, and automated verification.
+The recognition service, Docker stack, Caddy TLS proxy, persistent model cache, database, and core API authentication are all operational. The gap is the remaining hardening surface, frontend provisioning, and automated verification.
 
 ## UX Vision
 
@@ -62,7 +62,10 @@ The recognition service, Docker stack, Caddy TLS proxy, persistent model cache, 
 
 | Gap | Source | Status |
 |-----|--------|--------|
-| No API key validation / origin policy / rate limiting | Production Readiness Phase 4 | Not started |
+| API key validation + tenant isolation | Production Readiness Phase 4 | **Already implemented** (`require_auth`, `api_key_repository.py`) |
+| No browser origin allowlist (CORS) | Production Readiness Phase 4 | Not started -- **E15-1 Slice 2** |
+| No per-key rate limiting / 429 behavior | Production Readiness Phase 4 | Not started -- **E15-1 Slice 1** |
+| No key rotation/lifecycle surface | Production Readiness Phase 4 | Not started -- **E15-1 Slice 3** |
 | No `/health` or `/ready` endpoints with dependency checks | Production Readiness Phase 5 | Not started |
 | No structured JSON logs or correlation IDs | Production Readiness Phase 5 | Not started |
 | No request latency metrics | Production Readiness Phase 5 | Not started |
@@ -103,20 +106,23 @@ All E15 implementation work must happen on feature branches, never on `main`. `P
 
 **Goal**: Default deployment is safe for internet exposure under normal small-team ops.
 
-Deliverables:
+Deliverables (backend, owned by E15-1):
 
-- Strict API key validation with key fingerprint logging (no raw key logging).
-- Allowlist-based browser origin policy for admin-driven requests.
-- Request rate limiting with deterministic 429 behavior.
-- API key rotation support (at least two valid keys during cutover).
-- Plugin configuration UX for backend URL + API key validation feedback.
+- Allowlist-based browser origin policy (CORS) for admin-driven requests.
+- Per-API-key request rate limiting with deterministic 429 behavior.
+- API key lifecycle support: expiry, revocation, and at least two valid keys during cutover.
+- Key fingerprint logging for auth events (no raw key logging).
+
+Plugin-side deliverables (deferred to a separate plugin task, NOT owned by E15-1):
+
+- Plugin Settings page UX for backend URL + API key validation feedback. The plugin already has the SettingsController surface (`apps/prototype-wp-alt-context/src/api/class-settings-controller.php`) with a `/settings/test` connection probe; UX polish is a follow-on plugin task once the backend rotation/expiry contract lands.
 
 Exit criteria:
 
-- Invalid/missing keys are rejected with appropriate HTTP status.
+- Existing strict API key validation continues to pass tests (no regression on `require_auth`).
 - Non-allowlisted browser origins cannot call privileged endpoints.
-- Rate limiting triggers deterministic 429 under sustained load.
-- Rotation can be performed without downtime.
+- Rate limiting triggers deterministic 429 under sustained load against a single key.
+- Rotation can be performed without downtime: a tenant can have two valid keys, the old one can be revoked, and revoked/expired keys are rejected with 401.
 
 ---
 
@@ -265,41 +271,51 @@ Exit criteria:
 
 # Consolidated Checklist
 
-## Phase 1: Security Baseline -- NOT STARTED
+## Phase 1: Security Baseline -- NOT STARTED → [E15-1](../../tasks/15.0/E15-1-security-baseline-task-plan.md)
 
-- [ ] Enforce strict API key validation without sensitive logging
-- [ ] Add browser origin allowlist policy
-- [ ] Add rate limiting and deterministic 429 behavior
-- [ ] Implement no-downtime key rotation support
-- [ ] Add plugin-side backend URL/API key validation UX
+> Source: Production Readiness Phase 4 + E14 Phase 1
 
-## Phase 2: Observability Baseline -- NOT STARTED
+- [ ] Enforce strict API key validation without sensitive logging ← *Prod Readiness P4*
+- [ ] Add browser origin allowlist policy ← *Prod Readiness P4 + E14 P1*
+- [ ] Add rate limiting and deterministic 429 behavior ← *Prod Readiness P4*
+- [ ] Implement no-downtime key rotation + beta-tester key provisioning ← *Prod Readiness P4*
+- [ ] Add plugin-side backend URL/API key validation UX ← *Prod Readiness P4*
 
-- [ ] Emit structured JSON logs with correlation IDs
-- [ ] Add `/health` and `/ready` endpoints with dependency checks
-- [ ] Add latency and error metrics by endpoint class
-- [ ] Document operator diagnostics flow/runbook
+## Phase 2: Observability Baseline -- NOT STARTED → [E15-2](../../tasks/15.0/E15-2-observability-baseline-task-plan.md)
 
-## Phase 3: WordPress Demo Provisioning -- NOT STARTED
+> Source: Production Readiness Phase 5
 
-- [ ] Provision shared PHP hosting
-- [ ] Install WordPress + ACX plugin
-- [ ] Configure plugin with production backend URL and API key
-- [ ] Seed demo content (media library with sample faces)
-- [ ] Set up Cloudflare DNS + TLS for WP host
+- [ ] Emit structured JSON logs with correlation IDs ← *Prod Readiness P5*
+- [ ] Add `/health` and `/ready` endpoints with dependency checks ← *Prod Readiness P5*
+- [ ] Add latency and error metrics by endpoint class ← *Prod Readiness P5*
+- [ ] Document operator diagnostics flow/runbook ← *Prod Readiness P5*
 
-## Phase 4: End-to-End Verification -- IN PROGRESS
+## Phase 3: WordPress Demo Provisioning -- NOT STARTED → [E15-3](../../tasks/15.0/E15-3-wordpress-demo-provisioning-stub.md) (to be scoped)
 
-- [ ] Complete local reset bootstrap hardening (E15-4, in progress)
-- [ ] Verify OCI budget alerts ($1/$5/$10 thresholds)
-- [ ] Resolve dynamic IP SSH access drift (Tailscale)
-- [ ] Run end-to-end WP → backend → recognition → response smoke test
-- [ ] Document Hetzner CX22 fallback plan
+> Source: Production Readiness Phase 6 + E14 remaining
 
-## Phase 5: E2E Smoke Gate Automation -- NOT STARTED
+- [ ] Provision shared PHP hosting ← *Prod Readiness P6*
+- [ ] Install WordPress + ACX plugin ← *Prod Readiness P6 + E14*
+- [ ] Configure plugin with production backend URL and API key ← *Prod Readiness P6 + E14*
+- [ ] Seed demo content (media library with sample faces) ← *new for E15*
+- [ ] Set up Cloudflare DNS + TLS for WP host ← *Prod Readiness P6*
 
-- [ ] Scaffold Playwright E2E path for sovereign flows
-- [ ] Add WP-CLI seed/reset fixtures for deterministic setup
-- [ ] Add deterministic backend outage/recovery controls for tests
-- [ ] Automate required scenarios (offline persistence, local-read resilience, sync transitions)
-- [ ] Add CI smoke job with trace/video artifacts
+## Phase 4: End-to-End Verification -- IN PROGRESS → [E15-4](../../tasks/15.0/E15-4-local-reset-bootstrap-hardening-task-plan.md) + [E15-5](../../tasks/15.0/E15-5-remote-e2e-verification-stub.md) (to be scoped)
+
+> Source: Production Readiness Phase 6 exit criteria + [tech-debt/dynamic-ip-ssh-access.md](../../tasks/tech-debt/dynamic-ip-ssh-access.md)
+
+- [ ] Complete local reset bootstrap hardening (E15-4, in progress) ← *finding INVEST-reset-env-contract-mismatch*
+- [ ] Verify OCI budget alerts ($1/$5/$10 thresholds) ← *Prod Readiness P6 + E14*
+- [ ] Resolve dynamic IP SSH access drift (Tailscale) ← *[tech-debt/dynamic-ip-ssh-access.md](../../tasks/tech-debt/dynamic-ip-ssh-access.md)*
+- [ ] Run end-to-end WP → backend → recognition → response smoke test ← *Prod Readiness P6 + E14*
+- [ ] Document Hetzner CX22 fallback plan ← *Prod Readiness P6 + E14*
+
+## Phase 5: E2E Smoke Gate Automation -- NOT STARTED → [E15-6](../../tasks/15.0/E15-6-e2e-smoke-gate-automation-stub.md) (to be scoped)
+
+> Source: Production Readiness Phase 2
+
+- [ ] Scaffold Playwright E2E path for sovereign flows ← *Prod Readiness P2*
+- [ ] Add WP-CLI seed/reset fixtures for deterministic setup ← *Prod Readiness P2*
+- [ ] Add deterministic backend outage/recovery controls for tests ← *Prod Readiness P2*
+- [ ] Automate required scenarios (offline persistence, local-read resilience, sync transitions) ← *Prod Readiness P2*
+- [ ] Add CI smoke job with trace/video artifacts ← *Prod Readiness P2*

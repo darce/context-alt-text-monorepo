@@ -37,6 +37,8 @@ ISSUE_KIND_LABELS: dict[str, dict[str, str]] = {
     },
 }
 
+OPEN_HANDOFF_SECTIONS = "findings_open,blockers_open,actions_pending"
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Dispatch open handoff issues to the correct worker lanes.")
@@ -165,12 +167,10 @@ def _load_open_handoff_items(task_ref: str) -> dict[str, list[dict[str, Any]]]:
     payload = _json_load(
         get_handoff_state(
             task_ref=task_ref,
+            sections=OPEN_HANDOFF_SECTIONS,
             top_n_blockers=500,
             top_n_actions=500,
-            top_n_decisions=1,
-            top_n_tests=1,
             top_n_findings=500,
-            verbose=True,
         )
     )
     if payload.get("ok") is not True:

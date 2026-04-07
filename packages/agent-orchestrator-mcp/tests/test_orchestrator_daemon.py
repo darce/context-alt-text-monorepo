@@ -804,6 +804,7 @@ def test_resolve_task_ref_falls_back_to_active_task(tmp_path: Path) -> None:
         },
     ):
         assert mod._resolve_task_ref(tmp_path, None) == "active-task"
+    mock_ahm.get_handoff_state.assert_called_once_with(sections="identity")
 
 
 def test_resolve_task_ref_falls_back_to_sole_manifest(tmp_path: Path) -> None:

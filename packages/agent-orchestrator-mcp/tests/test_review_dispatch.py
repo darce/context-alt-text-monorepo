@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ORCHESTRATION_DIR = Path(__file__).resolve().parents[1] / "src" / "agent_orchestrator_mcp" / "orchestration"
@@ -101,3 +103,32 @@ def test_leaves_multi_lane_actions_unassigned() -> None:
     )
 
     assert lane_id is None
+
+
+def test_load_open_handoff_items_requests_only_dispatch_sections() -> None:
+    module = _load_review_dispatch_module()
+    mock_ahm = mock.MagicMock()
+    mock_ahm.get_handoff_state.return_value = json.dumps(
+        {
+            "ok": True,
+            "findings_open": [{"finding_id": "F-1"}],
+            "blockers_open": [{"id": 2}],
+            "actions_pending": [{"id": 3}],
+        }
+    )
+
+    with mock.patch.dict(__import__("sys").modules, {"agent_handoff_mcp": mock_ahm}):
+        issue_sets = module._load_open_handoff_items("task-ref")
+
+    assert issue_sets == {
+        "review_findings": [{"finding_id": "F-1"}],
+        "blockers": [{"id": 2}],
+        "actions": [{"id": 3}],
+    }
+    mock_ahm.get_handoff_state.assert_called_once_with(
+        task_ref="task-ref",
+        sections=module.OPEN_HANDOFF_SECTIONS,
+        top_n_blockers=500,
+        top_n_actions=500,
+        top_n_findings=500,
+    )

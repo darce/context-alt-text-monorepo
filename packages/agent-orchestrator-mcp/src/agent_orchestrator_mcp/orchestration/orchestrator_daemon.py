@@ -625,7 +625,7 @@ def _resolve_task_ref(orchestrator_root: Path, task_ref: str | None) -> str:
     try:
         from agent_handoff_mcp import get_handoff_state
 
-        state = _json_load(get_handoff_state())
+        state = _json_load(get_handoff_state(sections="identity"))
         if state.get("ok") and state.get("task_ref"):
             return state["task_ref"]
     except Exception:

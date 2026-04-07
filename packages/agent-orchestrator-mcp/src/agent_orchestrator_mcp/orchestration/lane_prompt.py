@@ -50,6 +50,7 @@ MAX_BRIEF_ITEMS = 6
 MAX_DECISION_ITEMS = 4
 MAX_TEST_ITEMS = 4
 MAX_GLOBAL_ITEMS = 6
+GLOBAL_CONTEXT_SECTIONS = "blockers_open,actions_pending,findings_open,decisions_recent,tests_recent"
 ANSI = {
     "reset": "\033[0m",
     "red": "\033[31m",
@@ -801,6 +802,7 @@ def _task_global_context(task_ref: str) -> dict[str, list[dict[str, Any]]]:
     payload = _json_load(
         get_handoff_state(
             task_ref=task_ref,
+            sections=GLOBAL_CONTEXT_SECTIONS,
             top_n_blockers=MAX_GLOBAL_ITEMS,
             top_n_actions=MAX_GLOBAL_ITEMS,
             top_n_decisions=MAX_GLOBAL_ITEMS,

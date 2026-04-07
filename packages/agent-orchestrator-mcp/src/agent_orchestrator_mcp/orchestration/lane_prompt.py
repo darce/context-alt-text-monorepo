@@ -39,6 +39,11 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from _env import extract_pyenv_version
 from backend_registry import get_backend_spec
+
+try:
+    from .handoff_read_shapes import global_context_kwargs
+except ImportError:
+    from handoff_read_shapes import global_context_kwargs
 from lane_manifest import get_lane_config
 
 NO_WORK_MESSAGE = "No actionable lane inbox items."
@@ -50,7 +55,6 @@ MAX_BRIEF_ITEMS = 6
 MAX_DECISION_ITEMS = 4
 MAX_TEST_ITEMS = 4
 MAX_GLOBAL_ITEMS = 6
-GLOBAL_CONTEXT_SECTIONS = "blockers_open,actions_pending,findings_open,decisions_recent,tests_recent"
 ANSI = {
     "reset": "\033[0m",
     "red": "\033[31m",
@@ -800,15 +804,7 @@ def _prompt_budget_section(
 
 def _task_global_context(task_ref: str) -> dict[str, list[dict[str, Any]]]:
     payload = _json_load(
-        get_handoff_state(
-            task_ref=task_ref,
-            sections=GLOBAL_CONTEXT_SECTIONS,
-            top_n_blockers=MAX_GLOBAL_ITEMS,
-            top_n_actions=MAX_GLOBAL_ITEMS,
-            top_n_decisions=MAX_GLOBAL_ITEMS,
-            top_n_tests=MAX_GLOBAL_ITEMS,
-            top_n_findings=MAX_GLOBAL_ITEMS,
-        )
+        get_handoff_state(**global_context_kwargs(task_ref, limit=MAX_GLOBAL_ITEMS))
     )
     return {
         "actions": [row for row in _as_dicts(payload.get("actions_pending")) if row.get("lane_id") in (None, "")],

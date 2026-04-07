@@ -37,12 +37,12 @@ The token-optimization assessment in `packages/agent-orchestrator-mcp/docs/tech-
 
 ## Current State Analysis
 
-- Slice 1 and Slice 2 are implemented on `feature/aomcp-1-token-efficient-handoff-adoption` at commit `336e3448a747f3dd2fe716d156b19d9952e68b89`, with focused pytest coverage pinning the narrowed caller envelopes.
+- Slices 1-3 are implemented on `feature/aomcp-1-token-efficient-handoff-adoption`, and the package-owned handoff guide now exists on this branch via `packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md`.
 - `agent-handoff-mcp` already supports `sections="identity"`, `detail="summary"`, and bounded list parameters, and `AHMCP-7` already landed the compact envelope and dict-return transport changes.
-- The preferred caller guidance belongs in a package-owned `agent-handoff-mcp` guide, but this branch cannot assume that guide already exists. AOMCP-1 should treat it as an `AHMCP-*` prerequisite and reference it only once that dependency is present.
-- `agent-orchestrator-mcp` still has full-state reads in `_resolve_task_ref()` (`orchestrator_daemon.py`), `_load_open_handoff_items()` (`review_dispatch.py`), `_task_global_context()` (`lane_prompt.py`), and `review_ready.main()`.
-- Not every full read is a bug. `ace_metrics.py` intentionally samples hot-state size and should not be blindly optimized away if that would change the metric being measured.
-- There is no package-local task plan under `packages/agent-orchestrator-mcp/docs/tasks/` covering this adoption work yet, so the assessment’s recommendations do not currently map to executable slices.
+- The preferred caller guidance now lives in package-owned `agent-handoff-mcp` docs, and this task references that guide instead of re-documenting parameter semantics locally.
+- The orchestrator runtime no longer has accidental full-state reads in `_resolve_task_ref()` (`orchestrator_daemon.py`), `_load_open_handoff_items()` (`review_dispatch.py`), `_task_global_context()` (`lane_prompt.py`), or `review_ready.main()`.
+- `ace_metrics.py` still performs a broad bounded handoff read, but that is now an intentional metric-definition choice with code comments, a dedicated helper bundle, and regression coverage.
+- This package-local task plan now maps every actionable recommendation from the assessment to implemented slices or explicit upstream ownership.
 
 ## Target Outcome
 
@@ -90,7 +90,7 @@ Implement the assessment follow-up in three slices. First, classify orchestrator
 | `packages/agent-orchestrator-mcp/docs/tech-debt/mcp-token-optimization-assessment.md` | Source assessment and recommendation inventory |
 | `packages/agent-handoff-mcp/docs/tasks/AHMCP-1-parameterize-handoff-mcp-read-surfaces-task-plan.md` | Owns server-side summary shaping and default semantics |
 | `packages/agent-handoff-mcp/docs/tasks/AHMCP-7-response-envelope-token-optimization-task-plan.md` | Owns compact envelope and transport-side token reductions |
-| `packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md` | Target package-owned caller guidance; treat as upstream dependency until it exists on the implementation branch |
+| `packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md` | Canonical package-owned caller guidance now present on this branch |
 | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/ace_metrics.py` | Likely intentional full-read path; verify before changing |
 
 ## Verification Strategy
@@ -173,21 +173,21 @@ Proof:
 ### Checklist for Slice 3: Documentation, Auditability, and Follow-Up Boundaries
 
 - [x] Any new orchestrator-facing guidance references the package-owned token-efficiency guide when available, or explicitly records that guide as an unmet upstream dependency.
-- [ ] Remaining server-owned recommendations are captured as dependencies rather than silently folded into orchestrator work.
+- [x] Remaining server-owned recommendations are captured as dependencies rather than silently folded into orchestrator work.
 - [x] Handoff decision records the verification evidence and any intentionally unchanged full-read paths.
 
 ## Review Readiness
 
-- [ ] No narrowed handoff read drops data that a downstream formatter or gate still consumes.
-- [ ] All changed orchestrator call sites are covered by deterministic tests or focused runtime fixtures.
-- [ ] The final implementation notes which full-read paths are intentional and why.
+- [x] No narrowed handoff read drops data that a downstream formatter or gate still consumes.
+- [x] All changed orchestrator call sites are covered by deterministic tests or focused runtime fixtures.
+- [x] The final implementation notes which full-read paths are intentional and why.
 
 ## Stretch Goals
 
-- [ ] Add a small helper for common shaped handoff reads if multiple orchestrator call sites converge on the same parameter bundle without obscuring the underlying contract.
+- [x] Add a small helper for common shaped handoff reads if multiple orchestrator call sites converge on the same parameter bundle without obscuring the underlying contract.
 
 ## Success Criteria
 
-- [ ] Routine orchestrator handoff reads use explicit shaping parameters instead of full-state defaults when they only need identity or bounded subsets.
-- [ ] Review-ready, lane-dispatch, and prompt-building behavior remain unchanged under the narrower reads.
-- [ ] The orchestrator package has a clear implementation plan and ownership boundary for the assessment recommendations.
+- [x] Routine orchestrator handoff reads use explicit shaping parameters instead of full-state defaults when they only need identity or bounded subsets.
+- [x] Review-ready, lane-dispatch, and prompt-building behavior remain unchanged under the narrower reads.
+- [x] The orchestrator package has a clear implementation plan and ownership boundary for the assessment recommendations.

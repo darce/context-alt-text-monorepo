@@ -67,6 +67,10 @@ from orchestrator_helpers import (  # noqa: F401
     _normalize_text,
     _report_timestamp,
 )
+try:
+    from .handoff_read_shapes import active_task_identity_kwargs
+except ImportError:
+    from handoff_read_shapes import active_task_identity_kwargs
 from orchestrator_lanes import (  # noqa: F401
     _complete_lane_plan_cursor,
     _intake_lane,
@@ -625,7 +629,7 @@ def _resolve_task_ref(orchestrator_root: Path, task_ref: str | None) -> str:
     try:
         from agent_handoff_mcp import get_handoff_state
 
-        state = _json_load(get_handoff_state(sections="identity"))
+        state = _json_load(get_handoff_state(**active_task_identity_kwargs()))
         if state.get("ok") and state.get("task_ref"):
             return state["task_ref"]
     except Exception:

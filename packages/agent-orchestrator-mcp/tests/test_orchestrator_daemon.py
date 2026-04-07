@@ -15,6 +15,7 @@ import pytest
 from agent_handoff_mcp.config import RuntimeConfig
 
 from agent_orchestrator_mcp import api as mcp_api
+from agent_orchestrator_mcp.orchestration.handoff_read_shapes import active_task_identity_kwargs
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ORCHESTRATION_DIR = Path(__file__).resolve().parents[1] / "src" / "agent_orchestrator_mcp" / "orchestration"
@@ -804,7 +805,7 @@ def test_resolve_task_ref_falls_back_to_active_task(tmp_path: Path) -> None:
         },
     ):
         assert mod._resolve_task_ref(tmp_path, None) == "active-task"
-    mock_ahm.get_handoff_state.assert_called_once_with(sections="identity")
+    mock_ahm.get_handoff_state.assert_called_once_with(**active_task_identity_kwargs())
 
 
 def test_resolve_task_ref_accepts_identity_only_payload(tmp_path: Path) -> None:
@@ -825,7 +826,7 @@ def test_resolve_task_ref_accepts_identity_only_payload(tmp_path: Path) -> None:
         },
     ):
         assert mod._resolve_task_ref(tmp_path, None) == "identity-task"
-    mock_ahm.get_handoff_state.assert_called_once_with(sections="identity")
+    mock_ahm.get_handoff_state.assert_called_once_with(**active_task_identity_kwargs())
 
 
 def test_resolve_task_ref_falls_back_to_sole_manifest(tmp_path: Path) -> None:
@@ -866,7 +867,7 @@ def test_resolve_task_ref_falls_back_when_identity_payload_omits_task_ref(tmp_pa
         },
     ):
         assert mod._resolve_task_ref(tmp_path, None) == "only-task"
-    mock_ahm.get_handoff_state.assert_called_once_with(sections="identity")
+    mock_ahm.get_handoff_state.assert_called_once_with(**active_task_identity_kwargs())
 
 
 def test_resolve_task_ref_errors_when_ambiguous(tmp_path: Path) -> None:

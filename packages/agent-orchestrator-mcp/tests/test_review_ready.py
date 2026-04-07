@@ -7,6 +7,7 @@ import agent_handoff_mcp
 import pytest
 
 from agent_orchestrator_mcp.orchestration import review_ready as review_ready_module
+from agent_orchestrator_mcp.orchestration.handoff_read_shapes import review_ready_state_kwargs
 from agent_orchestrator_mcp.orchestration.review_ready import (
     _load_ok_payload,
     evaluate_review_ready,
@@ -227,10 +228,5 @@ def test_main_requests_only_identity_and_recent_tests(
     assert exit_code == 0
     assert "REVIEW READY: READY" in captured.out
     assert calls["review"] == {"task_ref": "task-ref"}
-    assert calls["state"] == {
-        "task_ref": "task-ref",
-        "sections": review_ready_module.REVIEW_READY_STATE_SECTIONS,
-        "detail": "summary",
-        "top_n_tests": review_ready_module.REVIEW_READY_TEST_LIMIT,
-    }
+    assert calls["state"] == review_ready_state_kwargs("task-ref")
     assert calls["close"] == {"task_ref": "task-ref", "current_commit_sha": "abc123def456"}

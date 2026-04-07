@@ -1476,6 +1476,59 @@ def generate_current_task_md(
     )
 
 
+def _make_dict_wrapper(orig: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap a JSON-string-returning tool handler so FastMCP receives a dict.
+
+    Tool handlers in core.py / decisions.py / handoff_state.py / review_findings.py
+    return JSON strings via _envelope() / _json_response() because the same
+    functions are also used by the orchestrator over a string-based protocol.
+    When FastMCP sees a `-> str` return type, function_parsing.py:213-218 marks
+    the output schema with `x-fastmcp-wrap-result: True`, and at runtime
+    tool.py:297-302 wraps the value as `structured_content={"result": str}`.
+    Clients then receive `{"result": "<escaped JSON>"}` instead of a native
+    dict envelope.
+
+    This factory builds a wrapper that:
+      1. Closes over `orig` via the enclosing scope (NOT a default argument).
+         Default arguments would lose their value through FastMCP's
+         `get_cached_typeadapter` rebuild path: when annotation processing
+         triggers a fresh `types.FunctionType` construction (utilities/types.py
+         lines 99-115), only `__defaults__` is passed, not `__kwdefaults__`,
+         so any keyword-only `_fn=orig` default would be silently dropped and
+         calls would fail with `<tool>() missing 1 required keyword-only
+         argument: '_fn'`. A closure capture survives that rebuild because the
+         `__closure__` cell is also passed to `types.FunctionType`.
+      2. Sets `__signature__` from the original so FastMCP's parameter
+         inspection sees typed parameters (not `*args/**kwargs`) and the
+         return annotation is `dict` (no _WrappedResult wrapping).
+      3. Sets `__annotations__` to the original's parameter annotations with
+         `return: dict` so Pydantic's `get_type_hints(handler)` resolution
+         (used by both Pydantic and FastMCP's cached TypeAdapter) sees the
+         correct return type.
+      4. Deletes `__wrapped__` so `inspect.signature()` does not follow the
+         chain back to the original handler (which would re-introduce the
+         `return: str` annotation).
+    """
+    import functools as _ft
+    import inspect as _inspect
+
+    @_ft.wraps(orig)
+    def _dict_wrapper(*args: Any, **kwargs: Any) -> dict:
+        return json.loads(orig(*args, **kwargs))
+
+    _orig_sig = _inspect.signature(orig)
+    _dict_wrapper.__signature__ = _orig_sig.replace(return_annotation=dict)  # type: ignore[attr-defined]
+    _dict_wrapper.__annotations__ = {
+        **orig.__annotations__,
+        "return": dict,
+    }
+    try:
+        del _dict_wrapper.__wrapped__  # type: ignore[attr-defined]
+    except AttributeError:
+        pass
+    return _dict_wrapper
+
+
 def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
     configure_runtime(config)
     mcp = FastMCP(
@@ -1554,46 +1607,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
         return_type = resolved_hints.get("return")
 
         if return_type is str or return_type is None:
-            import functools as _ft
-            import inspect as _inspect
-
-            _orig = handler
-
-            @_ft.wraps(_orig)
-            def _dict_wrapper(*args: Any, _fn: Any = _orig, **kwargs: Any) -> dict:
-                return json.loads(_fn(*args, **kwargs))
-
-            # FastMCP performs three checks on the registered handler that all
-            # depend on `inspect.signature(fn)`:
-            #   1. function_parsing.py:100-107 rejects functions with *args/**kwargs.
-            #   2. function_parsing.py:155-156 reads `sig.return_annotation` to
-            #      decide whether to wrap output in `_WrappedResult` (which becomes
-            #      `structured_content={"result": <value>}` at runtime).
-            #   3. function_parsing.py:144 builds the input schema from the same sig.
-            #
-            # `_dict_wrapper` is physically defined with *args/**kwargs so it can
-            # forward any call shape to `_orig`. To pass FastMCP's checks we
-            # explicitly set `__signature__` to a synthetic signature derived
-            # from the original handler with `return_annotation` rewritten to
-            # `dict`. inspect.signature() honors __signature__ when set, so:
-            #   - Check 1: synthetic params have no VAR_POSITIONAL/VAR_KEYWORD.
-            #   - Check 2: return_annotation is `dict`, no _WrappedResult wrapping.
-            #   - Check 3: input schema is built from the original's typed params.
-            #
-            # We also delete __wrapped__ so inspect.signature() does not follow
-            # the chain back to the original handler (which would re-introduce
-            # the `return: str` annotation).
-            _orig_sig = _inspect.signature(_orig)
-            _dict_wrapper.__signature__ = _orig_sig.replace(return_annotation=dict)
-            _dict_wrapper.__annotations__ = {
-                **_orig.__annotations__,
-                "return": dict,
-            }
-            try:
-                del _dict_wrapper.__wrapped__
-            except AttributeError:
-                pass
-            handler = _dict_wrapper
+            handler = _make_dict_wrapper(handler)
         mcp.add_tool(handler)
     return mcp
 

@@ -8,7 +8,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated, Any, Callable, Literal, cast
+from typing import Annotated, Any, Callable, Literal, cast, get_type_hints
 
 from fastmcp import FastMCP
 from fastmcp.client import Client, PythonStdioTransport
@@ -1529,10 +1529,33 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
         handler = entry.handler
         # Wrap str-returning handlers so FastMCP receives a dict and
         # serialises once, eliminating double-serialisation on the wire.
-        if handler.__annotations__.get("return") is str or (
-            not handler.__annotations__.get("return") and callable(handler)
-        ):
+        #
+        # Why we need this: tool handlers historically return JSON strings via
+        # _envelope() / _json_response() because the same functions are also
+        # used by the orchestrator over a string-based protocol. When FastMCP
+        # sees a `-> str` return type, function_parsing.py marks the output
+        # schema with `x-fastmcp-wrap-result: True`, and at runtime tool.py's
+        # convert_result() wraps the value as `structured_content={"result": str}`.
+        # Clients then receive `{"result": "<escaped JSON>"}` instead of a
+        # native dict envelope. The wrapper below converts the JSON string to
+        # a dict before FastMCP sees the return value.
+        #
+        # Annotation resolution caveat: api.py uses
+        # `from __future__ import annotations` (PEP 563), so all annotations
+        # are stored as strings, not type objects. `__annotations__.get("return")`
+        # returns the string `'str'`, not the type `str`, so a naive
+        # `is str` check never matches. We use typing.get_type_hints() which
+        # resolves the string annotations against the function's module
+        # namespace, returning real type objects.
+        try:
+            resolved_hints = get_type_hints(handler)
+        except Exception:
+            resolved_hints = {}
+        return_type = resolved_hints.get("return")
+
+        if return_type is str or return_type is None:
             import functools as _ft
+            import inspect as _inspect
 
             _orig = handler
 
@@ -1540,6 +1563,36 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
             def _dict_wrapper(*args: Any, _fn: Any = _orig, **kwargs: Any) -> dict:
                 return json.loads(_fn(*args, **kwargs))
 
+            # FastMCP performs three checks on the registered handler that all
+            # depend on `inspect.signature(fn)`:
+            #   1. function_parsing.py:100-107 rejects functions with *args/**kwargs.
+            #   2. function_parsing.py:155-156 reads `sig.return_annotation` to
+            #      decide whether to wrap output in `_WrappedResult` (which becomes
+            #      `structured_content={"result": <value>}` at runtime).
+            #   3. function_parsing.py:144 builds the input schema from the same sig.
+            #
+            # `_dict_wrapper` is physically defined with *args/**kwargs so it can
+            # forward any call shape to `_orig`. To pass FastMCP's checks we
+            # explicitly set `__signature__` to a synthetic signature derived
+            # from the original handler with `return_annotation` rewritten to
+            # `dict`. inspect.signature() honors __signature__ when set, so:
+            #   - Check 1: synthetic params have no VAR_POSITIONAL/VAR_KEYWORD.
+            #   - Check 2: return_annotation is `dict`, no _WrappedResult wrapping.
+            #   - Check 3: input schema is built from the original's typed params.
+            #
+            # We also delete __wrapped__ so inspect.signature() does not follow
+            # the chain back to the original handler (which would re-introduce
+            # the `return: str` annotation).
+            _orig_sig = _inspect.signature(_orig)
+            _dict_wrapper.__signature__ = _orig_sig.replace(return_annotation=dict)
+            _dict_wrapper.__annotations__ = {
+                **_orig.__annotations__,
+                "return": dict,
+            }
+            try:
+                del _dict_wrapper.__wrapped__
+            except AttributeError:
+                pass
             handler = _dict_wrapper
         mcp.add_tool(handler)
     return mcp

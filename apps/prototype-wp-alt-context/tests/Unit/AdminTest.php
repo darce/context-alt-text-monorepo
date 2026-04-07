@@ -144,6 +144,92 @@ class AdminTest extends TestCase
     }
 
     /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testEnqueueScriptsUsesDevServerWhenViteIsReachable(): void
+    {
+        define('ACX_VITE_DEV_SERVER', 'http://localhost:5173');
+        $_ENV['WP_ENVIRONMENT_TYPE'] = 'development';
+
+        // Probe to Vite returns 200 — Vite is reachable.
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '',
+        ]);
+
+        $admin = new Admin();
+        $admin->enqueue_scripts('toplevel_page_alt-context-dashboard');
+
+        // Dev server path enqueues two scripts: -dev (vite client) and -entry (main.tsx).
+        $this->assertArrayHasKey('alt-context-admin-dev', $GLOBALS['__ac_scripts']);
+        $this->assertArrayHasKey('alt-context-admin-entry', $GLOBALS['__ac_scripts']);
+        $this->assertStringContainsString(
+            '@vite/client',
+            $GLOBALS['__ac_scripts']['alt-context-admin-dev']['src']
+        );
+
+        // The probe was a HEAD request to the @vite/client URL.
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertSame('HEAD', $calls[0]['method']);
+        $this->assertStringContainsString('@vite/client', $calls[0]['url']);
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testEnqueueScriptsFallsBackToBuildBundleWhenViteIsUnreachable(): void
+    {
+        define('ACX_VITE_DEV_SERVER', 'http://localhost:5173');
+        $_ENV['WP_ENVIRONMENT_TYPE'] = 'development';
+
+        // Probe to Vite returns a WP_Error — connection refused / unreachable.
+        $this->queueHttpResponse(new \WP_Error('http_request_failed', 'Connection refused'));
+
+        // Use the real built manifest fixture path so build_assets path can resolve.
+        $manifestPath = dirname(__DIR__, 2) . '/public/assets/dist/.vite/manifest.json';
+        $admin = new Admin($manifestPath);
+        $admin->enqueue_scripts('toplevel_page_alt-context-dashboard');
+
+        // Dev script handles MUST NOT be enqueued — fallback to built bundle path.
+        $this->assertArrayNotHasKey('alt-context-admin-dev', $GLOBALS['__ac_scripts']);
+        $this->assertArrayNotHasKey('alt-context-admin-entry', $GLOBALS['__ac_scripts']);
+        // Build bundle script handle should be enqueued instead.
+        $this->assertArrayHasKey('alt-context-admin', $GLOBALS['__ac_scripts']);
+
+        // The probe still happened (one HEAD request); no other HTTP calls were made.
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertSame('HEAD', $calls[0]['method']);
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testEnqueueScriptsFallsBackToBuildBundleWhenViteReturns500(): void
+    {
+        define('ACX_VITE_DEV_SERVER', 'http://localhost:5173');
+        $_ENV['WP_ENVIRONMENT_TYPE'] = 'development';
+
+        // Probe returns 500 — Vite is reachable but unhealthy. Fall back.
+        $this->queueHttpResponse([
+            'response' => ['code' => 500, 'message' => 'Internal Server Error'],
+            'body' => '',
+        ]);
+
+        $manifestPath = dirname(__DIR__, 2) . '/public/assets/dist/.vite/manifest.json';
+        $admin = new Admin($manifestPath);
+        $admin->enqueue_scripts('toplevel_page_alt-context-dashboard');
+
+        $this->assertArrayNotHasKey('alt-context-admin-dev', $GLOBALS['__ac_scripts']);
+        $this->assertArrayNotHasKey('alt-context-admin-entry', $GLOBALS['__ac_scripts']);
+        $this->assertArrayHasKey('alt-context-admin', $GLOBALS['__ac_scripts']);
+    }
+
+    /**
      * Test enqueue_scripts reports missing manifest and skips localization.
      */
     public function testEnqueueScriptsReportsMissingManifest(): void

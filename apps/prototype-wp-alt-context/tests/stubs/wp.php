@@ -1366,6 +1366,34 @@ if (!function_exists('wp_remote_get')) {
     }
 }
 
+if (!function_exists('wp_remote_head')) {
+    function wp_remote_head($url, $args = [])
+    {
+        if (!isset($GLOBALS['__ac_http_calls'])) {
+            $GLOBALS['__ac_http_calls'] = [];
+        }
+
+        $GLOBALS['__ac_http_calls'][] = [
+            'url' => $url,
+            'args' => $args,
+            'method' => 'HEAD',
+            'body' => '',
+        ];
+
+        if (!empty($GLOBALS['__ac_http_queue'])) {
+            return array_shift($GLOBALS['__ac_http_queue']);
+        }
+
+        return [
+            'response' => [
+                'code' => 200,
+                'message' => 'OK',
+            ],
+            'body' => '',
+        ];
+    }
+}
+
 if (!function_exists('wp_remote_request')) {
     function wp_remote_request($url, $args = [])
     {

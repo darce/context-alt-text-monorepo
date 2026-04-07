@@ -10,12 +10,13 @@ Bring the deployed recognition service from "running on the server" to "publicly
 
 ## Problem Statement
 
-The backend is deployed and serving HTTPS at `api.altcontext.com` (E14-1 complete, all 6 slices verified), but four gaps prevent public exposure as a demo or MVP:
+The backend is deployed and serving HTTPS at `api.altcontext.com` (E14-1 complete, all 6 slices verified), but five gaps prevent public exposure as a demo or MVP:
 
 1. **Incomplete security hardening.** API key validation and tenant isolation already exist (`require_auth` in `apps/prototype-description-service/recognition/interface_adapters/http/deps/auth.py` enforces hashed-key lookup, tenant header matching, and write-access gating). What is missing: browser origin allowlist (CORS), per-key rate limiting, and a key lifecycle/rotation surface. The service is internet-reachable and authenticated but not yet rate-limited or origin-restricted.
 2. **No WordPress demo frontend.** There is no public-facing WP instance running the ACX plugin. The backend has no audience without a frontend.
 3. **No observability.** Failures are invisible without SSH and manual log inspection. Operators cannot answer "is it up?" or "why did this fail?" without server access.
 4. **No automated E2E regression path.** Manual smoke checks are the only validation. No automation prevents regressions across deploys.
+5. **Local-sync correctness is incomplete.** The plugin's sovereign local-read story improved, but the remaining local-sync work still lacks a direct analyze-to-local persistence path and still carries correctness/audit findings around fallback honesty, polling bounds, and snapshot-failure visibility.
 
 The recognition service, Docker stack, Caddy TLS proxy, persistent model cache, database, and core API authentication are all operational. The gap is the remaining hardening surface, frontend provisioning, and automated verification.
 
@@ -72,6 +73,7 @@ The recognition service, Docker stack, Caddy TLS proxy, persistent model cache, 
 | No WordPress demo page | Production Readiness Phase 6 / E14 | Not started |
 | No E2E smoke gate automation | Production Readiness Phase 2 | Planned |
 | Local reset bootstrap contract mismatch | E15-4 (in progress) | In progress |
+| Local-sync correctness and audit closure | New for E15 | In progress -- **E15-7** |
 | OCI budget alerts not verified | E14 / Production Readiness Phase 6 | Not started |
 | Dynamic IP SSH access drift | Tech debt | Decision pending |
 
@@ -218,6 +220,30 @@ Exit criteria:
 
 - Required scenarios pass in CI:
   - Offline label persistence.
+
+---
+
+### Phase 6: Local Sync Correctness and Audit Closure -- in-progress
+
+> **Status**: in-progress
+> **Task plans**: [E15-7. Local Sync Completion and Audit Closure](../../tasks/15.0/E15-7-local-sync-completion-and-audit-closure-task-plan.md)
+> **Source**: runtime investigation follow-up on sovereign local-read correctness
+
+**Goal**: Finish the remaining local-sync work so completed analyze/clustering flows produce durable local state, fallback envelopes stay contract-honest, and the sovereign read path can be merged with clean review evidence.
+
+Deliverables:
+
+- A direct local persistence path from completed analyze/clustering work into the local projection, rather than relying entirely on a later snapshot pull.
+- Truthful fallback response metadata and bounded projection-trigger behavior during polling.
+- Explicit handling or surfacing of snapshot/auth failure state when backend-side auth regressions would otherwise leave local-sync degradation silent.
+- Review/audit closure for the remaining local-sync findings, with commit-backed evidence and a passing close check.
+
+Exit criteria:
+
+- Analyze completion leaves durable local state or an explicit degraded status even when snapshot fetch is unavailable immediately afterward.
+- Fallback envelopes do not invent unsupported metadata or contradictory projection status.
+- Remaining local-sync findings are fixed or explicitly deferred with rationale.
+- `handoff_close_check(enforce=True, current_commit_sha=<HEAD>)` passes for the merge candidate branch.
   - Local-read resilience with backend down.
   - Sync-status transitions through outage/recovery.
 - Required flow does not depend on LocalWP private APIs.

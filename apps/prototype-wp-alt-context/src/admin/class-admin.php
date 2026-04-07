@@ -30,8 +30,11 @@ use function wp_enqueue_style;
 use function wp_create_nonce;
 use function wp_get_environment_type;
 use function wp_localize_script;
+use function wp_remote_head;
+use function wp_remote_retrieve_response_code;
 use function wp_script_add_data;
 use function wp_unslash;
+use function is_wp_error;
 
 /**
  * Coordinates admin-only concerns such as enqueueing the SPA bundle.
@@ -59,6 +62,7 @@ class Admin {
 	private string $manifestPath;
 	private ?string $assetBootstrapFailureMessage = null;
 	private bool $assetBootstrapNoticeHooked = false;
+	private ?bool $devServerReachableCache = null;
 
 	public function __construct( ?string $manifestPath = null ) {
 		$this->devServer = defined('ACX_VITE_DEV_SERVER') ? (string) ACX_VITE_DEV_SERVER : '';
@@ -111,7 +115,46 @@ class Admin {
 	}
 
 	private function should_use_dev_server(): bool {
-		return wp_get_environment_type() === 'development' && '' !== $this->devServer;
+		if ( wp_get_environment_type() !== 'development' ) {
+			return false;
+		}
+		if ( '' === $this->devServer ) {
+			return false;
+		}
+		return $this->is_dev_server_reachable();
+	}
+
+	/**
+	 * Probe the Vite dev server with a short HEAD request and cache the result
+	 * for this request lifetime. Falls back to the built bundle when Vite is not
+	 * reachable, instead of letting the browser fail with ERR_CONNECTION_REFUSED.
+	 *
+	 * Tests can override this by providing an injected client; the default uses
+	 * wp_remote_head with a 1-second timeout so admin page loads stay responsive
+	 * even when ACX_VITE_DEV_SERVER is set but Vite is not running.
+	 */
+	private function is_dev_server_reachable(): bool {
+		if ( null !== $this->devServerReachableCache ) {
+			return $this->devServerReachableCache;
+		}
+
+		$probe_url = trailingslashit( $this->devServer ) . '@vite/client';
+		$response = wp_remote_head(
+			esc_url_raw( $probe_url ),
+			array(
+				'timeout'   => 1,
+				'sslverify' => false,
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			$this->devServerReachableCache = false;
+			return false;
+		}
+
+		$status = (int) wp_remote_retrieve_response_code( $response );
+		$this->devServerReachableCache = ( $status >= 200 && $status < 500 );
+		return $this->devServerReachableCache;
 	}
 
 	private function enqueue_dev_assets(): string {

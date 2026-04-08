@@ -37,8 +37,16 @@ def rotate_jsonl_if_needed(path: Path, max_bytes: int) -> None:
         pass
 
 
-def _json_load(payload: str) -> dict[str, Any]:
-    data = json.loads(payload)
+def _json_load(payload: str | dict[str, Any]) -> dict[str, Any]:
+    """Normalise an inner-tool result to a dict.
+
+    Post-AHMCP-10 handoff handlers return native dicts (Slice 3 of
+    AHMCP-7); pre-AHMCP-10 they returned JSON strings. This helper
+    accepts both shapes so the orchestrator daemon code can be flipped
+    in lockstep without forcing every call site to change. Once the
+    string-return path is fully retired we can drop the str branch.
+    """
+    data = payload if isinstance(payload, dict) else json.loads(payload)
     if not isinstance(data, dict):
         raise RuntimeError("Expected JSON object payload from handoff tool.")
     return data

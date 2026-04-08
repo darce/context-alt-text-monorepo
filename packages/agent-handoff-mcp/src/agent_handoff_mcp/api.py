@@ -8,7 +8,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated, Any, Callable, Literal, cast, get_type_hints
+from typing import Annotated, Any, Callable, Literal, cast
 
 from fastmcp import FastMCP
 from fastmcp.client import Client, PythonStdioTransport
@@ -545,7 +545,7 @@ def set_handoff_state(
             )
         ),
     ] = None,
-) -> str:
+) -> dict:
     return _core_set_handoff_state(
         task_ref=task_ref,
         objective=objective,
@@ -572,7 +572,7 @@ def update_task_status(
         Field(description="Optimistic concurrency guard for active-task updates. Not used for archived-task updates."),
     ] = None,
     actor: ActorParam = None,
-) -> str:
+) -> dict:
     return _core_update_task_status(
         task_ref=task_ref,
         status=status,
@@ -594,7 +594,7 @@ def record_decision(
     output_tokens: Annotated[int | None, Field(description="Optional completion token count for this slice.")] = None,
     total_tokens: Annotated[int | None, Field(description="Optional total token count for this slice.")] = None,
     changed_files: DecisionChangedFilesParam = None,
-) -> str:
+) -> dict:
     return _core_record_decision(
         session=session,
         decision=decision,
@@ -615,7 +615,7 @@ def record_event(
             description="Typed event payload. event_kind selects one of the decision, test_result, or blocker variants."
         ),
     ],
-) -> str:
+) -> dict:
     event_payload = _validate_record_event(event)
     resolved_actor = _dump_actor(event_payload.actor)
     if isinstance(event_payload, RecordDecisionEvent):
@@ -672,7 +672,7 @@ def update_next_actions(
     ] = None,
     actor: ActorParam = None,
     task_ref: TaskRefParam = None,
-) -> str:
+) -> dict:
     return _core_update_next_actions(
         operation=operation,
         action_id=action_id,
@@ -691,7 +691,7 @@ def next_actions(
             description="Typed next-actions payload. operation selects one of the list, add, update, complete, or skip variants."
         ),
     ],
-) -> str:
+) -> dict:
     action_payload = _validate_next_actions(action)
     if isinstance(action_payload, NextActionsListOp):
         return list_next_actions(
@@ -723,7 +723,7 @@ def record_test_result(
     exit_code: Annotated[int | None, Field(description="Optional process exit code for the command.")] = None,
     actor: ActorParam = None,
     task_ref: TaskRefParam = None,
-) -> str:
+) -> dict:
     return _core_record_test_result(
         session=session,
         command=command,
@@ -750,7 +750,7 @@ def report_blocker(
     ] = None,
     actor: ActorParam = None,
     task_ref: TaskRefParam = None,
-) -> str:
+) -> dict:
     return _core_report_blocker(
         operation=operation,
         description=description,
@@ -792,7 +792,7 @@ def update_review_finding(
         str | None,
         Field(description="Optional verification evidence used when closing a finding as fixed."),
     ] = None,
-) -> str:
+) -> dict:
     return _core_update_review_finding(
         status=status,
         finding_id=finding_id,
@@ -814,7 +814,7 @@ def review_findings(
             description="Typed review-findings payload. operation selects one of the record, batch_record, update, or list variants."
         ),
     ],
-) -> str:
+) -> dict:
     review_payload = _validate_review_findings(review)
     if isinstance(review_payload, ReviewFindingsRecordOp):
         return record_review_finding(
@@ -880,7 +880,7 @@ def record_review_run(
     ] = None,
     task_ref: TaskRefParam = None,
     actor: ActorParam = None,
-) -> str:
+) -> dict:
     return _core_record_review_run(
         review_run_id=review_run_id,
         session=session,
@@ -901,7 +901,7 @@ def review_runs(
             description="Typed review-runs payload. operation selects one of the record, list, or coverage variants."
         ),
     ],
-) -> str:
+) -> dict:
     review_payload = _validate_review_runs(review)
     if isinstance(review_payload, ReviewRunsRecordOp):
         return _core_record_review_run(
@@ -937,7 +937,7 @@ def artifacts(
             description="Typed artifacts payload. operation selects one of the record, search, get, or purge variants."
         ),
     ],
-) -> str:
+) -> dict:
     artifact_payload = _validate_artifacts(artifact)
     if isinstance(artifact_payload, ArtifactsRecordOp):
         return record_artifact(
@@ -1000,7 +1000,7 @@ def close_slice(
         Field(description="Optional new focus to store on the task after recording the decision."),
     ] = None,
     changed_files: DecisionChangedFilesParam = None,
-) -> str:
+) -> dict:
     return _core_close_slice(
         session=session,
         decision=decision,
@@ -1395,7 +1395,7 @@ def generate_current_task_md(
     task_ref: str | None = None,
     write_file: bool = True,
     max_cross_task_findings: int = 5,
-) -> str:
+) -> dict:
     """Generate CURRENT_TASK.md for the active task.
 
     Args:
@@ -1487,59 +1487,6 @@ def generate_current_task_md(
     )
 
 
-def _make_dict_wrapper(orig: Callable[..., Any]) -> Callable[..., Any]:
-    """Wrap a JSON-string-returning tool handler so FastMCP receives a dict.
-
-    Tool handlers in core.py / decisions.py / handoff_state.py / review_findings.py
-    return JSON strings via _envelope() / _json_response() because the same
-    functions are also used by the orchestrator over a string-based protocol.
-    When FastMCP sees a `-> str` return type, function_parsing.py:213-218 marks
-    the output schema with `x-fastmcp-wrap-result: True`, and at runtime
-    tool.py:297-302 wraps the value as `structured_content={"result": str}`.
-    Clients then receive `{"result": "<escaped JSON>"}` instead of a native
-    dict envelope.
-
-    This factory builds a wrapper that:
-      1. Closes over `orig` via the enclosing scope (NOT a default argument).
-         Default arguments would lose their value through FastMCP's
-         `get_cached_typeadapter` rebuild path: when annotation processing
-         triggers a fresh `types.FunctionType` construction (utilities/types.py
-         lines 99-115), only `__defaults__` is passed, not `__kwdefaults__`,
-         so any keyword-only `_fn=orig` default would be silently dropped and
-         calls would fail with `<tool>() missing 1 required keyword-only
-         argument: '_fn'`. A closure capture survives that rebuild because the
-         `__closure__` cell is also passed to `types.FunctionType`.
-      2. Sets `__signature__` from the original so FastMCP's parameter
-         inspection sees typed parameters (not `*args/**kwargs`) and the
-         return annotation is `dict` (no _WrappedResult wrapping).
-      3. Sets `__annotations__` to the original's parameter annotations with
-         `return: dict` so Pydantic's `get_type_hints(handler)` resolution
-         (used by both Pydantic and FastMCP's cached TypeAdapter) sees the
-         correct return type.
-      4. Deletes `__wrapped__` so `inspect.signature()` does not follow the
-         chain back to the original handler (which would re-introduce the
-         `return: str` annotation).
-    """
-    import functools as _ft
-    import inspect as _inspect
-
-    @_ft.wraps(orig)
-    def _dict_wrapper(*args: Any, **kwargs: Any) -> dict:
-        return json.loads(orig(*args, **kwargs))
-
-    _orig_sig = _inspect.signature(orig)
-    _dict_wrapper.__signature__ = _orig_sig.replace(return_annotation=dict)  # type: ignore[attr-defined]
-    _dict_wrapper.__annotations__ = {
-        **orig.__annotations__,
-        "return": dict,
-    }
-    try:
-        del _dict_wrapper.__wrapped__  # type: ignore[attr-defined]
-    except AttributeError:
-        pass
-    return _dict_wrapper
-
-
 def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
     configure_runtime(config)
     mcp = FastMCP(
@@ -1590,36 +1537,16 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
             entry.handler.__doc__ = f"[DEPRECATED since {entry.deprecated_since}] " + (
                 entry.handler.__doc__ or entry.description
             )
-        handler = entry.handler
-        # Wrap str-returning handlers so FastMCP receives a dict and
-        # serialises once, eliminating double-serialisation on the wire.
-        #
-        # Why we need this: tool handlers historically return JSON strings via
-        # _envelope() / _json_response() because the same functions are also
-        # used by the orchestrator over a string-based protocol. When FastMCP
-        # sees a `-> str` return type, function_parsing.py marks the output
-        # schema with `x-fastmcp-wrap-result: True`, and at runtime tool.py's
-        # convert_result() wraps the value as `structured_content={"result": str}`.
-        # Clients then receive `{"result": "<escaped JSON>"}` instead of a
-        # native dict envelope. The wrapper below converts the JSON string to
-        # a dict before FastMCP sees the return value.
-        #
-        # Annotation resolution caveat: api.py uses
-        # `from __future__ import annotations` (PEP 563), so all annotations
-        # are stored as strings, not type objects. `__annotations__.get("return")`
-        # returns the string `'str'`, not the type `str`, so a naive
-        # `is str` check never matches. We use typing.get_type_hints() which
-        # resolves the string annotations against the function's module
-        # namespace, returning real type objects.
-        try:
-            resolved_hints = get_type_hints(handler)
-        except Exception:
-            resolved_hints = {}
-        return_type = resolved_hints.get("return")
-
-        if return_type is str or return_type is None:
-            handler = _make_dict_wrapper(handler)
-        mcp.add_tool(handler)
+        # Tool handlers return native dicts via _envelope() / _json_response()
+        # in shared_primitives.py. FastMCP serialises the dict once on its way
+        # out — there is no longer a `json.dumps -> json.loads` round trip,
+        # and the wire payload is a clean nested object instead of the legacy
+        # `structured_content={"result": "<escaped JSON>"}` envelope. AHMCP-10
+        # finished AHMCP-7's Slice 3 by removing the _make_dict_wrapper shim
+        # that used to translate `-> str` handlers into `-> dict` at this
+        # registration site; the production handlers are now `-> dict` end to
+        # end and the wrapper is dead code.
+        mcp.add_tool(entry.handler)
     return mcp
 
 

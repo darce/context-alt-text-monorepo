@@ -715,8 +715,10 @@ def _handoff_memory(task_ref: str, state_dir: Path, workspace_root: Path) -> dic
             )
             # Intentional broad read: this metric tracks the serialized hot-state
             # footprint of the default bounded handoff snapshot, not the minimum
-            # payload needed by a specific orchestrator caller.
-            hot_state = json.loads(get_handoff_state(**hot_state_metric_kwargs(task_ref, limits=_HOT_STATE_LIMITS)))
+            # payload needed by a specific orchestrator caller. Post-AHMCP-10
+            # the handoff handler returns a native dict; we serialise it
+            # ourselves below to keep the byte-count metric stable.
+            hot_state = get_handoff_state(**hot_state_metric_kwargs(task_ref, limits=_HOT_STATE_LIMITS))
         finally:
             if prior_runtime is not None:
                 configure_runtime(prior_runtime)

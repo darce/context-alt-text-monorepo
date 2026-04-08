@@ -72,7 +72,7 @@ def _persist_task_archive_snapshot(
 
 def export_handoff_state(
     task_ref: str | None = None, output_path: str | None = None, include_markdown: bool = False
-) -> str:
+) -> dict:
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         snapshot = _collect_task_snapshot(conn, resolved_task_ref)
@@ -468,7 +468,7 @@ def _import_snapshot(
 
 def import_handoff_state(
     input_path: str, mode: str = "merge", set_active: bool = False, allow_destructive_clear: bool = False
-) -> str:
+) -> dict:
     if mode not in {"merge", "replace_task"}:
         return _envelope(
             ok=False, tool="import_handoff_state", data={"error": "Invalid mode. Valid: merge, replace_task."}
@@ -581,7 +581,7 @@ def archive_task_state(
     clear_active_if_matches: bool = True,
     prune_working_rows: bool = False,
     allow_destructive_clear: bool = False,
-) -> str:
+) -> dict:
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         snapshot = _collect_task_snapshot(conn, resolved_task_ref)
@@ -657,7 +657,7 @@ def update_task_status(
     status: str,
     expected_revision: int | None = None,
     actor: WriteActor | None = None,
-) -> str:
+) -> dict:
     """Update task status for the active task or an archived/inactive task snapshot."""
     if status not in HANDOFF_ACTIVE_STATUSES:
         return _envelope(
@@ -677,13 +677,12 @@ def update_task_status(
         if active_row is not None:
             from .handoff_state import set_handoff_state as _set_handoff_state
 
-            delegated_raw = _set_handoff_state(
+            delegated = _set_handoff_state(
                 task_ref=task_ref,
                 status=status,
                 expected_revision=expected_revision,
                 actor=actor,
             )
-            delegated = json.loads(delegated_raw)
             if not delegated.get("ok"):
                 return _envelope(
                     ok=False,
@@ -691,7 +690,7 @@ def update_task_status(
                     data=delegated.get("data", {}),
                     task_ref=task_ref,
                 )
-            active = delegated.get("data", {}).get("active") or delegated.get("active")
+            active = delegated.get("data", {}).get("active", {}) or {}
             try:
                 _write_current_task_md_for_task(conn, task_ref)
                 regen = "ok"
@@ -801,7 +800,7 @@ def switch_task(
     status: str = "in_progress",
     actor: WriteActor | None = None,
     target_branch: str | None = None,
-) -> str:
+) -> dict:
     """Switch the active task, archiving the current one if different.
 
     If the target task was previously archived, its objective is restored

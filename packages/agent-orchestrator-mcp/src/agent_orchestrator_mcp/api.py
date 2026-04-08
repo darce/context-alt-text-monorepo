@@ -230,7 +230,7 @@ def _import_orchestration_module(name: str) -> Any:
     return importlib.import_module(f"agent_orchestrator_mcp.orchestration.{name}")
 
 
-def _runtime_pythonpath() -> str:
+def _runtime_pythonpath() -> dict:
     package_root = Path(__file__).resolve().parents[4]
     disallowed_parts = {
         str(package_root / "packages" / "agent-handoff-mcp" / "src"),
@@ -358,7 +358,7 @@ def orchestrator_start(
     worker_start_mode: str = "mcp",
     worker_reasoning_effort: str = "auto",
     model: str | None = None,
-) -> str:
+) -> dict:
     paths = _orchestrator_paths()
     try:
         backend_registry = _import_orchestration_module("backend_registry")
@@ -429,7 +429,7 @@ def orchestrator_start(
     )
 
 
-def orchestrator_status() -> str:
+def orchestrator_status() -> dict:
     paths = _orchestrator_paths()
     orchestrator_daemon = _import_orchestration_module("orchestrator_daemon")
     status = orchestrator_daemon.daemon_status(paths["state_dir"], paths["log_dir"])
@@ -461,7 +461,7 @@ def orchestrator_status() -> str:
     )
 
 
-def orchestrator_pause() -> str:
+def orchestrator_pause() -> dict:
     paths = _orchestrator_paths()
     orchestrator_daemon = _import_orchestration_module("orchestrator_daemon")
     orchestrator_daemon.daemon_pause(paths["state_dir"])
@@ -474,7 +474,7 @@ def orchestrator_pause() -> str:
     )
 
 
-def orchestrator_resume() -> str:
+def orchestrator_resume() -> dict:
     paths = _orchestrator_paths()
     orchestrator_daemon = _import_orchestration_module("orchestrator_daemon")
     orchestrator_daemon.daemon_resume(paths["state_dir"])
@@ -487,7 +487,7 @@ def orchestrator_resume() -> str:
     )
 
 
-def orchestrator_stop(force: bool = False, wait_seconds: float = 5.0) -> str:
+def orchestrator_stop(force: bool = False, wait_seconds: float = 5.0) -> dict:
     paths = _orchestrator_paths()
     pid = _read_lock_pid(paths["lock_path"])
     if not _pid_is_running(pid):
@@ -534,7 +534,7 @@ def orchestrator_single_cycle(
     worker_start_mode: str = "mcp",
     worker_reasoning_effort: str = "auto",
     model: str | None = None,
-) -> str:
+) -> dict:
     """Run one orchestrator cycle synchronously (dispatch, poll, intake, verify)."""
     paths = _orchestrator_paths()
     try:
@@ -603,7 +603,7 @@ def worker_start(
     session_mode: str = "fresh_turn",
     reasoning_effort: str = "inherit",
     model: str | None = None,
-) -> str:
+) -> dict:
     paths = _worker_paths()
     try:
         backend_registry = _import_orchestration_module("backend_registry")
@@ -642,7 +642,7 @@ def worker_start(
     return core._json_response(payload)
 
 
-def worker_status(task_ref: str, lane_id: str) -> str:
+def worker_status(task_ref: str, lane_id: str) -> dict:
     paths = _worker_paths()
     worker_daemon_ctl = _import_orchestration_module("worker_daemon_ctl")
     payload = worker_daemon_ctl.daemon_status(
@@ -663,7 +663,7 @@ def worker_event_history(
     lane_id: str,
     limit: int = 50,
     event_name: str | None = None,
-) -> str:
+) -> dict:
     paths = _worker_paths()
     worker_daemon_ctl = _import_orchestration_module("worker_daemon_ctl")
     payload = worker_daemon_ctl.daemon_event_history(
@@ -680,7 +680,7 @@ def worker_event_history(
     return core._json_response(payload)
 
 
-def worker_stop(task_ref: str, lane_id: str, force: bool = False) -> str:
+def worker_stop(task_ref: str, lane_id: str, force: bool = False) -> dict:
     paths = _worker_paths()
     worker_daemon_ctl = _import_orchestration_module("worker_daemon_ctl")
     payload = worker_daemon_ctl.daemon_stop(
@@ -693,7 +693,7 @@ def worker_stop(task_ref: str, lane_id: str, force: bool = False) -> str:
     return core._json_response(payload)
 
 
-def worker_resume(task_ref: str, lane_id: str) -> str:
+def worker_resume(task_ref: str, lane_id: str) -> dict:
     paths = _worker_paths()
     worker_daemon_ctl = _import_orchestration_module("worker_daemon_ctl")
     payload = worker_daemon_ctl.daemon_resume(
@@ -713,7 +713,7 @@ def worker_start_all(
     session_mode: str = "fresh_turn",
     reasoning_effort: str = "inherit",
     model: str | None = None,
-) -> str:
+) -> dict:
     try:
         lane_manifest = _import_orchestration_module("lane_manifest")
         orchestrator_lanes = _import_orchestration_module("orchestrator_lanes")
@@ -800,7 +800,7 @@ def manage_worker(
     reasoning_effort: str = "inherit",
     model: str | None = None,
     force: bool = False,
-) -> str:
+) -> dict:
     """Compound tool: start, stop, resume, or query status for a single lane worker daemon.
 
     action values:
@@ -842,7 +842,7 @@ def run_structured_turn(
     backend: str = "codex-subagent",
     env: dict[str, str] | None = None,
     timeout_seconds: float = 120.0,
-) -> str:
+) -> dict:
     try:
         backend_registry = _import_orchestration_module("backend_registry")
         backend_name = backend_registry.validate_backend(backend)
@@ -922,7 +922,7 @@ def dispatch_lane_work(
     reasoning_effort: str | None = None,
     task_ref: str | None = None,
     start_worker: bool = False,
-) -> str:
+) -> dict:
     with core._get_db_connection() as conn:
         resolved_task_ref = core._resolve_task_ref(conn, task_ref)
         lane_row = _lanes._get_lane_row(conn, resolved_task_ref, lane_id)
@@ -954,7 +954,7 @@ def dispatch_lane_work(
         return result
 
 
-def list_available_backends() -> str:
+def list_available_backends() -> dict:
     try:
         backend_registry = _import_orchestration_module("backend_registry")
         backends = {}
@@ -973,7 +973,7 @@ def list_available_backends() -> str:
 def get_metrics_summary(
     task_ref: str | None = None,
     output_format: str = "markdown",
-) -> str:
+) -> dict:
     """Return an ACE metrics snapshot for the active task."""
     try:
         from agent_orchestrator_mcp.orchestration.ace_metrics import (  # noqa: PLC0415

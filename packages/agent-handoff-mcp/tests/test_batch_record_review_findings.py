@@ -13,9 +13,9 @@ from agent_handoff_mcp._shared import _get_db_connection
 from agent_handoff_mcp.config import RuntimeConfig
 
 
-def _parse(raw: str) -> dict:
-    """Parse JSON and flatten v2 envelope for backward-compatible test assertions."""
-    result = json.loads(raw)
+def _parse(raw: str | dict) -> dict:
+    """Convenience accessor (AHMCP-10): handlers now return dicts directly."""
+    result = raw if isinstance(raw, dict) else json.loads(raw)
     if isinstance(result, dict) and result.get("schema_version") == 2:
         data = result.get("data", {})
         scope = result.get("scope", {})

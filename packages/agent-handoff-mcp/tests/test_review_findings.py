@@ -14,8 +14,13 @@ from agent_handoff_mcp.config import RuntimeConfig
 from agent_handoff_mcp.current_task_rendering import _infer_epic_ref
 
 
-def _parse(raw: str) -> dict:
-    result = json.loads(raw)
+def _parse(raw: str | dict) -> dict:
+    """Convenience accessor: AHMCP-10 dict-return refactor means handlers
+    yield dicts directly, so we just normalise + flatten data into the top
+    level for ergonomic test reads. The string branch survives only for the
+    rare callers that capture serialised CLI output.
+    """
+    result = raw if isinstance(raw, dict) else json.loads(raw)
     if isinstance(result, dict) and result.get("schema_version") == 2:
         data = result.get("data", {})
         scope = result.get("scope", {})

@@ -196,8 +196,17 @@ def _utcnow_iso() -> str:
     return datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _json_response(payload: Mapping[str, object]) -> str:
-    return json.dumps(payload, sort_keys=True)
+def _json_response(payload: Mapping[str, object]) -> dict:
+    """Return a tool response as a native dict.
+
+    Historically returned a JSON string serialised by ``json.dumps``;
+    AHMCP-10 finished AHMCP-7's Slice 3 (dict return at the MCP boundary),
+    so every handler now returns a real dict. FastMCP serialises the dict
+    once on its way out — there is no longer a `json.dumps -> json.loads`
+    round trip and no `structured_content={"result": "<escaped JSON>"}`
+    double-encoding on the wire.
+    """
+    return dict(payload)
 
 
 def _envelope(
@@ -210,19 +219,24 @@ def _envelope(
     mutation: dict | None = None,
     artifacts: list[dict] | None = None,
     warnings: list[str] | None = None,
-) -> str:
-    """Build a v2 response envelope.
+) -> dict:
+    """Build a v2 response envelope as a native ``dict``.
 
     The nested ``data`` block is the canonical v2 shape. Callers must
     read payload fields from ``result["data"][...]``, not from the
     envelope root. The legacy top-level mirror that AHMCP-3 introduced
-    for backward compatibility was removed in AHMCP-10 (after AHMCP-7
-    documented the migration); in-process tests use the ``_flatten_v2``
-    helper at the top of every test module to translate between the
-    canonical ``data`` block and any code that still expects flat
-    access. ``schema_version`` stays at ``2`` because the envelope
-    fields and contract are unchanged — only the redundant root-level
-    duplication is gone.
+    was removed in the first half of AHMCP-10. The string-return path
+    that AHMCP-7 deferred (Slice 3 — "Dict Return at MCP Boundary")
+    was completed in the second half of AHMCP-10: this function now
+    returns a ``dict`` instead of ``json.dumps(dict)`` and every tool
+    handler is annotated ``-> dict``. FastMCP receives the dict
+    directly and serialises it once on the wire, eliminating the
+    ``structured_content={"result": "<escaped JSON>"}`` double-encoding
+    that previously inflated every response by 30-50%.
+
+    ``schema_version`` stays at ``2`` because the envelope fields and
+    contract are unchanged — the wire format went from JSON-string to
+    JSON-object, but the field set, names, and semantics are identical.
     """
     scope: dict[str, str | None] = {"task_ref": task_ref}
     if entity is not None:
@@ -242,7 +256,7 @@ def _envelope(
         payload["warnings"] = warnings
     if task_ref is not None:
         payload["task_ref"] = task_ref
-    return json.dumps(payload, sort_keys=True)
+    return payload
 
 
 def _excerpt_text(value: str | None, *, limit: int = 240) -> str | None:

@@ -86,8 +86,17 @@ async def test_get_job_status_returns_job(api_client, fake_job_service, tenant_i
 
 @pytest.mark.asyncio
 async def test_get_job_status_uses_service_followup_methods_for_pipeline_resolution(
-    api_client, fake_job_service, tenant_id
+    api_client, fake_job_service, fake_cluster_repository, tenant_id
 ) -> None:
+    fake_cluster_repository.seed("cluster-a", tenant_id=tenant_id, label="Cluster A", identity_count=2)
+    fake_cluster_repository.seed_member(
+        tenant_id=tenant_id,
+        cluster_id="cluster-a",
+        identity_id=str(uuid.uuid4()),
+        media_id="101",
+    )
+    snapshot_version = await fake_cluster_repository.get_snapshot_version(tenant_id)
+
     scan_job = await fake_job_service.create_job(JobType.ANALYZE, tenant_id=tenant_id, total=2)
     await fake_job_service.complete_job(scan_job.id)
     clustering_job = Job(
@@ -98,11 +107,11 @@ async def test_get_job_status_uses_service_followup_methods_for_pipeline_resolut
         progress_completed=2,
         progress_total=2,
         message="Clustering complete",
-        payload={"scan_job_id": scan_job.id, "snapshot_version": 123, "source_job_id": str(uuid.uuid4())},
+        payload={"scan_job_id": scan_job.id, "snapshot_version": snapshot_version, "source_job_id": str(uuid.uuid4())},
     )
     await fake_job_service.repository.save(clustering_job)
     fake_job_service.repository.projections[(clustering_job.id, tenant_id)] = ProjectionStatus(
-        snapshot_version=123,
+        snapshot_version=snapshot_version,
         source_job_id=str(clustering_job.id),
         acknowledged_at=None,
     )
@@ -114,7 +123,11 @@ async def test_get_job_status_uses_service_followup_methods_for_pipeline_resolut
     assert body["id"] == scan_job.id
     assert body["type"] == "clustering"
     assert body["progress"]["phase"] == "awaiting_projection"
-    assert body["snapshot_version"] == 123
+    assert body["snapshot_version"] == snapshot_version
+    assert body["projection_payload"]["snapshot_version"] == snapshot_version
+    assert body["projection_payload"]["tenant_id"] == tenant_id
+    assert body["projection_payload"]["clusters"][0]["cluster_uuid"] == "cluster-a"
+    assert body["projection_payload"]["members"][0]["cluster_uuid"] == "cluster-a"
 
 
 def test_get_job_status_404_for_unknown_job(api_client) -> None:

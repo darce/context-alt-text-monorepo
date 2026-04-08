@@ -32,10 +32,12 @@ use WP_REST_Response;
 use function absint;
 use function get_current_user_id;
 use function get_site_url;
+use function get_transient;
 use function gmdate;
 use function in_array;
 use function is_array;
 use function is_wp_error;
+use function md5;
 use function nocache_headers;
 use function sanitize_text_field;
 use function set_transient;
@@ -49,7 +51,10 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 
 	private const REQUEST_CLASS_POST_SCAN_READ = 'post_scan_read';
 	private const JOB_MEDIA_IDS_TRANSIENT_PREFIX = 'acx_job_media_ids_';
+	private const PROJECTION_SYNC_TRANSIENT_PREFIX = 'acx_projection_sync_';
 	private const JOB_TRACKING_TTL_SECONDS = 86400;
+	private const PROJECTION_SYNC_SUCCESS_TTL_SECONDS = 300;
+	private const PROJECTION_SYNC_RETRY_TTL_SECONDS = 5;
 	private SyncStateRepositoryInterface $sync_state_repository;
 	private ?SyncPullJobInterface $sync_pull_job;
 	private ?SyncPullJobFactory $sync_pull_job_factory;
@@ -463,11 +468,17 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 	 * @param array<string,mixed> $job_payload
 	 */
 	private function maybe_trigger_projection_sync( array $job_payload ): void {
-		$status = sanitize_text_field( (string) ( $job_payload['status'] ?? '' ) );
+		$status           = sanitize_text_field( (string) ( $job_payload['status'] ?? '' ) );
 		$snapshot_version = absint( $job_payload['snapshot_version'] ?? 0 );
-		$acknowledged_at = trim( (string) ( $job_payload['projection_acknowledged_at'] ?? '' ) );
+		$acknowledged_at  = trim( (string) ( $job_payload['projection_acknowledged_at'] ?? '' ) );
+		$job_id           = $this->projection_sync_job_id( $job_payload );
 
-		if ( 'completed' !== $status || $snapshot_version <= 0 || '' !== $acknowledged_at ) {
+		if ( 'completed' !== $status || $snapshot_version <= 0 || '' !== $acknowledged_at || '' === $job_id ) {
+			return;
+		}
+
+		$transient_key = $this->projection_sync_transient_key( $job_id, $snapshot_version );
+		if ( false !== get_transient( $transient_key ) ) {
 			return;
 		}
 
@@ -476,11 +487,48 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			return;
 		}
 
+		$projection_payload = $this->build_inline_projection_payload( $job_payload, $job_id, $snapshot_version );
+
 		try {
-			$sync_pull_job->perform_bypass_cooldown( $this->get_tenant_id() );
+			$result = is_array( $projection_payload )
+				? $sync_pull_job->perform_projection_payload( $this->get_tenant_id(), $projection_payload )
+				: $sync_pull_job->perform_bypass_cooldown( $this->get_tenant_id() );
+			$ttl    = $result->is_success()
+				? self::PROJECTION_SYNC_SUCCESS_TTL_SECONDS
+				: self::PROJECTION_SYNC_RETRY_TTL_SECONDS;
+			set_transient( $transient_key, 1, $ttl );
 		} catch ( Throwable $throwable ) {
+			set_transient( $transient_key, 1, self::PROJECTION_SYNC_RETRY_TTL_SECONDS );
 			// Job status remains readable even when the background projection retry fails.
 		}
+	}
+
+	private function projection_sync_job_id( array $job_payload ): string {
+		$job_id = trim( (string) ( $job_payload['source_job_id'] ?? $job_payload['id'] ?? '' ) );
+		return sanitize_text_field( $job_id );
+	}
+
+	/**
+	 * @param array<string,mixed> $job_payload
+	 * @return array<string,mixed>|null
+	 */
+	private function build_inline_projection_payload( array $job_payload, string $job_id, int $snapshot_version ): ?array {
+		$projection_payload = $job_payload['projection_payload'] ?? null;
+		if ( ! is_array( $projection_payload ) ) {
+			return null;
+		}
+
+		$payload_snapshot_version = absint( $projection_payload['snapshot_version'] ?? 0 );
+		if ( $payload_snapshot_version <= 0 || $payload_snapshot_version !== $snapshot_version ) {
+			return null;
+		}
+
+		$projection_payload['source_job_id'] = $job_id;
+		return $projection_payload;
+	}
+
+	private function projection_sync_transient_key( string $job_id, int $snapshot_version ): string {
+		return self::PROJECTION_SYNC_TRANSIENT_PREFIX . md5( $job_id . ':' . (string) $snapshot_version );
 	}
 
 	private function resolve_sync_pull_job(): ?SyncPullJobInterface {

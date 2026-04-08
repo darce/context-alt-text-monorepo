@@ -66,13 +66,53 @@ class SyncPullJob implements SyncPullJobInterface {
 		return $this->do_sync( $tenant_id, $transient_key );
 	}
 
+	/**
+	 * Apply a completed job-status projection payload without re-fetching snapshot state.
+	 *
+	 * @param array<string,mixed> $payload
+	 */
+	public function perform_projection_payload( string $tenant_id, array $payload ): SyncPullResult {
+		$transient_key = self::COOLDOWN_TRANSIENT_PREFIX . md5( $tenant_id );
+
+		try {
+			$this->projector->project_delta( $tenant_id, $payload );
+		} catch ( Throwable $throwable ) {
+			$this->sync_state_repository->set_last_sync_result( $tenant_id, SyncPullResult::FAILED );
+			set_transient( $transient_key, 1, self::FAILED_SYNC_COOLDOWN_SECONDS );
+			do_action(
+				'acx_sync_pull_failed',
+				array(
+					'tenant_id' => $tenant_id,
+					'context' => 'inline_projection_failed',
+					'message' => $throwable->getMessage(),
+				)
+			);
+			return SyncPullResult::failed();
+		}
+
+		$this->sync_state_repository->set_last_sync_result( $tenant_id, SyncPullResult::OK );
+
+		try {
+			$this->maybe_acknowledge_projection( $payload );
+		} catch ( Throwable $throwable ) {
+			do_action(
+				'acx_sync_pull_failed',
+				array(
+					'tenant_id' => $tenant_id,
+					'context' => 'projection_acknowledgement_failed',
+					'message' => $throwable->getMessage(),
+				)
+			);
+		}
+
+		return SyncPullResult::ok();
+	}
+
 	private function do_sync( string $tenant_id, string $transient_key ): SyncPullResult {
 		$last_snapshot_version = max( 0, $this->sync_state_repository->get_snapshot_version( $tenant_id ) );
-		if ( $last_snapshot_version > 0 ) {
-			$delta_result = $this->try_delta_sync( $tenant_id, $last_snapshot_version );
-			if ( $delta_result instanceof SyncPullResult ) {
-				return $delta_result;
-			}
+		$delta_result          = $this->try_delta_sync( $tenant_id, $last_snapshot_version );
+		if ( $delta_result instanceof SyncPullResult ) {
+			return $delta_result;
 		}
 
 		$snapshot = $this->client->fetch_snapshot( $tenant_id );

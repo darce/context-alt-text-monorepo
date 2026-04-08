@@ -351,6 +351,7 @@ class FakeJobService:
 
     def __init__(self, repository: FakeJobRepository | None = None) -> None:
         self.repository = repository or FakeJobRepository()
+        self.cluster_repository = None
         self.calls: list[dict[str, object]] = []
 
     async def create_job(self, job_type: JobType, tenant_id: str, total: int = 0) -> Job:

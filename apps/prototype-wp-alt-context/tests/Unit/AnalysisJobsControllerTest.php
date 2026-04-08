@@ -178,10 +178,70 @@ class AnalysisJobsControllerTest extends TestCase
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/' . $jobId);
         $request->set_param('job_id', $jobId);
         $response = $controller->get_job_status($request);
-
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'id' => $jobId,
+                'status' => 'completed',
+                'type' => 'clustering',
+                'snapshot_version' => 22,
+                'source_job_id' => $jobId,
+                'projection_acknowledged_at' => null,
+                'progress' => [
+                    'completed' => 2,
+                    'total' => 2,
+                    'phase' => 'awaiting_projection',
+                ],
+            ]),
+        ]);
+        $controller->get_job_status($request);
+
         $this->assertTrue($syncSpy->performedBypass);
         $this->assertNotSame('', $syncSpy->tenantIdBypass);
+        $this->assertSame(1, $syncSpy->performBypassCount);
+    }
+
+    public function testGetJobStatusProjectsInlinePayloadWithoutSnapshotRoundTrip(): void
+    {
+        $syncSpy = new AnalysisJobsControllerSyncPullSpy();
+        $controller = new AnalysisJobsController(null, $syncSpy);
+
+        $jobId = '66666666-6666-6666-6666-666666666666';
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'id' => $jobId,
+                'status' => 'completed',
+                'type' => 'clustering',
+                'snapshot_version' => 22,
+                'source_job_id' => $jobId,
+                'projection_acknowledged_at' => null,
+                'projection_payload' => [
+                    'tenant_id' => 'tenant-inline',
+                    'snapshot_version' => 22,
+                    'generated_at' => '2026-04-07T00:00:00Z',
+                    'clusters' => [],
+                    'members' => [],
+                ],
+                'progress' => [
+                    'completed' => 2,
+                    'total' => 2,
+                    'phase' => 'awaiting_projection',
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/' . $jobId);
+        $request->set_param('job_id', $jobId);
+        $response = $controller->get_job_status($request);
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+
+        $this->assertSame(1, $syncSpy->performProjectionPayloadCount);
+        $this->assertSame(0, $syncSpy->performBypassCount);
+        $this->assertSame($jobId, $syncSpy->projectionPayload['source_job_id'] ?? null);
+        $this->assertSame(22, $syncSpy->projectionPayload['snapshot_version'] ?? null);
     }
 
     public function testGetJobStatusForwardsCheckpointFieldsInProgressResponse(): void
@@ -313,6 +373,10 @@ class AnalysisJobsControllerSyncPullSpy implements SyncPullJobInterface
 {
     public bool $performedBypass = false;
     public string $tenantIdBypass = '';
+    public int $performBypassCount = 0;
+    public int $performProjectionPayloadCount = 0;
+    /** @var array<string,mixed> */
+    public array $projectionPayload = [];
 
     public function perform(string $tenant_id): SyncPullResult
     {
@@ -323,6 +387,15 @@ class AnalysisJobsControllerSyncPullSpy implements SyncPullJobInterface
     {
         $this->performedBypass = true;
         $this->tenantIdBypass = $tenant_id;
+        ++$this->performBypassCount;
+        return SyncPullResult::ok();
+    }
+
+    public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult
+    {
+        $this->tenantIdBypass = $tenant_id;
+        $this->projectionPayload = $payload;
+        ++$this->performProjectionPayloadCount;
         return SyncPullResult::ok();
     }
 }

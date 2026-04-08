@@ -147,7 +147,7 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 			return null;
 		}
 
-		return '' !== $normalized ? $normalized : null;
+		return $normalized;
 	}
 
 	public function get_last_sync_result( string $tenant_id ): string {
@@ -169,27 +169,38 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 		}
 
 		$normalized_result = $this->normalize_sync_result( $result );
-		$updated_at        = SyncPullResult::OK === $normalized_result
-			? gmdate( 'Y-m-d H:i:s' )
-			: '1970-01-01 00:00:00';
-		$sql               = $this->prepare_query(
-			'INSERT INTO %i (stream_name, last_snapshot_version, last_sync_result, last_sync_attempted_at, updated_at)
-			VALUES (%s, 0, %s, %s, %s)
-			ON DUPLICATE KEY UPDATE
-				last_sync_result = VALUES(last_sync_result),
-				last_sync_attempted_at = VALUES(last_sync_attempted_at),
-				updated_at = CASE
-					WHEN VALUES(last_sync_result) = \'ok\' THEN VALUES(updated_at)
-					ELSE updated_at
-				END',
-			array(
-				$this->table_name,
-				$this->stream_name_for_tenant( $normalized_tenant_id ),
-				$normalized_result,
-				gmdate( 'Y-m-d H:i:s' ),
-				$updated_at,
-			)
-		);
+		$attempted_at      = gmdate( 'Y-m-d H:i:s' );
+		if ( SyncPullResult::OK === $normalized_result ) {
+			$sql = $this->prepare_query(
+				'INSERT INTO %i (stream_name, last_snapshot_version, last_sync_result, last_sync_attempted_at, updated_at)
+				VALUES (%s, 0, %s, %s, %s)
+				ON DUPLICATE KEY UPDATE
+					last_sync_result = VALUES(last_sync_result),
+					last_sync_attempted_at = VALUES(last_sync_attempted_at),
+					updated_at = VALUES(updated_at)',
+				array(
+					$this->table_name,
+					$this->stream_name_for_tenant( $normalized_tenant_id ),
+					$normalized_result,
+					$attempted_at,
+					$attempted_at,
+				)
+			);
+		} else {
+			$sql = $this->prepare_query(
+				'INSERT INTO %i (stream_name, last_snapshot_version, last_sync_result, last_sync_attempted_at)
+				VALUES (%s, 0, %s, %s)
+				ON DUPLICATE KEY UPDATE
+					last_sync_result = VALUES(last_sync_result),
+					last_sync_attempted_at = VALUES(last_sync_attempted_at)',
+				array(
+					$this->table_name,
+					$this->stream_name_for_tenant( $normalized_tenant_id ),
+					$normalized_result,
+					$attempted_at,
+				)
+			);
+		}
 
 		if ( is_string( $sql ) && '' !== $sql ) {
 			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.

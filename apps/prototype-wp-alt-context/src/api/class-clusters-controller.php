@@ -206,10 +206,8 @@ class ClustersController extends AbstractRecognitionProxyController {
 				if ( is_array( $data ) ) {
 					return new WP_REST_Response(
 						array(
-							'clusters'          => $data,
-							'singleton_count'   => 0,
-							'data_source'       => self::DATA_SOURCE_BACKEND_PROXY,
-							'projection_status' => self::PROJECTION_STATUS_BOOTSTRAPPING,
+							'clusters'    => $data,
+							'data_source' => self::DATA_SOURCE_BACKEND_PROXY,
 						),
 						200
 					);

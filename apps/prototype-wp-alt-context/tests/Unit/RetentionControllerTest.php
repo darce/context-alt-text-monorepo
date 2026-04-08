@@ -16,6 +16,15 @@ use WP_REST_Request;
  */
 class RetentionControllerTest extends TestCase
 {
+    private function tenantId(): string
+    {
+        $controller = new RetentionController();
+        $method = new \ReflectionMethod($controller, 'get_tenant_id');
+        $method->setAccessible(true);
+
+        return (string) $method->invoke($controller);
+    }
+
     public function testGetStatusProxiesPolicyAndAuditAndCachesResult(): void
     {
         $this->queueHttpResponse([
@@ -119,12 +128,12 @@ class RetentionControllerTest extends TestCase
             ],
             $response->get_data()
         );
-        $this->assertArrayNotHasKey('acx_retention_status_' . md5((string) \get_site_url()), $GLOBALS['__ac_transients']);
+        $this->assertArrayNotHasKey('acx_retention_status_' . $this->tenantId(), $GLOBALS['__ac_transients']);
     }
 
     public function testUpdatePolicyForwardsToBackendAndInvalidatesCache(): void
     {
-        $tenantId = md5((string) \get_site_url());
+        $tenantId = $this->tenantId();
         set_transient('acx_retention_status_' . $tenantId, ['available' => true], 60);
 
         $this->queueHttpResponse([
@@ -170,7 +179,7 @@ class RetentionControllerTest extends TestCase
 
     public function testTriggerExportInvalidatesCacheAfterSuccessfulProxy(): void
     {
-        $tenantId = md5((string) \get_site_url());
+        $tenantId = $this->tenantId();
         set_transient('acx_retention_status_' . $tenantId, ['available' => true], 60);
 
         $this->queueHttpResponse([
@@ -201,7 +210,7 @@ class RetentionControllerTest extends TestCase
 
     public function testTriggerPurgeProxiesAndForcesSyncPull(): void
     {
-        $tenantId = md5((string) \get_site_url());
+        $tenantId = $this->tenantId();
         set_transient('acx_retention_status_' . $tenantId, ['available' => true], 60);
 
         $this->queueHttpResponse([
@@ -364,7 +373,7 @@ class RetentionControllerTest extends TestCase
 
     public function testTriggerImportInvalidatesCacheAfterSuccess(): void
     {
-        $tenantId = md5((string) \get_site_url());
+        $tenantId = $this->tenantId();
         set_transient('acx_retention_status_' . $tenantId, ['available' => true], 60);
 
         $this->queueHttpResponse([
@@ -466,7 +475,7 @@ class RetentionControllerTest extends TestCase
 
     public function testApplyPresetInvalidatesCacheAfterSuccess(): void
     {
-        $tenantId = md5((string) \get_site_url());
+        $tenantId = $this->tenantId();
         set_transient('acx_retention_status_' . $tenantId, ['available' => true], 60);
 
         $this->queueHttpResponse([
@@ -501,6 +510,12 @@ class RetentionControllerSyncPullJobSpy implements SyncPullJobInterface
     }
 
     public function perform_bypass_cooldown(string $tenant_id): SyncPullResult
+    {
+        $this->performedTenantId = $tenant_id;
+        return $this->result;
+    }
+
+    public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult
     {
         $this->performedTenantId = $tenant_id;
         return $this->result;

@@ -262,8 +262,10 @@ class SyncStatusControllerTest extends TestCase
         $this->assertSame('unreachable', $data['last_sync_result']);
 
         $calls = $this->getHttpCalls();
-        $this->assertCount(1, $calls);
+        $this->assertCount(2, $calls);
         $this->assertStringContainsString('/recognition/tenants/', $calls[0]['url']);
+        $this->assertStringContainsString('/clusters/delta', $calls[0]['url']);
+        $this->assertStringContainsString('/clusters/snapshot', $calls[1]['url']);
     }
 
     public function testTriggerSyncReturnsSyncedTrueOnSuccess(): void
@@ -284,6 +286,8 @@ class SyncStatusControllerTest extends TestCase
             public function perform(string $tenant_id): SyncPullResult {
 				return SyncPullResult::ok(); }
             public function perform_bypass_cooldown(string $tenant_id): SyncPullResult {
+				return SyncPullResult::ok(); }
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult {
 				return SyncPullResult::ok(); }
         };
 
@@ -346,6 +350,10 @@ class SyncStatusControllerTest extends TestCase
                 $this->syncRepo->setConflictCount(3);
                 return SyncPullResult::ok();
             }
+
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult {
+                return $this->perform_bypass_cooldown($tenant_id);
+            }
         };
 
         $controller = new SyncStatusController($syncRepo, $syncJob);
@@ -377,6 +385,8 @@ class SyncStatusControllerTest extends TestCase
 				return SyncPullResult::failed(); }
             public function perform_bypass_cooldown(string $tenant_id): SyncPullResult {
 				return SyncPullResult::failed(); }
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult {
+				return SyncPullResult::failed(); }
         };
 
         $controller = new SyncStatusController($syncRepo, $syncJob);
@@ -404,6 +414,9 @@ class SyncStatusControllerTest extends TestCase
             public function perform(string $tenant_id): SyncPullResult {
 				return SyncPullResult::failed(); }
             public function perform_bypass_cooldown(string $tenant_id): SyncPullResult {
+                throw new \RuntimeException('Connection refused');
+            }
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult {
                 throw new \RuntimeException('Connection refused');
             }
         };
@@ -494,6 +507,8 @@ class SyncStatusControllerTest extends TestCase
             public function perform(string $tenant_id): SyncPullResult {
 				return SyncPullResult::ok(); }
             public function perform_bypass_cooldown(string $tenant_id): SyncPullResult {
+				return SyncPullResult::ok(); }
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult {
 				return SyncPullResult::ok(); }
         };
 

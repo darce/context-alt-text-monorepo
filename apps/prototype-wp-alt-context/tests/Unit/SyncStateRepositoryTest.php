@@ -79,10 +79,24 @@ class SyncStateRepositoryTest extends TestCase
         global $wpdb;
         $sql = implode("\n", $wpdb->queries);
 
-        $this->assertStringContainsString('INSERT INTO `wp_acx_sync_state` (stream_name, last_snapshot_version, last_sync_result, last_sync_attempted_at, updated_at)', $sql);
+        $this->assertStringContainsString('INSERT INTO `wp_acx_sync_state` (stream_name, last_snapshot_version, last_sync_result, last_sync_attempted_at)', $sql);
         $this->assertStringContainsString("'tenant:tenant-sync:clusters'", $sql);
         $this->assertStringContainsString("'unreachable'", $sql);
         $this->assertStringContainsString('last_sync_attempted_at = VALUES(last_sync_attempted_at)', $sql);
+        $this->assertStringNotContainsString('updated_at = VALUES(updated_at)', $sql);
+    }
+
+    public function testSetLastSyncResultPersistsUpdatedAtForSuccessfulSyncs(): void
+    {
+        $this->repository->set_last_sync_result('tenant-sync', 'ok');
+
+        global $wpdb;
+        $sql = implode("\n", $wpdb->queries);
+
+        $this->assertStringContainsString('INSERT INTO `wp_acx_sync_state` (stream_name, last_snapshot_version, last_sync_result, last_sync_attempted_at, updated_at)', $sql);
+        $this->assertStringContainsString("'tenant:tenant-sync:clusters'", $sql);
+        $this->assertStringContainsString("'ok'", $sql);
+        $this->assertStringContainsString('updated_at = VALUES(updated_at)', $sql);
     }
 
     public function testTouchLocalCurationMarkerBackdatesUpdatedAtToEpoch(): void

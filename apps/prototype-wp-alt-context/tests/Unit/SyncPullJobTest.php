@@ -80,6 +80,37 @@ class SyncPullJobTest extends TestCase
         $this->assertSame('', $client->acknowledgedJobId);
     }
 
+    public function testSyncPullUsesDeltaEvenBeforeFirstLocalSnapshotVersion(): void
+    {
+        $client = new SyncPullJobSnapshotClient(
+            [
+                'snapshot_version' => 12,
+                'source_job_id' => 'job-12',
+                'clusters' => [['cluster_uuid' => 'cluster-1']],
+                'members' => [],
+            ],
+            null,
+            [
+                'snapshot_version' => 12,
+                'clusters' => [['cluster_uuid' => 'cluster-1']],
+                'members' => [],
+            ]
+        );
+        $projector = new SyncPullJobProjectorSpy();
+
+        $syncRepo = new SyncPullJobSyncStateSpy();
+        $job = new SyncPullJob($client, $projector, $syncRepo);
+
+        $result = $job->perform('tenant-first-delta');
+
+        $this->assertSame(SyncPullResult::OK, $result->status());
+        $this->assertSame(1, $client->fetchDeltaCalls);
+        $this->assertSame(0, $client->fetchSnapshotCalls);
+        $this->assertSame('tenant-first-delta', $projector->deltaTenantId);
+        $this->assertSame(12, $projector->deltaSnapshotVersion);
+        $this->assertSame('', $client->acknowledgedJobId);
+    }
+
     public function testSyncPullFallsBackToSnapshotWhenDeltaRequestsFallback(): void
     {
         $client = new SyncPullJobSnapshotClient(
@@ -327,6 +358,37 @@ class SyncPullJobTest extends TestCase
         $this->assertSame('generation-23', $client->acknowledgedSnapshotGenerationId);
     }
 
+    public function testPerformProjectionPayloadProjectsDeltaWithoutFetchingSnapshot(): void
+    {
+        $client = new SyncPullJobSnapshotClient([
+            'snapshot_version' => 99,
+            'clusters' => [],
+            'members' => [],
+        ]);
+        $projector = new SyncPullJobProjectorSpy();
+
+        $syncRepo = new SyncPullJobSyncStateSpy();
+        $job = new SyncPullJob($client, $projector, $syncRepo);
+
+        $result = $job->perform_projection_payload(
+            'tenant-inline',
+            [
+                'snapshot_version' => 24,
+                'source_job_id' => 'job-inline',
+                'clusters' => [['cluster_uuid' => 'cluster-inline']],
+                'members' => [],
+            ]
+        );
+
+        $this->assertSame(SyncPullResult::OK, $result->status());
+        $this->assertSame('tenant-inline', $projector->deltaTenantId);
+        $this->assertSame(24, $projector->deltaSnapshotVersion);
+        $this->assertSame(0, $client->fetchDeltaCalls);
+        $this->assertSame(0, $client->fetchSnapshotCalls);
+        $this->assertSame('job-inline', $client->acknowledgedJobId);
+        $this->assertSame(24, $client->acknowledgedSnapshotVersion);
+    }
+
     public function testTriggerSyncEndToEndReturnsConflictCountAfterProjection(): void
     {
         global $wpdb;
@@ -486,7 +548,12 @@ class SyncPullJobSnapshotClient extends SnapshotClient
             return $this->deltaPayload;
         }
 
-        return parent::fetch_delta($tenant_id, $since_version);
+        return [
+            'fallback_to_snapshot' => true,
+            'snapshot_version' => $since_version,
+            'clusters' => [],
+            'members' => [],
+        ];
     }
 
     public function acknowledge_projection(
@@ -558,5 +625,15 @@ class SyncPullJobNonArrayClient extends SnapshotClient
         // Simulate an invalid_snapshot_payload error (non-array decode result
         // is caught by SnapshotClient and converted to WP_Error).
         return new WP_Error('invalid_snapshot_payload', 'Snapshot payload must be an object.', ['status' => 502]);
+    }
+
+    public function fetch_delta(string $tenant_id, int $since_version): array|WP_Error
+    {
+        return [
+            'fallback_to_snapshot' => true,
+            'snapshot_version' => $since_version,
+            'clusters' => [],
+            'members' => [],
+        ];
     }
 }

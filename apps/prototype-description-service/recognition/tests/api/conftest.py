@@ -648,6 +648,7 @@ def api_client(
     app.include_router(recognition_router, prefix="/recognition")
     fake_session = FakeSession()
     fake_cluster_service.fake_cluster_repository = fake_cluster_repository
+    fake_job_service.cluster_repository = fake_cluster_repository
     fake_suggestion_service.tenant_id = tenant_id
     fake_suggestion_refresh_service.tenant_id = tenant_id
 

@@ -47,7 +47,7 @@ export interface TopUnlabeledCluster {
 
 export interface TopUnlabeledClustersResponse {
   clusters: TopUnlabeledCluster[];
-  singleton_count: number;
+  singleton_count?: number;
   data_source?: DataSource;
   projection_status?: ProjectionStatus;
 }

@@ -134,12 +134,24 @@ describe('recognitionApi', () => {
   it('rejects top-unlabeled payloads without canonical metadata', async () => {
     fetchApiMock.mockResolvedValue({
       clusters: [],
-      singleton_count: 0,
     });
 
     await expect(fetchTopUnlabeledClusters('tenant-1', 20)).rejects.toThrow(
       'Top-unlabeled clusters response must include a valid data_source.',
     );
+  });
+
+  it('accepts backend-proxy top-unlabeled payloads without projection metadata', async () => {
+    fetchApiMock.mockResolvedValue({
+      clusters: [],
+      data_source: 'backend_proxy',
+    });
+
+    const result = await fetchTopUnlabeledClusters('tenant-1', 20);
+
+    expect(result.data_source).toBe(DATA_SOURCE.BACKEND_PROXY);
+    expect(result.singleton_count).toBeUndefined();
+    expect(result.projection_status).toBeUndefined();
   });
 
   it('normalizes pending suggestion data_source metadata', async () => {

@@ -46,7 +46,11 @@ from recognition.interface_adapters.http.schemas.requests import (
     AnalyzeRequest,
     _validate_uuid,
 )
-from recognition.interface_adapters.http.schemas.responses import ClusterDeltaResponse, JobProgressResponse, JobStatusResponse
+from recognition.interface_adapters.http.schemas.responses import (
+    ClusterDeltaResponse,
+    JobProgressResponse,
+    JobStatusResponse,
+)
 from recognition.shared.db.dialect import is_postgres
 
 logger = logging.getLogger(__name__)
@@ -353,8 +357,8 @@ async def get_job_status(
         repo = SqlAlchemyJobRepository(session)
         domain_job = await repo.get(job_id)
         if domain_job:
-            from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
             from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
+            from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 
             scan_repo = SqlAlchemyScanQueueRepository(session)
             cluster_repo = SqlAlchemyClusterRepository(session)

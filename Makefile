@@ -239,6 +239,7 @@ check-all:
 		echo "✅ Lane-scoped checks passed for $(LANE)!"; \
 		else \
 			$(MAKE) lint-all; \
+			$(MAKE) lint-task-plans; \
 			$(MAKE) mypy-orchestrator; \
 			$(MAKE) test-all; \
 			echo ""; \
@@ -340,6 +341,18 @@ fix-lint-orchestrator:
 	$(PYTHON) -m ruff check --fix $(ORCHESTRATOR_SRC) $(ORCHESTRATOR_TESTS)
 
 fix-lint-mcp: fix-lint-orchestrator
+
+# Sweep every task plan / epic markdown for pasted review-finding lists.
+# Review findings live in agent-handoff-mcp; pasting them inline duplicates
+# the source of truth and bypasses the pre-merge gate. The scanner exits 1
+# with an actionable error on any 3+-bullet finding block. Wired into
+# `make check-all` so CI catches drift even if the PreToolUse hooks are
+# bypassed locally.
+lint-task-plans:
+	@python3 scripts/hooks/guard-task-plan-findings.py --scan-paths \
+		docs/tasks docs/epics \
+		packages/agent-handoff-mcp/docs/tasks \
+		packages/agent-orchestrator-mcp/docs/tasks
 
 format-handoff:
 	@echo "agent-handoff-mcp formatting now runs in the standalone repository."

@@ -8,6 +8,67 @@ This file is the canonical migration notice for in-monorepo agents and
 external consumers. When you see a new entry, read the **Migration** block
 in that entry before relying on previously cached field shapes.
 
+## [0.4.0] — 2026-04-07
+
+### Added
+
+- **Oversize-response advisory warning.** The response envelope built by
+  `_envelope()` now appends an `oversize_response: ~<bytes> bytes (~<tokens>
+  tokens) ...` warning to `payload["warnings"]` whenever the serialised
+  payload exceeds `RESPONSE_OVERSIZE_WARN_BYTES` (default 20,000 bytes,
+  ~5,000 tokens). The warning is purely advisory — the response is still
+  returned in full so callers are not silently truncated — but it names the
+  bounded-read levers callers should adopt for the next call:
+
+  - `sections="identity"` for routine identity-only checks (returns just
+    `active` + `limits`).
+  - `sections="<comma-separated>"` to fetch only the sections you need.
+  - `detail="summary"` to truncate long-form rationale, fix, and verification
+    fields to 200 chars.
+  - Lower `top_n_blockers`, `top_n_actions`, `top_n_decisions`, `top_n_tests`,
+    `top_n_findings` to reduce row counts.
+  - `fields=...` (where supported) to project specific columns.
+
+  This is exposed via the new `RESPONSE_OVERSIZE_WARN_BYTES` constant in
+  `shared_primitives.py`. Callers that already use bounded-read parameters
+  will never see the warning. The threshold is tunable but should remain a
+  soft cap — hard truncation belongs at the caller's discretion, not the
+  envelope's.
+
+  Motivated by AHMCP-14: a routine `get_handoff_state(top_n_decisions=10,
+  detail="full")` call against AOMCP-3 returned ~17.6k tokens because
+  slice-complete decision rationales dominate the payload, and AHMCP-7 /
+  AHMCP-10 wire-format optimizations only attack the wrapper, not the
+  rationale text itself. The warning is the cheapest possible nudge toward
+  the documented narrowing levers.
+
+### Migration — what callers must do
+
+- **Nothing required.** This is an additive change. Existing callers will
+  start seeing an extra warning entry on oversize responses; the response
+  body is unchanged.
+- If you were already filtering `payload["warnings"]` for `context_drift:`
+  prefixes, add `oversize_response:` to your filter list to surface the new
+  advisory.
+- Treat the advisory as a soft signal: **the next call** should be narrowed,
+  not the current one. Do not retry the same call expecting different output.
+
+### Companion enforcement (outside the package)
+
+This release also introduces an out-of-package PreToolUse hook —
+`scripts/hooks/guard-task-plan-findings.py` in the monorepo root — that
+rejects any Edit/Write attempting to paste a review-finding list into a
+task plan, epic, or planning document. The hook is wired into both
+`.claude/settings.json` and `.github/hooks/terminal-guard.json`, runs in
+`make check-all` via `make lint-task-plans`, and exposes a `--scan-staged`
+mode for opt-in `git pre-commit` integration (the monorepo does not ship
+a checked-in `.git/hooks/pre-commit`; teams that want commit-time
+enforcement should wire it themselves via `core.hooksPath` or a tool like
+`pre-commit`). Review findings live in `agent-handoff-mcp` and are
+recorded with `review_findings(review={"operation":"record"|"batch_record",
+...})`; pasting them inline duplicates the source of truth and escapes the
+pre-merge gate.
+
 ## [0.3.0] — 2026-04-08
 
 ### Changed (BREAKING — wire format)

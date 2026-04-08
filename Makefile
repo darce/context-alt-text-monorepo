@@ -342,17 +342,16 @@ fix-lint-orchestrator:
 
 fix-lint-mcp: fix-lint-orchestrator
 
-# Sweep every task plan / epic markdown for pasted review-finding lists.
-# Review findings live in agent-handoff-mcp; pasting them inline duplicates
-# the source of truth and bypasses the pre-merge gate. The scanner exits 1
-# with an actionable error on any 3+-bullet finding block. Wired into
-# `make check-all` so CI catches drift even if the PreToolUse hooks are
-# bypassed locally.
+# Sweep every tracked task-plan / epic markdown for pasted review-finding
+# lists. Review findings live in agent-handoff-mcp; pasting them inline
+# duplicates the source of truth and bypasses the pre-merge gate. --scan-repo
+# enumerates `git ls-files '*.md'` and applies the same path scope used by
+# the Claude Code PreToolUse hook, so CI catches drift in any file the hook
+# would block — not just a hard-coded subset of directories (AHMCP-14-BR-03).
+# Wired into `make check-all` so CI catches drift even if the PreToolUse
+# hooks are bypassed locally.
 lint-task-plans:
-	@python3 scripts/hooks/guard-task-plan-findings.py --scan-paths \
-		docs/tasks docs/epics \
-		packages/agent-handoff-mcp/docs/tasks \
-		packages/agent-orchestrator-mcp/docs/tasks
+	@python3 scripts/hooks/guard-task-plan-findings.py --scan-repo
 
 format-handoff:
 	@echo "agent-handoff-mcp formatting now runs in the standalone repository."

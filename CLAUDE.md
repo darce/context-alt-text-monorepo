@@ -76,6 +76,31 @@ This project has NO production users and NO existing data to preserve.
 - No data migrations. Schema changes go directly in `001_identity_schema.py`.
 - Clean rewrites over backward-compatibility shims. Delete-over-flag.
 
+### In-Monorepo Package Test Invocation
+
+> **Always invoke `agent-handoff-mcp` and `agent-orchestrator-mcp` tests via the package Makefile target, never via a direct `pytest` command.**
+
+```bash
+cd packages/agent-handoff-mcp && make test-handoff
+cd packages/agent-orchestrator-mcp && make test-orchestrator
+```
+
+The Makefile sets `PYTHONPATH` to the **current worktree's** `src/` directory before invoking pytest. Direct `pytest` invocations rely on whichever editable install is registered in the Python environment, and editable installs are environment-wide: a single `pip install -e packages/agent-handoff-mcp` from one checkout makes every Python interpreter in the venv resolve `import agent_handoff_mcp` to that path regardless of which git worktree the test session is running from. Linked worktrees inherit that pointer, so a refactor that lives only in the linked worktree's source will silently NOT be exercised by tests run inside that worktree — pytest runs against the root worktree's source instead, producing false-positive verification reports.
+
+**Enforcement:** Both packages' `tests/conftest.py` contain a `pytest_sessionstart` guard that imports the package, compares its resolved `__file__` against the worktree-local source path, and aborts the session with a `pytest.UsageError` if they differ. The guard cannot be bypassed without editing the conftest. The error message names the Makefile target the caller should use.
+
+See [docs/agentic/rules/testing-python.md § In-Monorepo Package Test Invocation](docs/agentic/rules/testing-python.md#in-monorepo-package-test-invocation-mandatory) for the full rationale and the AHMCP-10 regression that motivated the enforcement.
+
+### Commit SHA Provenance Discipline
+
+> **Pass full 40-character SHAs from `git rev-parse` to every handoff `commit_sha` field. Never type SHA suffixes from memory.**
+
+Whenever a handoff write accepts a `commit_sha` (`record_event(actor=...)`, `set_handoff_state(actor=...)`, `close_slice(actor=...)`, `update_review_finding(verified_commit_sha=...)`, `handoff_close_check(current_commit_sha=...)`, etc.), pass the canonical 40-character SHA from `git rev-parse <abbrev>` or `git rev-parse HEAD`. Never type the suffix from memory after seeing a 7-char abbreviation in `git commit` output.
+
+**Enforcement:** The MCP write path validates every `commit_sha` against the active git repo via `git rev-parse --verify <sha>^{commit}` and rejects fabricated SHAs with an `InvalidCommitShaError`. Abbreviated SHAs (4–40 hex chars) that resolve uniquely are auto-expanded to the full 40-char form before storage, so callers may pass `bb24ee59` and the audit trail records `bb24ee5945273ebc4663b6d264023d9542823310`. Validation is bypassed in test sessions via `AGENT_HANDOFF_SKIP_SHA_VALIDATION=1` (set automatically by both packages' `tests/conftest.py`); production callers always run with validation enabled.
+
+See [docs/agentic/rules/testing-python.md § Commit SHA Provenance Discipline](docs/agentic/rules/testing-python.md#commit-sha-provenance-discipline-mandatory) for the full rationale and the AHMCP-10/AHMCP-11 audit-trail bug that motivated the enforcement.
+
 ### MCP Handoff (MANDATORY)
 
 - Every code change must be logged with a `record_event(event={event_kind: "decision", actor: {...}, ...})` entry before review or completion.

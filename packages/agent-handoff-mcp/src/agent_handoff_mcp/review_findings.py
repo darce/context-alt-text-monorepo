@@ -643,6 +643,26 @@ def update_review_finding(
     normalized_resolution_notes = _normalize_optional_text(resolution_notes)
     normalized_reopen_reason = _normalize_optional_text(reopen_reason)
     normalized_verified_commit_sha = _normalize_optional_text(verified_commit_sha)
+    # Validate the SHA against the active git repo and auto-expand
+    # abbreviated forms. Catches the fabricated-SHA bug that poisoned
+    # several AHMCP-10/AHMCP-11 audit-trail rows. Bypassed entirely by
+    # AGENT_HANDOFF_SKIP_SHA_VALIDATION (set in both packages' test
+    # conftests so synthetic test SHAs work).
+    from .shared_write_context import (  # noqa: PLC0415 - late import for module init order
+        InvalidCommitShaError,
+        _validate_and_expand_commit_sha,
+    )
+    try:
+        normalized_verified_commit_sha = _validate_and_expand_commit_sha(
+            normalized_verified_commit_sha
+        )
+    except InvalidCommitShaError as exc:
+        return _envelope(
+            ok=False,
+            tool="update_review_finding",
+            data={"error": str(exc)},
+            entity="finding",
+        )
     normalized_verification_evidence = _normalize_optional_text(verification_evidence)
     input_error = _validate_update_finding_input(
         status,

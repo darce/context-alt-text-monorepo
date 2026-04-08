@@ -113,3 +113,88 @@ make ruff           # Linting with Ruff
 make mypy           # Type checking
 make check          # All checks (ruff + mypy + pytest)
 ```
+
+## In-Monorepo Package Test Invocation (MANDATORY)
+
+For tests under `packages/agent-handoff-mcp/` and `packages/agent-orchestrator-mcp/`,
+**always invoke pytest via the package Makefile target**, never via a direct
+`pytest` command:
+
+```bash
+cd packages/agent-handoff-mcp && make test-handoff
+cd packages/agent-orchestrator-mcp && make test-orchestrator
+```
+
+The Makefile sets `PYTHONPATH` to the **current worktree's** `src/` directory
+before invoking pytest. Direct `pytest` invocations rely on whatever editable
+install (`pip install -e .`) is currently registered in the Python environment,
+and editable installs are environment-wide: a single `pip install -e packages/agent-handoff-mcp`
+from one checkout makes every Python interpreter in the venv resolve
+`import agent_handoff_mcp` to that path, regardless of which git worktree the
+test session is running from. Linked worktrees inherit that same install
+pointer, so a refactor that lives only in the linked worktree's source will
+silently NOT be exercised by tests run inside that worktree — pytest runs
+against the root worktree's source instead, producing false-positive
+verification reports.
+
+### Enforcement
+
+Both packages' `tests/conftest.py` files contain a `pytest_sessionstart`
+guard that imports the package, compares its resolved `__file__` against
+the expected worktree-local source path, and aborts the session with a
+`pytest.UsageError` if they differ. The guard cannot be bypassed without
+editing the conftest. The guard message names the Makefile target the
+caller should use instead.
+
+### Background
+
+This enforcement was added in `AHMCP-13` after `AHMCP-10` regressed 65
+orchestrator tests because the original verification ran inside a linked
+worktree but the editable install resolved to the root checkout's
+pre-refactor source. The resulting "586 passed" claim was a false positive
+and the regression was not caught until the merge landed and the root
+worktree updated.
+
+### If you must invoke pytest directly
+
+Set `PYTHONPATH` explicitly so the worktree's `src/` precedes the editable
+install in import resolution:
+
+```bash
+PYTHONPATH=packages/agent-handoff-mcp/src:packages/agent-orchestrator-mcp/src \
+  pyenv exec python -m pytest packages/agent-handoff-mcp/tests -q
+```
+
+The conftest guard verifies this anyway and will fail the session if the
+imported package still resolves to the wrong path.
+
+## Commit SHA Provenance Discipline (MANDATORY)
+
+Whenever a handoff write path accepts a `commit_sha` (`record_event(actor=...)`,
+`set_handoff_state(actor=...)`, `update_review_finding(verified_commit_sha=...)`,
+`handoff_close_check(current_commit_sha=...)`, etc.):
+
+- **Pass the canonical 40-character SHA**, not an abbreviation.
+- **Get the SHA from `git rev-parse <abbrev>` or `git rev-parse HEAD`**, never
+  by typing the suffix from memory after seeing a 7-char abbreviation in
+  `git commit` output.
+- The MCP write path validates every `commit_sha` against the active git
+  repo via `git rev-parse --verify <sha>^{commit}`. If the SHA does not
+  resolve to a real commit, the write is rejected with an error message
+  pointing at this rule. Abbreviated SHAs (4-40 hex chars) that resolve
+  uniquely are auto-expanded to the full 40-char form before being stored.
+- Validation is bypassed inside the test suites via the
+  `AGENT_HANDOFF_SKIP_SHA_VALIDATION` env var (set in both packages'
+  `tests/conftest.py`); production callers always run with validation
+  enabled.
+
+### Background
+
+This enforcement was added in `AHMCP-13` after several `AHMCP-10` and
+`AHMCP-11` audit-trail rows ended up tagged with SHA suffixes that were
+typed from memory rather than via `git rev-parse`. The pre-existing
+`handoff_close_check` gate compared the passed `current_commit_sha` against
+the recorded slice decision's `commit_sha` as opaque strings, so a
+fabricated SHA that matched itself sailed through the gate. The validator
+closes that hole at the MCP write boundary so fabricated SHAs cannot enter
+the audit trail in the first place.

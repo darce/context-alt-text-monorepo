@@ -23,6 +23,7 @@ imports in this file would create a deadlock when this module is loaded first.
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 import subprocess
 from dataclasses import dataclass
@@ -39,6 +40,149 @@ from .shared_primitives import _normalize_optional_text
 # Mirror the constant from _shared; defined here so this module has no
 # module-level dependency on _shared (avoids circular import).
 _SUBPROCESS_TIMEOUT = 10
+
+# Regex matching abbreviated and full git commit SHAs (4-40 hex chars).
+# Anything shorter than 4 chars is too ambiguous to expand; anything
+# non-hex is rejected outright.
+_COMMIT_SHA_HEX_RE = re.compile(r"^[0-9a-f]{4,40}$")
+
+
+class InvalidCommitShaError(ValueError):
+    """Raised when a ``commit_sha`` value cannot be validated against git.
+
+    The validator distinguishes three failure modes:
+
+    1. The string is non-empty but not hex (typo, wrong field passed).
+    2. The string is hex but does not resolve to any object in the
+       active git repository (typically a fabricated SHA, e.g. one
+       expanded from a 7-char abbreviation by typing the suffix from
+       memory rather than via ``git rev-parse``).
+    3. The string resolves to a non-commit object (tag, tree, blob).
+
+    Validation is bypassed entirely when the
+    ``AGENT_HANDOFF_SKIP_SHA_VALIDATION`` environment variable is set
+    (used by both packages' test suites; see their ``conftest.py``).
+    """
+
+
+def _commit_sha_validation_enabled() -> bool:
+    """Return ``False`` if the test bypass env var is set, else ``True``."""
+    bypass = os.environ.get("AGENT_HANDOFF_SKIP_SHA_VALIDATION", "").strip().lower()
+    return bypass not in {"1", "true", "yes", "on"}
+
+
+def _git_repo_root() -> str | None:
+    """Return the absolute path of the active git repo root, or None.
+
+    Resolves the active task's ``target_worktree_path`` if present (so
+    validation runs against the worktree the agent claims to be working
+    in), falling back to the runtime workspace_root, falling back to
+    cwd. Returns ``None`` if no git directory is reachable from any of
+    those, which means SHA validation is silently skipped (the agent is
+    not in a git context, e.g. running tests in a tmp_path fixture).
+    """
+    candidates: list[str] = []
+    try:
+        config = get_runtime_config()
+        candidates.append(str(config.workspace_root))
+    except Exception:
+        pass
+    try:
+        candidates.append(os.getcwd())
+    except Exception:
+        pass
+    for candidate in candidates:
+        try:
+            proc = subprocess.run(
+                ["git", "-C", candidate, "rev-parse", "--show-toplevel"],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=_SUBPROCESS_TIMEOUT,
+            )
+        except Exception:
+            continue
+        if proc.returncode == 0:
+            root = proc.stdout.strip()
+            if root:
+                return root
+    return None
+
+
+def _validate_and_expand_commit_sha(value: str | None) -> str | None:
+    """Validate ``value`` against the active git repo and return its full SHA.
+
+    Behavior:
+
+    - ``None`` or empty string -> return as-is (caller is not claiming
+      provenance for a specific commit).
+    - Non-hex string -> raise ``InvalidCommitShaError`` immediately.
+    - Hex string of 4-40 chars -> shell out to
+      ``git -C <repo> rev-parse --verify <sha>^{commit}`` to confirm
+      the SHA resolves to a real commit. On success, return the
+      full 40-char form so the audit trail always stores the
+      canonical SHA. On failure (object not found, ambiguous abbrev,
+      not a commit), raise ``InvalidCommitShaError``.
+    - When git is not available or no repository is reachable from
+      the runtime workspace_root, validation is silently skipped and
+      the input is returned unchanged. This keeps tmp_path tests and
+      non-git environments working.
+    - Validation is also bypassed entirely when the
+      ``AGENT_HANDOFF_SKIP_SHA_VALIDATION`` env var is truthy. Both
+      package test suites set this env var in their ``conftest.py``
+      so synthetic test SHAs (``"abc123"``, ``"def456"``) pass
+      through unchanged.
+
+    The validator exists because the gate that previously accepted
+    fabricated SHAs (``handoff_close_check`` comparing the passed
+    ``current_commit_sha`` against the recorded slice decision's
+    ``commit_sha`` as opaque strings) had no way to detect that the
+    SHA didn't actually point at a real git object. Several
+    AHMCP-10/AHMCP-11 audit-trail rows ended up tagged with
+    SHA suffixes that were typed from memory rather than read from
+    ``git rev-parse``, and the gate passed because the fabricated
+    string matched itself.
+    """
+    if not _commit_sha_validation_enabled():
+        return value
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if not normalized:
+        return value
+    if not _COMMIT_SHA_HEX_RE.fullmatch(normalized):
+        raise InvalidCommitShaError(
+            f"commit_sha {value!r} is not a hex string of 4-40 characters. "
+            "Pass the full SHA from `git rev-parse HEAD`, never a typed-from-memory expansion."
+        )
+    repo_root = _git_repo_root()
+    if repo_root is None:
+        # No git context available -- typical in tmp_path test fixtures.
+        # Skip validation rather than failing the write.
+        return value
+    try:
+        proc = subprocess.run(
+            ["git", "-C", repo_root, "rev-parse", "--verify", f"{normalized}^{{commit}}"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=_SUBPROCESS_TIMEOUT,
+        )
+    except Exception:
+        # git binary not available or hung -- skip rather than fail.
+        return value
+    if proc.returncode != 0:
+        stderr = (proc.stderr or "").strip()
+        raise InvalidCommitShaError(
+            f"commit_sha {value!r} does not resolve to a real commit object in {repo_root}.\n"
+            "Run `git rev-parse <abbrev>` to get the canonical SHA before recording it.\n"
+            f"git rev-parse said: {stderr}"
+        )
+    full_sha = proc.stdout.strip()
+    if not _COMMIT_SHA_HEX_RE.fullmatch(full_sha) or len(full_sha) != 40:
+        # Defensive: git returned something unexpected.
+        return value
+    return full_sha
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +264,14 @@ def build_write_actor(
     normalized_agent = _normalize_optional_text(agent)
     normalized_branch = _normalize_optional_text(branch)
     normalized_commit_sha = _normalize_optional_text(commit_sha)
+    # Validate the SHA against the active git repo and auto-expand
+    # abbreviated forms to the full 40-char canonical hash. Bypassed
+    # by AGENT_HANDOFF_SKIP_SHA_VALIDATION (set by both packages'
+    # test conftests). Raises InvalidCommitShaError if the SHA is
+    # non-hex or does not resolve to a real commit object in a
+    # reachable git repo. See _validate_and_expand_commit_sha for
+    # the full contract.
+    normalized_commit_sha = _validate_and_expand_commit_sha(normalized_commit_sha)
     normalized_lane_id = _normalize_optional_text(lane_id)
     if normalized_model is not None:
         actor["model"] = normalized_model

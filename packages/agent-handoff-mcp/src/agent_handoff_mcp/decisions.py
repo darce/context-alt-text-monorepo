@@ -591,6 +591,27 @@ def handoff_close_check(
     current_commit_sha: str | None = None,
 ) -> dict:
     normalized_current_commit_sha = _normalize_optional_text(current_commit_sha)
+    # Validate the SHA against the active git repo and auto-expand
+    # abbreviated forms to the canonical 40-char hash. Catches the
+    # fabricated-SHA bug that poisoned several AHMCP-10/AHMCP-11
+    # audit-trail rows when callers expanded short SHAs from memory
+    # rather than from `git rev-parse`. Bypassed entirely by
+    # AGENT_HANDOFF_SKIP_SHA_VALIDATION (set in both packages' test
+    # conftests so synthetic test SHAs work).
+    from .shared_write_context import (  # noqa: PLC0415 - late import avoids circular dependency
+        InvalidCommitShaError,
+        _validate_and_expand_commit_sha,
+    )
+    try:
+        normalized_current_commit_sha = _validate_and_expand_commit_sha(
+            normalized_current_commit_sha
+        )
+    except InvalidCommitShaError as exc:
+        return _envelope(
+            ok=False,
+            tool="handoff_close_check",
+            data={"error": str(exc)},
+        )
     if require_fresh_tests and normalized_current_commit_sha is None:
         return _envelope(
             ok=False,

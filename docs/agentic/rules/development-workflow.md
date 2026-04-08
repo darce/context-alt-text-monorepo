@@ -160,9 +160,15 @@ For every unit of work (feature slice, bug fix, refactor):
 
 Package-test execution note:
 
-- For `packages/agent-handoff-mcp/` and `packages/agent-orchestrator-mcp/`, prefer terminal-first pytest commands with the pinned `description-service` interpreter instead of IDE Python environment setup.
+- For `packages/agent-handoff-mcp/` and `packages/agent-orchestrator-mcp/`, **always invoke pytest via the package Makefile target** (`make test-handoff` / `make test-orchestrator`), never via a direct `pytest` command. The Makefile sets `PYTHONPATH` to the current worktree's `src/` directory so imports actually resolve to the worktree's source instead of whatever editable install is registered in the Python environment. Direct `pytest` invocations from a linked worktree silently test against the editable install's source path (typically the root checkout), producing false-positive verifications when the linked worktree contains a refactor that the root checkout does not. Both packages' `tests/conftest.py` enforce this with a `pytest_sessionstart` guard that aborts the session with a `pytest.UsageError` when `import agent_handoff_mcp` resolves to the wrong path. See [testing-python.md § In-Monorepo Package Test Invocation](testing-python.md#in-monorepo-package-test-invocation-mandatory) for the full rationale and the `AHMCP-10` regression that motivated the enforcement.
 - Do not hardcode user-local absolute filesystem paths such as `/Users/...` in commands or examples; prefer environment variables such as `${PYENV_ROOT:-$HOME/.pyenv}` and `${REPO_ROOT:-$PWD}`.
-- Example: `REPO_ROOT="${REPO_ROOT:-$PWD}" && PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}" && PYENV_VERSION=description-service "$PYENV_ROOT/versions/description-service/bin/python" -m pytest "$REPO_ROOT/packages/agent-handoff-mcp/tests/test_import_export_regressions.py" -q`
+- Canonical example: `cd "$REPO_ROOT/packages/agent-handoff-mcp" && make test-handoff` (or `make test-orchestrator` from the orchestrator package directory). The Makefile pins the interpreter via `PYENV_VERSION=description-service` and sets `PYTHONPATH` to the worktree-local `src/` directory before invoking pytest.
+
+Commit SHA provenance discipline:
+
+- Whenever a handoff write path accepts a `commit_sha` field (`record_event(actor=...)`, `set_handoff_state(actor=...)`, `update_review_finding(verified_commit_sha=...)`, `handoff_close_check(current_commit_sha=...)`, etc.), pass the **canonical 40-character SHA** from `git rev-parse <abbrev>` or `git rev-parse HEAD`. Never type the suffix from memory after seeing a 7-char abbreviation in `git commit` output.
+- The MCP write path validates every `commit_sha` against the active git repo via `git rev-parse --verify <sha>^{commit}`. Fabricated SHAs (typed from memory or otherwise) are rejected with an error pointing at this rule. Abbreviated SHAs that resolve uniquely are auto-expanded to the full 40-char form before being stored, so callers can pass `bb24ee59` and the audit trail still records `bb24ee5945273ebc4663b6d264023d9542823310`.
+- Validation is bypassed inside the test suites via the `AGENT_HANDOFF_SKIP_SHA_VALIDATION` env var (set in both packages' `tests/conftest.py`); production callers always run with validation enabled. See [testing-python.md § Commit SHA Provenance Discipline](testing-python.md#commit-sha-provenance-discipline-mandatory) for the full rationale and the `AHMCP-10`/`AHMCP-11` audit-trail bug that motivated the enforcement.
 
 ---
 

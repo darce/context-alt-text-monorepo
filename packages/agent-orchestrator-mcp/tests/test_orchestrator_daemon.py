@@ -23,6 +23,35 @@ SCRIPT_PATH = ORCHESTRATION_DIR / "orchestrator_daemon.py"
 SCRIPT_DIR = ORCHESTRATION_DIR
 
 
+def _to_dict(value: Any) -> Any:
+    """AHMCP-10 dict-return migration helper with v2 flatten.
+
+    Handler results from `agent_handoff_mcp` and `agent_orchestrator_mcp`
+    are now native dicts; pre-AHMCP-10 they were JSON strings. This helper
+    accepts either shape so inline ``_to_dict(handler(...))`` call sites in
+    this test module are structurally identical to the previous
+    ``json.loads(handler(...))`` form. File-content reads (e.g.
+    ``_to_dict(path.read_text())``) keep working through the str branch.
+
+    For v2 envelope dicts the helper also merges ``data`` and ``scope``
+    fields into the top level so test assertions that previously read
+    ``result["foo"]`` (relying on the legacy top-level mirror that AHMCP-10
+    removed from the wire format) keep working without rewriting every
+    test body. The merge is a test-only ergonomic — production callers
+    must read from ``result["data"][...]``.
+    """
+    if not isinstance(value, dict):
+        value = json.loads(value)
+    if isinstance(value, dict) and value.get("schema_version") == 2:
+        data = value.get("data", {})
+        scope = value.get("scope", {})
+        flat = {**value, **data}
+        if "task_ref" not in flat and scope.get("task_ref"):
+            flat["task_ref"] = scope["task_ref"]
+        return flat
+    return value
+
+
 def _load_module():
     spec = importlib.util.spec_from_file_location("orchestrator_daemon", SCRIPT_PATH)
     if spec is None or spec.loader is None:
@@ -70,7 +99,7 @@ def test_lock_writes_pid(tmp_path: Path) -> None:
     mod = _load_module()
     lock = mod.OrchestratorLock(tmp_path)
     assert lock.acquire() is True
-    lock_data = json.loads((tmp_path / "orchestrator.lock").read_text())
+    lock_data = _to_dict((tmp_path / "orchestrator.lock").read_text())
     assert lock_data["pid"] == os.getpid()
     lock.release()
 
@@ -114,7 +143,7 @@ def test_log_creates_jsonl_entry(tmp_path: Path) -> None:
     mod._log(tmp_path, "INFO", "test_event", extra_key="val")
     log_path = tmp_path / "orchestrator.jsonl"
     assert log_path.exists()
-    entry = json.loads(log_path.read_text().strip())
+    entry = _to_dict(log_path.read_text().strip())
     assert entry["event"] == "test_event"
     assert entry["level"] == "INFO"
     assert entry["extra_key"] == "val"
@@ -482,7 +511,7 @@ def test_single_pass_dispatches_from_task_plan(tmp_path: Path) -> None:
     plan_path = tmp_path / "docs" / "tasks" / "demo-task-plan.md"
     plan_path.parent.mkdir(parents=True)
     plan_path.write_text("## Phase 1: Backend\n- [ ] Implement backend slice\n")
-    json.loads(
+    _to_dict(
         mcp_api.upsert_worktree_lane(
             lane_id="backend-domain",
             worktree_path=str(tmp_path / "backend-domain"),
@@ -515,7 +544,7 @@ def test_single_pass_dispatches_from_task_plan(tmp_path: Path) -> None:
             )
 
     assert result == 0
-    messages = json.loads(
+    messages = _to_dict(
         mcp_api.list_lane_messages(
             task_ref="phase-5-retention-export-and-audit-controls",
             lane_id="backend-domain",
@@ -526,14 +555,14 @@ def test_single_pass_dispatches_from_task_plan(tmp_path: Path) -> None:
     assert messages[0]["direction"] == "orchestrator_to_worker"
     assert "[plan:phase-1::phase-1-backend::checklist_1]" in messages[0]["message"]
 
-    state = json.loads(
+    state = _to_dict(
         mcp_api.get_handoff_state(
             task_ref="phase-5-retention-export-and-audit-controls",
             verbose=True,
         )
     )
     assert any("[plan:phase-1::phase-1-backend::checklist_1]" in row["action"] for row in state["actions_pending"])
-    cursors = json.loads(
+    cursors = _to_dict(
         mcp_api.list_plan_cursors(
             task_ref="phase-5-retention-export-and-audit-controls",
             state="dispatched",
@@ -549,7 +578,7 @@ def test_single_pass_dispatches_next_eligible_task_plan_item(tmp_path: Path) -> 
     plan_path = tmp_path / "docs" / "tasks" / "demo-task-plan.md"
     plan_path.parent.mkdir(parents=True)
     plan_path.write_text("## Phase 1: Backend\n- [ ] Implement backend slice\n- [ ] Verify backend slice\n")
-    json.loads(
+    _to_dict(
         mcp_api.upsert_worktree_lane(
             lane_id="backend-domain",
             worktree_path=str(tmp_path / "backend-domain"),
@@ -584,7 +613,7 @@ def test_single_pass_dispatches_next_eligible_task_plan_item(tmp_path: Path) -> 
                 == 0
             )
 
-            first_cursor = json.loads(
+            first_cursor = _to_dict(
                 mcp_api.list_plan_cursors(
                     task_ref="phase-5-retention-export-and-audit-controls",
                     state="dispatched",
@@ -593,7 +622,7 @@ def test_single_pass_dispatches_next_eligible_task_plan_item(tmp_path: Path) -> 
             assert len(first_cursor) == 1
             assert first_cursor[0]["plan_item_id"] == "phase-1::phase-1-backend::checklist_1"
 
-            first_actions = json.loads(
+            first_actions = _to_dict(
                 mcp_api.list_next_actions(
                     task_ref="phase-5-retention-export-and-audit-controls",
                     status="pending",
@@ -601,7 +630,7 @@ def test_single_pass_dispatches_next_eligible_task_plan_item(tmp_path: Path) -> 
                 )
             )["actions"]
             assert len(first_actions) == 1
-            json.loads(
+            _to_dict(
                 mcp_api.update_next_actions(
                     operation="update",
                     action_id=int(first_actions[0]["id"]),
@@ -609,7 +638,7 @@ def test_single_pass_dispatches_next_eligible_task_plan_item(tmp_path: Path) -> 
                 )
             )
 
-            first_messages = json.loads(
+            first_messages = _to_dict(
                 mcp_api.list_lane_messages(
                     task_ref="phase-5-retention-export-and-audit-controls",
                     lane_id="backend-domain",
@@ -617,9 +646,9 @@ def test_single_pass_dispatches_next_eligible_task_plan_item(tmp_path: Path) -> 
                 )
             )["messages"]
             assert len(first_messages) == 1
-            json.loads(mcp_api.update_lane_message(int(first_messages[0]["id"]), "closed"))
+            _to_dict(mcp_api.update_lane_message(int(first_messages[0]["id"]), "closed"))
 
-            json.loads(
+            _to_dict(
                 mcp_api.upsert_plan_cursor(
                     task_ref="phase-5-retention-export-and-audit-controls",
                     plan_item_id="phase-1::phase-1-backend::checklist_1",
@@ -637,7 +666,7 @@ def test_single_pass_dispatches_next_eligible_task_plan_item(tmp_path: Path) -> 
                 == 0
             )
 
-    cursors = json.loads(
+    cursors = _to_dict(
         mcp_api.list_plan_cursors(
             task_ref="phase-5-retention-export-and-audit-controls",
             state="dispatched",
@@ -653,7 +682,7 @@ def test_single_pass_dispatches_only_one_plan_item_per_cycle(tmp_path: Path) -> 
     plan_path = tmp_path / "docs" / "tasks" / "demo-task-plan.md"
     plan_path.parent.mkdir(parents=True)
     plan_path.write_text("## Phase 1: Backend\n- [ ] Implement backend slice\n- [ ] Verify backend slice\n")
-    json.loads(
+    _to_dict(
         mcp_api.upsert_worktree_lane(
             lane_id="backend-domain",
             worktree_path=str(tmp_path / "backend-domain"),
@@ -688,7 +717,7 @@ def test_single_pass_dispatches_only_one_plan_item_per_cycle(tmp_path: Path) -> 
                 == 0
             )
 
-    cursors = json.loads(
+    cursors = _to_dict(
         mcp_api.list_plan_cursors(
             task_ref="phase-5-retention-export-and-audit-controls",
             state="dispatched",
@@ -709,7 +738,7 @@ def test_single_pass_prefers_upstream_lane_over_document_order(tmp_path: Path) -
         "## Phase 1: Backend Domain\n"
         "- [ ] Implement domain slice\n"
     )
-    json.loads(
+    _to_dict(
         mcp_api.upsert_worktree_lane(
             lane_id="backend-domain",
             worktree_path=str(tmp_path / "backend-domain"),
@@ -718,7 +747,7 @@ def test_single_pass_prefers_upstream_lane_over_document_order(tmp_path: Path) -
             objective="domain work",
         )
     )
-    json.loads(
+    _to_dict(
         mcp_api.upsert_worktree_lane(
             lane_id="backend-http",
             worktree_path=str(tmp_path / "backend-http"),
@@ -757,7 +786,7 @@ def test_single_pass_prefers_upstream_lane_over_document_order(tmp_path: Path) -
                 == 0
             )
 
-    cursors = json.loads(
+    cursors = _to_dict(
         mcp_api.list_plan_cursors(
             task_ref="phase-5-retention-export-and-audit-controls",
             state="dispatched",
@@ -1666,7 +1695,7 @@ def test_apply_guidance_resolution_review_completes_pending_actions(tmp_path: Pa
 def test_resolve_guidance_cycle_integration_redispatch(tmp_path: Path) -> None:
     mod = _load_module()
     _configure_real_runtime(tmp_path, "phase-5-retention-export-and-audit-controls")
-    json.loads(
+    _to_dict(
         mcp_api.upsert_worktree_lane(
             lane_id="backend-domain",
             worktree_path=str(tmp_path / "backend-domain"),
@@ -1675,7 +1704,7 @@ def test_resolve_guidance_cycle_integration_redispatch(tmp_path: Path) -> None:
             objective="domain work",
         )
     )
-    json.loads(
+    _to_dict(
         mcp_api.record_lane_message(
             lane_id="backend-domain",
             session="lane-session",
@@ -1685,7 +1714,7 @@ def test_resolve_guidance_cycle_integration_redispatch(tmp_path: Path) -> None:
             status="open",
         )
     )
-    json.loads(
+    _to_dict(
         mcp_api.record_lane_message(
             lane_id="backend-domain",
             session="lane-session",
@@ -1695,7 +1724,7 @@ def test_resolve_guidance_cycle_integration_redispatch(tmp_path: Path) -> None:
             status="open",
         )
     )
-    json.loads(
+    _to_dict(
         mcp_api.record_worker_report(
             lane_id="backend-domain",
             session="lane-session",
@@ -1707,7 +1736,7 @@ def test_resolve_guidance_cycle_integration_redispatch(tmp_path: Path) -> None:
     results = mod._resolve_guidance_cycle(tmp_path, "phase-5-retention-export-and-audit-controls")
 
     assert [row.kind for row in results] == ["redispatch"]
-    messages = json.loads(
+    messages = _to_dict(
         mcp_api.list_lane_messages(
             task_ref="phase-5-retention-export-and-audit-controls", lane_id="backend-domain", status="open"
         )
@@ -1720,7 +1749,7 @@ def test_resolve_guidance_cycle_integration_redispatch(tmp_path: Path) -> None:
 def test_resolve_guidance_cycle_integration_review_closes_dispatch(tmp_path: Path) -> None:
     mod = _load_module()
     _configure_real_runtime(tmp_path, "phase-5-retention-export-and-audit-controls")
-    json.loads(
+    _to_dict(
         mcp_api.upsert_worktree_lane(
             lane_id="backend-http",
             worktree_path=str(tmp_path / "backend-http"),
@@ -1729,7 +1758,7 @@ def test_resolve_guidance_cycle_integration_review_closes_dispatch(tmp_path: Pat
             objective="http work",
         )
     )
-    json.loads(
+    _to_dict(
         mcp_api.record_lane_message(
             lane_id="backend-http",
             session="lane-session",
@@ -1739,7 +1768,7 @@ def test_resolve_guidance_cycle_integration_review_closes_dispatch(tmp_path: Pat
             status="open",
         )
     )
-    json.loads(
+    _to_dict(
         mcp_api.record_lane_message(
             lane_id="backend-http",
             session="lane-session",
@@ -1749,7 +1778,7 @@ def test_resolve_guidance_cycle_integration_review_closes_dispatch(tmp_path: Pat
             status="open",
         )
     )
-    json.loads(
+    _to_dict(
         mcp_api.record_worker_report(
             lane_id="backend-http",
             session="lane-session",
@@ -1760,13 +1789,13 @@ def test_resolve_guidance_cycle_integration_review_closes_dispatch(tmp_path: Pat
     results = mod._resolve_guidance_cycle(tmp_path, "phase-5-retention-export-and-audit-controls")
 
     assert [row.kind for row in results] == ["review"]
-    messages = json.loads(
+    messages = _to_dict(
         mcp_api.list_lane_messages(
             task_ref="phase-5-retention-export-and-audit-controls", lane_id="backend-http", status="open"
         )
     )["messages"]
     assert messages == []
-    lanes = json.loads(
+    lanes = _to_dict(
         mcp_api.list_worktree_lanes(task_ref="phase-5-retention-export-and-audit-controls", status="all")
     )["lanes"]
     lane_row = next(row for row in lanes if row["lane_id"] == "backend-http")
@@ -1776,7 +1805,7 @@ def test_resolve_guidance_cycle_integration_review_closes_dispatch(tmp_path: Pat
 def test_resolve_guidance_cycle_dedupes_duplicate_lane_messages(tmp_path: Path) -> None:
     mod = _load_module()
     _configure_real_runtime(tmp_path, "phase-5-retention-export-and-audit-controls")
-    json.loads(
+    _to_dict(
         mcp_api.upsert_worktree_lane(
             lane_id="backend-domain",
             worktree_path=str(tmp_path / "backend-domain"),
@@ -1785,7 +1814,7 @@ def test_resolve_guidance_cycle_dedupes_duplicate_lane_messages(tmp_path: Path) 
             objective="domain work",
         )
     )
-    json.loads(
+    _to_dict(
         mcp_api.record_lane_message(
             lane_id="backend-domain",
             session="lane-session-old",
@@ -1795,7 +1824,7 @@ def test_resolve_guidance_cycle_dedupes_duplicate_lane_messages(tmp_path: Path) 
             status="open",
         )
     )
-    json.loads(
+    _to_dict(
         mcp_api.record_lane_message(
             lane_id="backend-domain",
             session="lane-session-new",
@@ -1805,7 +1834,7 @@ def test_resolve_guidance_cycle_dedupes_duplicate_lane_messages(tmp_path: Path) 
             status="open",
         )
     )
-    json.loads(
+    _to_dict(
         mcp_api.record_worker_report(
             lane_id="backend-domain",
             session="lane-session-new",
@@ -1817,7 +1846,7 @@ def test_resolve_guidance_cycle_dedupes_duplicate_lane_messages(tmp_path: Path) 
     results = mod._resolve_guidance_cycle(tmp_path, "phase-5-retention-export-and-audit-controls")
 
     assert [row.kind for row in results] == ["redispatch"]
-    messages = json.loads(
+    messages = _to_dict(
         mcp_api.list_lane_messages(
             task_ref="phase-5-retention-export-and-audit-controls",
             lane_id="backend-domain",

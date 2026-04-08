@@ -37,9 +37,24 @@ def isolated_handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     }
 
 
-def _parse(payload: str) -> dict:
-    import typing
+def _parse(payload: str | dict) -> dict:
+    """AHMCP-10 dict-return migration: handlers return native dicts;
+    only fall back to json.loads when something legitimately hands us a
+    string (e.g. CLI stdout capture).
+    """
+    if not isinstance(payload, dict):
+        payload = json.loads(payload)
+    if isinstance(payload, dict) and payload.get("schema_version") == 2:
+        data = payload.get("data", {})
+        scope = payload.get("scope", {})
+        flat = {**payload, **data}
+        if "task_ref" not in flat and scope.get("task_ref"):
+            flat["task_ref"] = scope["task_ref"]
+        return flat
+    return payload
 
+    if isinstance(payload, dict):
+        return payload
     return typing.cast(dict, json.loads(payload))
 
 

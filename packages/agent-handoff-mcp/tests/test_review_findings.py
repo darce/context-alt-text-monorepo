@@ -1105,3 +1105,348 @@ def test_tool_registry_metadata_matches_contract_taxonomy(
 
     assert registry[tool_name].surface_class == surface_class
     assert registry[tool_name].entity_family == entity_family
+
+
+# ---------------------------------------------------------------------------
+# AHMCP-15: repair_review_finding_provenance — bounded admin op
+# ---------------------------------------------------------------------------
+#
+# Motivating bug (AHMCP-14-BR-04 → BR-05): a review finding row was attributed
+# to the reviewing agent's workspace HEAD (an unrelated branch) instead of the
+# actual buggy code's commit. The standard `record` upsert COALESCEs existing
+# branch/commit_sha so re-recording cannot fix it; `update` doesn't expose the
+# source columns. `repair_provenance` is the bounded admin path that mutates
+# exactly those two columns and writes a `repair_provenance_<finding_id>`
+# decision row as the audit trail.
+
+
+_AHMCP15_OLD_BRANCH = "feature/wrong-branch"
+_AHMCP15_OLD_SHA = "1111111111111111111111111111111111111111"
+_AHMCP15_NEW_BRANCH = "feature/correct-branch"
+_AHMCP15_NEW_SHA = "2222222222222222222222222222222222222222"
+_AHMCP15_REASON = (
+    "Original row was tagged with the reviewing agent's workspace HEAD instead of the "
+    "AHMCP-14 source commit; repair so commit_guard descendant check is meaningful."
+)
+
+
+def _seed_finding_with_provenance(
+    *,
+    task_ref: str,
+    finding_id: str,
+    branch: str,
+    commit_sha: str,
+) -> int:
+    """Insert a review_findings row directly so the test controls source provenance."""
+    with _get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO review_findings (
+                task_ref, finding_id, severity, file_path, description,
+                status, session, agent, branch, commit_sha,
+                created_at, updated_at
+            )
+            VALUES (?, ?, 'medium', 'src/foo.py', 'wrong attribution',
+                    'open', 'seed-session', 'Test Agent', ?, ?,
+                    datetime('now'), datetime('now'))
+            """,
+            (task_ref, finding_id, branch, commit_sha),
+        )
+        return int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+
+
+def test_repair_provenance_happy_path(isolated_handoff: dict) -> None:
+    """Happy path: repair updates branch+commit_sha and writes audit decision."""
+    _parse(mcp_server.set_handoff_state(task_ref="T1", objective="obj", status="in_progress"))
+    db_id = _seed_finding_with_provenance(
+        task_ref="T1",
+        finding_id="T1-BR-01",
+        branch=_AHMCP15_OLD_BRANCH,
+        commit_sha=_AHMCP15_OLD_SHA,
+    )
+
+    result = _parse(
+        mcp_server.review_findings(
+            review={
+                "operation": "repair_provenance",
+                "session": "ahmcp-15-test",
+                "task_ref": "T1",
+                "finding_id": "T1-BR-01",
+                "expected_branch": _AHMCP15_OLD_BRANCH,
+                "expected_commit_sha": _AHMCP15_OLD_SHA,
+                "new_branch": _AHMCP15_NEW_BRANCH,
+                "new_commit_sha": _AHMCP15_NEW_SHA,
+                "reason": _AHMCP15_REASON,
+            }
+        )
+    )
+
+    assert result["ok"] is True, result
+    assert result["finding"]["branch"] == _AHMCP15_NEW_BRANCH
+    assert result["finding"]["commit_sha"] == _AHMCP15_NEW_SHA
+    assert result["before"] == {"branch": _AHMCP15_OLD_BRANCH, "commit_sha": _AHMCP15_OLD_SHA}
+    assert result["after"] == {"branch": _AHMCP15_NEW_BRANCH, "commit_sha": _AHMCP15_NEW_SHA}
+    assert result["audit_decision_id"] == "repair_provenance_T1-BR-01"
+    assert isinstance(result["audit_decision_db_id"], int)
+
+    # Row in DB reflects the change
+    with _get_db_connection() as conn:
+        row = conn.execute("SELECT branch, commit_sha FROM review_findings WHERE id = ?", (db_id,)).fetchone()
+    assert row["branch"] == _AHMCP15_NEW_BRANCH
+    assert row["commit_sha"] == _AHMCP15_NEW_SHA
+
+    # Audit decision row exists with before/after embedded in rationale
+    with _get_db_connection() as conn:
+        decision_row = conn.execute(
+            "SELECT decision, rationale, task_ref FROM decisions WHERE id = ?",
+            (result["audit_decision_db_id"],),
+        ).fetchone()
+    assert decision_row["decision"] == "repair_provenance_T1-BR-01"
+    assert decision_row["task_ref"] == "T1"
+    assert _AHMCP15_OLD_BRANCH in decision_row["rationale"]
+    assert _AHMCP15_OLD_SHA in decision_row["rationale"]
+    assert _AHMCP15_NEW_BRANCH in decision_row["rationale"]
+    assert _AHMCP15_NEW_SHA in decision_row["rationale"]
+    assert _AHMCP15_REASON in decision_row["rationale"]
+
+
+def test_repair_provenance_rejects_branch_mismatch(isolated_handoff: dict) -> None:
+    """Concurrency guard: expected_branch must match the stored row exactly."""
+    _parse(mcp_server.set_handoff_state(task_ref="T1", objective="obj", status="in_progress"))
+    _seed_finding_with_provenance(
+        task_ref="T1",
+        finding_id="T1-BR-02",
+        branch=_AHMCP15_OLD_BRANCH,
+        commit_sha=_AHMCP15_OLD_SHA,
+    )
+
+    result = _parse(
+        mcp_server.review_findings(
+            review={
+                "operation": "repair_provenance",
+                "session": "ahmcp-15-test",
+                "task_ref": "T1",
+                "finding_id": "T1-BR-02",
+                "expected_branch": "feature/some-other-branch",
+                "expected_commit_sha": _AHMCP15_OLD_SHA,
+                "new_branch": _AHMCP15_NEW_BRANCH,
+                "new_commit_sha": _AHMCP15_NEW_SHA,
+                "reason": _AHMCP15_REASON,
+            }
+        )
+    )
+    assert result["ok"] is False
+    assert "expected_branch does not match" in result["error"]
+    assert result["actual_branch"] == _AHMCP15_OLD_BRANCH
+
+    # Row was NOT modified
+    with _get_db_connection() as conn:
+        row = conn.execute(
+            "SELECT branch, commit_sha FROM review_findings WHERE finding_id = 'T1-BR-02'"
+        ).fetchone()
+    assert row["branch"] == _AHMCP15_OLD_BRANCH
+    assert row["commit_sha"] == _AHMCP15_OLD_SHA
+
+
+def test_repair_provenance_rejects_commit_sha_mismatch(isolated_handoff: dict) -> None:
+    """Concurrency guard: expected_commit_sha must match the stored row exactly."""
+    _parse(mcp_server.set_handoff_state(task_ref="T1", objective="obj", status="in_progress"))
+    _seed_finding_with_provenance(
+        task_ref="T1",
+        finding_id="T1-BR-03",
+        branch=_AHMCP15_OLD_BRANCH,
+        commit_sha=_AHMCP15_OLD_SHA,
+    )
+
+    result = _parse(
+        mcp_server.review_findings(
+            review={
+                "operation": "repair_provenance",
+                "session": "ahmcp-15-test",
+                "task_ref": "T1",
+                "finding_id": "T1-BR-03",
+                "expected_branch": _AHMCP15_OLD_BRANCH,
+                "expected_commit_sha": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+                "new_branch": _AHMCP15_NEW_BRANCH,
+                "new_commit_sha": _AHMCP15_NEW_SHA,
+                "reason": _AHMCP15_REASON,
+            }
+        )
+    )
+    assert result["ok"] is False
+    assert "expected_commit_sha does not match" in result["error"]
+    assert result["actual_commit_sha"] == _AHMCP15_OLD_SHA
+
+
+def test_repair_provenance_rejects_missing_finding(isolated_handoff: dict) -> None:
+    """Missing finding (no row with finding_id under the task_ref) is rejected."""
+    _parse(mcp_server.set_handoff_state(task_ref="T1", objective="obj", status="in_progress"))
+
+    result = _parse(
+        mcp_server.review_findings(
+            review={
+                "operation": "repair_provenance",
+                "session": "ahmcp-15-test",
+                "task_ref": "T1",
+                "finding_id": "T1-DOES-NOT-EXIST",
+                "expected_branch": _AHMCP15_OLD_BRANCH,
+                "expected_commit_sha": _AHMCP15_OLD_SHA,
+                "new_branch": _AHMCP15_NEW_BRANCH,
+                "new_commit_sha": _AHMCP15_NEW_SHA,
+                "reason": _AHMCP15_REASON,
+            }
+        )
+    )
+    assert result["ok"] is False
+    assert "Finding not found" in result["error"]
+
+
+def test_repair_provenance_rejects_short_reason(isolated_handoff: dict) -> None:
+    """reason must be at least 20 characters."""
+    _parse(mcp_server.set_handoff_state(task_ref="T1", objective="obj", status="in_progress"))
+    _seed_finding_with_provenance(
+        task_ref="T1",
+        finding_id="T1-BR-04",
+        branch=_AHMCP15_OLD_BRANCH,
+        commit_sha=_AHMCP15_OLD_SHA,
+    )
+
+    # Pydantic min_length=20 catches this at the discriminator boundary
+    with pytest.raises(Exception):  # ValidationError from pydantic
+        mcp_server.review_findings(
+            review={
+                "operation": "repair_provenance",
+                "session": "ahmcp-15-test",
+                "task_ref": "T1",
+                "finding_id": "T1-BR-04",
+                "expected_branch": _AHMCP15_OLD_BRANCH,
+                "expected_commit_sha": _AHMCP15_OLD_SHA,
+                "new_branch": _AHMCP15_NEW_BRANCH,
+                "new_commit_sha": _AHMCP15_NEW_SHA,
+                "reason": "too short",
+            }
+        )
+
+
+def test_repair_provenance_rejects_short_reason_at_core_boundary(isolated_handoff: dict) -> None:
+    """The core function also rejects short reasons (defense in depth, bypassing pydantic)."""
+    _parse(mcp_server.set_handoff_state(task_ref="T1", objective="obj", status="in_progress"))
+    _seed_finding_with_provenance(
+        task_ref="T1",
+        finding_id="T1-BR-04b",
+        branch=_AHMCP15_OLD_BRANCH,
+        commit_sha=_AHMCP15_OLD_SHA,
+    )
+
+    result = _parse(
+        mcp_server.repair_review_finding_provenance(
+            session="ahmcp-15-test",
+            task_ref="T1",
+            finding_id="T1-BR-04b",
+            expected_branch=_AHMCP15_OLD_BRANCH,
+            expected_commit_sha=_AHMCP15_OLD_SHA,
+            new_branch=_AHMCP15_NEW_BRANCH,
+            new_commit_sha=_AHMCP15_NEW_SHA,
+            reason="too short",
+        )
+    )
+    assert result["ok"] is False
+    assert "at least 20 characters" in result["error"]
+
+
+def test_repair_provenance_rejects_no_op_repair(isolated_handoff: dict) -> None:
+    """If expected and new are identical, the operation refuses (nothing to repair)."""
+    _parse(mcp_server.set_handoff_state(task_ref="T1", objective="obj", status="in_progress"))
+    _seed_finding_with_provenance(
+        task_ref="T1",
+        finding_id="T1-BR-05",
+        branch=_AHMCP15_OLD_BRANCH,
+        commit_sha=_AHMCP15_OLD_SHA,
+    )
+
+    result = _parse(
+        mcp_server.review_findings(
+            review={
+                "operation": "repair_provenance",
+                "session": "ahmcp-15-test",
+                "task_ref": "T1",
+                "finding_id": "T1-BR-05",
+                "expected_branch": _AHMCP15_OLD_BRANCH,
+                "expected_commit_sha": _AHMCP15_OLD_SHA,
+                "new_branch": _AHMCP15_OLD_BRANCH,
+                "new_commit_sha": _AHMCP15_OLD_SHA,
+                "reason": _AHMCP15_REASON,
+            }
+        )
+    )
+    assert result["ok"] is False
+    assert "nothing to repair" in result["error"]
+
+
+def test_repair_provenance_global_lookup_ambiguity_error(isolated_handoff: dict) -> None:
+    """When the same finding_id exists under multiple task_refs and task_ref is omitted,
+    the operation reports ambiguity instead of guessing."""
+    _parse(mcp_server.set_handoff_state(task_ref="task-A", objective="A", status="in_progress"))
+    _seed_finding_with_provenance(
+        task_ref="task-A",
+        finding_id="DUP-BR-01",
+        branch=_AHMCP15_OLD_BRANCH,
+        commit_sha=_AHMCP15_OLD_SHA,
+    )
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="task-B", objective="B", status="in_progress", expected_revision=0
+        )
+    )
+    _seed_finding_with_provenance(
+        task_ref="task-B",
+        finding_id="DUP-BR-01",
+        branch=_AHMCP15_OLD_BRANCH,
+        commit_sha=_AHMCP15_OLD_SHA,
+    )
+
+    result = _parse(
+        mcp_server.review_findings(
+            review={
+                "operation": "repair_provenance",
+                "session": "ahmcp-15-test",
+                "finding_id": "DUP-BR-01",
+                "expected_branch": _AHMCP15_OLD_BRANCH,
+                "expected_commit_sha": _AHMCP15_OLD_SHA,
+                "new_branch": _AHMCP15_NEW_BRANCH,
+                "new_commit_sha": _AHMCP15_NEW_SHA,
+                "reason": _AHMCP15_REASON,
+            }
+        )
+    )
+    assert result["ok"] is False
+    assert "Ambiguous finding_id" in result["error"]
+
+
+def test_repair_provenance_global_lookup_succeeds_when_unique(isolated_handoff: dict) -> None:
+    """When task_ref is omitted but finding_id is globally unique, the repair lands."""
+    _parse(mcp_server.set_handoff_state(task_ref="task-A", objective="A", status="in_progress"))
+    _seed_finding_with_provenance(
+        task_ref="task-A",
+        finding_id="UNIQUE-BR-01",
+        branch=_AHMCP15_OLD_BRANCH,
+        commit_sha=_AHMCP15_OLD_SHA,
+    )
+
+    result = _parse(
+        mcp_server.review_findings(
+            review={
+                "operation": "repair_provenance",
+                "session": "ahmcp-15-test",
+                "finding_id": "UNIQUE-BR-01",
+                "expected_branch": _AHMCP15_OLD_BRANCH,
+                "expected_commit_sha": _AHMCP15_OLD_SHA,
+                "new_branch": _AHMCP15_NEW_BRANCH,
+                "new_commit_sha": _AHMCP15_NEW_SHA,
+                "reason": _AHMCP15_REASON,
+            }
+        )
+    )
+    assert result["ok"] is True
+    assert result["task_ref"] == "task-A"
+    assert result["finding"]["branch"] == _AHMCP15_NEW_BRANCH

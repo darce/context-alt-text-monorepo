@@ -9,7 +9,6 @@ by api.py / __init__.py / tests.
 
 from __future__ import annotations
 
-import json
 import re
 import sqlite3
 
@@ -121,6 +120,7 @@ from .review_findings import (  # noqa: F401
     reconcile_review_findings,
     record_review_finding,
     record_review_run,
+    repair_review_finding_provenance,
     update_review_finding,
 )
 from .runtime import get_runtime_config

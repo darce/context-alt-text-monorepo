@@ -29,6 +29,8 @@ _core_report_blocker = core.report_blocker
 record_review_finding = core.record_review_finding
 batch_record_review_findings = core.batch_record_review_findings
 _core_update_review_finding = core.update_review_finding
+repair_review_finding_provenance = core.repair_review_finding_provenance
+_core_repair_review_finding_provenance = repair_review_finding_provenance
 list_review_findings = core.list_review_findings
 _core_record_review_run = core.record_review_run
 list_review_runs = core.list_review_runs
@@ -57,7 +59,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "get_handoff_state": "Read task handoff summary (blockers, actions, findings). Pass view='dashboard' for cross-task view. Pass sections='decisions_recent,findings_open' to select specific sections; active and limits are always included. Pass sections='identity' for an identity-only response (active + limits, no data sections). Pass detail='summary' to truncate long rationale and verification fields.",
     "record_event": "Record a decision, verification result, or blocker mutation through one typed event surface. Set event.event_kind to 'decision', 'test_result', or 'blocker' to select the required fields.",
     "next_actions": "List or mutate next-action items through one typed domain surface. Set action.operation to 'list', 'add', 'update', 'complete', or 'skip'.",
-    "review_findings": "Record, batch record, update, or list review findings through one typed domain surface. Set review.operation to 'record', 'batch_record', 'update', or 'list'.",
+    "review_findings": "Record, batch record, update, repair provenance, or list review findings through one typed domain surface. Set review.operation to 'record', 'batch_record', 'update', 'repair_provenance', or 'list'. The 'repair_provenance' operation is the bounded admin path for fixing a finding row whose source branch/commit_sha was attributed to the wrong commit (e.g. the reviewer's workspace HEAD instead of the actual buggy code's commit) — see ReviewFindingsRepairProvenanceOp.",
     "review_runs": "Record, list, or summarize review-run coverage through one typed domain surface. Set review.operation to 'record', 'list', or 'coverage'.",
     "handoff_close_check": "Check task readiness to close: blockers, pending actions, findings, and optional fresh-test gate.",
     "audit_decision_ids": "Audit decision IDs for grammar conformance. Returns canonical/malformed/freeform classifications.",
@@ -258,6 +260,51 @@ class ReviewFindingsUpdateOp(BaseModel):
     ] = None
 
 
+class ReviewFindingsRepairProvenanceOp(BaseModel):
+    operation: Literal["repair_provenance"]
+    session: Annotated[
+        str,
+        Field(description="Session identifier for the repair audit-trail decision row."),
+    ]
+    finding_id: Annotated[
+        str,
+        Field(
+            description="Stable finding identifier of the row whose source branch/commit_sha must be repaired."
+        ),
+    ]
+    expected_branch: Annotated[
+        str,
+        Field(
+            description="The branch currently stored on the row. The repair refuses to apply unless this matches exactly — concurrency / mistake guard."
+        ),
+    ]
+    expected_commit_sha: Annotated[
+        str,
+        Field(
+            description="The commit_sha currently stored on the row (full or abbreviated; auto-expanded). Must match exactly after expansion."
+        ),
+    ]
+    new_branch: Annotated[
+        str,
+        Field(description="The corrected branch the row should reference."),
+    ]
+    new_commit_sha: Annotated[
+        str,
+        Field(
+            description="The corrected commit_sha. Validated against the active git repo and auto-expanded to its 40-char form."
+        ),
+    ]
+    reason: Annotated[
+        str,
+        Field(
+            description="At least 20 characters explaining why the original attribution was wrong. Recorded in the audit decision row.",
+            min_length=20,
+        ),
+    ]
+    task_ref: TaskRefParam = None
+    actor: ActorParam = None
+
+
 class ReviewFindingsListOp(BaseModel):
     operation: Literal["list"]
     task_ref: TaskRefParam = None
@@ -278,11 +325,21 @@ class ReviewFindingsListOp(BaseModel):
 
 
 ReviewFindingsParam = Annotated[
-    ReviewFindingsRecordOp | ReviewFindingsBatchRecordOp | ReviewFindingsUpdateOp | ReviewFindingsListOp,
+    ReviewFindingsRecordOp
+    | ReviewFindingsBatchRecordOp
+    | ReviewFindingsUpdateOp
+    | ReviewFindingsRepairProvenanceOp
+    | ReviewFindingsListOp,
     Field(discriminator="operation"),
 ]
 
-_REVIEW_FINDINGS_ADAPTER: TypeAdapter[ReviewFindingsRecordOp | ReviewFindingsBatchRecordOp | ReviewFindingsUpdateOp | ReviewFindingsListOp] = TypeAdapter(ReviewFindingsParam)
+_REVIEW_FINDINGS_ADAPTER: TypeAdapter[
+    ReviewFindingsRecordOp
+    | ReviewFindingsBatchRecordOp
+    | ReviewFindingsUpdateOp
+    | ReviewFindingsRepairProvenanceOp
+    | ReviewFindingsListOp
+] = TypeAdapter(ReviewFindingsParam)
 
 
 class ReviewRunsRecordOp(BaseModel):
@@ -488,7 +545,13 @@ def _dump_batch_review_finding_item(item: ReviewFindingBatchItemInput) -> dict[s
 
 def _validate_review_findings(
     review: ReviewFindingsParam | dict[str, Any],
-) -> ReviewFindingsRecordOp | ReviewFindingsBatchRecordOp | ReviewFindingsUpdateOp | ReviewFindingsListOp:
+) -> (
+    ReviewFindingsRecordOp
+    | ReviewFindingsBatchRecordOp
+    | ReviewFindingsUpdateOp
+    | ReviewFindingsRepairProvenanceOp
+    | ReviewFindingsListOp
+):
     return _REVIEW_FINDINGS_ADAPTER.validate_python(review)
 
 
@@ -847,6 +910,18 @@ def review_findings(
             actor=_dump_actor(review_payload.actor),
             verified_commit_sha=review_payload.verified_commit_sha,
             verification_evidence=review_payload.verification_evidence,
+        )
+    if isinstance(review_payload, ReviewFindingsRepairProvenanceOp):
+        return _core_repair_review_finding_provenance(
+            session=review_payload.session,
+            finding_id=review_payload.finding_id,
+            expected_branch=review_payload.expected_branch,
+            expected_commit_sha=review_payload.expected_commit_sha,
+            new_branch=review_payload.new_branch,
+            new_commit_sha=review_payload.new_commit_sha,
+            reason=review_payload.reason,
+            task_ref=review_payload.task_ref,
+            actor=_dump_actor(review_payload.actor),
         )
     return list_review_findings(
         task_ref=review_payload.task_ref,

@@ -2804,6 +2804,85 @@ def test_set_handoff_state_focus_default_none(isolated_handoff: dict) -> None:
     assert created["active"].get("focus") is None
 
 
+def test_set_handoff_state_target_worktree_path_round_trip(isolated_handoff: dict) -> None:
+    """target_worktree_path can be set on insert, preserved when omitted, and updated explicitly."""
+    created = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="twp-rt",
+            objective="Test target_worktree_path",
+            status="in_progress",
+            target_branch="feature/twp-rt",
+            target_worktree_path="/tmp/context-alt-text-monorepo-twp-rt",
+        )
+    )
+    assert created["ok"] is True
+    assert created["active"]["target_worktree_path"] == "/tmp/context-alt-text-monorepo-twp-rt"
+    assert created["active"]["target_branch"] == "feature/twp-rt"
+
+    # Omitting preserves existing value
+    updated = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="twp-rt",
+            status="in_progress",
+            expected_revision=0,
+            focus="now editing",
+        )
+    )
+    assert updated["ok"] is True
+    assert updated["active"]["target_worktree_path"] == "/tmp/context-alt-text-monorepo-twp-rt"
+    assert updated["active"]["target_branch"] == "feature/twp-rt"
+
+    # Explicitly updating overwrites
+    moved = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="twp-rt",
+            status="in_progress",
+            expected_revision=1,
+            target_worktree_path="/tmp/context-alt-text-monorepo-twp-rt-v2",
+        )
+    )
+    assert moved["ok"] is True
+    assert moved["active"]["target_worktree_path"] == "/tmp/context-alt-text-monorepo-twp-rt-v2"
+
+
+def test_set_handoff_state_target_worktree_path_default_none(isolated_handoff: dict) -> None:
+    """When target_worktree_path is omitted on insert, it remains null."""
+    created = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="twp-none",
+            objective="No worktree path",
+            status="in_progress",
+        )
+    )
+    assert created["ok"] is True
+    assert created["active"].get("target_worktree_path") is None
+
+
+def test_set_handoff_state_emits_context_drift_warning_on_branch_mismatch(isolated_handoff: dict) -> None:
+    """When actor.branch differs from active task target_branch, write surfaces a warning."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="drift-warn",
+            objective="Drift warning test",
+            status="in_progress",
+            target_branch="feature/drift-warn",
+        )
+    )
+    drifted = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="drift-warn",
+            status="in_progress",
+            expected_revision=0,
+            actor={"agent": "test-agent", "branch": "feature/some-other-branch"},
+        )
+    )
+    assert drifted["ok"] is True
+    warnings = drifted.get("warnings") or []
+    assert any("context_drift" in w and "feature/some-other-branch" in w for w in warnings), (
+        f"Expected context_drift warning in {warnings!r}"
+    )
+
+
 def test_current_task_md_renders_focus_section(isolated_handoff: dict) -> None:
     """CURRENT_TASK.md includes a Current Focus section when focus is set."""
     _parse(

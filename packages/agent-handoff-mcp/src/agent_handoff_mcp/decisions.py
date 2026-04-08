@@ -24,6 +24,7 @@ from ._shared import (
     _render_current_task_md,
     _resolve_task_ref,
     _resolve_write_actor,
+    collect_target_context_warnings,
     _row_to_dict,
     _summarize_test_result,
     _validate_decision_payload,
@@ -87,6 +88,7 @@ def record_decision(
             warnings.append(
                 "actor is missing model/model_label; decision will render without model identity. Pass actor.model and actor.model_label for accurate provenance."
             )
+        warnings.extend(collect_target_context_warnings(conn, ctx))
         changed_files_json = json.dumps(normalized_changed_files) if normalized_changed_files is not None else "[]"
         cur = conn.execute(
             """

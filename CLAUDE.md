@@ -10,14 +10,15 @@
 
 On every session (cold start, mid-task re-entry, lane inherit):
 
-1. Query MCP handoff state: `get_handoff_state(task_ref="<task>")`.
-2. If in a lane, run `make lane-inbox` to pick up routed findings and dispatch messages.
-3. Load role routing below; read the linked context map, guidelines, and testing guide.
-4. Check open findings: `review_findings(review={"operation":"list","status":"open"})`.
-5. Verify contract surface before writing code ([contracts/](docs/agentic/contracts/)).
-6. Decide whether `ctx7` is needed (upstream library behavior; see ctx7 criteria in instructions.md).
-7. Ensure the work has an MCP task. If no active task fits, initialize one before editing.
-8. If starting a task plan, create its target branch from `main` and activate via `switch_task`. See [planning pipeline](docs/agentic/rules/planning-pipeline.md) for the full workflow.
+1. **Run `make context`** to verify your shell is in the right worktree on the right branch. The script reads `target_worktree_path` and `target_branch` from the active task and exits non-zero on drift. **Do not record any handoff state from a drifted shell.** If you see a drift warning, `cd` to the canonical path before continuing.
+2. Query MCP handoff state: `get_handoff_state(sections="identity")` for routine task checks; full `get_handoff_state(task_ref="<task>")` only for hot-state load.
+3. If in a lane, run `make lane-inbox` to pick up routed findings and dispatch messages.
+4. Load role routing below; read the linked context map, guidelines, and testing guide.
+5. Check open findings: `review_findings(review={"operation":"list","status":"open"})`.
+6. Verify contract surface before writing code ([contracts/](docs/agentic/contracts/)).
+7. Decide whether `ctx7` is needed (upstream library behavior; see ctx7 criteria in instructions.md).
+8. Ensure the work has an MCP task. If no active task fits, initialize one with `make task-start TASK=<id> OBJECTIVE="..."` (single command: creates feature branch + linked worktree + MCP task with `target_worktree_path` populated).
+9. If starting a task plan, create its target branch from `main` and activate via `switch_task`. See [planning pipeline](docs/agentic/rules/planning-pipeline.md) for the full workflow.
 
 If MCP unavailable: read `CURRENT_TASK.md` as stale fallback. Record blocker when access returns. **Stop implementation work until MCP is available.**
 
@@ -53,6 +54,11 @@ See [development-workflow.md § Pre-Merge Gate](docs/agentic/rules/development-w
 A `PreToolUse` hook enforces this in both harnesses: VS Code runs `.github/hooks/guard-main-branch.py` via `.github/hooks/terminal-guard.json`, and Claude Code runs `scripts/hooks/guard-main-branch.sh` via `.claude/settings.json`. Code-file edits under `apps/` or `packages/` are blocked on `main`. Create a feature branch (`git checkout -b feature/<task-id>-<slug>`) before any code edit. Docs, configs, and planning artifacts are allowed on `main`.
 
 **Worktree rule:** The root worktree stays on `main`. Always. Never check out `main` in a linked worktree. After merging a feature branch, return the root to `main` and delete the merged branch.
+
+**Worktree naming convention** (mandatory for new tasks): `<repo-parent>/context-alt-text-monorepo-<lowercase-task-id>` paired with branch `feature/<lowercase-task-id>`. Examples: task `AHMCP-9` → worktree `context-alt-text-monorepo-ahmcp-9` on branch `feature/ahmcp-9`. The `make task-start TASK=<id>` helper enforces this convention and registers `target_worktree_path` on the active handoff state in one shot. The `make task-finish TASK=<id>` helper performs the post-merge teardown (worktree remove + branch delete + MCP archive).
+
+**Context discipline for multi-agent flows:** Run `make context` at the start of every session to verify your shell is on the right `target_worktree_path` and `target_branch`. The `set_handoff_state` and `record_decision` write paths emit `context_drift` warnings (non-fatal) when actor branch or cwd diverges from the active task target — read those warnings and fix the drift before recording further events.
+
 See [development-workflow.md](docs/agentic/rules/development-workflow.md#branch-isolation-protocol-mandatory) for isolation tiers, worktree recovery, and rationale.
 
 ### Plugin Boundary Rule

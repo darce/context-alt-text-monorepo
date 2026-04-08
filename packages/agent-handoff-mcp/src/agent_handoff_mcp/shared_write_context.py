@@ -246,6 +246,53 @@ def _workspace_git_context() -> dict[str, str | None]:
 # ---------------------------------------------------------------------------
 
 
+def collect_target_context_warnings(
+    conn: sqlite3.Connection,
+    ctx: ResolvedWriteContext,
+) -> list[str]:
+    """Return human-readable warnings when the resolved write context drifts from the active task target.
+
+    Reads the active handoff_state row and compares its `target_branch` and
+    `target_worktree_path` against the resolved actor branch and the current
+    process working directory. Mismatches are returned as warning strings that
+    callers can pass through to `_envelope(warnings=...)`.
+
+    The check is intentionally non-fatal: it surfaces drift without rejecting
+    the write, so cross-agent handoff loops still record state. If you need a
+    hard guard, layer it on top of these warnings at the call site.
+    """
+    try:
+        active = conn.execute(
+            "SELECT target_branch, target_worktree_path FROM handoff_state WHERE id = 1"
+        ).fetchone()
+    except sqlite3.OperationalError:
+        # Schema is older than this build (missing column). Skip the check.
+        return []
+    if active is None:
+        return []
+    warnings: list[str] = []
+    target_branch = _normalize_optional_text(active["target_branch"]) if active["target_branch"] else None
+    target_worktree_path = (
+        _normalize_optional_text(active["target_worktree_path"]) if active["target_worktree_path"] else None
+    )
+    if target_branch and ctx.branch and ctx.branch != target_branch:
+        warnings.append(
+            "context_drift: actor.branch={} but active task target_branch={}. "
+            "Consider switching to the canonical worktree before recording further events.".format(
+                ctx.branch, target_branch
+            )
+        )
+    if target_worktree_path:
+        cwd = os.path.abspath(os.getcwd())
+        canonical = os.path.abspath(target_worktree_path)
+        if cwd != canonical:
+            warnings.append(
+                "context_drift: cwd={} but active task target_worktree_path={}. "
+                "Run `make context` to confirm or switch directories.".format(cwd, canonical)
+            )
+    return warnings
+
+
 def _resolve_write_actor(
     conn: sqlite3.Connection,
     actor: WriteActor | None,

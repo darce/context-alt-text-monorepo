@@ -16,6 +16,7 @@ from ._shared import (
     _resolve_current_lane_row,
     _resolve_write_actor,
     _row_to_dict,
+    collect_target_context_warnings,
 )
 
 
@@ -27,6 +28,7 @@ def set_handoff_state(
     expected_revision: int | None = None,
     actor: WriteActor | None = None,
     target_branch: str | None = None,
+    target_worktree_path: str | None = None,
 ) -> str:
     _tool = "set_handoff_state"
     if status not in HANDOFF_ACTIVE_STATUSES:
@@ -39,7 +41,7 @@ def set_handoff_state(
     with _get_db_connection() as conn:
         ctx = _resolve_write_actor(conn, actor)
         current = conn.execute(
-            "SELECT revision, objective, focus, target_branch FROM handoff_state WHERE id = 1"
+            "SELECT revision, objective, focus, target_branch, target_worktree_path FROM handoff_state WHERE id = 1"
         ).fetchone()
         if current is None:
             if objective is None:
@@ -52,10 +54,21 @@ def set_handoff_state(
             conn.execute(
                 """
                 INSERT INTO handoff_state (
-                    id, task_ref, objective, focus, status, target_branch, revision, updated_at, updated_by, updated_branch, updated_commit_sha
-                ) VALUES (1, ?, ?, ?, ?, ?, 0, datetime('now'), ?, ?, ?)
+                    id, task_ref, objective, focus, status, target_branch, target_worktree_path,
+                    revision, updated_at, updated_by, updated_branch, updated_commit_sha
+                ) VALUES (1, ?, ?, ?, ?, ?, ?, 0, datetime('now'), ?, ?, ?)
                 """,
-                (task_ref, objective, focus, status, target_branch, ctx.agent, ctx.branch, ctx.commit_sha),
+                (
+                    task_ref,
+                    objective,
+                    focus,
+                    status,
+                    target_branch,
+                    target_worktree_path,
+                    ctx.agent,
+                    ctx.branch,
+                    ctx.commit_sha,
+                ),
             )
             active = _row_to_dict(conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone())
             return _envelope(
@@ -84,10 +97,20 @@ def set_handoff_state(
             if target_branch is not None
             else (_normalize_optional_text(current["target_branch"]) if current["target_branch"] else None)
         )
+        resolved_target_worktree_path = (
+            target_worktree_path
+            if target_worktree_path is not None
+            else (
+                _normalize_optional_text(current["target_worktree_path"])
+                if current["target_worktree_path"]
+                else None
+            )
+        )
         updated = conn.execute(
             """
             UPDATE handoff_state
-            SET task_ref = ?, objective = ?, focus = ?, status = ?, target_branch = ?,
+            SET task_ref = ?, objective = ?, focus = ?, status = ?,
+                target_branch = ?, target_worktree_path = ?,
                 revision = revision + 1, updated_at = datetime('now'),
                 updated_by = ?, updated_branch = ?, updated_commit_sha = ?
             WHERE id = 1 AND revision = ?
@@ -98,6 +121,7 @@ def set_handoff_state(
                 resolved_focus,
                 status,
                 resolved_target_branch,
+                resolved_target_worktree_path,
                 ctx.agent,
                 ctx.branch,
                 ctx.commit_sha,
@@ -124,12 +148,14 @@ def set_handoff_state(
                 task_ref=task_ref,
                 data={"error": "Active handoff state missing after update."},
             )
+        warnings = collect_target_context_warnings(conn, ctx)
         return _envelope(
             ok=True,
             tool=_tool,
             task_ref=task_ref,
             data={"updated": True, "active": active},
             mutation={"entity": "handoff_state", "operation": "update", "task_revision": active.get("revision")},
+            warnings=warnings or None,
         )
 
 

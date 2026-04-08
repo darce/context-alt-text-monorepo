@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from pathlib import Path
 from typing import TypedDict
@@ -35,6 +36,7 @@ from ._shared import (
     _workspace_root,
     _write_current_task_md_for_task,
 )
+from .slice_decision import is_canonical_decision
 
 
 def _write_current_task_md_for_active_context(conn: sqlite3.Connection, fallback_task_ref: str) -> None:
@@ -795,6 +797,80 @@ def update_review_finding(
         )
 
 
+_AUTHOR_TAG_FALLBACK = "ahm"
+_KNOWN_AUTHOR_TAGS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("claude", "code"), "cco"),
+    (("claude", "opus"), "clo"),
+    (("claude", "sonnet"), "cls"),
+    (("claude", "haiku"), "clh"),
+    (("codex",), "cdx"),
+    (("gpt",), "gpt"),
+)
+_AUTHOR_TAG_RE = re.compile(r"^[a-z]{2,4}$")
+_SLUG_NORMALIZE_RE = re.compile(r"[^a-z0-9_]+")
+
+
+def _short_author_tag(agent: str | None) -> str:
+    """Return a 2-4 char lowercase author tag derived from an agent identity.
+
+    The canonical decision-id grammar requires a 2-4 lowercase-letter prefix
+    (see ``slice_decision.CANONICAL_DECISION_RE``). Resolved actor agent names
+    are long-form ("Claude Opus 4", "codex", "GPT-5"), so we map known agent
+    families to their conventional short tags and fall back to the package
+    abbreviation ``ahm`` when no match applies. This keeps the audit-trail
+    decision id canonical without inventing new author tags per call site.
+    """
+    normalized = (agent or "").strip().lower()
+    if not normalized:
+        return _AUTHOR_TAG_FALLBACK
+    for needles, tag in _KNOWN_AUTHOR_TAGS:
+        if all(needle in normalized for needle in needles):
+            return tag
+    # Best-effort fallback: take the first 3 alphabetic chars from the
+    # first whitespace-delimited token. Skips digits/punctuation so a
+    # leading "GPT-5" still produces "gpt", not "gpt5".
+    first_token = next((t for t in re.split(r"\s+", normalized) if t), "")
+    alpha_only = "".join(ch for ch in first_token if ch.isalpha())[:4]
+    if _AUTHOR_TAG_RE.fullmatch(alpha_only):
+        return alpha_only
+    return _AUTHOR_TAG_FALLBACK
+
+
+def _canonical_repair_provenance_decision_id(
+    *,
+    task_ref: str,
+    finding_id: str,
+    agent: str | None,
+) -> str:
+    """Construct a canonical decision id for the repair-provenance audit row.
+
+    Format: ``<author_tag>_repair_provenance_<task_ref>_<slug>``
+
+    The slug is derived from ``finding_id`` by lowercasing and replacing any
+    non-``[a-z0-9_]`` characters with underscores so the result conforms to
+    the canonical grammar's slug pattern. The constructed id is verified
+    against ``is_canonical_decision`` before being returned; if any field
+    sanitization unexpectedly produces a non-canonical id, fall back to a
+    minimally sanitized form that is guaranteed to match the regex.
+    """
+    author_tag = _short_author_tag(agent)
+    slug = _SLUG_NORMALIZE_RE.sub("_", finding_id.lower()).strip("_")
+    if not slug or not slug[0].isalnum():
+        slug = f"f{slug}" if slug else "finding"
+    candidate = f"{author_tag}_repair_provenance_{task_ref}_{slug}"
+    if is_canonical_decision(candidate):
+        return candidate
+    # Defensive fallback: scrub the work_ref slot too. The canonical regex
+    # for the work_ref slot is [A-Za-z0-9][A-Za-z0-9_-]*, so we strip any
+    # other characters that might have leaked through (e.g. a task_ref that
+    # was hand-edited to include whitespace or punctuation).
+    safe_task_ref = re.sub(r"[^A-Za-z0-9_-]+", "-", task_ref).strip("-_") or "task"
+    if not safe_task_ref[0].isalnum():
+        safe_task_ref = f"t{safe_task_ref}"
+    fallback = f"{author_tag}_repair_provenance_{safe_task_ref}_{slug}"
+    return fallback
+
+
 def repair_review_finding_provenance(
     finding_id: str,
     expected_branch: str,
@@ -825,10 +901,14 @@ def repair_review_finding_provenance(
 
     The ``new_commit_sha`` is validated against the active git repo via
     ``_validate_and_expand_commit_sha`` and auto-expanded to the canonical
-    40-character form. The repair is recorded as a ``decision`` row tagged
-    ``repair_provenance_<finding_id>`` capturing the before/after values
-    and the caller's ``reason``, so ``get_handoff_state`` and the audit
-    surfaces show the change.
+    40-character form. The repair is recorded as a ``decision`` row whose
+    id conforms to the canonical grammar
+    ``<author_tag>_repair_provenance_<task_ref>_<slug>`` (see
+    ``_canonical_repair_provenance_decision_id``) so ``audit_decision_ids``
+    classifies it as canonical and the audit trail does not introduce
+    decision-id grammar drift. The rationale captures the before/after
+    values and the caller's ``reason``, so ``get_handoff_state`` and the
+    audit surfaces show the change.
     """
     normalized_finding_id = finding_id.strip() if isinstance(finding_id, str) else None
     if not normalized_finding_id:
@@ -916,6 +996,15 @@ def repair_review_finding_provenance(
     # from any ref), fall back to the literal string and rely on byte-for-byte
     # comparison against the row. Repair must remain possible for orphaned SHAs
     # — that is exactly the kind of broken provenance this op exists to fix.
+    #
+    # The literal pre-expansion form is preserved so legacy rows whose
+    # commit_sha is still stored as an abbreviation can be matched even when
+    # the validator expanded the caller's input to its 40-char canonical form
+    # (AHMCP-15-BR-01 regression). The stored row's commit_sha is also
+    # best-effort expanded below, so the comparison succeeds whenever any
+    # literal-or-expanded form on the input matches any literal-or-expanded
+    # form on the row.
+    literal_expected_commit_sha = normalized_expected_commit_sha
     try:
         expanded_expected = _validate_and_expand_commit_sha(normalized_expected_commit_sha)
         if expanded_expected is not None:
@@ -990,7 +1079,27 @@ def repair_review_finding_provenance(
                 task_ref=resolved_task_ref,
                 entity="finding",
             )
-        if existing_commit_sha != normalized_expected_commit_sha:
+
+        # Best-effort expansion of the stored row's commit_sha so a caller passing
+        # the full 40-char SHA can match a row that still carries a historical
+        # 7-8 char abbreviation. Combined with literal_expected_commit_sha above,
+        # the comparison succeeds whenever any literal-or-expanded form on the
+        # input matches any literal-or-expanded form on the row. This is the
+        # AHMCP-15-BR-01 fix: previously the comparison only used the expanded
+        # input against the literal stored value, so abbreviation==abbreviation
+        # was rejected after the input was expanded.
+        existing_commit_sha_expanded = existing_commit_sha
+        if existing_commit_sha:
+            try:
+                expanded_existing = _validate_and_expand_commit_sha(existing_commit_sha)
+                if expanded_existing is not None:
+                    existing_commit_sha_expanded = expanded_existing
+            except InvalidCommitShaError:
+                pass
+
+        acceptable_existing = {existing_commit_sha, existing_commit_sha_expanded}
+        acceptable_expected = {literal_expected_commit_sha, normalized_expected_commit_sha}
+        if not (acceptable_expected & acceptable_existing):
             return _envelope(
                 ok=False,
                 tool="repair_review_finding_provenance",
@@ -1032,7 +1141,15 @@ def repair_review_finding_provenance(
         # Audit trail: write a decision row capturing before/after + reason.
         # Recording inline (instead of calling core.record_decision) keeps the
         # repair atomic with the UPDATE under the same connection.
-        audit_decision_id = f"repair_provenance_{normalized_finding_id}"
+        #
+        # The decision id must conform to the canonical grammar so
+        # `audit_decision_ids` classifies the audit row as canonical instead
+        # of freeform — see AHMCP-15-BR-02.
+        audit_decision_id = _canonical_repair_provenance_decision_id(
+            task_ref=resolved_task_ref,
+            finding_id=normalized_finding_id,
+            agent=ctx.agent,
+        )
         audit_rationale = (
             f"Repaired source provenance on review finding `{normalized_finding_id}` "
             f"(row id={target_db_id}, task_ref={resolved_task_ref}).\n\n"

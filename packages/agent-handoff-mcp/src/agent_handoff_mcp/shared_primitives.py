@@ -213,11 +213,16 @@ def _envelope(
 ) -> str:
     """Build a v2 response envelope.
 
-    The nested ``data`` block remains the canonical v2 shape. For
-    backward compatibility with existing Python callers and tests, the
-    same fields are also mirrored at the top level so legacy
-    ``result["foo"]`` access still works while ``result["data"]["foo"]``
-    stays available.
+    The nested ``data`` block is the canonical v2 shape. Callers must
+    read payload fields from ``result["data"][...]``, not from the
+    envelope root. The legacy top-level mirror that AHMCP-3 introduced
+    for backward compatibility was removed in AHMCP-10 (after AHMCP-7
+    documented the migration); in-process tests use the ``_flatten_v2``
+    helper at the top of every test module to translate between the
+    canonical ``data`` block and any code that still expects flat
+    access. ``schema_version`` stays at ``2`` because the envelope
+    fields and contract are unchanged — only the redundant root-level
+    duplication is gone.
     """
     scope: dict[str, str | None] = {"task_ref": task_ref}
     if entity is not None:
@@ -237,7 +242,6 @@ def _envelope(
         payload["warnings"] = warnings
     if task_ref is not None:
         payload["task_ref"] = task_ref
-    payload.update(dict(data))
     return json.dumps(payload, sort_keys=True)
 
 

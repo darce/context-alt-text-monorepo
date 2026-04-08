@@ -41,6 +41,18 @@ def _load_lane_prompt():
     return module
 
 
+def _parse(payload: str | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(payload, dict):
+        return payload
+    return json.loads(payload)
+
+
+def _data(payload: str | dict[str, Any]) -> dict[str, Any]:
+    parsed = _parse(payload)
+    data = parsed.get("data")
+    return data if isinstance(data, dict) else parsed
+
+
 # ---------------------------------------------------------------------------
 # Realistic large output fixtures
 # ---------------------------------------------------------------------------
@@ -185,8 +197,9 @@ class TestLargeOutputIndexedAndRetrievedAsSnippet:
         task_ref = apps_lane_env["task_ref"]
 
         # Index the large pytest output (uses real sidecar DB).
-        record_result = record_artifact(
-                            task_ref=task_ref,
+        raw_record = _parse(
+            record_artifact(
+                task_ref=task_ref,
                 lane_id="backend-domain",
                 app_root="apps/prototype-description-service",
                 source_kind="test-output",
@@ -195,8 +208,10 @@ class TestLargeOutputIndexedAndRetrievedAsSnippet:
                 content_type="text/plain",
                 summary="Backend-domain pytest run: 4 failed (snapshot projector, outbox drain)",
             )
-        assert record_result["ok"] is True, record_result
-        source_id = record_result["data"]["source_id"]
+        )
+        record_result = _data(raw_record)
+        assert raw_record["ok"] is True, raw_record
+        source_id = record_result["source_id"]
         assert source_id is not None
 
         # Simulate a lane activity dict that a worker would produce:
@@ -261,8 +276,9 @@ class TestLargeOutputIndexedAndRetrievedAsSnippet:
 
         task_ref = apps_lane_env["task_ref"]
 
-        record_result = record_artifact(
-                            task_ref=task_ref,
+        raw_record = _parse(
+            record_artifact(
+                task_ref=task_ref,
                 lane_id="wp-proxy",
                 app_root="apps/prototype-wp-alt-context",
                 source_kind="http-response",
@@ -271,7 +287,8 @@ class TestLargeOutputIndexedAndRetrievedAsSnippet:
                 content_type="application/json",
                 summary="GET /acx/v1/snapshot: 60 clusters, 15 conflicts returned",
             )
-        assert record_result["ok"] is True, record_result
+        )
+        assert raw_record["ok"] is True, raw_record
 
         # No pinned ref -- the lane message just describes what to work on.
         # The FTS search should discover the artifact via query terms.
@@ -344,8 +361,9 @@ class TestLargeOutputIndexedAndRetrievedAsSnippet:
         task_ref = apps_lane_env["task_ref"]
 
         # Index a large artifact.
-        record_result = record_artifact(
-                            task_ref=task_ref,
+        raw_record = _parse(
+            record_artifact(
+                task_ref=task_ref,
                 lane_id="backend-domain",
                 source_kind="test-output",
                 source_label="pytest-pressure-test",
@@ -353,8 +371,10 @@ class TestLargeOutputIndexedAndRetrievedAsSnippet:
                 content_type="text/plain",
                 summary="Pressure test run: 4 failed snapshot projector tests",
             )
-        assert record_result["ok"] is True
-        source_id = record_result["data"]["source_id"]
+        )
+        record_result = _data(raw_record)
+        assert raw_record["ok"] is True
+        source_id = record_result["source_id"]
 
         # Minimal activity dict with the artifact ref attached.
         minimal_activity = {

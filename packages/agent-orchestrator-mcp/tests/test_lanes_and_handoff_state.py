@@ -16,6 +16,7 @@ from agent_handoff_mcp import core as handoff_core
 from agent_handoff_mcp.config import RuntimeConfig
 
 from agent_orchestrator_mcp import api as mcp_server
+from agent_orchestrator_mcp import lanes as lanes_module
 
 
 @pytest.fixture()
@@ -45,17 +46,37 @@ def _parse(payload: str | dict) -> dict:
     if not isinstance(payload, dict):
         payload = json.loads(payload)
     if isinstance(payload, dict) and payload.get("schema_version") == 2:
-        data = payload.get("data", {})
-        scope = payload.get("scope", {})
-        flat = {**payload, **data}
-        if "task_ref" not in flat and scope.get("task_ref"):
+        data = payload.get("data")
+        scope = payload.get("scope")
+        flat = dict(payload)
+        if isinstance(data, dict):
+            flat.update(data)
+        if "task_ref" not in flat and isinstance(scope, dict) and scope.get("task_ref"):
             flat["task_ref"] = scope["task_ref"]
         return flat
     return payload
 
-    if isinstance(payload, dict):
-        return payload
-    return typing.cast(dict, json.loads(payload))
+
+def _data(payload: str | dict) -> dict:
+    parsed = _parse(payload)
+    data = parsed.get("data")
+    return data if isinstance(data, dict) else parsed
+
+
+def _manage_worktree_lane(**kwargs: object) -> dict:
+    return _parse(mcp_server.manage_worktree_lane(**kwargs))
+
+
+def _plan_cursor(**kwargs: object) -> dict:
+    return _parse(mcp_server.plan_cursor(**kwargs))
+
+
+def _worker_reports(**kwargs: object) -> dict:
+    return _parse(mcp_server.worker_reports(**kwargs))
+
+
+def _turn_metrics(**kwargs: object) -> dict:
+    return _parse(mcp_server.turn_metrics(**kwargs))
 
 
 def _assert_dashboard_row(
@@ -90,34 +111,33 @@ def test_turn_metrics_round_trip_and_summary(isolated_handoff: dict) -> None:
         )
     )
 
-    created = _parse(
-        mcp_server.record_turn_metric(
-            task_ref="turn-metrics-task",
-            session="worker-backend",
-            lane_id="backend",
-            cycle=2,
-            phase="execution",
-            backend="codex-cli",
-            model="gpt-5.4",
-            token_usage=TokenUsage(
-                input_tokens=101,
-                output_tokens=29,
-                cached_input_tokens=7,
-                reasoning_output_tokens=3,
-                total_tokens=130,
-                usage_source="observed",
-            ),
-            prompt_metrics=PromptMetrics(
-                prompt_tokens=120,
-                prompt_chars=480,
-                prompt_token_source="char_estimate",
-                pressure_level="elevated",
-            ),
-            attribution={"used_artifact_context": True},
-            section_sizes={"assignment": 120, "artifact_context": 60},
-            raw_usage={"last": {"input_tokens": 101}},
-            actor={"lane_id": "backend"},
-        )
+    created = _turn_metrics(
+        operation="record",
+        task_ref="turn-metrics-task",
+        session="worker-backend",
+        lane_id="backend",
+        cycle=2,
+        phase="execution",
+        backend="codex-cli",
+        model="gpt-5.4",
+        token_usage=TokenUsage(
+            input_tokens=101,
+            output_tokens=29,
+            cached_input_tokens=7,
+            reasoning_output_tokens=3,
+            total_tokens=130,
+            usage_source="observed",
+        ),
+        prompt_metrics=PromptMetrics(
+            prompt_tokens=120,
+            prompt_chars=480,
+            prompt_token_source="char_estimate",
+            pressure_level="elevated",
+        ),
+        attribution={"used_artifact_context": True},
+        section_sizes={"assignment": 120, "artifact_context": 60},
+        raw_usage={"last": {"input_tokens": 101}},
+        actor={"lane_id": "backend"},
     )
 
     assert created["ok"] is True
@@ -127,22 +147,12 @@ def test_turn_metrics_round_trip_and_summary(isolated_handoff: dict) -> None:
     assert metric["attribution"]["used_artifact_context"] is True
     assert metric["section_sizes"]["artifact_context"] == 60
 
-    listed = _parse(
-        mcp_server.list_turn_metrics(
-            task_ref="turn-metrics-task",
-            lane_id="backend",
-        )
-    )
+    listed = _turn_metrics(operation="list", task_ref="turn-metrics-task", lane_id="backend")
     assert listed["ok"] is True
     assert listed["returned"] == 1
     assert listed["turn_metrics"][0]["total_tokens"] == 130
 
-    summary = _parse(
-        mcp_server.get_turn_metrics_summary(
-            task_ref="turn-metrics-task",
-            lane_id="backend",
-        )
-    )
+    summary = _turn_metrics(operation="summary", task_ref="turn-metrics-task", lane_id="backend")
     assert summary["ok"] is True
     assert summary["summary"]["usage_source_counts"]["observed"] == 1
     assert summary["summary"]["prompt_token_source_counts"]["char_estimate"] == 1
@@ -161,42 +171,81 @@ def test_list_turn_metrics_applies_offset_without_dropping_rows(isolated_handoff
     )
 
     for cycle in range(3):
-        created = _parse(
-            mcp_server.record_turn_metric(
-                task_ref="turn-metrics-pagination",
-                session="worker-backend",
-                lane_id="backend",
-                cycle=cycle,
-                phase="execution",
-                backend="codex-cli",
-                model="gpt-5.4",
-                token_usage=TokenUsage(
-                    total_tokens=100 + cycle,
-                    usage_source="observed",
-                ),
-                prompt_metrics=PromptMetrics(
-                    prompt_tokens=90 + cycle,
-                    prompt_chars=360 + cycle,
-                    prompt_token_source="observed",
-                    pressure_level="normal",
-                ),
-            )
+        created = _turn_metrics(
+            operation="record",
+            task_ref="turn-metrics-pagination",
+            session="worker-backend",
+            lane_id="backend",
+            cycle=cycle,
+            phase="execution",
+            backend="codex-cli",
+            model="gpt-5.4",
+            token_usage=TokenUsage(
+                total_tokens=100 + cycle,
+                usage_source="observed",
+            ),
+            prompt_metrics=PromptMetrics(
+                prompt_tokens=90 + cycle,
+                prompt_chars=360 + cycle,
+                prompt_token_source="observed",
+                pressure_level="normal",
+            ),
         )
         assert created["ok"] is True
 
-    listed = _parse(
-        mcp_server.list_turn_metrics(
-            task_ref="turn-metrics-pagination",
-            lane_id="backend",
-            limit=1,
-            offset=1,
-        )
+    listed = _turn_metrics(
+        operation="list",
+        task_ref="turn-metrics-pagination",
+        lane_id="backend",
+        limit=1,
+        offset=1,
     )
 
     assert listed["ok"] is True
     assert listed["returned"] == 1
     assert listed["has_more"] is True
     assert listed["turn_metrics"][0]["cycle"] == 1
+
+
+def test_list_turn_metrics_supports_bounded_read_parameters(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="turn-metrics-bounded",
+            objective="Shape turn metric reads",
+            status="in_progress",
+        )
+    )
+    for cycle in range(2):
+        created = _turn_metrics(
+            operation="record",
+            task_ref="turn-metrics-bounded",
+            session="worker-backend",
+            lane_id="backend",
+            cycle=cycle,
+            phase="execution",
+            backend="codex-cli",
+            model="gpt-5.4",
+            token_usage=TokenUsage(total_tokens=100 + cycle, usage_source="observed"),
+            prompt_metrics=PromptMetrics(prompt_tokens=90 + cycle, prompt_chars=360 + cycle, prompt_token_source="observed"),
+            raw_usage={"cycle": cycle, "tokens": 100 + cycle},
+        )
+        assert created["ok"] is True
+
+    full = _turn_metrics(operation="list", task_ref="turn-metrics-bounded", lane_id="backend")
+    shaped = _turn_metrics(
+        operation="list",
+        task_ref="turn-metrics-bounded",
+        lane_id="backend",
+        sections="turn_metrics",
+        detail="summary",
+        fields="id,total_tokens",
+        top_n_turn_metrics=1,
+    )
+
+    assert full["returned"] == 2
+    assert set(shaped) == {"ok", "turn_metrics"}
+    assert shaped["turn_metrics"] == [{"id": full["turn_metrics"][0]["id"], "total_tokens": full["turn_metrics"][0]["total_tokens"]}]
+    assert len(json.dumps(shaped)) < len(json.dumps(full))
 
 
 
@@ -210,46 +259,79 @@ def test_plan_cursor_crud_round_trip(isolated_handoff: dict) -> None:
         )
     )
 
-    created = _parse(
-        mcp_server.upsert_plan_cursor(
-            task_ref="daemon-5-task-plan-driven-orchestrator",
-            plan_item_id="phase-1::phase-1-backend::checklist_1",
-            state="dispatched",
-            lane_id="backend-domain",
-            summary="Implement backend slice",
-            source_heading="Phase 1: Backend",
-        )
+    created = _plan_cursor(
+        operation="upsert",
+        task_ref="daemon-5-task-plan-driven-orchestrator",
+        plan_item_id="phase-1::phase-1-backend::checklist_1",
+        state="dispatched",
+        lane_id="backend-domain",
+        summary="Implement backend slice",
+        source_heading="Phase 1: Backend",
     )
     assert created["ok"] is True
     assert created["cursor"]["dispatch_count"] == 1
 
-    fetched = _parse(
-        mcp_server.get_plan_cursor(
-            task_ref="daemon-5-task-plan-driven-orchestrator",
-            plan_item_id="phase-1::phase-1-backend::checklist_1",
-        )
+    fetched = _plan_cursor(
+        operation="get",
+        task_ref="daemon-5-task-plan-driven-orchestrator",
+        plan_item_id="phase-1::phase-1-backend::checklist_1",
     )
     assert fetched["cursor"]["state"] == "dispatched"
 
-    updated = _parse(
-        mcp_server.upsert_plan_cursor(
-            task_ref="daemon-5-task-plan-driven-orchestrator",
-            plan_item_id="phase-1::phase-1-backend::checklist_1",
-            state="completed",
-            lane_id="backend-domain",
-            summary="Implement backend slice",
-        )
+    updated = _plan_cursor(
+        operation="upsert",
+        task_ref="daemon-5-task-plan-driven-orchestrator",
+        plan_item_id="phase-1::phase-1-backend::checklist_1",
+        state="completed",
+        lane_id="backend-domain",
+        summary="Implement backend slice",
     )
     assert updated["cursor"]["state"] == "completed"
     assert updated["cursor"]["completed_at"] is not None
 
-    listed = _parse(
-        mcp_server.list_plan_cursors(
-            task_ref="daemon-5-task-plan-driven-orchestrator",
-            state="completed",
-        )
+    listed = _plan_cursor(
+        operation="list",
+        task_ref="daemon-5-task-plan-driven-orchestrator",
+        state="completed",
     )
     assert listed["returned"] == 1
+
+
+def test_list_plan_cursors_supports_bounded_read_parameters(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="plan-cursor-bounded",
+            objective="Shape plan cursor reads",
+            status="in_progress",
+        )
+    )
+    for plan_item_id in ("phase-1::a", "phase-1::b"):
+        created = _plan_cursor(
+            operation="upsert",
+            task_ref="plan-cursor-bounded",
+            plan_item_id=plan_item_id,
+            state="dispatched",
+            lane_id="backend-domain",
+            summary=f"Dispatch {plan_item_id}",
+        )
+        assert created["ok"] is True
+
+    full = _plan_cursor(operation="list", task_ref="plan-cursor-bounded", state="dispatched")
+    shaped = _plan_cursor(
+        operation="list",
+        task_ref="plan-cursor-bounded",
+        state="dispatched",
+        sections="cursors",
+        fields="plan_item_id,state",
+        top_n_cursors=1,
+    )
+
+    assert full["returned"] == 2
+    assert set(shaped) == {"ok", "cursors"}
+    assert shaped["cursors"] == [
+        {"plan_item_id": full["cursors"][0]["plan_item_id"], "state": full["cursors"][0]["state"]}
+    ]
+    assert len(json.dumps(shaped)) < len(json.dumps(full))
 
 
 def test_get_latest_slice_review_packet_returns_branch_packet(isolated_handoff: dict) -> None:
@@ -261,7 +343,8 @@ def test_get_latest_slice_review_packet_returns_branch_packet(isolated_handoff: 
         )
     )
     _parse(
-        mcp_server.upsert_worktree_lane(
+        mcp_server.manage_worktree_lane(
+            operation="upsert",
             task_ref="slice-review-packet",
             lane_id="backend-domain",
             worktree_path="/tmp/backend-domain",
@@ -270,7 +353,8 @@ def test_get_latest_slice_review_packet_returns_branch_packet(isolated_handoff: 
         )
     )
     _parse(
-        mcp_server.upsert_plan_cursor(
+        mcp_server.plan_cursor(
+            operation="upsert",
             task_ref="slice-review-packet",
             plan_item_id="slice-1",
             lane_id="backend-domain",
@@ -279,7 +363,8 @@ def test_get_latest_slice_review_packet_returns_branch_packet(isolated_handoff: 
         )
     )
     _parse(
-        mcp_server.record_worker_report(
+        mcp_server.worker_reports(
+            operation="record",
             task_ref="slice-review-packet",
             lane_id="backend-domain",
             session="slice-1",
@@ -321,7 +406,8 @@ def test_get_latest_slice_review_packet_filters_to_planning_slices(isolated_hand
         )
     )
     _parse(
-        mcp_server.upsert_worktree_lane(
+        mcp_server.manage_worktree_lane(
+            operation="upsert",
             task_ref="slice-review-packet-planning",
             lane_id="docs-lane",
             worktree_path="/tmp/docs-lane",
@@ -330,7 +416,8 @@ def test_get_latest_slice_review_packet_filters_to_planning_slices(isolated_hand
         )
     )
     _parse(
-        mcp_server.record_worker_report(
+        mcp_server.worker_reports(
+            operation="record",
             task_ref="slice-review-packet-planning",
             lane_id="docs-lane",
             session="slice-docs",
@@ -493,7 +580,8 @@ def test_worker_worktree_scopes_open_lane_messages_to_its_registered_lane(tmp_pa
         )
     )
     _parse(
-        mcp_server.upsert_worktree_lane(
+        mcp_server.manage_worktree_lane(
+            operation="upsert",
             lane_id="frontend",
             worktree_path=str(frontend_root),
             branch="codex/p5-frontend",
@@ -501,7 +589,8 @@ def test_worker_worktree_scopes_open_lane_messages_to_its_registered_lane(tmp_pa
         )
     )
     _parse(
-        mcp_server.upsert_worktree_lane(
+        mcp_server.manage_worktree_lane(
+            operation="upsert",
             lane_id="backend-http",
             worktree_path=str(backend_root),
             branch="codex/p5-backend-http",
@@ -509,7 +598,9 @@ def test_worker_worktree_scopes_open_lane_messages_to_its_registered_lane(tmp_pa
         )
     )
     _parse(
-        mcp_server.record_lane_message(
+        mcp_server.lane_communication(
+            kind="message",
+            operation="record",
             lane_id="frontend",
             session="dispatch-frontend",
             direction="orchestrator_to_worker",
@@ -518,7 +609,9 @@ def test_worker_worktree_scopes_open_lane_messages_to_its_registered_lane(tmp_pa
         )
     )
     _parse(
-        mcp_server.record_lane_message(
+        mcp_server.lane_communication(
+            kind="message",
+            operation="record",
             lane_id="backend-http",
             session="dispatch-backend",
             direction="orchestrator_to_worker",
@@ -535,12 +628,12 @@ def test_worker_worktree_scopes_open_lane_messages_to_its_registered_lane(tmp_pa
         )
     )
 
-    worker_state = _parse(mcp_server.get_handoff_state())
+    worker_state = _data(mcp_server.get_handoff_state())
     assert worker_state["current_lane"]["lane_id"] == "frontend"
     assert [message["lane_id"] for message in worker_state["lane_messages_open"]] == ["frontend"]
     assert worker_state["lane_messages_open"][0]["subject"] == "Frontend dispatch"
 
-    worker_messages = _parse(mcp_server.list_lane_messages(status="open"))
+    worker_messages = _parse(mcp_server.lane_communication(kind="message", operation="list", status="open"))
     assert worker_messages["lane_id"] == "frontend"
     assert worker_messages["current_lane"]["lane_id"] == "frontend"
     assert [message["lane_id"] for message in worker_messages["messages"]] == ["frontend"]
@@ -552,7 +645,7 @@ def test_worker_worktree_scopes_open_lane_messages_to_its_registered_lane(tmp_pa
             current_task_path=shared_current_task,
         )
     )
-    orchestrator_state = _parse(mcp_server.get_handoff_state())
+    orchestrator_state = _data(mcp_server.get_handoff_state())
     assert orchestrator_state["current_lane"] is None
     assert {message["lane_id"] for message in orchestrator_state["lane_messages_open"]} == {"frontend", "backend-http"}
 
@@ -569,7 +662,8 @@ def test_export_and_import_handoff_state_round_trip(isolated_handoff: dict) -> N
     )
     _parse(mcp_server.record_decision(session="s1", decision="seed decision"))
     _parse(
-        mcp_server.upsert_worktree_lane(
+        mcp_server.manage_worktree_lane(
+            operation="upsert",
             lane_id="backend-http",
             worktree_path="/tmp/backend-http",
             branch="codex/p5-backend-http",
@@ -580,7 +674,8 @@ def test_export_and_import_handoff_state_round_trip(isolated_handoff: dict) -> N
     _parse(mcp_server.update_next_actions(operation="add", action="seed action", priority=1))
     _parse(mcp_server.report_blocker(operation="add", description="seed blocker"))
     _parse(
-        mcp_server.record_worker_report(
+        mcp_server.worker_reports(
+            operation="record",
             lane_id="backend-http",
             session="s1",
             summary="lane summary",
@@ -590,7 +685,9 @@ def test_export_and_import_handoff_state_round_trip(isolated_handoff: dict) -> N
         )
     )
     _parse(
-        mcp_server.record_lane_message(
+        mcp_server.lane_communication(
+            kind="message",
+            operation="record",
             lane_id="backend-http",
             session="s1",
             direction="worker_to_orchestrator",
@@ -647,7 +744,7 @@ def test_export_and_import_handoff_state_round_trip(isolated_handoff: dict) -> N
     assert imported["ok"] is True
     assert imported["task_ref"] == "4.12.0"
 
-    state = _parse(mcp_server.get_handoff_state(task_ref="4.12.0", verbose=True))
+    state = _data(mcp_server.get_handoff_state(task_ref="4.12.0", verbose=True))
     assert state["active"] is not None
     assert len(state["decisions_recent"]) == 1
     assert len(state["actions_pending"]) == 1
@@ -670,7 +767,8 @@ def test_worktree_lane_activity_and_reports_are_recorded_by_lane(isolated_handof
         )
     )
     lane = _parse(
-        mcp_server.upsert_worktree_lane(
+        mcp_server.manage_worktree_lane(
+            operation="upsert",
             lane_id="frontend",
             worktree_path="/tmp/frontend",
             branch="codex/p5-frontend",
@@ -697,7 +795,8 @@ def test_worktree_lane_activity_and_reports_are_recorded_by_lane(isolated_handof
         )
     )
     report = _parse(
-        mcp_server.record_worker_report(
+        mcp_server.worker_reports(
+            operation="record",
             lane_id="frontend",
             session="lane",
             summary="Frontend ready for review",
@@ -710,7 +809,9 @@ def test_worktree_lane_activity_and_reports_are_recorded_by_lane(isolated_handof
     )
     assert report["ok"] is True
     message = _parse(
-        mcp_server.record_lane_message(
+        mcp_server.lane_communication(
+            kind="message",
+            operation="record",
             lane_id="frontend",
             session="lane",
             direction="worker_to_orchestrator",
@@ -732,19 +833,286 @@ def test_worktree_lane_activity_and_reports_are_recorded_by_lane(isolated_handof
     assert len(activity["reports"]) == 1
     assert len(activity["messages"]) == 1
 
-    listed_reports = _parse(mcp_server.list_worker_reports(lane_id="frontend"))
+    listed_reports = _worker_reports(operation="list", lane_id="frontend")
     assert listed_reports["total_matching"] == 1
     assert listed_reports["reports"][0]["lane_id"] == "frontend"
 
-    listed_messages = _parse(mcp_server.list_lane_messages(lane_id="frontend"))
+    listed_messages = _parse(mcp_server.lane_communication(kind="message", operation="list", lane_id="frontend"))
     assert listed_messages["total_matching"] == 1
     updated_message = _parse(
-        mcp_server.update_lane_message(
+        mcp_server.lane_communication(
+            kind="message",
+            operation="update",
             message_id=listed_messages["messages"][0]["id"],
             status="acknowledged",
         )
     )
     assert updated_message["message"]["status"] == "acknowledged"
+
+
+def test_list_worker_reports_supports_bounded_read_parameters(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="worker-reports-bounded",
+            objective="Shape worker report reads",
+            status="in_progress",
+        )
+    )
+    _manage_worktree_lane(
+        operation="upsert",
+        lane_id="frontend",
+        worktree_path="/tmp/frontend",
+        branch="codex/p5-frontend",
+        status="active",
+        task_ref="worker-reports-bounded",
+    )
+    for session in ("lane-1", "lane-2"):
+        recorded = _worker_reports(
+            operation="record",
+            task_ref="worker-reports-bounded",
+            lane_id="frontend",
+            session=session,
+            summary=f"Summary for {session}",
+            changed_files=["apps/prototype-description-service/app.py", "docs/notes.md"],
+            test_commands=["pytest -q"],
+            blockers=["none"],
+        )
+        assert recorded["ok"] is True
+
+    full = _worker_reports(operation="list", task_ref="worker-reports-bounded", lane_id="frontend")
+    shaped = _worker_reports(
+        operation="list",
+        task_ref="worker-reports-bounded",
+        lane_id="frontend",
+        sections="reports",
+        fields="id,summary,merge_ready",
+        top_n_reports=1,
+    )
+
+    assert full["returned"] == 2
+    assert set(shaped) == {"ok", "reports"}
+    assert shaped["reports"] == [
+        {
+            "id": full["reports"][0]["id"],
+            "summary": full["reports"][0]["summary"],
+            "merge_ready": full["reports"][0]["merge_ready"],
+        }
+    ]
+    assert len(json.dumps(shaped)) < len(json.dumps(full))
+
+
+def test_list_lane_messages_supports_bounded_read_parameters(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="lane-messages-bounded",
+            objective="Shape lane message reads",
+            status="in_progress",
+        )
+    )
+    _manage_worktree_lane(
+        operation="upsert",
+        lane_id="frontend",
+        worktree_path="/tmp/frontend",
+        branch="codex/p5-frontend",
+        status="active",
+        task_ref="lane-messages-bounded",
+    )
+    for idx in range(2):
+        recorded = _parse(
+            mcp_server.lane_communication(
+                kind="message",
+                operation="record",
+                task_ref="lane-messages-bounded",
+                lane_id="frontend",
+                session=f"lane-{idx}",
+                direction="worker_to_orchestrator",
+                subject=f"Need guidance {idx}",
+                message=f"Detailed worker guidance body {idx}",
+            )
+        )
+        assert recorded["ok"] is True
+
+    full = _parse(
+        mcp_server.lane_communication(kind="message", operation="list", task_ref="lane-messages-bounded", lane_id="frontend")
+    )
+    shaped = _parse(
+        mcp_server.lane_communication(
+            kind="message",
+            operation="list",
+            task_ref="lane-messages-bounded",
+            lane_id="frontend",
+            sections="messages",
+            fields="id,subject,status",
+            top_n_messages=1,
+        )
+    )
+
+    assert full["returned"] == 2
+    assert set(shaped) == {"ok", "messages"}
+    assert shaped["messages"] == [
+        {"id": full["messages"][0]["id"], "subject": full["messages"][0]["subject"], "status": full["messages"][0]["status"]}
+    ]
+    assert len(json.dumps(shaped)) < len(json.dumps(full))
+
+
+def test_list_lane_messages_escapes_subject_prefix_wildcards(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="lane-messages-like-escape",
+            objective="Escape subject prefix wildcards",
+            status="in_progress",
+        )
+    )
+    _manage_worktree_lane(
+        operation="upsert",
+        task_ref="lane-messages-like-escape",
+        lane_id="frontend",
+        worktree_path="/tmp/frontend",
+        branch="codex/p5-frontend",
+        status="active",
+    )
+    for subject in ("brief:_literal", "brief:xliteral"):
+        recorded = _parse(
+            mcp_server.lane_communication(
+                kind="message",
+                operation="record",
+                task_ref="lane-messages-like-escape",
+                lane_id="frontend",
+                session=subject,
+                direction="orchestrator_to_worker",
+                subject=subject,
+                message="body",
+            )
+        )
+        assert recorded["ok"] is True
+
+    listed = _parse(
+        mcp_server.lane_communication(
+            kind="message",
+            operation="list",
+            task_ref="lane-messages-like-escape",
+            lane_id="frontend",
+            subject_prefix="brief:_",
+        )
+    )
+    assert [row["subject"] for row in listed["messages"]] == ["brief:_literal"]
+
+
+def test_list_lane_messages_rejects_unknown_sections(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="lane-messages-invalid-sections",
+            objective="Reject invalid message sections",
+            status="in_progress",
+        )
+    )
+    payload = _parse(
+        mcp_server.lane_communication(
+            kind="message",
+            operation="list",
+            task_ref="lane-messages-invalid-sections",
+            sections="not-a-real-section",
+        )
+    )
+    assert payload["ok"] is False
+    assert "Invalid sections" in payload["error"]
+
+
+def test_get_lane_activity_supports_bounded_read_parameters(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="lane-activity-bounded",
+            objective="Shape lane activity reads",
+            status="in_progress",
+        )
+    )
+    _manage_worktree_lane(
+        operation="upsert",
+        lane_id="frontend",
+        worktree_path="/tmp/frontend",
+        branch="codex/p5-frontend",
+        status="active",
+        task_ref="lane-activity-bounded",
+    )
+    _worker_reports(
+        operation="record",
+        task_ref="lane-activity-bounded",
+        lane_id="frontend",
+        session="lane",
+        summary="Frontend report summary",
+        changed_files=["apps/prototype-description-service/app.py"],
+    )
+    _parse(
+        mcp_server.lane_communication(
+            kind="message",
+            operation="record",
+            task_ref="lane-activity-bounded",
+            lane_id="frontend",
+            session="lane",
+            direction="worker_to_orchestrator",
+            subject="Need guidance",
+            message="Detailed guidance body",
+        )
+    )
+
+    full = _parse(mcp_server.get_lane_activity(task_ref="lane-activity-bounded", lane_id="frontend"))
+    shaped = _parse(
+        mcp_server.get_lane_activity(
+            task_ref="lane-activity-bounded",
+            lane_id="frontend",
+            sections="messages,reports",
+            detail="summary",
+            fields="id,summary,status",
+            top_n_messages=1,
+            top_n_reports=1,
+        )
+    )
+
+    assert "lane" not in shaped
+    assert set(shaped) == {"ok", "task_ref", "format", "messages", "reports"}
+    assert len(shaped["messages"]) == 1
+    assert len(shaped["reports"]) == 1
+    assert set(shaped["messages"][0]) == {"id", "status"}
+    assert set(shaped["reports"][0]) == {"id", "summary", "status"}
+    assert len(json.dumps(shaped)) < len(json.dumps(full))
+
+
+def test_get_lane_activity_only_fetches_requested_sections(
+    isolated_handoff: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="lane-activity-lazy-fetch",
+            objective="Fetch only requested sections",
+            status="in_progress",
+        )
+    )
+    _manage_worktree_lane(
+        operation="upsert",
+        task_ref="lane-activity-lazy-fetch",
+        lane_id="frontend",
+        worktree_path="/tmp/frontend",
+        branch="codex/p5-frontend",
+        status="active",
+    )
+
+    fetched_tables: list[str] = []
+
+    def fake_fetch_handoff_rows(conn, *, table, where_sql, order_sql, limit, params):
+        fetched_tables.append(table)
+        return []
+
+    monkeypatch.setattr(lanes_module, "_fetch_handoff_rows", fake_fetch_handoff_rows)
+    payload = _parse(
+        mcp_server.get_lane_activity(
+            task_ref="lane-activity-lazy-fetch",
+            lane_id="frontend",
+            sections="messages",
+        )
+    )
+
+    assert payload["ok"] is True
+    assert fetched_tables == ["lane_messages"]
 
 
 def test_lane_briefs_round_trip_with_structured_payload(isolated_handoff: dict) -> None:
@@ -756,7 +1124,8 @@ def test_lane_briefs_round_trip_with_structured_payload(isolated_handoff: dict) 
         )
     )
     _parse(
-        mcp_server.upsert_worktree_lane(
+        mcp_server.manage_worktree_lane(
+            operation="upsert",
             lane_id="frontend",
             worktree_path="/tmp/frontend",
             branch="codex/p5-frontend",
@@ -765,7 +1134,9 @@ def test_lane_briefs_round_trip_with_structured_payload(isolated_handoff: dict) 
     )
 
     brief = _parse(
-        mcp_server.record_lane_brief(
+        mcp_server.lane_communication(
+            kind="brief",
+            operation="record",
             task_ref="5.1.0",
             lane_id="frontend",
             session="briefs",
@@ -780,7 +1151,7 @@ def test_lane_briefs_round_trip_with_structured_payload(isolated_handoff: dict) 
     assert brief["message"]["subject"] == "brief:api-contract-changed"
     assert brief["message"]["payload"]["source_lane"] == "backend-domain"
 
-    listed = _parse(mcp_server.list_lane_briefs(task_ref="5.1.0", lane_id="frontend"))
+    listed = _parse(mcp_server.lane_communication(kind="brief", operation="list", task_ref="5.1.0", lane_id="frontend"))
     assert listed["ok"] is True
     assert listed["total_matching"] == 1
     assert listed["briefs"][0]["payload"]["required_actions"] == [
@@ -802,7 +1173,8 @@ def test_get_lane_activity_archival_format_returns_compact_summary(isolated_hand
     )
     actor = {"agent": "codex", "branch": "codex/p5-backend", "commit_sha": "abc123", "lane_id": "backend"}
     _parse(
-        mcp_server.upsert_worktree_lane(
+        mcp_server.manage_worktree_lane(
+            operation="upsert",
             task_ref="5.2.0",
             lane_id="backend",
             worktree_path="/tmp/backend",
@@ -868,7 +1240,8 @@ def test_get_lane_activity_archival_format_returns_compact_summary(isolated_hand
         )
     )
     _parse(
-        mcp_server.record_worker_report(
+        mcp_server.worker_reports(
+            operation="record",
             task_ref="5.2.0",
             lane_id="backend",
             session="archival",
@@ -879,7 +1252,9 @@ def test_get_lane_activity_archival_format_returns_compact_summary(isolated_hand
         )
     )
     _parse(
-        mcp_server.record_lane_message(
+        mcp_server.lane_communication(
+            kind="message",
+            operation="record",
             task_ref="5.2.0",
             lane_id="backend",
             session="archival",
@@ -937,7 +1312,8 @@ def test_get_lane_activity_archival_format_truncates_long_decision_rationale(iso
     )
     actor = {"agent": "codex", "branch": "codex/p5-backend", "commit_sha": "def456", "lane_id": "backend"}
     _parse(
-        mcp_server.upsert_worktree_lane(
+        mcp_server.manage_worktree_lane(
+            operation="upsert",
             task_ref="5.2.3",
             lane_id="backend",
             worktree_path="/tmp/backend-truncation",
@@ -975,7 +1351,8 @@ def test_get_lane_activity_archival_format_handles_empty_lane() -> None:
         )
     )
     _parse(
-        mcp_server.upsert_worktree_lane(
+        mcp_server.manage_worktree_lane(
+            operation="upsert",
             task_ref="5.2.1",
             lane_id="frontend",
             worktree_path="/tmp/frontend",
@@ -1013,7 +1390,8 @@ def test_get_lane_activity_rejects_unknown_format(isolated_handoff: dict) -> Non
         )
     )
     _parse(
-        mcp_server.upsert_worktree_lane(
+        mcp_server.manage_worktree_lane(
+            operation="upsert",
             task_ref="5.2.2",
             lane_id="backend",
             worktree_path="/tmp/backend",
@@ -1084,7 +1462,9 @@ def test_import_handoff_state_prefers_decoded_lane_message_payload(isolated_hand
     )
     assert response["ok"] is True
 
-    listed = _parse(mcp_server.list_lane_briefs(task_ref="5.1.1", lane_id="frontend"))
+    listed = _parse(
+        mcp_server.lane_communication(kind="brief", operation="list", task_ref="5.1.1", lane_id="frontend")
+    )
     assert listed["briefs"][0]["payload"]["summary"] == "fresh"
 
 
@@ -1116,8 +1496,9 @@ def test_review_list_and_summary_surface_workspace_git_context(isolated_handoff:
         lambda reference_sha, candidate_sha: "descendant" if (reference_sha, candidate_sha) == ("abc123", "def456") else "same",
     )
 
-    listed = _parse(mcp_server.list_review_findings())
-    assert listed["ok"] is True
+    listed_response = _parse(mcp_server.list_review_findings())
+    listed = _data(listed_response)
+    assert listed_response["ok"] is True
     assert listed["workspace_git"]["branch"] == "feature/review"
     assert listed["workspace_git"]["commit_sha"] == "def456"
     assert listed["findings"][0]["workspace_commit_relation"] == "descendant"
@@ -1140,7 +1521,8 @@ def test_lane_reports_and_messages_accept_explicit_task_ref_cross_task(isolated_
         )
     )
     _parse(
-        mcp_server.upsert_worktree_lane(
+        mcp_server.manage_worktree_lane(
+            operation="upsert",
             lane_id="backend-domain",
             worktree_path="/tmp/backend-domain",
             branch="codex/p5-backend-domain",
@@ -1157,7 +1539,8 @@ def test_lane_reports_and_messages_accept_explicit_task_ref_cross_task(isolated_
     )
 
     hidden_report = _parse(
-        mcp_server.record_worker_report(
+        mcp_server.worker_reports(
+            operation="record",
             lane_id="backend-domain",
             session="cross-task",
             summary="hidden",
@@ -1166,7 +1549,8 @@ def test_lane_reports_and_messages_accept_explicit_task_ref_cross_task(isolated_
     assert hidden_report["ok"] is False
 
     explicit_report = _parse(
-        mcp_server.record_worker_report(
+        mcp_server.worker_reports(
+            operation="record",
             task_ref="phase-5-a",
             lane_id="backend-domain",
             session="cross-task",
@@ -1177,7 +1561,9 @@ def test_lane_reports_and_messages_accept_explicit_task_ref_cross_task(isolated_
     assert explicit_report["report"]["task_ref"] == "phase-5-a"
 
     hidden_message = _parse(
-        mcp_server.record_lane_message(
+        mcp_server.lane_communication(
+            kind="message",
+            operation="record",
             lane_id="backend-domain",
             session="cross-task",
             direction="worker_to_orchestrator",
@@ -1187,7 +1573,9 @@ def test_lane_reports_and_messages_accept_explicit_task_ref_cross_task(isolated_
     assert hidden_message["ok"] is False
 
     explicit_message = _parse(
-        mcp_server.record_lane_message(
+        mcp_server.lane_communication(
+            kind="message",
+            operation="record",
             task_ref="phase-5-a",
             lane_id="backend-domain",
             session="cross-task",
@@ -1199,7 +1587,9 @@ def test_lane_reports_and_messages_accept_explicit_task_ref_cross_task(isolated_
     assert explicit_message["message"]["task_ref"] == "phase-5-a"
 
     hidden_update = _parse(
-        mcp_server.update_lane_message(
+        mcp_server.lane_communication(
+            kind="message",
+            operation="update",
             message_id=explicit_message["message"]["id"],
             status="acknowledged",
         )
@@ -1207,7 +1597,9 @@ def test_lane_reports_and_messages_accept_explicit_task_ref_cross_task(isolated_
     assert hidden_update["ok"] is False
 
     explicit_update = _parse(
-        mcp_server.update_lane_message(
+        mcp_server.lane_communication(
+            kind="message",
+            operation="update",
             message_id=explicit_message["message"]["id"],
             status="acknowledged",
             task_ref="phase-5-a",
@@ -1235,7 +1627,8 @@ def test_lane_upsert_accepts_explicit_task_ref_cross_task(isolated_handoff: dict
     )
 
     explicit_lane = _parse(
-        mcp_server.upsert_worktree_lane(
+        mcp_server.manage_worktree_lane(
+            operation="upsert",
             task_ref="phase-5-a",
             lane_id="backend-domain",
             worktree_path="/tmp/backend-domain",
@@ -1258,7 +1651,7 @@ def test_get_review_findings_summary_counts_and_limits(isolated_handoff: dict) -
             status="in_progress",
         )
     )
-    open_finding = _parse(
+    open_finding = _data(
         mcp_server.record_review_finding(
             session="s-summary",
             finding_id="H-2",
@@ -1267,7 +1660,7 @@ def test_get_review_findings_summary_counts_and_limits(isolated_handoff: dict) -
             description="Open finding",
         )
     )
-    fixed_finding = _parse(
+    fixed_finding = _data(
         mcp_server.record_review_finding(
             session="s-summary",
             finding_id="M-3",
@@ -1276,7 +1669,7 @@ def test_get_review_findings_summary_counts_and_limits(isolated_handoff: dict) -
             description="Will be fixed",
         )
     )
-    deferred_finding = _parse(
+    deferred_finding = _data(
         mcp_server.record_review_finding(
             session="s-summary",
             finding_id="L-4",
@@ -1340,18 +1733,20 @@ def test_switch_task_clears_focus_on_restore(isolated_handoff: dict) -> None:
         )
     )
     # Switch back to A; focus should be cleared (restored from archive without focus)
-    result = _parse(
+    result_response = _parse(
         mcp_server.switch_task(task_ref="sw-focus-a")
     )
-    assert result["ok"] is True
+    result = _data(result_response)
+    assert result_response["ok"] is True
     assert result["active"].get("focus") is None
 
     # Now switch with explicit focus
     _parse(mcp_server.switch_task(task_ref="sw-focus-b"))
-    result2 = _parse(
+    result2_response = _parse(
         mcp_server.switch_task(task_ref="sw-focus-a", focus="resuming slice 3")
     )
-    assert result2["ok"] is True
+    result2 = _data(result2_response)
+    assert result2_response["ok"] is True
     assert result2["active"]["focus"] == "resuming slice 3"
 
 
@@ -1374,7 +1769,7 @@ def test_switch_task_regenerates_current_task_with_dashboard(isolated_handoff: d
         )
     )
 
-    result = _parse(
+    result_response = _parse(
         mcp_server.switch_task(
             task_ref="sw-dashboard-b",
             objective="Task B dashboard state",
@@ -1382,7 +1777,8 @@ def test_switch_task_regenerates_current_task_with_dashboard(isolated_handoff: d
         )
     )
 
-    assert result["ok"] is True
+    result = _data(result_response)
+    assert result_response["ok"] is True
     assert result["current_task_md_regen"] == "ok"
 
     md = isolated_handoff["current_task_path"].read_text()
@@ -1419,6 +1815,3 @@ def test_switch_task_regenerates_current_task_with_dashboard(isolated_handoff: d
 # ---------------------------------------------------------------------------
 # Decision grammar helpers tests
 # ---------------------------------------------------------------------------
-
-
-

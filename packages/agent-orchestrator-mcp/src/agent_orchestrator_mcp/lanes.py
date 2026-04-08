@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Callable
 from typing import Any
 
 from agent_handoff_mcp.current_task_rendering import _write_current_task_md_for_task
@@ -34,6 +35,21 @@ from agent_handoff_mcp.shared_primitives import (
 from agent_handoff_mcp.shared_schema import _get_db_connection
 from agent_handoff_mcp.shared_write_context import WriteActor, _resolve_write_actor
 
+_VALID_DETAIL_LEVELS = {"full", "summary"}
+_LIST_SECTION_IDENTITY = "identity"
+_LIST_SECTION_COUNTS = "counts"
+
+_LANE_MESSAGE_IDENTITY_FIELDS = frozenset({"id", "task_ref", "lane_id", "status"})
+_TURN_METRIC_IDENTITY_FIELDS = frozenset({"id", "task_ref", "lane_id", "session", "phase", "backend", "model"})
+_WORKER_REPORT_IDENTITY_FIELDS = frozenset({"id", "task_ref", "lane_id", "session", "status", "merge_ready"})
+_PLAN_CURSOR_IDENTITY_FIELDS = frozenset({"id", "task_ref", "plan_item_id", "lane_id", "state"})
+_LANE_ACTIVITY_LANE_IDENTITY_FIELDS = frozenset({"id", "task_ref", "lane_id", "status", "title", "objective"})
+_LANE_ACTIVITY_DECISION_IDENTITY_FIELDS = frozenset({"id", "decision", "created_at"})
+_LANE_ACTIVITY_TEST_IDENTITY_FIELDS = frozenset({"id", "command", "passed", "verified_at"})
+_LANE_ACTIVITY_BLOCKER_IDENTITY_FIELDS = frozenset({"id", "description", "status", "created_at"})
+_LANE_ACTIVITY_ACTION_IDENTITY_FIELDS = frozenset({"id", "action", "status", "priority", "updated_at"})
+_LANE_ACTIVITY_FINDING_IDENTITY_FIELDS = frozenset({"id", "title", "severity", "status", "created_at"})
+
 
 def _get_lane_row(conn: sqlite3.Connection, task_ref: str, lane_id: str) -> sqlite3.Row | None:
     result: sqlite3.Row | None = conn.execute(
@@ -41,6 +57,142 @@ def _get_lane_row(conn: sqlite3.Connection, task_ref: str, lane_id: str) -> sqli
         (task_ref, lane_id),
     ).fetchone()
     return result
+
+
+def _normalize_read_detail(detail: str) -> str:
+    return detail if detail in _VALID_DETAIL_LEVELS else "full"
+
+
+def _parse_projection_fields(fields: str | None) -> frozenset[str] | None:
+    if fields is None:
+        return None
+    return frozenset(part.strip() for part in fields.split(",") if part.strip())
+
+
+def _parse_sections(sections: str | None, valid_sections: frozenset[str]) -> frozenset[str] | None:
+    if sections is None:
+        return None
+    requested = frozenset(part.strip() for part in sections.split(",") if part.strip())
+    if not requested:
+        return None
+    return requested & valid_sections
+
+
+def _project_mapping(
+    mapping: dict[str, object],
+    requested_fields: frozenset[str] | None,
+    identity_fields: frozenset[str],
+) -> dict[str, object]:
+    if requested_fields is None:
+        allowed_fields: frozenset[str] | None = None
+    else:
+        allowed_fields = requested_fields or identity_fields
+    return {key: value for key, value in mapping.items() if allowed_fields is None or key in allowed_fields}
+
+
+def _truncate_text(value: object, limit: int = 160) -> object:
+    if isinstance(value, str) and len(value) > limit:
+        return value[:limit] + "..."
+    return value
+
+
+def _summarize_value(value: object) -> object:
+    if isinstance(value, str):
+        return _truncate_text(value)
+    if isinstance(value, dict):
+        return {key: _summarize_value(raw_value) for key, raw_value in value.items()}
+    if isinstance(value, list):
+        preview = [_summarize_value(item) for item in value[:5]]
+        if len(value) > 5:
+            preview.append("...")
+        return preview
+    return value
+
+
+def _summarize_turn_metric_row(row: dict[str, object]) -> dict[str, object]:
+    summarized = dict(row)
+    summarized.pop("attribution_json", None)
+    summarized.pop("section_sizes_json", None)
+    summarized.pop("raw_usage_json", None)
+    for key in ("attribution", "section_sizes", "raw_usage"):
+        if key in summarized:
+            summarized[key] = _summarize_value(summarized.get(key))
+    return summarized
+
+
+def _summarize_worker_report_row(row: dict[str, object]) -> dict[str, object]:
+    summarized = dict(row)
+    summarized.pop("changed_files_json", None)
+    summarized.pop("test_commands_json", None)
+    summarized.pop("blockers_json", None)
+    return summarized
+
+
+def _summarize_lane_message_row(row: dict[str, object]) -> dict[str, object]:
+    summarized = dict(row)
+    summarized["message"] = _truncate_text(summarized.get("message"), 240)
+    summarized.pop("payload_json", None)
+    if "payload" in summarized:
+        summarized["payload"] = _summarize_value(summarized.get("payload"))
+    return summarized
+
+
+def _summarize_generic_row(row: dict[str, object]) -> dict[str, object]:
+    return {key: _summarize_value(value) for key, value in row.items()}
+
+
+def _effective_limit(limit: int, top_n: int | None) -> int:
+    if top_n is not None:
+        return max(1, int(top_n))
+    return max(1, limit)
+
+
+def _invalid_sections_error(valid_sections: frozenset[str]) -> dict[str, object]:
+    return {"ok": False, "error": f"Invalid sections. Valid: {', '.join(sorted(valid_sections))}"}
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _shape_list_payload(
+    payload: dict[str, object],
+    *,
+    sections: str | None,
+    detail: str,
+    fields: str | None,
+    row_key: str,
+    identity_fields: frozenset[str],
+    summary_fn: Callable[[dict[str, object]], dict[str, object]] | None = None,
+) -> dict[str, object]:
+    detail = _normalize_read_detail(detail)
+    requested_fields = _parse_projection_fields(fields)
+    valid_sections = frozenset({_LIST_SECTION_IDENTITY, _LIST_SECTION_COUNTS, row_key})
+    requested_sections = _parse_sections(sections, valid_sections)
+    if sections is not None and requested_sections == frozenset():
+        return _invalid_sections_error(valid_sections)
+    if requested_sections is None:
+        requested_sections = valid_sections
+    shaped: dict[str, object] = {"ok": payload["ok"]}
+    if _LIST_SECTION_IDENTITY in requested_sections:
+        for key, value in payload.items():
+            if key not in {"ok", "total_matching", "returned", "has_more", row_key}:
+                shaped[key] = value
+    if _LIST_SECTION_COUNTS in requested_sections:
+        for key in ("total_matching", "returned", "has_more"):
+            if key in payload:
+                shaped[key] = payload[key]
+    if row_key in requested_sections:
+        rows = payload.get(row_key, [])
+        shaped_rows: list[dict[str, object]] = []
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                summarized = summary_fn(row) if detail == "summary" and callable(summary_fn) else dict(row)
+                shaped_rows.append(_project_mapping(summarized, requested_fields, identity_fields))
+        shaped[row_key] = shaped_rows
+    return shaped
 
 
 def upsert_worktree_lane(
@@ -187,6 +339,59 @@ def list_worktree_lanes(task_ref: str | None = None, status: str = "all", limit:
         )
 
 
+def manage_worktree_lane(
+    operation: str,
+    lane_id: str | None = None,
+    worktree_path: str | None = None,
+    branch: str | None = None,
+    title: str | None = None,
+    objective: str | None = None,
+    owner_agent: str | None = None,
+    model: str | None = None,
+    backend: str | None = None,
+    reasoning_effort: str | None = None,
+    status: str | None = None,
+    notes: str | None = None,
+    task_ref: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> dict:
+    """Discriminated wrapper for worktree lane upsert, close, and list operations."""
+    valid_operations = {"close", "list", "upsert"}
+    if operation not in valid_operations:
+        return _json_response(
+            {"ok": False, "error": f"Invalid operation. Valid: {', '.join(sorted(valid_operations))}"}
+        )
+    if operation == "upsert":
+        return upsert_worktree_lane(
+            lane_id=str(lane_id or ""),
+            worktree_path=str(worktree_path or ""),
+            branch=str(branch or ""),
+            title=title,
+            objective=objective,
+            owner_agent=owner_agent,
+            model=model,
+            backend=backend,
+            reasoning_effort=reasoning_effort,
+            status=status or "planned",
+            notes=notes,
+            task_ref=task_ref,
+        )
+    if operation == "close":
+        return close_worktree_lane(
+            lane_id=str(lane_id or ""),
+            status=status or "closed",
+            notes=notes,
+            task_ref=task_ref,
+        )
+    return list_worktree_lanes(
+        task_ref=task_ref,
+        status=status or "all",
+        limit=limit,
+        offset=offset,
+    )
+
+
 def record_turn_metric(
     session: str,
     phase: str,
@@ -280,8 +485,12 @@ def list_turn_metrics(
     phase: str | None = None,
     limit: int = 50,
     offset: int = 0,
+    sections: str | None = None,
+    detail: str = "full",
+    fields: str | None = None,
+    top_n_turn_metrics: int | None = None,
 ) -> dict:
-    limit = max(1, limit)
+    limit = _effective_limit(limit, top_n_turn_metrics)
     offset = max(0, offset)
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
@@ -308,18 +517,26 @@ def list_turn_metrics(
             _decode_turn_metric_row_dict,
         )
         return _json_response(
-            {
-                "ok": True,
-                "task_ref": resolved_task_ref,
-                "lane_id": _normalize_optional_text(lane_id),
-                "backend": _normalize_optional_text(backend),
-                "model": _normalize_optional_text(model),
-                "phase": _normalize_optional_text(phase),
-                "total_matching": total,
-                "returned": len(rows),
-                "has_more": offset + len(rows) < total,
-                "turn_metrics": rows,
-            }
+            _shape_list_payload(
+                {
+                    "ok": True,
+                    "task_ref": resolved_task_ref,
+                    "lane_id": _normalize_optional_text(lane_id),
+                    "backend": _normalize_optional_text(backend),
+                    "model": _normalize_optional_text(model),
+                    "phase": _normalize_optional_text(phase),
+                    "total_matching": total,
+                    "returned": len(rows),
+                    "has_more": offset + len(rows) < total,
+                    "turn_metrics": rows,
+                },
+                sections=sections,
+                detail=detail,
+                fields=fields,
+                row_key="turn_metrics",
+                identity_fields=_TURN_METRIC_IDENTITY_FIELDS,
+                summary_fn=_summarize_turn_metric_row,
+            )
         )
 
 
@@ -433,7 +650,19 @@ def get_lane_activity(
     limit_blockers: int = 20,
     limit_actions: int = 20,
     limit_findings: int = 20,
+    limit_reports: int = 20,
+    limit_messages: int = 20,
     format: str = "full",
+    sections: str | None = None,
+    detail: str = "full",
+    fields: str | None = None,
+    top_n_decisions: int | None = None,
+    top_n_tests: int | None = None,
+    top_n_blockers: int | None = None,
+    top_n_actions: int | None = None,
+    top_n_findings: int | None = None,
+    top_n_reports: int | None = None,
+    top_n_messages: int | None = None,
 ) -> dict:
     normalized_lane_id = _normalize_optional_text(lane_id)
     if normalized_lane_id is None:
@@ -445,84 +674,120 @@ def get_lane_activity(
         lane = _get_lane_row(conn, resolved_task_ref, normalized_lane_id)
         if lane is None:
             return _json_response({"ok": False, "error": "Lane not found for task_ref."})
+        requested_fields = _parse_projection_fields(fields)
         if format == "archival":
-            return _json_response(
-                {
-                    "ok": True,
-                    "task_ref": resolved_task_ref,
-                    "format": format,
-                    "lane": dict(lane),
-                    "summary": _build_archival_lane_activity_summary(
-                        conn,
-                        task_ref=resolved_task_ref,
-                        lane_id=normalized_lane_id,
-                    ),
-                }
+            summary = _build_archival_lane_activity_summary(
+                conn,
+                task_ref=resolved_task_ref,
+                lane_id=normalized_lane_id,
             )
-        return _json_response(
-            {
-                "ok": True,
-                "task_ref": resolved_task_ref,
-                "format": format,
-                "lane": dict(lane),
-                "decisions": _fetch_handoff_rows(
-                    conn,
-                    table="decisions",
-                    where_sql="task_ref = ? AND lane_id = ?",
-                    order_sql="created_at DESC, id DESC",
-                    limit=max(1, limit_decisions),
-                    params=(resolved_task_ref, normalized_lane_id),
-                ),
-                "tests": _fetch_handoff_rows(
-                    conn,
-                    table="verified_tests",
-                    where_sql="task_ref = ? AND lane_id = ?",
-                    order_sql="verified_at DESC, id DESC",
-                    limit=max(1, limit_tests),
-                    params=(resolved_task_ref, normalized_lane_id),
-                ),
-                "blockers": _fetch_handoff_rows(
-                    conn,
-                    table="blockers",
-                    where_sql="task_ref = ? AND lane_id = ?",
-                    order_sql="created_at DESC, id DESC",
-                    limit=max(1, limit_blockers),
-                    params=(resolved_task_ref, normalized_lane_id),
-                ),
-                "actions": _fetch_handoff_rows(
-                    conn,
-                    table="next_actions",
-                    where_sql="task_ref = ? AND lane_id = ?",
-                    order_sql="updated_at DESC, id DESC",
-                    limit=max(1, limit_actions),
-                    params=(resolved_task_ref, normalized_lane_id),
-                ),
-                "findings": _fetch_handoff_rows(
-                    conn,
-                    table="review_findings",
-                    where_sql="task_ref = ? AND lane_id = ?",
-                    order_sql="COALESCE(updated_at, created_at) DESC, id DESC",
-                    limit=max(1, limit_findings),
-                    params=(resolved_task_ref, normalized_lane_id),
-                ),
-                "reports": _fetch_handoff_rows(
-                    conn,
-                    table="worker_reports",
-                    where_sql="task_ref = ? AND lane_id = ?",
-                    order_sql="created_at DESC, id DESC",
-                    limit=20,
-                    params=(resolved_task_ref, normalized_lane_id),
-                ),
-                "messages": _fetch_handoff_rows(
-                    conn,
-                    table="lane_messages",
-                    where_sql="task_ref = ? AND lane_id = ?",
-                    order_sql="updated_at DESC, id DESC",
-                    limit=20,
-                    params=(resolved_task_ref, normalized_lane_id),
-                ),
-            }
+            valid_sections = frozenset({"identity", "lane", "summary"})
+            requested_sections = _parse_sections(sections, valid_sections) or valid_sections
+            if sections is not None and requested_sections == frozenset():
+                return _json_response(_invalid_sections_error(valid_sections))
+            shaped: dict[str, object] = {"ok": True, "task_ref": resolved_task_ref, "format": format}
+            if "identity" in requested_sections or "lane" in requested_sections:
+                shaped["lane"] = _project_mapping(dict(lane), requested_fields, _LANE_ACTIVITY_LANE_IDENTITY_FIELDS)
+            if "summary" in requested_sections:
+                shaped["summary"] = summary
+            return _json_response(shaped)
+
+        detail = _normalize_read_detail(detail)
+        valid_sections = frozenset(
+            {"identity", "lane", "decisions", "tests", "blockers", "actions", "findings", "reports", "messages"}
         )
+        requested_sections = _parse_sections(sections, valid_sections)
+        if sections is not None and requested_sections == frozenset():
+            return _json_response(_invalid_sections_error(valid_sections))
+        requested_sections = requested_sections or valid_sections
+        shaped: dict[str, object] = {"ok": True, "task_ref": resolved_task_ref, "format": format}
+        if "identity" in requested_sections or "lane" in requested_sections:
+            lane_row = _summarize_generic_row(dict(lane)) if detail == "summary" else dict(lane)
+            shaped["lane"] = _project_mapping(lane_row, requested_fields, _LANE_ACTIVITY_LANE_IDENTITY_FIELDS)
+
+        section_fetchers: dict[str, Callable[[], list[dict[str, object]]]] = {
+            "decisions": lambda: _fetch_handoff_rows(
+                conn,
+                table="decisions",
+                where_sql="task_ref = ? AND lane_id = ?",
+                order_sql="created_at DESC, id DESC",
+                limit=_effective_limit(limit_decisions, top_n_decisions),
+                params=(resolved_task_ref, normalized_lane_id),
+            ),
+            "tests": lambda: _fetch_handoff_rows(
+                conn,
+                table="verified_tests",
+                where_sql="task_ref = ? AND lane_id = ?",
+                order_sql="verified_at DESC, id DESC",
+                limit=_effective_limit(limit_tests, top_n_tests),
+                params=(resolved_task_ref, normalized_lane_id),
+            ),
+            "blockers": lambda: _fetch_handoff_rows(
+                conn,
+                table="blockers",
+                where_sql="task_ref = ? AND lane_id = ?",
+                order_sql="created_at DESC, id DESC",
+                limit=_effective_limit(limit_blockers, top_n_blockers),
+                params=(resolved_task_ref, normalized_lane_id),
+            ),
+            "actions": lambda: _fetch_handoff_rows(
+                conn,
+                table="next_actions",
+                where_sql="task_ref = ? AND lane_id = ?",
+                order_sql="updated_at DESC, id DESC",
+                limit=_effective_limit(limit_actions, top_n_actions),
+                params=(resolved_task_ref, normalized_lane_id),
+            ),
+            "findings": lambda: _fetch_handoff_rows(
+                conn,
+                table="review_findings",
+                where_sql="task_ref = ? AND lane_id = ?",
+                order_sql="COALESCE(updated_at, created_at) DESC, id DESC",
+                limit=_effective_limit(limit_findings, top_n_findings),
+                params=(resolved_task_ref, normalized_lane_id),
+            ),
+            "reports": lambda: _fetch_handoff_rows(
+                conn,
+                table="worker_reports",
+                where_sql="task_ref = ? AND lane_id = ?",
+                order_sql="created_at DESC, id DESC",
+                limit=_effective_limit(limit_reports, top_n_reports),
+                params=(resolved_task_ref, normalized_lane_id),
+            ),
+            "messages": lambda: _fetch_handoff_rows(
+                conn,
+                table="lane_messages",
+                where_sql="task_ref = ? AND lane_id = ?",
+                order_sql="updated_at DESC, id DESC",
+                limit=_effective_limit(limit_messages, top_n_messages),
+                params=(resolved_task_ref, normalized_lane_id),
+            ),
+        }
+
+        def _shape_activity_rows(
+            section_name: str,
+            identity_fields: frozenset[str],
+            summary_fn: Callable[[dict[str, object]], dict[str, object]],
+        ) -> None:
+            if section_name not in requested_sections:
+                return
+            rows = section_fetchers[section_name]()
+            shaped_rows: list[dict[str, object]] = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                summarized = summary_fn(row) if detail == "summary" else dict(row)
+                shaped_rows.append(_project_mapping(summarized, requested_fields, identity_fields))
+            shaped[section_name] = shaped_rows
+
+        _shape_activity_rows("decisions", _LANE_ACTIVITY_DECISION_IDENTITY_FIELDS, _summarize_generic_row)
+        _shape_activity_rows("tests", _LANE_ACTIVITY_TEST_IDENTITY_FIELDS, _summarize_generic_row)
+        _shape_activity_rows("blockers", _LANE_ACTIVITY_BLOCKER_IDENTITY_FIELDS, _summarize_generic_row)
+        _shape_activity_rows("actions", _LANE_ACTIVITY_ACTION_IDENTITY_FIELDS, _summarize_generic_row)
+        _shape_activity_rows("findings", _LANE_ACTIVITY_FINDING_IDENTITY_FIELDS, _summarize_generic_row)
+        _shape_activity_rows("reports", _WORKER_REPORT_IDENTITY_FIELDS, _summarize_worker_report_row)
+        _shape_activity_rows("messages", _LANE_MESSAGE_IDENTITY_FIELDS, _summarize_lane_message_row)
+        return _json_response(shaped)
 
 
 def get_latest_slice_review_packet(
@@ -565,6 +830,71 @@ def get_latest_slice_review_packet(
                 "packet": packet,
             }
         )
+
+
+def turn_metrics(
+    operation: str,
+    session: str | None = None,
+    phase: str | None = None,
+    backend: str | None = None,
+    cycle: int | None = None,
+    lane_id: str | None = None,
+    model: str | None = None,
+    thread_id: str | None = None,
+    turn_id: str | None = None,
+    token_usage: TokenUsage | None = None,
+    prompt_metrics: PromptMetrics | None = None,
+    attribution: dict[str, Any] | None = None,
+    section_sizes: dict[str, Any] | None = None,
+    raw_usage: dict[str, Any] | None = None,
+    actor: WriteActor | None = None,
+    task_ref: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    sections: str | None = None,
+    detail: str = "full",
+    fields: str | None = None,
+    top_n_turn_metrics: int | None = None,
+) -> dict:
+    """Discriminated wrapper for turn metric record, list, and summary operations."""
+    valid_operations = {"list", "record", "summary"}
+    if operation not in valid_operations:
+        return _json_response(
+            {"ok": False, "error": f"Invalid operation. Valid: {', '.join(sorted(valid_operations))}"}
+        )
+    if operation == "record":
+        return record_turn_metric(
+            session=str(session or ""),
+            phase=str(phase or ""),
+            backend=str(backend or ""),
+            cycle=cycle,
+            lane_id=lane_id,
+            model=model,
+            thread_id=thread_id,
+            turn_id=turn_id,
+            token_usage=token_usage,
+            prompt_metrics=prompt_metrics,
+            attribution=attribution,
+            section_sizes=section_sizes,
+            raw_usage=raw_usage,
+            actor=actor,
+            task_ref=task_ref,
+        )
+    if operation == "list":
+        return list_turn_metrics(
+            task_ref=task_ref,
+            lane_id=lane_id,
+            backend=backend,
+            model=model,
+            phase=phase,
+            limit=limit,
+            offset=offset,
+            sections=sections,
+            detail=detail,
+            fields=fields,
+            top_n_turn_metrics=top_n_turn_metrics,
+        )
+    return get_turn_metrics_summary(task_ref=task_ref, lane_id=lane_id)
 
 
 def record_worker_report(
@@ -618,9 +948,16 @@ def record_worker_report(
 
 
 def list_worker_reports(
-    task_ref: str | None = None, lane_id: str | None = None, limit: int = 20, offset: int = 0
+    task_ref: str | None = None,
+    lane_id: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+    sections: str | None = None,
+    detail: str = "full",
+    fields: str | None = None,
+    top_n_reports: int | None = None,
 ) -> dict:
-    limit = max(1, limit)
+    limit = _effective_limit(limit, top_n_reports)
     offset = max(0, offset)
     normalized_lane_id = _normalize_optional_text(lane_id)
     with _get_db_connection() as conn:
@@ -634,16 +971,74 @@ def list_worker_reports(
             conn, "worker_reports", where_sql, tuple(params), limit, offset, "created_at DESC, id DESC"
         )
         return _json_response(
-            {
-                "ok": True,
-                "task_ref": resolved_task_ref,
-                "lane_id": normalized_lane_id,
-                "total_matching": total,
-                "returned": len(rows),
-                "has_more": offset + len(rows) < total,
-                "reports": rows,
-            }
+            _shape_list_payload(
+                {
+                    "ok": True,
+                    "task_ref": resolved_task_ref,
+                    "lane_id": normalized_lane_id,
+                    "total_matching": total,
+                    "returned": len(rows),
+                    "has_more": offset + len(rows) < total,
+                    "reports": rows,
+                },
+                sections=sections,
+                detail=detail,
+                fields=fields,
+                row_key="reports",
+                identity_fields=_WORKER_REPORT_IDENTITY_FIELDS,
+                summary_fn=_summarize_worker_report_row,
+            )
         )
+
+
+def worker_reports(
+    operation: str,
+    lane_id: str | None = None,
+    session: str | None = None,
+    summary: str | None = None,
+    changed_files: list[str] | None = None,
+    test_commands: list[str] | None = None,
+    blockers: list[str] | None = None,
+    merge_ready: bool = False,
+    status: str | None = None,
+    task_ref: str | None = None,
+    actor: WriteActor | None = None,
+    limit: int = 20,
+    offset: int = 0,
+    sections: str | None = None,
+    detail: str = "full",
+    fields: str | None = None,
+    top_n_reports: int | None = None,
+) -> dict:
+    """Discriminated wrapper for worker report record and list operations."""
+    valid_operations = {"list", "record"}
+    if operation not in valid_operations:
+        return _json_response(
+            {"ok": False, "error": f"Invalid operation. Valid: {', '.join(sorted(valid_operations))}"}
+        )
+    if operation == "record":
+        return record_worker_report(
+            lane_id=str(lane_id or ""),
+            session=str(session or ""),
+            summary=str(summary or ""),
+            changed_files=changed_files,
+            test_commands=test_commands,
+            blockers=blockers,
+            merge_ready=merge_ready,
+            status=status or "submitted",
+            task_ref=task_ref,
+            actor=actor,
+        )
+    return list_worker_reports(
+        task_ref=task_ref,
+        lane_id=lane_id,
+        limit=limit,
+        offset=offset,
+        sections=sections,
+        detail=detail,
+        fields=fields,
+        top_n_reports=top_n_reports,
+    )
 
 
 def record_lane_message(
@@ -782,6 +1177,10 @@ def list_lane_messages(
     offset: int = 0,
     direction: str | None = None,
     subject_prefix: str | None = None,
+    sections: str | None = None,
+    detail: str = "full",
+    fields: str | None = None,
+    top_n_messages: int | None = None,
 ) -> dict:
     """List lane messages with optional scope and content filters.
 
@@ -792,7 +1191,7 @@ def list_lane_messages(
     valid_statuses = {"all", *MESSAGE_STATUSES}
     if status not in valid_statuses:
         return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(valid_statuses))}"})
-    limit = max(1, limit)
+    limit = _effective_limit(limit, top_n_messages)
     offset = max(0, offset)
     normalized_lane_id = _normalize_optional_text(lane_id)
     with _get_db_connection() as conn:
@@ -812,8 +1211,8 @@ def list_lane_messages(
             where_sql += " AND direction = ?"
             params.append(direction)
         if subject_prefix is not None:
-            where_sql += " AND subject LIKE ?"
-            params.append(f"{subject_prefix}%")
+            where_sql += " AND subject LIKE ? ESCAPE '\\'"
+            params.append(f"{_escape_like(subject_prefix)}%")
         if status != "all":
             where_sql += " AND status = ?"
             params.append(status)
@@ -828,17 +1227,25 @@ def list_lane_messages(
             _decode_lane_message_row_dict,
         )
         return _json_response(
-            {
-                "ok": True,
-                "task_ref": resolved_task_ref,
-                "lane_id": normalized_lane_id,
-                "current_lane": inferred_lane,
-                "status": status,
-                "total_matching": total,
-                "returned": len(rows),
-                "has_more": offset + len(rows) < total,
-                "messages": rows,
-            }
+            _shape_list_payload(
+                {
+                    "ok": True,
+                    "task_ref": resolved_task_ref,
+                    "lane_id": normalized_lane_id,
+                    "current_lane": inferred_lane,
+                    "status": status,
+                    "total_matching": total,
+                    "returned": len(rows),
+                    "has_more": offset + len(rows) < total,
+                    "messages": rows,
+                },
+                sections=sections,
+                detail=detail,
+                fields=fields,
+                row_key="messages",
+                identity_fields=_LANE_MESSAGE_IDENTITY_FIELDS,
+                summary_fn=_summarize_lane_message_row,
+            )
         )
 
 
@@ -883,6 +1290,102 @@ def list_lane_briefs(
                 "briefs": rows,
             }
         )
+
+
+def lane_communication(
+    kind: str,
+    operation: str,
+    lane_id: str | None = None,
+    session: str | None = None,
+    direction: str | None = None,
+    message: str | None = None,
+    subject: str | None = None,
+    status: str = "open",
+    payload: dict[str, object] | None = None,
+    task_ref: str | None = None,
+    actor: WriteActor | None = None,
+    source_lane: str | None = None,
+    reason: str | None = None,
+    summary: str | None = None,
+    required_actions: list[str] | None = None,
+    artifacts: list[str] | None = None,
+    message_id: int | None = None,
+    limit: int = 20,
+    offset: int = 0,
+    subject_prefix: str | None = None,
+    sections: str | None = None,
+    detail: str = "full",
+    fields: str | None = None,
+    top_n_messages: int | None = None,
+) -> dict:
+    """Discriminated wrapper for lane message and brief operations."""
+    valid_kinds = {"message", "brief"}
+    valid_operations = {"record", "update", "list"}
+    if kind not in valid_kinds:
+        return _json_response({"ok": False, "error": f"Invalid kind. Valid: {', '.join(sorted(valid_kinds))}"})
+    if operation not in valid_operations:
+        return _json_response(
+            {"ok": False, "error": f"Invalid operation. Valid: {', '.join(sorted(valid_operations))}"}
+        )
+
+    if operation == "record":
+        if kind == "message":
+            return record_lane_message(
+                lane_id=str(lane_id or ""),
+                session=str(session or ""),
+                direction=str(direction or ""),
+                message=str(message or ""),
+                subject=subject,
+                status=status,
+                payload=payload,
+                task_ref=task_ref,
+                actor=actor,
+            )
+        return record_lane_brief(
+            lane_id=str(lane_id or ""),
+            session=str(session or ""),
+            source_lane=str(source_lane or ""),
+            reason=str(reason or ""),
+            summary=str(summary or ""),
+            message=message,
+            required_actions=required_actions,
+            artifacts=artifacts,
+            status=status,
+            task_ref=task_ref,
+            actor=actor,
+        )
+
+    if operation == "update":
+        if message_id is None:
+            return _json_response({"ok": False, "error": "message_id is required for update."})
+        return update_lane_message(
+            message_id=message_id,
+            status=status,
+            task_ref=task_ref,
+            actor=actor,
+        )
+
+    if kind == "message":
+        return list_lane_messages(
+            task_ref=task_ref,
+            lane_id=lane_id,
+            status=status,
+            limit=limit,
+            offset=offset,
+            direction=direction,
+            subject_prefix=subject_prefix,
+            sections=sections,
+            detail=detail,
+            fields=fields,
+            top_n_messages=top_n_messages,
+        )
+    return list_lane_briefs(
+        task_ref=task_ref,
+        lane_id=lane_id,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1058,11 +1561,15 @@ def list_plan_cursors(
     lane_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
+    sections: str | None = None,
+    detail: str = "full",
+    fields: str | None = None,
+    top_n_cursors: int | None = None,
 ) -> dict:
     valid_states = {"all", "dispatched", "completed", "skipped", "escalated"}
     if state not in valid_states:
         return _json_response({"ok": False, "error": f"Invalid state. Valid: {', '.join(sorted(valid_states))}"})
-    limit = max(1, limit)
+    limit = _effective_limit(limit, top_n_cursors)
     offset = max(0, offset)
     normalized_lane_id = _normalize_optional_text(lane_id)
     with _get_db_connection() as conn:
@@ -1079,14 +1586,73 @@ def list_plan_cursors(
             conn, "plan_cursors", where_sql, tuple(params), limit, offset, "updated_at DESC, id DESC"
         )
         return _json_response(
-            {
-                "ok": True,
-                "task_ref": resolved_task_ref,
-                "lane_id": normalized_lane_id,
-                "state": state,
-                "total_matching": total,
-                "returned": len(rows),
-                "has_more": offset + len(rows) < total,
-                "cursors": rows,
-            }
+            _shape_list_payload(
+                {
+                    "ok": True,
+                    "task_ref": resolved_task_ref,
+                    "lane_id": normalized_lane_id,
+                    "state": state,
+                    "total_matching": total,
+                    "returned": len(rows),
+                    "has_more": offset + len(rows) < total,
+                    "cursors": rows,
+                },
+                sections=sections,
+                detail=detail,
+                fields=fields,
+                row_key="cursors",
+                identity_fields=_PLAN_CURSOR_IDENTITY_FIELDS,
+                summary_fn=_summarize_generic_row,
+            )
         )
+
+
+def plan_cursor(
+    operation: str,
+    plan_item_id: str | None = None,
+    state: str | None = None,
+    lane_id: str | None = None,
+    mcp_action_id: int | None = None,
+    worker_message_id: int | None = None,
+    source_heading: str | None = None,
+    summary: str | None = None,
+    task_ref: str | None = None,
+    require_clean_slice: bool = False,
+    limit: int = 50,
+    offset: int = 0,
+    sections: str | None = None,
+    detail: str = "full",
+    fields: str | None = None,
+    top_n_cursors: int | None = None,
+) -> dict:
+    """Discriminated wrapper for plan cursor upsert, get, and list operations."""
+    valid_operations = {"get", "list", "upsert"}
+    if operation not in valid_operations:
+        return _json_response(
+            {"ok": False, "error": f"Invalid operation. Valid: {', '.join(sorted(valid_operations))}"}
+        )
+    if operation == "upsert":
+        return upsert_plan_cursor(
+            plan_item_id=str(plan_item_id or ""),
+            state=str(state or ""),
+            lane_id=lane_id,
+            mcp_action_id=mcp_action_id,
+            worker_message_id=worker_message_id,
+            source_heading=source_heading,
+            summary=summary,
+            task_ref=task_ref,
+            require_clean_slice=require_clean_slice,
+        )
+    if operation == "get":
+        return get_plan_cursor(plan_item_id=str(plan_item_id or ""), task_ref=task_ref)
+    return list_plan_cursors(
+        task_ref=task_ref,
+        state=state or "all",
+        lane_id=lane_id,
+        limit=limit,
+        offset=offset,
+        sections=sections,
+        detail=detail,
+        fields=fields,
+        top_n_cursors=top_n_cursors,
+    )

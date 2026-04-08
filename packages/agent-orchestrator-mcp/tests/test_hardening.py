@@ -33,13 +33,21 @@ def _parse(payload: str | dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         payload = json.loads(payload)
     if isinstance(payload, dict) and payload.get("schema_version") == 2:
-        data = payload.get("data", {})
-        scope = payload.get("scope", {})
-        flat = {**payload, **data}
-        if "task_ref" not in flat and scope.get("task_ref"):
+        data = payload.get("data")
+        scope = payload.get("scope")
+        flat = dict(payload)
+        if isinstance(data, dict):
+            flat.update(data)
+        if "task_ref" not in flat and isinstance(scope, dict) and scope.get("task_ref"):
             flat["task_ref"] = scope["task_ref"]
         return flat
     return payload
+
+
+def _data(payload: str | dict[str, Any]) -> dict[str, Any]:
+    parsed = _parse(payload)
+    data = parsed.get("data")
+    return data if isinstance(data, dict) else parsed
 
 
 def _load(name: str):
@@ -134,9 +142,10 @@ class TestFreshCloseChecks:
             )
         )
 
-        response = _parse(mcp_server.handoff_close_check(require_fresh_tests=True))
+        raw = _parse(mcp_server.handoff_close_check(require_fresh_tests=True))
+        response = _data(raw)
 
-        assert response["ok"] is False
+        assert raw["ok"] is False
         assert "current_commit_sha required" in response["error"]
 
     def test_fails_when_no_test_exists_for_current_commit(self, isolated_handoff: RuntimeConfig) -> None:
@@ -157,15 +166,16 @@ class TestFreshCloseChecks:
         )
         _parse(mcp_server.generate_current_task_md(write_file=True))
 
-        response = _parse(
+        raw = _parse(
             mcp_server.handoff_close_check(
                 enforce=True,
                 require_fresh_tests=True,
                 current_commit_sha="newsha",
             )
         )
+        response = _data(raw)
 
-        assert response["ok"] is False
+        assert raw["ok"] is False
         assert response["checks"]["fresh_tests"]["count"] == 0
         assert response["checks"]["fresh_tests"]["is_violation"] is True
         assert response["stale_test"]["current_commit_sha"] == "newsha"
@@ -213,15 +223,16 @@ class TestFreshCloseChecks:
         )
         _parse(mcp_server.generate_current_task_md(write_file=True))
 
-        response = _parse(
+        raw = _parse(
             mcp_server.handoff_close_check(
                 enforce=True,
                 require_fresh_tests=True,
                 current_commit_sha="newsha",
             )
         )
+        response = _data(raw)
 
-        assert response["ok"] is True
+        assert raw["ok"] is True
         assert response["ready_to_close"] is True
         assert response["checks"]["fresh_tests"]["count"] == 1
         assert response["checks"]["fresh_tests"]["is_violation"] is False
@@ -754,15 +765,10 @@ class TestEnsureLaneWorkersExhaustionGate:
         def _fake_log(level, event, **kw):
             logged.append((level, event, kw))
 
-        with (
-            mock.patch(
-                "agent_orchestrator_mcp.api.worker_status",
-                return_value=json.dumps(exhausted_status),
-            ),
-            mock.patch(
-                "agent_orchestrator_mcp.api.worker_start",
-            ) as mock_start,
-        ):
+        with mock.patch(
+            "agent_orchestrator_mcp.api.manage_worker",
+            return_value=json.dumps(exhausted_status),
+        ) as mock_manage_worker:
             rows = mod._ensure_lane_workers(
                 tmp_path,
                 "test-task",
@@ -771,7 +777,7 @@ class TestEnsureLaneWorkersExhaustionGate:
                 log=_fake_log,
             )
 
-        mock_start.assert_not_called()
+        assert [call.kwargs["action"] for call in mock_manage_worker.call_args_list] == ["status"]
         assert any(r.get("worker_state") == "unhealthy" for r in rows)
         assert any(e[1] == "lane_unhealthy" for e in logged)
 
@@ -787,15 +793,10 @@ class TestEnsureLaneWorkersExhaustionGate:
             "status_record": {},
         }
 
-        with (
-            mock.patch(
-                "agent_orchestrator_mcp.api.worker_status",
-                return_value=json.dumps(attn_status),
-            ),
-            mock.patch(
-                "agent_orchestrator_mcp.api.worker_start",
-            ) as mock_start,
-        ):
+        with mock.patch(
+            "agent_orchestrator_mcp.api.manage_worker",
+            return_value=json.dumps(attn_status),
+        ) as mock_manage_worker:
             rows = mod._ensure_lane_workers(
                 tmp_path,
                 "test-task",
@@ -803,7 +804,7 @@ class TestEnsureLaneWorkersExhaustionGate:
                 worker_start_mode="mcp",
             )
 
-        mock_start.assert_not_called()
+        assert [call.kwargs["action"] for call in mock_manage_worker.call_args_list] == ["status"]
         assert any(r.get("reason") == "attention_required" for r in rows)
 
 
@@ -1204,10 +1205,7 @@ class TestLaneHealthChangedEvent:
             logged.append((level, event, kw))
 
         prev_health: dict = {}
-        with (
-            mock.patch("agent_orchestrator_mcp.api.worker_status", return_value=self._status()),
-            mock.patch("agent_orchestrator_mcp.api.worker_start"),
-        ):
+        with mock.patch("agent_orchestrator_mcp.api.manage_worker", return_value=self._status()):
             mod._ensure_lane_workers(
                 tmp_path,
                 "task",
@@ -1232,12 +1230,9 @@ class TestLaneHealthChangedEvent:
             logged.append((level, event, kw))
 
         prev_health: dict = {"lane-a": "healthy"}
-        with (
-            mock.patch(
-                "agent_orchestrator_mcp.api.worker_status",
-                return_value=self._status(streak=2),
-            ),
-            mock.patch("agent_orchestrator_mcp.api.worker_start"),
+        with mock.patch(
+            "agent_orchestrator_mcp.api.manage_worker",
+            return_value=self._status(streak=2),
         ):
             mod._ensure_lane_workers(
                 tmp_path,
@@ -1266,10 +1261,7 @@ class TestLaneHealthChangedEvent:
             logged.append((level, event, kw))
 
         prev_health: dict = {"lane-a": "healthy"}
-        with (
-            mock.patch("agent_orchestrator_mcp.api.worker_status", return_value=self._status()),
-            mock.patch("agent_orchestrator_mcp.api.worker_start"),
-        ):
+        with mock.patch("agent_orchestrator_mcp.api.manage_worker", return_value=self._status()):
             mod._ensure_lane_workers(
                 tmp_path,
                 "task",

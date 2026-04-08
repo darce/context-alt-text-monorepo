@@ -28,10 +28,12 @@ def _parse(payload: str | dict) -> dict:
     if not isinstance(payload, dict):
         payload = json.loads(payload)
     if isinstance(payload, dict) and payload.get("schema_version") == 2:
-        data = payload.get("data", {})
-        scope = payload.get("scope", {})
-        flat = {**payload, **data}
-        if "task_ref" not in flat and scope.get("task_ref"):
+        data = payload.get("data")
+        scope = payload.get("scope")
+        flat = dict(payload)
+        if isinstance(data, dict):
+            flat.update(data)
+        if "task_ref" not in flat and isinstance(scope, dict) and scope.get("task_ref"):
             flat["task_ref"] = scope["task_ref"]
         return flat
     return payload
@@ -47,7 +49,8 @@ def test_require_clean_slice_fails_without_recent_tests(isolated_handoff: Runtim
     )
 
     response = _parse(
-        mcp_server.upsert_plan_cursor(
+        mcp_server.plan_cursor(
+            operation="upsert",
             plan_item_id="slice-1",
             state="completed",
             summary="Complete slice",
@@ -86,7 +89,8 @@ def test_require_clean_slice_fails_with_open_high_findings_in_lane(isolated_hand
     )
 
     response = _parse(
-        mcp_server.upsert_plan_cursor(
+        mcp_server.plan_cursor(
+            operation="upsert",
             plan_item_id="slice-1",
             state="completed",
             lane_id="docs-guides",
@@ -109,7 +113,8 @@ def test_require_clean_slice_passes_with_recent_test_and_no_open_high_findings(i
         )
     )
     created = _parse(
-        mcp_server.upsert_plan_cursor(
+        mcp_server.plan_cursor(
+            operation="upsert",
             plan_item_id="slice-1",
             state="dispatched",
             lane_id="docs-guides",
@@ -129,7 +134,8 @@ def test_require_clean_slice_passes_with_recent_test_and_no_open_high_findings(i
     )
 
     completed = _parse(
-        mcp_server.upsert_plan_cursor(
+        mcp_server.plan_cursor(
+            operation="upsert",
             plan_item_id="slice-1",
             state="completed",
             lane_id="docs-guides",

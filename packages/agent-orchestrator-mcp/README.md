@@ -38,6 +38,10 @@ PYTHONPATH=src python -m mypy src
 PYTHONPATH=src python -m pytest tests -q
 ```
 
+## Token-Efficient Usage
+
+For bounded reads and compact caller patterns, follow the shared guide in [`packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md`](../agent-handoff-mcp/docs/guides/token-efficient-usage.md). The orchestrator package reuses that guidance instead of maintaining a separate copy of the same parameter semantics.
+
 ## Runtime Notes
 
 This package orchestrates work against a target workspace. The workspace you point it at still needs the expected task state and orchestration inputs, such as:

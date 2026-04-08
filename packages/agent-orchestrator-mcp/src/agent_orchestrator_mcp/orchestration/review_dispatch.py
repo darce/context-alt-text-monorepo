@@ -22,7 +22,7 @@ _handoff_read_shapes = import_module(
     f"{__package__}.handoff_read_shapes" if __package__ else "handoff_read_shapes"
 )
 
-from agent_orchestrator_mcp.lanes import list_lane_messages
+from agent_orchestrator_mcp.lanes import lane_communication
 
 ISSUE_KIND_LABELS: dict[str, dict[str, str]] = {
     "review_findings": {
@@ -150,7 +150,16 @@ def _run_make_dispatch(
 
 
 def _has_open_dispatch(task_ref: str, lane_id: str, subject: str) -> bool:
-    payload = _json_load(list_lane_messages(task_ref=task_ref, lane_id=lane_id, status="open", limit=100))
+    payload = _json_load(
+        lane_communication(
+            kind="message",
+            operation="list",
+            task_ref=task_ref,
+            lane_id=lane_id,
+            status="open",
+            limit=100,
+        )
+    )
     if payload.get("ok") is not True:
         raise RuntimeError(f"Unable to list open lane messages for {lane_id}: {payload}")
     messages = payload.get("messages", [])

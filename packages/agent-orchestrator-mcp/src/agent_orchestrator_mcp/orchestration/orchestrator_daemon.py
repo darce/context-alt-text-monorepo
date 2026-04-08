@@ -106,11 +106,19 @@ def _poll_merge_ready_lanes(
     if str(SCRIPT_DIR) not in sys.path:
         sys.path.insert(0, str(SCRIPT_DIR))
 
-    from agent_orchestrator_mcp.lanes import list_worker_reports
+    from agent_orchestrator_mcp.lanes import worker_reports
 
     ready: list[str] = []
     for lane_id in lane_ids:
-        payload = _json_load(list_worker_reports(task_ref=task_ref, lane_id=lane_id, limit=1))
+        payload = _json_load(
+            worker_reports(
+                operation="list",
+                task_ref=task_ref,
+                lane_id=lane_id,
+                limit=1,
+                fields="merge_ready",
+            )
+        )
         if payload.get("ok") is not True:
             continue
         reports = payload.get("reports", [])
@@ -163,10 +171,19 @@ def _has_open_plan_action(task_ref: str, plan_item_id: str) -> bool:
 
 
 def _has_open_plan_message(task_ref: str, plan_item_id: str) -> bool:
-    from agent_orchestrator_mcp.lanes import list_lane_messages
+    from agent_orchestrator_mcp.lanes import lane_communication
 
     marker = f"[plan:{plan_item_id}]"
-    payload = _json_load(list_lane_messages(task_ref=task_ref, status="open", limit=200))
+    payload = _json_load(
+        lane_communication(
+            kind="message",
+            operation="list",
+            task_ref=task_ref,
+            status="open",
+            limit=200,
+            fields="subject,message",
+        )
+    )
     if payload.get("ok") is not True:
         raise RuntimeError(f"Failed to list lane messages for {task_ref}.")
     for row in payload.get("messages", []):
@@ -189,12 +206,13 @@ def _escalate_plan_item(
 ) -> None:
     from agent_handoff_mcp import record_decision  # noqa: PLC0415
 
-    from agent_orchestrator_mcp.lanes import upsert_plan_cursor  # noqa: PLC0415
+    from agent_orchestrator_mcp.lanes import plan_cursor  # noqa: PLC0415
 
     if dry_run:
         return
     _json_load(
-        upsert_plan_cursor(
+        plan_cursor(
+            operation="upsert",
             task_ref=task_ref,
             plan_item_id=plan_item_id,
             state="escalated",
@@ -225,7 +243,7 @@ def _dispatch_plan_item(
     from agent_handoff_mcp import record_decision, update_next_actions  # noqa: PLC0415
     from agent_handoff_mcp.api import WriteActorInput  # noqa: PLC0415
 
-    from agent_orchestrator_mcp.lanes import record_lane_message, upsert_plan_cursor  # noqa: PLC0415
+    from agent_orchestrator_mcp.lanes import lane_communication, plan_cursor  # noqa: PLC0415
 
     marker = f"[plan:{plan_item_id}]"
     lane_actor = WriteActorInput(lane_id=lane_id)
@@ -253,7 +271,9 @@ def _dispatch_plan_item(
     action_id = int(action_id_raw) if action_id_raw is not None else None
 
     message_payload = _json_load(
-        record_lane_message(
+        lane_communication(
+            kind="message",
+            operation="record",
             lane_id=lane_id,
             session=f"{task_ref}-orchestrator-plan",
             direction="orchestrator_to_worker",
@@ -267,7 +287,8 @@ def _dispatch_plan_item(
         raise RuntimeError(f"Failed to create lane message for {plan_item_id}.")
 
     cursor_update = _json_load(
-        upsert_plan_cursor(
+        plan_cursor(
+            operation="upsert",
             task_ref=task_ref,
             plan_item_id=plan_item_id,
             state="dispatched",
@@ -299,7 +320,7 @@ def _dispatch_from_task_plan(
     from lane_manifest import load_manifest, task_plan_path
     from task_plan_parser import map_plan_item_to_lane, normalize_plan_item, parse_task_plan
 
-    from agent_orchestrator_mcp.lanes import get_plan_cursor  # noqa: PLC0415
+    from agent_orchestrator_mcp.lanes import plan_cursor  # noqa: PLC0415
 
     plan_path = task_plan_path(task_ref, orchestrator_root=str(orchestrator_root))
     if not isinstance(plan_path, str) or not plan_path.strip():
@@ -327,7 +348,7 @@ def _dispatch_from_task_plan(
         if item.checked:
             continue
         normalized = normalize_plan_item(item)
-        cursor_payload = _json_load(get_plan_cursor(task_ref=task_ref, plan_item_id=normalized.plan_item_id))
+        cursor_payload = _json_load(plan_cursor(operation="get", task_ref=task_ref, plan_item_id=normalized.plan_item_id))
         if cursor_payload.get("ok") is not True:
             raise RuntimeError(f"Failed to read plan cursor for {normalized.plan_item_id}.")
         cursor = cursor_payload.get("cursor")
@@ -461,14 +482,15 @@ def salvage_and_close_lane(
     if not dry_run:
         from agent_handoff_mcp import record_decision  # noqa: PLC0415
 
-        from agent_orchestrator_mcp.lanes import upsert_worktree_lane  # noqa: PLC0415
+        from agent_orchestrator_mcp.lanes import manage_worktree_lane  # noqa: PLC0415
 
         # Resolve branch name from manifest
         lane_cfg = all_lanes.get(lane_id)
         branch = (lane_cfg.get("branch") or "") if isinstance(lane_cfg, dict) else ""
 
         _json_load(
-            upsert_worktree_lane(
+            manage_worktree_lane(
+                operation="upsert",
                 lane_id=lane_id,
                 worktree_path=str(worktree) if worktree else "",
                 branch=branch,
@@ -720,11 +742,11 @@ def _ensure_lane_workers(
     prev_health: "dict[str, str] | None" = None,
 ) -> list[dict[str, Any]]:
     """Status all lanes and optionally start missing workers via MCP."""
-    from agent_orchestrator_mcp.api import worker_start, worker_status  # noqa: PLC0415
+    from agent_orchestrator_mcp.api import manage_worker  # noqa: PLC0415
 
     rows: list[dict[str, Any]] = []
     for lane_id in lane_ids:
-        status_payload = _json_load(worker_status(task_ref=task_ref, lane_id=lane_id))
+        status_payload = _json_load(manage_worker(task_ref=task_ref, lane_id=lane_id, action="status"))
         if status_payload.get("ok") is not True:
             continue
 
@@ -804,9 +826,10 @@ def _ensure_lane_workers(
         # Decide if we should start it
         if worker_start_mode == "mcp" and not dry_run:
             start_payload = _json_load(
-                worker_start(
+                manage_worker(
                     task_ref=task_ref,
                     lane_id=lane_id,
+                    action="start",
                     backend=backend,
                     reasoning_effort=worker_reasoning_effort,
                     model=model,
@@ -1042,9 +1065,10 @@ def _lane_intake_phase(ctx: OrchestratorContext) -> None:
             cursor = _complete_lane_plan_cursor(ctx.task_ref, lane_id)
             if cursor is not None:
                 ctx.log("INFO", "plan_cursor_completed", lane=lane_id, plan_item_id=cursor.get("plan_item_id"))
-            from agent_orchestrator_mcp.lanes import close_worktree_lane  # noqa: PLC0415
+            from agent_orchestrator_mcp.lanes import manage_worktree_lane  # noqa: PLC0415
 
-            close_worktree_lane(
+            manage_worktree_lane(
+                operation="close",
                 lane_id=lane_id,
                 status="merged",
                 notes="Auto-closed by orchestrator daemon post-intake.",

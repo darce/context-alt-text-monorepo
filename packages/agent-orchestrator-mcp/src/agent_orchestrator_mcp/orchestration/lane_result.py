@@ -26,10 +26,12 @@ def _record_artifact_lane_message(
     from agent_handoff_mcp.api import configure_runtime  # noqa: PLC0415
     from agent_handoff_mcp.config import RuntimeConfig  # noqa: PLC0415
 
-    from agent_orchestrator_mcp.lanes import record_lane_message  # noqa: PLC0415
+    from agent_orchestrator_mcp.lanes import lane_communication  # noqa: PLC0415
 
     configure_runtime(RuntimeConfig.for_workspace(orchestrator_root))
-    record_lane_message(
+    lane_communication(
+        kind="message",
+        operation="record",
         task_ref=task_ref,
         lane_id=lane_id,
         session=session,

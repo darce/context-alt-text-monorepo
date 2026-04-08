@@ -3,6 +3,7 @@
 Subcommands:
   serve / serve-stdio      Start the MCP server over stdio.
   doctor                   Print server diagnostics.
+  tools-snapshot           Capture a normalized tools/list snapshot.
   orchestrator-start       Start the orchestrator daemon for a task.
   orchestrator-status      Print orchestrator daemon status.
   orchestrator-pause       Pause the orchestrator daemon.
@@ -25,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 from agent_handoff_mcp.config import RuntimeConfig
 
@@ -34,19 +36,10 @@ from .api import (
     dispatch_lane_work,
     get_metrics_summary,
     list_available_backends,
-    orchestrator_pause,
-    orchestrator_resume,
-    orchestrator_single_cycle,
-    orchestrator_start,
-    orchestrator_status,
-    orchestrator_stop,
+    manage_orchestrator,
+    manage_worker,
     run_doctor,
-    worker_event_history,
-    worker_resume,
-    worker_start,
-    worker_start_all,
-    worker_status,
-    worker_stop,
+    run_tools_snapshot,
 )
 
 
@@ -64,7 +57,10 @@ def _build_config(
     )
 
 
-def _print_json(payload: str) -> None:
+def _print_json(payload: Any) -> None:
+    if isinstance(payload, dict):
+        print(json.dumps(payload, indent=2))
+        return
     print(payload)
 
 
@@ -94,6 +90,12 @@ def _build_parser() -> argparse.ArgumentParser:
     # --- doctor ---
     doctor_p = subparsers.add_parser("doctor", help="Print server diagnostics.")
     doctor_p.add_argument("--json", dest="json_output", action="store_true")
+
+    # --- tools snapshot ---
+    snapshot_p = subparsers.add_parser("tools-snapshot", help="Capture a normalized tools/list snapshot.")
+    snapshot_p.add_argument("--phase", default="current", choices=["a1", "a2", "a3", "current"])
+    snapshot_p.add_argument("--output", type=Path, default=None)
+    snapshot_p.add_argument("--json", dest="json_output", action="store_true")
 
     # --- orchestrator daemon ---
     ostart = subparsers.add_parser("orchestrator-start", help="Start the orchestrator daemon.")
@@ -213,93 +215,128 @@ def main() -> None:
                 print(f"  - {name}")
         return
 
+    if cmd == "tools-snapshot":
+        output_path = args.output
+        if output_path is None:
+            suffix = "" if args.phase == "current" else f"-{args.phase}"
+            output_path = config.state_dir / f"tools-list-snapshot{suffix}.json"
+        result = run_tools_snapshot(config, phase=args.phase, output_path=output_path)
+        if getattr(args, "json_output", False):
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"server: {result['server']}")
+            print(f"phase: {result['phase']}")
+            print(f"tool_count: {result['tool_count']}")
+            print(
+                "estimated_tools_list_tokens: "
+                f"{result['estimated_tools_list_tokens']} ({result['token_estimation_method']})"
+            )
+            print(f"tools_list_bytes: {result['tools_list_bytes']}")
+            print(f"output_path: {result['output_path']}")
+        return
+
     # --- orchestrator daemon ---
     if cmd == "orchestrator-start":
-        _print_json(orchestrator_start(
-            task_ref=args.task_ref,
-            backend=args.backend,
-            poll_interval=args.poll_interval,
-            single_pass=args.single_pass,
-            worker_start_mode=args.worker_start_mode,
-            worker_reasoning_effort=args.worker_reasoning_effort,
-            model=args.model,
-        ))
+        _print_json(
+            manage_orchestrator(
+                operation="start",
+                task_ref=args.task_ref,
+                backend=args.backend,
+                poll_interval=args.poll_interval,
+                single_pass=args.single_pass,
+                worker_start_mode=args.worker_start_mode,
+                worker_reasoning_effort=args.worker_reasoning_effort,
+                model=args.model,
+            )
+        )
         return
 
     if cmd == "orchestrator-status":
-        _print_json(orchestrator_status())
+        _print_json(manage_orchestrator(operation="status"))
         return
 
     if cmd == "orchestrator-pause":
-        _print_json(orchestrator_pause())
+        _print_json(manage_orchestrator(operation="pause"))
         return
 
     if cmd == "orchestrator-resume":
-        _print_json(orchestrator_resume())
+        _print_json(manage_orchestrator(operation="resume"))
         return
 
     if cmd == "orchestrator-stop":
-        _print_json(orchestrator_stop(force=args.force, wait_seconds=args.wait_seconds))
+        _print_json(manage_orchestrator(operation="stop", force=args.force, wait_seconds=args.wait_seconds))
         return
 
     if cmd == "orchestrator-cycle":
-        _print_json(orchestrator_single_cycle(
-            task_ref=args.task_ref,
-            backend=args.backend,
-            dry_run=args.dry_run,
-            timeout_seconds=args.timeout_seconds,
-            worker_start_mode=args.worker_start_mode,
-            worker_reasoning_effort=args.worker_reasoning_effort,
-            model=args.model,
-        ))
+        _print_json(
+            manage_orchestrator(
+                operation="single_cycle",
+                task_ref=args.task_ref,
+                backend=args.backend,
+                dry_run=args.dry_run,
+                timeout_seconds=args.timeout_seconds,
+                worker_start_mode=args.worker_start_mode,
+                worker_reasoning_effort=args.worker_reasoning_effort,
+                model=args.model,
+            )
+        )
         return
 
     # --- worker daemon ---
     if cmd == "worker-start":
-        _print_json(worker_start(
-            task_ref=args.task_ref,
-            lane_id=args.lane_id,
-            backend=args.backend,
-            poll_interval=args.poll_interval,
-            single_pass=args.single_pass,
-            session=args.session,
-            session_mode=args.session_mode,
-            reasoning_effort=args.reasoning_effort,
-            model=args.model,
-        ))
+        _print_json(
+            manage_worker(
+                task_ref=args.task_ref,
+                lane_id=args.lane_id,
+                action="start",
+                backend=args.backend,
+                poll_interval=args.poll_interval,
+                single_pass=args.single_pass,
+                session=args.session,
+                session_mode=args.session_mode,
+                reasoning_effort=args.reasoning_effort,
+                model=args.model,
+            )
+        )
         return
 
     if cmd == "worker-status":
-        _print_json(worker_status(task_ref=args.task_ref, lane_id=args.lane_id))
+        _print_json(manage_worker(task_ref=args.task_ref, lane_id=args.lane_id, action="status"))
         return
 
     if cmd == "worker-stop":
-        _print_json(worker_stop(task_ref=args.task_ref, lane_id=args.lane_id, force=args.force))
+        _print_json(manage_worker(task_ref=args.task_ref, lane_id=args.lane_id, action="stop", force=args.force))
         return
 
     if cmd == "worker-resume":
-        _print_json(worker_resume(task_ref=args.task_ref, lane_id=args.lane_id))
+        _print_json(manage_worker(task_ref=args.task_ref, lane_id=args.lane_id, action="resume"))
         return
 
     if cmd == "worker-start-all":
-        _print_json(worker_start_all(
-            task_ref=args.task_ref,
-            backend=args.backend,
-            poll_interval=args.poll_interval,
-            single_pass=args.single_pass,
-            session_mode=args.session_mode,
-            reasoning_effort=args.reasoning_effort,
-            model=args.model,
-        ))
+        _print_json(
+            manage_worker(
+                task_ref=args.task_ref,
+                action="start_all",
+                backend=args.backend,
+                poll_interval=args.poll_interval,
+                single_pass=args.single_pass,
+                session_mode=args.session_mode,
+                reasoning_effort=args.reasoning_effort,
+                model=args.model,
+            )
+        )
         return
 
     if cmd == "worker-events":
-        _print_json(worker_event_history(
-            task_ref=args.task_ref,
-            lane_id=args.lane_id,
-            limit=args.limit,
-            event_name=args.event_name,
-        ))
+        _print_json(
+            manage_worker(
+                task_ref=args.task_ref,
+                lane_id=args.lane_id,
+                action="event_history",
+                limit=args.limit,
+                event_name=args.event_name,
+            )
+        )
         return
 
     # --- dispatch ---

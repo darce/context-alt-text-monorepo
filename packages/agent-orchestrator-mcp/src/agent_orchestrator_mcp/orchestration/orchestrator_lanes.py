@@ -149,26 +149,50 @@ def _resolve_lane_worktree(orchestrator_root: Path, task_ref: str, lane_id: str)
 
 def _lane_has_capacity(task_ref: str, lane_id: str) -> bool:
     """Return True when a lane has no open dispatch, no pending lane action, and no open plan cursor."""
-    from agent_orchestrator_mcp.lanes import get_lane_activity, list_lane_messages, list_plan_cursors  # noqa: PLC0415
+    from agent_orchestrator_mcp.lanes import get_lane_activity, lane_communication, plan_cursor  # noqa: PLC0415
 
-    messages_payload = _json_load(list_lane_messages(task_ref=task_ref, lane_id=lane_id, status="open", limit=200))
+    messages_payload = _json_load(
+        lane_communication(
+            kind="message",
+            operation="list",
+            task_ref=task_ref,
+            lane_id=lane_id,
+            status="open",
+            limit=200,
+            fields="direction",
+        )
+    )
     if messages_payload.get("ok") is not True:
         raise RuntimeError(f"Failed to list lane messages for {lane_id}.")
     for row in messages_payload.get("messages", []):
         if isinstance(row, dict) and row.get("direction") == "orchestrator_to_worker":
             return False
 
-    activity_payload = _json_load(get_lane_activity(task_ref=task_ref, lane_id=lane_id, limit_actions=50))
+    activity_payload = _json_load(
+        get_lane_activity(
+            task_ref=task_ref,
+            lane_id=lane_id,
+            sections="actions",
+            fields="status",
+            limit_actions=50,
+        )
+    )
     if activity_payload.get("ok") is not True:
         raise RuntimeError(f"Failed to fetch lane activity for {lane_id}.")
     for row in activity_payload.get("actions", []):
         if isinstance(row, dict) and row.get("status") == "pending":
             return False
 
-    cursor_raw: object = list_plan_cursors(task_ref=task_ref, state="dispatched", lane_id=lane_id, limit=20)
-    if not isinstance(cursor_raw, str):
-        return True
-    cursor_payload = _json_load(cursor_raw)
+    cursor_payload = _json_load(
+        plan_cursor(
+            operation="list",
+            task_ref=task_ref,
+            state="dispatched",
+            lane_id=lane_id,
+            limit=20,
+            fields="plan_item_id",
+        )
+    )
     if cursor_payload.get("ok") is not True:
         raise RuntimeError(f"Failed to list plan cursors for {lane_id}.")
     return not bool(cursor_payload.get("cursors"))
@@ -178,12 +202,18 @@ def _complete_lane_plan_cursor(
     task_ref: str, lane_id: str, *, worker_message_id: Optional[int] = None
 ) -> Optional[dict[str, Any]]:
     """Mark the newest dispatched plan cursor for a lane complete."""
-    from agent_orchestrator_mcp.lanes import list_plan_cursors, upsert_plan_cursor  # noqa: PLC0415
+    from agent_orchestrator_mcp.lanes import plan_cursor  # noqa: PLC0415
 
-    payload_raw: object = list_plan_cursors(task_ref=task_ref, state="dispatched", lane_id=lane_id, limit=20)
-    if not isinstance(payload_raw, str):
-        return None
-    payload = _json_load(payload_raw)
+    payload = _json_load(
+        plan_cursor(
+            operation="list",
+            task_ref=task_ref,
+            state="dispatched",
+            lane_id=lane_id,
+            limit=20,
+            fields="plan_item_id,summary,source_heading",
+        )
+    )
     if payload.get("ok") is not True:
         raise RuntimeError(f"Failed to list plan cursors for {lane_id}.")
     rows = payload.get("cursors", [])
@@ -193,7 +223,8 @@ def _complete_lane_plan_cursor(
     if not isinstance(row, dict):
         return None
     update = _json_load(
-        upsert_plan_cursor(
+        plan_cursor(
+            operation="upsert",
             task_ref=task_ref,
             plan_item_id=str(row.get("plan_item_id") or ""),
             state="completed",

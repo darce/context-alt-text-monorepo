@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from agent_orchestrator_mcp.lanes import list_lane_messages, list_worker_reports
+from agent_orchestrator_mcp.lanes import lane_communication, worker_reports
 
 
 def _json_load(payload: str | dict[str, Any]) -> dict[str, Any]:
@@ -34,7 +34,17 @@ def _summary_level(message: str) -> str:
 
 
 def _load_open_guidance(task_ref: str, lane_id: str | None = None) -> list[dict[str, Any]]:
-    payload = _json_load(list_lane_messages(task_ref=task_ref, lane_id=lane_id, status="open", limit=200))
+    payload = _json_load(
+        lane_communication(
+            kind="message",
+            operation="list",
+            task_ref=task_ref,
+            lane_id=lane_id,
+            status="open",
+            limit=200,
+            fields="lane_id,direction,subject,message,status",
+        )
+    )
     rows = payload.get("messages", [])
     if not isinstance(rows, list):
         return []
@@ -42,7 +52,15 @@ def _load_open_guidance(task_ref: str, lane_id: str | None = None) -> list[dict[
 
 
 def _load_recent_reports(task_ref: str, lane_id: str | None = None) -> dict[str, dict[str, Any]]:
-    payload = _json_load(list_worker_reports(task_ref=task_ref, lane_id=lane_id, limit=50))
+    payload = _json_load(
+        worker_reports(
+            operation="list",
+            task_ref=task_ref,
+            lane_id=lane_id,
+            limit=50,
+            fields="lane_id,summary",
+        )
+    )
     rows = payload.get("reports", [])
     result: dict[str, dict[str, Any]] = {}
     if not isinstance(rows, list):

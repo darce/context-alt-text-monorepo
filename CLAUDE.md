@@ -11,14 +11,15 @@
 On every session (cold start, mid-task re-entry, lane inherit):
 
 1. **Run `make context`** to verify your shell is in the right worktree on the right branch. The script reads `target_worktree_path` and `target_branch` from the active task and exits non-zero on drift. **Do not record any handoff state from a drifted shell.** If you see a drift warning, `cd` to the canonical path before continuing.
-2. Query MCP handoff state: `get_handoff_state(sections="identity")` for routine task checks; full `get_handoff_state(task_ref="<task>")` only for hot-state load.
-3. If in a lane, run `make lane-inbox` to pick up routed findings and dispatch messages.
-4. Load role routing below; read the linked context map, guidelines, and testing guide.
-5. Check open findings: `review_findings(review={"operation":"list","status":"open"})`.
-6. Verify contract surface before writing code ([contracts/](docs/agentic/contracts/)).
-7. Decide whether `ctx7` is needed (upstream library behavior; see ctx7 criteria in instructions.md).
-8. Ensure the work has an MCP task. If no active task fits, initialize one with `make task-start TASK=<id> OBJECTIVE="..."` (single command: creates feature branch + linked worktree + MCP task with `target_worktree_path` populated).
-9. If starting a task plan, create its target branch from `main` and activate via `switch_task`. See [planning pipeline](docs/agentic/rules/planning-pipeline.md) for the full workflow.
+2. **Apply the [MCP Loading Protocol](docs/agentic/rules/mcp-loading-protocol.md)** before fetching state. Read [`docs/agentic/maps/mcp-tool-routing.yaml`](docs/agentic/maps/mcp-tool-routing.yaml) and surface only the MCP servers whose triggers match the current prompt / task scope. `agent-handoff-mcp` is always loaded; `agent-orchestrator-mcp`, `context7`, and `computer-use` are on-demand. Concretely on Claude Code: `ToolSearch select:mcp__<server>__*` to surface a deferred server when its triggers fire.
+3. Query MCP handoff state: `get_handoff_state(sections="identity")` for routine task checks; full `get_handoff_state(task_ref="<task>")` only for hot-state load.
+4. If in a lane, run `make lane-inbox` to pick up routed findings and dispatch messages.
+5. Load role routing below; read the linked context map, guidelines, and testing guide.
+6. Check open findings: `review_findings(review={"operation":"list","status":"open"})`.
+7. Verify contract surface before writing code ([contracts/](docs/agentic/contracts/)).
+8. Decide whether `ctx7` is needed (upstream library behavior; see ctx7 criteria in instructions.md).
+9. Ensure the work has an MCP task. If no active task fits, initialize one with `make task-start TASK=<id> OBJECTIVE="..."` (single command: creates feature branch + linked worktree + MCP task with `target_worktree_path` populated).
+10. If starting a task plan, create its target branch from `main` and activate via `switch_task`. See [planning pipeline](docs/agentic/rules/planning-pipeline.md) for the full workflow.
 
 If MCP unavailable: read `CURRENT_TASK.md` as stale fallback. Record blocker when access returns. **Stop implementation work until MCP is available.**
 

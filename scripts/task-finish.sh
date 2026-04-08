@@ -73,31 +73,52 @@ fi
 
 # Step 5: Archive the MCP task and regenerate CURRENT_TASK.md.
 echo "→ Archiving MCP task state $TASK"
+REPO_ROOT="$REPO_ROOT" TASK="$TASK" \
 PYTHONPATH="${REPO_ROOT}/packages/agent-handoff-mcp/src:${REPO_ROOT}/packages/agent-orchestrator-mcp/src" \
   PYENV_VERSION="${PYENV_VERSION:-description-service}" \
-  "${PYENV_ROOT:-$HOME/.pyenv}/versions/${PYENV_VERSION:-description-service}/bin/python" -c "
-from agent_handoff_mcp import update_task_status, archive_task_state, generate_current_task_md
-import json, subprocess, sys
+  "${PYENV_ROOT:-$HOME/.pyenv}/versions/${PYENV_VERSION:-description-service}/bin/python" -c '
+import json, os, subprocess, sys
+from pathlib import Path
+from agent_handoff_mcp import (
+    RuntimeConfig,
+    archive_task_state,
+    configure_runtime,
+    generate_current_task_md,
+    update_task_status,
+)
 
-head_sha = subprocess.check_output(['git', 'rev-parse', 'HEAD']).strip().decode()
+repo_root = Path(os.environ["REPO_ROOT"])
+state_dir = repo_root / ".task-state"
+runtime = RuntimeConfig.for_workspace(
+    repo_root,
+    state_dir=state_dir,
+    current_task_path=repo_root / "CURRENT_TASK.md",
+    exports_dir=state_dir / "exports",
+)
+configure_runtime(runtime)
+
+task = os.environ["TASK"]
+head_sha = subprocess.check_output(["git", "rev-parse", "HEAD"]).strip().decode()
 
 # Best-effort status -> done before archive (idempotent if already done).
 try:
-    state = json.loads(update_task_status(task_ref='$TASK', status='done'))
-    if not state.get('ok'):
-        print('⚠ update_task_status returned ok=False:', state, file=sys.stderr)
+    state = json.loads(update_task_status(task_ref=task, status="done"))
+    if not state.get("ok"):
+        print("\u26a0 update_task_status returned ok=False:", state, file=sys.stderr)
 except Exception as exc:
-    print('⚠ update_task_status skipped:', exc, file=sys.stderr)
+    print("\u26a0 update_task_status skipped:", exc, file=sys.stderr)
 
-archived = json.loads(archive_task_state(task_ref='$TASK', archive_branch='main', archive_commit_sha=head_sha))
-if not archived.get('ok'):
-    print('⚠ archive_task_state returned ok=False:', archived, file=sys.stderr)
+archived = json.loads(
+    archive_task_state(task_ref=task, archive_branch="main", archive_commit_sha=head_sha)
+)
+if not archived.get("ok"):
+    print("\u26a0 archive_task_state returned ok=False:", archived, file=sys.stderr)
 
 regen = json.loads(generate_current_task_md())
-if not regen.get('ok'):
-    print('⚠ generate_current_task_md returned ok=False:', regen, file=sys.stderr)
-print('  OK')
-" || echo "⚠ MCP archive failed — clean up manually with archive_task_state."
+if not regen.get("ok"):
+    print("\u26a0 generate_current_task_md returned ok=False:", regen, file=sys.stderr)
+print("  OK")
+' || echo "⚠ MCP archive failed — clean up manually with archive_task_state."
 
 echo
 echo "✓ Task $TASK finished and cleaned up."

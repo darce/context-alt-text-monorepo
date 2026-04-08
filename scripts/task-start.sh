@@ -63,24 +63,38 @@ git worktree add "$WORKTREE_PATH" "$BRANCH"
 
 if [[ -n "$OBJECTIVE" ]]; then
   echo "→ Registering MCP handoff task $TASK with target_branch=$BRANCH target_worktree_path=$WORKTREE_PATH"
+  REPO_ROOT="$REPO_ROOT" TASK="$TASK" OBJECTIVE="$OBJECTIVE" BRANCH="$BRANCH" WORKTREE_PATH="$WORKTREE_PATH" \
   PYTHONPATH="${REPO_ROOT}/packages/agent-handoff-mcp/src:${REPO_ROOT}/packages/agent-orchestrator-mcp/src" \
     PYENV_VERSION="${PYENV_VERSION:-description-service}" \
-    "${PYENV_ROOT:-$HOME/.pyenv}/versions/${PYENV_VERSION:-description-service}/bin/python" -c "
-from agent_handoff_mcp import set_handoff_state
-import json, sys
+    "${PYENV_ROOT:-$HOME/.pyenv}/versions/${PYENV_VERSION:-description-service}/bin/python" -c '
+import json, os, sys
+from pathlib import Path
+from agent_handoff_mcp import RuntimeConfig, configure_runtime, set_handoff_state
+
+repo_root = Path(os.environ["REPO_ROOT"])
+state_dir = repo_root / ".task-state"
+runtime = RuntimeConfig.for_workspace(
+    repo_root,
+    state_dir=state_dir,
+    current_task_path=repo_root / "CURRENT_TASK.md",
+    exports_dir=state_dir / "exports",
+)
+configure_runtime(runtime)
+
 result = set_handoff_state(
-    task_ref='$TASK',
-    objective='''$OBJECTIVE''',
-    status='in_progress',
-    target_branch='$BRANCH',
-    target_worktree_path='$WORKTREE_PATH',
+    task_ref=os.environ["TASK"],
+    objective=os.environ["OBJECTIVE"],
+    status="in_progress",
+    target_branch=os.environ["BRANCH"],
+    target_worktree_path=os.environ["WORKTREE_PATH"],
 )
 parsed = json.loads(result) if isinstance(result, str) else result
-if not parsed.get('ok'):
-    print('⚠ set_handoff_state failed:', parsed, file=sys.stderr)
+if not parsed.get("ok"):
+    print("\u26a0 set_handoff_state failed:", parsed, file=sys.stderr)
     sys.exit(1)
-print('  OK rev=' + str(parsed.get('data', {}).get('active', {}).get('revision', '?')))
-" || echo "⚠ MCP registration skipped — register manually with set_handoff_state."
+revision = parsed.get("data", {}).get("active", {}).get("revision", "?")
+print(f"  OK rev={revision}")
+' || echo "⚠ MCP registration skipped — register manually with set_handoff_state."
 else
   echo "→ Skipping MCP registration (no OBJECTIVE provided)"
   echo "  Register manually:"

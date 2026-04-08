@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 from collections import defaultdict
+from importlib import import_module
 from pathlib import Path
 from typing import Any, Literal
 
@@ -17,10 +18,9 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from lane_manifest import lane_route_hints, list_task_refs, route_patterns
 
-try:
-    from .handoff_read_shapes import open_handoff_items_kwargs
-except ImportError:
-    from handoff_read_shapes import open_handoff_items_kwargs
+_handoff_read_shapes = import_module(
+    f"{__package__}.handoff_read_shapes" if __package__ else "handoff_read_shapes"
+)
 
 from agent_orchestrator_mcp.lanes import list_lane_messages
 
@@ -167,7 +167,7 @@ def _load_open_handoff_items(task_ref: str) -> dict[str, list[dict[str, Any]]]:
     from agent_handoff_mcp import get_handoff_state  # noqa: PLC0415
 
     payload = _json_load(
-        get_handoff_state(**open_handoff_items_kwargs(task_ref))
+        get_handoff_state(**_handoff_read_shapes.open_handoff_items_kwargs(task_ref))
     )
     if payload.get("ok") is not True:
         raise RuntimeError(f"Unable to load open handoff state: {payload}")

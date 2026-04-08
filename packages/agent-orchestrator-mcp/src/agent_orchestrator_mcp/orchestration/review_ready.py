@@ -5,16 +5,16 @@ import json
 import subprocess
 import sys
 from dataclasses import dataclass
+from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from agent_handoff_mcp.enums import ReviewKind, ReviewScopeSource
 
-try:
-    from .handoff_read_shapes import review_ready_state_kwargs
-except ImportError:
-    from handoff_read_shapes import review_ready_state_kwargs
+_handoff_read_shapes = import_module(
+    f"{__package__}.handoff_read_shapes" if __package__ else "handoff_read_shapes"
+)
 
 DEFAULT_BOUNDARY_PREFIXES = (
     "apps/",
@@ -247,7 +247,7 @@ def main() -> int:
         )
         state = _load_ok_payload(
             "get_handoff_state",
-            get_handoff_state(**review_ready_state_kwargs(args.task_ref)),
+            get_handoff_state(**_handoff_read_shapes.review_ready_state_kwargs(args.task_ref)),
         )
         close = _load_ok_payload(
             "handoff_close_check",

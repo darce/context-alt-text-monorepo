@@ -63,7 +63,8 @@ def test_close_dry_run_prints_cleanup_commands(tmp_path: Path) -> None:
     repo.mkdir()
     api.configure_runtime(api.RuntimeConfig.for_workspace(repo))
     api.set_handoff_state(task_ref="task-1", objective="lane close")
-    api.upsert_worktree_lane(
+    api.manage_worktree_lane(
+        operation="upsert",
         task_ref="task-1",
         lane_id="frontend",
         worktree_path=str(repo / "frontend"),

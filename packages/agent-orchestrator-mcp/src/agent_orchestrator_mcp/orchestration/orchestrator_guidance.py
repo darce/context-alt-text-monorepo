@@ -117,9 +117,18 @@ class GuidanceResolution:
 
 
 def _list_open_worker_guidance(task_ref: str) -> list[dict[str, Any]]:
-    from agent_orchestrator_mcp.lanes import list_lane_messages  # noqa: PLC0415
+    from agent_orchestrator_mcp.lanes import lane_communication  # noqa: PLC0415
 
-    payload = _json_load(list_lane_messages(task_ref=task_ref, status="open", limit=200))
+    payload = _json_load(
+        lane_communication(
+            kind="message",
+            operation="list",
+            task_ref=task_ref,
+            status="open",
+            limit=200,
+            fields="id,lane_id,session,direction,subject,message,status,created_at,updated_at",
+        )
+    )
     if payload.get("ok") is not True:
         raise RuntimeError("Failed to list lane messages.")
     rows = payload.get("messages", [])
@@ -148,9 +157,19 @@ def _dedupe_worker_guidance_messages(rows: list[dict[str, Any]]) -> list[dict[st
 
 
 def _list_open_dispatch_messages(task_ref: str, lane_id: str) -> list[dict[str, Any]]:
-    from agent_orchestrator_mcp.lanes import list_lane_messages  # noqa: PLC0415
+    from agent_orchestrator_mcp.lanes import lane_communication  # noqa: PLC0415
 
-    payload = _json_load(list_lane_messages(task_ref=task_ref, lane_id=lane_id, status="open", limit=200))
+    payload = _json_load(
+        lane_communication(
+            kind="message",
+            operation="list",
+            task_ref=task_ref,
+            lane_id=lane_id,
+            status="open",
+            limit=200,
+            fields="id,direction",
+        )
+    )
     if payload.get("ok") is not True:
         raise RuntimeError(f"Failed to list lane messages for {lane_id}.")
     rows = payload.get("messages", [])
@@ -160,9 +179,17 @@ def _list_open_dispatch_messages(task_ref: str, lane_id: str) -> list[dict[str, 
 
 
 def _latest_lane_report(task_ref: str, lane_id: str, *, session: str | None = None) -> dict[str, Any] | None:
-    from agent_orchestrator_mcp.lanes import list_worker_reports  # noqa: PLC0415
+    from agent_orchestrator_mcp.lanes import worker_reports  # noqa: PLC0415
 
-    payload = _json_load(list_worker_reports(task_ref=task_ref, lane_id=lane_id, limit=20))
+    payload = _json_load(
+        worker_reports(
+            operation="list",
+            task_ref=task_ref,
+            lane_id=lane_id,
+            limit=20,
+            fields="id,session,summary,blockers_json",
+        )
+    )
     if payload.get("ok") is not True:
         raise RuntimeError(f"Failed to list worker reports for {lane_id}.")
     reports = payload.get("reports", [])
@@ -179,9 +206,9 @@ def _latest_lane_report(task_ref: str, lane_id: str, *, session: str | None = No
 
 
 def _lane_row(task_ref: str, lane_id: str) -> dict[str, Any]:
-    from agent_orchestrator_mcp.lanes import list_worktree_lanes  # noqa: PLC0415
+    from agent_orchestrator_mcp.lanes import manage_worktree_lane  # noqa: PLC0415
 
-    payload = _json_load(list_worktree_lanes(task_ref=task_ref, status="all", limit=200))
+    payload = _json_load(manage_worktree_lane(operation="list", task_ref=task_ref, status="all", limit=200))
     if payload.get("ok") is not True:
         raise RuntimeError(f"Failed to list lanes for {task_ref}.")
     for lane in payload.get("lanes", []):
@@ -350,19 +377,27 @@ def _apply_guidance_resolution(
 ) -> GuidanceResolution:
     from agent_handoff_mcp import record_decision, update_next_actions  # noqa: PLC0415
 
-    from agent_orchestrator_mcp.lanes import (  # noqa: PLC0415
-        record_lane_message,
-        update_lane_message,
-        upsert_worktree_lane,
-    )
+    from agent_orchestrator_mcp.lanes import lane_communication, manage_worktree_lane  # noqa: PLC0415
 
     lane = _lane_row(task_ref, resolution.lane_id)
     if dry_run:
         return resolution
 
-    update_lane_message(resolution.worker_message_id, "closed", task_ref=task_ref)
+    lane_communication(
+        kind="message",
+        operation="update",
+        message_id=resolution.worker_message_id,
+        status="closed",
+        task_ref=task_ref,
+    )
     for message_id in resolution.close_dispatch_ids:
-        update_lane_message(message_id, "closed", task_ref=task_ref)
+        lane_communication(
+            kind="message",
+            operation="update",
+            message_id=message_id,
+            status="closed",
+            task_ref=task_ref,
+        )
 
     from lane_manifest import get_lane_config
 
@@ -381,7 +416,8 @@ def _apply_guidance_resolution(
         else:
             owner_agent = backend or "codex-subagent"
 
-    upsert_worktree_lane(
+    manage_worktree_lane(
+        operation="upsert",
         task_ref=task_ref,
         lane_id=resolution.lane_id,
         worktree_path=str(lane.get("worktree_path") or ""),
@@ -424,7 +460,9 @@ def _apply_guidance_resolution(
                 _dispatch_payload = {"artifacts": [str(_art_ref["source_id"])]}
         except Exception:  # noqa: BLE001
             pass
-        record_lane_message(
+        lane_communication(
+            kind="message",
+            operation="record",
             task_ref=task_ref,
             lane_id=resolution.lane_id,
             session=f"{task_ref}-orchestrator-guidance",

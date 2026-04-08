@@ -16,10 +16,12 @@ def _parse(payload: str | dict) -> dict:
     if not isinstance(payload, dict):
         payload = json.loads(payload)
     if isinstance(payload, dict) and payload.get("schema_version") == 2:
-        data = payload.get("data", {})
-        scope = payload.get("scope", {})
-        flat = {**payload, **data}
-        if "task_ref" not in flat and scope.get("task_ref"):
+        data = payload.get("data")
+        scope = payload.get("scope")
+        flat = dict(payload)
+        if isinstance(data, dict):
+            flat.update(data)
+        if "task_ref" not in flat and isinstance(scope, dict) and scope.get("task_ref"):
             flat["task_ref"] = scope["task_ref"]
         return flat
     return payload
@@ -62,7 +64,14 @@ def test_orchestrator_start_returns_pid_and_lock_path(tmp_path: Path) -> None:
         fake_registry = mock.Mock()
         fake_registry.validate_backend.return_value = "codex-subagent"
         mock_import_module.return_value = fake_registry
-        payload = _parse(api.orchestrator_start(task_ref="daemon-8", backend="codex-subagent", poll_interval=15))
+        payload = _parse(
+            api.manage_orchestrator(
+                operation="start",
+                task_ref="daemon-8",
+                backend="codex-subagent",
+                poll_interval=15,
+            )
+        )
 
     assert payload["ok"] is True
     assert payload["pid"] == 43210
@@ -112,7 +121,7 @@ def test_orchestrator_status_reports_running_state(tmp_path: Path) -> None:
         ),
         mock.patch.object(api, "_pid_is_running", return_value=True),
     ):
-        payload = _parse(api.orchestrator_status())
+        payload = _parse(api.manage_orchestrator(operation="status"))
 
     assert payload["ok"] is True
     assert payload["running"] is True
@@ -143,7 +152,7 @@ def test_worker_start_returns_pid_and_paths(tmp_path: Path) -> None:
         raise AssertionError(name)
 
     with mock.patch.object(api, "_import_orchestration_module", side_effect=_import):
-        payload = _parse(api.worker_start(task_ref="daemon-10", lane_id="backend-domain"))
+        payload = _parse(api.manage_worker(task_ref="daemon-10", lane_id="backend-domain", action="start"))
 
     assert payload["ok"] is True
     assert payload["pid"] == 6789
@@ -185,7 +194,7 @@ def test_worker_start_uses_runtime_state_dir(tmp_path: Path) -> None:
         raise AssertionError(name)
 
     with mock.patch.object(api, "_import_orchestration_module", side_effect=_import):
-        payload = _parse(api.worker_start(task_ref="daemon-10", lane_id="backend-domain"))
+        payload = _parse(api.manage_worker(task_ref="daemon-10", lane_id="backend-domain", action="start"))
 
     assert payload["ok"] is True
     assert fake_ctl.daemon_start.call_args.kwargs["state_dir"] == custom_state_dir
@@ -213,7 +222,14 @@ def test_worker_start_passes_shared_lane_session_mode(tmp_path: Path) -> None:
         raise AssertionError(name)
 
     with mock.patch.object(api, "_import_orchestration_module", side_effect=_import):
-        payload = _parse(api.worker_start(task_ref="daemon-10", lane_id="frontend", session_mode="shared_lane"))
+        payload = _parse(
+            api.manage_worker(
+                task_ref="daemon-10",
+                lane_id="frontend",
+                action="start",
+                session_mode="shared_lane",
+            )
+        )
 
     assert payload["ok"] is True
     assert fake_ctl.daemon_start.call_args.kwargs["session_mode"] == "shared_lane"
@@ -242,9 +258,10 @@ def test_worker_start_passes_reasoning_effort(tmp_path: Path) -> None:
 
     with mock.patch.object(api, "_import_orchestration_module", side_effect=_import):
         payload = _parse(
-            api.worker_start(
+            api.manage_worker(
                 task_ref="daemon-10",
                 lane_id="frontend",
+                action="start",
                 reasoning_effort="xhigh",
             )
         )
@@ -259,7 +276,7 @@ def test_worker_status_delegates_to_control_module(tmp_path: Path) -> None:
     fake_ctl.daemon_status.return_value = {"lane_id": "frontend", "process": None}
 
     with mock.patch.object(api, "_import_orchestration_module", return_value=fake_ctl):
-        payload = _parse(api.worker_status(task_ref="daemon-10", lane_id="frontend"))
+        payload = _parse(api.manage_worker(task_ref="daemon-10", lane_id="frontend", action="status"))
 
     assert payload["ok"] is True
     assert payload["running"] is False
@@ -279,9 +296,10 @@ def test_worker_event_history_delegates_to_control_module(tmp_path: Path) -> Non
 
     with mock.patch.object(api, "_import_orchestration_module", return_value=fake_ctl):
         payload = _parse(
-            api.worker_event_history(
+            api.manage_worker(
                 task_ref="daemon-10",
                 lane_id="frontend",
+                action="event_history",
                 limit=10,
                 event_name="subagent_turn_observed",
             )
@@ -299,7 +317,7 @@ def test_worker_stop_delegates_force_flag(tmp_path: Path) -> None:
     fake_ctl.daemon_stop.return_value = {"ok": True, "signaled": [1234]}
 
     with mock.patch.object(api, "_import_orchestration_module", return_value=fake_ctl):
-        payload = _parse(api.worker_stop(task_ref="daemon-10", lane_id="frontend", force=True))
+        payload = _parse(api.manage_worker(task_ref="daemon-10", lane_id="frontend", action="stop", force=True))
 
     assert payload["ok"] is True
     assert payload["signaled"] == [1234]
@@ -325,7 +343,7 @@ def test_worker_start_all_aggregates_lane_results(tmp_path: Path) -> None:
             ],
         ),
     ):
-        payload = _parse(api.worker_start_all(task_ref="daemon-10"))
+        payload = _parse(api.manage_worker(task_ref="daemon-10", action="start_all"))
 
     assert payload["ok"] is True
     assert [item["lane_id"] for item in payload["results"]] == ["backend-domain", "frontend"]
@@ -351,7 +369,7 @@ def test_worker_start_all_isolates_per_lane_exceptions(tmp_path: Path) -> None:
             ],
         ),
     ):
-        payload = _parse(api.worker_start_all(task_ref="daemon-10"))
+        payload = _parse(api.manage_worker(task_ref="daemon-10", action="start_all"))
 
     assert payload["ok"] is False
     assert payload["results"][0]["ok"] is True
@@ -374,7 +392,7 @@ def test_worker_start_all_skips_lanes_with_unresolved_upstream_dependencies(tmp_
             api, "worker_start", return_value=json.dumps({"ok": True, "lane_id": "backend-domain"})
         ) as mock_worker_start,
     ):
-        payload = _parse(api.worker_start_all(task_ref="daemon-10", session_mode="shared_lane"))
+        payload = _parse(api.manage_worker(task_ref="daemon-10", action="start_all", session_mode="shared_lane"))
 
     assert payload["ok"] is True
     assert payload["session_mode"] == "shared_lane"
@@ -402,11 +420,29 @@ def test_worker_resume_delegates_to_control_module(tmp_path: Path) -> None:
     fake_ctl.daemon_resume.return_value = {"ok": True, "signaled": [2222]}
 
     with mock.patch.object(api, "_import_orchestration_module", return_value=fake_ctl):
-        payload = _parse(api.worker_resume(task_ref="daemon-10", lane_id="frontend"))
+        payload = _parse(api.manage_worker(task_ref="daemon-10", lane_id="frontend", action="resume"))
 
     assert payload["ok"] is True
     assert payload["signaled"] == [2222]
     fake_ctl.daemon_resume.assert_called_once()
+
+
+def test_manage_worker_requires_lane_id_for_lane_actions(tmp_path: Path) -> None:
+    _configure_runtime(tmp_path)
+
+    payload = _parse(api.manage_worker(task_ref="daemon-10", action="status"))
+
+    assert payload["ok"] is False
+    assert "requires lane_id" in payload["error"]
+
+
+def test_manage_worker_rejects_unknown_action(tmp_path: Path) -> None:
+    _configure_runtime(tmp_path)
+
+    payload = _parse(api.manage_worker(task_ref="daemon-10", lane_id="frontend", action="dance"))
+
+    assert payload["ok"] is False
+    assert "Valid values: start, stop, resume, status, event_history, start_all." in payload["error"]
 
 
 def test_orchestrator_pause_and_resume_delegate_to_daemon_module(tmp_path: Path) -> None:
@@ -429,8 +465,8 @@ def test_orchestrator_pause_and_resume_delegate_to_daemon_module(tmp_path: Path)
             },
         ),
     ):
-        paused = _parse(api.orchestrator_pause())
-        resumed = _parse(api.orchestrator_resume())
+        paused = _parse(api.manage_orchestrator(operation="pause"))
+        resumed = _parse(api.manage_orchestrator(operation="resume"))
 
     assert paused["ok"] is True
     assert paused["paused"] is True
@@ -459,7 +495,7 @@ def test_orchestrator_stop_returns_not_running_when_no_pid(tmp_path: Path) -> No
         ),
         mock.patch.object(api, "_read_lock_pid", return_value=None),
     ):
-        payload = _parse(api.orchestrator_stop())
+        payload = _parse(api.manage_orchestrator(operation="stop"))
 
     assert payload["ok"] is True
     assert payload["running"] is False
@@ -495,7 +531,7 @@ def test_orchestrator_start_rejects_invalid_backend_before_spawn(tmp_path: Path)
         mock.patch.object(api, "_import_orchestration_module", return_value=fake_registry),
         mock.patch.object(api.subprocess, "Popen") as mock_popen,
     ):
-        payload = _parse(api.orchestrator_start(task_ref="daemon-8", backend="bad"))
+        payload = _parse(api.manage_orchestrator(operation="start", task_ref="daemon-8", backend="bad"))
 
     assert payload["ok"] is False
     assert "Unsupported execution backend 'bad'" in payload["error"]
@@ -591,7 +627,8 @@ def test_orchestrator_single_cycle_returns_exit_code(tmp_path: Path) -> None:
         mock.patch.object(api.subprocess, "run", return_value=completed) as mock_run,
     ):
         payload = _parse(
-            api.orchestrator_single_cycle(
+            api.manage_orchestrator(
+                operation="single_cycle",
                 task_ref="daemon-8",
                 backend="codex-cli",
                 dry_run=True,
@@ -633,7 +670,7 @@ def test_orchestrator_single_cycle_reports_failure(tmp_path: Path) -> None:
         mock.patch.object(api, "_import_orchestration_module", return_value=fake_registry),
         mock.patch.object(api.subprocess, "run", return_value=completed),
     ):
-        payload = _parse(api.orchestrator_single_cycle(task_ref="daemon-8"))
+        payload = _parse(api.manage_orchestrator(operation="single_cycle", task_ref="daemon-8"))
 
     assert payload["ok"] is False
     assert payload["exit_code"] == 1
@@ -664,7 +701,8 @@ def test_orchestrator_single_cycle_handles_timeout(tmp_path: Path) -> None:
         mock.patch.object(api.subprocess, "run", side_effect=api.subprocess.TimeoutExpired(cmd=[], timeout=1)),
     ):
         payload = _parse(
-            api.orchestrator_single_cycle(
+            api.manage_orchestrator(
+                operation="single_cycle",
                 task_ref="daemon-8",
                 timeout_seconds=1.0,
             )
@@ -740,7 +778,7 @@ def test_e2e_orchestrator_lifecycle_through_mcp_tools(tmp_path: Path) -> None:
         mock.patch.object(api.subprocess, "Popen", return_value=proc_mock),
     ):
         # Step 1: Start
-        started = _parse(api.orchestrator_start(task_ref="e2e-test", backend="codex-cli"))
+        started = _parse(api.manage_orchestrator(operation="start", task_ref="e2e-test", backend="codex-cli"))
         assert started["ok"] is True
         assert started["pid"] == 99999
 
@@ -750,7 +788,7 @@ def test_e2e_orchestrator_lifecycle_through_mcp_tools(tmp_path: Path) -> None:
         mock.patch.object(api, "_import_orchestration_module", side_effect=import_selector),
         mock.patch.object(api, "_pid_is_running", return_value=True),
     ):
-        status = _parse(api.orchestrator_status())
+        status = _parse(api.manage_orchestrator(operation="status"))
         assert status["ok"] is True
         assert status["running"] is True
 
@@ -759,7 +797,7 @@ def test_e2e_orchestrator_lifecycle_through_mcp_tools(tmp_path: Path) -> None:
         mock.patch.object(api, "_orchestrator_paths", return_value=paths),
         mock.patch.object(api, "_import_orchestration_module", side_effect=import_selector),
     ):
-        paused = _parse(api.orchestrator_pause())
+        paused = _parse(api.manage_orchestrator(operation="pause"))
         assert paused["ok"] is True
         assert paused["paused"] is True
 
@@ -768,7 +806,7 @@ def test_e2e_orchestrator_lifecycle_through_mcp_tools(tmp_path: Path) -> None:
         mock.patch.object(api, "_orchestrator_paths", return_value=paths),
         mock.patch.object(api, "_import_orchestration_module", side_effect=import_selector),
     ):
-        resumed = _parse(api.orchestrator_resume())
+        resumed = _parse(api.manage_orchestrator(operation="resume"))
         assert resumed["ok"] is True
         assert resumed["paused"] is False
 
@@ -780,7 +818,8 @@ def test_e2e_orchestrator_lifecycle_through_mcp_tools(tmp_path: Path) -> None:
         mock.patch.object(api.subprocess, "run", return_value=completed),
     ):
         cycle = _parse(
-            api.orchestrator_single_cycle(
+            api.manage_orchestrator(
+                operation="single_cycle",
                 task_ref="e2e-test",
                 backend="codex-cli",
                 dry_run=True,
@@ -796,7 +835,7 @@ def test_e2e_orchestrator_lifecycle_through_mcp_tools(tmp_path: Path) -> None:
         mock.patch.object(api, "_pid_is_running", side_effect=[True, False]),
         mock.patch("os.kill") as mock_kill,
     ):
-        stopped = _parse(api.orchestrator_stop())
+        stopped = _parse(api.manage_orchestrator(operation="stop"))
         assert stopped["ok"] is True
         assert stopped["running"] is False
         mock_kill.assert_called_once()

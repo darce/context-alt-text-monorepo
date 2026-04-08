@@ -186,13 +186,12 @@ def _fetch_mcp_lane_params(orchestrator_root: Path, task_ref: str, lane_id: str)
         from agent_handoff_mcp import api  # noqa: PLC0415
         from agent_handoff_mcp.config import RuntimeConfig  # noqa: PLC0415
 
-        from agent_orchestrator_mcp.lanes import list_worktree_lanes  # noqa: PLC0415
+        from agent_orchestrator_mcp.lanes import manage_worktree_lane  # noqa: PLC0415
 
         config = RuntimeConfig.for_workspace(orchestrator_root)
         api.configure_runtime(config)
 
-        res = list_worktree_lanes(task_ref=task_ref)
-        data = json.loads(res)
+        data = manage_worktree_lane(operation="list", task_ref=task_ref, status="all")
         if not data.get("ok"):
             return {}
 
@@ -607,7 +606,7 @@ def _record_token_usage_to_handoff(
 
         config = RuntimeConfig.for_workspace(orchestrator_root)
         api.configure_runtime(config)
-        from agent_orchestrator_mcp.lanes import record_turn_metric  # noqa: PLC0415
+        from agent_orchestrator_mcp.lanes import turn_metrics  # noqa: PLC0415
 
         reasoning_tokens = totals.get("reasoning_output_tokens") or 0
         token_usage = entry.get("token_usage") or {}
@@ -639,7 +638,8 @@ def _record_token_usage_to_handoff(
             rationale=rationale,
             actor=actor,
         )
-        record_turn_metric(
+        turn_metrics(
+            operation="record",
             task_ref=task_ref,
             session=session,
             phase=phase,

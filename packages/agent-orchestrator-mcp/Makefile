@@ -13,7 +13,7 @@ ifneq ($(PYTHONPATH),)
 LOCAL_PYTHONPATH := $(LOCAL_PYTHONPATH):$(PYTHONPATH)
 endif
 
-.PHONY: help lint-orchestrator fix-lint-orchestrator format-orchestrator mypy-orchestrator test-orchestrator check-orchestrator
+.PHONY: help lint-orchestrator fix-lint-orchestrator format-orchestrator mypy-orchestrator test-orchestrator check-orchestrator tools-list-snapshot
 
 help:
 	@echo "agent-orchestrator-mcp Commands"
@@ -25,6 +25,7 @@ help:
 	@echo "  make mypy-orchestrator     - Run mypy"
 	@echo "  make test-orchestrator     - Run pytest"
 	@echo "  make check-orchestrator    - Run lint, mypy, and tests"
+	@echo "  make tools-list-snapshot   - Capture a normalized tools/list snapshot"
 
 lint-orchestrator:
 	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff check $(RUFF_TARGETS)
@@ -42,3 +43,12 @@ test-orchestrator:
 	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m pytest $(PYTEST_TARGETS) -q
 
 check-orchestrator: lint-orchestrator mypy-orchestrator test-orchestrator
+
+tools-list-snapshot:
+	@PHASE="$${PHASE:-current}"; \
+	if [ -n "$$OUT" ]; then :; \
+	elif [ "$$PHASE" = "current" ]; then OUT="$(PACKAGE_ROOT)/.task-state/tools-list-snapshot.json"; \
+	else OUT="$(PACKAGE_ROOT)/.task-state/tools-list-snapshot-$$PHASE.json"; fi; \
+	PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m agent_orchestrator_mcp \
+		--workspace-root "$(PACKAGE_ROOT)" \
+		tools-snapshot --phase "$$PHASE" --output "$$OUT"

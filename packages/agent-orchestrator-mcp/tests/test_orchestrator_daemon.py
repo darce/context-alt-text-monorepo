@@ -61,6 +61,18 @@ def _load_module():
     return module
 
 
+def _parse(payload: str | dict) -> dict:
+    if isinstance(payload, dict):
+        return payload
+    return json.loads(payload)
+
+
+def _data(payload: str | dict) -> dict:
+    parsed = _parse(payload)
+    data = parsed.get("data")
+    return data if isinstance(data, dict) else parsed
+
+
 # ---------------------------------------------------------------------------
 # OrchestratorLock
 # ---------------------------------------------------------------------------
@@ -262,12 +274,22 @@ def test_poll_merge_ready_lanes_direct(tmp_path: Path) -> None:
         json.dumps({"ok": True, "reports": [{"merge_ready": 0}]}),
     ]
 
-    def fake_list(task_ref=None, lane_id=None, limit=1):
+    def fake_list(
+        *,
+        operation=None,
+        task_ref=None,
+        lane_id=None,
+        limit=1,
+        offset=0,
+        fields=None,
+    ):
+        assert operation == "list"
+        assert fields == "merge_ready"
         idx = call_count["n"]
         call_count["n"] += 1
         return responses[idx]
 
-    with mock.patch("agent_orchestrator_mcp.lanes.list_worker_reports", side_effect=fake_list):
+    with mock.patch("agent_orchestrator_mcp.lanes.worker_reports", side_effect=fake_list):
         with mock.patch.object(mod, "_lane_has_unmerged_commits", return_value=True):
             result = mod._poll_merge_ready_lanes(tmp_path, "test-task", ["a", "b"])
     assert result == ["a"]
@@ -278,7 +300,7 @@ def test_poll_skips_already_merged_lane(tmp_path: Path) -> None:
     mod = _load_module()
 
     with mock.patch(
-        "agent_orchestrator_mcp.lanes.list_worker_reports",
+        "agent_orchestrator_mcp.lanes.worker_reports",
         return_value=json.dumps({"ok": True, "reports": [{"merge_ready": 1}]}),
     ):
         with mock.patch.object(mod, "_lane_has_unmerged_commits", return_value=False):
@@ -452,11 +474,86 @@ def _make_mock_ahm(*, ready_to_close: bool = False) -> mock.MagicMock:
     mock_ahm.update_lane_message.return_value = json.dumps({"ok": True})
     mock_ahm.record_lane_message.return_value = json.dumps({"ok": True})
     mock_ahm.upsert_worktree_lane.return_value = json.dumps({"ok": True})
+    mock_ahm.close_worktree_lane.return_value = json.dumps({"ok": True})
+    mock_ahm.list_worker_reports.return_value = json.dumps({"ok": True, "reports": []})
+    mock_ahm.record_worker_report.return_value = json.dumps({"ok": True})
+    mock_ahm.list_plan_cursors.return_value = json.dumps({"ok": True, "cursors": []})
+    mock_ahm.get_plan_cursor.return_value = json.dumps({"ok": True, "cursor": None})
+    mock_ahm.upsert_plan_cursor.return_value = json.dumps({"ok": True, "cursor": {}})
     mock_ahm.update_next_actions.return_value = json.dumps({"ok": True})
-    mock_ahm.worker_status.return_value = json.dumps(
-        {"ok": True, "running": False, "worker_state": "stopped", "attention_required": False}
-    )
-    mock_ahm.worker_start.return_value = json.dumps({"ok": True, "pid": 1234})
+
+    def _lane_communication(**kwargs):
+        operation = kwargs.get("operation")
+        if operation == "record":
+            return mock_ahm.record_lane_message(**kwargs)
+        if operation == "update":
+            return mock_ahm.update_lane_message(kwargs.get("message_id"), kwargs.get("status"), task_ref=kwargs.get("task_ref"))
+        return mock_ahm.list_lane_messages(
+            task_ref=kwargs.get("task_ref"),
+            lane_id=kwargs.get("lane_id"),
+            status=kwargs.get("status", "all"),
+            limit=kwargs.get("limit", 20),
+            offset=kwargs.get("offset", 0),
+            direction=kwargs.get("direction"),
+            subject_prefix=kwargs.get("subject_prefix"),
+        )
+
+    def _worker_reports(**kwargs):
+        if kwargs.get("operation") == "record":
+            return mock_ahm.record_worker_report(**kwargs)
+        return mock_ahm.list_worker_reports(
+            task_ref=kwargs.get("task_ref"),
+            lane_id=kwargs.get("lane_id"),
+            limit=kwargs.get("limit", 20),
+            offset=kwargs.get("offset", 0),
+        )
+
+    def _manage_worktree_lane(**kwargs):
+        operation = kwargs.get("operation")
+        if operation == "upsert":
+            return mock_ahm.upsert_worktree_lane(**kwargs)
+        if operation == "close":
+            return mock_ahm.close_worktree_lane(
+                lane_id=kwargs.get("lane_id"),
+                status=kwargs.get("status", "closed"),
+                notes=kwargs.get("notes"),
+                task_ref=kwargs.get("task_ref"),
+            )
+        return mock_ahm.list_worktree_lanes(
+            task_ref=kwargs.get("task_ref"),
+            status=kwargs.get("status", "all"),
+            limit=kwargs.get("limit", 100),
+            offset=kwargs.get("offset", 0),
+        )
+
+    def _plan_cursor(**kwargs):
+        operation = kwargs.get("operation")
+        if operation == "upsert":
+            return mock_ahm.upsert_plan_cursor(**kwargs)
+        if operation == "get":
+            return mock_ahm.get_plan_cursor(plan_item_id=kwargs.get("plan_item_id"), task_ref=kwargs.get("task_ref"))
+        return mock_ahm.list_plan_cursors(
+            task_ref=kwargs.get("task_ref"),
+            state=kwargs.get("state", "all"),
+            lane_id=kwargs.get("lane_id"),
+            limit=kwargs.get("limit", 50),
+            offset=kwargs.get("offset", 0),
+        )
+
+    mock_ahm.lane_communication.side_effect = _lane_communication
+    mock_ahm.worker_reports.side_effect = _worker_reports
+    mock_ahm.manage_worktree_lane.side_effect = _manage_worktree_lane
+    mock_ahm.plan_cursor.side_effect = _plan_cursor
+
+    def _manage_worker(**kwargs):
+        action = kwargs.get("action")
+        if action == "status":
+            return json.dumps({"ok": True, "running": False, "worker_state": "stopped", "attention_required": False})
+        if action == "start":
+            return json.dumps({"ok": True, "pid": 1234})
+        raise AssertionError(f"Unexpected manage_worker action: {action}")
+
+    mock_ahm.manage_worker.side_effect = _manage_worker
     return mock_ahm
 
 
@@ -511,8 +608,9 @@ def test_single_pass_dispatches_from_task_plan(tmp_path: Path) -> None:
     plan_path = tmp_path / "docs" / "tasks" / "demo-task-plan.md"
     plan_path.parent.mkdir(parents=True)
     plan_path.write_text("## Phase 1: Backend\n- [ ] Implement backend slice\n")
-    _to_dict(
-        mcp_api.upsert_worktree_lane(
+    _parse(
+        mcp_api.manage_worktree_lane(
+            operation="upsert",
             lane_id="backend-domain",
             worktree_path=str(tmp_path / "backend-domain"),
             branch="codex/p5-backend-domain",
@@ -544,8 +642,10 @@ def test_single_pass_dispatches_from_task_plan(tmp_path: Path) -> None:
             )
 
     assert result == 0
-    messages = _to_dict(
-        mcp_api.list_lane_messages(
+    messages = _parse(
+        mcp_api.lane_communication(
+            kind="message",
+            operation="list",
             task_ref="phase-5-retention-export-and-audit-controls",
             lane_id="backend-domain",
             status="open",
@@ -555,15 +655,16 @@ def test_single_pass_dispatches_from_task_plan(tmp_path: Path) -> None:
     assert messages[0]["direction"] == "orchestrator_to_worker"
     assert "[plan:phase-1::phase-1-backend::checklist_1]" in messages[0]["message"]
 
-    state = _to_dict(
+    state = _data(
         mcp_api.get_handoff_state(
             task_ref="phase-5-retention-export-and-audit-controls",
             verbose=True,
         )
     )
     assert any("[plan:phase-1::phase-1-backend::checklist_1]" in row["action"] for row in state["actions_pending"])
-    cursors = _to_dict(
-        mcp_api.list_plan_cursors(
+    cursors = _parse(
+        mcp_api.plan_cursor(
+            operation="list",
             task_ref="phase-5-retention-export-and-audit-controls",
             state="dispatched",
         )
@@ -578,8 +679,9 @@ def test_single_pass_dispatches_next_eligible_task_plan_item(tmp_path: Path) -> 
     plan_path = tmp_path / "docs" / "tasks" / "demo-task-plan.md"
     plan_path.parent.mkdir(parents=True)
     plan_path.write_text("## Phase 1: Backend\n- [ ] Implement backend slice\n- [ ] Verify backend slice\n")
-    _to_dict(
-        mcp_api.upsert_worktree_lane(
+    _parse(
+        mcp_api.manage_worktree_lane(
+            operation="upsert",
             lane_id="backend-domain",
             worktree_path=str(tmp_path / "backend-domain"),
             branch="codex/p5-backend-domain",
@@ -602,7 +704,9 @@ def test_single_pass_dispatches_next_eligible_task_plan_item(tmp_path: Path) -> 
     dispatch_output = json.dumps({"ok": True})
     with mock.patch.dict(sys.modules, {"lane_manifest": mock_manifest}):
         with mock.patch.object(
-            mod.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=dispatch_output, stderr="")
+            mod.subprocess,
+            "run",
+            return_value=mock.Mock(returncode=0, stdout=dispatch_output, stderr=""),
         ):
             assert (
                 mod.orchestrator_loop(
@@ -613,8 +717,9 @@ def test_single_pass_dispatches_next_eligible_task_plan_item(tmp_path: Path) -> 
                 == 0
             )
 
-            first_cursor = _to_dict(
-                mcp_api.list_plan_cursors(
+            first_cursor = _parse(
+                mcp_api.plan_cursor(
+                    operation="list",
                     task_ref="phase-5-retention-export-and-audit-controls",
                     state="dispatched",
                 )
@@ -622,7 +727,7 @@ def test_single_pass_dispatches_next_eligible_task_plan_item(tmp_path: Path) -> 
             assert len(first_cursor) == 1
             assert first_cursor[0]["plan_item_id"] == "phase-1::phase-1-backend::checklist_1"
 
-            first_actions = _to_dict(
+            first_actions = _data(
                 mcp_api.list_next_actions(
                     task_ref="phase-5-retention-export-and-audit-controls",
                     status="pending",
@@ -630,7 +735,7 @@ def test_single_pass_dispatches_next_eligible_task_plan_item(tmp_path: Path) -> 
                 )
             )["actions"]
             assert len(first_actions) == 1
-            _to_dict(
+            _parse(
                 mcp_api.update_next_actions(
                     operation="update",
                     action_id=int(first_actions[0]["id"]),
@@ -638,18 +743,28 @@ def test_single_pass_dispatches_next_eligible_task_plan_item(tmp_path: Path) -> 
                 )
             )
 
-            first_messages = _to_dict(
-                mcp_api.list_lane_messages(
+            first_messages = _parse(
+                mcp_api.lane_communication(
+                    kind="message",
+                    operation="list",
                     task_ref="phase-5-retention-export-and-audit-controls",
                     lane_id="backend-domain",
                     status="open",
                 )
             )["messages"]
             assert len(first_messages) == 1
-            _to_dict(mcp_api.update_lane_message(int(first_messages[0]["id"]), "closed"))
+            _parse(
+                mcp_api.lane_communication(
+                    kind="message",
+                    operation="update",
+                    message_id=int(first_messages[0]["id"]),
+                    status="closed",
+                )
+            )
 
-            _to_dict(
-                mcp_api.upsert_plan_cursor(
+            _parse(
+                mcp_api.plan_cursor(
+                    operation="upsert",
                     task_ref="phase-5-retention-export-and-audit-controls",
                     plan_item_id="phase-1::phase-1-backend::checklist_1",
                     state="completed",
@@ -666,8 +781,9 @@ def test_single_pass_dispatches_next_eligible_task_plan_item(tmp_path: Path) -> 
                 == 0
             )
 
-    cursors = _to_dict(
-        mcp_api.list_plan_cursors(
+    cursors = _parse(
+        mcp_api.plan_cursor(
+            operation="list",
             task_ref="phase-5-retention-export-and-audit-controls",
             state="dispatched",
         )
@@ -682,8 +798,9 @@ def test_single_pass_dispatches_only_one_plan_item_per_cycle(tmp_path: Path) -> 
     plan_path = tmp_path / "docs" / "tasks" / "demo-task-plan.md"
     plan_path.parent.mkdir(parents=True)
     plan_path.write_text("## Phase 1: Backend\n- [ ] Implement backend slice\n- [ ] Verify backend slice\n")
-    _to_dict(
-        mcp_api.upsert_worktree_lane(
+    _parse(
+        mcp_api.manage_worktree_lane(
+            operation="upsert",
             lane_id="backend-domain",
             worktree_path=str(tmp_path / "backend-domain"),
             branch="codex/p5-backend-domain",
@@ -717,8 +834,9 @@ def test_single_pass_dispatches_only_one_plan_item_per_cycle(tmp_path: Path) -> 
                 == 0
             )
 
-    cursors = _to_dict(
-        mcp_api.list_plan_cursors(
+    cursors = _parse(
+        mcp_api.plan_cursor(
+            operation="list",
             task_ref="phase-5-retention-export-and-audit-controls",
             state="dispatched",
         )
@@ -738,8 +856,9 @@ def test_single_pass_prefers_upstream_lane_over_document_order(tmp_path: Path) -
         "## Phase 1: Backend Domain\n"
         "- [ ] Implement domain slice\n"
     )
-    _to_dict(
-        mcp_api.upsert_worktree_lane(
+    _parse(
+        mcp_api.manage_worktree_lane(
+            operation="upsert",
             lane_id="backend-domain",
             worktree_path=str(tmp_path / "backend-domain"),
             branch="codex/p5-backend-domain",
@@ -747,8 +866,9 @@ def test_single_pass_prefers_upstream_lane_over_document_order(tmp_path: Path) -
             objective="domain work",
         )
     )
-    _to_dict(
-        mcp_api.upsert_worktree_lane(
+    _parse(
+        mcp_api.manage_worktree_lane(
+            operation="upsert",
             lane_id="backend-http",
             worktree_path=str(tmp_path / "backend-http"),
             branch="codex/p5-backend-http",
@@ -786,8 +906,9 @@ def test_single_pass_prefers_upstream_lane_over_document_order(tmp_path: Path) -
                 == 0
             )
 
-    cursors = _to_dict(
-        mcp_api.list_plan_cursors(
+    cursors = _parse(
+        mcp_api.plan_cursor(
+            operation="list",
             task_ref="phase-5-retention-export-and-audit-controls",
             state="dispatched",
         )
@@ -1011,16 +1132,18 @@ def test_single_pass_autostarts_actionable_worker_via_mcp(tmp_path: Path) -> Non
 
     mock_ahm = _make_mock_ahm()
     mock_ahm.list_worker_reports.return_value = json.dumps({"ok": True, "reports": []})
-    mock_ahm.worker_status.return_value = json.dumps(
-        {
-            "ok": True,
-            "lane_id": "backend-domain",
-            "running": False,
-            "worker_state": "stopped",
-            "attention_required": False,
-        }
-    )
-    mock_ahm.worker_start.return_value = json.dumps({"ok": True, "pid": 1234, "lane_id": "backend-domain"})
+    mock_ahm.manage_worker.side_effect = [
+        json.dumps(
+            {
+                "ok": True,
+                "lane_id": "backend-domain",
+                "running": False,
+                "worker_state": "stopped",
+                "attention_required": False,
+            }
+        ),
+        json.dumps({"ok": True, "pid": 1234, "lane_id": "backend-domain"}),
+    ]
 
     mock_manifest = mock.MagicMock()
     mock_manifest.merge_order.return_value = ["backend-domain"]
@@ -1043,30 +1166,29 @@ def test_single_pass_autostarts_actionable_worker_via_mcp(tmp_path: Path) -> Non
                     return_value=mock.Mock(returncode=0, stdout=json.dumps({"ok": True}), stderr=""),
                 ):
                     with mock.patch(
-                        "agent_orchestrator_mcp.api.worker_status",
-                        return_value=json.dumps(
-                            {
-                                "ok": True,
-                                "lane_id": "backend-domain",
-                                "running": False,
-                                "worker_state": "stopped",
-                                "attention_required": False,
-                            }
-                        ),
-                    ):
-                        with mock.patch(
-                            "agent_orchestrator_mcp.api.worker_start",
-                            return_value=json.dumps({"ok": True, "pid": 1234, "lane_id": "backend-domain"}),
-                        ) as mock_start:
-                            result = mod.orchestrator_loop(
-                                orchestrator_root=tmp_path,
-                                task_ref="test-task",
-                                single_pass=True,
-                                backend="codex-subagent",
-                            )
+                        "agent_orchestrator_mcp.api.manage_worker",
+                        side_effect=[
+                            json.dumps(
+                                {
+                                    "ok": True,
+                                    "lane_id": "backend-domain",
+                                    "running": False,
+                                    "worker_state": "stopped",
+                                    "attention_required": False,
+                                }
+                            ),
+                            json.dumps({"ok": True, "pid": 1234, "lane_id": "backend-domain"}),
+                        ],
+                    ) as mock_manage_worker:
+                        result = mod.orchestrator_loop(
+                            orchestrator_root=tmp_path,
+                            task_ref="test-task",
+                            single_pass=True,
+                            backend="codex-subagent",
+                        )
 
     assert result == 0
-    mock_start.assert_called_once()
+    assert [call.kwargs["action"] for call in mock_manage_worker.call_args_list] == ["status", "start"]
 
 
 def test_single_pass_running_worker_prevents_plan_stall(tmp_path: Path) -> None:
@@ -1078,7 +1200,7 @@ def test_single_pass_running_worker_prevents_plan_stall(tmp_path: Path) -> None:
 
     mock_ahm = _make_mock_ahm()
     mock_ahm.list_worker_reports.return_value = json.dumps({"ok": True, "reports": []})
-    mock_ahm.worker_status.return_value = json.dumps(
+    mock_ahm.manage_worker.return_value = json.dumps(
         {
             "ok": True,
             "lane_id": "backend-domain",
@@ -1114,7 +1236,7 @@ def test_single_pass_running_worker_prevents_plan_stall(tmp_path: Path) -> None:
                         return_value=mock.Mock(returncode=0, stdout=json.dumps({"ok": True}), stderr=""),
                     ):
                         with mock.patch(
-                            "agent_orchestrator_mcp.api.worker_status",
+                            "agent_orchestrator_mcp.api.manage_worker",
                             return_value=json.dumps(
                                 {
                                     "ok": True,
@@ -1124,17 +1246,16 @@ def test_single_pass_running_worker_prevents_plan_stall(tmp_path: Path) -> None:
                                     "attention_required": False,
                                 }
                             ),
-                        ):
-                            with mock.patch("agent_orchestrator_mcp.api.worker_start") as mock_start:
-                                result = mod.orchestrator_loop(
-                                    orchestrator_root=tmp_path,
-                                    task_ref="test-task",
-                                    single_pass=True,
-                                    backend="codex-subagent",
-                                )
+                        ) as mock_manage_worker:
+                            result = mod.orchestrator_loop(
+                                orchestrator_root=tmp_path,
+                                task_ref="test-task",
+                                single_pass=True,
+                                backend="codex-subagent",
+                            )
 
     assert result == 0
-    mock_start.assert_not_called()
+    assert [call.kwargs["action"] for call in mock_manage_worker.call_args_list] == ["status"]
 
 
 def test_single_pass_manual_worker_mode_skips_mcp_autostart(tmp_path: Path) -> None:
@@ -1146,7 +1267,7 @@ def test_single_pass_manual_worker_mode_skips_mcp_autostart(tmp_path: Path) -> N
 
     mock_ahm = _make_mock_ahm()
     mock_ahm.list_worker_reports.return_value = json.dumps({"ok": True, "reports": []})
-    mock_ahm.worker_status.return_value = json.dumps(
+    mock_ahm.manage_worker.return_value = json.dumps(
         {
             "ok": True,
             "lane_id": "backend-domain",
@@ -1177,7 +1298,7 @@ def test_single_pass_manual_worker_mode_skips_mcp_autostart(tmp_path: Path) -> N
                     return_value=mock.Mock(returncode=0, stdout=json.dumps({"ok": True}), stderr=""),
                 ):
                     with mock.patch(
-                        "agent_orchestrator_mcp.api.worker_status",
+                        "agent_orchestrator_mcp.api.manage_worker",
                         return_value=json.dumps(
                             {
                                 "ok": True,
@@ -1187,18 +1308,17 @@ def test_single_pass_manual_worker_mode_skips_mcp_autostart(tmp_path: Path) -> N
                                 "attention_required": False,
                             }
                         ),
-                    ):
-                        with mock.patch("agent_orchestrator_mcp.api.worker_start") as mock_start:
-                            result = mod.orchestrator_loop(
-                                orchestrator_root=tmp_path,
-                                task_ref="test-task",
-                                single_pass=True,
-                                backend="codex-subagent",
-                                worker_start_mode="manual",
-                            )
+                    ) as mock_manage_worker:
+                        result = mod.orchestrator_loop(
+                            orchestrator_root=tmp_path,
+                            task_ref="test-task",
+                            single_pass=True,
+                            backend="codex-subagent",
+                            worker_start_mode="manual",
+                        )
 
     assert result == 0
-    mock_start.assert_not_called()
+    assert [call.kwargs["action"] for call in mock_manage_worker.call_args_list] == ["status"]
 
 
 def test_single_pass_logs_lanes_discovered(tmp_path: Path) -> None:
@@ -1451,7 +1571,7 @@ def test_intake_failure_skips_refresh_and_verify(tmp_path: Path) -> None:
 def test_list_open_worker_guidance_filters_client_side() -> None:
     mod = _load_module()
     mock_ahm = mock.MagicMock()
-    mock_ahm.list_lane_messages.return_value = json.dumps(
+    mock_ahm.lane_communication.return_value = json.dumps(
         {
             "ok": True,
             "messages": [
@@ -1463,6 +1583,10 @@ def test_list_open_worker_guidance_filters_client_side() -> None:
     with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "agent_orchestrator_mcp.lanes": mock_ahm}):
         rows = mod._list_open_worker_guidance("task")
     assert [row["id"] for row in rows] == [1]
+    assert (
+        mock_ahm.lane_communication.call_args.kwargs["fields"]
+        == "id,lane_id,session,direction,subject,message,status,created_at,updated_at"
+    )
 
 
 def test_dedupe_worker_guidance_messages_keeps_newest_per_lane() -> None:
@@ -1483,7 +1607,7 @@ def test_dedupe_worker_guidance_messages_keeps_newest_per_lane() -> None:
 def test_list_open_dispatch_messages_filters_client_side() -> None:
     mod = _load_module()
     mock_ahm = mock.MagicMock()
-    mock_ahm.list_lane_messages.return_value = json.dumps(
+    mock_ahm.lane_communication.return_value = json.dumps(
         {
             "ok": True,
             "messages": [
@@ -1495,12 +1619,13 @@ def test_list_open_dispatch_messages_filters_client_side() -> None:
     with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "agent_orchestrator_mcp.lanes": mock_ahm}):
         rows = mod._list_open_dispatch_messages("task", "frontend")
     assert [row["id"] for row in rows] == [2]
+    assert mock_ahm.lane_communication.call_args.kwargs["fields"] == "id,direction"
 
 
 def test_latest_lane_report_prefers_matching_session() -> None:
     mod = _load_module()
     mock_ahm = mock.MagicMock()
-    mock_ahm.list_worker_reports.return_value = json.dumps(
+    mock_ahm.worker_reports.return_value = json.dumps(
         {
             "ok": True,
             "reports": [
@@ -1512,6 +1637,7 @@ def test_latest_lane_report_prefers_matching_session() -> None:
     with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "agent_orchestrator_mcp.lanes": mock_ahm}):
         report = mod._latest_lane_report("task", "lane", session="wanted")
     assert report["id"] == 2
+    assert mock_ahm.worker_reports.call_args.kwargs["fields"] == "id,session,summary,blockers_json"
 
 
 def test_resolve_next_assignment_prefers_pending_action() -> None:
@@ -1611,24 +1737,30 @@ def test_apply_guidance_resolution_closes_messages_and_records_dispatch(tmp_path
         close_dispatch_ids=(20, 21),
     )
     mock_ahm = mock.MagicMock()
-    mock_ahm.list_worktree_lanes.return_value = json.dumps(
-        {
-            "ok": True,
-            "lanes": [
-                {
-                    "lane_id": "backend-domain",
-                    "worktree_path": str(tmp_path / "wt"),
-                    "branch": "codex/p5-backend-domain",
-                    "title": "Backend Domain",
-                    "objective": "domain",
-                    "owner_agent": "codex",
-                }
-            ],
-        }
-    )
-    mock_ahm.update_lane_message.return_value = json.dumps({"ok": True})
-    mock_ahm.upsert_worktree_lane.return_value = json.dumps({"ok": True})
-    mock_ahm.record_lane_message.return_value = json.dumps({"ok": True})
+    mock_ahm.manage_worktree_lane.side_effect = [
+        json.dumps(
+            {
+                "ok": True,
+                "lanes": [
+                    {
+                        "lane_id": "backend-domain",
+                        "worktree_path": str(tmp_path / "wt"),
+                        "branch": "codex/p5-backend-domain",
+                        "title": "Backend Domain",
+                        "objective": "domain",
+                        "owner_agent": "codex",
+                    }
+                ],
+            }
+        ),
+        json.dumps({"ok": True}),
+    ]
+    mock_ahm.lane_communication.side_effect = [
+        json.dumps({"ok": True}),
+        json.dumps({"ok": True}),
+        json.dumps({"ok": True}),
+        json.dumps({"ok": True}),
+    ]
     mock_ahm.record_decision.return_value = json.dumps({"ok": True})
     with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "agent_orchestrator_mcp.lanes": mock_ahm}):
         mod._apply_guidance_resolution(
@@ -1637,10 +1769,12 @@ def test_apply_guidance_resolution_closes_messages_and_records_dispatch(tmp_path
             resolution=resolution,
             dry_run=False,
         )
-    assert mock_ahm.update_lane_message.call_args_list[0].args == (10, "closed")
-    assert mock_ahm.update_lane_message.call_args_list[1].args == (20, "closed")
-    assert mock_ahm.update_lane_message.call_args_list[2].args == (21, "closed")
-    mock_ahm.record_lane_message.assert_called_once()
+    lane_calls = mock_ahm.lane_communication.call_args_list
+    assert lane_calls[0].kwargs["operation"] == "update"
+    assert lane_calls[0].kwargs["message_id"] == 10
+    assert lane_calls[1].kwargs["message_id"] == 20
+    assert lane_calls[2].kwargs["message_id"] == 21
+    assert lane_calls[3].kwargs["operation"] == "record"
     mock_ahm.record_decision.assert_called_once()
 
 
@@ -1657,21 +1791,24 @@ def test_apply_guidance_resolution_review_completes_pending_actions(tmp_path: Pa
         close_dispatch_ids=(20,),
     )
     mock_ahm = mock.MagicMock()
-    mock_ahm.list_worktree_lanes.return_value = json.dumps(
-        {
-            "ok": True,
-            "lanes": [
-                {
-                    "lane_id": "backend-http",
-                    "worktree_path": str(tmp_path / "wt"),
-                    "branch": "codex/p5-backend-http",
-                    "title": "Backend HTTP",
-                    "objective": "http",
-                    "owner_agent": "codex",
-                }
-            ],
-        }
-    )
+    mock_ahm.manage_worktree_lane.side_effect = [
+        json.dumps(
+            {
+                "ok": True,
+                "lanes": [
+                    {
+                        "lane_id": "backend-http",
+                        "worktree_path": str(tmp_path / "wt"),
+                        "branch": "codex/p5-backend-http",
+                        "title": "Backend HTTP",
+                        "objective": "http",
+                        "owner_agent": "codex",
+                    }
+                ],
+            }
+        ),
+        json.dumps({"ok": True}),
+    ]
     mock_ahm.get_lane_activity.return_value = json.dumps(
         {
             "ok": True,
@@ -1679,8 +1816,7 @@ def test_apply_guidance_resolution_review_completes_pending_actions(tmp_path: Pa
             "actions": [{"id": 7, "status": "pending", "priority": 1, "action": "Fix already-resolved wiring"}],
         }
     )
-    mock_ahm.update_lane_message.return_value = json.dumps({"ok": True})
-    mock_ahm.upsert_worktree_lane.return_value = json.dumps({"ok": True})
+    mock_ahm.lane_communication.return_value = json.dumps({"ok": True})
     mock_ahm.record_decision.return_value = json.dumps({"ok": True})
     with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "agent_orchestrator_mcp.lanes": mock_ahm}):
         mod._apply_guidance_resolution(
@@ -1695,8 +1831,9 @@ def test_apply_guidance_resolution_review_completes_pending_actions(tmp_path: Pa
 def test_resolve_guidance_cycle_integration_redispatch(tmp_path: Path) -> None:
     mod = _load_module()
     _configure_real_runtime(tmp_path, "phase-5-retention-export-and-audit-controls")
-    _to_dict(
-        mcp_api.upsert_worktree_lane(
+    _parse(
+        mcp_api.manage_worktree_lane(
+            operation="upsert",
             lane_id="backend-domain",
             worktree_path=str(tmp_path / "backend-domain"),
             branch="codex/p5-backend-domain",
@@ -1704,8 +1841,10 @@ def test_resolve_guidance_cycle_integration_redispatch(tmp_path: Path) -> None:
             objective="domain work",
         )
     )
-    _to_dict(
-        mcp_api.record_lane_message(
+    _parse(
+        mcp_api.lane_communication(
+            kind="message",
+            operation="record",
             lane_id="backend-domain",
             session="lane-session",
             direction="orchestrator_to_worker",
@@ -1714,8 +1853,10 @@ def test_resolve_guidance_cycle_integration_redispatch(tmp_path: Path) -> None:
             status="open",
         )
     )
-    _to_dict(
-        mcp_api.record_lane_message(
+    _parse(
+        mcp_api.lane_communication(
+            kind="message",
+            operation="record",
             lane_id="backend-domain",
             session="lane-session",
             direction="worker_to_orchestrator",
@@ -1724,8 +1865,9 @@ def test_resolve_guidance_cycle_integration_redispatch(tmp_path: Path) -> None:
             status="open",
         )
     )
-    _to_dict(
-        mcp_api.record_worker_report(
+    _parse(
+        mcp_api.worker_reports(
+            operation="record",
             lane_id="backend-domain",
             session="lane-session",
             summary="remaining backend-domain implementation target",
@@ -1736,9 +1878,13 @@ def test_resolve_guidance_cycle_integration_redispatch(tmp_path: Path) -> None:
     results = mod._resolve_guidance_cycle(tmp_path, "phase-5-retention-export-and-audit-controls")
 
     assert [row.kind for row in results] == ["redispatch"]
-    messages = _to_dict(
-        mcp_api.list_lane_messages(
-            task_ref="phase-5-retention-export-and-audit-controls", lane_id="backend-domain", status="open"
+    messages = _parse(
+        mcp_api.lane_communication(
+            kind="message",
+            operation="list",
+            task_ref="phase-5-retention-export-and-audit-controls",
+            lane_id="backend-domain",
+            status="open",
         )
     )["messages"]
     assert len(messages) == 1
@@ -1749,8 +1895,9 @@ def test_resolve_guidance_cycle_integration_redispatch(tmp_path: Path) -> None:
 def test_resolve_guidance_cycle_integration_review_closes_dispatch(tmp_path: Path) -> None:
     mod = _load_module()
     _configure_real_runtime(tmp_path, "phase-5-retention-export-and-audit-controls")
-    _to_dict(
-        mcp_api.upsert_worktree_lane(
+    _parse(
+        mcp_api.manage_worktree_lane(
+            operation="upsert",
             lane_id="backend-http",
             worktree_path=str(tmp_path / "backend-http"),
             branch="codex/p5-backend-http",
@@ -1758,8 +1905,10 @@ def test_resolve_guidance_cycle_integration_review_closes_dispatch(tmp_path: Pat
             objective="http work",
         )
     )
-    _to_dict(
-        mcp_api.record_lane_message(
+    _parse(
+        mcp_api.lane_communication(
+            kind="message",
+            operation="record",
             lane_id="backend-http",
             session="lane-session",
             direction="orchestrator_to_worker",
@@ -1768,8 +1917,10 @@ def test_resolve_guidance_cycle_integration_review_closes_dispatch(tmp_path: Pat
             status="open",
         )
     )
-    _to_dict(
-        mcp_api.record_lane_message(
+    _parse(
+        mcp_api.lane_communication(
+            kind="message",
+            operation="record",
             lane_id="backend-http",
             session="lane-session",
             direction="worker_to_orchestrator",
@@ -1778,8 +1929,9 @@ def test_resolve_guidance_cycle_integration_review_closes_dispatch(tmp_path: Pat
             status="open",
         )
     )
-    _to_dict(
-        mcp_api.record_worker_report(
+    _parse(
+        mcp_api.worker_reports(
+            operation="record",
             lane_id="backend-http",
             session="lane-session",
             summary="already resolved",
@@ -1789,14 +1941,22 @@ def test_resolve_guidance_cycle_integration_review_closes_dispatch(tmp_path: Pat
     results = mod._resolve_guidance_cycle(tmp_path, "phase-5-retention-export-and-audit-controls")
 
     assert [row.kind for row in results] == ["review"]
-    messages = _to_dict(
-        mcp_api.list_lane_messages(
-            task_ref="phase-5-retention-export-and-audit-controls", lane_id="backend-http", status="open"
+    messages = _parse(
+        mcp_api.lane_communication(
+            kind="message",
+            operation="list",
+            task_ref="phase-5-retention-export-and-audit-controls",
+            lane_id="backend-http",
+            status="open",
         )
     )["messages"]
     assert messages == []
-    lanes = _to_dict(
-        mcp_api.list_worktree_lanes(task_ref="phase-5-retention-export-and-audit-controls", status="all")
+    lanes = _parse(
+        mcp_api.manage_worktree_lane(
+            operation="list",
+            task_ref="phase-5-retention-export-and-audit-controls",
+            status="all",
+        )
     )["lanes"]
     lane_row = next(row for row in lanes if row["lane_id"] == "backend-http")
     assert lane_row["status"] == "review"
@@ -1805,8 +1965,9 @@ def test_resolve_guidance_cycle_integration_review_closes_dispatch(tmp_path: Pat
 def test_resolve_guidance_cycle_dedupes_duplicate_lane_messages(tmp_path: Path) -> None:
     mod = _load_module()
     _configure_real_runtime(tmp_path, "phase-5-retention-export-and-audit-controls")
-    _to_dict(
-        mcp_api.upsert_worktree_lane(
+    _parse(
+        mcp_api.manage_worktree_lane(
+            operation="upsert",
             lane_id="backend-domain",
             worktree_path=str(tmp_path / "backend-domain"),
             branch="codex/p5-backend-domain",
@@ -1814,8 +1975,10 @@ def test_resolve_guidance_cycle_dedupes_duplicate_lane_messages(tmp_path: Path) 
             objective="domain work",
         )
     )
-    _to_dict(
-        mcp_api.record_lane_message(
+    _parse(
+        mcp_api.lane_communication(
+            kind="message",
+            operation="record",
             lane_id="backend-domain",
             session="lane-session-old",
             direction="worker_to_orchestrator",
@@ -1824,8 +1987,10 @@ def test_resolve_guidance_cycle_dedupes_duplicate_lane_messages(tmp_path: Path) 
             status="open",
         )
     )
-    _to_dict(
-        mcp_api.record_lane_message(
+    _parse(
+        mcp_api.lane_communication(
+            kind="message",
+            operation="record",
             lane_id="backend-domain",
             session="lane-session-new",
             direction="worker_to_orchestrator",
@@ -1834,8 +1999,9 @@ def test_resolve_guidance_cycle_dedupes_duplicate_lane_messages(tmp_path: Path) 
             status="open",
         )
     )
-    _to_dict(
-        mcp_api.record_worker_report(
+    _parse(
+        mcp_api.worker_reports(
+            operation="record",
             lane_id="backend-domain",
             session="lane-session-new",
             summary="remaining backend-domain implementation target",
@@ -1846,8 +2012,10 @@ def test_resolve_guidance_cycle_dedupes_duplicate_lane_messages(tmp_path: Path) 
     results = mod._resolve_guidance_cycle(tmp_path, "phase-5-retention-export-and-audit-controls")
 
     assert [row.kind for row in results] == ["redispatch"]
-    messages = _to_dict(
-        mcp_api.list_lane_messages(
+    messages = _parse(
+        mcp_api.lane_communication(
+            kind="message",
+            operation="list",
             task_ref="phase-5-retention-export-and-audit-controls",
             lane_id="backend-domain",
             status="open",

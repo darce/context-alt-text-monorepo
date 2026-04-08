@@ -230,7 +230,7 @@ def _import_orchestration_module(name: str) -> Any:
     return importlib.import_module(f"agent_orchestrator_mcp.orchestration.{name}")
 
 
-def _runtime_pythonpath() -> dict:
+def _runtime_pythonpath() -> str:
     package_root = Path(__file__).resolve().parents[4]
     disallowed_parts = {
         str(package_root / "packages" / "agent-handoff-mcp" / "src"),

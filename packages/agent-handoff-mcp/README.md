@@ -120,9 +120,26 @@ The v2 envelope is already compact, but callers still save the most tokens by sh
 - Use `get_handoff_state(sections="identity")` for routine task checks instead of a full state fetch.
 - Use `detail="summary"` on read surfaces such as `get_handoff_state`, `load_session`, `review_findings`, `search_handoff`, and `artifacts` when truncated text is acceptable.
 - Use `top_n_*`, `limit=`, and `fields=` to cap read size instead of trimming large payloads client-side.
-- Read from the canonical `data` block rather than expecting legacy top-level mirrors.
+- Read from the canonical `data` block — `result["data"]["active"]` etc. The legacy top-level mirror was removed in 0.3.0 and never returns.
 
 Package-local guidance and examples live in [docs/guides/token-efficient-usage.md](docs/guides/token-efficient-usage.md).
+
+### Wire format note (≥0.3.0)
+
+Starting in `agent-handoff-mcp 0.3.0`, MCP tool responses are **native JSON
+objects** on the wire, not JSON strings inside `structured_content.result`.
+Every handler is annotated `-> dict` and returns a real dict via
+`_envelope()`; FastMCP serialises it once. If you previously did
+`json.loads(handoff_tool(...))` to parse a JSON string return value, drop
+the `json.loads` — the call returns a dict directly. If you previously
+read `result.content[0].text` from the MCP wire payload and parsed it,
+read `result.structured_content` directly instead.
+
+The envelope **field set is unchanged** (`ok`, `schema_version`, `tool`,
+`scope`, `data`, `mutation`, `artifacts`, `warnings`, `task_ref`) and
+`schema_version` stays at `2`. Only the wire-encoding moved from
+JSON-string-inside-JSON to a native nested object. See
+[CHANGELOG.md](CHANGELOG.md) for the full migration notice.
 
 ## Client Adapter Shape
 

@@ -1186,7 +1186,14 @@ def test_repair_provenance_happy_path(isolated_handoff: dict) -> None:
     assert result["finding"]["commit_sha"] == _AHMCP15_NEW_SHA
     assert result["before"] == {"branch": _AHMCP15_OLD_BRANCH, "commit_sha": _AHMCP15_OLD_SHA}
     assert result["after"] == {"branch": _AHMCP15_NEW_BRANCH, "commit_sha": _AHMCP15_NEW_SHA}
-    assert result["audit_decision_id"] == "repair_provenance_T1-BR-01"
+    # AHMCP-15-BR-02: audit decision id must conform to the canonical grammar.
+    from agent_handoff_mcp.slice_decision import is_canonical_decision
+
+    audit_decision_id = result["audit_decision_id"]
+    assert "repair_provenance" in audit_decision_id
+    assert is_canonical_decision(audit_decision_id), (
+        f"audit_decision_id {audit_decision_id!r} must match the canonical decision-id grammar"
+    )
     assert isinstance(result["audit_decision_db_id"], int)
 
     # Row in DB reflects the change
@@ -1201,7 +1208,7 @@ def test_repair_provenance_happy_path(isolated_handoff: dict) -> None:
             "SELECT decision, rationale, task_ref FROM decisions WHERE id = ?",
             (result["audit_decision_db_id"],),
         ).fetchone()
-    assert decision_row["decision"] == "repair_provenance_T1-BR-01"
+    assert decision_row["decision"] == audit_decision_id
     assert decision_row["task_ref"] == "T1"
     assert _AHMCP15_OLD_BRANCH in decision_row["rationale"]
     assert _AHMCP15_OLD_SHA in decision_row["rationale"]
@@ -1450,3 +1457,176 @@ def test_repair_provenance_global_lookup_succeeds_when_unique(isolated_handoff: 
     assert result["ok"] is True
     assert result["task_ref"] == "task-A"
     assert result["finding"]["branch"] == _AHMCP15_NEW_BRANCH
+
+
+def test_repair_provenance_accepts_stored_abbreviated_sha(
+    isolated_handoff: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AHMCP-15-BR-01 regression: a finding row whose commit_sha is stored as
+    an abbreviation must still be repairable when the caller passes the same
+    abbreviation. Production validation expands the caller's input to its
+    40-char canonical form, so the comparison must succeed even when the
+    stored row has not yet been expanded.
+
+    Tests bypass `_validate_and_expand_commit_sha` via
+    `AGENT_HANDOFF_SKIP_SHA_VALIDATION`, so this test mocks the validator to
+    simulate the production expansion path.
+    """
+    short_old = "2c270d01"
+    full_old = "2c270d0192de21217ecb0d13d0f42d5ca123779b"
+    short_new = "39a23e50"
+    full_new = "39a23e503939393939393939393939393939393b"
+
+    def fake_expand(value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if not normalized:
+            return value
+        if normalized in (short_old, full_old):
+            return full_old
+        if normalized in (short_new, full_new):
+            return full_new
+        return value
+
+    monkeypatch.setattr(
+        "agent_handoff_mcp.shared_write_context._validate_and_expand_commit_sha",
+        fake_expand,
+    )
+
+    _parse(mcp_server.set_handoff_state(task_ref="T1", objective="obj", status="in_progress"))
+    db_id = _seed_finding_with_provenance(
+        task_ref="T1",
+        finding_id="T1-BR-06",
+        branch=_AHMCP15_OLD_BRANCH,
+        commit_sha=short_old,  # row stores the abbreviation
+    )
+
+    result = _parse(
+        mcp_server.review_findings(
+            review={
+                "operation": "repair_provenance",
+                "session": "ahmcp-15-test",
+                "task_ref": "T1",
+                "finding_id": "T1-BR-06",
+                "expected_branch": _AHMCP15_OLD_BRANCH,
+                "expected_commit_sha": short_old,  # caller passes the same abbreviation
+                "new_branch": _AHMCP15_NEW_BRANCH,
+                "new_commit_sha": short_new,
+                "reason": _AHMCP15_REASON,
+            }
+        )
+    )
+    assert result["ok"] is True, result
+    # The stored row should be updated to the expanded canonical form
+    assert result["finding"]["commit_sha"] == full_new
+    with _get_db_connection() as conn:
+        row = conn.execute(
+            "SELECT commit_sha FROM review_findings WHERE id = ?", (db_id,)
+        ).fetchone()
+    assert row["commit_sha"] == full_new
+
+
+def test_repair_provenance_accepts_full_input_against_stored_abbreviation(
+    isolated_handoff: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AHMCP-15-BR-01 corollary: a caller passing the canonical 40-char SHA
+    must also be able to repair a row that still carries the historical
+    abbreviation. The fix expands the stored SHA best-effort so either side
+    can be in either form."""
+    short_old = "2c270d01"
+    full_old = "2c270d0192de21217ecb0d13d0f42d5ca123779b"
+    short_new = "39a23e50"
+    full_new = "39a23e503939393939393939393939393939393b"
+
+    def fake_expand(value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if not normalized:
+            return value
+        if normalized in (short_old, full_old):
+            return full_old
+        if normalized in (short_new, full_new):
+            return full_new
+        return value
+
+    monkeypatch.setattr(
+        "agent_handoff_mcp.shared_write_context._validate_and_expand_commit_sha",
+        fake_expand,
+    )
+
+    _parse(mcp_server.set_handoff_state(task_ref="T1", objective="obj", status="in_progress"))
+    _seed_finding_with_provenance(
+        task_ref="T1",
+        finding_id="T1-BR-07",
+        branch=_AHMCP15_OLD_BRANCH,
+        commit_sha=short_old,  # row stores the abbreviation
+    )
+
+    result = _parse(
+        mcp_server.review_findings(
+            review={
+                "operation": "repair_provenance",
+                "session": "ahmcp-15-test",
+                "task_ref": "T1",
+                "finding_id": "T1-BR-07",
+                "expected_branch": _AHMCP15_OLD_BRANCH,
+                "expected_commit_sha": full_old,  # caller passes the canonical 40-char SHA
+                "new_branch": _AHMCP15_NEW_BRANCH,
+                "new_commit_sha": full_new,
+                "reason": _AHMCP15_REASON,
+            }
+        )
+    )
+    assert result["ok"] is True, result
+
+
+def test_repair_provenance_audit_decision_id_is_canonical(isolated_handoff: dict) -> None:
+    """AHMCP-15-BR-02 regression: the audit-trail decision id written by the
+    repair op must conform to the canonical decision-id grammar so that
+    `audit_decision_ids` does not flag it as freeform.
+    """
+    from agent_handoff_mcp.slice_decision import classify_decision_id, is_canonical_decision
+
+    _parse(
+        mcp_server.set_handoff_state(task_ref="AHMCP-15", objective="obj", status="in_progress")
+    )
+    _seed_finding_with_provenance(
+        task_ref="AHMCP-15",
+        finding_id="AHMCP-15-BR-99",
+        branch=_AHMCP15_OLD_BRANCH,
+        commit_sha=_AHMCP15_OLD_SHA,
+    )
+
+    result = _parse(
+        mcp_server.review_findings(
+            review={
+                "operation": "repair_provenance",
+                "session": "ahmcp-15-test",
+                "task_ref": "AHMCP-15",
+                "finding_id": "AHMCP-15-BR-99",
+                "expected_branch": _AHMCP15_OLD_BRANCH,
+                "expected_commit_sha": _AHMCP15_OLD_SHA,
+                "new_branch": _AHMCP15_NEW_BRANCH,
+                "new_commit_sha": _AHMCP15_NEW_SHA,
+                "reason": _AHMCP15_REASON,
+            }
+        )
+    )
+    assert result["ok"] is True, result
+    audit_id = result["audit_decision_id"]
+    assert is_canonical_decision(audit_id), (
+        f"audit decision id {audit_id!r} must conform to the canonical grammar"
+    )
+    assert classify_decision_id(audit_id) == "canonical"
+
+    audit_report = _parse(mcp_server.audit_decision_ids(task_ref="AHMCP-15"))
+    counts = audit_report["counts"]
+    violations = audit_report["violations"]
+    assert counts["freeform"] == 0, (
+        f"audit_decision_ids must not see any freeform rows after repair: {audit_report}"
+    )
+    assert all(v["decision"] != audit_id for v in violations), (
+        f"audit row {audit_id!r} should not be flagged as a violation: {violations}"
+    )

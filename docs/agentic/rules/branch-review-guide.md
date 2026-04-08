@@ -42,6 +42,16 @@ Hard rule for agent responses:
 - If a finding is discussed before recording, immediately record it and then reference its `finding_id`.
 - Do not write review findings back into task plans, ADRs, or other planning docs. Log them in MCP handoff, then rely on generated `CURRENT_TASK.md` when a task-facing summary is needed.
 
+### Review Findings Placement (MANDATORY)
+
+Review findings live in `agent-handoff-mcp`, full stop. They are recorded with `review_findings(review={"operation":"record"|"batch_record", ...})` and read back with `review_findings(review={"operation":"list"|"get"})`. **Pasting a finding list into a task plan, epic, ADR, or any other markdown document is forbidden** because it duplicates the source of truth, escapes the pre-merge gate (`handoff_close_check` only audits MCP-stored findings), and silently rots the moment a finding is updated, deferred, or fixed.
+
+If a planning document needs to reference findings, link to them by ID (`see AOMCP-3-BR-04 in handoff`) instead of duplicating their bodies. The generated `CURRENT_TASK.md` is the only sanctioned task-facing mirror of finding state — do not author a parallel one.
+
+**Enforcement:** A `PreToolUse` hook in both harnesses (`scripts/hooks/guard-task-plan-findings.py`) scans the content of every Edit/Write to a task plan markdown file (`docs/tasks/**`, `docs/epics/**`, `packages/*/docs/tasks/**`, or any `*task-plan*.md`). Three or more consecutive bulleted lines that open with a finding-style identifier (e.g. `- AOMCP-3-BR-04: ...`, `- **H-1**: ...`, `- E15-7-BR-02 — ...`) are rejected with an actionable error naming the MCP tools the agent should use instead. The same scanner is wired into `make check-all` via `make lint-task-plans`, so CI catches drift even if a local hook is bypassed. The script also exposes a `--scan-staged` mode for opt-in `git pre-commit` integration.
+
+This rule is motivated by AHMCP-14: a parallel agent had been pasting `review_findings(operation="list")` results inline into the AOMCP-3 task plan, creating a parallel finding record that diverged from the MCP-stored source and would not have been gated by `handoff_close_check`.
+
 ### Scope
 
 Review only **uncommitted working-directory changes** (`git status` / `git diff --name-only`), not the full branch history against `main`. The goal is to review what will be in the next commit, not re-review already-committed work.

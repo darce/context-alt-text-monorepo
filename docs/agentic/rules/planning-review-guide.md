@@ -51,6 +51,7 @@ Project-wide constraint to apply during review:
 Hard rule for agent responses:
 
 - Do not present a planning-review finding in chat unless it has already been recorded in MCP with a stable `finding_id`.
+- **Never paste a finding list into the planning document under review.** Findings live in `agent-handoff-mcp` (`review_findings(review={"operation":"record"|"batch_record", ...})`); the document under review is not a place to mirror them. The `scripts/hooks/guard-task-plan-findings.py` PreToolUse hook rejects any Edit/Write that introduces three or more consecutive bulleted lines opening with a finding-style identifier. See [branch-review-guide.md § Review Findings Placement](branch-review-guide.md#review-findings-placement-mandatory) for the full rule and the AHMCP-14 incident that motivated enforcement.
 
 ---
 

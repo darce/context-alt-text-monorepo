@@ -101,6 +101,30 @@ Whenever a handoff write accepts a `commit_sha` (`record_event(actor=...)`, `set
 
 See [docs/agentic/rules/testing-python.md § Commit SHA Provenance Discipline](docs/agentic/rules/testing-python.md#commit-sha-provenance-discipline-mandatory) for the full rationale and the AHMCP-10/AHMCP-11 audit-trail bug that motivated the enforcement.
 
+### Review Findings Placement
+
+> **Review findings live in agent-handoff-mcp, not in task plans. Never paste a finding list into a markdown file.**
+
+Review findings are recorded with `review_findings(review={"operation":"record"|"batch_record", ...})` and read back with `review_findings(review={"operation":"list"|"get"})`. Pasting them inline into a task plan duplicates the source of truth, escapes the pre-merge gate (`handoff_close_check` only audits MCP-stored findings), and silently rots the moment a finding is updated, deferred, or fixed. If a task plan needs to reference findings, link to them by ID (`see AOMCP-3-BR-04 in handoff`) instead of duplicating their bodies.
+
+**Enforcement:** A `PreToolUse` hook in both harnesses (`scripts/hooks/guard-task-plan-findings.py`) scans the content of every Edit/Write to a task plan markdown file (`docs/tasks/**`, `docs/epics/**`, `packages/*/docs/tasks/**`, or any `*task-plan*.md`). Three or more consecutive bulleted lines that open with a finding-style identifier (e.g. `- AOMCP-3-BR-04: ...`, `- **H-1**: ...`, `- E15-7-BR-02 — ...`) are rejected with an actionable error naming the MCP tools the agent should use instead. The same scanner is wired into `make check-all` via `make lint-task-plans`, so CI catches drift even if a local hook is bypassed. The script also exposes a `--scan-staged` mode for opt-in `git pre-commit` integration.
+
+See [docs/agentic/rules/branch-review-guide.md § Review Findings Placement](docs/agentic/rules/branch-review-guide.md#review-findings-placement-mandatory) for the full rationale and the AHMCP-14 incident that motivated the enforcement.
+
+### Bounded Handoff Reads
+
+> **Routine `get_handoff_state` calls must use the bounded-read levers — never call it with `detail="full"` and high `top_n_*` values for an identity check.**
+
+The handoff response envelope appends an `oversize_response: ...` advisory warning to `payload["warnings"]` whenever the serialised payload exceeds ~20 KB (~5,000 tokens). The warning is purely advisory — the response is still returned in full so callers are not silently truncated — but it names the bounded-read levers callers should adopt for the next call:
+
+- `sections="identity"` for routine identity-only checks (returns just `active` + `limits`).
+- `sections="<comma-separated>"` to fetch only the sections you need (`current_lane`, `blockers_open`, `actions_pending`, etc.).
+- `detail="summary"` to truncate long-form rationale, fix, and verification fields to 200 chars.
+- Lower `top_n_blockers`, `top_n_actions`, `top_n_decisions`, `top_n_tests`, `top_n_findings` to reduce row counts.
+- `fields=...` (where supported) to project specific columns.
+
+See [packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md](packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md) for the full set of bounded-read levers and example call patterns.
+
 ### MCP Handoff (MANDATORY)
 
 - Every code change must be logged with a `record_event(event={event_kind: "decision", actor: {...}, ...})` entry before review or completion.

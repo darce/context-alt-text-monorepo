@@ -107,6 +107,21 @@ MANDATORY_SLICE_DECISION_HEADINGS = (
 MAX_RESOLUTION_NOTES_LENGTH = 500
 MAX_REOPEN_REASON_LENGTH = 500
 MAX_VERIFICATION_EVIDENCE_LENGTH = 2000
+
+# Soft cap on response payload size before the envelope appends an oversize
+# warning naming the bounded-read levers (`detail="summary"`, lower `top_n_*`,
+# `sections="identity"`). The byte threshold corresponds to roughly 5,000
+# tokens at the typical ~4 chars/token ratio, which is the budget level at
+# which routine handoff reads should already have been narrowed via the
+# bounded-read parameters introduced by AHMCP-1 / AHMCP-7. The check is not
+# a hard cap; it just nudges callers toward the documented narrowing levers
+# the same way the AHMCP-13 conftest guard nudges callers toward the
+# Makefile test target. AHMCP-14 added the warning after a real
+# `get_handoff_state(top_n_decisions=10, detail="full")` call returned
+# ~17.6k tokens because the slice-complete decision rationales account for
+# the bulk of the payload, and AHMCP-7 / AHMCP-10 wire-format optimizations
+# only attack the wrapper, not the rationale text itself.
+RESPONSE_OVERSIZE_WARN_BYTES = 20_000
 BATCH_CLOSE_WINDOW_SECONDS = 60
 BATCH_CLOSE_THRESHOLD = 2
 REOPEN_ESCALATION_THRESHOLD = 2
@@ -252,8 +267,30 @@ def _envelope(
         payload["mutation"] = mutation
     if artifacts:
         payload["artifacts"] = artifacts
-    if warnings:
-        payload["warnings"] = warnings
+    accumulated_warnings: list[str] = list(warnings) if warnings else []
+    # Oversize-response advisory: emit a warning when the serialised
+    # payload exceeds RESPONSE_OVERSIZE_WARN_BYTES, naming the bounded-read
+    # levers callers should adopt. The warning is purely advisory — the
+    # response is still returned in full so the caller is not silently
+    # truncated. See AHMCP-14 for the motivating incident
+    # (`get_handoff_state(top_n_decisions=10, detail="full")` returned
+    # ~17.6k tokens against AOMCP-3 because slice-complete decision
+    # rationales dominate the payload).
+    try:
+        approx_bytes = len(json.dumps(payload, default=str))
+    except Exception:
+        approx_bytes = 0
+    if approx_bytes > RESPONSE_OVERSIZE_WARN_BYTES:
+        accumulated_warnings.append(
+            f"oversize_response: ~{approx_bytes} bytes (~{approx_bytes // 4} tokens) exceeds "
+            f"{RESPONSE_OVERSIZE_WARN_BYTES}-byte advisory threshold. Narrow the read with "
+            f"detail=\"summary\", lower top_n_decisions/top_n_tests/top_n_findings, "
+            f"sections=\"identity\" for routine identity-only checks, or fields=... to "
+            f"project specific columns. See packages/agent-handoff-mcp/docs/guides/"
+            f"token-efficient-usage.md for the full set of bounded-read levers."
+        )
+    if accumulated_warnings:
+        payload["warnings"] = accumulated_warnings
     if task_ref is not None:
         payload["task_ref"] = task_ref
     return payload

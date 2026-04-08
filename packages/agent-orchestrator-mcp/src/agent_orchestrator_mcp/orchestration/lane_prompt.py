@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
+import importlib
 import json
 import os
 import re
@@ -40,10 +40,9 @@ if str(SCRIPT_DIR) not in sys.path:
 from _env import extract_pyenv_version
 from backend_registry import get_backend_spec
 
-try:
-    from .handoff_read_shapes import global_context_kwargs
-except ImportError:
-    from handoff_read_shapes import global_context_kwargs
+_handoff_read_shapes = importlib.import_module(
+    f"{__package__}.handoff_read_shapes" if __package__ else "handoff_read_shapes"
+)
 from lane_manifest import get_lane_config
 
 NO_WORK_MESSAGE = "No actionable lane inbox items."
@@ -804,7 +803,7 @@ def _prompt_budget_section(
 
 def _task_global_context(task_ref: str) -> dict[str, list[dict[str, Any]]]:
     payload = _json_load(
-        get_handoff_state(**global_context_kwargs(task_ref, limit=MAX_GLOBAL_ITEMS))
+        get_handoff_state(**_handoff_read_shapes.global_context_kwargs(task_ref, limit=MAX_GLOBAL_ITEMS))
     )
     return {
         "actions": [row for row in _as_dicts(payload.get("actions_pending")) if row.get("lane_id") in (None, "")],

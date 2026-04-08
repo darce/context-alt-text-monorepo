@@ -20,6 +20,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from dataclasses import field as _dc_field
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -67,10 +68,10 @@ from orchestrator_helpers import (  # noqa: F401
     _normalize_text,
     _report_timestamp,
 )
-try:
-    from .handoff_read_shapes import active_task_identity_kwargs
-except ImportError:
-    from handoff_read_shapes import active_task_identity_kwargs
+
+_handoff_read_shapes = import_module(
+    f"{__package__}.handoff_read_shapes" if __package__ else "handoff_read_shapes"
+)
 from orchestrator_lanes import (  # noqa: F401
     _complete_lane_plan_cursor,
     _intake_lane,
@@ -629,7 +630,7 @@ def _resolve_task_ref(orchestrator_root: Path, task_ref: str | None) -> str:
     try:
         from agent_handoff_mcp import get_handoff_state
 
-        state = _json_load(get_handoff_state(**active_task_identity_kwargs()))
+        state = _json_load(get_handoff_state(**_handoff_read_shapes.active_task_identity_kwargs()))
         if state.get("ok") and state.get("task_ref"):
             return state["task_ref"]
     except Exception:

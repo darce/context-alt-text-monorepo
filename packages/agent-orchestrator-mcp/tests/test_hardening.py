@@ -28,8 +28,18 @@ def isolated_handoff(tmp_path: Path):
     return runtime
 
 
-def _parse(payload: str) -> dict[str, Any]:
-    return json.loads(payload)
+def _parse(payload: str | dict[str, Any]) -> dict[str, Any]:
+    """AHMCP-10 dict-return migration: handler returns are dicts now."""
+    if not isinstance(payload, dict):
+        payload = json.loads(payload)
+    if isinstance(payload, dict) and payload.get("schema_version") == 2:
+        data = payload.get("data", {})
+        scope = payload.get("scope", {})
+        flat = {**payload, **data}
+        if "task_ref" not in flat and scope.get("task_ref"):
+            flat["task_ref"] = scope["task_ref"]
+        return flat
+    return payload
 
 
 def _load(name: str):

@@ -9,8 +9,20 @@ from agent_orchestrator_mcp import api
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-def _parse(payload: str) -> dict:
-    return json.loads(payload)
+def _parse(payload: str | dict) -> dict:
+    """AHMCP-10 dict-return migration: handler returns are dicts now;
+    only fall back to json.loads when something legitimately hands us a
+    string (e.g. CLI stdout capture)."""
+    if not isinstance(payload, dict):
+        payload = json.loads(payload)
+    if isinstance(payload, dict) and payload.get("schema_version") == 2:
+        data = payload.get("data", {})
+        scope = payload.get("scope", {})
+        flat = {**payload, **data}
+        if "task_ref" not in flat and scope.get("task_ref"):
+            flat["task_ref"] = scope["task_ref"]
+        return flat
+    return payload
 
 
 def _configure_runtime(tmp_path: Path) -> None:

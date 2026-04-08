@@ -182,6 +182,7 @@ from .shared_write_context import (  # noqa: F401
     _run_cmd,
     _workspace_git_context,
     build_write_actor,
+    collect_target_context_warnings,
 )
 
 # ---------------------------------------------------------------------------

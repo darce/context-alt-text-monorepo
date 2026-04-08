@@ -132,7 +132,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/lane-maintenance.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context task-start task-finish
 
 # Default target
 help:
@@ -498,3 +498,28 @@ ace-trends:
 		--task-ref "$(TASK)" \
 		--state-dir .task-state \
 		--sparklines
+
+# =============================================================================
+# Lane / worktree context discipline (E15-LANE-ORCH slice 2)
+# =============================================================================
+
+# Verify the current shell is aligned with the active task's target_branch and
+# target_worktree_path. Exits 0 when aligned, 2 on drift, 1 on infra error.
+# Run at the start of every session before recording any handoff state.
+# Usage: make context
+context:
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) scripts/check-task-context.py
+
+# Convenience wrapper that scaffolds a feature branch + worktree + MCP task in
+# one go. Computes the canonical path /Users/.../context-alt-text-monorepo-<task>
+# and registers it as target_worktree_path on the active handoff state.
+# Usage: make task-start TASK=<task-id> [OBJECTIVE="..."]
+task-start:
+	@./scripts/task-start.sh "$(TASK)" "$(OBJECTIVE)"
+
+# Run handoff_close_check, return root to main, remove the worktree, and
+# delete the merged feature branch in a single call. Run after the merge train
+# has landed the task on main.
+# Usage: make task-finish TASK=<task-id>
+task-finish:
+	@./scripts/task-finish.sh "$(TASK)"

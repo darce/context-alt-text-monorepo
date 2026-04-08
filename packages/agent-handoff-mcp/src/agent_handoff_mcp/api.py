@@ -535,6 +535,16 @@ def set_handoff_state(
         str | None,
         Field(description="Target git branch for this task. Preserved on update when omitted."),
     ] = None,
+    target_worktree_path: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Absolute filesystem path of the linked worktree where this task should be implemented. "
+                "Used by `make context` and write-side guards to fail-fast when an agent runs from the wrong "
+                "directory. Preserved on update when omitted."
+            )
+        ),
+    ] = None,
 ) -> str:
     return _core_set_handoff_state(
         task_ref=task_ref,
@@ -544,6 +554,7 @@ def set_handoff_state(
         expected_revision=expected_revision,
         actor=_dump_actor(actor),
         target_branch=target_branch,
+        target_worktree_path=target_worktree_path,
     )
 
 

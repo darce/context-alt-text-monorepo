@@ -272,6 +272,209 @@ def test_hook_blocks_edit_with_new_string(tmp_path: Path) -> None:
     assert "H-1" in stderr
 
 
+def test_hook_blocks_incremental_edit_completing_three_bullet_run(tmp_path: Path) -> None:
+    """Regression for AHMCP-14-BR-04.
+
+    A task plan that already contains two finding bullets must be unable to
+    grow a third via an Edit whose ``new_string`` adds a single bullet. The
+    hook must scan the post-edit document, not just the inserted fragment.
+    """
+    target = tmp_path / "docs" / "tasks" / "12.0" / "fake-task-plan.md"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "## Findings\n"
+        "\n"
+        "- AOMCP-3-BR-04: First.\n"
+        "- AOMCP-3-BR-05: Second.\n"
+        "- placeholder\n",
+        encoding="utf-8",
+    )
+    payload = {
+        "tool_input": {
+            "file_path": str(target),
+            "old_string": "- placeholder\n",
+            "new_string": "- AOMCP-3-BR-06: Third.\n",
+        }
+    }
+    rc, stderr = _run_hook(payload)
+    assert rc == 2, f"expected hook to block, got rc={rc}, stderr={stderr!r}"
+    assert "AOMCP-3-BR-06" in stderr
+    assert "Pasted review-finding list detected" in stderr
+
+
+def test_hook_allows_edit_that_does_not_form_finding_run(tmp_path: Path) -> None:
+    """An Edit on a clean task plan that adds prose must still be allowed."""
+    target = tmp_path / "docs" / "tasks" / "12.0" / "fake-task-plan.md"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "# Task Plan\n\n## Slice 1\n- Implement foo\n- Test bar\n",
+        encoding="utf-8",
+    )
+    payload = {
+        "tool_input": {
+            "file_path": str(target),
+            "old_string": "- Test bar\n",
+            "new_string": "- Test bar\n- Document baz\n",
+        }
+    }
+    rc, stderr = _run_hook(payload)
+    assert rc == 0, f"expected hook to allow, got rc={rc}, stderr={stderr!r}"
+
+
+def test_hook_falls_back_to_new_string_when_file_missing(tmp_path: Path) -> None:
+    """When the target file doesn't exist, the hook still scans new_string."""
+    target = tmp_path / "docs" / "tasks" / "12.0" / "does-not-exist-task-plan.md"
+    target.parent.mkdir(parents=True)
+    payload = {
+        "tool_input": {
+            "file_path": str(target),
+            "old_string": "placeholder",
+            "new_string": (
+                "- AOMCP-3-BR-04: a\n"
+                "- AOMCP-3-BR-05: b\n"
+                "- AOMCP-3-BR-06: c\n"
+            ),
+        }
+    }
+    rc, stderr = _run_hook(payload)
+    assert rc == 2
+    assert "AOMCP-3-BR-04" in stderr
+
+
+def test_hook_replace_all_simulates_global_replacement(tmp_path: Path) -> None:
+    """replace_all=True must apply to every occurrence in the simulated scan."""
+    target = tmp_path / "docs" / "tasks" / "12.0" / "fake-task-plan.md"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "## A\n- TOK\n\n## B\n- TOK\n\n## C\n- TOK\n",
+        encoding="utf-8",
+    )
+    payload = {
+        "tool_input": {
+            "file_path": str(target),
+            "old_string": "- TOK",
+            "new_string": "- AOMCP-3-BR-04: filled in",
+            "replace_all": True,
+        }
+    }
+    # Each TOK becomes a single finding bullet, but they sit in separate
+    # sections so blank lines reset the run. None of the runs reach three
+    # consecutive bullets, so the hook must allow.
+    rc, stderr = _run_hook(payload)
+    assert rc == 0, f"expected allow, got rc={rc}, stderr={stderr!r}"
+
+
+# ---------------------------------------------------------------------------
+# --scan-repo mode (regression for AHMCP-14-BR-03)
+# ---------------------------------------------------------------------------
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=10,
+    )
+
+
+def _init_fake_repo(root: Path) -> None:
+    _git(root, "init", "-q", "-b", "main")
+    _git(root, "config", "user.email", "test@example.com")
+    _git(root, "config", "user.name", "Test")
+    _git(root, "commit", "--allow-empty", "-m", "init", "-q")
+
+
+def _run_hook_in(cwd: Path, *args: str) -> tuple[int, str, str]:
+    proc = subprocess.run(
+        [sys.executable, str(HOOK_SCRIPT), *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def test_scan_repo_catches_task_plan_outside_hard_coded_directories(tmp_path: Path) -> None:
+    """Regression for AHMCP-14-BR-03.
+
+    A file matching the ``*task-plan*.md`` filename glob but living outside
+    the four directories the old Makefile target hard-coded must still be
+    swept by ``make lint-task-plans``. ``--scan-repo`` enumerates every
+    tracked .md file via ``git ls-files`` and applies the same path filter
+    the Claude Code hook uses.
+    """
+    _init_fake_repo(tmp_path)
+    offending = (
+        tmp_path
+        / "packages"
+        / "agent-orchestrator-mcp"
+        / "docs"
+        / "tech-debt"
+        / "orchestrator-chat-tui-task-plan.md"
+    )
+    offending.parent.mkdir(parents=True)
+    offending.write_text(
+        "# Plan\n\n## Findings\n\n"
+        "- AOMCP-3-BR-04: First.\n"
+        "- AOMCP-3-BR-05: Second.\n"
+        "- AOMCP-3-BR-06: Third.\n",
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-m", "add bad plan", "-q")
+
+    rc, _stdout, stderr = _run_hook_in(tmp_path, "--scan-repo")
+    assert rc == 1, f"expected scan-repo to fail, got rc={rc}, stderr={stderr!r}"
+    assert "orchestrator-chat-tui-task-plan.md" in stderr
+    assert "AOMCP-3-BR-04" in stderr
+
+
+def test_scan_repo_passes_on_clean_repo(tmp_path: Path) -> None:
+    _init_fake_repo(tmp_path)
+    plan = tmp_path / "docs" / "tasks" / "12.0" / "clean-task-plan.md"
+    plan.parent.mkdir(parents=True)
+    plan.write_text(
+        "# Plan\n\n## Slice 1\n- Implement foo\n- Test bar\n- Document baz\n",
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-m", "add clean plan", "-q")
+
+    rc, _stdout, stderr = _run_hook_in(tmp_path, "--scan-repo")
+    assert rc == 0, f"expected scan-repo to pass, got rc={rc}, stderr={stderr!r}"
+    assert stderr == ""
+
+
+def test_scan_repo_ignores_unscoped_markdown(tmp_path: Path) -> None:
+    """README.md and CLAUDE.md must remain exempt even with --scan-repo."""
+    _init_fake_repo(tmp_path)
+    readme = tmp_path / "README.md"
+    readme.write_text(
+        "# Repo\n\n"
+        "- AOMCP-3-BR-04: noted\n"
+        "- AOMCP-3-BR-05: noted\n"
+        "- AOMCP-3-BR-06: noted\n",
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-m", "add readme", "-q")
+
+    rc, _stdout, stderr = _run_hook_in(tmp_path, "--scan-repo")
+    assert rc == 0, f"expected scan-repo to pass, got rc={rc}, stderr={stderr!r}"
+
+
+def test_scan_repo_and_scan_paths_are_mutually_exclusive(tmp_path: Path) -> None:
+    rc, _stdout, stderr = _run_hook_in(
+        tmp_path, "--scan-repo", "--scan-paths", str(tmp_path)
+    )
+    assert rc != 0
+    assert "mutually exclusive" in stderr
+
+
 def test_hook_no_op_on_invalid_json() -> None:
     proc = subprocess.run(
         [sys.executable, str(HOOK_SCRIPT)],

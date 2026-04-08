@@ -191,23 +191,6 @@ _ARTIFACT_GET_IDENTITY_FIELDS: frozenset[str] = frozenset(
 _HANDOFF_SEARCH_IDENTITY_FIELDS: frozenset[str] = frozenset({"record_type", "record_id", "task_ref", "snippet"})
 
 
-def _flatten_v2(parsed: dict) -> dict:
-    """Flatten a v2 envelope for internal cross-function consumption.
-
-    Merges ``data`` fields and ``scope.task_ref`` into the top level so that
-    compound tools like ``close_slice`` can access inner-tool results with the
-    same key paths that worked under v1.
-    """
-    if parsed.get("schema_version") != 2:
-        return parsed
-    data = parsed.get("data", {})
-    scope = parsed.get("scope", {})
-    flat: dict = {**parsed, **data}
-    if "task_ref" not in flat and scope.get("task_ref"):
-        flat["task_ref"] = scope["task_ref"]
-    return flat
-
-
 def _normalize_detail(detail: str) -> str:
     return detail if detail in _VALID_DETAIL_LEVELS else "full"
 
@@ -277,7 +260,7 @@ def search_handoff(
     limit: int = 20,
     detail: str = "full",
     fields: str | None = None,
-) -> str:
+) -> dict:
     """Search canonical handoff records by keyword with optional scope filters."""
     if not queries:
         return _envelope(
@@ -404,7 +387,7 @@ def record_artifact(
     content_type: str = "text/plain",
     summary: str | None = None,
     metadata: dict | None = None,
-) -> str:
+) -> dict:
     """Index an artifact source in the sidecar artifact database."""
     config = get_runtime_config()
     sk = _normalize_optional_text(source_kind)
@@ -452,7 +435,7 @@ def search_artifacts(
     offset: int = 0,
     detail: str = "full",
     fields: str | None = None,
-) -> str:
+) -> dict:
     """Search indexed artifact chunks, or list sources when no queries given."""
     config = get_runtime_config()
     detail = _normalize_detail(detail)
@@ -532,7 +515,7 @@ def get_artifact(
     top_n_terms: int = 10,
     detail: str = "full",
     fields: str | None = None,
-) -> str:
+) -> dict:
     """Return the full artifact source record, optionally with distinctive terms."""
     config = get_runtime_config()
     detail = _normalize_detail(detail)
@@ -581,7 +564,7 @@ def purge_artifacts(
     lane_id: str | None = None,
     app_root: str | None = None,
     older_than_days: int | None = None,
-) -> str:
+) -> dict:
     """Delete artifact sources and their FTS chunks."""
     config = get_runtime_config()
     resolved_task_ref: str | None = None
@@ -618,27 +601,28 @@ def load_session(
     task_ref: str | None = None,
     sections: str | None = None,
     detail: str = "full",
-) -> str:
+) -> dict:
     """Load session context: get_handoff_state + list_review_findings(open) in one call.
 
     Passes ``sections`` and ``detail`` through to ``get_handoff_state`` and
     ``detail`` through to ``list_review_findings`` so callers can reduce
     payload size without making two separate calls.
     """
-    state_raw = get_handoff_state(task_ref=task_ref, sections=sections, detail=detail)
-    state = _flatten_v2(json.loads(state_raw))
-    if not state.get("ok"):
-        return state_raw
-    resolved_task_ref = state.get("scope", {}).get("task_ref") or state.get("task_ref")
-    findings_raw = list_review_findings(task_ref=resolved_task_ref, status="open", detail=detail)
-    findings = _flatten_v2(json.loads(findings_raw))
+    state_envelope = get_handoff_state(task_ref=task_ref, sections=sections, detail=detail)
+    if not state_envelope.get("ok"):
+        return state_envelope
+    state_data = state_envelope.get("data", {}) or {}
+    resolved_task_ref = state_envelope.get("scope", {}).get("task_ref")
+    findings_envelope = list_review_findings(task_ref=resolved_task_ref, status="open", detail=detail)
+    findings_data = findings_envelope.get("data", {}) or {}
+    findings_ok = bool(findings_envelope.get("ok"))
     return _envelope(
         ok=True,
         tool="load_session",
         data={
-            "state": state,
-            "open_findings": findings.get("findings", []) if findings.get("ok") else [],
-            "open_findings_count": findings.get("total_matching", 0) if findings.get("ok") else 0,
+            "state": state_data,
+            "open_findings": findings_data.get("findings", []) if findings_ok else [],
+            "open_findings_count": findings_data.get("total_matching", 0) if findings_ok else 0,
         },
         task_ref=resolved_task_ref,
     )
@@ -653,7 +637,7 @@ def close_slice(
     task_ref: str | None = None,
     focus: str | None = None,
     changed_files: list[str] | None = None,
-) -> str:
+) -> dict:
     """Record a slice-complete decision, keep the task in progress, and regenerate CURRENT_TASK.md."""
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
@@ -713,7 +697,7 @@ def close_slice(
                 task_ref=resolved_task_ref,
             )
 
-    decision_raw = record_decision(
+    decision_envelope = record_decision(
         session=session,
         decision=decision,
         rationale=rationale,
@@ -721,31 +705,38 @@ def close_slice(
         task_ref=task_ref,
         changed_files=changed_files,
     )
-    decision_result = _flatten_v2(json.loads(decision_raw))
-    if not decision_result.get("ok"):
-        return decision_raw
-    resolved_task_ref = str(decision_result.get("task_ref", task_ref))
-    state_raw = set_handoff_state(
+    if not decision_envelope.get("ok"):
+        return decision_envelope
+    decision_data = decision_envelope.get("data", {}) or {}
+    decision_payload = decision_data.get("decision", {}) or {}
+    resolved_task_ref = str(
+        decision_envelope.get("scope", {}).get("task_ref")
+        or decision_payload.get("task_ref")
+        or task_ref
+    )
+    state_envelope = set_handoff_state(
         task_ref=resolved_task_ref,
         focus=focus,
         status="in_progress",
         expected_revision=expected_revision,
         actor=actor,
     )
-    state_result = _flatten_v2(json.loads(state_raw))
-    if not state_result.get("ok"):
+    if not state_envelope.get("ok"):
+        state_data = state_envelope.get("data", {}) or {}
         return _envelope(
             ok=False,
             tool="close_slice",
             data={
-                "error": state_result.get("error"),
-                "state_error": state_result.get("error"),
+                "error": state_data.get("error"),
+                "state_error": state_data.get("error"),
                 "decision_recorded": True,
                 "state_updated": False,
                 "current_task_md_written": False,
             },
             task_ref=resolved_task_ref,
         )
+    state_data = state_envelope.get("data", {}) or {}
+    active_block = state_data.get("active", {}) or {}
     _write_current_task_md_from_state(resolved_task_ref)
     return _envelope(
         ok=True,
@@ -755,14 +746,14 @@ def close_slice(
             "state_updated": True,
             "state_error": None,
             "current_task_md_written": True,
-            "decision": decision_result.get("decision"),
-            "task_revision": state_result.get("active", {}).get("revision"),
+            "decision": decision_payload,
+            "task_revision": active_block.get("revision"),
         },
         task_ref=resolved_task_ref,
         mutation={
             "entity": "decision",
             "operation": "close_slice",
-            "task_revision": state_result.get("active", {}).get("revision"),
+            "task_revision": active_block.get("revision"),
         },
         artifacts=[{"type": "current_task_md", "path": "CURRENT_TASK.md", "written": True}],
     )

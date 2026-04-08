@@ -77,7 +77,7 @@ REPO_ROOT="$REPO_ROOT" TASK="$TASK" \
 PYTHONPATH="${REPO_ROOT}/packages/agent-handoff-mcp/src:${REPO_ROOT}/packages/agent-orchestrator-mcp/src" \
   PYENV_VERSION="${PYENV_VERSION:-description-service}" \
   "${PYENV_ROOT:-$HOME/.pyenv}/versions/${PYENV_VERSION:-description-service}/bin/python" -c '
-import json, os, subprocess, sys
+import os, subprocess, sys
 from pathlib import Path
 from agent_handoff_mcp import (
     RuntimeConfig,
@@ -101,20 +101,20 @@ task = os.environ["TASK"]
 head_sha = subprocess.check_output(["git", "rev-parse", "HEAD"]).strip().decode()
 
 # Best-effort status -> done before archive (idempotent if already done).
+# Post-AHMCP-10 the handoff handlers return native dicts (Slice 3 of AHMCP-7),
+# so we read result["ok"] directly with no json.loads round trip.
 try:
-    state = json.loads(update_task_status(task_ref=task, status="done"))
+    state = update_task_status(task_ref=task, status="done")
     if not state.get("ok"):
         print("\u26a0 update_task_status returned ok=False:", state, file=sys.stderr)
 except Exception as exc:
     print("\u26a0 update_task_status skipped:", exc, file=sys.stderr)
 
-archived = json.loads(
-    archive_task_state(task_ref=task, archive_branch="main", archive_commit_sha=head_sha)
-)
+archived = archive_task_state(task_ref=task, archive_branch="main", archive_commit_sha=head_sha)
 if not archived.get("ok"):
     print("\u26a0 archive_task_state returned ok=False:", archived, file=sys.stderr)
 
-regen = json.loads(generate_current_task_md())
+regen = generate_current_task_md()
 if not regen.get("ok"):
     print("\u26a0 generate_current_task_md returned ok=False:", regen, file=sys.stderr)
 print("  OK")

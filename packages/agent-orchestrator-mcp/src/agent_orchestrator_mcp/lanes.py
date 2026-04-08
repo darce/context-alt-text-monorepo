@@ -56,7 +56,7 @@ def upsert_worktree_lane(
     status: str = "planned",
     notes: str | None = None,
     task_ref: str | None = None,
-) -> str:
+) -> dict:
     valid_statuses = LANE_STATUSES
     normalized_lane_id = _normalize_optional_text(lane_id)
     normalized_path = _normalize_optional_text(worktree_path)
@@ -117,7 +117,7 @@ def close_worktree_lane(
     status: str = "closed",
     notes: str | None = None,
     task_ref: str | None = None,
-) -> str:
+) -> dict:
     """Transition a worktree lane to closed or merged status in the handoff database."""
     valid_close_statuses = CLOSEABLE_LANE_STATUSES
     normalized_lane_id = _normalize_optional_text(lane_id)
@@ -149,7 +149,7 @@ def close_worktree_lane(
         return _json_response({"ok": True, "lane": _row_to_dict(row)})
 
 
-def list_worktree_lanes(task_ref: str | None = None, status: str = "all", limit: int = 100, offset: int = 0) -> str:
+def list_worktree_lanes(task_ref: str | None = None, status: str = "all", limit: int = 100, offset: int = 0) -> dict:
     limit = max(1, limit)
     offset = max(0, offset)
     valid_statuses = {"all", *LANE_STATUSES}
@@ -203,7 +203,7 @@ def record_turn_metric(
     raw_usage: dict[str, Any] | None = None,
     actor: WriteActor | None = None,
     task_ref: str | None = None,
-) -> str:
+) -> dict:
     if _normalize_optional_text(session) is None:
         return _json_response({"ok": False, "error": "session is required."})
     normalized_phase = _normalize_optional_text(phase)
@@ -280,7 +280,7 @@ def list_turn_metrics(
     phase: str | None = None,
     limit: int = 50,
     offset: int = 0,
-) -> str:
+) -> dict:
     limit = max(1, limit)
     offset = max(0, offset)
     with _get_db_connection() as conn:
@@ -326,7 +326,7 @@ def list_turn_metrics(
 def get_turn_metrics_summary(
     task_ref: str | None = None,
     lane_id: str | None = None,
-) -> str:
+) -> dict:
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         normalized_lane_id = _normalize_optional_text(lane_id)
@@ -434,7 +434,7 @@ def get_lane_activity(
     limit_actions: int = 20,
     limit_findings: int = 20,
     format: str = "full",
-) -> str:
+) -> dict:
     normalized_lane_id = _normalize_optional_text(lane_id)
     if normalized_lane_id is None:
         return _json_response({"ok": False, "error": "lane_id is required."})
@@ -529,7 +529,7 @@ def get_latest_slice_review_packet(
     task_ref: str | None = None,
     lane_id: str | None = None,
     review_kind: str | None = None,
-) -> str:
+) -> dict:
     normalized_lane_id = _normalize_optional_text(lane_id)
     normalized_review_kind = _normalize_optional_text(review_kind)
     if normalized_review_kind is not None and normalized_review_kind not in REVIEW_KINDS:
@@ -578,7 +578,7 @@ def record_worker_report(
     status: str = "submitted",
     task_ref: str | None = None,
     actor: WriteActor | None = None,
-) -> str:
+) -> dict:
     valid_statuses = REPORT_STATUSES
     normalized_lane_id = _normalize_optional_text(lane_id)
     if normalized_lane_id is None:
@@ -619,7 +619,7 @@ def record_worker_report(
 
 def list_worker_reports(
     task_ref: str | None = None, lane_id: str | None = None, limit: int = 20, offset: int = 0
-) -> str:
+) -> dict:
     limit = max(1, limit)
     offset = max(0, offset)
     normalized_lane_id = _normalize_optional_text(lane_id)
@@ -656,7 +656,7 @@ def record_lane_message(
     payload: dict[str, object] | None = None,
     task_ref: str | None = None,
     actor: WriteActor | None = None,
-) -> str:
+) -> dict:
     valid_directions = LANE_MESSAGE_DIRECTIONS
     valid_statuses = MESSAGE_STATUSES
     normalized_lane_id = _normalize_optional_text(lane_id)
@@ -714,7 +714,7 @@ def record_lane_brief(
     status: str = "open",
     task_ref: str | None = None,
     actor: WriteActor | None = None,
-) -> str:
+) -> dict:
     normalized_reason = _normalize_optional_text(reason)
     normalized_summary = _normalize_optional_text(summary)
     normalized_source_lane = _normalize_optional_text(source_lane)
@@ -753,7 +753,7 @@ def update_lane_message(
     status: str,
     task_ref: str | None = None,
     actor: WriteActor | None = None,
-) -> str:
+) -> dict:
     valid_statuses = MESSAGE_STATUSES
     if status not in valid_statuses:
         return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(valid_statuses))}"})
@@ -782,7 +782,7 @@ def list_lane_messages(
     offset: int = 0,
     direction: str | None = None,
     subject_prefix: str | None = None,
-) -> str:
+) -> dict:
     """List lane messages with optional scope and content filters.
 
     ``direction`` restricts to a specific message direction (e.g. ``"orchestrator_to_worker"``).
@@ -844,7 +844,7 @@ def list_lane_messages(
 
 def list_lane_briefs(
     task_ref: str | None = None, lane_id: str | None = None, status: str = "open", limit: int = 20, offset: int = 0
-) -> str:
+) -> dict:
     valid_statuses = {"all", *MESSAGE_STATUSES}
     if status not in valid_statuses:
         return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(valid_statuses))}"})
@@ -943,7 +943,7 @@ def upsert_plan_cursor(
     summary: str | None = None,
     task_ref: str | None = None,
     require_clean_slice: bool = False,
-) -> str:
+) -> dict:
     valid_states = {"dispatched", "completed", "skipped", "escalated"}
     normalized_plan_item_id = _normalize_optional_text(plan_item_id)
     normalized_lane_id = _normalize_optional_text(lane_id)
@@ -1039,7 +1039,7 @@ def upsert_plan_cursor(
         return _json_response({"ok": True, "cursor": row})
 
 
-def get_plan_cursor(plan_item_id: str, task_ref: str | None = None) -> str:
+def get_plan_cursor(plan_item_id: str, task_ref: str | None = None) -> dict:
     normalized_plan_item_id = _normalize_optional_text(plan_item_id)
     if normalized_plan_item_id is None:
         return _json_response({"ok": False, "error": "plan_item_id is required."})
@@ -1058,7 +1058,7 @@ def list_plan_cursors(
     lane_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
-) -> str:
+) -> dict:
     valid_states = {"all", "dispatched", "completed", "skipped", "escalated"}
     if state not in valid_states:
         return _json_response({"ok": False, "error": f"Invalid state. Valid: {', '.join(sorted(valid_states))}"})

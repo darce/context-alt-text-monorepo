@@ -15,20 +15,25 @@ def _run_cli(argv: list[str], capsys) -> dict:
         cli.main()
     finally:
         sys.argv = original_argv
-    raw = json.loads(capsys.readouterr().out)
-    if isinstance(raw, dict) and raw.get("schema_version") == 2:
-        data = raw.get("data", {})
-        scope = raw.get("scope", {})
-        flat = {**raw, **data}
-        if "task_ref" not in flat and scope.get("task_ref"):
-            flat["task_ref"] = scope["task_ref"]
-        return flat
-    return raw
+    return _parse_response(capsys.readouterr().out)
 
 
-def _parse_response(raw: str) -> dict:
-    """Parse JSON and flatten v2 envelope for backward-compatible test assertions."""
-    result = json.loads(raw)
+def _parse_response(raw: str | dict) -> dict:
+    """Convenience accessor (AHMCP-10): handlers now return dicts natively.
+
+    This helper accepts:
+      - native ``dict`` returned by an MCP handler call (the new path)
+      - ``str`` JSON output from CLI stdout capture
+      - ``str`` JSON pulled from a stored DB column (e.g.
+        ``decision["changed_files_json"]``); the parsed value may itself be
+        a list, in which case the v2-envelope merge below short-circuits.
+
+    The previous AHMCP-7 helper assumed string-only handler returns; the
+    AHMCP-10 dict-return refactor flipped handler signatures to ``-> dict``
+    and we route every former ``json.loads(...)`` call site through this
+    helper to handle both shapes uniformly.
+    """
+    result = raw if isinstance(raw, dict) else json.loads(raw)
     if isinstance(result, dict) and result.get("schema_version") == 2:
         data = result.get("data", {})
         scope = result.get("scope", {})
@@ -56,8 +61,8 @@ def test_doctor_cli_reports_workspace_paths(tmp_path: Path, capsys) -> None:
 
 def test_state_review_list_and_close_check_cli_smoke(tmp_path: Path, capsys) -> None:
     api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
-    json.loads(api.set_handoff_state(task_ref="task-1", objective="cli smoke"))
-    json.loads(
+    _parse_response(api.set_handoff_state(task_ref="task-1", objective="cli smoke"))
+    _parse_response(
         api.record_review_finding(
             session="cli",
             finding_id="M-1",
@@ -109,9 +114,9 @@ def test_state_review_list_and_close_check_cli_smoke(tmp_path: Path, capsys) -> 
 def test_state_cli_sections_flag(tmp_path: Path, capsys) -> None:
     """--sections limits which data sections appear in CLI output."""
     api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
-    json.loads(api.set_handoff_state(task_ref="sec-cli", objective="sections cli smoke"))
-    json.loads(api.record_decision(session="s1", decision="d1"))
-    json.loads(api.report_blocker(operation="add", description="b1"))
+    _parse_response(api.set_handoff_state(task_ref="sec-cli", objective="sections cli smoke"))
+    _parse_response(api.record_decision(session="s1", decision="d1"))
+    _parse_response(api.report_blocker(operation="add", description="b1"))
 
     payload = _run_cli(
         ["agent-handoff-mcp", "--workspace-root", str(tmp_path), "state", "--sections", "decisions_recent"],
@@ -138,8 +143,8 @@ def test_state_cli_sections_flag(tmp_path: Path, capsys) -> None:
 def test_state_cli_detail_flag(tmp_path: Path, capsys) -> None:
     """--detail summary truncates long fields via CLI."""
     api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
-    json.loads(api.set_handoff_state(task_ref="det-cli", objective="detail cli smoke"))
-    json.loads(api.record_decision(session="s1", decision="d1", rationale="R" * 500))
+    _parse_response(api.set_handoff_state(task_ref="det-cli", objective="detail cli smoke"))
+    _parse_response(api.record_decision(session="s1", decision="d1", rationale="R" * 500))
 
     full = _run_cli(
         ["agent-handoff-mcp", "--workspace-root", str(tmp_path), "state", "--detail", "full"],
@@ -158,8 +163,8 @@ def test_state_cli_detail_flag(tmp_path: Path, capsys) -> None:
 def test_review_list_cli_detail_flag(tmp_path: Path, capsys) -> None:
     """review-findings --operation list --detail summary truncates long fields via CLI."""
     api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
-    json.loads(api.set_handoff_state(task_ref="rl-det", objective="review-list detail smoke"))
-    json.loads(
+    _parse_response(api.set_handoff_state(task_ref="rl-det", objective="review-list detail smoke"))
+    _parse_response(
         api.record_review_finding(
             session="cli",
             finding_id="M-1",
@@ -203,8 +208,8 @@ def test_review_list_cli_detail_flag(tmp_path: Path, capsys) -> None:
 
 def test_artifact_search_cli_fields_flag(tmp_path: Path, capsys) -> None:
     api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
-    json.loads(api.set_handoff_state(task_ref="artifact-search-cli", objective="artifact search cli"))
-    json.loads(
+    _parse_response(api.set_handoff_state(task_ref="artifact-search-cli", objective="artifact search cli"))
+    _parse_response(
         api.record_artifact(
             task_ref="artifact-search-cli",
             source_kind="log",
@@ -237,8 +242,8 @@ def test_artifact_search_cli_fields_flag(tmp_path: Path, capsys) -> None:
 
 def test_artifact_list_cli_fields_flag(tmp_path: Path, capsys) -> None:
     api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
-    json.loads(api.set_handoff_state(task_ref="artifact-list-cli", objective="artifact list cli"))
-    json.loads(
+    _parse_response(api.set_handoff_state(task_ref="artifact-list-cli", objective="artifact list cli"))
+    _parse_response(
         api.record_artifact(
             task_ref="artifact-list-cli",
             source_kind="log",
@@ -269,7 +274,7 @@ def test_artifact_list_cli_fields_flag(tmp_path: Path, capsys) -> None:
 
 def test_artifact_get_cli_detail_and_fields_flags(tmp_path: Path, capsys) -> None:
     api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
-    json.loads(api.set_handoff_state(task_ref="artifact-get-cli", objective="artifact get cli"))
+    _parse_response(api.set_handoff_state(task_ref="artifact-get-cli", objective="artifact get cli"))
     recorded = _parse_response(
         api.record_artifact(
             task_ref="artifact-get-cli",
@@ -304,8 +309,8 @@ def test_artifact_get_cli_detail_and_fields_flags(tmp_path: Path, capsys) -> Non
 
 def test_handoff_search_cli_fields_flag(tmp_path: Path, capsys) -> None:
     api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
-    json.loads(api.set_handoff_state(task_ref="handoff-search-cli", objective="handoff search cli"))
-    json.loads(api.record_decision(session="cli", decision="handoff search keyword"))
+    _parse_response(api.set_handoff_state(task_ref="handoff-search-cli", objective="handoff search cli"))
+    _parse_response(api.record_decision(session="cli", decision="handoff search keyword"))
 
     payload = _run_cli(
         [
@@ -329,7 +334,7 @@ def test_handoff_search_cli_fields_flag(tmp_path: Path, capsys) -> None:
 def test_event_cli_decision_variant_persists_changed_files(tmp_path: Path, capsys) -> None:
     """event --event-kind decision persists structured scope metadata."""
     api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
-    json.loads(api.set_handoff_state(task_ref="dec-cli", objective="decision cli changed files"))
+    _parse_response(api.set_handoff_state(task_ref="dec-cli", objective="decision cli changed files"))
 
     payload = _run_cli(
         [
@@ -353,7 +358,7 @@ def test_event_cli_decision_variant_persists_changed_files(tmp_path: Path, capsy
     )
 
     assert payload["ok"] is True
-    assert json.loads(payload["decision"]["changed_files_json"]) == [
+    assert _parse_response(payload["decision"]["changed_files_json"]) == [
         "packages/agent-handoff-mcp/src/agent_handoff_mcp/decisions.py",
         "packages/agent-handoff-mcp/tests/test_cli.py",
     ]
@@ -361,8 +366,8 @@ def test_event_cli_decision_variant_persists_changed_files(tmp_path: Path, capsy
 
 def test_review_update_cli_accepts_explicit_task_ref(tmp_path: Path, capsys) -> None:
     api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
-    json.loads(api.set_handoff_state(task_ref="task-a", objective="task a"))
-    json.loads(
+    _parse_response(api.set_handoff_state(task_ref="task-a", objective="task a"))
+    _parse_response(
         api.record_review_finding(
             session="cli",
             finding_id="M-9",
@@ -371,7 +376,7 @@ def test_review_update_cli_accepts_explicit_task_ref(tmp_path: Path, capsys) -> 
             description="cross-task cli update",
         )
     )
-    json.loads(api.set_handoff_state(task_ref="task-b", objective="task b", expected_revision=0))
+    _parse_response(api.set_handoff_state(task_ref="task-b", objective="task b", expected_revision=0))
 
     payload = _run_cli(
         [
@@ -398,8 +403,8 @@ def test_review_update_cli_accepts_explicit_task_ref(tmp_path: Path, capsys) -> 
 
 def test_review_update_cli_accepts_verified_commit_sha(tmp_path: Path, capsys, monkeypatch) -> None:
     api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
-    json.loads(api.set_handoff_state(task_ref="task-a", objective="task a"))
-    json.loads(
+    _parse_response(api.set_handoff_state(task_ref="task-a", objective="task a"))
+    _parse_response(
         api.record_review_finding(
             session="cli",
             finding_id="M-10",

@@ -62,15 +62,13 @@ def test_close_dry_run_prints_cleanup_commands(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     api.configure_runtime(api.RuntimeConfig.for_workspace(repo))
-    json.loads(api.set_handoff_state(task_ref="task-1", objective="lane close"))
-    json.loads(
-        api.upsert_worktree_lane(
-            task_ref="task-1",
-            lane_id="frontend",
-            worktree_path=str(repo / "frontend"),
-            branch="codex/frontend",
-            status="closed",
-        )
+    api.set_handoff_state(task_ref="task-1", objective="lane close")
+    api.upsert_worktree_lane(
+        task_ref="task-1",
+        lane_id="frontend",
+        worktree_path=str(repo / "frontend"),
+        branch="codex/frontend",
+        status="closed",
     )
 
     result = subprocess.run(

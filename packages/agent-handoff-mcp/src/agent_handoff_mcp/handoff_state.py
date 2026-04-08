@@ -29,7 +29,7 @@ def set_handoff_state(
     actor: WriteActor | None = None,
     target_branch: str | None = None,
     target_worktree_path: str | None = None,
-) -> str:
+) -> dict:
     _tool = "set_handoff_state"
     if status not in HANDOFF_ACTIVE_STATUSES:
         return _envelope(
@@ -224,7 +224,7 @@ def get_handoff_state(
     include_archived: bool = True,
     sections: str | None = None,
     detail: str = "full",
-) -> str:
+) -> dict:
     if detail not in _VALID_DETAIL_LEVELS:
         detail = "full"
     if view == "dashboard":
@@ -388,7 +388,7 @@ def get_handoff_state(
         )
 
 
-def _get_handoff_dashboard_view(limit: int = 20, include_archived: bool = True) -> str:
+def _get_handoff_dashboard_view(limit: int = 20, include_archived: bool = True) -> dict:
     with _get_db_connection() as conn:
         from .current_task_rendering import _collect_dashboard_rows  # noqa: PLC0415
 

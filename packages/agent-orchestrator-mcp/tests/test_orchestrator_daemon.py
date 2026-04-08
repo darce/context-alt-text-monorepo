@@ -439,7 +439,7 @@ def _configure_real_runtime(tmp_path: Path, task_ref: str) -> RuntimeConfig:
         exports_dir=tmp_path / ".task-state" / "exports",
     )
     mcp_api.configure_runtime(runtime)
-    json.loads(mcp_api.set_handoff_state(task_ref=task_ref, objective="daemon integration", status="in_progress"))
+    mcp_api.set_handoff_state(task_ref=task_ref, objective="daemon integration", status="in_progress")
     return runtime
 
 

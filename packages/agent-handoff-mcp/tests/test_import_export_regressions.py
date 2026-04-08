@@ -12,8 +12,9 @@ from agent_handoff_mcp import core as handoff_core
 from agent_handoff_mcp.config import RuntimeConfig
 
 
-def _parse(payload: str) -> dict:
-    raw = json.loads(payload)
+def _parse(payload: str | dict) -> dict:
+    """Convenience accessor (AHMCP-10): handlers now return dicts directly."""
+    raw = payload if isinstance(payload, dict) else json.loads(payload)
     if isinstance(raw, dict) and raw.get("schema_version") == 2:
         data = raw.get("data", {})
         scope = raw.get("scope", {})

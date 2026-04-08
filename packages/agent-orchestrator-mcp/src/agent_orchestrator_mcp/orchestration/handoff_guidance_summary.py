@@ -9,8 +9,9 @@ from typing import Any
 from agent_orchestrator_mcp.lanes import list_lane_messages, list_worker_reports
 
 
-def _json_load(payload: str) -> dict[str, Any]:
-    data = json.loads(payload)
+def _json_load(payload: str | dict[str, Any]) -> dict[str, Any]:
+    """Normalise an inner-tool result to a dict (AHMCP-10 dict-return migration)."""
+    data = payload if isinstance(payload, dict) else json.loads(payload)
     if not isinstance(data, dict):
         raise RuntimeError("Expected JSON object payload.")
     return data

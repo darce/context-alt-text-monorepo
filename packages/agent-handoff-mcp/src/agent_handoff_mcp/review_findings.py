@@ -219,7 +219,7 @@ def record_review_finding(
     actor: WriteActor | None = None,
     task_ref: str | None = None,
     review_mode: str | None = None,
-) -> str:
+) -> dict:
     if severity not in REVIEW_FINDING_SEVERITIES:
         return _envelope(
             ok=False,
@@ -326,7 +326,7 @@ def batch_record_review_findings(
     findings: list[BatchFindingItem],
     actor: WriteActor | None = None,
     task_ref: str | None = None,
-) -> str:
+) -> dict:
     """Record or reopen multiple review findings in a single atomic write."""
     if len(findings) > _BATCH_MAX_SIZE:
         return _envelope(
@@ -503,7 +503,7 @@ def _apply_finding_update(
     normalized_reopen_reason: str | None,
     normalized_verified_commit_sha: str | None,
     normalized_verification_evidence: str | None,
-) -> str:
+) -> dict:
     """Execute the UPDATE and return the JSON response."""
     finding_commit_sha = _normalize_optional_text(existing["commit_sha"])
     current_commit_sha = _normalize_optional_text(ctx.commit_sha)
@@ -638,7 +638,7 @@ def update_review_finding(
     actor: WriteActor | None = None,
     verified_commit_sha: str | None = None,
     verification_evidence: str | None = None,
-) -> str:
+) -> dict:
     normalized_finding_id = finding_id.strip() if isinstance(finding_id, str) else None
     normalized_resolution_notes = _normalize_optional_text(resolution_notes)
     normalized_reopen_reason = _normalize_optional_text(reopen_reason)
@@ -789,7 +789,7 @@ def list_review_findings(
     finding_id: str | None = None,
     finding_db_id: int | None = None,
     detail: str = "full",
-) -> str:
+) -> dict:
     if detail not in ("full", "summary"):
         detail = "full"
 
@@ -998,7 +998,7 @@ def get_review_findings_summary(
     top_n_open: int = 5,
     top_n_recent_updates: int = 3,
     review_mode: str | None = None,
-) -> str:
+) -> dict:
     top_n_open = max(1, top_n_open)
     top_n_recent_updates = max(1, top_n_recent_updates)
     try:
@@ -1189,7 +1189,7 @@ def _collect_review_findings_integrity(conn: sqlite3.Connection, task_ref: str, 
     }
 
 
-def reconcile_review_findings(task_ref: str | None = None, apply: bool = False) -> str:
+def reconcile_review_findings(task_ref: str | None = None, apply: bool = False) -> dict:
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         report = _collect_review_findings_integrity(conn, resolved_task_ref, apply=apply)
@@ -1222,7 +1222,7 @@ def record_review_run(
     verdict_decision: str | None = None,
     task_ref: str | None = None,
     actor: WriteActor | None = None,
-) -> str:
+) -> dict:
     """Record a completed review pass in the review_runs ledger.
 
     ``review_run_id`` must be globally unique; the caller is responsible for
@@ -1345,7 +1345,7 @@ def list_review_runs(
     offset: int = 0,
     review_mode: str | None = None,
     verdict: str | None = None,
-) -> str:
+) -> dict:
     """List review-run ledger entries, optionally filtered by task_ref, subject_path,
     review_mode, or verdict.  At least one filter is recommended; an empty filter
     returns all runs ordered by recency."""
@@ -1414,7 +1414,7 @@ def list_review_runs(
 def get_review_coverage(
     task_ref: str | None = None,
     subject_path: str | None = None,
-) -> str:
+) -> dict:
     """Return a review-coverage summary for a task or subject artifact.
 
     Provide ``task_ref``, ``subject_path``, or both.  When both are given,

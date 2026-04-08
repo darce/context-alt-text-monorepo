@@ -139,18 +139,19 @@ def test_summarize_test_result_falls_back_to_last_line() -> None:
     assert handoff_core._summarize_test_result(result) == "3 passed in 0.12s"
 
 
-def _parse(payload: str) -> dict:
-    """Parse JSON and flatten v2 envelope for backward-compatible test assertions.
+def _parse(payload: str | dict) -> dict:
+    """Convenience accessor for test assertions.
 
-    If the response has schema_version=2, merge data into the top level so
-    tests can access result["active"] instead of result["data"]["active"].
-    Envelope metadata (schema_version, tool, scope, mutation, artifacts, warnings)
-    remains accessible at the top level.
+    Post-AHMCP-10, handlers return dicts directly. This helper merges
+    ``data`` and ``scope.task_ref`` into the top level so existing test
+    assertions like ``result["active"]`` keep working without rewriting
+    every test body to use ``result["data"]["active"]``. The string
+    branch survives only for the rare callers that capture serialised
+    CLI output (the CLI still prints JSON to stdout).
     """
-    raw = json.loads(payload)
+    raw = payload if isinstance(payload, dict) else json.loads(payload)
     if isinstance(raw, dict) and raw.get("schema_version") == 2:
         data = raw.get("data", {})
-        # Promote scope fields to top level for convenience
         scope = raw.get("scope", {})
         flat = {**raw, **data}
         if "task_ref" not in flat and scope.get("task_ref"):
@@ -748,8 +749,8 @@ def test_v2_envelope_shape_on_read_surfaces(isolated_handoff: dict) -> None:
     """Read surfaces return the v2 envelope with schema_version, tool, scope, data."""
     _parse(mcp_server.set_handoff_state(task_ref="env-test", objective="Envelope shape", status="in_progress"))
 
-    # get_handoff_state
-    raw_state = json.loads(mcp_server.get_handoff_state(task_ref="env-test"))
+    # get_handoff_state — handlers return dicts natively (AHMCP-10)
+    raw_state = mcp_server.get_handoff_state(task_ref="env-test")
     assert raw_state["schema_version"] == 2
     assert raw_state["tool"] == "get_handoff_state"
     assert raw_state["scope"]["task_ref"] == "env-test"
@@ -758,14 +759,14 @@ def test_v2_envelope_shape_on_read_surfaces(isolated_handoff: dict) -> None:
     assert "limits" in raw_state["data"]
 
     # generate_current_task_md
-    raw_gen = json.loads(mcp_server.generate_current_task_md(task_ref="env-test", write_file=False))
+    raw_gen = mcp_server.generate_current_task_md(task_ref="env-test", write_file=False)
     assert raw_gen["schema_version"] == 2
     assert raw_gen["tool"] == "generate_current_task_md"
     assert raw_gen["scope"]["task_ref"] == "env-test"
     assert "markdown" in raw_gen["data"]
 
     # dashboard view
-    raw_dash = json.loads(mcp_server.get_handoff_state(view="dashboard"))
+    raw_dash = mcp_server.get_handoff_state(view="dashboard")
     assert raw_dash["schema_version"] == 2
     assert raw_dash["tool"] == "get_handoff_state"
     assert "tasks" in raw_dash["data"]
@@ -775,7 +776,7 @@ def test_v2_envelope_no_legacy_mirroring(isolated_handoff: dict) -> None:
     """Compact envelope puts data in the ``data`` block only — no top-level mirrors."""
     _parse(mcp_server.set_handoff_state(task_ref="compact-env", objective="Compact envelope", status="in_progress"))
 
-    raw_state = json.loads(mcp_server.get_handoff_state(task_ref="compact-env"))
+    raw_state = mcp_server.get_handoff_state(task_ref="compact-env")
     assert raw_state["schema_version"] == 2
     assert raw_state["task_ref"] == "compact-env"
     # Canonical data block contains the payload
@@ -785,7 +786,7 @@ def test_v2_envelope_no_legacy_mirroring(isolated_handoff: dict) -> None:
     assert "active" not in raw_state
     assert "limits" not in raw_state
 
-    raw_error = json.loads(mcp_server.handoff_close_check(require_fresh_tests=True))
+    raw_error = mcp_server.handoff_close_check(require_fresh_tests=True)
     assert raw_error["ok"] is False
     assert "error" in raw_error["data"]
     assert "error" not in raw_error  # no legacy mirror

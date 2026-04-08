@@ -73,7 +73,7 @@ def record_decision(
     output_tokens: int | None = None,
     total_tokens: int | None = None,
     changed_files: list[str] | None = None,
-) -> str:
+) -> dict:
     validation_error = _validate_decision_payload(decision, rationale)
     if validation_error is not None:
         return _envelope(ok=False, tool="record_decision", data={"error": validation_error})
@@ -143,7 +143,7 @@ def update_next_actions(
     status: str | None = None,
     actor: WriteActor | None = None,
     task_ref: str | None = None,
-) -> str:
+) -> dict:
     valid_operations = {"add", "update", "complete", "skip"}
     if operation not in valid_operations:
         return _envelope(
@@ -271,7 +271,7 @@ def list_next_actions(
     status: str = "all",
     limit: int = 100,
     offset: int = 0,
-) -> str:
+) -> dict:
     valid_statuses = {"all", *ACTION_STATUSES}
     if status not in valid_statuses:
         return _envelope(
@@ -327,7 +327,7 @@ def record_test_result(
     exit_code: int | None = None,
     actor: WriteActor | None = None,
     task_ref: str | None = None,
-) -> str:
+) -> dict:
     summarized_result = _summarize_test_result(result)
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
@@ -372,7 +372,7 @@ def report_blocker(
     blocker_id: int | None = None,
     actor: WriteActor | None = None,
     task_ref: str | None = None,
-) -> str:
+) -> dict:
     valid_operations = {"add", "resolve", "reopen"}
     if operation not in valid_operations:
         return _envelope(
@@ -589,7 +589,7 @@ def handoff_close_check(
     enforce: bool = False,
     require_fresh_tests: bool = False,
     current_commit_sha: str | None = None,
-) -> str:
+) -> dict:
     normalized_current_commit_sha = _normalize_optional_text(current_commit_sha)
     if require_fresh_tests and normalized_current_commit_sha is None:
         return _envelope(
@@ -735,7 +735,7 @@ def audit_decision_ids(
     task_ref: str | None = None,
     limit: int = 50,
     include_categories: list[str] | None = None,
-) -> str:
+) -> dict:
     """Audit recent decision ids for grammar conformance and report violations.
 
     Classifies every decision row (newest first) for the active or requested

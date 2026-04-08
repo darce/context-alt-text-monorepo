@@ -31,8 +31,13 @@ Operating modes
    the task-plan directories and scans each staged file blob. Suitable for a
    git ``pre-commit`` hook.
 
-3. ``--scan-paths <path> [...]``: scans the on-disk content of each path. Used
-   by ``make lint-task-plans`` to sweep the whole repo.
+3. ``--scan-paths <path> [...]``: scans the on-disk content of each path
+   (file or directory). Useful for ad-hoc sweeps of a known subtree.
+
+4. ``--scan-repo``: enumerates ``git ls-files '*.md'`` from the repo root and
+   filters by the same path scope used by the Claude Code hook mode. This is
+   the mode wired into ``make lint-task-plans`` so CI sees every file the
+   hook would block, not just a hard-coded subset of directories.
 
 Path filter
 -----------
@@ -188,9 +193,20 @@ def _format_block_reason(rel_path: str, runs: list[tuple[int, list[str]]]) -> st
 def _extract_claude_payload(stdin_data: dict) -> tuple[str, str] | None:
     """Pull (file_path, content_to_scan) from a Claude Code PreToolUse payload.
 
+    For Write tools, scan the full ``content`` being written.
+
+    For Edit tools, simulate the replacement against the current file content
+    and scan the result. The hook must catch incremental edits whose
+    ``new_string`` alone contains fewer than three finding bullets but whose
+    post-edit document does — for example, an Edit that adds the third bullet
+    to a file that already had two. Scanning ``new_string`` in isolation
+    misses that case (AHMCP-14-BR-04).
+
+    If the target file does not exist or cannot be read, fall back to scanning
+    ``new_string`` so an obviously bad payload still trips the guard.
+
     Returns None when the tool input is not a markdown write/edit we care
-    about. Edit tools yield the new_string only — that is what is being
-    *inserted*, which is the right thing to scan.
+    about.
     """
     tool_input = stdin_data.get("tool_input") or {}
     if not isinstance(tool_input, dict):
@@ -204,12 +220,36 @@ def _extract_claude_payload(stdin_data: dict) -> tuple[str, str] | None:
     if "content" in tool_input and isinstance(tool_input["content"], str):
         return file_path, tool_input["content"]
 
-    # Edit tool: scan the new_string. (replace_all is irrelevant: pasted
-    # finding lists are unique strings.)
-    if "new_string" in tool_input and isinstance(tool_input["new_string"], str):
-        return file_path, tool_input["new_string"]
+    # Edit tool: simulate the replacement so the scan sees the post-edit
+    # document, not just the inserted fragment.
+    new_string = tool_input.get("new_string")
+    if not isinstance(new_string, str):
+        return None
 
-    return None
+    raw_old = tool_input.get("old_string")
+    old_string = raw_old if isinstance(raw_old, str) else ""
+    replace_all = bool(tool_input.get("replace_all", False))
+
+    try:
+        existing = Path(file_path).read_text(encoding="utf-8")
+    except OSError:
+        # File missing or unreadable — Edit would fail anyway. Fall back to
+        # scanning new_string alone so a self-contained bad payload still
+        # blocks.
+        return file_path, new_string
+
+    if old_string and old_string in existing:
+        simulated = (
+            existing.replace(old_string, new_string)
+            if replace_all
+            else existing.replace(old_string, new_string, 1)
+        )
+    else:
+        # old_string not found — the actual Edit will fail. Scan new_string
+        # alone so a payload that pastes a finding list still trips the guard.
+        simulated = new_string
+
+    return file_path, simulated
 
 
 def _to_repo_relative(path: str, repo_root: str) -> str:
@@ -352,6 +392,57 @@ def _run_scan_paths(targets: list[str]) -> int:
 
 
 # ---------------------------------------------------------------------------
+# --scan-repo mode (make lint-task-plans)
+# ---------------------------------------------------------------------------
+
+
+def _run_scan_repo() -> int:
+    """Sweep every tracked .md file in the repo through the path filter.
+
+    The Claude Code hook mode treats any path containing ``/docs/tasks/`` or
+    ``/docs/epics/``, plus any filename matching ``*task-plan*.md`` or
+    ``*-plan.md``, as in scope. CI must mirror that scope or a bypassed local
+    hook can land forbidden finding lists in files outside the hard-coded
+    subtree (AHMCP-14-BR-03). Using ``git ls-files`` keeps the discovery
+    grounded in tracked files and lets the same ``_path_should_be_scanned``
+    helper that gates the hook also gate the sweep.
+    """
+    repo_root = _git_repo_root()
+    if not repo_root:
+        sys.stderr.write("guard-task-plan-findings: not inside a git repo\n")
+        return 1
+    proc = subprocess.run(
+        ["git", "-C", repo_root, "ls-files", "-z", "*.md"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=15,
+    )
+    if proc.returncode != 0:
+        sys.stderr.write(
+            "guard-task-plan-findings: git ls-files failed: " + proc.stderr
+        )
+        return 1
+    failures: list[str] = []
+    repo_root_path = Path(repo_root)
+    for entry in proc.stdout.split("\0"):
+        rel_path = entry.strip()
+        if not rel_path or not _path_should_be_scanned(rel_path):
+            continue
+        try:
+            text = (repo_root_path / rel_path).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        runs = _detect_finding_runs(text)
+        if runs:
+            failures.append(_format_block_reason(rel_path, runs))
+    if failures:
+        sys.stderr.write("\n\n".join(failures) + "\n")
+        return 1
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -369,15 +460,25 @@ def main(argv: list[str] | None = None) -> int:
         metavar="PATH",
         help="Scan the given files or directories on disk.",
     )
+    parser.add_argument(
+        "--scan-repo",
+        action="store_true",
+        help="Sweep every tracked .md file in the repo through the path filter.",
+    )
     args = parser.parse_args(argv)
 
-    if args.scan_staged and args.scan_paths:
-        parser.error("--scan-staged and --scan-paths are mutually exclusive")
+    selected = sum(bool(x) for x in (args.scan_staged, args.scan_paths, args.scan_repo))
+    if selected > 1:
+        parser.error(
+            "--scan-staged, --scan-paths, and --scan-repo are mutually exclusive"
+        )
 
     if args.scan_staged:
         return _run_scan_staged()
     if args.scan_paths:
         return _run_scan_paths(args.scan_paths)
+    if args.scan_repo:
+        return _run_scan_repo()
     return _run_claude_hook()
 
 

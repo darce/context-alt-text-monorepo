@@ -57,6 +57,9 @@ Notes:
 - When the service cannot acquire a database connection from the pool, the route returns `503` with `{ "error": "database_unavailable", "trace_id": "...", "path": "..." }` and a `Retry-After: 5` header.
 - Generic unhandled `500` responses expose `trace_id` and `path`, but no longer leak raw exception class names or messages.
 - The request uses the tenant-aware session provided by `get_optional_session()` and does not repeat tenant-context setup inside `get_job_status()`.
+- Completed clustering responses may include `snapshot_version`, `source_job_id`, `projection_acknowledged_at`, and an optional `projection_payload`.
+- `projection_payload` mirrors the tenant delta envelope for `since_version=0` and exists to let the WordPress plugin project durable local state from the same successful job-status read that reported `awaiting_projection`.
+- When `projection_acknowledged_at` is non-null or the payload version no longer matches `snapshot_version`, `projection_payload` may be omitted.
 
 ### POST /recognition/jobs/{job_id}/cancel
 

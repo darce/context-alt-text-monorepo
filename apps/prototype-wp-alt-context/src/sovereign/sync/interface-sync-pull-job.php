@@ -10,4 +10,9 @@ interface SyncPullJobInterface {
 	public function perform( string $tenant_id ): SyncPullResult;
 
 	public function perform_bypass_cooldown( string $tenant_id ): SyncPullResult;
+
+	/**
+	 * @param array<string,mixed> $payload
+	 */
+	public function perform_projection_payload( string $tenant_id, array $payload ): SyncPullResult;
 }

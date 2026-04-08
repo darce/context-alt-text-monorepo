@@ -121,14 +121,19 @@ export const fetchTopUnlabeledClusters = async (
   }
 
   const projectionStatus = parseProjectionStatus(payload.projection_status);
-  if (!projectionStatus) {
+  if (dataSource === 'unavailable' && !projectionStatus) {
     throw new Error('Top-unlabeled clusters response must include a valid projection_status.');
   }
 
+  const singletonCount =
+    dataSource === 'backend_proxy'
+      ? undefined
+      : requireTopUnlabeledNumber(payload.singleton_count, 'singleton_count');
+
   return {
     clusters: payload.clusters.map(normalizeTopUnlabeledCluster),
-    singleton_count: requireTopUnlabeledNumber(payload.singleton_count, 'singleton_count'),
+    singleton_count: singletonCount,
     data_source: dataSource,
-    projection_status: projectionStatus,
+    projection_status: projectionStatus ?? undefined,
   };
 };

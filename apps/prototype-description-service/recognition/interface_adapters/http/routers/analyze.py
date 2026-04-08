@@ -46,7 +46,7 @@ from recognition.interface_adapters.http.schemas.requests import (
     AnalyzeRequest,
     _validate_uuid,
 )
-from recognition.interface_adapters.http.schemas.responses import JobProgressResponse, JobStatusResponse
+from recognition.interface_adapters.http.schemas.responses import ClusterDeltaResponse, JobProgressResponse, JobStatusResponse
 from recognition.shared.db.dialect import is_postgres
 
 logger = logging.getLogger(__name__)
@@ -73,6 +73,7 @@ async def _job_to_pipeline_response(
     domain_job: Job | None,
     repo: JobRepository,
     scan_repo,
+    cluster_repo=None,
 ):
     resolved_job = await _resolve_pipeline_job(requested_job_id=requested_job_id, domain_job=domain_job, repo=repo)
     if resolved_job is None:
@@ -103,7 +104,40 @@ async def _job_to_pipeline_response(
             response.snapshot_version = projection.snapshot_version
             response.source_job_id = projection.source_job_id
             response.projection_acknowledged_at = projection.acknowledged_at
+            if projection.snapshot_version > 0 and projection.acknowledged_at is None:
+                response.projection_payload = await _build_projection_payload(
+                    tenant_id=resolved_job.tenant_id,
+                    snapshot_version=projection.snapshot_version,
+                    cluster_repo=cluster_repo,
+                )
     return response
+
+
+async def _build_projection_payload(
+    *,
+    tenant_id: str,
+    snapshot_version: int,
+    cluster_repo,
+) -> ClusterDeltaResponse | None:
+    if cluster_repo is None or snapshot_version <= 0:
+        return None
+
+    from recognition.interface_adapters.http.routers.clusters import (
+        _build_cluster_responses,
+        _build_member_responses,
+    )
+
+    clusters, members_with_identities, payload_version = await cluster_repo.get_delta(tenant_id, since_version=0)
+    if payload_version != snapshot_version:
+        return None
+
+    return ClusterDeltaResponse(
+        tenant_id=tenant_id,
+        snapshot_version=payload_version,
+        generated_at=datetime.now(tz=UTC),
+        clusters=_build_cluster_responses(clusters),
+        members=_build_member_responses(members_with_identities),
+    )
 
 
 def _prepare_media_items(request: AnalyzeRequest) -> tuple[list[str], list[str], list[tuple[int, str]]]:
@@ -294,15 +328,21 @@ async def get_job_status(
         if isinstance(job, JobStatusResponse):
             return job
         scan_repo = None
+        cluster_repo = getattr(job_service, "cluster_repository", None)
         if session is not None:
             from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 
             scan_repo = SqlAlchemyScanQueueRepository(session)
+            if cluster_repo is None:
+                from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
+
+                cluster_repo = SqlAlchemyClusterRepository(session)
         return await _job_to_pipeline_response(
             requested_job_id=job_id,
             domain_job=job,
             repo=job_service,
             scan_repo=scan_repo,
+            cluster_repo=cluster_repo,
         )
 
     # Look up from database if we have a session
@@ -314,13 +354,16 @@ async def get_job_status(
         domain_job = await repo.get(job_id)
         if domain_job:
             from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
+            from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
 
             scan_repo = SqlAlchemyScanQueueRepository(session)
+            cluster_repo = SqlAlchemyClusterRepository(session)
             return await _job_to_pipeline_response(
                 requested_job_id=job_id,
                 domain_job=domain_job,
                 repo=repo,
                 scan_repo=scan_repo,
+                cluster_repo=cluster_repo,
             )
 
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")

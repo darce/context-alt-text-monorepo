@@ -207,7 +207,6 @@ describe('TopClustersSection', () => {
     vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
       ...topUnlabeledResponse([clusterWithSuggestion()]),
       data_source: DATA_SOURCE.BACKEND_PROXY,
-      projection_status: PROJECTION_STATUS.BOOTSTRAPPING,
     });
 
     renderSection();

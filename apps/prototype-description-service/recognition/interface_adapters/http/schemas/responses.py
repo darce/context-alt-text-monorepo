@@ -387,6 +387,7 @@ class JobStatusResponse(BaseModel):
     snapshot_version: int | None = None
     source_job_id: str | None = None
     projection_acknowledged_at: datetime | None = None
+    projection_payload: ClusterDeltaResponse | None = None
 
     @field_validator("id")
     @classmethod

@@ -157,9 +157,7 @@ class ClustersControllerTest extends TestCase
                         'representatives' => [],
                     ],
                 ],
-                'singleton_count' => 0,
                 'data_source' => 'backend_proxy',
-                'projection_status' => 'bootstrapping',
             ],
             $response->get_data()
         );
@@ -167,7 +165,8 @@ class ClustersControllerTest extends TestCase
         $calls = $this->getHttpCalls();
         $this->assertCount(2, $calls);
         $this->assertStringContainsString('/recognition/clusters/top-unlabeled', $calls[0]['url']);
-        $this->assertStringContainsString('/clusters/snapshot', $calls[1]['url']);
+        $this->assertStringContainsString('/clusters/delta', $calls[1]['url']);
+        $this->assertStringContainsString('since_version=0', $calls[1]['url']);
         $this->assertCount(0, $GLOBALS['__ac_scheduled']);
     }
 
@@ -724,6 +723,13 @@ class ClustersControllerSyncPullSpy implements SyncPullJobInterface
         $this->tenantIdBypass = $tenant_id;
         return SyncPullResult::ok();
     }
+
+    public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult
+    {
+        $this->performedBypass = true;
+        $this->tenantIdBypass = $tenant_id;
+        return SyncPullResult::ok();
+    }
 }
 
 class ClustersControllerFailingSyncPull implements SyncPullJobInterface
@@ -734,6 +740,11 @@ class ClustersControllerFailingSyncPull implements SyncPullJobInterface
     }
 
     public function perform_bypass_cooldown(string $tenant_id): SyncPullResult
+    {
+        return SyncPullResult::failed();
+    }
+
+    public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult
     {
         return SyncPullResult::failed();
     }

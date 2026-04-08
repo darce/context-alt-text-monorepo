@@ -115,7 +115,7 @@ On the feature branch, after final commit:
     handoff_close_check(enforce=True, current_commit_sha=<HEAD>)
     Expected: ok=true, no failures
 
-8.  Merge the feature branch into main, return root to main, delete the feature branch.
+8.  Merge the feature branch into main, return root to main, delete the feature branch, close any still-open post-merge review findings on the merged task from a descendant `main` context, archive the task, and regenerate `CURRENT_TASK.md`.
 ```
 
 ### When the Gate May Be Skipped
@@ -482,6 +482,8 @@ Source-of-truth policy:
 - `CURRENT_TASK.md` is derived output; never hand-edit it as the canonical tracker.
 - `CURRENT_TASK.md` includes a cross-task dashboard header plus the active task's detail section, so task switches should not erase visibility into other in-flight work.
 - If markdown drifts from DB, regenerate (`generate_current_task_md`) and continue from DB state.
+- After a merged task is archived, regenerate `CURRENT_TASK.md` in the same cleanup slice so completed merged work does not linger as stale active detail.
+- A task is not considered fully cleaned up until its merged-task review findings are also closed or explicitly deferred; otherwise it will continue to appear in the dashboard header even after archive.
 
 **When to use:**
 
@@ -503,7 +505,7 @@ Source-of-truth policy:
 5. Close the slice in every active tracker before moving on. Mark completed or skipped MCP next actions, update the relevant task-plan checklist boxes for the slice you just finished, and leave future-slice items open instead of carrying a fully stale checklist forward.
 6. Before close/final handoff, run `handoff_close_check(enforce=True, current_commit_sha=<HEAD>)` and resolve all failures.
 7. Before requesting branch review, run `make review-ready` from the current worktree and resolve all reported NOT READY reasons.
-8. Regenerate markdown view on demand via `generate_current_task_md`; confirm the dashboard header and active-task detail both reflect the latest DB state.
+8. Regenerate markdown view on demand via `generate_current_task_md`; after merge/archive this is mandatory, and the dashboard header plus active-task detail must both reflect the latest DB state. If a completed merged task still appears, treat that as a cleanup failure: close or defer its remaining findings, then regenerate again.
 9. Use template fallback only when MCP tooling is unavailable.
 
 **Template location:** [templates/CURRENT_TASK.template.md](../templates/CURRENT_TASK.template.md)

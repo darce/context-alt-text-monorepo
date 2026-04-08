@@ -55,6 +55,9 @@ Notes:
 - The WordPress proxy preserves that overload state as HTTP `503` with `{ "error": "backend_overloaded", "retry_after": 5 }` and a matching `Retry-After` header instead of degrading it to an empty success payload.
 - The proxied backend no longer leaks raw exception class names or messages in generic `500` responses.
 - Tenant-context setup occurs in the backend session dependency; the job-status handler does not repeat tenant setup after the session has already been prepared.
+- Completed clustering responses may include `snapshot_version`, `source_job_id`, `projection_acknowledged_at`, and an optional `projection_payload`.
+- `projection_payload` mirrors the backend cluster-delta shape for `since_version=0`. When present and `projection_acknowledged_at` is null, the plugin may project local state directly from this job-status response instead of issuing a second snapshot or delta fetch.
+- The plugin still falls back to `POST /recognition/sync/trigger` semantics when `projection_payload` is absent or version-mismatched.
 
 ## GET /recognition/jobs/{job_id}/stream
 
@@ -200,10 +203,11 @@ Response (envelope):
 
 Notes:
 
-- Returns clusters from **sovereign local projection** only; does not proxy to backend when projection is unavailable.
-- When local projection is missing, schedules a bootstrap sync and returns an empty envelope with `data_source: "unavailable"` and `projection_status: "bootstrapping"`.
-- `singleton_count` reports the number of single-identity clusters excluded from the naming queue.
-- `projection_status` is `available` when local projection is readable, `bootstrapping` while the controller has scheduled bootstrap sync, and `unavailable` if a future controller path needs to surface a non-bootstrap projection failure.
+- Returns clusters from **sovereign local projection** when available.
+- When projection is still bootstrapping but the backend queue is reachable, the plugin may return a read-only backend envelope with `{ "clusters": [...], "data_source": "backend_proxy" }`. That proxy envelope intentionally omits `singleton_count` and `projection_status`; the plugin must not invent those fields on behalf of the backend.
+- When local projection is missing and the backend queue is also unavailable, the plugin schedules a bootstrap sync and returns an empty envelope with `data_source: "unavailable"` and `projection_status: "bootstrapping"`.
+- `singleton_count` reports the number of single-identity clusters excluded from the naming queue, but only on local-projection / unavailable envelopes where the plugin can source that value honestly.
+- `projection_status` is `available` when local projection is readable, `bootstrapping` while the controller has scheduled bootstrap sync, and `unavailable` if a future controller path needs to surface a non-bootstrap projection failure. It is omitted on `backend_proxy` envelopes because those responses did not come from the projection.
 - Clusters with `identity_count < 2`, `is_user_confirmed = true`, or `dismissed_at` set are excluded.
 
 ## GET /recognition/clusters/labels

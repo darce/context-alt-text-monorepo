@@ -795,6 +795,295 @@ def update_review_finding(
         )
 
 
+def repair_review_finding_provenance(
+    finding_id: str,
+    expected_branch: str,
+    expected_commit_sha: str,
+    new_branch: str,
+    new_commit_sha: str,
+    reason: str,
+    session: str,
+    task_ref: str | None = None,
+    actor: WriteActor | None = None,
+) -> dict:
+    """Repair an incorrectly attributed review finding's source provenance.
+
+    Use this only when a finding row was recorded with the wrong source
+    ``branch`` / ``commit_sha`` — typically because the reviewing agent's
+    workspace HEAD was unrelated to the buggy code's actual commit. The
+    standard ``record`` and ``update`` operations cannot reach the source
+    provenance columns: ``record`` upserts ``COALESCE(existing, new)`` to
+    preserve original attribution, and ``update`` only mutates status /
+    verification fields. ``repair_provenance`` is the bounded admin path
+    that mutates exactly those two columns and writes an audit trail.
+
+    Both the *expected* and *new* values are mandatory: the operation
+    refuses to apply unless the existing row's ``branch`` and
+    ``commit_sha`` match the caller's expected values exactly. This is a
+    concurrency / mistake guard — the caller must have read the row before
+    requesting the repair, so a stale read or a typo trips the assert.
+
+    The ``new_commit_sha`` is validated against the active git repo via
+    ``_validate_and_expand_commit_sha`` and auto-expanded to the canonical
+    40-character form. The repair is recorded as a ``decision`` row tagged
+    ``repair_provenance_<finding_id>`` capturing the before/after values
+    and the caller's ``reason``, so ``get_handoff_state`` and the audit
+    surfaces show the change.
+    """
+    normalized_finding_id = finding_id.strip() if isinstance(finding_id, str) else None
+    if not normalized_finding_id:
+        return _envelope(
+            ok=False,
+            tool="repair_review_finding_provenance",
+            data={"error": "finding_id must not be empty."},
+            entity="finding",
+        )
+    normalized_expected_branch = expected_branch.strip() if isinstance(expected_branch, str) else None
+    normalized_expected_commit_sha = (
+        expected_commit_sha.strip() if isinstance(expected_commit_sha, str) else None
+    )
+    normalized_new_branch = new_branch.strip() if isinstance(new_branch, str) else None
+    normalized_new_commit_sha = new_commit_sha.strip() if isinstance(new_commit_sha, str) else None
+    normalized_reason = reason.strip() if isinstance(reason, str) else None
+    if not normalized_expected_branch:
+        return _envelope(
+            ok=False,
+            tool="repair_review_finding_provenance",
+            data={"error": "expected_branch must not be empty."},
+            entity="finding",
+        )
+    if not normalized_expected_commit_sha:
+        return _envelope(
+            ok=False,
+            tool="repair_review_finding_provenance",
+            data={"error": "expected_commit_sha must not be empty."},
+            entity="finding",
+        )
+    if not normalized_new_branch:
+        return _envelope(
+            ok=False,
+            tool="repair_review_finding_provenance",
+            data={"error": "new_branch must not be empty."},
+            entity="finding",
+        )
+    if not normalized_new_commit_sha:
+        return _envelope(
+            ok=False,
+            tool="repair_review_finding_provenance",
+            data={"error": "new_commit_sha must not be empty."},
+            entity="finding",
+        )
+    if not normalized_reason or len(normalized_reason) < 20:
+        return _envelope(
+            ok=False,
+            tool="repair_review_finding_provenance",
+            data={
+                "error": "reason must be at least 20 characters; describe why the original attribution was wrong."
+            },
+            entity="finding",
+        )
+
+    # Validate the new commit_sha against the active git repo and
+    # auto-expand abbreviated forms. Bypassed entirely by
+    # AGENT_HANDOFF_SKIP_SHA_VALIDATION (set in test conftests).
+    from .shared_write_context import (  # noqa: PLC0415 - late import for module init order
+        InvalidCommitShaError,
+        _validate_and_expand_commit_sha,
+    )
+    try:
+        expanded_new = _validate_and_expand_commit_sha(normalized_new_commit_sha)
+    except InvalidCommitShaError as exc:
+        return _envelope(
+            ok=False,
+            tool="repair_review_finding_provenance",
+            data={"error": str(exc)},
+            entity="finding",
+        )
+    if expanded_new is None:
+        # _validate_and_expand_commit_sha returns None only for None/empty input;
+        # we already rejected empty above, so this is defensive against the type signature.
+        return _envelope(
+            ok=False,
+            tool="repair_review_finding_provenance",
+            data={"error": "new_commit_sha could not be resolved."},
+            entity="finding",
+        )
+    normalized_new_commit_sha = expanded_new
+    # The expected_commit_sha is best-effort expanded so the caller can pass
+    # an abbreviation and still match the row's stored 40-char canonical form.
+    # If expansion fails (e.g. the original buggy attribution pointed at a
+    # commit that has since been force-pushed away and is no longer reachable
+    # from any ref), fall back to the literal string and rely on byte-for-byte
+    # comparison against the row. Repair must remain possible for orphaned SHAs
+    # — that is exactly the kind of broken provenance this op exists to fix.
+    try:
+        expanded_expected = _validate_and_expand_commit_sha(normalized_expected_commit_sha)
+        if expanded_expected is not None:
+            normalized_expected_commit_sha = expanded_expected
+    except InvalidCommitShaError:
+        pass
+
+    if (
+        normalized_expected_branch == normalized_new_branch
+        and normalized_expected_commit_sha == normalized_new_commit_sha
+    ):
+        return _envelope(
+            ok=False,
+            tool="repair_review_finding_provenance",
+            data={
+                "error": "expected and new branch+commit_sha are identical; nothing to repair."
+            },
+            entity="finding",
+        )
+
+    with _get_db_connection() as conn:
+        ctx = _resolve_write_actor(conn, actor)
+        if task_ref is None:
+            rows = conn.execute(
+                "SELECT * FROM review_findings WHERE finding_id = ?", (normalized_finding_id,)
+            ).fetchall()
+            if not rows:
+                return _envelope(
+                    ok=False,
+                    tool="repair_review_finding_provenance",
+                    data={"error": "Finding not found."},
+                    entity="finding",
+                )
+            if len(rows) > 1:
+                candidate_scopes = sorted({str(r["task_ref"]) for r in rows})
+                return _envelope(
+                    ok=False,
+                    tool="repair_review_finding_provenance",
+                    data={
+                        "error": f"Ambiguous finding_id: {len(rows)} rows across task_refs {candidate_scopes}. Pass task_ref explicitly to disambiguate.",
+                    },
+                    entity="finding",
+                )
+            existing = rows[0]
+            resolved_task_ref = str(existing["task_ref"])
+        else:
+            resolved_task_ref = _resolve_task_ref(conn, task_ref)
+            existing = conn.execute(
+                "SELECT * FROM review_findings WHERE finding_id = ? AND task_ref = ?",
+                (normalized_finding_id, resolved_task_ref),
+            ).fetchone()
+            if existing is None:
+                return _envelope(
+                    ok=False,
+                    tool="repair_review_finding_provenance",
+                    data={"error": "Finding not found for task."},
+                    task_ref=resolved_task_ref,
+                    entity="finding",
+                )
+
+        existing_branch = _normalize_optional_text(existing["branch"])
+        existing_commit_sha = _normalize_optional_text(existing["commit_sha"])
+        if existing_branch != normalized_expected_branch:
+            return _envelope(
+                ok=False,
+                tool="repair_review_finding_provenance",
+                data={
+                    "error": "expected_branch does not match the stored row.",
+                    "expected_branch": normalized_expected_branch,
+                    "actual_branch": existing_branch,
+                },
+                task_ref=resolved_task_ref,
+                entity="finding",
+            )
+        if existing_commit_sha != normalized_expected_commit_sha:
+            return _envelope(
+                ok=False,
+                tool="repair_review_finding_provenance",
+                data={
+                    "error": "expected_commit_sha does not match the stored row.",
+                    "expected_commit_sha": normalized_expected_commit_sha,
+                    "actual_commit_sha": existing_commit_sha,
+                },
+                task_ref=resolved_task_ref,
+                entity="finding",
+            )
+
+        target_db_id = int(existing["id"])
+        before = {
+            "branch": existing_branch,
+            "commit_sha": existing_commit_sha,
+        }
+        after = {
+            "branch": normalized_new_branch,
+            "commit_sha": normalized_new_commit_sha,
+        }
+
+        conn.execute(
+            """
+            UPDATE review_findings
+            SET branch = ?,
+                commit_sha = ?,
+                updated_at = datetime('now')
+            WHERE id = ? AND task_ref = ?
+            """,
+            (
+                normalized_new_branch,
+                normalized_new_commit_sha,
+                target_db_id,
+                resolved_task_ref,
+            ),
+        )
+
+        # Audit trail: write a decision row capturing before/after + reason.
+        # Recording inline (instead of calling core.record_decision) keeps the
+        # repair atomic with the UPDATE under the same connection.
+        audit_decision_id = f"repair_provenance_{normalized_finding_id}"
+        audit_rationale = (
+            f"Repaired source provenance on review finding `{normalized_finding_id}` "
+            f"(row id={target_db_id}, task_ref={resolved_task_ref}).\n\n"
+            f"**Before:** branch=`{before['branch']}`, commit_sha=`{before['commit_sha']}`\n"
+            f"**After:**  branch=`{after['branch']}`,  commit_sha=`{after['commit_sha']}`\n\n"
+            f"**Reason:** {normalized_reason}"
+        )
+        conn.execute(
+            """
+            INSERT INTO decisions (
+                task_ref, session, decision, rationale, agent, branch, commit_sha, lane_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            """,
+            (
+                resolved_task_ref,
+                session,
+                audit_decision_id,
+                audit_rationale,
+                ctx.agent,
+                ctx.branch,
+                ctx.commit_sha,
+                ctx.lane_id,
+            ),
+        )
+        audit_row_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+
+        row = conn.execute("SELECT * FROM review_findings WHERE id = ?", (target_db_id,)).fetchone()
+        _write_current_task_md_for_active_context(conn, resolved_task_ref)
+        task_revision = _current_task_revision(conn, resolved_task_ref)
+
+        return _envelope(
+            ok=True,
+            tool="repair_review_finding_provenance",
+            data={
+                "finding": _row_to_dict(row),
+                "before": before,
+                "after": after,
+                "audit_decision_id": audit_decision_id,
+                "audit_decision_db_id": audit_row_id,
+            },
+            task_ref=resolved_task_ref,
+            entity="finding",
+            mutation={
+                "entity": "finding",
+                "operation": "repair_provenance",
+                "affected_ids": [normalized_finding_id],
+                "task_revision": task_revision,
+            },
+        )
+
+
 _FINDING_SUMMARY_FIELDS = ("description", "fix", "resolution_notes", "verification_evidence")
 _FINDING_SUMMARY_TRUNCATE = 200
 

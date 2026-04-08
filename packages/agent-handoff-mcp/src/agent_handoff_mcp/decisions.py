@@ -24,10 +24,10 @@ from ._shared import (
     _render_current_task_md,
     _resolve_task_ref,
     _resolve_write_actor,
-    collect_target_context_warnings,
     _row_to_dict,
     _summarize_test_result,
     _validate_decision_payload,
+    collect_target_context_warnings,
 )
 from .slice_decision import classify_decision_id, is_slice_complete_decision
 

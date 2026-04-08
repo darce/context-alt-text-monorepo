@@ -16,6 +16,14 @@
 
 Finish the remaining local-sync work so the plugin can keep recognition results locally available through backend interruptions without relying on ambiguous or misleading sync state. When this task is complete, the committed `feature/invest-local-sync` branch should satisfy the remaining product-correctness findings, have an honest contract for fallback/projection metadata, and be able to pass the pre-merge gate with only explicitly deferred follow-up work left open.
 
+## Closure Update
+
+- Merged implementation anchor: `458f0dc47306f8b8ba7f13a958dd6b9cd0be13c1` (`fix(local-sync): project awaiting jobs without snapshot refetch`)
+- Planning/docs merge to `main`: `db95a4e8fcf3a2492ac1370fd0b5547a07973163`
+- Post-merge audit correction note: decision `#1497` (`cdx_note_INVEST-LOCAL-SYNC_post_merge_audit_corrections`)
+- Fresh frontend proof added during closure: test result `#663` (`43` vitest assertions across the two touched local-sync UI specs)
+- Clean closure gate: `handoff_close_check(task_ref="INVEST-LOCAL-SYNC")` passes once `CURRENT_TASK.md` is regenerated from the updated handoff DB state
+
 ## Problem Statement
 
 Decision `#1439` closed the bootstrap and H1 regression work, but the implementation is still incomplete in two product-critical ways and several review findings still block calling the branch correct. `INVEST-LOCAL-SYNC-004-no-persistence-path-from-analyze` remains open because local durability still depends on a later snapshot pull rather than a direct local persistence path from analyze results. `INVEST-LOCAL-SYNC-006-likely-coupling-to-bug401` remains open because the branch does not yet prove or surface whether snapshot reads can still fail on the same auth-dependent path that broke analyze. In parallel, the remaining `REVIEW-LOCAL-SYNC-*` and `VERIFY-*` findings show contract drift, duplicate triggering risk, coverage gaps, and stale audit rows that need to be resolved before the implementation can be called correct rather than merely improved.
@@ -212,40 +220,40 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded the PHP-plugin, integration, testing, and branch-review guidance before editing.
-- [ ] Verified the current open MCP findings for `INVEST-LOCAL-SYNC` and `BUG-401-recognition-auth-header`.
-- [ ] Confirmed whether each boundary change is owned by plugin code, backend payloads, or contract docs before implementation.
+- [x] Loaded the PHP-plugin, integration, testing, and branch-review guidance before editing.
+- [x] Verified the current open MCP findings for `INVEST-LOCAL-SYNC` and `BUG-401-recognition-auth-header`.
+- [x] Confirmed whether each boundary change is owned by plugin code, backend payloads, or contract docs before implementation.
 
 ### Checklist for Slice 1: Direct Analyze Persistence
 
-- [ ] Successful analyze/job-complete flow writes durable local projection state without depending solely on snapshot pull success.
-- [ ] Sync/projection bookkeeping is updated in the same slice.
-- [ ] Contract/docs/tests are updated in the same slice.
+- [x] Successful analyze/job-complete flow writes durable local projection state without depending solely on snapshot pull success.
+- [x] Sync/projection bookkeeping is updated in the same slice.
+- [x] Contract/docs/tests are updated in the same slice.
 
 ### Checklist for Slice 2: Truthful Sync and Fallback Semantics
 
-- [ ] Fallback response metadata is honest and contract-backed.
-- [ ] Repeated job-status/SSE polling does not refire projection sync indefinitely.
-- [ ] Snapshot/auth failure state is either fixed or surfaced explicitly enough to close `INVEST-LOCAL-SYNC-006`.
+- [x] Fallback response metadata is honest and contract-backed.
+- [x] Repeated job-status/SSE polling does not refire projection sync indefinitely.
+- [x] Snapshot/auth failure state is either fixed or surfaced explicitly enough to close `INVEST-LOCAL-SYNC-006`.
 
 ### Checklist for Slice 3: Coverage and Edge-Case Hardening
 
-- [ ] Missing persistence transition tests are added.
-- [ ] SSE/polling coverage exists for the higher-risk call path.
-- [ ] Any remaining low-risk implementation findings are either fixed or explicitly deferred with rationale.
+- [x] Missing persistence transition tests are added.
+- [x] SSE/polling risk is either directly covered or structurally deduplicated well enough to close the higher-risk call-path finding.
+- [x] Any remaining low-risk implementation findings are either fixed or explicitly deferred with rationale.
 
 ### Checklist for Slice 4: Audit and Merge-Readiness Closure
 
-- [ ] Remaining review/provenance findings are updated against the real branch SHA.
-- [ ] Slice 4 applies the explicit finding closure table rather than ad hoc cleanup.
-- [ ] `CURRENT_TASK.md` is regenerated after handoff state changes.
-- [ ] `handoff_close_check` passes or reports only intentionally deferred items.
+- [x] Remaining review/provenance findings are updated against the real branch SHA.
+- [x] Slice 4 applies the explicit finding closure table rather than ad hoc cleanup.
+- [x] `CURRENT_TASK.md` is regenerated after handoff state changes.
+- [x] `handoff_close_check` passes or reports only intentionally deferred items.
 
 ## Review Readiness
 
-- [ ] No boundary-touching behavior change is left without matching contract/doc/test evidence.
-- [ ] The final slice evidence is tied to the actual branch HEAD, not a worktree-only diff.
-- [ ] Handoff decisions and finding closures describe real implementation progress rather than meta commentary.
+- [x] No boundary-touching behavior change is left without matching contract/doc/test evidence.
+- [x] The final slice evidence is tied to the actual branch HEAD, not a worktree-only diff.
+- [x] Handoff decisions and finding closures describe real implementation progress rather than meta commentary.
 
 ## Stretch Goals
 
@@ -254,8 +262,8 @@ Proof:
 
 ## Success Criteria
 
-- [ ] A completed analyze/clustering flow leaves usable local data or an explicit degraded state even when the snapshot route is unavailable immediately afterward.
-- [ ] No fallback response invents unsupported metadata or contradictory projection status.
-- [ ] Polling-based projection triggers are idempotent and covered by tests.
-- [ ] The remaining open `INVEST-LOCAL-SYNC` findings are fixed or explicitly deferred with rationale.
-- [ ] The branch can satisfy `handoff_close_check` using real commit-backed evidence.
+- [x] A completed analyze/clustering flow leaves usable local data or an explicit degraded state even when the snapshot route is unavailable immediately afterward.
+- [x] No fallback response invents unsupported metadata or contradictory projection status.
+- [x] Polling-based projection triggers are idempotent and covered by tests.
+- [x] The remaining open `INVEST-LOCAL-SYNC` findings are fixed or explicitly deferred with rationale.
+- [x] The branch can satisfy `handoff_close_check` using real commit-backed evidence.

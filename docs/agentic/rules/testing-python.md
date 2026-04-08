@@ -142,9 +142,17 @@ verification reports.
 Both packages' `tests/conftest.py` files contain a `pytest_sessionstart`
 guard that imports the package, compares its resolved `__file__` against
 the expected worktree-local source path, and aborts the session with a
-`pytest.UsageError` if they differ. The guard cannot be bypassed without
-editing the conftest. The guard message names the Makefile target the
-caller should use instead.
+`pytest.UsageError` when the import resolves to a different worktree's
+source. The guard message names the Makefile target the caller should use.
+
+The conftest also prepends the worktree-local `src/` to `sys.path` before
+the guard check, so a direct `pytest` invocation from inside the correct
+package directory resolves to the right source and the guard passes.
+Cross-worktree invocations — where the editable install points at a
+different checkout — trigger the guard. To make cross-package invocations
+safe (e.g., running `pytest packages/agent-handoff-mcp/tests` from the
+repo root), the Makefile and the explicit-PYTHONPATH form documented below
+both work; the guard verifies the resolution regardless of invocation form.
 
 ### Background
 

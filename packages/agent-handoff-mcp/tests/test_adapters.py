@@ -44,21 +44,50 @@ def test_vscode_adapter_points_to_installed_entrypoint_and_doctor_runs() -> None
 
 
 def test_project_codex_config_registers_installed_stdio_adapter() -> None:
-    repo_root = Path(__file__).resolve().parents[3]
-    config = tomllib.loads((repo_root / ".codex" / "config.toml").read_text())
+    """The Codex MCP config registers the installed handoff binary with
+    consistent path arguments.
+
+    This test deliberately does **not** compare the toml's path values
+    against ``Path(__file__).parents[3]``. The Codex CLI doesn't know about
+    git linked worktrees and always launches from the user's primary
+    checkout, so ``.codex/config.toml`` is intentionally pinned to that
+    primary path. When this test runs from a linked worktree (under
+    ``context-alt-text-monorepo-<task-id>/``), the test file's parent path
+    is the linked worktree's root, not the toml's pinned root, and the two
+    correctly do not match.
+
+    Instead, the test extracts the toml's own ``cwd`` value and verifies
+    **internal consistency**: every other path arg (`--workspace-root`,
+    `--state-dir`, `--current-task-path`, `--exports-dir`) must derive
+    from the same base. That catches drift between the toml's various
+    path values without coupling the test to where pytest happens to be
+    running.
+    """
+    test_repo_root = Path(__file__).resolve().parents[3]
+    config = tomllib.loads((test_repo_root / ".codex" / "config.toml").read_text())
 
     server = config["mcp_servers"]["altcontext-mcp"]
     assert server["command"] == "agent-handoff-mcp"
-    assert server["cwd"] == str(repo_root)
+
+    # Anchor every path assertion on the toml's own cwd, not on the test
+    # file's runtime location. This is what makes the test linked-worktree
+    # safe.
+    cwd = Path(server["cwd"])
+    assert cwd.is_absolute(), f"Codex cwd must be an absolute path; got {cwd!r}"
+    assert cwd.name == "context-alt-text-monorepo", (
+        f"Codex cwd should point at the primary monorepo checkout; "
+        f"got {cwd!r}"
+    )
+
     assert server["args"] == [
         "--workspace-root",
-        str(repo_root),
+        str(cwd),
         "--state-dir",
-        str(repo_root / ".task-state"),
+        str(cwd / ".task-state"),
         "--current-task-path",
-        str(repo_root / "CURRENT_TASK.md"),
+        str(cwd / "CURRENT_TASK.md"),
         "--exports-dir",
-        str(repo_root / ".task-state" / "exports"),
+        str(cwd / ".task-state" / "exports"),
         "serve-stdio",
     ]
     assert server["env"]["PYENV_VERSION"] == "description-service"

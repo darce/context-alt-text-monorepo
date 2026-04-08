@@ -9,9 +9,9 @@ from pathlib import Path
 import pytest
 from agent_handoff_mcp.config import RuntimeConfig
 
-from agent_orchestrator_mcp.api import build_orchestrator_mcp
+from agent_orchestrator_mcp.api import build_orchestrator_mcp, run_tools_snapshot
 
-EXPECTED_TOOL_COUNT = 38  # 17 CRUD + 17 wrappers + 4 cross-task tools (incl. manage_worker)
+EXPECTED_TOOL_COUNT = 16  # Slice C removes 28 deprecated registrations from the 44-tool additive surface
 
 
 def _make_config() -> RuntimeConfig:
@@ -49,6 +49,31 @@ def test_orchestrator_tool_count():
     assert tool_count == EXPECTED_TOOL_COUNT, f"Expected {EXPECTED_TOOL_COUNT} tools, got {tool_count}"
 
 
+def test_orchestrator_registry_omits_removed_legacy_tool_names():
+    config = _make_config()
+    mcp = build_orchestrator_mcp(config)
+    tool_names: set[str] = set()
+    if hasattr(mcp, "_tool_manager") and hasattr(mcp._tool_manager, "_tools"):
+        tool_names = set(mcp._tool_manager._tools)
+    elif hasattr(mcp, "list_tools"):
+        import asyncio
+
+        tools = asyncio.run(mcp.list_tools())
+        tool_names = {tool.name for tool in tools}
+    assert "manage_worktree_lane" in tool_names
+    assert "lane_communication" in tool_names
+    assert "manage_orchestrator" in tool_names
+    assert "manage_worker" in tool_names
+    assert "upsert_worktree_lane" not in tool_names
+    assert "record_lane_message" not in tool_names
+    assert "record_lane_brief" not in tool_names
+    assert "record_turn_metric" not in tool_names
+    assert "record_worker_report" not in tool_names
+    assert "upsert_plan_cursor" not in tool_names
+    assert "orchestrator_start" not in tool_names
+    assert "worker_start" not in tool_names
+
+
 def test_orchestrator_has_lane_tools():
     config = _make_config()
     mcp = build_orchestrator_mcp(config)
@@ -59,45 +84,47 @@ def test_orchestrator_has_lane_tools():
 def test_orchestrator_has_daemon_tools():
     """Orchestration wrapper functions should be importable."""
     from agent_orchestrator_mcp.api import (
-        orchestrator_pause,
-        orchestrator_resume,
-        orchestrator_single_cycle,
-        orchestrator_start,
-        orchestrator_status,
-        orchestrator_stop,
-        worker_event_history,
-        worker_resume,
-        worker_start,
-        worker_start_all,
-        worker_status,
-        worker_stop,
+        manage_orchestrator,
+        manage_worker,
     )
 
-    assert callable(orchestrator_start)
-    assert callable(worker_start)
+    assert callable(manage_orchestrator)
+    assert callable(manage_worker)
 
 
 def test_orchestrator_crud_tools_importable():
-    """CRUD tools re-exported from agent_handoff_mcp.core should be callable."""
+    """The public wrapper-era CRUD tools should remain importable."""
     from agent_orchestrator_mcp.api import (
-        close_worktree_lane,
         get_lane_activity,
-        get_plan_cursor,
-        get_turn_metrics_summary,
-        list_lane_messages,
-        list_plan_cursors,
-        list_turn_metrics,
-        list_worker_reports,
-        list_worktree_lanes,
-        record_lane_message,
-        record_turn_metric,
-        record_worker_report,
-        upsert_plan_cursor,
-        upsert_worktree_lane,
+        lane_communication,
+        manage_worktree_lane,
+        plan_cursor,
+        turn_metrics,
+        worker_reports,
     )
 
-    assert callable(upsert_worktree_lane)
-    assert callable(list_plan_cursors)
+    assert callable(lane_communication)
+    assert callable(manage_worktree_lane)
+    assert callable(plan_cursor)
+    assert callable(turn_metrics)
+    assert callable(worker_reports)
+
+
+def test_tools_snapshot_counts_across_phases(tmp_path: Path) -> None:
+    config = _make_config()
+    current_output = tmp_path / "current.json"
+    current_snapshot = run_tools_snapshot(config, phase="current", output_path=current_output)
+    assert current_snapshot["tool_count"] == 16
+    assert current_output.exists()
+
+    phase_counts = {
+        "a1": 38,
+        "a2": 39,
+        "a3": 44,
+    }
+    for phase, expected in phase_counts.items():
+        snapshot = run_tools_snapshot(config, phase=phase)
+        assert snapshot["tool_count"] == expected, f"{phase} should expose {expected} tools"
 
 
 def test_orchestration_dir_points_to_orchestration():

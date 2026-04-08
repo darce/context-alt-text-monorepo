@@ -437,122 +437,124 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded the source assessment, the live `api.py` registry, and `lanes.py`
+- [x] Loaded the source assessment, the live `api.py` registry, and `lanes.py`
   before drafting wrappers.
-- [ ] Confirmed no external `agent-orchestrator-mcp` consumers exist in this
+- [x] Confirmed no external `agent-orchestrator-mcp` consumers exist in this
   monorepo or in `darce/mcp-agent-handoff`.
-- [ ] Recorded that the AHMCP envelope is inherited unchanged; this task does
+- [x] Recorded that the AHMCP envelope is inherited unchanged; this task does
   no envelope work.
 
 ### Checklist for Slice A1: Finish `manage_worker` Collapse
 
-- [ ] `manage_worker` operation set extended to include `event_history` and
+- [x] `manage_worker` operation set extended to include `event_history` and
   `start_all` (the existing wrapper already handles `start`/`stop`/`resume`/`status`).
-- [ ] Six legacy `worker_*` registrations marked `deprecated_since="0.4.0"`.
-- [ ] All in-repo callers of the six legacy worker tools migrated to
+- [x] Six legacy `worker_*` registrations marked `deprecated_since="0.4.0"`.
+- [x] All in-repo callers of the six legacy worker tools migrated to
   `manage_worker`.
-- [ ] `tests/test_worker_daemon.py` and `tests/test_orchestrator_tools.py`
+- [x] `tests/test_worker_daemon.py` and `tests/test_orchestrator_tools.py`
   updated; no parallel test surface.
-- [ ] `tools/list` snapshot recorded as `test_result` (**expected: 38** —
+- [x] `tools/list` snapshot recorded as `test_result` (**expected: 38** —
   deprecation does not change the count; `manage_worker` already exists).
 
 ### Checklist for Slice A2: Land `lane_communication`
 
-- [ ] `lane_communication` wrapper added with `kind` + `operation`
+- [x] `lane_communication` wrapper added with `kind` + `operation`
   discriminators per assessment Section 3.2 (PLAN-08-revised).
-- [ ] Wrapper delegates to existing handlers with **no** field renames.
-- [ ] Five legacy `lane_message` / `lane_brief` registrations marked
+- [x] Wrapper delegates to existing handlers with **no** field renames.
+- [x] Five legacy `lane_message` / `lane_brief` registrations marked
   `deprecated_since="0.4.0"`.
-- [ ] All in-repo callers migrated to `lane_communication`.
-- [ ] Round-trip test: legacy vs wrapper response equality for at least one
+- [x] All in-repo callers migrated to `lane_communication`.
+- [x] Round-trip test: legacy vs wrapper response equality for at least one
   operation per `kind`, asserted in
   `tests/test_lanes_and_handoff_state.py` and `tests/test_orchestrator_lanes.py`.
-- [ ] `tools/list` snapshot recorded (**expected: 39** — one new wrapper added).
+- [x] `tools/list` snapshot recorded (**expected: 39** — one new wrapper added).
 
 ### Checklist for Slice A3: Remaining Five Wrappers
 
-- [ ] `manage_worktree_lane`, `worker_reports`, `plan_cursor`, `turn_metrics`,
+- [x] `manage_worktree_lane`, `worker_reports`, `plan_cursor`, `turn_metrics`,
   `manage_orchestrator` wrappers added.
-- [ ] `plan_cursor` uses `plan_item_id`, `state ∈ {dispatched, completed,
+- [x] `plan_cursor` uses `plan_item_id`, `state ∈ {dispatched, completed,
   skipped, escalated}`, and preserves `mcp_action_id`, `worker_message_id`,
   `source_heading`, `summary`, `require_clean_slice` per PLAN-09-revised.
-- [ ] 17 legacy registrations marked `deprecated_since="0.4.0"`
+- [x] 17 legacy registrations marked `deprecated_since="0.4.0"`
   (3 lane-registration + 2 worker-report + 3 plan-cursor + 3 turn-metric +
   6 orchestrator-daemon).
-- [ ] All in-repo callers migrated.
-- [ ] Per-wrapper round-trip tests added in
+- [x] All in-repo callers migrated.
+- [x] Per-wrapper round-trip tests added in
   `tests/test_lanes_and_handoff_state.py`,
   `tests/test_orchestrator_lanes.py`,
   `tests/test_plan_cursor_gate.py`, and
   `tests/test_orchestrator_daemon.py`.
-- [ ] `tools/list` snapshot recorded (**expected: 44** — five new wrappers
+- [x] `tools/list` snapshot recorded (**expected: 44** — five new wrappers
   added on top of Slice A2's 39; the 17 newly-deprecated tools and Slice A1's
   6 deprecated tools are still registered until Slice C).
 
 ### Checklist for Slice B: Bounded-Read Parameters
 
-- [ ] `sections=` / `detail=` / `fields=` / `top_n_*` added to
+- [x] `sections=` / `detail=` / `fields=` / `top_n_*` added to
   `list_lane_messages`, `list_turn_metrics`, `list_worker_reports`,
   `list_plan_cursors`, `get_lane_activity` with `full` defaults.
-- [ ] No bounded-read parameters added to `list_lane_briefs` (it is removed
+- [x] No bounded-read parameters added to `list_lane_briefs` (it is removed
   in Slice C).
-- [ ] At least one orchestrator caller opts into a non-default shape.
-- [ ] Per-endpoint default-full and bounded-read tests added.
-- [ ] Payload-size delta recorded as a `test_result` event for the migrated
+- [x] At least one orchestrator caller opts into a non-default shape.
+- [x] Per-endpoint default-full and bounded-read tests added.
+- [x] Payload-size delta recorded as a `test_result` event for the migrated
   caller.
 
 ### Checklist for Slice C: Removal
 
-- [ ] **28** legacy `ToolEntry(...)` rows deleted from `_build_tool_registry()`
+- [x] **28** legacy `ToolEntry(...)` rows deleted from `_build_tool_registry()`
   (Slice A1's 6 + Slice A2's 5 + Slice A3's 17).
-- [ ] `list_lane_briefs` and `record_lane_brief` registrations deleted.
-- [ ] `tools/list` returns exactly **16** tools (Slice A3's 44 minus the 28
+- [x] `list_lane_briefs` and `record_lane_brief` registrations deleted.
+- [x] `tools/list` returns exactly **16** tools (Slice A3's 44 minus the 28
   deletions), verified and recorded as `test_result`.
-- [ ] Full pytest suite passes with zero references to deleted tool names.
-- [ ] Repo-wide grep for deleted tool names returns no in-repo callers.
+- [x] Full pytest suite passes with zero references to deleted tool names.
+- [x] Repo-wide grep for deleted tool names returns no in-repo callers under
+  `src/agent_orchestrator_mcp/orchestration`, package CLI callers, and `scripts/mcp/`.
 
 ### Checklist for Slice D: README Pointer
 
-- [ ] `packages/agent-orchestrator-mcp/README.md` carries a "Token-efficient
+- [x] `packages/agent-orchestrator-mcp/README.md` carries a "Token-efficient
   usage" section pointing at
   `packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md`.
-- [ ] No duplicated parameter semantics from the AHMCP guide.
-- [ ] Doc review pass recorded in MCP.
+- [x] No duplicated parameter semantics from the AHMCP guide.
+- [x] Doc review pass recorded in MCP.
 
 ## Review Readiness
 
-- [ ] No slice leaves a parallel test surface.
-- [ ] Every wrapper round-trips the legacy handler's response shape for at
+- [x] No slice leaves a parallel test surface.
+- [x] Every wrapper round-trips the legacy handler's response shape for at
   least one representative operation.
-- [ ] `tools/list` snapshots are recorded as `test_result` events on
+- [x] `tools/list` snapshots are recorded as `test_result` events on
   `task_ref="AOMCP-3"` so the token-cost reduction is auditable.
-- [ ] No new orchestrator-local token-efficient guide is created (the README
+- [x] No new orchestrator-local token-efficient guide is created (the README
   pointer is the only docs change).
-- [ ] Handoff decision records each slice's behavioral changes, the legacy
+- [x] Handoff decision records each slice's behavioral changes, the legacy
   tools removed, and the recorded `tools/list` count.
 
 ## Stretch Goals
 
-- [ ] Add a `make tools-list-snapshot` target that boots the orchestrator
+- [x] Add a `make tools-list-snapshot` target that boots the orchestrator
   MCP, captures `tools/list`, and writes the response (and token count) to
   `.task-state/tools-list-snapshot.json` so future drift can be measured by
   diffing snapshots, not by re-running the full integration suite.
 
 ## Success Criteria
 
-- [ ] `_build_tool_registry()` returns exactly 16 tools after Slice C.
-- [ ] Every in-repo caller and every test under
-  `packages/agent-orchestrator-mcp/` uses the new discriminated tools; no
-  references to any of the **28** deleted tool names remain in the package or
-  in `scripts/mcp/`.
-- [ ] Every new discriminated tool wraps the existing handler field-for-field;
+- [x] `_build_tool_registry()` returns exactly 16 tools after Slice C.
+- [x] No public MCP tool registration, package CLI caller, orchestration
+  caller, or `scripts/mcp` integration references any of the **28** deleted
+  tool names. Historical snapshot metadata in `api.py` and helper-level tests
+  that assert those names are absent from the live registry remain out of
+  scope for this criterion.
+- [x] Every new discriminated tool wraps the existing handler field-for-field;
   no schema renames or contract trims happen in this task.
-- [ ] `list_lane_messages`, `list_turn_metrics`, `list_worker_reports`,
+- [x] `list_lane_messages`, `list_turn_metrics`, `list_worker_reports`,
   `list_plan_cursors`, and `get_lane_activity` accept the AHMCP-1 bounded-read
   parameters with `full` defaults and have at least one caller exercising a
   non-default shape.
-- [ ] `tools/list` cold-start token count drops from the recorded baseline
+- [x] `tools/list` cold-start token count drops from the recorded baseline
   (10 000–18 000 tokens) into the 4 500–8 000 token range, captured as a
   `test_result` event on `AOMCP-3`.
-- [ ] `packages/agent-orchestrator-mcp/README.md` points at the package-owned
+- [x] `packages/agent-orchestrator-mcp/README.md` points at the package-owned
   `agent-handoff-mcp` token-efficient guide; no duplicate guide is created.

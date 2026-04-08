@@ -26,13 +26,21 @@ def _parse(payload: str | dict) -> dict:
     if not isinstance(payload, dict):
         payload = json.loads(payload)
     if isinstance(payload, dict) and payload.get("schema_version") == 2:
-        data = payload.get("data", {})
-        scope = payload.get("scope", {})
-        flat = {**payload, **data}
-        if "task_ref" not in flat and scope.get("task_ref"):
+        data = payload.get("data")
+        scope = payload.get("scope")
+        flat = dict(payload)
+        if isinstance(data, dict):
+            flat.update(data)
+        if "task_ref" not in flat and isinstance(scope, dict) and scope.get("task_ref"):
             flat["task_ref"] = scope["task_ref"]
         return flat
     return payload
+
+
+def _data(payload: str | dict) -> dict:
+    parsed = _parse(payload)
+    data = parsed.get("data")
+    return data if isinstance(data, dict) else parsed
 
 
 def test_record_and_filter_review_findings_by_review_mode(isolated_handoff: RuntimeConfig) -> None:
@@ -74,9 +82,9 @@ def test_record_and_filter_review_findings_by_review_mode(isolated_handoff: Runt
         )
     )
 
-    branch_only = _parse(mcp_server.list_review_findings(review_mode="branch"))
-    audit_only = _parse(mcp_server.list_review_findings(review_mode="release_audit"))
-    unfiltered = _parse(mcp_server.list_review_findings())
+    branch_only = _data(mcp_server.list_review_findings(review_mode="branch"))
+    audit_only = _data(mcp_server.list_review_findings(review_mode="release_audit"))
+    unfiltered = _data(mcp_server.list_review_findings())
 
     assert {finding["finding_id"] for finding in branch_only["findings"]} == {"F-BRANCH", "F-EXPLICIT-BRANCH"}
     assert {finding["finding_id"] for finding in audit_only["findings"]} == {"F-AUDIT"}
@@ -111,8 +119,8 @@ def test_rerecord_preserves_existing_review_mode_when_omitted(isolated_handoff: 
         )
     )
 
-    audit_only = _parse(mcp_server.list_review_findings(review_mode="release_audit"))
-    branch_only = _parse(mcp_server.list_review_findings(review_mode="branch"))
+    audit_only = _data(mcp_server.list_review_findings(review_mode="release_audit"))
+    branch_only = _data(mcp_server.list_review_findings(review_mode="branch"))
 
     assert {finding["finding_id"] for finding in audit_only["findings"]} == {"F-PRESERVE"}
     assert {finding["finding_id"] for finding in branch_only["findings"]} == set()
@@ -127,7 +135,8 @@ def test_invalid_review_mode_returns_error(isolated_handoff: RuntimeConfig) -> N
         )
     )
 
-    response = _parse(mcp_server.list_review_findings(review_mode="not-a-mode"))
+    raw = _parse(mcp_server.list_review_findings(review_mode="not-a-mode"))
+    response = _data(raw)
 
-    assert response["ok"] is False
+    assert raw["ok"] is False
     assert "Invalid review_mode" in response["error"]

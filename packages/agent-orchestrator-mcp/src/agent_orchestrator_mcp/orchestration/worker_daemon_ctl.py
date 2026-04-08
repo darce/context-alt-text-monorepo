@@ -208,7 +208,7 @@ def _derive_state_summary(state: str, status_record: dict[str, Any] | None) -> s
         "verifying": "Worker lane-local verification is currently running.",
         "handoff": "Worker is submitting its final handoff.",
         "handoff_failed": "The final worker handoff failed; retry the saved result instead of rerunning the lane assignment.",
-        "paused": "Worker process is paused. Resume it with worker_resume or SIGCONT.",
+        "paused": "Worker process is paused. Resume it with manage_worker(action='resume') or SIGCONT.",
         "stopped": "Worker daemon is not currently running for this lane.",
     }
     return defaults.get(state, "Worker status is available.")

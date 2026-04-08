@@ -564,11 +564,11 @@ def _artifact_context_section(
         if used >= budget_chars:
             break
         try:
-            envelope = _json_load(_mcp_get_artifact(source_id=sid))
-            if not envelope.get("ok"):
+            payload = _json_load(_mcp_get_artifact(source_id=sid))
+            if not payload.get("ok"):
                 continue
-            # AHMCP-10: read from canonical data block, not legacy top-level mirror.
-            source = (envelope.get("data") or {}).get("source")
+            data = payload.get("data")
+            source = data.get("source") if isinstance(data, dict) else None
             if not source:
                 continue
             label = str(source.get("source_label") or "artifact")
@@ -594,9 +594,9 @@ def _artifact_context_section(
     if not queries:
         return lines
     try:
-        envelope = _json_load(_mcp_search_artifacts(queries=queries, task_ref=task_ref, lane_id=lane_id, limit=4))
-        # AHMCP-10: read from canonical data block, not legacy top-level mirror.
-        hits = (envelope.get("data") or {}).get("hits")
+        payload = _json_load(_mcp_search_artifacts(queries=queries, task_ref=task_ref, lane_id=lane_id, limit=4))
+        data = payload.get("data")
+        hits = data.get("hits") if isinstance(data, dict) else []
         if not isinstance(hits, list) or not hits:
             return lines
     except Exception:  # noqa: BLE001

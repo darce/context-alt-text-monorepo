@@ -24,27 +24,12 @@ from fastmcp import FastMCP
 
 from agent_orchestrator_mcp import lanes as _lanes
 
-# ---------------------------------------------------------------------------
-# Re-export lane/worker/metrics/plan-cursor CRUD from the orchestrator lanes
-# module. These were physically relocated from agent-handoff-mcp in E12-9.
-# ---------------------------------------------------------------------------
-upsert_worktree_lane = _lanes.upsert_worktree_lane
-close_worktree_lane = _lanes.close_worktree_lane
-list_worktree_lanes = _lanes.list_worktree_lanes
+manage_worktree_lane = _lanes.manage_worktree_lane
 get_lane_activity = _lanes.get_lane_activity
-record_turn_metric = _lanes.record_turn_metric
-list_turn_metrics = _lanes.list_turn_metrics
-get_turn_metrics_summary = _lanes.get_turn_metrics_summary
-record_lane_message = _lanes.record_lane_message
-update_lane_message = _lanes.update_lane_message
-list_lane_messages = _lanes.list_lane_messages
-record_lane_brief = _lanes.record_lane_brief
-list_lane_briefs = _lanes.list_lane_briefs
-record_worker_report = _lanes.record_worker_report
-list_worker_reports = _lanes.list_worker_reports
-upsert_plan_cursor = _lanes.upsert_plan_cursor
-get_plan_cursor = _lanes.get_plan_cursor
-list_plan_cursors = _lanes.list_plan_cursors
+turn_metrics = _lanes.turn_metrics
+lane_communication = _lanes.lane_communication
+worker_reports = _lanes.worker_reports
+plan_cursor = _lanes.plan_cursor
 
 # Additional tools that belong to the orchestration surface
 get_latest_slice_review_packet = _lanes.get_latest_slice_review_packet
@@ -82,10 +67,28 @@ from agent_handoff_mcp.api import (  # noqa: E402,F401
 )
 
 TOOL_DESCRIPTIONS: dict[str, str] = {
+    "manage_worktree_lane": "Compound tool: create, close, or list worktree lanes in one call. Use operation='upsert'|'close'|'list'.",
+    "get_lane_activity": "Read the current activity summary for a lane, including blockers, actions, findings, messages, and tests.",
+    "turn_metrics": "Compound tool: record, list, or summarize turn metrics in one call. Use operation='record'|'list'|'summary'.",
+    "lane_communication": "Compound tool: record, update, or list lane messages and briefs in one call. Use kind='message'|'brief' and operation='record'|'update'|'list'.",
+    "worker_reports": "Compound tool: record or list worker reports in one call. Use operation='record'|'list'.",
+    "plan_cursor": "Compound tool: create/update, fetch, or list plan cursors in one call. Use operation='upsert'|'get'|'list'.",
+    "switch_task": "Switch the active task in one step: auto-archives the outgoing task and activates the target.",
+    "get_latest_slice_review_packet": "Resolve the latest completed slice review packet for a task, optionally filtered by lane or review kind.",
+    "reconcile_review_findings": "Compare open findings against current files and return a reconciliation summary for review workflows.",
+    "get_review_findings_summary": "Return aggregate counts of review findings by status and severity for the active or requested task.",
+    "manage_orchestrator": "Compound tool: start, query, pause, resume, stop, or run a single orchestrator cycle in one call. Use operation='start'|'status'|'pause'|'resume'|'stop'|'single_cycle'.",
+    "manage_worker": "Compound tool: start, stop, resume, query status, inspect event history, or start all worker daemons in one call. Use action='start'|'stop'|'resume'|'status'|'event_history'|'start_all'.",
+    "run_structured_turn": "Execute one synchronous structured bridge turn through a registered non-CLI backend.",
+    "dispatch_lane_work": "Update lane dispatch parameters (model, backend, effort) for the next execution cycle.",
+    "list_available_backends": "List supported execution backends and their capabilities.",
+    "get_metrics_summary": "Return an ACE metrics snapshot for the active task covering token burn, context pressure, FTS5 retrieval, lane health, phase timing, and documentation fitness.",
+}
+
+LEGACY_TOOL_DESCRIPTIONS: dict[str, str] = {
     "upsert_worktree_lane": "Create or update worktree lane metadata for a task, including branch, status, and worktree path.",
     "close_worktree_lane": "Transition a worktree lane to merged or closed status.",
     "list_worktree_lanes": "List registered worktree lanes for the active or requested task.",
-    "get_lane_activity": "Read the current activity summary for a lane, including blockers, actions, findings, messages, and tests.",
     "record_turn_metric": "Record one durable turn-metrics row for the active or requested task.",
     "list_turn_metrics": "List durable turn-metrics rows for the active or requested task, optionally filtered by lane, backend, model, or phase.",
     "get_turn_metrics_summary": "Return an aggregated turn-metrics summary for the active or requested task.",
@@ -99,10 +102,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "upsert_plan_cursor": "Create or update a durable task-plan cursor row recording dispatch, completion, skip, or escalation state.",
     "get_plan_cursor": "Fetch the durable plan-dispatch cursor for a specific task-plan item.",
     "list_plan_cursors": "List durable plan-dispatch cursor rows for the active or requested task.",
-    "switch_task": "Switch the active task in one step: auto-archives the outgoing task and activates the target.",
-    "get_latest_slice_review_packet": "Resolve the latest completed slice review packet for a task, optionally filtered by lane or review kind.",
-    "reconcile_review_findings": "Compare open findings against current files and return a reconciliation summary for review workflows.",
-    "get_review_findings_summary": "Return aggregate counts of review findings by status and severity for the active or requested task.",
     "orchestrator_start": "Start the orchestrator daemon for the authoritative checkout and return its PID and lock path.",
     "orchestrator_status": "Return orchestrator daemon runtime status, including pause state, PID, last event, and cycle count.",
     "orchestrator_stop": "Stop the orchestrator daemon with SIGTERM, or SIGKILL when force=true.",
@@ -115,11 +114,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "worker_stop": "Stop a lane worker daemon with SIGTERM, or SIGKILL when force=true.",
     "worker_resume": "Resume a stopped lane worker daemon with SIGCONT.",
     "worker_start_all": "Start worker daemons for all lanes declared in the task manifest and return per-lane results.",
-    "manage_worker": "Compound tool: start, stop, resume, or query status for a single lane worker daemon in one call. Use action='start'|'stop'|'resume'|'status'.",
-    "run_structured_turn": "Execute one synchronous structured bridge turn through a registered non-CLI backend.",
-    "dispatch_lane_work": "Update lane dispatch parameters (model, backend, effort) for the next execution cycle.",
-    "list_available_backends": "List supported execution backends and their capabilities.",
-    "get_metrics_summary": "Return an ACE metrics snapshot for the active task covering token burn, context pressure, FTS5 retrieval, lane health, phase timing, and documentation fitness.",
 }
 
 
@@ -144,33 +138,17 @@ class ToolEntry:
     deprecated_since: str | None = None  # Version string; non-None appends [DEPRECATED] to description
 
 
-def _build_tool_registry() -> list[ToolEntry]:
-    """Build the orchestrator MCP tool registry (called lazily after all handlers defined)."""
+SNAPSHOT_PHASES = ("a1", "a2", "a3", "current")
+
+
+def _current_tool_entries() -> list[ToolEntry]:
     return [
-        # Lane registration (3)
-        ToolEntry("upsert_worktree_lane", upsert_worktree_lane, TOOL_DESCRIPTIONS["upsert_worktree_lane"]),
-        ToolEntry("close_worktree_lane", close_worktree_lane, TOOL_DESCRIPTIONS["close_worktree_lane"]),
-        ToolEntry("list_worktree_lanes", list_worktree_lanes, TOOL_DESCRIPTIONS["list_worktree_lanes"]),
-        # Lane activity (1)
+        ToolEntry("manage_worktree_lane", manage_worktree_lane, TOOL_DESCRIPTIONS["manage_worktree_lane"]),
         ToolEntry("get_lane_activity", get_lane_activity, TOOL_DESCRIPTIONS["get_lane_activity"]),
-        # Turn metrics (3)
-        ToolEntry("record_turn_metric", record_turn_metric, TOOL_DESCRIPTIONS["record_turn_metric"]),
-        ToolEntry("list_turn_metrics", list_turn_metrics, TOOL_DESCRIPTIONS["list_turn_metrics"]),
-        ToolEntry("get_turn_metrics_summary", get_turn_metrics_summary, TOOL_DESCRIPTIONS["get_turn_metrics_summary"]),
-        # Lane communication (5)
-        ToolEntry("record_lane_message", record_lane_message, TOOL_DESCRIPTIONS["record_lane_message"]),
-        ToolEntry("update_lane_message", update_lane_message, TOOL_DESCRIPTIONS["update_lane_message"]),
-        ToolEntry("list_lane_messages", list_lane_messages, TOOL_DESCRIPTIONS["list_lane_messages"]),
-        ToolEntry("record_lane_brief", record_lane_brief, TOOL_DESCRIPTIONS["record_lane_brief"]),
-        ToolEntry("list_lane_briefs", list_lane_briefs, TOOL_DESCRIPTIONS["list_lane_briefs"]),
-        # Worker reports (2)
-        ToolEntry("record_worker_report", record_worker_report, TOOL_DESCRIPTIONS["record_worker_report"]),
-        ToolEntry("list_worker_reports", list_worker_reports, TOOL_DESCRIPTIONS["list_worker_reports"]),
-        # Plan cursors (3)
-        ToolEntry("upsert_plan_cursor", upsert_plan_cursor, TOOL_DESCRIPTIONS["upsert_plan_cursor"]),
-        ToolEntry("get_plan_cursor", get_plan_cursor, TOOL_DESCRIPTIONS["get_plan_cursor"]),
-        ToolEntry("list_plan_cursors", list_plan_cursors, TOOL_DESCRIPTIONS["list_plan_cursors"]),
-        # Cross-task / review surface (4)
+        ToolEntry("turn_metrics", turn_metrics, TOOL_DESCRIPTIONS["turn_metrics"]),
+        ToolEntry("lane_communication", lane_communication, TOOL_DESCRIPTIONS["lane_communication"]),
+        ToolEntry("worker_reports", worker_reports, TOOL_DESCRIPTIONS["worker_reports"]),
+        ToolEntry("plan_cursor", plan_cursor, TOOL_DESCRIPTIONS["plan_cursor"]),
         ToolEntry("switch_task", switch_task, TOOL_DESCRIPTIONS["switch_task"]),
         ToolEntry(
             "get_latest_slice_review_packet",
@@ -183,30 +161,132 @@ def _build_tool_registry() -> list[ToolEntry]:
         ToolEntry(
             "get_review_findings_summary", get_review_findings_summary, TOOL_DESCRIPTIONS["get_review_findings_summary"]
         ),
-        # Orchestrator daemons (6)
-        ToolEntry("orchestrator_start", orchestrator_start, TOOL_DESCRIPTIONS["orchestrator_start"]),
-        ToolEntry("orchestrator_status", orchestrator_status, TOOL_DESCRIPTIONS["orchestrator_status"]),
-        ToolEntry("orchestrator_stop", orchestrator_stop, TOOL_DESCRIPTIONS["orchestrator_stop"]),
-        ToolEntry("orchestrator_pause", orchestrator_pause, TOOL_DESCRIPTIONS["orchestrator_pause"]),
-        ToolEntry("orchestrator_resume", orchestrator_resume, TOOL_DESCRIPTIONS["orchestrator_resume"]),
-        ToolEntry(
-            "orchestrator_single_cycle", orchestrator_single_cycle, TOOL_DESCRIPTIONS["orchestrator_single_cycle"]
-        ),
-        # Worker daemons (7)
-        ToolEntry("worker_start", worker_start, TOOL_DESCRIPTIONS["worker_start"]),
-        ToolEntry("worker_status", worker_status, TOOL_DESCRIPTIONS["worker_status"]),
-        ToolEntry("worker_event_history", worker_event_history, TOOL_DESCRIPTIONS["worker_event_history"]),
-        ToolEntry("worker_stop", worker_stop, TOOL_DESCRIPTIONS["worker_stop"]),
-        ToolEntry("worker_resume", worker_resume, TOOL_DESCRIPTIONS["worker_resume"]),
-        ToolEntry("worker_start_all", worker_start_all, TOOL_DESCRIPTIONS["worker_start_all"]),
+        ToolEntry("manage_orchestrator", manage_orchestrator, TOOL_DESCRIPTIONS["manage_orchestrator"]),
         ToolEntry("manage_worker", manage_worker, TOOL_DESCRIPTIONS["manage_worker"]),
-        # Dispatch / backends (3)
         ToolEntry("run_structured_turn", run_structured_turn, TOOL_DESCRIPTIONS["run_structured_turn"]),
         ToolEntry("dispatch_lane_work", dispatch_lane_work, TOOL_DESCRIPTIONS["dispatch_lane_work"]),
         ToolEntry("list_available_backends", list_available_backends, TOOL_DESCRIPTIONS["list_available_backends"]),
-        # Metrics summary (1)
         ToolEntry("get_metrics_summary", get_metrics_summary, TOOL_DESCRIPTIONS["get_metrics_summary"]),
     ]
+
+
+def _legacy_tool_entries() -> list[ToolEntry]:
+    return [
+        ToolEntry("upsert_worktree_lane", _lanes.upsert_worktree_lane, LEGACY_TOOL_DESCRIPTIONS["upsert_worktree_lane"]),
+        ToolEntry("close_worktree_lane", _lanes.close_worktree_lane, LEGACY_TOOL_DESCRIPTIONS["close_worktree_lane"]),
+        ToolEntry("list_worktree_lanes", _lanes.list_worktree_lanes, LEGACY_TOOL_DESCRIPTIONS["list_worktree_lanes"]),
+        ToolEntry("record_turn_metric", _lanes.record_turn_metric, LEGACY_TOOL_DESCRIPTIONS["record_turn_metric"]),
+        ToolEntry("list_turn_metrics", _lanes.list_turn_metrics, LEGACY_TOOL_DESCRIPTIONS["list_turn_metrics"]),
+        ToolEntry(
+            "get_turn_metrics_summary",
+            _lanes.get_turn_metrics_summary,
+            LEGACY_TOOL_DESCRIPTIONS["get_turn_metrics_summary"],
+        ),
+        ToolEntry("record_lane_message", _lanes.record_lane_message, LEGACY_TOOL_DESCRIPTIONS["record_lane_message"]),
+        ToolEntry("update_lane_message", _lanes.update_lane_message, LEGACY_TOOL_DESCRIPTIONS["update_lane_message"]),
+        ToolEntry("list_lane_messages", _lanes.list_lane_messages, LEGACY_TOOL_DESCRIPTIONS["list_lane_messages"]),
+        ToolEntry("record_lane_brief", _lanes.record_lane_brief, LEGACY_TOOL_DESCRIPTIONS["record_lane_brief"]),
+        ToolEntry("list_lane_briefs", _lanes.list_lane_briefs, LEGACY_TOOL_DESCRIPTIONS["list_lane_briefs"]),
+        ToolEntry("record_worker_report", _lanes.record_worker_report, LEGACY_TOOL_DESCRIPTIONS["record_worker_report"]),
+        ToolEntry("list_worker_reports", _lanes.list_worker_reports, LEGACY_TOOL_DESCRIPTIONS["list_worker_reports"]),
+        ToolEntry("upsert_plan_cursor", _lanes.upsert_plan_cursor, LEGACY_TOOL_DESCRIPTIONS["upsert_plan_cursor"]),
+        ToolEntry("get_plan_cursor", _lanes.get_plan_cursor, LEGACY_TOOL_DESCRIPTIONS["get_plan_cursor"]),
+        ToolEntry("list_plan_cursors", _lanes.list_plan_cursors, LEGACY_TOOL_DESCRIPTIONS["list_plan_cursors"]),
+        ToolEntry("orchestrator_start", orchestrator_start, LEGACY_TOOL_DESCRIPTIONS["orchestrator_start"]),
+        ToolEntry("orchestrator_status", orchestrator_status, LEGACY_TOOL_DESCRIPTIONS["orchestrator_status"]),
+        ToolEntry("orchestrator_stop", orchestrator_stop, LEGACY_TOOL_DESCRIPTIONS["orchestrator_stop"]),
+        ToolEntry("orchestrator_pause", orchestrator_pause, LEGACY_TOOL_DESCRIPTIONS["orchestrator_pause"]),
+        ToolEntry("orchestrator_resume", orchestrator_resume, LEGACY_TOOL_DESCRIPTIONS["orchestrator_resume"]),
+        ToolEntry(
+            "orchestrator_single_cycle",
+            orchestrator_single_cycle,
+            LEGACY_TOOL_DESCRIPTIONS["orchestrator_single_cycle"],
+        ),
+        ToolEntry("worker_start", worker_start, LEGACY_TOOL_DESCRIPTIONS["worker_start"]),
+        ToolEntry("worker_status", worker_status, LEGACY_TOOL_DESCRIPTIONS["worker_status"]),
+        ToolEntry("worker_event_history", worker_event_history, LEGACY_TOOL_DESCRIPTIONS["worker_event_history"]),
+        ToolEntry("worker_stop", worker_stop, LEGACY_TOOL_DESCRIPTIONS["worker_stop"]),
+        ToolEntry("worker_resume", worker_resume, LEGACY_TOOL_DESCRIPTIONS["worker_resume"]),
+        ToolEntry("worker_start_all", worker_start_all, LEGACY_TOOL_DESCRIPTIONS["worker_start_all"]),
+    ]
+
+
+def _snapshot_registry(phase: str = "current") -> list[ToolEntry]:
+    if phase not in SNAPSHOT_PHASES:
+        raise ValueError(f"Unknown snapshot phase '{phase}'. Expected one of: {', '.join(SNAPSHOT_PHASES)}.")
+    if phase == "current":
+        return _current_tool_entries()
+
+    current_entries = {entry.name: entry for entry in _current_tool_entries()}
+    legacy_entries = {entry.name: entry for entry in _legacy_tool_entries()}
+    phase_names = [
+        "get_lane_activity",
+        "switch_task",
+        "get_latest_slice_review_packet",
+        "reconcile_review_findings",
+        "get_review_findings_summary",
+        "manage_worker",
+        "run_structured_turn",
+        "dispatch_lane_work",
+        "list_available_backends",
+        "get_metrics_summary",
+        *legacy_entries.keys(),
+    ]
+    if phase in {"a2", "a3"}:
+        phase_names.insert(1, "lane_communication")
+    if phase == "a3":
+        phase_names[0:0] = [
+            "manage_worktree_lane",
+            "turn_metrics",
+            "worker_reports",
+            "plan_cursor",
+            "manage_orchestrator",
+        ]
+
+    deprecated_names: set[str]
+    if phase == "a1":
+        deprecated_names = {
+            "worker_start",
+            "worker_status",
+            "worker_event_history",
+            "worker_stop",
+            "worker_resume",
+            "worker_start_all",
+        }
+    elif phase == "a2":
+        deprecated_names = {
+            "worker_start",
+            "worker_status",
+            "worker_event_history",
+            "worker_stop",
+            "worker_resume",
+            "worker_start_all",
+            "record_lane_message",
+            "update_lane_message",
+            "list_lane_messages",
+            "record_lane_brief",
+            "list_lane_briefs",
+        }
+    else:
+        deprecated_names = set(legacy_entries)
+
+    entries: list[ToolEntry] = []
+    for name in phase_names:
+        entry = current_entries.get(name) or legacy_entries[name]
+        entries.append(
+            ToolEntry(
+                name=entry.name,
+                handler=entry.handler,
+                description=entry.description,
+                deprecated_since="0.4.0" if name in deprecated_names else None,
+            )
+        )
+    return entries
+
+
+def _build_tool_registry() -> list[ToolEntry]:
+    """Build the orchestrator MCP tool registry (called lazily after all handlers defined)."""
+    return _current_tool_entries()
 
 
 def _orchestration_dir() -> Path:
@@ -593,6 +673,57 @@ def orchestrator_single_cycle(
     )
 
 
+def manage_orchestrator(
+    operation: str,
+    task_ref: str | None = None,
+    backend: str = "codex-cli",
+    poll_interval: int = 60,
+    single_pass: bool = False,
+    worker_start_mode: str = "mcp",
+    worker_reasoning_effort: str = "auto",
+    model: str | None = None,
+    force: bool = False,
+    wait_seconds: float = 5.0,
+    dry_run: bool = False,
+    timeout_seconds: float = 300.0,
+) -> dict:
+    """Compound tool for orchestrator-daemon lifecycle and single-cycle operations."""
+    valid_operations = {"pause", "resume", "single_cycle", "start", "status", "stop"}
+    if operation not in valid_operations:
+        return core._json_response(
+            {"ok": False, "error": f"Invalid operation. Valid: {', '.join(sorted(valid_operations))}"}
+        )
+    if operation in {"start", "single_cycle"} and (task_ref is None or not str(task_ref).strip()):
+        return core._json_response({"ok": False, "error": f"Operation '{operation}' requires task_ref."})
+    if operation == "start":
+        return orchestrator_start(
+            task_ref=str(task_ref),
+            backend=backend,
+            poll_interval=poll_interval,
+            single_pass=single_pass,
+            worker_start_mode=worker_start_mode,
+            worker_reasoning_effort=worker_reasoning_effort,
+            model=model,
+        )
+    if operation == "status":
+        return orchestrator_status()
+    if operation == "pause":
+        return orchestrator_pause()
+    if operation == "resume":
+        return orchestrator_resume()
+    if operation == "stop":
+        return orchestrator_stop(force=force, wait_seconds=wait_seconds)
+    return orchestrator_single_cycle(
+        task_ref=str(task_ref),
+        backend=backend,
+        dry_run=dry_run,
+        timeout_seconds=timeout_seconds,
+        worker_start_mode=worker_start_mode,
+        worker_reasoning_effort=worker_reasoning_effort,
+        model=model,
+    )
+
+
 def worker_start(
     task_ref: str,
     lane_id: str,
@@ -790,8 +921,8 @@ def worker_start_all(
 
 def manage_worker(
     task_ref: str,
-    lane_id: str,
     action: str,
+    lane_id: str | None = None,
     backend: str = "codex-subagent",
     poll_interval: int = 30,
     single_pass: bool = False,
@@ -800,19 +931,32 @@ def manage_worker(
     reasoning_effort: str = "inherit",
     model: str | None = None,
     force: bool = False,
+    limit: int = 50,
+    event_name: str | None = None,
 ) -> dict:
-    """Compound tool: start, stop, resume, or query status for a single lane worker daemon.
+    """Compound tool for worker-daemon lifecycle, inspection, and bulk starts.
 
     action values:
-    - "start"   — equivalent to worker_start with the given parameters.
-    - "stop"    — equivalent to worker_stop (force=True for SIGKILL).
-    - "resume"  — equivalent to worker_resume.
-    - "status"  — equivalent to worker_status (no side effects).
+    - "start"   — start a lane worker with the given parameters.
+    - "stop"    — stop a lane worker (force=True for SIGKILL).
+    - "resume"  — resume a stopped lane worker.
+    - "status"  — inspect lane-worker runtime status.
+    - "event_history" — read recent worker-daemon events for a lane.
+    - "start_all" — start workers for every lane declared in the task.
     """
+    lane_actions = {"start", "stop", "resume", "status", "event_history"}
+    if action in lane_actions and (lane_id is None or not str(lane_id).strip()):
+        return core._json_response(
+            {
+                "ok": False,
+                "error": f"Action '{action}' requires lane_id.",
+            }
+        )
+
     if action == "start":
         return worker_start(
             task_ref=task_ref,
-            lane_id=lane_id,
+            lane_id=str(lane_id),
             backend=backend,
             poll_interval=poll_interval,
             single_pass=single_pass,
@@ -822,15 +966,35 @@ def manage_worker(
             model=model,
         )
     if action == "stop":
-        return worker_stop(task_ref=task_ref, lane_id=lane_id, force=force)
+        return worker_stop(task_ref=task_ref, lane_id=str(lane_id), force=force)
     if action == "resume":
-        return worker_resume(task_ref=task_ref, lane_id=lane_id)
+        return worker_resume(task_ref=task_ref, lane_id=str(lane_id))
     if action == "status":
-        return worker_status(task_ref=task_ref, lane_id=lane_id)
+        return worker_status(task_ref=task_ref, lane_id=str(lane_id))
+    if action == "event_history":
+        return worker_event_history(
+            task_ref=task_ref,
+            lane_id=str(lane_id),
+            limit=limit,
+            event_name=event_name,
+        )
+    if action == "start_all":
+        return worker_start_all(
+            task_ref=task_ref,
+            backend=backend,
+            poll_interval=poll_interval,
+            single_pass=single_pass,
+            session_mode=session_mode,
+            reasoning_effort=reasoning_effort,
+            model=model,
+        )
     return core._json_response(
         {
             "ok": False,
-            "error": f"Unknown action '{action}'. Valid values: start, stop, resume, status.",
+            "error": (
+                f"Unknown action '{action}'. "
+                "Valid values: start, stop, resume, status, event_history, start_all."
+            ),
         }
     )
 
@@ -851,7 +1015,7 @@ def run_structured_turn(
             return core._json_response(
                 {
                     "ok": False,
-                    "error": "CLI backends are not supported for synchronous MCP turns. Use orchestrator_start or a worker daemon instead.",
+                    "error": "CLI backends are not supported for synchronous MCP turns. Use manage_orchestrator(operation='start') or a worker daemon instead.",
                 }
             )
         runner = backend_registry.resolve_bridge(backend_name)
@@ -929,7 +1093,8 @@ def dispatch_lane_work(
         if lane_row is None:
             return core._json_response({"ok": False, "error": f"Lane '{lane_id}' not found."})
 
-        result = upsert_worktree_lane(
+        result = manage_worktree_lane(
+            operation="upsert",
             lane_id=lane_id,
             worktree_path=lane_row["worktree_path"],
             branch=lane_row["branch"],
@@ -1014,6 +1179,10 @@ def get_metrics_summary(
 
 def build_orchestrator_mcp(config: RuntimeConfig) -> FastMCP:
     configure_runtime(config)
+    return _build_mcp_from_registry(_build_tool_registry())
+
+
+def _build_mcp_from_registry(entries: list[ToolEntry]) -> FastMCP:
     mcp = FastMCP(
         "Agent Orchestrator MCP",
         instructions=(
@@ -1023,11 +1192,12 @@ def build_orchestrator_mcp(config: RuntimeConfig) -> FastMCP:
         ),
     )
     _apply_tool_descriptions()
-    for entry in _build_tool_registry():
+    for entry in entries:
+        base_doc = entry.description
         if entry.deprecated_since is not None:
-            entry.handler.__doc__ = f"[DEPRECATED since {entry.deprecated_since}] " + (
-                entry.handler.__doc__ or entry.description
-            )
+            entry.handler.__doc__ = f"[DEPRECATED since {entry.deprecated_since}] {base_doc}"
+        else:
+            entry.handler.__doc__ = base_doc
         mcp.add_tool(entry.handler)
     return mcp
 
@@ -1045,3 +1215,76 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
         "tool_count": len(tool_names),
         "tools": tool_names,
     }
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+    if hasattr(value, "model_dump"):
+        return _json_safe(value.model_dump(mode="json", exclude_none=True))
+    return str(value)
+
+
+def _estimate_token_count(payload_json: str) -> tuple[int, str]:
+    try:
+        import tiktoken  # type: ignore
+
+        encoding = tiktoken.get_encoding("o200k_base")
+        return len(encoding.encode(payload_json)), "tiktoken:o200k_base"
+    except Exception:
+        return max(1, round(len(payload_json) / 4)), "chars_div_4"
+
+
+def _serialize_tool_snapshot(tool: Any, *, deprecated_since: str | None = None) -> dict[str, Any]:
+    raw_tool = tool.to_mcp_tool() if hasattr(tool, "to_mcp_tool") else tool
+    if hasattr(raw_tool, "model_dump"):
+        snapshot = _json_safe(raw_tool.model_dump(mode="json", exclude_none=True))
+    else:
+        snapshot = {
+            "name": getattr(tool, "name"),
+            "description": getattr(tool, "description", None),
+            "inputSchema": _json_safe(getattr(tool, "parameters", None)),
+        }
+    if deprecated_since is not None:
+        snapshot["deprecated_since"] = deprecated_since
+    return snapshot
+
+
+def run_tools_snapshot(
+    config: RuntimeConfig,
+    *,
+    phase: str = "current",
+    output_path: Path | None = None,
+) -> dict[str, Any]:
+    configure_runtime(config)
+    registry = _snapshot_registry(phase)
+    mcp = _build_mcp_from_registry(registry)
+    tools = asyncio.run(mcp.list_tools())
+    deprecated_map = {entry.name: entry.deprecated_since for entry in registry if entry.deprecated_since is not None}
+    tool_snapshots = [
+        _serialize_tool_snapshot(tool, deprecated_since=deprecated_map.get(tool.name))
+        for tool in sorted(tools, key=lambda item: item.name)
+    ]
+    tools_list_payload = {"tools": tool_snapshots}
+    tools_list_json = json.dumps(tools_list_payload, sort_keys=True, separators=(",", ":"))
+    estimated_tokens, estimation_method = _estimate_token_count(tools_list_json)
+    snapshot = {
+        "ok": True,
+        "server": "agent-orchestrator-mcp",
+        "phase": phase,
+        "tool_count": len(tool_snapshots),
+        "tools": tool_snapshots,
+        "tool_names": [tool["name"] for tool in tool_snapshots],
+        "tools_list_bytes": len(tools_list_json),
+        "estimated_tools_list_tokens": estimated_tokens,
+        "token_estimation_method": estimation_method,
+    }
+    if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(snapshot, sort_keys=True, indent=2) + "\n")
+        snapshot["output_path"] = str(output_path)
+    return snapshot

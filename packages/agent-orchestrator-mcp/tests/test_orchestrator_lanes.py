@@ -26,7 +26,7 @@ def test_lane_has_capacity_false_when_open_dispatch_exists() -> None:
 
     with (
         mock.patch(
-            "agent_orchestrator_mcp.lanes.list_lane_messages",
+            "agent_orchestrator_mcp.lanes.lane_communication",
             return_value=json.dumps(
                 {
                     "ok": True,
@@ -48,7 +48,7 @@ def test_lane_has_capacity_false_when_pending_action_exists() -> None:
 
     with (
         mock.patch(
-            "agent_orchestrator_mcp.lanes.list_lane_messages", return_value=json.dumps({"ok": True, "messages": []})
+            "agent_orchestrator_mcp.lanes.lane_communication", return_value=json.dumps({"ok": True, "messages": []})
         ),
         mock.patch(
             "agent_orchestrator_mcp.lanes.get_lane_activity",
@@ -71,7 +71,7 @@ def test_lane_has_capacity_false_when_dispatched_plan_cursor_exists() -> None:
 
     with (
         mock.patch(
-            "agent_orchestrator_mcp.lanes.list_lane_messages", return_value=json.dumps({"ok": True, "messages": []})
+            "agent_orchestrator_mcp.lanes.lane_communication", return_value=json.dumps({"ok": True, "messages": []})
         ),
         mock.patch(
             "agent_orchestrator_mcp.lanes.get_lane_activity", return_value=json.dumps({"ok": True, "actions": []})
@@ -94,7 +94,7 @@ def test_lane_has_capacity_true_when_lane_has_no_open_work() -> None:
 
     with (
         mock.patch(
-            "agent_orchestrator_mcp.lanes.list_lane_messages", return_value=json.dumps({"ok": True, "messages": []})
+            "agent_orchestrator_mcp.lanes.lane_communication", return_value=json.dumps({"ok": True, "messages": []})
         ),
         mock.patch(
             "agent_orchestrator_mcp.lanes.get_lane_activity", return_value=json.dumps({"ok": True, "actions": []})

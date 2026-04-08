@@ -20,12 +20,37 @@ from .runtime import get_runtime_config
 
 _log = logging.getLogger("agent_handoff_mcp")
 
-# Schema version sentinel used to skip redundant DDL on warm starts.
-# IMPORTANT: Bump this integer whenever a new migration is added to
-# _apply_handoff_migrations(). The bootstrap gate short-circuits when
-# PRAGMA user_version >= HANDOFF_SCHEMA_VERSION, so un-bumped migrations
-# will be silently skipped on databases that were already bootstrapped.
-HANDOFF_SCHEMA_VERSION = 2
+# Schema version sentinel that gates the warm-start migration path.
+#
+# !!! MANDATORY MAINTENANCE RULE !!!
+# Whenever you add a new migration step to _apply_handoff_migrations() (e.g.
+# an `ALTER TABLE ... ADD COLUMN ...`), you MUST bump this integer in the
+# same commit. Failure to bump it is a SILENT bug: the new migration will
+# never run on any database that was bootstrapped under the previous
+# version, because `_handoff_schema_bootstrapped()` short-circuits as soon
+# as `PRAGMA user_version >= HANDOFF_SCHEMA_VERSION`.
+#
+# How the bump propagates the migration:
+#   1. _get_db_connection() opens the DB.
+#   2. _handoff_schema_bootstrapped() reads PRAGMA user_version. If it is
+#      strictly less than HANDOFF_SCHEMA_VERSION, the function returns False
+#      even though the tables already exist.
+#   3. The bootstrap branch in _get_db_connection() then re-runs
+#      `executescript(HANDOFF_SCHEMA_SQL)` (safe — every CREATE uses
+#      `IF NOT EXISTS`), runs `_apply_handoff_migrations(conn)`
+#      (idempotent — every step is `if not _has_column(...)`), and finally
+#      writes the new user_version.
+#
+# Regression coverage for this rule lives in
+# tests/test_schema_migrations.py — see test_warm_start_migration_runs_when_version_bumped.
+#
+# History:
+#   v1 — initial schema
+#   v2 — first wave of column additions (lane_id, model/model_label, etc.)
+#   v3 — adds handoff_state.target_worktree_path (originally landed without
+#        a version bump, which silently broke `set_handoff_state` on every
+#        already-bootstrapped DB until AHMCP-9 fixed it).
+HANDOFF_SCHEMA_VERSION = 3
 _HANDOFF_REQUIRED_TABLES = frozenset(
     {
         "handoff_state",

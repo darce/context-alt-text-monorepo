@@ -4,7 +4,6 @@ Analyze routes: scan media and poll job status.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import os
@@ -18,7 +17,7 @@ from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
-from db.tenant_context import clear_tenant_context, ensure_tenant_exists, set_tenant_context
+from db.tenant_context import ensure_tenant_exists
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.tasks.scan import (
     chain_populate_and_process,
@@ -184,7 +183,6 @@ async def _prepare_tenant_context(
 
     if session is not None and hasattr(session, "execute") and is_postgres(session):
         await ensure_tenant_exists(session, tenant_uuid)
-        await set_tenant_context(session, tenant_uuid)
         if not inline_processing and not await scan_worker_available(session):
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -313,9 +311,6 @@ async def analyze_media(
             total_media_items,
             (_time.perf_counter() - started_at) * 1000,
         )
-        if session is not None and hasattr(session, "execute") and tenant_uuid and is_postgres(session):
-            with contextlib.suppress(Exception):
-                await clear_tenant_context(session)
 
 
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse)
@@ -530,26 +525,19 @@ async def cancel_job(
     # Prefer canceling persisted scan jobs when a DB session is available.
     if session is not None and scan_queue is not None:
         if tenant_id and is_postgres(session):
-            with contextlib.suppress(Exception):
-                tenant_uuid = uuid.UUID(str(tenant_id))
-                await ensure_tenant_exists(session, tenant_uuid)
-                await set_tenant_context(session, tenant_uuid)
-        try:
-            job_uuid = uuid.UUID(str(job_id))
-            await scan_queue.cancel_scan_job(job_id=job_uuid)
-            from recognition.infrastructure.repositories.job_repository import SqlAlchemyJobRepository
+            tenant_uuid = uuid.UUID(str(tenant_id))
+            await ensure_tenant_exists(session, tenant_uuid)
+        job_uuid = uuid.UUID(str(job_id))
+        await scan_queue.cancel_scan_job(job_id=job_uuid)
+        from recognition.infrastructure.repositories.job_repository import SqlAlchemyJobRepository
 
-            repo = SqlAlchemyJobRepository(session)
-            domain_job = await repo.get(job_id)
-            if domain_job:
-                from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
+        repo = SqlAlchemyJobRepository(session)
+        domain_job = await repo.get(job_id)
+        if domain_job:
+            from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 
-                scan_repo = SqlAlchemyScanQueueRepository(session)
-                return await _job_to_response(domain_job, scan_repo=scan_repo)
-        finally:
-            if tenant_id and is_postgres(session):
-                with contextlib.suppress(Exception):
-                    await clear_tenant_context(session)
+            scan_repo = SqlAlchemyScanQueueRepository(session)
+            return await _job_to_response(domain_job, scan_repo=scan_repo)
 
     job = await job_service.cancel_job(job_id)
     return await _job_to_response(job)

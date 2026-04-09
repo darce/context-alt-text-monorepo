@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 from collections.abc import AsyncIterator
 from uuid import UUID
@@ -14,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.session import engine
 from recognition.shared.db.dialect import is_sqlite
+
+logger = logging.getLogger(__name__)
 
 
 async def ensure_tenant_exists(session: AsyncSession, tenant_id: UUID, site_url: str | None = None) -> None:
@@ -82,9 +85,16 @@ async def clear_tenant_context(session: AsyncSession) -> None:
     # SQLite doesn't support RLS or session variables - skip for test environments
     if is_sqlite(session):
         return
-    with contextlib.suppress(Exception):
+    try:
         await session.execute(text("RESET app.current_tenant"))
         await session.execute(text("RESET app.bypass_rls"))
+    except Exception:
+        logger.warning(
+            "clear_tenant_context failed in_transaction=%s conn_id=%s",
+            session.in_transaction(),
+            hex(id(getattr(session, "sync_session", session))),
+            exc_info=True,
+        )
 
 
 async def enable_rls_bypass(session: AsyncSession) -> None:
@@ -135,10 +145,17 @@ def _register_checkout_listener() -> None:  # pragma: no cover
 
     @event.listens_for(engine.sync_engine, "checkout")
     def _reset_context_on_checkout(dbapi_conn, connection_record, connection_proxy) -> None:
-        cursor = dbapi_conn.cursor()
-        cursor.execute("RESET app.current_tenant")
-        cursor.execute("RESET app.bypass_rls")
-        cursor.close()
+        cursor = None
+        try:
+            cursor = dbapi_conn.cursor()
+            cursor.execute("RESET app.current_tenant")
+            cursor.execute("RESET app.bypass_rls")
+        except Exception:
+            logger.warning("checkout listener: failed to reset tenant context", exc_info=True)
+        finally:
+            if cursor is not None:
+                with contextlib.suppress(Exception):
+                    cursor.close()
 
 
 # Only register the listener if not in test mode (avoids asyncpg engine init during tests)

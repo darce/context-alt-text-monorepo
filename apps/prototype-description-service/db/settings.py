@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 DEFAULT_PGUSER = "context"
 DEFAULT_PGPASSWORD = "context"
@@ -29,6 +30,9 @@ class DatabaseSettings:
     max_overflow: int
     pool_timeout: int
     pool_recycle: int
+    statement_timeout: str
+    idle_in_txn_timeout: str
+    disable_stmt_cache: bool
 
 
 def _infer_sync_dsn(async_dsn: str) -> str:
@@ -89,6 +93,15 @@ def _render_default_sync_dsn() -> str:
     )
 
 
+def _disable_asyncpg_statement_cache(async_dsn: str) -> str:
+    """Append the asyncpg prepared statement cache toggle to the DSN."""
+
+    parsed = urlparse(async_dsn)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query["prepared_statement_cache_size"] = "0"
+    return urlunparse(parsed._replace(query=urlencode(query)))
+
+
 @lru_cache(maxsize=1)
 def get_database_settings() -> DatabaseSettings:
     """Load settings from environment variables with sensible defaults."""
@@ -101,6 +114,12 @@ def get_database_settings() -> DatabaseSettings:
     max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "10"))
     pool_timeout = int(os.getenv("DB_POOL_TIMEOUT", "30"))
     pool_recycle = int(os.getenv("DB_POOL_RECYCLE", "3600"))
+    statement_timeout = os.getenv("DB_STATEMENT_TIMEOUT", "10s")
+    idle_in_txn_timeout = os.getenv("DB_IDLE_IN_TXN_TIMEOUT", "30s")
+    disable_stmt_cache = os.getenv("DB_DISABLE_STMT_CACHE", "0") == "1"
+
+    if disable_stmt_cache and "+asyncpg" in async_dsn:
+        async_dsn = _disable_asyncpg_statement_cache(async_dsn)
 
     return DatabaseSettings(
         postgres_dsn=async_dsn,
@@ -110,6 +129,9 @@ def get_database_settings() -> DatabaseSettings:
         max_overflow=max_overflow,
         pool_timeout=pool_timeout,
         pool_recycle=pool_recycle,
+        statement_timeout=statement_timeout,
+        idle_in_txn_timeout=idle_in_txn_timeout,
+        disable_stmt_cache=disable_stmt_cache,
     )
 
 

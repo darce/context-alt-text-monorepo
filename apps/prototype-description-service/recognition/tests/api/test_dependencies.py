@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator
 
 import pytest
 from fastapi import FastAPI
@@ -10,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from recognition.domain.services.retention_policy_service import RetentionPolicyService
 from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http.deps import session as session_module
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.tests.api.conftest import FakeSession
 
@@ -132,3 +134,128 @@ async def test_retention_policy_service_factory_uses_provided_optional_session()
 
     assert isinstance(service, RetentionPolicyService)
     assert getattr(service, "_session", None) is session
+
+
+class _TrackingSession:
+    def __init__(self) -> None:
+        self.commit_calls = 0
+        self.rollback_calls = 0
+        self.close_calls = 0
+        self.execute_calls = 0
+        self.executed_statements: list[str] = []
+        self.bind = type("Bind", (), {"dialect": type("Dialect", (), {"name": "postgresql"})()})()
+
+    async def commit(self) -> None:
+        self.commit_calls += 1
+
+    async def rollback(self) -> None:
+        self.rollback_calls += 1
+
+    async def close(self) -> None:
+        self.close_calls += 1
+
+    async def execute(self, _statement, _params=None):  # noqa: ANN001
+        self.execute_calls += 1
+        self.executed_statements.append(str(_statement))
+        return None
+
+    async def connection(self):
+        return type("AsyncConnection", (), {"sync_connection": object()})()
+
+
+@pytest.mark.asyncio
+async def test_get_session_uses_async_session_factory_directly(monkeypatch) -> None:
+    session = _TrackingSession()
+    events: list[str] = []
+
+    async def fake_set(_session, _tenant_id) -> None:
+        events.append("set")
+
+    monkeypatch.setattr(session_module, "async_session_factory", lambda: session)
+    monkeypatch.setattr(session_module, "set_tenant_context", fake_set)
+
+    yielded: list[object] = []
+    async for item in session_module.get_session(tenant_id=str(uuid.uuid4())):
+        yielded.append(item)
+
+    assert yielded == [session]
+    assert session.commit_calls == 1
+    assert session.rollback_calls == 0
+    assert session.close_calls == 1
+    assert events == ["set"]
+
+
+@pytest.mark.asyncio
+async def test_get_optional_session_yields_none_on_probe_failure_and_closes(monkeypatch) -> None:
+    class _FailingSession(_TrackingSession):
+        async def execute(self, _statement, _params=None):  # noqa: ANN001
+            self.execute_calls += 1
+            raise RuntimeError("db unavailable")
+
+    session = _FailingSession()
+    monkeypatch.setattr(session_module, "async_session_factory", lambda: session)
+
+    yielded: list[object | None] = []
+    async for item in session_module.get_optional_session(tenant_id=None):
+        yielded.append(item)
+
+    assert yielded == [None]
+    assert session.execute_calls == 1
+    assert session.commit_calls == 0
+    assert session.rollback_calls == 0
+    assert session.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_optional_session_applies_timeouts_and_logs_connection_identity(monkeypatch, caplog) -> None:
+    session = _TrackingSession()
+    monkeypatch.setattr(session_module, "async_session_factory", lambda: session)
+    monkeypatch.setattr(
+        session_module,
+        "_db_settings",
+        type("Settings", (), {"statement_timeout": "9s", "idle_in_txn_timeout": "27s"})(),
+    )
+
+    with caplog.at_level("INFO"):
+        async for _ in session_module.get_optional_session(tenant_id=None):
+            pass
+
+    assert any("SET LOCAL statement_timeout = '9s'" in statement for statement in session.executed_statements)
+    assert any(
+        "SET LOCAL idle_in_transaction_session_timeout = '27s'" in statement
+        for statement in session.executed_statements
+    )
+    assert any("conn_id=" in message for message in caplog.messages)
+
+
+@pytest.mark.asyncio
+async def test_optional_session_rejects_malformed_timeout_values(monkeypatch) -> None:
+    session = _TrackingSession()
+    monkeypatch.setattr(session_module, "async_session_factory", lambda: session)
+    monkeypatch.setattr(
+        session_module,
+        "_db_settings",
+        type("Settings", (), {"statement_timeout": "9s'; RESET ALL; --", "idle_in_txn_timeout": "27s"})(),
+    )
+
+    with pytest.raises(ValueError, match="DB_STATEMENT_TIMEOUT"):
+        async for _ in session_module.get_optional_session(tenant_id=None):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_get_observability_session_degrades_without_raising(monkeypatch) -> None:
+    class _FailingSession(_TrackingSession):
+        async def execute(self, _statement, _params=None):  # noqa: ANN001
+            self.execute_calls += 1
+            raise RuntimeError("health probe failed")
+
+    session = _FailingSession()
+    monkeypatch.setattr(session_module, "async_session_factory", lambda: session)
+
+    yielded: list[object | None] = []
+    async for item in session_module.get_observability_session():
+        yielded.append(item)
+
+    assert yielded == [None]
+    assert session.close_calls == 1

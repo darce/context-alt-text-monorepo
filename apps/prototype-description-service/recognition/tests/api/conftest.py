@@ -28,6 +28,9 @@ class FakeSession:
         self.added: list[object] = []
         self._get_results: dict[tuple[object, object], object | None] = {}
         self._execute_results: list[FakeSessionResult] = []
+        self.commit_calls = 0
+        self.rollback_calls = 0
+        self.close_calls = 0
 
     def set_get_result(self, *, model_class: object, pk: object, value: object | None) -> None:
         """Register a deterministic return value for `get(model_class, pk)`."""
@@ -74,12 +77,18 @@ class FakeSession:
         return None
 
     async def commit(self) -> None:
+        self.commit_calls += 1
         return None
 
     async def refresh(self, _obj) -> None:
         return None
 
     async def rollback(self) -> None:
+        self.rollback_calls += 1
+        return None
+
+    async def close(self) -> None:
+        self.close_calls += 1
         return None
 
     async def get(self, model_class, pk):  # noqa: ANN001

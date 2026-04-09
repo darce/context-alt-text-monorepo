@@ -88,13 +88,11 @@ from agent_handoff_mcp import (
 )
 
 repo_root = Path(os.environ["REPO_ROOT"])
-state_dir = repo_root / ".task-state"
-runtime = RuntimeConfig.for_workspace(
-    repo_root,
-    state_dir=state_dir,
-    current_task_path=repo_root / "CURRENT_TASK.md",
-    exports_dir=state_dir / "exports",
-)
+# Anchor at the primary git worktree so the archive write lands in the same
+# DB the MCP server reads from. AHMCP-16: previously hard-coded
+# `RuntimeConfig.for_workspace(repo_root)` which read a fresh empty DB when
+# task-finish was invoked from a linked worktree.
+runtime = RuntimeConfig.for_repo(repo_root)
 configure_runtime(runtime)
 
 task = os.environ["TASK"]

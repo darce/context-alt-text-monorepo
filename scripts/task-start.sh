@@ -69,17 +69,34 @@ if [[ -n "$OBJECTIVE" ]]; then
     "${PYENV_ROOT:-$HOME/.pyenv}/versions/${PYENV_VERSION:-description-service}/bin/python" -c '
 import json, os, sys
 from pathlib import Path
-from agent_handoff_mcp import RuntimeConfig, configure_runtime, set_handoff_state
-
-repo_root = Path(os.environ["REPO_ROOT"])
-state_dir = repo_root / ".task-state"
-runtime = RuntimeConfig.for_workspace(
-    repo_root,
-    state_dir=state_dir,
-    current_task_path=repo_root / "CURRENT_TASK.md",
-    exports_dir=state_dir / "exports",
+from agent_handoff_mcp import (
+    RuntimeConfig,
+    configure_runtime,
+    get_handoff_state,
+    set_handoff_state,
 )
+
+# Anchor the runtime at the primary git worktree so the handoff DB is the
+# same one the MCP server reads from. AHMCP-16: previously this used
+# `RuntimeConfig.for_workspace(repo_root)` which is correct for the primary
+# worktree but a fresh empty per-worktree DB when invoked from a linked
+# worktree, breaking task switches.
+runtime = RuntimeConfig.for_repo(Path(os.environ["REPO_ROOT"]))
 configure_runtime(runtime)
+
+# Fetch the current handoff_state revision before updating. The set_handoff_state
+# write path requires expected_revision for any update of the singleton id=1
+# row, and that row is non-null whenever any task has ever been started, so
+# omitting expected_revision here failed every invocation after the first.
+# AHMCP-16: read identity-only and pass through expected_revision; treat the
+# absence of an active row (genuine cold start) as expected_revision=None so
+# the create-row path still works.
+identity = get_handoff_state(sections="identity")
+if isinstance(identity, str):
+    identity = json.loads(identity)
+identity_data = identity.get("data") if isinstance(identity, dict) else None
+active_row = identity_data.get("active") if isinstance(identity_data, dict) else None
+expected_revision = active_row.get("revision") if isinstance(active_row, dict) else None
 
 result = set_handoff_state(
     task_ref=os.environ["TASK"],
@@ -87,6 +104,7 @@ result = set_handoff_state(
     status="in_progress",
     target_branch=os.environ["BRANCH"],
     target_worktree_path=os.environ["WORKTREE_PATH"],
+    expected_revision=expected_revision,
 )
 parsed = json.loads(result) if isinstance(result, str) else result
 if not parsed.get("ok"):

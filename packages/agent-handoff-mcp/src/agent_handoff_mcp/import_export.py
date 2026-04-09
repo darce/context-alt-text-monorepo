@@ -1,7 +1,7 @@
 """Import/export domain module.
 
 Contains export_handoff_state, import_handoff_state, archive_task_state,
-update_task_status, and switch_task.
+get_archived_task, update_task_status, and switch_task.
 """
 
 from __future__ import annotations
@@ -649,6 +649,82 @@ def archive_task_state(
             "affected_ids": [resolved_task_ref],
             "task_revision": None,
         },
+    )
+
+
+def get_archived_task(task_ref: str, include_snapshot: bool = True) -> dict:
+    """Read an archived task row from ``task_archives`` by ``task_ref``.
+
+    The handoff dashboard surfaces archive metadata in the cross-task view,
+    but there is no MCP-side read tool for inspecting individual archive
+    rows directly. Without this, callers (audit scripts, lifecycle tooling,
+    review-handoff agents) had to either drop to raw sqlite — guessing
+    column names — or roundtrip through ``export_handoff_state`` which only
+    works for the currently-active task. AHMCP-16 closes the gap so the
+    archive table is reachable through the same envelope as every other
+    handoff read.
+
+    Returns the archive row's metadata (``task_ref``, ``archived_at``,
+    ``archived_by``, ``archived_branch``, ``archived_commit_sha``,
+    ``notes``) plus the parsed snapshot when ``include_snapshot=True``.
+    Returns ``ok=False`` with a structured error when no archive row
+    exists for the given ``task_ref``.
+    """
+    normalized_task_ref = _normalize_optional_text(task_ref)
+    if not normalized_task_ref:
+        return _envelope(
+            ok=False,
+            tool="get_archived_task",
+            data={"error": "task_ref must not be empty."},
+        )
+    with _get_db_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT task_ref, archived_at, archived_by, archived_branch,
+                   archived_commit_sha, notes, snapshot_json
+            FROM task_archives WHERE task_ref = ?
+            """,
+            (normalized_task_ref,),
+        ).fetchone()
+    if row is None:
+        return _envelope(
+            ok=False,
+            tool="get_archived_task",
+            data={
+                "error": f"No archived task found for task_ref={normalized_task_ref!r}.",
+                "task_ref": normalized_task_ref,
+            },
+            task_ref=normalized_task_ref,
+        )
+    archive_metadata: dict[str, object] = {
+        "task_ref": str(row["task_ref"]),
+        "archived_at": str(row["archived_at"]) if row["archived_at"] is not None else None,
+        "archived_by": str(row["archived_by"]) if row["archived_by"] is not None else None,
+        "archived_branch": str(row["archived_branch"]) if row["archived_branch"] is not None else None,
+        "archived_commit_sha": str(row["archived_commit_sha"]) if row["archived_commit_sha"] is not None else None,
+        "notes": str(row["notes"]) if row["notes"] is not None else None,
+    }
+    data: dict[str, object] = {"archive": archive_metadata}
+    if include_snapshot:
+        snapshot_json = row["snapshot_json"]
+        if snapshot_json is None:
+            data["snapshot"] = None
+            data["snapshot_parse_error"] = "snapshot_json column is null"
+        else:
+            try:
+                data["snapshot"] = json.loads(snapshot_json)
+            except json.JSONDecodeError as exc:
+                # Defensive: surface the parse error rather than swallowing it.
+                # The archive write path always serialises via json.dumps so a
+                # parse failure indicates external tampering or a schema
+                # migration mismatch — both worth flagging loudly.
+                data["snapshot"] = None
+                data["snapshot_parse_error"] = f"snapshot_json failed to parse: {exc}"
+    return _envelope(
+        ok=True,
+        tool="get_archived_task",
+        data=data,
+        task_ref=normalized_task_ref,
     )
 
 

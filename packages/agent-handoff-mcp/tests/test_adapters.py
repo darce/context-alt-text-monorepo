@@ -124,8 +124,14 @@ def test_generic_stdio_adapter_launches_packaged_server(tmp_path: Path) -> None:
     assert "review_runs" in tool_names
 
 
-def test_legacy_tool_profile_flags_now_all_expose_the_same_17_tools(tmp_path: Path) -> None:
-    """Default/core/extended launches all expose the unified 17-tool surface."""
+def test_legacy_tool_profile_flags_now_all_expose_the_same_18_tools(tmp_path: Path) -> None:
+    """Default/core/extended launches all expose the unified 18-tool surface.
+
+    AHMCP-16 added `get_archived_task` to the public registry, bringing the
+    surface from 17 to 18 tools. The previous count was a hard assert that
+    served as a regression guard against accidental tool churn — keep that
+    guarantee with the updated count.
+    """
     repo_root = Path(__file__).resolve().parents[3]
     launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
 
@@ -144,6 +150,6 @@ def test_legacy_tool_profile_flags_now_all_expose_the_same_17_tools(tmp_path: Pa
     core_count = asyncio.run(_count(["--tool-profile", "core"], "core-count.log"))
     extended_count = asyncio.run(_count(["--tool-profile", "extended"], "extended-count.log"))
 
-    assert default_count == 17, f"Expected 17 default tools, got {default_count}"
-    assert core_count == 17, f"Expected 17 tools for legacy core launch, got {core_count}"
-    assert extended_count == 17, f"Expected 17 tools for legacy extended launch, got {extended_count}"
+    assert default_count == 18, f"Expected 18 default tools, got {default_count}"
+    assert core_count == 18, f"Expected 18 tools for legacy core launch, got {core_count}"
+    assert extended_count == 18, f"Expected 18 tools for legacy extended launch, got {extended_count}"

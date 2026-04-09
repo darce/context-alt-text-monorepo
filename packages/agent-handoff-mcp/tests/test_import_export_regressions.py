@@ -337,3 +337,126 @@ def test_review_list_and_summary_surface_workspace_git_context(workspace_pair: d
     assert isinstance(summary["workspace_git"], dict)
     assert "branch" in summary["workspace_git"]
     assert "commit_sha" in summary["workspace_git"]
+
+
+# ---------------------------------------------------------------------------
+# AHMCP-16: get_archived_task — read-side access to task_archives rows.
+# ---------------------------------------------------------------------------
+
+
+def test_get_archived_task_returns_full_archive_row(workspace_pair: dict[str, Path]) -> None:
+    """Happy path: get_archived_task returns the archive metadata + parsed snapshot."""
+    _configure_runtime(workspace_pair["source"])
+
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="archived-task",
+            objective="To be archived",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.record_decision(
+            session="s1",
+            decision="archived_task_decision",
+            rationale="this is preserved in the archived snapshot",
+        )
+    )
+    archived = _parse(
+        mcp_server.archive_task_state(
+            task_ref="archived-task",
+            archive_branch="main",
+            notes="archived for AHMCP-16 read test",
+        )
+    )
+    assert archived["ok"] is True
+
+    fetched = _parse(mcp_server.get_archived_task(task_ref="archived-task"))
+    assert fetched["ok"] is True
+
+    archive = fetched["archive"]
+    assert archive["task_ref"] == "archived-task"
+    assert archive["archived_branch"] == "main"
+    assert archive["notes"] == "archived for AHMCP-16 read test"
+    assert archive["archived_at"] is not None
+    assert archive["archived_by"] is not None
+
+    snapshot = fetched["snapshot"]
+    assert isinstance(snapshot, dict)
+    # The archived snapshot must include the decision row we recorded above.
+    decision_ids = [row["decision"] for row in snapshot.get("decisions", [])]
+    assert "archived_task_decision" in decision_ids
+
+
+def test_get_archived_task_omits_snapshot_when_include_snapshot_false(
+    workspace_pair: dict[str, Path],
+) -> None:
+    """Pass-through: include_snapshot=False returns metadata only."""
+    _configure_runtime(workspace_pair["source"])
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="archived-meta-only",
+            objective="metadata-only",
+            status="in_progress",
+        )
+    )
+    _parse(mcp_server.archive_task_state(task_ref="archived-meta-only"))
+
+    fetched = _parse(
+        mcp_server.get_archived_task(task_ref="archived-meta-only", include_snapshot=False)
+    )
+    assert fetched["ok"] is True
+    assert fetched["archive"]["task_ref"] == "archived-meta-only"
+    assert "snapshot" not in fetched
+    assert "snapshot_parse_error" not in fetched
+
+
+def test_get_archived_task_returns_structured_error_when_missing(
+    workspace_pair: dict[str, Path],
+) -> None:
+    """Negative path: missing task_ref must return ok=False with a clear error."""
+    _configure_runtime(workspace_pair["source"])
+    fetched = _parse(mcp_server.get_archived_task(task_ref="never-archived"))
+    assert fetched["ok"] is False
+    assert "No archived task found" in fetched["error"]
+    assert fetched["task_ref"] == "never-archived"
+
+
+def test_get_archived_task_rejects_empty_task_ref(workspace_pair: dict[str, Path]) -> None:
+    """Validation: blank task_ref is rejected before any DB read."""
+    _configure_runtime(workspace_pair["source"])
+    fetched = _parse(mcp_server.get_archived_task(task_ref="   "))
+    assert fetched["ok"] is False
+    assert "must not be empty" in fetched["error"]
+
+
+def test_get_archived_task_surfaces_snapshot_parse_error(
+    workspace_pair: dict[str, Path],
+) -> None:
+    """Defensive: when snapshot_json is corrupted, the error is surfaced
+    instead of being swallowed. Simulates external tampering or schema
+    migration drift."""
+    import sqlite3
+
+    _configure_runtime(workspace_pair["source"])
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="corrupt-snapshot",
+            objective="will be corrupted",
+            status="in_progress",
+        )
+    )
+    _parse(mcp_server.archive_task_state(task_ref="corrupt-snapshot"))
+
+    db_path = workspace_pair["source"] / ".task-state" / "handoff.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE task_archives SET snapshot_json = ? WHERE task_ref = ?",
+            ("not-valid-json{", "corrupt-snapshot"),
+        )
+        conn.commit()
+
+    fetched = _parse(mcp_server.get_archived_task(task_ref="corrupt-snapshot"))
+    assert fetched["ok"] is True
+    assert fetched["snapshot"] is None
+    assert "snapshot_json failed to parse" in fetched["snapshot_parse_error"]

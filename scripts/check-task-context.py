@@ -21,6 +21,12 @@ EXIT_OK = 0
 EXIT_INFRA_ERROR = 1
 EXIT_DRIFT = 2
 
+# Statuses that indicate the active task has reached a terminal state and the
+# agent should start a new task before recording further work. `done` is the
+# canonical "task complete, archive pending" status; `blocked` and `review`
+# stay surfaced because they represent open holds rather than completion.
+TERMINAL_STATUSES = frozenset({"done"})
+
 
 def _print_aligned(emoji: str, label: str, value: str) -> None:
     print(f"{emoji} {label:18s} {value}")
@@ -39,30 +45,21 @@ def _detect_branch() -> str | None:
 
 
 def _configure_runtime() -> bool:
-    """Configure agent_handoff_mcp runtime for the current repo. Returns False on failure."""
+    """Configure agent_handoff_mcp runtime for the current repo. Returns False on failure.
+
+    Resolves the workspace root via ``RuntimeConfig.for_repo`` so that running
+    this script from a linked worktree still binds to the primary worktree's
+    ``.task-state/handoff.db``. Without this, every linked worktree would
+    start with an empty per-worktree DB and ``make context`` would report
+    "No active handoff task" even when the MCP server (configured against
+    the primary worktree) sees a different active task. AHMCP-16 closes
+    this divergence loop.
+    """
     try:
         from agent_handoff_mcp import RuntimeConfig, configure_runtime  # type: ignore
     except ImportError:
         return False
-    try:
-        repo_root = Path(
-            subprocess.check_output(
-                ["git", "rev-parse", "--show-toplevel"],
-                stderr=subprocess.DEVNULL,
-                timeout=5,
-            )
-            .decode("utf-8")
-            .strip()
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-        return False
-    state_dir = repo_root / ".task-state"
-    runtime = RuntimeConfig.for_workspace(
-        repo_root,
-        state_dir=state_dir,
-        current_task_path=repo_root / "CURRENT_TASK.md",
-        exports_dir=state_dir / "exports",
-    )
+    runtime = RuntimeConfig.for_repo(Path.cwd())
     configure_runtime(runtime)
     return True
 
@@ -147,6 +144,22 @@ def main() -> int:
 
     print()
     print("Context aligned ✓")
+
+    # AHMCP-16: surface a loud warning when the active task has already
+    # reached a terminal status. Without this, agents who run `make context`
+    # at the start of a session see "Context aligned" for a `done` task and
+    # may start editing code under the impression they are still under that
+    # task's umbrella, only to be blocked by the branch-isolation hook on
+    # the first edit. Telling them up-front to start a new task is cheaper
+    # than discovering it via the hook later.
+    status = (active.get("status") or "").strip().lower()
+    if status in TERMINAL_STATUSES:
+        print()
+        print(f"⚠ Active task `{task_ref}` is in status `{status}`.")
+        print("  Start a new task before recording further work:")
+        print("    make task-start TASK=<id> OBJECTIVE=\"...\"")
+        print("  or switch to an existing task with switch_task.")
+
     return EXIT_OK
 
 

@@ -1,11 +1,63 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 _DEFAULT_TOOL_PROFILE = "all"
 _VALID_TOOL_PROFILES = ("all", "core", "extended")
+_GIT_SUBPROCESS_TIMEOUT_SECONDS = 5
+
+
+def _resolve_primary_worktree_root(start_dir: Path) -> Path | None:
+    """Resolve the primary git worktree root from a starting directory.
+
+    Uses ``git rev-parse --git-common-dir`` to find the shared ``.git``
+    location across all linked worktrees of the same physical repository,
+    then walks one level up to the primary worktree root.
+
+    Returns ``None`` when git is not available, when the start directory is
+    not inside a git repository, or when the resolved common dir does not
+    point at a recognisable ``.git`` directory.
+
+    The output of ``git rev-parse --git-common-dir`` is documented to be
+    relative to the cwd of the git invocation when the call is made from the
+    primary worktree (typically ``.git``) and an absolute path when called
+    from a linked worktree (the absolute path of the primary's ``.git``
+    directory). The two cases are normalised here so callers always receive
+    the primary worktree's root directory.
+    """
+    if not start_dir.exists():
+        return None
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(start_dir), "rev-parse", "--git-common-dir"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_SUBPROCESS_TIMEOUT_SECONDS,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    raw = proc.stdout.strip()
+    if not raw:
+        return None
+    common_path = Path(raw)
+    if not common_path.is_absolute():
+        # Relative paths are relative to the cwd of the git invocation, which
+        # is start_dir.
+        common_path = (start_dir / common_path).resolve()
+    else:
+        common_path = common_path.resolve()
+    if common_path.name == ".git":
+        return common_path.parent
+    # Defensive: a bare repo or unusual layout returned a non-".git" path.
+    # Use it as-is rather than guessing at a parent that may not be a
+    # checkout root.
+    return common_path
 
 
 @dataclass(frozen=True)
@@ -56,6 +108,50 @@ class RuntimeConfig:
             exports_dir=resolved_exports_dir,
             artifact_db_path=resolved_state_dir / "mcp-artifacts.db",
             tool_profile=tool_profile or _DEFAULT_TOOL_PROFILE,
+        )
+
+    @classmethod
+    def for_repo(
+        cls,
+        start_dir: str | Path | None = None,
+        *,
+        state_dir: str | Path | None = None,
+        current_task_path: str | Path | None = None,
+        exports_dir: str | Path | None = None,
+        tool_profile: str | None = None,
+    ) -> RuntimeConfig:
+        """Build a RuntimeConfig anchored at the primary git worktree.
+
+        Resolves the workspace root by walking from ``start_dir`` (or the
+        current working directory if omitted) to the primary git worktree
+        via ``git rev-parse --git-common-dir``. Every linked worktree of the
+        same physical repository will therefore resolve to the same
+        ``.task-state/handoff.db``, eliminating the per-worktree DB
+        divergence that breaks ``make context`` when run from a linked
+        worktree while the MCP server reads the primary worktree's DB.
+
+        When git is not available or ``start_dir`` is not inside a git
+        repository, this falls back to ``RuntimeConfig.for_workspace``
+        anchored at ``start_dir`` (or the current working directory). This
+        keeps non-git contexts (tests, ad-hoc tmpdir setups) working
+        unchanged.
+
+        Explicit ``state_dir`` / ``current_task_path`` / ``exports_dir``
+        arguments are passed through and override the resolved defaults
+        unchanged. This means a caller can still anchor the DB at an
+        arbitrary path if it has a reason to bypass the primary-worktree
+        resolution (e.g. running against a snapshotted state directory in
+        a fixture).
+        """
+        start = Path(start_dir).expanduser().resolve() if start_dir is not None else Path.cwd().resolve()
+        primary_root = _resolve_primary_worktree_root(start)
+        workspace_root = primary_root if primary_root is not None else start
+        return cls.for_workspace(
+            workspace_root,
+            state_dir=state_dir,
+            current_task_path=current_task_path,
+            exports_dir=exports_dir,
+            tool_profile=tool_profile,
         )
 
     @classmethod

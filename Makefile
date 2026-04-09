@@ -240,6 +240,7 @@ check-all:
 		else \
 			$(MAKE) lint-all; \
 			$(MAKE) lint-task-plans; \
+			$(MAKE) lint-scripts; \
 			$(MAKE) mypy-orchestrator; \
 			$(MAKE) test-all; \
 			echo ""; \
@@ -352,6 +353,15 @@ fix-lint-mcp: fix-lint-orchestrator
 # hooks are bypassed locally.
 lint-task-plans:
 	@python3 scripts/hooks/guard-task-plan-findings.py --scan-repo
+
+# AHMCP-20 / Layer 3 of the heredoc-eradication bug class fix.
+# Walks scripts/**/*.sh and fails on any multi-line `python -c '...'`
+# heredoc — the AHMCP-17 apostrophe-in-heredoc bug class. Promotes
+# inline Python to standalone files via scripts/_my_inline.py instead.
+# See scripts/_task_start_inline.py and scripts/_task_finish_inline.py
+# for the canonical pattern.
+lint-scripts:
+	@python3 scripts/hooks/lint-no-inline-python-heredoc.py
 
 format-handoff:
 	@echo "agent-handoff-mcp formatting now runs in the standalone repository."

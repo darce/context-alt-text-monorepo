@@ -139,75 +139,17 @@ fi
 
 # Step 5: Archive the MCP task and regenerate CURRENT_TASK.md.
 echo "→ Archiving MCP task state $TASK"
+# AHMCP-20: the inline Python that used to live here as a `python -c '...'`
+# heredoc now lives at scripts/_task_finish_inline.py. Bash quoting is no
+# longer in the loop, so the AHMCP-17 apostrophe-in-comment bug class is
+# unrepresentable here. The lint guard at scripts/hooks/lint-no-inline-python-heredoc.py
+# prevents future heredocs from sneaking back in.
 REPO_ROOT="$REPO_ROOT" TASK="$TASK" \
 PYTHONPATH="${REPO_ROOT}/packages/agent-handoff-mcp/src:${REPO_ROOT}/packages/agent-orchestrator-mcp/src" \
   PYENV_VERSION="${PYENV_VERSION:-description-service}" \
-  "${PYENV_ROOT:-$HOME/.pyenv}/versions/${PYENV_VERSION:-description-service}/bin/python" -c '
-import json, os, subprocess, sys
-from pathlib import Path
-from agent_handoff_mcp import (
-    RuntimeConfig,
-    archive_task_state,
-    configure_runtime,
-    generate_current_task_md,
-    get_handoff_state,
-    update_task_status,
-)
-
-repo_root = Path(os.environ["REPO_ROOT"])
-# Anchor at the primary git worktree so the archive write lands in the same
-# DB the MCP server reads from. AHMCP-16: previously hard-coded
-# `RuntimeConfig.for_workspace(repo_root)` which read a fresh empty DB when
-# task-finish was invoked from a linked worktree.
-runtime = RuntimeConfig.for_repo(repo_root)
-configure_runtime(runtime)
-
-task = os.environ["TASK"]
-head_sha = subprocess.check_output(["git", "rev-parse", "HEAD"]).strip().decode()
-
-# Best-effort status -> done before archive (idempotent if already done).
-# AHMCP-16-FU-01: when the task being finished is the active row
-# (handoff_state.id=1), update_task_status delegates to set_handoff_state
-# which requires expected_revision for any update of an existing row. Fetch
-# the active rows revision via the identity-only sections projection and
-# pass it through. When the task is NOT the active row (already cleared, or
-# being archived from a snapshot), the active payload is None and we pass
-# expected_revision=None and update_task_status falls through to the archived
-# snapshot path which does not enforce optimistic concurrency.
-# (Apostrophes are intentionally omitted from comments because the inline
-# Python is wrapped in bash single quotes; an unescaped apostrophe breaks
-# the heredoc parse.)
-identity = get_handoff_state(sections="identity")
-if isinstance(identity, str):
-    identity = json.loads(identity)
-identity_data = identity.get("data") if isinstance(identity, dict) else None
-active_row = identity_data.get("active") if isinstance(identity_data, dict) else None
-expected_revision = (
-    active_row.get("revision")
-    if isinstance(active_row, dict) and active_row.get("task_ref") == task
-    else None
-)
-
-try:
-    state = update_task_status(
-        task_ref=task,
-        status="done",
-        expected_revision=expected_revision,
-    )
-    if not state.get("ok"):
-        print("\u26a0 update_task_status returned ok=False:", state, file=sys.stderr)
-except Exception as exc:
-    print("\u26a0 update_task_status skipped:", exc, file=sys.stderr)
-
-archived = archive_task_state(task_ref=task, archive_branch="main", archive_commit_sha=head_sha)
-if not archived.get("ok"):
-    print("\u26a0 archive_task_state returned ok=False:", archived, file=sys.stderr)
-
-regen = generate_current_task_md()
-if not regen.get("ok"):
-    print("\u26a0 generate_current_task_md returned ok=False:", regen, file=sys.stderr)
-print("  OK")
-' || echo "⚠ MCP archive failed — clean up manually with archive_task_state."
+  "${PYENV_ROOT:-$HOME/.pyenv}/versions/${PYENV_VERSION:-description-service}/bin/python" \
+  "${REPO_ROOT}/scripts/_task_finish_inline.py" \
+  || echo "⚠ MCP archive failed — clean up manually with archive_task_state."
 
 echo
 echo "✓ Task $TASK finished and cleaned up."

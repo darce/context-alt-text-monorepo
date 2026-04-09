@@ -654,8 +654,16 @@ def close_slice(
                 ok=False,
                 tool="close_slice",
                 data={
-                    "error": "expected_revision is required for updates.",
-                    "state_error": "expected_revision is required for updates.",
+                    "error": (
+                        "expected_revision is required for updates. "
+                        "Fetch the active row first via get_handoff_state(sections='identity') "
+                        "and pass its revision field as expected_revision."
+                    ),
+                    "state_error": (
+                        "expected_revision is required for updates. "
+                        "Fetch the active row first via get_handoff_state(sections='identity') "
+                        "and pass its revision field as expected_revision."
+                    ),
                     "decision_recorded": False,
                     "state_updated": False,
                     "current_revision": current_revision,

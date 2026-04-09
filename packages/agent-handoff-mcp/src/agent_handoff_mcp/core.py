@@ -103,6 +103,7 @@ from .import_export import (  # noqa: F401
     _set_import_active_state,
     archive_task_state,
     export_handoff_state,
+    get_archived_task,
     import_handoff_state,
     switch_task,
     update_task_status,

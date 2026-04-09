@@ -1,10 +1,11 @@
 import os
+import subprocess
 from pathlib import Path
 from unittest import mock
 
 import pytest
 
-from agent_handoff_mcp.config import RuntimeConfig
+from agent_handoff_mcp.config import RuntimeConfig, _resolve_primary_worktree_root
 
 
 def test_runtime_config_defaults_to_workspace_state() -> None:
@@ -74,6 +75,87 @@ def test_runtime_config_from_args_cli_flag_takes_precedence_but_normalizes_to_al
     with mock.patch.dict(os.environ, {"AGENT_HANDOFF_TOOL_PROFILE": "core"}):
         runtime = RuntimeConfig.from_args(FakeArgs())
     assert runtime.tool_profile == "all"
+
+
+def _run_git(cwd: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+@pytest.fixture
+def git_repo_with_linked_worktree(tmp_path: Path) -> tuple[Path, Path]:
+    """Create a primary git repo plus a linked worktree under tmp_path.
+
+    Returns ``(primary_root, linked_root)``. The linked worktree is on a
+    second branch checked out into a sibling directory, mirroring the
+    monorepo's `make task-start` layout.
+    """
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    _run_git(primary, "init", "-q", "-b", "main")
+    _run_git(primary, "config", "user.email", "test@example.com")
+    _run_git(primary, "config", "user.name", "Test User")
+    _run_git(primary, "commit", "--allow-empty", "-m", "init", "-q")
+    linked = tmp_path / "primary-feature"
+    _run_git(primary, "branch", "feature/test")
+    _run_git(primary, "worktree", "add", "-q", str(linked), "feature/test")
+    return primary, linked
+
+
+def test_for_repo_resolves_primary_root_from_primary_worktree(
+    git_repo_with_linked_worktree: tuple[Path, Path],
+) -> None:
+    """When called from inside the primary worktree, for_repo() returns the
+    primary worktree's root."""
+    primary, _linked = git_repo_with_linked_worktree
+    runtime = RuntimeConfig.for_repo(primary)
+    assert runtime.workspace_root == primary.resolve()
+    assert runtime.state_dir == primary.resolve() / ".task-state"
+    assert runtime.db_path == primary.resolve() / ".task-state" / "handoff.db"
+
+
+def test_for_repo_collapses_linked_worktree_to_primary_root(
+    git_repo_with_linked_worktree: tuple[Path, Path],
+) -> None:
+    """When called from inside a linked worktree, for_repo() must still
+    resolve to the primary worktree's root so all worktrees share a single
+    handoff DB. This is the AHMCP-16 fix."""
+    primary, linked = git_repo_with_linked_worktree
+    runtime = RuntimeConfig.for_repo(linked)
+    assert runtime.workspace_root == primary.resolve()
+    assert runtime.db_path == primary.resolve() / ".task-state" / "handoff.db"
+
+
+def test_for_repo_falls_back_to_start_dir_outside_git(tmp_path: Path) -> None:
+    """When start_dir is not inside any git repo, for_repo() falls back to
+    using start_dir as the workspace root."""
+    not_a_repo = tmp_path / "scratch"
+    not_a_repo.mkdir()
+    runtime = RuntimeConfig.for_repo(not_a_repo)
+    assert runtime.workspace_root == not_a_repo.resolve()
+
+
+def test_for_repo_passes_through_explicit_state_dir(
+    git_repo_with_linked_worktree: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """An explicit state_dir override must take precedence over the
+    primary-worktree resolution. This preserves the escape hatch for
+    fixtures that anchor at a snapshotted state directory."""
+    _primary, linked = git_repo_with_linked_worktree
+    custom_state = tmp_path / "custom-state"
+    runtime = RuntimeConfig.for_repo(linked, state_dir=custom_state)
+    assert runtime.state_dir == custom_state.resolve()
+    assert runtime.db_path == custom_state.resolve() / "handoff.db"
+
+
+def test_resolve_primary_worktree_root_returns_none_for_missing_dir(tmp_path: Path) -> None:
+    missing = tmp_path / "does-not-exist"
+    assert _resolve_primary_worktree_root(missing) is None
 
 
 def test_runtime_config_rejects_invalid_tool_profile() -> None:

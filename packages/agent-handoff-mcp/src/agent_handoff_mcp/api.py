@@ -39,6 +39,7 @@ handoff_close_check = core.handoff_close_check
 export_handoff_state = core.export_handoff_state
 import_handoff_state = core.import_handoff_state
 archive_task_state = core.archive_task_state
+get_archived_task = core.get_archived_task
 _core_update_task_status = core.update_task_status
 _core_set_handoff_state = core.set_handoff_state
 get_handoff_state = core.get_handoff_state
@@ -67,6 +68,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "export_handoff_state": "Export the task handoff state to a portable JSON snapshot.",
     "import_handoff_state": "Import a previously exported handoff state snapshot into the local database.",
     "archive_task_state": "Archive completed task state from the live handoff tables into archive storage.",
+    "get_archived_task": "Read an archived task row from task_archives by task_ref. Returns archive metadata (archived_at/archived_by/archived_branch/archived_commit_sha/notes) plus the parsed snapshot when include_snapshot=True. Use this to inspect a task's terminal state without dropping to raw sqlite.",
     "update_task_status": "Update a task status without recording a slice decision. For the active task this requires expected_revision; for archived tasks it updates the archived snapshot status used by the dashboard.",
     "load_session": "Load session context: get_handoff_state + review_findings(list open) in one call. Pass sections to shape the nested state payload and detail to shape both state and findings.",
     "close_slice": "Record a slice-complete decision, keep the task status in_progress, and regenerate CURRENT_TASK.md. Requires expected_revision when the target task is currently active. Pass changed_files to persist structured review scope on the nested decision write.",
@@ -1351,6 +1353,19 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--allow-destructive-clear", action="store_true"),
             ],
             surface_class="action",
+            entity_family="lifecycle",
+        ),
+        ToolEntry(
+            "get_archived_task",
+            get_archived_task,
+            TOOL_DESCRIPTIONS["get_archived_task"],
+            profile="extended",
+            cli_name="get-archived-task",
+            cli_args=[
+                ArgSpec("--task-ref", required=True),
+                ArgSpec("--no-snapshot", dest="include_snapshot", action="store_false"),
+            ],
+            surface_class="query",
             entity_family="lifecycle",
         ),
         ToolEntry(

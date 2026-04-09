@@ -6,11 +6,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash scripts/hooks/guard-main-branch.sh"
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-main-branch.sh\""
           },
           {
             "type": "command",
-            "command": "python3 scripts/hooks/guard-task-plan-findings.py"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-task-plan-findings.py\""
           }
         ]
       }

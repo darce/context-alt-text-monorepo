@@ -3089,7 +3089,8 @@ def test_close_slice_requires_expected_revision_before_recording_decision(isolat
 
     assert result["ok"] is False
     assert result["decision_recorded"] is False
-    assert result["state_error"] == "expected_revision is required for updates."
+    assert "expected_revision is required for updates" in result["state_error"]
+    assert "get_handoff_state(sections='identity')" in result["state_error"]
 
     state = _parse(mcp_server.get_handoff_state(task_ref="close-preflight-test"))
     assert state["ok"] is True

@@ -362,6 +362,7 @@ lint-task-plans:
 # for the canonical pattern.
 lint-scripts:
 	@python3 scripts/hooks/lint-no-inline-python-heredoc.py
+	@python3 scripts/hooks/lint-expected-revision.py
 
 format-handoff:
 	@echo "agent-handoff-mcp formatting now runs in the standalone repository."

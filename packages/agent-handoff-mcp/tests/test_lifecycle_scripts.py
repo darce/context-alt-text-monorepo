@@ -657,3 +657,69 @@ def test_integrity_watcher_smoke_mode_resolves_primary_worktree_from_linked(
         f"smoke write path {write_event['path']!r} should resolve to primary "
         f"worktree {str(primary.resolve())!r}, not linked worktree"
     )
+
+
+# ---------------------------------------------------------------------------
+# lint-expected-revision.py tests (AHMCP-21 / Layer 3 expected_revision class)
+# ---------------------------------------------------------------------------
+
+
+def test_lint_expected_revision_passes_on_current_scripts_tree() -> None:
+    """AHMCP-21 / Layer 3: the lint guard at
+    scripts/hooks/lint-expected-revision.py must pass on the current
+    scripts/_*.py tree. If someone adds a set_handoff_state or
+    update_task_status call without expected_revision, this test fails
+    the package suite."""
+    lint_script = REPO_ROOT / "scripts" / "hooks" / "lint-expected-revision.py"
+    assert lint_script.exists(), f"missing lint guard at {lint_script}"
+    proc = subprocess.run(
+        [sys.executable, str(lint_script)],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, (
+        f"lint-expected-revision failed on current scripts/ tree:\n{proc.stderr}"
+    )
+
+
+def test_lint_expected_revision_catches_missing_kwarg(tmp_path: Path) -> None:
+    """AHMCP-21 / Layer 3 negative test: feed the guard a synthetic
+    Python file that calls set_handoff_state without expected_revision
+    and assert it returns exit code 1."""
+    fixture = tmp_path / "_bad_inline.py"
+    fixture.write_text(
+        "from agent_handoff_mcp import set_handoff_state\n"
+        "set_handoff_state(task_ref='T1', objective='test', status='in_progress')\n"
+    )
+    lint_script = REPO_ROOT / "scripts" / "hooks" / "lint-expected-revision.py"
+    proc = subprocess.run(
+        [sys.executable, str(lint_script), "--paths", str(tmp_path / "_*.py")],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 1, (
+        f"lint guard should fail when expected_revision is missing; "
+        f"got exit={proc.returncode} stderr={proc.stderr!r}"
+    )
+    assert "set_handoff_state" in proc.stderr
+    assert "expected_revision" in proc.stderr
+
+
+def test_lint_expected_revision_allows_call_with_kwarg(tmp_path: Path) -> None:
+    """AHMCP-21 / Layer 3 positive escape: a call that includes
+    expected_revision should not be flagged."""
+    fixture = tmp_path / "_good_inline.py"
+    fixture.write_text(
+        "from agent_handoff_mcp import set_handoff_state\n"
+        "set_handoff_state(task_ref='T1', objective='test', status='in_progress', expected_revision=0)\n"
+    )
+    lint_script = REPO_ROOT / "scripts" / "hooks" / "lint-expected-revision.py"
+    proc = subprocess.run(
+        [sys.executable, str(lint_script), "--paths", str(tmp_path / "_*.py")],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, (
+        f"lint guard should pass when expected_revision is present; "
+        f"got exit={proc.returncode} stderr={proc.stderr!r}"
+    )

@@ -84,7 +84,11 @@ def set_handoff_state(
                 tool=_tool,
                 task_ref=task_ref,
                 data={
-                    "error": "expected_revision is required for updates.",
+                    "error": (
+                        "expected_revision is required for updates. "
+                        "Fetch the active row first via get_handoff_state(sections='identity') "
+                        "and pass its revision field as expected_revision."
+                    ),
                     "current_revision": int(current["revision"]),
                 },
             )

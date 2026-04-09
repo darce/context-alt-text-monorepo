@@ -41,6 +41,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TASK_START_SCRIPT = REPO_ROOT / "scripts" / "task-start.sh"
 TASK_FINISH_SCRIPT = REPO_ROOT / "scripts" / "task-finish.sh"
+TASK_START_INLINE = REPO_ROOT / "scripts" / "_task_start_inline.py"
+TASK_FINISH_INLINE = REPO_ROOT / "scripts" / "_task_finish_inline.py"
 CHECK_CONTEXT_SCRIPT = REPO_ROOT / "scripts" / "check-task-context.py"
 INTEGRITY_WATCHER_SCRIPT = REPO_ROOT / "scripts" / "integrity-watcher.sh"
 
@@ -66,13 +68,21 @@ def _build_fake_monorepo(tmp_path: Path) -> Path:
     repo = tmp_path / "fake-monorepo"
     repo.mkdir()
 
-    # Copy lifecycle scripts.
+    # Copy lifecycle scripts. AHMCP-20 promoted the inline Python out of
+    # task-start.sh and task-finish.sh into _task_start_inline.py and
+    # _task_finish_inline.py respectively, so the fake monorepo must
+    # carry both the bash wrapper and the standalone Python module for
+    # each entry point.
     (repo / "scripts").mkdir()
     shutil.copy2(TASK_START_SCRIPT, repo / "scripts" / "task-start.sh")
     shutil.copy2(TASK_FINISH_SCRIPT, repo / "scripts" / "task-finish.sh")
+    shutil.copy2(TASK_START_INLINE, repo / "scripts" / "_task_start_inline.py")
+    shutil.copy2(TASK_FINISH_INLINE, repo / "scripts" / "_task_finish_inline.py")
     shutil.copy2(CHECK_CONTEXT_SCRIPT, repo / "scripts" / "check-task-context.py")
     os.chmod(repo / "scripts" / "task-start.sh", 0o755)
     os.chmod(repo / "scripts" / "task-finish.sh", 0o755)
+    os.chmod(repo / "scripts" / "_task_start_inline.py", 0o755)
+    os.chmod(repo / "scripts" / "_task_finish_inline.py", 0o755)
     os.chmod(repo / "scripts" / "check-task-context.py", 0o755)
 
     # Copy the agent-handoff-mcp source so the inline Python can import it.
@@ -268,61 +278,114 @@ def test_task_finish_archives_active_task_with_status_done(tmp_path: Path) -> No
     )
 
 
-def test_task_finish_inline_python_has_no_unescaped_apostrophes() -> None:
-    """AHMCP-17 regression: the inline `python -c '...'` heredoc in
-    task-finish.sh is wrapped in bash single quotes. An unescaped
-    apostrophe inside the Python (e.g. in a comment like 'the row's
-    revision') closes the bash string prematurely and produces
-    `syntax error near unexpected token '('`. Static-check the script
-    so the regression cannot recur."""
-    text = TASK_FINISH_SCRIPT.read_text()
-    # Locate the python -c heredoc block.
-    marker = '"${PYENV_ROOT:-$HOME/.pyenv}/versions/${PYENV_VERSION:-description-service}/bin/python" -c \''
-    start = text.find(marker)
-    assert start != -1, "Could not locate python -c heredoc in task-finish.sh"
-    # The heredoc body runs from the opening ' to the matching closing '
-    # at the start of a line followed by `' || echo`.
-    body_start = text.find("'", start + len(marker) - 1) + 1
-    body_end = text.find("' || echo", body_start)
-    assert body_end != -1, "Could not locate end of python -c heredoc"
-    body = text[body_start:body_end]
-    # Inside the heredoc body there must be NO single-quote characters
-    # (the bash wrapper cannot escape them inside the same single-quoted
-    # block; any apostrophe terminates the bash string).
-    if "'" in body:
-        offending_lines = [
-            f"line {i + 1}: {line}"
-            for i, line in enumerate(body.splitlines())
-            if "'" in line
-        ]
-        raise AssertionError(
-            "task-finish.sh inline python -c heredoc contains an unescaped "
-            "apostrophe; bash will close the heredoc prematurely.\n"
-            + "\n".join(offending_lines)
-        )
+def test_task_lifecycle_scripts_have_no_multiline_python_heredoc() -> None:
+    """AHMCP-20 / Layer 1 of the heredoc-eradication bug class fix.
+
+    This is the structural successor to the AHMCP-17 apostrophe-static-
+    check tests (which used to walk the heredoc body and assert no `'`
+    characters appeared inside it). The new assertion is stronger:
+    instead of checking that the heredoc body is apostrophe-free, we
+    assert the heredoc itself does not exist. The inline Python lives
+    at scripts/_task_start_inline.py and scripts/_task_finish_inline.py
+    instead, and bash quoting is no longer in the loop.
+    """
+    for script in (TASK_START_SCRIPT, TASK_FINISH_SCRIPT):
+        text = script.read_text()
+        # The forbidden pattern is `python -c '<multiline body>'`. We look
+        # for `python` followed by `-c '` and check whether the next `'`
+        # is on the same line. Any cross-line `-c '...'` is the bug class.
+        cursor = 0
+        while True:
+            idx = text.find(" -c '", cursor)
+            if idx == -1:
+                break
+            close_quote = text.find("'", idx + 5)
+            assert close_quote != -1, (
+                f"{script.name}: unterminated `-c '...'` starting at offset {idx}"
+            )
+            body = text[idx + 5 : close_quote]
+            assert "\n" not in body, (
+                f"{script.name}: multi-line `python -c '...'` heredoc detected at offset {idx} "
+                f"({body.count(chr(10)) + 1} lines). AHMCP-20 forbids this pattern. Promote the "
+                f"inline Python to a standalone .py file and invoke it via `python <script.py>`. "
+                f"See scripts/_task_start_inline.py for the canonical example."
+            )
+            cursor = close_quote + 1
 
 
-def test_task_start_inline_python_has_no_unescaped_apostrophes() -> None:
-    """AHMCP-17 regression mirror for task-start.sh: same constraint."""
-    text = TASK_START_SCRIPT.read_text()
-    marker = '"${PYENV_ROOT:-$HOME/.pyenv}/versions/${PYENV_VERSION:-description-service}/bin/python" -c \''
-    start = text.find(marker)
-    assert start != -1, "Could not locate python -c heredoc in task-start.sh"
-    body_start = text.find("'", start + len(marker) - 1) + 1
-    body_end = text.find("' || echo", body_start)
-    assert body_end != -1, "Could not locate end of python -c heredoc"
-    body = text[body_start:body_end]
-    if "'" in body:
-        offending_lines = [
-            f"line {i + 1}: {line}"
-            for i, line in enumerate(body.splitlines())
-            if "'" in line
-        ]
-        raise AssertionError(
-            "task-start.sh inline python -c heredoc contains an unescaped "
-            "apostrophe; bash will close the heredoc prematurely.\n"
-            + "\n".join(offending_lines)
-        )
+def test_lint_no_inline_python_heredoc_passes_on_current_scripts_tree() -> None:
+    """AHMCP-20 / Layer 3 of the heredoc-eradication bug class fix.
+
+    The lint guard at scripts/hooks/lint-no-inline-python-heredoc.py is
+    the long-term defense against future heredocs sneaking back in. This
+    test asserts the guard passes on the current scripts/ tree, which is
+    the per-PR regression check. If the guard ever fails because someone
+    re-introduced a heredoc, this test fails the package suite and the
+    pre-merge gate refuses the merge.
+    """
+    lint_script = REPO_ROOT / "scripts" / "hooks" / "lint-no-inline-python-heredoc.py"
+    assert lint_script.exists(), f"missing lint guard at {lint_script}"
+    proc = subprocess.run(
+        [sys.executable, str(lint_script)],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, (
+        f"lint-no-inline-python-heredoc failed on the current scripts/ tree:\n"
+        f"{proc.stderr}"
+    )
+
+
+def test_lint_no_inline_python_heredoc_catches_synthetic_violation(tmp_path: Path) -> None:
+    """AHMCP-20 / Layer 3 negative test: feed the guard a synthetic
+    multi-line `python -c '...'` heredoc and assert it returns exit
+    code 1 with a clear message naming the offending file and line."""
+    fixture_dir = tmp_path / "fixture-scripts"
+    fixture_dir.mkdir()
+    bad_script = fixture_dir / "bad.sh"
+    bad_script.write_text(
+        "#!/usr/bin/env bash\n"
+        "python -c '\n"
+        "import os\n"
+        "print(\"hello\")\n"
+        "'\n"
+    )
+    lint_script = REPO_ROOT / "scripts" / "hooks" / "lint-no-inline-python-heredoc.py"
+    proc = subprocess.run(
+        [sys.executable, str(lint_script), "--paths", str(fixture_dir / "*.sh")],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 1, (
+        f"lint guard should fail on a multi-line heredoc fixture; got "
+        f"exit={proc.returncode} stderr={proc.stderr!r}"
+    )
+    assert "multi-line `python -c '...'` heredoc" in proc.stderr
+    assert "bad.sh" in proc.stderr
+
+
+def test_lint_no_inline_python_heredoc_allows_single_line_invocation(tmp_path: Path) -> None:
+    """AHMCP-20 / Layer 3 escape hatch: a single-line `python -c "..."`
+    invocation is allowed because it cannot embed multi-line content
+    and the apostrophe risk is minimal. The guard is only after the
+    multi-line heredoc class."""
+    fixture_dir = tmp_path / "fixture-scripts"
+    fixture_dir.mkdir()
+    ok_script = fixture_dir / "ok.sh"
+    ok_script.write_text(
+        "#!/usr/bin/env bash\n"
+        'python -c "import sys; print(sys.version)"\n'
+    )
+    lint_script = REPO_ROOT / "scripts" / "hooks" / "lint-no-inline-python-heredoc.py"
+    proc = subprocess.run(
+        [sys.executable, str(lint_script), "--paths", str(fixture_dir / "*.sh")],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, (
+        f"lint guard should allow single-line `python -c '...'`; got "
+        f"exit={proc.returncode} stderr={proc.stderr!r}"
+    )
 
 
 # ---------------------------------------------------------------------------

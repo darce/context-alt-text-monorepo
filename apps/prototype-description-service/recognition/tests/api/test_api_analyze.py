@@ -18,6 +18,7 @@ from recognition.domain.job import Job, JobStatus, JobType, ProjectionStatus
 from recognition.domain.services.retention_policy_service import RetentionPolicyService
 from recognition.interface_adapters.http import dependencies
 from recognition.interface_adapters.http import router as recognition_router
+from recognition.interface_adapters.http.routers import analyze as analyze_router
 from recognition.tests.api.conftest import FakeSession
 
 
@@ -66,6 +67,37 @@ def test_analyze_job_starts_with_correct_progress(api_client, tenant_id) -> None
     assert body["status"] in {"running", "pending"}
     assert body["progress"]["total"] == len(payload["media_ids"])
     assert body["message"] == f"Queueing 0/{len(payload['media_ids'])} items"
+
+
+@pytest.mark.asyncio
+async def test_prepare_tenant_context_does_not_reapply_dependency_owned_context(monkeypatch, tenant_id: str) -> None:
+    session = FakeSession()
+    session.bind = type("Bind", (), {"dialect": type("Dialect", (), {"name": "postgresql"})()})()
+    calls: list[str] = []
+
+    async def _ensure_tenant_exists(*_args, **_kwargs):
+        calls.append("ensure")
+
+    async def _set_tenant_context(*_args, **_kwargs):
+        raise AssertionError("router should not reapply tenant context")
+
+    async def _scan_worker_available(_session):
+        calls.append("worker_check")
+        return True
+
+    monkeypatch.setattr(analyze_router, "ensure_tenant_exists", _ensure_tenant_exists)
+    monkeypatch.setattr(analyze_router, "set_tenant_context", _set_tenant_context, raising=False)
+    monkeypatch.setattr(analyze_router, "scan_worker_available", _scan_worker_available)
+
+    tenant_uuid = await analyze_router._prepare_tenant_context(
+        request=SimpleNamespace(tenant_id=tenant_id),
+        auth=None,
+        session=session,
+        inline_processing=False,
+    )
+
+    assert tenant_uuid == uuid.UUID(tenant_id)
+    assert calls == ["ensure", "worker_check"]
 
 
 @pytest.mark.asyncio
@@ -227,9 +259,6 @@ def test_get_job_status_relies_on_dependency_tenant_setup_once(monkeypatch, tena
     async def _ensure_tenant_exists(*_args, **_kwargs):
         setup_calls["count"] += 1
 
-    async def _set_tenant_context(*_args, **_kwargs):
-        setup_calls["count"] += 1
-
     class _NullJobService:
         async def get_job_status(self, _job_id: str):
             return None
@@ -240,10 +269,6 @@ def test_get_job_status_relies_on_dependency_tenant_setup_once(monkeypatch, tena
     monkeypatch.setattr(
         "recognition.interface_adapters.http.routers.analyze.ensure_tenant_exists",
         _ensure_tenant_exists,
-    )
-    monkeypatch.setattr(
-        "recognition.interface_adapters.http.routers.analyze.set_tenant_context",
-        _set_tenant_context,
     )
 
     app = FastAPI()

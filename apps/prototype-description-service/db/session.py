@@ -18,6 +18,13 @@ logger = logging.getLogger(__name__)
 
 _settings = get_database_settings()
 
+logger.info(
+    "database_engine_settings stmt_cache_disabled=%s statement_timeout=%s idle_in_txn_timeout=%s",
+    _settings.disable_stmt_cache,
+    _settings.statement_timeout,
+    _settings.idle_in_txn_timeout,
+)
+
 engine: AsyncEngine = create_async_engine(
     _settings.postgres_dsn,
     echo=False,

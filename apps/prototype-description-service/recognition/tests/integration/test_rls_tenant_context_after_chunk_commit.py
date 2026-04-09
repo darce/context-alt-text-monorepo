@@ -284,6 +284,9 @@ def test_resolve_postgres_test_dsn_returns_empty_when_no_real_postgres_config(mo
             max_overflow=10,
             pool_timeout=30,
             pool_recycle=3600,
+            statement_timeout="10s",
+            idle_in_txn_timeout="30s",
+            disable_stmt_cache=False,
         ),
     )
 

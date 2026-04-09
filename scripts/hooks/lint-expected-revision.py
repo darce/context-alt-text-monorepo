@@ -59,31 +59,76 @@ def _iter_python_files(patterns: Iterable[str]) -> Iterable[Path]:
             yield resolved
 
 
+def _collect_import_aliases(tree: ast.Module) -> dict[str, str]:
+    """Map local alias names to their canonical imported names.
+
+    Handles ``from X import set_handoff_state as write_state`` by recording
+    ``{"write_state": "set_handoff_state"}``. Bare ``import`` statements and
+    ``from X import Y`` without alias produce identity mappings (Y -> Y).
+    This closes AHMCP-21-BR-01: without the alias map, a renamed import
+    bypasses the guard entirely because the AST walker only sees the local
+    alias name in the call node, not the canonical function name.
+    """
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                canonical = alias.name
+                local = alias.asname or alias.name
+                if canonical in GUARDED_FUNCTIONS:
+                    aliases[local] = canonical
+    return aliases
+
+
 def find_violations(paths: Iterable[Path]) -> list[tuple[Path, int, str]]:
-    """Return (path, line, function_name) for each violating call."""
+    """Return (path, line, description) for each violating call or parse error."""
     violations: list[tuple[Path, int, str]] = []
     for path in paths:
         try:
             source = path.read_text()
-            tree = ast.parse(source, filename=str(path))
-        except (OSError, SyntaxError):
+        except OSError:
             continue
+        # AHMCP-21-BR-02: surface parse failures as violations instead of
+        # silently skipping. A syntactically broken scripts/_*.py file means
+        # the guard cannot verify it, which is worse than a false positive.
+        try:
+            tree = ast.parse(source, filename=str(path))
+        except SyntaxError as exc:
+            violations.append((
+                path,
+                exc.lineno or 0,
+                f"SyntaxError: {exc.msg} (file cannot be parsed; lint guard cannot verify it)",
+            ))
+            continue
+
+        # Build an alias map so `from X import set_handoff_state as Y`
+        # is caught when `Y(...)` is called without expected_revision.
+        aliases = _collect_import_aliases(tree)
+
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             # Resolve the function name from either a bare name or an
             # attribute (e.g. `mcp_server.set_handoff_state(...)`).
-            func_name: str | None = None
+            call_name: str | None = None
             if isinstance(node.func, ast.Name):
-                func_name = node.func.id
+                call_name = node.func.id
             elif isinstance(node.func, ast.Attribute):
-                func_name = node.func.attr
-            if func_name not in GUARDED_FUNCTIONS:
+                call_name = node.func.attr
+            if call_name is None:
+                continue
+            # Resolve through the alias map. If the call name is a known
+            # alias for a guarded function, use the canonical name.
+            canonical = aliases.get(call_name, call_name)
+            if canonical not in GUARDED_FUNCTIONS:
                 continue
             # Check whether `expected_revision` is present as a keyword argument.
             keyword_names = {kw.arg for kw in node.keywords if kw.arg is not None}
             if "expected_revision" not in keyword_names:
-                violations.append((path, node.lineno, func_name))
+                display_name = (
+                    f"{call_name} (alias for {canonical})" if call_name != canonical else call_name
+                )
+                violations.append((path, node.lineno, f"{display_name}(...) has no `expected_revision` kwarg"))
     return violations
 
 
@@ -106,12 +151,9 @@ def main(argv: list[str] | None = None) -> int:
         f"{len(violations)} call(s) missing `expected_revision`.",
         file=sys.stderr,
     )
-    for path, line, func_name in violations:
+    for path, line, description in violations:
         rel = path.relative_to(REPO_ROOT) if path.is_relative_to(REPO_ROOT) else path
-        print(
-            f"  {rel}:{line}: {func_name}(...) has no `expected_revision` kwarg",
-            file=sys.stderr,
-        )
+        print(f"  {rel}:{line}: {description}", file=sys.stderr)
     print(
         "\n  Every call to set_handoff_state or update_task_status that touches\n"
         "  an existing handoff_state row requires expected_revision. The canonical\n"

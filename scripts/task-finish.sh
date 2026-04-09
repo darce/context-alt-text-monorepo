@@ -103,11 +103,14 @@ head_sha = subprocess.check_output(["git", "rev-parse", "HEAD"]).strip().decode(
 # AHMCP-16-FU-01: when the task being finished is the active row
 # (handoff_state.id=1), update_task_status delegates to set_handoff_state
 # which requires expected_revision for any update of an existing row. Fetch
-# the active row's revision via the identity-only sections projection and
+# the active rows revision via the identity-only sections projection and
 # pass it through. When the task is NOT the active row (already cleared, or
 # being archived from a snapshot), the active payload is None and we pass
-# expected_revision=None — update_task_status falls through to the archived
+# expected_revision=None and update_task_status falls through to the archived
 # snapshot path which does not enforce optimistic concurrency.
+# (Apostrophes are intentionally omitted from comments because the inline
+# Python is wrapped in bash single quotes; an unescaped apostrophe breaks
+# the heredoc parse.)
 identity = get_handoff_state(sections="identity")
 if isinstance(identity, str):
     identity = json.loads(identity)

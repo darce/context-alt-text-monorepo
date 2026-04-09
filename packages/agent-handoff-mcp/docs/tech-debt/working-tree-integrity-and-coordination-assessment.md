@@ -195,7 +195,9 @@ High. New schema migration, new table, new tools (3 minimum), and coordinated ch
 
 ---
 
-## Item I: Out-of-Band Write Attribution Daemon
+## Item I: Out-of-Band Write Attribution Daemon — LANDED IN AHMCP-19
+
+> **Status: implemented.** AHMCP-19 added `scripts/integrity-watcher.sh`, the `make integrity-watch` target, and three smoke tests under `tests/test_lifecycle_scripts.py`. The implementation matches the proposed surface in this section, and `AHMCP-16-FU-02` was closed in the same slice using the watcher as the verification path. The remainder of this section is preserved as the design rationale.
 
 ### Problem
 
@@ -233,7 +235,7 @@ Small (script). Medium (operational). The script is ~60 lines of bash. The opera
 
 If/when the project decides to convert any of this assessment into a task plan, the recommended order is:
 
-1. **Item I first** (operational + cheap). Land `integrity-watcher.sh` as a `make integrity-watch` target. Run it for one week to gather baseline data on what processes write to the protected dirs in normal use. This dataset is the ground truth for evaluating items E and F.
+1. **Item I first** (operational + cheap). ✅ **LANDED IN AHMCP-19.** `scripts/integrity-watcher.sh` and `make integrity-watch` are live. Run the watcher for one week to gather baseline data on what processes write to the protected dirs in normal use. This dataset is the ground truth for evaluating items E and F.
 
 2. **Items E + G together**. They share the same `_check_working_tree_integrity` helper and integrate at the same write path (`handoff_close_check` for E, post-merge for G). Land them as a single AHMCP slice with the helper extracted into a new `working_tree.py` module.
 
@@ -252,4 +254,5 @@ If/when the project decides to convert any of this assessment into a task plan, 
 - AHMCP-16-BR-01: `RuntimeConfig.from_args()` migration to `for_repo()` (closed before AHMCP-16 merged).
 - AHMCP-17: `task-finish.sh` `expected_revision` fix.
 - AHMCP-18: working-tree integrity guards in `make context` + `make task-finish`, shell-execution smoke tests for the lifecycle scripts, `development-workflow.md` § Concurrent Editor Buffers.
-- AHMCP-16-FU-02: the still-open finding tracking the unidentified `api.py` revert. This assessment's item I would have made FU-02 root-cause-able.
+- AHMCP-19: integrity-watcher.sh + `make integrity-watch` (item I from this assessment). Closes `AHMCP-16-FU-02`.
+- AHMCP-16-FU-02: closed in AHMCP-19 with `scripts/integrity-watcher.sh` as the verification path. Future api.py-revert-class incidents are now root-cause-able by replaying `.task-state/integrity-watcher.jsonl`.

@@ -535,3 +535,18 @@ task-start:
 # Usage: make task-finish TASK=<task-id>
 task-finish:
 	@./scripts/task-finish.sh "$(TASK)"
+
+# Start the integrity-watcher daemon (AHMCP-19 / item I from the AHMCP-18
+# tech-debt assessment). Wraps fswatch (or inotifywait on Linux) over the
+# protected source dirs and records every write event with PID/lsof
+# attribution to .task-state/integrity-watcher.jsonl. Run in the
+# foreground; Ctrl+C exits cleanly with a daemon_stop event.
+#
+# Pair with `make context` and `make task-finish` integrity guards: the
+# guards detect drift, the watcher names the responsible PID.
+#
+# Usage:
+#   make integrity-watch                    # watch the default paths
+#   make integrity-watch ARGS="path1 path2" # watch explicit paths
+integrity-watch:
+	@./scripts/integrity-watcher.sh $(ARGS)

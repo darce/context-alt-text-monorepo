@@ -1091,8 +1091,12 @@ def close_slice(
     # with two superseded rows, as happened with AHMCP-19 decisions
     # #1507 and #1508.
     if rationale is not None:
+        # AHMCP-22-BR-01: case-insensitive scan so <ACTOR>, <Actor>, etc.
+        # are caught. The anti-pattern is structural (XML tags inside a
+        # markdown rationale), not case-dependent.
+        rationale_lower = rationale.lower()
         for tag in _RATIONALE_XML_ANTI_PATTERNS:
-            if tag in rationale:
+            if tag in rationale_lower:
                 return core._envelope(
                     ok=False,
                     tool="close_slice",

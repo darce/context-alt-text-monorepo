@@ -3241,6 +3241,28 @@ def test_close_slice_rejects_xml_changed_files_tag_in_rationale(isolated_handoff
     assert "<changed_files>" in result["error"]
 
 
+def test_close_slice_rejects_uppercase_xml_actor_tag(isolated_handoff: dict) -> None:
+    """AHMCP-22-BR-01 regression: the guard must be case-insensitive so
+    <ACTOR>, <Actor>, <Changed_Files> etc. are all caught."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="xml-upper-test",
+            objective="Uppercase tag test",
+            status="in_progress",
+        )
+    )
+    result = _parse(
+        mcp_server.close_slice(
+            session="s-xml-upper",
+            decision="clo_slice_complete_xml_upper_test_s1",
+            expected_revision=0,
+            rationale='## Changes\nWork.\n<ACTOR>{"agent":"x"}</ACTOR>',
+        )
+    )
+    assert result["ok"] is False
+    assert "actor" in result["error"].lower()
+
+
 def test_close_slice_allows_clean_rationale(isolated_handoff: dict) -> None:
     """A rationale that does not contain XML anti-pattern tags should pass through."""
     _parse(

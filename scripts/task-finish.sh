@@ -71,6 +71,72 @@ if git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
   git branch -d "$BRANCH"
 fi
 
+# Step 4b: Working-tree integrity check before archiving.
+#
+# AHMCP-18 (item B): immediately before invoking the inline Python that
+# touches the handoff DB, run `git diff HEAD` against the merged main and
+# fail loudly if any tracked file disagrees with HEAD content. This is the
+# detection guard for the AHMCP-15-BR-FIXES incident where api.py was
+# silently reverted in the working tree between the AHMCP-16 merge and the
+# AHMCP-15-BR-FIXES merge, causing task-finish to fail mid-flight on a
+# bad import.
+#
+# Files in `.task-state/dirty-allowlist` (one path per line, comments OK)
+# are treated as expected drift and skipped. Untracked files are not
+# considered integrity violations because git tracks intent through the
+# index; only tracked-but-modified content is verified.
+echo "→ Checking working-tree integrity"
+INTEGRITY_DIRTY=$(git -C "$REPO_ROOT" diff --name-only HEAD 2>/dev/null || true)
+if [[ -n "$INTEGRITY_DIRTY" ]]; then
+  ALLOWLIST_FILE="$REPO_ROOT/.task-state/dirty-allowlist"
+  ALLOWED_PATHS=()
+  if [[ -f "$ALLOWLIST_FILE" ]]; then
+    while IFS= read -r line; do
+      stripped="${line#"${line%%[![:space:]]*}"}"
+      stripped="${stripped%"${stripped##*[![:space:]]}"}"
+      [[ -z "$stripped" || "$stripped" == \#* ]] && continue
+      ALLOWED_PATHS+=("$stripped")
+    done < "$ALLOWLIST_FILE"
+  fi
+  UNEXPECTED_DIRTY=()
+  while IFS= read -r dirty_path; do
+    [[ -z "$dirty_path" ]] && continue
+    is_allowed=0
+    # ${ALLOWED_PATHS[@]+"${ALLOWED_PATHS[@]}"} expands to nothing when the
+    # array is empty, which is required because `set -u` rejects bare
+    # `${ALLOWED_PATHS[@]}` when no entries have been appended.
+    for allowed in ${ALLOWED_PATHS[@]+"${ALLOWED_PATHS[@]}"}; do
+      if [[ "$dirty_path" == "$allowed" ]]; then
+        is_allowed=1
+        break
+      fi
+    done
+    if [[ "$is_allowed" -eq 0 ]]; then
+      UNEXPECTED_DIRTY+=("$dirty_path")
+    fi
+  done <<< "$INTEGRITY_DIRTY"
+
+  if [[ "${#UNEXPECTED_DIRTY[@]}" -gt 0 ]]; then
+    echo "❌ Working tree disagrees with HEAD on ${#UNEXPECTED_DIRTY[@]} tracked file(s):" >&2
+    for unexpected in "${UNEXPECTED_DIRTY[@]:0:10}"; do
+      echo "    - $unexpected" >&2
+    done
+    if [[ "${#UNEXPECTED_DIRTY[@]}" -gt 10 ]]; then
+      echo "    ... and $(( ${#UNEXPECTED_DIRTY[@]} - 10 )) more" >&2
+    fi
+    echo "" >&2
+    echo "  task-finish refuses to archive when the working tree has drifted from HEAD." >&2
+    echo "  Investigate before archiving — silent file reverts and stale editor buffers" >&2
+    echo "  are exactly the kind of out-of-band write that this guard exists to catch." >&2
+    echo "" >&2
+    echo "  Resolution options:" >&2
+    echo "    1. Restore from HEAD:    git -C $REPO_ROOT checkout HEAD -- <path>" >&2
+    echo "    2. Allow the drift:      add the path to $ALLOWLIST_FILE and re-run" >&2
+    echo "    3. Commit the change:    git add + git commit, then re-run" >&2
+    exit 4
+  fi
+fi
+
 # Step 5: Archive the MCP task and regenerate CURRENT_TASK.md.
 echo "→ Archiving MCP task state $TASK"
 REPO_ROOT="$REPO_ROOT" TASK="$TASK" \

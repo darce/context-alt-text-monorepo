@@ -1,0 +1,455 @@
+"""Shell-execution smoke tests for the lifecycle scripts.
+
+These tests cover the **bash wrapper** layer of `scripts/task-start.sh`,
+`scripts/task-finish.sh`, and `scripts/check-task-context.py` by running
+the scripts via subprocess against a tmpdir-anchored fake monorepo.
+
+Why this exists (AHMCP-18 item C): the package test suite exercises the
+inline Python code via direct ``import`` (it cannot reach the bash
+heredoc layer), and direct ``pytest`` invocations against the source do
+not exercise the make targets either. As a result, three real bugs in
+the lifecycle scripts shipped past CI in three consecutive sessions:
+
+1. AHMCP-16 ``task-start.sh`` missing ``expected_revision`` (caught only
+   when ``make task-start`` failed at the MCP registration step).
+2. AHMCP-16-FU-01 ``task-finish.sh`` missing ``expected_revision``
+   (same bug class, caught when ``make task-finish`` warned and silently
+   left the archive snapshot in the wrong status).
+3. AHMCP-17 apostrophe-in-heredoc bug (``the active row's revision``
+   in a Python comment closed the bash single-quoted ``python -c``
+   argument prematurely; caught only when ``make task-finish`` aborted
+   with a bash syntax error from inside the python -c).
+
+The fix for the bug class is detection: run the scripts end-to-end
+inside a fixture so any future regression on the bash wrapper layer
+fails a test instead of failing in production. Each test below is
+designed to be cheap (single-commit tmp git repo, fork/exec a real
+shell) and assertion-rich (exit code, archive row content,
+context-check warnings).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import sqlite3
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+TASK_START_SCRIPT = REPO_ROOT / "scripts" / "task-start.sh"
+TASK_FINISH_SCRIPT = REPO_ROOT / "scripts" / "task-finish.sh"
+CHECK_CONTEXT_SCRIPT = REPO_ROOT / "scripts" / "check-task-context.py"
+
+
+def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _build_fake_monorepo(tmp_path: Path) -> Path:
+    """Create a tmp git repo that mimics the monorepo's lifecycle-script layout.
+
+    Copies the lifecycle scripts and the agent-handoff-mcp package source
+    into a temp directory so the inline Python in the scripts has a
+    real PYTHONPATH to import from. The git history is a single commit
+    on ``main`` so ``git rev-parse HEAD`` works.
+    """
+    repo = tmp_path / "fake-monorepo"
+    repo.mkdir()
+
+    # Copy lifecycle scripts.
+    (repo / "scripts").mkdir()
+    shutil.copy2(TASK_START_SCRIPT, repo / "scripts" / "task-start.sh")
+    shutil.copy2(TASK_FINISH_SCRIPT, repo / "scripts" / "task-finish.sh")
+    shutil.copy2(CHECK_CONTEXT_SCRIPT, repo / "scripts" / "check-task-context.py")
+    os.chmod(repo / "scripts" / "task-start.sh", 0o755)
+    os.chmod(repo / "scripts" / "task-finish.sh", 0o755)
+    os.chmod(repo / "scripts" / "check-task-context.py", 0o755)
+
+    # Copy the agent-handoff-mcp source so the inline Python can import it.
+    package_src = REPO_ROOT / "packages" / "agent-handoff-mcp" / "src"
+    target_pkg = repo / "packages" / "agent-handoff-mcp" / "src"
+    target_pkg.parent.mkdir(parents=True)
+    shutil.copytree(package_src, target_pkg)
+
+    # Initialise the git repo.
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "init")
+    return repo
+
+
+def _make_env(repo: Path) -> dict[str, str]:
+    """Build the env passed to the lifecycle scripts.
+
+    The scripts compose their python interpreter path as
+    ``${PYENV_ROOT}/versions/${PYENV_VERSION}/bin/python``. To run them
+    under whichever python is running the tests (whose site-packages
+    has all the dependencies including ``fastmcp``), we create a tmp
+    pyenv-shim directory containing a small wrapper shell script that
+    ``exec``\\s ``sys.executable``. A bare symlink does not work on
+    every platform because some pyenv interpreters resolve their
+    ``prefix`` from the symlink path rather than the resolved real path,
+    which then misses the venv's site-packages.
+    """
+    env = os.environ.copy()
+    # Ensure the inline python -c invocation can find agent_handoff_mcp
+    # by pointing at the fake monorepo's package source. The test
+    # suite's `LOCAL_PYTHONPATH` is irrelevant inside the subprocess.
+    env["PYTHONPATH"] = str(repo / "packages" / "agent-handoff-mcp" / "src")
+    pyenv_shim = repo / ".pyenv-shim"
+    pyenv_version = env.get("PYENV_VERSION", "description-service")
+    bin_dir = pyenv_shim / "versions" / pyenv_version / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    python_wrapper = bin_dir / "python"
+    if python_wrapper.exists() or python_wrapper.is_symlink():
+        python_wrapper.unlink()
+    python_wrapper.write_text(
+        f'#!/bin/bash\nexec "{sys.executable}" "$@"\n'
+    )
+    python_wrapper.chmod(0o755)
+    env["PYENV_ROOT"] = str(pyenv_shim)
+    env["PYENV_VERSION"] = pyenv_version
+    # Forward the test-suite SHA validation bypass so the lifecycle
+    # scripts running in this fake monorepo do not require a real git
+    # commit object for every commit_sha they record.
+    env["AGENT_HANDOFF_SKIP_SHA_VALIDATION"] = "1"
+    return env
+
+
+def _run_script(
+    script: str,
+    cwd: Path,
+    *args: str,
+    env: dict[str, str] | None = None,
+    check: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(cwd / "scripts" / script), *args],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=check,
+    )
+
+
+def _read_active_row(repo: Path) -> dict[str, object] | None:
+    db_path = repo / ".task-state" / "handoff.db"
+    if not db_path.exists():
+        return None
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row is not None else None
+
+
+def _read_archive_row(repo: Path, task_ref: str) -> dict[str, object] | None:
+    db_path = repo / ".task-state" / "handoff.db"
+    if not db_path.exists():
+        return None
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT * FROM task_archives WHERE task_ref = ?", (task_ref,)
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row is not None else None
+
+
+# ---------------------------------------------------------------------------
+# task-start.sh smoke tests
+# ---------------------------------------------------------------------------
+
+
+def test_task_start_succeeds_on_cold_start(tmp_path: Path) -> None:
+    """task-start.sh should succeed on a virgin handoff DB.
+
+    This is the cold-start path: handoff_state.id=1 does not yet exist,
+    so set_handoff_state inserts a new row and the inline Python should
+    not need an expected_revision."""
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+    proc = _run_script(
+        "task-start.sh", repo, "TS-COLD-1", "Cold-start objective", env=env
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "OK rev=0" in proc.stdout, proc.stdout
+    assert "MCP registration skipped" not in proc.stdout
+    active = _read_active_row(repo)
+    assert active is not None
+    assert active["task_ref"] == "TS-COLD-1"
+    assert active["status"] == "in_progress"
+
+
+def test_task_start_succeeds_when_existing_active_task_present(tmp_path: Path) -> None:
+    """AHMCP-16 regression: task-start.sh must succeed when handoff_state.id=1
+    already exists. Before the fix, the second invocation failed with
+    `expected_revision is required for updates`."""
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+
+    first = _run_script(
+        "task-start.sh", repo, "TS-EXISTING-1", "First task", env=env
+    )
+    assert first.returncode == 0, f"stdout={first.stdout!r} stderr={first.stderr!r}"
+
+    # The first task-start created the row at rev=0. The second must
+    # transparently fetch the revision and update.
+    second = _run_script(
+        "task-start.sh", repo, "TS-EXISTING-2", "Second task", env=env
+    )
+    assert second.returncode == 0, f"stdout={second.stdout!r} stderr={second.stderr!r}"
+    assert "MCP registration skipped" not in second.stdout
+    assert "MCP registration skipped" not in second.stderr
+
+    active = _read_active_row(repo)
+    assert active is not None
+    assert active["task_ref"] == "TS-EXISTING-2"
+    assert int(active["revision"]) >= 1  # rev incremented from cold-start 0
+
+
+# ---------------------------------------------------------------------------
+# task-finish.sh smoke tests
+# ---------------------------------------------------------------------------
+
+
+def test_task_finish_archives_active_task_with_status_done(tmp_path: Path) -> None:
+    """AHMCP-16-FU-01 regression: task-finish.sh must successfully update the
+    active task to status='done' before archiving. Before the fix, the
+    update_task_status call was rejected with `expected_revision is
+    required` and the archive snapshot was captured with the old status."""
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+
+    # Bootstrap a task and create the matching feature branch (task-finish
+    # expects the branch to exist and be merged into main).
+    started = _run_script(
+        "task-start.sh", repo, "TF-DONE-1", "Finish me", env=env
+    )
+    assert started.returncode == 0, started.stderr
+
+    # Simulate the merge: the feature branch is reachable from main.
+    # task-start created `feature/tf-done-1`. We merge it back into main
+    # by fast-forward (no real changes — the branch is just at HEAD).
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "--ff-only", "feature/tf-done-1")
+
+    finished = _run_script("task-finish.sh", repo, "TF-DONE-1", env=env)
+    assert finished.returncode == 0, (
+        f"stdout={finished.stdout!r} stderr={finished.stderr!r}"
+    )
+    assert "expected_revision is required" not in finished.stderr
+    assert "syntax error" not in finished.stderr
+    assert "Task TF-DONE-1 finished" in finished.stdout
+
+    archived = _read_archive_row(repo, "TF-DONE-1")
+    assert archived is not None
+    snapshot = json.loads(archived["snapshot_json"])
+    assert snapshot["active"]["status"] == "done", (
+        f"task-finish must capture status=done in archive snapshot, got "
+        f"{snapshot['active']['status']!r}"
+    )
+
+
+def test_task_finish_inline_python_has_no_unescaped_apostrophes() -> None:
+    """AHMCP-17 regression: the inline `python -c '...'` heredoc in
+    task-finish.sh is wrapped in bash single quotes. An unescaped
+    apostrophe inside the Python (e.g. in a comment like 'the row's
+    revision') closes the bash string prematurely and produces
+    `syntax error near unexpected token '('`. Static-check the script
+    so the regression cannot recur."""
+    text = TASK_FINISH_SCRIPT.read_text()
+    # Locate the python -c heredoc block.
+    marker = '"${PYENV_ROOT:-$HOME/.pyenv}/versions/${PYENV_VERSION:-description-service}/bin/python" -c \''
+    start = text.find(marker)
+    assert start != -1, "Could not locate python -c heredoc in task-finish.sh"
+    # The heredoc body runs from the opening ' to the matching closing '
+    # at the start of a line followed by `' || echo`.
+    body_start = text.find("'", start + len(marker) - 1) + 1
+    body_end = text.find("' || echo", body_start)
+    assert body_end != -1, "Could not locate end of python -c heredoc"
+    body = text[body_start:body_end]
+    # Inside the heredoc body there must be NO single-quote characters
+    # (the bash wrapper cannot escape them inside the same single-quoted
+    # block; any apostrophe terminates the bash string).
+    if "'" in body:
+        offending_lines = [
+            f"line {i + 1}: {line}"
+            for i, line in enumerate(body.splitlines())
+            if "'" in line
+        ]
+        raise AssertionError(
+            "task-finish.sh inline python -c heredoc contains an unescaped "
+            "apostrophe; bash will close the heredoc prematurely.\n"
+            + "\n".join(offending_lines)
+        )
+
+
+def test_task_start_inline_python_has_no_unescaped_apostrophes() -> None:
+    """AHMCP-17 regression mirror for task-start.sh: same constraint."""
+    text = TASK_START_SCRIPT.read_text()
+    marker = '"${PYENV_ROOT:-$HOME/.pyenv}/versions/${PYENV_VERSION:-description-service}/bin/python" -c \''
+    start = text.find(marker)
+    assert start != -1, "Could not locate python -c heredoc in task-start.sh"
+    body_start = text.find("'", start + len(marker) - 1) + 1
+    body_end = text.find("' || echo", body_start)
+    assert body_end != -1, "Could not locate end of python -c heredoc"
+    body = text[body_start:body_end]
+    if "'" in body:
+        offending_lines = [
+            f"line {i + 1}: {line}"
+            for i, line in enumerate(body.splitlines())
+            if "'" in line
+        ]
+        raise AssertionError(
+            "task-start.sh inline python -c heredoc contains an unescaped "
+            "apostrophe; bash will close the heredoc prematurely.\n"
+            + "\n".join(offending_lines)
+        )
+
+
+# ---------------------------------------------------------------------------
+# task-finish.sh integrity guard (AHMCP-18 item B)
+# ---------------------------------------------------------------------------
+
+
+def test_task_finish_aborts_when_working_tree_drifted_from_head(tmp_path: Path) -> None:
+    """AHMCP-18 item B: task-finish.sh must refuse to archive when a tracked
+    file in the working tree disagrees with HEAD content. This catches the
+    AHMCP-15-BR-FIXES api.py-revert incident class."""
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+
+    started = _run_script(
+        "task-start.sh", repo, "TF-DRIFT-1", "Drift guard repro", env=env
+    )
+    assert started.returncode == 0, started.stderr
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "--ff-only", "feature/tf-drift-1")
+
+    # Tamper with a tracked file so it disagrees with HEAD.
+    tracked = repo / "scripts" / "task-finish.sh"
+    original = tracked.read_text()
+    tracked.write_text(original + "\n# tampered post-merge\n")
+
+    finished = _run_script("task-finish.sh", repo, "TF-DRIFT-1", env=env)
+    assert finished.returncode == 4, (
+        f"task-finish must exit 4 on integrity violation; "
+        f"got {finished.returncode}\nstdout={finished.stdout!r}\nstderr={finished.stderr!r}"
+    )
+    assert "Working tree disagrees with HEAD" in finished.stderr
+    assert "scripts/task-finish.sh" in finished.stderr
+
+    # The archive must NOT have been written when the integrity check fails.
+    archived = _read_archive_row(repo, "TF-DRIFT-1")
+    assert archived is None, (
+        "task-finish must abort BEFORE archiving when integrity check fails; "
+        f"found archive row: {archived}"
+    )
+
+
+def test_task_finish_allows_drift_listed_in_dirty_allowlist(tmp_path: Path) -> None:
+    """AHMCP-18 item B escape hatch: paths listed in
+    .task-state/dirty-allowlist are treated as expected drift and the
+    integrity check passes."""
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+
+    started = _run_script(
+        "task-start.sh", repo, "TF-ALLOW-1", "Allowlist repro", env=env
+    )
+    assert started.returncode == 0, started.stderr
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "--ff-only", "feature/tf-allow-1")
+
+    # Tamper with a tracked file.
+    tracked = repo / "scripts" / "task-finish.sh"
+    tracked.write_text(tracked.read_text() + "\n# intentional drift\n")
+
+    # Add it to the allowlist.
+    allowlist = repo / ".task-state" / "dirty-allowlist"
+    allowlist.parent.mkdir(parents=True, exist_ok=True)
+    allowlist.write_text("# AHMCP-18 test allowlist\nscripts/task-finish.sh\n")
+
+    finished = _run_script("task-finish.sh", repo, "TF-ALLOW-1", env=env)
+    assert finished.returncode == 0, (
+        f"task-finish should pass when drift is allowlisted; "
+        f"got {finished.returncode}\nstderr={finished.stderr!r}"
+    )
+
+    archived = _read_archive_row(repo, "TF-ALLOW-1")
+    assert archived is not None, "task-finish should archive after passing integrity check"
+
+
+# ---------------------------------------------------------------------------
+# check-task-context.py smoke tests (AHMCP-18 items A + done-warning)
+# ---------------------------------------------------------------------------
+
+
+def test_check_task_context_warns_on_unexpected_dirty_paths(tmp_path: Path) -> None:
+    """AHMCP-18 item A: check-task-context.py should print an integrity
+    warning when tracked-but-modified files are not in the dirty-allowlist."""
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+
+    started = _run_script(
+        "task-start.sh", repo, "CHECK-DIRTY-1", "Dirty repro", env=env
+    )
+    assert started.returncode == 0, started.stderr
+
+    # Tamper with a tracked file.
+    tracked = repo / "scripts" / "task-finish.sh"
+    tracked.write_text(tracked.read_text() + "\n# unexpected drift\n")
+
+    proc = subprocess.run(
+        [sys.executable, str(repo / "scripts" / "check-task-context.py")],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert "Working-tree integrity" in proc.stdout, proc.stdout
+    assert "scripts/task-finish.sh" in proc.stdout, proc.stdout
+
+
+def test_check_task_context_silent_when_drift_is_allowlisted(tmp_path: Path) -> None:
+    """AHMCP-18 item A escape hatch: drift in the allowlist must not warn."""
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+
+    started = _run_script(
+        "task-start.sh", repo, "CHECK-ALLOW-1", "Allowlist repro", env=env
+    )
+    assert started.returncode == 0, started.stderr
+
+    tracked = repo / "scripts" / "task-finish.sh"
+    tracked.write_text(tracked.read_text() + "\n# intentional drift\n")
+
+    allowlist = repo / ".task-state" / "dirty-allowlist"
+    allowlist.parent.mkdir(parents=True, exist_ok=True)
+    allowlist.write_text("scripts/task-finish.sh\n")
+
+    proc = subprocess.run(
+        [sys.executable, str(repo / "scripts" / "check-task-context.py")],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert "Working-tree integrity" not in proc.stdout, proc.stdout

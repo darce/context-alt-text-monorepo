@@ -53,9 +53,9 @@ def pytest_sessionstart(session) -> None:  # type: ignore[no-untyped-def]
     expected paths, and raises ``pytest.UsageError`` if either differs.
     See module docstring for why this matters.
     """
+    import agent_handoff_mcp  # noqa: PLC0415 - intentional late import for the guard.
     import pytest
 
-    import agent_handoff_mcp  # noqa: PLC0415 - intentional late import for the guard.
     import agent_orchestrator_mcp  # noqa: PLC0415 - intentional late import for the guard.
 
     handoff_actual = Path(agent_handoff_mcp.__file__).resolve().parent

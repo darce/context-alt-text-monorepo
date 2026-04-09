@@ -6,13 +6,16 @@ Covers:
   budget guard, and context-pressure skip
 """
 from __future__ import annotations
+
 import importlib.util
 import json
 import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
+
 import pytest
+
 ORCHESTRATION_DIR = Path(__file__).resolve().parents[1] / 'src' / 'agent_orchestrator_mcp' / 'orchestration'
 
 def _load_lane_prompt():

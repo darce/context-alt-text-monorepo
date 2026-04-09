@@ -682,15 +682,18 @@ def get_lane_activity(
                 lane_id=normalized_lane_id,
             )
             valid_sections = frozenset({"identity", "lane", "summary"})
-            requested_sections = _parse_sections(sections, valid_sections) or valid_sections
+            requested_sections = _parse_sections(sections, valid_sections)
             if sections is not None and requested_sections == frozenset():
                 return _json_response(_invalid_sections_error(valid_sections))
-            shaped: dict[str, object] = {"ok": True, "task_ref": resolved_task_ref, "format": format}
-            if "identity" in requested_sections or "lane" in requested_sections:
-                shaped["lane"] = _project_mapping(dict(lane), requested_fields, _LANE_ACTIVITY_LANE_IDENTITY_FIELDS)
-            if "summary" in requested_sections:
-                shaped["summary"] = summary
-            return _json_response(shaped)
+            archival_sections: frozenset[str] = requested_sections or valid_sections
+            archival_payload: dict[str, object] = {"ok": True, "task_ref": resolved_task_ref, "format": format}
+            if "identity" in archival_sections or "lane" in archival_sections:
+                archival_payload["lane"] = _project_mapping(
+                    dict(lane), requested_fields, _LANE_ACTIVITY_LANE_IDENTITY_FIELDS
+                )
+            if "summary" in archival_sections:
+                archival_payload["summary"] = summary
+            return _json_response(archival_payload)
 
         detail = _normalize_read_detail(detail)
         valid_sections = frozenset(
@@ -699,11 +702,11 @@ def get_lane_activity(
         requested_sections = _parse_sections(sections, valid_sections)
         if sections is not None and requested_sections == frozenset():
             return _json_response(_invalid_sections_error(valid_sections))
-        requested_sections = requested_sections or valid_sections
-        shaped: dict[str, object] = {"ok": True, "task_ref": resolved_task_ref, "format": format}
-        if "identity" in requested_sections or "lane" in requested_sections:
+        activity_sections: frozenset[str] = requested_sections or valid_sections
+        activity_payload: dict[str, object] = {"ok": True, "task_ref": resolved_task_ref, "format": format}
+        if "identity" in activity_sections or "lane" in activity_sections:
             lane_row = _summarize_generic_row(dict(lane)) if detail == "summary" else dict(lane)
-            shaped["lane"] = _project_mapping(lane_row, requested_fields, _LANE_ACTIVITY_LANE_IDENTITY_FIELDS)
+            activity_payload["lane"] = _project_mapping(lane_row, requested_fields, _LANE_ACTIVITY_LANE_IDENTITY_FIELDS)
 
         section_fetchers: dict[str, Callable[[], list[dict[str, object]]]] = {
             "decisions": lambda: _fetch_handoff_rows(
@@ -764,30 +767,25 @@ def get_lane_activity(
             ),
         }
 
-        def _shape_activity_rows(
-            section_name: str,
-            identity_fields: frozenset[str],
-            summary_fn: Callable[[dict[str, object]], dict[str, object]],
-        ) -> None:
-            if section_name not in requested_sections:
-                return
+        section_specs: tuple[tuple[str, frozenset[str], Callable[[dict[str, object]], dict[str, object]]], ...] = (
+            ("decisions", _LANE_ACTIVITY_DECISION_IDENTITY_FIELDS, _summarize_generic_row),
+            ("tests", _LANE_ACTIVITY_TEST_IDENTITY_FIELDS, _summarize_generic_row),
+            ("blockers", _LANE_ACTIVITY_BLOCKER_IDENTITY_FIELDS, _summarize_generic_row),
+            ("actions", _LANE_ACTIVITY_ACTION_IDENTITY_FIELDS, _summarize_generic_row),
+            ("findings", _LANE_ACTIVITY_FINDING_IDENTITY_FIELDS, _summarize_generic_row),
+            ("reports", _WORKER_REPORT_IDENTITY_FIELDS, _summarize_worker_report_row),
+            ("messages", _LANE_MESSAGE_IDENTITY_FIELDS, _summarize_lane_message_row),
+        )
+        for section_name, identity_fields, summary_fn in section_specs:
+            if section_name not in activity_sections:
+                continue
             rows = section_fetchers[section_name]()
             shaped_rows: list[dict[str, object]] = []
             for row in rows:
-                if not isinstance(row, dict):
-                    continue
                 summarized = summary_fn(row) if detail == "summary" else dict(row)
                 shaped_rows.append(_project_mapping(summarized, requested_fields, identity_fields))
-            shaped[section_name] = shaped_rows
-
-        _shape_activity_rows("decisions", _LANE_ACTIVITY_DECISION_IDENTITY_FIELDS, _summarize_generic_row)
-        _shape_activity_rows("tests", _LANE_ACTIVITY_TEST_IDENTITY_FIELDS, _summarize_generic_row)
-        _shape_activity_rows("blockers", _LANE_ACTIVITY_BLOCKER_IDENTITY_FIELDS, _summarize_generic_row)
-        _shape_activity_rows("actions", _LANE_ACTIVITY_ACTION_IDENTITY_FIELDS, _summarize_generic_row)
-        _shape_activity_rows("findings", _LANE_ACTIVITY_FINDING_IDENTITY_FIELDS, _summarize_generic_row)
-        _shape_activity_rows("reports", _WORKER_REPORT_IDENTITY_FIELDS, _summarize_worker_report_row)
-        _shape_activity_rows("messages", _LANE_MESSAGE_IDENTITY_FIELDS, _summarize_lane_message_row)
-        return _json_response(shaped)
+            activity_payload[section_name] = shaped_rows
+        return _json_response(activity_payload)
 
 
 def get_latest_slice_review_packet(

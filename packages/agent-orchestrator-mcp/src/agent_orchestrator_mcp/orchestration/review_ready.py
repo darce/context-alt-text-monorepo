@@ -74,8 +74,14 @@ def _configure_runtime(orchestrator_root: Path) -> None:
     )
 
 
-def _load_ok_payload(name: str, payload: str) -> dict[str, Any]:
-    data: dict[str, Any] = json.loads(payload)
+def _load_ok_payload(name: str, payload: dict[str, Any] | str | bytes | bytearray) -> dict[str, Any]:
+    if isinstance(payload, dict):
+        data = payload
+    else:
+        loaded = json.loads(payload)
+        if not isinstance(loaded, dict):
+            raise RuntimeError(f"MCP query failed: {name}: expected object payload, got {type(loaded).__name__}")
+        data = loaded
     if not data.get("ok"):
         error = data.get("error") or "unknown error"
         raise RuntimeError(f"MCP query failed: {name}: {error}")

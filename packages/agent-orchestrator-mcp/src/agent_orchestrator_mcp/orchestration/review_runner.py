@@ -274,7 +274,7 @@ def _resolve_review_scope(
             exports_dir=orchestrator_root / ".task-state" / "exports",
         )
         configure_runtime(runtime)
-        payload = json.loads(
+        payload = _load_mcp_payload(
             get_latest_slice_review_packet(
                 task_ref=task_ref,
                 review_kind=preferred_review_kind.value,
@@ -327,6 +327,15 @@ def _generate_finding_id(lane_id: str | None, index: int, finding: dict[str, Any
 # ---------------------------------------------------------------------------
 
 
+def _load_mcp_payload(payload: dict[str, Any] | str | bytes | bytearray) -> dict[str, Any]:
+    if isinstance(payload, dict):
+        return payload
+    loaded = json.loads(payload)
+    if not isinstance(loaded, dict):
+        raise RuntimeError(f"Expected MCP payload object, got {type(loaded).__name__}.")
+    return loaded
+
+
 def _validate_review_result(result: dict[str, Any]) -> dict[str, Any]:
     """Validate the review result against the expected schema shape. Returns the validated result."""
     if "findings" not in result:
@@ -375,7 +384,6 @@ def _record_findings(
     orchestrator_root: Path,
 ) -> list[str]:
     """Record each finding into MCP atomically. Returns list of finding IDs that were recorded."""
-    import json as _json
 
     from agent_handoff_mcp import RuntimeConfig, batch_record_review_findings, configure_runtime
 
@@ -415,7 +423,7 @@ def _record_findings(
             }
         )
 
-    batch_result = _json.loads(
+    batch_result = _load_mcp_payload(
         batch_record_review_findings(
             session=session,
             findings=batch_items,

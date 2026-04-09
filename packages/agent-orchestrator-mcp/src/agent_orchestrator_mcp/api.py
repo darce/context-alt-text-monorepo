@@ -425,6 +425,15 @@ def _count_log_events(log_path: Path, event_name: str) -> int:
         return 0
 
 
+def _load_response_payload(payload: dict[str, Any] | str | bytes | bytearray) -> dict[str, Any]:
+    if isinstance(payload, dict):
+        return payload
+    loaded = json.loads(payload)
+    if not isinstance(loaded, dict):
+        raise TypeError(f"Expected object payload, got {type(loaded).__name__}")
+    return loaded
+
+
 # ---------------------------------------------------------------------------
 # Orchestration wrapper tools
 # ---------------------------------------------------------------------------
@@ -888,7 +897,7 @@ def worker_start_all(
             )
             continue
         try:
-            result = json.loads(
+            result = _load_response_payload(
                 worker_start(
                     task_ref=task_ref,
                     lane_id=lane_id,
@@ -1138,7 +1147,7 @@ def list_available_backends() -> dict:
 def get_metrics_summary(
     task_ref: str | None = None,
     output_format: str = "markdown",
-) -> dict:
+) -> dict[str, Any] | str:
     """Return an ACE metrics snapshot for the active task."""
     try:
         from agent_orchestrator_mcp.orchestration.ace_metrics import (  # noqa: PLC0415

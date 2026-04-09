@@ -1,9 +1,6 @@
 [mcp_servers."context7"]
-command = "/opt/homebrew/bin/npx"
+command = "npx"
 args = ["-y", "@upstash/context7-mcp@2.1.4"]
-
-[mcp_servers."context7".env]
-PATH = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 [mcp_servers."altcontext-mcp"]
 command = "agent-handoff-mcp"
@@ -21,4 +18,22 @@ args = [
 cwd = "/Users/daniel/Development/context-alt-text-monorepo"
 
 [mcp_servers."altcontext-mcp".env]
+PYENV_VERSION = "description-service"
+
+[mcp_servers."altcontext-orchestrator-mcp"]
+command = "agent-orchestrator-mcp"
+args = [
+  "--workspace-root",
+  "/Users/daniel/Development/context-alt-text-monorepo",
+  "--state-dir",
+  "/Users/daniel/Development/context-alt-text-monorepo/.task-state",
+  "--current-task-path",
+  "/Users/daniel/Development/context-alt-text-monorepo/CURRENT_TASK.md",
+  "--exports-dir",
+  "/Users/daniel/Development/context-alt-text-monorepo/.task-state/exports",
+  "serve-stdio",
+]
+cwd = "/Users/daniel/Development/context-alt-text-monorepo"
+
+[mcp_servers."altcontext-orchestrator-mcp".env]
 PYENV_VERSION = "description-service"

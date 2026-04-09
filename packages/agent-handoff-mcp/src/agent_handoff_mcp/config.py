@@ -156,11 +156,30 @@ class RuntimeConfig:
 
     @classmethod
     def from_args(cls, args: object) -> RuntimeConfig:
+        """Build a RuntimeConfig from CLI args / env vars.
+
+        AHMCP-16-BR-01: ``from_args`` routes the resolved ``workspace_root``
+        through ``for_repo`` so an MCP server (or any other CLI entry point)
+        launched with ``--workspace-root`` pointing at a *linked* git
+        worktree silently collapses to the primary worktree's
+        ``.task-state/handoff.db``. Without this redirection the MCP server
+        and the lifecycle scripts (which already use ``for_repo`` after the
+        AHMCP-16 base slice) end up writing to two different per-worktree
+        DBs, defeating the divergence-loop closure the slice claims.
+
+        Explicit ``--state-dir`` / ``--current-task-path`` / ``--exports-dir``
+        overrides remain authoritative and are passed through unchanged.
+        Callers that genuinely need a per-worktree state directory (e.g.
+        a snapshot fixture or a per-worker isolation test) keep that
+        escape hatch. The fix only affects the default-resolution path
+        where the harness invokes the server with just
+        ``--workspace-root``.
+        """
         workspace_root = getattr(args, "workspace_root", None) or os.environ.get("AGENT_HANDOFF_WORKSPACE_ROOT")
         if not workspace_root:
             raise RuntimeError("AGENT_HANDOFF_WORKSPACE_ROOT must be set or passed via --workspace-root")
 
-        return cls.for_workspace(
+        return cls.for_repo(
             workspace_root,
             state_dir=getattr(args, "state_dir", None) or os.environ.get("AGENT_HANDOFF_STATE_DIR"),
             current_task_path=getattr(args, "current_task_path", None)

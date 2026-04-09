@@ -11,6 +11,19 @@ from fastmcp.client import Client, PythonStdioTransport
 
 
 def test_vscode_adapter_points_to_installed_entrypoint_and_doctor_runs() -> None:
+    """The vscode adapter wires up the right entrypoint and `doctor` reports
+    a sane workspace_root.
+
+    AHMCP-16-BR-01 made `from_args` collapse a linked-worktree
+    `--workspace-root` to the primary worktree via `for_repo`. As a result,
+    when this test runs from a linked worktree, `mcp-server.sh doctor`
+    invokes the binary with `--workspace-root <linked>` but the doctor
+    reports the **primary** worktree's path. The assertion below derives
+    the expected primary independently of where pytest is running so the
+    test stays correct in both primary and linked worktree contexts.
+    """
+    from agent_handoff_mcp.config import _resolve_primary_worktree_root
+
     repo_root = Path(__file__).resolve().parents[3]
     config = json.loads((repo_root / ".vscode" / "mcp.json").read_text())
 
@@ -40,7 +53,13 @@ def test_vscode_adapter_points_to_installed_entrypoint_and_doctor_runs() -> None
     )
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
-    assert payload["workspace_root"] == str(repo_root)
+
+    # AHMCP-16-BR-01: from_args() routes through for_repo(), so doctor's
+    # reported workspace_root is the primary worktree even when invoked
+    # from a linked worktree. Derive the expected primary independently
+    # so the test passes in both contexts.
+    expected_primary = _resolve_primary_worktree_root(repo_root) or repo_root
+    assert payload["workspace_root"] == str(expected_primary)
 
 
 def test_project_codex_config_registers_installed_stdio_adapter() -> None:

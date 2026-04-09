@@ -267,12 +267,7 @@ def _resolve_review_scope(
 
         from agent_orchestrator_mcp.lanes import get_latest_slice_review_packet  # noqa: PLC0415
 
-        runtime = RuntimeConfig.for_workspace(
-            orchestrator_root,
-            state_dir=orchestrator_root / ".task-state",
-            current_task_path=orchestrator_root / "CURRENT_TASK.md",
-            exports_dir=orchestrator_root / ".task-state" / "exports",
-        )
+        runtime = RuntimeConfig.for_repo(orchestrator_root)
         configure_runtime(runtime)
         payload = _load_mcp_payload(
             get_latest_slice_review_packet(
@@ -387,12 +382,7 @@ def _record_findings(
 
     from agent_handoff_mcp import RuntimeConfig, batch_record_review_findings, configure_runtime
 
-    runtime = RuntimeConfig.for_workspace(
-        orchestrator_root,
-        state_dir=orchestrator_root / ".task-state",
-        current_task_path=orchestrator_root / "CURRENT_TASK.md",
-        exports_dir=orchestrator_root / ".task-state" / "exports",
-    )
+    runtime = RuntimeConfig.for_repo(orchestrator_root)
     configure_runtime(runtime)
 
     actor: WriteActor = {}

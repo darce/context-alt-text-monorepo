@@ -442,7 +442,7 @@ def _apply_guidance_resolution(
             from agent_handoff_mcp import artifact_index as _art_idx
             from agent_handoff_mcp.config import RuntimeConfig as _ArtCfg
 
-            _art_config = _ArtCfg.for_workspace(orchestrator_root)
+            _art_config = _ArtCfg.for_repo(orchestrator_root)
             _art_ref = _art_idx.maybe_record_artifact(
                 task_ref=task_ref,
                 lane_id=resolution.lane_id,

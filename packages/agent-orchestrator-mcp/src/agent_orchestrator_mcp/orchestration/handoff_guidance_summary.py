@@ -103,12 +103,7 @@ def main() -> int:
     args = parser.parse_args()
 
     orchestrator_root = Path(args.orchestrator_root).resolve()
-    runtime = RuntimeConfig.for_workspace(
-        orchestrator_root,
-        state_dir=orchestrator_root / ".task-state",
-        current_task_path=orchestrator_root / "CURRENT_TASK.md",
-        exports_dir=orchestrator_root / ".task-state" / "exports",
-    )
+    runtime = RuntimeConfig.for_repo(orchestrator_root)
     configure_runtime(runtime)
     print(render_summary(args.task_ref, lane_id=args.lane_id))
     return 0

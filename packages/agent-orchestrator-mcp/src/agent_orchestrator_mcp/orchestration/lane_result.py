@@ -28,7 +28,7 @@ def _record_artifact_lane_message(
 
     from agent_orchestrator_mcp.lanes import lane_communication  # noqa: PLC0415
 
-    configure_runtime(RuntimeConfig.for_workspace(orchestrator_root))
+    configure_runtime(RuntimeConfig.for_repo(orchestrator_root))
     lane_communication(
         kind="message",
         operation="record",

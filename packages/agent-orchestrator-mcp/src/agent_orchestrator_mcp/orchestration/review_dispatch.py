@@ -254,12 +254,7 @@ def main() -> int:
 
     args = _parse_args()
     orchestrator_root = Path(args.orchestrator_root).expanduser().resolve()
-    runtime = RuntimeConfig.for_workspace(
-        orchestrator_root,
-        state_dir=orchestrator_root / ".task-state",
-        current_task_path=orchestrator_root / "CURRENT_TASK.md",
-        exports_dir=orchestrator_root / ".task-state" / "exports",
-    )
+    runtime = RuntimeConfig.for_repo(orchestrator_root)
     configure_runtime(runtime)
 
     if args.task_ref not in list_task_refs():

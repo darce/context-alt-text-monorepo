@@ -379,7 +379,7 @@ def _compress_large_result_details(
     if not isinstance(details, str):
         return result_data
     try:
-        art_config = artifact_runtime_config.for_workspace(orchestrator_root)
+        art_config = artifact_runtime_config.for_repo(orchestrator_root)
         artifact_db_path = art_config.artifact_db_path
         min_bytes = art_config.artifact_index_min_bytes
         min_lines = art_config.artifact_index_min_lines

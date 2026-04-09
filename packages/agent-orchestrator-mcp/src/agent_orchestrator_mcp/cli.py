@@ -49,7 +49,7 @@ def _build_config(
     current_task_path: Path | None = None,
     exports_dir: Path | None = None,
 ) -> RuntimeConfig:
-    return RuntimeConfig.for_workspace(
+    return RuntimeConfig.for_repo(
         workspace_root,
         state_dir=state_dir,
         current_task_path=current_task_path,

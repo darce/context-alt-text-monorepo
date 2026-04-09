@@ -65,12 +65,7 @@ def _configure_runtime(orchestrator_root: Path) -> None:
     from agent_handoff_mcp.runtime import configure_runtime  # noqa: PLC0415
 
     configure_runtime(
-        RuntimeConfig.for_workspace(
-            orchestrator_root,
-            state_dir=orchestrator_root / ".task-state",
-            current_task_path=orchestrator_root / "CURRENT_TASK.md",
-            exports_dir=orchestrator_root / ".task-state" / "exports",
-        )
+        RuntimeConfig.for_repo(orchestrator_root)
     )
 
 

@@ -44,6 +44,63 @@ def _detect_branch() -> str | None:
     return out.decode("utf-8").strip()
 
 
+def _git_dirty_paths() -> list[str] | None:
+    """Return the relative paths of tracked-but-modified files (vs HEAD).
+
+    Uses ``git diff --name-only HEAD`` so only tracked content that
+    diverges from HEAD is reported. Untracked files are intentionally
+    excluded — they are either the user's in-progress working files or
+    build artifacts, neither of which is the kind of silent file revert
+    or stale-buffer overwrite this integrity check exists to catch.
+    Aligned with the bash-side check in ``scripts/task-finish.sh`` so
+    the two surfaces report the same set of paths.
+
+    Returns ``None`` when git is unavailable.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+
+def _load_dirty_allowlist(state_dir: Path) -> set[str]:
+    """Read ``.task-state/dirty-allowlist`` and return the set of allowed paths.
+
+    The allowlist file is a plain newline-delimited list of repo-relative
+    paths that are expected to be dirty (e.g. work that pre-dates the active
+    task, or files the user is intentionally editing in parallel). Comments
+    starting with ``#`` and blank lines are ignored. Missing file is treated
+    as an empty allowlist.
+
+    Anchoring at ``state_dir`` (which is the **primary** worktree's
+    ``.task-state`` thanks to ``RuntimeConfig.for_repo``) means a single
+    allowlist applies across all linked worktrees of the same physical
+    repository.
+    """
+    allowlist_path = state_dir / "dirty-allowlist"
+    if not allowlist_path.exists():
+        return set()
+    allowed: set[str] = set()
+    try:
+        for raw in allowlist_path.read_text().splitlines():
+            stripped = raw.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            allowed.add(stripped)
+    except OSError:
+        return set()
+    return allowed
+
+
 def _configure_runtime() -> bool:
     """Configure agent_handoff_mcp runtime for the current repo. Returns False on failure.
 
@@ -140,6 +197,11 @@ def main() -> int:
             print(f"  git checkout {target_branch}")
         print()
         print("Drift detected. Switch to the canonical context above before recording further events.")
+        # AHMCP-18 (item A): the working-tree integrity check is an
+        # independent class of problem from worktree drift, so we run it
+        # even on the drift path. A user who is in the wrong worktree
+        # AND has unexpected dirty files needs to see both warnings.
+        _emit_integrity_warning_if_dirty()
         return EXIT_DRIFT
 
     print()
@@ -160,7 +222,57 @@ def main() -> int:
         print("    make task-start TASK=<id> OBJECTIVE=\"...\"")
         print("  or switch to an existing task with switch_task.")
 
+    # AHMCP-18 (item A): working-tree integrity check.
+    #
+    # Compare `git status --porcelain` against `.task-state/dirty-allowlist`
+    # and warn loudly when files outside the allowlist are dirty. This
+    # catches the "session bleed" failure mode where a long-lived editor
+    # buffer (or any out-of-band write) leaves the working tree in a
+    # surprising state at the start of the next session — for example
+    # the silent api.py revert that bit AHMCP-15-BR-FIXES on merge.
+    #
+    # The allowlist file is anchored at the primary worktree's .task-state
+    # so a single allowlist applies across all linked worktrees of the
+    # same physical repository.
+    _emit_integrity_warning_if_dirty()
+
     return EXIT_OK
+
+
+def _emit_integrity_warning_if_dirty() -> None:
+    """Print a warning if any unexpected paths are dirty.
+
+    Reads ``.task-state/dirty-allowlist`` from the primary worktree (via
+    ``RuntimeConfig.for_repo``) and compares it against the current
+    ``git status --porcelain`` output. Files in the allowlist are
+    considered intentional drift; everything else is surfaced.
+    """
+    try:
+        from agent_handoff_mcp import RuntimeConfig  # type: ignore
+    except ImportError:
+        return
+    runtime = RuntimeConfig.for_repo(Path.cwd())
+    dirty = _git_dirty_paths()
+    if dirty is None:
+        return
+    if not dirty:
+        return
+    allowed = _load_dirty_allowlist(runtime.state_dir)
+    unexpected = sorted(p for p in dirty if p not in allowed)
+    if not unexpected:
+        return
+    print()
+    print(f"⚠ Working-tree integrity: {len(unexpected)} unexpected dirty path(s).")
+    print("  These files differ from HEAD or are untracked but are not in")
+    print(f"  {runtime.state_dir / 'dirty-allowlist'}:")
+    for path in unexpected[:10]:
+        print(f"    - {path}")
+    if len(unexpected) > 10:
+        print(f"    ... and {len(unexpected) - 10} more")
+    print()
+    print("  If these are intentional, add them to dirty-allowlist (one path per")
+    print("  line). If they are not, investigate before recording handoff state —")
+    print("  silent file reverts and stale editor buffers cause merge regressions.")
 
 
 if __name__ == "__main__":

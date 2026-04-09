@@ -56,6 +56,48 @@ git checkout main                  # return root to main
 git branch -d feature/<merged>     # delete the merged branch
 ```
 
+### Concurrent Editor Buffers (BUFFER ISOLATION)
+
+> **Branch isolation prevents agent-vs-agent collisions across branches. Buffer isolation prevents agent-vs-editor collisions inside the same root worktree.**
+
+The branch isolation rule above stops *agents* from racing on `main`, but it does not stop a long-lived **editor buffer** (VS Code, Cursor, JetBrains, vim, etc.) from doing the same thing through a different path. The failure mode looks like this:
+
+1. You open `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py` in your editor before any work begins. The editor reads the file and holds an in-memory buffer.
+2. An agent merges a feature branch into `main` that adds 3 hunks to `api.py`. The on-disk file now contains the new content; HEAD agrees with disk.
+3. Some time later, your editor's auto-save (or "save all", or a focus-loss flush, or a format-on-save run) writes the **stale buffer** back to disk. The buffer was loaded *before* the merge, so it does not contain the 3 new hunks. The on-disk file silently regresses to the pre-merge content while HEAD still points at the post-merge commit. `git status` now shows `M api.py` with no record of who wrote it.
+4. The next merge or task-finish that tries to use the regressed file fails. In the AHMCP-15-BR-FIXES → AHMCP-16 incident on this repo, the regression was an `ImportError` from `task-finish.sh` trying to `from agent_handoff_mcp import get_archived_task` after the symbol had been silently removed by exactly this mechanism. **Stash@{1}** in this checkout is literally named `session-bleed accumulated working-tree at codex/e15-7-plan-fixes pre-merge stash 2026-04-08`, so the failure mode is recurring and named.
+
+**No agent layer can detect this race in real time** because the editor write does not go through git, does not go through `agent-handoff-mcp`, and leaves no entry in any tracked log. The mitigations are editor-side and detection-side:
+
+#### Editor-side mitigations (mandatory for any editor open against this repo)
+
+| Editor | Setting that prevents stale-buffer overwrites |
+| --- | --- |
+| **VS Code** / **Cursor** | `"files.autoSave": "off"` is the safest default. If auto-save is required, use `"files.autoSave": "onFocusChange"` AND enable `"files.refactoring.autoSave": false` so renames/refactors do not silently flush. Always set `"editor.formatOnSave"` to `false` for files outside your active focus. |
+| **JetBrains** (IntelliJ, PyCharm, WebStorm) | Settings → Appearance & Behavior → System Settings → uncheck "Save files when switching to another application" and "Save files automatically if application is idle for N sec". Use explicit `Ctrl+S` instead. |
+| **vim / neovim** | Add `set autoread` so the editor reloads files when they change on disk. Without this, switching branches under a held buffer creates the same staleness. |
+| **Emacs** | `(global-auto-revert-mode 1)` enables auto-reload from disk. |
+
+The single most important behavior is **reload-on-disk-change**, not auto-save. An editor that reloads when a file changes underneath it cannot accidentally clobber a merge.
+
+#### Detection-side mitigations (enforced by the lifecycle scripts)
+
+Even with correct editor settings, mistakes happen. The lifecycle scripts now run a working-tree integrity check at two points:
+
+1. **`make context`** (every session start) prints a `⚠ Working-tree integrity` warning when `git diff --name-only HEAD` reports tracked files that are not listed in `.task-state/dirty-allowlist`. This catches stale buffer flushes that happened *between* sessions.
+2. **`make task-finish`** (every merge teardown) runs the same check via bash and **refuses to archive** when integrity fails (exit code 4). This catches stale buffer flushes that happened *during* a session, before the archive write commits an invalid state.
+
+The escape hatch for both is `.task-state/dirty-allowlist` — a plain newline-delimited list of repo-relative paths that you have intentionally modified outside any task. Add a file to it when the drift is intentional; otherwise resolve the drift before recording further handoff state.
+
+```bash
+# Example .task-state/dirty-allowlist
+# Files I'm intentionally editing in parallel with task work:
+docs/agentic/instructions.md
+docs/agentic/rules/development-workflow.md
+# Pre-existing orchestrator package work that pre-dates the active task:
+packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/api.py
+```
+
 ---
 
 ## Pre-Merge Gate (MANDATORY)

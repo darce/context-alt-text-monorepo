@@ -21,6 +21,23 @@ every piece of work — small, well-understood changes can skip the assessment
 and go directly to a spec or task plan. The pipeline exists to prevent
 premature implementation of complex or contract-breaking work.
 
+### Planning stays on `main`; implementation branches after approval
+
+**All planning artifacts (assessments, specs, ADRs, task plans) are written and reviewed on `main`.** Do not create a feature branch or worktree until the plan is approved and implementation is ready to begin. This is a deliberate workflow choice:
+
+- **Human review is frictionless.** The reviewer reads, comments on, and approves the plan from the same branch they are already on. No worktree switching, no `git checkout`, no stale-buffer risk from having the plan open in a linked worktree while reviewing on `main`.
+- **Planning artifacts are docs, not code.** The branch isolation rule already allows `docs/`, `packages/*/docs/`, and markdown files on `main`. Task plans, assessments, specs, and ADRs all live in these paths. There is no policy reason to isolate them on a feature branch.
+- **The MCP task can exist before the branch does.** `set_handoff_state(task_ref=..., objective=...)` creates the handoff task on `main`. Decisions, findings, and review passes are recorded against the task ref during the planning phase. The feature branch and worktree are created later by `make task-start` when implementation begins.
+- **The pre-merge gate applies to code, not to plans.** A task plan committed on `main` does not go through `handoff_close_check(enforce=True)` because it is not a feature-branch merge. The gate fires when the implementation branch merges — which is exactly when it matters.
+
+**Workflow:**
+
+1. **Plan on `main`**: write the assessment, spec, or task plan directly on `main` (commit as docs). Record planning decisions and review findings in MCP handoff against the task ref.
+2. **Review on `main`**: the human reviews the plan in their normal editor/IDE context. No context switch. Findings recorded via MCP. Plan updated on `main` until approved.
+3. **Branch when approved**: once the plan is approved, run `make task-start TASK=<id> OBJECTIVE="..."` to create the feature branch + linked worktree + MCP target_branch/target_worktree_path. Implementation begins here.
+4. **Implement on the feature branch**: code changes, tests, slice-complete decisions, pre-merge gate — all per the [development workflow](development-workflow.md).
+5. **Merge via the gate**: the feature branch merges to `main` after `handoff_close_check(enforce=True)` passes. The planning artifacts are already there; the code joins them.
+
 **When to use the full pipeline:**
 - Contract or output format changes
 - Tool surface changes (add, remove, rename, consolidate)
@@ -216,16 +233,16 @@ The task ID prefix should be the package short name (e.g. `AHMCP` for
 Each task plan declares a **target branch** in its metadata. The branch name
 follows `feature/[task-id-slug]` (e.g. `feature/ahmcp-2-bounded-rendering`).
 
-This creates a natural context layer alongside MCP handoff:
-`git log main..feature/ahmcp-2-bounded-rendering` shows the exact code delta
-for the task, while MCP tracks decisions, findings, and review state.
-PRs map 1:1 to task plans — reviewable as a unit.
+**The branch is not created at plan time.** The task plan is committed on
+`main` as a docs artifact. The branch is created later — after the plan is
+reviewed and approved — by running `make task-start TASK=<id>`, which creates
+the branch, links the worktree, and registers `target_branch` on the MCP
+handoff state. This keeps planning frictionless for human review and avoids
+the context-switching cost of reading plans inside linked worktrees.
 
-> **Advisory until OC-008 lands.** The `target_branch` field in task plan
-> metadata is advisory documentation today. Once OC-008 is implemented,
-> `switch_task` will accept a `target_branch` parameter and the handoff
-> state will include it in responses and CURRENT_TASK.md. Until then, branch
-> creation and naming are manual steps guided by the task plan metadata.
+Once the branch exists, `git log main..feature/ahmcp-2-bounded-rendering`
+shows the exact code delta for the task, and MCP tracks decisions, findings,
+and review state. PRs map 1:1 to task plans — reviewable as a unit.
 
 ### Exit gate → Implementation
 
@@ -245,12 +262,17 @@ TDD cycle, slice checklist, MCP handoff decisions, and review findings.
 
 ### Task start workflow
 
-1. **Commit or finish current work** before switching (see safe switching below)
-2. Create the target branch from `main`: `git checkout -b <target_branch> main`
-3. Activate the MCP task: `switch_task(task_ref="...", objective="...")`
-4. Load the task plan and begin slice work
+At this point the task plan is already on `main` (committed and reviewed
+during the planning phase). Implementation begins:
 
-> After OC-008: step 3 becomes `switch_task(task_ref="...", target_branch="<target_branch>", objective="...")`
+1. **Commit or finish current work** before switching (see safe switching below)
+2. Run `make task-start TASK=<id> OBJECTIVE="..."` from the root worktree.
+   This creates the feature branch, links the worktree, and registers the MCP
+   task with `target_branch` and `target_worktree_path` in one shot.
+3. `cd` to the linked worktree and run `make context` to verify alignment.
+4. Load the task plan (already on `main`, visible from the linked worktree
+   because git worktrees share the same index for committed files) and begin
+   slice work.
 
 ### Slice workflow
 

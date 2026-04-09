@@ -13,7 +13,7 @@
 
 Protected code extensions: `*.py`, `*.ts`, `*.tsx`, `*.js`, `*.jsx`, `*.php`, `*.sql`, `*.sh`, `*.css`, `*.scss`.
 
-**Allowed on `main`:** documentation, planning artifacts, configuration files, Makefiles, markdown, and settings. These are legitimate planning-phase edits that do not risk dirty working tree bleed.
+**Allowed on `main`:** documentation, planning artifacts (assessments, specs, ADRs, task plans), configuration files, Makefiles, markdown, and settings. These are legitimate planning-phase edits that do not risk dirty working tree bleed. **All planning work stays on `main` so the human can review it without switching worktrees.** Feature branches and linked worktrees are created only when the plan is approved and implementation begins. See [planning-pipeline.md § Planning stays on main](planning-pipeline.md#planning-stays-on-main-implementation-branches-after-approval) for the full two-phase flow.
 
 **Before any code edit:**
 

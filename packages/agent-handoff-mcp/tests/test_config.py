@@ -158,6 +158,67 @@ def test_resolve_primary_worktree_root_returns_none_for_missing_dir(tmp_path: Pa
     assert _resolve_primary_worktree_root(missing) is None
 
 
+def test_from_args_collapses_linked_worktree_workspace_root_to_primary(
+    git_repo_with_linked_worktree: tuple[Path, Path],
+) -> None:
+    """AHMCP-16-BR-01 regression: from_args() must route through for_repo()
+    so an MCP server launched with --workspace-root pointing at a linked
+    worktree binds to the primary worktree's .task-state/handoff.db.
+
+    This is the structural divergence loop the AHMCP-16 base slice claimed
+    to close. Before the fix, from_args() called for_workspace() directly,
+    so the linked-worktree workspace_root resolved to a fresh empty
+    per-worktree DB, defeating the resolution that for_repo() does for
+    the lifecycle scripts.
+    """
+    primary, linked = git_repo_with_linked_worktree
+
+    class FakeArgs:
+        workspace_root = str(linked)
+        state_dir = None
+        current_task_path = None
+        exports_dir = None
+        tool_profile = None
+
+    with mock.patch.dict(os.environ, {}, clear=True):
+        runtime = RuntimeConfig.from_args(FakeArgs())
+
+    assert runtime.workspace_root == primary.resolve(), (
+        "from_args must collapse a linked-worktree workspace_root to the primary "
+        f"(got {runtime.workspace_root}, expected {primary.resolve()})"
+    )
+    assert runtime.db_path == primary.resolve() / ".task-state" / "handoff.db"
+    assert runtime.current_task_path == primary.resolve() / "CURRENT_TASK.md"
+    assert runtime.exports_dir == primary.resolve() / ".task-state" / "exports"
+
+
+def test_from_args_preserves_explicit_state_dir_override(
+    git_repo_with_linked_worktree: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """AHMCP-16-BR-01 escape hatch: an explicit --state-dir override remains
+    authoritative even when from_args() is routing workspace_root through
+    for_repo. Callers with a legitimate per-worktree-state use case (test
+    snapshots, isolation fixtures) keep their override semantics."""
+    primary, linked = git_repo_with_linked_worktree
+    explicit_state = tmp_path / "explicit-state"
+
+    class FakeArgs:
+        workspace_root = str(linked)
+        state_dir = str(explicit_state)
+        current_task_path = None
+        exports_dir = None
+        tool_profile = None
+
+    with mock.patch.dict(os.environ, {}, clear=True):
+        runtime = RuntimeConfig.from_args(FakeArgs())
+
+    # workspace_root still collapses to the primary worktree (the structural
+    # default), but the explicit state_dir override is honored byte-for-byte.
+    assert runtime.workspace_root == primary.resolve()
+    assert runtime.state_dir == explicit_state.resolve()
+    assert runtime.db_path == explicit_state.resolve() / "handoff.db"
+
+
 def test_runtime_config_rejects_invalid_tool_profile() -> None:
     root = Path("/tmp/agent-handoff").resolve()
 

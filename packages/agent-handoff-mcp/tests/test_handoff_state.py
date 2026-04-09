@@ -3194,6 +3194,78 @@ def test_close_slice_persists_changed_files_on_decision_row(isolated_handoff: di
     ]
 
 
+# AHMCP-22: close_slice rejects XML-embedded actor/changed_files in rationale
+def test_close_slice_rejects_xml_actor_tag_in_rationale(isolated_handoff: dict) -> None:
+    """AHMCP-22 / Layer 2 of the XML-in-rationale bug class eradication.
+    close_slice must reject rationale strings containing <actor> tags
+    because they indicate the caller embedded the actor parameter inside
+    the rationale instead of passing it as a separate top-level field."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="xml-reject-test",
+            objective="XML tag rejection test",
+            status="in_progress",
+        )
+    )
+    result = _parse(
+        mcp_server.close_slice(
+            session="s-xml",
+            decision="clo_slice_complete_xml_reject_test_s1",
+            expected_revision=0,
+            rationale='## Changes\nDid some work.\n<actor>{"agent": "test"}</actor>',
+        )
+    )
+    assert result["ok"] is False
+    assert "<actor>" in result["error"]
+    assert "separate top-level JSON fields" in result["error"]
+
+
+def test_close_slice_rejects_xml_changed_files_tag_in_rationale(isolated_handoff: dict) -> None:
+    """Same bug class, different tag: <changed_files> in rationale."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="xml-reject-cf-test",
+            objective="CF tag rejection test",
+            status="in_progress",
+        )
+    )
+    result = _parse(
+        mcp_server.close_slice(
+            session="s-xml-cf",
+            decision="clo_slice_complete_xml_reject_cf_test_s1",
+            expected_revision=0,
+            rationale='## Changes\nDid work.\n<changed_files>["a.py"]</changed_files>',
+        )
+    )
+    assert result["ok"] is False
+    assert "<changed_files>" in result["error"]
+
+
+def test_close_slice_allows_clean_rationale(isolated_handoff: dict) -> None:
+    """A rationale that does not contain XML anti-pattern tags should pass through."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="xml-allow-test",
+            objective="Clean rationale test",
+            status="in_progress",
+        )
+    )
+    result = _parse(
+        mcp_server.close_slice(
+            session="s-xml-allow",
+            decision="clo_slice_complete_xml_allow_test_s1",
+            expected_revision=0,
+            rationale=(
+                "## Changes\nFixed the bug.\n\n"
+                "## Verification\n1 passed.\n\n"
+                "## Schema / Contract Changes\nNone.\n\n"
+                "## Open Threads\nNone."
+            ),
+        )
+    )
+    assert result["ok"] is True
+
+
 # E12-5 review: load_session compound tool
 def test_load_session_merges_state_and_findings(isolated_handoff: dict) -> None:
     """load_session returns combined handoff state + open findings in a single payload."""

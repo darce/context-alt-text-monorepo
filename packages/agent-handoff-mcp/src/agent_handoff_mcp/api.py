@@ -1059,6 +1059,9 @@ def artifacts(
     )
 
 
+_RATIONALE_XML_ANTI_PATTERNS = ("<actor>", "<changed_files>", "</actor>", "</changed_files>")
+
+
 def close_slice(
     session: Annotated[str, Field(description="Session identifier for the slice completion write.")],
     decision: Annotated[str, Field(description="Stable slice-complete decision identifier.")],
@@ -1078,6 +1081,34 @@ def close_slice(
     ] = None,
     changed_files: DecisionChangedFilesParam = None,
 ) -> dict:
+    # AHMCP-22 / Layer 2 of the XML-in-rationale bug class eradication.
+    # Reject rationale strings that contain XML-like <actor> or
+    # <changed_files> tags — these indicate the caller accidentally
+    # embedded the top-level `actor` and `changed_files` parameters
+    # inside the rationale string instead of passing them as separate
+    # JSON fields. The misattribution is silent (the decision row gets
+    # default actor provenance) and the resulting audit trail is polluted
+    # with two superseded rows, as happened with AHMCP-19 decisions
+    # #1507 and #1508.
+    if rationale is not None:
+        for tag in _RATIONALE_XML_ANTI_PATTERNS:
+            if tag in rationale:
+                return core._envelope(
+                    ok=False,
+                    tool="close_slice",
+                    data={
+                        "error": (
+                            f"rationale contains the XML-like tag `{tag}` which indicates "
+                            f"the `actor` or `changed_files` parameters were accidentally "
+                            f"embedded inside the rationale string instead of being passed "
+                            f"as separate top-level JSON fields. Remove the XML tags from "
+                            f"the rationale and pass actor={{...}} and changed_files=[...] "
+                            f"as separate parameters to close_slice."
+                        ),
+                        "rejected_tag": tag,
+                    },
+                    task_ref=task_ref,
+                )
     return _core_close_slice(
         session=session,
         decision=decision,

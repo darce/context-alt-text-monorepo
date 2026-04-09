@@ -1134,7 +1134,7 @@ def _build_orchestrator_context(
     def log(level: str, event: str, **kw: object) -> None:
         _log(log_dir, level, event, run_id=run_id, **kw)
 
-    runtime = RuntimeConfig.for_workspace(
+    runtime = RuntimeConfig.for_repo(
         orchestrator_root,
         state_dir=state_dir,
         current_task_path=orchestrator_root / "CURRENT_TASK.md",
@@ -1345,7 +1345,7 @@ def main() -> int:
         state_dir = orchestrator_root / ".task-state"
         from agent_handoff_mcp import RuntimeConfig, configure_runtime
 
-        runtime = RuntimeConfig.for_workspace(
+        runtime = RuntimeConfig.for_repo(
             orchestrator_root,
             state_dir=state_dir,
             current_task_path=orchestrator_root / "CURRENT_TASK.md",

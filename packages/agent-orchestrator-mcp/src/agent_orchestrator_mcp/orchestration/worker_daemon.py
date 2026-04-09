@@ -188,7 +188,7 @@ def _fetch_mcp_lane_params(orchestrator_root: Path, task_ref: str, lane_id: str)
 
         from agent_orchestrator_mcp.lanes import manage_worktree_lane  # noqa: PLC0415
 
-        config = RuntimeConfig.for_workspace(orchestrator_root)
+        config = RuntimeConfig.for_repo(orchestrator_root)
         api.configure_runtime(config)
 
         data = manage_worktree_lane(operation="list", task_ref=task_ref, status="all")
@@ -604,7 +604,7 @@ def _record_token_usage_to_handoff(
         from agent_handoff_mcp import api  # noqa: PLC0415
         from agent_handoff_mcp.config import RuntimeConfig  # noqa: PLC0415
 
-        config = RuntimeConfig.for_workspace(orchestrator_root)
+        config = RuntimeConfig.for_repo(orchestrator_root)
         api.configure_runtime(config)
         from agent_orchestrator_mcp.lanes import turn_metrics  # noqa: PLC0415
 

@@ -42,6 +42,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 TASK_START_SCRIPT = REPO_ROOT / "scripts" / "task-start.sh"
 TASK_FINISH_SCRIPT = REPO_ROOT / "scripts" / "task-finish.sh"
 CHECK_CONTEXT_SCRIPT = REPO_ROOT / "scripts" / "check-task-context.py"
+INTEGRITY_WATCHER_SCRIPT = REPO_ROOT / "scripts" / "integrity-watcher.sh"
 
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -453,3 +454,143 @@ def test_check_task_context_silent_when_drift_is_allowlisted(tmp_path: Path) -> 
         text=True,
     )
     assert "Working-tree integrity" not in proc.stdout, proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# integrity-watcher.sh smoke tests (AHMCP-19 / item I from tech-debt assessment)
+# ---------------------------------------------------------------------------
+
+
+def test_integrity_watcher_script_has_valid_shell_syntax() -> None:
+    """Static check: integrity-watcher.sh must parse cleanly under bash -n.
+
+    Catches the same class of regression that bit AHMCP-17: a syntax bug in
+    a wrapper script that the package test suite (which only exercises
+    Python imports) cannot see."""
+    proc = subprocess.run(
+        ["bash", "-n", str(INTEGRITY_WATCHER_SCRIPT)],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, (
+        f"integrity-watcher.sh failed bash -n syntax check:\n{proc.stderr}"
+    )
+
+
+def test_integrity_watcher_smoke_mode_emits_valid_jsonl(tmp_path: Path) -> None:
+    """End-to-end check: --smoke mode emits a valid JSONL stream with the
+    expected event sequence and field set.
+
+    The watcher's main loop runs fswatch / inotifywait which we cannot
+    require in CI. The smoke mode bypasses the watcher loop entirely and
+    emits one daemon_start, one synthetic write event, and one daemon_stop
+    event so the JSON encoder, log rotation, and event schema can be
+    tested without external dependencies."""
+    # Build a tiny git repo so the watcher can resolve a primary worktree.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    (repo / "README.md").write_text("hello\n")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-q", "-m", "init")
+
+    # Make a directory the watcher's default-paths logic will pick up.
+    src_dir = repo / "packages" / "agent-handoff-mcp" / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "placeholder.py").write_text("# placeholder\n")
+
+    log_path = tmp_path / "integrity-watcher.jsonl"
+    env = os.environ.copy()
+    env["INTEGRITY_WATCHER_LOG"] = str(log_path)
+
+    proc = subprocess.run(
+        [str(INTEGRITY_WATCHER_SCRIPT), "--smoke"],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, (
+        f"integrity-watcher --smoke failed: stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    assert log_path.exists(), f"expected log at {log_path}"
+
+    lines = [line for line in log_path.read_text().splitlines() if line]
+    assert len(lines) == 3, f"expected 3 events, got {len(lines)}: {lines}"
+
+    events = [json.loads(line) for line in lines]
+    assert events[0]["event_kind"] == "daemon_start"
+    assert events[1]["event_kind"] == "write"
+    assert events[2]["event_kind"] == "daemon_stop"
+
+    # All events share the same session_id and have ISO-8601 timestamps.
+    session_ids = {event["session_id"] for event in events}
+    assert len(session_ids) == 1, f"expected single session_id, got {session_ids}"
+    for event in events:
+        assert event["ts"].endswith("Z"), f"timestamp must be UTC ISO-8601: {event['ts']}"
+
+    # The synthetic write event must include the attribution fields the
+    # forensic replay needs: git_head, git_branch, dirty list, holders list.
+    write_event = events[1]
+    assert "git_head" in write_event
+    assert "git_branch" in write_event
+    assert "dirty" in write_event
+    assert "holders" in write_event
+    assert isinstance(write_event["dirty"], list)
+    assert isinstance(write_event["holders"], list)
+    assert "path" in write_event
+    assert write_event["path"].startswith(str(repo))
+
+
+def test_integrity_watcher_smoke_mode_resolves_primary_worktree_from_linked(
+    tmp_path: Path,
+) -> None:
+    """The integrity watcher must resolve the primary worktree even when
+    invoked from a linked worktree (mirrors the AHMCP-16 for_repo
+    resolution semantics)."""
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    _git(primary, "init", "-q", "-b", "main")
+    _git(primary, "config", "user.email", "test@example.com")
+    _git(primary, "config", "user.name", "Test")
+    (primary / "README.md").write_text("hello\n")
+    _git(primary, "add", "README.md")
+    _git(primary, "commit", "-q", "-m", "init")
+    src_dir = primary / "packages" / "agent-handoff-mcp" / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "placeholder.py").write_text("# placeholder\n")
+    _git(primary, "add", "packages")
+    _git(primary, "commit", "-q", "-m", "add packages")
+
+    linked = tmp_path / "primary-linked"
+    _git(primary, "branch", "feature/test")
+    _git(primary, "worktree", "add", "-q", str(linked), "feature/test")
+
+    log_path = tmp_path / "integrity-watcher.jsonl"
+    env = os.environ.copy()
+    env["INTEGRITY_WATCHER_LOG"] = str(log_path)
+
+    # Invoke from the linked worktree. The script should still resolve
+    # the primary worktree's source dir as the default watch path and
+    # write to the explicit log path.
+    proc = subprocess.run(
+        [str(INTEGRITY_WATCHER_SCRIPT), "--smoke"],
+        cwd=linked,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, (
+        f"smoke from linked worktree failed: {proc.stderr!r}"
+    )
+    assert log_path.exists()
+    events = [json.loads(line) for line in log_path.read_text().splitlines() if line]
+    write_event = next(e for e in events if e["event_kind"] == "write")
+    # The synthetic write must reference a path under the PRIMARY worktree,
+    # not the linked one — proving the for_repo-style resolution worked.
+    assert write_event["path"].startswith(str(primary.resolve())), (
+        f"smoke write path {write_event['path']!r} should resolve to primary "
+        f"worktree {str(primary.resolve())!r}, not linked worktree"
+    )

@@ -61,37 +61,38 @@ The recognition service, Docker stack, Caddy TLS proxy, persistent model cache, 
 
 ### Production Gaps (What This Epic Closes)
 
-| Gap | Source | Status |
-|-----|--------|--------|
-| API key validation + tenant isolation | Production Readiness Phase 4 | **Already implemented** (`require_auth`, `api_key_repository.py`) |
-| No browser origin allowlist (CORS) | Production Readiness Phase 4 | Not started -- **E15-1 Slice 2** |
-| No per-key rate limiting / 429 behavior | Production Readiness Phase 4 | Not started -- **E15-1 Slice 1** |
-| No key rotation/lifecycle surface | Production Readiness Phase 4 | Not started -- **E15-1 Slice 3** |
-| No `/health` or `/ready` endpoints with dependency checks | Production Readiness Phase 5 | Not started |
-| No structured JSON logs or correlation IDs | Production Readiness Phase 5 | Not started |
-| No request latency metrics | Production Readiness Phase 5 | Not started |
-| No WordPress demo page | Production Readiness Phase 6 / E14 | Not started |
-| No E2E smoke gate automation | Production Readiness Phase 2 | Planned |
-| Local reset bootstrap contract mismatch | E15-4 (in progress) | In progress |
-| Local-sync correctness and audit closure | New for E15 | In progress -- **E15-7** |
-| OCI budget alerts not verified | E14 / Production Readiness Phase 6 | Not started |
-| Dynamic IP SSH access drift | Tech debt | Decision pending |
+| Gap                                                       | Source                             | Status                                                            |
+| --------------------------------------------------------- | ---------------------------------- | ----------------------------------------------------------------- |
+| API key validation + tenant isolation                     | Production Readiness Phase 4       | **Already implemented** (`require_auth`, `api_key_repository.py`) |
+| No browser origin allowlist (CORS)                        | Production Readiness Phase 4       | Not started -- **E15-1 Slice 2**                                  |
+| No per-key rate limiting / 429 behavior                   | Production Readiness Phase 4       | Not started -- **E15-1 Slice 1**                                  |
+| No key rotation/lifecycle surface                         | Production Readiness Phase 4       | Not started -- **E15-1 Slice 3**                                  |
+| No `/health` or `/ready` endpoints with dependency checks | Production Readiness Phase 5       | Not started                                                       |
+| No structured JSON logs or correlation IDs                | Production Readiness Phase 5       | Not started                                                       |
+| No request latency metrics                                | Production Readiness Phase 5       | Not started                                                       |
+| No WordPress demo page                                    | Production Readiness Phase 6 / E14 | Not started                                                       |
+| No E2E smoke gate automation                              | Production Readiness Phase 2       | Planned                                                           |
+| Local reset bootstrap contract mismatch                   | E15-4 (in progress)                | In progress                                                       |
+| Local-sync correctness and audit closure                  | New for E15                        | In progress -- **E15-7**                                          |
+| OCI budget alerts not verified                            | E14 / Production Readiness Phase 6 | Not started                                                       |
+| Dynamic IP SSH access drift                               | Tech debt                          | Decision pending                                                  |
 
 ## Design Decisions
 
-| Decision | Rationale |
-|----------|-----------|
-| Security before WP demo provisioning | Cannot share a public URL until the backend is safe for internet exposure |
-| Observability before E2E smoke gate | Need structured logs and health endpoints to debug smoke test failures |
+| Decision                                          | Rationale                                                                              |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Security before WP demo provisioning              | Cannot share a public URL until the backend is safe for internet exposure              |
+| Observability before E2E smoke gate               | Need structured logs and health endpoints to debug smoke test failures                 |
 | WP on separate shared hosting, not on the OCI VPS | Clean separation of concerns; inference VPS should not run PHP; ~$2-5/mo is acceptable |
-| Tailscale for SSH access (replaces IP allowlist) | Eliminates dynamic-IP drift permanently; free for personal use; 15-minute setup |
-| E2E smoke gate as final phase | All other infrastructure must be in place before automated tests can assert against it |
+| Tailscale for SSH access (replaces IP allowlist)  | Eliminates dynamic-IP drift permanently; free for personal use; 15-minute setup        |
+| E2E smoke gate as final phase                     | All other infrastructure must be in place before automated tests can assert against it |
 
 ## Cross-Cutting: Branch Isolation Enforcement
 
 All E15 implementation work must happen on feature branches, never on `main`. `PreToolUse` hooks in both harnesses enforce this by blocking code-file edits on the main branch. This was added after discovering uncommitted code changes on `main` from a prior agent session that bled into subsequent work.
 
 **Enforcement mechanism:**
+
 - VS Code hook: `.github/hooks/guard-main-branch.py` via `.github/hooks/terminal-guard.json`
 - Claude hook: `scripts/hooks/guard-main-branch.sh` via `.claude/settings.json`
 - Policy: code files (`*.py`, `*.ts`, etc.) under `apps/` or `packages/` are blocked on `main`
@@ -250,29 +251,29 @@ Exit criteria:
 
 ## External Dependencies
 
-| Dependency | Owner | Status | Blocks |
-|------------|-------|--------|--------|
+| Dependency                              | Owner   | Status      | Blocks  |
+| --------------------------------------- | ------- | ----------- | ------- |
 | WP shared hosting provisioning + domain | @daniel | Not started | Phase 3 |
-| API key / origin policy decisions | @daniel | Not started | Phase 1 |
-| OCI budget alert verification | @daniel | Not started | Phase 4 |
-| Tailscale installation on OCI VM | @daniel | Not started | Phase 4 |
-| CI secret provisioning for smoke tests | @daniel | Not started | Phase 5 |
+| API key / origin policy decisions       | @daniel | Not started | Phase 1 |
+| OCI budget alert verification           | @daniel | Not started | Phase 4 |
+| Tailscale installation on OCI VM        | @daniel | Not started | Phase 4 |
+| CI secret provisioning for smoke tests  | @daniel | Not started | Phase 5 |
 
 ## Code Anchors
 
-| Layer | File | Note |
-|-------|------|------|
-| Backend API entry | `apps/prototype-description-service/api/main.py` | Security middleware, health/ready endpoints |
-| Backend deploy | `apps/prototype-description-service/docker-compose.prod.yml` | Production stack definition |
-| Backend Caddy | `apps/prototype-description-service/Caddyfile` | Reverse proxy + TLS config |
-| Backend env | `apps/prototype-description-service/.env.prod.example` | Production env contract |
-| Backend reset | `apps/prototype-description-service/scripts/reset_dev_db.sh` | Local reset (E15-4 scope) |
-| Infra | `infra/oci/` | Terraform module, cloud-init, retry tooling |
-| Plugin sync | `apps/prototype-wp-alt-context/src/sovereign/sync/class-sync-pull-job.php` | WP-to-backend sync path |
-| Plugin API | `apps/prototype-wp-alt-context/src/api/class-sync-status-controller.php` | Sync status for E2E verification |
-| Frontend workbench | `apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx` | Demo UX surface |
-| QA automation | `apps/prototype-wp-alt-context/tests/e2e/` | Proposed smoke gate location |
-| Tech debt | `docs/tasks/tech-debt/dynamic-ip-ssh-access.md` | SSH drift resolution |
+| Layer              | File                                                                       | Note                                        |
+| ------------------ | -------------------------------------------------------------------------- | ------------------------------------------- |
+| Backend API entry  | `apps/prototype-description-service/api/main.py`                           | Security middleware, health/ready endpoints |
+| Backend deploy     | `apps/prototype-description-service/docker-compose.prod.yml`               | Production stack definition                 |
+| Backend Caddy      | `apps/prototype-description-service/Caddyfile`                             | Reverse proxy + TLS config                  |
+| Backend env        | `apps/prototype-description-service/.env.prod.example`                     | Production env contract                     |
+| Backend reset      | `apps/prototype-description-service/scripts/reset_dev_db.sh`               | Local reset (E15-4 scope)                   |
+| Infra              | `infra/oci/`                                                               | Terraform module, cloud-init, retry tooling |
+| Plugin sync        | `apps/prototype-wp-alt-context/src/sovereign/sync/class-sync-pull-job.php` | WP-to-backend sync path                     |
+| Plugin API         | `apps/prototype-wp-alt-context/src/api/class-sync-status-controller.php`   | Sync status for E2E verification            |
+| Frontend workbench | `apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx`           | Demo UX surface                             |
+| QA automation      | `apps/prototype-wp-alt-context/tests/e2e/`                                 | Proposed smoke gate location                |
+| Tech debt          | `docs/tasks/tech-debt/dynamic-ip-ssh-access.md`                            | SSH drift resolution                        |
 
 ## Risks and Mitigations
 
@@ -301,47 +302,47 @@ Exit criteria:
 
 > Source: Production Readiness Phase 4 + E14 Phase 1
 
-- [ ] Enforce strict API key validation without sensitive logging ← *Prod Readiness P4*
-- [ ] Add browser origin allowlist policy ← *Prod Readiness P4 + E14 P1*
-- [ ] Add rate limiting and deterministic 429 behavior ← *Prod Readiness P4*
-- [ ] Implement no-downtime key rotation + beta-tester key provisioning ← *Prod Readiness P4*
-- [ ] Add plugin-side backend URL/API key validation UX ← *Prod Readiness P4*
+- [ ] Enforce strict API key validation without sensitive logging ← _Prod Readiness P4_
+- [ ] Add browser origin allowlist policy ← _Prod Readiness P4 + E14 P1_
+- [ ] Add rate limiting and deterministic 429 behavior ← _Prod Readiness P4_
+- [ ] Implement no-downtime key rotation + beta-tester key provisioning ← _Prod Readiness P4_
+- [ ] Add plugin-side backend URL/API key validation UX ← _Prod Readiness P4_
 
 ## Phase 2: Observability Baseline -- NOT STARTED → [E15-2](../../tasks/15.0/E15-2-observability-baseline-task-plan.md)
 
 > Source: Production Readiness Phase 5
 
-- [ ] Emit structured JSON logs with correlation IDs ← *Prod Readiness P5*
-- [ ] Add `/health` and `/ready` endpoints with dependency checks ← *Prod Readiness P5*
-- [ ] Add latency and error metrics by endpoint class ← *Prod Readiness P5*
-- [ ] Document operator diagnostics flow/runbook ← *Prod Readiness P5*
+- [ ] Emit structured JSON logs with correlation IDs ← _Prod Readiness P5_
+- [ ] Add `/health` and `/ready` endpoints with dependency checks ← _Prod Readiness P5_
+- [ ] Add latency and error metrics by endpoint class ← _Prod Readiness P5_
+- [ ] Document operator diagnostics flow/runbook ← _Prod Readiness P5_
 
 ## Phase 3: WordPress Demo Provisioning -- NOT STARTED → [E15-3](../../tasks/15.0/E15-3-wordpress-demo-provisioning-stub.md) (to be scoped)
 
 > Source: Production Readiness Phase 6 + E14 remaining
 
-- [ ] Provision shared PHP hosting ← *Prod Readiness P6*
-- [ ] Install WordPress + ACX plugin ← *Prod Readiness P6 + E14*
-- [ ] Configure plugin with production backend URL and API key ← *Prod Readiness P6 + E14*
-- [ ] Seed demo content (media library with sample faces) ← *new for E15*
-- [ ] Set up Cloudflare DNS + TLS for WP host ← *Prod Readiness P6*
+- [ ] Provision shared PHP hosting ← _Prod Readiness P6_
+- [ ] Install WordPress + ACX plugin ← _Prod Readiness P6 + E14_
+- [ ] Configure plugin with production backend URL and API key ← _Prod Readiness P6 + E14_
+- [ ] Seed demo content (media library with sample faces) ← _new for E15_
+- [ ] Set up Cloudflare DNS + TLS for WP host ← _Prod Readiness P6_
 
 ## Phase 4: End-to-End Verification -- IN PROGRESS → [E15-4](../../tasks/15.0/E15-4-local-reset-bootstrap-hardening-task-plan.md) + [E15-5](../../tasks/15.0/E15-5-remote-e2e-verification-stub.md) (to be scoped)
 
 > Source: Production Readiness Phase 6 exit criteria + [tech-debt/dynamic-ip-ssh-access.md](../../tasks/tech-debt/dynamic-ip-ssh-access.md)
 
-- [ ] Complete local reset bootstrap hardening (E15-4, in progress) ← *finding INVEST-reset-env-contract-mismatch*
-- [ ] Verify OCI budget alerts ($1/$5/$10 thresholds) ← *Prod Readiness P6 + E14*
-- [ ] Resolve dynamic IP SSH access drift (Tailscale) ← *[tech-debt/dynamic-ip-ssh-access.md](../../tasks/tech-debt/dynamic-ip-ssh-access.md)*
-- [ ] Run end-to-end WP → backend → recognition → response smoke test ← *Prod Readiness P6 + E14*
-- [ ] Document Hetzner CX22 fallback plan ← *Prod Readiness P6 + E14*
+- [ ] Complete local reset bootstrap hardening (E15-4, in progress) ← _finding INVEST-reset-env-contract-mismatch_
+- [ ] Verify OCI budget alerts ($1/$5/$10 thresholds) ← _Prod Readiness P6 + E14_
+- [ ] Resolve dynamic IP SSH access drift (Tailscale) ← _[tech-debt/dynamic-ip-ssh-access.md](../../tasks/tech-debt/dynamic-ip-ssh-access.md)_
+- [ ] Run end-to-end WP → backend → recognition → response smoke test ← _Prod Readiness P6 + E14_
+- [ ] Document Hetzner CX22 fallback plan ← _Prod Readiness P6 + E14_
 
 ## Phase 5: E2E Smoke Gate Automation -- NOT STARTED → [E15-6](../../tasks/15.0/E15-6-e2e-smoke-gate-automation-stub.md) (to be scoped)
 
 > Source: Production Readiness Phase 2
 
-- [ ] Scaffold Playwright E2E path for sovereign flows ← *Prod Readiness P2*
-- [ ] Add WP-CLI seed/reset fixtures for deterministic setup ← *Prod Readiness P2*
-- [ ] Add deterministic backend outage/recovery controls for tests ← *Prod Readiness P2*
-- [ ] Automate required scenarios (offline persistence, local-read resilience, sync transitions) ← *Prod Readiness P2*
-- [ ] Add CI smoke job with trace/video artifacts ← *Prod Readiness P2*
+- [ ] Scaffold Playwright E2E path for sovereign flows ← _Prod Readiness P2_
+- [ ] Add WP-CLI seed/reset fixtures for deterministic setup ← _Prod Readiness P2_
+- [ ] Add deterministic backend outage/recovery controls for tests ← _Prod Readiness P2_
+- [ ] Automate required scenarios (offline persistence, local-read resilience, sync transitions) ← _Prod Readiness P2_
+- [ ] Add CI smoke job with trace/video artifacts ← _Prod Readiness P2_

@@ -215,6 +215,118 @@ def test_update_task_status_active_task_preserves_state_via_set_handoff_state(wo
     assert updated["active"]["revision"] == 1
 
 
+def test_update_task_status_active_task_rejects_missing_expected_revision(
+    workspace_pair: dict[str, Path],
+) -> None:
+    """AHMCP-16-FU-01 regression: when the target task is the active row,
+    update_task_status delegates to set_handoff_state which requires
+    expected_revision for any update of an existing row. Without the
+    revision, the call must fail with the canonical error so callers know
+    they need to fetch identity first.
+
+    This is the bug that broke `make task-finish` for both AHMCP-16 and
+    AHMCP-15-BR-FIXES in the same merge train: the inline Python in
+    task-finish.sh called update_task_status without expected_revision
+    every time, and silently moved on after the failure, leaving the
+    archive snapshot with whatever status the task had at the time."""
+    _configure_runtime(workspace_pair["source"])
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="finish-active-task",
+            objective="Active row missing-revision repro",
+            status="in_progress",
+        )
+    )
+
+    # Bare call without expected_revision must be rejected.
+    rejected = _parse(
+        mcp_server.update_task_status(task_ref="finish-active-task", status="done")
+    )
+    assert rejected["ok"] is False
+    assert "expected_revision" in (rejected.get("error") or "")
+
+
+def test_task_finish_pattern_fetches_identity_then_updates(
+    workspace_pair: dict[str, Path],
+) -> None:
+    """AHMCP-16-FU-01 regression: validate the canonical task-finish.sh
+    pattern. Fetching the active row's revision via
+    get_handoff_state(sections='identity') and threading it into
+    update_task_status must succeed where the bare call fails. This is the
+    pattern the inline Python in scripts/task-finish.sh now uses."""
+    _configure_runtime(workspace_pair["source"])
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="finish-pattern-task",
+            objective="task-finish pattern repro",
+            status="in_progress",
+        )
+    )
+
+    # Step 1: fetch identity (mirrors what task-finish.sh now does).
+    identity = _parse(mcp_server.get_handoff_state(sections="identity"))
+    assert identity["ok"] is True
+    active_row = identity.get("active") or {}
+    assert active_row.get("task_ref") == "finish-pattern-task"
+    expected_revision = active_row.get("revision")
+    assert isinstance(expected_revision, int)
+
+    # Step 2: thread the revision into update_task_status.
+    updated = _parse(
+        mcp_server.update_task_status(
+            task_ref="finish-pattern-task",
+            status="done",
+            expected_revision=expected_revision,
+        )
+    )
+    assert updated["ok"] is True
+    assert updated["active"]["status"] == "done"
+    assert updated["active"]["revision"] == expected_revision + 1
+
+
+def test_task_finish_pattern_handles_no_active_task(
+    workspace_pair: dict[str, Path],
+) -> None:
+    """AHMCP-16-FU-01 corollary: when the active row was already cleared
+    (e.g. archive_task_state ran first, or the task is being archived from
+    an inactive snapshot), the task-finish.sh pattern must gracefully pass
+    expected_revision=None so update_task_status takes the archived-snapshot
+    path. This catches the case where get_handoff_state returns active=None
+    but the script must still proceed."""
+    _configure_runtime(workspace_pair["source"])
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="archived-only-task",
+            objective="archived snapshot path",
+            status="in_progress",
+        )
+    )
+    _parse(mcp_server.archive_task_state(task_ref="archived-only-task"))
+
+    # Active row was cleared by archive_task_state. Identity reports active=None.
+    identity = _parse(mcp_server.get_handoff_state(sections="identity"))
+    assert identity["ok"] is True
+    active_row = identity.get("active")
+    expected_revision = (
+        active_row.get("revision")
+        if isinstance(active_row, dict) and active_row.get("task_ref") == "archived-only-task"
+        else None
+    )
+    assert expected_revision is None
+
+    # Pattern: pass expected_revision=None — update_task_status falls through
+    # to the archived-snapshot path which does not enforce optimistic concurrency.
+    updated = _parse(
+        mcp_server.update_task_status(
+            task_ref="archived-only-task",
+            status="done",
+            expected_revision=expected_revision,
+        )
+    )
+    assert updated["ok"] is True
+    assert updated["updated_scope"] == "archived"
+
+
 def test_switch_task_preserves_target_branch_on_restore(workspace_pair: dict[str, Path]) -> None:
     """target_branch survives switch-away / switch-back lifecycle."""
     _configure_runtime(workspace_pair["source"])

@@ -77,13 +77,14 @@ REPO_ROOT="$REPO_ROOT" TASK="$TASK" \
 PYTHONPATH="${REPO_ROOT}/packages/agent-handoff-mcp/src:${REPO_ROOT}/packages/agent-orchestrator-mcp/src" \
   PYENV_VERSION="${PYENV_VERSION:-description-service}" \
   "${PYENV_ROOT:-$HOME/.pyenv}/versions/${PYENV_VERSION:-description-service}/bin/python" -c '
-import os, subprocess, sys
+import json, os, subprocess, sys
 from pathlib import Path
 from agent_handoff_mcp import (
     RuntimeConfig,
     archive_task_state,
     configure_runtime,
     generate_current_task_md,
+    get_handoff_state,
     update_task_status,
 )
 
@@ -99,10 +100,31 @@ task = os.environ["TASK"]
 head_sha = subprocess.check_output(["git", "rev-parse", "HEAD"]).strip().decode()
 
 # Best-effort status -> done before archive (idempotent if already done).
-# Post-AHMCP-10 the handoff handlers return native dicts (Slice 3 of AHMCP-7),
-# so we read result["ok"] directly with no json.loads round trip.
+# AHMCP-16-FU-01: when the task being finished is the active row
+# (handoff_state.id=1), update_task_status delegates to set_handoff_state
+# which requires expected_revision for any update of an existing row. Fetch
+# the active row's revision via the identity-only sections projection and
+# pass it through. When the task is NOT the active row (already cleared, or
+# being archived from a snapshot), the active payload is None and we pass
+# expected_revision=None — update_task_status falls through to the archived
+# snapshot path which does not enforce optimistic concurrency.
+identity = get_handoff_state(sections="identity")
+if isinstance(identity, str):
+    identity = json.loads(identity)
+identity_data = identity.get("data") if isinstance(identity, dict) else None
+active_row = identity_data.get("active") if isinstance(identity_data, dict) else None
+expected_revision = (
+    active_row.get("revision")
+    if isinstance(active_row, dict) and active_row.get("task_ref") == task
+    else None
+)
+
 try:
-    state = update_task_status(task_ref=task, status="done")
+    state = update_task_status(
+        task_ref=task,
+        status="done",
+        expected_revision=expected_revision,
+    )
     if not state.get("ok"):
         print("\u26a0 update_task_status returned ok=False:", state, file=sys.stderr)
 except Exception as exc:

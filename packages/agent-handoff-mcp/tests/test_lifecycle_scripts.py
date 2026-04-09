@@ -723,3 +723,49 @@ def test_lint_expected_revision_allows_call_with_kwarg(tmp_path: Path) -> None:
         f"lint guard should pass when expected_revision is present; "
         f"got exit={proc.returncode} stderr={proc.stderr!r}"
     )
+
+
+def test_lint_expected_revision_catches_aliased_import(tmp_path: Path) -> None:
+    """AHMCP-21-BR-01 regression: the lint guard must catch calls made
+    through an aliased import like
+    ``from agent_handoff_mcp import set_handoff_state as write_state``
+    where ``write_state(...)`` is called without ``expected_revision``."""
+    fixture = tmp_path / "_alias_bad.py"
+    fixture.write_text(
+        "from agent_handoff_mcp import set_handoff_state as write_state\n"
+        "write_state(task_ref='T1', objective='test', status='in_progress')\n"
+    )
+    lint_script = REPO_ROOT / "scripts" / "hooks" / "lint-expected-revision.py"
+    proc = subprocess.run(
+        [sys.executable, str(lint_script), "--paths", str(tmp_path / "_*.py")],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 1, (
+        f"lint guard should catch aliased import; "
+        f"got exit={proc.returncode} stderr={proc.stderr!r}"
+    )
+    assert "write_state" in proc.stderr
+    assert "alias for set_handoff_state" in proc.stderr
+
+
+def test_lint_expected_revision_reports_syntax_errors(tmp_path: Path) -> None:
+    """AHMCP-21-BR-02 regression: the lint guard must report SyntaxError
+    as a violation instead of silently skipping the broken file."""
+    fixture = tmp_path / "_syntax_bad.py"
+    fixture.write_text(
+        "from agent_handoff_mcp import set_handoff_state\n"
+        "set_handoff_state(\n"  # unterminated call
+    )
+    lint_script = REPO_ROOT / "scripts" / "hooks" / "lint-expected-revision.py"
+    proc = subprocess.run(
+        [sys.executable, str(lint_script), "--paths", str(tmp_path / "_*.py")],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 1, (
+        f"lint guard should fail on SyntaxError; "
+        f"got exit={proc.returncode} stderr={proc.stderr!r}"
+    )
+    assert "SyntaxError" in proc.stderr
+    assert "_syntax_bad.py" in proc.stderr

@@ -130,7 +130,6 @@ See [packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md](packages/a
 
 - Every code change must be logged with a `record_event(event={event_kind: "decision", actor: {...}, ...})` entry before review or completion.
 - After recording the decision, notify the user that the handoff has been updated (e.g. "Handoff updated: decision `<id>` recorded."). This notification is mandatory — a response that makes code changes without both recording and notifying is incomplete.
-- **Every `actor` block on a write must carry the full provenance set: `agent`, `model`, `model_label`, `branch`, and `commit_sha`.** The handoff write path emits an `actor is missing model/model_label` warning and renders the decision without model identity when these are omitted, which silently degrades audit-trail quality. The `model_label` must equal the canonical normalisation of `model` (e.g. `model="claude-opus-4-6"` ↔ `model_label="Claude Opus 4"`); a mismatch is rejected at the boundary.
 - A task response is incomplete if MCP handoff was not updated.
 - When a task is finished, set status to `done` via `update_task_status(task_ref=..., status="done")` before or after archiving. `close_slice` keeps status `in_progress` — it does not close the task. `archive_task_state` preserves whatever status the task had; archiving while `in_progress` leaves the dashboard permanently stale.
 - Slice completion format (enforced at write time): [docs/agentic/templates/slice-complete-template.md](docs/agentic/templates/slice-complete-template.md).

@@ -44,6 +44,7 @@ The harness guard implementations live at `.github/hooks/guard-main-branch.py` a
 - Git only allows one worktree per branch. If `main` is checked out in a linked worktree, every other agent and worktree loses access to `main`, blocking planning work, merges, and doc reads.
 
 **If `main` gets trapped in a linked worktree:**
+
 ```bash
 git -C /path/to/linked-worktree checkout --detach HEAD   # free main
 git checkout main                                          # reclaim in root
@@ -51,6 +52,7 @@ git worktree remove /path/to/linked-worktree              # clean up
 ```
 
 **After merging a feature branch to `main`:**
+
 ```bash
 git checkout main                  # return root to main
 git branch -d feature/<merged>     # delete the merged branch

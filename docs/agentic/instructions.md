@@ -59,7 +59,7 @@ Choose your domain to load targeted context. Always load the matching testing gu
 | Detection vs identification boundary   | [maps/integration.md](maps/integration.md)                                                                                                          |
 | Face/Identity nomenclature (ADR)       | [adrs/ADR-001-face-identity-nomenclature.md](adrs/ADR-001-face-identity-nomenclature.md)                                                            |
 | MCP tooling / testing commands         | [BOOTSTRAP.md](BOOTSTRAP.md)                                                                                                                        |
-| MCP server loading at session start    | [rules/mcp-loading-protocol.md](rules/mcp-loading-protocol.md) + [maps/mcp-tool-routing.yaml](maps/mcp-tool-routing.yaml)                            |
+| MCP server loading at session start    | [rules/mcp-loading-protocol.md](rules/mcp-loading-protocol.md) + [maps/mcp-tool-routing.yaml](maps/mcp-tool-routing.yaml)                           |
 | Codex custom MCP attachment            | [playbooks/codex-custom-mcp-playbook.md](playbooks/codex-custom-mcp-playbook.md)                                                                    |
 | Lane decomposition / orchestration     | [playbooks/worktree-codex-playbook.md](playbooks/worktree-codex-playbook.md) + [playbooks/lane-scoped-context.md](playbooks/lane-scoped-context.md) |
 
@@ -73,7 +73,7 @@ Use this checklist at session start, whether you are entering from a cold start,
 4. Load role routing next. Choose the domain from the Role Selection table and read the linked context map, guidelines, and testing guide before touching code.
 5. Check open findings before proposing or repeating a fix. Use `review_findings(review={"operation":"list","status":"open"})` so you do not re-raise known issues or miss already-assigned follow-up work.
 6. Verify the contract surface before implementation. If the task touches a service, language, schema, or MCP boundary, confirm the owning contract exists in [contracts/](contracts/) and load it before writing code. If no contract exists for the boundary, follow the Cross-Boundary Change Protocol in [rules/development-workflow.md](rules/development-workflow.md) to scaffold one before proceeding.
-7. Decide whether `ctx7` is needed. If the slice depends on upstream library or framework behavior, apply the `ctx7` entry criteria below before relying on memory or stale local notes. (The MCP Loading Protocol's `context7` triggers and the ctx7 entry criteria are complementary — the protocol decides whether to *load* the server, the criteria decide whether to *call* it.)
+7. Decide whether `ctx7` is needed. If the slice depends on upstream library or framework behavior, apply the `ctx7` entry criteria below before relying on memory or stale local notes. (The MCP Loading Protocol's `context7` triggers and the ctx7 entry criteria are complementary — the protocol decides whether to _load_ the server, the criteria decide whether to _call_ it.)
 8. Ensure the work has an MCP task, even if there is no `docs/tasks/` plan. A task plan is optional; handoff state is not. If the current change does not fit the active task, switch to or initialize an ad hoc task before editing so the slice can be logged and reviewed.
 
 Cold start vs. mid-task re-entry:

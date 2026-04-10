@@ -134,8 +134,8 @@ def test_query_param_tenant_fallback(monkeypatch) -> None:
     assert collected["service_tenant"] == tenant_value
 
 
-def test_session_context_cleared_after_request(monkeypatch) -> None:
-    """Tenant context should be set and cleared so sessions do not leak between requests."""
+def test_session_context_is_reset_by_next_request_setup(monkeypatch) -> None:
+    """Each request should establish its tenant context without dependency-local cleanup."""
     tenant_a = str(uuid.uuid4())
     tenant_b = str(uuid.uuid4())
     events: list[tuple[str, str | None]] = []
@@ -155,23 +155,23 @@ def test_session_context_cleared_after_request(monkeypatch) -> None:
         events.append(("set", str(tenant_id)))
         session_obj.current_tenant = str(tenant_id)
 
-    async def fake_clear(session_obj):
-        events.append(("clear", session_obj.current_tenant))
-        session_obj.current_tenant = None
+    async def fake_commit():
+        events.append(("commit", session.current_tenant))
 
-    async def fake_session_source():
-        events.append(("open", session.current_tenant))
-        try:
-            yield session
-        finally:
-            events.append(("session_exit", session.current_tenant))
+    async def fake_rollback():
+        events.append(("rollback", session.current_tenant))
 
-    monkeypatch.setattr("db.tenant_context.set_tenant_context", fake_set)
-    monkeypatch.setattr("db.tenant_context.clear_tenant_context", fake_clear)
-    # Patch in the session module where it's actually used
+    async def fake_close():
+        events.append(("session_exit", session.current_tenant))
+
+    session.commit = fake_commit
+    session.rollback = fake_rollback
+    session.close = fake_close
+
     from recognition.interface_adapters.http.deps import session as session_module
 
-    monkeypatch.setattr(session_module, "_get_session", fake_session_source)
+    monkeypatch.setattr(session_module, "async_session_factory", lambda: session)
+    monkeypatch.setattr(session_module, "set_tenant_context", fake_set)
 
     def builder(session_dep=Depends(dependencies.get_session)):
         async def _build(_: str):
@@ -201,4 +201,7 @@ def test_session_context_cleared_after_request(monkeypatch) -> None:
     assert second.status_code == 200
     assert any(evt[0] == "list" and evt[1] == tenant_a for evt in events)
     assert any(evt[0] == "list" and evt[1] == tenant_b for evt in events)
-    assert session.current_tenant is None
+    assert ("set", tenant_a) in events
+    assert ("set", tenant_b) in events
+    assert not any(evt[0] == "clear" for evt in events)
+    assert session.current_tenant == tenant_b

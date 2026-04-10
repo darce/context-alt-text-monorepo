@@ -17,6 +17,7 @@ import db.session as db_session_module
 from db.base import Base
 from db.models import IdentityCluster, Tenant
 from recognition.interface_adapters.http import router as recognition_router
+from recognition.interface_adapters.http.deps import session as session_deps
 from recognition.interface_adapters.http.routers import clusters as cluster_router
 
 
@@ -81,6 +82,7 @@ async def session_factory(
 ) -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
     factory = async_sessionmaker(sqlite_engine, expire_on_commit=False)
     monkeypatch.setattr(db_session_module, "async_session_factory", factory)
+    monkeypatch.setattr(session_deps, "async_session_factory", factory)
     monkeypatch.setattr(cluster_router.db_session_module, "async_session_factory", factory)
     yield factory
 

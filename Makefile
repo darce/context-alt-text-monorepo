@@ -497,19 +497,17 @@ ace-metrics-json:
 		--output-format json
 
 # Apply pending ACE counter updates from ace_reflect_log.jsonl to instruction files.
-# Must be run from the orchestrator root; never from daemon or worker context.
-# Usage: make ace-reflect TASK=<task-ref>
+# ACE is project-local (scripts/ace/), not part of any MCP package.
+# Usage: make ace-reflect
 ace-reflect:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.ace_reflect \
-		--task-ref "$(TASK)" \
+	@$(MCP_PYTHON) scripts/ace/ace_reflect.py \
 		--state-dir .task-state \
 		--instruction-files docs/agentic/instructions.md
 
 # Show pruning candidates across instruction files.
 # Usage: make ace-curation-report
 ace-curation-report:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.ace_reflect \
-		--task-ref "$(TASK)" \
+	@$(MCP_PYTHON) scripts/ace/ace_reflect.py \
 		--state-dir .task-state \
 		--instruction-files docs/agentic/instructions.md \
 		--curation-report-only

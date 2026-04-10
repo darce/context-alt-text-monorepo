@@ -1327,35 +1327,9 @@ def _review_phase(ctx: WorkerRunContext) -> "dict[str, Any]":
         scope_reason=review_output.get("scope_reason"),
     )
 
-    # ACE reflection hook
-    if findings:
-        try:
-            import datetime as _dt  # noqa: PLC0415
-
-            from agent_orchestrator_mcp.orchestration.ace_reflect import (  # noqa: PLC0415
-                ace_reflect_on_findings,
-            )
-
-            _workspace_root = ctx.state_dir.parent
-            _instruction_files = [
-                _workspace_root / "docs/agentic/instructions.md",
-            ]
-            _records = ace_reflect_on_findings(findings, _instruction_files)
-            if _records:
-                _reflect_log = ctx.state_dir / "ace_reflect_log.jsonl"
-                with _reflect_log.open("a", encoding="utf-8") as _fh:
-                    for _rec in _records:
-                        _rec["cycle"] = ctx.cycle
-                        _rec["timestamp"] = _dt.datetime.utcnow().isoformat() + "Z"
-                        _fh.write(json.dumps(_rec) + "\n")
-                ctx.log(
-                    "INFO",
-                    WorkerEventName.ACE_REFLECT_DETECTED,
-                    cycle=ctx.cycle,
-                    records=len(_records),
-                )
-        except Exception as _ace_exc:  # noqa: BLE001
-            ctx.log("WARNING", WorkerEventName.ACE_REFLECT_ERROR, error=str(_ace_exc))
+    # ACE reflection is now handled by the project-local PostToolUse hook
+    # (scripts/hooks/ace-detect.py) rather than embedded in the daemon.
+    # See scripts/ace/ace_reflect.py for the extracted logic.
 
     # Compute finding diff
     if ctx.prev_finding_ids or findings:

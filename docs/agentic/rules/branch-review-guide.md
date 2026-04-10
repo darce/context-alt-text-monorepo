@@ -107,6 +107,17 @@ For cross-agent post-implementation review, use the latest-slice packet query be
 
 Do not reconstruct the "latest slice" from chat memory, recent commits, or a dirty branch when MCP packet state is available.
 
+### Handoff-only Fallback
+
+When `agent-orchestrator-mcp` is not loaded, use this degraded handoff-only path instead of inventing a second compound packet:
+
+1. `load_session`
+2. `search_handoff(queries=["slice_complete"], record_types=["decision"], limit=1)`
+3. `get_verified_tests(task_ref=..., commit_sha=...)`
+4. `review_findings(review={"operation":"list","status":"open"})`
+
+Call this path out explicitly in the review output as fallback scope. Prefer `get_latest_slice_review_packet` whenever orchestrator is available.
+
 ## Fresh Verification Evidence
 
 Treat any claim that a branch is "done", "fixed", "passing", or "ready" as unproven unless there is fresh verification evidence for the current branch state.

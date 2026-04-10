@@ -59,11 +59,11 @@ established that:
 |---------|------|---------|--------------|
 | `get_handoff_state` | query | Active task state, bounded sections | No |
 | `load_session` | compound query | State + open findings | No |
-| `search_handoff` | FTS generator | Ranked snippets over 4 record types | No |
+| `search_handoff` | FTS generator | Ranked snippets over 5 record types | No |
 | `review_findings(operation="list")` | query | Findings by status/severity | No |
 | `handoff_close_check` | generator | Merge-readiness verdict | No (task-level) |
 
-`search_handoff` validates against `_VALID_RECORD_TYPES = frozenset({"decision", "finding", "blocker", "action"})` at `core.py:132`. No FTS table exists for `verified_tests`.
+`search_handoff` now validates against `_VALID_RECORD_TYPES = frozenset({"decision", "finding", "blocker", "action", "verified_test"})` in `core.py`, and `verified_tests_fts` now exists as the fifth handoff FTS table.
 
 ### Orchestrator compound surfaces (`agent-orchestrator-mcp`)
 
@@ -164,7 +164,7 @@ Loading both servers in every context would eliminate the handoff-only fallback 
 - **No orchestrator imports in handoff.** The handoff package must not import from `agent_orchestrator_mcp` at any level. The new `get_verified_tests` read and the FTS extension must use only handoff-native data access.
 - **FTS table parity.** The new `verified_tests_fts` table must use the same tokenizer (`porter unicode61`) and unindexed column pattern as existing FTS tables in `shared_schema.py`.
 - **Contract-first.** Update `docs/agentic/contracts/agent-handoff-mcp.md` to document `get_verified_tests` and the new `verified_test` record type in `search_handoff` before or in the same slice as the implementation.
-- **Fallback docs land with the primitives.** The review-guide fallback sections must ship in the same task plan as the handoff primitive changes, not as a deferred documentation follow-up.
+- **Fallback docs land with the primitives.** The review-guide fallback sections must ship in the same task plan as the handoff primitive changes, not as a deferred documentation follow-up. This guardrail was later superseded by the approved Tier 1/Tier 2 spec decomposition: AHMCP-8 shipped the primitives first and AHMCP-9 shipped the adoption docs as the follow-on slice.
 - **No compound assembly on handoff.** If a future spec proposes a compound `get_review_packet` on handoff, that proposal must be treated as a new ADR because it reverses this decision's boundary preservation.
 
 ## References

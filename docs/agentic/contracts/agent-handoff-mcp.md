@@ -89,6 +89,20 @@ Surface classes:
 
 Cross-task and review-summary tools (`switch_task`, `get_latest_slice_review_packet`, `get_review_findings_summary`, `reconcile_review_findings`) are registered on `agent-orchestrator-mcp`. See [`agent-orchestrator-mcp.md`](agent-orchestrator-mcp.md).
 
+Preferred review-intake path when orchestrator is loaded:
+
+1. `get_latest_slice_review_packet`
+2. `get_review_findings_summary` or `review_findings(review={"operation":"list","status":"open"})` as needed
+
+Handoff-only fallback:
+
+1. `load_session`
+2. `search_handoff(queries=["slice_complete"], record_types=["decision"], limit=1)`
+3. `get_verified_tests(task_ref=..., commit_sha=...)`
+4. `review_findings(review={"operation":"list","status":"open"})`
+
+This is a degraded multi-call fallback for sessions where orchestrator is unavailable. `agent-handoff-mcp` does not expose a parallel compound `get_review_packet` surface.
+
 Retry guidance:
 
 - Retry `query` and pure `generator` surfaces when the failure is transport-level, timeout-based, or due to a transient read lock.
@@ -259,26 +273,6 @@ search_handoff(
 - **queries**: One or more search terms. Multiple terms are OR-joined. Multi-word terms are
   automatically phrase-quoted (`"term with spaces"`) for precise adjacency matching.
 - **record_types**: Defaults to all five types when omitted.
-
-## Verified Test Read Surface (`get_verified_tests`)
-
-`get_verified_tests` returns verified test rows from the handoff ledger without requiring a broader dashboard read.
-
-```python
-get_verified_tests(
-  task_ref: str | None = None,
-  lane_id: str | None = None,
-  branch: str | None = None,
-  commit_sha: str | None = None,
-  passed: bool | None = None,
-  limit: int = 100,
-  offset: int = 0,
-) -> str
-```
-
-- Results are ordered by `verified_at DESC, id DESC` for deterministic newest-first reads.
-- Filters are additive; combine `branch`, `commit_sha`, and `passed` to inspect the exact verification rows tied to a merge candidate.
-- The envelope includes `total_matching`, `returned`, `has_more`, and `tests`.
 - **limit**: Clamped to [1, 200]. Results across all searched types are merged and re-ranked.
 - **detail**: `full` preserves the compact FTS snippet returned by SQLite. `summary` truncates that snippet further for startup-friendly reads.
 - **fields**: Optional comma-separated projection over result rows, for example `record_type,snippet`.
@@ -300,7 +294,7 @@ get_verified_tests(
   ],
   "total": 1,
   "query": "\"exponential backoff\"",
-  "record_types_searched": ["action", "blocker", "decision", "finding"]
+  "record_types_searched": ["action", "blocker", "decision", "finding", "verified_test"]
 }
 ```
 
@@ -326,9 +320,55 @@ agent-handoff-mcp --workspace-root <repo> handoff-search \
 ### Error Cases
 
 - `queries` is `None` or all strings are blank: returns `{"ok": false, "error": "..."}`.
-- Any `record_types` entry is not in `["decision", "finding", "blocker", "action"]`: returns error.
+- Any `record_types` entry is not in `["decision", "finding", "blocker", "action", "verified_test"]`: returns error.
 - FTS5 tables not initialized (FTS5 unavailable): returns `{"ok": false, "error": "..."}`. Run
   `doctor` to diagnose.
+
+## Verified Test Read Surface (`get_verified_tests`)
+
+`get_verified_tests` returns verified test rows from the handoff ledger without requiring a broader dashboard read.
+
+```python
+get_verified_tests(
+  task_ref: str | None = None,
+  lane_id: str | None = None,
+  branch: str | None = None,
+  commit_sha: str | None = None,
+  passed: bool | None = None,
+  limit: int = 100,
+  offset: int = 0,
+) -> str
+```
+
+- Results are ordered by `verified_at DESC, id DESC` for deterministic newest-first reads.
+- Filters are additive; combine `branch`, `commit_sha`, and `passed` to inspect the exact verification rows tied to a merge candidate.
+- The envelope includes `total_matching`, `returned`, `has_more`, and `tests`.
+
+### Response Shape
+
+```json
+{
+  "ok": true,
+  "total_matching": 1,
+  "returned": 1,
+  "has_more": false,
+  "tests": [
+    {
+      "id": 42,
+      "task_ref": "my-task",
+      "lane_id": "backend-domain",
+      "branch": "feature/my-task",
+      "commit_sha": "0123456789abcdef0123456789abcdef01234567",
+      "command": "PYENV_VERSION=description-service pytest packages/agent-handoff-mcp/tests/test_schema_migrations.py -q",
+      "passed": true,
+      "verified_at": "2026-04-10 03:20:23"
+    }
+  ]
+}
+```
+
+- `tests` entries return the stored verification row data rather than FTS snippets.
+- Filter combinations narrow the result set without changing the envelope shape.
 
 ## `get_handoff_state` Dashboard View Response Shape
 

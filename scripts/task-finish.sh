@@ -7,18 +7,39 @@
 # task state, and regenerates CURRENT_TASK.md.
 #
 # Usage:
-#   ./scripts/task-finish.sh <TASK_ID>
+#   ./scripts/task-finish.sh <TASK_ID> [--merge]
 #
-# This script does NOT perform the merge itself — it expects main to already
-# contain the work. Pair with `git checkout main && git merge feature/<task>`.
+# Without --merge this script does NOT perform the merge itself — it expects
+# main to already contain the work.
+#
+# --merge  Performs the merge as part of the teardown sequence:
+#          1. Requires the root worktree to be on main.
+#          2. Stashes any uncommitted tracked changes on the root worktree so
+#             they do not block the fast-forward merge.
+#          3. Merges the feature branch into main via git merge --ff-only.
+#          4. Pops the stash. If stash pop produces conflicts the merge is
+#             left on main but the stash is preserved; the script exits
+#             non-zero with recovery instructions.
+#          5. Continues with the normal worktree/branch/MCP cleanup.
+#
+#          This mode is safe for the common pattern where planning artifacts
+#          on main are left uncommitted (untracked new files are invisible to
+#          git stash and do not interfere).
+#
+# Makefile shorthand:
+#   make task-finish TASK=<id>          # merge already done
+#   make task-finish TASK=<id> MERGE=1  # stash + merge + pop, then cleanup
 
 set -euo pipefail
 
 TASK="${1:-}"
 if [[ -z "$TASK" ]]; then
-  echo "usage: $0 <TASK_ID>" >&2
+  echo "usage: $0 <TASK_ID> [--merge]" >&2
   exit 1
 fi
+
+MERGE_MODE=0
+[[ "${2:-}" == "--merge" ]] && MERGE_MODE=1
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 PARENT_DIR="$(dirname "$REPO_ROOT")"
@@ -27,6 +48,51 @@ BRANCH="feature/${TASK_LOWER}"
 WORKTREE_PATH="${PARENT_DIR}/context-alt-text-monorepo-${TASK_LOWER}"
 
 cd "$REPO_ROOT"
+
+# Step 0 (--merge mode): stash root worktree, merge feature branch, pop stash.
+if [[ "$MERGE_MODE" -eq 1 ]]; then
+  ROOT_BRANCH_PRE="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
+  if [[ "$ROOT_BRANCH_PRE" != "main" ]]; then
+    echo "❌ --merge requires the root worktree to be on main (currently on $ROOT_BRANCH_PRE)." >&2
+    exit 5
+  fi
+
+  if ! git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
+    echo "❌ Branch '$BRANCH' does not exist." >&2
+    exit 2
+  fi
+
+  # Only stash tracked modifications; untracked new files are invisible to
+  # git stash and do not interfere with a fast-forward merge.
+  STASH_NEEDED=0
+  if ! git -C "$REPO_ROOT" diff --quiet || ! git -C "$REPO_ROOT" diff --cached --quiet; then
+    STASH_NEEDED=1
+    echo "→ Stashing uncommitted tracked changes on root worktree"
+    git -C "$REPO_ROOT" stash push -m "auto-stash before merge of $BRANCH"
+  fi
+
+  echo "→ Merging $BRANCH into main (--ff-only)"
+  if ! git -C "$REPO_ROOT" merge --ff-only "$BRANCH"; then
+    echo "❌ git merge --ff-only failed." >&2
+    if [[ "$STASH_NEEDED" -eq 1 ]]; then
+      echo "   Your stash is preserved. Run: git stash pop" >&2
+    fi
+    exit 6
+  fi
+
+  if [[ "$STASH_NEEDED" -eq 1 ]]; then
+    echo "→ Popping stash"
+    if ! git -C "$REPO_ROOT" stash pop; then
+      echo "❌ git stash pop produced conflicts." >&2
+      echo "   The merge is committed to main. Resolve manually:" >&2
+      echo "     git stash list           # locate the stash entry" >&2
+      echo "     git checkout -- <path>   # discard conflicting stash file" >&2
+      echo "     git stash drop           # remove the stash entry" >&2
+      echo "   Then re-run task-finish (without --merge) to continue cleanup." >&2
+      exit 7
+    fi
+  fi
+fi
 
 # Step 1: Verify branch is reachable from main (work has been merged).
 if ! git merge-base --is-ancestor "$BRANCH" main 2>/dev/null; then

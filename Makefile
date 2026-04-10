@@ -140,19 +140,16 @@ help:
 	@echo "==================================="
 	@echo ""
 	@echo "Cross-Repo Operations:"
-	@echo "  make check-all    - Run all checks (lint + types + tests)"
-	@echo "  make check-frontend - Run frontend checks (lint + types + arch + tests)"
-	@echo "  make check-mcp    - Run lint, mypy, and tests for the monorepo MCP consumer package"
-	@echo "  make check-orchestrator - Run lint, mypy, and tests for agent-orchestrator-mcp"
-	@echo "  make lint-all     - Run linters for all apps"
-	@echo "  make lint-orchestrator - Run Ruff for agent-orchestrator-mcp"
-	@echo "  make format-orchestrator - Format agent-orchestrator-mcp with Ruff"
-	@echo "  make mypy-orchestrator - Run mypy for agent-orchestrator-mcp"
-	@echo "  make fix-php-style - Auto-fix WordPress plugin PHPCS violations (manual)"
-	@echo "  make test-all     - Run tests for all apps"
-	@echo "  make test-orchestrator - Run agent-orchestrator-mcp tests"
-	@echo "  make clean-all    - Clean cache files in all apps"
-	@echo "  make reset-local  - Reset local backend DB + WordPress projection data (destructive, dev-only)"
+	@echo "  make check-all        - Run all checks (lint + types + tests)"
+	@echo "  make check-mcp        - Run lint, mypy, and tests for both MCP packages"
+	@echo "  make check-handoff    - Lint, mypy, tests for agent-handoff-mcp"
+	@echo "  make check-orchestrator - Lint, mypy, tests for agent-orchestrator-mcp"
+	@echo "  make check-frontend   - Run frontend checks (lint + types + arch + tests)"
+	@echo "  make lint-all         - Run linters for all apps and packages"
+	@echo "  make test-all         - Run tests for all apps and packages"
+	@echo "  make fix-php-style    - Auto-fix WordPress plugin PHPCS violations"
+	@echo "  make clean-all        - Clean cache files in all apps"
+	@echo "  make reset-local      - Reset local backend DB + WordPress projection data (destructive)"
 	@echo ""
 	@echo "App-Specific Commands:"
 	@echo "  cd apps/prototype-description-service && make help"
@@ -247,8 +244,8 @@ check-all:
 			echo "✅ All monorepo checks passed!"; \
 		fi
 
-check-mcp: check-orchestrator
-	@echo "✅ MCP consumer checks passed!"
+check-mcp: check-handoff check-orchestrator
+	@echo "✅ MCP package checks passed!"
 
 check-frontend:
 	@set -eu; \
@@ -273,6 +270,9 @@ lint-all:
 		else \
 			echo "=== Linting Python (backend) ==="; \
 			( cd apps/prototype-description-service && make lint ); \
+			echo ""; \
+			echo "=== Linting Agent Handoff MCP ==="; \
+			$(MAKE) lint-handoff; \
 			echo ""; \
 			echo "=== Linting Agent Orchestrator MCP ==="; \
 			$(MAKE) lint-orchestrator; \
@@ -299,6 +299,9 @@ test-all:
 			echo "=== Testing Python (backend) ==="; \
 			( cd apps/prototype-description-service && make test ); \
 			echo ""; \
+			echo "=== Testing Agent Handoff MCP ==="; \
+			$(MAKE) test-handoff; \
+			echo ""; \
 			echo "=== Testing Agent Orchestrator MCP ==="; \
 			$(MAKE) test-orchestrator; \
 			echo ""; \
@@ -308,11 +311,9 @@ test-all:
 			echo "✅ Tests complete"; \
 		fi
 
-# Test the handoff/MCP package from the monorepo root.
+# Test agent-handoff-mcp via the package Makefile (sets PYTHONPATH correctly).
 test-handoff:
-	@echo "agent-handoff-mcp is now verified in its standalone repository."
-	@echo "Run the handoff test suite from darce/mcp-agent-handoff instead of this monorepo."
-	@exit 1
+	@$(MAKE) -C packages/agent-handoff-mcp test-handoff
 
 test-orchestrator:
 	@set -eu; \
@@ -324,24 +325,20 @@ test-orchestrator:
 	$(PYTHON) -m pytest $(ORCHESTRATOR_TESTS) -q
 
 lint-handoff:
-	@echo "agent-handoff-mcp lint now runs in the standalone repository."
-	@echo "Run lint from darce/mcp-agent-handoff instead of this monorepo."
-	@exit 1
+	@$(MAKE) -C packages/agent-handoff-mcp lint-handoff
 
 lint-orchestrator:
 	@PYTHONPATH="$(MCP_PYTHONPATH)" \
 	$(PYTHON) -m ruff check $(ORCHESTRATOR_SRC) $(ORCHESTRATOR_TESTS)
 
 fix-lint-handoff:
-	@echo "agent-handoff-mcp lint fixes now run in the standalone repository."
-	@echo "Run fix-lint from darce/mcp-agent-handoff instead of this monorepo."
-	@exit 1
+	@$(MAKE) -C packages/agent-handoff-mcp fix-lint-handoff
 
 fix-lint-orchestrator:
 	@PYTHONPATH="$(MCP_PYTHONPATH)" \
 	$(PYTHON) -m ruff check --fix $(ORCHESTRATOR_SRC) $(ORCHESTRATOR_TESTS)
 
-fix-lint-mcp: fix-lint-orchestrator
+fix-lint-mcp: fix-lint-handoff fix-lint-orchestrator
 
 # Sweep every tracked task-plan / epic markdown for pasted review-finding
 # lists. Review findings live in agent-handoff-mcp; pasting them inline
@@ -365,28 +362,22 @@ lint-scripts:
 	@python3 scripts/hooks/lint-expected-revision.py
 
 format-handoff:
-	@echo "agent-handoff-mcp formatting now runs in the standalone repository."
-	@echo "Run format from darce/mcp-agent-handoff instead of this monorepo."
-	@exit 1
+	@$(MAKE) -C packages/agent-handoff-mcp format-handoff
 
 format-orchestrator:
 	@PYTHONPATH="$(MCP_PYTHONPATH)" \
 	$(PYTHON) -m ruff format $(ORCHESTRATOR_SRC) $(ORCHESTRATOR_TESTS)
 
 mypy-handoff:
-	@echo "agent-handoff-mcp type checking now runs in the standalone repository."
-	@echo "Run mypy from darce/mcp-agent-handoff instead of this monorepo."
-	@exit 1
+	@$(MAKE) -C packages/agent-handoff-mcp mypy-handoff
 
 mypy-orchestrator:
 	@MYPYPATH="$(ORCHESTRATOR_ROOT)/packages/agent-orchestrator-mcp/src:$(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src" \
 	PYTHONPATH="$(MCP_PYTHONPATH)" \
 	$(PYTHON) -m mypy --ignore-missing-imports $(ORCHESTRATOR_SRC)
 
-check-handoff:
-	@echo "agent-handoff-mcp is no longer checked from this monorepo."
-	@echo "Run checks from darce/mcp-agent-handoff instead."
-	@exit 1
+check-handoff: lint-handoff mypy-handoff test-handoff
+	@echo "✅ agent-handoff-mcp checks passed!"
 
 check-orchestrator: lint-orchestrator mypy-orchestrator test-orchestrator
 	@echo "✅ agent-orchestrator-mcp checks passed!"

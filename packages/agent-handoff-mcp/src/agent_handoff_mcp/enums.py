@@ -159,8 +159,6 @@ class WorkerEventName(StrEnum):
     REVIEW_START = "review_start"
     REVIEW_FAILED = "review_failed"
     REVIEW_COMPLETE = "review_complete"
-    ACE_REFLECT_DETECTED = "ace_reflect_detected"
-    ACE_REFLECT_ERROR = "ace_reflect_error"
     FINDING_DIFF = "finding_diff"
     VERIFICATION_START = "verification_start"
     VERIFICATION_COMPLETE = "verification_complete"

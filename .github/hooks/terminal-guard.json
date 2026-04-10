@@ -16,6 +16,18 @@
         "command": "python3 scripts/hooks/guard-task-plan-findings.py",
         "timeout": 5
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__agent-handoff-mcp__review_findings",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 scripts/hooks/ace-detect.py",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }

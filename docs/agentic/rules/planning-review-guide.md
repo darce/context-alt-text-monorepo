@@ -210,7 +210,7 @@ For every finding, call `record_review_finding` / `review-record` with:
 | `finding_id`  | Short ID matching the report (e.g., `E12-PLAN-01`)                                                                                  |
 | `severity`    | `high`, `medium`, or `low`                                                                                                          |
 | `file_path`   | Planning doc path (monorepo-relative)                                                                                               |
-| `description` | One-paragraph description with evidence from the plan                                                                               |
+| `description` | One-paragraph description with evidence from the plan. **ACE rule citation:** if the finding confirms or contradicts a `[sr-NNN]` or `[rg-NNN]` rule from `instructions.md`, include the rule ID in the description (e.g., "contradicts [rg-009] no task-specific logic in generic modules"). |
 | `session`     | Current session identifier                                                                                                          |
 | `task_ref`    | The task ref owning the plan (may differ from the currently active task; pass explicitly)                                           |
 | `details`     | Nested object: `{ "line_start"?: int, "line_end"?: int, "fix"?: str }` -- **must be nested, NOT top-level parameters**              |

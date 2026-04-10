@@ -49,7 +49,7 @@ Leaving those docs stale would keep the resilience roadmap artificially blocked 
 ## Current State Analysis
 
 - [session-lifecycle-resilience-spec.md](../../specs/session-lifecycle-resilience-spec.md) originally marked `SLR-CB` and `SLR-BH` as Tier 3 items blocked on ADR-006.
-- [ADR-006-session-circuit-breaker-and-pool-bulkheading.md](../../agentic/adrs/ADR-006-session-circuit-breaker-and-pool-bulkheading.md) is now review-clean via decision `#1521`, with all `ADR-006-PLAN-*` findings fixed.
+- [ADR-006-session-circuit-breaker-and-pool-bulkheading.md](../../adrs/ADR-006-session-circuit-breaker-and-pool-bulkheading.md) is now review-clean via decision `#1521`, with all `ADR-006-PLAN-*` findings fixed.
 - SLR-1 addressed the immediate HTTP lifecycle and timeout risks, so the remaining resilience work is architectural and operational rather than bug triage.
 - This unblock task exists to finish the transition from reviewed ADR to implementation-ready task plans on `main`.
 
@@ -68,8 +68,8 @@ The spec no longer describes Tier 3 as ADR-blocked, and the next implementation-
 - Rules: `docs/agentic/rules/planning-pipeline.md`
 - Rules: `docs/agentic/rules/development-workflow.md`
 - Spec: `docs/specs/session-lifecycle-resilience-spec.md`
-- ADR: `docs/agentic/adrs/ADR-006-session-circuit-breaker-and-pool-bulkheading.md`
-- Assessment: `docs/assessment/infailed-sql-transaction-investigation-2026-04-09.md`
+- ADR: `docs/adrs/ADR-006-session-circuit-breaker-and-pool-bulkheading.md`
+- Assessment: `docs/assessments/infailed-sql-transaction-investigation-2026-04-09.md`
 - Handoff/MCP state: reuse `SESSION-LIFECYCLE-RESILIENCE` for the Tier 3 planning/unblock phase
 
 ## Contract and Boundary Impact
@@ -90,7 +90,7 @@ The spec no longer describes Tier 3 as ADR-blocked, and the next implementation-
 
 | Surface | File | Change |
 | ------- | ---- | ------ |
-| ADR status alignment | `docs/agentic/adrs/ADR-006-session-circuit-breaker-and-pool-bulkheading.md` | Keep ADR metadata aligned with its now-approved planning role |
+| ADR status alignment | `docs/adrs/ADR-006-session-circuit-breaker-and-pool-bulkheading.md` | Keep ADR metadata aligned with its now-approved planning role |
 | Spec update | `docs/specs/session-lifecycle-resilience-spec.md` | Replace blocked Tier 3 notes with ADR-backed implementation direction |
 | Task planning | `docs/tasks/15.0/` | Add implementation-ready SLR task plans for circuit breaker and bulkhead work |
 

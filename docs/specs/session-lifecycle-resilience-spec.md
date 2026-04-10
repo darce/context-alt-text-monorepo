@@ -5,7 +5,7 @@
 > - **Date**: 2026-04-09
 > - **Author**: Claude Opus 4.6
 > - **Status**: Draft
-> - **Assessment**: [docs/assessment/infailed-sql-transaction-investigation-2026-04-09.md](../assessment/infailed-sql-transaction-investigation-2026-04-09.md)
+> - **Assessment**: [docs/assessments/infailed-sql-transaction-investigation-2026-04-09.md](../assessment/infailed-sql-transaction-investigation-2026-04-09.md)
 > - **Package version target**: n/a (monorepo `apps/prototype-description-service`)
 >
 > **Purpose:** This spec defines testable changes to eliminate the double session lifecycle bug,
@@ -354,7 +354,7 @@ SLR-001 must land first. SLR-005 depends on SLR-001 (removing request-path clean
 
 ### Tier 3 — ADR-Backed Direction, Ready for Implementation Planning
 
-Design artifact: `docs/agentic/adrs/ADR-006-session-circuit-breaker-and-pool-bulkheading.md`
+Design artifact: `docs/adrs/ADR-006-session-circuit-breaker-and-pool-bulkheading.md`
 
 ADR-006 is now the approved source of truth for the Tier 3 resilience split. It chooses:
 - a repo-local, in-process circuit breaker in the HTTP dependency boundary

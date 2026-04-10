@@ -73,7 +73,7 @@ After this task:
 
 ## Context Loading
 
-- ADR: `docs/agentic/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md`
+- ADR: `docs/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md`
 - Contract: `docs/agentic/contracts/agent-handoff-mcp.md`
 - Prior task plans:
   - `packages/agent-handoff-mcp/docs/tasks/AHMCP-1-parameterize-handoff-mcp-read-surfaces-task-plan.md`
@@ -132,7 +132,7 @@ Start from the already-restored in-repo source baseline, first clean up the rema
 | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/api.py` | Imports and re-exports handoff tools by name; rename and compatibility work must update this surface in lockstep, not as verification-only fallout |
 | `packages/agent-orchestrator-mcp/tests/` | Cross-service tests must prove orchestrator consumers still work after each consolidated rename or alias introduction |
 | `.vscode/mcp.json`, `.codex/config.toml` | Restored-source baseline still needs adapter/config cleanup to align tests with the installed-entrypoint model before consolidation slices start |
-| `docs/agentic/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md` | Update status from "Proposed" to "Implemented" after completion |
+| `docs/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md` | Update status from "Proposed" to "Implemented" after completion |
 | `packages/agent-handoff-mcp/docs/tasks/AHMCP-2-bounded-current-task-rendering-and-mutation-output-task-plan.md` | OC-001/OC-002 are baseline context; only the still-open CURRENT_TASK mutation-output follow-through should be absorbed here |
 
 ## Verification Strategy

@@ -1,6 +1,6 @@
 # ADR Template
 
-> **Metadata** — fill in when creating a new ADR under `docs/agentic/adrs/`:
+> **Metadata** — fill in when creating a new ADR under `docs/adrs/`:
 >
 > - **Date**: [YYYY-MM-DD]
 > - **Author**: {{MODEL_IDENTITY}}

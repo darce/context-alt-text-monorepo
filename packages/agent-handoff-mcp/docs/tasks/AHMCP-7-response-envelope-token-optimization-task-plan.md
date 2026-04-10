@@ -70,7 +70,7 @@ After this task:
 
 - Rules: `docs/agentic/rules/backend-python-guidelines.md`
 - Contracts: `docs/agentic/contracts/agent-handoff-mcp.md` (response envelope shape)
-- ADR: `docs/agentic/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md`
+- ADR: `docs/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md`
 - Prior work: `packages/agent-handoff-mcp/docs/tasks/AHMCP-6-tool-surface-consolidation-and-current-task-authoring-task-plan.md`
 
 ## Contract and Boundary Impact

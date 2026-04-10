@@ -9,7 +9,7 @@
 >
 > **Purpose:** This assessment examines why cold-start review and merge-readiness work still requires too much archaeology across MCP tools, even after the slice-review-packet work landed. It inventories the remaining intake gaps against current code, narrows them to the actual missing surfaces, and recommends a spec direction without prescribing implementation details.
 >
-> **Pipeline position:** **Assessment** -> Spec -> [ADR] -> Task Plan -> Implementation.
+> **Pipeline position:** **Assessment** → Spec → [ADR] → Task Plan → Implementation.
 
 Cold-start review is no longer blocked on the total absence of a review packet; `agent-orchestrator-mcp` already provides a deterministic latest-slice packet. The remaining problem is narrower and more operationally relevant: reviewers still need multiple extra reads to connect that packet to concrete verification rows, open findings, and handoff-only fallback paths. That gap is large enough to make merge-readiness checks and post-implementation review more laborious than they should be, but small enough that the next stage should be a focused spec rather than another broad proposal.
 
@@ -165,7 +165,7 @@ Write a cross-package spec, not another proposal document. The spec should live 
 
 ## Next Step
 
-- [x] ADR-007 written: `docs/agentic/adrs/ADR-007-review-intake-handoff-fallback-boundary.md` — resolves the design question of how handoff-only callers access review-intake data without reimplementing the orchestrator packet
+- [x] ADR-007 written: `docs/adrs/ADR-007-review-intake-handoff-fallback-boundary.md` — resolves the design question of how handoff-only callers access review-intake data without reimplementing the orchestrator packet
 - [x] ADR-007 remains the governing boundary decision for the follow-on work — Tier 1 and Tier 2 tasks implement within its guardrails; any future compound handoff packet idea remains ADR-gated
 - [x] Write the package-local spec: `packages/agent-handoff-mcp/docs/specs/agent-handoff-mcp-review-intake-handoff-fallback-spec.md` — translates F2/F3 plus ADR-007 into concrete Tier 1 and Tier 2 items
 - [x] Create Tier 1 implementation task plan: `packages/agent-handoff-mcp/docs/tasks/AHMCP-8-verified-test-search-and-read-surfaces-task-plan.md` — implements searchable verified tests and the `get_verified_tests` primitive read

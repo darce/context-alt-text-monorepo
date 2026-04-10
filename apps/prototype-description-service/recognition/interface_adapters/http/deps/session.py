@@ -17,7 +17,7 @@ from fastapi.exceptions import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.session import async_session_factory
+from db.session import async_session_factory, observability_async_session_factory
 from db.settings import get_database_settings
 from db.tenant_context import set_tenant_context
 from recognition.interface_adapters.http.deps.circuit_breaker import (
@@ -221,17 +221,7 @@ async def get_optional_session(
 async def get_observability_session(request: Request) -> AsyncIterator[AsyncSession | None]:
     """Session provider without tenant validation for diagnostics."""
     started_at = _time.perf_counter()
-    breaker = _get_session_dependency_breaker(request)
-    if not breaker.allow_request():
-        _log_session_dependency_timing(
-            "get_observability_session",
-            started_at=started_at,
-            available=False,
-            tenant_id=None,
-        )
-        yield None
-        return
-    session = async_session_factory()
+    session = observability_async_session_factory()
     probe_ms: float | None = None
     session_available = False
     conn_id: str | None = None
@@ -245,11 +235,9 @@ async def get_observability_session(request: Request) -> AsyncIterator[AsyncSess
         except ValueError:
             raise
         except Exception:
-            breaker.record_failure()
             yield None
             return
         session_available = True
-        breaker.record_success()
         try:
             yield session
             await session.commit()

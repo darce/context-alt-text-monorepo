@@ -83,7 +83,7 @@ Update the contract and guides after AHMCP-8 lands, then rewrite the assessment/
 | Branch review guide | `docs/agentic/rules/branch-review-guide.md` | Add `Handoff-only fallback` section under latest-slice review guidance |
 | Planning review guide | `docs/agentic/rules/planning-review-guide.md` | Add parallel `Handoff-only fallback` section |
 | Assessment | `packages/agent-handoff-mcp/docs/assessments/agent-handoff-mcp-review-intake-tooling-proposal.md` | Replace placeholder next-step lines with the real spec/task plan references |
-| ADR | `docs/agentic/adrs/ADR-007-review-intake-handoff-fallback-boundary.md` | Replace placeholder implementation-task reference with the created package-local task plans |
+| ADR | `docs/adrs/ADR-007-review-intake-handoff-fallback-boundary.md` | Replace placeholder implementation-task reference with the created package-local task plans |
 
 ## Related Files
 
@@ -98,7 +98,7 @@ Update the contract and guides after AHMCP-8 lands, then rewrite the assessment/
 - Deterministic tests:
   - none required beyond the code-backed proofs from AHMCP-8
 - Contract/fixture verification:
-  - `rg -n "get_verified_tests|verified_test|Handoff-only fallback|get_latest_slice_review_packet" docs/agentic/contracts/agent-handoff-mcp.md docs/agentic/rules/branch-review-guide.md docs/agentic/rules/planning-review-guide.md packages/agent-handoff-mcp/docs/assessments/agent-handoff-mcp-review-intake-tooling-proposal.md docs/agentic/adrs/ADR-007-review-intake-handoff-fallback-boundary.md`
+  - `rg -n "get_verified_tests|verified_test|Handoff-only fallback|get_latest_slice_review_packet" docs/agentic/contracts/agent-handoff-mcp.md docs/agentic/rules/branch-review-guide.md docs/agentic/rules/planning-review-guide.md packages/agent-handoff-mcp/docs/assessments/agent-handoff-mcp-review-intake-tooling-proposal.md docs/adrs/ADR-007-review-intake-handoff-fallback-boundary.md`
 - Runtime-parity / environment checks:
   - none required; this is documentation alignment work
 - Manual verification:
@@ -118,7 +118,7 @@ Changes:
 
 Proof:
 
-- `rg -n "get_verified_tests|verified_test|AHMCP-8|AHMCP-9" docs/agentic/contracts/agent-handoff-mcp.md packages/agent-handoff-mcp/docs/assessments/agent-handoff-mcp-review-intake-tooling-proposal.md docs/agentic/adrs/ADR-007-review-intake-handoff-fallback-boundary.md`
+- `rg -n "get_verified_tests|verified_test|AHMCP-8|AHMCP-9" docs/agentic/contracts/agent-handoff-mcp.md packages/agent-handoff-mcp/docs/assessments/agent-handoff-mcp-review-intake-tooling-proposal.md docs/adrs/ADR-007-review-intake-handoff-fallback-boundary.md`
 
 ### Slice 2: Review Guide Fallback Adoption
 

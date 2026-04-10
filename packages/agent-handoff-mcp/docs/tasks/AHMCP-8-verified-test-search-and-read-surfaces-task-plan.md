@@ -91,7 +91,7 @@ Extend the handoff FTS/search layer first, then add the explicit verified-test r
 | --- | --- |
 | `packages/agent-handoff-mcp/src/agent_handoff_mcp/decisions.py` | Existing verified-test writer; query semantics must align with stored columns |
 | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/slice_review_packet.py` | No edits expected; reference-only boundary check |
-| `docs/agentic/adrs/ADR-007-review-intake-handoff-fallback-boundary.md` | Decision guardrails for this task |
+| `docs/adrs/ADR-007-review-intake-handoff-fallback-boundary.md` | Decision guardrails for this task |
 | `packages/agent-handoff-mcp/docs/specs/agent-handoff-mcp-review-intake-handoff-fallback-spec.md` | Source of `RIF-001` and `RIF-002` |
 
 ## Verification Strategy

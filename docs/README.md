@@ -33,7 +33,10 @@ docs/
 - **Forward-looking planning** -- `docs/epics/`, `docs/tasks/`, `docs/roadmaps/`, `docs/deferred-features/`
 - **Research and comparison notes** -- `docs/research/`
 - **Historical retrospectives and superseded docs** -- `docs/archive/`
-- **Imported external materials** -- `docs/literature/`
+- **Assessments and investigations** -- `docs/assessments/`
+- **Specs** -- `docs/specs/`
+- **Architecture Decision Records** -- `docs/adrs/`
+- **Imported external materials** -- `literature/` (top-level, gitignored)
 - **Machine-readable schemas** -- `packages/shared-contracts/`
 - **Plugin-specific docs** -- `apps/prototype-wp-alt-context/`
 - **Service-specific docs** -- `apps/prototype-description-service/`

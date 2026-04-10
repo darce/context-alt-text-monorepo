@@ -65,8 +65,8 @@ def test_stdio_server_lists_handoff_tools(tmp_path: Path) -> None:
     assert "run_structured_turn" not in tool_names
 
 
-def test_stdio_legacy_core_profile_still_exposes_all_19_tools(tmp_path: Path) -> None:
-    """Legacy --tool-profile core is accepted but now exposes the full 19-tool surface."""
+def test_stdio_legacy_core_profile_still_exposes_all_20_tools(tmp_path: Path) -> None:
+    """Legacy --tool-profile core is accepted but now exposes the full 20-tool surface."""
     repo_root = Path(__file__).resolve().parents[3]
     launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
 
@@ -86,11 +86,11 @@ def test_stdio_legacy_core_profile_still_exposes_all_19_tools(tmp_path: Path) ->
     assert not missing_core, f"Core tools missing from legacy core launch: {missing_core}"
     missing_extended = _EXTENDED_ONLY_TOOLS - tool_names
     assert not missing_extended, f"Legacy extended tools missing from unified launch: {missing_extended}"
-    assert len(tool_names) == 19
+    assert len(tool_names) == 20
 
 
-def test_stdio_extended_profile_exposes_all_19_tools(tmp_path: Path) -> None:
-    """Legacy --tool-profile extended still exposes the unified 19-tool surface."""
+def test_stdio_extended_profile_exposes_all_20_tools(tmp_path: Path) -> None:
+    """Legacy --tool-profile extended still exposes the unified 20-tool surface."""
     repo_root = Path(__file__).resolve().parents[3]
     launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
 
@@ -110,7 +110,7 @@ def test_stdio_extended_profile_exposes_all_19_tools(tmp_path: Path) -> None:
     assert _EXTENDED_ONLY_TOOLS <= tool_names, (
         f"Extended tools missing from extended profile: {_EXTENDED_ONLY_TOOLS - tool_names}"
     )
-    assert len(tool_names) == 19
+    assert len(tool_names) == 20
 
 
 def _collect_schema_types(schema: dict[str, Any], root_schema: dict[str, Any]) -> set[str]:

@@ -20,6 +20,7 @@ from .api import (
     configure_runtime,
     export_handoff_state,
     generate_current_task_md,
+    generate_dashboard_md,
     get_handoff_state,
     get_verified_tests,
     handoff_close_check,
@@ -342,6 +343,10 @@ def _dispatch_task(args: argparse.Namespace) -> Any:
     return generate_current_task_md(task_ref=args.task_ref, write_file=not args.no_write)
 
 
+def _dispatch_dashboard(args: argparse.Namespace) -> Any:
+    return generate_dashboard_md(write_file=not args.no_write)
+
+
 def _dispatch_export(args: argparse.Namespace) -> Any:
     return export_handoff_state(
         task_ref=args.task_ref,
@@ -395,6 +400,7 @@ _CLI_DISPATCH_OVERRIDES: dict[str, Callable[[argparse.Namespace], Any]] = {
     "get_verified_tests": _dispatch_get_verified_tests,
     "artifacts": _dispatch_artifacts,
     "generate_current_task_md": _dispatch_task,
+    "generate_dashboard_md": _dispatch_dashboard,  # CLI name: write-dashboard
     "export_handoff_state": _dispatch_export,
 }
 

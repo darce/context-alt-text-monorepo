@@ -180,9 +180,10 @@ def test_update_task_status_updates_archived_snapshot_and_dashboard(workspace_pa
 
     payload = _parse(mcp_server.generate_current_task_md(task_ref="task-b", write_file=False))
     assert payload["ok"] is True
-    assert "> task-b" in payload["markdown"]
-    assert "task-a" in payload["markdown"]
-    assert "done" in payload["markdown"]
+    # CURRENT_TASK.md is now active-task-only; cross-task data is in DASHBOARD.md.
+    assert "task-b" in payload["markdown"]
+    assert "task-a" not in payload["markdown"]
+    assert "## All Tasks" not in payload["markdown"]
 
 
 def test_update_task_status_active_task_preserves_state_via_set_handoff_state(workspace_pair: dict[str, Path]) -> None:

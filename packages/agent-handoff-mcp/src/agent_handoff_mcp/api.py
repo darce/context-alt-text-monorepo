@@ -64,7 +64,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "review_runs": "Record, list, or summarize review-run coverage through one typed domain surface. Set review.operation to 'record', 'list', or 'coverage'.",
     "handoff_close_check": "Check task readiness to close: blockers, pending actions, findings, and optional fresh-test gate.",
     "audit_decision_ids": "Audit decision IDs for grammar conformance. Returns canonical/malformed/freeform classifications.",
-    "generate_current_task_md": "Generate the machine-readable CURRENT_TASK.md snapshot for the active task and refresh the human-readable DASHBOARD.md mirror.",
+    "generate_current_task_md": "Generate the machine-readable CURRENT_TASK.md snapshot for the active task.",
+    "generate_dashboard_md": "Generate DASHBOARD.md — the human-scoped observatory view with Needs Attention summary, All Tasks table, cross-task open findings, and optional extension sections (e.g. Lane Health from agent-orchestrator-mcp).",
     "export_handoff_state": "Export the task handoff state to a portable JSON snapshot.",
     "import_handoff_state": "Import a previously exported handoff state snapshot into the local database.",
     "archive_task_state": "Archive completed task state from the live handoff tables into archive storage.",
@@ -1365,6 +1366,17 @@ def _build_tool_registry() -> list[ToolEntry]:
             surface_class="generator",
             entity_family="lifecycle",
         ),
+        ToolEntry(
+            "generate_dashboard_md",
+            generate_dashboard_md,
+            TOOL_DESCRIPTIONS["generate_dashboard_md"],
+            cli_name="write-dashboard",
+            cli_args=[
+                ArgSpec("--no-write", action="store_true"),
+            ],
+            surface_class="generator",
+            entity_family="lifecycle",
+        ),
         # Export / import / archive (3)
         ToolEntry(
             "export_handoff_state",
@@ -1558,22 +1570,25 @@ def _build_tool_registry() -> list[ToolEntry]:
 def generate_current_task_md(
     task_ref: str | None = None,
     write_file: bool = True,
-    max_cross_task_findings: int = 5,
 ) -> dict:
     """Generate CURRENT_TASK.md for the active task.
 
+    Renders only the active task's data: objective, focus, status, blockers,
+    actions, decisions, tests, findings, lanes, and coverage.  Cross-task
+    sections (All Tasks table, findings from other tasks) have moved to
+    DASHBOARD.md — use generate_dashboard_md() to produce that file.
+
     Args:
         task_ref: The task to render. Defaults to the active task.
-        write_file: Write the machine-readable CURRENT_TASK.md snapshot and the
-            human-readable DASHBOARD.md mirror to disk.
-        max_cross_task_findings: Maximum findings per task_ref in cross-task
-            open and deferred sections. Default 5.
+        write_file: Write the machine-readable CURRENT_TASK.md snapshot to disk.
 
-    Open review findings from all other tasks are always included in the
-    human-readable dashboard output, grouped by task_ref under
-    "## Open Review Findings". Active-task findings are uncapped.
+    Return keys (data envelope):
+        task_ref: resolved task reference.
+        path: absolute path to CURRENT_TASK.md (machine-readable JSON).
+        written: True when write_file=True.
+        current_task_json: JSON content of CURRENT_TASK.md; present only
+            when write_file=False.
     """
-    max_cross_task_findings = max(0, max_cross_task_findings)
     with core._get_db_connection() as conn:
         resolved_task_ref = task_ref
         if resolved_task_ref is None:
@@ -1585,11 +1600,7 @@ def generate_current_task_md(
         if resolved_task_ref is not None:
             from .current_task_rendering import _build_current_task_render_state  # noqa: PLC0415
 
-            state = _build_current_task_render_state(
-                conn,
-                resolved_task_ref,
-                max_cross_task_findings=max_cross_task_findings,
-            )
+            state = _build_current_task_render_state(conn, resolved_task_ref)
         else:
             state = {
                 "task_ref": None,
@@ -1603,15 +1614,6 @@ def generate_current_task_md(
                 "worktree_lanes": [],
                 "worker_reports_recent": [],
                 "lane_messages_open": [],
-                "dashboard_tasks": core._collect_dashboard_rows(conn),
-                "related_findings_open": core._collect_all_open_findings(
-                    conn,
-                    max_per_task=max_cross_task_findings,
-                ),
-                "related_findings_deferred": core._collect_all_deferred_findings(
-                    conn,
-                    max_per_task=max_cross_task_findings,
-                ),
             }
 
     # If the requested task is not currently active, hydrate `active` from the
@@ -1630,22 +1632,18 @@ def generate_current_task_md(
 
     from .current_task_rendering import _render_current_task_json  # noqa: PLC0415
 
-    dashboard_markdown = core._render_current_task_md(state)
     current_task_json = _render_current_task_json(state)
     runtime = get_runtime_config()
     current_task_path = runtime.current_task_path
-    dashboard_path = runtime.dashboard_path
 
     if write_file:
         current_task_path.write_text(current_task_json)
-        dashboard_path.write_text(dashboard_markdown)
 
     resolved_ref = state.get("task_ref")
     artifacts = []
     if write_file:
         artifacts = [
             {"type": "current_task_md", "path": str(current_task_path), "written": True},
-            {"type": "dashboard_md", "path": str(dashboard_path), "written": True},
         ]
     return core._envelope(
         ok=True,
@@ -1653,15 +1651,32 @@ def generate_current_task_md(
         data={
             "task_ref": resolved_ref,
             "path": str(current_task_path),
-            "dashboard_path": str(dashboard_path),
             "written": write_file,
-            "markdown": dashboard_markdown if not write_file else None,
-            "dashboard_markdown": dashboard_markdown if not write_file else None,
             "current_task_json": current_task_json if not write_file else None,
         },
         task_ref=resolved_ref,
         artifacts=artifacts,
     )
+
+
+def generate_dashboard_md(write_file: bool = True) -> dict:
+    """Generate DASHBOARD.md — the human-scoped observatory view.
+
+    Contains: Needs Attention summary, All Tasks table, cross-task open findings
+    grouped by task_ref, deferred/wontfix findings, and any registered extension
+    sections (e.g. Lane Health, Worker Status added by agent-orchestrator-mcp).
+
+    Core sections always render.  Extension sections appear only when
+    register_dashboard_extension() has been called by an extension provider.
+    The CLI path (make dashboard) renders core sections only without importing
+    agent-orchestrator-mcp.
+
+    Args:
+        write_file: Write the markdown to DASHBOARD.md alongside CURRENT_TASK.md.
+    """
+    from .dashboard_rendering import generate_dashboard_md as _generate  # noqa: PLC0415
+
+    return _generate(write_file=write_file)
 
 
 def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:

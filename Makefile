@@ -132,7 +132,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/lane-maintenance.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context task-start task-finish
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context dashboard task-start task-finish
 
 # Default target
 help:
@@ -526,6 +526,15 @@ ace-trends:
 # Usage: make context
 context:
 	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) scripts/check-task-context.py
+
+# Generate DASHBOARD.md — the human-scoped observatory view.
+# Renders Needs Attention, All Tasks, Open Findings, and Deferred sections.
+# Extension sections (Lane Health, Worker Status) appear only when
+# agent-orchestrator-mcp is loaded and has registered its extension callback.
+# Usage: make dashboard
+dashboard:
+	@PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src:$(MCP_PYTHONPATH)" \
+		$(MCP_CMD) $(MCP_STATE_ARGS) write-dashboard
 
 # Convenience wrapper that scaffolds a feature branch + worktree + MCP task in
 # one go. Computes the canonical path /Users/.../context-alt-text-monorepo-<task>

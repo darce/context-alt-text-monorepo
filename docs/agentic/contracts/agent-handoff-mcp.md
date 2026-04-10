@@ -6,7 +6,7 @@ boundary_owner: agentic-tooling
 
 ## Purpose
 
-`agent-handoff-mcp` is the portable MCP server for agent coordination state. After the AHMCP-6 event, review, next-action, and artifact-domain consolidation plus profile-removal stretch work, it exposes a single **17-tool** MCP surface for task state, review findings, artifacts, export/import, and handoff close checks. Orchestration, daemon lifecycle, lane management, and turn metrics are served by [`agent-orchestrator-mcp`](agent-orchestrator-mcp.md).
+`agent-handoff-mcp` is the portable MCP server for agent coordination state. After the AHMCP-6 event, review, next-action, and artifact-domain consolidation plus profile-removal stretch work, plus AHMCP-8 verified-test search/read support, it exposes a single **19-tool** MCP surface for task state, review findings, verification evidence, artifacts, export/import, and handoff close checks. Orchestration, daemon lifecycle, lane management, and turn metrics are served by [`agent-orchestrator-mcp`](agent-orchestrator-mcp.md).
 
 ## Runtime Configuration
 
@@ -18,7 +18,7 @@ Supported config inputs:
 - `--state-dir` or `AGENT_HANDOFF_STATE_DIR`
 - `--current-task-path` or `AGENT_HANDOFF_CURRENT_TASK_PATH`
 - `--exports-dir` or `AGENT_HANDOFF_EXPORTS_DIR`
-- `--tool-profile` or `AGENT_HANDOFF_TOOL_PROFILE` — legacy compatibility input. `all`, `core`, and `extended` are accepted, but all launches now expose the same 17-tool surface.
+- `--tool-profile` or `AGENT_HANDOFF_TOOL_PROFILE` — legacy compatibility input. `all`, `core`, and `extended` are accepted, but all launches now expose the same 19-tool surface.
 - `AGENT_HANDOFF_DEFAULT_AGENT`
 - `AGENT_HANDOFF_DEFAULT_BRANCH`
 - `AGENT_HANDOFF_DEFAULT_COMMIT_SHA`
@@ -79,12 +79,13 @@ Surface classes:
 | `export_handoff_state` | generator | yes | Produces portable snapshot output. |
 | `import_handoff_state` | action | no | Imports snapshot into local DB; destructive in replace modes. |
 | `archive_task_state` | action | no | Moves active state into archive storage. |
+| `get_verified_tests` | query | yes | Lists verified test rows with optional task, lane, branch, commit, and pass/fail filters. |
 | `load_session` | query | yes | **Compound**: calls `get_handoff_state` + `review_findings(review={"operation":"list","status":"open"})` in one invocation. Use at session start to minimise round trips. `sections` is passed through only to the nested `state` payload from `get_handoff_state`; `detail` is passed through to both nested state and findings. Defaults preserve the pre-parameterization full payload behavior. |
 | `close_slice` | action | no | **Compound**: records a slice-complete decision, re-applies the active task as `in_progress`, and regenerates `CURRENT_TASK.md`. Requires `expected_revision` when the target task is currently active. Accepts the same optional `changed_files` list as the decision variant of `record_event` and passes it through to the nested decision write. |
 | `update_task_status` | action | no | Updates task status without recording a slice decision. For the active task this requires `expected_revision`; for archived tasks it updates the archived snapshot status used by dashboard rendering. |
 | `audit_decision_ids` | query | yes | Audits recent decision IDs for grammar conformance. Returns canonical/malformed/freeform classifications per ID. |
 | `artifacts` | action | no | Typed artifacts domain surface. `artifact.operation` selects `record`, `search`, `get`, or `purge`. Search mode supports both ranked hits and source-list mode when `queries` is omitted or empty; get mode supports `include_terms=true`. |
-| `search_handoff` | generator | yes | Returns ranked snippets over handoff FTS tables. `detail` accepts `full` (default) or `summary`, and `fields` accepts a comma-separated per-result projection. |
+| `search_handoff` | generator | yes | Returns ranked snippets over handoff FTS tables, including verified test evidence. `detail` accepts `full` (default) or `summary`, and `fields` accepts a comma-separated per-result projection. |
 
 Cross-task and review-summary tools (`switch_task`, `get_latest_slice_review_packet`, `get_review_findings_summary`, `reconcile_review_findings`) are registered on `agent-orchestrator-mcp`. See [`agent-orchestrator-mcp.md`](agent-orchestrator-mcp.md).
 
@@ -205,12 +206,12 @@ artifacts(
 
 ## Structured Handoff Search (`search_handoff`)
 
-`search_handoff` provides BM25/FTS5 full-text search over the four canonical handoff record
-tables (decisions, review findings, blockers, and next actions) stored in `handoff.db`.
+`search_handoff` provides BM25/FTS5 full-text search over the five canonical handoff record
+tables (decisions, review findings, blockers, next actions, and verified tests) stored in `handoff.db`.
 
 ### FTS5 Shadow Tables
 
-Four FTS5 virtual tables are maintained in `handoff.db` alongside the canonical tables:
+Five FTS5 virtual tables are maintained in `handoff.db` alongside the canonical tables:
 
 | FTS table       | Source table      | Indexed body                                     | Status column |
 | --------------- | ----------------- | ------------------------------------------------ | ------------- |
@@ -218,6 +219,7 @@ Four FTS5 virtual tables are maintained in `handoff.db` alongside the canonical 
 | `findings_fts`  | `review_findings` | `description \|\| ' ' \|\| COALESCE(fix, '')`    | yes           |
 | `blockers_fts`  | `blockers`        | `description`                                    | yes           |
 | `actions_fts`   | `next_actions`    | `action`                                         | yes           |
+| `verified_tests_fts` | `verified_tests` | `command \|\| ' ' \|\| COALESCE(result, '')` | no            |
 
 All tables use `tokenize='porter unicode61'`, `record_id UNINDEXED`, `task_ref UNINDEXED`, and
 `lane_id UNINDEXED` so that scope filters (`task_ref`, `lane_id`) are fast equality lookups
@@ -225,15 +227,15 @@ without touching FTS ranking.
 
 ### Trigger Maintenance
 
-Twelve SQL triggers (INSERT / UPDATE / DELETE for each source table) keep FTS tables in sync
+Fifteen SQL triggers (INSERT / UPDATE / DELETE for each source table) keep FTS tables in sync
 automatically. UPDATE triggers follow the DELETE-then-INSERT pattern to prevent stale rows. All
 triggers use `CREATE TRIGGER IF NOT EXISTS` so they are schema-idempotent.
 
 `_ensure_handoff_fts(conn)` is called on every `_get_db_connection()` call. It:
 
 1. Probes FTS5 availability (CREATE/DROP `_fts5_handoff_probe`); silently returns on failure.
-2. Creates the four FTS5 virtual tables if not already present.
-3. Creates the twelve triggers if not already present.
+2. Creates the five FTS5 virtual tables if not already present.
+3. Creates the fifteen triggers if not already present.
 4. Runs `_backfill_handoff_fts(conn)`: for each source/FTS pair, if source has rows but FTS is
    empty, bulk-inserts all source rows into the FTS table (handles cold-start upgrades).
 
@@ -247,7 +249,7 @@ search_handoff(
     queries: list[str],
     task_ref: str | None = None,
     lane_id: str | None = None,
-    record_types: list[str] | None = None,  # subset of ["decision", "finding", "blocker", "action"]
+    record_types: list[str] | None = None,  # subset of ["decision", "finding", "blocker", "action", "verified_test"]
     limit: int = 20,                         # max 200
     detail: str = "full",
     fields: str | None = None,
@@ -256,7 +258,27 @@ search_handoff(
 
 - **queries**: One or more search terms. Multiple terms are OR-joined. Multi-word terms are
   automatically phrase-quoted (`"term with spaces"`) for precise adjacency matching.
-- **record_types**: Defaults to all four types when omitted.
+- **record_types**: Defaults to all five types when omitted.
+
+## Verified Test Read Surface (`get_verified_tests`)
+
+`get_verified_tests` returns verified test rows from the handoff ledger without requiring a broader dashboard read.
+
+```python
+get_verified_tests(
+  task_ref: str | None = None,
+  lane_id: str | None = None,
+  branch: str | None = None,
+  commit_sha: str | None = None,
+  passed: bool | None = None,
+  limit: int = 100,
+  offset: int = 0,
+) -> str
+```
+
+- Results are ordered by `verified_at DESC, id DESC` for deterministic newest-first reads.
+- Filters are additive; combine `branch`, `commit_sha`, and `passed` to inspect the exact verification rows tied to a merge candidate.
+- The envelope includes `total_matching`, `returned`, `has_more`, and `tests`.
 - **limit**: Clamped to [1, 200]. Results across all searched types are merged and re-ranked.
 - **detail**: `full` preserves the compact FTS snippet returned by SQLite. `summary` truncates that snippet further for startup-friendly reads.
 - **fields**: Optional comma-separated projection over result rows, for example `record_type,snippet`.

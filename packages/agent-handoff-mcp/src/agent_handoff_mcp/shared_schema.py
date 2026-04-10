@@ -67,7 +67,9 @@ _HANDOFF_REQUIRED_TABLES = frozenset(
         "turn_metrics",
     }
 )
-_HANDOFF_REQUIRED_FTS_TABLES = frozenset({"decisions_fts", "findings_fts", "blockers_fts", "actions_fts"})
+_HANDOFF_REQUIRED_FTS_TABLES = frozenset(
+    {"decisions_fts", "findings_fts", "blockers_fts", "actions_fts", "verified_tests_fts"}
+)
 _HANDOFF_REQUIRED_FTS_TRIGGERS = frozenset(
     {
         "decisions_fts_insert",
@@ -82,6 +84,9 @@ _HANDOFF_REQUIRED_FTS_TRIGGERS = frozenset(
         "actions_fts_insert",
         "actions_fts_update",
         "actions_fts_delete",
+        "verified_tests_fts_insert",
+        "verified_tests_fts_update",
+        "verified_tests_fts_delete",
     }
 )
 
@@ -415,6 +420,14 @@ CREATE VIRTUAL TABLE IF NOT EXISTS actions_fts USING fts5(
     status    UNINDEXED,
     tokenize='porter unicode61'
 );
+
+CREATE VIRTUAL TABLE IF NOT EXISTS verified_tests_fts USING fts5(
+    body,
+    record_id UNINDEXED,
+    task_ref  UNINDEXED,
+    lane_id   UNINDEXED,
+    tokenize='porter unicode61'
+);
 """
 
 _HANDOFF_FTS_TRIGGERS_SQL = """
@@ -488,6 +501,26 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS actions_fts_delete AFTER DELETE ON next_actions BEGIN
     DELETE FROM actions_fts WHERE rowid = old.id;
+END;
+
+-- verified_tests triggers
+CREATE TRIGGER IF NOT EXISTS verified_tests_fts_insert AFTER INSERT ON verified_tests BEGIN
+    INSERT INTO verified_tests_fts(rowid, body, record_id, task_ref, lane_id)
+    VALUES (new.id,
+            new.command || ' ' || COALESCE(new.result, ''),
+            new.id, new.task_ref, new.lane_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS verified_tests_fts_update AFTER UPDATE ON verified_tests BEGIN
+    DELETE FROM verified_tests_fts WHERE rowid = old.id;
+    INSERT INTO verified_tests_fts(rowid, body, record_id, task_ref, lane_id)
+    VALUES (new.id,
+            new.command || ' ' || COALESCE(new.result, ''),
+            new.id, new.task_ref, new.lane_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS verified_tests_fts_delete AFTER DELETE ON verified_tests BEGIN
+    DELETE FROM verified_tests_fts WHERE rowid = old.id;
 END;
 """
 
@@ -563,12 +596,18 @@ def _backfill_handoff_fts(conn: sqlite3.Connection) -> None:
             "INSERT INTO actions_fts(rowid, body, record_id, task_ref, lane_id, status) "
             "SELECT id, action, id, task_ref, lane_id, status FROM next_actions",
         ),
+        (
+            "verified_tests",
+            "verified_tests_fts",
+            "INSERT INTO verified_tests_fts(rowid, body, record_id, task_ref, lane_id) "
+            "SELECT id, command || ' ' || COALESCE(result, ''), id, task_ref, lane_id FROM verified_tests",
+        ),
     ]
     existing_fts = {
         row[0]
         for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name IN (?,?,?,?)",
-            ("decisions_fts", "findings_fts", "blockers_fts", "actions_fts"),
+            f"SELECT name FROM sqlite_master WHERE type='table' AND name IN ({','.join('?' for _ in _HANDOFF_REQUIRED_FTS_TABLES)})",
+            tuple(sorted(_HANDOFF_REQUIRED_FTS_TABLES)),
         ).fetchall()
     }
     for source_table, fts_table, backfill_sql in pairs:
@@ -597,11 +636,11 @@ def _ensure_handoff_fts(conn: sqlite3.Connection) -> None:
         return
     try:
         conn.executescript(HANDOFF_FTS_SCHEMA_SQL)
-        _fts_expected = {"decisions_fts", "findings_fts", "blockers_fts", "actions_fts"}
+        _fts_expected = set(_HANDOFF_REQUIRED_FTS_TABLES)
         _fts_created = {
             row[0]
             for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name IN (?,?,?,?)",
+                f"SELECT name FROM sqlite_master WHERE type='table' AND name IN ({','.join('?' for _ in _fts_expected)})",
                 tuple(sorted(_fts_expected)),
             ).fetchall()
         }
@@ -620,7 +659,7 @@ def _ensure_handoff_fts(conn: sqlite3.Connection) -> None:
             _log.warning("Handoff FTS setup skipped (%s); will retry on next connection.", exc)
         elif "vtable constructor failed" in errstr:
             _log.warning("Handoff FTS5 vtable corrupt (%s); dropping and recreating FTS tables.", exc)
-            for _fts_table in ("decisions_fts", "findings_fts", "blockers_fts", "actions_fts"):
+            for _fts_table in sorted(_HANDOFF_REQUIRED_FTS_TABLES):
                 conn.execute(f"DROP TABLE IF EXISTS {_fts_table}")
             conn.executescript(HANDOFF_FTS_SCHEMA_SQL)
             conn.executescript(_HANDOFF_FTS_TRIGGERS_SQL)

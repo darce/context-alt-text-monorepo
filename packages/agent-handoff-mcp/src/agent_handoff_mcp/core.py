@@ -125,17 +125,19 @@ from .review_findings import (  # noqa: F401
     update_review_finding,
 )
 from .runtime import get_runtime_config
+from .verified_tests import get_verified_tests
 
 # FTS search constants and search_handoff
 _FTS5_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
-_VALID_RECORD_TYPES: frozenset[str] = frozenset({"decision", "finding", "blocker", "action"})
+_VALID_RECORD_TYPES: frozenset[str] = frozenset({"decision", "finding", "blocker", "action", "verified_test"})
 
 _RECORD_TYPE_FTS_MAP: dict[str, tuple[str, bool]] = {
     "decision": ("decisions_fts", False),
     "finding": ("findings_fts", True),
     "blocker": ("blockers_fts", True),
     "action": ("actions_fts", True),
+    "verified_test": ("verified_tests_fts", False),
 }
 
 _VALID_DETAIL_LEVELS: frozenset[str] = frozenset({"full", "summary"})

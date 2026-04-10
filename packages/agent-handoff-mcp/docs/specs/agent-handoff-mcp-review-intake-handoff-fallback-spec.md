@@ -247,7 +247,7 @@ This tier depends on Tier 1 because the fallback docs must reference the real pu
 ### Tier 3 — Blocked on ADR
 
 Design task: `none`
-ADR: `docs/agentic/adrs/ADR-007-review-intake-handoff-fallback-boundary.md`
+ADR: `docs/adrs/ADR-007-review-intake-handoff-fallback-boundary.md`
 
 ```text
 none  ADR-007 resolved the only boundary question for this scope
@@ -288,5 +288,5 @@ rg -n "get_verified_tests|verified_test|Handoff-only fallback" \
   docs/agentic/rules/branch-review-guide.md \
   docs/agentic/rules/planning-review-guide.md \
   packages/agent-handoff-mcp/docs/assessments/agent-handoff-mcp-review-intake-tooling-proposal.md \
-  docs/agentic/adrs/ADR-007-review-intake-handoff-fallback-boundary.md
+  docs/adrs/ADR-007-review-intake-handoff-fallback-boundary.md
 ```

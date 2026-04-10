@@ -471,7 +471,7 @@ Call `review-record` / `record_review_finding` with:
 | `finding_id`  | Short ID matching the report (e.g., `H-1`, `M-2`, `L-3`)                                                                              |
 | `severity`    | `high`, `medium`, or `low`                                                                                                            |
 | `file_path`   | Relative path from monorepo root                                                                                                      |
-| `description` | One-paragraph description with code references                                                                                        |
+| `description` | One-paragraph description with code references. **ACE rule citation:** if the finding confirms or contradicts a documented `[sr-NNN]` or `[rg-NNN]` rule from `instructions.md`, include the rule ID in the description text (e.g., "violates [rg-005] schema/contract parity"). This enables automated ACE counter updates. |
 | `details`     | Optional object: `{ "line_start"?: int, "line_end"?: int, "fix"?: str }`                                                              |
 | `actor`       | Optional object: `{ "agent"?: str, "model"?: str, "model_label"?: str, "reasoning_level"?: str, "branch"?: str, "commit_sha"?: str }` |
 

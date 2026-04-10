@@ -9,6 +9,7 @@ from api.schemas.health import HealthResponse
 from recognition.application.health import check_health as recognition_health
 from recognition.config.cache import configure_dev_cache
 from recognition.interface_adapters.http import router as recognition_router
+from recognition.interface_adapters.http.deps.circuit_breaker import initialize_session_dependency_circuit_breaker
 from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
 from roster.application.health import check_health as roster_health
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
@@ -72,6 +73,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
         description="Experimental rewrite scaffolding for the description service.",
     )
+    initialize_session_dependency_circuit_breaker(app)
 
     app.include_router(recognition_router, prefix="/recognition")
     app.include_router(roster_router, prefix="/roster")

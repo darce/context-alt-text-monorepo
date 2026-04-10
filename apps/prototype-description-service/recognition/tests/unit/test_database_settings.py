@@ -91,6 +91,9 @@ def test_database_settings_expose_timeout_defaults(monkeypatch, tmp_path: Path) 
 
     assert settings.statement_timeout == "10s"
     assert settings.idle_in_txn_timeout == "30s"
+    assert settings.breaker_failure_threshold == 3
+    assert settings.breaker_window_seconds == 30
+    assert settings.breaker_half_open_after_seconds == 10
     assert settings.disable_stmt_cache is False
 
 
@@ -119,3 +122,35 @@ def test_database_settings_can_disable_asyncpg_statement_cache(monkeypatch, tmp_
     assert settings.disable_stmt_cache is True
     assert settings.statement_timeout == "11s"
     assert settings.idle_in_txn_timeout == "31s"
+
+
+def test_database_settings_can_override_breaker_values(monkeypatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+
+    for key in (
+        "PGUSER",
+        "PGPASSWORD",
+        "PGHOST",
+        "PGPORT",
+        "DB_NAME",
+        "POSTGRES_DSN",
+        "POSTGRES_SYNC_DSN",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("DB_BREAKER_FAILURE_THRESHOLD", "5")
+    monkeypatch.setenv("DB_BREAKER_WINDOW_SECONDS", "45")
+    monkeypatch.setenv("DB_BREAKER_HALF_OPEN_AFTER_SECONDS", "12")
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        settings = settings_module.get_database_settings()
+    finally:
+        settings_module.get_database_settings.cache_clear()
+        monkeypatch.delenv("DB_BREAKER_FAILURE_THRESHOLD", raising=False)
+        monkeypatch.delenv("DB_BREAKER_WINDOW_SECONDS", raising=False)
+        monkeypatch.delenv("DB_BREAKER_HALF_OPEN_AFTER_SECONDS", raising=False)
+
+    assert settings.breaker_failure_threshold == 5
+    assert settings.breaker_window_seconds == 45
+    assert settings.breaker_half_open_after_seconds == 12

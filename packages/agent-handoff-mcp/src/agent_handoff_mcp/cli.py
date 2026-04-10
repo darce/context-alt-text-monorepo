@@ -20,6 +20,7 @@ from .api import (
     export_handoff_state,
     generate_current_task_md,
     get_handoff_state,
+    get_verified_tests,
     handoff_close_check,
     import_handoff_state,
     next_actions,
@@ -208,6 +209,23 @@ def _dispatch_review_runs(args: argparse.Namespace) -> Any:
     return review_runs(review=cast(ReviewRunsParam, payload))
 
 
+def _dispatch_get_verified_tests(args: argparse.Namespace) -> Any:
+    passed: bool | None = None
+    if args.passed == "true":
+        passed = True
+    elif args.passed == "false":
+        passed = False
+    return get_verified_tests(
+        task_ref=args.task_ref,
+        lane_id=args.lane_id,
+        branch=args.branch,
+        commit_sha=args.commit_sha,
+        passed=passed,
+        limit=args.limit,
+        offset=args.offset,
+    )
+
+
 def _dispatch_event_record(args: argparse.Namespace) -> Any:
     payload: dict[str, Any] = {"event_kind": args.event_kind}
     if args.task_ref is not None:
@@ -373,6 +391,7 @@ _CLI_DISPATCH_OVERRIDES: dict[str, Callable[[argparse.Namespace], Any]] = {
     "next_actions": _dispatch_next_actions,
     "review_findings": _dispatch_review_findings,
     "review_runs": _dispatch_review_runs,
+    "get_verified_tests": _dispatch_get_verified_tests,
     "artifacts": _dispatch_artifacts,
     "generate_current_task_md": _dispatch_task,
     "export_handoff_state": _dispatch_export,

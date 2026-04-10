@@ -69,11 +69,12 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "import_handoff_state": "Import a previously exported handoff state snapshot into the local database.",
     "archive_task_state": "Archive completed task state from the live handoff tables into archive storage.",
     "get_archived_task": "Read an archived task row from task_archives by task_ref. Returns archive metadata (archived_at/archived_by/archived_branch/archived_commit_sha/notes) plus the parsed snapshot when include_snapshot=True. Use this to inspect a task's terminal state without dropping to raw sqlite.",
+    "get_verified_tests": "List verified test rows from the handoff ledger with optional task, lane, branch, commit, and pass/fail filters.",
     "update_task_status": "Update a task status without recording a slice decision. For the active task this requires expected_revision; for archived tasks it updates the archived snapshot status used by the dashboard.",
     "load_session": "Load session context: get_handoff_state + review_findings(list open) in one call. Pass sections to shape the nested state payload and detail to shape both state and findings.",
     "close_slice": "Record a slice-complete decision, keep the task status in_progress, and regenerate CURRENT_TASK.md. Requires expected_revision when the target task is currently active. Pass changed_files to persist structured review scope on the nested decision write.",
     "artifacts": "Record, search, get, or purge artifact sources through one typed domain surface. Set artifact.operation to 'record', 'search', 'get', or 'purge'.",
-    "search_handoff": "Search decisions, findings, blockers, actions by keyword with BM25 ranking. Pass detail='summary' to truncate snippets and fields='record_type,snippet' to project per-result fields.",
+    "search_handoff": "Search decisions, findings, blockers, actions, and verified tests by keyword with BM25 ranking. Pass detail='summary' to truncate snippets and fields='record_type,snippet' to project per-result fields.",
 }
 
 
@@ -800,6 +801,26 @@ def record_test_result(
     )
 
 
+def get_verified_tests(
+    task_ref: TaskRefParam = None,
+    lane_id: Annotated[str | None, Field(description="Optional lane filter.")] = None,
+    branch: Annotated[str | None, Field(description="Optional branch filter.")] = None,
+    commit_sha: Annotated[str | None, Field(description="Optional commit SHA filter.")] = None,
+    passed: Annotated[bool | None, Field(description="Optional pass/fail filter.")] = None,
+    limit: Annotated[int, Field(description="Maximum number of tests to return.")] = 100,
+    offset: Annotated[int, Field(description="Pagination offset.")] = 0,
+) -> dict:
+    return core.get_verified_tests(
+        task_ref=task_ref,
+        lane_id=lane_id,
+        branch=branch,
+        commit_sha=commit_sha,
+        passed=passed,
+        limit=limit,
+        offset=offset,
+    )
+
+
 def report_blocker(
     operation: Annotated[
         Literal["add", "resolve", "reopen"],
@@ -1404,6 +1425,24 @@ def _build_tool_registry() -> list[ToolEntry]:
             entity_family="lifecycle",
         ),
         ToolEntry(
+            "get_verified_tests",
+            get_verified_tests,
+            TOOL_DESCRIPTIONS["get_verified_tests"],
+            profile="extended",
+            cli_name="get-verified-tests",
+            cli_args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--lane-id"),
+                ArgSpec("--branch"),
+                ArgSpec("--commit-sha"),
+                ArgSpec("--passed", choices=["true", "false"]),
+                ArgSpec("--limit", type=int, default=100),
+                ArgSpec("--offset", type=int, default=0),
+            ],
+            surface_class="query",
+            entity_family="handoff_state",
+        ),
+        ToolEntry(
             "update_task_status",
             update_task_status,
             TOOL_DESCRIPTIONS["update_task_status"],
@@ -1505,8 +1544,8 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec(
                     "--record-types",
                     nargs="+",
-                    choices=["decision", "finding", "blocker", "action"],
-                    help="Limit search to these record types (decision, finding, blocker, action).",
+                    choices=["decision", "finding", "blocker", "action", "verified_test"],
+                    help="Limit search to these record types (decision, finding, blocker, action, verified_test).",
                 ),
                 ArgSpec("--limit", type=int, default=20, help="Max results (default 20, max 100)."),
                 ArgSpec("--detail", default="full", choices=["full", "summary"], help="Detail level: full or summary"),

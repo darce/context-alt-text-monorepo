@@ -142,29 +142,29 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded ADR-007, the review-intake spec, and the handoff/orchestrator contracts before editing.
-- [ ] Confirmed no orchestrator packet logic is reimplemented on handoff.
-- [ ] Recorded the contract/doc touchpoints in the same slices as the behavior changes.
+- [x] Loaded ADR-007, the review-intake spec, and the handoff/orchestrator contracts before editing.
+- [x] Confirmed no orchestrator packet logic is reimplemented on handoff.
+- [x] Recorded the contract/doc touchpoints in the same slices as the behavior changes.
 
 ### Checklist for Slice 1: Searchable Verified Test Evidence
 
-- [ ] Add `verified_tests_fts` with trigger and backfill coverage.
-- [ ] Extend `search_handoff` to accept `verified_test`.
-- [ ] Add search/schema regression coverage.
-- [ ] Update the handoff contract doc for the new search record type.
+- [x] Add `verified_tests_fts` with trigger and backfill coverage.
+- [x] Extend `search_handoff` to accept `verified_test`.
+- [x] Add search/schema regression coverage.
+- [x] Update the handoff contract doc for the new search record type.
 
 ### Checklist for Slice 2: Exact Verified Test Listing
 
-- [ ] Add `get_verified_tests` with bounded filters and ordering.
-- [ ] Register and document the new public tool.
-- [ ] Add regression coverage for task/lane/branch/commit/pass filters.
-- [ ] Capture `make test-handoff` and `make mypy-handoff` evidence.
+- [x] Add `get_verified_tests` with bounded filters and ordering.
+- [x] Register and document the new public tool.
+- [x] Add regression coverage for task/lane/branch/commit/pass filters.
+- [x] Capture `make test-handoff` and `make mypy-handoff` evidence.
 
 ## Review Readiness
 
-- [ ] No compound review-packet behavior has been introduced on handoff.
-- [ ] Contract and test updates land in the same slices as the implementation.
-- [ ] Handoff decision records the search/read additions and the proof commands.
+- [x] No compound review-packet behavior has been introduced on handoff.
+- [x] Contract and test updates land in the same slices as the implementation.
+- [x] Handoff decision records the search/read additions and the proof commands.
 
 ## Stretch Goals
 
@@ -172,6 +172,6 @@ Proof:
 
 ## Success Criteria
 
-- [ ] `search_handoff` can return `verified_test` hits backed by `verified_tests_fts`.
-- [ ] `get_verified_tests` returns deterministic filtered rows without raw-SQL archaeology.
-- [ ] The handoff contract documents both new primitives accurately.
+- [x] `search_handoff` can return `verified_test` hits backed by `verified_tests_fts`.
+- [x] `get_verified_tests` returns deterministic filtered rows without raw-SQL archaeology.
+- [x] The handoff contract documents both new primitives accurately.

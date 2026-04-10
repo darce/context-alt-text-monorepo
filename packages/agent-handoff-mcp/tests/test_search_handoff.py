@@ -2,7 +2,7 @@
 
 Covers:
 - FTS5 schema bootstrap (all virtual tables created on first connection)
-- INSERT trigger maintenance for all four record types
+- INSERT trigger maintenance for all five record types
 - UPDATE and DELETE trigger maintenance
 - Scope filters (task_ref, lane_id, record_types)
 - Error handling (empty queries, invalid types)
@@ -58,7 +58,7 @@ def _parse(payload: str | dict) -> dict:
 
 
 def test_fts_tables_exist_after_connection(isolated_env: dict) -> None:
-    """All four FTS5 virtual tables must exist after first _get_db_connection()."""
+    """All five FTS5 virtual tables must exist after first _get_db_connection()."""
     with handoff_core._get_db_connection() as conn:
         names = {
             row[0]
@@ -66,7 +66,7 @@ def test_fts_tables_exist_after_connection(isolated_env: dict) -> None:
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '%_fts'"
             ).fetchall()
         }
-    for expected in ("decisions_fts", "findings_fts", "blockers_fts", "actions_fts"):
+    for expected in ("decisions_fts", "findings_fts", "blockers_fts", "actions_fts", "verified_tests_fts"):
         assert expected in names, f"Expected FTS table {expected!r} not found; got {names}."
 
 
@@ -91,7 +91,7 @@ def test_vtable_constructor_failure_auto_recovers(isolated_env: dict) -> None:
     # would be more realistic, but that requires deep mocking of SQLite internals.
     # Instead we verify the actual recovery path: drop + recreate + backfill.)
     with handoff_core._get_db_connection() as conn:
-        for tbl in ("decisions_fts", "findings_fts", "blockers_fts", "actions_fts"):
+        for tbl in ("decisions_fts", "findings_fts", "blockers_fts", "actions_fts", "verified_tests_fts"):
             conn.execute(f"DROP TABLE IF EXISTS {tbl}")
         conn.commit()
 
@@ -103,7 +103,7 @@ def test_vtable_constructor_failure_auto_recovers(isolated_env: dict) -> None:
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '%_fts'"
             ).fetchall()
         }
-    for expected in ("decisions_fts", "findings_fts", "blockers_fts", "actions_fts"):
+    for expected in ("decisions_fts", "findings_fts", "blockers_fts", "actions_fts", "verified_tests_fts"):
         assert expected in names, f"FTS table {expected!r} not recreated after recovery."
 
     # Backfilled decision must be searchable.
@@ -186,6 +186,25 @@ def test_insert_trigger_action(isolated_env: dict) -> None:
     )
     assert result["ok"] is True
     assert any(r["record_type"] == "action" for r in result["results"])
+
+
+def test_insert_trigger_verified_test(isolated_env: dict) -> None:
+    """Inserting a verified test result must index it in verified_tests_fts via trigger."""
+    handoff_core.record_test_result(
+        session="s1",
+        command="pytest tests/test_verified_tests.py -q",
+        passed=True,
+        result="3 passed in 0.12s",
+        exit_code=0,
+    )
+    result = _parse(
+        handoff_core.search_handoff(
+            queries=["test_verified_tests.py"],
+            record_types=["verified_test"],
+        )
+    )
+    assert result["ok"] is True
+    assert any(r["record_type"] == "verified_test" for r in result["results"])
 
 
 # ---------------------------------------------------------------------------
@@ -364,16 +383,24 @@ def test_search_scoped_by_record_types_excludes_other_types(isolated_env: dict) 
 
 
 def test_search_all_record_types_by_default(isolated_env: dict) -> None:
-    """Omitting record_types must search across all four record types."""
+    """Omitting record_types must search across all five record types."""
     handoff_core.record_decision(session="s1", decision="omniquery alpha unique designword")
     handoff_core.report_blocker(operation="add", description="omniquery beta unique designword")
+    handoff_core.record_test_result(
+        session="s1",
+        command="pytest tests/test_search_handoff.py -q",
+        passed=True,
+        result="1 passed in 0.01s",
+        exit_code=0,
+    )
 
     result = _parse(handoff_core.search_handoff(queries=["omniquery"]))
     assert result["ok"] is True
-    assert len(result["record_types_searched"]) == 4
+    assert len(result["record_types_searched"]) == 5
     types_in_results = {r["record_type"] for r in result["results"]}
     assert "decision" in types_in_results
     assert "blocker" in types_in_results
+
 
 
 def test_search_handoff_fields_project_results(isolated_env: dict) -> None:

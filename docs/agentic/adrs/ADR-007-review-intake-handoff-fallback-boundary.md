@@ -55,23 +55,23 @@ established that:
 
 ### Handoff read surfaces (`agent-handoff-mcp`)
 
-| Surface | Type | Returns | Slice-aware? |
-|---------|------|---------|--------------|
-| `get_handoff_state` | query | Active task state, bounded sections | No |
-| `load_session` | compound query | State + open findings | No |
-| `search_handoff` | FTS generator | Ranked snippets over 4 record types | No |
-| `review_findings(operation="list")` | query | Findings by status/severity | No |
-| `handoff_close_check` | generator | Merge-readiness verdict | No (task-level) |
+| Surface                             | Type           | Returns                             | Slice-aware?    |
+| ----------------------------------- | -------------- | ----------------------------------- | --------------- |
+| `get_handoff_state`                 | query          | Active task state, bounded sections | No              |
+| `load_session`                      | compound query | State + open findings               | No              |
+| `search_handoff`                    | FTS generator  | Ranked snippets over 5 record types | No              |
+| `review_findings(operation="list")` | query          | Findings by status/severity         | No              |
+| `handoff_close_check`               | generator      | Merge-readiness verdict             | No (task-level) |
 
-`search_handoff` validates against `_VALID_RECORD_TYPES = frozenset({"decision", "finding", "blocker", "action"})` at `core.py:132`. No FTS table exists for `verified_tests`.
+`search_handoff` now validates against `_VALID_RECORD_TYPES = frozenset({"decision", "finding", "blocker", "action", "verified_test"})` in `core.py`, and `verified_tests_fts` now exists as the fifth handoff FTS table.
 
 ### Orchestrator compound surfaces (`agent-orchestrator-mcp`)
 
-| Surface | Type | Returns | Slice-aware? |
-|---------|------|---------|--------------|
-| `get_latest_slice_review_packet` | query | Deterministic packet for latest slice-complete decision | Yes |
-| `get_review_findings_summary` | generator | Aggregated counts + top open findings | No (task-level) |
-| `reconcile_review_findings` | generator | Compares findings with current files | No |
+| Surface                          | Type      | Returns                                                 | Slice-aware?    |
+| -------------------------------- | --------- | ------------------------------------------------------- | --------------- |
+| `get_latest_slice_review_packet` | query     | Deterministic packet for latest slice-complete decision | Yes             |
+| `get_review_findings_summary`    | generator | Aggregated counts + top open findings                   | No (task-level) |
+| `reconcile_review_findings`      | generator | Compares findings with current files                    | No              |
 
 ### Downstream surfaces that must migrate together
 
@@ -100,7 +100,7 @@ Handoff-only callers will use a documented sequence of existing and new primitiv
    2. `search_handoff(query="slice_complete", record_types=["decision"], limit=1)` -- find the latest slice-complete decision
    3. `get_verified_tests(task_ref=..., commit_sha=<from decision>)` -- get test evidence for that slice
    4. `review_findings(operation="list", status="open")` -- confirm finding state
-   This is not a compound tool; it is a documented recipe that any caller can follow.
+      This is not a compound tool; it is a documented recipe that any caller can follow.
 
 5. **The orchestrator packet remains the preferred path.** When both servers are loaded, callers should use `get_latest_slice_review_packet` and not the fallback sequence. The fallback is explicitly a degraded path for contexts where orchestrator is unavailable.
 

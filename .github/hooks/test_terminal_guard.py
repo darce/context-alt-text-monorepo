@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 HOOK_SCRIPT = Path(__file__).parent / "terminal-guard.py"
+HOOK_CONFIG = Path(__file__).parent / "terminal-guard.json"
 
 # ---------------------------------------------------------------------------
 # Direct import of _check_command for in-process classification tests.
@@ -387,3 +388,21 @@ def test_missing_tool_input_does_not_crash() -> None:
     exit_code, output = _run_hook(payload)
     assert exit_code == 0
     assert output is None
+
+
+def test_post_tool_use_registers_ace_detect_hook() -> None:
+    config = json.loads(HOOK_CONFIG.read_text(encoding="utf-8"))
+    post_tool_use = config["hooks"]["PostToolUse"]
+
+    assert post_tool_use == [
+        {
+            "matcher": "mcp__agent-handoff-mcp__review_findings",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "python3 scripts/hooks/ace-detect.py",
+                    "timeout": 5,
+                }
+            ],
+        }
+    ]

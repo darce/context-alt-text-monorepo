@@ -6,8 +6,8 @@ finding description for [sr-NNN]/[rg-NNN] patterns and appends matches
 to .task-state/ace_reflect_log.jsonl for later processing by
 `make ace-reflect`.
 
-Hook contract (Claude Code PostToolUse):
-  - stdin: JSON with tool_name, tool_input, tool_output
+Hook contract (Claude Code / VS Code PostToolUse):
+    - stdin: JSON with tool_name/toolName, tool_input/toolInput, tool_output/toolOutput
   - stdout: JSON with {"result": "continue"} or error
   - exit 0 to continue, non-zero to block (we never block)
 """
@@ -54,12 +54,12 @@ def main() -> None:
         print(json.dumps({"result": "continue"}))
         return
 
-    tool_name = hook_input.get("tool_name", "")
+    tool_name = hook_input.get("tool_name") or hook_input.get("toolName") or ""
     if "review_findings" not in tool_name:
         print(json.dumps({"result": "continue"}))
         return
 
-    tool_input = hook_input.get("tool_input", {})
+    tool_input = hook_input.get("tool_input") or hook_input.get("toolInput") or {}
     review = tool_input.get("review", {})
     operation = review.get("operation", "")
 

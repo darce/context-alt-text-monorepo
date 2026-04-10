@@ -8,7 +8,11 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.session import get_pool_stats
-from recognition.interface_adapters.http.dependencies import get_optional_session, require_auth
+from recognition.interface_adapters.http.dependencies import (
+    get_observability_session,
+    get_optional_session,
+    require_auth,
+)
 from recognition.interface_adapters.http.deps.circuit_breaker import (
     BreakerState,
     get_or_create_session_dependency_circuit_breaker,
@@ -22,21 +26,26 @@ router = APIRouter(prefix="/health", tags=["health"])
 async def health_check(
     request: Request,
     session: AsyncSession | None = Depends(get_optional_session),
+    observability_session: AsyncSession | None = Depends(get_observability_session),
 ) -> HealthCheckResponse:
     """Health check with database connectivity."""
     breaker = get_or_create_session_dependency_circuit_breaker(request.app)
     breaker_snapshot = breaker.snapshot()
-    db_status = "connected" if session is not None else "disconnected"
+    business_available = session is not None
+    observability_available = observability_session is not None
+    db_status = "connected" if business_available and observability_available else "disconnected"
     status = "healthy" if db_status == "connected" else "degraded"
     database_detail = None
-    if session is None:
+    if not business_available:
         database_detail = "circuit_breaker_open" if breaker_snapshot.state is BreakerState.OPEN else "connection_unavailable"
+    elif not observability_available:
+        database_detail = "observability_connection_unavailable"
     return HealthCheckResponse(
         status=status,
         database=db_status,
         database_detail=database_detail,
         breaker_state=breaker_snapshot.state,
-        pool_stats=None,
+        pool_stats=ConnectionPoolStats(**get_pool_stats()),
         timestamp=datetime.now(tz=UTC).isoformat(),
     )
 

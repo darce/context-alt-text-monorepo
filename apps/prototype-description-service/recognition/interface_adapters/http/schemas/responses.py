@@ -417,8 +417,8 @@ class CreateClusterForIdentityResponse(BaseModel):
         return _validate_uuid(v)
 
 
-class ConnectionPoolStats(BaseModel):
-    """Connection pool statistics for monitoring.
+class PoolMetricsResponse(BaseModel):
+    """Connection-pool statistics for one pool.
 
     Attributes:
         size: Configured pool size (base connections).
@@ -439,6 +439,13 @@ class ConnectionPoolStats(BaseModel):
     utilization_percent: float
 
 
+class ConnectionPoolStats(BaseModel):
+    """Connection-pool statistics for business and observability pools."""
+
+    business: PoolMetricsResponse
+    observability: PoolMetricsResponse
+
+
 class HealthCheckResponse(BaseModel):
     """Health check response with database connectivity.
 
@@ -447,7 +454,7 @@ class HealthCheckResponse(BaseModel):
         database: Database connection status.
         database_detail: Optional detail explaining degraded DB status.
         breaker_state: Session dependency breaker state.
-        pool_stats: Connection pool statistics.
+        pool_stats: Connection-pool statistics for business and observability pools.
         timestamp: ISO timestamp of check.
     """
 

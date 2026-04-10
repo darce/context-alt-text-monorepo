@@ -30,6 +30,9 @@ class DatabaseSettings:
     max_overflow: int
     pool_timeout: int
     pool_recycle: int
+    observability_pool_size: int
+    observability_max_overflow: int
+    observability_pool_timeout: int
     statement_timeout: str
     idle_in_txn_timeout: str
     breaker_failure_threshold: int
@@ -117,6 +120,9 @@ def get_database_settings() -> DatabaseSettings:
     max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "10"))
     pool_timeout = int(os.getenv("DB_POOL_TIMEOUT", "30"))
     pool_recycle = int(os.getenv("DB_POOL_RECYCLE", "3600"))
+    observability_pool_size = int(os.getenv("DB_OBSERVABILITY_POOL_SIZE", "2"))
+    observability_max_overflow = int(os.getenv("DB_OBSERVABILITY_MAX_OVERFLOW", "0"))
+    observability_pool_timeout = int(os.getenv("DB_OBSERVABILITY_POOL_TIMEOUT", "5"))
     statement_timeout = os.getenv("DB_STATEMENT_TIMEOUT", "10s")
     idle_in_txn_timeout = os.getenv("DB_IDLE_IN_TXN_TIMEOUT", "30s")
     breaker_failure_threshold = int(os.getenv("DB_BREAKER_FAILURE_THRESHOLD", "3"))
@@ -135,6 +141,9 @@ def get_database_settings() -> DatabaseSettings:
         max_overflow=max_overflow,
         pool_timeout=pool_timeout,
         pool_recycle=pool_recycle,
+        observability_pool_size=observability_pool_size,
+        observability_max_overflow=observability_max_overflow,
+        observability_pool_timeout=observability_pool_timeout,
         statement_timeout=statement_timeout,
         idle_in_txn_timeout=idle_in_txn_timeout,
         breaker_failure_threshold=breaker_failure_threshold,

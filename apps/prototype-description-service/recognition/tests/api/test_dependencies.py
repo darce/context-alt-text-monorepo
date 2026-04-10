@@ -296,7 +296,7 @@ async def test_get_observability_session_degrades_without_raising(monkeypatch) -
             raise RuntimeError("health probe failed")
 
     session = _FailingSession()
-    monkeypatch.setattr(session_module, "async_session_factory", lambda: session)
+    monkeypatch.setattr(session_module, "observability_async_session_factory", lambda: session)
     request = _make_request()
 
     yielded: list[object | None] = []
@@ -305,6 +305,47 @@ async def test_get_observability_session_degrades_without_raising(monkeypatch) -
 
     assert yielded == [None]
     assert session.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_get_observability_session_uses_dedicated_factory(monkeypatch) -> None:
+    business_factory_called = False
+    observability_session = _TrackingSession()
+    request = _make_request()
+
+    def _business_factory():
+        nonlocal business_factory_called
+        business_factory_called = True
+        return _TrackingSession()
+
+    monkeypatch.setattr(session_module, "async_session_factory", _business_factory)
+    monkeypatch.setattr(session_module, "observability_async_session_factory", lambda: observability_session)
+
+    yielded: list[object | None] = []
+    async for item in session_module.get_observability_session(request=request):
+        yielded.append(item)
+
+    assert yielded == [observability_session]
+    assert business_factory_called is False
+
+
+@pytest.mark.asyncio
+async def test_get_observability_session_ignores_business_breaker_when_pool_is_split(monkeypatch) -> None:
+    breaker = SessionDependencyCircuitBreaker(
+        failure_threshold=3,
+        window_seconds=30,
+        half_open_after_seconds=10,
+    )
+    breaker.force_open()
+    request = _make_request(breaker=breaker)
+    observability_session = _TrackingSession()
+    monkeypatch.setattr(session_module, "observability_async_session_factory", lambda: observability_session)
+
+    yielded: list[object | None] = []
+    async for item in session_module.get_observability_session(request=request):
+        yielded.append(item)
+
+    assert yielded == [observability_session]
 
 
 @pytest.mark.asyncio
@@ -337,7 +378,7 @@ async def test_get_session_fast_fails_when_breaker_is_open(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_optional_and_observability_sessions_fast_fail_when_breaker_is_open(monkeypatch) -> None:
+async def test_optional_session_fast_fails_when_breaker_is_open(monkeypatch) -> None:
     breaker = SessionDependencyCircuitBreaker(
         failure_threshold=3,
         window_seconds=30,
@@ -358,12 +399,7 @@ async def test_optional_and_observability_sessions_fast_fail_when_breaker_is_ope
     async for item in session_module.get_optional_session(request=request, tenant_id=None):
         optional_items.append(item)
 
-    observability_items: list[object | None] = []
-    async for item in session_module.get_observability_session(request=request):
-        observability_items.append(item)
-
     assert optional_items == [None]
-    assert observability_items == [None]
     assert factory_called is False
 
 

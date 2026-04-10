@@ -32,6 +32,7 @@ ADR-006 rejects policy-only isolation inside one shared pool. After SLR-1 and SL
 - Business-session behavior from SLR-1 remains the default path and must not regress.
 - Pool sizing and timeout settings must be environment-backed through `db/settings.py`.
 - Health and diagnostics should degrade honestly when the observability pool itself is unavailable.
+- After the pool split, `get_observability_session()` is decoupled from the business-pool circuit breaker introduced in SLR-3. Any observability-specific breaker policy is a separate follow-on concern.
 
 ## Workflow Principles
 
@@ -74,7 +75,7 @@ Observability traffic uses its own small engine/pool, business traffic uses the 
 
 ## Proposed Solution
 
-Add a second async engine and sessionmaker in `db/session.py`, backed by environment-driven observability pool settings from `db/settings.py`. Rewire `get_observability_session()` to use that factory, update pool stats to report both pools clearly, and adjust observability/health consumers and tests to use the split topology.
+Add a second async engine and sessionmaker in `db/session.py`, backed by environment-driven observability pool settings from `db/settings.py`. Rewire `get_observability_session()` to use that factory without consulting the business-pool breaker, update pool stats to report both pools clearly, and adjust observability/health consumers and tests to use the split topology.
 
 ## Files and Surfaces to Change
 
@@ -132,10 +133,11 @@ Changes:
 
 - Switch `get_observability_session()` to the observability sessionmaker.
 - Keep service/repository wiring aligned with the split dependency source.
+- Decouple observability-session behavior from the SLR-3 business breaker once the independent pool exists.
 
 Proof:
 
-- `pytest recognition/tests/api/test_api_health.py -q`
+- `pytest recognition/tests/api/test_dependencies.py recognition/tests/api/test_api_health.py -q`
 
 ### Slice 3: Dual-Pool Reporting and Regression Proof
 
@@ -143,7 +145,7 @@ Proof:
 
 Changes:
 
-- Update pool-stats reporting and any dependent health/diagnostic payloads.
+- Update pool-stats reporting and any dependent health/diagnostic payloads, including `exception_handlers.py` consumers.
 - Verify the full recognition suite still passes with the split topology.
 
 Proof:

@@ -8,6 +8,7 @@ from .api import (
     configure_runtime,
     export_handoff_state,
     generate_current_task_md,
+    generate_dashboard_md,
     get_archived_task,
     get_artifact,
     get_handoff_state,
@@ -42,9 +43,19 @@ from .api import (
 )
 from .config import RuntimeConfig
 from .core import PromptMetrics, ResolvedWriteContext, ReviewFindingDetails, TokenUsage, WriteActor
+from .dashboard_rendering import (
+    DashboardContext,
+    DashboardExtension,
+    DashboardSection,
+    clear_dashboard_extensions,
+    register_dashboard_extension,
+)
 from .enums import ReviewKind, ReviewScopeSource
 
 __all__ = [
+    "DashboardContext",
+    "DashboardExtension",
+    "DashboardSection",
     "PromptMetrics",
     "ResolvedWriteContext",
     "RuntimeConfig",
@@ -58,9 +69,12 @@ __all__ = [
     "audit_decision_ids",
     "build_handoff_mcp",
     "build_write_actor",
+    "clear_dashboard_extensions",
     "configure_runtime",
     "export_handoff_state",
     "generate_current_task_md",
+    "generate_dashboard_md",
+    "register_dashboard_extension",
     "get_archived_task",
     "get_artifact",
     "get_handoff_state",

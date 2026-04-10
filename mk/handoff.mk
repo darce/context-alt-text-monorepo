@@ -2,15 +2,11 @@
 # Handoff / Task State / Daemons
 # =============================================================================
 
-.PHONY: task dashboard state list-tasks lane-list mcp-serve-http handoff-close-check handoff-integrity-check handoff-inbox handoff-dispatch review-dispatch review-run review-ready
+.PHONY: task state list-tasks lane-list mcp-serve-http handoff-close-check handoff-integrity-check handoff-inbox handoff-dispatch review-dispatch review-run review-ready
 
 # Generate CURRENT_TASK.md from handoff DB
 task:
 	@$(MCP_CMD) $(MCP_STATE_ARGS) task
-
-# Print handoff dashboard
-dashboard:
-	@$(MCP_CMD) $(MCP_STATE_ARGS) dashboard
 
 # Print full handoff state
 state:

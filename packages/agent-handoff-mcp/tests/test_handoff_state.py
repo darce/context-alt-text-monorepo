@@ -1640,11 +1640,12 @@ def test_archive_and_dashboard_summary(isolated_handoff: dict) -> None:
     # (a) Status is recovered from archived snapshot JSON; task was archived with status="done".
     assert matching[0]["status"] == "done"
 
-    # (b) Archived task status renders correctly in the CURRENT_TASK.md dashboard table.
+    # (b) Archived task status is accessible via the dashboard view; CURRENT_TASK.md
+    # no longer renders the All Tasks table (moved to DASHBOARD.md).
     _parse(mcp_server.set_handoff_state(task_ref="post-archive", objective="post-archive placeholder", status="active"))
     rendered = _parse(mcp_server.generate_current_task_md(task_ref="post-archive", write_file=False))
-    assert "4.99.0" in rendered["markdown"]
-    assert "done" in rendered["markdown"]
+    assert "4.99.0" not in rendered["markdown"]  # cross-task data moved to DASHBOARD.md
+    assert "## All Tasks" not in rendered["markdown"]
 
 
 def test_generate_current_task_md_with_nested_tool_wrapper(
@@ -1708,11 +1709,10 @@ def test_generate_current_task_md_prefers_live_status_over_archived_snapshot(iso
     payload = _parse(mcp_server.generate_current_task_md(task_ref="reactivated-task", write_file=False))
     md = payload["markdown"]
 
-    assert "> reactivated-task" in md
+    # CURRENT_TASK.md shows active-task status only; All Tasks table is in DASHBOARD.md.
+    assert "reactivated-task" in md
     assert "done" in md
-    assert "in_progress" not in next(
-        line for line in md.splitlines() if "reactivated-task" in line and line.lstrip().startswith(">")
-    )
+    assert "## All Tasks" not in md
 
 
 def test_generate_current_task_md_includes_dashboard_header(isolated_handoff: dict) -> None:
@@ -1750,19 +1750,15 @@ def test_generate_current_task_md_includes_dashboard_header(isolated_handoff: di
     payload = _parse(mcp_server.generate_current_task_md(task_ref="E12-11", write_file=False))
     md = payload["markdown"]
 
-    assert "## All Tasks" in md
-    _assert_dashboard_row(
-        md, "E12-11", status="in_progress", open_findings=0, open_blockers=0, pending_actions=0, active=True
-    )
-    _assert_dashboard_row(
-        md, "E12-10", status="active", open_findings=1, open_blockers=0, pending_actions=0, active=False
-    )
-    assert md.index("## All Tasks") < md.index("## Objective")
+    # CURRENT_TASK.md is now active-task-only; All Tasks table moved to DASHBOARD.md.
+    assert "## All Tasks" not in md
+    assert "E12-10" not in md
+    assert "## Objective" in md
     assert "- epic_ref: `E12`" in md
     assert "- task_ref: `E12-11`" in md
 
 
-def test_internal_write_path_includes_dashboard_header(isolated_handoff: dict) -> None:
+def test_internal_write_path_writes_current_task_json(isolated_handoff: dict) -> None:
     from agent_handoff_mcp._shared import _write_current_task_md_from_state
 
     _parse(
@@ -1785,16 +1781,11 @@ def test_internal_write_path_includes_dashboard_header(isolated_handoff: dict) -
 
     _write_current_task_md_from_state("iw-dashboard")
 
+    # CURRENT_TASK.md is machine-readable JSON (active-task only).
+    # Cross-task sections (All Tasks table, other-task findings) live in DASHBOARD.md.
     current_task_payload = json.loads(isolated_handoff["current_task_path"].read_text())
     assert current_task_payload["task_ref"] == "iw-dashboard"
-    md = isolated_handoff["dashboard_path"].read_text()
-    assert "## All Tasks" in md
-    _assert_dashboard_row(
-        md, "iw-dashboard", status="in_progress", open_findings=0, open_blockers=0, pending_actions=0, active=True
-    )
-    _assert_dashboard_row(
-        md, "other-task", status="active", open_findings=1, open_blockers=0, pending_actions=0, active=False
-    )
+    assert current_task_payload["active"]["status"] == "in_progress"
 
 
 def test_handoff_close_check_allows_no_active_task_when_configured(isolated_handoff: dict) -> None:
@@ -2054,9 +2045,8 @@ def test_record_decision_accepts_structured_slice_completion_rationale(isolated_
 # ---------------------------------------------------------------------------
 
 
-def test_generate_current_task_md_includes_related_findings(isolated_handoff: dict) -> None:
-    """Open findings from all other tasks always appear grouped by task_ref."""
-    # Set up the active task
+def test_generate_current_task_md_excludes_cross_task_findings(isolated_handoff: dict) -> None:
+    """CURRENT_TASK.md only shows the active task's own findings; cross-task data is in DASHBOARD.md."""
     _parse(
         mcp_server.set_handoff_state(
             task_ref="daemon-3",
@@ -2074,15 +2064,6 @@ def test_generate_current_task_md_includes_related_findings(isolated_handoff: di
             severity="low",
         )
     )
-
-    # Set up two related tasks with findings
-    _parse(
-        mcp_server.set_handoff_state(
-            task_ref="daemon-1",
-            objective="Related task 1",
-            status="in_progress",
-        )
-    )
     _parse(
         mcp_server.record_review_finding(
             task_ref="daemon-1",
@@ -2091,32 +2072,6 @@ def test_generate_current_task_md_includes_related_findings(isolated_handoff: di
             file_path="file_a.py",
             description="Daemon 1 finding",
             severity="medium",
-        )
-    )
-    _parse(
-        mcp_server.set_handoff_state(
-            task_ref="daemon-2",
-            objective="Related task 2",
-            status="in_progress",
-        )
-    )
-    _parse(
-        mcp_server.record_review_finding(
-            task_ref="daemon-2",
-            session="s1",
-            finding_id="D2-01",
-            file_path="file_b.py",
-            description="Daemon 2 finding",
-            severity="high",
-        )
-    )
-
-    # Switch back to daemon-3 as active
-    _parse(
-        mcp_server.set_handoff_state(
-            task_ref="daemon-3",
-            objective="Active task",
-            status="in_progress",
         )
     )
 
@@ -2129,11 +2084,9 @@ def test_generate_current_task_md_includes_related_findings(isolated_handoff: di
     assert payload["ok"] is True
     md = payload["markdown"]
     assert "## Open Review Findings" in md
-    assert "D3-01" in md
-    assert "### daemon-1" in md
-    assert "D1-01" in md
-    assert "### daemon-2" in md
-    assert "D2-01" in md
+    assert "D3-01" in md          # active task's own finding present
+    assert "D1-01" not in md      # cross-task finding absent from CURRENT_TASK.md
+    assert "### daemon-1" not in md
 
 
 def test_generate_current_task_md_related_excludes_active_task(isolated_handoff: dict) -> None:
@@ -2169,8 +2122,8 @@ def test_generate_current_task_md_related_excludes_active_task(isolated_handoff:
     assert "## Related Open Review Findings" not in md
 
 
-def test_generate_current_task_md_caps_cross_task_findings_per_task(isolated_handoff: dict) -> None:
-    """Cross-task finding groups honor max_cross_task_findings per related task."""
+def test_generate_current_task_md_excludes_all_cross_task_findings(isolated_handoff: dict) -> None:
+    """Cross-task findings never appear in CURRENT_TASK.md; they belong in DASHBOARD.md."""
     _parse(
         mcp_server.set_handoff_state(
             task_ref="daemon-active",
@@ -2199,16 +2152,17 @@ def test_generate_current_task_md_caps_cross_task_findings_per_task(isolated_han
         mcp_server.generate_current_task_md(
             task_ref="daemon-active",
             write_file=False,
-            max_cross_task_findings=1,
         )
     )
 
     assert payload["ok"] is True
     md = payload["markdown"]
-    assert "### daemon-a" in md
-    assert "### daemon-b" in md
-    assert ("DA-01" in md) ^ ("DA-02" in md)
-    assert ("DB-01" in md) ^ ("DB-02" in md)
+    assert "DA-01" not in md
+    assert "DA-02" not in md
+    assert "DB-01" not in md
+    assert "DB-02" not in md
+    assert "### daemon-a" not in md
+    assert "### daemon-b" not in md
 
 
 def test_generate_current_task_md_related_skips_resolved(isolated_handoff: dict) -> None:
@@ -3146,7 +3100,7 @@ def test_close_slice_requires_expected_revision_before_recording_decision(isolat
     assert [item["decision"] for item in state["decisions_recent"]] == []
 
 
-def test_close_slice_writes_dashboard_header_on_success(isolated_handoff: dict) -> None:
+def test_close_slice_writes_current_task_json_on_success(isolated_handoff: dict) -> None:
     _parse(
         mcp_server.set_handoff_state(
             task_ref="close-dashboard",
@@ -3189,16 +3143,11 @@ def test_close_slice_writes_dashboard_header_on_success(isolated_handoff: dict) 
     assert isinstance(result["task_revision"], int)
     assert result["task_revision"] >= 1
 
+    # CURRENT_TASK.md is machine-readable JSON (active-task only).
+    # Cross-task sections (All Tasks table, other-task findings) live in DASHBOARD.md.
     current_task_payload = json.loads(isolated_handoff["current_task_path"].read_text())
     assert current_task_payload["task_ref"] == "close-dashboard"
-    md = isolated_handoff["dashboard_path"].read_text()
-    assert "## All Tasks" in md
-    _assert_dashboard_row(
-        md, "close-dashboard", status="in_progress", open_findings=0, open_blockers=0, pending_actions=0, active=True
-    )
-    _assert_dashboard_row(
-        md, "close-dashboard-other", status="active", open_findings=1, open_blockers=0, pending_actions=0, active=False
-    )
+    assert current_task_payload["active"]["status"] == "in_progress"
 
 
 def test_close_slice_persists_changed_files_on_decision_row(isolated_handoff: dict) -> None:

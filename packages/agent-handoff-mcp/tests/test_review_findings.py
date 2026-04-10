@@ -451,8 +451,9 @@ def test_cross_task_finding_write_keeps_current_task_on_active_task(isolated_han
     md = isolated_handoff["dashboard_path"].read_text()
     assert "## Objective\nActive task should remain visible" in md
     assert "- task_ref: `E15-2`" in md
-    assert "### E14-2" in md
-    assert "CROSS-ACTIVE-001" in md
+    # Cross-task findings no longer appear in CURRENT_TASK.md; they belong in DASHBOARD.md.
+    assert "### E14-2" not in md
+    assert "CROSS-ACTIVE-001" not in md
 
 
 def test_render_dashboard_section_handles_zero_one_and_multiple_tasks() -> None:
@@ -551,36 +552,17 @@ def test_render_dashboard_section_truncates_long_task_refs() -> None:
     assert row[46:].split()[:4] == ["done", "0", "0", "0"]
 
 
-def test_render_current_task_md_prepends_dashboard_section() -> None:
+def test_render_current_task_md_active_task_only() -> None:
+    """CURRENT_TASK.md renders active-task sections only; no All Tasks table or cross-task data."""
     state: dict = {
         "task_ref": "E12-11",
         "active": {
             "task_ref": "E12-11",
-            "objective": "Render dashboard above detail section",
+            "objective": "Render active task only",
             "status": "in_progress",
             "revision": 3,
             "updated_at": "2026-03-30 21:15:00",
         },
-        "dashboard_tasks": [
-            {
-                "task_ref": "E12-11",
-                "status": "in_progress",
-                "last_activity": "2026-03-30 21:15:00",
-                "open_blockers": 0,
-                "pending_actions": 0,
-                "open_findings": 0,
-                "archived_at": None,
-            },
-            {
-                "task_ref": "E12-10",
-                "status": "archived",
-                "last_activity": "2026-03-30 20:59:00",
-                "open_blockers": 1,
-                "pending_actions": 2,
-                "open_findings": 3,
-                "archived_at": "2026-03-30 21:00:00",
-            },
-        ],
         "decisions_recent": [],
         "findings_open": [],
         "blockers_open": [],
@@ -593,26 +575,9 @@ def test_render_current_task_md_prepends_dashboard_section() -> None:
 
     md = _render_current_task_md(state)
 
-    assert "## All Tasks" in md
-    _assert_dashboard_row(
-        md,
-        "E12-11",
-        status="in_progress",
-        open_findings=0,
-        open_blockers=0,
-        pending_actions=0,
-        active=True,
-    )
-    _assert_dashboard_row(
-        md,
-        "E12-10",
-        status="archived",
-        open_findings=3,
-        open_blockers=1,
-        pending_actions=2,
-        active=False,
-    )
-    assert "## Objective\nRender dashboard above detail section" in md
+    assert "## All Tasks" not in md
+    assert "E12-10" not in md
+    assert "## Objective\nRender active task only" in md
     assert "- epic_ref: `E12`" in md
     assert "- task_ref: `E12-11`" in md
 

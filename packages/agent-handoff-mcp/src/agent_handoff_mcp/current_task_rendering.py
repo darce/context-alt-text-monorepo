@@ -371,24 +371,15 @@ def _build_current_task_state_from_snapshot(snapshot: TaskSnapshot) -> CurrentTa
 def _build_current_task_render_state(
     conn: sqlite3.Connection,
     task_ref: str,
-    *,
-    max_cross_task_findings: int = 5,
 ) -> CurrentTaskRenderState:
-    """Assemble the full CURRENT_TASK render state from the canonical task snapshot path."""
+    """Assemble the CURRENT_TASK render state from the canonical task snapshot path.
 
+    Contains only active-task data.  Cross-task sections (All Tasks table,
+    open/deferred findings from other tasks) are rendered by DASHBOARD.md via
+    dashboard_rendering.generate_dashboard_md().
+    """
     snapshot = _collect_task_snapshot(conn, task_ref)
     state = _build_current_task_state_from_snapshot(snapshot)
-    state["dashboard_tasks"] = _collect_dashboard_rows(conn)
-    state["related_findings_open"] = _collect_all_open_findings(
-        conn,
-        active_task_ref=task_ref,
-        max_per_task=max_cross_task_findings,
-    )
-    state["related_findings_deferred"] = _collect_all_deferred_findings(
-        conn,
-        active_task_ref=task_ref,
-        max_per_task=max_cross_task_findings,
-    )
     try:
         from .review_findings import (
             _collect_review_coverage,  # noqa: PLC0415 – late import to break circular
@@ -409,7 +400,6 @@ def _write_current_task_md_for_task(conn: sqlite3.Connection, task_ref: str) -> 
     state = _build_current_task_render_state(conn, task_ref)
     runtime = get_runtime_config()
     runtime.current_task_path.write_text(_render_current_task_json(state))
-    runtime.dashboard_path.write_text(_render_current_task_md(state))
 
 
 def _write_current_task_md_from_state(task_ref: str) -> None:
@@ -490,8 +480,6 @@ def _render_lanes_section(state: CurrentTaskRenderState) -> list[str]:
 
 
 def _render_findings_section(state: CurrentTaskRenderState) -> list[str]:
-    active_ref = state.get("task_ref")
-
     def _finding_line(finding: dict, show_status: bool = False) -> str:
         location = (
             f"{finding.get('file_path')}:{finding.get('line_start')}"
@@ -501,37 +489,20 @@ def _render_findings_section(state: CurrentTaskRenderState) -> list[str]:
         status_prefix = f"[{finding.get('status', '').upper()}] " if show_status else ""
         return f"- {status_prefix}[{finding.get('severity', '').upper()}] {finding.get('finding_id')}: {location} -- {finding.get('description')}"
 
-    # --- Open findings ---
+    # --- Open findings (active task only) ---
     lines: list[str] = ["", "## Open Review Findings"]
     active_findings = state.get("findings_open", [])
-    related_open = state.get("related_findings_open", {})
 
-    if not active_findings and not related_open:
+    if not active_findings:
         lines.append("- None")
     else:
-        use_subheadings = bool(related_open)
-        if active_findings:
-            if use_subheadings and active_ref:
-                lines.extend(["", f"### {active_ref}"])
-            lines.extend(_finding_line(f) for f in active_findings)
-        for ref, ref_findings in related_open.items():
-            lines.extend(["", f"### {ref}"])
-            lines.extend(_finding_line(f) for f in ref_findings)
+        lines.extend(_finding_line(f) for f in active_findings)
 
-    # --- Deferred / wontfix findings ---
+    # --- Deferred / wontfix findings (active task only) ---
     active_deferred = state.get("findings_deferred", [])
-    related_deferred = state.get("related_findings_deferred", {})
-
-    if active_deferred or related_deferred:
+    if active_deferred:
         lines.extend(["", "## Deferred / Won't Fix Findings"])
-        use_subheadings_d = bool(related_deferred)
-        if active_deferred:
-            if use_subheadings_d and active_ref:
-                lines.extend(["", f"### {active_ref}"])
-            lines.extend(_finding_line(f, show_status=True) for f in active_deferred)
-        for ref, ref_findings in related_deferred.items():
-            lines.extend(["", f"### {ref}"])
-            lines.extend(_finding_line(f, show_status=True) for f in ref_findings)
+        lines.extend(_finding_line(f, show_status=True) for f in active_deferred)
 
     return lines
 
@@ -647,7 +618,6 @@ def _render_current_task_md(state: CurrentTaskRenderState) -> str:
     _generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     decisions = state.get("decisions_recent", [])
     latest_decision = decisions[0] if decisions else None
-    dashboard_tasks = state.get("dashboard_tasks", [])
 
     def _task_identity_lines(task_ref: str | None) -> list[str]:
         identity_lines: list[str] = []
@@ -677,12 +647,8 @@ def _render_current_task_md(state: CurrentTaskRenderState) -> str:
         "# DASHBOARD",
         "",
         f"_DO NOT EDIT: generated from .task-state/handoff.db. Last generated: {_generated_at}_",
+        "",
     ]
-    if dashboard_tasks:
-        header_lines.extend(_render_dashboard_section(dashboard_tasks, state.get("task_ref")))
-        header_lines.extend(["", "---", ""])
-    else:
-        header_lines.append("")
 
     if not active:
         has_data = any(

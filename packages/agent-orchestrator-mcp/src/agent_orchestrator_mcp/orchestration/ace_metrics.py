@@ -30,6 +30,31 @@ from .handoff_read_shapes import hot_state_metric_kwargs
 
 _ACE_RULE_REFERENCE_RE = re.compile(r"\[(?:sr|rg)-\d{3}\]")
 
+# Inline ACE bullet parser — canonical version lives in scripts/ace/ace_reflect.py.
+# Inlined here to avoid a PYTHONPATH dependency on project-local scripts.
+_BULLET_RE = re.compile(
+    r"^\s*-\s+\[(?P<rule_id>(?:sr|rg)-\d{3})\]\s+"
+    r"helpful=(?P<helpful>\d+)\s+"
+    r"harmful=(?P<harmful>\d+)\s*::\s*(?P<text>.+)$"
+)
+
+
+def _parse_strategy_bullets(filepath: Path) -> dict[str, dict]:
+    """Parse ACE strategy bullets from an instruction file."""
+    results: dict[str, dict] = {}
+    if not filepath.exists():
+        return results
+    for line_number, line in enumerate(filepath.read_text(encoding="utf-8").splitlines(), start=1):
+        m = _BULLET_RE.match(line)
+        if m:
+            results[m.group("rule_id")] = {
+                "helpful": int(m.group("helpful")),
+                "harmful": int(m.group("harmful")),
+                "text": m.group("text").strip(),
+                "line_number": line_number,
+            }
+    return results
+
 
 # ---------------------------------------------------------------------------
 # JSONL log parsing
@@ -341,10 +366,7 @@ def _ace_process_health(task_ref: str, state_dir: Path, instruction_files: list[
         "backfill_needed": False,
     }
 
-    # Import at call time (late binding) per rg-014
-    from .ace_reflect import parse_strategy_bullets  # noqa: PLC0415
-
-    rules_defined = any(parse_strategy_bullets(path) for path in instruction_files if path.exists())
+    rules_defined = any(_parse_strategy_bullets(path) for path in instruction_files if path.exists())
     result["rules_defined"] = rules_defined
     result["data_available"] = rules_defined
     if not rules_defined:
@@ -1009,9 +1031,6 @@ def _contract_co_change_signal(workspace_root: Path, commit_limit: int = 20) -> 
 
 
 def _ace_documentation(instruction_files: list[Path]) -> dict:
-    # Import at call time (late binding) per rg-014
-    from .ace_reflect import parse_strategy_bullets  # noqa: PLC0415
-
     total_helpful = 0
     total_harmful = 0
     all_bullets: dict[str, dict] = {}
@@ -1020,7 +1039,7 @@ def _ace_documentation(instruction_files: list[Path]) -> dict:
     for fp in instruction_files:
         if fp.exists():
             total_lines += len(fp.read_text(encoding="utf-8").splitlines())
-            bullets = parse_strategy_bullets(fp)
+            bullets = _parse_strategy_bullets(fp)
             for rule_id, data in bullets.items():
                 if rule_id not in all_bullets:
                     all_bullets[rule_id] = data

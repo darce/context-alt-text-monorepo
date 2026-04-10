@@ -71,3 +71,16 @@ def test_health_pool_requires_auth(monkeypatch) -> None:
     resp = client.get("/recognition/health/pool")
 
     assert resp.status_code == 401
+
+
+def test_health_pool_returns_business_and_observability_stats(monkeypatch) -> None:
+    monkeypatch.setenv("RECOGNITION_AUTH_ENABLED", "0")
+    client = _make_client()
+
+    resp = client.get("/recognition/health/pool")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) == {"business", "observability"}
+    assert "total_capacity" in body["business"]
+    assert "total_capacity" in body["observability"]

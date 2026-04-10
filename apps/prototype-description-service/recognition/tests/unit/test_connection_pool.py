@@ -18,18 +18,29 @@ def test_pool_stats_returns_valid_metrics() -> None:
     """Pool stats should return all expected metrics."""
     stats = get_pool_stats()
 
-    assert "size" in stats
-    assert "overflow" in stats
-    assert "checked_out" in stats
-    assert "checked_in" in stats
-    assert "overflow_count" in stats
-    assert "total_capacity" in stats
-    assert "utilization_percent" in stats
-    assert 0 <= stats["utilization_percent"] <= 100
+    assert set(stats) == {"business", "observability"}
+    for pool_name in ("business", "observability"):
+        pool_stats = stats[pool_name]
+        assert "size" in pool_stats
+        assert "overflow" in pool_stats
+        assert "checked_out" in pool_stats
+        assert "checked_in" in pool_stats
+        assert "overflow_count" in pool_stats
+        assert "total_capacity" in pool_stats
+        assert "utilization_percent" in pool_stats
+        assert 0 <= pool_stats["utilization_percent"] <= 100
 
 
 def test_database_settings_use_higher_pool_defaults(monkeypatch) -> None:
-    for key in ("DB_POOL_SIZE", "DB_MAX_OVERFLOW", "DB_POOL_TIMEOUT", "DB_POOL_RECYCLE"):
+    for key in (
+        "DB_POOL_SIZE",
+        "DB_MAX_OVERFLOW",
+        "DB_POOL_TIMEOUT",
+        "DB_POOL_RECYCLE",
+        "DB_OBSERVABILITY_POOL_SIZE",
+        "DB_OBSERVABILITY_MAX_OVERFLOW",
+        "DB_OBSERVABILITY_POOL_TIMEOUT",
+    ):
         monkeypatch.delenv(key, raising=False)
 
     get_database_settings.cache_clear()
@@ -40,6 +51,9 @@ def test_database_settings_use_higher_pool_defaults(monkeypatch) -> None:
 
     assert settings.pool_size == 20
     assert settings.max_overflow == 10
+    assert settings.observability_pool_size == 2
+    assert settings.observability_max_overflow == 0
+    assert settings.observability_pool_timeout == 5
 
 
 @pytest.mark.asyncio

@@ -6,7 +6,7 @@
 > - **Author**: GPT-5.4
 > - **Project**: `agent-handoff-mcp`
 > - **Task ID**: `AHMCP-9`
-> - **Target Branch**: `feature/ahmcp-9-review-intake-fallback-docs`
+> - **Target Branch**: `feature/ahmcp-9`
 > - **Review Coverage Target**: 2
 > - **Expected Review Path**: planning-aware branch review focused on contract/doc accuracy and boundary clarity
 > - **Spec**: `packages/agent-handoff-mcp/docs/specs/agent-handoff-mcp-review-intake-handoff-fallback-spec.md`
@@ -27,6 +27,7 @@ The assessment and ADR now define the correct ownership boundary, but the surrou
 - The docs must preserve the preferred orchestrator packet path and present the handoff-only flow as a degraded fallback.
 - No guide, contract, README, or planning artifact may imply that handoff owns a compound `get_review_packet` surface.
 - Planning artifacts stay package-local under `packages/agent-handoff-mcp/docs/` rather than monorepo app task directories.
+- ADR-007 guardrail 5 originally said fallback docs should ship with the primitives. This task keeps the spec's deliberate Tier 2 follow-up split; the guardrail is treated as superseded by the approved spec/task decomposition for AHMCP-8 then AHMCP-9.
 
 ## Workflow Principles
 
@@ -79,11 +80,11 @@ Update the contract and guides after AHMCP-8 lands, then rewrite the assessment/
 
 | Surface | File | Change |
 | --- | --- | --- |
-| Handoff contract | `docs/agentic/contracts/agent-handoff-mcp.md` | Document `get_verified_tests`, `verified_test`, and the fallback sequence |
+| Handoff contract | `docs/agentic/contracts/agent-handoff-mcp.md` | Add fallback-sequence guidance section and fix the `search_handoff` error-cases list to include `verified_test` |
 | Branch review guide | `docs/agentic/rules/branch-review-guide.md` | Add `Handoff-only fallback` section under latest-slice review guidance |
 | Planning review guide | `docs/agentic/rules/planning-review-guide.md` | Add parallel `Handoff-only fallback` section |
 | Assessment | `packages/agent-handoff-mcp/docs/assessments/agent-handoff-mcp-review-intake-tooling-proposal.md` | Replace placeholder next-step lines with the real spec/task plan references |
-| ADR | `docs/adrs/ADR-007-review-intake-handoff-fallback-boundary.md` | Replace placeholder implementation-task reference with the created package-local task plans |
+| ADR | `docs/adrs/ADR-007-review-intake-handoff-fallback-boundary.md` | Keep the canonical ADR current and keep any legacy `docs/agentic/adrs/` path as a redirect only |
 
 ## Related Files
 
@@ -138,29 +139,33 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded ADR-007, the review-intake spec, and both MCP contracts before editing.
-- [ ] Confirmed AHMCP-8 shipped before documenting the new public tool and record type.
-- [ ] Preserved orchestrator ownership of the compound packet in every doc touchpoint.
+- [x] Loaded ADR-007, the review-intake spec, and both MCP contracts before editing.
+- [x] Confirmed AHMCP-8 shipped before documenting the new public tool and record type.
+- [x] Preserved orchestrator ownership of the compound packet in every doc touchpoint.
 
 ### Checklist for Slice 1: Contract and Planning Chain Alignment
 
-- [ ] Add the fallback-sequence guidance section to the handoff contract around the AHMCP-8-documented `get_verified_tests` and `verified_test` surfaces.
-- [ ] Verify the assessment next steps still point at the package-local artifact references.
-- [ ] Verify the ADR implementation-task references still point at the package-local task plans.
-- [ ] Capture grep-based proof for those references.
+- [x] Add the fallback-sequence guidance section to the handoff contract around the AHMCP-8-documented `get_verified_tests` and `verified_test` surfaces.
+- [x] Fix the `search_handoff` Error Cases list in the handoff contract so `verified_test` is listed as a valid record type.
+- [x] Verify the assessment next steps still point at the package-local artifact references.
+- [x] Verify the ADR implementation-task references still point at the package-local task plans.
+- [x] Keep `docs/adrs/ADR-007-review-intake-handoff-fallback-boundary.md` as the canonical ADR path and reduce any `docs/agentic/adrs/` copy to redirect-only status.
+- [x] Capture grep-based proof for those references.
 
 ### Checklist for Slice 2: Review Guide Fallback Adoption
 
-- [ ] Add a `Handoff-only fallback` section to the branch review guide.
-- [ ] Add the matching section to the planning review guide.
-- [ ] Confirm the packet-first path remains the preferred guidance.
-- [ ] Capture grep-based proof for the fallback wording.
+- [x] Add a `Handoff-only fallback` section to the branch review guide.
+- [x] Add the matching section to the planning review guide.
+- [x] Confirm the packet-first path remains the preferred guidance.
+- [x] Capture grep-based proof for the fallback wording.
 
 ## Review Readiness
 
-- [ ] No doc claims a second compound packet exists on handoff.
-- [ ] Packet-first and fallback guidance use the same tool names as the shipped contract.
-- [ ] Handoff decision records the contract/guide updates and the verification commands.
+- [x] No doc claims a second compound packet exists on handoff.
+- [x] Packet-first and fallback guidance use the same tool names as the shipped contract.
+- [x] Handoff decision records the contract/guide updates and the verification commands.
+- [x] All `AHMCP-9-BR-*` branch-review findings are fixed in the same feature branch before merge.
+- [x] Review coverage target met: one planning review plus one branch review recorded in handoff.
 
 ## Stretch Goals
 
@@ -168,6 +173,6 @@ Proof:
 
 ## Success Criteria
 
-- [ ] The planning chain from assessment -> ADR -> spec -> task plans resolves to concrete package-local artifacts.
-- [ ] The handoff contract and review guides all describe the same deterministic fallback sequence.
-- [ ] No shared doc routes this work into plugin or description-service task directories.
+- [x] The planning chain from assessment -> ADR -> spec -> task plans resolves to concrete package-local artifacts.
+- [x] The handoff contract and review guides all describe the same deterministic fallback sequence.
+- [x] No shared doc routes this work into plugin or description-service task directories.

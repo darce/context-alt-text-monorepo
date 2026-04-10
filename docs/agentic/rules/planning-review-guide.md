@@ -86,6 +86,17 @@ When the ask is "review the latest completed planning slice", prefer the MCP-bac
 
 Planning review is still a document-and-codebase review, but the packet-backed file set should define which planning surfaces belong to the latest completed slice.
 
+### Handoff-only Fallback
+
+When `agent-orchestrator-mcp` is not loaded, use this degraded handoff-only path instead of inferring a latest slice from chat or git archaeology:
+
+1. `load_session`
+2. `search_handoff(queries=["slice_complete"], record_types=["decision"], limit=1)`
+3. `get_verified_tests(task_ref=..., commit_sha=...)`
+4. `review_findings(review={"operation":"list","status":"open"})`
+
+Call this path out explicitly as fallback scope. Prefer `get_latest_slice_review_packet(review_kind="planning")` whenever orchestrator is available.
+
 ---
 
 ## Planning Review Checklist

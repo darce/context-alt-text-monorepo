@@ -529,12 +529,20 @@ context:
 task-start:
 	@./scripts/task-start.sh "$(TASK)" "$(OBJECTIVE)"
 
-# Run handoff_close_check, return root to main, remove the worktree, and
-# delete the merged feature branch in a single call. Run after the merge train
-# has landed the task on main.
-# Usage: make task-finish TASK=<task-id>
+# Run handoff_close_check, merge the feature branch (optional), return root
+# to main, remove the worktree, and delete the merged feature branch in a
+# single call.
+#
+# Without MERGE=1: expects main to already contain the work.
+# With    MERGE=1: stashes any uncommitted tracked changes on the root
+#                  worktree, merges feature/<task-lower> via --ff-only, pops
+#                  the stash, then runs the normal cleanup sequence.
+#
+# Usage:
+#   make task-finish TASK=<task-id>          # merge already done
+#   make task-finish TASK=<task-id> MERGE=1  # stash + merge + pop, then cleanup
 task-finish:
-	@./scripts/task-finish.sh "$(TASK)"
+	@./scripts/task-finish.sh "$(TASK)" $(if $(MERGE),--merge,)
 
 # Start the integrity-watcher daemon (AHMCP-19 / item I from the AHMCP-18
 # tech-debt assessment). Wraps fswatch (or inotifywait on Linux) over the

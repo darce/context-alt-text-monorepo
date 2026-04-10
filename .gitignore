@@ -51,7 +51,8 @@ apps/archived-wp-context-alt-text/**
 # uncomment the next line
 #/wp-content/themes
 
-#docs/literature
+# Reference library (PDFs, extracted notes, marketing — not project planning)
+literature/
 .DS_Store
 # .vscode/settings.json
 # .vscode/

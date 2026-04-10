@@ -48,7 +48,7 @@ The next honest step is still not code. It is to leave behind aligned planning a
 ## Current State Analysis
 
 - `packages/agent-handoff-mcp/docs/specs/agent-handoff-mcp-output-contract-v2-spec.md` now carries the ADR-backed OC-005 direction and implementation guardrails instead of leaving the design unresolved.
-- `docs/agentic/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md` now exists as the reviewed design artifact, so the remaining role of this task plan is to document the review-approved boundary between the ADR and the deferred implementation task.
+- `docs/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md` now exists as the reviewed design artifact, so the remaining role of this task plan is to document the review-approved boundary between the ADR and the deferred implementation task.
 - `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py` is the source of truth for current tool registrations, descriptions, and argument schema exposure.
 - Transport tests such as `test_stdio.py`, `test_http.py`, `test_cli.py`, and `test_adapters.py` already enumerate expectations about the live tool surface and profile counts; any rename or consolidation has to migrate those surfaces deliberately.
 - `docs/agentic/contracts/agent-handoff-mcp.md` documents the current surface and will need a same-slice update once consolidation is implemented, but not before the ADR chooses the direction.
@@ -58,7 +58,7 @@ The next honest step is still not code. It is to leave behind aligned planning a
 
 After this task:
 
-- a reviewed ADR exists at `docs/agentic/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md`
+- a reviewed ADR exists at `docs/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md`
 - the ADR selects one typed-dispatch model and rejects the weaker alternatives with rationale
 - the output-contract v2 spec is updated to replace unresolved OC-005 placeholders with the ADR-backed direction and implementation guardrails
 - this task plan remains as the review and approval wrapper for ADR-005 rather than pretending to be the implementation plan for the consolidation itself
@@ -67,7 +67,7 @@ After this task:
 ## Context Loading
 
 - Spec: `packages/agent-handoff-mcp/docs/specs/agent-handoff-mcp-output-contract-v2-spec.md`
-- Existing ADR draft: `docs/agentic/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md`
+- Existing ADR draft: `docs/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md`
 - Adjacent task plans:
   - `packages/agent-handoff-mcp/docs/tasks/AHMCP-1-parameterize-handoff-mcp-read-surfaces-task-plan.md`
   - `packages/agent-handoff-mcp/docs/tasks/AHMCP-2-bounded-current-task-rendering-and-mutation-output-task-plan.md`
@@ -98,7 +98,7 @@ Treat OC-005 as a bounded design task with three slices. First, inventory the cu
 
 | Surface | File | Change |
 | --- | --- | --- |
-| Existing ADR draft | `docs/agentic/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md` | review, revise, and finalize the draft design decision and chosen approach |
+| Existing ADR draft | `docs/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md` | review, revise, and finalize the draft design decision and chosen approach |
 | Output-contract spec | `packages/agent-handoff-mcp/docs/specs/agent-handoff-mcp-output-contract-v2-spec.md` | replace unresolved OC-005 placeholders with ADR-backed guidance |
 | Live tool inventory anchor | `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py` | verification-only source for current tool registrations and schemas |
 | CLI inventory anchor | `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py` | verification-only source for CLI command exposure |
@@ -114,7 +114,7 @@ Treat OC-005 as a bounded design task with three slices. First, inventory the cu
 | --- | --- |
 | `packages/agent-handoff-mcp/docs/tasks/AHMCP-1-parameterize-handoff-mcp-read-surfaces-task-plan.md` | recent related plan that already reduced read-surface proliferation without collapsing explicit writes |
 | `packages/agent-handoff-mcp/docs/assessments/agent-handoff-mcp-output-state-keeping-report.md` | original assessment that framed tool-surface reduction as secondary to output-state correctness |
-| `docs/agentic/adrs/ADR-004-sync-completion-and-retention-hardening-rationale.md` | style and scope reference for a repo ADR |
+| `docs/adrs/ADR-004-sync-completion-and-retention-hardening-rationale.md` | style and scope reference for a repo ADR |
 
 ## Verification Strategy
 
@@ -168,7 +168,7 @@ Proof:
 
 Changes:
 
-- Finalize the existing draft at `docs/agentic/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md`
+- Finalize the existing draft at `docs/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md`
 - Update OC-005 in the output-contract v2 spec to reference the ADR and chosen implementation direction
 - Capture any follow-on implementation preconditions, including downstream doc/test update scope and any staged rollout requirements
 

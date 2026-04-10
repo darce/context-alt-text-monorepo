@@ -13,7 +13,7 @@
 | 5        | `apps/prototype-description-service/roster/`                                      | Curation sync (person/cluster-person operations)    |
 | 6        | `docs/agentic/contracts/recognition-clustering.md`                                | API contract specification                          |
 | 7        | `docs/agentic/contracts/curation-sync-api.md`                                     | Outbox replay contract                              |
-| 8        | `docs/agentic/adrs/ADR-001-face-identity-nomenclature.md`                         | Face* (infra) vs *Identity (domain) naming boundary |
+| 8        | `docs/adrs/ADR-001-face-identity-nomenclature.md`                         | Face* (infra) vs *Identity (domain) naming boundary |
 
 ## Architecture Layers
 

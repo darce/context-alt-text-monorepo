@@ -208,6 +208,7 @@ Notes:
 - When local projection is missing and the backend queue is also unavailable, the plugin schedules a bootstrap sync and returns an empty envelope with `data_source: "unavailable"` and `projection_status: "bootstrapping"`.
 - `singleton_count` reports the number of single-identity clusters excluded from the naming queue, but only on local-projection / unavailable envelopes where the plugin can source that value honestly.
 - `projection_status` is `available` when local projection is readable, `bootstrapping` while the controller has scheduled bootstrap sync, and `unavailable` if a future controller path needs to surface a non-bootstrap projection failure. It is omitted on `backend_proxy` envelopes because those responses did not come from the projection.
+- WordPress and TypeScript consumers now treat `clusters`, `singleton_count`, `data_source`, and `projection_status` as canonical envelope metadata. Missing or malformed values are contract errors, not fields to infer locally.
 - Clusters with `identity_count < 2`, `is_user_confirmed = true`, or `dismissed_at` set are excluded.
 
 ## GET /recognition/clusters/labels
@@ -282,6 +283,8 @@ Notes:
 
 - When the proxied backend returns `503 database_unavailable`, the WordPress proxy responds with HTTP `503`, `{ "error": "backend_overloaded", "retry_after": <seconds> }`, and forwards `Retry-After`.
 - `data_source: "unavailable"` remains the degraded HTTP `200` response only for non-503 upstream failures (for example other `5xx` or transport errors).
+- Successful backend-proxy responses must resolve to one canonical envelope: either an upstream `identities_by_media` object or a bare array of identity rows that each include `media_id`. Any other `200` payload shape is rejected with `invalid_media_identities_payload` and HTTP `502`.
+- TypeScript consumers now require `data_source` to be present on successful envelopes instead of defaulting missing metadata locally.
 
 ## POST /recognition/clusters/reassign
 
@@ -486,6 +489,7 @@ Notes:
 - For non-503 upstream failures, the controller still returns `{ "suggestions": [], "total": 0, "limit": <requested>, "offset": <requested>, "data_source": "unavailable" }` with HTTP 200.
 - TypeScript type: `PendingSuggestion` in `js/admin/api/recognition/types/suggestion.ts`.
 - Field names use `suggested_cluster_id` (not `cluster_id`), `representative_similarity` (not `rep_similarity`), and `*_thumb_url` (not `*_thumbnail_url`).
+- TypeScript consumers treat `suggestions`, `total`, `limit`, `offset`, and `data_source` as canonical envelope metadata. Missing or malformed values now fail explicitly instead of falling back to request defaults or list length.
 
 ## GET /recognition/suggestions/merge
 
@@ -529,6 +533,7 @@ Notes:
 - `total` reports the number of items in the current page only, derived from the backend array length. The backend does not provide a global total count, so consumers must not treat `total` as server-side pagination metadata.
 - When the proxied backend returns `503 database_unavailable`, the WordPress proxy responds with HTTP `503`, `{ "error": "backend_overloaded", "retry_after": <seconds> }`, and forwards `Retry-After`.
 - For non-503 upstream failures, the controller still returns `{ "suggestions": [], "total": 0, "limit": <requested>, "offset": <requested>, "data_source": "unavailable" }` with HTTP 200.
+- TypeScript consumers treat `suggestions`, `total`, `limit`, `offset`, and `data_source` as canonical envelope metadata. Missing or malformed values now fail explicitly instead of falling back to request defaults or list length.
 
 ## GET /recognition/suggestions/name
 
@@ -570,6 +575,7 @@ Notes:
 - `representatives` is optional; current UI types allow it but the proxy may omit it when the backend response does not supply representative context.
 - When the proxied backend returns `503 database_unavailable`, the WordPress proxy responds with HTTP `503`, `{ "error": "backend_overloaded", "retry_after": <seconds> }`, and forwards `Retry-After`.
 - For non-503 upstream failures, the controller still returns `{ "suggestions": [], "total": 0, "limit": <requested>, "offset": <requested>, "data_source": "unavailable" }` with HTTP 200.
+- TypeScript consumers treat `suggestions`, `total`, `limit`, `offset`, and `data_source` as canonical envelope metadata. Missing or malformed values now fail explicitly instead of falling back to request defaults.
 
 ## POST /recognition/suggestions/{suggestion_id}/accept
 

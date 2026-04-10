@@ -134,7 +134,7 @@ field names, broken validation commands, and under-specified consolidation model
 
 **Artifact:** `ADR-NNN-[kebab-case-topic].md`
 **Template:** [ADR.template.md](../templates/ADR.template.md)
-**Location:** `docs/agentic/adrs/`
+**Location:** `docs/adrs/`
 
 ### When required
 
@@ -339,7 +339,7 @@ These artifacts from the output-contract-v2 work demonstrate the pipeline:
 |-------|----------|------|
 | Assessment | Output state-keeping report | `packages/agent-handoff-mcp/docs/assessments/agent-handoff-mcp-output-state-keeping-report.md` |
 | Spec | Output contract v2 spec | `packages/agent-handoff-mcp/docs/specs/agent-handoff-mcp-output-contract-v2-spec.md` |
-| ADR | Typed tool surface consolidation | `docs/agentic/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md` |
+| ADR | Typed tool surface consolidation | `docs/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md` |
 | Task plan (Tier 1) | Bounded rendering + mutation output | `packages/agent-handoff-mcp/docs/tasks/AHMCP-2-bounded-current-task-rendering-and-mutation-output-task-plan.md` |
 | Task plan (Tier 2) | Response envelope rollout | `packages/agent-handoff-mcp/docs/tasks/AHMCP-3-response-envelope-and-output-contract-v2-rollout-task-plan.md` |
 | Task plan (design) | Tool surface consolidation ADR | `packages/agent-handoff-mcp/docs/tasks/AHMCP-4-typed-tool-surface-consolidation-adr-task-plan.md` |

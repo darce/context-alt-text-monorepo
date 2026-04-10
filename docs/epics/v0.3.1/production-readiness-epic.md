@@ -1,5 +1,7 @@
 # Production Readiness (v0.2.0)
 
+> **Epic Short ID**: E15
+>
 > **Note (Apr 2026)**: Phase 1 is complete. Remaining Phases 2-6 are carried forward into [E15. Public Demo Launch Readiness](../v0.4.0/public-demo-launch-readiness-epic.md). This document is retained as the historical audit trail and source of requirements.
 
 ## Objective

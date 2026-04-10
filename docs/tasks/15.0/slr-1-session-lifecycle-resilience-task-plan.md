@@ -59,7 +59,7 @@ The HTTP dependency layer creates sessions directly from `async_session_factory`
 - Rules: `docs/agentic/rules/testing-python.md`
 - Rules: `docs/agentic/rules/planning-review-guide.md`
 - Spec: `docs/specs/session-lifecycle-resilience-spec.md`
-- Assessment: `docs/assessment/infailed-sql-transaction-investigation-2026-04-09.md`
+- Assessment: `docs/assessments/infailed-sql-transaction-investigation-2026-04-09.md`
 - Handoff/MCP state: `SESSION-LIFECYCLE-RESILIENCE`, including `SLR-PLAN-01`
 - External docs via `ctx7` only if: SQLAlchemy async engine DSN/query-parameter behavior needs confirmation for the statement-cache toggle
 
@@ -96,7 +96,7 @@ Flatten the three HTTP session dependencies onto direct `async_session_factory()
 | `apps/prototype-description-service/recognition/interface_adapters/http/deps/services.py` | Uses `get_observability_session`; must stay aligned with the flattened dependency behavior |
 | `apps/prototype-description-service/api/main.py` | Root health aggregation depends on recognition health behavior staying honest under degraded DB access |
 | `docs/roadmaps/roadmap-pg18-upgrade.md` | Phase 0 names the application-level timeout work this task implements; server-level `transaction_timeout` remains a separate infrastructure item |
-| `docs/agentic/adrs/ADR-006-session-circuit-breaker-and-pool-bulkheading.md` | Follow-on ADR for Tier 3 resilience work intentionally excluded from this task |
+| `docs/adrs/ADR-006-session-circuit-breaker-and-pool-bulkheading.md` | Follow-on ADR for Tier 3 resilience work intentionally excluded from this task |
 
 ## Verification Strategy
 

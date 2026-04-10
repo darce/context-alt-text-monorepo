@@ -9,6 +9,7 @@
 > - **Project**: prototype-description-service
 > - **Task ID**: SLR-4
 > - **Target Branch**: `feature/slr-4-observability-pool-bulkhead`
+> - **Status**: Completed; merged to `main` on 2026-04-10
 > - **Review Coverage Target**: 2
 
 ---
@@ -62,7 +63,7 @@ Observability traffic uses its own small engine/pool, business traffic uses the 
 - Rules: `docs/agentic/rules/backend-python-guidelines.md`
 - Rules: `docs/agentic/rules/testing-python.md`
 - Spec: `docs/specs/session-lifecycle-resilience-spec.md`
-- ADR: `docs/agentic/adrs/ADR-006-session-circuit-breaker-and-pool-bulkheading.md`
+- ADR: `docs/adrs/ADR-006-session-circuit-breaker-and-pool-bulkheading.md`
 - Prior task: `docs/tasks/15.0/slr-3-session-dependency-circuit-breaker-task-plan.md`
 
 ## Contract and Boundary Impact
@@ -97,7 +98,7 @@ Add a second async engine and sessionmaker in `db/session.py`, backed by environ
 | ---- | ---- |
 | `apps/prototype-description-service/recognition/interface_adapters/http/deps/session.py` | SLR-3 may already add breaker semantics that health must keep consistent |
 | `apps/prototype-description-service/recognition/interface_adapters/http/deps/services.py` | observability repositories and optional-session consumers must not silently regress |
-| `docs/agentic/adrs/ADR-006-session-circuit-breaker-and-pool-bulkheading.md` | source of truth for bulkhead ownership and default pool sizing |
+| `docs/adrs/ADR-006-session-circuit-breaker-and-pool-bulkheading.md` | source of truth for bulkhead ownership and default pool sizing |
 
 ## Verification Strategy
 
@@ -156,33 +157,33 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded the spec, ADR, and prior SLR task outcomes before editing.
-- [ ] Confirmed the bulkhead is a separate engine/pool, not a logical partition.
-- [ ] Scoped any breaker-state ownership changes out of this task unless strictly required for compatibility.
+- [x] Loaded the spec, ADR, and prior SLR task outcomes before editing.
+- [x] Confirmed the bulkhead is a separate engine/pool, not a logical partition.
+- [x] Scoped any breaker-state ownership changes out of this task unless strictly required for compatibility.
 
 ### Checklist for Slice 1: Observability Pool Settings and Engine Topology
 
-- [ ] Add observability pool settings.
-- [ ] Add a dedicated observability engine/sessionmaker.
-- [ ] Extend settings and pool unit tests.
+- [x] Add observability pool settings.
+- [x] Add a dedicated observability engine/sessionmaker.
+- [x] Extend settings and pool unit tests.
 
 ### Checklist for Slice 2: Observability Dependency and Service Wiring
 
-- [ ] Switch observability dependency wiring to the dedicated factory.
-- [ ] Keep service/repository wiring aligned with the split source.
-- [ ] Prove degraded observability behavior with targeted tests.
+- [x] Switch observability dependency wiring to the dedicated factory.
+- [x] Keep service/repository wiring aligned with the split source.
+- [x] Prove degraded observability behavior with targeted tests.
 
 ### Checklist for Slice 3: Dual-Pool Reporting and Regression Proof
 
-- [ ] Update pool stats and any dependent payloads to show both pools clearly.
-- [ ] Preserve whole recognition-package behavior.
-- [ ] Record targeted and full-suite verification evidence in handoff.
+- [x] Update pool stats and any dependent payloads to show both pools clearly.
+- [x] Preserve whole recognition-package behavior.
+- [x] Record targeted and full-suite verification evidence in handoff.
 
 ## Review Readiness
 
-- [ ] The bulkhead uses a real separate engine/pool.
-- [ ] Pool stats and degraded behavior are explicit in tests.
-- [ ] Handoff records fresh verification on the branch commit.
+- [x] The bulkhead uses a real separate engine/pool.
+- [x] Pool stats and degraded behavior are explicit in tests.
+- [x] Handoff records fresh verification on the branch commit.
 
 ## Stretch Goals
 
@@ -190,6 +191,6 @@ Proof:
 
 ## Success Criteria
 
-- [ ] `get_observability_session()` no longer uses the business session factory.
-- [ ] Business and observability pools are independently configurable.
-- [ ] Pool-inspection or health surfaces can distinguish business-pool and observability-pool state.
+- [x] `get_observability_session()` no longer uses the business session factory.
+- [x] Business and observability pools are independently configurable.
+- [x] Pool-inspection or health surfaces can distinguish business-pool and observability-pool state.

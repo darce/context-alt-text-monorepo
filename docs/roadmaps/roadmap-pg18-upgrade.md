@@ -76,6 +76,36 @@ No schema-breaking changes. Migration steps:
 
 ## Phased Delivery
 
+### Phase 0: PG17 Safety Parameter Configuration
+
+**Goal**: Configure transaction safety parameters already available in the current PG17 deployment. These are not PG18 features — they are PG9.6+ and PG17 capabilities that are currently unconfigured and directly mitigate the `InFailedSQLTransactionError` cascading failure documented in [the session lifecycle assessment](../assessment/infailed-sql-transaction-investigation-2026-04-09.md).
+
+**Motivation**: The session lifecycle assessment found that no `statement_timeout`, `idle_in_transaction_session_timeout`, or `transaction_timeout` is configured anywhere in the application or PostgreSQL server. A connection in a failed transaction state can sit idle indefinitely, poisoning the connection pool. These server-side defenses bound the damage automatically.
+
+Deliverables:
+
+- Configure `statement_timeout` at the session level via `SET LOCAL` in the session dependency (recommended: `10s` for prototype).
+- Configure `idle_in_transaction_session_timeout` at the session level via `SET LOCAL` (recommended: `30s`). Available since PG9.6.
+- Configure `transaction_timeout` at the PostgreSQL server level in `postgresql.conf` or Docker entrypoint (recommended: `60s`). Available since PG17. This parameter bounds total transaction duration including application processing time between SQL commands; `SET LOCAL` is not sufficient because the timeout applies to the transaction that sets it.
+- Make values configurable via environment variables (`DB_STATEMENT_TIMEOUT`, `DB_IDLE_IN_TXN_TIMEOUT`, `DB_TRANSACTION_TIMEOUT`) with sensible defaults.
+- Guard timeout configuration with `is_postgres()` so SQLite test sessions skip it.
+
+Exit criteria:
+
+- `SHOW statement_timeout` returns a non-zero value within an active session.
+- `SHOW idle_in_transaction_session_timeout` returns a non-zero value within an active session.
+- `SHOW transaction_timeout` returns a non-zero value at the server level.
+- A deliberately stalled transaction is terminated by PostgreSQL after the configured timeout (verifiable via integration test).
+- Existing test suite passes (SQLite sessions unaffected).
+
+Code anchors:
+
+| Layer | File | Note |
+|---|---|---|
+| DB | `apps/prototype-description-service/recognition/interface_adapters/http/deps/session.py` | `SET LOCAL` after probe succeeds |
+| DB | `apps/prototype-description-service/db/settings.py` | New timeout settings with env-var defaults |
+| Infra | `apps/prototype-description-service/docker-compose.db.yml` | Server-level `transaction_timeout` in PG config |
+
 ### Phase 1: Compatibility Verification & Upgrade
 
 **Goal**: Upgrade the development database from PG17 to PG18 with zero data loss and passing test suite.
@@ -213,6 +243,7 @@ Exit criteria:
 
 ## Success Metrics
 
+- Transaction safety parameters configured — **server-side defense** against `InFailedSQLTransactionError` cascading failure class (Phase 0, PG17).
 - `uuid-ossp` extension eliminated — **1 fewer C extension** to maintain across upgrades.
 - `is_sqlite()` branching removed — estimated **~40 LOC** removed from `tenant_context.py` and `dialect.py`.
 - Scan-job claim query reduced from **2 round-trips to 1** via `RETURNING OLD/NEW`.
@@ -225,6 +256,16 @@ Exit criteria:
 ---
 
 # Consolidated Checklist
+
+## Phase 0: PG17 Safety Parameter Configuration
+
+- [ ] Add `statement_timeout` to session dependency via `SET LOCAL` (default: `10s`)
+- [ ] Add `idle_in_transaction_session_timeout` to session dependency via `SET LOCAL` (default: `30s`)
+- [ ] Add `transaction_timeout` to PostgreSQL server config (default: `60s`)
+- [ ] Add env-var overrides (`DB_STATEMENT_TIMEOUT`, `DB_IDLE_IN_TXN_TIMEOUT`, `DB_TRANSACTION_TIMEOUT`)
+- [ ] Guard timeout configuration with `is_postgres()` for SQLite test sessions
+- [ ] Verify with integration test: deliberately stalled transaction is terminated after timeout
+- [ ] Existing test suite passes
 
 ## Phase 1: Compatibility Verification & Upgrade
 
@@ -397,8 +438,91 @@ Exit criteria:
 
 **Affected code**: `scan_queue_repository.py` (claim CTE), PostgreSQL configuration.
 
+---
+
+### D9: PostgREST for Read-Path Backend Simplification
+
+- [ ] Evaluate PostgREST compatibility with existing RLS policies and `SET LOCAL app.current_tenant` pattern
+- [ ] Identify read-only endpoints that can be served directly from PostgreSQL views via PostgREST
+- [ ] Prototype a single read endpoint (e.g., `GET /clusters`) via PostgREST and compare with Python/SQLAlchemy equivalent
+- [ ] Evaluate JWT-to-PostgreSQL-role mapping for PostgREST auth integration with existing API-key mechanism
+- [ ] Benchmark read-path latency: PostgREST direct vs. Python/SQLAlchemy/asyncpg
+
+**What PostgREST is**: A standalone Haskell server that auto-generates a RESTful API from PostgreSQL schema (tables, views, stored functions). It uses PostgreSQL's own RLS for row-level security, manages its own connection pool with proper transaction boundaries, and authenticates via JWT claims mapped to PostgreSQL roles.
+
+**What it would replace**: For read-path endpoints, PostgREST would eliminate the entire Python session lifecycle layer (`db/session.py`, `deps/session.py`, `db/tenant_context.py`) — the exact surface that produced the `InFailedSQLTransactionError` cascading failure documented in the [session lifecycle assessment](../assessment/infailed-sql-transaction-investigation-2026-04-09.md). PostgREST does not use an ORM; it issues SQL directly against views and functions, with transaction boundaries managed by PostgreSQL itself.
+
+**Why PG18 makes PostgREST more attractive:**
+
+| PG18 Feature | PostgREST Benefit |
+|---|---|
+| `--no-policies` pg_dump | Test/CI schema generation for PostgREST-served views without RLS complexity |
+| AFTER trigger role semantics | PostgREST-initiated DML through writable views fires triggers under the correct tenant role |
+| UUIDv7 | Time-ordered PKs enable efficient cursor-based pagination in PostgREST without `ORDER BY created_at` |
+| Virtual generated columns | Computed fields (e.g., cluster staleness, identity counts) are exposed by PostgREST automatically without application code |
+| Skip scan | Multi-column indexes on `(tenant_id, ...)` benefit PostgREST reads that filter on non-leading columns |
+| RETURNING OLD/NEW | Writable PostgREST endpoints (if adopted) can return pre/post state in a single round-trip |
+
+**Candidate read-path endpoints for PostgREST:**
+
+| Current Python Endpoint | PostgREST Equivalent | Complexity |
+|---|---|---|
+| `GET /recognition/clusters` | PostgreSQL view `v_clusters` with RLS | Low — direct table/view read |
+| `GET /recognition/identities` | PostgreSQL view `v_identities` with joins | Low — view with identity_members join |
+| `GET /recognition/jobs/{id}` | PostgreSQL view `v_scan_jobs` | Low — single-row lookup |
+| `GET /recognition/clusters/{id}/members` | PostgreSQL view `v_cluster_members` | Low — filtered view |
+| `GET /recognition/tenants/{id}` | Direct table read with RLS | Trivial |
+
+**Endpoints that CANNOT move to PostgREST:**
+
+| Python Endpoint | Reason |
+|---|---|
+| `POST /recognition/analyze` | Complex business logic: face recognition, embedding generation, scan job creation, file handling |
+| `POST /recognition/scan` | Background task scheduling, worker dispatch |
+| `POST /recognition/clusters/refresh` | Materialized view refresh orchestration |
+| `POST /recognition/identities/merge` | Multi-step clustering mutation with constraint validation |
+
+**Cost/benefit assessment:**
+
+Benefits:
+- **Eliminates session lifecycle bugs on read paths.** The `InFailedSQLTransactionError` bug class is structurally impossible in PostgREST because it manages its own connection pool with single-owner transaction boundaries.
+- **Reduces Python backend feature surface.** ~5 read controllers, their dependencies, and their test infrastructure can be replaced by PostgreSQL views + PostgREST configuration.
+- **Reduces infrastructure complexity long-term.** PostgREST serves read traffic without Python process overhead (no asyncio event loop, no SQLAlchemy ORM, no greenlet bridge for async). Read scaling becomes a PostgreSQL + PostgREST scaling problem, separate from the Python compute service.
+- **Performance.** PostgREST issues SQL directly without ORM overhead. For simple reads, latency is bounded by PostgreSQL query execution, not by Python/asyncpg/SQLAlchemy layers.
+- **PG18 synergy.** Multiple PG18 features (virtual generated columns, skip scan, UUIDv7 pagination, trigger role semantics) make PostgREST-served views richer without application code changes.
+
+Costs:
+- **Split architecture.** The API surface would be served by two backends: PostgREST for reads, Python for writes. The WordPress plugin must route requests to the correct backend (or a reverse proxy/API gateway must route based on method + path).
+- **Auth integration.** PostgREST uses JWT; the current backend uses API-key hash lookup. A JWT bridge or shared auth layer is required. PG18's native OAuth support (D1) could simplify this but is itself deferred.
+- **Two API conventions.** PostgREST uses its own URL query syntax (e.g., `?tenant_id=eq.{uuid}&select=id,name`) which differs from the current REST conventions. The frontend would need adapter code or the reverse proxy would need to translate.
+- **Operational overhead.** A new service (PostgREST binary + config) must be deployed, monitored, and version-managed alongside the Python service.
+- **View maintenance.** PostgreSQL views must be created and maintained (via Alembic migrations or separate DDL) to serve the read endpoints. Schema changes require updating both the views and any PostgREST configuration.
+
+**Rationale for deferral**: The session lifecycle assessment's P0 fix (flatten session lifecycle to single-owner pattern) resolves the `InFailedSQLTransactionError` root cause in ~100 LOC without architectural upheaval. The prototype has no production users and no read-traffic scaling pressure. PostgREST adoption is a significant architecture change that should be evaluated after: (a) the session lifecycle fix is verified, (b) read traffic patterns are understood from real usage, and (c) PG18 is deployed (to benefit from the synergies listed above).
+
+**When to revisit**: When the prototype transitions to production use and read traffic dominates write traffic, OR when the Python session lifecycle continues to produce connection-management bugs despite the P0 fix, indicating that the ORM layer itself is a structural liability.
+
+**Affected code**: All files in `recognition/interface_adapters/http/routers/` (read endpoints), `recognition/interface_adapters/http/deps/session.py` (read-path session management), `db/models/` (view definitions), `docker-compose.db.yml` (PostgREST service), `recognition/config/security.py` (JWT auth bridge).
+
+---
+
+### D10: PostgreSQL Logical Replication for Read/Write Pool Separation
+
+- [ ] Evaluate `CREATE PUBLICATION` / `CREATE SUBSCRIPTION` for streaming read replicas
+- [ ] Configure PostgREST (if adopted, see D9) to connect to read replica
+- [ ] Evaluate `synchronous_commit = off` for write-heavy scan-job paths
+
+**PG18 feature**: Logical replication improvements (subscription failover, improved slot management).
+
+**Rationale for deferral**: The current architecture uses a single PostgreSQL instance. Read/write separation via logical replication only becomes valuable when read traffic exceeds what a single instance can serve, or when read availability must be isolated from write-path failures. Neither condition exists for the prototype.
+
+**When to revisit**: When the PostgREST evaluation (D9) is underway and read-path scaling is a concrete concern, or when write-heavy operations (batch clustering, MV refresh) need to be isolated from read latency.
+
+**Affected code**: `docker-compose.db.yml` (replica instance), `db/settings.py` (read-replica DSN), PostgREST configuration (if D9 is adopted).
+
 ## Success Criteria
 
+- [ ] PG17 safety parameters (`statement_timeout`, `idle_in_transaction_session_timeout`, `transaction_timeout`) are configured and verified (Phase 0).
 - [ ] All services run on PostgreSQL 18 with pgvector in development and CI.
 - [ ] `uuid-ossp` extension is fully removed.
 - [ ] Test suite runs against PG18 without SQLite RLS workarounds.

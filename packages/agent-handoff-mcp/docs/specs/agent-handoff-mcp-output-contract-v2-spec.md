@@ -575,7 +575,7 @@ OC-004 should land after Tier 1 so the envelope doesn't need to be updated when 
 
 Design task: `packages/agent-handoff-mcp/docs/tasks/AHMCP-4-typed-tool-surface-consolidation-adr-task-plan.md`
 
-ADR: `docs/agentic/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md`
+ADR: `docs/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md`
 
 ```
 OC-005  Tool surface consolidation                        ADR-005 chooses hybrid domain-tool consolidation

@@ -34,6 +34,7 @@ ADR-006 resolves the open architecture questions and says the breaker belongs in
 - Breaker state must be deterministic and testable with fake clocks or explicit dependency injection.
 - No third-party breaker library is introduced; use a local implementation.
 - This task does not split the observability engine/pool yet; that belongs to SLR-4.
+- While the business and observability paths still share one pool, one breaker policy governs all three HTTP session dependencies.
 
 ## Workflow Principles
 
@@ -63,42 +64,42 @@ Repeated DB probe failures transition the request dependency into open-breaker f
 - Rules: `docs/agentic/rules/backend-python-guidelines.md`
 - Rules: `docs/agentic/rules/testing-python.md`
 - Spec: `docs/specs/session-lifecycle-resilience-spec.md`
-- ADR: `docs/agentic/adrs/ADR-006-session-circuit-breaker-and-pool-bulkheading.md`
+- ADR: `docs/adrs/ADR-006-session-circuit-breaker-and-pool-bulkheading.md`
 - Prior task: `docs/tasks/15.0/slr-1-session-lifecycle-resilience-task-plan.md`
 
 ## Contract and Boundary Impact
 
-| Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
-| -------- | ----- | ---------------- | --------------- | --------------------- | ------------ |
-| Session dependency resilience | Backend | `get_optional_session()` probes directly on each request | Add breaker-aware fast-fail state before the probe path | Yes — dependency signatures stay stable | targeted API/unit tests |
-| App lifecycle state | Backend | no breaker state on app startup | initialize/reset breaker state on app construction | No | app wiring tests |
-| Health semantics | Backend | degraded DB vs connected only | distinguish breaker-open degradation in health reporting | Yes — preserve non-5xx degraded behavior | health tests |
+| Boundary                      | Owner   | Current Contract                                         | Expected Change                                          | Compatibility Needed?                    | Verification            |
+| ----------------------------- | ------- | -------------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------- | ----------------------- |
+| Session dependency resilience | Backend | `get_optional_session()` probes directly on each request | Add breaker-aware fast-fail state before the probe path  | Yes — dependency signatures stay stable  | targeted API/unit tests |
+| App lifecycle state           | Backend | no breaker state on app startup                          | initialize/reset breaker state on app construction       | No                                       | app wiring tests        |
+| Health semantics              | Backend | degraded DB vs connected only                            | distinguish breaker-open degradation in health reporting | Yes — preserve non-5xx degraded behavior | health tests            |
 
 ## Proposed Solution
 
-Implement a small breaker module with explicit clock injection and state transitions, initialize it on FastAPI `app.state`, and teach the session dependency layer to consult it before probing. Probe failures record breaker failures; successful half-open probes close the breaker. Health surfaces should report breaker-open state without attempting the full request-path DB probe repeatedly.
+Implement a small breaker module with explicit clock injection and state transitions, initialize it on FastAPI `app.state`, and teach the session dependency layer to consult it before probing. Probe failures record breaker failures; successful half-open probes close the breaker. While SLR-4 has not yet split the observability pool, the breaker governs `get_session`, `get_optional_session`, and `get_observability_session` consistently: `get_session` raises a retryable 503 when the breaker is open, and the optional/observability dependencies yield `None` without probing. Health surfaces should report breaker-open state without attempting the full request-path DB probe repeatedly.
 
 ## Files and Surfaces to Change
 
-| Surface | File | Change |
-| ------- | ---- | ------ |
-| Breaker implementation | `apps/prototype-description-service/recognition/interface_adapters/http/deps/circuit_breaker.py` | New local breaker state machine and state container |
-| Session dependency | `apps/prototype-description-service/recognition/interface_adapters/http/deps/session.py` | Integrate breaker checks, failure recording, and half-open success reset |
-| App wiring | `apps/prototype-description-service/api/main.py` | Initialize breaker state on app startup / factory construction |
-| Settings | `apps/prototype-description-service/db/settings.py` | Add `DB_BREAKER_FAILURE_THRESHOLD`, `DB_BREAKER_WINDOW_SECONDS`, `DB_BREAKER_HALF_OPEN_AFTER_SECONDS` |
-| Health behavior | `apps/prototype-description-service/recognition/interface_adapters/http/routers/health.py` | Surface breaker-open degraded status without hiding DB state |
-| Tests | `apps/prototype-description-service/recognition/tests/api/test_api_health.py` | Extend for breaker-open behavior |
-| Tests | `apps/prototype-description-service/recognition/tests/api/test_dependencies.py` | Add fast-fail and half-open recovery coverage |
-| Tests | `apps/prototype-description-service/recognition/tests/unit/test_database_settings.py` | Add breaker settings coverage |
-| Tests | `apps/prototype-description-service/recognition/tests/unit/test_session_circuit_breaker.py` | New state-machine unit tests |
+| Surface                | File                                                                                             | Change                                                                                                |
+| ---------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| Breaker implementation | `apps/prototype-description-service/recognition/interface_adapters/http/deps/circuit_breaker.py` | New local breaker state machine and state container                                                   |
+| Session dependency     | `apps/prototype-description-service/recognition/interface_adapters/http/deps/session.py`         | Integrate breaker checks, failure recording, and half-open success reset                              |
+| App wiring             | `apps/prototype-description-service/api/main.py`                                                 | Initialize breaker state on app startup / factory construction                                        |
+| Settings               | `apps/prototype-description-service/db/settings.py`                                              | Add `DB_BREAKER_FAILURE_THRESHOLD`, `DB_BREAKER_WINDOW_SECONDS`, `DB_BREAKER_HALF_OPEN_AFTER_SECONDS` |
+| Health behavior        | `apps/prototype-description-service/recognition/interface_adapters/http/routers/health.py`       | Surface breaker-open degraded status without hiding DB state                                          |
+| Tests                  | `apps/prototype-description-service/recognition/tests/api/test_api_health.py`                    | Extend for breaker-open behavior                                                                      |
+| Tests                  | `apps/prototype-description-service/recognition/tests/api/test_dependencies.py`                  | Add fast-fail and half-open recovery coverage                                                         |
+| Tests                  | `apps/prototype-description-service/recognition/tests/unit/test_database_settings.py`            | Add breaker settings coverage                                                                         |
+| Tests                  | `apps/prototype-description-service/recognition/tests/unit/test_session_circuit_breaker.py`      | New state-machine unit tests                                                                          |
 
 ## Related Files
 
-| File | Note |
-| ---- | ---- |
-| `apps/prototype-description-service/db/session.py` | Remains the business engine/session factory source while the breaker governs access |
-| `apps/prototype-description-service/recognition/interface_adapters/http/deps/services.py` | Must stay aligned with any breaker-aware observability behavior until SLR-4 lands |
-| `docs/agentic/adrs/ADR-006-session-circuit-breaker-and-pool-bulkheading.md` | Source of truth for breaker ownership and defaults |
+| File                                                                                      | Note                                                                                |
+| ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `apps/prototype-description-service/db/session.py`                                        | Remains the business engine/session factory source while the breaker governs access |
+| `apps/prototype-description-service/recognition/interface_adapters/http/deps/services.py` | Must stay aligned with any breaker-aware observability behavior until SLR-4 lands   |
+| `docs/adrs/ADR-006-session-circuit-breaker-and-pool-bulkheading.md`               | Source of truth for breaker ownership and defaults                                  |
 
 ## Verification Strategy
 
@@ -133,7 +134,8 @@ Proof:
 Changes:
 
 - Initialize breaker state on app construction.
-- Fast-fail optional-session requests while the breaker is open.
+- Fast-fail `get_session()` with a retryable 503 while the breaker is open.
+- Fast-fail `get_optional_session()` and `get_observability_session()` by yielding `None` while the breaker is open and the pool is still shared.
 - Reset the breaker after a successful half-open probe.
 
 Proof:
@@ -158,33 +160,33 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded the spec, ADR, and SLR-1 outcome before editing.
-- [ ] Confirmed the breaker stays in the dependency boundary and on `app.state`.
-- [ ] Scoped out observability-pool splitting to SLR-4.
+- [x] Loaded the spec, ADR, and SLR-1 outcome before editing.
+- [x] Confirmed the breaker stays in the dependency boundary and on `app.state`.
+- [x] Scoped out observability-pool splitting to SLR-4.
 
 ### Checklist for Slice 1: Breaker State Machine and Settings
 
-- [ ] Add the local breaker implementation.
-- [ ] Add ADR-backed breaker settings.
-- [ ] Add deterministic breaker unit tests.
+- [x] Add the local breaker implementation.
+- [x] Add ADR-backed breaker settings.
+- [x] Add deterministic breaker unit tests.
 
 ### Checklist for Slice 2: Dependency Integration
 
-- [ ] Integrate breaker checks into the session dependency.
-- [ ] Initialize breaker state in app wiring.
-- [ ] Add dependency-path fast-fail and recovery tests.
+- [x] Integrate breaker checks into the session dependency.
+- [x] Initialize breaker state in app wiring.
+- [x] Add dependency-path fast-fail and recovery tests.
 
 ### Checklist for Slice 3: Breaker-Aware Health Semantics
 
-- [ ] Surface breaker-open degradation in health behavior.
-- [ ] Preserve non-5xx degraded semantics.
-- [ ] Capture targeted and full-suite verification evidence.
+- [x] Surface breaker-open degradation in health behavior.
+- [x] Preserve non-5xx degraded semantics.
+- [x] Capture targeted and full-suite verification evidence.
 
 ## Review Readiness
 
-- [ ] Breaker state ownership is explicit and test-backed.
-- [ ] No health-behavior change lands without matching contract evidence.
-- [ ] Handoff records fresh verification on the branch commit.
+- [x] Breaker state ownership is explicit and test-backed.
+- [x] No health-behavior change lands without matching contract evidence.
+- [x] Handoff records fresh verification on the branch commit.
 
 ## Stretch Goals
 
@@ -192,6 +194,6 @@ Proof:
 
 ## Success Criteria
 
-- [ ] Repeated DB probe failures open the breaker after the configured threshold.
-- [ ] A half-open recovery probe can close the breaker on success.
-- [ ] Health responses can distinguish breaker-open degradation from ordinary DB connectivity failure.
+- [x] Repeated DB probe failures open the breaker after the configured threshold.
+- [x] A half-open recovery probe can close the breaker on success.
+- [x] Health responses can distinguish breaker-open degradation from ordinary DB connectivity failure.

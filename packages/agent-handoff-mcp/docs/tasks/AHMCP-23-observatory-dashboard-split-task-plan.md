@@ -38,14 +38,16 @@ Handoff.db analysis (2026-04-10) confirmed:
 ## Workflow Principles
 
 - Single contract owner: handoff-mcp owns the data, the rendering protocol, and CURRENT_TASK.md.  The orchestrator is a dashboard extension provider, not a co-owner.
-- No speculative abstraction: the extension protocol supports exactly the use case we have (orchestrator adds sections).  No plugin registry, no priority ordering, no versioned APIs.
+- No speculative abstraction: the extension protocol supports exactly the use case we have (orchestrator adds sections).  No plugin registry, no versioned APIs.  Extensions use an `order` int for section placement relative to other extensions; core sections are fixed and always render first.
 - Delete over flag: the cross-task findings and All Tasks table are removed from CURRENT_TASK.md, not hidden behind a parameter.
+- CLI graceful degradation: `make dashboard` loads only handoff-mcp and renders core sections (Needs Attention, All Tasks, Findings).  Extension sections (Lane Health, Worker Status) appear only when orchestrator-mcp is loaded and has registered its callback.  The CLI path must not import orchestrator-mcp.
 
 ## Terminology
 
 - **CURRENT_TASK.md**: Agent-scoped generated file.  Contains only active-task data after this change.
 - **DASHBOARD.md**: Human-scoped generated file.  Contains the All Tasks table, cross-task findings, needs-attention summary, and orchestrator extension sections.
-- **DashboardExtension**: A callable that receives a `sqlite3.Connection` and returns a list of `DashboardSection` dicts.  Defined in handoff-mcp, implemented in orchestrator-mcp.
+- **DashboardExtension**: A callable that receives a `DashboardContext` TypedDict (pre-queried data) and returns a list of `DashboardSection` dicts.  Defined in handoff-mcp, implemented in orchestrator-mcp.
+- **DashboardContext**: A TypedDict passed to extensions containing pre-queried data they need (lane rows, worker report rows, turn metric rows), so extensions never touch the DB directly.
 - **Needs Attention**: A computed section that aggregates tasks with open high/medium findings, blocked status, or stale activity.
 
 ## Current State Analysis
@@ -105,20 +107,31 @@ agent-orchestrator-mcp (provides extension)
 ```python
 # In handoff-mcp: dashboard_rendering.py
 
+class DashboardContext(TypedDict):
+    """Pre-queried data passed to extensions so they never touch the DB."""
+    worktree_lanes: list[dict]       # from worktree_lanes table
+    worker_reports: list[dict]       # from worker_reports table
+    turn_metrics: list[dict]         # from turn_metrics table (last 20)
+
 class DashboardSection(TypedDict):
     heading: str       # e.g. "Lane Health"
     content: str       # Pre-rendered ASCII/markdown content
-    order: int         # Lower = higher in output.  Core sections use 0-49.
+    order: int         # Lower = higher among extension sections.
+                       # Core sections are always rendered first regardless.
 
-DashboardExtension = Callable[[sqlite3.Connection], list[DashboardSection]]
+DashboardExtension = Callable[[DashboardContext], list[DashboardSection]]
 
 _extensions: list[DashboardExtension] = []
 
 def register_dashboard_extension(ext: DashboardExtension) -> None:
     _extensions.append(ext)
+
+def clear_dashboard_extensions() -> None:
+    """Reset the extension registry.  Use in test fixtures to prevent leakage."""
+    _extensions.clear()
 ```
 
-Handoff-mcp defines the protocol.  Orchestrator-mcp calls `register_dashboard_extension()` at import time.  No discovery, no plugin registry — one explicit registration call.
+Handoff-mcp defines the protocol.  Orchestrator-mcp calls `register_dashboard_extension()` at import time — one explicit registration, no discovery.  `clear_dashboard_extensions()` is exported for test teardown (same pattern as `reset_runtime_config()` in `runtime.py`).
 
 ### Dashboard Layout
 
@@ -228,8 +241,9 @@ Changes:
 
 Proof:
 - `cd packages/agent-orchestrator-mcp && make test-orchestrator` — new integration test passes
-- `make dashboard` produces valid DASHBOARD.md
-- Extension sections appear in output when orchestrator is loaded
+- `make dashboard` produces valid DASHBOARD.md with core sections only (no orchestrator imported)
+- Extension sections appear in output when `register_dashboard_extension` has been called (test with explicit registration before calling `generate_dashboard_md`)
+- `make dashboard` output contains NO import of `agent_orchestrator_mcp`
 
 ---
 

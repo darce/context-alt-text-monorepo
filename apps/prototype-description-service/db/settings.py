@@ -32,6 +32,9 @@ class DatabaseSettings:
     pool_recycle: int
     statement_timeout: str
     idle_in_txn_timeout: str
+    breaker_failure_threshold: int
+    breaker_window_seconds: int
+    breaker_half_open_after_seconds: int
     disable_stmt_cache: bool
 
 
@@ -116,6 +119,9 @@ def get_database_settings() -> DatabaseSettings:
     pool_recycle = int(os.getenv("DB_POOL_RECYCLE", "3600"))
     statement_timeout = os.getenv("DB_STATEMENT_TIMEOUT", "10s")
     idle_in_txn_timeout = os.getenv("DB_IDLE_IN_TXN_TIMEOUT", "30s")
+    breaker_failure_threshold = int(os.getenv("DB_BREAKER_FAILURE_THRESHOLD", "3"))
+    breaker_window_seconds = int(os.getenv("DB_BREAKER_WINDOW_SECONDS", "30"))
+    breaker_half_open_after_seconds = int(os.getenv("DB_BREAKER_HALF_OPEN_AFTER_SECONDS", "10"))
     disable_stmt_cache = os.getenv("DB_DISABLE_STMT_CACHE", "0") == "1"
 
     if disable_stmt_cache and "+asyncpg" in async_dsn:
@@ -131,6 +137,9 @@ def get_database_settings() -> DatabaseSettings:
         pool_recycle=pool_recycle,
         statement_timeout=statement_timeout,
         idle_in_txn_timeout=idle_in_txn_timeout,
+        breaker_failure_threshold=breaker_failure_threshold,
+        breaker_window_seconds=breaker_window_seconds,
+        breaker_half_open_after_seconds=breaker_half_open_after_seconds,
         disable_stmt_cache=disable_stmt_cache,
     )
 

@@ -8,11 +8,17 @@ from collections.abc import AsyncIterator
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 from recognition.domain.services.retention_policy_service import RetentionPolicyService
 from recognition.interface_adapters.http import dependencies
-from recognition.interface_adapters.http.deps import session as session_module
 from recognition.interface_adapters.http import router as recognition_router
+from recognition.interface_adapters.http.deps import session as session_module
+from recognition.interface_adapters.http.deps.circuit_breaker import (
+    BreakerState,
+    SessionDependencyCircuitBreaker,
+    initialize_session_dependency_circuit_breaker,
+)
 from recognition.tests.api.conftest import FakeSession
 
 
@@ -163,6 +169,23 @@ class _TrackingSession:
         return type("AsyncConnection", (), {"sync_connection": object()})()
 
 
+class _RequestClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _make_request(
+    *,
+    breaker: SessionDependencyCircuitBreaker | None = None,
+) -> Request:
+    app = FastAPI()
+    initialize_session_dependency_circuit_breaker(app, breaker=breaker)
+    return Request({"type": "http", "method": "GET", "path": "/test", "headers": [], "app": app})
+
+
 @pytest.mark.asyncio
 async def test_get_session_uses_async_session_factory_directly(monkeypatch) -> None:
     session = _TrackingSession()
@@ -173,9 +196,10 @@ async def test_get_session_uses_async_session_factory_directly(monkeypatch) -> N
 
     monkeypatch.setattr(session_module, "async_session_factory", lambda: session)
     monkeypatch.setattr(session_module, "set_tenant_context", fake_set)
+    request = _make_request()
 
     yielded: list[object] = []
-    async for item in session_module.get_session(tenant_id=str(uuid.uuid4())):
+    async for item in session_module.get_session(request=request, tenant_id=str(uuid.uuid4())):
         yielded.append(item)
 
     assert yielded == [session]
@@ -194,9 +218,10 @@ async def test_get_optional_session_yields_none_on_probe_failure_and_closes(monk
 
     session = _FailingSession()
     monkeypatch.setattr(session_module, "async_session_factory", lambda: session)
+    request = _make_request()
 
     yielded: list[object | None] = []
-    async for item in session_module.get_optional_session(tenant_id=None):
+    async for item in session_module.get_optional_session(request=request, tenant_id=None):
         yielded.append(item)
 
     assert yielded == [None]
@@ -213,11 +238,21 @@ async def test_optional_session_applies_timeouts_and_logs_connection_identity(mo
     monkeypatch.setattr(
         session_module,
         "_db_settings",
-        type("Settings", (), {"statement_timeout": "9s", "idle_in_txn_timeout": "27s"})(),
+        type(
+            "Settings",
+            (),
+            {
+                "statement_timeout": "9s",
+                "idle_in_txn_timeout": "27s",
+                "breaker_failure_threshold": 3,
+                "breaker_half_open_after_seconds": 10,
+            },
+        )(),
     )
+    request = _make_request()
 
     with caplog.at_level("INFO"):
-        async for _ in session_module.get_optional_session(tenant_id=None):
+        async for _ in session_module.get_optional_session(request=request, tenant_id=None):
             pass
 
     assert any("SET LOCAL statement_timeout = '9s'" in statement for statement in session.executed_statements)
@@ -235,11 +270,21 @@ async def test_optional_session_rejects_malformed_timeout_values(monkeypatch) ->
     monkeypatch.setattr(
         session_module,
         "_db_settings",
-        type("Settings", (), {"statement_timeout": "9s'; RESET ALL; --", "idle_in_txn_timeout": "27s"})(),
+        type(
+            "Settings",
+            (),
+            {
+                "statement_timeout": "9s'; RESET ALL; --",
+                "idle_in_txn_timeout": "27s",
+                "breaker_failure_threshold": 3,
+                "breaker_half_open_after_seconds": 10,
+            },
+        )(),
     )
+    request = _make_request()
 
     with pytest.raises(ValueError, match="DB_STATEMENT_TIMEOUT"):
-        async for _ in session_module.get_optional_session(tenant_id=None):
+        async for _ in session_module.get_optional_session(request=request, tenant_id=None):
             pass
 
 
@@ -252,10 +297,94 @@ async def test_get_observability_session_degrades_without_raising(monkeypatch) -
 
     session = _FailingSession()
     monkeypatch.setattr(session_module, "async_session_factory", lambda: session)
+    request = _make_request()
 
     yielded: list[object | None] = []
-    async for item in session_module.get_observability_session():
+    async for item in session_module.get_observability_session(request=request):
         yielded.append(item)
 
     assert yielded == [None]
     assert session.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_get_session_fast_fails_when_breaker_is_open(monkeypatch) -> None:
+    clock = _RequestClock()
+    breaker = SessionDependencyCircuitBreaker(
+        failure_threshold=3,
+        window_seconds=30,
+        half_open_after_seconds=10,
+        time_source=clock,
+    )
+    breaker.force_open()
+    request = _make_request(breaker=breaker)
+    factory_called = False
+
+    def _unexpected_factory():
+        nonlocal factory_called
+        factory_called = True
+        return _TrackingSession()
+
+    monkeypatch.setattr(session_module, "async_session_factory", _unexpected_factory)
+
+    with pytest.raises(session_module.HTTPException) as exc_info:
+        async for _ in session_module.get_session(request=request, tenant_id=None):
+            pass
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.headers == {"Retry-After": "10"}
+    assert factory_called is False
+
+
+@pytest.mark.asyncio
+async def test_optional_and_observability_sessions_fast_fail_when_breaker_is_open(monkeypatch) -> None:
+    breaker = SessionDependencyCircuitBreaker(
+        failure_threshold=3,
+        window_seconds=30,
+        half_open_after_seconds=10,
+    )
+    breaker.force_open()
+    request = _make_request(breaker=breaker)
+    factory_called = False
+
+    def _unexpected_factory():
+        nonlocal factory_called
+        factory_called = True
+        return _TrackingSession()
+
+    monkeypatch.setattr(session_module, "async_session_factory", _unexpected_factory)
+
+    optional_items: list[object | None] = []
+    async for item in session_module.get_optional_session(request=request, tenant_id=None):
+        optional_items.append(item)
+
+    observability_items: list[object | None] = []
+    async for item in session_module.get_observability_session(request=request):
+        observability_items.append(item)
+
+    assert optional_items == [None]
+    assert observability_items == [None]
+    assert factory_called is False
+
+
+@pytest.mark.asyncio
+async def test_optional_session_half_open_success_closes_breaker(monkeypatch) -> None:
+    clock = _RequestClock()
+    breaker = SessionDependencyCircuitBreaker(
+        failure_threshold=3,
+        window_seconds=30,
+        half_open_after_seconds=10,
+        time_source=clock,
+    )
+    breaker.force_open()
+    clock.now = 11.0
+    request = _make_request(breaker=breaker)
+    session = _TrackingSession()
+    monkeypatch.setattr(session_module, "async_session_factory", lambda: session)
+
+    yielded: list[object | None] = []
+    async for item in session_module.get_optional_session(request=request, tenant_id=None):
+        yielded.append(item)
+
+    assert yielded == [session]
+    assert breaker.snapshot().state is BreakerState.CLOSED

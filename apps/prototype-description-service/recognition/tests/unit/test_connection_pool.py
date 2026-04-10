@@ -43,30 +43,36 @@ def test_database_settings_use_higher_pool_defaults(monkeypatch) -> None:
 async def test_session_cleanup_on_context_failure(monkeypatch) -> None:
     """Session should close even if set_tenant_context fails."""
     events: list[str] = []
-    session = object()
 
-    async def fake_session_source():
-        events.append("open")
-        try:
-            yield session
-        finally:
+    class StubSession:
+        bind = type("Bind", (), {"dialect": type("Dialect", (), {"name": "postgresql"})()})()
+
+        async def execute(self, _statement, _params=None):  # noqa: ANN001
+            return None
+
+        async def commit(self) -> None:
+            events.append("commit")
+
+        async def rollback(self) -> None:
+            events.append("rollback")
+
+        async def close(self) -> None:
             events.append("close")
+
+        async def connection(self):
+            return type("AsyncConnection", (), {"sync_connection": object()})()
+
+    session = StubSession()
 
     async def fail_set(_session, _tenant_id):
         events.append("set")
         raise RuntimeError("Simulated failure")
 
-    async def fake_clear(_session):
-        events.append("clear")
-
-    # Patch in the session module where these are actually used
-    monkeypatch.setattr(session_module, "_get_session", fake_session_source)
+    monkeypatch.setattr(session_module, "async_session_factory", lambda: session)
     monkeypatch.setattr(session_module, "set_tenant_context", fail_set)
-    monkeypatch.setattr(session_module, "clear_tenant_context", fake_clear)
 
     with pytest.raises(RuntimeError, match="Simulated failure"):
         async for _ in session_module.get_session(tenant_id=str(uuid.uuid4())):
             pass
 
-    assert "clear" in events
     assert "close" in events

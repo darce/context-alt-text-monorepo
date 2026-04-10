@@ -5,10 +5,13 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from fastapi import FastAPI
+from starlette.requests import Request
 
 from db.session import get_pool_stats
 from db.settings import get_database_settings
 from recognition.interface_adapters.http.deps import session as session_module
+from recognition.interface_adapters.http.deps.circuit_breaker import initialize_session_dependency_circuit_breaker
 
 
 def test_pool_stats_returns_valid_metrics() -> None:
@@ -70,9 +73,12 @@ async def test_session_cleanup_on_context_failure(monkeypatch) -> None:
 
     monkeypatch.setattr(session_module, "async_session_factory", lambda: session)
     monkeypatch.setattr(session_module, "set_tenant_context", fail_set)
+    app = FastAPI()
+    initialize_session_dependency_circuit_breaker(app)
+    request = Request({"type": "http", "method": "GET", "path": "/test", "headers": [], "app": app})
 
     with pytest.raises(RuntimeError, match="Simulated failure"):
-        async for _ in session_module.get_session(tenant_id=str(uuid.uuid4())):
+        async for _ in session_module.get_session(request=request, tenant_id=str(uuid.uuid4())):
             pass
 
     assert "close" in events

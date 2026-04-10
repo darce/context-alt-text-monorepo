@@ -12,14 +12,18 @@ import time as _time
 import uuid
 from collections.abc import AsyncIterator
 
-from fastapi import Depends
+from fastapi import Depends, Request, status
 from fastapi.exceptions import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.settings import get_database_settings
 from db.session import async_session_factory
+from db.settings import get_database_settings
 from db.tenant_context import set_tenant_context
+from recognition.interface_adapters.http.deps.circuit_breaker import (
+    SessionDependencyCircuitBreaker,
+    get_or_create_session_dependency_circuit_breaker,
+)
 from recognition.interface_adapters.http.deps.tenant_common import get_tenant_id_optional
 from recognition.shared.db.dialect import is_postgres
 
@@ -91,10 +95,37 @@ def _log_session_dependency_timing(
     )
 
 
-async def get_session(tenant_id: str | None = Depends(get_tenant_id_optional)) -> AsyncIterator[AsyncSession]:
+def _get_session_dependency_breaker(request: Request) -> SessionDependencyCircuitBreaker:
+    """Return the app-scoped breaker, lazily creating it for lightweight test apps."""
+    return get_or_create_session_dependency_circuit_breaker(request.app)
+
+
+def _raise_breaker_open_http_exception() -> None:
+    """Raise the required-session fast-fail response when the breaker is open."""
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Database unavailable",
+        headers={"Retry-After": str(_db_settings.breaker_half_open_after_seconds)},
+    )
+
+
+async def get_session(
+    request: Request,
+    tenant_id: str | None = Depends(get_tenant_id_optional),
+) -> AsyncIterator[AsyncSession]:
     """Yield a SQLAlchemy async session; set tenant context when provided."""
     started_at = _time.perf_counter()
+    breaker = _get_session_dependency_breaker(request)
+    if not breaker.allow_request():
+        _log_session_dependency_timing(
+            "get_session",
+            started_at=started_at,
+            available=False,
+            tenant_id=tenant_id,
+        )
+        _raise_breaker_open_http_exception()
     session = async_session_factory()
+    session_available = False
     tenant_context_ms: float | None = None
     conn_id: str | None = None
     try:
@@ -104,16 +135,20 @@ async def get_session(tenant_id: str | None = Depends(get_tenant_id_optional)) -
             await set_tenant_context(session, uuid.UUID(str(tenant_id)))
             tenant_context_ms = (_time.perf_counter() - tenant_context_started_at) * 1000
         conn_id = await _resolve_connection_id(session)
+        session_available = True
+        breaker.record_success()
         yield session
         await session.commit()
     except Exception:
+        if not session_available:
+            breaker.record_failure()
         await session.rollback()
         raise
     finally:
         _log_session_dependency_timing(
             "get_session",
             started_at=started_at,
-            available=True,
+            available=session_available,
             tenant_id=tenant_id,
             tenant_context_ms=tenant_context_ms,
             conn_id=conn_id,
@@ -122,10 +157,21 @@ async def get_session(tenant_id: str | None = Depends(get_tenant_id_optional)) -
 
 
 async def get_optional_session(
+    request: Request,
     tenant_id: str | None = Depends(get_tenant_id_optional),
 ) -> AsyncIterator[AsyncSession | None]:
     """Best-effort session provider; returns None when the database is unavailable."""
     started_at = _time.perf_counter()
+    breaker = _get_session_dependency_breaker(request)
+    if not breaker.allow_request():
+        _log_session_dependency_timing(
+            "get_optional_session",
+            started_at=started_at,
+            available=False,
+            tenant_id=tenant_id,
+        )
+        yield None
+        return
     session = async_session_factory()
     probe_ms: float | None = None
     tenant_context_ms: float | None = None
@@ -145,9 +191,11 @@ async def get_optional_session(
         except ValueError:
             raise
         except Exception:
+            breaker.record_failure()
             yield None
             return
         session_available = True
+        breaker.record_success()
         try:
             yield session
             await session.commit()
@@ -170,9 +218,19 @@ async def get_optional_session(
         await session.close()
 
 
-async def get_observability_session() -> AsyncIterator[AsyncSession | None]:
+async def get_observability_session(request: Request) -> AsyncIterator[AsyncSession | None]:
     """Session provider without tenant validation for diagnostics."""
     started_at = _time.perf_counter()
+    breaker = _get_session_dependency_breaker(request)
+    if not breaker.allow_request():
+        _log_session_dependency_timing(
+            "get_observability_session",
+            started_at=started_at,
+            available=False,
+            tenant_id=None,
+        )
+        yield None
+        return
     session = async_session_factory()
     probe_ms: float | None = None
     session_available = False
@@ -187,9 +245,11 @@ async def get_observability_session() -> AsyncIterator[AsyncSession | None]:
         except ValueError:
             raise
         except Exception:
+            breaker.record_failure()
             yield None
             return
         session_available = True
+        breaker.record_success()
         try:
             yield session
             await session.commit()

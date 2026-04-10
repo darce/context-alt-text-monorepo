@@ -445,12 +445,16 @@ class HealthCheckResponse(BaseModel):
     Attributes:
         status: "healthy" or "degraded".
         database: Database connection status.
+        database_detail: Optional detail explaining degraded DB status.
+        breaker_state: Session dependency breaker state.
         pool_stats: Connection pool statistics.
         timestamp: ISO timestamp of check.
     """
 
     status: str
     database: str
+    database_detail: str | None = None
+    breaker_state: str
     pool_stats: ConnectionPoolStats | None = None
     timestamp: str
 

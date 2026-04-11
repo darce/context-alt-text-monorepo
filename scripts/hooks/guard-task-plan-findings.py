@@ -20,6 +20,16 @@ Single mentions and cross-references are unaffected — only structured lists
 of three or more in a row trip the heuristic, which is the shape an agent
 produces when copy-pasting a ``review_findings(operation="list")`` result.
 
+Residual risk and mitigation
+----------------------------
+
+The ≥3 consecutive-bullet threshold accepts a residual risk: a 1- or 2-bullet
+finding paste is not caught by the run detector. A second heuristic
+(``_detect_findings_under_heading``) closes this gap: any finding bullet that
+appears under a section heading matching ``Findings`` (e.g. ``## Review
+Findings``, ``### Open Findings``) is flagged regardless of bullet count. The
+heading heuristic has no false positives on the calibration corpus.
+
 Operating modes
 ---------------
 
@@ -78,6 +88,13 @@ _FINDING_BULLET_RE = re.compile(
 )
 
 _CONSECUTIVE_THRESHOLD = 3
+
+# Heading pattern for the residual-risk heuristic.  Matches Markdown headings
+# like "## Review Findings", "### Open Findings", "# Findings".
+_FINDINGS_HEADING_RE = re.compile(
+    r"^#{1,4}\s+(?:(?:open|review|closed|all)\s+)?findings\b",
+    re.IGNORECASE,
+)
 
 _PATH_FILTER_SUBSTRINGS = ("/docs/tasks/", "/docs/epics/")
 _PATH_FILTER_FILENAME_GLOBS = ("*task-plan*.md", "*-plan.md")
@@ -153,6 +170,54 @@ def _detect_finding_runs(text: str) -> list[tuple[int, list[str]]]:
         runs.append((current_run[0][0], [item[1] for item in current_run]))
 
     return runs
+
+
+def _detect_findings_under_heading(text: str) -> list[tuple[int, list[str]]]:
+    """Catch finding bullets placed under a Findings section heading (1-2 bullet gap).
+
+    ``_detect_finding_runs`` requires ≥3 consecutive bullets, accepting the
+    residual risk that a 1- or 2-bullet paste slips through.  This function
+    closes that gap: once a heading matching ``_FINDINGS_HEADING_RE`` is seen,
+    every finding bullet that follows (until the next heading) is collected and
+    flagged regardless of count.  The start line in the returned tuple is the
+    line of the first matching bullet, not the heading line.
+    """
+    runs: list[tuple[int, list[str]]] = []
+    under_findings_heading = False
+    group: list[tuple[int, str]] = []
+
+    def _flush() -> None:
+        nonlocal under_findings_heading, group
+        if group:
+            runs.append((group[0][0], [item[1] for item in group]))
+        under_findings_heading = False
+        group = []
+
+    for idx, raw_line in enumerate(text.splitlines(), start=1):
+        stripped = raw_line.lstrip()
+        if stripped.startswith("#"):
+            _flush()
+            if _FINDINGS_HEADING_RE.match(stripped):
+                under_findings_heading = True
+            continue
+        if under_findings_heading:
+            match = _FINDING_BULLET_RE.match(raw_line)
+            if match:
+                group.append((idx, match.group("id")))
+
+    _flush()
+    return runs
+
+
+def _detect_all_runs(text: str) -> list[tuple[int, list[str]]]:
+    """Run both detection heuristics and return combined, deduplicated results."""
+    seen: set[int] = set()
+    combined: list[tuple[int, list[str]]] = []
+    for run in _detect_finding_runs(text) + _detect_findings_under_heading(text):
+        if run[0] not in seen:
+            seen.add(run[0])
+            combined.append(run)
+    return combined
 
 
 def _format_block_reason(rel_path: str, runs: list[tuple[int, list[str]]]) -> str:
@@ -291,7 +356,7 @@ def _run_claude_hook() -> int:
     if not _path_should_be_scanned(rel_path):
         return 0
 
-    runs = _detect_finding_runs(content)
+    runs = _detect_all_runs(content)
     if not runs:
         return 0
 
@@ -342,7 +407,7 @@ def _run_scan_staged() -> int:
         blob = _staged_blob(rel_path)
         if blob is None:
             continue
-        runs = _detect_finding_runs(blob)
+        runs = _detect_all_runs(blob)
         if runs:
             failures.append(_format_block_reason(rel_path, runs))
     if failures:
@@ -382,7 +447,7 @@ def _run_scan_paths(targets: list[str]) -> int:
             text = path.read_text(encoding="utf-8")
         except OSError:
             continue
-        runs = _detect_finding_runs(text)
+        runs = _detect_all_runs(text)
         if runs:
             failures.append(_format_block_reason(rel_path, runs))
     if failures:
@@ -433,7 +498,7 @@ def _run_scan_repo() -> int:
             text = (repo_root_path / rel_path).read_text(encoding="utf-8")
         except OSError:
             continue
-        runs = _detect_finding_runs(text)
+        runs = _detect_all_runs(text)
         if runs:
             failures.append(_format_block_reason(rel_path, runs))
     if failures:

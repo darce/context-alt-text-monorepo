@@ -718,6 +718,10 @@ def close_slice(
     )
     if not decision_envelope.get("ok"):
         return decision_envelope
+    warnings: list[str] = []
+    decision_warnings = decision_envelope.get("warnings")
+    if isinstance(decision_warnings, list):
+        warnings.extend(str(item) for item in decision_warnings if isinstance(item, str))
     decision_data = decision_envelope.get("data", {}) or {}
     decision_payload = decision_data.get("decision", {}) or {}
     resolved_task_ref = str(
@@ -734,6 +738,9 @@ def close_slice(
     )
     if not state_envelope.get("ok"):
         state_data = state_envelope.get("data", {}) or {}
+        state_warnings = state_envelope.get("warnings")
+        if isinstance(state_warnings, list):
+            warnings.extend(str(item) for item in state_warnings if isinstance(item, str))
         return _envelope(
             ok=False,
             tool="close_slice",
@@ -745,9 +752,13 @@ def close_slice(
                 "current_task_md_written": False,
             },
             task_ref=resolved_task_ref,
+            warnings=warnings or None,
         )
     state_data = state_envelope.get("data", {}) or {}
     active_block = state_data.get("active", {}) or {}
+    state_warnings = state_envelope.get("warnings")
+    if isinstance(state_warnings, list):
+        warnings.extend(str(item) for item in state_warnings if isinstance(item, str))
     _write_current_task_md_from_state(resolved_task_ref)
     return _envelope(
         ok=True,
@@ -767,4 +778,5 @@ def close_slice(
             "task_revision": active_block.get("revision"),
         },
         artifacts=[{"type": "current_task_md", "path": "CURRENT_TASK.md", "written": True}],
+        warnings=warnings or None,
     )

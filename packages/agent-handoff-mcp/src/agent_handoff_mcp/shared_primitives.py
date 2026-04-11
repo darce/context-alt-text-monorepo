@@ -72,6 +72,9 @@ _VERIFIED_TEST_RESULT_HINT_RE = re.compile(
     re.IGNORECASE,
 )
 _VERIFIED_TEST_RESULT_MAX_CHARS = 280
+RATIONALE_SOFT_LIMIT_CHARS = 1_500
+RATIONALE_HARD_LIMIT_CHARS = 3_000
+SLICE_COMPLETE_HARD_LIMIT_CHARS = 4_000
 
 # ---------------------------------------------------------------------------
 # Domain constants
@@ -121,7 +124,7 @@ MAX_VERIFICATION_EVIDENCE_LENGTH = 2000
 # ~17.6k tokens because the slice-complete decision rationales account for
 # the bulk of the payload, and AHMCP-7 / AHMCP-10 wire-format optimizations
 # only attack the wrapper, not the rationale text itself.
-RESPONSE_OVERSIZE_WARN_BYTES = 20_000
+RESPONSE_OVERSIZE_WARN_BYTES = 8_000
 BATCH_CLOSE_WINDOW_SECONDS = 60
 BATCH_CLOSE_THRESHOLD = 2
 REOPEN_ESCALATION_THRESHOLD = 2
@@ -501,10 +504,48 @@ def _validate_decision_payload(decision: str, rationale: str | None) -> str | No
         return "Malformed slice-complete id. New writes must use <author_tag>_slice_complete_<work_ref>_<slug>."
     if "_slice_complete_" in decision and not is_prefixed_slice_complete_decision(decision):
         return "Malformed slice-complete id. Expected <author_tag>_slice_complete_<work_ref>_<slug>."
+    rationale_size_error = _validate_decision_rationale_size(decision, rationale)
+    if rationale_size_error is not None:
+        return rationale_size_error
     if is_slice_complete_decision(decision) and not _has_structured_slice_summary(str(rationale or "")):
         headings = ", ".join(MANDATORY_SLICE_DECISION_HEADINGS)
         return f"slice_complete_* decisions require a structured rationale with non-empty sections for: {headings}."
     return None
+
+
+def _decision_rationale_hard_limit(decision: str) -> int:
+    return SLICE_COMPLETE_HARD_LIMIT_CHARS if is_slice_complete_decision(decision) else RATIONALE_HARD_LIMIT_CHARS
+
+
+def _validate_decision_rationale_size(decision: str, rationale: str | None) -> str | None:
+    normalized = _normalize_optional_text(rationale)
+    if normalized is None:
+        return None
+    char_count = len(normalized)
+    hard_limit = _decision_rationale_hard_limit(decision)
+    if char_count <= hard_limit:
+        return None
+    kind_label = "Slice-complete" if is_slice_complete_decision(decision) else "Decision"
+    return (
+        f"{kind_label} rationale is {char_count:,} chars, which exceeds the {hard_limit:,}-char limit. "
+        f"Trim to the decision and key reason. Move verbose evidence into verification summaries, "
+        f"artifacts, or changed_files metadata."
+    )
+
+
+def _decision_rationale_size_warning(decision: str, rationale: str | None) -> str | None:
+    normalized = _normalize_optional_text(rationale)
+    if normalized is None:
+        return None
+    char_count = len(normalized)
+    if char_count <= RATIONALE_SOFT_LIMIT_CHARS:
+        return None
+    hard_limit = _decision_rationale_hard_limit(decision)
+    kind_label = "Slice-complete" if is_slice_complete_decision(decision) else "Decision"
+    return (
+        f"{kind_label} rationale is {char_count:,} chars. Prefer staying under "
+        f"{RATIONALE_SOFT_LIMIT_CHARS:,} chars for context efficiency; hard limit is {hard_limit:,} chars."
+    )
 
 
 # ---------------------------------------------------------------------------

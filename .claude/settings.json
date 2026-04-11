@@ -15,7 +15,7 @@
         ]
       },
       {
-        "matcher": "mcp__agent-handoff-mcp__record_event|mcp__agent-handoff-mcp__close_slice",
+        "matcher": "mcp_altcontext-mc_record_event|mcp_altcontext-mc_close_slice|mcp__agent-handoff-mcp__record_event|mcp__agent-handoff-mcp__close_slice",
         "hooks": [
           {
             "type": "command",
@@ -26,7 +26,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "mcp__agent-handoff-mcp__review_findings",
+        "matcher": "mcp_altcontext-mc_review_findings|mcp__agent-handoff-mcp__review_findings",
         "hooks": [
           {
             "type": "command",
@@ -35,7 +35,7 @@
         ]
       },
       {
-        "matcher": "mcp__agent-handoff-mcp__get_handoff_state|mcp__agent-handoff-mcp__load_session",
+        "matcher": "mcp_altcontext-mc_get_handoff_state|mcp_altcontext-mc_load_session|mcp__agent-handoff-mcp__get_handoff_state|mcp__agent-handoff-mcp__load_session",
         "hooks": [
           {
             "type": "command",

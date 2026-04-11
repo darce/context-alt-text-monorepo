@@ -302,6 +302,37 @@ def test_record_decision_persists_changed_files(isolated_handoff: dict) -> None:
     assert isinstance(recorded["mutation"]["task_revision"], int)
 
 
+def test_record_decision_warns_when_rationale_is_verbose(isolated_handoff: dict) -> None:
+    _parse(mcp_server.set_handoff_state(task_ref="cf-warn", objective="Verbose rationale", status="in_progress"))
+
+    recorded = _parse(
+        mcp_server.record_decision(
+            session="s1",
+            decision="cdx_decision_verbose_rationale",
+            rationale="x" * 1600,
+        )
+    )
+
+    assert recorded["ok"] is True
+    warnings = recorded.get("warnings", [])
+    assert any("1,500 chars" in warning for warning in warnings)
+
+
+def test_record_decision_rejects_oversize_rationale(isolated_handoff: dict) -> None:
+    _parse(mcp_server.set_handoff_state(task_ref="cf-too-long", objective="Oversize rationale", status="in_progress"))
+
+    recorded = _parse(
+        mcp_server.record_decision(
+            session="s1",
+            decision="cdx_decision_oversize_rationale",
+            rationale="x" * 3500,
+        )
+    )
+
+    assert recorded["ok"] is False
+    assert "3,000-char limit" in recorded["error"]
+
+
 def test_record_decision_rejects_non_relative_changed_files(isolated_handoff: dict) -> None:
     """changed_files rejects malformed or non-relative path entries."""
     _parse(mcp_server.set_handoff_state(task_ref="cf-invalid", objective="Invalid files test", status="in_progress"))
@@ -3261,6 +3292,36 @@ def test_close_slice_rejects_uppercase_xml_actor_tag(isolated_handoff: dict) -> 
     )
     assert result["ok"] is False
     assert "actor" in result["error"].lower()
+
+
+def test_close_slice_surfaces_verbose_rationale_warning(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="close-warn",
+            objective="Close slice warning propagation",
+            status="in_progress",
+        )
+    )
+
+    result = _parse(
+        mcp_server.close_slice(
+            session="s-close-warn",
+            decision="cop_slice_complete_AHMCP-24_warning_propagation",
+            rationale=(
+                "## Changes\n- packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py: close_slice ; preserved warnings.\n\n"
+                "## Verification\n- none.\n\n"
+                "## Schema / Contract Changes\n- none.\n\n"
+                "## Open Threads\n- none.\n\n"
+                + ("x" * 1550)
+            ),
+            expected_revision=0,
+            task_ref="close-warn",
+        )
+    )
+
+    assert result["ok"] is True
+    warnings = result.get("warnings", [])
+    assert any("1,500 chars" in warning for warning in warnings)
 
 
 def test_close_slice_allows_clean_rationale(isolated_handoff: dict) -> None:

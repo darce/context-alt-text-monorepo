@@ -17,6 +17,7 @@ from ._shared import (
     WriteActor,
     _collect_task_snapshot,
     _current_task_path,
+    _decision_rationale_size_warning,
     _envelope,
     _get_db_connection,
     _has_structured_slice_summary,
@@ -84,6 +85,9 @@ def record_decision(
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         ctx = _resolve_write_actor(conn, actor)
         warnings: list[str] = []
+        rationale_warning = _decision_rationale_size_warning(decision, rationale)
+        if rationale_warning is not None:
+            warnings.append(rationale_warning)
         if not ctx.model and not ctx.model_label:
             warnings.append(
                 "actor is missing model/model_label; decision will render without model identity. Pass actor.model and actor.model_label for accurate provenance."

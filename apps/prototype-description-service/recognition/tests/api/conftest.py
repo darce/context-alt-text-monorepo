@@ -27,10 +27,13 @@ class FakeSession:
     def __init__(self) -> None:
         self.added: list[object] = []
         self._get_results: dict[tuple[object, object], object | None] = {}
-        self._execute_results: list[FakeSessionResult] = []
+        self._execute_results: list[FakeSessionResult | Exception] = []
         self.commit_calls = 0
         self.rollback_calls = 0
         self.close_calls = 0
+        self.flush_calls = 0
+        self.begin_nested_calls = 0
+        self.nested_rollback_calls = 0
 
     def set_get_result(self, *, model_class: object, pk: object, value: object | None) -> None:
         """Register a deterministic return value for `get(model_class, pk)`."""
@@ -52,9 +55,16 @@ class FakeSession:
             )
         )
 
+    def queue_execute_exception(self, exc: Exception) -> None:
+        """Queue an exception to raise from the next `execute()` call."""
+        self._execute_results.append(exc)
+
     async def execute(self, _statement, _params=None):  # noqa: ANN001
         if self._execute_results:
-            return self._execute_results.pop(0)
+            next_item = self._execute_results.pop(0)
+            if isinstance(next_item, Exception):
+                raise next_item
+            return next_item
         if any(isinstance(obj, CurationReplayRecord) for obj in self.added):
             return FakeSessionResult(
                 scalar_one_or_none_value=next(
@@ -74,6 +84,7 @@ class FakeSession:
             self.add(obj)
 
     async def flush(self) -> None:
+        self.flush_calls += 1
         return None
 
     async def commit(self) -> None:
@@ -94,6 +105,26 @@ class FakeSession:
     async def get(self, model_class, pk):  # noqa: ANN001
         """Stub get method for repository compatibility."""
         return self._get_results.get((model_class, pk))
+
+    def begin_nested(self) -> "_FakeNestedTransaction":
+        """Provide a minimal nested-transaction seam for auth/savepoint tests."""
+        return _FakeNestedTransaction(self)
+
+
+class _FakeNestedTransaction:
+    """Async context manager that records savepoint entry/rollback behavior."""
+
+    def __init__(self, session: FakeSession) -> None:
+        self._session = session
+
+    async def __aenter__(self) -> "_FakeNestedTransaction":
+        self._session.begin_nested_calls += 1
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:  # noqa: ANN001
+        if exc_type is not None:
+            self._session.nested_rollback_calls += 1
+        return False
 
 
 class FakeSessionResult:

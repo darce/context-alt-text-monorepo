@@ -22,6 +22,7 @@ def _make_config() -> RuntimeConfig:
         state_dir=p / ".task-state",
         db_path=p / ".task-state" / "handoff.db",
         current_task_path=p / "CURRENT_TASK.md",
+        dashboard_path=p / "DASHBOARD.md",
         exports_dir=p / ".task-state" / "exports",
         artifact_db_path=p / ".task-state" / "mcp-artifacts.db",
     )
@@ -161,6 +162,7 @@ def test_dashboard_extension_lane_health_and_worker_status(tmp_path: Path) -> No
         state_dir=state_dir,
         db_path=state_dir / "handoff.db",
         current_task_path=tmp_path / "CURRENT_TASK.md",
+        dashboard_path=tmp_path / "DASHBOARD.md",
         exports_dir=state_dir / "exports",
         artifact_db_path=state_dir / "mcp-artifacts.db",
     )
@@ -205,11 +207,11 @@ def test_dashboard_extension_lane_health_and_worker_status(tmp_path: Path) -> No
     assert md is not None
 
     # Lane Health section
-    assert "## Lane Health" in md
+    assert "LANE HEALTH" in md
     assert "frontend" in md
     assert "active" in md
 
     # Worker Status section
-    assert "## Worker Status" in md
+    assert "WORKER STATUS" in md
     assert "Implemented UI components" in md
     assert "merge-ready" in md

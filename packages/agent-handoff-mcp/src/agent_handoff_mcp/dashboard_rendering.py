@@ -181,12 +181,12 @@ def _collect_needs_attention(
 
 
 def _render_needs_attention_section(items: list[_NeedsAttentionItem]) -> list[str]:
-    lines: list[str] = ["", "## Needs Attention"]
+    lines: list[str] = ["", "NEEDS ATTENTION", "-" * 15]
     if not items:
-        lines.append("- All clear.")
+        lines.append("  (all clear)")
         return lines
     for item in items:
-        icon = "○" if item["kind"] == "stale" else "⚠"
+        icon = "!" if item["kind"] != "stale" else "~"
         task_ref = item["task_ref"]
         detail = item["detail"]
         lines.append(f"  {icon} {task_ref:<20}  {detail}")
@@ -215,12 +215,12 @@ def _render_all_tasks_section(dashboard_rows: list[dict], active_task_ref: str |
 
 
 def _render_open_findings_section(open_findings: dict[str, list[dict]]) -> list[str]:
-    lines: list[str] = ["", "## Open Findings"]
+    lines: list[str] = ["", "OPEN FINDINGS", "-" * 13]
     if not open_findings:
-        lines.append("- None")
+        lines.append("  (none)")
         return lines
     for task_ref, findings in sorted(open_findings.items()):
-        lines.extend(["", f"### {task_ref}"])
+        lines.extend(["", f"  [{task_ref}]"])
         for f in findings:
             location = (
                 f"{f.get('file_path')}:{f.get('line_start')}"
@@ -228,17 +228,17 @@ def _render_open_findings_section(open_findings: dict[str, list[dict]]) -> list[
                 else f.get("file_path", "")
             )
             lines.append(
-                f"- [{f.get('severity', '').upper()}] {f.get('finding_id')}: {location} -- {f.get('description', '')}"
+                f"  [{f.get('severity', '').upper()}] {f.get('finding_id')}: {location} -- {f.get('description', '')}"
             )
     return lines
 
 
 def _render_deferred_findings_section(deferred_findings: dict[str, list[dict]]) -> list[str]:
-    lines: list[str] = ["", "## Deferred / Won't Fix"]
+    lines: list[str] = ["", "DEFERRED / WONTFIX", "-" * 18]
     if not deferred_findings:
         return []
     for task_ref, findings in sorted(deferred_findings.items()):
-        lines.extend(["", f"### {task_ref}"])
+        lines.extend(["", f"  [{task_ref}]"])
         for f in findings:
             location = (
                 f"{f.get('file_path')}:{f.get('line_start')}"
@@ -247,7 +247,7 @@ def _render_deferred_findings_section(deferred_findings: dict[str, list[dict]]) 
             )
             status_label = f.get("status", "deferred").upper()
             lines.append(
-                f"- [{status_label}] [{f.get('severity', '').upper()}] {f.get('finding_id')}: {location} -- {f.get('description', '')}"
+                f"  [{status_label}] [{f.get('severity', '').upper()}] {f.get('finding_id')}: {location} -- {f.get('description', '')}"
             )
     return lines
 
@@ -289,10 +289,12 @@ def _render_dashboard_md(
     active_task_ref: str | None,
     extension_sections: list[DashboardSection],
 ) -> str:
+    sep = "=" * 80
     lines: list[str] = [
-        "# DASHBOARD",
-        "",
-        f"_Generated from .task-state/handoff.db. Last generated: {generated_at}_",
+        "DASHBOARD",
+        sep,
+        f"DO NOT EDIT: generated from .task-state/handoff.db at {generated_at}",
+        sep,
     ]
 
     lines.extend(_render_needs_attention_section(needs_attention))
@@ -303,7 +305,8 @@ def _render_dashboard_md(
         lines.extend(deferred_lines)
 
     for section in sorted(extension_sections, key=lambda s: s["order"]):
-        lines.extend(["", f"## {section['heading']}"])
+        heading = section["heading"].upper()
+        lines.extend(["", heading, "-" * len(heading)])
         lines.append(section["content"])
 
     lines.append("")

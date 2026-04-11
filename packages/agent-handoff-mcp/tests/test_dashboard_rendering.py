@@ -89,7 +89,7 @@ def test_extension_sections_appear_in_output() -> None:
         active_task_ref=None,
         extension_sections=ext({"worktree_lanes": [], "worker_reports": [], "turn_metrics": []}),
     )
-    assert "## Lane Health" in result
+    assert "LANE HEALTH" in result
     assert "all clear" in result
 
 
@@ -107,8 +107,8 @@ def test_extension_sections_ordered_by_order_field() -> None:
         active_task_ref=None,
         extension_sections=sections,
     )
-    lane_pos = result.index("## Lane Health")
-    worker_pos = result.index("## Worker Status")
+    lane_pos = result.index("LANE HEALTH")
+    worker_pos = result.index("WORKER STATUS")
     assert lane_pos < worker_pos, "Lower order should render first"
 
 
@@ -117,10 +117,10 @@ def test_no_extensions_registered_renders_core_only(isolated_handoff) -> None:
     result = generate_dashboard_md(write_file=False)
     assert result["ok"] is True
     md = result["markdown"]
-    assert "## Needs Attention" in md
-    assert "## All Tasks" in md
-    assert "## Lane Health" not in md
-    assert "## Worker Status" not in md
+    assert "NEEDS ATTENTION" in md
+    assert "ALL TASKS" in md
+    assert "LANE HEALTH" not in md
+    assert "WORKER STATUS" not in md
 
 
 # ---------------------------------------------------------------------------
@@ -138,12 +138,12 @@ def test_render_with_no_data() -> None:
         active_task_ref=None,
         extension_sections=[],
     )
-    assert "# DASHBOARD" in result
-    assert "## Needs Attention" in result
-    assert "All clear." in result
-    assert "## All Tasks" in result
-    assert "## Open Findings" in result
-    assert "- None" in result
+    assert "DASHBOARD" in result
+    assert "NEEDS ATTENTION" in result
+    assert "  (all clear)" in result
+    assert "ALL TASKS" in result
+    assert "OPEN FINDINGS" in result
+    assert "  (none)" in result
 
 
 def test_render_open_findings_grouped_by_task() -> None:
@@ -176,10 +176,10 @@ def test_render_open_findings_grouped_by_task() -> None:
         active_task_ref=None,
         extension_sections=[],
     )
-    assert "### TASK-A" in result
+    assert "  [TASK-A]" in result
     assert "TASK-A-01" in result
     assert "src/foo.py:42" in result
-    assert "### TASK-B" in result
+    assert "  [TASK-B]" in result
     assert "TASK-B-01" in result
 
 
@@ -193,7 +193,7 @@ def test_deferred_findings_section_omitted_when_empty() -> None:
         active_task_ref=None,
         extension_sections=[],
     )
-    assert "## Deferred" not in result
+    assert "DEFERRED" not in result
 
 
 def test_deferred_findings_section_present_when_populated() -> None:
@@ -218,7 +218,7 @@ def test_deferred_findings_section_present_when_populated() -> None:
         active_task_ref=None,
         extension_sections=[],
     )
-    assert "## Deferred / Won't Fix" in result
+    assert "DEFERRED / WONTFIX" in result
     assert "TASK-X-01" in result
     assert "WONTFIX" in result
 
@@ -355,7 +355,7 @@ def test_generate_dashboard_md_writes_file(isolated_handoff) -> None:
     dashboard_path = Path(result["path"])
     assert dashboard_path.exists()
     content = dashboard_path.read_text()
-    assert "# DASHBOARD" in content
+    assert "DASHBOARD" in content
 
 
 def test_generate_dashboard_md_no_write_returns_markdown(isolated_handoff) -> None:
@@ -365,7 +365,7 @@ def test_generate_dashboard_md_no_write_returns_markdown(isolated_handoff) -> No
     assert result["ok"] is True
     assert result["written"] is False
     assert result["markdown"] is not None
-    assert "# DASHBOARD" in result["markdown"]
+    assert "DASHBOARD" in result["markdown"]
 
 
 def test_generate_dashboard_md_with_registered_extension(isolated_handoff) -> None:
@@ -377,7 +377,7 @@ def test_generate_dashboard_md_with_registered_extension(isolated_handoff) -> No
     result = generate_dashboard_md(write_file=False)
 
     assert result["ok"] is True
-    assert "## Lane Health" in result["markdown"]
+    assert "LANE HEALTH" in result["markdown"]
     assert "3 lanes active" in result["markdown"]
 
 
@@ -390,4 +390,4 @@ def test_generate_dashboard_md_extension_exception_does_not_abort(isolated_hando
     result = generate_dashboard_md(write_file=False)
 
     assert result["ok"] is True
-    assert "# DASHBOARD" in result["markdown"]
+    assert "DASHBOARD" in result["markdown"]

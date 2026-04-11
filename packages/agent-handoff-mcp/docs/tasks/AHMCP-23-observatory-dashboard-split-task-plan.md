@@ -251,42 +251,42 @@ Proof:
 
 ### Context and Ownership
 
-- [ ] Loaded current_task_rendering.py, api.py, and orchestrator api.py before editing
-- [ ] Confirmed extension protocol does not create upward dependency
-- [ ] Recorded boundary ownership in Contract and Boundary Impact table
+- [x] Loaded current_task_rendering.py, api.py, and orchestrator api.py before editing
+- [x] Confirmed extension protocol does not create upward dependency
+- [x] Recorded boundary ownership in Contract and Boundary Impact table
 
 ### Checklist for Slice 1: Dashboard rendering module + extension protocol
 
-- [ ] `dashboard_rendering.py` created with DashboardSection, DashboardExtension types
-- [ ] `register_dashboard_extension()` and `generate_dashboard_md()` implemented
-- [ ] Needs-attention logic aggregates open findings by severity, blocked tasks, stale tasks
-- [ ] Data collection functions promoted to public API (or wrapped)
-- [ ] `test_dashboard_rendering.py` covers render, extension, needs-attention
-- [ ] Verification: `make test-handoff` passes
+- [x] `dashboard_rendering.py` created with DashboardSection, DashboardExtension types
+- [x] `register_dashboard_extension()` and `generate_dashboard_md()` implemented
+- [x] Needs-attention logic aggregates open findings by severity, blocked tasks, stale tasks
+- [x] Data collection functions promoted to public API (or wrapped)
+- [x] `test_dashboard_rendering.py` covers render, extension, needs-attention
+- [x] Verification: `make test-handoff` passes
 
 ### Checklist for Slice 2: Slim CURRENT_TASK.md
 
-- [ ] `_build_current_task_render_state()` stops collecting cross-task data
-- [ ] `_render_current_task_md()` stops rendering All Tasks table and cross-task findings
-- [ ] Dashboard-specific render helpers moved to dashboard_rendering.py
-- [ ] Existing tests updated for new CURRENT_TASK.md shape
-- [ ] Verification: `make test-handoff` passes, output is measurably smaller
+- [x] `_build_current_task_render_state()` stops collecting cross-task data
+- [x] `_render_current_task_md()` stops rendering All Tasks table and cross-task findings
+- [x] Dashboard-specific render helpers moved to dashboard_rendering.py
+- [x] Existing tests updated for new CURRENT_TASK.md shape
+- [x] Verification: `make test-handoff` passes, output is measurably smaller
 
 ### Checklist for Slice 3: MCP tool + orchestrator integration
 
-- [ ] `generate_dashboard_md` exposed as MCP tool in handoff-mcp
-- [ ] `dashboard_extension.py` created in orchestrator with lane/worker sections
-- [ ] Extension registered at orchestrator startup
-- [ ] Re-exported from orchestrator api.py
-- [ ] `make dashboard` target added to root Makefile
-- [ ] Contract doc updated
-- [ ] Verification: `make test-handoff`, `make test-orchestrator`, `make dashboard` all pass
+- [x] `generate_dashboard_md` exposed as MCP tool in handoff-mcp
+- [x] `dashboard_extension.py` created in orchestrator with lane/worker sections
+- [x] Extension registered at orchestrator startup
+- [x] Re-exported from orchestrator api.py
+- [x] `make dashboard` target added to root Makefile
+- [x] Contract doc updated
+- [x] Verification: `make test-handoff`, `make test-orchestrator`, `make dashboard` all pass
 
 ### Review Readiness
 
-- [ ] No boundary-touching implementation left without matching contract/doc/fixture evidence
-- [ ] Extension protocol tested with and without registered extensions
-- [ ] Handoff decision records the change, verification, and contract implications
+- [x] No boundary-touching implementation left without matching contract/doc/fixture evidence
+- [x] Extension protocol tested with and without registered extensions
+- [x] Handoff decision records the change, verification, and contract implications
 
 ## Stretch Goals
 
@@ -296,8 +296,8 @@ Proof:
 
 ## Success Criteria
 
-- [ ] `CURRENT_TASK.md` contains zero cross-task findings and no All Tasks table
-- [ ] `DASHBOARD.md` contains Needs Attention, All Tasks, Open Findings, Deferred/Won't Fix sections
-- [ ] Orchestrator extension sections (Lane Health, Worker Status) appear in DASHBOARD.md when orchestrator is loaded
-- [ ] `generate_dashboard_md()` is callable as an MCP tool from both servers
-- [ ] No import from `agent_orchestrator_mcp` exists anywhere in `agent_handoff_mcp`
+- [x] `CURRENT_TASK.md` contains zero cross-task findings and no All Tasks table
+- [x] `DASHBOARD.md` contains Needs Attention, All Tasks, Open Findings, Deferred/Won't Fix sections
+- [x] Orchestrator extension sections (Lane Health, Worker Status) appear in DASHBOARD.md when orchestrator is loaded
+- [x] `generate_dashboard_md()` is callable as an MCP tool from both servers
+- [x] No import from `agent_orchestrator_mcp` exists anywhere in `agent_handoff_mcp`

@@ -37,7 +37,9 @@ async def health_check(
     status = "healthy" if db_status == "connected" else "degraded"
     database_detail = None
     if not business_available:
-        database_detail = "circuit_breaker_open" if breaker_snapshot.state is BreakerState.OPEN else "connection_unavailable"
+        database_detail = (
+            "circuit_breaker_open" if breaker_snapshot.state is BreakerState.OPEN else "connection_unavailable"
+        )
     elif not observability_available:
         database_detail = "observability_connection_unavailable"
     return HealthCheckResponse(

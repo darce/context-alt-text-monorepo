@@ -30,9 +30,7 @@ class SqlAlchemyApiKeyRepository:
     async def touch_by_id(self, api_key_id: str) -> None:
         """Update last_used_at for a record identified by id."""
         await self._session.execute(
-            update(ApiKey)
-            .where(ApiKey.id == uuid.UUID(str(api_key_id)))
-            .values(last_used_at=datetime.now(tz=UTC))
+            update(ApiKey).where(ApiKey.id == uuid.UUID(str(api_key_id))).values(last_used_at=datetime.now(tz=UTC))
         )
 
 

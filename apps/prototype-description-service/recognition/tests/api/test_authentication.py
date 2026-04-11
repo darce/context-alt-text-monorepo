@@ -6,13 +6,12 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from recognition.config.security import SecuritySettings
 from recognition.interface_adapters.http import dependencies
 from recognition.interface_adapters.http import router as recognition_router
-from recognition.config.security import SecuritySettings
 from recognition.interface_adapters.http.deps import auth
 from recognition.tests.api.conftest import FakeSession
 from recognition.tests.fakes import FakeClusterService

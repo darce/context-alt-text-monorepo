@@ -27,7 +27,7 @@ def run_hook(payload: dict) -> tuple[int, str, str]:
 def make_record_event(rationale: str, event_kind: str = "decision", decision: str = "") -> dict:
     return {
         "hook_event_name": "PreToolUse",
-        "tool_name": "mcp__agent-handoff-mcp__record_event",
+        "tool_name": "mcp_altcontext-mc_record_event",
         "tool_input": {
             "event": {
                 "event_kind": event_kind,
@@ -41,7 +41,7 @@ def make_record_event(rationale: str, event_kind: str = "decision", decision: st
 def make_close_slice(rationale: str, decision: str = "slice_complete_test") -> dict:
     return {
         "hook_event_name": "PreToolUse",
-        "tool_name": "mcp__agent-handoff-mcp__close_slice",
+        "tool_name": "mcp_altcontext-mc_close_slice",
         "tool_input": {
             "rationale": rationale,
             "decision": decision,

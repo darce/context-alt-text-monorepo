@@ -37,7 +37,7 @@ def make_handoff_payload(response_chars: int) -> dict:
     padding = "x" * response_chars
     return {
         "hook_event_name": "PostToolUse",
-        "tool_name": "mcp__agent-handoff-mcp__get_handoff_state",
+        "tool_name": "mcp_altcontext-mc_get_handoff_state",
         "tool_input": {"task_ref": "TEST-1"},
         "tool_response": {
             "active": {"task_ref": "TEST-1", "objective": "test"},
@@ -82,7 +82,7 @@ class TestAboveThreshold:
 
     def test_load_session_also_triggers(self):
         payload = make_handoff_payload(10_000)
-        payload["tool_name"] = "mcp__agent-handoff-mcp__load_session"
+        payload["tool_name"] = "mcp_altcontext-mc_load_session"
         resp = run_hook(payload)
         ctx = get_context(resp)
         assert ctx is not None
@@ -107,7 +107,7 @@ class TestEdgeCases:
 
     def test_string_response(self):
         payload = {
-            "tool_name": "mcp__agent-handoff-mcp__get_handoff_state",
+            "tool_name": "mcp_altcontext-mc_get_handoff_state",
             "tool_response": "x" * 10_000,
         }
         resp = run_hook(payload)
@@ -116,7 +116,7 @@ class TestEdgeCases:
 
     def test_empty_response(self):
         payload = {
-            "tool_name": "mcp__agent-handoff-mcp__get_handoff_state",
+            "tool_name": "mcp_altcontext-mc_get_handoff_state",
             "tool_response": {},
         }
         resp = run_hook(payload)

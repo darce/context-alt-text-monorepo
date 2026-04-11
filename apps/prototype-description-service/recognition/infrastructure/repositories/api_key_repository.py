@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import ApiKey
@@ -25,6 +26,14 @@ class SqlAlchemyApiKeyRepository:
         """Update last_used_at for bookkeeping."""
         api_key.last_used_at = datetime.now(tz=UTC)
         await self._session.flush()
+
+    async def touch_by_id(self, api_key_id: str) -> None:
+        """Update last_used_at for a record identified by id."""
+        await self._session.execute(
+            update(ApiKey)
+            .where(ApiKey.id == uuid.UUID(str(api_key_id)))
+            .values(last_used_at=datetime.now(tz=UTC))
+        )
 
 
 __all__ = ["SqlAlchemyApiKeyRepository"]

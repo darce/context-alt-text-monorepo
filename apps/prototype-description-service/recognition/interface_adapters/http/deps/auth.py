@@ -6,13 +6,15 @@ This module provides FastAPI dependencies for API key validation and access cont
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import hashlib
 import logging
 from dataclasses import dataclass
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import BackgroundTasks, Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.session import async_session_factory
 from recognition.config.security import SecuritySettings, get_security_settings
 from recognition.infrastructure.repositories import SqlAlchemyApiKeyRepository
 from recognition.interface_adapters.http.deps.session import get_optional_session
@@ -102,6 +104,84 @@ def _translate_auth_lookup_failure(failure: _AuthLookupFailure) -> HTTPException
     return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="api key lookup failed")
 
 
+async def record_api_key_use(
+    api_key_id: str,
+    *,
+    session_factory: Callable[[], AsyncSession] = async_session_factory,
+) -> None:
+    """Best-effort telemetry update for successful API-key auth."""
+    session = session_factory()
+    try:
+        repo = SqlAlchemyApiKeyRepository(session)
+        await repo.touch_by_id(api_key_id)
+        await session.commit()
+    except Exception:
+        logger.exception("api key telemetry update failed", extra={"api_key_id": api_key_id})
+        await session.rollback()
+    finally:
+        await session.close()
+
+
+def _enqueue_api_key_telemetry(background_tasks: BackgroundTasks | None, api_key_id: str | None) -> None:
+    """Schedule telemetry bookkeeping when the dependency has a background task sink."""
+    if background_tasks is None or api_key_id is None:
+        return
+    background_tasks.add_task(record_api_key_use, api_key_id=api_key_id, session_factory=async_session_factory)
+
+
+async def _require_auth_impl(
+    *,
+    authorization: str | None,
+    x_tenant_id: str | None,
+    api_key_header_value: str | None,
+    background_tasks: BackgroundTasks | None,
+    session: AsyncSession | None,
+) -> AuthContext:
+    """Shared auth implementation that keeps the direct-call test seam explicit."""
+    settings = get_security_settings()
+    if not settings.auth_enabled:
+        return AuthContext(token=None, tenant_claim=None, api_key_id=None, is_admin=False, enabled=False)
+
+    configured_header = settings.api_key_header.strip().lower()
+    api_key: str | None
+
+    if configured_header == "authorization":
+        if authorization:
+            api_key = _extract_authorization_api_key(authorization)
+        elif api_key_header_value:
+            api_key = _extract_api_key_header_value(api_key_header_value)
+        else:
+            api_key = None
+    else:
+        if api_key_header_value:
+            api_key = _extract_api_key_header_value(api_key_header_value)
+        elif authorization:
+            api_key = _extract_authorization_api_key(authorization)
+        else:
+            api_key = None
+
+    if not api_key:
+        if authorization or api_key_header_value:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid authorization scheme")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization header required")
+
+    tenant_claim, api_key_id, rate_limit_tier, is_admin = await _lookup_api_key(api_key, settings, session)
+    if tenant_claim and x_tenant_id:
+        provided = normalize_tenant_id(x_tenant_id)
+        if tenant_claim != provided:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+    _enqueue_api_key_telemetry(background_tasks, api_key_id)
+
+    return AuthContext(
+        token=api_key,
+        tenant_claim=tenant_claim,
+        api_key_id=api_key_id,
+        rate_limit_tier=rate_limit_tier,
+        is_admin=is_admin,
+        enabled=True,
+    )
+
+
 async def _lookup_api_key(
     api_key: str,
     settings: SecuritySettings,
@@ -155,52 +235,19 @@ def _extract_api_key_header_value(header_value: str) -> str | None:
 
 
 async def require_auth(
+    background_tasks: BackgroundTasks,
     authorization: str | None = Header(default=None, alias="Authorization"),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
     api_key_header_value: str | None = Header(default=None, alias="X-Api-Key"),
     session: AsyncSession | None = Depends(get_optional_session),
 ) -> AuthContext:
     """Enforce bearer auth when enabled via settings."""
-    settings = get_security_settings()
-    if not settings.auth_enabled:
-        return AuthContext(token=None, tenant_claim=None, api_key_id=None, is_admin=False, enabled=False)
-
-    configured_header = settings.api_key_header.strip().lower()
-    api_key: str | None
-
-    if configured_header == "authorization":
-        if authorization:
-            api_key = _extract_authorization_api_key(authorization)
-        elif api_key_header_value:
-            api_key = _extract_api_key_header_value(api_key_header_value)
-        else:
-            api_key = None
-    else:
-        if api_key_header_value:
-            api_key = _extract_api_key_header_value(api_key_header_value)
-        elif authorization:
-            api_key = _extract_authorization_api_key(authorization)
-        else:
-            api_key = None
-
-    if not api_key:
-        if authorization or api_key_header_value:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid authorization scheme")
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization header required")
-
-    tenant_claim, api_key_id, rate_limit_tier, is_admin = await _lookup_api_key(api_key, settings, session)
-    if tenant_claim and x_tenant_id:
-        provided = normalize_tenant_id(x_tenant_id)
-        if tenant_claim != provided:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
-
-    return AuthContext(
-        token=api_key,
-        tenant_claim=tenant_claim,
-        api_key_id=api_key_id,
-        rate_limit_tier=rate_limit_tier,
-        is_admin=is_admin,
-        enabled=True,
+    return await _require_auth_impl(
+        authorization=authorization,
+        x_tenant_id=x_tenant_id,
+        api_key_header_value=api_key_header_value,
+        background_tasks=background_tasks,
+        session=session,
     )
 
 
@@ -235,6 +282,7 @@ async def require_write_access(auth: AuthContext = Depends(require_auth)) -> Aut
 
 __all__ = [
     "AuthContext",
+    "record_api_key_use",
     "require_auth",
     "get_current_tenant",
     "require_write_access",

@@ -339,7 +339,7 @@ What this does:
 
 1. Upserts the lane registration to `active` status.
 2. Sends an open `orchestrator_to_worker` lane message.
-3. Regenerates `CURRENT_TASK.md` so the dispatch is human-readable.
+3. Regenerates `CURRENT_TASK.md` as machine-readable state and `DASHBOARD.md` as the human-readable dispatch surface.
 
 The worker sees it the next time they run `make lane-inbox`.
 

@@ -83,7 +83,7 @@ Cold start vs. mid-task re-entry:
 
 If MCP handoff is unavailable:
 
-- Read `CURRENT_TASK.md` only as a stale human-readable fallback.
+- Read `DASHBOARD.md` only as a stale human-readable fallback; `CURRENT_TASK.md` is machine-readable state.
 - Treat the missing MCP path as a blocker and record or report that unavailability as soon as MCP access returns.
 
 ---
@@ -207,7 +207,7 @@ Reserve terminal for operations with no native-tool equivalent: test execution, 
 - Consolidate all checklists at the **bottom** of task documents. No scattered `- [ ]` items. No time estimates.
 - Planning docs must stay internally consistent (current state vs checklist vs success criteria vs ADR terms).
 - When reviewing task plans, epics, roadmaps, ADRs, or other planning documents for gaps, bugs, obsolete assumptions, or unnecessary complexity, record every finding in MCP handoff before presenting it in chat.
-- Do not log branch-review or plan-review findings, `finding_id`s, or fix-status notes into task plans. MCP handoff is the canonical store for review results, and `CURRENT_TASK.md` is the generated human-readable mirror when review state needs to be surfaced.
+- Do not log branch-review or plan-review findings, `finding_id`s, or fix-status notes into task plans. MCP handoff is the canonical store for review results; `DASHBOARD.md` is the generated human-readable mirror, and `CURRENT_TASK.md` is the generated machine-readable snapshot.
 - Reference code locations by **function/target name**, not line numbers. Line numbers go stale; names survive refactors.
 - Every pseudocode function or CLI command in a plan must map to an existing API/import or be explicitly marked as "new, to be created." Unresolved pseudocode references cause implementation ambiguity.
 - Validate enum values, status strings, and filter parameters used in plans against the actual API or schema. Using a status value that the API rejects (e.g., `done` when valid values are `planned/active/blocked/review/merged/closed`) is a plan bug.
@@ -360,7 +360,7 @@ During-work discipline (abbreviated):
 - Record verification: `record_event(event={event_kind: "test_result", task_ref: ..., actor: {...}, ...})`. Keep `result` as a concise proof line.
 - Record findings with `review_findings(...)`. Use `review_findings(review={operation: "record", ...}, actor={ ... })` for 1-2 findings and `review_findings(review={operation: "batch_record", findings: [...], ...}, actor={ ... })` for 3 or more — one atomic write, one `CURRENT_TASK.md` flush, per-item results returned.
 - **Review findings live in handoff, not in task plans.** Never paste a finding list into `docs/tasks/**`, `docs/epics/**`, or any `*task-plan*.md`. The `scripts/hooks/guard-task-plan-findings.py` PreToolUse hook (wired into both `.claude/settings.json` and `.github/hooks/terminal-guard.json`) rejects any Edit/Write that introduces three or more consecutive bulleted lines opening with a finding-style identifier (`AOMCP-3-BR-04`, `H-1`, `E15-7-BR-02`, etc.). The same scanner runs via `make lint-task-plans` in `make check-all`, and exposes a `--scan-staged` mode for opt-in `git pre-commit` integration. If a task plan needs to reference findings, link to them by ID (`see AOMCP-3-BR-04 in handoff`) instead of duplicating their bodies. Motivated by AHMCP-14: pasted finding lists duplicate the source of truth, escape `handoff_close_check`, and silently rot the moment a finding is updated, deferred, or fixed.
-- **Regenerate `CURRENT_TASK.md`** after any state-changing handoff operation — not just slice completions. This includes `record_event`, `review_findings(operation="update")`, and `review_findings(operation="batch_record")`. Call `generate_current_task_md(task_ref=<active-task-ref>)` so the human-readable mirror stays current.
+- **Regenerate `CURRENT_TASK.md`** after any state-changing handoff operation — not just slice completions. This includes `record_event`, `review_findings(operation="update")`, and `review_findings(operation="batch_record")`. Call `generate_current_task_md(task_ref=<active-task-ref>)` so `CURRENT_TASK.md` stays machine-readable and `DASHBOARD.md` stays human-readable.
 - Validate review state with `get_review_findings_summary(...)` and `review_findings(review={"operation":"list", ...})`, not direct `sqlite3`.
 
 Read discipline:

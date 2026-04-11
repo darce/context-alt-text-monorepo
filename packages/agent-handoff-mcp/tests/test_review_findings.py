@@ -58,16 +58,19 @@ def _assert_dashboard_row(
 def isolated_handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     state_dir = tmp_path / ".task-state"
     current_task_path = tmp_path / "CURRENT_TASK.md"
+    dashboard_path = tmp_path / "DASHBOARD.md"
     runtime = RuntimeConfig.for_workspace(
         tmp_path,
         state_dir=state_dir,
         current_task_path=current_task_path,
+        dashboard_path=dashboard_path,
     )
     mcp_server.configure_runtime(runtime)
     return {
         "state_dir": state_dir,
         "db_path": runtime.db_path,
         "current_task_path": current_task_path,
+        "dashboard_path": dashboard_path,
     }
 
 
@@ -385,7 +388,9 @@ def test_render_current_task_md_with_decisions_but_no_active(isolated_handoff: d
     assert result["ok"] is True
 
     current_task_path = Path(isolated_handoff["current_task_path"])
-    md = current_task_path.read_text()
+    current_task_payload = json.loads(current_task_path.read_text())
+    md = Path(isolated_handoff["dashboard_path"]).read_text()
+    assert current_task_payload["task_ref"] == "E12-test-render"
     assert "No active handoff state found." not in md
     assert "E12-test-render" in md
     assert "test_decision_for_render" in md
@@ -414,7 +419,9 @@ def test_render_current_task_md_with_findings_but_no_active(isolated_handoff: di
     assert result["ok"] is True
 
     current_task_path = Path(isolated_handoff["current_task_path"])
-    md = current_task_path.read_text()
+    current_task_payload = json.loads(current_task_path.read_text())
+    md = Path(isolated_handoff["dashboard_path"]).read_text()
+    assert current_task_payload["task_ref"] == "E12-render-findings"
     assert "No active handoff state found." not in md
     assert "E12-render-findings" in md
 
@@ -439,7 +446,9 @@ def test_cross_task_finding_write_keeps_current_task_on_active_task(isolated_han
         )
     )
 
-    md = isolated_handoff["current_task_path"].read_text()
+    current_task_payload = json.loads(isolated_handoff["current_task_path"].read_text())
+    assert current_task_payload["task_ref"] == "E15-2"
+    md = isolated_handoff["dashboard_path"].read_text()
     assert "## Objective\nActive task should remain visible" in md
     assert "- task_ref: `E15-2`" in md
     assert "### E14-2" in md

@@ -22,7 +22,6 @@ from ._shared import (
     _get_db_connection,
     _has_structured_slice_summary,
     _normalize_optional_text,
-    _render_current_task_md,
     _resolve_task_ref,
     _resolve_write_actor,
     _row_to_dict,
@@ -659,17 +658,18 @@ def handoff_close_check(
         provenance_integrity = _collect_task_provenance_integrity(conn, resolved_task_ref)
         from .current_task_rendering import (  # noqa: PLC0415
             _build_current_task_render_state,
-            _normalize_current_task_markdown_for_compare,
+            _normalize_current_task_json_for_compare,
+            _render_current_task_json,
         )
 
         expected_state = _build_current_task_render_state(conn, resolved_task_ref)
-        expected_markdown = _render_current_task_md(expected_state)
+        expected_current_task = _render_current_task_json(expected_state)
         current_task_exists = _current_task_path().exists()
         current_task_in_sync = bool(
             current_task_exists
             and active_task_matches
-            and _normalize_current_task_markdown_for_compare(_current_task_path().read_text())
-            == _normalize_current_task_markdown_for_compare(expected_markdown)
+            and _normalize_current_task_json_for_compare(_current_task_path().read_text())
+            == _normalize_current_task_json_for_compare(expected_current_task)
         )
     latest_structured_current_commit_decision = (
         structured_current_commit_decisions[0] if structured_current_commit_decisions else None

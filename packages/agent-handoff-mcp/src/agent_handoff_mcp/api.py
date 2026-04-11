@@ -64,7 +64,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "review_runs": "Record, list, or summarize review-run coverage through one typed domain surface. Set review.operation to 'record', 'list', or 'coverage'.",
     "handoff_close_check": "Check task readiness to close: blockers, pending actions, findings, and optional fresh-test gate.",
     "audit_decision_ids": "Audit decision IDs for grammar conformance. Returns canonical/malformed/freeform classifications.",
-    "generate_current_task_md": "Generate CURRENT_TASK.md for the active task.",
+    "generate_current_task_md": "Generate the machine-readable CURRENT_TASK.md snapshot for the active task and refresh the human-readable DASHBOARD.md mirror.",
     "export_handoff_state": "Export the task handoff state to a portable JSON snapshot.",
     "import_handoff_state": "Import a previously exported handoff state snapshot into the local database.",
     "archive_task_state": "Archive completed task state from the live handoff tables into archive storage.",
@@ -72,7 +72,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "get_verified_tests": "List verified test rows from the handoff ledger with optional task, lane, branch, commit, and pass/fail filters.",
     "update_task_status": "Update a task status without recording a slice decision. For the active task this requires expected_revision; for archived tasks it updates the archived snapshot status used by the dashboard.",
     "load_session": "Load session context: get_handoff_state + review_findings(list open) in one call. Pass sections to shape the nested state payload and detail to shape both state and findings.",
-    "close_slice": "Record a slice-complete decision, keep the task status in_progress, and regenerate CURRENT_TASK.md. Requires expected_revision when the target task is currently active. Pass changed_files to persist structured review scope on the nested decision write.",
+    "close_slice": "Record a slice-complete decision, keep the task status in_progress, and regenerate CURRENT_TASK.md plus DASHBOARD.md. Requires expected_revision when the target task is currently active. Pass changed_files to persist structured review scope on the nested decision write.",
     "artifacts": "Record, search, get, or purge artifact sources through one typed domain surface. Set artifact.operation to 'record', 'search', 'get', or 'purge'.",
     "search_handoff": "Search decisions, findings, blockers, actions, and verified tests by keyword with BM25 ranking. Pass detail='summary' to truncate snippets and fields='record_type,snippet' to project per-result fields.",
 }
@@ -1564,13 +1564,14 @@ def generate_current_task_md(
 
     Args:
         task_ref: The task to render. Defaults to the active task.
-        write_file: Write the markdown to disk.
+        write_file: Write the machine-readable CURRENT_TASK.md snapshot and the
+            human-readable DASHBOARD.md mirror to disk.
         max_cross_task_findings: Maximum findings per task_ref in cross-task
             open and deferred sections. Default 5.
 
     Open review findings from all other tasks are always included in the
-    rendered output, grouped by task_ref under "## Open Review Findings".
-    Active-task findings are uncapped.
+    human-readable dashboard output, grouped by task_ref under
+    "## Open Review Findings". Active-task findings are uncapped.
     """
     max_cross_task_findings = max(0, max_cross_task_findings)
     with core._get_db_connection() as conn:
@@ -1627,24 +1628,36 @@ def generate_current_task_md(
                 archived_snapshot = json.loads(archive_row["snapshot_json"])
                 state["active"] = archived_snapshot.get("active")
 
-    markdown = core._render_current_task_md(state)
-    current_task_path = get_runtime_config().current_task_path
+    from .current_task_rendering import _render_current_task_json  # noqa: PLC0415
+
+    dashboard_markdown = core._render_current_task_md(state)
+    current_task_json = _render_current_task_json(state)
+    runtime = get_runtime_config()
+    current_task_path = runtime.current_task_path
+    dashboard_path = runtime.dashboard_path
 
     if write_file:
-        current_task_path.write_text(markdown)
+        current_task_path.write_text(current_task_json)
+        dashboard_path.write_text(dashboard_markdown)
 
     resolved_ref = state.get("task_ref")
-    artifacts = (
-        [{"type": "current_task_md", "path": str(current_task_path), "written": write_file}] if write_file else []
-    )
+    artifacts = []
+    if write_file:
+        artifacts = [
+            {"type": "current_task_md", "path": str(current_task_path), "written": True},
+            {"type": "dashboard_md", "path": str(dashboard_path), "written": True},
+        ]
     return core._envelope(
         ok=True,
         tool="generate_current_task_md",
         data={
             "task_ref": resolved_ref,
             "path": str(current_task_path),
+            "dashboard_path": str(dashboard_path),
             "written": write_file,
-            "markdown": markdown if not write_file else None,
+            "markdown": dashboard_markdown if not write_file else None,
+            "dashboard_markdown": dashboard_markdown if not write_file else None,
+            "current_task_json": current_task_json if not write_file else None,
         },
         task_ref=resolved_ref,
         artifacts=artifacts,
@@ -1661,8 +1674,9 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
             "## Task State Model\n\n"
             "One task is active at a time (stored in handoff_state id=1). "
             "Completed tasks are archived into task_archives with a status snapshot. "
-            "The CURRENT_TASK.md dashboard renders both: the active task's live status "
-            "and each archived task's snapshot status. "
+            "DASHBOARD.md renders the human-readable active-task view plus the cross-task dashboard, "
+            "while CURRENT_TASK.md stores the machine-readable active-task snapshot. "
+            "The dashboard renders both the active task's live status and each archived task's snapshot status. "
             "Non-archived, non-active tasks default to 'active' in the dashboard — "
             "this is a rendering fallback, not a real stored status.\n\n"
             "## Task Lifecycle\n\n"
@@ -1672,7 +1686,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
             "record test results with `record_event(event={event_kind:'test_result', ...})`, "
             "and record blockers with `record_event(event={event_kind:'blocker', ...})`.\n"
             "3. **Complete slices**: use `close_slice(...)` to record a slice-complete decision. "
-            "This keeps the task status as in_progress and regenerates CURRENT_TASK.md.\n"
+            "This keeps the task status as in_progress and regenerates CURRENT_TASK.md plus DASHBOARD.md.\n"
             "4. **Finish task**: when all slices are done, update status to done: "
             "`update_task_status(task_ref=..., status='done')`. "
             "Then archive: `archive_task_state(task_ref=...)`.\n"
@@ -1682,7 +1696,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
             "## Key Tool Guidance\n\n"
             "- `load_session`: use at session start to get state + open findings in one call.\n"
             "- `close_slice`: use for slice completions — it records a decision, keeps status "
-            "in_progress, and regenerates CURRENT_TASK.md atomically.\n"
+            "in_progress, and regenerates CURRENT_TASK.md plus DASHBOARD.md atomically.\n"
             "- `update_task_status`: use to change status (in_progress/done/blocked/review) "
             "without recording a decision. Works for both active and archived tasks.\n"
             "- `set_handoff_state`: use to update objective, focus, or status on the active task. "
@@ -1692,7 +1706,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
             "the task had at archive time.\n"
             "- `generate_current_task_md`: call after any state-changing operation "
             "(record_event, review_findings with record/batch_record/update) "
-            "to keep the human-readable CURRENT_TASK.md current."
+            "to keep CURRENT_TASK.md machine-readable and DASHBOARD.md human-readable."
         ),
     )
     _apply_tool_descriptions()

@@ -66,6 +66,7 @@ class RuntimeConfig:
     state_dir: Path
     db_path: Path
     current_task_path: Path
+    dashboard_path: Path
     exports_dir: Path
     artifact_db_path: Path
     artifact_index_min_bytes: int = 4096
@@ -85,6 +86,7 @@ class RuntimeConfig:
         *,
         state_dir: str | Path | None = None,
         current_task_path: str | Path | None = None,
+        dashboard_path: str | Path | None = None,
         exports_dir: str | Path | None = None,
         tool_profile: str | None = None,
     ) -> RuntimeConfig:
@@ -97,6 +99,11 @@ class RuntimeConfig:
             if current_task_path is not None
             else resolved_workspace_root / "CURRENT_TASK.md"
         )
+        resolved_dashboard_path = (
+            Path(dashboard_path).expanduser().resolve()
+            if dashboard_path is not None
+            else resolved_workspace_root / "DASHBOARD.md"
+        )
         resolved_exports_dir = (
             Path(exports_dir).expanduser().resolve() if exports_dir is not None else resolved_state_dir / "exports"
         )
@@ -105,6 +112,7 @@ class RuntimeConfig:
             state_dir=resolved_state_dir,
             db_path=resolved_state_dir / "handoff.db",
             current_task_path=resolved_current_task_path,
+            dashboard_path=resolved_dashboard_path,
             exports_dir=resolved_exports_dir,
             artifact_db_path=resolved_state_dir / "mcp-artifacts.db",
             tool_profile=tool_profile or _DEFAULT_TOOL_PROFILE,
@@ -117,6 +125,7 @@ class RuntimeConfig:
         *,
         state_dir: str | Path | None = None,
         current_task_path: str | Path | None = None,
+        dashboard_path: str | Path | None = None,
         exports_dir: str | Path | None = None,
         tool_profile: str | None = None,
     ) -> RuntimeConfig:
@@ -150,6 +159,7 @@ class RuntimeConfig:
             workspace_root,
             state_dir=state_dir,
             current_task_path=current_task_path,
+            dashboard_path=dashboard_path,
             exports_dir=exports_dir,
             tool_profile=tool_profile,
         )
@@ -184,6 +194,7 @@ class RuntimeConfig:
             state_dir=getattr(args, "state_dir", None) or os.environ.get("AGENT_HANDOFF_STATE_DIR"),
             current_task_path=getattr(args, "current_task_path", None)
             or os.environ.get("AGENT_HANDOFF_CURRENT_TASK_PATH"),
+            dashboard_path=getattr(args, "dashboard_path", None) or os.environ.get("AGENT_HANDOFF_DASHBOARD_PATH"),
             exports_dir=getattr(args, "exports_dir", None) or os.environ.get("AGENT_HANDOFF_EXPORTS_DIR"),
             tool_profile=getattr(args, "tool_profile", None) or os.environ.get("AGENT_HANDOFF_TOOL_PROFILE"),
         )

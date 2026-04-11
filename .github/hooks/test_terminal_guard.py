@@ -394,15 +394,18 @@ def test_post_tool_use_registers_ace_detect_hook() -> None:
     config = json.loads(HOOK_CONFIG.read_text(encoding="utf-8"))
     post_tool_use = config["hooks"]["PostToolUse"]
 
-    assert post_tool_use == [
-        {
-            "matcher": "mcp__agent-handoff-mcp__review_findings",
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": "python3 scripts/hooks/ace-detect.py",
-                    "timeout": 5,
-                }
-            ],
-        }
+    # Verify ace-detect.py is wired to fire on review_findings calls.
+    # The matcher may include additional MCP server prefixes (e.g. aliases
+    # added by AHMCP-24); what matters is that the canonical tool name is
+    # covered and exactly one PostToolUse entry runs ace-detect.
+    ace_detect_entries = [
+        entry for entry in post_tool_use
+        if any(
+            h.get("command", "").endswith("ace-detect.py")
+            for h in entry.get("hooks", [])
+        )
     ]
+    assert len(ace_detect_entries) == 1, (
+        "Expected exactly one PostToolUse entry for ace-detect.py"
+    )
+    assert "mcp__agent-handoff-mcp__review_findings" in ace_detect_entries[0]["matcher"]

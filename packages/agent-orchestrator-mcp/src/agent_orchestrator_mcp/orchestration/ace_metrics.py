@@ -728,7 +728,7 @@ def _handoff_memory(task_ref: str, state_dir: Path, workspace_root: Path) -> dic
 
         try:
             configure_runtime(
-                RuntimeConfig.for_repo(workspace_root)
+                RuntimeConfig.for_repo(workspace_root, state_dir=state_dir)
             )
             # Intentional broad read: this metric tracks the serialized hot-state
             # footprint of the default bounded handoff snapshot, not the minimum

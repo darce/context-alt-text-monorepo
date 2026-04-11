@@ -361,6 +361,11 @@ lint-scripts:
 	@python3 scripts/hooks/lint-no-inline-python-heredoc.py
 	@python3 scripts/hooks/lint-expected-revision.py
 
+# Run unit tests for scripts/hooks and .github/hooks.
+# Addresses AHMCP-14-BR-02: hook tests were not reachable via package Makefiles.
+test-hooks:
+	@python3 -m pytest scripts/hooks .github/hooks -q --tb=short
+
 format-handoff:
 	@$(MAKE) -C packages/agent-handoff-mcp format-handoff
 

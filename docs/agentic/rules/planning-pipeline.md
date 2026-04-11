@@ -265,6 +265,17 @@ TDD cycle, slice checklist, MCP handoff decisions, and review findings.
 At this point the task plan is already on `main` (committed and reviewed
 during the planning phase). Implementation begins:
 
+0. **Verify the task plan is committed on `main`.** Before running `make task-start`,
+   confirm the task plan document is discoverable:
+   ```bash
+   TASK_LOWER="$(echo "<id>" | tr '[:upper:]' '[:lower:]')"
+   git log main --oneline -- "docs/tasks/**/*${TASK_LOWER}*" \
+     "packages/*/docs/tasks/**/*${TASK_LOWER}*"
+   ```
+   If nothing is returned, commit the task plan on `main` first. For ad-hoc or
+   reactive work that did not follow a planning phase, create a minimal retroactive
+   task plan before proceeding. See [Retroactive task plans](#retroactive-task-plans)
+   below.
 1. **Commit or finish current work** before switching (see safe switching below)
 2. Run `make task-start TASK=<id> OBJECTIVE="..."` from the root worktree.
    This creates the feature branch, links the worktree, and registers the MCP
@@ -287,6 +298,23 @@ Each completed slice records a `slice_complete_*` decision in MCP with:
 1. Final slice recorded with `close_slice`
 2. PR created from task branch to `main`
 3. PR maps 1:1 to the task plan — reviewable as a unit
+
+### Retroactive task plans
+
+When urgent or reactive work proceeds directly to implementation without a
+full planning phase, a minimal task plan must be retrofitted on `main`
+before the feature branch merges. The retroactive plan does not need a spec
+review history; it needs:
+
+- **Objective**: one paragraph explaining why the work was done
+- **Scope**: the packages and files the work touched
+- **Handoff reference**: the MCP task ref and slice decision ID(s) that
+  captured the implementation intent
+
+The retroactive plan counts as a planning artifact for pre-merge traceability
+and does not require a separate planning review pass unless the work is large
+or contract-breaking. Commit it on `main` while the feature branch is open;
+the merge lands the code alongside the doc in one reviewable unit.
 
 ### Safe branch switching
 

@@ -426,6 +426,7 @@ Quick reference — required gates between stages:
 - Spec → Task Plan: at least one planning review pass with findings in MCP; all findings resolved
 - Spec → ADR: only when a spec item is explicitly design-uncertain
 - ADR → Task Plan: ADR reviewed before implementation tasks are created from it
+- Task Plan → Implementation: task plan document committed and discoverable on `main` before `make task-start` is run; see [Stage 4 prerequisites](planning-pipeline.md#task-start-workflow)
 
 #### Where Epics Fit
 

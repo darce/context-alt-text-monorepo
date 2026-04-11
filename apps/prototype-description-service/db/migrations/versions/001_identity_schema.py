@@ -63,6 +63,21 @@ def upgrade() -> None:
     )
 
     op.create_table(
+        "api_keys",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("api_key_hash", sa.String(length=128), nullable=False, unique=True),
+        sa.Column("rate_limit_tier", sa.String(length=50), nullable=True),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("last_used_at", sa.TIMESTAMP(timezone=True), nullable=True),
+    )
+
+    op.create_table(
         "media_identities",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -986,6 +1001,8 @@ def upgrade() -> None:
     op.create_index("idx_recognition_runs_status", "recognition_runs", ["status"])
     op.create_index("idx_recognition_runs_scan_job", "recognition_runs", ["scan_job_id"])
     op.create_index("idx_recognition_runs_clustering_job", "recognition_runs", ["clustering_job_id"])
+    op.create_index("idx_api_keys_tenant", "api_keys", ["tenant_id"])
+    op.create_index("idx_api_keys_hash", "api_keys", ["api_key_hash"])
 
     op.create_index("idx_recognition_events_tenant", "recognition_events", ["tenant_id"])
     op.create_index("idx_recognition_events_run_time", "recognition_events", ["run_id", "timestamp"])

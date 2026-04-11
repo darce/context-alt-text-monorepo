@@ -218,7 +218,9 @@ async def get_optional_session(
         await session.close()
 
 
-async def get_observability_session(request: Request) -> AsyncIterator[AsyncSession | None]:
+async def get_observability_session(
+    request: Request,  # kept for future observability-specific circuit breaker (SLR-4-BR-01)
+) -> AsyncIterator[AsyncSession | None]:
     """Session provider without tenant validation for diagnostics."""
     started_at = _time.perf_counter()
     session = observability_async_session_factory()

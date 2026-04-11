@@ -110,7 +110,7 @@ class FakeSession:
         """Stub get method for repository compatibility."""
         return self._get_results.get((model_class, pk))
 
-    def begin_nested(self) -> "_FakeNestedTransaction":
+    def begin_nested(self) -> _FakeNestedTransaction:
         """Provide a minimal nested-transaction seam for auth/savepoint tests."""
         return _FakeNestedTransaction(self)
 
@@ -121,7 +121,7 @@ class _FakeNestedTransaction:
     def __init__(self, session: FakeSession) -> None:
         self._session = session
 
-    async def __aenter__(self) -> "_FakeNestedTransaction":
+    async def __aenter__(self) -> _FakeNestedTransaction:
         self._session.begin_nested_calls += 1
         return self
 

@@ -35,9 +35,7 @@ _TIMEOUT_PATTERN = re.compile(r"^\d+(?:ms|s|min|h|d)?$")
 def _validated_timeout_setting(raw_value: str, *, setting_name: str) -> str:
     """Reject malformed timeout values before interpolating them into SET LOCAL."""
     if not _TIMEOUT_PATTERN.fullmatch(raw_value):
-        raise ValueError(
-            f"{setting_name} must match <integer><optional unit>; got {raw_value!r}"
-        )
+        raise ValueError(f"{setting_name} must match <integer><optional unit>; got {raw_value!r}")
     return raw_value
 
 

@@ -1781,7 +1781,11 @@ def test_switch_task_regenerates_current_task_with_dashboard(isolated_handoff: d
     assert result_response["ok"] is True
     assert result["current_task_md_regen"] == "ok"
 
-    md = isolated_handoff["current_task_path"].read_text()
+    # After AHMCP-23: "## All Tasks" lives in DASHBOARD.md, not CURRENT_TASK.md.
+    # Generate DASHBOARD.md and assert the cross-task sections are there.
+    dash_result = mcp_server.generate_dashboard_md(write_file=False)
+    assert dash_result["ok"] is True
+    md = dash_result["markdown"]
     assert "## All Tasks" in md
     _assert_dashboard_row(
         md,

@@ -46,6 +46,7 @@ from agent_handoff_mcp.api import (  # noqa: E402,F401
     close_slice,
     export_handoff_state,
     generate_current_task_md,
+    generate_dashboard_md,
     get_handoff_state,
     handoff_close_check,
     import_handoff_state,
@@ -65,6 +66,23 @@ from agent_handoff_mcp.api import (  # noqa: E402,F401
     update_next_actions,
     update_review_finding,
 )
+
+
+def _register_dashboard_extensions() -> None:
+    """Register orchestrator-side dashboard extensions at module load time.
+
+    Late-binding imports per rg-014: ``agent_handoff_mcp`` symbols are
+    imported inside this function, not at module top level.
+    """
+    from agent_handoff_mcp.dashboard_rendering import register_dashboard_extension  # noqa: PLC0415
+    from agent_orchestrator_mcp.orchestration.dashboard_extension import (  # noqa: PLC0415
+        lane_worker_extension,
+    )
+
+    register_dashboard_extension(lane_worker_extension)
+
+
+_register_dashboard_extensions()
 
 TOOL_DESCRIPTIONS: dict[str, str] = {
     "manage_worktree_lane": "Compound tool: create, close, or list worktree lanes in one call. Use operation='upsert'|'close'|'list'.",

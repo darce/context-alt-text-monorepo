@@ -69,8 +69,8 @@ from ._shared import (  # noqa: F401
     _normalize_lane_message_payload,
     _normalize_optional_text,
     _paginated_query,
-    _render_current_task_md,
     _render_current_task_json,
+    _render_current_task_md,
     _resolve_task_ref,
     _resolve_write_actor,
     _row_to_dict,
@@ -126,7 +126,7 @@ from .review_findings import (  # noqa: F401
     update_review_finding,
 )
 from .runtime import get_runtime_config
-from .verified_tests import get_verified_tests
+from .verified_tests import get_verified_tests  # noqa: F401
 
 # FTS search constants and search_handoff
 _FTS5_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")

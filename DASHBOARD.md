@@ -1,28 +1,28 @@
 # DASHBOARD
 
-_Generated from .task-state/handoff.db. Last generated: 2026-04-10 23:57 UTC_
+_Generated from .task-state/handoff.db. Last generated: 2026-04-11 00:20 UTC_
 
 ## Needs Attention
   ⚠ AOMCP-4               1 open (1 medium)
-  ⚠ AHMCP-9               blocked: 1 open blocker
 
 ## All Tasks
 
 ```
   Task                                          Status         Find  Block  Act  Last            
   ────────────────────────────────────────────  ─────────────  ────  ─────  ───  ────────────────
-  AHMCP-23                                      done              0      0    0  23:57           
-> AHMCP-9                                       blocked           0      1    0  22:37           
-  AHMCP-8                                       done              0      0    0  20:52           
-  ACE-EXTRACT                                   active            0      0    0  19:55           
-  REVIEW-INTAKE-ASSESS                          active            0      0    0  18:06           
-  AHMCP-RI-PLAN                                 done              0      0    0  06:23           
-  RLS-TEST-DSN-FIX                              done              0      0    0  06:04           
-  REVIEW-INTAKE-PROPOSAL                        in_progress       0      0    0  05:47           
-  SLR-4                                         done              0      0    0  04:38           
-  SESSION-LIFECYCLE-RESILIENCE                  review            1      0    1  04:21           
-  SLR-3                                         active            0      0    0  04:12           
-  SLR-1                                         done              0      0    0  03:27           
+> ahmcp-24                                      in_progress       0      0    0  00:15           
+  AHMCP-9                                       done              0      0    0  2026-04-10 23:59
+  AHMCP-23                                      done              0      0    0  2026-04-10 23:57
+  AHMCP-8                                       done              0      0    0  2026-04-10 20:52
+  ACE-EXTRACT                                   active            0      0    0  2026-04-10 19:55
+  REVIEW-INTAKE-ASSESS                          active            0      0    0  2026-04-10 18:06
+  AHMCP-RI-PLAN                                 done              0      0    0  2026-04-10 06:23
+  RLS-TEST-DSN-FIX                              done              0      0    0  2026-04-10 06:04
+  REVIEW-INTAKE-PROPOSAL                        in_progress       0      0    0  2026-04-10 05:47
+  SLR-4                                         done              0      0    0  2026-04-10 04:38
+  SESSION-LIFECYCLE-RESILIENCE                  review            1      0    1  2026-04-10 04:21
+  SLR-3                                         active            0      0    0  2026-04-10 04:12
+  SLR-1                                         done              0      0    0  2026-04-10 03:27
   INVEST-LOCAL-SYNC                             done              0      0    0  2026-04-09 21:35
   AHMCP-22-BR-FIXES                             done              0      0    0  2026-04-09 19:12
   AHMCP-22                                      done              0      0    0  2026-04-09 19:12
@@ -30,7 +30,6 @@ _Generated from .task-state/handoff.db. Last generated: 2026-04-10 23:57 UTC_
   AHMCP-21                                      done              0      0    0  2026-04-09 19:03
   AOMCP-4                                       done              1      0    0  2026-04-09 18:59
   AHMCP-19                                      done              0      0    0  2026-04-09 16:47
-  AHMCP-20                                      done              0      0    0  2026-04-09 06:02
 ```
 
 ## Open Findings

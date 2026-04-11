@@ -61,7 +61,7 @@ make lane-intake TASK=<task> LANE=<lane>                       # Merge a lane
 make lane-refresh TASK=<task> LANE=<lane>                      # Sync lane to root
 make lane-list                                                 # List all lanes
 make state                                                     # Full MCP state
-make dashboard                                                 # MCP dashboard
+make dashboard                                                 # Generate DASHBOARD.md (human observatory view)
 make orchestrator-daemon [TASK=<task>] [BACKEND=<backend>] [MODEL=<model>]
 make artifact-list TASK=<task> [LANE=<lane>]                   # List indexed evidence
 make artifact-search TASK=<task> QUERY="schema missing"        # Search indexed evidence

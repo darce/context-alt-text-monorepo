@@ -249,7 +249,7 @@ def test_stdio_tool_responses_return_native_dict_not_wrapped_string(tmp_path: Pa
             log_file=tmp_path / "stdio-dict-response.log",
         )
         async with Client(transport) as client:
-            result = await client.call_tool("get_handoff_state", {"view": "dashboard"})
+            result = await client.call_tool("get_handoff_state", {"sections": "identity"})
             text_payload = _json.loads(result.content[0].text)
             structured = result.structured_content
             return text_payload, structured

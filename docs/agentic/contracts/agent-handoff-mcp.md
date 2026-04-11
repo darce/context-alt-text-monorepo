@@ -6,7 +6,7 @@ boundary_owner: agentic-tooling
 
 ## Purpose
 
-`agent-handoff-mcp` is the portable MCP server for agent coordination state. After the AHMCP-6 event, review, next-action, and artifact-domain consolidation plus profile-removal stretch work, plus AHMCP-8 verified-test search/read support, it exposes a single **19-tool** MCP surface for task state, review findings, verification evidence, artifacts, export/import, and handoff close checks. Orchestration, daemon lifecycle, lane management, and turn metrics are served by [`agent-orchestrator-mcp`](agent-orchestrator-mcp.md).
+`agent-handoff-mcp` is the portable MCP server for agent coordination state. After the AHMCP-6 event, review, next-action, and artifact-domain consolidation plus profile-removal stretch work, AHMCP-8 verified-test search/read support, and AHMCP-23 observatory dashboard split, it exposes a single **20-tool** MCP surface for task state, review findings, verification evidence, artifacts, export/import, handoff close checks, and DASHBOARD.md generation. Orchestration, daemon lifecycle, lane management, and turn metrics are served by [`agent-orchestrator-mcp`](agent-orchestrator-mcp.md).
 
 ## Runtime Configuration
 
@@ -28,10 +28,10 @@ Default workspace-owned state:
 - DB: `.task-state/handoff.db`
 - artifact DB: `.task-state/mcp-artifacts.db`
 - exports: `.task-state/exports/`
-- generated machine-readable snapshot: `CURRENT_TASK.md`
-- generated human-readable dashboard: `DASHBOARD.md`
+- generated machine-readable snapshot: `CURRENT_TASK.md` (JSON, active-task-only)
+- generated human-readable dashboard: `DASHBOARD.md` (pure ASCII, human-scoped observatory view)
 
-`CURRENT_TASK.md` now stores a deterministic machine-readable snapshot of the active task state. `DASHBOARD.md` is the human-readable mirror; it renders the active task detail plus the cross-task dashboard header derived from the same aggregated task-state query used by `get_handoff_state(view="dashboard")`.
+`CURRENT_TASK.md` is a deterministic JSON snapshot of the active task state (objective, status, findings, decisions, tests, blockers, actions, lanes). `DASHBOARD.md` is the human-readable ASCII observatory: Needs Attention summary, All Tasks table, cross-task open findings, deferred/wontfix findings, and registered extension sections (e.g. Lane Health from agent-orchestrator-mcp). Use `generate_current_task_md()` to refresh the JSON snapshot and `generate_dashboard_md()` to refresh the ASCII dashboard.
 
 The monorepo now consumes `agent-handoff-mcp` from the private git+ssh source for `darce/mcp-agent-handoff`; the installed binary shape stays the same.
 
@@ -70,7 +70,7 @@ Surface classes:
 | Tool | Surface class | Idempotent | Notes |
 | --- | --- | --- | --- |
 | `set_handoff_state` | action | no | Updates active task state with optimistic revision guard. |
-| `get_handoff_state` | query | yes | Canonical task-state read. Pass `view="dashboard"` for a cross-task aggregation (replaces the former `get_handoff_dashboard`). For task views, `sections` accepts a comma-separated subset of task-state sections; `active` and `limits` remain always included. `detail` accepts `full` (default) or `summary` to truncate long rationale and verification fields without changing the default payload shape. |
+| `get_handoff_state` | query | yes | Canonical task-state read. `sections` accepts a comma-separated subset of task-state sections; `active` and `limits` remain always included. `detail` accepts `full` (default) or `summary` to truncate long rationale and verification fields without changing the default payload shape. |
 | `record_event` | action | no | Appends decision/test-result/blocker state through a typed `event` payload. `event.event_kind` selects the variant and required fields. |
 | `next_actions` | action | no | Typed next-actions domain surface. `action.operation` selects `list`, `add`, `update`, `complete`, or `skip`. |
 | `review_findings` | action | no | Typed review-findings domain surface. `review.operation` selects `record`, `batch_record`, `update`, or `list`. Preserves atomic batch semantics and list filters on one tool. |
@@ -371,42 +371,6 @@ get_verified_tests(
 - `tests` entries return the stored verification row data rather than FTS snippets.
 - Filter combinations narrow the result set without changing the envelope shape.
 
-## `get_handoff_state` Dashboard View Response Shape
-
-When called with `view="dashboard"`, `get_handoff_state` returns:
-
-```json
-{
-  "ok": true,
-  "view": "dashboard",
-  "active": { "task_ref": "E12-11", "status": "in_progress", "..." : "..." },
-  "tasks": [
-    {
-      "task_ref": "E12-11",
-      "status": "in_progress",
-      "last_activity": "2026-03-30 23:50:30",
-      "open_blockers": 0,
-      "pending_actions": 0,
-      "open_findings": 6,
-      "archived_at": null
-    }
-  ]
-}
-```
-
-`tasks[]` field reference:
-
-| Field | Type | Notes |
-| --- | --- | --- |
-| `task_ref` | `string` | Task reference identifier |
-| `status` | `string` | For the active task: live `handoff_state.status`. For archived tasks: recovered from the archived snapshot's `active.status` when available, else `"archived"`. For non-active, non-archived tasks: `"active"` as fallback. |
-| `last_activity` | `string \| null` | ISO datetime of the most recent ledger entry across decisions, blockers, next_actions, verified_tests, review_findings, worktree_lanes, worker_reports, and lane_messages. Also includes `handoff_state.updated_at` for the currently active task as a baseline anchor (see behavioral note below). |
-| `open_blockers` | `integer` | Count of blockers with `status = 'open'` |
-| `pending_actions` | `integer` | Count of next_actions with `status = 'pending'` |
-| `open_findings` | `integer` | Count of review_findings with `status = 'open'` |
-| `archived_at` | `string \| null` | ISO datetime of archival; `null` for non-archived tasks |
-
-**Behavioral note on `last_activity`:** `_collect_dashboard_rows` includes `handoff_state.updated_at` (the `id = 1` row, i.e. the active task) as an activity source. This gives the currently active task a recent-activity anchor even when it has no separate ledger entries. The prior `_get_handoff_dashboard_view` implementation did not include this source; the difference is intentional.
 
 ## Request Shape Notes
 

@@ -497,7 +497,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Port to bind to (default: 8741)",
     )
     subparsers.add_parser("doctor")
-    subparsers.add_parser("dashboard").add_argument("--limit", type=int, default=20)
 
     # Registry-driven commands
     for entry in _build_cli_registry():
@@ -528,20 +527,6 @@ def main() -> None:
     if args.subcommand == "doctor":
         _print_json(run_doctor(config))
         return
-    if args.subcommand == "dashboard":
-        rendered = generate_current_task_md(write_file=False)
-        if isinstance(rendered, dict):
-            data = rendered.get("data", {}) or {}
-            dashboard_markdown = data.get("dashboard_markdown") or data.get("markdown")
-            if isinstance(dashboard_markdown, str):
-                print(dashboard_markdown)
-                return
-        sys.stderr.write(
-            "DASHBOARD.md render unavailable; falling back to raw get_handoff_state(view=\"dashboard\") output.\n"
-        )
-        _print_json(get_handoff_state(view="dashboard", top_n_findings=args.limit))
-        return
-
     # Registry-driven dispatch
     registry_map = {entry.name: entry for entry in _build_cli_registry()}
     entry = registry_map.get(args.subcommand)

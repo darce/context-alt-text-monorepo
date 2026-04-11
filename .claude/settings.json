@@ -13,6 +13,15 @@
             "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-task-plan-findings.py\""
           }
         ]
+      },
+      {
+        "matcher": "mcp__agent-handoff-mcp__record_event|mcp__agent-handoff-mcp__close_slice",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/guard-rationale-size.py\""
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -22,6 +31,24 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/ace-detect.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__agent-handoff-mcp__get_handoff_state|mcp__agent-handoff-mcp__load_session",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/slim-handoff-response.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/filter-test-output.py\""
           }
         ]
       }

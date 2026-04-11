@@ -15,6 +15,12 @@
         "type": "command",
         "command": "python3 scripts/hooks/guard-task-plan-findings.py",
         "timeout": 5
+      },
+      {
+        "matcher": "mcp__agent-handoff-mcp__record_event|mcp__agent-handoff-mcp__close_slice",
+        "type": "command",
+        "command": "python3 scripts/hooks/guard-rationale-size.py",
+        "timeout": 5
       }
     ],
     "PostToolUse": [
@@ -27,6 +33,18 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "mcp__agent-handoff-mcp__get_handoff_state|mcp__agent-handoff-mcp__load_session",
+        "type": "command",
+        "command": "python3 scripts/hooks/slim-handoff-response.py",
+        "timeout": 5
+      },
+      {
+        "matcher": "Bash",
+        "type": "command",
+        "command": "python3 scripts/hooks/filter-test-output.py",
+        "timeout": 5
       }
     ]
   }

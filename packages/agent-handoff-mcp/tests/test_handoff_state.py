@@ -803,13 +803,6 @@ def test_v2_envelope_shape_on_read_surfaces(isolated_handoff: dict) -> None:
     assert "dashboard_markdown" in raw_gen["data"]
     assert "current_task_json" in raw_gen["data"]
 
-    # dashboard view
-    raw_dash = mcp_server.get_handoff_state(view="dashboard")
-    assert raw_dash["schema_version"] == 2
-    assert raw_dash["tool"] == "get_handoff_state"
-    assert "tasks" in raw_dash["data"]
-
-
 def test_v2_envelope_no_legacy_mirroring(isolated_handoff: dict) -> None:
     """Compact envelope puts data in the ``data`` block only — no top-level mirrors."""
     _parse(mcp_server.set_handoff_state(task_ref="compact-env", objective="Compact envelope", status="in_progress"))
@@ -1626,22 +1619,16 @@ def test_archive_and_dashboard_summary(isolated_handoff: dict) -> None:
         assert conn.execute("SELECT COUNT(*) FROM decisions WHERE task_ref = '4.99.0'").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM next_actions WHERE task_ref = '4.99.0'").fetchone()[0] == 0
 
-    # Default: include_archived=True; archived task must appear without verbose flag.
-    dashboard = _parse(mcp_server.get_handoff_state(view="dashboard"))
-    matching = [row for row in dashboard["tasks"] if row["task_ref"] == "4.99.0"]
-    assert len(matching) == 1
-    assert matching[0]["archived_at"] is not None
-
-    # Explicit include_archived=False must hide archived tasks.
-    dashboard_no_archive = _parse(mcp_server.get_handoff_state(view="dashboard", include_archived=False))
-    hidden = [row for row in dashboard_no_archive["tasks"] if row["task_ref"] == "4.99.0"]
-    assert len(hidden) == 0
+    # Archived task must appear in DASHBOARD.md (generate_dashboard_md replaces view="dashboard").
+    dash_result = _parse(mcp_server.generate_dashboard_md(write_file=False))
+    dash_md = dash_result["markdown"]
+    assert "4.99.0" in dash_md
 
     # (a) Status is recovered from archived snapshot JSON; task was archived with status="done".
-    assert matching[0]["status"] == "done"
+    # The All Tasks table in DASHBOARD.md renders the status column.
+    assert "done" in dash_md
 
-    # (b) Archived task status is accessible via the dashboard view; CURRENT_TASK.md
-    # no longer renders the All Tasks table (moved to DASHBOARD.md).
+    # (b) CURRENT_TASK.md no longer renders the All Tasks table (moved to DASHBOARD.md).
     _parse(mcp_server.set_handoff_state(task_ref="post-archive", objective="post-archive placeholder", status="active"))
     rendered = _parse(mcp_server.generate_current_task_md(task_ref="post-archive", write_file=False))
     assert "4.99.0" not in rendered["markdown"]  # cross-task data moved to DASHBOARD.md

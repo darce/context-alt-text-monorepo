@@ -77,7 +77,7 @@ make lane-intake TASK=<task> LANE=<lane>                       # Merge a lane
 make lane-refresh TASK=<task> LANE=<lane>                      # Sync lane to root
 make lane-list                                                 # List all lanes
 make state                                                     # Full MCP state
-make dashboard                                                 # MCP dashboard
+make dashboard                                                 # Generate DASHBOARD.md (human observatory view)
 make orchestrator-daemon [TASK=<task>] [BACKEND=codex-cli|codex-subagent] [MODEL=gpt-5.4-mini]
 make artifact-list TASK=<task> [LANE=<lane>]                  # List indexed evidence
 make artifact-search TASK=<task> QUERY="schema missing"       # Search indexed evidence
@@ -921,7 +921,7 @@ git stash pop
 
 ```bash
 make state                    # full MCP state dump
-make dashboard                # quick overview
+make dashboard                # regenerate DASHBOARD.md (human observatory)
 make task                     # regenerate CURRENT_TASK.md
 ```
 

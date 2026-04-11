@@ -1,6 +1,6 @@
 """Handoff state domain module.
 
-Contains set_handoff_state, get_handoff_state, and dashboard view.
+Contains set_handoff_state and get_handoff_state.
 """
 
 from __future__ import annotations
@@ -224,18 +224,12 @@ def get_handoff_state(
     top_n_tests: int = DEFAULT_HANDOFF_LIMITS["tests"],
     top_n_findings: int = DEFAULT_HANDOFF_LIMITS["findings"],
     verbose: bool = False,
-    view: str = "task",
     include_archived: bool = True,
     sections: str | None = None,
     detail: str = "full",
 ) -> dict:
     if detail not in _VALID_DETAIL_LEVELS:
         detail = "full"
-    if view == "dashboard":
-        return _get_handoff_dashboard_view(
-            limit=top_n_findings if top_n_findings != DEFAULT_HANDOFF_LIMITS["findings"] else 20,
-            include_archived=include_archived,
-        )
     requested_sections = _parse_sections(sections)
     top_n_blockers = max(1, top_n_blockers)
     top_n_actions = max(1, top_n_actions)
@@ -392,16 +386,3 @@ def get_handoff_state(
         )
 
 
-def _get_handoff_dashboard_view(limit: int = 20, include_archived: bool = True) -> dict:
-    with _get_db_connection() as conn:
-        from .current_task_rendering import _collect_dashboard_rows  # noqa: PLC0415
-
-        rows = _collect_dashboard_rows(conn, limit=limit, include_archived=include_archived)
-        active = conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone()
-        active_dict = _row_to_dict(active)
-        return _envelope(
-            ok=True,
-            tool="get_handoff_state",
-            data={"view": "dashboard", "active": active_dict, "tasks": rows},
-            task_ref=active_dict.get("task_ref") if active_dict else None,
-        )

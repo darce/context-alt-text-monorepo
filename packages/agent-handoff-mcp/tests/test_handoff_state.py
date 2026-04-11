@@ -21,10 +21,12 @@ def isolated_handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     state_dir = tmp_path / ".task-state"
     state_dir.mkdir(parents=True, exist_ok=True)
     current_task_path = tmp_path / "CURRENT_TASK.md"
+    dashboard_path = tmp_path / "DASHBOARD.md"
     runtime = RuntimeConfig.for_workspace(
         tmp_path,
         state_dir=state_dir,
         current_task_path=current_task_path,
+        dashboard_path=dashboard_path,
     )
     mcp_server.configure_runtime(runtime)
 
@@ -32,6 +34,7 @@ def isolated_handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         "state_dir": state_dir,
         "db_path": runtime.db_path,
         "current_task_path": current_task_path,
+        "dashboard_path": dashboard_path,
     }
 
 
@@ -42,6 +45,7 @@ def test_runtime_config_defaults_to_workspace_task_state() -> None:
     assert runtime.state_dir == workspace_root / ".task-state"
     assert runtime.db_path == workspace_root / ".task-state" / "handoff.db"
     assert runtime.current_task_path == workspace_root / "CURRENT_TASK.md"
+    assert runtime.dashboard_path == workspace_root / "DASHBOARD.md"
     assert runtime.exports_dir == workspace_root / ".task-state" / "exports"
 
 
@@ -498,7 +502,8 @@ def test_current_task_md_shows_token_summary(isolated_handoff: dict) -> None:
 
     _parse(mcp_server.generate_current_task_md(task_ref="token-render-test"))
 
-    md = isolated_handoff["current_task_path"].read_text()
+    json.loads(isolated_handoff["current_task_path"].read_text())
+    md = isolated_handoff["dashboard_path"].read_text()
     assert "## Token Summary" in md
     assert "21.0K" in md  # 7000 + 14000
     assert "Claude Opus 4 high" in md
@@ -795,6 +800,8 @@ def test_v2_envelope_shape_on_read_surfaces(isolated_handoff: dict) -> None:
     assert raw_gen["tool"] == "generate_current_task_md"
     assert raw_gen["scope"]["task_ref"] == "env-test"
     assert "markdown" in raw_gen["data"]
+    assert "dashboard_markdown" in raw_gen["data"]
+    assert "current_task_json" in raw_gen["data"]
 
     # dashboard view
     raw_dash = mcp_server.get_handoff_state(view="dashboard")
@@ -1673,7 +1680,7 @@ def test_generate_current_task_md_with_nested_tool_wrapper(
     payload = _parse(mcp_server.generate_current_task_md(task_ref="4.12.0", write_file=False))
     assert payload["ok"] is True
     assert payload["written"] is False
-    assert "CURRENT_TASK" in payload["markdown"]
+    assert "# DASHBOARD" in payload["markdown"]
     assert "Nested wrapper objective" in payload["markdown"]
     assert "Latest Decision" in payload["markdown"]
     assert "cdx_slice_complete_nested_nested_wrapper" in payload["markdown"]
@@ -1778,7 +1785,9 @@ def test_internal_write_path_includes_dashboard_header(isolated_handoff: dict) -
 
     _write_current_task_md_from_state("iw-dashboard")
 
-    md = isolated_handoff["current_task_path"].read_text()
+    current_task_payload = json.loads(isolated_handoff["current_task_path"].read_text())
+    assert current_task_payload["task_ref"] == "iw-dashboard"
+    md = isolated_handoff["dashboard_path"].read_text()
     assert "## All Tasks" in md
     _assert_dashboard_row(
         md, "iw-dashboard", status="in_progress", open_findings=0, open_blockers=0, pending_actions=0, active=True
@@ -2444,7 +2453,10 @@ def test_internal_write_path_includes_task_ref(isolated_handoff: dict) -> None:
 
     _write_current_task_md_from_state("iw-task-ref-test")
 
-    md = isolated_handoff["current_task_path"].read_text()
+    current_task_payload = json.loads(isolated_handoff["current_task_path"].read_text())
+    assert current_task_payload["task_ref"] == "iw-task-ref-test"
+    assert current_task_payload["active"]["task_ref"] == "iw-task-ref-test"
+    md = isolated_handoff["dashboard_path"].read_text()
     assert "iw-task-ref-test" in md
     assert "unknown" not in md
 
@@ -2473,7 +2485,9 @@ def test_internal_write_path_includes_review_coverage(isolated_handoff: dict) ->
 
     _write_current_task_md_from_state("iw-cov-test")
 
-    md = isolated_handoff["current_task_path"].read_text()
+    current_task_payload = json.loads(isolated_handoff["current_task_path"].read_text())
+    assert current_task_payload["review_coverage"]["run_count"] == 1
+    md = isolated_handoff["dashboard_path"].read_text()
     assert "## Review Coverage" in md
     assert "review runs: 1" in md
 
@@ -2513,7 +2527,9 @@ def test_internal_write_path_reuses_existing_connection_for_review_coverage(
     with _get_db_connection() as conn:
         _write_current_task_md_for_task(conn, "iw-cov-inline")
 
-    md = isolated_handoff["current_task_path"].read_text()
+    current_task_payload = json.loads(isolated_handoff["current_task_path"].read_text())
+    assert current_task_payload["review_coverage"]["run_count"] == 1
+    md = isolated_handoff["dashboard_path"].read_text()
     assert "## Review Coverage" in md
     assert "review runs: 1" in md
 
@@ -2928,8 +2944,9 @@ def test_current_task_md_renders_focus_section(isolated_handoff: dict) -> None:
     result = _parse(mcp_server.generate_current_task_md(task_ref="focus-md", write_file=True))
     assert result["ok"] is True
 
-    md_path = isolated_handoff["current_task_path"]
-    content = md_path.read_text()
+    current_task_payload = json.loads(isolated_handoff["current_task_path"].read_text())
+    assert current_task_payload["active"]["focus"] == "working on E12-3 slice 1"
+    content = isolated_handoff["dashboard_path"].read_text()
     assert "## Current Focus" in content
     assert "working on E12-3 slice 1" in content
 
@@ -2946,8 +2963,9 @@ def test_current_task_md_omits_focus_when_null(isolated_handoff: dict) -> None:
     result = _parse(mcp_server.generate_current_task_md(task_ref="focus-null-md", write_file=True))
     assert result["ok"] is True
 
-    md_path = isolated_handoff["current_task_path"]
-    content = md_path.read_text()
+    current_task_payload = json.loads(isolated_handoff["current_task_path"].read_text())
+    assert current_task_payload["active"]["focus"] is None
+    content = isolated_handoff["dashboard_path"].read_text()
     assert "## Current Focus" not in content
 
 
@@ -3171,7 +3189,9 @@ def test_close_slice_writes_dashboard_header_on_success(isolated_handoff: dict) 
     assert isinstance(result["task_revision"], int)
     assert result["task_revision"] >= 1
 
-    md = isolated_handoff["current_task_path"].read_text()
+    current_task_payload = json.loads(isolated_handoff["current_task_path"].read_text())
+    assert current_task_payload["task_ref"] == "close-dashboard"
+    md = isolated_handoff["dashboard_path"].read_text()
     assert "## All Tasks" in md
     _assert_dashboard_row(
         md, "close-dashboard", status="in_progress", open_findings=0, open_blockers=0, pending_actions=0, active=True

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, cast
@@ -522,6 +523,16 @@ def main() -> None:
         _print_json(run_doctor(config))
         return
     if args.subcommand == "dashboard":
+        rendered = generate_current_task_md(write_file=False)
+        if isinstance(rendered, dict):
+            data = rendered.get("data", {}) or {}
+            dashboard_markdown = data.get("dashboard_markdown") or data.get("markdown")
+            if isinstance(dashboard_markdown, str):
+                print(dashboard_markdown)
+                return
+        sys.stderr.write(
+            "DASHBOARD.md render unavailable; falling back to raw get_handoff_state(view=\"dashboard\") output.\n"
+        )
         _print_json(get_handoff_state(view="dashboard", top_n_findings=args.limit))
         return
 

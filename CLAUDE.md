@@ -20,7 +20,7 @@ On every session (cold start, mid-task re-entry, lane inherit):
 8. Decide whether `ctx7` is needed (upstream library behavior; see ctx7 criteria in instructions.md).
 9. Ensure the work has an MCP task. **Planning (assessments, specs, task plans) stays on `main`** — create the handoff task with `set_handoff_state(task_ref=..., objective=...)` and commit the plan as a docs artifact on `main`. No feature branch or worktree needed yet. **Implementation (code + tests)** requires a feature branch: run `make task-start TASK=<id> OBJECTIVE="..."` to create the branch + worktree + MCP target after the plan is approved. See [planning pipeline](docs/agentic/rules/planning-pipeline.md) for the full two-phase flow.
 
-If MCP unavailable: read `CURRENT_TASK.md` as stale fallback. Record blocker when access returns. **Stop implementation work until MCP is available.**
+If MCP unavailable: read `DASHBOARD.md` as stale human-readable fallback and treat `CURRENT_TASK.md` as machine-readable state only. Record blocker when access returns. **Stop implementation work until MCP is available.**
 
 ---
 

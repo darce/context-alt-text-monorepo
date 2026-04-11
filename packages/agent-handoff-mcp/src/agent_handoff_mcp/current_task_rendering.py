@@ -1,4 +1,4 @@
-"""CURRENT_TASK.md rendering cluster for agent_handoff_mcp.
+"""Generated handoff surface rendering cluster for agent_handoff_mcp.
 
 Extracted from _shared.py (Slice 1 of E12-10). Contains:
   - snapshot collection (_collect_task_snapshot)
@@ -7,7 +7,8 @@ Extracted from _shared.py (Slice 1 of E12-10). Contains:
   - related-findings helpers (_fetch_related_open_findings_impl, _fetch_related_open_findings)
   - rendering sub-helpers (_format_token_suffix, _render_lanes_section,
     _render_findings_section, _render_coverage_section, _render_token_summary_section)
-  - primary render function (_render_current_task_md)
+    - human dashboard render (_render_current_task_md)
+    - machine-readable current-task render (_render_current_task_json)
 
 All symbols are re-exported from _shared.py for backward compatibility.
 
@@ -92,17 +93,14 @@ class CurrentTaskRenderState(TypedDict):
     related_findings_deferred: NotRequired[dict[str, list[dict]]]
 
 
-def _normalize_current_task_markdown_for_compare(markdown: str) -> str:
-    """Strip volatile header fields so sync checks compare the durable render content."""
+def _normalize_current_task_json_for_compare(serialized: str) -> str:
+    """Normalize the machine-readable CURRENT_TASK.md payload for sync checks."""
 
-    lines = markdown.splitlines()
-    normalized: list[str] = []
-    for line in lines:
-        if line.startswith("_DO NOT EDIT: generated from .task-state/handoff.db. Last generated: "):
-            normalized.append("_DO NOT EDIT: generated from .task-state/handoff.db. Last generated: <normalized>_")
-            continue
-        normalized.append(line)
-    return "\n".join(normalized)
+    try:
+        payload = json.loads(serialized)
+    except json.JSONDecodeError:
+        return serialized.strip()
+    return json.dumps(payload, indent=2, sort_keys=True)
 
 
 def _infer_epic_ref(task_ref: str | None) -> str | None:
@@ -409,7 +407,9 @@ def _build_current_task_render_state(
 
 def _write_current_task_md_for_task(conn: sqlite3.Connection, task_ref: str) -> None:
     state = _build_current_task_render_state(conn, task_ref)
-    get_runtime_config().current_task_path.write_text(_render_current_task_md(state))
+    runtime = get_runtime_config()
+    runtime.current_task_path.write_text(_render_current_task_json(state))
+    runtime.dashboard_path.write_text(_render_current_task_md(state))
 
 
 def _write_current_task_md_from_state(task_ref: str) -> None:
@@ -674,7 +674,7 @@ def _render_current_task_md(state: CurrentTaskRenderState) -> str:
         return single_line
 
     header_lines = [
-        "# CURRENT_TASK",
+        "# DASHBOARD",
         "",
         f"_DO NOT EDIT: generated from .task-state/handoff.db. Last generated: {_generated_at}_",
     ]
@@ -759,3 +759,36 @@ def _render_current_task_md(state: CurrentTaskRenderState) -> str:
     lines.extend(_render_token_summary_section(decisions))
     lines.append("")
     return "\n".join(lines)
+
+
+def _build_current_task_file_payload(state: CurrentTaskRenderState) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "schema_version": 1,
+        "surface": "current_task",
+        "task_ref": state.get("task_ref"),
+        "active": state.get("active"),
+        "blockers_open": state.get("blockers_open", []),
+        "actions_pending": state.get("actions_pending", []),
+        "decisions_recent": state.get("decisions_recent", []),
+        "tests_recent": state.get("tests_recent", []),
+        "findings_open": state.get("findings_open", []),
+        "findings_deferred": state.get("findings_deferred", []),
+        "worktree_lanes": state.get("worktree_lanes", []),
+        "worker_reports_recent": state.get("worker_reports_recent", []),
+        "lane_messages_open": state.get("lane_messages_open", []),
+        "dashboard_tasks": state.get("dashboard_tasks", []),
+    }
+    review_coverage = state.get("review_coverage")
+    if review_coverage is not None:
+        payload["review_coverage"] = review_coverage
+    related_findings_open = state.get("related_findings_open")
+    if related_findings_open is not None:
+        payload["related_findings_open"] = related_findings_open
+    related_findings_deferred = state.get("related_findings_deferred")
+    if related_findings_deferred is not None:
+        payload["related_findings_deferred"] = related_findings_deferred
+    return payload
+
+
+def _render_current_task_json(state: CurrentTaskRenderState) -> str:
+    return json.dumps(_build_current_task_file_payload(state), indent=2, sort_keys=True)

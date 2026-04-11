@@ -28,9 +28,10 @@ Default workspace-owned state:
 - DB: `.task-state/handoff.db`
 - artifact DB: `.task-state/mcp-artifacts.db`
 - exports: `.task-state/exports/`
-- generated markdown: `CURRENT_TASK.md`
+- generated machine-readable snapshot: `CURRENT_TASK.md`
+- generated human-readable dashboard: `DASHBOARD.md`
 
-`CURRENT_TASK.md` now renders a compact cross-task dashboard header above the active task detail section. The dashboard is derived from the same aggregated task-state query used by `get_handoff_state(view="dashboard")`, so switching tasks preserves visibility into other active or recently active tasks without creating extra files.
+`CURRENT_TASK.md` now stores a deterministic machine-readable snapshot of the active task state. `DASHBOARD.md` is the human-readable mirror; it renders the active task detail plus the cross-task dashboard header derived from the same aggregated task-state query used by `get_handoff_state(view="dashboard")`.
 
 The monorepo now consumes `agent-handoff-mcp` from the private git+ssh source for `darce/mcp-agent-handoff`; the installed binary shape stays the same.
 
@@ -75,13 +76,13 @@ Surface classes:
 | `review_findings` | action | no | Typed review-findings domain surface. `review.operation` selects `record`, `batch_record`, `update`, or `list`. Preserves atomic batch semantics and list filters on one tool. |
 | `review_runs` | action | no | Typed review-runs domain surface. `review.operation` selects `record`, `list`, or `coverage`. |
 | `handoff_close_check` | generator | yes | Derived readiness verdict from current state. |
-| `generate_current_task_md` | generator | no | Renders deterministic markdown and writes `CURRENT_TASK.md` by default. Output includes a cross-task dashboard header plus the existing active-task detail section. |
+| `generate_current_task_md` | generator | no | Writes machine-readable `CURRENT_TASK.md` plus human-readable `DASHBOARD.md` by default. The dashboard output includes a cross-task header plus the active-task detail section. |
 | `export_handoff_state` | generator | yes | Produces portable snapshot output. |
 | `import_handoff_state` | action | no | Imports snapshot into local DB; destructive in replace modes. |
 | `archive_task_state` | action | no | Moves active state into archive storage. |
 | `get_verified_tests` | query | yes | Lists verified test rows with optional task, lane, branch, commit, and pass/fail filters. |
 | `load_session` | query | yes | **Compound**: calls `get_handoff_state` + `review_findings(review={"operation":"list","status":"open"})` in one invocation. Use at session start to minimise round trips. `sections` is passed through only to the nested `state` payload from `get_handoff_state`; `detail` is passed through to both nested state and findings. Defaults preserve the pre-parameterization full payload behavior. |
-| `close_slice` | action | no | **Compound**: records a slice-complete decision, re-applies the active task as `in_progress`, and regenerates `CURRENT_TASK.md`. Requires `expected_revision` when the target task is currently active. Accepts the same optional `changed_files` list as the decision variant of `record_event` and passes it through to the nested decision write. |
+| `close_slice` | action | no | **Compound**: records a slice-complete decision, re-applies the active task as `in_progress`, and regenerates `CURRENT_TASK.md` plus `DASHBOARD.md`. Requires `expected_revision` when the target task is currently active. Accepts the same optional `changed_files` list as the decision variant of `record_event` and passes it through to the nested decision write. |
 | `update_task_status` | action | no | Updates task status without recording a slice decision. For the active task this requires `expected_revision`; for archived tasks it updates the archived snapshot status used by dashboard rendering. |
 | `audit_decision_ids` | query | yes | Audits recent decision IDs for grammar conformance. Returns canonical/malformed/freeform classifications per ID. |
 | `artifacts` | action | no | Typed artifacts domain surface. `artifact.operation` selects `record`, `search`, `get`, or `purge`. Search mode supports both ranked hits and source-list mode when `queries` is omitted or empty; get mode supports `include_terms=true`. |
@@ -118,7 +119,7 @@ Symptoms:
 - `agent-handoff-mcp` binary not found
 - import or launcher failure
 - wrong `--workspace-root` / `--state-dir`
-- missing `.task-state` or unwritable `CURRENT_TASK.md`
+- missing `.task-state` or unwritable `CURRENT_TASK.md` / `DASHBOARD.md`
 
 Checks:
 
@@ -592,11 +593,11 @@ Host-specific integrations (e.g. Codex skill wrappers, VS Code callbacks) trigge
 
 **Trigger:** `switch_task(task_ref=...)` completes (archives the prior task, activates the new task).
 
-**Side effects allowed:** `CURRENT_TASK.md` regeneration. `generate_current_task_md` runs for the new active task so the human-readable mirror reflects the switch immediately.
+**Side effects allowed:** `CURRENT_TASK.md` and `DASHBOARD.md` regeneration. `generate_current_task_md` runs for the new active task so the machine-readable snapshot and human-readable mirror reflect the switch immediately.
 
-**Required durable output:** Updated `CURRENT_TASK.md` with the dashboard header plus the new task's latest decision, objective, and open findings in the detail section. If regeneration fails, the failure must be surfaced in the `switch_task` response, not silently swallowed.
+**Required durable output:** Updated machine-readable `CURRENT_TASK.md` plus human-readable `DASHBOARD.md` for the new task. If regeneration fails, the failure must be surfaced in the `switch_task` response, not silently swallowed.
 
-**Operator visibility:** `CURRENT_TASK.md` must be current after `switch_task` returns. If the file appears stale, run `generate_current_task_md(task_ref=<new-task>)` explicitly.
+**Operator visibility:** `DASHBOARD.md` must be current after `switch_task` returns, and `CURRENT_TASK.md` must remain parseable machine state. If either file appears stale, run `generate_current_task_md(task_ref=<new-task>)` explicitly.
 
 ---
 

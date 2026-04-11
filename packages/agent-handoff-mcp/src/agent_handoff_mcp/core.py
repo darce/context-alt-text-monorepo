@@ -70,6 +70,7 @@ from ._shared import (  # noqa: F401
     _normalize_optional_text,
     _paginated_query,
     _render_current_task_md,
+    _render_current_task_json,
     _resolve_task_ref,
     _resolve_write_actor,
     _row_to_dict,

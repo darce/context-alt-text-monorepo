@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 
+import pytest
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from recognition.interface_adapters.http import dependencies
 from recognition.interface_adapters.http import router as recognition_router
+from recognition.config.security import SecuritySettings
+from recognition.interface_adapters.http.deps import auth
 from recognition.tests.api.conftest import FakeSession
 from recognition.tests.fakes import FakeClusterService
 
@@ -141,3 +146,91 @@ def test_valid_x_api_key_header_allows_request_when_configured(monkeypatch) -> N
     response = client.get("/recognition/clusters", headers=headers)
 
     assert response.status_code == 200
+
+
+def test_dev_key_returns_503_when_optional_session_is_unavailable(monkeypatch) -> None:
+    """Breaker-open/session-unavailable requests must fail before dev-key fallback."""
+    monkeypatch.setenv("RECOGNITION_AUTH_ENABLED", "1")
+    monkeypatch.setenv("RECOGNITION_ALLOWED_API_KEYS", "good-key")
+    app = FastAPI()
+    app.include_router(recognition_router, prefix="/recognition")
+
+    async def _session_dep():
+        yield None
+
+    def cluster_builder():
+        async def _build(_tenant_id: str):
+            return FakeClusterService()
+
+        return _build
+
+    app.dependency_overrides[dependencies.get_optional_session] = _session_dep
+    app.dependency_overrides[dependencies.get_session] = _session_dep
+    app.dependency_overrides[dependencies.get_cluster_service_builder] = cluster_builder
+    client = TestClient(app)
+
+    response = client.get(
+        "/recognition/clusters",
+        headers={"Authorization": "Bearer good-key", "X-Tenant-ID": str(uuid.uuid4())},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Database unavailable"
+
+
+class _FakeLookupError(Exception):
+    """Small DB-ish exception carrying SQLSTATE for auth lookup tests."""
+
+    def __init__(self, message: str, *, sqlstate: str | None = None) -> None:
+        super().__init__(message)
+        self.sqlstate = sqlstate
+
+
+def test_classify_auth_lookup_failure_25p02_returns_transaction_aborted() -> None:
+    """Aborted-transaction SQLSTATE should translate to a retryable auth failure."""
+    failure = auth._classify_auth_lookup_failure(_FakeLookupError("aborted transaction", sqlstate="25P02"))
+
+    assert failure.kind == "transaction_aborted"
+    assert failure.sqlstate == "25P02"
+    assert auth._translate_auth_lookup_failure(failure).status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_lookup_api_key_is_pure_query_and_uses_nested_transaction() -> None:
+    """Successful auth lookup should not flush telemetry writes on the request session."""
+    session = FakeSession()
+    tenant_id = uuid.uuid4()
+    api_key_id = uuid.uuid4()
+    session.queue_execute_result(
+        scalar_one_or_none=SimpleNamespace(id=api_key_id, tenant_id=tenant_id, rate_limit_tier="free")
+    )
+
+    result = await auth._lookup_api_key(
+        "good-key",
+        SecuritySettings(auth_enabled=True, dev_api_keys=[]),
+        session,
+    )
+
+    assert result == (str(tenant_id), str(api_key_id), "free", False)
+    assert session.begin_nested_calls == 1
+    assert session.nested_rollback_calls == 0
+    assert session.flush_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_lookup_api_key_translates_missing_table_to_500_and_rolls_back_savepoint() -> None:
+    """Permanent auth-store faults should fail fast at the auth boundary."""
+    session = FakeSession()
+    session.queue_execute_exception(_FakeLookupError('relation "api_keys" does not exist', sqlstate="42P01"))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await auth._lookup_api_key(
+            "good-key",
+            SecuritySettings(auth_enabled=True, dev_api_keys=[]),
+            session,
+        )
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "api key store unavailable"
+    assert session.begin_nested_calls == 1
+    assert session.nested_rollback_calls == 1

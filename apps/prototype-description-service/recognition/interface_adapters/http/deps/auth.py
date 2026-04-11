@@ -7,7 +7,8 @@ This module provides FastAPI dependencies for API key validation and access cont
 from __future__ import annotations
 
 import hashlib
-from contextlib import suppress
+import logging
+from dataclasses import dataclass
 
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +17,8 @@ from recognition.config.security import SecuritySettings, get_security_settings
 from recognition.infrastructure.repositories import SqlAlchemyApiKeyRepository
 from recognition.interface_adapters.http.deps.session import get_optional_session
 from recognition.interface_adapters.http.deps.tenant_common import normalize_tenant_id
+
+logger = logging.getLogger(__name__)
 
 
 class AuthContext:
@@ -39,6 +42,14 @@ class AuthContext:
         self.enabled = enabled
 
 
+@dataclass(frozen=True)
+class _AuthLookupFailure:
+    """Normalized auth-store lookup failure details for policy translation."""
+
+    kind: str
+    sqlstate: str | None
+
+
 def _hash_api_key(raw_key: str, algorithm: str) -> str:
     """Return a hex digest for the provided API key."""
     try:
@@ -57,6 +68,40 @@ def _table_missing(exc: Exception) -> bool:
     return "no such table: api_keys" in message or 'relation "api_keys" does not exist' in message
 
 
+def _extract_sqlstate(exc: BaseException) -> str | None:
+    """Return a best-effort SQLSTATE/pgcode from nested DB exceptions."""
+    for candidate in (
+        exc,
+        getattr(exc, "orig", None),
+        getattr(exc, "__cause__", None),
+        getattr(getattr(exc, "orig", None), "__cause__", None),
+    ):
+        if candidate is None:
+            continue
+        for attr_name in ("sqlstate", "pgcode"):
+            value = getattr(candidate, attr_name, None)
+            if isinstance(value, str) and value:
+                return value
+    return None
+
+
+def _classify_auth_lookup_failure(exc: Exception) -> _AuthLookupFailure:
+    """Classify auth lookup failures with SQLSTATE-first semantics."""
+    sqlstate = _extract_sqlstate(exc)
+    if sqlstate == "42P01" or _table_missing(exc):
+        return _AuthLookupFailure(kind="table_missing", sqlstate=sqlstate or "42P01")
+    if sqlstate == "25P02":
+        return _AuthLookupFailure(kind="transaction_aborted", sqlstate=sqlstate)
+    return _AuthLookupFailure(kind="lookup_failed", sqlstate=sqlstate)
+
+
+def _translate_auth_lookup_failure(failure: _AuthLookupFailure) -> HTTPException:
+    """Map an auth-store failure into an auth-boundary HTTP response."""
+    if failure.kind == "table_missing":
+        return HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="api key store unavailable")
+    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="api key lookup failed")
+
+
 async def _lookup_api_key(
     api_key: str,
     settings: SecuritySettings,
@@ -64,18 +109,24 @@ async def _lookup_api_key(
 ) -> tuple[str | None, str | None, str | None, bool]:
     """Validate API key and return (tenant_id, api_key_id, rate_limit_tier, is_admin)."""
     hashed = _hash_api_key(api_key, settings.api_key_hash_algorithm)
-    if session is not None and hasattr(session, "execute"):
-        repo = SqlAlchemyApiKeyRepository(session)
-        try:
+    if session is None or not hasattr(session, "execute"):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database unavailable")
+
+    repo = SqlAlchemyApiKeyRepository(session)
+    try:
+        async with session.begin_nested():
             record = await repo.get_by_hash(hashed)
-        except Exception as exc:
-            if not _table_missing(exc):
-                raise
-            record = None
-        if record:
-            with suppress(Exception):
-                await repo.touch(record)
-            return str(record.tenant_id), str(record.id), record.rate_limit_tier, False
+    except Exception as exc:
+        failure = _classify_auth_lookup_failure(exc)
+        logger.error(
+            "api key lookup failed",
+            extra={"auth_failure_kind": failure.kind, "sqlstate": failure.sqlstate},
+            exc_info=True,
+        )
+        raise _translate_auth_lookup_failure(failure) from exc
+
+    if record:
+        return str(record.tenant_id), str(record.id), record.rate_limit_tier, False
 
     if api_key in settings.dev_api_keys:
         return None, None, "enterprise", True

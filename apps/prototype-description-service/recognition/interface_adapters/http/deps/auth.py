@@ -6,6 +6,7 @@ This module provides FastAPI dependencies for API key validation and access cont
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import hashlib
 import logging
 from dataclasses import dataclass
@@ -103,7 +104,11 @@ def _translate_auth_lookup_failure(failure: _AuthLookupFailure) -> HTTPException
     return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="api key lookup failed")
 
 
-async def record_api_key_use(api_key_id: str, *, session_factory=async_session_factory) -> None:
+async def record_api_key_use(
+    api_key_id: str,
+    *,
+    session_factory: Callable[[], AsyncSession] = async_session_factory,
+) -> None:
     """Best-effort telemetry update for successful API-key auth."""
     session = session_factory()
     try:

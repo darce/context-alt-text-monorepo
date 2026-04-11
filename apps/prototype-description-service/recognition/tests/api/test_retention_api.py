@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -186,6 +187,7 @@ def _build_client(
     tenant_id: str | None = None,
     export_count: int = 1,
     import_raises: str | None = None,
+    session: FakeSession | None = None,
 ) -> tuple[
     TestClient,
     FakeRetentionPolicyService,
@@ -204,7 +206,7 @@ def _build_client(
         return {"tenant_id": resolved_tenant_id}
 
     app.include_router(recognition_router, prefix="/recognition")
-    fake_session = FakeSession()
+    fake_session = session or FakeSession()
     policy_service = FakeRetentionPolicyService(tenant_id)
     export_service = FakeRetentionExportService(tenant_id, count=export_count)
     purge_service = FakeRetentionPurgeService(tenant_id)
@@ -283,6 +285,24 @@ def test_authenticated_tenant_dependency_is_self_contained(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json() == {"tenant_id": tenant_id}
+
+
+def test_retention_policy_auth_store_failure_stops_at_auth_boundary(monkeypatch) -> None:
+    """Auth-store faults should fail before downstream retention services run."""
+    tenant_id = str(uuid.uuid4())
+    fake_session = FakeSession()
+    fake_session.queue_execute_exception(Exception('relation "api_keys" does not exist'))
+    fake_session.queue_execute_result(scalar=1)
+    client, policy_service, _, _, _ = _build_client(monkeypatch, tenant_id=tenant_id, session=fake_session)
+
+    response = client.get("/recognition/retention/policy", headers={"Authorization": "Bearer good-key"})
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "api key store unavailable"
+    assert policy_service.calls == []
+    assert fake_session.begin_nested_calls == 1
+    assert fake_session.nested_rollback_calls == 1
+    assert asyncio.run(fake_session.execute("select 1")).scalar() == 1
 
 
 def test_retention_policy_admin_requires_header_not_query_param(monkeypatch) -> None:

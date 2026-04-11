@@ -1786,7 +1786,7 @@ def test_switch_task_regenerates_current_task_with_dashboard(isolated_handoff: d
     dash_result = mcp_server.generate_dashboard_md(write_file=False)
     assert dash_result["ok"] is True
     md = dash_result["markdown"]
-    assert "## All Tasks" in md
+    assert "ALL TASKS" in md
     _assert_dashboard_row(
         md,
         "sw-dashboard-b",

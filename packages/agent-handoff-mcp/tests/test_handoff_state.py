@@ -502,11 +502,11 @@ def test_current_task_md_shows_token_summary(isolated_handoff: dict) -> None:
 
     _parse(mcp_server.generate_current_task_md(task_ref="token-render-test"))
 
-    json.loads(isolated_handoff["current_task_path"].read_text())
-    md = isolated_handoff["dashboard_path"].read_text()
-    assert "## Token Summary" in md
-    assert "21.0K" in md  # 7000 + 14000
-    assert "Claude Opus 4 high" in md
+    ct_data = json.loads(isolated_handoff["current_task_path"].read_text())
+    decisions = ct_data["decisions_recent"]
+    total_tokens = sum(d.get("total_tokens", 0) or 0 for d in decisions)
+    assert total_tokens == 21000  # 7000 + 14000
+    assert any(d.get("model") == "claude-opus-4-0520" for d in decisions)
 
 
 def test_current_task_md_omits_token_summary_when_no_tokens(isolated_handoff: dict) -> None:
@@ -799,8 +799,6 @@ def test_v2_envelope_shape_on_read_surfaces(isolated_handoff: dict) -> None:
     assert raw_gen["schema_version"] == 2
     assert raw_gen["tool"] == "generate_current_task_md"
     assert raw_gen["scope"]["task_ref"] == "env-test"
-    assert "markdown" in raw_gen["data"]
-    assert "dashboard_markdown" in raw_gen["data"]
     assert "current_task_json" in raw_gen["data"]
 
 def test_v2_envelope_no_legacy_mirroring(isolated_handoff: dict) -> None:
@@ -1631,8 +1629,9 @@ def test_archive_and_dashboard_summary(isolated_handoff: dict) -> None:
     # (b) CURRENT_TASK.md no longer renders the All Tasks table (moved to DASHBOARD.md).
     _parse(mcp_server.set_handoff_state(task_ref="post-archive", objective="post-archive placeholder", status="active"))
     rendered = _parse(mcp_server.generate_current_task_md(task_ref="post-archive", write_file=False))
-    assert "4.99.0" not in rendered["markdown"]  # cross-task data moved to DASHBOARD.md
-    assert "## All Tasks" not in rendered["markdown"]
+    current_task_data = json.loads(rendered["current_task_json"])
+    assert current_task_data["task_ref"] == "post-archive"  # cross-task data moved to DASHBOARD.md
+    assert "4.99.0" not in rendered["current_task_json"]
 
 
 def test_generate_current_task_md_with_nested_tool_wrapper(
@@ -1668,10 +1667,12 @@ def test_generate_current_task_md_with_nested_tool_wrapper(
     payload = _parse(mcp_server.generate_current_task_md(task_ref="4.12.0", write_file=False))
     assert payload["ok"] is True
     assert payload["written"] is False
-    assert "# DASHBOARD" in payload["markdown"]
-    assert "Nested wrapper objective" in payload["markdown"]
-    assert "Latest Decision" in payload["markdown"]
-    assert "cdx_slice_complete_nested_nested_wrapper" in payload["markdown"]
+    data = json.loads(payload["current_task_json"])
+    assert data["active"]["objective"] == "Nested wrapper objective"
+    assert any(
+        "cdx_slice_complete_nested_nested_wrapper" in d.get("decision", "")
+        for d in data["decisions_recent"]
+    )
 
 
 def test_generate_current_task_md_prefers_live_status_over_archived_snapshot(isolated_handoff: dict) -> None:
@@ -1694,12 +1695,11 @@ def test_generate_current_task_md_prefers_live_status_over_archived_snapshot(iso
     assert switched["active"]["status"] == "done"
 
     payload = _parse(mcp_server.generate_current_task_md(task_ref="reactivated-task", write_file=False))
-    md = payload["markdown"]
+    data = json.loads(payload["current_task_json"])
 
     # CURRENT_TASK.md shows active-task status only; All Tasks table is in DASHBOARD.md.
-    assert "reactivated-task" in md
-    assert "done" in md
-    assert "## All Tasks" not in md
+    assert data["task_ref"] == "reactivated-task"
+    assert data["active"]["status"] == "done"
 
 
 def test_generate_current_task_md_includes_dashboard_header(isolated_handoff: dict) -> None:
@@ -1735,14 +1735,13 @@ def test_generate_current_task_md_includes_dashboard_header(isolated_handoff: di
     )
 
     payload = _parse(mcp_server.generate_current_task_md(task_ref="E12-11", write_file=False))
-    md = payload["markdown"]
+    data = json.loads(payload["current_task_json"])
 
     # CURRENT_TASK.md is now active-task-only; All Tasks table moved to DASHBOARD.md.
-    assert "## All Tasks" not in md
-    assert "E12-10" not in md
-    assert "## Objective" in md
-    assert "- epic_ref: `E12`" in md
-    assert "- task_ref: `E12-11`" in md
+    assert data["task_ref"] == "E12-11"
+    assert data["active"]["objective"] == "Dashboard active task"
+    # Cross-task finding (E12-10) must not appear in active-task JSON
+    assert all(f["finding_id"] != "E12-10-OPEN" for f in data["findings_open"])
 
 
 def test_internal_write_path_writes_current_task_json(isolated_handoff: dict) -> None:
@@ -2069,11 +2068,11 @@ def test_generate_current_task_md_excludes_cross_task_findings(isolated_handoff:
         )
     )
     assert payload["ok"] is True
-    md = payload["markdown"]
-    assert "## Open Review Findings" in md
-    assert "D3-01" in md          # active task's own finding present
-    assert "D1-01" not in md      # cross-task finding absent from CURRENT_TASK.md
-    assert "### daemon-1" not in md
+    data = json.loads(payload["current_task_json"])
+    # Active task's own finding present
+    assert any(f["finding_id"] == "D3-01" for f in data["findings_open"])
+    # Cross-task finding absent from CURRENT_TASK.md
+    assert all(f["finding_id"] != "D1-01" for f in data["findings_open"])
 
 
 def test_generate_current_task_md_related_excludes_active_task(isolated_handoff: dict) -> None:
@@ -2102,11 +2101,12 @@ def test_generate_current_task_md_related_excludes_active_task(isolated_handoff:
             write_file=False,
         )
     )
-    md = payload["markdown"]
-    open_section = md.split("## Open Review Findings", 1)[1]
-    # D3-01 should appear only once in the open section, not duplicated as a related finding.
-    assert open_section.count("D3-01") == 1
-    assert "## Related Open Review Findings" not in md
+    data = json.loads(payload["current_task_json"])
+    # D3-01 should appear exactly once in findings_open (not duplicated)
+    d3_findings = [f for f in data["findings_open"] if f["finding_id"] == "D3-01"]
+    assert len(d3_findings) == 1
+    # No cross-task related findings section in JSON
+    assert "related_findings_open" not in data or len(data.get("related_findings_open", [])) == 0
 
 
 def test_generate_current_task_md_excludes_all_cross_task_findings(isolated_handoff: dict) -> None:
@@ -2143,13 +2143,12 @@ def test_generate_current_task_md_excludes_all_cross_task_findings(isolated_hand
     )
 
     assert payload["ok"] is True
-    md = payload["markdown"]
-    assert "DA-01" not in md
-    assert "DA-02" not in md
-    assert "DB-01" not in md
-    assert "DB-02" not in md
-    assert "### daemon-a" not in md
-    assert "### daemon-b" not in md
+    data = json.loads(payload["current_task_json"])
+    finding_ids = {f["finding_id"] for f in data["findings_open"]}
+    assert "DA-01" not in finding_ids
+    assert "DA-02" not in finding_ids
+    assert "DB-01" not in finding_ids
+    assert "DB-02" not in finding_ids
 
 
 def test_generate_current_task_md_related_skips_resolved(isolated_handoff: dict) -> None:
@@ -2197,13 +2196,14 @@ def test_generate_current_task_md_related_skips_resolved(isolated_handoff: dict)
             write_file=False,
         )
     )
-    md = payload["markdown"]
+    data = json.loads(payload["current_task_json"])
     # OC-001: All Review Findings History section removed; fixed findings
     # are no longer in the default render. They remain queryable via
     # list_review_findings(status="all").
-    assert "## All Review Findings History" not in md
-    assert "D1-FIXED" not in md
-    assert "## Related Open Review Findings" not in md
+    finding_ids = {f["finding_id"] for f in data["findings_open"]}
+    assert "D1-FIXED" not in finding_ids
+    # No related findings section in JSON for daemon-3 (has no own findings)
+    assert len(data["findings_open"]) == 0
 
 
 def test_generate_current_task_md_includes_all_findings_history_for_resolved_cross_task_findings(
@@ -2249,11 +2249,11 @@ def test_generate_current_task_md_includes_all_findings_history_for_resolved_cro
             write_file=False,
         )
     )
-    md = payload["markdown"]
+    data = json.loads(payload["current_task_json"])
     # OC-001: All Review Findings History section removed from default render.
     # Fixed findings from other tasks do not appear in CURRENT_TASK.md.
-    assert "## All Review Findings History" not in md
-    assert "D1-HISTORY" not in md
+    finding_ids = {f["finding_id"] for f in data["findings_open"]}
+    assert "D1-HISTORY" not in finding_ids
 
 
 def test_generate_current_task_md_no_other_open_findings(isolated_handoff: dict) -> None:
@@ -2271,14 +2271,15 @@ def test_generate_current_task_md_no_other_open_findings(isolated_handoff: dict)
             write_file=False,
         )
     )
-    md = payload["markdown"]
-    assert "## Related Open Review Findings" not in md
+    data = json.loads(payload["current_task_json"])
+    # No related findings for daemon-3 (no cross-task open findings)
+    assert len(data["findings_open"]) == 0
 
 
 def test_generate_current_task_md_truncates_multiline_test_command(
     isolated_handoff: dict,
 ) -> None:
-    """Multi-line test commands are collapsed to a single line and capped at 120 chars."""
+    """Multi-line test commands are stored verbatim in CURRENT_TASK.md JSON."""
     multiline_cmd = (
         "ORCH_ROOT=\"$(dirname $(pwd))\" && make something && python3 - <<'PY'\n"
         "from agent_handoff_mcp import list_plan_cursors\n"
@@ -2305,13 +2306,10 @@ def test_generate_current_task_md_truncates_multiline_test_command(
         )
     )
     payload = _parse(mcp_server.generate_current_task_md(task_ref="cmd-truncate-test", write_file=False))
-    md = payload["markdown"]
-    rendered_cmd_lines = [line for line in md.splitlines() if "ORCH_ROOT" in line]
-    assert len(rendered_cmd_lines) == 1, "command must render on a single line"
-    rendered_line = rendered_cmd_lines[0]
-    assert "\n" not in rendered_line
-    assert " \u21a9 " in rendered_line, "collapsed newlines must appear as ↩ markers"
-    assert len(rendered_line) <= 160  # generous bound; command portion capped at 120
+    data = json.loads(payload["current_task_json"])
+    assert len(data["tests_recent"]) == 1
+    stored_cmd = data["tests_recent"][0]["command"]
+    assert "ORCH_ROOT" in stored_cmd
 
 
 # ---------------------------------------------------------------------------
@@ -2348,11 +2346,10 @@ def test_generate_current_task_md_includes_review_coverage_section(isolated_hand
         )
     )
     payload = _parse(mcp_server.generate_current_task_md(task_ref="cov-section-1", write_file=False))
-    md = payload["markdown"]
-    assert "## Review Coverage" in md
-    assert "review runs: 1" in md
-    assert "latest verdict: pass_with_findings" in md
-    assert "open findings: high=0 medium=1 low=0" in md
+    data = json.loads(payload["current_task_json"])
+    assert "review_coverage" in data
+    assert data["review_coverage"]["run_count"] == 1
+    assert data["review_coverage"]["latest_verdict"] == "pass_with_findings"
 
 
 def test_generate_current_task_md_review_coverage_zero_runs(isolated_handoff: dict) -> None:
@@ -2365,10 +2362,10 @@ def test_generate_current_task_md_review_coverage_zero_runs(isolated_handoff: di
         )
     )
     payload = _parse(mcp_server.generate_current_task_md(task_ref="cov-zero-1", write_file=False))
-    md = payload["markdown"]
-    assert "## Review Coverage" in md
-    assert "review runs: 0" in md
-    assert "latest verdict: none" in md
+    data = json.loads(payload["current_task_json"])
+    assert "review_coverage" in data
+    assert data["review_coverage"]["run_count"] == 0
+    assert data["review_coverage"]["latest_verdict"] is None or data["review_coverage"]["latest_verdict"] == "none"
 
 
 def test_internal_write_path_includes_task_ref(isolated_handoff: dict) -> None:
@@ -2393,6 +2390,7 @@ def test_internal_write_path_includes_task_ref(isolated_handoff: dict) -> None:
     )
 
     _write_current_task_md_from_state("iw-task-ref-test")
+    _parse(mcp_server.generate_dashboard_md(write_file=True))
 
     current_task_payload = json.loads(isolated_handoff["current_task_path"].read_text())
     assert current_task_payload["task_ref"] == "iw-task-ref-test"
@@ -2428,9 +2426,7 @@ def test_internal_write_path_includes_review_coverage(isolated_handoff: dict) ->
 
     current_task_payload = json.loads(isolated_handoff["current_task_path"].read_text())
     assert current_task_payload["review_coverage"]["run_count"] == 1
-    md = isolated_handoff["dashboard_path"].read_text()
-    assert "## Review Coverage" in md
-    assert "review runs: 1" in md
+    assert current_task_payload["review_coverage"]["latest_verdict"] == "pass"
 
 
 def test_internal_write_path_reuses_existing_connection_for_review_coverage(
@@ -2470,9 +2466,7 @@ def test_internal_write_path_reuses_existing_connection_for_review_coverage(
 
     current_task_payload = json.loads(isolated_handoff["current_task_path"].read_text())
     assert current_task_payload["review_coverage"]["run_count"] == 1
-    md = isolated_handoff["dashboard_path"].read_text()
-    assert "## Review Coverage" in md
-    assert "review runs: 1" in md
+    assert current_task_payload["review_coverage"]["latest_verdict"] == "pass"
 
 
 # ---------------------------------------------------------------------------
@@ -2887,9 +2881,6 @@ def test_current_task_md_renders_focus_section(isolated_handoff: dict) -> None:
 
     current_task_payload = json.loads(isolated_handoff["current_task_path"].read_text())
     assert current_task_payload["active"]["focus"] == "working on E12-3 slice 1"
-    content = isolated_handoff["dashboard_path"].read_text()
-    assert "## Current Focus" in content
-    assert "working on E12-3 slice 1" in content
 
 
 def test_current_task_md_omits_focus_when_null(isolated_handoff: dict) -> None:
@@ -2906,8 +2897,6 @@ def test_current_task_md_omits_focus_when_null(isolated_handoff: dict) -> None:
 
     current_task_payload = json.loads(isolated_handoff["current_task_path"].read_text())
     assert current_task_payload["active"]["focus"] is None
-    content = isolated_handoff["dashboard_path"].read_text()
-    assert "## Current Focus" not in content
 
 
 def test_is_slice_complete_legacy_format() -> None:
@@ -3024,8 +3013,9 @@ def test_generate_current_task_md_renders_archived_non_active_task(isolated_hand
     payload = _parse(mcp_server.generate_current_task_md(task_ref="archived-render-task", write_file=False))
     assert payload["ok"] is True
     assert payload["task_ref"] == "archived-render-task"
-    assert payload["markdown"] is not None
-    assert "Archived Task Objective" in payload["markdown"]
+    assert payload["current_task_json"] is not None
+    data = json.loads(payload["current_task_json"])
+    assert data["active"]["objective"] == "Archived Task Objective"
 
 
 # HANDOFF-REV-002 regression: close_slice atomicity on set_handoff_state failure

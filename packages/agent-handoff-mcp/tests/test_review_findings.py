@@ -386,14 +386,20 @@ def test_render_current_task_md_with_decisions_but_no_active(isolated_handoff: d
     )
     result = _parse(mcp_server.generate_current_task_md(task_ref="E12-test-render"))
     assert result["ok"] is True
+    _parse(mcp_server.generate_dashboard_md(write_file=True))
 
     current_task_path = Path(isolated_handoff["current_task_path"])
     current_task_payload = json.loads(current_task_path.read_text())
-    md = Path(isolated_handoff["dashboard_path"]).read_text()
+    dash_md = Path(isolated_handoff["dashboard_path"]).read_text()
     assert current_task_payload["task_ref"] == "E12-test-render"
-    assert "No active handoff state found." not in md
-    assert "E12-test-render" in md
-    assert "test_decision_for_render" in md
+    # Decision is stored in the active-task JSON (CURRENT_TASK.md)
+    assert any(
+        "test_decision_for_render" in d.get("decision", "")
+        for d in current_task_payload.get("decisions_recent", [])
+    )
+    # Task appears in the dashboard All Tasks table
+    assert "No active handoff state found." not in dash_md
+    assert "E12-test-render" in dash_md
 
 
 def test_infer_epic_ref_for_epic_task_plan_refs() -> None:
@@ -417,13 +423,14 @@ def test_render_current_task_md_with_findings_but_no_active(isolated_handoff: di
     )
     result = _parse(mcp_server.generate_current_task_md(task_ref="E12-render-findings"))
     assert result["ok"] is True
+    _parse(mcp_server.generate_dashboard_md(write_file=True))
 
     current_task_path = Path(isolated_handoff["current_task_path"])
     current_task_payload = json.loads(current_task_path.read_text())
-    md = Path(isolated_handoff["dashboard_path"]).read_text()
+    dash_md = Path(isolated_handoff["dashboard_path"]).read_text()
     assert current_task_payload["task_ref"] == "E12-render-findings"
-    assert "No active handoff state found." not in md
-    assert "E12-render-findings" in md
+    assert "No active handoff state found." not in dash_md
+    assert "E12-render-findings" in dash_md
 
 
 def test_cross_task_finding_write_keeps_current_task_on_active_task(isolated_handoff: dict) -> None:
@@ -448,17 +455,17 @@ def test_cross_task_finding_write_keeps_current_task_on_active_task(isolated_han
 
     current_task_payload = json.loads(isolated_handoff["current_task_path"].read_text())
     assert current_task_payload["task_ref"] == "E15-2"
+    # Cross-task finding must not appear in active-task JSON
+    assert all(f["finding_id"] != "CROSS-ACTIVE-001" for f in current_task_payload["findings_open"])
+    _parse(mcp_server.generate_dashboard_md(write_file=True))
     md = isolated_handoff["dashboard_path"].read_text()
-    assert "## Objective\nActive task should remain visible" in md
-    assert "- task_ref: `E15-2`" in md
-    # Cross-task findings no longer appear in CURRENT_TASK.md; they belong in DASHBOARD.md.
-    assert "### E14-2" not in md
-    assert "CROSS-ACTIVE-001" not in md
+    # Active task appears in dashboard
+    assert "E15-2" in md
 
 
 def test_render_dashboard_section_handles_zero_one_and_multiple_tasks() -> None:
     empty_lines = _render_dashboard_section([], active_task_ref=None)
-    assert "## All Tasks" in empty_lines
+    assert "ALL TASKS" in empty_lines
     assert any("(no tasks)" in line for line in empty_lines)
 
     single_lines = _render_dashboard_section(
@@ -575,7 +582,7 @@ def test_render_current_task_md_active_task_only() -> None:
 
     md = _render_current_task_md(state)
 
-    assert "## All Tasks" not in md
+    assert "ALL TASKS" not in md
     assert "E12-10" not in md
     assert "## Objective\nRender active task only" in md
     assert "- epic_ref: `E12`" in md

@@ -76,8 +76,9 @@ uvicorn api.main:app --reload
 
 ````
 
-At the end of step 4 the following tables will exist: `tenants`,
-`media_faces`, `face_clusters`, `cluster_members`, and `face_scan_jobs`.
+At the end of step 4 the baseline auth/identity tables will exist, including
+`tenants`, `api_keys`, `media_identities`, `identity_clusters`,
+`identity_members`, and `identity_scan_jobs`.
 The migration also issues `CREATE EXTENSION IF NOT EXISTS vector`, but running it
 manually up front guarantees the role you are using has the required privilege.
 

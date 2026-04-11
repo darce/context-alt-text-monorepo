@@ -562,11 +562,24 @@ def _configure_real_runtime(tmp_path: Path, task_ref: str) -> RuntimeConfig:
         tmp_path,
         state_dir=tmp_path / ".task-state",
         current_task_path=tmp_path / "CURRENT_TASK.md",
+        dashboard_path=tmp_path / "DASHBOARD.md",
         exports_dir=tmp_path / ".task-state" / "exports",
     )
     mcp_api.configure_runtime(runtime)
     mcp_api.set_handoff_state(task_ref=task_ref, objective="daemon integration", status="in_progress")
     return runtime
+
+
+def _mock_run_with_real_git_common_dir(mod, tmp_path: Path, stdout: str):
+    real_run = mod.subprocess.run
+
+    def _side_effect(args, *pargs, **kwargs):
+        argv = args if isinstance(args, list) else [args]
+        if "--git-common-dir" in argv:
+            return real_run(args, *pargs, **kwargs)
+        return mock.Mock(returncode=0, stdout=stdout, stderr="")
+
+    return _side_effect
 
 
 def test_single_pass_no_ready_lanes(tmp_path: Path) -> None:
@@ -633,8 +646,11 @@ def test_single_pass_dispatches_from_task_plan(tmp_path: Path) -> None:
     dispatch_output = json.dumps({"ok": True})
 
     with mock.patch.dict(sys.modules, {"lane_manifest": mock_manifest}):
-        with mock.patch.object(mod.subprocess, "run") as mock_run:
-            mock_run.return_value = mock.Mock(returncode=0, stdout=dispatch_output, stderr="")
+        with mock.patch.object(
+            mod.subprocess,
+            "run",
+            side_effect=_mock_run_with_real_git_common_dir(mod, tmp_path, dispatch_output),
+        ):
             result = mod.orchestrator_loop(
                 orchestrator_root=tmp_path,
                 task_ref="phase-5-retention-export-and-audit-controls",
@@ -706,7 +722,7 @@ def test_single_pass_dispatches_next_eligible_task_plan_item(tmp_path: Path) -> 
         with mock.patch.object(
             mod.subprocess,
             "run",
-            return_value=mock.Mock(returncode=0, stdout=dispatch_output, stderr=""),
+            side_effect=_mock_run_with_real_git_common_dir(mod, tmp_path, dispatch_output),
         ):
             assert (
                 mod.orchestrator_loop(
@@ -823,7 +839,9 @@ def test_single_pass_dispatches_only_one_plan_item_per_cycle(tmp_path: Path) -> 
     dispatch_output = json.dumps({"ok": True})
     with mock.patch.dict(sys.modules, {"lane_manifest": mock_manifest}):
         with mock.patch.object(
-            mod.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=dispatch_output, stderr="")
+            mod.subprocess,
+            "run",
+            side_effect=_mock_run_with_real_git_common_dir(mod, tmp_path, dispatch_output),
         ):
             assert (
                 mod.orchestrator_loop(
@@ -895,7 +913,9 @@ def test_single_pass_prefers_upstream_lane_over_document_order(tmp_path: Path) -
     dispatch_output = json.dumps({"ok": True})
     with mock.patch.dict(sys.modules, {"lane_manifest": mock_manifest}):
         with mock.patch.object(
-            mod.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=dispatch_output, stderr="")
+            mod.subprocess,
+            "run",
+            side_effect=_mock_run_with_real_git_common_dir(mod, tmp_path, dispatch_output),
         ):
             assert (
                 mod.orchestrator_loop(

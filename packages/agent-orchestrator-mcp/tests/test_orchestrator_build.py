@@ -134,3 +134,82 @@ def test_orchestration_dir_points_to_orchestration():
     scripts_dir = _orchestration_dir()
     assert scripts_dir.exists(), f"orchestration dir not found: {scripts_dir}"
     assert (scripts_dir / "orchestrator_daemon.py").exists()
+
+
+def test_dashboard_extension_lane_health_and_worker_status(tmp_path: Path) -> None:
+    """AHMCP-23: lane_worker_extension contributes Lane Health + Worker Status to DASHBOARD.md.
+
+    Registers the real ``lane_worker_extension`` from the orchestrator package,
+    seeds the handoff DB with a lane row and a submitted worker-report row,
+    then calls ``generate_dashboard_md(write_file=False)`` and asserts both
+    extension sections appear in the output markdown.
+    """
+    from agent_handoff_mcp.config import RuntimeConfig
+    from agent_handoff_mcp.dashboard_rendering import (
+        clear_dashboard_extensions,
+        register_dashboard_extension,
+    )
+    from agent_handoff_mcp.shared_schema import _get_db_connection
+    from agent_orchestrator_mcp.api import configure_runtime, generate_dashboard_md
+    from agent_orchestrator_mcp.orchestration.dashboard_extension import lane_worker_extension
+
+    # Isolated runtime
+    state_dir = tmp_path / ".task-state"
+    state_dir.mkdir()
+    runtime = RuntimeConfig(
+        workspace_root=tmp_path,
+        state_dir=state_dir,
+        db_path=state_dir / "handoff.db",
+        current_task_path=tmp_path / "CURRENT_TASK.md",
+        exports_dir=state_dir / "exports",
+        artifact_db_path=state_dir / "mcp-artifacts.db",
+    )
+    configure_runtime(runtime)
+
+    # Bootstrap the DB schema by opening a managed connection (which runs migrations)
+    # then seed lane and worker-report rows.
+    with _get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO worktree_lanes
+            (task_ref, lane_id, title, objective, worktree_path, branch,
+             owner_agent, model, backend, reasoning_effort, status, created_at, updated_at)
+            VALUES ('TEST-1', 'frontend', 'Frontend lane', 'Build UI', '/tmp/wt', 'feature/frontend',
+                    'claude', 'claude-sonnet-4', 'local', 'medium', 'active',
+                    datetime('now'), datetime('now'))
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO worker_reports
+            (task_ref, lane_id, session, summary, changed_files_json, test_commands_json,
+             blockers_json, merge_ready, status, agent, branch, commit_sha, created_at)
+            VALUES ('TEST-1', 'frontend', 'sess-1', 'Implemented UI components', '[]', '[]',
+                    '[]', 1, 'submitted', 'claude', 'feature/frontend', 'abc1234', datetime('now'))
+            """
+        )
+
+    # Register only our extension for this test
+    clear_dashboard_extensions()
+    register_dashboard_extension(lane_worker_extension)
+
+    try:
+        result = generate_dashboard_md(write_file=False)
+    finally:
+        # Restore the module-level registration
+        clear_dashboard_extensions()
+        register_dashboard_extension(lane_worker_extension)
+
+    assert result["ok"] is True
+    md = result["markdown"]
+    assert md is not None
+
+    # Lane Health section
+    assert "## Lane Health" in md
+    assert "frontend" in md
+    assert "active" in md
+
+    # Worker Status section
+    assert "## Worker Status" in md
+    assert "Implemented UI components" in md
+    assert "merge-ready" in md

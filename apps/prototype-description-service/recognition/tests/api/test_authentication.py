@@ -234,3 +234,94 @@ async def test_lookup_api_key_translates_missing_table_to_500_and_rolls_back_sav
     assert exc_info.value.detail == "api key store unavailable"
     assert session.begin_nested_calls == 1
     assert session.nested_rollback_calls == 1
+
+
+def test_valid_api_key_enqueues_background_telemetry(monkeypatch) -> None:
+    """Successful API-key auth should record usage through a dedicated session."""
+    client = _auth_client(FakeClusterService(), monkeypatch)
+    tenant_id = str(uuid.uuid4())
+    telemetry_session = FakeSession()
+
+    async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
+        assert api_key == "good-key"
+        return tenant_id, str(uuid.uuid4()), "free", False
+
+    monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
+    monkeypatch.setattr(auth, "async_session_factory", lambda: telemetry_session)
+    headers = {"X-Tenant-ID": tenant_id, "Authorization": "Bearer good-key"}
+
+    response = client.get("/recognition/clusters", headers=headers)
+
+    assert response.status_code == 200
+    assert telemetry_session.commit_calls == 1
+    assert telemetry_session.rollback_calls == 0
+    assert telemetry_session.close_calls == 1
+    assert telemetry_session.execute_calls == 1
+
+
+def test_valid_api_key_survives_background_telemetry_failure(monkeypatch) -> None:
+    """Telemetry failures must be logged/rolled back without changing auth success."""
+    client = _auth_client(FakeClusterService(), monkeypatch)
+    tenant_id = str(uuid.uuid4())
+    telemetry_session = FakeSession()
+    telemetry_session.queue_execute_exception(RuntimeError("telemetry failed"))
+
+    async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
+        assert api_key == "good-key"
+        return tenant_id, str(uuid.uuid4()), "free", False
+
+    monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
+    monkeypatch.setattr(auth, "async_session_factory", lambda: telemetry_session)
+    headers = {"X-Tenant-ID": tenant_id, "Authorization": "Bearer good-key"}
+
+    response = client.get("/recognition/clusters", headers=headers)
+
+    assert response.status_code == 200
+    assert telemetry_session.commit_calls == 0
+    assert telemetry_session.rollback_calls == 1
+    assert telemetry_session.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_require_auth_direct_call_allows_missing_background_tasks(monkeypatch) -> None:
+    """Direct-call unit tests can pass no BackgroundTasks and still exercise auth."""
+    monkeypatch.setenv("RECOGNITION_AUTH_ENABLED", "1")
+    tenant_id = str(uuid.uuid4())
+
+    async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
+        assert api_key == "good-key"
+        return tenant_id, "api-key-id", "free", False
+
+    monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
+
+    result = await auth._require_auth_impl(
+        authorization="Bearer good-key",
+        x_tenant_id=tenant_id,
+        api_key_header_value=None,
+        background_tasks=None,
+        session=FakeSession(),
+    )
+
+    assert result.api_key_id == "api-key-id"
+
+
+def test_tenant_mismatch_does_not_enqueue_background_telemetry(monkeypatch) -> None:
+    """Telemetry should only run for fully authorized requests."""
+    client = _auth_client(FakeClusterService(), monkeypatch)
+    token_tenant = str(uuid.uuid4())
+    request_tenant = str(uuid.uuid4())
+    telemetry_session = FakeSession()
+
+    async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
+        assert api_key == "good-key"
+        return token_tenant, str(uuid.uuid4()), "free", False
+
+    monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
+    monkeypatch.setattr(auth, "async_session_factory", lambda: telemetry_session)
+    headers = {"X-Tenant-ID": request_tenant, "Authorization": "Bearer good-key"}
+
+    response = client.get("/recognition/clusters", headers=headers)
+
+    assert response.status_code == 403
+    assert telemetry_session.execute_calls == 0
+    assert telemetry_session.commit_calls == 0

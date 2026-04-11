@@ -34,6 +34,8 @@ class FakeSession:
         self.flush_calls = 0
         self.begin_nested_calls = 0
         self.nested_rollback_calls = 0
+        self.execute_calls = 0
+        self.executed_statements: list[str] = []
 
     def set_get_result(self, *, model_class: object, pk: object, value: object | None) -> None:
         """Register a deterministic return value for `get(model_class, pk)`."""
@@ -60,6 +62,8 @@ class FakeSession:
         self._execute_results.append(exc)
 
     async def execute(self, _statement, _params=None):  # noqa: ANN001
+        self.execute_calls += 1
+        self.executed_statements.append(str(_statement))
         if self._execute_results:
             next_item = self._execute_results.pop(0)
             if isinstance(next_item, Exception):

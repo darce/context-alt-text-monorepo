@@ -28,6 +28,15 @@ RATIONALE_SOFT_LIMIT = 1_500   # chars — warn via additionalContext
 # longer.  Allow a higher limit for those.
 SLICE_COMPLETE_HARD_LIMIT = 4_000
 
+# Required markdown sections for slice_complete_* decisions.
+# Must match shared_primitives.SLICE_COMPLETE_REQUIRED_SECTIONS.
+SLICE_COMPLETE_REQUIRED_SECTIONS = (
+    "## Changes",
+    "## Verification",
+    "## Schema / Contract Changes",
+    "## Open Threads",
+)
+
 
 def _get_rationale(tool_input: dict) -> tuple[str, str]:
     """Extract the rationale text and event_kind from the tool input.
@@ -74,6 +83,22 @@ def main() -> None:
         or ""
     )
     hard_limit = SLICE_COMPLETE_HARD_LIMIT if is_slice else RATIONALE_HARD_LIMIT
+
+    # Block slice_complete decisions that are missing required sections.
+    # This catches structural errors before the server validates them,
+    # saving the agent a full round-trip retry.
+    if is_slice:
+        missing = [s for s in SLICE_COMPLETE_REQUIRED_SECTIONS if s not in rationale]
+        if missing:
+            missing_list = ", ".join(f'"{s}"' for s in missing)
+            print(
+                f"Slice-complete rationale is missing required sections: {missing_list}. "
+                f"All four sections must be non-empty: ## Changes, ## Verification, "
+                f"## Schema / Contract Changes, ## Open Threads. "
+                f"Template: docs/agentic/templates/slice-complete-template.md.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
 
     char_count = len(rationale)
 

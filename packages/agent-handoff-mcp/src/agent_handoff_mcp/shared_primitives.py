@@ -75,6 +75,12 @@ _VERIFIED_TEST_RESULT_MAX_CHARS = 280
 RATIONALE_SOFT_LIMIT_CHARS = 1_500
 RATIONALE_HARD_LIMIT_CHARS = 3_000
 SLICE_COMPLETE_HARD_LIMIT_CHARS = 4_000
+SLICE_COMPLETE_REQUIRED_SECTIONS: tuple[str, ...] = (
+    "## Changes",
+    "## Verification",
+    "## Schema / Contract Changes",
+    "## Open Threads",
+)
 
 # ---------------------------------------------------------------------------
 # Domain constants

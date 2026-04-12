@@ -8,6 +8,10 @@ from __future__ import annotations
 from ._shared import (
     DEFAULT_HANDOFF_LIMITS,
     HANDOFF_ACTIVE_STATUSES,
+    RATIONALE_HARD_LIMIT_CHARS,
+    RATIONALE_SOFT_LIMIT_CHARS,
+    SLICE_COMPLETE_HARD_LIMIT_CHARS,
+    SLICE_COMPLETE_REQUIRED_SECTIONS,
     WriteActor,
     _envelope,
     _fetch_handoff_rows,
@@ -272,6 +276,12 @@ def get_handoff_state(
             "decisions": top_n_decisions,
             "tests": top_n_tests,
             "findings": top_n_findings,
+            "write": {
+                "rationale_soft_chars": RATIONALE_SOFT_LIMIT_CHARS,
+                "rationale_hard_chars": RATIONALE_HARD_LIMIT_CHARS,
+                "slice_complete_hard_chars": SLICE_COMPLETE_HARD_LIMIT_CHARS,
+                "slice_complete_required_sections": list(SLICE_COMPLETE_REQUIRED_SECTIONS),
+            },
         }
 
         if _want("current_lane"):

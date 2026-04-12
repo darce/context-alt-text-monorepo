@@ -768,7 +768,16 @@ def test_get_handoff_state_compact_defaults_enforced(isolated_handoff: dict) -> 
     compact = _parse(mcp_server.get_handoff_state())
 
     assert compact["ok"] is True
-    assert compact["limits"] == {"blockers": 5, "actions": 5, "decisions": 3, "tests": 3, "findings": 10}
+    assert compact["limits"]["blockers"] == 5
+    assert compact["limits"]["actions"] == 5
+    assert compact["limits"]["decisions"] == 3
+    assert compact["limits"]["tests"] == 3
+    assert compact["limits"]["findings"] == 10
+    write = compact["limits"]["write"]
+    assert write["rationale_soft_chars"] == 1500
+    assert write["rationale_hard_chars"] == 3000
+    assert write["slice_complete_hard_chars"] == 4000
+    assert "## Changes" in write["slice_complete_required_sections"]
     assert len(compact["blockers_open"]) == 5
     assert len(compact["actions_pending"]) == 5
     assert len(compact["decisions_recent"]) == 3

@@ -134,7 +134,11 @@ class RecordDecisionEvent(BaseModel):
     decision: Annotated[str, Field(description="Stable decision identifier to persist in the ledger.")]
     rationale: Annotated[
         str | None,
-        Field(description="Optional markdown rationale explaining the decision, verification, and open threads."),
+        Field(description=(
+            "Optional markdown rationale. Soft limit: 1,500 chars; hard limit: 3,000 chars "
+            "(enforced by hook before call reaches server). For slice_complete_* decisions "
+            "use close_slice, which enforces required sections."
+        )),
     ] = None
     actor: ActorParam = None
     task_ref: TaskRefParam = None
@@ -1089,7 +1093,12 @@ def close_slice(
     decision: Annotated[str, Field(description="Stable slice-complete decision identifier.")],
     rationale: Annotated[
         str | None,
-        Field(description="Optional markdown rationale for the slice completion decision."),
+        Field(description=(
+            "Structured markdown rationale. MUST include non-empty sections: "
+            "## Changes, ## Verification, ## Schema / Contract Changes, ## Open Threads. "
+            "Soft limit: 1,500 chars; hard limit: 4,000 chars (enforced by hook before call reaches server). "
+            "See docs/agentic/templates/slice-complete-template.md."
+        )),
     ] = None,
     actor: ActorParam = None,
     expected_revision: Annotated[

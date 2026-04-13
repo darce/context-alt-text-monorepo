@@ -75,6 +75,7 @@ def _register_dashboard_extensions() -> None:
     imported inside this function, not at module top level.
     """
     from agent_handoff_mcp.dashboard_rendering import register_dashboard_extension  # noqa: PLC0415
+
     from agent_orchestrator_mcp.orchestration.dashboard_extension import (  # noqa: PLC0415
         lane_worker_extension,
     )

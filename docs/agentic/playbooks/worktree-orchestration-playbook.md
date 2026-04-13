@@ -19,8 +19,23 @@ Three durable layers underpin lane orchestration:
 - **orchestrator root**: the main repo checkout, e.g. `${REPO_ROOT:-$PWD}`
 - **worker worktree**: a sibling checkout created for one lane
 - **task ref**: the active MCP task, e.g. `phase-5-retention-export-and-audit-controls`
-- **lane id**: the worker slice name, e.g. `backend-domain`, `frontend`
+- **lane id**: the worker slice name — vertical feature slice by default, e.g. `create-alt-text`, `edit-alt-text`; horizontal domain lanes (`backend-domain`, `frontend`) only for hard runtime isolation boundaries
 - **lane manifest**: `config/lane-orchestration/<task-ref>.json`, source of truth for owned paths and branch names
+
+## Lane Decomposition Strategy
+
+**Default: vertical feature slices, not domain lanes.**
+
+A lane owns a complete end-to-end path for one user-visible behavior (DB schema → service layer → API endpoint → UI component). Each lane can be independently tested and validated before merge. Horizontal domain lanes defer integration risk to merge time and prevent end-to-end validation until both lanes land.
+
+| Pattern | Example lane ids | When to use |
+|---------|-----------------|-------------|
+| **Vertical (default)** | `create-alt-text`, `edit-alt-text`, `delete-alt-text` | Feature work crossing multiple layers |
+| **Horizontal (exception)** | `backend-domain`, `frontend`, `wp-proxy` | Hard runtime isolation — separate service, no shared test surface |
+
+When horizontal lanes are unavoidable, name them after the feature delivered (`auth-api-cleanup`), not the layer touched (`backend`).
+
+**TDD within every lane:** every slice starts with a failing test via `make slice-start TEST_CMD="..."` before any implementation edit. See [lifecycle-map.md](../lifecycle-map.md) stages I2–I4.
 
 ## Task Manifests
 
@@ -29,7 +44,7 @@ Each task that uses lane automation defines its orchestration config at `config/
 Initialize with:
 
 ```bash
-make lane-manifest-init TASK=<task-ref> LANE_IDS='backend frontend' TASK_PLAN=docs/tasks/...md
+make lane-manifest-init TASK=<task-ref> LANE_IDS='create-alt-text edit-alt-text' TASK_PLAN=docs/tasks/...md
 ```
 
 The manifest drives:

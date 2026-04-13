@@ -27,7 +27,7 @@ An agent starting a branch review runs `make review-run` (agent-assisted target)
 
 An agent reviewing a task plan first runs `make plan-analyze` (agent-assisted target) for automated triage, then `make plan-review` for the canonical review pass. The analyzer loads the plan plus `constitution.md` and runs six detection passes; the reviewer resolves analyzer findings and adds judgment-requiring findings. Both targets require an active agent session — the LLM executes the skill's structured process against the loaded artifacts.
 
-An agent finishing a task runs `make task-finish`. The skill runs `handoff_close_check`, merges, cleans up the worktree, archives the task, and regenerates the dashboard. The Makefile target is the entry point; the skill defines the loop; the MCP tools enforce the gates.
+An agent starts each implementation slice with `make slice-start TEST_CMD="..."` to record the failing-test gate, then lands the slice with `make slice-commit MSG="..."` so the commit and `close_slice` write happen in one step. An agent finishing a task runs `make task-finish`. The skill runs `handoff_close_check`, merges, cleans up the worktree, archives the task, and regenerates the dashboard. The Makefile target is the entry point; the skill defines the loop; the MCP tools enforce the gates.
 
 Structural validation — frontmatter schema, rule formatting, skill anatomy compliance — runs headlessly via `make check-skills` and `make check-all`, with no agent required.
 
@@ -38,6 +38,43 @@ Structural validation — frontmatter schema, rule formatting, skill anatomy com
 - **Guides become reference, skills become executable.** The existing review guides are not deleted — they become the reference documentation that skills link to for edge cases and rationale. The skill is the executable subset; the guide is the manual.
 - **Agent-agnostic.** Skills must work for Claude Code, Codex, and any future agent that can read `.claude/skills/` and invoke Makefile targets. No model-specific assumptions in skill definitions.
 - **Backward-compatible with existing Makefile surface.** New targets extend the Makefile; existing targets (`review-ready`, `task-start`, `task-finish`, `check-all`) keep their current behavior but may be wrapped by skills.
+
+## Implementation Paradigm
+
+> **Mandatory for all E17 implementation work. The default for all new task plans going forward.**
+
+### TDD — mandatory, not advisory
+
+Every implementation slice begins with a failing test. No production code may be written before `make slice-start TEST_CMD="..."` records `test_result(passed=false)` in handoff. The sequence is invariant:
+
+1. **RED** — write the failing test → `make slice-start` records the gate before any edit
+2. **GREEN** — implement minimal code to pass → record `test_result(passed=true)`
+3. **REFACTOR** — clean without breaking → `make slice-commit`
+
+Execution skills that gate implementation work declare `tdd_gate: true` in their frontmatter. Advisory skills default to `tdd_gate: false`. A slice that does not start with a recorded failing test is invalid; the pre-merge gate enforces this via `handoff_close_check`.
+
+### Vertical slices — the default decomposition unit
+
+Implementation is decomposed into vertical feature slices, not horizontal domain layers. A slice delivers a complete end-to-end path (DB schema → service layer → API endpoint → UI component) for one user-visible behavior. This allows each slice to be independently testable, demoable, and mergeable before the next begins.
+
+**Horizontal decomposition** (`backend` lane, `frontend` lane, `wp-proxy` lane) is an exception path only for hard runtime isolation boundaries (separate service, no shared test surface, no cross-layer contract coupling). When horizontal lanes are unavoidable, name them after the feature they deliver (`auth-api-cleanup`), not the layer they touch (`backend`). See [playbooks/worktree-orchestration-playbook.md](../playbooks/worktree-orchestration-playbook.md#lane-decomposition-strategy) for the full strategy.
+
+### Worktree status integrity — invariant close sequence
+
+The most common source of stale `active` dashboard entries is tasks archived before their handoff status reaches `done`. The full close sequence is:
+
+1. `update_task_status(task_ref=..., status="done")` — mark the task done in handoff DB
+2. `manage_worktree_lane(action="close", ...)` — close the orchestrator lane registration (agent-orchestrator-mcp; applies when orchestrated lanes were opened at task-start)
+3. `archive_task_state(task_ref=...)` — archive the task snapshot
+4. `generate_current_task_md()` + `generate_dashboard_md()` — regenerate both views with the archived status
+
+**Current implementation** (`make task-finish` → `scripts/_task_finish_inline.py`): steps 1, 3, and 4 are executed today. Step 2 (`manage_worktree_lane(close)`) is an agent-directed MCP call; the `branch-lifecycle` skill (Phase 2) will document it as a required step when orchestrated lanes are in use.
+
+`manage_worktree_lane(close)` marks the lane closed in the orchestrator but does **not** update the handoff task status. Always run `update_task_status(done)` before both `manage_worktree_lane(close)` and `archive_task_state`.
+
+`switch_task` (agent-orchestrator-mcp) provides the safe task-transition entry point when starting a new task while another is in flight: it verifies the current task status before switching, preventing mid-flight switches that leave the previous task orphaned as `in_progress`.
+
+---
 
 ## Terminology
 
@@ -150,54 +187,90 @@ Exit criteria:
 
 **Goal**: Create the discrete execution skills that replace bulk guide loading for the four core workflows.
 
+> **Delivery order: `tdd` and `incremental-implementation` ship first.** They establish the TDD gate and vertical slice model that all other execution skills operate within. No implementation-facing execution skill is marked complete until its delivering agent has demonstrated TDD compliance on at least one slice.
+
 Deliverables:
 
-- **`branch-review` skill** (`mode: execution`)
+- **`tdd` skill** (`mode: execution`, `tdd_gate: true`) — _deliver first_
+  - Enforces RED → GREEN → REFACTOR ordering at slice start; establishes the machine-enforceable gate all other execution skills depend on
+  - Core process: choose target test → run failing test → record `record_event(test_result, passed=false)` via `make slice-start` → only then allow implementation → record `test_result(passed=true)` after passing
+  - MCP tools: `record_event`, `get_verified_tests`, `search_handoff`
+  - Context budget: ~90 lines of skill
+
+- **`incremental-implementation` skill** (`mode: execution`, `tdd_gate: true`) — _deliver second_
+  - Enforces vertical, test-backed slice increments (DB → service → API → UI in one slice) instead of horizontal implementation waves; defines the default decomposition model for all feature work
+  - Core process: choose the smallest end-to-end user path → write failing test → scaffold → implement → re-run tests → keep diff bounded → `make slice-commit`
+  - MCP tools: `record_event`, `search_handoff`, `generate_current_task_md`; `plan_cursor` (agent-orchestrator-mcp — tracks which plan item each slice advances; `require_clean_slice` guard refuses upsert if open findings exist, enforcing the TDD integrity gate)
+  - Context budget: ~100 lines of skill
+
+- **`branch-lifecycle` skill** (`mode: execution`, `tdd_gate: true`)
+  - Extracts the task-start → slice-work → task-finish lifecycle from `development-workflow.md` and `planning-pipeline.md`
+  - Core process: `make task-start` → `make slice-start` → implementation loop (TDD) → `make slice-commit` → `make review-ready` → review → `make task-finish`
+  - MCP tools: `set_handoff_state`, `record_event`, `close_slice`, `handoff_close_check`, `archive_task_state`, `generate_current_task_md`; `manage_worktree_lane` (agent-orchestrator-mcp — register lane at task-start, close as part of invariant finish sequence), `switch_task` (agent-orchestrator-mcp)
+  - Context budget: ~150 lines of skill
+
+- **`branch-review` skill** (`mode: execution`, `tdd_gate: false`)
   - Extracts the executable review loop from `branch-review-guide.md`
-  - Core process: load review packet -> check prior review runs via `review_runs(list)` -> run detection passes -> record findings via `review_findings(batch_record)` -> record review run via `review_runs(record)` -> verify convergence (zero unaddressed findings) -> record verdict decision
+  - Core process: load review packet → pre-triage via `get_review_findings_summary` + `reconcile_review_findings` → check prior review runs via `review_runs(list)` → run detection passes → record findings via `review_findings(batch_record)` → record review run via `review_runs(record)` → verify convergence (zero unaddressed findings) → record verdict decision
   - References `make review-ready` and `make review-run` as Makefile entry points
-  - MCP tools: `get_latest_slice_review_packet`, `review_findings`, `review_runs`, `record_event`, `handoff_close_check`
+  - MCP tools: `get_latest_slice_review_packet`, `review_findings`, `review_runs`, `record_event`, `handoff_close_check`; `get_review_findings_summary`, `reconcile_review_findings` (agent-orchestrator-mcp — pre-review triage: summarize and dedup existing findings before starting detection passes)
   - Context budget: ~150 lines of skill + loaded review packet (not the full 250-line guide)
 
-- **`planning-review` skill** (`mode: execution`)
+- **`planning-review` skill** (`mode: execution`, `tdd_gate: false`)
   - Extracts the executable review loop from `planning-review-guide.md`
-  - Core process: load planning document + code anchors -> check prior review runs via `review_runs(list)` -> run planning checklist passes -> record findings via `review_findings(batch_record)` -> record review run via `review_runs(record)` -> verify convergence -> record verdict
+  - Core process: load planning document + code anchors → check prior review runs via `review_runs(list)` → run planning checklist passes → record findings via `review_findings(batch_record)` → record review run via `review_runs(record)` → verify convergence → record verdict
   - References `make plan-review` (new target) as Makefile entry point
   - MCP tools: `review_findings`, `review_runs`, `record_event`, `search_handoff`
   - Context budget: ~120 lines of skill + loaded plan + code anchors
 
-- **`plan-analyze` skill** (`mode: advisory`)
+- **`plan-analyze` skill** (`mode: advisory`, `tdd_gate: false`)
   - Implements the six spec-kit detection passes as a structured prompt
-  - Core process: load plan + constitution + code anchors -> run duplication/ambiguity/underspecification/constitution-alignment/coverage-gap/terminology-drift passes -> produce findings table -> record findings in MCP with `review_mode="analysis"`
+  - Core process: load plan + constitution + code anchors → run duplication/ambiguity/underspecification/constitution-alignment/coverage-gap/terminology-drift passes → produce findings table → record findings in MCP with `review_mode="analysis"`
   - References `make plan-analyze` (new target, agent-assisted) as Makefile entry point
   - MCP tools: `review_findings(batch_record)` for finding recording
   - Context budget: ~200 lines of skill + loaded plan + constitution
-  - **Gate semantics**: `plan-analyze` is a pre-review triage step, not a substitute for the required planning review pass. Its findings are recorded with `review_mode="analysis"` (distinct from `review_mode="planning"`). It does NOT record a review run via `review_runs(record)` — only `planning-review` does that. The planning pipeline exit gate still requires at least one `planning`-mode review run. The analyzer's value is that it surfaces mechanical issues (duplication, underspecification, constitution drift) before the reviewer spends time on them, reducing review churn. The reviewer may resolve, confirm, or override analyzer findings during the subsequent `planning-review` pass.
+  - **Gate semantics**: `plan-analyze` is a pre-review triage step, not a substitute for the required planning review pass. Its findings are recorded with `review_mode="analysis"` (distinct from `review_mode="planning"`). It does NOT record a review run via `review_runs(record)` — only `planning-review` does that. The planning pipeline exit gate still requires at least one `planning`-mode review run.
 
-- **`branch-lifecycle` skill** (`mode: execution`)
-  - Extracts the task-start -> slice-work -> task-finish lifecycle from `development-workflow.md` and `planning-pipeline.md`
-  - Core process: `make task-start` -> slice loop (implement, test, record, close_slice) -> `make review-ready` -> review -> `make task-finish`
-  - MCP tools: `set_handoff_state`, `record_event`, `close_slice`, `handoff_close_check`, `archive_task_state`, `generate_current_task_md`
-  - Context budget: ~150 lines of skill
-
-- **`handoff-lifecycle` skill** (`mode: execution`)
-  - Extracts the session-start -> work -> handoff -> resume pattern from `instructions.md` agent startup protocol
-  - Core process: `make context` -> `load_session` -> verify alignment -> work loop -> record decisions -> `generate_current_task_md` -> session end
-  - MCP tools: `load_session`, `get_handoff_state`, `record_event`, `generate_current_task_md`
+- **`handoff-lifecycle` skill** (`mode: execution`, `tdd_gate: false`)
+  - Extracts the session-start → work → handoff → resume pattern from `instructions.md` agent startup protocol
+  - Core process: `make context` → `load_session` → verify alignment → work loop → record decisions → `generate_current_task_md` → session end; documents that `archive_task_state` must only be called after `update_task_status(status="done")`; documents that `switch_task` is the safe entry point for transitioning between tasks mid-session
+  - MCP tools: `load_session`, `get_handoff_state`, `record_event`, `generate_current_task_md`; `switch_task` (agent-orchestrator-mcp — proper task transitions that verify current task status before switching)
   - Context budget: ~100 lines of skill
 
 New Makefile targets:
 
 - `plan-review` — invoke the planning-review skill with the target document
 - `plan-analyze` — invoke the plan-analyze skill with the target document and constitution
+- `slice-start` — record the failing-test gate for the current slice before implementation begins
+- `slice-commit` — commit staged changes and record `close_slice` in one step
 - Existing `review-ready`, `review-run`, `task-start`, `task-finish` remain; skills document their usage
+
+New command files (one per skill, committed in the same slice as the skill):
+
+- `.claude/commands/branch-review.md` — `/branch-review` slash command entry point
+- `.claude/commands/planning-review.md` — `/planning-review` slash command entry point
+- `.claude/commands/plan-analyze.md` — `/plan-analyze` slash command entry point
+- `.claude/commands/branch-lifecycle.md` — `/branch-lifecycle` slash command entry point
+- `.claude/commands/tdd.md` — `/tdd` slash command entry point
+- `.claude/commands/incremental-implementation.md` — `/incremental-implementation` slash command entry point
+- `.claude/commands/handoff-lifecycle.md` — `/handoff-lifecycle` slash command entry point
+
+Each command file is ~15 lines: names the active skill, declares the Makefile entry point, and sets the execution context. This is the agent-agnostic invocation surface — a human or agent types `/branch-review` instead of relying on prose triggers in CLAUDE.md to load a 570-line guide.
+
+Dashboard auto-refresh hook:
+
+- **PostToolUse hook** in `.claude/settings.json` that runs `$(MCP_CMD) task` after every `record_event`, `review_findings`, and `review_runs` write. Ensures `CURRENT_TASK.md` and `DASHBOARD.md` are regenerated after state-changing writes without requiring an explicit agent call. The server-side path (`close_slice`, `update_task_status`, `archive_task_state`) already regenerates views atomically; this hook closes the gap for the remaining write operations. The `handoff-lifecycle` skill documents that `archive_task_state` must only be called after `update_task_status(status="done")` — archiving a task that is still `in_progress` causes the dashboard to render a permanent `active` fallback status.
 
 Exit criteria:
 
-- All 5 skills exist, pass the anatomy checklist, and reference their Makefile targets and MCP tools
+- All 7 skills exist, pass the anatomy checklist, and reference their Makefile targets and MCP tools
+- Each Phase 2 skill has a paired `.claude/commands/<skill>.md` entry point committed in the same slice
 - `make plan-analyze` runs the six detection passes against a sample task plan and produces a findings table
 - `make plan-review` invokes the planning-review skill
+- `make slice-start` records a failing-test gate before implementation begins
+- `make slice-commit` creates a commit and records a slice-complete decision against the new HEAD
 - Each skill's context budget is under its declared target when measured against a representative invocation
+- Dashboard auto-refresh hook is wired; CURRENT_TASK.md and DASHBOARD.md regenerate within one tool call of any state write
 
 ### Phase 3: Retrofit and Integration -- not-started
 
@@ -213,12 +286,14 @@ Deliverables:
 - Add `make check-skills` target that validates all SKILL.md files have required frontmatter fields
 - Update `CLAUDE.md` key triggers to reference skills instead of bulk guide loading
 - Update `instructions.md` routing table to point to skills as primary entry points, guides as reference
+- Mark `branch-review-guide.md` and `planning-review-guide.md` as reference appendices once their execution skills ship; move executable checklists into the skills and leave heuristics/rationale in the guides
 
 Exit criteria:
 
 - All skills pass `make check-skills` anatomy validation
 - Planning pipeline exit gates include automated constitution-alignment check
 - `CLAUDE.md` and `instructions.md` reference skills as the primary workflow entry points
+- `branch-review-guide.md` and `planning-review-guide.md` are explicitly labelled as reference appendices, not primary execution surfaces
 - End-to-end test: cold-start agent -> `make context` -> `make plan-analyze` on a sample plan -> findings recorded in MCP -> `make plan-review` -> verdict recorded -> `make task-start` -> implementation -> `make task-finish` -> clean main
 
 ## External Dependencies
@@ -271,6 +346,8 @@ This epic has no external dependencies. All work is internal to the repo's agent
 - [ ] Add `make plan-analyze` Makefile target
 - [ ] Verify each skill references its Makefile targets and MCP tools in frontmatter
 - [ ] Verify each skill's context budget is under its declared target
+- [ ] Create paired `.claude/commands/<skill>.md` for each Phase 2 skill (7 files total)
+- [ ] Add PostToolUse hook in `.claude/settings.json` to auto-regenerate CURRENT_TASK.md + DASHBOARD.md after `record_event`, `review_findings`, `review_runs` writes
 
 ## Phase 3: Retrofit and Integration -- not-started
 
@@ -286,4 +363,4 @@ This epic has no external dependencies. All work is internal to the repo's agent
 - [ ] `validate_constitution` MCP tool for programmatic constitution checking (only if LLM-powered prompt approach proves insufficient)
 - [ ] Skill composition graph visualization (which skills chain to which)
 - [ ] Automated context-budget enforcement via linter (flag skills that load more than their declared budget)
-- [ ] `.claude/commands/` slash command generation from skill frontmatter (auto-generate `/review`, `/plan`, etc.)
+- [ ] Archive guard: `archive_task_state` rejects tasks with status `in_progress` (or emits hard warning) to prevent permanent `active` fallback in dashboard — AHMCP scope

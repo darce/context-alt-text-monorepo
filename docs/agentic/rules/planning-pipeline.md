@@ -2,6 +2,7 @@
 
 > Repeatable process: observed problems → reviewed specs → design decisions → task plans.
 >
+> **Navigation:** [lifecycle-map.md](../lifecycle-map.md) — stage map with Makefile targets, skills, MCP tools, and exit gates for every step.
 > Related: [planning-review-guide.md](planning-review-guide.md) (review procedures) · [development-workflow.md](development-workflow.md) (implementation workflow).
 
 ---
@@ -38,6 +39,7 @@ Not every stage is required. Small, well-understood changes can skip to a spec o
 **Artifact:** `*-report.md`, `*-investigation.md`, or `*-audit.md`
 **Template:** [ASSESSMENT.template.md](../templates/ASSESSMENT.template.md)
 **Location:** Package-local `docs/tech-debt/` or `docs/assessments/`, or monorepo `docs/assessments/`
+**Entry:** `make plan-analyze DOC=<path>` · **Skill:** `plan-analyze` _(Phase 2, E17)_
 
 ### Purpose
 
@@ -69,6 +71,7 @@ Findings that fail code verification must be corrected or removed before spec wo
 **Artifact:** `*-spec.md`
 **Template:** [SPEC.template.md](../templates/SPEC.template.md)
 **Location:** Package-local `docs/specs/`
+**Entry:** `make plan-review DOC=<path>` · **Skill:** `planning-review` _(Phase 2, E17)_
 
 ### Purpose
 
@@ -109,6 +112,7 @@ Define concrete, testable changes derived from assessment findings. Each spec it
 **Artifact:** `ADR-NNN-[kebab-case-topic].md`
 **Template:** [ADR.template.md](../templates/ADR.template.md)
 **Location:** `docs/adrs/`
+**Entry:** `make plan-review DOC=<path>` · **Skill:** `planning-review` _(Phase 2, E17)_
 
 ### When required
 
@@ -150,6 +154,7 @@ The ADR is reviewed first; implementation task plans are derived from the approv
 **Artifact:** `*-task-plan.md`
 **Template:** [TASK_PLAN.template.md](../templates/TASK_PLAN.template.md)
 **Location:** Package-local `docs/tasks/` or monorepo `docs/tasks/`
+**Entry:** `make plan-analyze DOC=<path>` → `make plan-review DOC=<path>` · **Skill:** `planning-review` _(Phase 2, E17)_
 
 ### Purpose
 
@@ -199,62 +204,35 @@ Each task plan declares a **target branch** (`feature/[task-id-slug]`, e.g. `fea
 
 ## Stage 4: Implementation
 
-Implementation follows the standard [development workflow](development-workflow.md).
+**Entry:** `make task-start TASK=<id> OBJECTIVE="..."` · **Skill:** `branch-lifecycle` _(Phase 2, E17)_
 
-### Task start workflow
+Full step-by-step lifecycle (I1–I7) with Makefile targets, MCP tool calls, and exit gates: **[lifecycle-map.md](../lifecycle-map.md)**.
 
-The task plan is already on `main` (committed and reviewed). Implementation begins:
+Key prerequisites before starting:
 
-0. **Verify the task plan is committed on `main`.** Before running `make task-start`,
-   confirm the task plan document is discoverable:
-   ```bash
-   TASK_LOWER="$(echo "<id>" | tr '[:upper:]' '[:lower:]')"
-   git log main --oneline -- "docs/tasks/**/*${TASK_LOWER}*" \
-     "packages/*/docs/tasks/**/*${TASK_LOWER}*"
-   ```
-   If nothing is returned, commit the task plan on `main` first. For ad-hoc work, see [Retroactive task plans](#retroactive-task-plans).
-1. **Commit or finish current work** before switching (see safe switching below)
-2. Run `make task-start TASK=<id> OBJECTIVE="..."` from the root worktree (creates branch + worktree + MCP target in one shot).
-3. `cd` to the linked worktree and run `make context` to verify alignment.
-4. Load the task plan (visible from linked worktree via shared git index) and begin slice work.
-
-### Slice workflow
-
-Each completed slice records a `slice_complete_*` decision in MCP with:
-- Changes made
-- Verification evidence
-- Schema/contract changes (if any)
-- Open threads
-
-### Task completion workflow
-
-1. Final slice recorded with `close_slice`
-2. PR created from task branch to `main`
-3. PR maps 1:1 to the task plan — reviewable as a unit
+- Task plan is committed on `main`. Verify: `git log main --oneline -- "docs/tasks/**/*<id>*"`
+- Commit or finish current work before switching branches (never stash — WIP commits are MCP-referenceable).
+- Run `make task-start TASK=<id> OBJECTIVE="..."` from root worktree; then `cd` to the linked worktree and `make context`.
 
 ### Retroactive task plans
 
-When work proceeds directly to implementation without planning, a minimal task plan must be retrofitted on `main` before the feature branch merges. Required content:
+When work proceeds directly to implementation, retrofit a minimal plan on `main` before the feature branch merges:
 
-- **Objective**: one paragraph explaining why the work was done
+- **Objective**: one paragraph — why the work was done
 - **Scope**: packages and files touched
 - **Handoff reference**: MCP task ref and slice decision ID(s)
 
-No separate planning review pass required unless the work is large or contract-breaking. Commit on `main` while the feature branch is open.
+No planning review pass required unless the work is large or contract-breaking.
 
 ### Safe branch switching
 
-Always **commit before switching** — never stash. WIP commits are visible in `git log`, referenceable by SHA, and squashable before PR. Stashes are unnamed and invisible to MCP.
+Always **commit before switching** — never stash. WIP commits are visible in `git log`, referenceable by SHA, and squashable before PR.
 
-**Switching procedure:**
-1. `git add -A && git commit -m "wip: <brief description>"`
-2. `switch_task(task_ref="<new-task>")` if changing tasks
-3. `git checkout <target_branch>` (or `git checkout -b <target_branch> main` if new)
-
-**Returning to a task:**
-1. `git checkout <target_branch>`
-2. `switch_task(task_ref="<task-ref>")`
-3. Resume from last WIP commit
+```bash
+git add -A && git commit -m "wip: <brief>"   # commit first
+switch_task(task_ref="<new-task>")           # MCP switch if changing tasks
+git checkout <target_branch>                 # then switch branch
+```
 
 ---
 

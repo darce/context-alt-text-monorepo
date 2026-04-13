@@ -212,50 +212,50 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded the epic (E17) Phase 1 deliverables and exit criteria.
-- [ ] Loaded the `agent-skills-vs-spec-kit-evaluation.md` assessment for anatomy patterns.
-- [ ] Confirmed no contract or boundary impact beyond the agent startup injection surface (`CLAUDE.md`, `instructions.md`).
+- [x] Loaded the epic (E17) Phase 1 deliverables and exit criteria.
+- [x] Loaded the `agent-skills-vs-spec-kit-evaluation.md` assessment for anatomy patterns.
+- [x] Confirmed no contract or boundary impact beyond the agent startup injection surface (`CLAUDE.md`, `instructions.md`).
 
 ### Checklist for Slice 1: Skill Anatomy Template
 
-- [ ] Create `docs/agentic/templates/SKILL_ANATOMY.template.md`
-- [ ] Include all 7 frontmatter fields with types and descriptions
-- [ ] Include all 10 required sections with inline guidance
-- [ ] Document `advisory` vs `execution` mode distinction with examples
-- [ ] Verify template is discoverable in the templates directory
+- [x] Create `docs/agentic/templates/SKILL_ANATOMY.template.md`
+- [x] Include all 7 frontmatter fields with types and descriptions (including `tdd_gate` added in planning review pass)
+- [x] Include all 10 required sections with inline guidance
+- [x] Document `advisory` vs `execution` mode distinction with examples (Core Process section)
+- [x] Verify template is discoverable in the templates directory
 
 ### Checklist for Slice 2: Constitution Extraction
 
-- [ ] Create `docs/agentic/constitution.md` with all 10 `[sr-NNN]` rules
-- [ ] Include all 15 `[rg-NNN]` rules in `constitution.md`
-- [ ] Verify rule count: `grep -c '\[sr-' constitution.md` == 10, `grep -c '\[rg-' constitution.md` == 15
-- [ ] Add provenance header to `CLAUDE.md` Short Rules and Regression Guards sections pointing to `constitution.md`
-- [ ] Retain full inline rule text in `CLAUDE.md` (required for injection visibility)
-- [ ] Replace `instructions.md` inline rule text with path reference to `constitution.md`
-- [ ] Verify `CLAUDE.md` rule text matches `constitution.md` content
-- [ ] Verify no broken internal links in `CLAUDE.md` or `instructions.md`
+- [x] Create `docs/agentic/constitution.md` with all 10 `[sr-NNN]` rules
+- [x] Include all 15 `[rg-NNN]` rules in `constitution.md`
+- [x] Verify rule count: `grep -c '\[sr-' constitution.md` == 10, `grep -c '\[rg-' constitution.md` == 15
+- [x] Add provenance header to `CLAUDE.md` Short Rules and Regression Guards sections pointing to `constitution.md`
+- [x] Retain full inline rule text in `CLAUDE.md` (required for injection visibility)
+- [x] Replace `instructions.md` inline rule text with path reference to `constitution.md`
+- [ ] Verify `CLAUDE.md` rule text matches `constitution.md` content (manual diff; pending `make check-constitution-sync` Phase 3)
+- [ ] Verify no broken internal links in `CLAUDE.md` or `instructions.md` (pending `make check-skills` Phase 3)
 
 ### Checklist for Slice 3: Skill Retrofit
 
-- [ ] Retrofit `commit2git`: extend frontmatter, add Rationalizations/Red Flags/See Also
-- [ ] Retrofit `review`: add full frontmatter, normalize stale tool names, add Rationalizations/Red Flags/See Also
-- [ ] Retrofit `investigate`: add full frontmatter, normalize stale tool names, promote Red Flags, add Rationalizations/See Also
-- [ ] Verify each skill has: `name`, `description`, `mode`, `context_budget` in frontmatter
-- [ ] Verify no stale pseudo-tool names remain in retrofitted skills
-- [ ] Verify functional intent is preserved (triggers, process goals, recovery paths unchanged)
-- [ ] Record handoff decision with changed files and verification evidence
+- [x] Retrofit `commit2git`: extend frontmatter, add Rationalizations/Red Flags/See Also
+- [x] Retrofit `review`: add full frontmatter, normalize stale tool names, add Rationalizations/Red Flags/See Also
+- [x] Retrofit `investigate`: add full frontmatter, normalize stale tool names, promote Red Flags, add Rationalizations/See Also
+- [x] Verify each skill has: `name`, `description`, `mode`, `context_budget` in frontmatter
+- [x] Verify no stale pseudo-tool names remain in retrofitted skills (`grep` returns 0)
+- [x] Verify functional intent is preserved (triggers, process goals, recovery paths unchanged)
+- [x] Record handoff decision with changed files and verification evidence
 
 ## Review Readiness
 
-- [ ] Constitution contains all 25 rules with stable IDs preserved.
-- [ ] `CLAUDE.md` retains full inline rules with provenance header; `instructions.md` references `constitution.md` by path.
-- [ ] Three retrofitted skills pass the anatomy checklist with current MCP tool names.
-- [ ] Handoff decision records the change, verification, and any open threads.
+- [x] Constitution contains all 25 rules with stable IDs preserved.
+- [x] `CLAUDE.md` retains full inline rules with provenance header; `instructions.md` references `constitution.md` by path.
+- [x] Three retrofitted skills pass the anatomy checklist with current MCP tool names.
+- [x] Handoff decision records the change, verification, and any open threads.
 
 ## Success Criteria
 
-- [ ] `docs/agentic/templates/SKILL_ANATOMY.template.md` exists with full frontmatter schema and section structure
-- [ ] `docs/agentic/constitution.md` exists with all 25 `[sr/rg-NNN]` rules as the canonical authoring source
-- [ ] `CLAUDE.md` retains full rules with provenance header; `instructions.md` references by path — authoring source is unambiguous
-- [ ] 3 existing skills retrofitted to new anatomy with required frontmatter fields and current MCP tool names
-- [ ] E17 Phase 1 exit criteria (from epic) are satisfied
+- [x] `docs/agentic/templates/SKILL_ANATOMY.template.md` exists with full frontmatter schema and section structure
+- [x] `docs/agentic/constitution.md` exists with all 25 `[sr/rg-NNN]` rules as the canonical authoring source
+- [x] `CLAUDE.md` retains full rules with provenance header; `instructions.md` references by path — authoring source is unambiguous
+- [x] 3 existing skills retrofitted to new anatomy with required frontmatter fields and current MCP tool names
+- [x] E17 Phase 1 exit criteria (from epic) are satisfied

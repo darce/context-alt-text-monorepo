@@ -42,12 +42,12 @@ The RED→GREEN→REFACTOR invariant is documented in `development-workflow.md` 
 
 ## Current State Analysis
 
-- `.claude/skills/tdd/` does not exist. No skill covers the RED→GREEN→REFACTOR loop.
-- `.claude/skills/incremental-implementation/` does not exist. Decomposition guidance lives only in `development-workflow.md` Gradual Layering section and the epic Implementation Paradigm section.
-- `.claude/commands/` is empty — no slash command entry points exist for any skill.
-- `make slice-start` exists in `mk/handoff.mk` and records `test_result(passed=false)` correctly.
-- `make slice-commit` exists in `mk/handoff.mk` and records `close_slice` atomically.
-- `plan_cursor` (agent-orchestrator-mcp) is documented in `lifecycle-map.md` Quick Reference but no skill surfaces it.
+- `.claude/skills/tdd/SKILL.md` and `.claude/skills/incremental-implementation/SKILL.md` now exist and both ship as execution skills with `tdd_gate: true`.
+- `.claude/commands/tdd.md` and `.claude/commands/incremental-implementation.md` now exist as the paired slash-command entry points.
+- `docs/agentic/instructions.md` now routes both implementation-start and slice-decomposition work to the new skills.
+- `mk/handoff.mk` needed a live-surface fix during implementation: `slice-start` now refreshes task output via positional `task "<task-ref>"` instead of the stale `--task-ref` flag.
+- `scripts/agentic/slice_commit.py` needed two live-surface fixes during implementation: the default decision id now uses the canonical `cdx_slice_complete_<work_ref>_<slug>` prefix, and slug generation now uses underscores so automated `make slice-commit` writes satisfy the enforced decision-id grammar.
+- `plan_cursor` (agent-orchestrator-mcp) is now surfaced explicitly in the `incremental-implementation` skill with its `require_clean_slice` guard documented.
 
 ## Target Outcome
 
@@ -82,6 +82,8 @@ Two slices, one per skill pair. Each slice: create the `SKILL.md`, create the pa
 | Skill | `.claude/skills/incremental-implementation/SKILL.md` | New execution skill (~100 lines) |
 | Command | `.claude/commands/incremental-implementation.md` | New slash command entry point (~15 lines) |
 | Routing | `docs/agentic/instructions.md` | Add `tdd` and `incremental-implementation` rows to Additional Routing table |
+| Workflow helper | `mk/handoff.mk` | Fix `slice-start` task refresh for the live CLI surface |
+| Workflow helper | `scripts/agentic/slice_commit.py` | Fix canonical slice-decision id generation for `make slice-commit` |
 
 ## Related Files
 
@@ -189,45 +191,56 @@ Proof:
 
 ## Consolidated Checklist
 
+### Task Status
+
+- [x] Implementation complete on `feature/e17-2`
+- [x] Task-plan checklist synced to delivered files and helper fixes
+- [x] Handoff decision `#1639` verified against commit `6df337d058c75ebb2a66f8cf47b9f7c91656556b`
+- [x] Handoff decision `#1643` recorded as the corrected provenance row for the incremental-implementation slice commit `813de5394437b316c14913e7c1dae8fb9481f342`
+- [x] Handoff decision `#1644` recorded as the corrected provenance row for the helper-fix commit `11b67e8d1224c723cda5b18f9306b26c2a09f3fd`
+- [x] Handoff decision `#1645` verified against task-plan sync commit `da168e4c428039283b8c9ad27042640f8bf7891a`
+- [ ] Review/gate sequence still pending before merge
+- [ ] Task archival still pending after review and merge
+
 ## Context and Ownership
 
-- [ ] Loaded `SKILL_ANATOMY.template.md` and reviewed Phase 2 epic entries for `tdd` and `incremental-implementation`
-- [ ] Confirmed no contract or boundary impact beyond `instructions.md` Additional Routing
-- [ ] Reviewed `.claude/skills/review/SKILL.md` as structural reference for execution skills
+- [x] Loaded `SKILL_ANATOMY.template.md` and reviewed Phase 2 epic entries for `tdd` and `incremental-implementation`
+- [x] Confirmed no contract or boundary impact beyond `instructions.md` Additional Routing
+- [x] Reviewed `.claude/skills/review/SKILL.md` as structural reference for execution skills
 
 ### Checklist for Slice 1: `tdd` Skill and Command File
 
-- [ ] Create `.claude/skills/tdd/SKILL.md` with all 8 frontmatter fields
-- [ ] Verify `mode: execution`, `tdd_gate: true`, `makefile_target: slice-start`
-- [ ] Include all 10 anatomy sections
-- [ ] Core process references `make slice-start` as the gate mechanism
-- [ ] Common rationalizations section names the 3 most common skip excuses
-- [ ] Create `.claude/commands/tdd.md` (≤20 lines)
-- [ ] `wc -l .claude/skills/tdd/SKILL.md` ≤ 110
-- [ ] Record handoff decision with changed files
+- [x] Create `.claude/skills/tdd/SKILL.md` with all 8 frontmatter fields
+- [x] Verify `mode: execution`, `tdd_gate: true`, `makefile_target: slice-start`
+- [x] Include all 10 anatomy sections
+- [x] Core process references `make slice-start` as the gate mechanism
+- [x] Common rationalizations section names the 3 most common skip excuses
+- [x] Create `.claude/commands/tdd.md` (≤20 lines)
+- [x] `wc -l .claude/skills/tdd/SKILL.md` ≤ 110
+- [x] Record handoff decision with changed files
 
 ### Checklist for Slice 2: `incremental-implementation` Skill and Command File
 
-- [ ] Create `.claude/skills/incremental-implementation/SKILL.md` with all 8 frontmatter fields
-- [ ] Verify `mode: execution`, `tdd_gate: true`
-- [ ] `plan_cursor` with `require_clean_slice` documented in core process with explanation of the guard
-- [ ] Horizontal-decomposition anti-pattern named explicitly in Common Rationalizations
-- [ ] Create `.claude/commands/incremental-implementation.md` (≤20 lines)
-- [ ] Add routing rows to `instructions.md` Additional Routing
-- [ ] `wc -l .claude/skills/incremental-implementation/SKILL.md` ≤ 120
-- [ ] Record handoff decision with changed files
+- [x] Create `.claude/skills/incremental-implementation/SKILL.md` with all 8 frontmatter fields
+- [x] Verify `mode: execution`, `tdd_gate: true`
+- [x] `plan_cursor` with `require_clean_slice` documented in core process with explanation of the guard
+- [x] Horizontal-decomposition anti-pattern named explicitly in Common Rationalizations
+- [x] Create `.claude/commands/incremental-implementation.md` (≤20 lines)
+- [x] Add routing rows to `instructions.md` Additional Routing
+- [x] `wc -l .claude/skills/incremental-implementation/SKILL.md` ≤ 120
+- [x] Record handoff decision with changed files
 
 ## Review Readiness
 
-- [ ] Both skills pass anatomy checklist (all 8 frontmatter fields, all 10 sections)
-- [ ] No stale pseudo-tool names in either skill
-- [ ] Command files declare skill name, Makefile entry point, and execution context
-- [ ] `make lint-task-plans` passes
+- [x] Both skills pass anatomy checklist (all 8 frontmatter fields, all 10 sections)
+- [x] No stale pseudo-tool names in either skill
+- [x] Command files declare skill name, Makefile entry point, and execution context
+- [x] `make lint-task-plans` passes
 
 ## Success Criteria
 
-- [ ] `.claude/skills/tdd/SKILL.md` exists, `mode: execution`, `tdd_gate: true`, within budget
-- [ ] `.claude/skills/incremental-implementation/SKILL.md` exists, documents `plan_cursor` `require_clean_slice` guard
-- [ ] `.claude/commands/tdd.md` and `.claude/commands/incremental-implementation.md` exist
-- [ ] `docs/agentic/instructions.md` Additional Routing references both skills
-- [ ] E17 Phase 2 first-delivery criteria satisfied: TDD gate skill and vertical-slice skill both shipped
+- [x] `.claude/skills/tdd/SKILL.md` exists, `mode: execution`, `tdd_gate: true`, within budget
+- [x] `.claude/skills/incremental-implementation/SKILL.md` exists, documents `plan_cursor` `require_clean_slice` guard
+- [x] `.claude/commands/tdd.md` and `.claude/commands/incremental-implementation.md` exist
+- [x] `docs/agentic/instructions.md` Additional Routing references both skills
+- [x] E17 Phase 2 first-delivery criteria satisfied: TDD gate skill and vertical-slice skill both shipped

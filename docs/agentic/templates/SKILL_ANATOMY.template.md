@@ -5,6 +5,7 @@ mode: advisory
 context_budget: 150
 makefile_target: null
 mcp_tools: []
+tdd_gate: false
 disable-model-invocation: false
 ---
 

@@ -15,6 +15,8 @@ Protected code extensions: `*.py`, `*.ts`, `*.tsx`, `*.js`, `*.jsx`, `*.php`, `*
 
 **Allowed on `main`:** documentation, planning artifacts, configuration files, Makefiles, markdown, and settings. Feature branches and linked worktrees are created only when a plan is approved and implementation begins. See [planning-pipeline.md § Planning stays on main](planning-pipeline.md#planning-stays-on-main-implementation-branches-after-approval).
 
+**Task-plan progress lives on `main`:** update checklist progress and status blocks in `docs/tasks/`, `docs/epics/`, and similar planning artifacts directly on `main` as slices complete. Code stays on `feature/<task-id>` branches; progress-only planning updates do not wait for the feature merge. If a feature branch also carries the same plan file, sync the branch copy after the `main` docs commit so merge-time docs do not regress.
+
 **Before any code edit:**
 
 1. Create a feature branch: `git checkout -b feature/<task-id>-<slug>`
@@ -192,17 +194,18 @@ For every unit of work (feature slice, bug fix, refactor):
 3. **Scaffold the minimal signature that test needs**: create signatures + `NotImplementedError` bodies; verify the failure is for the intended reason before proceeding
 4. If remote dependencies exist, add a provider interface + mock
 5. Implement minimal production code to pass tests (Red → Green → Refactor) → record `record_event(test_result, passed=true)`
-6. Refactor for clarity while tests stay green
-7. Run the [UML Change Checklist](uml-change-checklist.md) if architecture changed
-8. Security pass: nonce/capability checks, escape/sanitize
-9. Accessibility pass: keyboard navigation, ARIA labels
-10. Run full test suite locally
-11. **Commit the slice** → `make slice-commit MSG="..."` (commits + `close_slice` + regenerates `CURRENT_TASK.md` atomically)
-12. **Before requesting review**: `make review-ready`; confirm zero errors
-13. **Self-review with bug-finding heuristics**: Walk your diff through the [Bug-Finding Heuristics](branch-review-guide.md#bug-finding-heuristics-universal) checklist
-14. **Regression trap sweep (handoff-learned)**: Verify stale/offline flows keep manual recovery, remote calls use shared timeout helpers, retry loops are per-cycle bounded, import/update paths preserve payload/provenance integrity, and reopened findings include explicit rationale
-15. **Escalate when risk warrants**: If the slice crosses audit triggers such as architecture transitions, multi-service state machines, persistence changes, or broad UI state surfaces, run the [Multi-Lens Audit Workflow](branch-review-guide.md#multi-lens-audit-workflow) instead of a single-lens branch review
-16. **End-of-turn user report must cite handoff evidence**: When a turn records a handoff decision, the final user-facing report for that turn must include the decision number (for example `Handoff decision: #1452`) so the chat summary and MCP trail stay explicitly linked.
+6. **Apply format and auto-fix**: `make format-all` from repo root (or per-component equivalent in lane workers: `make format-handoff`, `make format-orchestrator`, `make format` from the app dir). Runs `ruff check --fix --unsafe-fixes` + `ruff format` on Python, `npm run lint:fix` + `npm run format:fix` on TS/JS, `composer cs-fix` on PHP. Many violations are auto-fixable — eliminate them before the refactor pass and before the full test run.
+7. Refactor for clarity while tests stay green
+8. Run the [UML Change Checklist](uml-change-checklist.md) if architecture changed
+9. Security pass: nonce/capability checks, escape/sanitize
+10. Accessibility pass: keyboard navigation, ARIA labels
+11. Run full test suite locally
+12. **Commit the slice** → `make slice-commit MSG="..."` (commits + `close_slice` + regenerates `CURRENT_TASK.md` atomically)
+13. **Before requesting review**: `make review-ready`; confirm zero errors
+14. **Self-review with bug-finding heuristics**: Walk your diff through the [Bug-Finding Heuristics](branch-review-guide.md#bug-finding-heuristics-universal) checklist
+15. **Regression trap sweep (handoff-learned)**: Verify stale/offline flows keep manual recovery, remote calls use shared timeout helpers, retry loops are per-cycle bounded, import/update paths preserve payload/provenance integrity, and reopened findings include explicit rationale
+16. **Escalate when risk warrants**: If the slice crosses audit triggers such as architecture transitions, multi-service state machines, persistence changes, or broad UI state surfaces, run the [Multi-Lens Audit Workflow](branch-review-guide.md#multi-lens-audit-workflow) instead of a single-lens branch review
+17. **End-of-turn user report must cite handoff evidence**: When a turn records a handoff decision, the final user-facing report for that turn must include the decision number (for example `Handoff decision: #1452`) so the chat summary and MCP trail stay explicitly linked.
 
 Package-test execution note:
 

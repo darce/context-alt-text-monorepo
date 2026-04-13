@@ -191,11 +191,12 @@ Proof:
 
 ## Consolidated Checklist
 
-## Task Status
+### Task Status
 
 - [x] Implementation complete on `feature/e17-2`
 - [x] Task-plan checklist synced to delivered files and helper fixes
 - [x] Handoff decision `#1639` verified against commit `6df337d058c75ebb2a66f8cf47b9f7c91656556b`
+- [x] Handoff decision `#1649` recorded as the canonical repair row for the original tdd slice commit `6df337d058c75ebb2a66f8cf47b9f7c91656556b`
 - [x] Handoff decision `#1643` recorded as the corrected provenance row for the incremental-implementation slice commit `813de5394437b316c14913e7c1dae8fb9481f342`
 - [x] Handoff decision `#1644` recorded as the corrected provenance row for the helper-fix commit `11b67e8d1224c723cda5b18f9306b26c2a09f3fd`
 - [x] Handoff decision `#1645` verified against task-plan sync commit `da168e4c428039283b8c9ad27042640f8bf7891a`

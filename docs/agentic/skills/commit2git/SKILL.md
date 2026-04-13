@@ -1,37 +1,44 @@
 ---
 name: commit2git
-description: Split uncommitted changes into clean commits grouped by completed slice or sub-feature. Inspects diffs, stages deliberately, writes meaningful messages. Worktree-aware.
+description: Split uncommitted changes into clean commits grouped by completed slice or sub-feature while staying in the current worktree.
+mode: advisory
+context_budget: 200
+makefile_target: null
+mcp_tools: []
 disable-model-invocation: true
 ---
 
 # Commit2Git
 
-Use this skill when the user asks you to turn a dirty branch into a small set of reviewable commits.
+## Overview
+
+Use this skill when the user wants a dirty branch turned into a small set of reviewable commits. It standardizes how to inspect, group, stage, and message commits without changing worktree ownership or sweeping ambiguous changes into a single commit.
 
 ## Trigger
 
-Use this skill when the current branch contains multiple completed slices, refactors, or docs/tooling updates that need to be grouped into intentional commits. If the working tree already contains one clean isolated slice, prefer `docs/agentic/skills/subfeature-committer/SKILL.md` instead.
+Use this skill when the current branch contains multiple completed slices, refactors, or docs/tooling updates that need to be grouped into intentional commits.
+
+Do not use this skill when:
+
+- the tree already contains one clean isolated slice
+- the user explicitly wants a checkpoint or WIP commit
+- the file history is too interleaved to split safely without user input
+
+If the working tree already contains one clean isolated slice, prefer [subfeature-committer](../subfeature-committer/SKILL.md).
 
 ## Goal
 
-Create one commit per completed sub-feature, not one commit per directory or per file type.
+Create one commit per completed sub-feature, behavior slice, or reviewable refactor instead of one commit per directory, language, or "everything touched for this task."
 
 ## Canonical Policy
 
 - Use [../../instructions.md](../../instructions.md) for startup, handoff, and evidence-logging policy.
-- Use [../../rules/development-workflow.md](../../rules/development-workflow.md) for slice, contract, and review-readiness rules.
-- Use this skill for commit grouping and staging behavior only; broader process policy lives in the linked canonical docs.
+- Use [../../rules/development-workflow.md](../../rules/development-workflow.md) for branch isolation, slice, and review-readiness rules.
+- Use this skill for commit grouping and staging behavior only; broader task lifecycle policy lives in the linked docs.
 
-## Worktree safety
+## Core Process
 
-Treat the current checkout as authoritative.
-
-- Do not change to the orchestrator root or another sibling worktree just to make a commit.
-- Do not replace a worker-lane commit flow with a root-repo commit flow.
-- Do not run cleanup or refresh commands that would reset, replace, or abandon the current lane unless the user explicitly asked for that.
-- After committing, remain in the same worktree and branch context you started in.
-
-Before doing any staging, confirm where you are:
+1. Confirm the current checkout is the authoritative place to commit:
 
 ```bash
 pwd
@@ -41,56 +48,24 @@ git rev-parse --git-dir
 git rev-parse --git-common-dir
 ```
 
-If the current branch is a lane branch such as `codex/p5-backend-domain`, treat that lane worktree as the only valid place to commit its changes.
-
-## Inspect the current change set
-
-Start by reading the shape of the diff:
+2. Inspect the shape of the current change set before staging anything:
 
 ```bash
 git status --short
 git diff --name-only
 git diff --cached --name-only
-```
-
-Then inspect candidate groups with targeted diffs:
-
-```bash
-git diff -- path/to/file
 git diff --stat
 ```
 
-## Grouping rules
+3. Inspect candidate groups with targeted diffs:
 
-- Group by completed behavior, workflow slice, or reviewable refactor.
-- Keep tests, fixtures, and docs with the code they verify when they describe the same slice.
-- Split tooling or workflow changes away from product behavior unless both are required for one completed outcome.
-- Do not create a commit for half-finished work unless the user explicitly asks for a checkpoint commit.
-- Leave unrelated or ambiguous hunks unstaged until they can be split cleanly.
+```bash
+git diff -- path/to/file
+git diff --cached -- path/to/file
+```
 
-Prefer groups such as:
-
-- new command/handler plus its tests
-- one documentation slice for a newly introduced workflow
-- one MCP or review-tooling improvement
-- one refactor with no behavioral change
-
-Do not group by:
-
-- language alone
-- folder alone
-- "everything touched for this task" when the branch clearly contains multiple finished slices
-
-## Safety Constraints
-
-- Stay in the current worktree and branch; do not switch to the orchestrator root or a sibling worktree just to commit.
-- Do not use this skill to make checkpoint or WIP commits unless the user explicitly asked for that.
-- Do not stage ambiguous hunks just to make the tree clean. Leave unrelated work unstaged when the slice boundary is unclear.
-- When operating in a worker lane, respect lane-owned paths and prefer `make lane-commit` if it already gives the required prefixing behavior.
-
-## Stage deliberately
-
-Use full-file staging only when the file belongs to one slice. Otherwise use hunk staging:
+4. Group by completed behavior, workflow slice, or reviewable refactor. Keep tests, fixtures, and docs with the code they verify when they describe the same slice.
+5. Stage deliberately. Use full-file staging only when the entire file belongs to one slice. Otherwise use hunk staging:
 
 ```bash
 git add path/to/file
@@ -99,11 +74,7 @@ git diff --cached --stat
 git diff --cached
 ```
 
-Before each commit, confirm the staged diff tells one story.
-
-## Commit message format
-
-Write subjects around the completed outcome, preferably using a Conventional Commit style for the core subject:
+6. Write a commit message around the completed outcome:
 
 ```text
 feat(scope): add review dispatch routing
@@ -113,16 +84,7 @@ refactor(scope): split report rendering from git inspection
 test(scope): cover lane status edge cases
 ```
 
-Avoid vague subjects such as:
-
-- `misc updates`
-- `wip`
-- `fix stuff`
-- `address feedback`
-
-## Worktree-aware prefix and lane behavior
-
-Detect whether the current checkout is a linked worktree:
+7. If the checkout is a linked worktree, prefix the subject with the worktree directory name. Detect that with:
 
 ```bash
 git rev-parse --git-dir
@@ -130,52 +92,44 @@ git rev-parse --git-common-dir
 basename "$(git rev-parse --show-toplevel)"
 ```
 
-If `git rev-parse --git-dir` and `git rev-parse --git-common-dir` differ, treat the checkout as a linked worktree and prefix the commit subject with the worktree directory name:
+If `git-dir` and `git-common-dir` differ, use:
 
 ```text
 <worktree-name>: <subject>
 ```
 
-Example:
+8. After each commit, re-run `git status --short` and repeat only for the next clearly completed slice.
 
-```text
-context-alt-text-monorepo-p5-frontend: feat(retention-export): add export progress banner
-```
+## Common Rationalizations
 
-If the paths are the same, use the subject without a worktree prefix.
+- "I'll just commit everything together because it's all for the same task."
+- "The diff is mostly related, so the extra hunks can ride along."
+- "A vague commit message is fine because the PR will explain it."
+- "I'll clean up the lane or worktree context later."
 
-## Repo-specific note
+## Red Flags
 
-This repo's `make lane-commit` and `make lane-handoff` helpers already prefix commits with the lane name and preserve lane ownership rules.
-
-When you are inside a worker lane worktree in this repo:
-
-- prefer `make lane-commit` over a manual root-level `git commit`
-- do not switch to the orchestrator root or another sibling worktree just to perform the commit
-- do not leave the lane on the orchestrator branch after committing
-
-If the user explicitly wants the worktree name instead of the lane name, prefer a manual `git commit -m "<worktree-name>: <subject>"` in the current worker worktree and then run the reporting step separately if needed.
+- The staged diff tells more than one story.
+- A single file contains interleaved hunks that cannot be separated safely.
+- The current branch or worktree ownership is unclear.
+- A lane helper would hide staging detail you need to inspect first.
+- The commit would include half-finished work just to make the tree clean.
 
 ## Recovery
 
 - If the staged diff tells more than one story, unstage it and split the slice before committing.
 - If a file contains interleaved hunks that cannot be separated safely, stop and ask the user instead of guessing.
-- If the lane/worktree prefix behavior is unclear, inspect `git rev-parse --git-dir` and `git rev-parse --git-common-dir` again before committing.
-- If a lane helper would hide important staging detail for the current slice, fall back to manual staging in the same worktree rather than leaving the lane context.
-
-## Final check per commit
-
-For each commit group:
-
-1. Stage only the files or hunks for that completed slice.
-2. Re-read `git diff --cached`.
-3. Commit with a meaningful subject.
-4. Re-run `git status --short` and repeat for the next slice.
-
-Stop and ask the user only if one file contains interleaved changes that cannot be split safely into separate sub-features.
+- If the lane or worktree prefix behavior is unclear, re-run the `git rev-parse --git-dir` and `git rev-parse --git-common-dir` checks before committing.
+- If a repo helper such as `make lane-commit` would hide important staging detail for the current slice, fall back to manual staging in the same worktree instead of switching contexts.
 
 ## Convergence Criteria
 
 - Each commit represents exactly one completed slice, sub-feature, or reviewable refactor.
-- The staged diff for each commit tells one coherent story with matching tests/docs where applicable.
+- The staged diff for each commit tells one coherent story with matching tests or docs where applicable.
 - The remaining working tree is intentionally left for follow-on slices rather than accidentally swept into the commit.
+- The agent stays in the same worktree and branch context it started in.
+
+## See Also
+
+- [subfeature-committer](../subfeature-committer/SKILL.md)
+- [development-workflow.md](../../rules/development-workflow.md)

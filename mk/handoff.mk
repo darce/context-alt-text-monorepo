@@ -89,7 +89,7 @@ slice-start:
 		--command "$(TEST_CMD)" \
 		--result "$(or $(RESULT),Expected failing test before implementation begins.)" \
 		--exit-code $(or $(EXIT_CODE),1) >/dev/null
-	@$(MCP_CMD) $(MCP_STATE_ARGS) task --task-ref "$(TASK)" >/dev/null
+	@$(MCP_CMD) $(MCP_STATE_ARGS) task "$(TASK)" >/dev/null
 	@echo "Recorded failing test gate for $(TASK)."
 
 slice-commit:

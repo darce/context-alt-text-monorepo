@@ -183,20 +183,22 @@ If a stale test_result blocks the gate, re-run the test suite and record a fresh
 
 ## Slice Checklist
 
+> Full lifecycle with Makefile targets and MCP tool calls: **[lifecycle-map.md](../lifecycle-map.md)** (stages I1–I7).
+
 For every unit of work (feature slice, bug fix, refactor):
 
-1. Identify the roadmap epic you are advancing
-2. **Scaffold first**: Create class/function signatures with type hints and docstrings BEFORE implementation
-3. **Write failing tests first** (PHPUnit, Vitest, or integration) -- TDD is mandatory
+1. Identify the roadmap epic; ensure task is active → `set_handoff_state` or `switch_task`
+2. **Scaffold first**: Create signatures + `NotImplementedError` bodies; verify compile/typecheck before proceeding
+3. **Write failing tests first** → `make slice-start` records `record_event(test_result, passed=false)` — TDD is mandatory
 4. If remote dependencies exist, add a provider interface + mock
-5. Implement minimal production code to pass tests (Red -> Green -> Refactor)
+5. Implement minimal production code to pass tests (Red → Green → Refactor) → record `record_event(test_result, passed=true)`
 6. Refactor for clarity while tests stay green
 7. Run the [UML Change Checklist](uml-change-checklist.md) if architecture changed
 8. Security pass: nonce/capability checks, escape/sanitize
 9. Accessibility pass: keyboard navigation, ARIA labels
-10. Run full test suite locally before committing
-11. Commit with Conventional Commits format
-12. **Before requesting review**: Run required automated checks from the [Branch Review Guide](branch-review-guide.md#how-to-use-this-guide) and confirm zero errors
+10. Run full test suite locally
+11. **Commit the slice** → `make slice-commit MSG="..."` (commits + `close_slice` + regenerates `CURRENT_TASK.md` atomically)
+12. **Before requesting review**: `make review-ready`; confirm zero errors
 13. **Self-review with bug-finding heuristics**: Walk your diff through the [Bug-Finding Heuristics](branch-review-guide.md#bug-finding-heuristics-universal) checklist
 14. **Regression trap sweep (handoff-learned)**: Verify stale/offline flows keep manual recovery, remote calls use shared timeout helpers, retry loops are per-cycle bounded, import/update paths preserve payload/provenance integrity, and reopened findings include explicit rationale
 15. **Escalate when risk warrants**: If the slice crosses audit triggers such as architecture transitions, multi-service state machines, persistence changes, or broad UI state surfaces, run the [Multi-Lens Audit Workflow](branch-review-guide.md#multi-lens-audit-workflow) instead of a single-lens branch review

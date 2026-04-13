@@ -60,7 +60,7 @@ A `tdd` execution skill that an agent loads when starting any implementation sli
 - Lifecycle: `docs/agentic/lifecycle-map.md` (stages I2–I4, `plan_cursor` Quick Reference)
 - Workflow: `docs/agentic/rules/development-workflow.md` (Slice Checklist, Scaffolding First, Gradual Layering)
 - Exemplar skill: `.claude/skills/review/SKILL.md` (retrofitted execution skill for reference)
-- Handoff/MCP state: task ref `E17` (archived); start fresh task `E17-2` at implementation start
+- Handoff/MCP state: E17 was archived at merge of E17-1; use `switch_task(task_ref="E17-2", objective="...")` at implementation start to create the E17-2 active task
 - External docs via `ctx7` only if: FastMCP tool registration patterns needed for `plan_cursor` schema
 
 ## Contract and Boundary Impact
@@ -158,7 +158,7 @@ Changes:
   - Goal: each slice delivers one complete end-to-end user path, independently testable, with a failing test recorded before any edit
   - Core process (gated loop):
     1. Load the task plan — identify the next uncompleted slice
-    2. Advance `plan_cursor` to this slice: `plan_cursor(operation="upsert", task_ref=..., slice_ref=..., require_clean_slice=true)` — gate refuses if the previous slice has open findings
+    2. Advance `plan_cursor` to this slice: `plan_cursor(operation="upsert", task_ref=..., plan_item_id="<slice-heading>", require_clean_slice=true)` — gate refuses if the previous slice has open findings
     3. Identify the smallest end-to-end user path for this slice (e.g. one DB column + one service method + one API field + one UI label)
     4. Write the failing test for that path → run `make slice-start TEST_CMD="..."`
     5. Scaffold minimal signatures needed (no implementation bodies yet)

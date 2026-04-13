@@ -17,7 +17,7 @@ Each task that uses lane automation should define its orchestration config in `c
 Start from the generic scaffold command:
 
 ```bash
-make lane-manifest-init TASK=<task-ref> LANE_IDS='backend frontend' TASK_PLAN=docs/tasks/...md
+make lane-manifest-init TASK=<task-ref> LANE_IDS='create-alt-text edit-alt-text' TASK_PLAN=docs/tasks/...md
 ```
 
 That manifest is the source of truth for:
@@ -42,7 +42,7 @@ To add lane automation for a new task, add a new manifest first. The root `Makef
 - orchestrator root: the main repo checkout, usually `${REPO_ROOT:-$PWD}`
 - worker worktree: a sibling checkout created for one lane
 - task ref: the active MCP task, for example `phase-5-retention-export-and-audit-controls`
-- lane id: the worker slice name, for example `backend-domain`, `backend-http`, `wp-proxy`, or `frontend`
+- lane id: the worker slice name — vertical feature slice by default (e.g. `create-alt-text`, `edit-alt-text`); horizontal domain lanes (`backend-domain`, `frontend`) only for hard runtime isolation boundaries. See [../worktree-orchestration-playbook.md#lane-decomposition-strategy](../worktree-orchestration-playbook.md#lane-decomposition-strategy).
 
 ## Current repo examples
 

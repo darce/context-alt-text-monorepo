@@ -188,8 +188,8 @@ If a stale test_result blocks the gate, re-run the test suite and record a fresh
 For every unit of work (feature slice, bug fix, refactor):
 
 1. Identify the roadmap epic; ensure task is active → `set_handoff_state` or `switch_task`
-2. **Scaffold first**: Create signatures + `NotImplementedError` bodies; verify compile/typecheck before proceeding
-3. **Write failing tests first** → `make slice-start` records `record_event(test_result, passed=false)` — TDD is mandatory
+2. **Write the failing test first** → `make slice-start TEST_CMD="..."` records `record_event(test_result, passed=false)` before any implementation edit — TDD is mandatory
+3. **Scaffold the minimal signature that test needs**: create signatures + `NotImplementedError` bodies; verify the failure is for the intended reason before proceeding
 4. If remote dependencies exist, add a provider interface + mock
 5. Implement minimal production code to pass tests (Red → Green → Refactor) → record `record_event(test_result, passed=true)`
 6. Refactor for clarity while tests stay green
@@ -230,6 +230,13 @@ Commit SHA provenance discipline:
 ## Scaffolding First (MANDATORY)
 
 **Before writing any implementation or tests, scaffold all interfaces and contracts.**
+
+For TDD-compatible scaffolding, the order is:
+
+1. Write the failing test stub that defines the expected behavior.
+2. Scaffold only the minimal signature the test needs.
+3. Verify the test fails for the intended reason.
+4. Implement the smallest change that makes the test pass.
 
 - Add function/method signatures with complete type hints
 - Write comprehensive docstrings (Args, Returns, Raises, Examples)

@@ -59,6 +59,19 @@ Implementation is decomposed into vertical feature slices, not horizontal domain
 
 **Horizontal decomposition** (`backend` lane, `frontend` lane, `wp-proxy` lane) is an exception path only for hard runtime isolation boundaries (separate service, no shared test surface, no cross-layer contract coupling). When horizontal lanes are unavoidable, name them after the feature they deliver (`auth-api-cleanup`), not the layer they touch (`backend`). See [playbooks/worktree-orchestration-playbook.md](../playbooks/worktree-orchestration-playbook.md#lane-decomposition-strategy) for the full strategy.
 
+### Worktree status integrity — invariant close sequence
+
+The most common source of stale `active` dashboard entries is tasks archived before their handoff status reaches `done`. The invariant close sequence is:
+
+1. `update_task_status(task_ref=..., status="done")` — mark the task done in handoff DB
+2. `manage_worktree_lane(action="close", ...)` — close the orchestrator lane registration (agent-orchestrator-mcp)
+3. `archive_task_state(task_ref=...)` — archive the task snapshot
+4. `generate_dashboard_md(...)` — regenerate the dashboard with the archived status
+
+`manage_worktree_lane(close)` marks the lane closed in the orchestrator but does **not** update the handoff task status. If `archive_task_state` runs on a task still `in_progress`, the dashboard renders a permanent `active` fallback. The `branch-lifecycle` skill documents this sequence as mandatory.
+
+`switch_task` (agent-orchestrator-mcp) provides the safe task-transition entry point when starting a new task while another is in flight: it verifies the current task status before switching, preventing mid-flight switches that leave the previous task orphaned as `in_progress`.
+
 ---
 
 ## Terminology
@@ -185,20 +198,20 @@ Deliverables:
 - **`incremental-implementation` skill** (`mode: execution`, `tdd_gate: true`) — _deliver second_
   - Enforces vertical, test-backed slice increments (DB → service → API → UI in one slice) instead of horizontal implementation waves; defines the default decomposition model for all feature work
   - Core process: choose the smallest end-to-end user path → write failing test → scaffold → implement → re-run tests → keep diff bounded → `make slice-commit`
-  - MCP tools: `record_event`, `search_handoff`, `generate_current_task_md`
+  - MCP tools: `record_event`, `search_handoff`, `generate_current_task_md`; `plan_cursor` (agent-orchestrator-mcp — tracks which plan item each slice advances; `require_clean_slice` guard refuses upsert if open findings exist, enforcing the TDD integrity gate)
   - Context budget: ~100 lines of skill
 
 - **`branch-lifecycle` skill** (`mode: execution`, `tdd_gate: true`)
   - Extracts the task-start → slice-work → task-finish lifecycle from `development-workflow.md` and `planning-pipeline.md`
   - Core process: `make task-start` → `make slice-start` → implementation loop (TDD) → `make slice-commit` → `make review-ready` → review → `make task-finish`
-  - MCP tools: `set_handoff_state`, `record_event`, `close_slice`, `handoff_close_check`, `archive_task_state`, `generate_current_task_md`
+  - MCP tools: `set_handoff_state`, `record_event`, `close_slice`, `handoff_close_check`, `archive_task_state`, `generate_current_task_md`; `manage_worktree_lane` (agent-orchestrator-mcp — register lane at task-start, close as part of invariant finish sequence), `switch_task` (agent-orchestrator-mcp)
   - Context budget: ~150 lines of skill
 
 - **`branch-review` skill** (`mode: execution`, `tdd_gate: false`)
   - Extracts the executable review loop from `branch-review-guide.md`
-  - Core process: load review packet → check prior review runs via `review_runs(list)` → run detection passes → record findings via `review_findings(batch_record)` → record review run via `review_runs(record)` → verify convergence (zero unaddressed findings) → record verdict decision
+  - Core process: load review packet → pre-triage via `get_review_findings_summary` + `reconcile_review_findings` → check prior review runs via `review_runs(list)` → run detection passes → record findings via `review_findings(batch_record)` → record review run via `review_runs(record)` → verify convergence (zero unaddressed findings) → record verdict decision
   - References `make review-ready` and `make review-run` as Makefile entry points
-  - MCP tools: `get_latest_slice_review_packet`, `review_findings`, `review_runs`, `record_event`, `handoff_close_check`
+  - MCP tools: `get_latest_slice_review_packet`, `review_findings`, `review_runs`, `record_event`, `handoff_close_check`; `get_review_findings_summary`, `reconcile_review_findings` (agent-orchestrator-mcp — pre-review triage: summarize and dedup existing findings before starting detection passes)
   - Context budget: ~150 lines of skill + loaded review packet (not the full 250-line guide)
 
 - **`planning-review` skill** (`mode: execution`, `tdd_gate: false`)
@@ -218,8 +231,8 @@ Deliverables:
 
 - **`handoff-lifecycle` skill** (`mode: execution`, `tdd_gate: false`)
   - Extracts the session-start → work → handoff → resume pattern from `instructions.md` agent startup protocol
-  - Core process: `make context` → `load_session` → verify alignment → work loop → record decisions → `generate_current_task_md` → session end; documents that `archive_task_state` must only be called after `update_task_status(status="done")`
-  - MCP tools: `load_session`, `get_handoff_state`, `record_event`, `generate_current_task_md`
+  - Core process: `make context` → `load_session` → verify alignment → work loop → record decisions → `generate_current_task_md` → session end; documents that `archive_task_state` must only be called after `update_task_status(status="done")`; documents that `switch_task` is the safe entry point for transitioning between tasks mid-session
+  - MCP tools: `load_session`, `get_handoff_state`, `record_event`, `generate_current_task_md`; `switch_task` (agent-orchestrator-mcp — proper task transitions that verify current task status before switching)
   - Context budget: ~100 lines of skill
 
 New Makefile targets:

@@ -131,7 +131,7 @@ Three slices in dependency order:
 Changes:
 
 - Create `docs/agentic/templates/SKILL_ANATOMY.template.md` with:
-  - YAML frontmatter schema: `name` (string), `description` (string), `mode` (`advisory`|`execution`), `context_budget` (integer, line count target), `makefile_target` (string, optional), `mcp_tools` (list of strings, optional), `disable-model-invocation` (boolean, optional)
+  - YAML frontmatter schema: `name` (string), `description` (string), `mode` (`advisory`|`execution`), `context_budget` (integer, line count target), `makefile_target` (string, optional), `mcp_tools` (list of strings, optional), `tdd_gate` (boolean, optional — `true` for execution skills that enforce RED→GREEN→REFACTOR; defaults to `true` for `mode: execution`, `false` for `mode: advisory`), `disable-model-invocation` (boolean, optional)
   - Required sections: Overview, Trigger, Goal, Canonical Policy, Core Process, Common Rationalizations, Red Flags, Recovery, Convergence Criteria, See Also
   - Inline guidance for each section explaining its purpose and content expectations
   - Distinction between advisory and execution skill templates (execution skills require convergence gates and MCP state writes)

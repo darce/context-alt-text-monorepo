@@ -25,7 +25,7 @@ def _git(repo_root: Path, *args: str) -> str:
 
 
 def _slugify(value: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    slug = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
     return slug[:48] or "slice"
 
 

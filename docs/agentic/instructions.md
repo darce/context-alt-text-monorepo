@@ -50,6 +50,8 @@ Choose your domain to load targeted context. Always load the matching testing gu
 | PHP tests (PHPUnit)                    | [rules/testing-php.md](rules/testing-php.md)                                                                                                        |
 | Workflow, commits, scaffolding         | [rules/development-workflow.md](rules/development-workflow.md)                                                                                      |
 | Epic/task lifecycle, planning pipeline | [rules/development-workflow.md](rules/development-workflow.md) + [rules/planning-pipeline.md](rules/planning-pipeline.md)                           |
+| Starting an implementation slice       | [../../.claude/skills/tdd/SKILL.md](../../.claude/skills/tdd/SKILL.md) + `make slice-start TASK=<task-ref> TEST_CMD="<command>"`                   |
+| Decomposing feature work into slices   | [../../.claude/skills/incremental-implementation/SKILL.md](../../.claude/skills/incremental-implementation/SKILL.md) + `make slice-commit TASK=<task-ref> MSG="..."` |
 | Branch review                          | [rules/branch-review-guide.md](rules/branch-review-guide.md)                                                                                        |
 | Planning document review               | [rules/planning-review-guide.md](rules/planning-review-guide.md)                                                                                    |
 | Component architecture patterns        | [rules/component-architecture-patterns.md](rules/component-architecture-patterns.md)                                                                |

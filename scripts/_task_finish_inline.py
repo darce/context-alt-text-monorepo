@@ -38,6 +38,7 @@ from agent_handoff_mcp import (
     archive_task_state,
     configure_runtime,
     generate_current_task_md,
+    generate_dashboard_md,
     get_handoff_state,
     update_task_status,
 )
@@ -96,6 +97,11 @@ def main() -> int:
     regen = generate_current_task_md()
     if not regen.get("ok"):
         print(f"\u26a0 generate_current_task_md returned ok=False: {regen}", file=sys.stderr)
+
+    dash = generate_dashboard_md()
+    if not dash.get("ok"):
+        print(f"\u26a0 generate_dashboard_md returned ok=False: {dash}", file=sys.stderr)
+
     print("  OK")
     return 0
 

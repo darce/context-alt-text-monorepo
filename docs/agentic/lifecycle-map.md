@@ -58,8 +58,20 @@
 | Findings (1–2) | `review_findings(operation="record")` | Single finding |
 | Finding resolution | `review_findings(operation="update", status="fixed"\|"deferred"\|"wontfix")` | After resolving a finding |
 | Pre-merge gate | `handoff_close_check(enforce=True)` | Must pass before merge; never bypass with `enforce=False` |
-| Task completion | `update_task_status(status="done")` then `archive_task_state` | In that order |
+| Task completion | `update_task_status(status="done")` then `archive_task_state` | In that order — **never archive while `in_progress`** |
 | Search history | `search_handoff(query=...)` | Find prior decisions/findings without reloading full state |
+
+**agent-orchestrator-mcp** (load via `ToolSearch select:mcp__agent-orchestrator-mcp__*`):
+
+| Domain | Tool | When |
+|--------|------|------|
+| Lane registration | `manage_worktree_lane(action="open")` | At `make task-start`; registers the lane so worker daemons can be dispatched |
+| Lane close | `manage_worktree_lane(action="close")` | Step 2 of invariant close sequence — **before** `archive_task_state` |
+| Task switch | `switch_task` | Transitioning between tasks mid-session; verifies current task is `done` or `blocked` before switching |
+| Plan cursor | `plan_cursor` | Track which plan item the current slice advances; `require_clean_slice` guard blocks upsert if open findings exist |
+| Pre-review triage | `get_review_findings_summary` | Summary of existing findings before starting detection passes in `branch-review` skill |
+| Finding repair | `reconcile_review_findings` | Dedup and repair finding state before detection passes when prior review runs exist |
+| Worker output | `worker_reports` | Query worker lane results during orchestrated multi-lane execution |
 
 ---
 

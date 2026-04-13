@@ -45,8 +45,8 @@ After E17-2, two workflows remain without skills: the task lifecycle (task-start
 ## Current State Analysis
 
 - No `branch-lifecycle`, `handoff-lifecycle`, `branch-review`, `planning-review`, or `plan-analyze` skills exist.
-- `.claude/commands/` is empty (assuming E17-2 has landed; 2 of 7 command files will then exist).
-- `make plan-review` and `make plan-analyze` targets do not exist; `mk/handoff.mk` has `review-run` and `review-ready` but not the planning-side targets.
+- **Prerequisite: E17-2 merged.** When E17-3 starts, `.claude/commands/tdd.md` and `.claude/commands/incremental-implementation.md` already exist (delivered by E17-2). Five command files remain to be created by this task.
+- `make plan-review` and `make plan-analyze` exist as stubs in `mk/handoff.mk`, pointing to Phase 2 skill files that do not yet exist. This task creates the skills those stubs reference; the targets themselves need no changes unless their guidance text needs refinement.
 - No PostToolUse hook regenerates views after `record_event`/`review_findings`/`review_runs` writes. `close_slice`, `update_task_status`, and `archive_task_state` already regenerate atomically server-side; this hook closes the remaining gap.
 - `branch-review-guide.md` (≥250 lines) and `planning-review-guide.md` are loaded in full today; skills will extract the executable subset.
 
@@ -93,7 +93,7 @@ Three slices in dependency order: lifecycle skills first (lowest dependency), th
 | Command | `.claude/commands/planning-review.md` | New slash command (~15 lines) |
 | Skill | `.claude/skills/plan-analyze/SKILL.md` | New advisory skill (~200 lines) |
 | Command | `.claude/commands/plan-analyze.md` | New slash command (~15 lines) |
-| Makefile | `mk/handoff.mk` | Add `plan-review` and `plan-analyze` agent-assisted targets |
+| Makefile | `mk/handoff.mk` | Verify existing `plan-review` and `plan-analyze` stub targets reference the correct skill paths |
 | Settings | `.claude/settings.json` | Add PostToolUse hook for `record_event\|review_findings\|review_runs` |
 | Script | `scripts/hooks/regenerate-task-views.sh` | New shell script: calls `agent-handoff-mcp task` + `agent-handoff-mcp dashboard` |
 | Routing | `docs/agentic/instructions.md` | Add rows for all 5 skills to Additional Routing table |
@@ -179,9 +179,10 @@ Changes:
   - Explicit gate semantics: does NOT record a review run via `review_runs`; findings use `review_mode="analysis"` (distinct from `review_mode="planning"`); is a pre-review triage step, not a substitute for `planning-review`
   - Convergence: findings table produced and recorded in MCP; recommendation (proceed to planning-review / revise first) stated
 - Create `.claude/commands/plan-analyze.md`
-- Add `plan-review` and `plan-analyze` targets to `mk/handoff.mk`:
-  - Both are agent-assisted: print the target document path, print guidance pointing agent to the skill, exit 0
-  - Pattern: `make plan-review DOC=<path>` validates DOC is set, prints the doc path and skill name; `make plan-analyze DOC=<path>` same
+- Verify `plan-review` and `plan-analyze` targets in `mk/handoff.mk` (already exist as stubs):
+  - Confirm each target validates `DOC` is set, prints the doc path, and references the correct skill path
+  - Update the skill path references if the stubs point to placeholder paths — the real skills will now exist at `.claude/skills/plan-analyze/SKILL.md` and `.claude/skills/planning-review/SKILL.md`
+  - No new Makefile targets needed
 - Add routing rows to `docs/agentic/instructions.md` Additional Routing
 
 Proof:
@@ -238,7 +239,7 @@ Proof:
 - [ ] Create `planning-review` skill
 - [ ] Create `plan-analyze` skill — verify `review_runs` absent, `review_mode="analysis"` present
 - [ ] All 3 command files created and paired
-- [ ] `make plan-review` and `make plan-analyze` added to `mk/handoff.mk`
+- [ ] Verify `make plan-review` and `make plan-analyze` stub targets reference correct skill paths
 - [ ] `instructions.md` routing rows added for all 3 skills
 - [ ] Record handoff decision
 

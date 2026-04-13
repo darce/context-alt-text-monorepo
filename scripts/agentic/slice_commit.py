@@ -82,7 +82,7 @@ def main() -> int:
     if active.get("task_ref") == args.task_ref:
         revision = active.get("revision")
 
-    decision = args.decision or f"mk_slice_complete_{args.task_ref}_{_slugify(args.message)}"
+    decision = args.decision or f"cdx_slice_complete_{args.task_ref}_{_slugify(args.message)}"
     rationale = _build_rationale(args.message, commit_sha, changed_files)
     result = close_slice(
         session=args.session,

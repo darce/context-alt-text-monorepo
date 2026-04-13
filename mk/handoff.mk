@@ -2,7 +2,7 @@
 # Handoff / Task State / Daemons
 # =============================================================================
 
-.PHONY: task state list-tasks lane-list mcp-serve-http handoff-close-check handoff-integrity-check handoff-inbox handoff-dispatch review-dispatch review-run review-ready
+.PHONY: task state list-tasks lane-list mcp-serve-http handoff-close-check handoff-integrity-check handoff-inbox handoff-dispatch review-dispatch review-run review-ready plan-analyze plan-review slice-start slice-commit
 
 # Generate CURRENT_TASK.md from handoff DB
 task:
@@ -30,6 +30,95 @@ list-tasks:
 # Validate that active handoff state is ready to close
 handoff-close-check:
 	@$(MCP_CMD) $(MCP_STATE_ARGS) handoff-close-check --enforce --current-commit-sha "$$(git rev-parse HEAD)"
+
+plan-analyze:
+	@if [ -z "$(DOC)" ]; then \
+		echo "DOC is required."; \
+		echo "Example: make plan-analyze DOC=docs/tasks/17.0/E17-1-skill-anatomy-template-and-constitution-task-plan.md"; \
+		exit 1; \
+	fi
+	@if [ ! -f "$(DOC)" ]; then \
+		echo "Document not found: $(DOC)"; \
+		exit 1; \
+	fi
+	@printf '%s\n' \
+		"Agent-assisted target: plan-analyze" \
+		"Document: $(DOC)" \
+		"Skill: docs/agentic/skills/plan-analyze/SKILL.md (Phase 2 deliverable)" \
+		"Constraint surface: docs/agentic/constitution.md" \
+		"Review checklist: docs/agentic/rules/planning-review-guide.md" \
+		"Expected output: MCP findings with review_mode=analysis before planning review."
+
+plan-review:
+	@if [ -z "$(DOC)" ]; then \
+		echo "DOC is required."; \
+		echo "Example: make plan-review DOC=docs/epics/v0.4.0/skill-formalization-and-process-automation-epic.md"; \
+		exit 1; \
+	fi
+	@if [ ! -f "$(DOC)" ]; then \
+		echo "Document not found: $(DOC)"; \
+		exit 1; \
+	fi
+	@printf '%s\n' \
+		"Agent-assisted target: plan-review" \
+		"Document: $(DOC)" \
+		"Skill: docs/agentic/skills/planning-review/SKILL.md (Phase 2 deliverable)" \
+		"Checklist: docs/agentic/rules/planning-review-guide.md" \
+		"Expected output: MCP findings + review_runs(record) + verdict decision."
+
+slice-start:
+	@if [ -z "$(TASK)" ]; then \
+		echo "TASK is required."; \
+		echo "No active task could be inferred from MCP state."; \
+		echo "Example: make slice-start TASK=E17 TEST_CMD='pytest path/to/test -q'"; \
+		exit 1; \
+	fi
+	@if [ -z "$(TEST_CMD)" ]; then \
+		echo "TEST_CMD is required."; \
+		echo "Example: make slice-start TASK=$(TASK) TEST_CMD='pytest path/to/test -q'"; \
+		exit 1; \
+	fi
+	@SESSION_NAME="$(SESSION)"; \
+	if [ -z "$$SESSION_NAME" ] || [ "$$SESSION_NAME" = "$(TASK)-" ]; then \
+		SESSION_NAME="$(TASK)-slice-start"; \
+	fi; \
+	$(MCP_CMD) $(MCP_STATE_ARGS) event \
+		--event-kind test_result \
+		--task-ref "$(TASK)" \
+		--session "$$SESSION_NAME" \
+		--command "$(TEST_CMD)" \
+		--result "$(or $(RESULT),Expected failing test before implementation begins.)" \
+		--exit-code $(or $(EXIT_CODE),1) >/dev/null
+	@$(MCP_CMD) $(MCP_STATE_ARGS) task --task-ref "$(TASK)" >/dev/null
+	@echo "Recorded failing test gate for $(TASK)."
+
+slice-commit:
+	@if [ -z "$(TASK)" ]; then \
+		echo "TASK is required."; \
+		echo "No active task could be inferred from MCP state."; \
+		echo "Example: make slice-commit TASK=E17 MSG='docs(agentic): add lifecycle map'"; \
+		exit 1; \
+	fi
+	@if [ -z "$(or $(MSG),$(COMMIT_MSG))" ]; then \
+		echo "MSG or COMMIT_MSG is required."; \
+		echo "Example: make slice-commit TASK=$(TASK) MSG='feat(scope): add capability'"; \
+		exit 1; \
+	fi
+	@SESSION_NAME="$(SESSION)"; \
+	if [ -z "$$SESSION_NAME" ] || [ "$$SESSION_NAME" = "$(TASK)-" ]; then \
+		SESSION_NAME="$(TASK)-slice-commit"; \
+	fi; \
+	PYTHONPATH="$(WORKTREE_MCP_PYTHONPATH)" \
+		$(MCP_PYTHON) "$(WORKTREE_ROOT_REAL)/scripts/agentic/slice_commit.py" \
+		--repo-root "$(WORKTREE_ROOT_REAL)" \
+		--workspace-root "$(ORCHESTRATOR_ROOT)" \
+		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
+		--current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" \
+		--exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports" \
+		--task-ref "$(TASK)" \
+		--session "$$SESSION_NAME" \
+		--message "$(or $(MSG),$(COMMIT_MSG))" \
+		$(if $(FOCUS),--focus "$(FOCUS)",)
 
 review-ready:
 	@if [ -z "$(TASK)" ]; then \
@@ -127,4 +216,3 @@ review-run:
 		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
 
 review-dispatch: handoff-dispatch
-

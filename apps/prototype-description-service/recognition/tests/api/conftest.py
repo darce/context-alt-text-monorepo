@@ -34,6 +34,7 @@ class FakeSession:
         self.flush_calls = 0
         self.begin_nested_calls = 0
         self.nested_rollback_calls = 0
+        self._savepoint_recovered = False
         self.execute_calls = 0
         self.executed_statements: list[str] = []
 
@@ -128,6 +129,7 @@ class _FakeNestedTransaction:
     async def __aexit__(self, exc_type, exc, tb) -> bool:  # noqa: ANN001
         if exc_type is not None:
             self._session.nested_rollback_calls += 1
+            self._session._savepoint_recovered = True
         return False
 
 

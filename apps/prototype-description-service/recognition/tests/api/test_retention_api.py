@@ -302,7 +302,8 @@ def test_retention_policy_auth_store_failure_stops_at_auth_boundary(monkeypatch)
     assert policy_service.calls == []
     assert fake_session.begin_nested_calls == 1
     assert fake_session.nested_rollback_calls == 1
-    assert asyncio.run(fake_session.execute("select 1")).scalar() == 1
+    assert fake_session._savepoint_recovered is True
+    assert len(fake_session._execute_results) == 1  # queued result unconsumed; downstream never ran
 
 
 def test_retention_policy_admin_requires_header_not_query_param(monkeypatch) -> None:

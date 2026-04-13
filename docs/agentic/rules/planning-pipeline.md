@@ -1,11 +1,8 @@
 # Planning Pipeline
 
-> **Purpose:** Defines the repeatable process for turning observed problems into
-> reviewed specs, design decisions, and implementation task plans.
+> Repeatable process: observed problems → reviewed specs → design decisions → task plans.
 >
-> Load this document when creating, reviewing, or sequencing planning artifacts.
-> For review procedures, see [planning-review-guide.md](planning-review-guide.md).
-> For implementation workflow (TDD, slices, commits), see [development-workflow.md](development-workflow.md).
+> Related: [planning-review-guide.md](planning-review-guide.md) (review procedures) · [development-workflow.md](development-workflow.md) (implementation workflow).
 
 ---
 
@@ -16,39 +13,23 @@ Assessment ──→ Spec ──→ [ADR] ──→ Task Plan ──→ Implemen
   report        spec     ADR      task plan     code + tests
 ```
 
-Each stage produces a distinct artifact type. Not every stage is required for
-every piece of work — small, well-understood changes can skip the assessment
-and go directly to a spec or task plan. The pipeline exists to prevent
-premature implementation of complex or contract-breaking work.
+Not every stage is required. Small, well-understood changes can skip to a spec or task plan directly. The full pipeline prevents premature implementation of complex or contract-breaking work.
 
 ### Planning stays on `main`; implementation branches after approval
 
-**All planning artifacts (assessments, specs, ADRs, task plans) are written and reviewed on `main`.** Do not create a feature branch or worktree until the plan is approved and implementation is ready to begin. This is a deliberate workflow choice:
-
-- **Human review is frictionless.** The reviewer reads, comments on, and approves the plan from the same branch they are already on. No worktree switching, no `git checkout`, no stale-buffer risk from having the plan open in a linked worktree while reviewing on `main`.
-- **Planning artifacts are docs, not code.** The branch isolation rule already allows `docs/`, `packages/*/docs/`, and markdown files on `main`. Task plans, assessments, specs, and ADRs all live in these paths. There is no policy reason to isolate them on a feature branch.
-- **The MCP task can exist before the branch does.** `set_handoff_state(task_ref=..., objective=...)` creates the handoff task on `main`. Decisions, findings, and review passes are recorded against the task ref during the planning phase. The feature branch and worktree are created later by `make task-start` when implementation begins.
-- **The pre-merge gate applies to code, not to plans.** A task plan committed on `main` does not go through `handoff_close_check(enforce=True)` because it is not a feature-branch merge. The gate fires when the implementation branch merges — which is exactly when it matters.
+**All planning artifacts (assessments, specs, ADRs, task plans) are written and reviewed on `main`.** No feature branch or worktree until the plan is approved and implementation begins.
 
 **Workflow:**
 
-1. **Plan on `main`**: write the assessment, spec, or task plan directly on `main` (commit as docs). Record planning decisions and review findings in MCP handoff against the task ref.
-2. **Review on `main`**: the human reviews the plan in their normal editor/IDE context. No context switch. Findings recorded via MCP. Plan updated on `main` until approved.
-3. **Branch when approved**: once the plan is approved, run `make task-start TASK=<id> OBJECTIVE="..."` to create the feature branch + linked worktree + MCP target_branch/target_worktree_path. Implementation begins here.
-4. **Implement on the feature branch**: code changes, tests, slice-complete decisions, pre-merge gate — all per the [development workflow](development-workflow.md).
-5. **Merge via the gate**: the feature branch merges to `main` after `handoff_close_check(enforce=True)` passes. The planning artifacts are already there; the code joins them.
+1. **Plan on `main`**: write artifacts, record planning decisions and review findings in MCP.
+2. **Review on `main`**: human reviews in normal editor context. Findings via MCP. Plan updated until approved.
+3. **Branch when approved**: `make task-start TASK=<id> OBJECTIVE="..."` creates feature branch + worktree + MCP targets.
+4. **Implement on the feature branch**: code, tests, slices, pre-merge gate per [development workflow](development-workflow.md).
+5. **Merge via the gate**: `handoff_close_check(enforce=True)` passes. Planning artifacts already on `main`; code joins them.
 
-**When to use the full pipeline:**
-- Contract or output format changes
-- Tool surface changes (add, remove, rename, consolidate)
-- Cross-service or cross-package boundary changes
-- Architectural decisions with multiple viable approaches
-- Work that will take more than one task plan to complete
+**Use the full pipeline for:** contract/output format changes, tool surface changes, cross-service/cross-package boundary changes, multi-approach architectural decisions, multi-task-plan work.
 
-**When to skip stages:**
-- Bug fixes with an obvious root cause → task plan or direct implementation
-- Small additive features with no contract impact → task plan
-- Documentation-only changes → direct implementation
+**Skip stages for:** obvious bug fixes (task plan or direct), small additive features with no contract impact (task plan), docs-only changes (direct).
 
 ---
 
@@ -60,9 +41,7 @@ premature implementation of complex or contract-breaking work.
 
 ### Purpose
 
-Surface problems and verify them against code. An assessment inventories what
-is wrong, traces findings to the codebase, and recommends directions — without
-prescribing solutions.
+Inventory what is wrong, trace findings to code, recommend directions — without prescribing solutions.
 
 ### Required content
 
@@ -81,8 +60,7 @@ prescribing solutions.
 | Owner has reviewed and resolved disagreements | Recommended |
 | Deferred items are named explicitly | Yes |
 
-An assessment that passes this gate can feed into a spec. Findings that fail
-code verification must be corrected or removed before spec work begins.
+Findings that fail code verification must be corrected or removed before spec work begins.
 
 ---
 
@@ -94,9 +72,7 @@ code verification must be corrected or removed before spec work begins.
 
 ### Purpose
 
-Define concrete, testable changes derived from assessment findings. Each spec
-item has a stable identifier, traceability to findings, before/after code
-anchored by function name, and a done-when definition that is machine-verifiable.
+Define concrete, testable changes derived from assessment findings. Each spec item has a stable ID, traceability to findings, before/after code anchored by function name, and machine-verifiable done-when criteria.
 
 ### Required content
 
@@ -125,8 +101,6 @@ anchored by function name, and a done-when definition that is machine-verifiable
 | Tier 3 items explicitly marked as ADR-gated | Yes |
 
 **No implementation tasks may be created from a spec until this gate is passed.**
-This gate was established after the output-contract-v2 spec review caught invented
-field names, broken validation commands, and under-specified consolidation models.
 
 ---
 
@@ -138,20 +112,13 @@ field names, broken validation commands, and under-specified consolidation model
 
 ### When required
 
-Only when a spec item is explicitly design-uncertain — multiple viable approaches
-exist and the choice has architectural consequences. The spec marks these items
-as "Tier 3 — Blocked on ADR."
+Only when a spec item is explicitly design-uncertain — multiple viable approaches with architectural consequences. The spec marks these as "Tier 3 — Blocked on ADR."
 
-ADRs are **not** created:
-- Before a spec exists (design uncertainty is flagged within the spec)
-- For implementation choices that don't affect contracts or architecture
-- As a substitute for assessment work
+ADRs are **not** created before a spec exists, for implementation choices that don't affect contracts/architecture, or as a substitute for assessment work.
 
 ### Purpose
 
-Resolve design uncertainty that a spec explicitly marks as blocked. The ADR
-chooses one approach, rejects alternatives with rationale, and sets guardrails
-for the follow-on implementation task.
+Resolve design uncertainty that a spec marks as blocked. Choose one approach, reject alternatives with rationale, set guardrails for implementation.
 
 ### Required content
 
@@ -165,13 +132,7 @@ for the follow-on implementation task.
 
 ### Relationship to task plans
 
-The ADR is reviewed first. Any implementation task plan is then derived from
-the approved ADR. The ADR is the durable design artifact; the task plan is the
-execution plan that implements it.
-
-If the ADR itself needs structured investigation (tool inventory, schema
-evaluation), that work belongs in the assessment or spec — not in a wrapper
-task plan around the ADR.
+The ADR is reviewed first; implementation task plans are derived from the approved ADR. Structured investigation (tool inventory, schema evaluation) belongs in the assessment or spec, not in a wrapper task plan around the ADR.
 
 ### Exit gate → Task Plan
 
@@ -192,9 +153,7 @@ task plan around the ADR.
 
 ### Purpose
 
-Decompose spec items into implementation slices with proof commands, lane
-ownership, and merge order. Task plans are execution artifacts — they describe
-how to build and verify, not what to build (that's the spec's job).
+Decompose spec items into implementation slices with proof commands, lane ownership, and merge order. Task plans describe how to build and verify, not what to build (that's the spec's job).
 
 ### Required content
 
@@ -206,10 +165,7 @@ how to build and verify, not what to build (that's the spec's job).
 
 ### Key principle: reference the spec, don't duplicate it
 
-Task plans should reference spec items for code-level detail rather than
-restating what the spec already says. The Current State Analysis section in
-a task plan should add only task-specific context (test-surface observations,
-lane constraints) not already in the spec.
+Reference spec items for code-level detail rather than restating. The Current State Analysis section should add only task-specific context (test-surface observations, lane constraints) not already in the spec.
 
 ### Task plan variants
 
@@ -218,31 +174,17 @@ lane constraints) not already in the spec.
 | **Implementation task** | Code + tests + contract docs | AHMCP-2, AHMCP-3 |
 | **Design task** | A reviewed ADR | AHMCP-4 |
 
-Design tasks follow the same template structure but their slices produce
-investigation and design artifacts instead of code.
+Design tasks follow the same template but produce investigation and design artifacts instead of code.
 
 ### Package-local tasks
 
-For tasks scoped to a single package (not owned by a monorepo epic), replace
-the template's "Owning Epic" with "Project" and "Epic Short ID" with "Task ID".
-The task ID prefix should be the package short name (e.g. `AHMCP` for
-`agent-handoff-mcp`).
+For single-package tasks, replace "Owning Epic" with "Project" and "Epic Short ID" with "Task ID". Use the package short name as prefix (e.g. `AHMCP` for `agent-handoff-mcp`).
 
 ### Branch-per-task convention
 
-Each task plan declares a **target branch** in its metadata. The branch name
-follows `feature/[task-id-slug]` (e.g. `feature/ahmcp-2-bounded-rendering`).
+Each task plan declares a **target branch** (`feature/[task-id-slug]`, e.g. `feature/ahmcp-2-bounded-rendering`).
 
-**The branch is not created at plan time.** The task plan is committed on
-`main` as a docs artifact. The branch is created later — after the plan is
-reviewed and approved — by running `make task-start TASK=<id>`, which creates
-the branch, links the worktree, and registers `target_branch` on the MCP
-handoff state. This keeps planning frictionless for human review and avoids
-the context-switching cost of reading plans inside linked worktrees.
-
-Once the branch exists, `git log main..feature/ahmcp-2-bounded-rendering`
-shows the exact code delta for the task, and MCP tracks decisions, findings,
-and review state. PRs map 1:1 to task plans — reviewable as a unit.
+**The branch is not created at plan time.** The plan is committed on `main`. After approval, `make task-start TASK=<id>` creates the branch, links the worktree, and registers `target_branch` on MCP. PRs map 1:1 to task plans.
 
 ### Exit gate → Implementation
 
@@ -257,13 +199,11 @@ and review state. PRs map 1:1 to task plans — reviewable as a unit.
 
 ## Stage 4: Implementation
 
-Implementation follows the standard [development workflow](development-workflow.md):
-TDD cycle, slice checklist, MCP handoff decisions, and review findings.
+Implementation follows the standard [development workflow](development-workflow.md).
 
 ### Task start workflow
 
-At this point the task plan is already on `main` (committed and reviewed
-during the planning phase). Implementation begins:
+The task plan is already on `main` (committed and reviewed). Implementation begins:
 
 0. **Verify the task plan is committed on `main`.** Before running `make task-start`,
    confirm the task plan document is discoverable:
@@ -272,18 +212,11 @@ during the planning phase). Implementation begins:
    git log main --oneline -- "docs/tasks/**/*${TASK_LOWER}*" \
      "packages/*/docs/tasks/**/*${TASK_LOWER}*"
    ```
-   If nothing is returned, commit the task plan on `main` first. For ad-hoc or
-   reactive work that did not follow a planning phase, create a minimal retroactive
-   task plan before proceeding. See [Retroactive task plans](#retroactive-task-plans)
-   below.
+   If nothing is returned, commit the task plan on `main` first. For ad-hoc work, see [Retroactive task plans](#retroactive-task-plans).
 1. **Commit or finish current work** before switching (see safe switching below)
-2. Run `make task-start TASK=<id> OBJECTIVE="..."` from the root worktree.
-   This creates the feature branch, links the worktree, and registers the MCP
-   task with `target_branch` and `target_worktree_path` in one shot.
+2. Run `make task-start TASK=<id> OBJECTIVE="..."` from the root worktree (creates branch + worktree + MCP target in one shot).
 3. `cd` to the linked worktree and run `make context` to verify alignment.
-4. Load the task plan (already on `main`, visible from the linked worktree
-   because git worktrees share the same index for committed files) and begin
-   slice work.
+4. Load the task plan (visible from linked worktree via shared git index) and begin slice work.
 
 ### Slice workflow
 
@@ -301,43 +234,27 @@ Each completed slice records a `slice_complete_*` decision in MCP with:
 
 ### Retroactive task plans
 
-When urgent or reactive work proceeds directly to implementation without a
-full planning phase, a minimal task plan must be retrofitted on `main`
-before the feature branch merges. The retroactive plan does not need a spec
-review history; it needs:
+When work proceeds directly to implementation without planning, a minimal task plan must be retrofitted on `main` before the feature branch merges. Required content:
 
 - **Objective**: one paragraph explaining why the work was done
-- **Scope**: the packages and files the work touched
-- **Handoff reference**: the MCP task ref and slice decision ID(s) that
-  captured the implementation intent
+- **Scope**: packages and files touched
+- **Handoff reference**: MCP task ref and slice decision ID(s)
 
-The retroactive plan counts as a planning artifact for pre-merge traceability
-and does not require a separate planning review pass unless the work is large
-or contract-breaking. Commit it on `main` while the feature branch is open;
-the merge lands the code alongside the doc in one reviewable unit.
+No separate planning review pass required unless the work is large or contract-breaking. Commit on `main` while the feature branch is open.
 
 ### Safe branch switching
 
-When switching between tasks (and therefore branches), always **commit before
-switching** — never stash.
-
-**Why commits over stashes:**
-- Stashes are unnamed, easily lost, and invisible to other agents or sessions
-- WIP commits are visible in `git log`, can be referenced by SHA, and are
-  automatically available when the agent returns to the branch
-- WIP commits can be squashed into clean commits before the PR is created
-- MCP handoff decisions reference `commit_sha` — stashed work has no SHA
+Always **commit before switching** — never stash. WIP commits are visible in `git log`, referenceable by SHA, and squashable before PR. Stashes are unnamed and invisible to MCP.
 
 **Switching procedure:**
-1. Commit all current work: `git add -A && git commit -m "wip: <brief description>"`
-2. Record the switch in MCP if the task is changing: `switch_task(task_ref="<new-task>")`
-3. Check out the target branch: `git checkout <target_branch>`
-4. If the branch doesn't exist yet, create it: `git checkout -b <target_branch> main`
+1. `git add -A && git commit -m "wip: <brief description>"`
+2. `switch_task(task_ref="<new-task>")` if changing tasks
+3. `git checkout <target_branch>` (or `git checkout -b <target_branch> main` if new)
 
 **Returning to a task:**
-1. Check out the task branch: `git checkout <target_branch>`
-2. Activate the task in MCP: `switch_task(task_ref="<task-ref>")`
-3. Resume from the last WIP commit — the branch state is exactly where you left it
+1. `git checkout <target_branch>`
+2. `switch_task(task_ref="<task-ref>")`
+3. Resume from last WIP commit
 
 ---
 
@@ -352,16 +269,11 @@ Assessment finding F2
               └── Decision #1234 (references OC-001)
 ```
 
-This chain makes it possible to answer:
-- Why was this change made? → Spec item → Assessment finding
-- Is the design decision reviewed? → ADR review run in MCP
-- Is the spec fully implemented? → Spec items → Task plan checklists → MCP decisions
-
 ---
 
 ## Exemplars
 
-These artifacts from the output-contract-v2 work demonstrate the pipeline:
+Output-contract-v2 pipeline artifacts:
 
 | Stage | Artifact | Path |
 |-------|----------|------|

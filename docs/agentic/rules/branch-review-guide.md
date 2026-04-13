@@ -1,21 +1,16 @@
 # Branch Review Guide
 
-> **Purpose:** Structured checklist and metrics for reviewing feature branches before merge.
-> Checklist items reference canonical rules in [`instructions.md`](../instructions.md).
+> Structured checklist for reviewing feature branches before merge. Checklist items reference [`instructions.md`](../instructions.md).
 
 ## Quick Navigation
 
-**Start here:** This file covers universal process, common checklist, severity classification, and report template.
+For planning documents (task plans, epics, ADRs), use [planning-review-guide.md](planning-review-guide.md) instead. See [context routing table](development-workflow.md#context-routing-for-reviews).
 
-For task plans, epics, roadmaps, ADRs, and other planning documents, use [planning-review-guide.md](planning-review-guide.md) instead of this guide. The [context routing table](development-workflow.md#context-routing-for-reviews) defines which guide to load based on request intent.
-
-**Then load the relevant stack guide(s):**
+**Stack guides** (load only those relevant to the branch diff):
 
 - Python / FastAPI / SQLAlchemy → [branch-review-python.md](branch-review-python.md)
 - TypeScript / React / Vitest → [branch-review-typescript.md](branch-review-typescript.md)
 - PHP / WordPress / PHPUnit → [branch-review-php.md](branch-review-php.md)
-
-Load only the guides relevant to files in the branch diff. Most branches touch one or two stacks.
 
 ---
 
@@ -23,138 +18,117 @@ Load only the guides relevant to files in the branch diff. Most branches touch o
 
 ### When
 
-Run this review on every feature branch **before merge to `main`**.
-For multi-worktree orchestration in this repo, perform the review from the orchestrator root and log findings into MCP there before routing them to worker lanes.
+Run on every feature branch **before merge to `main`**. For multi-worktree orchestration, review from the orchestrator root and log findings into MCP before routing to worker lanes.
 
 ### Who
 
-The reviewer can be human or agentic. When an agent performs the review:
+The reviewer can be human or agentic. Agent reviewers must:
 
-1. Walk through each checklist section, citing specific files and line numbers
-2. Classify findings using the severity guide and categories below
-3. Record each finding into MCP handoff via the repo-local handoff server/CLI flow (see MCP Handoff Integration)
-4. Do **not** produce a report file unless the user explicitly requests one
-5. If the task is split into worktrees, have the orchestrator run `make handoff-dispatch TASK=<task-ref>` after findings are logged so open issues are stamped to the correct lane and delivered through MCP lane messages.
+1. Walk each checklist section, citing specific files and line numbers
+2. Classify findings by severity and category (below)
+3. Record each finding into MCP handoff (see MCP Handoff Integration)
+4. Only produce a report file if the user explicitly requests one
+5. For worktree-split tasks, run `make handoff-dispatch TASK=<task-ref>` after logging findings
 
-Hard rule for agent responses:
+**Hard rules for agent responses:**
 
-- Do not present a finding in chat unless it has already been recorded in MCP with a stable `finding_id`.
-- If a finding is discussed before recording, immediately record it and then reference its `finding_id`.
-- Do not write review findings back into task plans, ADRs, or other planning docs. Log them in MCP handoff, then rely on generated `CURRENT_TASK.md` when a task-facing summary is needed.
+- Never present a finding in chat unless it has a stable `finding_id` in MCP.
+- If discussed before recording, immediately record it and reference the `finding_id`.
+- Never write review findings into task plans, ADRs, or other planning docs. Use MCP handoff and generated `CURRENT_TASK.md`.
 
 ### Review Findings Placement (MANDATORY)
 
-Review findings live in `agent-handoff-mcp`, full stop. They are recorded with `review_findings(review={"operation":"record"|"batch_record", ...})` and read back with `review_findings(review={"operation":"list"|"get"})`. **Pasting a finding list into a task plan, epic, ADR, or any other markdown document is forbidden** because it duplicates the source of truth, escapes the pre-merge gate (`handoff_close_check` only audits MCP-stored findings), and silently rots the moment a finding is updated, deferred, or fixed.
+Review findings live in `agent-handoff-mcp`. Record with `review_findings(review={"operation":"record"|"batch_record", ...})`, read with `review_findings(review={"operation":"list"|"get"})`. **Pasting a finding list into a task plan, epic, ADR, or any other markdown document is forbidden** -- it duplicates the source of truth and escapes the pre-merge gate.
 
-If a planning document needs to reference findings, link to them by ID (`see AOMCP-3-BR-04 in handoff`) instead of duplicating their bodies. The generated `CURRENT_TASK.md` is the only sanctioned task-facing mirror of finding state — do not author a parallel one.
+Reference findings by ID (`see AOMCP-3-BR-04 in handoff`), never by duplicating their bodies. `CURRENT_TASK.md` is the only sanctioned task-facing mirror.
 
-**Enforcement:** A `PreToolUse` hook in both harnesses (`scripts/hooks/guard-task-plan-findings.py`) scans the content of every Edit/Write to a task plan markdown file (`docs/tasks/**`, `docs/epics/**`, `packages/*/docs/tasks/**`, or any `*task-plan*.md`). Three or more consecutive bulleted lines that open with a finding-style identifier (e.g. `- AOMCP-3-BR-04: ...`, `- **H-1**: ...`, `- E15-7-BR-02 — ...`) are rejected with an actionable error naming the MCP tools the agent should use instead. The same scanner is wired into `make check-all` via `make lint-task-plans`, so CI catches drift even if a local hook is bypassed. The script also exposes a `--scan-staged` mode for opt-in `git pre-commit` integration.
-
-This rule is motivated by AHMCP-14: a parallel agent had been pasting `review_findings(operation="list")` results inline into the AOMCP-3 task plan, creating a parallel finding record that diverged from the MCP-stored source and would not have been gated by `handoff_close_check`.
+**Enforcement:** `PreToolUse` hook (`scripts/hooks/guard-task-plan-findings.py`) rejects 3+ consecutive finding-style bullets in task plan files. Also wired into `make check-all` via `make lint-task-plans`. Exposes `--scan-staged` for opt-in pre-commit integration.
 
 ### Scope
 
-Review only **uncommitted working-directory changes** (`git status` / `git diff --name-only`), not the full branch history against `main`. The goal is to review what will be in the next commit, not re-review already-committed work.
-
-For a full branch audit before merge, use `git diff --name-only main...HEAD` instead.
-
-When the ask is "review the latest completed implementation slice", prefer the MCP-backed slice review packet instead of current branch diff. Use the packet-backed path first, and treat branch diff as fallback only when no valid slice packet exists.
+- Default: review **uncommitted working-directory changes** (`git status` / `git diff --name-only`).
+- Full branch audit before merge: `git diff --name-only main...HEAD`.
+- "Review the latest slice": prefer the MCP-backed slice review packet; branch diff is fallback only.
 
 ### Automated Review
 
-This guide is also consumed as prompt input by `review_runner.py` (`make review-run TASK=<task> LANE=<lane>`), which feeds the checklist text to an LLM reviewer. Because the guide serves this dual role (human-readable checklist and machine-readable prompt), structural or wording changes here directly affect automated review fidelity. The orchestrator daemon (`make orchestrator-daemon`) dispatches findings produced by automated reviews to the correct worker lanes via `make handoff-dispatch`.
+This guide is also consumed as prompt input by `review_runner.py` (`make review-run TASK=<task> LANE=<lane>`). Structural changes here affect automated review fidelity. The orchestrator daemon dispatches automated-review findings to worker lanes via `make handoff-dispatch`.
 
 ### Dev Tooling (Lightweight Review)
 
-Files under `scripts/mcp/`, MCP test files, and other dev tooling do **not** require the full checklist treatment. Apply a lightweight review:
+Files under `scripts/mcp/`, MCP test files, and other dev tooling get a lightweight review:
 
-- Correctness: does the tool do what it claims?
-- Obvious bugs: off-by-one, missing error handling, SQL injection
-- Skip: metric thresholds, architecture boundary checks, Protocol typing
-
-Dev tooling findings should still be recorded through the handoff MCP server before they are mentioned in chat, but are never HIGH severity unless they corrupt production data or state.
+- Correctness and obvious bugs only (skip metric thresholds, architecture boundary checks, Protocol typing)
+- Still record findings via MCP handoff; never HIGH unless they corrupt production data or state
 
 ---
 
 ## Review Intake
 
-Before walking the checklist, load only the minimum review packet:
+Load only the minimum review packet before walking the checklist:
 
-1. the intended change: task plan, scoped request, or stated branch objective
-2. the actual diff or working-directory change set being reviewed
-3. the boundary contracts, ADRs, and repo rules touched by that change
-4. the proof artifacts already produced: tests, type checks, static analysis, runtime checks
+1. Intended change (task plan, scoped request, or branch objective)
+2. Actual diff or working-directory change set
+3. Touched boundary contracts, ADRs, and repo rules
+4. Proof artifacts already produced (tests, type checks, static analysis)
 
-Required intake details:
+Required intake details: branch/commit range, intended scope reference, relevant contracts/ADRs/rules, verification commands already run, review mode (normal or `release_audit`), scope source (`slice_packet` or `branch_diff`).
 
-- branch or commit range under review
-- intended scope reference
-- relevant contracts/ADRs/rules
-- verification commands already run, if any
-- review mode: normal branch review or release-audit escalation
-- scope source: `slice_packet` when reviewing the latest completed slice, otherwise `branch_diff`
-
-Do not bulk-load unrelated docs, lane chatter, or historical artifacts unless the branch cannot be reviewed correctly without them.
+Do not bulk-load unrelated docs, lane chatter, or historical artifacts unless required for correct review.
 
 ### Latest-Slice Review Preference
 
-For cross-agent post-implementation review, use the latest-slice packet query before reading git diff:
+For cross-agent post-implementation review, query the latest-slice packet before reading git diff:
 
-1. Request the latest completed slice packet for the active task, optionally scoped by lane.
-2. Use packet `changed_files` as the authoritative review file set when the packet returns `scope_source="slice_packet"`.
-3. Confirm the packet still carries concrete verification evidence and contract/doc touches from the completed slice.
-4. Fall back to branch diff only when no valid packet exists, and call that lower-trust path out explicitly in review output.
+1. Request the latest completed slice packet for the active task (optionally scoped by lane).
+2. Use packet `changed_files` as the authoritative file set when `scope_source="slice_packet"`.
+3. Confirm the packet carries verification evidence and contract/doc touches.
+4. Fall back to branch diff only when no valid packet exists; call that out explicitly in review output.
 
-Do not reconstruct the "latest slice" from chat memory, recent commits, or a dirty branch when MCP packet state is available.
+Never reconstruct the "latest slice" from chat memory or recent commits when MCP packet state is available.
 
 ### Handoff-only Fallback
 
-When `agent-orchestrator-mcp` is not loaded, use this degraded handoff-only path instead of inventing a second compound packet:
+When `agent-orchestrator-mcp` is not loaded, use this degraded path:
 
 1. `load_session`
 2. `search_handoff(queries=["slice_complete"], record_types=["decision"], limit=1)`
 3. `get_verified_tests(task_ref=..., commit_sha=...)`
 4. `review_findings(review={"operation":"list","status":"open"})`
 
-Call this path out explicitly in the review output as fallback scope. Prefer `get_latest_slice_review_packet` whenever orchestrator is available.
+Call this out as fallback scope in review output. Prefer `get_latest_slice_review_packet` when orchestrator is available.
 
 ## Fresh Verification Evidence
 
-Treat any claim that a branch is "done", "fixed", "passing", or "ready" as unproven unless there is fresh verification evidence for the current branch state.
-
-- A review finding is warranted when verification is stale, partial, or unrelated to the behavior being claimed fixed.
-- Historical test rows are useful context, but they do not by themselves prove current-branch correctness.
-- Prefer deterministic proof on the current branch state: test run, type check, static analysis, runtime-parity check, or equivalent command evidence.
+Treat any claim of "done", "fixed", "passing", or "ready" as unproven without fresh verification evidence for the current branch state. Historical test rows are context, not proof.
 
 Reviewer prompts:
 
-- What command would actually prove this claim?
-- Was that command run on the current branch state?
-- Does the output support the claim, or only part of it?
-- Is runtime-sensitive behavior being justified only by unit tests?
+- What command would prove this claim? Was it run on the current branch state?
+- Does the output support the full claim, or only part of it?
+- Is runtime-sensitive behavior justified only by unit tests?
 
-If the answer is no, treat the claim as a `GAP`; use `HIGH` when the missing proof changes merge or release readiness.
+If no: `GAP` finding. `HIGH` when the missing proof affects merge or release readiness.
 
 ## Contract-Change Gate
 
-Apply this gate whenever the reviewed diff changes a documented boundary payload, status/error contract, shared enum vocabulary, or adapter-owned envelope shape.
+Apply when the diff changes a documented boundary payload, status/error contract, shared enum vocabulary, or adapter-owned envelope shape.
 
-- A boundary-touching change is not `review-ready` unless the owning contract changed in the same slice, or handoff contains an explicit no-contract-change rationale tied to the current diff.
-- A boundary-touching change is not `review-ready` unless matching fixture, schema, or contract-test evidence exists for the changed shape.
-- A boundary-touching change is not `merge-ready` unless handoff records the boundary owner, verification path, and current contract reference.
-- Use [contract-change-checklist.md](contract-change-checklist.md) as the canonical review aid for ownership, schema-evolution notes, fixture proof, and remediation-plan finding-ID checks.
+- **Review-ready** requires: owning contract updated in the same slice (or explicit no-change rationale), plus matching fixture/schema/contract-test evidence.
+- **Merge-ready** requires: handoff records boundary owner, verification path, and current contract reference.
+- Canonical review aid: [contract-change-checklist.md](contract-change-checklist.md).
 
 ## Common Checklist
 
-These items apply regardless of language. Stack-specific items are in the language guides linked above.
+Language-agnostic items. Stack-specific items are in the language guides linked above.
 
 ### Branch Isolation
 
 Reference: [development-workflow.md](development-workflow.md#branch-isolation-protocol-mandatory).
 
-- [ ] **Code changes are not on `main`** — the branch under review is a feature branch, not `main`. Code-file edits committed directly to `main` are a workflow defect. If the diff is against `main` and includes code files under `apps/` or `packages/`, flag it as HIGH.
-- [ ] **Branch name matches task plan** — the branch name follows `feature/<task-id>-<slug>` and matches the `Target Branch` declared in the owning task plan. Mismatches between the task plan's declared branch and the actual branch being reviewed indicate task-tracking drift.
-- [ ] **No stale cross-branch bleed** — the diff does not include unrelated changes inherited from a dirty `main` working tree. If the branch diff contains files that the task plan does not claim to touch, investigate whether they are branch bleed from a prior session.
+- [ ] **Code changes are not on `main`** — code-file edits under `apps/` or `packages/` on `main` are HIGH.
+- [ ] **Branch name matches task plan** — follows `feature/<task-id>-<slug>` and matches the task plan's `Target Branch`.
+- [ ] **No stale cross-branch bleed** — diff does not include unrelated changes from a dirty `main` working tree.
 
 ### Correctness
 
@@ -163,18 +137,18 @@ Reference: [development-workflow.md](development-workflow.md#branch-isolation-pr
 - [ ] **No unreachable code** — dead branches inside conditionals.
 - [ ] **No duplicate field declarations** — Pydantic models, dataclasses.
 - [ ] **API contract alignment** — response schemas match `docs/agentic/contracts/`. New fields have tests.
-- [ ] **Boundary metadata preservation** — adapters/wrappers do not invent `limit`, `offset`, `total`, `data_source`, or similar envelope metadata; every field has a traceable source in the request, upstream payload, or documented fallback.
-- [ ] **Assertion intent matches layer** — assertions are used only for internal invariants/unreachable states, never as a substitute for boundary validation.
-- [ ] **Runtime dependency integrity** — no local type-only shims masking missing runtime packages; verify new imports with real build/test execution.
-- [ ] **PHP runtime autoload parity** — new plugin runtime classes resolve under the real WordPress/Composer load path, not only under the PHPUnit bootstrap fallback autoloader.
-- [ ] **Atomic mutation path preserved** — avoid splitting an existing atomic backend write flow into multiple client mutations without explicit architecture sign-off.
-- [ ] **Primary control reachability** — primary actions (for example select-all) are reachable from initial zero-state UI.
-- [ ] **Stale/offline path remains user-recoverable** — automation flags/defaults cannot remove an explicit manual recovery action.
-- [ ] **Interactive timeout parity** — related remote calls use a shared timeout helper and consistent timeout budgets.
-- [ ] **Import/restore payload validation** — malformed snapshot shapes fail fast with explicit errors (never silent success).
+- [ ] **Boundary metadata preservation** — adapters do not invent envelope metadata; every field traces to request, upstream payload, or documented fallback.
+- [ ] **Assertion intent matches layer** — assertions for internal invariants only, never boundary validation.
+- [ ] **Runtime dependency integrity** — no type-only shims masking missing runtime packages; verify with real build/test.
+- [ ] **PHP runtime autoload parity** — new classes resolve under real WordPress/Composer load path, not only PHPUnit bootstrap.
+- [ ] **Atomic mutation path preserved** — no splitting atomic backend writes into multiple client mutations without sign-off.
+- [ ] **Primary control reachability** — primary actions reachable from initial zero-state UI.
+- [ ] **Stale/offline path remains user-recoverable** — automation cannot remove explicit manual recovery actions.
+- [ ] **Interactive timeout parity** — related remote calls use shared timeout helper and consistent budgets.
+- [ ] **Import/restore payload validation** — malformed snapshots fail fast with explicit errors.
 - [ ] **Provenance preservation** — status/update operations do not overwrite original creator metadata.
-- [ ] **Single contract owner per boundary** — only one layer owns shape adaptation (for example backend array -> WordPress envelope). Downstream layers consume the canonical shape instead of carrying duplicate backward-compat fallbacks.
-- [ ] **Contract-change gate satisfied** — boundary changes have owning-contract updates or an explicit no-change rationale, plus matching fixture/schema/test evidence and handoff proof.
+- [ ] **Single contract owner per boundary** — only one layer owns shape adaptation; downstream consumes the canonical shape.
+- [ ] **Contract-change gate satisfied** — boundary changes have owning-contract updates or no-change rationale, plus fixture/schema/test evidence.
 
 ### Code Duplication
 
@@ -203,42 +177,40 @@ Reference: [development-workflow.md](development-workflow.md#branch-isolation-pr
 
 ### Code Health (Tech Debt Prevention)
 
-These items prevent the accumulation of structural debt documented in `docs/tasks/tech-debt/refactoring-*.md`.
-
 **Size and responsibility boundaries:**
 
-- [ ] **No god classes/components** -- a single class or component file should not exceed ~400 lines. If a new feature pushes an existing file past this threshold, budget extraction work in the same PR or file a follow-up.
-- [ ] **No god components mixing concerns** -- a React component must not combine API fetching, domain logic derivation, and rendering in one body. Extract presentation hooks (`useXPresentation`) and delegate rendering to focused sub-components.
-- [ ] **Hook/function parameter count** -- hooks and functions with >8 destructured parameters must group them into typed option objects (`state`, `actions`, `mutations`). Do not add a 9th param to an already-long signature.
+- [ ] **No god classes/components** -- single class/component file <= ~400 lines. Budget extraction in same PR or file follow-up.
+- [ ] **No god components mixing concerns** -- React components must not combine API fetching, domain logic, and rendering. Extract hooks and sub-components.
+- [ ] **Hook/function parameter count** -- >8 destructured params must be grouped into typed option objects.
 
 **Primitive obsession and enum discipline:**
 
-- [ ] **Domain concepts as types, not raw strings** -- recurring domain values (status, operation type, curation state) must use enums / `as const` objects / PHP backed enums, not inline string literals. New comparisons against string literals (`=== 'completed'`) are only acceptable when imported from a canonical definition.
-- [ ] **No duplicate status definitions** -- a single type definition or enum must be the sole source of truth. Do not re-declare equivalent string unions in multiple files.
+- [ ] **Domain concepts as types, not raw strings** -- recurring domain values use enums / `as const` / PHP backed enums, not inline string literals.
+- [ ] **No duplicate status definitions** -- single canonical type definition per domain concept.
 
 **Structural duplication:**
 
-- [ ] **Transaction boilerplate not inlined** -- PHP mutation handlers must use `run_transactional(callable)` or equivalent wrapper; do not duplicate START TRANSACTION / COMMIT / ROLLBACK inline.
-- [ ] **Transform loops not duplicated** -- if two functions differ only in the transform applied to a loop, extract a shared pipeline or generic builder.
+- [ ] **Transaction boilerplate not inlined** -- use `run_transactional(callable)` or equivalent; no inline START TRANSACTION / COMMIT / ROLLBACK.
+- [ ] **Transform loops not duplicated** -- extract shared pipeline when functions differ only in the loop transform.
 
 **Conditional complexity:**
 
-- [ ] **Nesting depth <= 3** -- if a conditional block exceeds 3 nesting levels, refactor to guard clauses (fail fast / return early).
-- [ ] **Wordy conditionals named** -- boolean expressions with 4+ parts must be extracted into named boolean variables (e.g., `const hasUnresolvedWork = ...`).
-- [ ] **No null sentinels for flow control** -- do not use `null` to mean both "no selection" and "dialog closed." Use an explicit boolean or the Null Object / Special Case pattern.
+- [ ] **Nesting depth <= 3** -- refactor to guard clauses.
+- [ ] **Wordy conditionals named** -- 4+ part boolean expressions extracted into named variables.
+- [ ] **No null sentinels for flow control** -- use explicit booleans or Null Object pattern.
 
 **Design token discipline (CSS/SCSS):**
 
-- [ ] **No ad-hoc font-size literals** -- use `--acx-text-*` scale tokens. If a new size is genuinely needed, add it to `_typography.scss`.
-- [ ] **No hardcoded hex gray values** -- use `--acx-gray-*` scale or semantic tokens (`--acx-color-text-muted`, `--acx-color-border`).
-- [ ] **No ad-hoc box-shadow** -- use `--acx-shadow-*` elevation tokens. Map component purpose to elevation level (cards = xs, dropdowns = md, toasts = lg, dialogs = xl).
+- [ ] **No ad-hoc font-size literals** -- use `--acx-text-*` tokens.
+- [ ] **No hardcoded hex gray values** -- use `--acx-gray-*` or semantic tokens.
+- [ ] **No ad-hoc box-shadow** -- use `--acx-shadow-*` elevation tokens (cards=xs, dropdowns=md, toasts=lg, dialogs=xl).
 - [ ] **No hardcoded border-radius** -- use `--acx-radius-*` tokens.
-- [ ] **Focus rings use shared tokens** -- `--acx-focus-ring` and `--acx-focus-offset`. Do not mix hardcoded outlines with token-based ones across components.
-- [ ] **Status indicators pair color with icon** -- color-only status differentiation fails for colorblind users. Every status color (success/error/warning/info) must be accompanied by a distinguishing icon.
+- [ ] **Focus rings use shared tokens** -- `--acx-focus-ring` and `--acx-focus-offset`.
+- [ ] **Status indicators pair color with icon** -- every status color must have a distinguishing icon.
 
 ### Bug-Finding Heuristics (Universal)
 
-**Variable identity after normalization:** When a function normalizes an input early, trace every subsequent reference to verify the normalized variable is used, never the original.
+**Variable identity after normalization:** Verify every subsequent reference uses the normalized variable, never the original.
 
 **Cross-method contract bugs:** When method A transforms data and passes it to method B:
 
@@ -248,133 +220,76 @@ These items prevent the accumulation of structural debt documented in `docs/task
 
 **Envelope-wrapper sanity check:** When a boundary layer wraps a list payload into an envelope:
 
-- [ ] `limit` and `offset` come from the request or upstream paging contract, never from list length or hardcoded defaults.
-- [ ] `total` comes from the upstream contract when available; if it falls back to current page length, that fallback is explicitly documented and correct for the route.
-- [ ] Provenance fields such as `data_source`, `projection_status`, or `source` are copied from a real upstream value or set by a documented local authority path, not guessed ad hoc.
-- [ ] If the upstream payload unexpectedly arrives in a different shape than the boundary owns (for example an envelope where only a list is valid), the code fails explicitly instead of silently supporting multiple contradictory contracts.
+- [ ] `limit`/`offset` from request or upstream paging contract, never from list length or hardcoded defaults.
+- [ ] `total` from upstream contract; if falling back to page length, that fallback is documented and correct.
+- [ ] Provenance fields copied from real upstream value or documented local authority, not guessed.
+- [ ] Unexpected upstream shape (e.g. envelope where only list is valid) fails explicitly.
 
-**Boundary value sweep:** For each function accepting numeric or collection inputs, mentally substitute empty, single element, and large (10k+) inputs.
+**Boundary value sweep:** Mentally substitute empty, single-element, and large (10k+) inputs for each numeric/collection parameter.
 
-**Retry lifecycle traps:** For visibility/focus/interval retries, verify both sides:
+**Retry lifecycle traps:**
 
-- [ ] Per-cycle retry guards prevent duplicate concurrent attempts.
-- [ ] Guard reset happens only on intentional state transitions (for example fresh -> stale), so retries are neither infinite nor permanently disabled.
+- [ ] Per-cycle guards prevent duplicate concurrent retry attempts.
+- [ ] Guard reset only on intentional state transitions, preventing infinite or permanently disabled retries.
 
-**Import strictness check:** Feed one malformed import payload variant during review (`snapshot` wrong type or required shape missing) and verify the tool returns `ok: false` with an explicit error.
+**Import strictness check:** Feed one malformed payload variant and verify `ok: false` with explicit error.
 
-**Mutable-record provenance:** For lifecycle/status updates, confirm updater context does not erase original creator metadata (`agent`, `branch`, `commit_sha`).
+**Mutable-record provenance:** Confirm updater context does not erase original creator metadata (`agent`, `branch`, `commit_sha`).
 
-**IDE stale-file guard:** Editor-integrated file-reading tools (`read_file`, `grep_search`) may return cached content after git operations or external writes. VS Code agents should use native `grep_search(...)` as the primary string-search surface when confirming that a function or feature is missing. Codex and other terminal-only agents may use `grep -n '<function_name>' <file>` as the fallback check. Tool-selection discipline matters here: use native IDE search when available, and reserve terminal grep for terminal-only environments. File-length mismatches between local file reads and search output are a strong signal of stale cache.
+**IDE stale-file guard:** Editor file-reading tools may return cached content after git operations. Use native IDE search (`grep_search`) to confirm missing functions; terminal `grep` as fallback for terminal-only environments. File-length mismatches signal stale cache.
 
-**False-fix detection (review finding closures):** When an agent (or operator) marks review findings as `fixed`, verify each closure individually:
+**False-fix detection (review finding closures):** When findings are marked `fixed`, verify each closure:
 
-- [ ] The claimed code change actually exists in the current working tree (grep for the function/variable/log-event by name).
-- [ ] Resolution notes reference real file paths and real function names that can be verified with a single string-search command (`grep_search(...)` in VS Code agents; terminal `grep` fallback for Codex/terminal-only agents).
-- [ ] Findings closed in rapid succession (3+ in under 60 seconds) are suspect -- each must show independent evidence of the fix.
-- [ ] Previously-reopened findings (reopen_count >= 2) require `verification_evidence` containing concrete proof (string-search output, diff snippet, or code excerpt).
-- [ ] Plan documents updated alongside bulk closures are cross-checked against the actual code to prevent circular false claims.
+- [ ] Claimed code change exists in current working tree (grep for function/variable by name).
+- [ ] Resolution notes reference real file paths and function names verifiable by string search.
+- [ ] Rapid closures (3+ in <60s) are suspect -- each needs independent fix evidence.
+- [ ] Reopened findings (reopen_count >= 2) require `verification_evidence` with concrete proof.
+- [ ] Plan documents updated alongside bulk closures are cross-checked against actual code.
 
-The `update_review_finding` MCP tool enforces two structural guards automatically:
+The `update_review_finding` tool enforces two guards:
 
-1. **Reopen escalation:** Findings reopened >= 2 times cannot be marked `fixed` without a `verification_evidence` parameter containing proof the fix exists.
-2. **Batch-close detection:** When 2+ findings for the same task have been fixed within the last 60 seconds, subsequent closures require `verification_evidence`.
+1. **Reopen escalation:** Findings reopened >= 2 times require `verification_evidence` to mark `fixed`.
+2. **Batch-close detection:** 2+ findings fixed in last 60 seconds require `verification_evidence` for subsequent closures.
 
-Both guards can be satisfied by providing `--verification-evidence` (CLI) or `verification_evidence` (MCP tool) with string-search output, diff excerpts, or code snippets proving the fix. Prefer `grep_search(...)` when the agent has native IDE search tools; use terminal `grep` only as the Codex/terminal-only fallback.
+Satisfy guards with string-search output, diff excerpts, or code snippets proving the fix.
 
 ---
 
 ## Multi-Lens Audit Workflow
 
-Escalate a normal branch review to a release-style multi-lens audit when the branch touches:
+Escalate to a multi-lens audit when the branch touches: security/compliance boundaries, release/deploy paths, major architecture transitions, multi-service state machines, high-risk persistence/migration, or broad UI/UX surfaces.
 
-- security or compliance boundaries
-- release or deploy paths
-- major architecture transitions
-- multi-service state machines
-- high-risk persistence or migration behavior
-- broad UI/UX surfaces with many state branches
-
-This workflow adds review perspectives, not new tooling. Record all audit findings through the existing MCP review-finding surface with `review_mode=release_audit`. Use finding-ID prefixes to classify which lens produced each finding:
-
-- `ARCH-<id>` for architecture/reliability
-- `QA-<id>` for QA/state-matrix
-- `CONTRACT-<id>` for contract/compliance
+Record all findings via MCP with `review_mode=release_audit`. Use finding-ID prefixes: `ARCH-<id>`, `QA-<id>`, `CONTRACT-<id>`.
 
 ### Lens Definitions
 
-#### Architecture / Reliability
-
-Focus:
-
-- ownership boundaries and adapter seams
-- single-writer and single-owner contract discipline
-- degraded/error behavior
-- queueing, retry, timeout, and recovery semantics
-- cross-service state transitions and race conditions
-
-Bias:
-
-- findings about hidden coupling, state drift, unsafe fallback behavior, replay hazards, or operational ambiguity
-
-#### QA / State-Matrix
-
-Focus:
-
-- state coverage across loading, empty, degraded, error, stale, and recovery paths
-- runtime-parity proof, not only unit proof
-- regression traps in polling, retries, offline/manual recovery, and import/restore flows
-- whether the diff proves the behavior users will actually see
-
-Bias:
-
-- findings about missing tests, stale verification, unproven fixes, or uncovered state combinations
-
-#### Contract / Compliance
-
-Focus:
-
-- documented contract ownership and same-slice contract updates
-- schema/fixture parity
-- boundary metadata provenance
-- release claims, compatibility notes, and explicit no-contract-change rationale
-
-Bias:
-
-- findings about undocumented shape changes, backward-compat drift, missing contract co-change, or unverifiable compliance/release claims
+| Lens | Focus | Bias toward |
+|------|-------|-------------|
+| **Architecture / Reliability** | Ownership boundaries, adapter seams, single-writer discipline, degraded/error behavior, retry/timeout/recovery, cross-service race conditions | Hidden coupling, state drift, unsafe fallbacks, replay hazards |
+| **QA / State-Matrix** | State coverage (loading/empty/degraded/error/stale/recovery), runtime-parity proof, regression traps in polling/retries/import flows | Missing tests, stale verification, unproven fixes, uncovered state combinations |
+| **Contract / Compliance** | Contract ownership, same-slice updates, schema/fixture parity, boundary metadata provenance, release claims | Undocumented shape changes, backward-compat drift, missing contract co-change |
 
 ### Execution Flow
 
-1. Confirm escalation is warranted from the trigger list above.
-2. Load the minimum audit packet:
-   - intended change or release scope
-   - actual diff under review
-   - touched contracts, ADRs, and rules
-   - fresh verification evidence already produced
-3. Run the lenses sequentially in this order:
-   - architecture/reliability
-   - QA/state-matrix
-   - contract/compliance
-4. Record findings after each lens before moving to the next one.
-5. Use `review_mode=release_audit` for every finding in the audit.
-6. Use the lens-specific finding-ID prefix so later summaries can distinguish which lens raised the issue.
-7. If a later lens depends on an earlier unresolved HIGH finding, record that dependency in the later finding or summary decision instead of pretending the branch was fully reviewable.
+1. Confirm escalation is warranted from triggers above.
+2. Load minimum audit packet: intended change, actual diff, touched contracts/ADRs/rules, fresh verification evidence.
+3. Run lenses sequentially: architecture/reliability, QA/state-matrix, contract/compliance.
+4. Record findings after each lens before moving to the next.
+5. Use `review_mode=release_audit` and lens-specific finding-ID prefixes for all findings.
+6. If a later lens depends on an unresolved HIGH from an earlier lens, record that dependency.
 
 ### Completion Criteria
 
-A multi-lens audit is complete only when:
-
-- all three lenses were applied, even if one lens found no issues
-- all HIGH findings are either fixed or deferred with explicit rationale
-- any remaining MEDIUM or LOW findings are clearly triaged
-- a summary decision is recorded in MCP describing audit scope, outcome, and any deferred risk
+- All three lenses applied (even if one found no issues)
+- All HIGH findings fixed or deferred with rationale
+- Remaining MEDIUM/LOW findings triaged
+- Summary decision recorded in MCP with audit scope, outcome, and deferred risk
 
 ### Reporting Rules
 
-- Do not invent new MCP categories or tool parameters for the audit. The supported review-mode value is `release_audit`.
-- Keep per-lens classification in the `finding_id` prefix rather than trying to encode it into `review_mode`.
-- If a branch does not meet the trigger criteria, stay in normal branch-review mode and avoid inflating process cost unnecessarily.
-
-Normal branch review is still the default. Escalation is for branches where one reviewer pass is not enough to cover the failure surface honestly.
+- Only supported `review_mode` value is `release_audit`. Do not invent new categories.
+- Per-lens classification goes in the `finding_id` prefix, not in `review_mode`.
+- If triggers are not met, stay in normal branch-review mode.
 
 ## Finding Categories
 
@@ -399,41 +314,35 @@ Normal branch review is still the default. Escalation is for branches where one 
 
 ## Resolving Findings
 
-Review is not complete when findings are merely written down. Each finding needs an explicit lifecycle transition.
+Each finding needs an explicit lifecycle transition:
 
-- Fixed findings: use `update_review_finding(status="fixed", ...)`.
-- Deferred findings: use `update_review_finding(status="deferred", resolution_notes=...)`.
-- Wontfix findings: use `update_review_finding(status="wontfix", resolution_notes=...)`.
-- Regressed or partially fixed findings: use `update_review_finding(status="open", reopen_reason="...")`.
-- `record_decision(...)` may add rationale, but it does not replace the finding status update.
+| Outcome | Call |
+|---------|------|
+| Fixed | `update_review_finding(status="fixed", ...)` |
+| Deferred | `update_review_finding(status="deferred", resolution_notes=...)` |
+| Wontfix | `update_review_finding(status="wontfix", resolution_notes=...)` |
+| Regressed | `update_review_finding(status="open", reopen_reason="...")` |
 
-Before declaring the review complete:
+`record_decision(...)` may add rationale but does not replace the finding status update.
 
-1. verify findings were written successfully
-2. verify follow-up status transitions are reflected in MCP
-3. run `get_review_findings_summary` or equivalent to confirm the final open/deferred state matches the review verdict
+Before declaring review complete: (1) verify findings written, (2) verify status transitions reflected in MCP, (3) run `get_review_findings_summary` to confirm open/deferred state matches the verdict.
 
 ## MCP Handoff Integration (MANDATORY for Agents)
 
-After completing the review, every finding **must** be recorded into the MCP handoff database for cross-agent visibility. Do not rely solely on the markdown report.
+Every finding **must** be recorded into MCP handoff for cross-agent visibility.
 
 ### Required Execution Surface
 
-For this repo, agents must log review findings through the handoff MCP server from the orchestrator root, not by keeping findings only in chat or a markdown file.
-Task plans may update implementation checklist state, but review findings themselves stay in MCP handoff and the generated `CURRENT_TASK.md`, not in the task plan body.
+Agents log findings through the handoff MCP server from the orchestrator root. Task plans may update checklist state, but review findings stay in MCP handoff and `CURRENT_TASK.md`.
 
-Preferred pattern:
+Pattern:
 
-1. Run the review from the orchestrator root worktree.
-2. Use the repo-local MCP runtime (`python3 -m agent_handoff_mcp ...`) with explicit runtime args:
-   - `--workspace-root <orchestrator-root>`
-   - `--state-dir <orchestrator-root>/.task-state`
-   - `--current-task-path <orchestrator-root>/CURRENT_TASK.md`
-   - `--exports-dir <orchestrator-root>/.task-state/exports`
-3. Record each finding with `review-record` before mentioning it in chat.
-4. Verify the write with `review-list` or `review-summary`.
-5. Record the final review decision with `decision`.
-6. If the review creates worker-lane work, dispatch it with `make handoff-dispatch TASK=<task-ref>` or `make review-dispatch TASK=<task-ref>` from root.
+1. Review from orchestrator root worktree.
+2. Use repo-local MCP runtime with `--workspace-root`, `--state-dir`, `--current-task-path`, `--exports-dir`.
+3. Record each finding with `review-record` before mentioning in chat.
+4. Verify with `review-list` or `review-summary`.
+5. Record final review decision with `decision`.
+6. Dispatch lane work with `make handoff-dispatch TASK=<task-ref>` from root.
 
 Example:
 
@@ -456,7 +365,7 @@ agent-handoff-mcp \
 
 ### Recording Findings: Single vs Batch
 
-When logging **3 or more findings** in a single review pass, use `batch_record_review_findings` instead of repeated `record_review_finding` calls. The batch tool writes all items in one SQLite transaction and triggers a single `CURRENT_TASK.md` flush at the end, avoiding N redundant file rewrites.
+For 3+ findings in a single pass, use `batch_record_review_findings` (one SQLite transaction, one `CURRENT_TASK.md` flush).
 
 ```python
 # Preferred for 3+ findings
@@ -501,96 +410,68 @@ Do not mention a finding in chat before it exists in MCP handoff with a stable `
 
 ### Closing Findings (verification_evidence)
 
-When marking a finding as `fixed`, the `update_review_finding` / `review-update` tool accepts an optional `verification_evidence` parameter (string, max 2000 chars). This field is **required** when:
+`update_review_finding` accepts optional `verification_evidence` (string, max 2000 chars). **Required** when:
 
-- The finding has been reopened 2+ times (reopen escalation guard)
-- 2+ findings for the same task were already fixed in the last 60 seconds (batch-close guard)
+- Finding reopened 2+ times (reopen escalation guard)
+- 2+ findings for same task fixed in last 60 seconds (batch-close guard)
 
-Good evidence: `grep_search(query="function_name", includePattern="path/to/file.py")` output when native IDE search is available, terminal `grep -n 'function_name' path/to/file.py` output for Codex/terminal-only environments, `git diff` excerpts, or inline code snippets proving the fix exists. Bad evidence: restating the resolution notes or referencing the commit SHA alone (the commit guard already covers that).
+Good evidence: string-search output, `git diff` excerpts, code snippets proving the fix. Bad evidence: restating resolution notes or referencing commit SHA alone.
 
-When either guard rejects the closure, the response includes a `false_fix_guard` object identifying which guard fired and current thresholds.
+Rejected closures include a `false_fix_guard` object identifying which guard fired.
 
 ### Severity Mapping
 
-The MCP `severity` field maps directly to this guide's severity levels:
-
-- `HIGH` -> `high` -- must fix before merge
-- `MEDIUM` -> `medium` -- should fix; defer only with justification
-- `LOW` -> `low` -- fix if easy; otherwise next pass
+`HIGH` -> `high` (must fix before merge) | `MEDIUM` -> `medium` (should fix; defer with justification) | `LOW` -> `low` (fix if easy; otherwise next pass)
 
 ---
 
 ## ACE Reflection
 
-When recording review findings, note any `[sr-NNN]` or `[rg-NNN]` rule IDs referenced or contradicted by a finding. This is the signal used to evolve instruction-file strategy bullets.
+Note `[sr-NNN]` or `[rg-NNN]` rule IDs referenced or contradicted by findings.
 
-- A finding that **confirms** a rule (the rule prevented a real failure) increments its `helpful` counter.
-- A finding that **contradicts** a rule (the rule caused unnecessary friction or was wrong) increments its `harmful` counter.
-- Rules accumulate evidence over time; rules with `helpful=0 harmful>=2` become pruning candidates.
+- **Confirms** a rule -> increments `helpful`. **Contradicts** -> increments `harmful`.
+- Rules with `helpful=0 harmful>=2` become pruning candidates.
 
 ### Automated Detection (daemon-cycle)
 
-During a review cycle the **worker daemon** automatically scans new findings for ACE rule references after each `review_complete` event. When references are found:
+Worker daemon scans new findings for ACE rule references after each `review_complete` event:
 
-1. Detection records are appended to `.task-state/ace_reflect_log.jsonl` (fields: `finding_id`, `rule_id`, `contradicts`, `cycle`, `timestamp`).
-2. A `ace_reflect_detected` log event is emitted with the record count.
-3. **No instruction-file edits are made during the daemon cycle.** Counter updates are intentionally deferred.
+1. Records appended to `.task-state/ace_reflect_log.jsonl` (`finding_id`, `rule_id`, `contradicts`, `cycle`, `timestamp`).
+2. `ace_reflect_detected` log event emitted.
+3. **No instruction-file edits during daemon cycle.** Counter updates deferred.
 
-When more than 5 entries accumulate in `ace_reflect_log.jsonl`, the **orchestrator daemon** emits an `ace_reflect_pending` advisory warning with the pending count and a hint to run `make ace-reflect`.
+When >5 entries accumulate, orchestrator emits `ace_reflect_pending` advisory.
 
-Operational health states:
-
-- `defined`: ACE rules exist, but no detection log has been created yet or no counters have been applied.
-- `detecting`: detection records exist and at least one reflect-log entry is still pending apply.
-- `applied`: the reflect-log offset has caught up to the current log, so all logged detections have been processed.
-- `backfill needed`: historical review findings already reference `[sr-NNN]` / `[rg-NNN]`, but no reflect-log history exists yet. Seed ACE from those findings before assuming the process is idle.
+Operational health states: `defined` (no log yet), `detecting` (pending entries), `applied` (all processed), `backfill needed` (historical findings reference rules but no log exists).
 
 ### Applying Counter Updates
-
-From the orchestrator root, run:
 
 ```bash
 make ace-reflect TASK=<task-ref>
 ```
 
-This calls `ace_reflect.py __main__`, which:
+Reads pending entries from `.task-state/ace_reflect_log.jsonl`, increments `helpful`/`harmful` counters in `docs/agentic/instructions.md`, deduplicates via `.ace_dedup.json`. All local, no model calls.
 
-1. Reads all pending entries from `.task-state/ace_reflect_log.jsonl`.
-2. Increments the `helpful` or `harmful` counter on the matching bullet in the canonical instruction file (`docs/agentic/instructions.md`). `CLAUDE.md` and `GEMINI.md` are symlinks to the same file; do not list them separately.
-3. Records processed keys in a sidecar `.ace_dedup.json` file to prevent double-counting.
-4. Prints a summary: `processed=N  incremented=N  skipped=N`.
-
-The default path stays local and low-token:
-
-- daemon detection is local file/log work only
-- `make ace-reflect` is a local counter-apply step
-- any future model-backed ACE curation must remain optional and explicitly budgeted
-
-For findings that occurred outside a daemon cycle (e.g., manual reviews):
+For manual reviews outside daemon cycle:
 
 ```python
 from agent_handoff_mcp.orchestration.ace_reflect import ace_reflect_on_findings
-# Pass state_dir so the function writes records to the log AND applies counters
 ace_reflect_on_findings(findings, instruction_files, state_dir=Path(".task-state"))
 ```
 
 ### Curation Report
 
-To view pruning candidates without making any changes:
-
 ```bash
 make ace-curation-report
 ```
 
-This prints all bullets where `helpful=0 and harmful>=2` across all instruction files. Delete or revise those bullets in a focused PR after review.
-
-The counter-update procedure and Reflection triggers are also documented in [../instructions.md](../instructions.md) under **Document Maintenance -- ACE Playbook Evolution**.
+Prints all bullets where `helpful=0 and harmful>=2`. Delete or revise in a focused PR. Also documented in [../instructions.md](../instructions.md) under **Document Maintenance -- ACE Playbook Evolution**.
 
 ---
 
 ## Review Report Template
 
-> **Only produce this file when the user explicitly requests a written report.** Findings recorded via `record_review_finding` are the canonical store.
+> Only produce when the user explicitly requests a written report. MCP findings are the canonical store.
 
 Save to `docs/tasks/<version>/<branch-name>-branch-audit-findings.md`.
 

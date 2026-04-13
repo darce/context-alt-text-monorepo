@@ -65,32 +65,51 @@ Choose your domain to load targeted context. Always load the matching testing gu
 
 ## Agent Startup Protocol
 
-Use this checklist at session start, whether you are entering from a cold start, resuming a task mid-slice, or inheriting a lane from another agent.
+Run at every session start (cold start, mid-task re-entry, lane inherit).
 
-1. Apply the **[MCP Loading Protocol](rules/mcp-loading-protocol.md)** before any MCP read. Read [`maps/mcp-tool-routing.yaml`](maps/mcp-tool-routing.yaml) and surface only the MCP servers whose triggers (keywords / paths / roles) match the current prompt + task scope. `agent-handoff-mcp` is always loaded; `agent-orchestrator-mcp`, `context7`, and `computer-use` are on-demand and must be activated explicitly when their triggers fire. The protocol is harness-agnostic — Claude Code, Codex, and any future agent harness apply the same YAML rules.
-2. Query MCP handoff state. For routine identity-only checks (verifying you are on the right task before recording an event), call `get_handoff_state(sections="identity")` — it returns just `active` + `limits` and is the cheapest read on the surface. Use a full `get_handoff_state(task_ref="<task>")` only when you need a hot-state load (objective, open blockers, latest verification, latest decisions). The handoff envelope appends an `oversize_response: ...` advisory warning to `payload["warnings"]` whenever the serialised payload exceeds ~20 KB (~5,000 tokens) — when you see that warning, narrow the next call with `sections=...`, `detail="summary"`, lower `top_n_*`, or `fields=...` per [packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md](../../packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md).
-3. If you are working in a lane, load the lane inbox before editing. Use `make lane-inbox`, lane activity MCP reads, or the equivalent lane-status helper to pick up routed findings, blockers, and dispatch messages.
-4. Load role routing next. Choose the domain from the Role Selection table and read the linked context map, guidelines, and testing guide before touching code.
-5. Check open findings before proposing or repeating a fix. Use `review_findings(review={"operation":"list","status":"open"})` so you do not re-raise known issues or miss already-assigned follow-up work.
-6. Verify the contract surface before implementation. If the task touches a service, language, schema, or MCP boundary, confirm the owning contract exists in [contracts/](contracts/) and load it before writing code. If no contract exists for the boundary, follow the Cross-Boundary Change Protocol in [rules/development-workflow.md](rules/development-workflow.md) to scaffold one before proceeding.
-7. Decide whether `ctx7` is needed. If the slice depends on upstream library or framework behavior, apply the `ctx7` entry criteria below before relying on memory or stale local notes. (The MCP Loading Protocol's `context7` triggers and the ctx7 entry criteria are complementary — the protocol decides whether to _load_ the server, the criteria decide whether to _call_ it.)
-8. Ensure the work has an MCP task, even if there is no `docs/tasks/` plan. A task plan is optional; handoff state is not. If the current change does not fit the active task, switch to or initialize an ad hoc task before editing so the slice can be logged and reviewed.
+1. Apply the **[MCP Loading Protocol](rules/mcp-loading-protocol.md)** before any MCP read. Read [`maps/mcp-tool-routing.yaml`](maps/mcp-tool-routing.yaml) and surface only servers whose triggers match the current prompt + task scope. `agent-handoff-mcp` always loaded; others (`agent-orchestrator-mcp`, `context7`, `computer-use`) on-demand. Harness-agnostic.
+2. Query MCP handoff state. Routine check: `get_handoff_state(sections="identity")` (cheapest read — returns `active` + `limits`). Hot-state load: full `get_handoff_state(task_ref="<task>")`. On `oversize_response` warning (~20 KB/~5 k tokens), narrow with `sections=...`, `detail="summary"`, lower `top_n_*`, or `fields=...` per [token-efficient-usage.md](../../packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md).
+3. In a lane: run `make lane-inbox` to pick up routed findings, blockers, and dispatch messages before editing.
+4. Load role routing from the Role Selection table. Read the linked context map, guidelines, and testing guide.
+5. Check open findings: `review_findings(review={"operation":"list","status":"open"})`.
+6. Verify contracts. If the task touches a service/schema/MCP boundary, confirm the owning contract in [contracts/](contracts/). Missing contract → scaffold one per [development-workflow.md](rules/development-workflow.md) before proceeding.
+7. Decide `ctx7` need. Upstream library/framework behavior → apply ctx7 entry criteria below. (Loading Protocol decides whether to _load_ the server; entry criteria decide whether to _call_ it.)
+8. Ensure the work has an MCP task. Task plan optional; handoff state not. Wrong active task → switch or initialize before editing.
 
 Cold start vs. mid-task re-entry:
 
-- Cold start: if no handoff state exists yet, initialize it, then continue through the checklist in order.
-- Mid-task re-entry: after loading hot state, use targeted `search_handoff` queries to recover prior slice summaries, earlier decisions, or older findings relevant to the current change. Do not replay the full task history into prompt context.
+- Cold start: initialize handoff state if none exists, then continue in order.
+- Mid-task re-entry: load hot state, then use `search_handoff` for prior slice summaries or older findings. Do not replay full task history.
 
 If MCP handoff is unavailable:
 
-- Read `DASHBOARD.md` only as a stale human-readable fallback; `CURRENT_TASK.md` is machine-readable state.
-- Treat the missing MCP path as a blocker and record or report that unavailability as soon as MCP access returns.
+- `DASHBOARD.md` = stale human-readable fallback; `CURRENT_TASK.md` = machine-readable state.
+- Treat missing MCP as a blocker; record/report when access returns.
 
 ---
 
 ## Critical Rules
 
 These rules are **universal** and apply to every task regardless of domain.
+
+### Output Brevity (MANDATORY)
+
+> **Default to terse output. Strip filler, hedging, and elaboration. State the result, not the journey.**
+
+Verbosity degrades accuracy on reasoning tasks — models talk themselves into wrong answers. Brevity constraints cut output ~60-75% while improving correctness. Reference: [Hakim 2025](https://arxiv.org/html/2604.00025v1).
+
+| Surface | Standard |
+|---------|----------|
+| Chat | One sentence per update. ≤2 sentence summary. No preamble. |
+| Handoff rationale | Decision first. ≤1,500 chars. Cut recaps. |
+| Review findings | One paragraph: evidence + impact. |
+| Slice decisions | Template sections only. No padding. |
+| Code comments | Default zero. One line max, WHY only. |
+| Commit messages | Outcome in subject. Body only when diff doesn't explain why. |
+
+Planning docs, contracts, and error messages need completeness — but still cut filler.
+
+**Heuristics:** Sentence removable without information loss? Remove it. Paragraph restates the diff? Delete it. Opens with "I" + verb? Lead with the finding. Rationale recaps the problem? Cut the recap. Lists over paragraphs.
 
 ### Plugin Boundary Rule
 
@@ -164,13 +183,14 @@ If a task seems to require external changes, STOP and propose an alternative wit
 - [rg-013] helpful=1 harmful=0 :: **`agent_handoff_mcp/core.py` must remain pure handoff-state CRUD.** No orchestration imports, no subprocess calls, no lock management. Scope: the standalone `agent-handoff-mcp` package available to the active workspace. Enforce during code review.
 - [rg-014] helpful=1 harmful=0 :: **`agent_orchestrator_mcp` modules must use late-binding imports** (function-level) for `agent_handoff_mcp` symbols to preserve the clean split seam and avoid load-time coupling. Scope: `packages/agent-orchestrator-mcp/`.
 - [rg-015] helpful=1 harmful=0 :: **Boundary adapters must not invent contract metadata.** When a controller/client/adapter wraps or normalizes remote payloads, every envelope field (`limit`, `offset`, `total`, `data_source`, status/projection metadata) must come from the request, the upstream payload, or an explicitly documented fallback. Never fabricate pagination or provenance metadata from convenience guesses like `count(payload)` unless the contract explicitly defines that derivation. If the upstream shape violates the expected contract, return an explicit error instead of silently supporting both shapes.
+- [rg-017] helpful=1 harmful=0 :: **Never force-remove a dirty linked worktree without triaging every uncommitted file.** Uncommitted edits in a linked worktree are local to that worktree and do not exist in the root or on any branch. `git worktree remove --force` on a dirty worktree permanently discards those edits. Before removing: run `git -C <path> status --short`; if dirty files exist, commit task-owned changes on the branch, move cross-task bleed to the root worktree, and confirm redundant files against main. If >5 dirty files or multiple task refs are present, stop and ask the user. See [development-workflow.md § Dirty Worktree Teardown](rules/development-workflow.md#dirty-worktree-teardown-mandatory).
 - [rg-016] helpful=0 harmful=0 :: **PHP runtime autoload parity must match tests.** New runtime classes added under `apps/prototype-wp-alt-context/src/` with WordPress-style filenames (`class-*.php`, `interface-*.php`) are not PSR-4 autoloadable via Composer by default. When a new class is introduced in this naming scheme, either add the explicit `require_once` from the owning runtime entrypoint or use a PSR-4-compliant filename, and verify with a real runtime-style check such as `php -r "require 'vendor/autoload.php'; var_export(class_exists('AltContext\\\\Foo\\\\Bar'));"`
 
 ### Tool Selection Discipline
 
-> **Enforcement layer**: `.github/copilot-instructions.md` contains the mandatory decision tree and branch-isolation rule and is auto-injected into every VS Code Copilot session. `.github/hooks/terminal-guard.py` intercepts `run_in_terminal` calls at the PreToolUse hook, and `.github/hooks/guard-main-branch.py` blocks code-file edits on `main` in the VS Code harness. Claude Code keeps the parallel branch-isolation hook in `.claude/settings.json`.
+> **Enforcement layer**: `.github/copilot-instructions.md` (auto-injected into VS Code Copilot sessions), `.github/hooks/terminal-guard.py` (intercepts `run_in_terminal`), `.github/hooks/guard-main-branch.py` (blocks code edits on `main`). Claude Code parallel hook: `.claude/settings.json`.
 
-Agents in this project run in two environments with different tool surfaces. Using the wrong tool for the environment wastes tokens and causes retries. This section exists because repeated terminal-output bloat (16 KB+ of stale scrollback per command) caused entire review sessions to choke on scope discovery that native tools could have resolved in one call.
+Two environments, different tool surfaces. Use the native tool for the environment; wrong-tool calls waste tokens.
 
 **VS Code agents** (GitHub Copilot, Copilot Chat, VS Code extensions) have native tools that bypass the terminal entirely:
 
@@ -188,32 +208,30 @@ Reserve terminal for operations with no native-tool equivalent: test execution, 
 
 **Terminal output discipline** (both environments, when terminal is required):
 
-- Always pipe through `tail -n 30`, `head -n 50`, or `grep -E '<pattern>'` for commands that may produce unbounded output.
-- **Test runs (MANDATORY pattern):** Always use `tee` to capture output to a deterministic `/tmp/` path, then read the file with `read_file`. This avoids stale-scrollback pollution entirely. Do NOT rely on terminal output alone for test results.
+- Pipe through `tail -n 30`, `head -n 50`, or `grep -E '<pattern>'` for unbounded output.
+- **Test runs (MANDATORY):** Capture with `tee` to `/tmp/`, then `read_file` the capture. Do NOT rely on terminal output alone.
   - Python (apps): `cd <app-dir> && pyenv exec python -m pytest <path> -q 2>&1 | tee /tmp/pytest_<suite>.txt`
-  - Python (in-monorepo packages — `agent-handoff-mcp`, `agent-orchestrator-mcp`): **always use the Makefile target**, never a direct `pytest` command. `cd packages/agent-handoff-mcp && make test-handoff 2>&1 | tee /tmp/pytest_handoff.txt` (or `make test-orchestrator` from the orchestrator package directory). The Makefile sets `PYTHONPATH` to the current worktree's `src/` directory; direct `pytest` invocations resolve `import agent_handoff_mcp` to whichever editable install was last registered in the Python environment, which silently bypasses linked-worktree refactors. Both packages' `tests/conftest.py` enforce this with a `pytest_sessionstart` guard that aborts the session if the resolved package source does not match the current worktree. See [rules/testing-python.md § In-Monorepo Package Test Invocation](rules/testing-python.md#in-monorepo-package-test-invocation-mandatory) for the rationale and the `AHMCP-10` regression that motivated the enforcement.
+  - Python (in-monorepo packages): **always use the Makefile target**, never direct `pytest`. `cd packages/agent-handoff-mcp && make test-handoff 2>&1 | tee /tmp/pytest_handoff.txt` (or `make test-orchestrator`). The Makefile sets `PYTHONPATH` to the current worktree's `src/`; direct `pytest` resolves to whichever editable install is registered env-wide. Both `tests/conftest.py` enforce this with a `pytest_sessionstart` guard. See [rules/testing-python.md § In-Monorepo Package Test Invocation](rules/testing-python.md#in-monorepo-package-test-invocation-mandatory).
   - Vitest: `cd <app-dir> && npx vitest run <path> 2>&1 | tee /tmp/vitest_<suite>.txt`
   - PHP: `cd <app-dir> && vendor/bin/phpunit <path> 2>&1 | tee /tmp/phpunit_<suite>.txt`
-  - Then immediately: `read_file("/tmp/pytest_<suite>.txt")` to get clean output. Never `cat` the file in terminal.
-  - If initial terminal output looks truncated or polluted, skip re-running; just `read_file` the `/tmp/` capture.
-- If output exceeds expectations, redirect to `/tmp/<descriptive-name>.txt` and read with `read_file` (VS Code) or `sed -n` (Codex); do not re-run the command.
-- Long-lived terminal sessions accumulate scrollback. A new `run_in_terminal` call in a polluted session can return 16 KB+ of stale output from prior commands. Prefer short, filtered commands over long pipelines.
-- **Background terminals lack pyenv virtualenv activation.** Only use the foreground terminal (or a terminal where `pyenv activate` has been run) for Python test commands. If the foreground session has stale scrollback, the `tee /tmp/` pattern above solves it without needing a new terminal.
-- **Use env vars in commands and settings.** Do not hardcode user-local absolute filesystem paths such as `/Users/...` in commands, docs, or workspace configuration. Prefer `${workspaceFolder}`, `${env:HOME}`, `${PYENV_ROOT:-$HOME/.pyenv}`, and `${REPO_ROOT:-$PWD}`.
-- **Package-test Python harness workaround.** For `agent-orchestrator-mcp` in this monorepo and `agent-handoff-mcp` in its standalone checkout, do not invoke IDE Python environment setup helpers. The workspace should pin `${env:HOME}/.pyenv/versions/description-service/bin/python`; run package tests from the foreground terminal with `PYENV_VERSION=description-service`, `pyenv exec python`, or `${PYENV_ROOT:-$HOME/.pyenv}/versions/description-service/bin/python`. If the IDE shows `Configuring a Python Environment` or `Preparing` for those package paths, stop retrying the harness and ask the user to run the terminal command directly.
+  - Then: `read_file("/tmp/pytest_<suite>.txt")`. Never `cat` in terminal. If output is truncated/polluted, just `read_file` the capture.
+- Excess output → redirect to `/tmp/<name>.txt` and `read_file` (VS Code) or `sed -n` (Codex); do not re-run.
+- **Background terminals lack pyenv virtualenv activation.** Use foreground terminal for Python tests. Stale scrollback → `tee /tmp/` pattern.
+- **Use env vars**, not hardcoded paths. Prefer `${workspaceFolder}`, `${env:HOME}`, `${PYENV_ROOT:-$HOME/.pyenv}`, `${REPO_ROOT:-$PWD}`.
+- **Package-test Python harness workaround.** For `agent-orchestrator-mcp` / `agent-handoff-mcp`, do not invoke IDE Python environment setup. Pin `${env:HOME}/.pyenv/versions/description-service/bin/python`; run from foreground terminal with `PYENV_VERSION=description-service`. If IDE shows `Configuring a Python Environment`, stop and ask the user to run the terminal command.
 
 ### Task Document Rules
 
 - Consolidate all checklists at the **bottom** of task documents. No scattered `- [ ]` items. No time estimates.
 - Planning docs must stay internally consistent (current state vs checklist vs success criteria vs ADR terms).
-- When reviewing task plans, epics, roadmaps, ADRs, or other planning documents for gaps, bugs, obsolete assumptions, or unnecessary complexity, record every finding in MCP handoff before presenting it in chat.
-- Do not log branch-review or plan-review findings, `finding_id`s, or fix-status notes into task plans. MCP handoff is the canonical store for review results; `DASHBOARD.md` is the generated human-readable mirror, and `CURRENT_TASK.md` is the generated machine-readable snapshot.
-- Reference code locations by **function/target name**, not line numbers. Line numbers go stale; names survive refactors.
-- Every pseudocode function or CLI command in a plan must map to an existing API/import or be explicitly marked as "new, to be created." Unresolved pseudocode references cause implementation ambiguity.
-- Validate enum values, status strings, and filter parameters used in plans against the actual API or schema. Using a status value that the API rejects (e.g., `done` when valid values are `planned/active/blocked/review/merged/closed`) is a plan bug.
-- Do not list a file in "Functions to Change" unless it actually requires modification. If a file only needs verification (no code changes), mark it as verification-only.
-- For MCP write tools, the live tool schema is authoritative over examples, templates, or prior-session memory. Prefer the minimal valid payload for common writes instead of copying rich historical examples with optional fields.
-- If an MCP write fails validation because a documented example or template drifted from the live signature, retry once with the minimal live-valid payload and update the stale guidance surface in the same slice.
+- Record every planning-review finding in MCP handoff before presenting it in chat.
+- Do not log findings, `finding_id`s, or fix-status notes into task plans. MCP handoff is the canonical store; `DASHBOARD.md` and `CURRENT_TASK.md` are generated mirrors.
+- Reference code locations by **function/target name**, not line numbers.
+- Pseudocode functions and CLI commands in plans must map to an existing API/import or be marked "new, to be created."
+- Validate enum values and status strings in plans against the actual API/schema.
+- Do not list a file in "Functions to Change" unless it requires modification. Verification-only → mark as such.
+- Live MCP tool schema is authoritative over examples or templates. Prefer the minimal valid payload.
+- MCP write fails validation from stale docs → retry with minimal live-valid payload and update the stale guidance.
 
 ### Naming Convention: acx\_\* / ACX\_\* Prefix
 
@@ -265,40 +283,37 @@ For normal task switching, always **commit before switching** branches; do not u
 
 ### MCP Handoff Contract (MANDATORY)
 
-You are one of multiple concurrent agents. MCP handoff tools are required for task state coordination.
+Multiple concurrent agents share state through MCP handoff tools.
 
-- Every code change must be logged to MCP handoff with a decision entry before review or completion. The decision must summarize what changed and how it was verified so handoff remains the canonical review trail.
+- Every code change → log a decision entry before review or completion. Summarize what changed and how it was verified.
 
 ## Selective Handoff Loading
 
-Treat handoff state as a tiered memory system. Load only what is needed for the current slice.
+Tiered memory. Load only what the current slice needs.
 
-- Hot state: always load at startup. This includes the current objective, open findings, open blockers, latest verification, and latest 3 decisions.
-- `CURRENT_TASK.md` must expose the latest decision separately from the recent-decisions list so a resuming agent can see the last handoff at a glance.
-- Warm state: load on demand when the current slice needs it. This includes recent worker reports, recent lane activity, active artifacts tied to the current slice, and nearby plan-cursor history.
-- Cold state: retrieve only through targeted search. This includes archived findings, superseded plan cursors, verbose logs, and large artifacts.
+- **Hot** (always at startup): objective, open findings, open blockers, latest verification, latest 3 decisions.
+- `CURRENT_TASK.md` must expose the latest decision separately from the recent-decisions list.
+- **Warm** (on demand): recent worker reports, lane activity, active artifacts, nearby plan-cursor history.
+- **Cold** (targeted search only): archived findings, superseded plan cursors, verbose logs, large artifacts.
 
 `task_ref` granularity:
 
-- Default to one `task_ref` per reviewable feature or task-plan implementation stream, not one per commit and not one for an entire multi-feature epic.
-- Use an epic-level `task_ref` for planning, decomposition, and cross-task coordination only. When implementation starts for a distinct task plan or feature stream, switch into that implementation task.
-- Stay on the same `task_ref` while the objective, acceptance criteria, and review packet are still obviously "the same work."
-- Switch `task_ref` when the active objective changes, when a separate review packet would be required, or when leaving the current task active would make `CURRENT_TASK.md` show the wrong latest decision for the work you are doing.
-- Do not create a new `task_ref` for every micro-slice inside the same task plan. Record multiple `slice_complete_*` decisions under the same implementation task until that task is actually done.
+- One `task_ref` per reviewable feature or task-plan stream — not per commit, not per epic.
+- Epic-level `task_ref` for planning/coordination only. Switch to implementation task when coding starts.
+- Stay on same `task_ref` while objective and review packet are "the same work."
+- Switch when the objective changes or `CURRENT_TASK.md` would show the wrong latest decision.
+- Do not create a new `task_ref` per micro-slice. Multiple `slice_complete_*` decisions under one task until done.
 
 Loading rules:
 
-- Do not replay full handoff history into prompt context. Use `search_handoff` or targeted artifact lookup for older records.
-- After recording a decision, finding, blocker, or test result, do not immediately re-read the full task state just to confirm it. Trust the write confirmation unless a later step needs fresh state.
-- When resuming a task, start with hot state, then expand to warm or cold state only if the active slice cannot be completed from the smaller working set.
+- Do not replay full history. Use `search_handoff` for older records.
+- Do not re-read full state after a write just to confirm. Trust the write confirmation.
+- Resume: hot state first, expand to warm/cold only if the slice requires it.
 
 Canonical handoff runtime:
 
-- Use `agent-handoff-mcp` exclusively for handoff state.
-- Do not use handoff tools or CLI subcommands from `scripts/mcp/unified_server.py`; they are deprecated and fail by design.
-- The legacy unified server is now repo-intel-only.
-- Current monorepo installs use the checked-in package path. After E13 extraction, the canonical external source is the private git+ssh repo `darce/mcp-agent-handoff`; keep the same binary shape and use [contracts/agent-handoff-mcp.md](contracts/agent-handoff-mcp.md) as the live install reference.
-- Retirement of `scripts/mcp/unified_server.py` is tracked in [../tasks/tech-debt/unified-server-retirement.md](../tasks/tech-debt/unified-server-retirement.md).
+- `agent-handoff-mcp` exclusively. Legacy `scripts/mcp/unified_server.py` is deprecated (repo-intel-only); retirement tracked in [unified-server-retirement.md](../tasks/tech-debt/unified-server-retirement.md).
+- Install reference: [contracts/agent-handoff-mcp.md](contracts/agent-handoff-mcp.md). After E13 extraction, canonical external source is `darce/mcp-agent-handoff` (private git+ssh).
 
 Primary binary shape:
 
@@ -310,72 +325,68 @@ Primary binary shape:
 
 ## ctx7 Entry Criteria
 
-Use `ctx7` for current upstream documentation when implementation depends on library or framework behavior that may have drifted since the repo docs were written.
+Use `ctx7` when implementation depends on upstream library/framework behavior that may have drifted.
 
-Use `ctx7` when:
+Use when:
 
-- modifying code that depends on an upstream framework or library API such as FastAPI, SQLAlchemy, Radix UI, WordPress hooks, React, or MCP SDK behavior
-- verifying version-specific behavior, migration guidance, or deprecation details that are not stable enough to trust from memory
-- confirming the current supported API surface for a dependency named in [maps/tech-stack.md](maps/tech-stack.md)
+- code depends on an upstream API (FastAPI, SQLAlchemy, Radix UI, WordPress hooks, React, MCP SDK, etc.)
+- verifying version-specific behavior, migration guidance, or deprecation details
+- confirming the current API surface for a dependency in [maps/tech-stack.md](maps/tech-stack.md)
 
-Do not use `ctx7` for:
+Do not use for:
 
 - repo-local rules, contracts, task plans, handoff state, or architecture decisions
-- facts already owned by repo documents such as [instructions.md](instructions.md), [contracts/](contracts/), or [maps/tech-stack.md](maps/tech-stack.md)
-- broad context assignment when a targeted local document answers the question
+- facts owned by [instructions.md](instructions.md), [contracts/](contracts/), or [maps/tech-stack.md](maps/tech-stack.md)
+- broad context when a targeted local document answers the question
 
 Fallback and caching:
 
-- If `ctx7` is unavailable, use [maps/tech-stack.md](maps/tech-stack.md) as the static version manifest and note the `ctx7` gap in handoff when it materially affects confidence.
-- Before issuing a new `ctx7` lookup for a dependency, search recent handoff decisions for the package name, resolved library id, or prior query so you can reuse an existing answer when it is still relevant.
-- When a `ctx7` lookup materially changes an implementation decision, record the resolved library id and the query in the handoff decision so later agents do not spend tokens rediscovering the same upstream detail.
-- Use this cache format inside the decision rationale when relevant:
+- Unavailable → use [maps/tech-stack.md](maps/tech-stack.md) as static manifest; note `ctx7` gap in handoff when it affects confidence.
+- Before a new lookup, search recent handoff decisions for the package name or prior query to reuse existing answers.
+- When a lookup changes an implementation decision, record in handoff:
   - `ctx7 library id: /org/project[/version]`
   - `ctx7 query: <targeted question>`
   - `ctx7 impact: <what changed in implementation or review scope>`
-- Do not bulk-copy upstream docs into repo documents just because a `ctx7` lookup was used. Cache the pointer and the decision impact, not a prose dump of the source.
+- Cache the pointer and decision impact, not a prose dump of upstream docs.
 
 ## Periodic Health Reviews
 
-Full during-work and end-of-slice checklists, healthy/unhealthy pattern definitions, and memory health review: [playbooks/ace-pruning-playbook.md](playbooks/ace-pruning-playbook.md).
+Full checklists and pattern definitions: [playbooks/ace-pruning-playbook.md](playbooks/ace-pruning-playbook.md).
 
-Key gates (always active, every slice):
+Key gates (every slice):
 
-1. Every slice that changes files must end with a structured `slice_complete_*` decision. Format: [templates/slice-complete-template.md](templates/slice-complete-template.md). The format is enforced at write time.
-2. After recording, call `generate_current_task_md(task_ref=<active-task-ref>)`. Always pass the currently active task's ref.
-3. Do not leave `CURRENT_TASK.md` pointing at a stale slice. If the latest decision does not describe the files changed this turn, record the missing decision before handoff.
+1. Every file-changing slice must end with a `slice_complete_*` decision. Format: [templates/slice-complete-template.md](templates/slice-complete-template.md). Enforced at write time.
+2. Call `generate_current_task_md(task_ref=<active-task-ref>)` after recording.
+3. Do not leave `CURRENT_TASK.md` stale. Record the missing decision before handoff if needed.
 4. Update singleton state via `set_handoff_state(..., expected_revision=<current>, actor={ ... })`.
-5. Include a one-line status marker in the response: `Handoff updated: yes`.
+5. Include `Handoff updated: yes` in the response.
 
 Write-tool targeting rule:
 
-- Most write tools accept optional `task_ref`. When omitted, they target the active task.
-- In concurrent, cross-task, or review-audit workflows, pass `task_ref` explicitly on writes.
-- `record_event` and `next_actions` support explicit `task_ref`. For `record_event`, pass it inside the typed `event` payload.
-- To switch tasks, use `switch_task(task_ref)`. For in-place updates to the current task, use `set_handoff_state(...)`.
+- Write tools default to the active task when `task_ref` is omitted. In cross-task workflows, pass `task_ref` explicitly.
+- `record_event`: pass `task_ref` inside the `event` payload. `switch_task(task_ref)` to change tasks; `set_handoff_state(...)` for in-place updates.
 
-During-work discipline (abbreviated):
+During-work discipline:
 
 - Record blockers immediately: `record_event(event={event_kind: "blocker", task_ref: ..., actor: {...}, ...})`.
-- Record verification: `record_event(event={event_kind: "test_result", task_ref: ..., actor: {...}, ...})`. Keep `result` as a concise proof line.
-- Record findings with `review_findings(...)`. Use `review_findings(review={operation: "record", ...}, actor={ ... })` for 1-2 findings and `review_findings(review={operation: "batch_record", findings: [...], ...}, actor={ ... })` for 3 or more — one atomic write, one `CURRENT_TASK.md` flush, per-item results returned.
-- **Review findings live in handoff, not in task plans.** Never paste a finding list into `docs/tasks/**`, `docs/epics/**`, or any `*task-plan*.md`. The `scripts/hooks/guard-task-plan-findings.py` PreToolUse hook (wired into both `.claude/settings.json` and `.github/hooks/terminal-guard.json`) rejects any Edit/Write that introduces three or more consecutive bulleted lines opening with a finding-style identifier (`AOMCP-3-BR-04`, `H-1`, `E15-7-BR-02`, etc.). The same scanner runs via `make lint-task-plans` in `make check-all`, and exposes a `--scan-staged` mode for opt-in `git pre-commit` integration. If a task plan needs to reference findings, link to them by ID (`see AOMCP-3-BR-04 in handoff`) instead of duplicating their bodies. Motivated by AHMCP-14: pasted finding lists duplicate the source of truth, escape `handoff_close_check`, and silently rot the moment a finding is updated, deferred, or fixed.
-- **Regenerate `CURRENT_TASK.md`** after any state-changing handoff operation — not just slice completions. This includes `record_event`, `review_findings(operation="update")`, and `review_findings(operation="batch_record")`. Call `generate_current_task_md(task_ref=<active-task-ref>)` so `CURRENT_TASK.md` stays machine-readable and `DASHBOARD.md` stays human-readable.
+- Record verification: `record_event(event={event_kind: "test_result", ...})`. Keep `result` concise.
+- Record findings: `review_findings(review={operation: "record", ...})` for 1-2; `batch_record` for 3+ (atomic write, single `CURRENT_TASK.md` flush).
+- **Findings live in handoff, not in task plans.** The `scripts/hooks/guard-task-plan-findings.py` hook rejects 3+ consecutive finding-style bullets in task plans. Same scanner runs via `make lint-task-plans`. Reference findings by ID (`see AOMCP-3-BR-04 in handoff`), never by pasting.
+- **Regenerate `CURRENT_TASK.md`** after every state-changing operation (`record_event`, `review_findings(operation="update"|"batch_record")`).
 - Validate review state with `get_review_findings_summary(...)` and `review_findings(review={"operation":"list", ...})`, not direct `sqlite3`.
 
 Read discipline:
 
 - Do not query `.task-state/handoff.db` directly when MCP tools are available.
-- Use `get_handoff_state` for active-task snapshot, `get_review_findings_summary` (on `agent-orchestrator-mcp`) for counts, and `review_findings(review={"operation":"list", ...})` for detailed review verification.
-- `review_findings(review={"operation":"list","finding_id":...})` accepts `finding_id` (human-readable string like `"H-OCI-28"`) for a single-finding lookup. Prefer `finding_id` when referencing findings from review output.
-- `review_findings(operation="list")` and `get_review_findings_summary` accept an optional `task_ref` to query findings on a non-active task. Use this instead of switching active state when verifying findings across multiple tasks.
-- Do **not** use legacy `scripts/mcp/unified_server.py` handoff tools or CLI subcommands. The only supported handoff surface is the packaged `agent-handoff-mcp` binary described in [contracts/agent-handoff-mcp.md](contracts/agent-handoff-mcp.md). See [../tasks/tech-debt/unified-server-retirement.md](../tasks/tech-debt/unified-server-retirement.md) for the tracked removal follow-up.
+- `get_handoff_state` for active-task snapshot, `get_review_findings_summary` for counts, `review_findings(operation="list")` for detailed verification.
+- `finding_id` (e.g. `"H-OCI-28"`) for single-finding lookup. Optional `task_ref` on list/summary to query non-active tasks without switching.
+- Do **not** use legacy `scripts/mcp/unified_server.py`. Only supported surface: `agent-handoff-mcp` per [contracts/agent-handoff-mcp.md](contracts/agent-handoff-mcp.md). Removal tracked in [unified-server-retirement.md](../tasks/tech-debt/unified-server-retirement.md).
 
 State integrity invariants:
 
-- Treat import/restore payloads as untrusted input. Validate payload shape and required object types before writes; malformed payloads must return `ok: false` (never silent success/no-op).
-- Preserve write provenance on mutable records (for example review findings): creation metadata (`agent`, `branch`, `commit_sha`) is immutable once set; status updates may fill missing fields but must not overwrite recorded provenance.
-- **Commit SHA provenance discipline (MANDATORY):** Whenever a write path accepts a `commit_sha` field — `record_event(actor=...)`, `set_handoff_state(actor=...)`, `close_slice(actor=...)`, `update_review_finding(verified_commit_sha=...)`, `handoff_close_check(current_commit_sha=...)`, etc. — pass the **canonical 40-character SHA** from `git rev-parse <abbrev>` or `git rev-parse HEAD`. Never type the suffix from memory after seeing a 7-character abbreviation in `git commit` output. The MCP write path validates every `commit_sha` against the active git repo via `git rev-parse --verify <sha>^{commit}` and rejects fabricated SHAs with an `InvalidCommitShaError` pointing at this rule. Abbreviated SHAs that resolve uniquely are auto-expanded to the full 40-char form before being stored, so callers may pass `bb24ee59` and the audit trail still records `bb24ee5945273ebc4663b6d264023d9542823310`. Validation is bypassed in test sessions via `AGENT_HANDOFF_SKIP_SHA_VALIDATION=1` (set automatically by both packages' `tests/conftest.py`); production callers always run with validation enabled. See [rules/testing-python.md § Commit SHA Provenance Discipline](rules/testing-python.md#commit-sha-provenance-discipline-mandatory) for the full rationale and the `AHMCP-10`/`AHMCP-11` audit-trail bug that motivated the enforcement.
+- Import/restore payloads are untrusted. Validate shape before writes; malformed → `ok: false`.
+- Write provenance is immutable once set. Status updates may fill missing fields but must not overwrite recorded provenance.
+- **Commit SHA provenance (MANDATORY):** Pass the **canonical 40-character SHA** from `git rev-parse HEAD` to every `commit_sha` field. Never type from memory. The write path validates via `git rev-parse --verify <sha>^{commit}` and rejects fabricated SHAs (`InvalidCommitShaError`). Abbreviated SHAs that resolve uniquely are auto-expanded. Validation bypassed in tests via `AGENT_HANDOFF_SKIP_SHA_VALIDATION=1`. See [rules/testing-python.md § Commit SHA Provenance Discipline](rules/testing-python.md#commit-sha-provenance-discipline-mandatory).
 
 Failure policy:
 

@@ -14,49 +14,43 @@
 | ESLint                  | `cd apps/prototype-wp-alt-context && npm run lint`                                  |
 | Architecture compliance | `cd apps/prototype-wp-alt-context && node scripts/check-architecture-compliance.js` |
 
-When a UI-behavior fix is claimed, require fresh command evidence on the current branch state for:
-
-- `typecheck`
-- `lint`
-- the targeted Vitest coverage for the changed behavior
-
-Do not accept "UI fix is done" claims based on screenshots, manual browsing, or stale test output alone.
+Require fresh evidence (`typecheck`, `lint`, targeted Vitest coverage) for any claimed UI fix. Screenshots, manual browsing, or stale output alone are insufficient.
 
 ---
 
 ## Type Safety
 
 - [ ] No non-null assertions (`!`) on API data — use type guards.
-- [ ] Assertion helpers, not `console.assert` — internal invariants use `asserts ...` / exhaustive helpers, while API/input validation stays explicit.
-- [ ] No `undefined as T` or `x as T` casts — use proper union return types.
+- [ ] Assertion helpers (`asserts ...`), not `console.assert` — API/input validation stays explicit.
+- [ ] No `undefined as T` or `x as T` casts — use union return types.
 - [ ] No ad-hoc query keys — all keys through `queryKeys` factory.
 
 ---
 
 ## Frontend Patterns
 
-- [ ] **No `!important` in SCSS** — increase selector specificity.
-- [ ] **Design tokens for colors** — hex literals as CSS custom properties.
-- [ ] **No inline styles for layout** — grid/flex patterns in SCSS classes.
-- [ ] **API calls go through API modules** — no direct `fetchApi` imports in components.
-- [ ] **`URLSearchParams` for query strings** — no string interpolation for URL params.
+- [ ] **No `!important` in SCSS** — increase specificity instead.
+- [ ] **Design tokens for colors** — hex literals → CSS custom properties.
+- [ ] **No inline styles for layout** — use SCSS classes.
+- [ ] **API calls through API modules** — no direct `fetchApi` in components.
+- [ ] **`URLSearchParams` for query strings** — no string interpolation.
 
 ---
 
 ## State Surface Correctness
 
-- [ ] **UI state matrix** — changed UI surfaces explicitly cover empty, loading, error, degraded, and offline states.
-- [ ] **Abort/cancel semantics** — expected cancellation does not surface noisy console warnings or error UI; only unexpected cancellation should behave like failure.
-- [ ] **API-boundary payload validation** — components tolerate malformed JSON, partial payloads, and missing optional fields without white-screen or unhandled-rejection behavior.
-- [ ] **Query invalidation regression** — after successful mutation, invalidation/refetch cannot silently restore stale pre-mutation UI state.
+- [ ] **UI state matrix** — changed surfaces cover empty, loading, error, degraded, and offline states.
+- [ ] **Abort/cancel semantics** — expected cancellation produces no console warnings or error UI.
+- [ ] **API-boundary payload validation** — components tolerate malformed JSON, partial payloads, missing optional fields without white-screen crashes.
+- [ ] **Query invalidation regression** — post-mutation invalidation/refetch cannot silently restore stale UI state.
 
 ---
 
 ## Code Duplication
 
-- [ ] **Frontend components** — shared algorithms in reusable components, not inlined.
-- [ ] **`retry: false` in QueryClient** — test QueryClients disable retries.
-- [ ] **Adequate coverage for new components** — render, loading, error, and primary interaction.
+- [ ] **Shared algorithms** in reusable components, not inlined.
+- [ ] **`retry: false`** in test QueryClients.
+- [ ] **New component coverage** — render, loading, error, and primary interaction.
 
 ---
 
@@ -76,7 +70,7 @@ Component size limits and hook counts are enforced by `check-architecture-compli
 
 When the diff touches `js/admin/pages/workbench/`, overlay hooks, or sync-status surfaces:
 
-- [ ] **URL param source of truth** — overlay visibility is driven by the `panel` query param via `useOverlayParam`, not duplicated in React state.
-- [ ] **No stale closure captures** — `setSearchParams` uses the functional updater form to avoid capturing stale params.
+- [ ] **URL param source of truth** — overlay visibility driven by `panel` query param via `useOverlayParam`, not React state.
+- [ ] **No stale closure captures** — `setSearchParams` uses functional updater form.
 - [ ] **Query invalidation on mutation settle** — conflict resolution invalidates `conflicts`, `outbox`, `sync`, and affected cluster queries; dead-letter retry/discard invalidates `outbox` and `sync`.
-- [ ] **Sync health coverage** — UI branches on the `SyncHealth` union cover all states (`healthy`, `queued`, `stale`, `conflicts`, `failures`, `offline`) without falling back to stale copy.
+- [ ] **Sync health coverage** — UI covers all `SyncHealth` states (`healthy`, `queued`, `stale`, `conflicts`, `failures`, `offline`).

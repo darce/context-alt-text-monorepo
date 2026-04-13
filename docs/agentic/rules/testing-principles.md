@@ -18,7 +18,7 @@
   /_______________\
 ```
 
-**Principle**: Most tests at the bottom (fast unit tests), fewer at the top (slow E2E tests).
+Most tests at the bottom (fast unit tests), fewer at the top (slow E2E tests).
 
 ---
 
@@ -26,7 +26,7 @@
 
 ### 1. Deterministic Data Over Randomness
 
-Tests must produce identical results on every run. Use fixed fixtures or seeded random generators.
+Use fixed fixtures or seeded random generators. Tests must produce identical results on every run.
 
 ```python
 # BAD: Random vectors make failures hard to reproduce
@@ -43,7 +43,7 @@ embedding = rng.random(512, dtype=np.float32)
 
 ### 2. Behavioral Assertions Over Call Counts
 
-Assert observable outcomes, not internal implementation details.
+Assert observable outcomes, not implementation details.
 
 ```python
 # BAD: Brittle coupling to internal calls
@@ -59,7 +59,7 @@ mock_event_bus.emit.assert_called_with(ClusterMergedEvent(...))
 
 ### 3. Import Settings, Don't Hardcode
 
-Reference configuration values from their source of truth, not hardcoded magic numbers.
+Reference configuration values from their source of truth.
 
 ```python
 # BAD: Magic numbers that can diverge from production
@@ -74,23 +74,17 @@ assert result.threshold == settings.suggestion_floor
 
 ### 4. No Permanently Skipped Tests
 
-Tests marked with skip annotations without a linked issue or TODO date are dead code. Either:
-
-- Remove the test (if the feature is abandoned)
-- Complete the test (if the feature shipped)
-- Add a comment with an issue reference and expected resolution (if blocked)
-
-Empty test bodies that run green are worse -- they inflate pass counts.
+Skip annotations without a linked issue or TODO date are dead code. Remove, complete, or add an issue reference. Empty test bodies that run green are worse -- they inflate pass counts.
 
 ### 5. Test Removed Surfaces Explicitly
 
-When a route, hook, export, or runtime surface is intentionally removed, add an explicit test asserting its absence. This prevents accidental re-introduction during future refactors.
+When a route, hook, export, or runtime surface is intentionally removed, add a test asserting its absence to prevent accidental re-introduction.
 
 ---
 
 ## Hierarchical TDD: Fake vs Real Resources
 
-**Principle**: Use the fastest feedback loop that validates the behavior you care about.
+Use the fastest feedback loop that validates the behavior under test.
 
 | Resource      | Unit Test       | Service Test    | Integration Test  | E2E Test |
 | ------------- | --------------- | --------------- | ----------------- | -------- |
@@ -103,18 +97,17 @@ When a route, hook, export, or runtime surface is intentionally removed, add an 
 
 ## Stub and Fake Fidelity
 
-- A stub must reproduce the real implementation's error-raising behavior for invalid inputs; silent success is a false positive when production would fail.
-- Null stubs are acceptable only when the dependency's behavior is irrelevant to the assertion under test. If the test depends on success, failure, or state-transition semantics, use a behavioral fake instead.
-- When a production implementation throws or returns an explicit error on invalid state, the fake must do the same for the same class of input.
-- Inline anonymous spies or per-test doubles should extend the canonical shared null stub or fake when one exists, rather than re-implementing the interface from scratch with drift-prone behavior.
-- New fakes should be checked against the real implementation's constructor expectations, state transitions, and negative-path behavior before becoming shared test utilities.
+- Stubs must reproduce the real implementation's error-raising behavior for invalid inputs.
+- Null stubs are acceptable only when the dependency's behavior is irrelevant to the assertion. Use a behavioral fake when the test depends on success, failure, or state transitions.
+- Inline per-test doubles should extend the canonical shared null stub or fake, not re-implement the interface from scratch.
+- New fakes must be checked against the real implementation's constructor expectations, state transitions, and negative-path behavior before becoming shared utilities.
 
 ## Runtime-Parity Verification
 
-- For each high-risk boundary class, at least one test or verification path must exercise the real runtime behavior or explicitly document why that is not locally verifiable.
-- Runtime parity includes bootstrap/load path behavior, dependency injection, transaction lifecycle, header and protocol forwarding, and error-shape preservation across adapters.
-- Golden payload tests and malformed-shape tests are part of runtime-parity proof for boundary changes; a happy-path fixture alone is not enough when the real risk is malformed input or drift.
-- If runtime parity cannot be verified locally, record a `GAP` finding in MCP instead of claiming full verification from isolated tests alone.
+- Each high-risk boundary class needs at least one test exercising real runtime behavior, or an explicit note on why that is not locally verifiable.
+- Runtime parity covers: bootstrap/load path, dependency injection, transaction lifecycle, header/protocol forwarding, and error-shape preservation across adapters.
+- Boundary changes require golden payload tests and malformed-shape tests, not just happy-path fixtures.
+- If runtime parity cannot be verified locally, record a `GAP` finding in MCP.
 
 ---
 
@@ -134,7 +127,7 @@ recognition/
 
 ### Shared Test Utilities
 
-If a Protocol stub or fake is copy-pasted across 3+ test files, extract it to a shared test utility module (`tests/fakes.py`, `tests/stubs.py`, `tests/helpers.ts`, etc.).
+Extract Protocol stubs/fakes copy-pasted across 3+ test files to a shared module (`tests/fakes.py`, `tests/stubs.py`, `tests/helpers.ts`, etc.).
 
 ```python
 # BAD: 100-line ClusterRepoStub defined independently in 4 test files
@@ -149,11 +142,11 @@ class NullClusterRepository:
 
 ### One Canonical Fake Per Protocol
 
-Do not maintain multiple divergent fake implementations of the same Protocol across test files. Use a single configurable fake.
+One configurable fake per Protocol. No divergent implementations across test files.
 
 ### 7. Fixture Data Over Live Config
 
-Tests for generic infrastructure (manifest loaders, config readers, serializers) must use temporary fixture data created by the test, not hardcoded references to a specific live task config. If the live config is renamed or restructured, generic tests should not break.
+Generic infrastructure tests (manifest loaders, config readers, serializers) must use temporary fixture data, not hardcoded references to live task configs.
 
 ```python
 # BAD: Coupled to a specific live config file
@@ -181,11 +174,11 @@ Keep at most one smoke test asserting the real config file loads without error.
 
 ## Performance Evidence Requirements
 
-- Performance claims for high-risk changes must include latency distributions such as `p50`, `p95`, and `p99`, not only averages.
-- Queue depth, connection-pool wait time, and retry counts must be observable and reportable for flows that use shared resources or external services.
-- Backpressure and saturation behavior must be documented: what happens under overload matters as much as steady-state success.
-- Attach performance evidence to MCP test results or handoff decisions with concrete numbers, not narrative claims like "seems faster."
-- Incident and remediation work must distinguish average-latency improvements from tail-latency or saturation improvements.
+- Performance claims must include `p50`, `p95`, `p99` latency distributions, not only averages.
+- Queue depth, connection-pool wait time, and retry counts must be observable for shared-resource flows.
+- Document backpressure and saturation behavior, not just steady-state success.
+- Attach concrete numbers to MCP test results or handoff decisions, not narrative claims.
+- Distinguish average-latency improvements from tail-latency or saturation improvements.
 
 ---
 

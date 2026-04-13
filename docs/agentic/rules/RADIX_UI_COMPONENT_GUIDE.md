@@ -10,7 +10,7 @@ Prefer Radix UI primitives over custom implementations for consistent, accessibl
 
 ## Installed Packages
 
-These are ready to use in `js/components/ui/`:
+Ready to use in `js/components/ui/`:
 
 | Package                     | Wrapper        | Use For                                        |
 | --------------------------- | -------------- | ---------------------------------------------- |
@@ -76,17 +76,13 @@ import { Separator } from "@radix-ui/react-separator";
 
 ## Adding New Primitives
 
-When you need a component not yet installed:
-
 1. `npm install @radix-ui/react-{component}`
 2. Create wrapper in `js/components/ui/{component}.tsx`
-3. Apply BEM classes: `acx-{component}`, `acx-{component}--variant`
-4. Add TypeScript types extending Radix props
-5. Write behavior tests (not implementation tests)
-6. Run axe-core accessibility audit
+3. BEM classes: `acx-{component}`, `acx-{component}--variant`
+4. TypeScript types extending Radix props
+5. Behavior tests + axe-core audit
 
-For the priority list of which packages to reach for (dialogs, selects, tabs, etc.),
-use ctx7: `ctx7 library @radix-ui/react-dialog "installation and usage"`.
+For package priority, use ctx7: `ctx7 library @radix-ui/react-dialog "installation and usage"`.
 
 ---
 

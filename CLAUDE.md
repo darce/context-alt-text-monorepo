@@ -40,6 +40,19 @@ Additional routing: see [docs/agentic/instructions.md](docs/agentic/instructions
 
 ## Critical Rules
 
+### Output Brevity Rule
+
+> **Terse output. Strip filler. State the result, not the journey.** Verbosity degrades reasoning accuracy ([Hakim 2025](https://arxiv.org/html/2604.00025v1)).
+
+- Chat: one sentence per update. ≤2 sentence summary. No preamble.
+- Handoff: decision first. ≤1,500 chars. Cut recaps.
+- Findings: one paragraph — evidence + impact.
+- Code comments: default zero. WHY only.
+- Removable without info loss? Remove it. Lists over paragraphs.
+- Planning docs need completeness — still cut filler.
+
+Full surface table: [instructions.md § Output Brevity](docs/agentic/instructions.md#output-brevity-mandatory).
+
 ### Pre-Merge Gate Rule
 
 > **No feature branch merges to `main` without a passing `handoff_close_check(enforce=True)`.**
@@ -169,6 +182,7 @@ See [packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md](packages/a
 - [rg-014] helpful=1 harmful=0 :: Orchestration modules must use late-binding imports (function-level) for `agent_handoff_mcp` symbols.
 - [rg-015] helpful=1 harmful=0 :: Boundary adapters must not invent contract metadata. Every envelope field must come from the request, upstream payload, or an explicitly documented fallback.
 - [rg-016] helpful=0 harmful=0 :: PHP runtime autoload parity must match tests. Verify with `php -r "require 'vendor/autoload.php'; var_export(class_exists(...));"`.
+- [rg-017] helpful=1 harmful=0 :: Never force-remove a dirty linked worktree without triaging every uncommitted file. Run `git -C <path> status --short` first; if dirty, commit task-owned changes, move cross-task bleed to root, confirm redundant files vs main. If >5 dirty files or multiple task refs, stop and ask the user. See [development-workflow.md § Dirty Worktree Teardown](docs/agentic/rules/development-workflow.md#dirty-worktree-teardown-mandatory).
 
 ---
 

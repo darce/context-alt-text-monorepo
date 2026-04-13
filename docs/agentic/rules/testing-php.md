@@ -19,7 +19,7 @@
 
 ## PHP Interface Contract Compliance
 
-When a PHP interface method signature changes (new parameter, return type), **every** anonymous `new class() implements Interface` in test files must be updated to match. PHP enforces signature compatibility strictly — a missing optional parameter causes a fatal error, not a warning.
+When a PHP interface method signature changes, **every** anonymous `new class() implements Interface` in test files must match. PHP enforces strict signature compatibility -- a missing optional parameter causes a fatal error.
 
 ```php
 // Interface gained ?string $tenant_id = null
@@ -42,7 +42,7 @@ $repo = new class() implements MembersRepoInterface {
 
 ## Response Shape Changes Require Test Updates
 
-When controller response shapes change (e.g., wrapping a flat array in an envelope), update assertions in all relevant tests.
+When response shapes change, update assertions in all relevant tests.
 
 ```php
 // Before: flat array
@@ -53,7 +53,7 @@ $this->assertArrayHasKey('clusters', $data);
 $this->assertSame('cluster-1', $data['clusters'][0]['id']);
 ```
 
-**Rule:** When changing response shapes, grep test files for the old assertion pattern and update all matches.
+Grep test files for the old assertion pattern and update all matches.
 
 ---
 
@@ -86,7 +86,7 @@ WP_Mock::userFunction('get_option')
 
 ## Anonymous Test Classes for Interfaces
 
-Use anonymous classes to implement interfaces in tests. This allows per-test stubbing without creating named test doubles.
+Use anonymous classes to implement interfaces in tests for per-test stubbing without named test doubles.
 
 ```php
 $clustersRepo = new class() implements ClustersRepositoryInterface {
@@ -100,21 +100,13 @@ $clustersRepo = new class() implements ClustersRepositoryInterface {
 };
 ```
 
-**Caution:** When the interface changes, ALL anonymous implementations must be updated. Use grep to find them.
-
-These stubs still need to follow the shared fidelity rules in [testing-principles.md](testing-principles.md). When a real repository method throws or returns an explicit failure for invalid state, a `Null*` stub should not silently succeed if the test depends on that failure behavior.
+When the interface changes, grep and update ALL anonymous implementations. Stubs follow the shared fidelity rules in [testing-principles.md](testing-principles.md).
 
 ---
 
 ## Composer Classmap Regeneration
 
-After adding a new class file or trait, regenerate the Composer classmap:
-
-```bash
-composer dump-autoload
-```
-
-Without this, the new file won't be found by the autoloader, causing "class not found" errors in tests.
+After adding a new class file or trait, run `composer dump-autoload` to regenerate the classmap.
 
 ---
 
@@ -122,11 +114,11 @@ Without this, the new file won't be found by the autoloader, causing "class not 
 
 ### ConflictController and SyncStatusController
 
-These controllers combine sync-specific repositories/services (`ConflictRepository`, `OutboxDrain`, `ConflictResolutionService`, `SyncStateRepository`) with cluster/member repository interfaces. Use focused test doubles for each dependency instead of broad “god” stubs.
+Use focused test doubles for each dependency, not broad “god” stubs.
 
 ### Outbox entry assertions
 
-When testing operations that enqueue outbox entries (reassign, merge, label), assert:
+For operations that enqueue outbox entries (reassign, merge, label), assert:
 
 1. The entry was written with the correct `operation_type` (for example `identity_reassigned`, `cluster_merged`, `assign_outlier_to_cluster`)
 2. The payload contains required fields per the topology contract
@@ -134,7 +126,7 @@ When testing operations that enqueue outbox entries (reassign, merge, label), as
 
 ### Conflict detection during projection
 
-When testing projection conflict handling, provide a snapshot payload that triggers a known conflict code (for example `curated_member_deleted`) and assert that `ConflictRepository::record_projection_conflict()` persists the expected open conflict shape.
+Provide a snapshot payload triggering a known conflict code (e.g., `curated_member_deleted`) and assert `ConflictRepository::record_projection_conflict()` persists the expected open conflict shape.
 
 ---
 
@@ -153,18 +145,6 @@ php -l file.php      # Syntax check single file
 
 ## Troubleshooting
 
-### "Class not found" after creating a new file
-
-Run `composer dump-autoload` to regenerate the classmap.
-
-### "Declaration must be compatible" fatal error
-
-An interface signature changed. Search test files for `implements <InterfaceName>` and update all anonymous implementations.
-
-### phpstan missing
-
-If `composer phpstan` fails with `vendor/bin/phpstan: No such file or directory`:
-
-```bash
-composer require --dev phpstan/phpstan:^1.12
-```
+- **"Class not found"** -- Run `composer dump-autoload`.
+- **"Declaration must be compatible"** -- An interface changed. Search for `implements <InterfaceName>` and update all anonymous implementations.
+- **phpstan missing** -- `composer require --dev phpstan/phpstan:^1.12`

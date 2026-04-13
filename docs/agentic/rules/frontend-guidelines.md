@@ -13,29 +13,17 @@
 
 Before building custom UI, check [RADIX_UI_COMPONENT_GUIDE.md](RADIX_UI_COMPONENT_GUIDE.md) for pre-vetted accessible patterns.
 
-**Size limits:**
+**Size limits:** 300 lines/component, 5 `useState`, 3 `useEffect`, 10 props max.
 
-- Maximum **300 lines** per component file
-- Maximum **5 useState** hooks (use `useReducer` for complex state)
-- Maximum **3 useEffect** hooks (prefer derived state)
-- Maximum **10 props** (split component if exceeded)
+**Extract when:** JSX block > 50 lines, pattern appears 2+ times, conditional nesting > 2 levels, or 6+ `useState` hooks.
 
-**Extract when:**
-
-- JSX block exceeds 50 lines
-- Pattern appears 2+ times
-- Conditional nesting exceeds 2 levels
-- Component has 6+ useState hooks
-
-For detailed architecture patterns and refactoring case studies, see [component-architecture-patterns.md](component-architecture-patterns.md).
+See [component-architecture-patterns.md](component-architecture-patterns.md) for detailed patterns.
 
 ---
 
 ## TypeScript Safety Rules
 
-> Distilled from the 4.12.0 and 4.13.0 branch audits.
-
-1. **No non-null assertions (`!`) on API data.** Fields typed `T | null | undefined` from an API response must be narrowed with a guard, not suppressed with `!`. Use a local const and an `if` check.
+1. **No non-null assertions (`!`) on API data.** Narrow with a guard instead.
 
    ```tsx
    // BAD
@@ -48,54 +36,54 @@ For detailed architecture patterns and refactoring case studies, see [component-
    }
    ```
 
-2. **No `undefined as T` or `x as T` for API return types.** If `fetchApi` can return `undefined` (204, empty body), the return type must be `Promise<T | undefined>`. Casting `undefined as T` gives callers a lie.
+2. **No `undefined as T` or `x as T` for API return types.** If `fetchApi` can return `undefined`, the return type must be `Promise<T | undefined>`.
 
-3. **Use assertion helpers for internal invariants.** Prefer `asserts value is ...` helpers or `assertNever(...)` for impossible states and exhaustive switches. Do not use `console.assert` or assertion helpers as a substitute for API/input validation.
+3. **Use assertion helpers for internal invariants.** `asserts value is ...` / `assertNever(...)` for impossible states. Not for API/input validation.
 
-4. **Centralize query keys.** All React Query keys must go through a `queryKeys` factory. Ad-hoc `['resource', id]` arrays create stale-data risk when other components invalidate via the factory but miss the ad-hoc key.
+4. **Centralize query keys.** All React Query keys through a `queryKeys` factory. No ad-hoc `['resource', id]` arrays.
 
-5. **No inline styles for layout.** If a grid/flex pattern is used more than once, it belongs in a SCSS class. Inline `style={{ display: 'grid', ... }}` objects are not reusable, not inspectable in DevTools by class name, and duplicate easily.
+5. **No inline styles for layout.** Reusable grid/flex patterns belong in SCSS classes.
 
-6. **No `!important` in SCSS.** Increase selector specificity instead (nest under a root `.acx-` container). WordPress admin styles have high specificity, but `!important` creates an arms race.
+6. **No `!important` in SCSS.** Increase selector specificity instead (nest under `.acx-` container).
 
-7. **Use design tokens for colors.** Hex literals (`#fef2f2`) must be CSS custom properties (`var(--acx-color-error-bg)`). Magic colors diverge silently across components.
+7. **Use design tokens for colors.** Hex literals must be `var(--acx-*)` custom properties.
 
-8. **API calls go through the API module.** Components must not import `fetchApi` directly and build URLs with string interpolation. All API calls should go through a dedicated function in the relevant API module (e.g., `clusterApi.ts`) for mockability and consistency.
+8. **API calls go through the API module.** No direct `fetchApi` imports in components. Use dedicated functions in `clusterApi.ts` etc.
 
-9. **Use `URLSearchParams` for query strings.** String interpolation (`` `?limit=${n}&tenant_id=${id}` ``) fails on special characters. Use `new URLSearchParams({ limit: String(n), tenant_id: id })` instead.
+9. **Use `URLSearchParams` for query strings.** No string interpolation for query params.
 
-10. **No REST transport in page or hook layers.** Pages (`js/admin/pages/`) and hooks (`js/admin/hooks/`) must not construct their own `fetch()` calls with custom nonce/base-URL plumbing. All HTTP calls go through `js/admin/api/` modules.
+10. **No REST transport in page or hook layers.** All HTTP calls go through `js/admin/api/` modules.
 
-11. **Browser API capability guards.** Code using `crypto.randomUUID`, `BroadcastChannel`, `navigator.locks`, or other APIs not universally available must check for availability and degrade gracefully.
+11. **Browser API capability guards.** `crypto.randomUUID`, `BroadcastChannel`, `navigator.locks`, etc. must check availability and degrade gracefully.
 
-12. **No origin-derived admin URLs.** Do not construct WordPress admin links via `window.location.origin + '/wp-admin/...'`. Localize the canonical admin URL from PHP via `wp_localize_script`.
+12. **No origin-derived admin URLs.** Localize the canonical admin URL from PHP via `wp_localize_script`.
 
-13. **Complete barrel exports.** If an API module uses a barrel file (`index.ts`), all public functions must be re-exported from it. Deep imports that bypass the barrel break the module boundary.
+13. **Complete barrel exports.** All public functions in an API module must be re-exported from its `index.ts`.
 
-14. **API types must match payload reality.** If the backend sends both `thumb_url` and legacy `thumbnail_url`, the TypeScript interface must declare both. Normalize variant shapes once in the API layer.
+14. **API types must match payload reality.** Declare all backend field variants; normalize once in the API layer.
 
 ---
 
 ## Workbench Overlay and URL State
 
-The Workbench page uses URL-synced overlay state via the `panel` query param to drive which secondary panel is visible (`conflicts`, `dead-letter`).
+The `panel` query param drives which secondary panel is visible (`conflicts`, `dead-letter`).
 
 ### Rules
 
-- **URL is the source of truth.** Read overlay state from `useOverlayParam` / `useSearchParams`, not from component state. Setting `panel=conflicts` opens the conflict inbox; removing `panel` closes the overlay.
-- **No stale closure captures.** Overlay open/close handlers must use the functional form of `setSearchParams` to avoid capturing stale param snapshots.
-- **Panel hooks stay local.** `ConflictInbox` and `DeadLetterPanel` own their query/mutation hooks; `WorkbenchPage` and `WorkbenchContext` only coordinate visibility and chrome.
+- **URL is the source of truth.** Read overlay state from `useOverlayParam` / `useSearchParams`, not component state.
+- **No stale closure captures.** Use the functional form of `setSearchParams`.
+- **Panel hooks stay local.** `ConflictInbox` and `DeadLetterPanel` own their own hooks; `WorkbenchPage` only coordinates visibility.
 
 ---
 
 ## Sovereign Read Model
 
-The WordPress plugin must derive all UI state from its own local projection tables (`wp_acx_clusters`, `wp_acx_identity_members`, `wp_acx_sync_state`, `wp_acx_persons`). Do not use the FastAPI backend as a runtime HTTP proxy for read operations.
+All UI state derives from local projection tables (`wp_acx_clusters`, `wp_acx_identity_members`, `wp_acx_sync_state`, `wp_acx_persons`), not live backend reads.
 
-- Dashboard, roster, and conflict UX query local projection tables via `acx/v1/` REST endpoints.
-- Backend snapshots and deltas are imported into local projection, not proxied at read time.
-- If local projection is unavailable, degrade gracefully (empty state or "unavailable" indicator). Do not fall back to live backend reads.
-- See [ADR-003](../adrs/ADR-003-wordpress-local-authority-and-durable-outbox-replay.md) for the full rationale.
+- Dashboard/roster/conflict UX queries local projection via `acx/v1/` REST endpoints.
+- Backend snapshots imported into local projection, not proxied at read time.
+- Degrade gracefully if local projection is unavailable. No fallback to live backend reads.
+- See [ADR-003](../adrs/ADR-003-wordpress-local-authority-and-durable-outbox-replay.md).
 
 ---
 

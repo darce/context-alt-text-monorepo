@@ -61,14 +61,16 @@ Implementation is decomposed into vertical feature slices, not horizontal domain
 
 ### Worktree status integrity — invariant close sequence
 
-The most common source of stale `active` dashboard entries is tasks archived before their handoff status reaches `done`. The invariant close sequence is:
+The most common source of stale `active` dashboard entries is tasks archived before their handoff status reaches `done`. The full close sequence is:
 
 1. `update_task_status(task_ref=..., status="done")` — mark the task done in handoff DB
-2. `manage_worktree_lane(action="close", ...)` — close the orchestrator lane registration (agent-orchestrator-mcp)
+2. `manage_worktree_lane(action="close", ...)` — close the orchestrator lane registration (agent-orchestrator-mcp; applies when orchestrated lanes were opened at task-start)
 3. `archive_task_state(task_ref=...)` — archive the task snapshot
-4. `generate_dashboard_md(...)` — regenerate the dashboard with the archived status
+4. `generate_current_task_md()` + `generate_dashboard_md()` — regenerate both views with the archived status
 
-`manage_worktree_lane(close)` marks the lane closed in the orchestrator but does **not** update the handoff task status. If `archive_task_state` runs on a task still `in_progress`, the dashboard renders a permanent `active` fallback. The `branch-lifecycle` skill documents this sequence as mandatory.
+**Current implementation** (`make task-finish` → `scripts/_task_finish_inline.py`): steps 1, 3, and 4 are executed today. Step 2 (`manage_worktree_lane(close)`) is an agent-directed MCP call; the `branch-lifecycle` skill (Phase 2) will document it as a required step when orchestrated lanes are in use.
+
+`manage_worktree_lane(close)` marks the lane closed in the orchestrator but does **not** update the handoff task status. Always run `update_task_status(done)` before both `manage_worktree_lane(close)` and `archive_task_state`.
 
 `switch_task` (agent-orchestrator-mcp) provides the safe task-transition entry point when starting a new task while another is in flight: it verifies the current task status before switching, preventing mid-flight switches that leave the previous task orphaned as `in_progress`.
 

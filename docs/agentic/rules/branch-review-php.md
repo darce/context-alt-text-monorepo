@@ -12,18 +12,16 @@
 | Static analysis | `cd apps/prototype-wp-alt-context && composer phpstan` |
 | Tests           | `cd apps/prototype-wp-alt-context && composer test`    |
 
-When runtime-sensitive behavior is claimed fixed, require fresh command evidence on the current branch state for both PHPUnit and PHPStan. Runtime-sensitive changes include bootstrap paths, controller composition, proxy/header forwarding, and autoload behavior.
+Require fresh PHPUnit + PHPStan evidence for runtime-sensitive fixes (bootstrap paths, controller composition, proxy/header forwarding, autoload behavior).
 
 ---
 
 ## Boundary and Runtime Correctness
 
-> `branch-review-guide.md` already carries the general principles for PHP runtime autoload parity and boundary metadata preservation. The items here are the PHP/WordPress-specific expansion: real runtime load-path checks, concrete proxy/header verification, and degradation semantics at the controller boundary.
-
-- [ ] **Runtime bootstrap/autoload parity** — when bootstrap, controller composition, or autoload paths change, verify behavior under the real WordPress load path, not only the PHPUnit bootstrap fallback.
-- [ ] **Adapter provenance** — controllers/adapters do not invent envelope fields such as `limit`, `offset`, `total`, `data_source`, or status metadata; every field must trace to the request, upstream payload, or documented local authority.
-- [ ] **Header and status preservation** — proxy controllers preserve upstream HTTP status and relevant headers without normalizing away failure semantics.
-- [ ] **Degradation semantics** — error paths explicitly match the contract: empty, unavailable, or blocking are distinct outcomes and must not be silently conflated.
+- [ ] **Runtime bootstrap/autoload parity** — verify behavior under the real WordPress load path, not only the PHPUnit bootstrap fallback.
+- [ ] **Adapter provenance** — controllers/adapters do not invent envelope fields (`limit`, `offset`, `total`, `data_source`, etc.); every field traces to the request, upstream payload, or documented local authority.
+- [ ] **Header and status preservation** — proxy controllers preserve upstream HTTP status and headers without normalizing away failure semantics.
+- [ ] **Degradation semantics** — empty, unavailable, and blocking are distinct outcomes; never silently conflated.
 
 ---
 
@@ -40,35 +38,35 @@ When runtime-sensitive behavior is claimed fixed, require fresh command evidence
 
 ### Data-flow through SQL binding
 
-For each SQL query with placeholders, verify the full chain: value origin → transformation → placeholder binding → database interpretation.
+Verify the full chain per query: value origin → transformation → placeholder binding → DB interpretation.
 
-- [ ] Placeholder count matches argument count (especially with dynamic `$placeholders` strings).
-- [ ] Arguments are in correct positional order matching their placeholders.
-- [ ] Sentinel/default values survive the binding mechanism. If a function returns `'NULL'` (string) and it's bound via `%s`, the database receives the **string** `'NULL'`, not SQL `NULL`.
-- [ ] `NULLIF()`, `COALESCE()`, `IF()` wrappers use the correct comparison value for the sentinel.
+- [ ] Placeholder count matches argument count (especially dynamic `$placeholders`).
+- [ ] Arguments in correct positional order.
+- [ ] Sentinel/default values survive binding. `'NULL'` (string) bound via `%s` → DB receives string `'NULL'`, not SQL `NULL`.
+- [ ] `NULLIF()`, `COALESCE()`, `IF()` use the correct comparison value for the sentinel.
 
 ### Guard condition vs business rule alignment
 
-For each `WHERE` clause, `if` guard, or existence check, state the business rule in plain language, then verify the SQL/code implements exactly that rule.
+State the business rule in plain language, then verify the SQL/code implements exactly that rule.
 
-- [ ] Curation guards protect the **correct scope** — a guard for cluster-level fields should not block operations on related entities.
-- [ ] Deletion guards exclude the correct rows — `NOT IN` vs `FIND_IN_SET` vs `NOT EXISTS` have different semantics for NULL, empty sets, and multi-value strings.
-- [ ] Early returns match their stated purpose — an early return for "empty input" should not also skip cleanup operations that should always run.
+- [ ] Curation guards protect the **correct scope** — cluster-level guards must not block related-entity operations.
+- [ ] Deletion guards use the right operator — `NOT IN` vs `FIND_IN_SET` vs `NOT EXISTS` differ on NULL, empty sets, and multi-value strings.
+- [ ] Early returns match their purpose — "empty input" returns must not skip cleanup that should always run.
 
 ### SQL function semantic correctness
 
-- [ ] `FIND_IN_SET(col, %s)` — a data value containing a comma corrupts the set boundary. Prefer `NOT IN (...)` with individual placeholders.
-- [ ] `GREATEST()` / `LEAST()` — any `NULL` argument makes the result `NULL` in MySQL.
-- [ ] `IF(condition, a, b)` — verify condition evaluates against the **current** row state, not `VALUES()`.
-- [ ] `ON DUPLICATE KEY UPDATE` — verify which fields refresh unconditionally vs which are guarded. Accidentally guarding a field that should refresh (or vice versa) is a silent data bug.
+- [ ] `FIND_IN_SET(col, %s)` — commas in data corrupt the set boundary. Prefer `NOT IN (...)` with individual placeholders.
+- [ ] `GREATEST()` / `LEAST()` — any `NULL` argument → result is `NULL`.
+- [ ] `IF(condition, a, b)` — condition must evaluate against **current** row state, not `VALUES()`.
+- [ ] `ON DUPLICATE KEY UPDATE` — verify which fields refresh unconditionally vs guarded. Misguarding is a silent data bug.
 
 ### Boundary value sweep
 
 For each function accepting numeric or collection inputs:
 
-- [ ] **Empty** — empty array, empty string, zero. Does the function degrade gracefully or produce invalid SQL / divide-by-zero?
-- [ ] **Single element** — does `implode()` produce valid SQL? Does a loop body work on first-and-only iteration?
-- [ ] **Large input** — at 10k+ items, does a `NOT IN (...)` clause hit MySQL limits? Is there an unbounded `LEFT JOIN` scan?
+- [ ] **Empty** — empty array/string/zero: graceful degradation or invalid SQL / divide-by-zero?
+- [ ] **Single element** — `implode()` valid? Loop body works on first-and-only iteration?
+- [ ] **Large input** — 10k+ items: `NOT IN (...)` MySQL limits? Unbounded `LEFT JOIN` scan?
 
 ---
 
@@ -76,8 +74,8 @@ For each function accepting numeric or collection inputs:
 
 When the diff touches `src/sovereign/`:
 
-- [ ] **Projection atomicity** — `SnapshotProjector` writes are inside a single transaction (`START TRANSACTION` / `COMMIT`).
-- [ ] **Outbox entry completeness** — new outbox writes include all required payload fields per the topology contract in [curation-sync-api.md](../contracts/curation-sync-api.md).
-- [ ] **Projection conflict reuse** — `record_projection_conflict()` updates an existing open conflict for the same tenant/entity/conflict code instead of accumulating duplicates.
-- [ ] **SyncState metrics updated** — projection, drain, retry/discard, and resolution paths refresh `SyncStateRepository` so `SyncStatusController` reflects current state.
-- [ ] **Dead-letter status transitions** — dead letters are `failed` rows; retry mutates the same row back to `pending`, discard mutates `failed`/`conflict` to `discarded`.
+- [ ] **Projection atomicity** — `SnapshotProjector` writes inside a single transaction.
+- [ ] **Outbox entry completeness** — all required payload fields per [curation-sync-api.md](../contracts/curation-sync-api.md).
+- [ ] **Projection conflict reuse** — `record_projection_conflict()` updates existing open conflicts instead of accumulating duplicates.
+- [ ] **SyncState metrics updated** — projection, drain, retry/discard, and resolution paths refresh `SyncStateRepository`.
+- [ ] **Dead-letter status transitions** — retry: `failed` → `pending`; discard: `failed`/`conflict` → `discarded`.

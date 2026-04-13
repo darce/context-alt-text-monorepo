@@ -7,23 +7,23 @@
 
 ## Automated Checks
 
-Backend review commands must run inside the `description-service` pyenv. For non-interactive commands, prefer `PYENV_VERSION=description-service <command>` instead of relying on `pyenv activate`, because subprocess shells may not have pyenv init hooks loaded.
+Run inside the `description-service` pyenv. Prefer `PYENV_VERSION=description-service <command>` over `pyenv activate` (subprocess shells may lack pyenv init hooks).
 
 | Check                    | Command                                                      |
 | ------------------------ | ------------------------------------------------------------ |
 | Lint + types + tests     | `cd apps/prototype-description-service && PYENV_VERSION=description-service make check`        |
 | Cyclomatic complexity    | `cd apps/prototype-description-service && PYENV_VERSION=description-service python -m radon cc --min C --show-complexity --average recognition/` |
 
-When backend behavior or performance is claimed fixed, require fresh command evidence on the current branch state for `make check` or the targeted `pytest` slice that proves the claim. If the evidence is stale, missing, or only partially relevant, record a `GAP` finding instead of accepting the claim as done.
+Require fresh evidence (`make check` or targeted `pytest` slice) for any claimed fix. Stale, missing, or partial evidence → `GAP` finding.
 
 ---
 
 ## Type Safety
 
-- [ ] No `object` parameters — use the domain type or a Protocol.
-- [ ] No `getattr()` + `callable()` guards — declare methods on the Protocol.
-- [ ] No `contextlib.suppress(Exception)` — catch specific exceptions and log.
-- [ ] `assert` used only for internal invariants/tests — request validation and external-data checks use explicit exceptions or HTTP errors.
+- [ ] No `object` parameters — use domain types or Protocols.
+- [ ] No `getattr()` + `callable()` guards — declare methods on Protocols.
+- [ ] No `contextlib.suppress(Exception)` — catch specific exceptions, log.
+- [ ] `assert` only for internal invariants/tests — use explicit exceptions for request/external-data validation.
 
 ---
 
@@ -40,11 +40,11 @@ When backend behavior or performance is claimed fixed, require fresh command evi
 
 ## Boundary and Runtime Correctness
 
-- [ ] **Dependency-injection parity** — FastAPI dependency overrides used in tests match the production dependency graph instead of bypassing real startup or tenant/session behavior.
-- [ ] **Session and transaction lifecycle parity** — tests for DB-sensitive changes verify the same commit/rollback/session-close semantics used in production, not a looser autocommit-only path.
-- [ ] **Schema and adapter validation parity** — Pydantic adapters validate against the canonical boundary shape, and malformed payloads fail explicitly instead of being normalized into success.
-- [ ] **Degradation semantics stay explicit** — upstream failures, unavailable dependencies, and true empty results remain distinct outcomes; backend handlers do not silently collapse them together.
-- [ ] **Golden payload coverage exists for high-risk boundaries** — boundary shape changes rely on fixture or malformed-shape tests, not only happy-path service assertions.
+- [ ] **Dependency-injection parity** — test overrides match production dependency graph; no bypassing real startup or tenant/session behavior.
+- [ ] **Session and transaction lifecycle parity** — tests verify the same commit/rollback/session-close semantics as production, not a looser autocommit path.
+- [ ] **Schema and adapter validation parity** — Pydantic adapters validate against canonical boundary shapes; malformed payloads fail explicitly.
+- [ ] **Degradation semantics stay explicit** — upstream failures, unavailable deps, and true empty results remain distinct outcomes.
+- [ ] **Golden payload coverage for high-risk boundaries** — boundary shape changes have fixture or malformed-shape tests, not only happy-path assertions.
 
 ---
 
@@ -79,21 +79,21 @@ When backend behavior or performance is claimed fixed, require fresh command evi
 
 | Grade   | Range | Action                                              |
 | ------- | ----- | --------------------------------------------------- |
-| **A**   | 1–5   | No action needed.                                   |
-| **B**   | 6–10  | Acceptable. Review if function could be simplified. |
+| **A**   | 1–5   | No action.                                          |
+| **B**   | 6–10  | Acceptable; review for simplification.              |
 | **C**   | 11–15 | **Requires justification.** Flag in review.         |
 | **D**   | 16–20 | **Must refactor.**                                  |
 | **E/F** | 21+   | **Block merge.**                                    |
 
-Typical offenders: Repository `_to_domain` converters, refresh service orchestration methods, clustering dispatch functions.
+Typical offenders: `_to_domain` converters, refresh orchestration, clustering dispatch.
 
 ### Performance Evidence
 
-For changes touching database queries, external HTTP calls, background task scheduling, or queue-driven work, require evidence beyond unit-test pass/fail:
+For changes touching DB queries, HTTP calls, background tasks, or queues, require evidence beyond unit-test pass/fail:
 
 - query timing or request latency on the affected path
 - connection-pool wait, retry, or queue behavior when applicable
-- enough evidence to distinguish average improvements from tail-latency or saturation regressions
+- evidence distinguishing average improvements from tail-latency or saturation regressions
 
 ---
 

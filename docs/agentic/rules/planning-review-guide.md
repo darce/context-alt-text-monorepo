@@ -1,22 +1,7 @@
 # Planning Review Guide
 
-> **Purpose:** Structured review checklist for task plans, epics, roadmaps, ADRs, and other planning documents before implementation or approval.
-> Planning reviews are document-and-codebase reviews, not branch-diff reviews.
-
-## Quick Navigation
-
-Use this guide when reviewing:
-
-- assessment reports
-- specs
-- task plans
-- epics
-- roadmaps
-- ADRs
-- implementation plans
-- scope/dependency/deferred-work documents
-
-For code diffs and working tree reviews, use [branch-review-guide.md](branch-review-guide.md) instead.
+> **Purpose:** Structured review checklist for planning documents (assessments, specs, task plans, epics, roadmaps, ADRs, implementation plans, scope/dependency docs) before implementation or approval.
+> Planning reviews are document-and-codebase reviews, not branch-diff reviews. For code diffs, use [branch-review-guide.md](branch-review-guide.md).
 
 ---
 
@@ -24,78 +9,63 @@ For code diffs and working tree reviews, use [branch-review-guide.md](branch-rev
 
 ### Scope
 
-Review the planning document against:
+Review the planning document against: (1) the current codebase, (2) adjacent planning docs and contracts, (3) already-completed prerequisite phases, (4) stated success criteria.
 
-1. the current codebase
-2. adjacent planning docs and contracts
-3. already-completed prerequisite phases
-4. the stated success criteria and rollout expectations
+**Greenfield constraints** (apply unless task documents an exception):
 
-The goal is to catch stale assumptions, impossible scope, contradictory sequencing, and unnecessary complexity before implementation starts.
-
-Project-wide constraint to apply during review:
-
-- This repo is currently treated as a greenfield project unless a task explicitly documents an exception.
-- Plans should prefer clean rewrites over backward-compatibility shims.
-- Schema changes should target the baseline migration file rather than adding follow-on migrations unless an exception is documented.
-- Storage migration/preservation work should be treated as suspect by default because there is no production data to preserve.
+- Prefer clean rewrites over backward-compatibility shims.
+- Schema changes go in the baseline migration, not follow-on migrations.
+- Storage migration/preservation work is suspect -- no production data to preserve.
 
 ### Agent Procedure
 
 1. Read the planning document.
-2. Check the referenced code paths and adjacent plans/contracts that the document depends on.
+2. Check referenced code paths and adjacent plans/contracts.
 3. Record each finding in MCP handoff before mentioning it in chat.
-4. Cite concrete file and line references for both the plan and the current implementation it contradicts.
-5. Prefer findings about correctness, scope realism, and architecture ownership over stylistic doc feedback.
+4. Cite concrete file and line references for both the plan and current implementation.
+5. Prefer correctness/scope/architecture findings over stylistic feedback.
 
-Hard rule for agent responses:
+Hard rules:
 
-- Do not present a planning-review finding in chat unless it has already been recorded in MCP with a stable `finding_id`.
-- **Never paste a finding list into the planning document under review.** Findings live in `agent-handoff-mcp` (`review_findings(review={"operation":"record"|"batch_record", ...})`); the document under review is not a place to mirror them. The `scripts/hooks/guard-task-plan-findings.py` PreToolUse hook rejects any Edit/Write that introduces three or more consecutive bulleted lines opening with a finding-style identifier. See [branch-review-guide.md § Review Findings Placement](branch-review-guide.md#review-findings-placement-mandatory) for the full rule and the AHMCP-14 incident that motivated enforcement.
+- Do not present a finding in chat unless it has a stable `finding_id` in MCP.
+- **Never paste a finding list into the planning document.** Findings live in `agent-handoff-mcp` (`review_findings(review={"operation":"record"|"batch_record", ...})`). The `scripts/hooks/guard-task-plan-findings.py` hook rejects inlined finding lists. See [branch-review-guide.md § Review Findings Placement](branch-review-guide.md#review-findings-placement-mandatory).
 
 ---
 
 ## Planning Intake
 
-Before walking the checklist, load only the minimum planning packet:
+Load only the minimum planning packet before walking the checklist:
 
-1. the planning document under review
-2. the prerequisite spec, ADR, and contract surfaces it depends on
-3. the current implementation surfaces the plan claims to change
-4. the already-completed slices, dependencies, or adjacent plans that constrain sequencing
-
-Required intake details:
-
-- planning document path
-- prerequisite assessment/spec/ADR/contracts
-- current implementation anchors
-- completed slices or dependency state
-- expected review mode after implementation: ordinary branch review, specialized module review, or release-style audit
-- scope source: `slice_packet` when reviewing the latest completed planning slice, otherwise a direct doc/codebase review
+| Item | Detail |
+|------|--------|
+| Planning document | Path to the doc under review |
+| Prerequisites | Assessment/spec/ADR/contracts it depends on |
+| Implementation anchors | Current code surfaces the plan claims to change |
+| Dependency state | Completed slices or adjacent plans constraining sequencing |
+| Post-implementation review mode | Ordinary branch review, specialized module review, or release-style audit |
+| Scope source | `slice_packet` for latest completed planning slice; otherwise direct doc/codebase review |
 
 Avoid speculative review against broad repo context. If the plan cannot be evaluated from these surfaces, name the missing dependency as the finding.
 
 ### Latest Planning Slice Review
 
-When the ask is "review the latest completed planning slice", prefer the MCP-backed slice packet over ad hoc git or chat archaeology:
+When reviewing the latest completed planning slice, prefer the MCP-backed slice packet:
 
 1. Request the latest slice packet with `review_kind="planning"`.
-2. Use packet `changed_files` as the planning review scope when the packet returns `scope_source="slice_packet"`.
-3. Confirm the packet is docs-only before treating it as a planning slice; mixed doc-plus-code slices should fall back to branch review.
-4. If no valid planning packet exists, say the review is using fallback scope instead of implying deterministic latest-slice coverage.
-
-Planning review is still a document-and-codebase review, but the packet-backed file set should define which planning surfaces belong to the latest completed slice.
+2. Use packet `changed_files` as review scope when `scope_source="slice_packet"`.
+3. Confirm the packet is docs-only; mixed doc-plus-code slices fall back to branch review.
+4. If no valid packet exists, state the review uses fallback scope.
 
 ### Handoff-only Fallback
 
-When `agent-orchestrator-mcp` is not loaded, use this degraded handoff-only path instead of inferring a latest slice from chat or git archaeology:
+When `agent-orchestrator-mcp` is not loaded:
 
 1. `load_session`
 2. `search_handoff(queries=["slice_complete"], record_types=["decision"], limit=1)`
 3. `get_verified_tests(task_ref=..., commit_sha=...)`
 4. `review_findings(review={"operation":"list","status":"open"})`
 
-Call this path out explicitly as fallback scope. Prefer `get_latest_slice_review_packet(review_kind="planning")` whenever orchestrator is available.
+State explicitly that this is fallback scope. Prefer `get_latest_slice_review_packet(review_kind="planning")` when orchestrator is available.
 
 ---
 
@@ -114,7 +84,7 @@ Call this path out explicitly as fallback scope. Prefer `get_latest_slice_review
 - [ ] Deferred/stretch items do not conflict with "done" or success-criteria language.
 - [ ] Slice ordering matches stated prerequisites and dependencies.
 - [ ] Terminology is consistent with current ADRs/contracts.
-- [ ] Review findings and handoff action items are tracked exclusively in MCP handoff state, not duplicated into the task plan. Task plans define scope and checklists; MCP is the single source of truth for review findings, blockers, and agent-recorded decisions. Embedding handoff items in the plan creates drift when findings are resolved or reopened.
+- [ ] Review findings and handoff action items are tracked exclusively in MCP handoff state, not duplicated into the task plan.
 
 ### Architecture and Ownership
 
@@ -123,7 +93,7 @@ Call this path out explicitly as fallback scope. Prefer `get_latest_slice_review
 - [ ] The plan does not re-implement behavior that already exists in another service or adapter.
 - [ ] Compound operations have an explicit contract for atomicity, idempotency, and conflict ownership.
 - [ ] Boundary-touching slices identify the owning contract and the canonical boundary owner explicitly.
-- [ ] Plans state whether compatibility is actually required; greenfield default is no compatibility shim unless an exception is documented.
+- [ ] Plans state whether compatibility is required; greenfield default is no shim unless an exception is documented.
 
 ### Contract and Data Model Realism
 
@@ -131,15 +101,15 @@ Call this path out explicitly as fallback scope. Prefer `get_latest_slice_review
 - [ ] Proposed conflict/version semantics match the current storage model.
 - [ ] Multi-entity operations define which entity/version drives conflict detection.
 - [ ] Schema changes are sufficient for the reporting/metrics the plan promises.
-- [ ] Migration strategy matches the repo's greenfield policy: baseline schema edits, no preservation-only data migrations, and no backward-compatibility shims unless the task explicitly justifies an exception.
+- [ ] Migration strategy matches greenfield policy: baseline schema edits, no preservation-only migrations, no backward-compatibility shims unless explicitly justified.
 - [ ] If a slice changes a boundary field or payload shape, the plan updates the shared schema/fixture and owning contract in the same slice.
 - [ ] If a remediation plan cites a `finding_id`, that id resolves to a real MCP finding or a concrete code site before implementation begins.
 
 ### Interface and API Realism
 
 - [ ] Pseudocode functions and helper references map to actual existing APIs/imports or are explicitly marked as new code to create.
-- [ ] Enum values, status strings, and filter parameters used in the plan exist in the actual API/schema (not invented names that the API will reject).
-- [ ] API capabilities assumed by the plan (e.g., server-side filtering by a specific field) actually exist; client-side workarounds are noted if not.
+- [ ] Enum values, status strings, and filter parameters in the plan exist in the actual API/schema.
+- [ ] API capabilities assumed by the plan actually exist; client-side workarounds are noted if not.
 - [ ] Files listed for modification actually require code changes; verification-only files are flagged as such.
 - [ ] Code location references use function/target names, not brittle line numbers.
 
@@ -155,52 +125,54 @@ Call this path out explicitly as fallback scope. Prefer `get_latest_slice_review
 
 Full pipeline reference: [planning-pipeline.md](planning-pipeline.md). Epic lifecycle reference: [development-workflow.md](development-workflow.md#planning-pipeline-and-document-lifecycle).
 
-- [ ] **Pipeline stage appropriate.** The artifact matches its pipeline position: assessments surface problems without prescribing solutions, specs define testable changes, ADRs resolve design uncertainty, task plans define executable slices. Artifacts that mix responsibilities across stages should be split.
-- [ ] **Upstream traceability present.** Spec items trace to assessment findings. Task plan slices trace to spec items or epic phase deliverables. ADRs reference the blocked spec item. If the plan skips stages (e.g., direct task plan without spec), the justification is stated or the work is small/well-understood enough that the skip is self-evident.
-- [ ] **Exit gates satisfied for upstream stages.** A task plan derived from a spec should not be created until the spec's review gate has been passed. A task plan derived from an ADR should not be created until the ADR is reviewed. Check MCP for review evidence if claimed.
-- [ ] **Epic-to-task decomposition sound.** Each epic phase maps to one or more task plans. Task plans do not span multiple epic phases unless explicitly justified. Phase ordering in the epic matches task plan dependency ordering.
-- [ ] **Target branch declared.** Task plans declare a `Target Branch` in metadata (e.g., `feature/e15-1-security-baseline`). Code implementation must happen on this branch, not on `main`. Plans that omit a target branch should be flagged.
-- [ ] **Version directory consistent.** Epics are filed under `docs/epics/v<version>/` matching their target release milestone. Task plans reference the correct epic path. Carry-forward notes are present when work migrated from an older epic.
+- [ ] **Pipeline stage appropriate.** Assessments surface problems, specs define testable changes, ADRs resolve design uncertainty, task plans define executable slices. Mixed-stage artifacts should be split.
+- [ ] **Upstream traceability present.** Specs trace to assessment findings, task plans to spec items or epic deliverables, ADRs to blocked spec items. Skipped stages require stated justification.
+- [ ] **Exit gates satisfied for upstream stages.** Task plans derived from specs/ADRs require passed review gates on those upstream artifacts.
+- [ ] **Epic-to-task decomposition sound.** Each epic phase maps to task plans. Task plans do not span phases unless justified. Phase ordering matches dependency ordering.
+- [ ] **Target branch declared.** Task plans declare a `Target Branch` in metadata. Plans without one should be flagged.
+- [ ] **Version directory consistent.** Epics filed under `docs/epics/v<version>/` matching their milestone. Task plans reference the correct epic path. Carry-forward notes present when work migrated from an older epic.
 
 ### Rollout and Testability
 
-- [ ] The plan can be implemented incrementally without leaving impossible intermediate states.
-- [ ] Cross-boundary or large-surface work cites the governing spec/ADR, not just the task plan itself.
-- [ ] Each slice names the files, contracts, and tests it expects to touch.
-- [ ] Each slice states what proof makes that slice honestly complete.
-- [ ] Scaffold-only or placeholder slices are rejected as progress theater unless they deliver executable value in the same slice.
-- [ ] The plan declares the expected review path: ordinary branch review, specialized module review, or release-style audit.
+- [ ] Incremental implementation without impossible intermediate states.
+- [ ] Cross-boundary work cites the governing spec/ADR.
+- [ ] Each slice names files, contracts, and tests it touches.
+- [ ] Each slice states what proof makes it honestly complete.
+- [ ] Scaffold-only slices rejected unless they deliver executable value in the same slice.
+- [ ] Plan declares expected review path: ordinary, specialized module, or release-style audit.
 - [ ] Tests validate real behavior, not placeholder scaffolding.
-- [ ] Manual/E2E-only steps are not used to hide core correctness gaps.
+- [ ] Manual/E2E-only steps do not hide core correctness gaps.
 - [ ] Success criteria are objectively testable from code and tests.
 
 ### Complexity Control
 
-- [ ] The plan reuses existing abstractions where appropriate.
-- [ ] New abstractions are justified by real seams, not hypothetical future flexibility.
-- [ ] Scope is minimal for the stated phase goal.
-- [ ] Stretch work is truly optional and not required for the phase to be honestly complete.
+- [ ] Reuses existing abstractions where appropriate.
+- [ ] New abstractions justified by real seams, not hypothetical flexibility.
+- [ ] Scope minimal for the stated phase goal.
+- [ ] Stretch work truly optional and not required for honest phase completion.
 
 ### Tech Debt Awareness
 
-These items prevent plans from compounding known structural debt documented in `docs/tasks/tech-debt/refactoring-*.md`.
+Ref: `docs/tasks/tech-debt/refactoring-*.md`.
 
-- [ ] **God-object growth budgeted.** If the plan adds logic to a class/component already exceeding ~400 lines (e.g., `cluster_repository.py`, `ClusterMutationsController.php`, `SyncStatusIndicator.tsx`), it must either (a) include extraction work to keep the file under threshold, or (b) explicitly note the debt increase with a follow-up reference.
-- [ ] **New domain concepts typed, not stringly.** Plans introducing new status values, operation types, or domain identifiers must define them as enums / value objects / `as const` types, not raw strings. If the plan's pseudocode uses bare string comparisons, flag it.
-- [ ] **Transaction/boilerplate duplication avoided.** Plans adding new PHP mutation endpoints must specify using the shared `run_transactional()` wrapper, not inlining transaction management.
-- [ ] **Hook/component decomposition considered.** Plans adding significant UI logic to a single component or hook should verify the target is not already flagged as a god component; if so, the plan should scope the new logic into a focused sub-hook or sub-component.
-- [ ] **Design token surfaces used.** Plans specifying new UI elements with explicit visual properties (colors, shadows, font sizes, radii) must reference `--acx-*` design tokens, not raw values. If the plan invents a new visual property, it should include adding the token to the shared surface.
+- [ ] **God-object growth budgeted.** Adding logic to a class/component >~400 lines must include extraction work or explicitly note the debt increase with a follow-up reference.
+- [ ] **New domain concepts typed, not stringly.** New status values, operation types, or domain identifiers must use enums / value objects / `as const`, not raw strings.
+- [ ] **Transaction/boilerplate duplication avoided.** New PHP mutation endpoints must use the shared `run_transactional()` wrapper.
+- [ ] **Hook/component decomposition considered.** New UI logic targeting an already-flagged god component must scope into a focused sub-hook or sub-component.
+- [ ] **Design token surfaces used.** New visual properties must reference `--acx-*` design tokens, not raw values. New tokens go in the shared surface.
 
 ---
 
 ## Finding Categories
 
-Use the same categories as branch review:
+Same as branch review:
 
-- **ANTIPATTERN**: works conceptually but pushes the system toward the wrong structure
-- **DEAD_CODE**: obsolete doc paths, stale assumptions, or plans for code paths that no longer exist
-- **COMPLEXITY**: unnecessary abstraction or over-scoped implementation
-- **GAP**: missing contract, test, migration, dependency, or rollout detail
+| Category | Meaning |
+|----------|---------|
+| **ANTIPATTERN** | Works conceptually but pushes the system toward the wrong structure |
+| **DEAD_CODE** | Obsolete doc paths, stale assumptions, or plans for nonexistent code paths |
+| **COMPLEXITY** | Unnecessary abstraction or over-scoped implementation |
+| **GAP** | Missing contract, test, migration, dependency, or rollout detail |
 
 ---
 
@@ -221,33 +193,26 @@ For every finding, call `record_review_finding` / `review-record` with:
 | `finding_id`  | Short ID matching the report (e.g., `E12-PLAN-01`)                                                                                  |
 | `severity`    | `high`, `medium`, or `low`                                                                                                          |
 | `file_path`   | Planning doc path (monorepo-relative)                                                                                               |
-| `description` | One-paragraph description with evidence from the plan. **ACE rule citation:** if the finding confirms or contradicts a `[sr-NNN]` or `[rg-NNN]` rule from `instructions.md`, include the rule ID in the description (e.g., "contradicts [rg-009] no task-specific logic in generic modules"). |
+| `description` | One-paragraph description with evidence. Include `[sr-NNN]`/`[rg-NNN]` rule IDs when a finding confirms or contradicts an ACE rule. |
 | `session`     | Current session identifier                                                                                                          |
-| `task_ref`    | The task ref owning the plan (may differ from the currently active task; pass explicitly)                                           |
-| `details`     | Nested object: `{ "line_start"?: int, "line_end"?: int, "fix"?: str }` -- **must be nested, NOT top-level parameters**              |
+| `task_ref`    | Task ref owning the plan (may differ from active task; pass explicitly)                                                             |
+| `details`     | Nested object: `{ "line_start"?: int, "line_end"?: int, "fix"?: str }` -- **must be nested, NOT top-level**                         |
 | `actor`       | Nested object: `{ "agent"?: str, "model"?: str, "model_label"?: str, "reasoning_level"?: str, "branch"?: str, "commit_sha"?: str }` |
 
-> **Schema contract**: `line_start`, `line_end`, and `fix` MUST be inside the `details` object. Passing them as top-level parameters fails with a schema validation error ("must NOT have additional properties").
+> **Schema contract**: `line_start`, `line_end`, and `fix` MUST be inside `details`. Top-level placement fails with schema validation error.
 
 After the review:
 
 1. Confirm findings with `list_review_findings` or `get_review_findings_summary`.
-2. Record a verdict decision with `record_decision` summarizing the review (finding count by severity, verdict). **The verdict decision must cite the decision number of the artifact under review** (e.g., "review of decision #966") so the reviewed artifact and its review are bidirectionally linked in handoff search.
-3. If requested, patch the plan to resolve the findings.
-4. Regenerate `CURRENT_TASK.md` using `generate_current_task_md(task_ref=<active-task-ref>)`. Always pass the **currently active** task's ref, NOT the reviewed plan's task ref. If findings were recorded against a non-active task (using explicit `task_ref` on write tools), still regenerate with the active task's ref so `CURRENT_TASK.md` reflects the live working state.
+2. Record a verdict decision citing the decision number of the artifact under review (e.g., "review of decision #966") for bidirectional linking.
+3. If requested, patch the plan to resolve findings.
+4. Regenerate `CURRENT_TASK.md` with `generate_current_task_md(task_ref=<active-task-ref>)`. Always use the **active** task's ref, even if findings were recorded against a different task.
 5. Include `Handoff updated: yes` in the final response.
 
 ---
 
 ## Output Expectations
 
-Prioritize findings in this order:
-
-1. obsolete assumptions
-2. architecture/ownership mistakes
-3. greenfield-policy violations (unnecessary migrations, compatibility shims, preservation work)
-4. contradictory scope or checklist logic
-5. contract gaps
-6. unnecessary complexity
+Finding priority order: (1) obsolete assumptions, (2) architecture/ownership mistakes, (3) greenfield-policy violations, (4) contradictory scope/checklist logic, (5) contract gaps, (6) unnecessary complexity.
 
 Do not spend review time on prose polish unless it affects implementation correctness.

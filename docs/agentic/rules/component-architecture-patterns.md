@@ -14,7 +14,7 @@ Rules for React component design in the Alt Context frontend (`apps/prototype-wp
 | Custom hook      | 150       | State reducers, data-fetching coordinators  |
 | Utility module   | 100       | Normalizers, formatters, validators         |
 
-If a file crosses its limit, extract before continuing. Do not wait for a "refactoring pass."
+Extract at the limit, not after exceeding it.
 
 ---
 
@@ -43,17 +43,15 @@ Route container (smart)
 
 ### Prefer `useReducer` over multiple `useState`
 
-When a component needs 4+ related state variables, consolidate into a single `useReducer` exposed via a custom hook.
-
-**Why:** Explicit action types make state transitions testable and prevent scattered `useEffect` chains that synchronize one `useState` to another.
+4+ related state variables -> consolidate into `useReducer` via a custom hook.
 
 ### Rules
 
 - State + dispatch live in a custom hook (e.g., `useClusterListState`).
-- The reducer is a pure function exportable for unit testing.
-- Maximum 1 `useEffect` in the hook (typically for debounce). If you need more, the abstraction is wrong.
-- Related state transitions (filter change resetting page to 1) belong in the reducer, not in an effect.
-- Internal impossible states belong in hook/util assertion helpers (`asserts ...`, `assertNever(...)`), not as non-null assertions on raw API data inside presentational components.
+- Reducer is a pure function exportable for unit testing.
+- Maximum 1 `useEffect` per hook (typically debounce).
+- Related state transitions (filter change resetting page) belong in the reducer, not effects.
+- Internal impossible states use hook/util assertion helpers, not non-null assertions on API data.
 
 ---
 
@@ -61,20 +59,13 @@ When a component needs 4+ related state variables, consolidate into a single `us
 
 ### Wrap coordinated queries in a custom data hook
 
-When a container needs data from 2+ API hooks, create a single data hook that:
-
-1. Calls the underlying query hooks
-2. Derives combined `isLoading` / `isError` state
-3. Transforms/normalizes response data via `useMemo`
-4. Exposes a single `refetch()` that refreshes all queries
-
-**Why:** The container should not know about individual endpoints, manual loading-state coordination, or data normalization.
+When a container needs 2+ API hooks, create a single data hook that calls them, derives combined loading/error state, transforms via `useMemo`, and exposes a single `refetch()`.
 
 ### Rules
 
-- Data hooks return `{ data, isLoading, isError, error, refetch }` — a uniform shape.
-- Transformations go in `useMemo` inside the data hook, not in the component render body.
-- If a data hook exceeds 150 lines, split the underlying queries into smaller hooks first.
+- Data hooks return `{ data, isLoading, isError, error, refetch }`.
+- Transformations in `useMemo` inside the data hook, not in the render body.
+- Data hook > 150 lines -> split underlying queries first.
 
 ---
 
@@ -112,7 +103,7 @@ Before merging, verify NONE of these exist in the diff:
 
 ## Overlay Panel Pattern (WorkbenchOverlay)
 
-The Workbench page uses a URL-synced overlay for secondary panels (`ConflictInbox`, `DeadLetterPanel`). This pattern applies whenever a page needs switchable side panels without changing the primary tab.
+URL-synced overlay for secondary panels (`ConflictInbox`, `DeadLetterPanel`).
 
 ```
 WorkbenchContext
@@ -126,9 +117,9 @@ WorkbenchPage
 
 ### Rules
 
-1. **URL param is source of truth.** The `panel` search param selects which overlay renders. Do not mirror it in local component state.
-2. **Context owns routing state, panels own their data.** `WorkbenchContext` / `useOverlayParam` manage which overlay is open. `ConflictInbox` and `DeadLetterPanel` call their own hooks directly.
-3. **Overlay components remain feature-local.** Conflict and dead-letter logic stays inside their own panel files and hooks; `WorkbenchPage` only handles container chrome and routing.
+1. **URL param is source of truth.** `panel` search param selects which overlay renders. No mirroring in component state.
+2. **Context owns routing, panels own data.** `WorkbenchContext` / `useOverlayParam` manage visibility; panels call their own hooks.
+3. **Overlay components stay feature-local.** `WorkbenchPage` only handles container chrome and routing.
 
 ---
 

@@ -34,42 +34,38 @@ echo esc_url($url);
 echo esc_attr($attribute);
 ```
 
-Additional security rules:
-
-- **Always sanitize superglobal access** -- use `sanitize_key()`, `sanitize_text_field()`, or `absint()` on `$_GET`/`$_POST`/`$_REQUEST` even when comparing against allowlists
-- **One transport per parameter** -- do not send the same value (e.g., `tenant_id`) in both the POST body and query params; pick one per your API contract
+- **Always sanitize superglobal access** -- `sanitize_key()`, `sanitize_text_field()`, or `absint()` on `$_GET`/`$_POST`/`$_REQUEST` even for allowlist comparisons
+- **One transport per parameter** -- pick POST body or query params, not both
 - Rate limiting via keyed transients
 
 ---
 
 ## WordPress Plugin Rules
 
-> Distilled from the 4.13.0 web-deployment cleanup audit.
-
-1. **No orphaned route registrations.** Every `register_rest_route()` must have at least one frontend consumer. Dead routes expand attack surface and confuse API documentation.
-2. **Symmetric create/destroy for plugin-owned tables.** Every `dbDelta()` / `CREATE TABLE` must have a corresponding `DROP TABLE IF EXISTS` in the uninstall lifecycle (`LifecycleManager::uninstall()`).
-3. **Fail fast on missing build assets.** Admin SPA bootstrap must report explicitly (admin notice + `error_log`) when the Vite manifest or compiled assets are missing or unreadable.
-4. **No allow-listed slugs without registered pages.** If a page slug appears in a permission or enqueue allowlist (e.g., `SUPPORTED_PAGE_SLUGS`), a corresponding menu page must be registered.
-5. **Strict boolean parameter parsing.** Use `rest_sanitize_boolean()` for REST query/body params intended as booleans. PHP treats the string `'false'` as truthy.
+1. **No orphaned route registrations.** Every `register_rest_route()` must have a frontend consumer.
+2. **Symmetric create/destroy for plugin-owned tables.** Every `CREATE TABLE` needs a `DROP TABLE IF EXISTS` in `LifecycleManager::uninstall()`.
+3. **Fail fast on missing build assets.** Report via admin notice + `error_log` when Vite manifest or assets are missing.
+4. **No allow-listed slugs without registered pages.**
+5. **Strict boolean parameter parsing.** Use `rest_sanitize_boolean()`. PHP treats `'false'` as truthy.
 
 ---
 
 ## Sovereign Sync Layer (`src/sovereign/`)
 
-The plugin's sync architecture is split into four cooperating subsystems:
+Four subsystems:
 
-1. **Inbound projection** (`SnapshotProjector` + repositories): pulls backend snapshots into local tables inside one DB transaction and records projection conflicts when curated rows disagree with machine state.
-2. **Outbound replay** (`OutboxDrain` + `OutboxDispatcher`): drains `wp_acx_sync_outbox` entries to backend curation/topology endpoints and applies result transitions (`acknowledged`, `conflict`, `failed`, `discarded`).
-3. **Conflict resolution** (`ConflictResolutionService`): resolves `wp_acx_sync_conflicts` by either accepting machine state or keeping local state, with source-specific side effects.
-4. **Sync health aggregation** (`SyncStateRepository` + `SyncStatusController`): persists pull reachability and aggregate counts for sync health surfaces.
+1. **Inbound projection** (`SnapshotProjector` + repositories): pulls snapshots into local tables in one DB transaction; records projection conflicts.
+2. **Outbound replay** (`OutboxDrain` + `OutboxDispatcher`): drains `wp_acx_sync_outbox` to backend endpoints; applies status transitions (`acknowledged`, `conflict`, `failed`, `discarded`).
+3. **Conflict resolution** (`ConflictResolutionService`): resolves `wp_acx_sync_conflicts` by accepting machine state or keeping local state.
+4. **Sync health** (`SyncStateRepository` + `SyncStatusController`): persists reachability and aggregate counts.
 
-### Rules for sovereign sync code
+### Rules
 
-- **Atomic projection transactions.** Snapshot projection work must stay inside one `$wpdb` transaction. Do not split cluster/member writes and conflict recording across separate request cycles.
-- **Outbox payloads are append-only input.** `OutboxDrain` may update row status, attempts, error fields, and acknowledgement metadata, but it must not rewrite the semantic payload to “fix” a bad operation after enqueue.
-- **Projection conflicts use idempotent open-conflict reuse.** `ConflictRepository::record_projection_conflict()` updates an existing open conflict for the same tenant/entity/conflict code instead of inserting duplicate rows.
-- **Outbox conflicts resolve through explicit status transitions.** Retry resets a `failed` row to `pending`; dismissing a `conflict` re-enqueues the same row with a new `expected_base_version`; discard is terminal.
-- **Sync metrics are part of the behavior, not incidental bookkeeping.** Projection, drain, retry, discard, and resolution paths must refresh `SyncStateRepository` metrics when they change conflict or outbox counts.
+- **Atomic projection transactions.** All projection work in one `$wpdb` transaction.
+- **Outbox payloads are append-only.** Do not rewrite semantic payload after enqueue.
+- **Idempotent open-conflict reuse.** `record_projection_conflict()` updates existing open conflicts instead of inserting duplicates.
+- **Explicit status transitions.** Retry resets `failed` to `pending`; dismiss re-enqueues with new `expected_base_version`; discard is terminal.
+- **Sync metrics are behavior.** All mutation paths must refresh `SyncStateRepository` metrics.
 
 ---
 
@@ -77,21 +73,15 @@ The plugin's sync architecture is split into four cooperating subsystems:
 
 ### Schema-Key Parity Before Query Edits
 
-Before changing SQL for plugin tables, confirm key column names from lifecycle schema (`class-life-cycle-manager.php`) and repository contracts.
-
-- Do not assume generic keys like `id` / `cluster_id`; use actual schema keys (for example `cluster_uuid`).
-- Treat column-name mismatch as a HIGH-severity correctness defect.
-- Add/extend tests that fail if `UPDATE`/`WHERE` targets a non-existent key.
+Confirm column names from lifecycle schema (`class-life-cycle-manager.php`) before changing SQL. Column-name mismatch is a HIGH-severity defect. Add tests that fail on non-existent keys.
 
 ### Prefer Derived Counts Over Stale Denormalized Fields
 
-For roster/person reporting, derive counts from authoritative relationships when practical (for example `COUNT(*)` via `wp_acx_clusters.person_id`) instead of trusting never-updated counter columns.
-
-- If a denormalized counter exists, either keep it transactionally updated in every write path or do not use it for read responses.
+Derive counts from authoritative relationships (e.g., `COUNT(*)` via `wp_acx_clusters.person_id`). If a denormalized counter exists, keep it transactionally updated or do not use it.
 
 ### Avoid N+1 Queries in Loops
 
-Never call a repository method inside a `foreach` loop over parent records. Use a batch method with `WHERE column IN (...)` instead.
+Use batch methods with `WHERE column IN (...)` instead of per-record repository calls in loops.
 
 ```php
 // BAD: N+1 — one query per cluster
@@ -113,7 +103,7 @@ public function list_for_cluster_uuids(array $uuids, int $limit_per_cluster): ar
 
 ### Tenant-Scoped Queries (Defense in Depth)
 
-Even when filtering by a globally-unique UUID, prefer adding a `tenant_id` JOIN or WHERE clause. UUID uniqueness is an implementation assumption; tenant scoping is a security invariant.
+Always add a `tenant_id` JOIN or WHERE clause, even when filtering by globally-unique UUID.
 
 ```php
 // Acceptable but fragile:
@@ -129,29 +119,25 @@ SELECT m.* FROM members m
 
 ## Trait Extraction Rules
 
-When extracting duplicated methods into a PHP trait:
-
-1. **Copy signatures verbatim.** Do not "improve" parameter types, add clamping, or change nullability during extraction. The trait must be a drop-in replacement.
-2. **Run `composer dump-autoload` after creating the trait file.** Composer's classmap does not detect new files automatically.
-3. **Remove the original methods from both classes.** Leaving them shadows the trait methods, making the trait dead code.
-4. **Verify with `php -l` on all three files** (trait + both consumers) before running tests.
+1. **Copy signatures verbatim.** No type changes during extraction.
+2. **Run `composer dump-autoload` after creating the trait file.**
+3. **Remove the original methods from both classes.** Leaving them shadows the trait.
+4. **Verify with `php -l` on all three files** before running tests.
 
 ---
 
 ## Taxonomy Capability Model
 
-When registering custom taxonomies (e.g., roster entity associations):
-
-- **CRUD operations** (`manage_options`): restrict to administrators
-- **Assignment to posts/attachments** (`upload_files`): editors and above
-- Register with `show_in_rest => true` for block editor and REST API access
-- Use `rest_sanitize_boolean()` for boolean query params (PHP treats `'false'` as truthy)
+- **CRUD** (`manage_options`): administrators only
+- **Assignment** (`upload_files`): editors and above
+- `show_in_rest => true` for block editor and REST API access
+- `rest_sanitize_boolean()` for boolean query params
 
 ---
 
 ## Roster Confidence Display
 
-Match confidence is ONLY displayed when a roster match exists. Priority order:
+Only displayed when a roster match exists. Priority order:
 
 1. `record.match.similarity` (roster match similarity)
 2. `record.match.confidence` (roster match confidence)

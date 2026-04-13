@@ -13,23 +13,21 @@
 
 ### Explicit Synchronization Over Sleep
 
-Use `asyncio.wait_for(coro, timeout=N)` instead of `asyncio.sleep()`. Timing-based waits are flaky and non-deterministic.
+Use `asyncio.wait_for(coro, timeout=N)` instead of `asyncio.sleep()`.
 
 ### Exact Assertions in Integration Tests
 
-Use deterministic fixtures for exact counts: `assert clusters_created == 3`, not `>= 1`.
+Use exact counts: `assert clusters_created == 3`, not `>= 1`.
 
 ### Test Mock Defaults Match Production Defaults
 
-Mock return values must match production defaults. For example: `AsyncMock(return_value=0.5)` not `0.0`; the `curriculum_t` field defaults to `0.5` in the schema.
-
-This rule is part of the broader stub-fidelity requirements in [testing-principles.md](testing-principles.md). Matching default values is not enough when the real dependency also raises errors or transitions state; use a behavioral fake when the test depends on that behavior.
+Mock return values must match production defaults (e.g., `AsyncMock(return_value=0.5)` not `0.0` when `curriculum_t` defaults to `0.5`). Part of the broader stub-fidelity requirements in [testing-principles.md](testing-principles.md).
 
 ---
 
 ## Python Fake Pattern (Project Standard)
 
-Use in-memory fakes for service layer tests. Keep fakes configurable, not hardcoded:
+Use configurable in-memory fakes for service layer tests:
 
 ```python
 class FakeClusterRepository:
@@ -43,7 +41,7 @@ class FakeClusterRepository:
         self._clusters[cluster.id] = cluster
 ```
 
-Bad pattern -- always-None fakes produce false-positive passing tests:
+Always-None fakes produce false positives:
 
 ```python
 # BAD
@@ -61,17 +59,11 @@ class FakeSession:
 
 ### Use One Injection Strategy Per Dependency
 
-Do not use both `app.dependency_overrides[dep]` and `monkeypatch.setattr(module, "dep", ...)` for the same dependency. Prefer FastAPI's `dependency_overrides` for endpoint-injected deps.
+Do not mix `app.dependency_overrides[dep]` and `monkeypatch.setattr(module, "dep", ...)` for the same dependency. Prefer `dependency_overrides`.
 
 ### Path Parameter Names Must Not Collide With Dependency Query Parameters
 
-FastAPI validates parameter sources across the **entire transitive dependency tree** of each route at module-load time. If any dependency (or sub-dependency) declares `param_name` as `Query` and the route URL contains `{param_name}` as a path segment, all test files that import the app will fail with:
-
-```
-AssertionError: Cannot use `Query` for path param 'param_name'
-```
-
-**Common trigger:** `get_session` depends on `get_tenant_id_optional`, which declares `tenant_id: Query`. Any route with `{tenant_id}` in its path that transitively depends on `get_session` (e.g., through `get_cluster_repository`) will collide -- even if the route never directly calls `get_tenant_id`.
+FastAPI validates parameter sources across the entire transitive dependency tree at module-load time. If any dependency declares `param_name` as `Query` and the route URL contains `{param_name}` as a path segment, all test imports fail with `AssertionError: Cannot use 'Query' for path param 'param_name'`.
 
 **Fix:** Rename the path segment to avoid the reserved name:
 
@@ -87,7 +79,7 @@ async def snapshot(tenant_uuid: str, repo=Depends(get_cluster_repository)):
     ...
 ```
 
-**Rule of thumb:** Before adding `{name}` to a route path, grep for `name.*Query` in `recognition/interface_adapters/http/deps/` to check for collisions.
+Before adding `{name}` to a route path, grep for `name.*Query` in `recognition/interface_adapters/http/deps/` to check for collisions.
 
 ---
 
@@ -116,93 +108,40 @@ make check          # All checks (ruff + mypy + pytest)
 
 ## In-Monorepo Package Test Invocation (MANDATORY)
 
-For tests under `packages/agent-handoff-mcp/` and `packages/agent-orchestrator-mcp/`,
-**always invoke pytest via the package Makefile target**, never via a direct
-`pytest` command:
+For `packages/agent-handoff-mcp/` and `packages/agent-orchestrator-mcp/`, **always use the Makefile target**:
 
 ```bash
 cd packages/agent-handoff-mcp && make test-handoff
 cd packages/agent-orchestrator-mcp && make test-orchestrator
 ```
 
-The Makefile sets `PYTHONPATH` to the **current worktree's** `src/` directory
-before invoking pytest. Direct `pytest` invocations rely on whatever editable
-install (`pip install -e .`) is currently registered in the Python environment,
-and editable installs are environment-wide: a single `pip install -e packages/agent-handoff-mcp`
-from one checkout makes every Python interpreter in the venv resolve
-`import agent_handoff_mcp` to that path, regardless of which git worktree the
-test session is running from. Linked worktrees inherit that same install
-pointer, so a refactor that lives only in the linked worktree's source will
-silently NOT be exercised by tests run inside that worktree — pytest runs
-against the root worktree's source instead, producing false-positive
-verification reports.
+The Makefile sets `PYTHONPATH` to the current worktree's `src/`. Direct `pytest` uses the environment-wide editable install, which may resolve to a different worktree's source, producing false-positive results.
 
 ### Enforcement
 
-Both packages' `tests/conftest.py` files contain a `pytest_sessionstart`
-guard that imports the package, compares its resolved `__file__` against
-the expected worktree-local source path, and aborts the session with a
-`pytest.UsageError` when the import resolves to a different worktree's
-source. The guard message names the Makefile target the caller should use.
-
-The conftest also prepends the worktree-local `src/` to `sys.path` before
-the guard check, so a direct `pytest` invocation from inside the correct
-package directory resolves to the right source and the guard passes.
-Cross-worktree invocations — where the editable install points at a
-different checkout — trigger the guard. To make cross-package invocations
-safe (e.g., running `pytest packages/agent-handoff-mcp/tests` from the
-repo root), the Makefile and the explicit-PYTHONPATH form documented below
-both work; the guard verifies the resolution regardless of invocation form.
+Both packages' `tests/conftest.py` contain a `pytest_sessionstart` guard that aborts the session if the package import resolves to a different worktree's source. The conftest also prepends the worktree-local `src/` to `sys.path`, so direct `pytest` from the correct package directory works; cross-worktree invocations trigger the guard.
 
 ### Background
 
-This enforcement was added in `AHMCP-13` after `AHMCP-10` regressed 65
-orchestrator tests because the original verification ran inside a linked
-worktree but the editable install resolved to the root checkout's
-pre-refactor source. The resulting "586 passed" claim was a false positive
-and the regression was not caught until the merge landed and the root
-worktree updated.
+Added in `AHMCP-13` after `AHMCP-10` regressed 65 orchestrator tests: verification ran in a linked worktree but the editable install resolved to the root checkout's pre-refactor source, producing a false-positive "586 passed" claim.
 
 ### If you must invoke pytest directly
 
-Set `PYTHONPATH` explicitly so the worktree's `src/` precedes the editable
-install in import resolution:
+Set `PYTHONPATH` explicitly:
 
 ```bash
 PYTHONPATH=packages/agent-handoff-mcp/src:packages/agent-orchestrator-mcp/src \
   pyenv exec python -m pytest packages/agent-handoff-mcp/tests -q
 ```
 
-The conftest guard verifies this anyway and will fail the session if the
-imported package still resolves to the wrong path.
+The conftest guard still verifies correct resolution.
 
 ## Commit SHA Provenance Discipline (MANDATORY)
 
-Whenever a handoff write path accepts a `commit_sha` (`record_event(actor=...)`,
-`set_handoff_state(actor=...)`, `update_review_finding(verified_commit_sha=...)`,
-`handoff_close_check(current_commit_sha=...)`, etc.):
-
-- **Pass the canonical 40-character SHA**, not an abbreviation.
-- **Get the SHA from `git rev-parse <abbrev>` or `git rev-parse HEAD`**, never
-  by typing the suffix from memory after seeing a 7-char abbreviation in
-  `git commit` output.
-- The MCP write path validates every `commit_sha` against the active git
-  repo via `git rev-parse --verify <sha>^{commit}`. If the SHA does not
-  resolve to a real commit, the write is rejected with an error message
-  pointing at this rule. Abbreviated SHAs (4-40 hex chars) that resolve
-  uniquely are auto-expanded to the full 40-char form before being stored.
-- Validation is bypassed inside the test suites via the
-  `AGENT_HANDOFF_SKIP_SHA_VALIDATION` env var (set in both packages'
-  `tests/conftest.py`); production callers always run with validation
-  enabled.
+- **Pass the canonical 40-character SHA** from `git rev-parse HEAD`, never typed from memory.
+- The MCP write path validates every `commit_sha` via `git rev-parse --verify <sha>^{commit}` and rejects fabricated SHAs. Abbreviated SHAs (4-40 hex chars) are auto-expanded.
+- Validation is bypassed in test suites via `AGENT_HANDOFF_SKIP_SHA_VALIDATION` (set in both packages' `tests/conftest.py`).
 
 ### Background
 
-This enforcement was added in `AHMCP-13` after several `AHMCP-10` and
-`AHMCP-11` audit-trail rows ended up tagged with SHA suffixes that were
-typed from memory rather than via `git rev-parse`. The pre-existing
-`handoff_close_check` gate compared the passed `current_commit_sha` against
-the recorded slice decision's `commit_sha` as opaque strings, so a
-fabricated SHA that matched itself sailed through the gate. The validator
-closes that hole at the MCP write boundary so fabricated SHAs cannot enter
-the audit trail in the first place.
+Added in `AHMCP-13` after `AHMCP-10`/`AHMCP-11` audit-trail rows were tagged with SHAs typed from memory. The validator closes this hole at the MCP write boundary so fabricated SHAs cannot enter the audit trail.

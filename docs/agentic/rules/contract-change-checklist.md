@@ -1,8 +1,6 @@
 # Contract Change Checklist
 
-> **Purpose:** Canonical checklist for cross-boundary changes so contract ownership, schema evolution, fixture evidence, and handoff proof stay in the same slice.
-
-Use this checklist whenever a change touches a payload, status code, envelope, enum, or boundary behavior shared across services, languages, or MCP surfaces.
+> Checklist for cross-boundary changes. Use when a change touches a payload, status code, envelope, enum, or boundary behavior shared across services, languages, or MCP surfaces.
 
 ## Boundary Ownership Registry
 
@@ -20,27 +18,14 @@ Use this checklist whenever a change touches a payload, status code, envelope, e
 
 ## Contract-Change Steps
 
-1. Identify the boundary being changed and load its owning contract before editing code.
-2. Confirm the canonical owner. If more than one layer appears to adapt the shape, stop and collapse ownership before proceeding.
-3. Decide whether the change affects:
-   - payload shape
-   - status/error semantics
-   - enum/value vocabulary
-   - pagination/provenance metadata
-   - runtime/parity behavior
-4. Update the owning contract in the same slice as the implementation. If no contract text changes, record a handoff decision explaining why.
-5. Update the shared schema or fixture in the same slice when the boundary payload changes.
-6. Add or update deterministic proof:
-   - fixture/schema assertion
-   - backend/PHP/TS contract tests
-   - runtime-parity proof when applicable
-7. Record a handoff decision with:
-   - boundary changed
-   - owning contract
-   - verification path
-   - compatibility stance
-   - downstream assumptions that remain valid
-8. Do not mark the slice review-ready until contract, schema/fixture, tests, and handoff proof all exist together.
+1. Load the owning contract before editing code.
+2. Confirm the canonical owner. If multiple layers adapt the shape, collapse ownership first.
+3. Classify the change: payload shape, status/error semantics, enum vocabulary, pagination/provenance metadata, or runtime parity.
+4. Update the owning contract in the same slice. If unchanged, record a handoff decision explaining why.
+5. Update shared schema/fixture in the same slice.
+6. Add deterministic proof: fixture/schema assertion, contract tests, runtime-parity proof.
+7. Record a handoff decision: boundary, owning contract, verification path, compatibility stance, valid downstream assumptions.
+8. Slice is not review-ready until contract, schema/fixture, tests, and handoff proof all exist together.
 
 ## Contract Intake Template
 
@@ -60,7 +45,7 @@ Handoff decision id:
 
 ## Schema-Evolution Notes
 
-Whenever a shared boundary payload changes, attach a short note in the owning contract or the implementation decision:
+Attach to the owning contract or implementation decision when a shared payload changes:
 
 ```md
 Schema evolution:
@@ -74,18 +59,18 @@ Schema evolution:
 
 Rules:
 
-- Greenfield default is `Compatibility required: no`.
-- Do not add backward-compatibility shims unless the task explicitly documents an exception.
-- Downstream consumers validate the canonical shape; they do not silently support multiple contradictory shapes.
+- Greenfield default: `Compatibility required: no`.
+- No backward-compatibility shims unless explicitly documented.
+- Downstream consumers validate the canonical shape only.
 
 ## Healthy Data Patterns
 
-- One writer per fact: every boundary field has a single authoritative source.
-- Explicit provenance for derived metadata: if a field is computed locally, document the derivation and local authority path.
-- No silent dual-write drift: when two layers can write related state, document which one is canonical and which one mirrors.
-- Read-after-write expectations must be named: immediate, eventual, or best-effort.
-- Boundary adapters must not invent pagination, provenance, or status metadata from convenience guesses.
-- Empty success is not an overload strategy: unavailability and malformed payloads must stay distinct from true empty results.
+- One writer per fact.
+- Explicit provenance for derived metadata.
+- No silent dual-write drift: document which layer is canonical.
+- Name read-after-write expectations: immediate, eventual, or best-effort.
+- Adapters must not invent pagination, provenance, or status metadata.
+- Unavailability and malformed payloads stay distinct from true empty results.
 
 ## Canonical Enum and Constant Surfaces
 
@@ -98,8 +83,4 @@ Rules:
 
 ## Remediation-Plan Finding IDs
 
-If a remediation plan cites an existing `finding_id`, that id must resolve to a real MCP finding or a concrete code site before implementation starts.
-
-- If the finding exists, fix/archive/defer it through MCP.
-- If the finding does not exist, record a handoff decision documenting the absence.
-- Do not carry unverifiable finding IDs forward as assumed technical debt.
+Cited `finding_id` values must resolve to a real MCP finding or concrete code site before implementation. Fix/archive/defer existing findings through MCP. Record a decision for non-existent IDs. Do not carry unverifiable IDs as assumed debt.

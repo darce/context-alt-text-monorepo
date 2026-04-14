@@ -15,7 +15,11 @@ Protected code extensions: `*.py`, `*.ts`, `*.tsx`, `*.js`, `*.jsx`, `*.php`, `*
 
 **Allowed on `main`:** documentation, planning artifacts, configuration files, Makefiles, markdown, and settings. Feature branches and linked worktrees are created only when a plan is approved and implementation begins. See [planning-pipeline.md § Planning stays on main](planning-pipeline.md#planning-stays-on-main-implementation-branches-after-approval).
 
-**Task-plan progress lives on `main`:** update checklist progress and status blocks in `docs/tasks/`, `docs/epics/`, and similar planning artifacts directly on `main` as slices complete. Code stays on `feature/<task-id>` branches; progress-only planning updates do not wait for the feature merge. If a feature branch also carries the same plan file, sync the branch copy after the `main` docs commit so merge-time docs do not regress.
+**Task-plan progress lives on `main`:** update checklist progress and status blocks in `docs/tasks/`, `docs/epics/`, and similar planning artifacts directly on `main` after each implementation or review turn so the consolidated checklist reflects the latest audited state. Code stays on `feature/<task-id>` branches; progress-only planning updates do not wait for the feature merge. If a feature branch also carries the same plan file, sync the branch copy after the `main` docs commit so merge-time docs do not regress.
+
+- Treat checklist items as complete only after the relevant handoff review findings for that turn are fixed or explicitly resolved.
+- Do not mark a task-plan slice complete on initial implementation alone; unresolved branch-review or planning-review findings mean the checklist stays in-progress on `main`.
+- When a turn lands implementation on a feature branch but review remains open, update `main` to show the real intermediate state rather than prematurely checking the box.
 
 **Before any code edit:**
 

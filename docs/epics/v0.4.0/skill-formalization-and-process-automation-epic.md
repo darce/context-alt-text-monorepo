@@ -68,7 +68,7 @@ The most common source of stale `active` dashboard entries is tasks archived bef
 1. `update_task_status(task_ref=..., status="done")` — mark the task done in handoff DB
 2. `manage_worktree_lane(action="close", ...)` — close the orchestrator lane registration (agent-orchestrator-mcp; applies when orchestrated lanes were opened at task-start)
 3. `archive_task_state(task_ref=...)` — archive the task snapshot
-4. `generate_current_task_md()` + `generate_dashboard_md()` — regenerate both views with the archived status
+4. `generate_dashboard_md()` — regenerate the operator-facing cross-task view with the archived status (`generate_current_task_md()` on demand for task-scoped snapshots)
 
 **Current implementation** (`make task-finish` → `scripts/_task_finish_inline.py`): steps 1, 3, and 4 are executed today. Step 2 (`manage_worktree_lane(close)`) is an agent-directed MCP call; the `branch-lifecycle` skill (Phase 2) will document it as a required step when orchestrated lanes are in use.
 
@@ -210,13 +210,13 @@ Deliverables:
 - **`incremental-implementation` skill** (`mode: execution`, `tdd_gate: true`) — _deliver second_
   - Enforces vertical, test-backed slice increments (DB → service → API → UI in one slice) instead of horizontal implementation waves; defines the default decomposition model for all feature work
   - Core process: choose the smallest end-to-end user path → write failing test → scaffold → implement → re-run tests → keep diff bounded → `make slice-commit`
-  - MCP tools: `record_event`, `search_handoff`, `generate_current_task_md`; `plan_cursor` (agent-orchestrator-mcp — tracks which plan item each slice advances; `require_clean_slice` guard refuses upsert if open findings exist, enforcing the TDD integrity gate)
+  - MCP tools: `record_event`, `search_handoff`, `generate_dashboard_md`; `plan_cursor` (agent-orchestrator-mcp — tracks which plan item each slice advances; `require_clean_slice` guard refuses upsert if open findings exist, enforcing the TDD integrity gate)
   - Context budget: ~100 lines of skill
 
 - **`branch-lifecycle` skill** (`mode: execution`, `tdd_gate: true`)
   - Extracts the task-start → slice-work → task-finish lifecycle from `development-workflow.md` and `planning-pipeline.md`
   - Core process: `make task-start` → `make slice-start` → implementation loop (TDD) → `make slice-commit` → `make review-ready` → review → `make task-finish`
-  - MCP tools: `set_handoff_state`, `record_event`, `close_slice`, `handoff_close_check`, `archive_task_state`, `generate_current_task_md`; `manage_worktree_lane` (agent-orchestrator-mcp — register lane at task-start, close as part of invariant finish sequence), `switch_task` (agent-orchestrator-mcp)
+  - MCP tools: `set_handoff_state`, `record_event`, `close_slice`, `handoff_close_check`, `archive_task_state`, `generate_dashboard_md`; `manage_worktree_lane` (agent-orchestrator-mcp — register lane at task-start, close as part of invariant finish sequence), `switch_task` (agent-orchestrator-mcp)
   - Context budget: ~150 lines of skill
 
 - **`branch-review` skill** (`mode: execution`, `tdd_gate: false`)
@@ -229,22 +229,22 @@ Deliverables:
 - **`planning-review` skill** (`mode: execution`, `tdd_gate: false`)
   - Extracts the executable review loop from `planning-review-guide.md`
   - Core process: load planning document + code anchors → check prior review runs via `review_runs(list)` → run planning checklist passes → record findings via `review_findings(batch_record)` → record review run via `review_runs(record)` → verify convergence → record verdict
-  - References `make plan-review` (new target) as Makefile entry point
+  - References the existing agent-assisted `make plan-review` stub as its Makefile entry point
   - MCP tools: `review_findings`, `review_runs`, `record_event`, `search_handoff`
   - Context budget: ~120 lines of skill + loaded plan + code anchors
 
 - **`plan-analyze` skill** (`mode: advisory`, `tdd_gate: false`)
   - Implements the six spec-kit detection passes as a structured prompt
   - Core process: load plan + constitution + code anchors → run duplication/ambiguity/underspecification/constitution-alignment/coverage-gap/terminology-drift passes → produce findings table → record findings in MCP with `review_mode="analysis"`
-  - References `make plan-analyze` (new target, agent-assisted) as Makefile entry point
+  - References the existing agent-assisted `make plan-analyze` stub as its Makefile entry point
   - MCP tools: `review_findings(batch_record)` for finding recording
   - Context budget: ~200 lines of skill + loaded plan + constitution
   - **Gate semantics**: `plan-analyze` is a pre-review triage step, not a substitute for the required planning review pass. Its findings are recorded with `review_mode="analysis"` (distinct from `review_mode="planning"`). It does NOT record a review run via `review_runs(record)` — only `planning-review` does that. The planning pipeline exit gate still requires at least one `planning`-mode review run.
 
 - **`handoff-lifecycle` skill** (`mode: execution`, `tdd_gate: false`)
   - Extracts the session-start → work → handoff → resume pattern from `instructions.md` agent startup protocol
-  - Core process: `make context` → `load_session` → verify alignment → work loop → record decisions → `generate_current_task_md` → session end; documents that `archive_task_state` must only be called after `update_task_status(status="done")`; documents that `switch_task` is the safe entry point for transitioning between tasks mid-session
-  - MCP tools: `load_session`, `get_handoff_state`, `record_event`, `generate_current_task_md`; `switch_task` (agent-orchestrator-mcp — proper task transitions that verify current task status before switching)
+  - Core process: `make context` → `load_session` → verify alignment → work loop → record decisions → `generate_dashboard_md` after each state write (CURRENT_TASK.md on demand) → session end; documents that `archive_task_state` must only be called after `update_task_status(status="done")`; documents that `switch_task` is the safe entry point for transitioning between tasks mid-session
+  - MCP tools: `load_session`, `get_handoff_state`, `record_event`, `generate_dashboard_md`, `generate_current_task_md`; `switch_task` (agent-orchestrator-mcp — proper task transitions that verify current task status before switching)
   - Context budget: ~100 lines of skill
 
 New Makefile targets:
@@ -269,7 +269,7 @@ Each command file is ~15 lines: names the active skill, declares the Makefile en
 
 Dashboard auto-refresh hook:
 
-- **PostToolUse hook** in `.claude/settings.json` that runs `$(MCP_CMD) task` after every `record_event`, `review_findings`, and `review_runs` write. Ensures `CURRENT_TASK.md` and `DASHBOARD.md` are regenerated after state-changing writes without requiring an explicit agent call. The server-side path (`close_slice`, `update_task_status`, `archive_task_state`) already regenerates views atomically; this hook closes the gap for the remaining write operations. The `handoff-lifecycle` skill documents that `archive_task_state` must only be called after `update_task_status(status="done")` — archiving a task that is still `in_progress` causes the dashboard to render a permanent `active` fallback status.
+- **PostToolUse hook** in `.claude/settings.json` that runs `regenerate-task-views.sh` after `record_event`, `review_findings`, `review_runs`, `set_handoff_state`, and `update_task_status` calls. The hook reads the tool payload from stdin and uses a Python filter to fire only on state-changing writes (read operations — `list`, `get`, `coverage` — exit early). On a covered write: calls `agent-handoff-mcp dashboard` (DASHBOARD.md only). CURRENT_TASK.md is NOT regenerated by the hook — agents call `generate_current_task_md` on demand when a task-scoped machine snapshot is specifically needed. The server-side path (`close_slice`, `archive_task_state`) already regenerates views atomically; this hook closes the gap for the remaining write operations. The `handoff-lifecycle` skill documents that `archive_task_state` must only be called after `update_task_status(status="done")` — archiving a task that is still `in_progress` causes the dashboard to render a permanent `active` fallback status.
 
 Exit criteria:
 
@@ -280,7 +280,11 @@ Exit criteria:
 - `make slice-start` records a failing-test gate before implementation begins
 - `make slice-commit` creates a commit and records a slice-complete decision against the new HEAD
 - Each skill's context budget is under its declared target when measured against a representative invocation
-- Dashboard auto-refresh hook is wired; CURRENT_TASK.md and DASHBOARD.md regenerate within one tool call of any state write
+- Dashboard auto-refresh hook is wired; DASHBOARD.md regenerates within one tool call of any state-changing `record_event`, `review_findings`, `review_runs`, `set_handoff_state`, or `update_task_status` write (read-only ops filtered; CURRENT_TASK.md is on-demand only)
+
+Architectural decisions recorded during Phase 2:
+
+- **Decision #1676 (cdx_decision_E17-3_choose_task_plan_progress_sync_architecture)**: `agent-orchestrator-mcp` (plan_cursors) owns task-plan progress sync. Consolidated checklist items become complete only after related handoff review findings are resolved — not just on commit. Implementation of the sync/check tool and pre-merge gate hook is out of Phase 2 scope (requires code change to `agent-orchestrator-mcp`); deferred to Phase 3 or a follow-on task.
 
 ### Phase 3: Retrofit and Integration -- not-started
 
@@ -407,7 +411,7 @@ This epic has no external dependencies. All work is internal to the repo's agent
 - [ ] Verify each skill references its Makefile targets and MCP tools in frontmatter
 - [ ] Verify each skill's context budget is under its declared target
 - [ ] Create paired `.claude/commands/<skill>.md` for each Phase 2 skill (7 files total)
-- [ ] Add PostToolUse hook in `.claude/settings.json` to auto-regenerate CURRENT_TASK.md + DASHBOARD.md after `record_event`, `review_findings`, `review_runs` writes
+- [ ] Add PostToolUse hook in `.claude/settings.json` to auto-regenerate DASHBOARD.md (only) after state-changing `record_event`, `review_findings`, `review_runs`, `set_handoff_state`, `update_task_status` writes (read ops filtered; CURRENT_TASK.md on-demand)
 
 ## Phase 3: Retrofit and Integration -- not-started
 

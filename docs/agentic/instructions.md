@@ -334,7 +334,7 @@ Key gates (every slice):
 
 View regeneration policy:
 
-- **After every state-changing operation** (`record_event`, `review_findings`, `review_runs`): call `generate_dashboard_md()`. This keeps the cross-task operator view current — NEEDS ATTENTION, ALL TASKS, OPEN FINDINGS.
+- **After every state-changing operation** (`record_event`, `review_findings`, `review_runs`, `set_handoff_state`, `update_task_status`): call `generate_dashboard_md()`. This keeps the cross-task operator view current — NEEDS ATTENTION, ALL TASKS, OPEN FINDINGS.
 - **On-demand only**: call `generate_current_task_md(task_ref=<ref>)` when a specific task's machine-readable JSON snapshot is needed (e.g., before handing off to another agent on the same task, or when producing a task-scoped report). Agents with live MCP access do not need this in the hot path — use `get_handoff_state` or `load_session` instead.
 - `close_slice` and `archive_task_state` regenerate both views atomically server-side; no extra call needed after those.
 
@@ -410,9 +410,9 @@ When a user request matches any of these patterns, **load and follow** [rules/br
 2. Read the relevant stack guide(s) based on files in the diff.
 3. Walk the common checklist + stack-specific checklist, citing files and lines.
 4. Classify each finding using the defined categories (ANTIPATTERN / DEAD_CODE / COMPLEXITY / GAP) and severities (HIGH / MEDIUM / LOW).
-5. Record findings in MCP handoff. Use `review_findings(review={"operation":"record", ...}, actor={ ... }, task_ref=...)` for 1-2 findings; use `review_findings(review={"operation":"batch_record", findings=[...], ...}, actor={ ... }, task_ref=...)` for 3 or more (atomic write, single `CURRENT_TASK.md` flush, per-item results).
+5. Record findings in MCP handoff. Use `review_findings(review={"operation":"record", ...}, actor={ ... }, task_ref=...)` for 1-2 findings; use `review_findings(review={"operation":"batch_record", findings=[...], ...}, actor={ ... }, task_ref=...)` for 3 or more (atomic write, single post-write dashboard refresh, per-item results).
 6. Produce the markdown report using the template.
-7. Call `record_event(event={event_kind: "decision", actor: {...}, ...})` summarizing the review + `generate_current_task_md(...)`.
+7. Call `record_event(event={event_kind: "decision", actor: {...}, ...})` summarizing the review, then `generate_dashboard_md()`. Call `generate_current_task_md(...)` only if a task-scoped machine snapshot is explicitly needed.
 
 **Do NOT** perform ad-hoc reviews. The guide exists to ensure consistent, structured, cross-agent-visible output.
 

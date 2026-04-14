@@ -20,6 +20,7 @@ from pathlib import Path
 EXIT_OK = 0
 EXIT_INFRA_ERROR = 1
 EXIT_DRIFT = 2
+MAIN_BRANCHES = frozenset({"main", "master"})
 
 # Statuses that indicate the active task has reached a terminal state and the
 # agent should start a new task before recording further work. `done` is the
@@ -152,16 +153,18 @@ def main() -> int:
     state = _load_active_state()
     if state is None:
         return EXIT_INFRA_ERROR
+    actual_branch = _detect_branch()
     active = state.get("active") if isinstance(state, dict) else None
     if not active:
         print("ℹ No active handoff task. Nothing to check.")
+        _emit_integrity_warning_if_dirty()
+        _emit_maintenance_task_hint_if_needed(actual_branch)
         return EXIT_OK
 
     task_ref = active.get("task_ref") or "(unknown)"
     target_branch = active.get("target_branch")
     target_worktree_path = active.get("target_worktree_path")
     actual_path = os.path.abspath(os.getcwd())
-    actual_branch = _detect_branch()
 
     print(f"Active task: {task_ref}  status={active.get('status', '?')}  rev={active.get('revision', '?')}")
     print()
@@ -273,6 +276,17 @@ def _emit_integrity_warning_if_dirty() -> None:
     print("  If these are intentional, add them to dirty-allowlist (one path per")
     print("  line). If they are not, investigate before recording handoff state —")
     print("  silent file reverts and stale editor buffers cause merge regressions.")
+
+
+def _emit_maintenance_task_hint_if_needed(actual_branch: str | None) -> None:
+    if actual_branch not in MAIN_BRANCHES:
+        return
+    dirty = _git_dirty_paths()
+    if not dirty:
+        return
+    print()
+    print("  Register a maintenance task before continuing with main-branch edits:")
+    print("    set_handoff_state(task_ref='MAINT-<slug>', objective='Describe the main-branch patch', status='in_progress')")
 
 
 if __name__ == "__main__":

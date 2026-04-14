@@ -19,9 +19,9 @@ help:
 	@echo "agent-orchestrator-mcp Commands"
 	@echo "==============================="
 	@echo ""
-	@echo "  make lint-orchestrator     - Run Ruff checks"
-	@echo "  make fix-lint-orchestrator - Auto-fix Ruff violations"
-	@echo "  make format-orchestrator   - Format code with Ruff"
+	@echo "  make lint-orchestrator     - Run Ruff checks (includes format check)"
+	@echo "  make fix-lint-orchestrator - Auto-fix Ruff violations (unsafe fixes)"
+	@echo "  make format-orchestrator   - Fix lint + format code with Ruff"
 	@echo "  make mypy-orchestrator     - Run mypy"
 	@echo "  make test-orchestrator     - Run pytest"
 	@echo "  make check-orchestrator    - Run lint, mypy, and tests"
@@ -29,11 +29,13 @@ help:
 
 lint-orchestrator:
 	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff check $(RUFF_TARGETS)
+	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff format --check $(RUFF_TARGETS)
 
 fix-lint-orchestrator:
-	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff check --fix $(RUFF_TARGETS)
+	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff check --fix --unsafe-fixes $(RUFF_TARGETS)
 
 format-orchestrator:
+	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff check --fix --unsafe-fixes $(RUFF_TARGETS)
 	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff format $(RUFF_TARGETS)
 
 mypy-orchestrator:

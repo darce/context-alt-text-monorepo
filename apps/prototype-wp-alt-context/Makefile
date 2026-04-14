@@ -1,9 +1,10 @@
-.PHONY: help check fix lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset worker-daemon FORCE
+.PHONY: help check fix format lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset worker-daemon FORCE
 
 help:
 	@echo "Available commands:"
 	@echo "  make check      - Run all checks (lint, types, arch, tests, PHP)"
 	@echo "  make fix        - Auto-fix lint/format then run checks"
+	@echo "  make format     - Auto-fix lint/format without running checks"
 	@echo "  make lint       - Run ESLint"
 	@echo "  make typecheck  - Run TypeScript checks"
 	@echo "  make arch       - Run frontend architecture compliance checks"
@@ -21,11 +22,12 @@ check:
 	@$(MAKE) php-test
 	@$(MAKE) check-php
 
-fix:
+format:
 	@npm run lint:fix
 	@npm run format:fix
 	@composer cs-fix
-	@$(MAKE) check
+
+fix: format check
 
 lint:
 	@npm run lint

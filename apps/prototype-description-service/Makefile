@@ -116,7 +116,7 @@ typecheck:
 # Format code
 format:
 	@echo "Auto-fixing code..."
-	@$(PYTHON) -m ruff check --fix .
+	@$(PYTHON) -m ruff check --fix --unsafe-fixes .
 	@$(PYTHON) -m ruff format .
 
 # Test only

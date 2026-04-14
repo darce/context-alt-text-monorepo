@@ -166,6 +166,7 @@ Reference: [development-workflow.md](development-workflow.md#branch-isolation-pr
 
 ### Documentation & Cleanup
 
+- [ ] **Format applied** — `make format-all` (or per-component equivalent) run on the branch; `make lint-all` passes with zero format violations.
 - [ ] **No stale comments** — "TODO", "assuming this", "will verify" resolved or removed.
 - [ ] **Planning-doc consistency** — "What works", "What's missing", checklist state, and success criteria do not contradict.
 - [ ] **ADR terminology alignment** — accepted domain terms are used consistently (no regressions to retired naming).
@@ -499,6 +500,7 @@ Save to `docs/tasks/<version>/<branch-name>-branch-audit-findings.md`.
 
 | Check                                   | Result                                |
 | --------------------------------------- | ------------------------------------- |
+| `make format-all` (all components)      | :white_check_mark: / :x:              |
 | `make check` (ruff + mypy + pytest)     | :white_check_mark: / :x:              |
 | `npm run typecheck`                     | :white_check_mark: / :x:              |
 | `npm run test -- --run`                 | :white_check_mark: / :x:              |

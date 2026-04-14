@@ -132,7 +132,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/lane-maintenance.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context dashboard task-start task-finish
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context dashboard task-start task-finish
 
 # Default target
 help:
@@ -141,6 +141,7 @@ help:
 	@echo ""
 	@echo "Cross-Repo Operations:"
 	@echo "  make check-all        - Run all checks (lint + types + tests)"
+	@echo "  make format-all       - Fix lint + format across all apps and packages (run before check-all)"
 	@echo "  make check-mcp        - Run lint, mypy, and tests for both MCP packages"
 	@echo "  make check-handoff    - Lint, mypy, tests for agent-handoff-mcp"
 	@echo "  make check-orchestrator - Lint, mypy, tests for agent-orchestrator-mcp"
@@ -285,6 +286,9 @@ lint-all:
 			echo "=== Linting Agent Orchestrator MCP ==="; \
 			$(MAKE) lint-orchestrator; \
 			echo ""; \
+			echo "=== Linting Codex Subagent Bridge ==="; \
+			$(MAKE) -C packages/codex-subagent-bridge lint-bridge; \
+			echo ""; \
 			echo "=== Linting TypeScript (frontend) ==="; \
 			( cd apps/prototype-wp-alt-context && make lint ); \
 			echo ""; \
@@ -338,13 +342,15 @@ lint-handoff:
 lint-orchestrator:
 	@PYTHONPATH="$(MCP_PYTHONPATH)" \
 	$(PYTHON) -m ruff check $(ORCHESTRATOR_SRC) $(ORCHESTRATOR_TESTS)
+	@PYTHONPATH="$(MCP_PYTHONPATH)" \
+	$(PYTHON) -m ruff format --check $(ORCHESTRATOR_SRC) $(ORCHESTRATOR_TESTS)
 
 fix-lint-handoff:
 	@$(MAKE) -C packages/agent-handoff-mcp fix-lint-handoff
 
 fix-lint-orchestrator:
 	@PYTHONPATH="$(MCP_PYTHONPATH)" \
-	$(PYTHON) -m ruff check --fix $(ORCHESTRATOR_SRC) $(ORCHESTRATOR_TESTS)
+	$(PYTHON) -m ruff check --fix --unsafe-fixes $(ORCHESTRATOR_SRC) $(ORCHESTRATOR_TESTS)
 
 fix-lint-mcp: fix-lint-handoff fix-lint-orchestrator
 
@@ -379,7 +385,28 @@ format-handoff:
 
 format-orchestrator:
 	@PYTHONPATH="$(MCP_PYTHONPATH)" \
+	$(PYTHON) -m ruff check --fix --unsafe-fixes $(ORCHESTRATOR_SRC) $(ORCHESTRATOR_TESTS)
+	@PYTHONPATH="$(MCP_PYTHONPATH)" \
 	$(PYTHON) -m ruff format $(ORCHESTRATOR_SRC) $(ORCHESTRATOR_TESTS)
+
+# Apply deterministic lint fixes and formatting across every app and package.
+# Run this before `make check-all` — many violations are auto-fixable and
+# resolving them first keeps the check output signal-to-noise clean.
+# Python: ruff check --fix --unsafe-fixes + ruff format
+# TypeScript/JS: npm run lint:fix + npm run format:fix
+# PHP: composer cs-fix
+format-all:
+	@echo "=== Formatting agent-handoff-mcp ==="
+	@$(MAKE) format-handoff
+	@echo "=== Formatting agent-orchestrator-mcp ==="
+	@$(MAKE) format-orchestrator
+	@echo "=== Formatting codex-subagent-bridge ==="
+	@$(MAKE) -C packages/codex-subagent-bridge format-bridge
+	@echo "=== Formatting description-service ==="
+	@( cd apps/prototype-description-service && $(MAKE) format )
+	@echo "=== Formatting WordPress plugin (TS/JS + PHP) ==="
+	@( cd apps/prototype-wp-alt-context && $(MAKE) format )
+	@echo "✅ All components formatted!"
 
 mypy-handoff:
 	@$(MAKE) -C packages/agent-handoff-mcp mypy-handoff

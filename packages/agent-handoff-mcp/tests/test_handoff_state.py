@@ -810,6 +810,7 @@ def test_v2_envelope_shape_on_read_surfaces(isolated_handoff: dict) -> None:
     assert raw_gen["scope"]["task_ref"] == "env-test"
     assert "current_task_json" in raw_gen["data"]
 
+
 def test_v2_envelope_no_legacy_mirroring(isolated_handoff: dict) -> None:
     """Compact envelope puts data in the ``data`` block only — no top-level mirrors."""
     _parse(mcp_server.set_handoff_state(task_ref="compact-env", objective="Compact envelope", status="in_progress"))
@@ -1678,10 +1679,7 @@ def test_generate_current_task_md_with_nested_tool_wrapper(
     assert payload["written"] is False
     data = json.loads(payload["current_task_json"])
     assert data["active"]["objective"] == "Nested wrapper objective"
-    assert any(
-        "cdx_slice_complete_nested_nested_wrapper" in d.get("decision", "")
-        for d in data["decisions_recent"]
-    )
+    assert any("cdx_slice_complete_nested_nested_wrapper" in d.get("decision", "") for d in data["decisions_recent"])
 
 
 def test_generate_current_task_md_prefers_live_status_over_archived_snapshot(isolated_handoff: dict) -> None:
@@ -3266,8 +3264,7 @@ def test_close_slice_surfaces_verbose_rationale_warning(isolated_handoff: dict) 
                 "## Changes\n- packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py: close_slice ; preserved warnings.\n\n"
                 "## Verification\n- none.\n\n"
                 "## Schema / Contract Changes\n- none.\n\n"
-                "## Open Threads\n- none.\n\n"
-                + ("x" * 1550)
+                "## Open Threads\n- none.\n\n" + ("x" * 1550)
             ),
             expected_revision=0,
             task_ref="close-warn",

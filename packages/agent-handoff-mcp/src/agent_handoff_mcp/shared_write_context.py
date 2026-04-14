@@ -414,9 +414,7 @@ def collect_target_context_warnings(
     hard guard, layer it on top of these warnings at the call site.
     """
     try:
-        active = conn.execute(
-            "SELECT target_branch, target_worktree_path FROM handoff_state WHERE id = 1"
-        ).fetchone()
+        active = conn.execute("SELECT target_branch, target_worktree_path FROM handoff_state WHERE id = 1").fetchone()
     except sqlite3.OperationalError:
         # Schema is older than this build (missing column). Skip the check.
         return []

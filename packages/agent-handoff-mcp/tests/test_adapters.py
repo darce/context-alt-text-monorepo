@@ -94,8 +94,7 @@ def test_project_codex_config_registers_installed_stdio_adapter() -> None:
     cwd = Path(server["cwd"])
     assert cwd.is_absolute(), f"Codex cwd must be an absolute path; got {cwd!r}"
     assert cwd.name == "context-alt-text-monorepo", (
-        f"Codex cwd should point at the primary monorepo checkout; "
-        f"got {cwd!r}"
+        f"Codex cwd should point at the primary monorepo checkout; got {cwd!r}"
     )
 
     assert server["args"] == [

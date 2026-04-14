@@ -134,11 +134,13 @@ class RecordDecisionEvent(BaseModel):
     decision: Annotated[str, Field(description="Stable decision identifier to persist in the ledger.")]
     rationale: Annotated[
         str | None,
-        Field(description=(
-            "Optional markdown rationale. Soft limit: 1,500 chars; hard limit: 3,000 chars "
-            "(enforced by hook before call reaches server). For slice_complete_* decisions "
-            "use close_slice, which enforces required sections."
-        )),
+        Field(
+            description=(
+                "Optional markdown rationale. Soft limit: 1,500 chars; hard limit: 3,000 chars "
+                "(enforced by hook before call reaches server). For slice_complete_* decisions "
+                "use close_slice, which enforces required sections."
+            )
+        ),
     ] = None
     actor: ActorParam = None
     task_ref: TaskRefParam = None
@@ -185,7 +187,9 @@ RecordEventParam = Annotated[
     Field(discriminator="event_kind"),
 ]
 
-_RECORD_EVENT_ADAPTER: TypeAdapter[RecordDecisionEvent | RecordTestResultEvent | ReportBlockerEvent] = TypeAdapter(RecordEventParam)
+_RECORD_EVENT_ADAPTER: TypeAdapter[RecordDecisionEvent | RecordTestResultEvent | ReportBlockerEvent] = TypeAdapter(
+    RecordEventParam
+)
 
 
 class ReviewFindingDetailsInput(BaseModel):
@@ -276,9 +280,7 @@ class ReviewFindingsRepairProvenanceOp(BaseModel):
     ]
     finding_id: Annotated[
         str,
-        Field(
-            description="Stable finding identifier of the row whose source branch/commit_sha must be repaired."
-        ),
+        Field(description="Stable finding identifier of the row whose source branch/commit_sha must be repaired."),
     ]
     expected_branch: Annotated[
         str,
@@ -402,7 +404,9 @@ ReviewRunsParam = Annotated[
     Field(discriminator="operation"),
 ]
 
-_REVIEW_RUNS_ADAPTER: TypeAdapter[ReviewRunsRecordOp | ReviewRunsListOp | ReviewRunsCoverageOp] = TypeAdapter(ReviewRunsParam)
+_REVIEW_RUNS_ADAPTER: TypeAdapter[ReviewRunsRecordOp | ReviewRunsListOp | ReviewRunsCoverageOp] = TypeAdapter(
+    ReviewRunsParam
+)
 
 
 class NextActionsAddOp(BaseModel):
@@ -460,7 +464,9 @@ NextActionsParam = Annotated[
     Field(discriminator="operation"),
 ]
 
-_NEXT_ACTIONS_ADAPTER: TypeAdapter[NextActionsAddOp | NextActionsUpdateOp | NextActionsCompleteOp | NextActionsSkipOp | NextActionsListOp] = TypeAdapter(NextActionsParam)
+_NEXT_ACTIONS_ADAPTER: TypeAdapter[
+    NextActionsAddOp | NextActionsUpdateOp | NextActionsCompleteOp | NextActionsSkipOp | NextActionsListOp
+] = TypeAdapter(NextActionsParam)
 
 
 class ArtifactsRecordOp(BaseModel):
@@ -517,7 +523,9 @@ ArtifactsParam = Annotated[
     Field(discriminator="operation"),
 ]
 
-_ARTIFACTS_ADAPTER: TypeAdapter[ArtifactsRecordOp | ArtifactsSearchOp | ArtifactsGetOp | ArtifactsPurgeOp] = TypeAdapter(ArtifactsParam)
+_ARTIFACTS_ADAPTER: TypeAdapter[ArtifactsRecordOp | ArtifactsSearchOp | ArtifactsGetOp | ArtifactsPurgeOp] = (
+    TypeAdapter(ArtifactsParam)
+)
 
 
 def _dump_actor(actor: WriteActorInput | dict[str, Any] | None) -> WriteActor | None:
@@ -922,7 +930,9 @@ def review_findings(
     if isinstance(review_payload, ReviewFindingsBatchRecordOp):
         return batch_record_review_findings(
             session=review_payload.session,
-            findings=cast(list[BatchFindingItem], [_dump_batch_review_finding_item(item) for item in review_payload.findings]),
+            findings=cast(
+                list[BatchFindingItem], [_dump_batch_review_finding_item(item) for item in review_payload.findings]
+            ),
             actor=_dump_actor(review_payload.actor),
             task_ref=review_payload.task_ref,
         )
@@ -1093,12 +1103,14 @@ def close_slice(
     decision: Annotated[str, Field(description="Stable slice-complete decision identifier.")],
     rationale: Annotated[
         str | None,
-        Field(description=(
-            "Structured markdown rationale. MUST include non-empty sections: "
-            "## Changes, ## Verification, ## Schema / Contract Changes, ## Open Threads. "
-            "Soft limit: 1,500 chars; hard limit: 4,000 chars (enforced by hook before call reaches server). "
-            "See docs/agentic/templates/slice-complete-template.md."
-        )),
+        Field(
+            description=(
+                "Structured markdown rationale. MUST include non-empty sections: "
+                "## Changes, ## Verification, ## Schema / Contract Changes, ## Open Threads. "
+                "Soft limit: 1,500 chars; hard limit: 4,000 chars (enforced by hook before call reaches server). "
+                "See docs/agentic/templates/slice-complete-template.md."
+            )
+        ),
     ] = None,
     actor: ActorParam = None,
     expected_revision: Annotated[

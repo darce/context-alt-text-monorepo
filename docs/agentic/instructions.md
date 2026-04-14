@@ -54,6 +54,7 @@ Choose your domain to load targeted context. Always load the matching testing gu
 | Decomposing feature work into slices   | [../../.claude/skills/incremental-implementation/SKILL.md](../../.claude/skills/incremental-implementation/SKILL.md) + `make slice-commit TASK=<task-ref> MSG="..."` |
 | Branch review                          | [rules/branch-review-guide.md](rules/branch-review-guide.md)                                                                                        |
 | Planning document review               | [rules/planning-review-guide.md](rules/planning-review-guide.md)                                                                                    |
+| Anchoring a review to a decision ID    | [rules/development-workflow.md § Decision-ID Review Anchoring](rules/development-workflow.md#decision-id-review-anchoring)                          |
 | Component architecture patterns        | [rules/component-architecture-patterns.md](rules/component-architecture-patterns.md)                                                                |
 | Radix UI / accessibility primitives    | [rules/RADIX_UI_COMPONENT_GUIDE.md](rules/RADIX_UI_COMPONENT_GUIDE.md)                                                                              |
 | Roster auto-resolve current behavior   | [maps/php-plugin.md](maps/php-plugin.md)                                                                                                            |

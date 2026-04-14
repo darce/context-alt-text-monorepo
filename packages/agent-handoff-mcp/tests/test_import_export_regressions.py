@@ -120,6 +120,8 @@ def test_switch_task_returns_full_mutation_shape(workspace_pair: dict[str, Path]
     assert switched["mutation"]["operation"] == "switch_task"
     assert switched["mutation"]["affected_ids"] == ["task-b"]
     assert isinstance(switched["mutation"]["task_revision"], int)
+    assert switched["archived_previous"] is True
+    assert switched["previous_task_ref"] == "task-a"
 
 
 def test_export_defaults_to_no_markdown(workspace_pair: dict[str, Path]) -> None:

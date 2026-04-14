@@ -9,6 +9,7 @@ mcp_tools:
   - get_handoff_state
   - record_event
   - update_task_status
+  - generate_dashboard_md
   - generate_current_task_md
   - switch_task
 tdd_gate: false
@@ -49,7 +50,7 @@ This skill owns hot-state loading, safe task switching, and the rule that genera
 1. At session start, run `make context` and load hot state with `load_session`. Use bounded reads unless you truly need full task history.
 2. Confirm the active task, branch, and worktree align. If they do not, switch shells or fix task state before editing.
 3. During work, record decisions, blockers, tests, and findings through MCP writes instead of chat-only notes.
-4. After each state-changing write that does not already regenerate views server-side, run `generate_current_task_md`. Treat `CURRENT_TASK.md` as generated output, never as a hand-edited log.
+4. After each state-changing write that does not already regenerate views server-side, run `generate_dashboard_md` so the operator-facing cross-task view stays current. Use `generate_current_task_md` only as an on-demand fallback when a task-scoped machine snapshot is specifically needed. Treat generated task views as outputs, never as hand-edited logs.
 5. When changing task focus mid-session, use `switch_task` as the safe transition path so the outgoing task is archived before the new task becomes active.
 6. Only archive completed work after `update_task_status(done)`. Never archive a task that is still `in_progress`.
 7. End the session with task state aligned to reality: active task correct, blockers explicit, generated task view current.
@@ -60,7 +61,7 @@ This skill owns hot-state loading, safe task switching, and the rule that genera
 |---|---|---|
 | "I already know the state, so I don't need `load_session`." | Session memory drifts and other agents may have written new findings or blockers. Skipping the read turns shared state into guesswork. | Load the current task state before acting on assumptions. |
 | "I'll archive while the task is still in progress so I can clean things up later." | Archiving an active task lies to the dashboard and breaks safe task switching. Downstream agents will assume the task is closed or restorable from the wrong snapshot. | Leave it active until `update_task_status(done)` is true, then archive. |
-| "I'll just update `CURRENT_TASK.md` directly." | `CURRENT_TASK.md` is a generated mirror. Hand edits drift immediately from MCP and disappear on the next regeneration. | Regenerate the file from MCP instead of editing it. |
+| "I'll just update `CURRENT_TASK.md` directly." | Generated task views drift immediately from MCP when hand-edited and disappear on the next regeneration. | Regenerate the appropriate view from MCP instead of editing it. |
 
 ## Red Flags
 
@@ -69,7 +70,7 @@ Each flag is a re-entry trigger. Stop and re-enter at the step shown.
 | Flag | Re-entry point |
 |---|---|
 | `make context` shows branch or worktree drift | Step 1: realign shell context before continuing. |
-| Task write made, but `CURRENT_TASK.md` still reflects old state | Step 4: regenerate the task view. |
+| Task write made, but `DASHBOARD.md` still reflects old state | Step 4: regenerate the dashboard view. |
 | Session switches tasks by calling `set_handoff_state` directly over another active task | Step 5: switch with `switch_task` so the outgoing task archives safely. |
 | Archive requested while status is still `in_progress` | Step 6: set status truthfully first, then archive only when done. |
 
@@ -77,14 +78,14 @@ Each flag is a re-entry trigger. Stop and re-enter at the step shown.
 
 - If session context is stale, rerun `make context` and `load_session` instead of guessing what changed.
 - If a write landed on the wrong task, stop and repair task state before continuing with more writes.
-- If `CURRENT_TASK.md` is stale, regenerate it; do not patch the markdown manually.
+- If `DASHBOARD.md` or `CURRENT_TASK.md` is stale, regenerate it; do not patch the markdown manually.
 - If a task was switched unsafely, restore the intended active task and archive state through `switch_task` / `update_task_status` in canonical order.
 
 ## Convergence Criteria
 
 - Session started from aligned task, branch, and worktree context.
 - Relevant MCP writes are recorded for work performed in the session.
-- `generate_current_task_md` was run after non-atomic state-changing writes.
+- `generate_dashboard_md` was run after non-atomic state-changing writes, with `generate_current_task_md` reserved for on-demand task snapshots.
 - Task switches happened through `switch_task`, not by overwriting the active row ad hoc.
 - Archive operations only happened after `update_task_status(done)`.
 

@@ -191,7 +191,9 @@ def _current_tool_entries() -> list[ToolEntry]:
 
 def _legacy_tool_entries() -> list[ToolEntry]:
     return [
-        ToolEntry("upsert_worktree_lane", _lanes.upsert_worktree_lane, LEGACY_TOOL_DESCRIPTIONS["upsert_worktree_lane"]),
+        ToolEntry(
+            "upsert_worktree_lane", _lanes.upsert_worktree_lane, LEGACY_TOOL_DESCRIPTIONS["upsert_worktree_lane"]
+        ),
         ToolEntry("close_worktree_lane", _lanes.close_worktree_lane, LEGACY_TOOL_DESCRIPTIONS["close_worktree_lane"]),
         ToolEntry("list_worktree_lanes", _lanes.list_worktree_lanes, LEGACY_TOOL_DESCRIPTIONS["list_worktree_lanes"]),
         ToolEntry("record_turn_metric", _lanes.record_turn_metric, LEGACY_TOOL_DESCRIPTIONS["record_turn_metric"]),
@@ -206,7 +208,9 @@ def _legacy_tool_entries() -> list[ToolEntry]:
         ToolEntry("list_lane_messages", _lanes.list_lane_messages, LEGACY_TOOL_DESCRIPTIONS["list_lane_messages"]),
         ToolEntry("record_lane_brief", _lanes.record_lane_brief, LEGACY_TOOL_DESCRIPTIONS["record_lane_brief"]),
         ToolEntry("list_lane_briefs", _lanes.list_lane_briefs, LEGACY_TOOL_DESCRIPTIONS["list_lane_briefs"]),
-        ToolEntry("record_worker_report", _lanes.record_worker_report, LEGACY_TOOL_DESCRIPTIONS["record_worker_report"]),
+        ToolEntry(
+            "record_worker_report", _lanes.record_worker_report, LEGACY_TOOL_DESCRIPTIONS["record_worker_report"]
+        ),
         ToolEntry("list_worker_reports", _lanes.list_worker_reports, LEGACY_TOOL_DESCRIPTIONS["list_worker_reports"]),
         ToolEntry("upsert_plan_cursor", _lanes.upsert_plan_cursor, LEGACY_TOOL_DESCRIPTIONS["upsert_plan_cursor"]),
         ToolEntry("get_plan_cursor", _lanes.get_plan_cursor, LEGACY_TOOL_DESCRIPTIONS["get_plan_cursor"]),
@@ -1020,8 +1024,7 @@ def manage_worker(
         {
             "ok": False,
             "error": (
-                f"Unknown action '{action}'. "
-                "Valid values: start, stop, resume, status, event_history, start_all."
+                f"Unknown action '{action}'. Valid values: start, stop, resume, status, event_history, start_all."
             ),
         }
     )

@@ -243,7 +243,9 @@ def test_build_prompt_includes_global_context_only_when_requested() -> None:
                 "decisions_recent": [
                     {"id": 93, "decision": "Use structured briefs for downstream lanes.", "lane_id": None}
                 ],
-                "tests_recent": [{"id": 94, "command": "pytest tests/test_cross_lane.py", "passed": 1, "lane_id": None}],
+                "tests_recent": [
+                    {"id": 94, "command": "pytest tests/test_cross_lane.py", "passed": 1, "lane_id": None}
+                ],
             }
         )
 
@@ -285,7 +287,9 @@ def test_build_prompt_includes_global_context_only_when_requested() -> None:
     assert "Escalated Task Context:" in expanded_prompt
     assert "Update the shared rollout checklist." in expanded_prompt
     assert "Waiting on policy sign-off." in expanded_prompt
-    assert calls == [global_context_kwargs("phase-5-retention-export-and-audit-controls", limit=module.MAX_GLOBAL_ITEMS)]
+    assert calls == [
+        global_context_kwargs("phase-5-retention-export-and-audit-controls", limit=module.MAX_GLOBAL_ITEMS)
+    ]
 
 
 def test_build_prompt_reports_prompt_budget_for_optional_context_sections() -> None:

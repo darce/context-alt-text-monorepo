@@ -232,14 +232,10 @@ def test_task_start_archives_previous_task_for_dashboard_status(tmp_path: Path) 
     repo = _build_fake_monorepo(tmp_path)
     env = _make_env(repo)
 
-    first = _run_script(
-        "task-start.sh", repo, "TS-DASH-1", "First task", env=env
-    )
+    first = _run_script("task-start.sh", repo, "TS-DASH-1", "First task", env=env)
     assert first.returncode == 0, f"stdout={first.stdout!r} stderr={first.stderr!r}"
 
-    second = _run_script(
-        "task-start.sh", repo, "TS-DASH-2", "Second task", env=env
-    )
+    second = _run_script("task-start.sh", repo, "TS-DASH-2", "Second task", env=env)
     assert second.returncode == 0, f"stdout={second.stdout!r} stderr={second.stderr!r}"
 
     archived = _read_archive_row(repo, "TS-DASH-1")

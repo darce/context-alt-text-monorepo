@@ -114,7 +114,11 @@ def test_run_subagent_drives_protocol_and_returns_structured_payload() -> None:
     mod = _load_bridge_module()
     fake_proc = _FakeProcess(
         [
-            {"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"}},
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"},
+            },
             {"jsonrpc": "2.0", "method": "thread/started", "params": {"thread": {"id": "thread-1"}}},
             {"jsonrpc": "2.0", "id": 2, "result": {"thread": {"id": "thread-1"}}},
             {"jsonrpc": "2.0", "method": "turn/started", "params": {"turn": {"id": "turn-1", "status": "inProgress"}}},
@@ -168,7 +172,11 @@ def test_run_subagent_accepts_agent_message_text_json_payload() -> None:
     mod = _load_bridge_module()
     fake_proc = _FakeProcess(
         [
-            {"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"}},
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"},
+            },
             {"jsonrpc": "2.0", "id": 2, "result": {"thread": {"id": "thread-1"}}},
             {"jsonrpc": "2.0", "id": 3, "result": {"turn": {"id": "turn-1", "status": "inProgress"}}},
             {
@@ -180,7 +188,7 @@ def test_run_subagent_accepts_agent_message_text_json_payload() -> None:
                     "item": {
                         "type": "agentMessage",
                         "id": "msg-1",
-                        "text": "{\"ok\":true,\"summary\":\"bridge live test passed\"}",
+                        "text": '{"ok":true,"summary":"bridge live test passed"}',
                         "phase": "final_answer",
                     },
                 },
@@ -212,7 +220,11 @@ def test_run_structured_turn_reports_token_usage_telemetry() -> None:
     mod = _load_bridge_module()
     fake_proc = _FakeProcess(
         [
-            {"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"}},
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"},
+            },
             {"jsonrpc": "2.0", "id": 2, "result": {"thread": {"id": "thread-1"}}},
             {"jsonrpc": "2.0", "id": 3, "result": {"turn": {"id": "turn-1", "status": "inProgress"}}},
             {
@@ -307,7 +319,11 @@ def test_run_subagent_public_entrypoint_launches_client_and_merges_env() -> None
     mod = _load_bridge_module()
     fake_proc = _FakeProcess(
         [
-            {"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"}},
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"},
+            },
             {"jsonrpc": "2.0", "id": 2, "result": {"thread": {"id": "thread-1"}}},
             {"jsonrpc": "2.0", "id": 3, "result": {"turn": {"id": "turn-1", "status": "inProgress"}}},
             {
@@ -378,7 +394,11 @@ def test_run_structured_turn_fails_when_no_structured_payload_arrives() -> None:
     mod = _load_bridge_module()
     fake_proc = _FakeProcess(
         [
-            {"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"}},
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"},
+            },
             {"jsonrpc": "2.0", "id": 2, "result": {"thread": {"id": "thread-1"}}},
             {"jsonrpc": "2.0", "id": 3, "result": {"turn": {"id": "turn-1", "status": "inProgress"}}},
             {
@@ -418,7 +438,11 @@ def test_failed_turn_raises_runtime_error_with_turn_message() -> None:
     mod = _load_bridge_module()
     fake_proc = _FakeProcess(
         [
-            {"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"}},
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"},
+            },
             {"jsonrpc": "2.0", "id": 2, "result": {"thread": {"id": "thread-1"}}},
             {"jsonrpc": "2.0", "id": 3, "result": {"turn": {"id": "turn-1", "status": "inProgress"}}},
             {
@@ -487,7 +511,11 @@ def test_shared_session_mode_reuses_initialized_client_for_multiple_calls() -> N
     procs = [
         _FakeProcess(
             [
-                {"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"}},
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"},
+                },
                 {"jsonrpc": "2.0", "id": 2, "result": {"thread": {"id": "thread-1"}}},
                 {"jsonrpc": "2.0", "id": 3, "result": {"turn": {"id": "turn-1", "status": "inProgress"}}},
                 {
@@ -522,6 +550,7 @@ def test_shared_session_mode_reuses_initialized_client_for_multiple_calls() -> N
         return procs[0]
 
     original_client = mod.AppServerClient
+
     class _PatchedClient(original_client):
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             kwargs["popen_factory"] = _fake_popen
@@ -562,20 +591,31 @@ def test_shared_session_failure_discards_cached_client() -> None:
     mod = _load_bridge_module()
     first_proc = _FakeProcess(
         [
-            {"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"}},
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"},
+            },
             {"jsonrpc": "2.0", "id": 2, "result": {"thread": {"id": "thread-1"}}},
             {"jsonrpc": "2.0", "id": 3, "result": {"turn": {"id": "turn-1", "status": "inProgress"}}},
             {
                 "jsonrpc": "2.0",
                 "method": "turn/completed",
-                "params": {"threadId": "thread-1", "turn": {"id": "turn-1", "status": "failed", "items": [], "error": {"message": "boom"}}},
+                "params": {
+                    "threadId": "thread-1",
+                    "turn": {"id": "turn-1", "status": "failed", "items": [], "error": {"message": "boom"}},
+                },
             },
         ],
         returncode=None,
     )
     second_proc = _FakeProcess(
         [
-            {"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"}},
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"},
+            },
             {"jsonrpc": "2.0", "id": 2, "result": {"thread": {"id": "thread-2"}}},
             {"jsonrpc": "2.0", "id": 3, "result": {"turn": {"id": "turn-2", "status": "inProgress"}}},
             {

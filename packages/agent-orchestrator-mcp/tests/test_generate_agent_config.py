@@ -22,14 +22,16 @@ def _load_module():
 
 def test_generate_agent_config_passes_orchestrator_root(monkeypatch, capsys, tmp_path: Path) -> None:
     module = _load_module()
-    fake_get_lane_config = mock.Mock(return_value={
-        "preferred_backend": "codex-subagent",
-        "preferred_model": "gpt-5.4-mini",
-        "reasoning_effort": "high",
-        "title": "Frontend",
-        "objective": "Implement frontend work",
-        "branch": "codex/frontend",
-    })
+    fake_get_lane_config = mock.Mock(
+        return_value={
+            "preferred_backend": "codex-subagent",
+            "preferred_model": "gpt-5.4-mini",
+            "reasoning_effort": "high",
+            "title": "Frontend",
+            "objective": "Implement frontend work",
+            "branch": "codex/frontend",
+        }
+    )
 
     monkeypatch.setattr(
         sys,

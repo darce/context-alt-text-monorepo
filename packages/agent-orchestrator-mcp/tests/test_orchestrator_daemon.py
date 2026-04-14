@@ -487,7 +487,9 @@ def _make_mock_ahm(*, ready_to_close: bool = False) -> mock.MagicMock:
         if operation == "record":
             return mock_ahm.record_lane_message(**kwargs)
         if operation == "update":
-            return mock_ahm.update_lane_message(kwargs.get("message_id"), kwargs.get("status"), task_ref=kwargs.get("task_ref"))
+            return mock_ahm.update_lane_message(
+                kwargs.get("message_id"), kwargs.get("status"), task_ref=kwargs.get("task_ref")
+            )
         return mock_ahm.list_lane_messages(
             task_ref=kwargs.get("task_ref"),
             lane_id=kwargs.get("lane_id"),

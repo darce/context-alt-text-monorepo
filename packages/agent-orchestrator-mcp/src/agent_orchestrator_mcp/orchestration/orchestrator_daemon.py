@@ -69,9 +69,7 @@ from orchestrator_helpers import (  # noqa: F401
     _report_timestamp,
 )
 
-_handoff_read_shapes = import_module(
-    f"{__package__}.handoff_read_shapes" if __package__ else "handoff_read_shapes"
-)
+_handoff_read_shapes = import_module(f"{__package__}.handoff_read_shapes" if __package__ else "handoff_read_shapes")
 from orchestrator_lanes import (  # noqa: F401
     _complete_lane_plan_cursor,
     _intake_lane,
@@ -348,7 +346,9 @@ def _dispatch_from_task_plan(
         if item.checked:
             continue
         normalized = normalize_plan_item(item)
-        cursor_payload = _json_load(plan_cursor(operation="get", task_ref=task_ref, plan_item_id=normalized.plan_item_id))
+        cursor_payload = _json_load(
+            plan_cursor(operation="get", task_ref=task_ref, plan_item_id=normalized.plan_item_id)
+        )
         if cursor_payload.get("ok") is not True:
             raise RuntimeError(f"Failed to read plan cursor for {normalized.plan_item_id}.")
         cursor = cursor_payload.get("cursor")

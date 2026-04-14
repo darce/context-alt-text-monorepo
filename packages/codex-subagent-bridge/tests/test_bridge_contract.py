@@ -75,7 +75,11 @@ def _run_bridge(payload: dict[str, Any]) -> dict[str, Any]:
     bridge = _load_module("codex_subagent_bridge", BRIDGE_PATH)
     fake_proc = _FakeProcess(
         [
-            {"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"}},
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"userAgent": "codex", "platformOs": "macos", "platformFamily": "unix"},
+            },
             {"jsonrpc": "2.0", "id": 2, "result": {"thread": {"id": "thread-1"}}},
             {"jsonrpc": "2.0", "id": 3, "result": {"turn": {"id": "turn-1", "status": "inProgress"}}},
             {

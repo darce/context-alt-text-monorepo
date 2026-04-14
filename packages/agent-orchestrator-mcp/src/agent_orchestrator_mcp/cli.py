@@ -75,12 +75,18 @@ def _build_parser() -> argparse.ArgumentParser:
         default=Path.cwd(),
         help="Workspace root directory (default: cwd).",
     )
-    parser.add_argument("--state-dir", type=Path, default=None,
-                        help="State directory (default: <workspace-root>/.task-state).")
-    parser.add_argument("--current-task-path", type=Path, default=None,
-                        help="CURRENT_TASK.md path (default: <workspace-root>/CURRENT_TASK.md).")
-    parser.add_argument("--exports-dir", type=Path, default=None,
-                        help="Exports directory (default: <state-dir>/exports).")
+    parser.add_argument(
+        "--state-dir", type=Path, default=None, help="State directory (default: <workspace-root>/.task-state)."
+    )
+    parser.add_argument(
+        "--current-task-path",
+        type=Path,
+        default=None,
+        help="CURRENT_TASK.md path (default: <workspace-root>/CURRENT_TASK.md).",
+    )
+    parser.add_argument(
+        "--exports-dir", type=Path, default=None, help="Exports directory (default: <state-dir>/exports)."
+    )
     subparsers = parser.add_subparsers(dest="command")
 
     # --- serve ---
@@ -341,14 +347,16 @@ def main() -> None:
 
     # --- dispatch ---
     if cmd == "dispatch":
-        _print_json(dispatch_lane_work(
-            lane_id=args.lane_id,
-            model=args.model,
-            backend=args.backend,
-            reasoning_effort=args.reasoning_effort,
-            task_ref=args.task_ref,
-            start_worker=args.start_worker,
-        ))
+        _print_json(
+            dispatch_lane_work(
+                lane_id=args.lane_id,
+                model=args.model,
+                backend=args.backend,
+                reasoning_effort=args.reasoning_effort,
+                task_ref=args.task_ref,
+                start_worker=args.start_worker,
+            )
+        )
         return
 
     # --- list-backends ---

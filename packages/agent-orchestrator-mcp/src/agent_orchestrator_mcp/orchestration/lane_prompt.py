@@ -30,6 +30,7 @@ def _mcp_search_artifacts(*args: Any, **kwargs: Any) -> Any:
 
     return _search_artifacts(*args, **kwargs)
 
+
 # test-patch surface: these names are patched by test_lane_prompt_artifacts.py via lp._ARTIFACT_SEARCH_AVAILABLE etc.
 _ARTIFACT_SEARCH_AVAILABLE = importlib.util.find_spec("agent_handoff_mcp") is not None
 

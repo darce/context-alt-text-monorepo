@@ -1287,25 +1287,27 @@ def _review_phase(ctx: WorkerRunContext) -> "dict[str, Any]":
             model=ctx.model,
             record_findings=True,
             dry_run=config.dry_run,
-            progress_callback=lambda event, **kw: ctx.log("INFO", event, cycle=ctx.cycle, **kw)
-            if event != WorkerEventName.SUBAGENT_TURN_COMPLETE
-            else _record_observability(
-                orchestrator_root=config.orchestrator_root,
-                task_ref=config.task_ref,
-                lane_id=config.lane_id,
-                session=config.session,
-                cycle=ctx.cycle,
-                phase=str(kw.get("phase") or "execution"),
-                backend=str(kw.get("backend") or ctx.backend),
-                model=ctx.model,
-                obs_ctx=ObservabilityContext(
-                    requested_reasoning_effort=ctx.execution_requested_effort,
-                    effective_reasoning_effort=ctx.execution_effective_effort,
-                    telemetry=kw,
-                    state="reviewing" if str(kw.get("phase") or "") == "review" else "executing",
-                    summary=f"Worker {str(kw.get('phase') or 'execution')} telemetry captured for cycle {ctx.cycle + 1}.",
-                    result_path=ctx.final_result_path,
-                ),
+            progress_callback=lambda event, **kw: (
+                ctx.log("INFO", event, cycle=ctx.cycle, **kw)
+                if event != WorkerEventName.SUBAGENT_TURN_COMPLETE
+                else _record_observability(
+                    orchestrator_root=config.orchestrator_root,
+                    task_ref=config.task_ref,
+                    lane_id=config.lane_id,
+                    session=config.session,
+                    cycle=ctx.cycle,
+                    phase=str(kw.get("phase") or "execution"),
+                    backend=str(kw.get("backend") or ctx.backend),
+                    model=ctx.model,
+                    obs_ctx=ObservabilityContext(
+                        requested_reasoning_effort=ctx.execution_requested_effort,
+                        effective_reasoning_effort=ctx.execution_effective_effort,
+                        telemetry=kw,
+                        state="reviewing" if str(kw.get("phase") or "") == "review" else "executing",
+                        summary=f"Worker {str(kw.get('phase') or 'execution')} telemetry captured for cycle {ctx.cycle + 1}.",
+                        result_path=ctx.final_result_path,
+                    ),
+                )
             ),
         )
     except Exception as exc:

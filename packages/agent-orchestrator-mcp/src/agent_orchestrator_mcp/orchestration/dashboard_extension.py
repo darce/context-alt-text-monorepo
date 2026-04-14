@@ -46,17 +46,21 @@ def lane_worker_extension(ctx: DashboardContext) -> list[DashboardSection]:
             branch = ln.get("branch", "")
             icon = {"active": "◎", "blocked": "⚠", "review": "↑"}.get(status, "·")
             lane_lines.append(f"  {icon} {lane_id:<20}  [{status}]  {title}  ({branch})")
-        sections.append(DashboardSection(
-            heading="Lane Health",
-            content="\n".join(lane_lines),
-            order=50,
-        ))
+        sections.append(
+            DashboardSection(
+                heading="Lane Health",
+                content="\n".join(lane_lines),
+                order=50,
+            )
+        )
     else:
-        sections.append(DashboardSection(
-            heading="Lane Health",
-            content="- No active, blocked, or review lanes.",
-            order=50,
-        ))
+        sections.append(
+            DashboardSection(
+                heading="Lane Health",
+                content="- No active, blocked, or review lanes.",
+                order=50,
+            )
+        )
 
     # ------------------------------------------------------------------
     # Worker Status (order=60)
@@ -72,16 +76,20 @@ def lane_worker_extension(ctx: DashboardContext) -> list[DashboardSection]:
             merge_ready = r.get("merge_ready", 0)
             ready_flag = " [merge-ready]" if merge_ready else ""
             report_lines.append(f"  • lane={lane_id}  {summary}{ready_flag}")
-        sections.append(DashboardSection(
-            heading="Worker Status",
-            content="\n".join(report_lines),
-            order=60,
-        ))
+        sections.append(
+            DashboardSection(
+                heading="Worker Status",
+                content="\n".join(report_lines),
+                order=60,
+            )
+        )
     else:
-        sections.append(DashboardSection(
-            heading="Worker Status",
-            content="- No submitted worker reports.",
-            order=60,
-        ))
+        sections.append(
+            DashboardSection(
+                heading="Worker Status",
+                content="- No submitted worker reports.",
+                order=60,
+            )
+        )
 
     return sections

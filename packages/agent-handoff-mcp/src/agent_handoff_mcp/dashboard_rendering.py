@@ -310,9 +310,7 @@ def _collect_task_test_status(conn: sqlite3.Connection) -> dict[str, dict]:
 
     Only includes tasks that have at least one verified_test row.
     """
-    rows = conn.execute(
-        "SELECT task_ref, passed, verified_at FROM verified_tests ORDER BY verified_at DESC"
-    ).fetchall()
+    rows = conn.execute("SELECT task_ref, passed, verified_at FROM verified_tests ORDER BY verified_at DESC").fetchall()
     summary: dict[str, dict] = {}
     for row in rows:
         ref = str(row["task_ref"])

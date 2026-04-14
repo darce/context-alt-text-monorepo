@@ -19,8 +19,10 @@ Reads the following from the environment (set by task-start.sh):
 Configures the agent_handoff_mcp runtime against the primary worktree's
 state directory, fetches the active row's revision via the identity-only
 projection (the AHMCP-16 fix that lets the script work when an existing
-handoff_state row is present), and updates the handoff state to point at
-the new task. Exits 0 on success and 1 on any failure.
+handoff_state row is present), archives any outgoing active task via
+``switch_task`` so its last known status remains visible on the dashboard,
+then updates the new active row with the linked worktree path. Exits 0 on
+success and 1 on any failure.
 
 This module is intentionally `_`-prefixed: it is invoked by task-start.sh
 and is not part of the public scripts/ surface.
@@ -38,6 +40,7 @@ from agent_handoff_mcp import (
     configure_runtime,
     get_handoff_state,
     set_handoff_state,
+    switch_task,
 )
 
 
@@ -58,13 +61,32 @@ def main() -> int:
     identity_data = identity.get("data") if isinstance(identity, dict) else None
     active_row = identity_data.get("active") if isinstance(identity_data, dict) else None
     expected_revision = active_row.get("revision") if isinstance(active_row, dict) else None
+    target_task = os.environ["TASK"]
+    target_objective = os.environ["OBJECTIVE"]
+    target_branch = os.environ["BRANCH"]
+    target_worktree_path = os.environ["WORKTREE_PATH"]
+
+    if isinstance(active_row, dict) and active_row.get("task_ref") != target_task:
+        switch_result = switch_task(
+            task_ref=target_task,
+            objective=target_objective,
+            status="in_progress",
+            target_branch=target_branch,
+        )
+        parsed_switch = json.loads(switch_result) if isinstance(switch_result, str) else switch_result
+        if not parsed_switch.get("ok"):
+            print(f"\u26a0 switch_task failed: {parsed_switch}", file=sys.stderr)
+            return 1
+        switch_data = parsed_switch.get("data") if isinstance(parsed_switch, dict) else None
+        switch_active = switch_data.get("active") if isinstance(switch_data, dict) else None
+        expected_revision = switch_active.get("revision") if isinstance(switch_active, dict) else None
 
     result = set_handoff_state(
-        task_ref=os.environ["TASK"],
-        objective=os.environ["OBJECTIVE"],
+        task_ref=target_task,
+        objective=target_objective,
         status="in_progress",
-        target_branch=os.environ["BRANCH"],
-        target_worktree_path=os.environ["WORKTREE_PATH"],
+        target_branch=target_branch,
+        target_worktree_path=target_worktree_path,
         expected_revision=expected_revision,
     )
     parsed = json.loads(result) if isinstance(result, str) else result

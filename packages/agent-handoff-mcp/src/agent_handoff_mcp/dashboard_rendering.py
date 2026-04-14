@@ -255,6 +255,97 @@ def _render_deferred_findings_section(deferred_findings: dict[str, list[dict]]) 
 
 
 # ---------------------------------------------------------------------------
+# New section: epic recent decisions
+# ---------------------------------------------------------------------------
+
+
+def _collect_epic_decisions(
+    conn: sqlite3.Connection,
+    active_task_ref: str | None,
+    limit: int = 8,
+) -> tuple[str | None, list[dict]]:
+    """Return (epic_ref, decisions) for the current epic.
+
+    Epic is inferred from the active task ref (e.g. E17-2 → E17).
+    If no epic can be inferred, returns (None, []).
+    """
+    from .current_task_rendering import _infer_epic_ref  # noqa: PLC0415
+
+    epic_ref = _infer_epic_ref(active_task_ref)
+    if not epic_ref:
+        return None, []
+    rows = conn.execute(
+        "SELECT id, task_ref, decision, agent, created_at FROM decisions "
+        "WHERE task_ref = ? OR task_ref LIKE ? "
+        "ORDER BY created_at DESC LIMIT ?",
+        (epic_ref, f"{epic_ref}-%", limit),
+    ).fetchall()
+    return epic_ref, [dict(r) for r in rows]
+
+
+def _render_epic_decisions_section(epic_ref: str, decisions: list[dict]) -> list[str]:
+    heading = f"RECENT DECISIONS ({epic_ref})"
+    lines: list[str] = ["", heading, "-" * len(heading)]
+    if not decisions:
+        lines.append("  (none)")
+        return lines
+    col_ref = 8
+    for d in decisions:
+        task_ref = str(d.get("task_ref", ""))
+        slug = str(d.get("decision", ""))
+        created = str(d.get("created_at", ""))[:16]
+        agent = d.get("agent") or ""
+        agent_suffix = f" ({agent})" if agent else ""
+        lines.append(f"  {task_ref:<{col_ref}}  [#{d.get('id')}] {slug}{agent_suffix}  {created}")
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# New section: test status per task
+# ---------------------------------------------------------------------------
+
+
+def _collect_task_test_status(conn: sqlite3.Connection) -> dict[str, dict]:
+    """Return per-task test summary: latest pass/fail and totals.
+
+    Only includes tasks that have at least one verified_test row.
+    """
+    rows = conn.execute(
+        "SELECT task_ref, passed, verified_at FROM verified_tests ORDER BY verified_at DESC"
+    ).fetchall()
+    summary: dict[str, dict] = {}
+    for row in rows:
+        ref = str(row["task_ref"])
+        passed = bool(row["passed"])
+        ts = str(row["verified_at"] or "")
+        if ref not in summary:
+            summary[ref] = {
+                "latest_passed": passed,
+                "latest_at": ts[:16],
+                "pass_count": 0,
+                "fail_count": 0,
+            }
+        if passed:
+            summary[ref]["pass_count"] += 1
+        else:
+            summary[ref]["fail_count"] += 1
+    return summary
+
+
+def _render_test_status_section(status_by_task: dict[str, dict]) -> list[str]:
+    lines: list[str] = ["", "TEST STATUS", "-" * 11]
+    if not status_by_task:
+        lines.append("  (no verified tests recorded)")
+        return lines
+    col_ref = 12
+    for task_ref, s in sorted(status_by_task.items()):
+        icon = "✓" if s["latest_passed"] else "✗"
+        totals = f"pass={s['pass_count']} fail={s['fail_count']}"
+        lines.append(f"  {task_ref:<{col_ref}}  {icon}  last: {s['latest_at']}  {totals}")
+    return lines
+
+
+# ---------------------------------------------------------------------------
 # Context collection
 # ---------------------------------------------------------------------------
 
@@ -284,6 +375,9 @@ def _render_dashboard_md(
     needs_attention: list[_NeedsAttentionItem],
     active_task_ref: str | None,
     extension_sections: list[DashboardSection],
+    epic_ref: str | None = None,
+    epic_decisions: list[dict] | None = None,
+    task_test_status: dict[str, dict] | None = None,
 ) -> str:
     sep = "=" * 80
     lines: list[str] = [
@@ -295,6 +389,13 @@ def _render_dashboard_md(
 
     lines.extend(_render_needs_attention_section(needs_attention))
     lines.extend(_render_all_tasks_section(dashboard_rows, active_task_ref))
+
+    if epic_ref and epic_decisions is not None:
+        lines.extend(_render_epic_decisions_section(epic_ref, epic_decisions))
+
+    if task_test_status is not None:
+        lines.extend(_render_test_status_section(task_test_status))
+
     lines.extend(_render_open_findings_section(open_findings))
     deferred_lines = _render_deferred_findings_section(deferred_findings)
     if deferred_lines:
@@ -343,6 +444,8 @@ def generate_dashboard_md(write_file: bool = True) -> dict:
         deferred_findings = _collect_all_deferred_findings(conn, max_per_task=100)
         needs_attention = _collect_needs_attention(conn, dashboard_rows, open_findings)
         ctx = _collect_dashboard_context(conn, active_task_ref)
+        epic_ref, epic_decisions = _collect_epic_decisions(conn, active_task_ref)
+        task_test_status = _collect_task_test_status(conn)
 
     extension_sections: list[DashboardSection] = []
     for ext in _extensions:
@@ -360,6 +463,9 @@ def generate_dashboard_md(write_file: bool = True) -> dict:
         needs_attention=needs_attention,
         active_task_ref=active_task_ref,
         extension_sections=extension_sections,
+        epic_ref=epic_ref,
+        epic_decisions=epic_decisions,
+        task_test_status=task_test_status,
     )
 
     written = False

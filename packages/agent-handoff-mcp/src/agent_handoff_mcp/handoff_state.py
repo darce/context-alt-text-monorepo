@@ -109,9 +109,7 @@ def set_handoff_state(
             target_worktree_path
             if target_worktree_path is not None
             else (
-                _normalize_optional_text(current["target_worktree_path"])
-                if current["target_worktree_path"]
-                else None
+                _normalize_optional_text(current["target_worktree_path"]) if current["target_worktree_path"] else None
             )
         )
         updated = conn.execute(
@@ -394,5 +392,3 @@ def get_handoff_state(
             task_ref=task_ref_val,
             warnings=warnings,
         )
-
-

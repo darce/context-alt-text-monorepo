@@ -726,9 +726,7 @@ def close_slice(
     decision_data = decision_envelope.get("data", {}) or {}
     decision_payload = decision_data.get("decision", {}) or {}
     resolved_task_ref = str(
-        decision_envelope.get("scope", {}).get("task_ref")
-        or decision_payload.get("task_ref")
-        or task_ref
+        decision_envelope.get("scope", {}).get("task_ref") or decision_payload.get("task_ref") or task_ref
     )
     state_envelope = set_handoff_state(
         task_ref=resolved_task_ref,

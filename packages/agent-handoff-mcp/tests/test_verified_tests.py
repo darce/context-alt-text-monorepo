@@ -127,9 +127,7 @@ def test_get_verified_tests_filters_by_branch_and_commit(isolated_env: dict) -> 
         actor={"lane_id": "lane-a", "branch": "feature/branch-b", "commit_sha": "sha-other"},
     )
 
-    result = _parse(
-        handoff_core.get_verified_tests(branch="feature/branch-a", commit_sha="sha-match")
-    )
+    result = _parse(handoff_core.get_verified_tests(branch="feature/branch-a", commit_sha="sha-match"))
 
     assert result["ok"] is True
     assert result["returned"] == 1

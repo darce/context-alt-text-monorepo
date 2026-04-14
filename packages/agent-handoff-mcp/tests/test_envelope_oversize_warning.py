@@ -10,6 +10,7 @@ not silently truncated, but the warning names the bounded-read levers
 (``detail="summary"``, lower ``top_n_*``, ``sections="identity"``,
 ``fields=...``) so the next call can be narrowed.
 """
+
 from __future__ import annotations
 
 from agent_handoff_mcp.shared_primitives import RESPONSE_OVERSIZE_WARN_BYTES, _envelope

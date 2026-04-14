@@ -654,10 +654,9 @@ def update_review_finding(
         InvalidCommitShaError,
         _validate_and_expand_commit_sha,
     )
+
     try:
-        normalized_verified_commit_sha = _validate_and_expand_commit_sha(
-            normalized_verified_commit_sha
-        )
+        normalized_verified_commit_sha = _validate_and_expand_commit_sha(normalized_verified_commit_sha)
     except InvalidCommitShaError as exc:
         return _envelope(
             ok=False,
@@ -919,9 +918,7 @@ def repair_review_finding_provenance(
             entity="finding",
         )
     normalized_expected_branch = expected_branch.strip() if isinstance(expected_branch, str) else None
-    normalized_expected_commit_sha = (
-        expected_commit_sha.strip() if isinstance(expected_commit_sha, str) else None
-    )
+    normalized_expected_commit_sha = expected_commit_sha.strip() if isinstance(expected_commit_sha, str) else None
     normalized_new_branch = new_branch.strip() if isinstance(new_branch, str) else None
     normalized_new_commit_sha = new_commit_sha.strip() if isinstance(new_commit_sha, str) else None
     normalized_reason = reason.strip() if isinstance(reason, str) else None
@@ -957,9 +954,7 @@ def repair_review_finding_provenance(
         return _envelope(
             ok=False,
             tool="repair_review_finding_provenance",
-            data={
-                "error": "reason must be at least 20 characters; describe why the original attribution was wrong."
-            },
+            data={"error": "reason must be at least 20 characters; describe why the original attribution was wrong."},
             entity="finding",
         )
 
@@ -970,6 +965,7 @@ def repair_review_finding_provenance(
         InvalidCommitShaError,
         _validate_and_expand_commit_sha,
     )
+
     try:
         expanded_new = _validate_and_expand_commit_sha(normalized_new_commit_sha)
     except InvalidCommitShaError as exc:
@@ -1019,9 +1015,7 @@ def repair_review_finding_provenance(
         return _envelope(
             ok=False,
             tool="repair_review_finding_provenance",
-            data={
-                "error": "expected and new branch+commit_sha are identical; nothing to repair."
-            },
+            data={"error": "expected and new branch+commit_sha are identical; nothing to repair."},
             entity="finding",
         )
 

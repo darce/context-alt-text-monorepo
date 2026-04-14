@@ -18,7 +18,6 @@ from agent_handoff_mcp.dashboard_rendering import (
     register_dashboard_extension,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

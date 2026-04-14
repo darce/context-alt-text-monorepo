@@ -955,6 +955,7 @@ def switch_task(
                     json.dumps(snapshot, sort_keys=True),
                 ),
             )
+            archived_previous = True
 
         # Upsert the singleton to point at the target task.
         if current is None:

@@ -15,20 +15,22 @@ help:
 	@echo "codex-subagent-bridge Commands"
 	@echo "==============================="
 	@echo ""
-	@echo "  make lint-bridge     - Run Ruff checks"
-	@echo "  make fix-lint-bridge - Auto-fix Ruff violations"
-	@echo "  make format-bridge   - Format code with Ruff"
+	@echo "  make lint-bridge     - Run Ruff checks (includes format check)"
+	@echo "  make fix-lint-bridge - Auto-fix Ruff violations (unsafe fixes)"
+	@echo "  make format-bridge   - Fix lint + format code with Ruff"
 	@echo "  make mypy-bridge     - Run mypy"
 	@echo "  make test-bridge     - Run pytest"
 	@echo "  make check-bridge    - Run lint, mypy, and tests"
 
 lint-bridge:
 	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff check $(RUFF_TARGETS)
+	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff format --check $(RUFF_TARGETS)
 
 fix-lint-bridge:
-	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff check --fix $(RUFF_TARGETS)
+	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff check --fix --unsafe-fixes $(RUFF_TARGETS)
 
 format-bridge:
+	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff check --fix --unsafe-fixes $(RUFF_TARGETS)
 	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff format $(RUFF_TARGETS)
 
 mypy-bridge:

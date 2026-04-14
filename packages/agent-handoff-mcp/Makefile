@@ -19,20 +19,22 @@ help:
 	@echo "agent-handoff-mcp Commands"
 	@echo "=========================="
 	@echo ""
-	@echo "  make lint-handoff     - Run Ruff checks"
-	@echo "  make fix-lint-handoff - Auto-fix Ruff violations"
-	@echo "  make format-handoff   - Format code with Ruff"
+	@echo "  make lint-handoff     - Run Ruff checks (includes format check)"
+	@echo "  make fix-lint-handoff - Auto-fix Ruff violations (unsafe fixes)"
+	@echo "  make format-handoff   - Fix lint + format code with Ruff"
 	@echo "  make mypy-handoff     - Run mypy"
 	@echo "  make test-handoff     - Run pytest"
 	@echo "  make check-handoff    - Run lint, mypy, and tests"
 
 lint-handoff:
 	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff check $(RUFF_TARGETS)
+	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff format --check $(RUFF_TARGETS)
 
 fix-lint-handoff:
-	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff check --fix $(RUFF_TARGETS)
+	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff check --fix --unsafe-fixes $(RUFF_TARGETS)
 
 format-handoff:
+	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff check --fix --unsafe-fixes $(RUFF_TARGETS)
 	@PYTHONPATH="$(LOCAL_PYTHONPATH)" $(PYTHON) -m ruff format $(RUFF_TARGETS)
 
 mypy-handoff:

@@ -40,6 +40,7 @@ export_handoff_state = core.export_handoff_state
 import_handoff_state = core.import_handoff_state
 archive_task_state = core.archive_task_state
 get_archived_task = core.get_archived_task
+switch_task = core.switch_task
 _core_update_task_status = core.update_task_status
 _core_set_handoff_state = core.set_handoff_state
 get_handoff_state = core.get_handoff_state

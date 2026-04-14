@@ -357,6 +357,31 @@ def test_generate_dashboard_md_writes_file(isolated_handoff) -> None:
     assert "DASHBOARD" in content
 
 
+def test_generate_dashboard_md_uses_runtime_dashboard_path(tmp_path: Path) -> None:
+    state_dir = tmp_path / ".task-state"
+    feature_root = tmp_path / "feature-worktree"
+    main_root = tmp_path / "main-root"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    feature_root.mkdir(parents=True, exist_ok=True)
+    main_root.mkdir(parents=True, exist_ok=True)
+
+    runtime = RuntimeConfig.for_workspace(
+        tmp_path,
+        state_dir=state_dir,
+        current_task_path=feature_root / "CURRENT_TASK.md",
+        dashboard_path=main_root / "DASHBOARD.md",
+    )
+    mcp_server.configure_runtime(runtime)
+
+    mcp_server.set_handoff_state(task_ref="DASH-SPLIT", objective="obj", status="in_progress")
+    result = generate_dashboard_md(write_file=True)
+
+    assert result["ok"] is True
+    assert result["path"] == str(runtime.dashboard_path)
+    assert runtime.dashboard_path.exists()
+    assert not (feature_root / "DASHBOARD.md").exists()
+
+
 def test_generate_dashboard_md_no_write_returns_markdown(isolated_handoff) -> None:
     mcp_server.set_handoff_state(task_ref="DASH-2", objective="obj", status="in_progress")
     result = generate_dashboard_md(write_file=False)

@@ -424,7 +424,7 @@ def generate_dashboard_md(write_file: bool = True) -> dict:
     DashboardSection.order.
 
     Args:
-        write_file: Write the markdown to DASHBOARD.md alongside CURRENT_TASK.md.
+        write_file: Write the markdown to the configured runtime dashboard path.
 
     Returns:
         A result dict with ``ok``, ``path``, ``written``, and ``markdown``.
@@ -472,7 +472,7 @@ def generate_dashboard_md(write_file: bool = True) -> dict:
     dashboard_path: Path | None = None
     if write_file:
         cfg = get_runtime_config()
-        dashboard_path = cfg.current_task_path.parent / "DASHBOARD.md"
+        dashboard_path = cfg.dashboard_path
         dashboard_path.write_text(markdown)
         written = True
 

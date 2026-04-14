@@ -306,6 +306,53 @@ Exit criteria:
 - `branch-review-guide.md` and `planning-review-guide.md` are explicitly labelled as reference appendices, not primary execution surfaces
 - End-to-end test: cold-start agent -> `make context` -> `make plan-analyze` on a sample plan -> findings recorded in MCP -> `make plan-review` -> verdict recorded -> `make task-start` -> implementation -> `make task-finish` -> clean main
 
+### Phase 4: Workflow Integrity and Session Continuity -- not-started
+
+> **Status**: not-started
+> **Task plans**: [E17-4](../../tasks/17.0/E17-4-workflow-integrity-task-plan.md)
+
+**Goal**: Close four failure classes identified in practice that undermine workflow discipline and cold-start reliability.
+
+**Root-cause findings** (investigation 2026-04-14):
+
+1. **Orphan branches** — `feature/ahmcp-8-verified-test-search-and-read-surfaces` and `feature/slr-003-suppress-cleanup` were left behind because their tasks were archived from a different branch (or after a manual merge to main), with no mechanism to detect or require cleanup. Neither `make context` nor `make check-all` flag branches that have no registered handoff task.
+
+2. **Ad-hoc main changes without logging** — The branch-isolation guard blocks code edits on main, but does not require an active handoff task before any file edit. Docs, Makefiles, and config files accumulate uncommitted on main with no MCP provenance. At investigation time: 8 files dirty on main with no active task.
+
+3. **File-touch state gap at cold start** — Agents reconstruct what was changed by running raw `git diff --name-only` or `git log --name-only` commands. The handoff DB stores changed-file lists as free text inside `## Changes` sections of slice decisions — structured enough for humans, not queryable as data. `load_session` returns no file-level change state. The result is every cold start re-derives what the last agent did from git rather than from handoff.
+
+4. **Branch-delete not enforced after archive** — `make task-finish` deletes the feature branch, but tasks archived manually (e.g. `archive_task_state` called from main after a manual merge) leave their `target_branch` dangling. No guard enforces deletion as part of the invariant close sequence.
+
+Deliverables:
+
+- **Orphan branch audit** (`make worktree-audit`): Python script cross-references `git branch --list 'feature/*'` and `git branch --list 'codex/*'` against every `task_archives.archived_branch` entry; flags branches with no registration. Included in `make check-all`.
+
+- **Main-change guard extension** (`scripts/hooks/guard-main-branch.sh` + `.claude/settings.json`): PreToolUse hook warns when an Edit/Write is attempted with no active handoff task, regardless of file type. Introduces the **maintenance-task pattern** as a first-class workflow primitive: `set_handoff_state(task_ref='MAINT-<slug>', objective='...')` before any ad-hoc main-branch edit. `make context` reports when main is dirty with no active task.
+
+- **Branch-delete enforcement** (`scripts/_task_finish_inline.py` + `development-workflow.md`): `make task-finish` extended to verify `target_branch` is deleted after archive; warns if branch persists. New rule in `development-workflow.md`: when `archive_task_state` is called for a task whose `target_branch != main`, the archiving agent must also delete the branch as part of the close sequence.
+
+- **File-touch tracking** (requires AHMCP-29 as sub-task):
+  - New `touched_files` table in handoff.db: `(task_ref, file_path, change_kind, session, commit_sha, touched_at)`
+  - New MCP tool `record_file_touch(task_ref, file_path, change_kind)` — agents call when they edit files; PostToolUse hook auto-calls it after every Edit/Write
+  - New MCP query `get_touched_files(task_ref)` — returns structured `(file_path, change_kind)` list
+  - `load_session` response includes `touched_files` for the active task — replaces `git diff` at cold start
+
+- **`make context` enhancement**: when main is dirty and no active task is registered, print the list of modified files and the maintenance-task registration command.
+
+- **CLAUDE.md and `development-workflow.md` updates**: document maintenance-task pattern, orphan-audit rule, and branch-delete requirement explicitly.
+
+Exit criteria:
+
+- `make worktree-audit` reports zero orphan branches on a clean repo; `make check-all` includes the orphan pass
+- `make context` warns when main is dirty with no active task and prints affected files
+- PreToolUse hook warns on Edit/Write with no active handoff task
+- CLAUDE.md documents maintenance-task pattern; `development-workflow.md` documents branch-delete invariant
+- `make task-finish` warns if `target_branch` is not deleted after archive
+- AHMCP-29 delivered: `record_file_touch`, `get_touched_files`, `load_session` includes `touched_files`
+- Cold-start test: fresh session → `load_session` returns what previous agent edited without running `git diff`
+
+---
+
 ## External Dependencies
 
 | Dependency | Owner | Status | Blocks |
@@ -321,13 +368,15 @@ This epic has no external dependencies. All work is internal to the repo's agent
 | Skills | `.claude/skills/*/SKILL.md` | All existing and new skill definitions |
 | Templates | `docs/agentic/templates/SKILL_ANATOMY.template.md` | New template (Phase 1) |
 | Constitution | `docs/agentic/constitution.md` | New document (Phase 1) |
-| Makefile | `Makefile`, `mk/*.mk` | New and extended targets |
+| Makefile | `Makefile`, `mk/*.mk` | New and extended targets; Phase 4 adds `worktree-audit` |
 | Review guides | `docs/agentic/rules/branch-review-guide.md` | Preserved as reference; executable subset extracted to skills |
 | Review guides | `docs/agentic/rules/planning-review-guide.md` | Preserved as reference; executable subset extracted to skills |
-| Workflow | `docs/agentic/rules/development-workflow.md` | Preserved as reference; lifecycle extracted to skills |
+| Workflow | `docs/agentic/rules/development-workflow.md` | Preserved as reference; Phase 4 adds branch-delete invariant and maintenance-task pattern |
 | Pipeline | `docs/agentic/rules/planning-pipeline.md` | Preserved as reference; exit gates wired to plan-analyze |
 | Instructions | `docs/agentic/instructions.md` | Rules extracted to constitution; routing updated to skills |
-| MCP handoff | `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py` | Existing tools composed by skills; no changes expected |
+| Hooks | `scripts/hooks/guard-main-branch.sh` | Phase 4: extended to warn on Edit/Write with no active task |
+| Task finish | `scripts/_task_finish_inline.py` | Phase 4: extended to verify branch deletion after archive |
+| MCP handoff | `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py` | Phase 4 (AHMCP-29): `record_file_touch`, `get_touched_files`, `load_session` touched_files |
 | MCP orchestrator | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/api.py` | Existing tools composed by skills; no changes expected |
 
 ---
@@ -369,9 +418,22 @@ This epic has no external dependencies. All work is internal to the repo's agent
 - [ ] Update `instructions.md` routing to point to skills as primary entry points
 - [ ] End-to-end validation of cold-start -> plan-analyze -> review -> implement -> finish flow
 
+## Phase 4: Workflow Integrity and Session Continuity -- not-started
+
+- [ ] Write `scripts/worktree_audit.py`: cross-reference local `feature/*` and `codex/*` branches against `task_archives`; exit non-zero if orphans found
+- [ ] Add `make worktree-audit` Makefile target; include in `make check-all`
+- [ ] Extend `scripts/hooks/guard-main-branch.sh`: warn (non-blocking) when Edit/Write invoked with no active handoff task; print maintenance-task registration command
+- [ ] Update `make context` output: report dirty main files + active-task status together
+- [ ] Document maintenance-task pattern in `CLAUDE.md` Critical Rules and `docs/agentic/rules/development-workflow.md`
+- [ ] Extend `scripts/_task_finish_inline.py`: after archive, verify `target_branch` deleted; warn if branch still exists
+- [ ] Document branch-delete invariant in `development-workflow.md § Invariant Close Sequence`
+- [ ] AHMCP-29: `touched_files` schema migration, `record_file_touch` MCP tool, `get_touched_files` MCP query
+- [ ] AHMCP-29: `load_session` response includes `touched_files` for active task
+- [ ] Wire PostToolUse hook to auto-call `record_file_touch` after Edit/Write in `.claude/settings.json`
+- [ ] Cold-start verification: `load_session` returns `touched_files` without `git diff`
+
 ## Deferred (Post-v0.4.0)
 
 - [ ] `validate_constitution` MCP tool for programmatic constitution checking (only if LLM-powered prompt approach proves insufficient)
 - [ ] Skill composition graph visualization (which skills chain to which)
 - [ ] Automated context-budget enforcement via linter (flag skills that load more than their declared budget)
-- [ ] Archive guard: `archive_task_state` rejects tasks with status `in_progress` (or emits hard warning) to prevent permanent `active` fallback in dashboard — AHMCP scope

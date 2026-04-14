@@ -46,8 +46,8 @@ This skill owns branch-review execution order. The guide owns the detailed check
 
 ## Core Process
 
-1. Load the latest slice review packet when available. Fall back to branch diff only when no valid packet exists.
-2. Pre-triage with `get_review_findings_summary` and `reconcile_review_findings` so old open findings are understood before new detection passes begin.
+1. Load the latest slice review packet when available. If `agent-orchestrator-mcp` is unavailable, use the handoff-only fallback from `branch-review-guide.md`: `load_session` -> `search_handoff("slice_complete")` -> `get_verified_tests` -> `review_findings(list)` and review against branch-diff scope.
+2. Pre-triage with `get_review_findings_summary` and `reconcile_review_findings` so old open findings are understood before new detection passes begin. When orchestrator is unavailable, state that the pass is using `branch_diff` fallback scope instead of `slice_packet`.
 3. Check prior review history with `review_runs(operation="list", review_mode="branch", ...)`.
 4. Run the branch-review checklist against the actual diff, touched contracts, and fresh verification evidence.
 5. Record every finding with `review_findings`. Use `batch_record` for multi-finding passes.
@@ -75,6 +75,7 @@ This skill owns branch-review execution order. The guide owns the detailed check
 ## Recovery
 
 - If the slice packet is missing, state that the review is branch-diff fallback scope.
+- If `agent-orchestrator-mcp` is not loaded, switch to the documented handoff-only fallback path instead of stopping at the missing slice-packet call.
 - If MCP is unavailable, stop and record a blocker instead of reporting untracked findings.
 - If findings recur from a prior pass, update or reopen them rather than creating duplicates.
 
@@ -83,6 +84,7 @@ This skill owns branch-review execution order. The guide owns the detailed check
 - Findings mentioned to the user are already recorded in MCP.
 - A branch-mode review run exists for the pass.
 - A verdict decision exists for the review.
+- The review scope is identified honestly as `slice_packet` when packet-backed or `branch_diff` when running fallback scope.
 - Merge-readiness claims are backed by fresh evidence, not assumption.
 
 ## See Also

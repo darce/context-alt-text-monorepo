@@ -5,7 +5,6 @@ mode: execution
 context_budget: 120
 makefile_target: plan-review
 mcp_tools:
-  - get_latest_slice_review_packet
   - review_findings
   - review_runs
   - record_event

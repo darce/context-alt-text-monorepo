@@ -125,6 +125,7 @@ State explicitly that this is fallback scope. Prefer `get_latest_slice_review_pa
 
 Full pipeline reference: [planning-pipeline.md](planning-pipeline.md). Epic lifecycle reference: [development-workflow.md](development-workflow.md#planning-pipeline-and-document-lifecycle).
 
+- [ ] **Intake Q&A present for new features.** For new features/epics where the problem was not pre-traced to code: a scope intake pass (3–5 questions using the `scope` skill) was conducted before assessment; answers are recorded as MCP decisions on the task ref; scope one-pager exists in `docs/ideas/` or the planning doc's objective section includes explicit Not-Doing language. Bug fixes, tech debt tasks, and spec-derived tasks are exempt.
 - [ ] **Pipeline stage appropriate.** Assessments surface problems, specs define testable changes, ADRs resolve design uncertainty, task plans define executable slices. Mixed-stage artifacts should be split.
 - [ ] **Upstream traceability present.** Specs trace to assessment findings, task plans to spec items or epic deliverables, ADRs to blocked spec items. Skipped stages require stated justification.
 - [ ] **Exit gates satisfied for upstream stages.** Task plans derived from specs/ADRs require passed review gates on those upstream artifacts.

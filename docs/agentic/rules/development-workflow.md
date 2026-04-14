@@ -399,8 +399,10 @@ Not every layer is required -- small changes skip directly to a task plan. The f
 
 ```
 Epic (optional umbrella)
-  └─ Assessment → Spec → [ADR] → Task Plan → Implementation → Review
+  └─ [Intake] → Assessment → Spec → [ADR] → Task Plan → Implementation → Review
 ```
+
+`[Intake]` is the P0 scope-intake stage: required for new features and epics; skipped for bug fixes and spec-derived tasks. See [planning-pipeline.md § Stage 0](planning-pipeline.md#stage-0-intake-new-features-and-epics--conditional).
 
 Full documentation: [planning-pipeline.md](planning-pipeline.md). Required gates between stages:
 

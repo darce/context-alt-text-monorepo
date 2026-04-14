@@ -40,6 +40,14 @@
 
 [What changes when this task is complete. 2-3 sentences max.]
 
+## Intake (optional — new features and epics only)
+
+> Include this section when a P0 scope intake pass was conducted before assessment. Omit for bug fixes, tech debt tasks, and spec-derived tasks.
+
+- **Scope one-pager**: `docs/ideas/[slug].md` _(link if created)_
+- **Key Q&A decisions**: [MCP decision IDs where answers were recorded, e.g. `decision #NNN`]
+- **Not-Doing**: [Explicit out-of-scope items confirmed during intake]
+
 ## Problem Statement
 
 [What behavior, contract, or workflow needs to change, and why the current state is insufficient.]

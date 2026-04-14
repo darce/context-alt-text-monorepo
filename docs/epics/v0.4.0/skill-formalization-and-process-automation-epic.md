@@ -23,6 +23,8 @@ The v0.3.0 epic built the engine. This epic builds the cockpit.
 
 ## UX Vision
 
+An agent starting a new feature or epic runs `/scope` first. The skill asks 3–5 questions before generating anything — scope, completion signals, edge cases, non-functional constraints, and explicit not-doing. Each answer is recorded in MCP as a decision, surviving across sessions and agents. The resulting one-pager seeds the assessment instead of the agent guessing at scope.
+
 An agent starting a branch review runs `make review-run` (agent-assisted target). The target sets up the environment; the agent reads the `branch-review` skill and follows its gated process: load review packet from MCP, run detection passes, record findings via `review_findings(batch_record)`, record the review run, and stop when convergence criteria are met. The agent never reads `branch-review-guide.md` in full — the skill extracts the executable subset.
 
 An agent reviewing a task plan first runs `make plan-analyze` (agent-assisted target) for automated triage, then `make plan-review` for the canonical review pass. The analyzer loads the plan plus `constitution.md` and runs six detection passes; the reviewer resolves analyzer findings and adds judgment-requiring findings. Both targets require an active agent session — the LLM executes the skill's structured process against the loaded artifacts.
@@ -103,6 +105,7 @@ The most common source of stale `active` dashboard entries is tasks archived bef
 | `addyosmani/agent-skills` | Skill anatomy: frontmatter, triggers, gated process, rationalizations, red flags, verification | Standardize all `.claude/skills/` definitions to this anatomy |
 | `addyosmani/agent-skills` | Advisory vs execution skill distinction | Tag every skill with `mode: advisory\|execution` to clarify loop ownership |
 | `addyosmani/agent-skills` | Context budget discipline (~2,000 lines target) | Add `context_budget` field to skill frontmatter |
+| `addyosmani/agent-skills` | `idea-refine` reversal pattern: ask 3–5 questions before generating any output | `scope` intake skill: question-first before any planning artifact; Q&A recorded as MCP decisions |
 | `github/spec-kit` | Six detection passes for plan validation (prompt-based, not code) | Adopt as the `plan-analyze` skill's core process |
 | `github/spec-kit` | Constitution-driven alignment checking | Create `constitution.md` from `[sr/rg-NNN]` rules as machine-loadable validation reference |
 | `github/spec-kit` | Before/after lifecycle hooks for stage transitions | Wire planning exit gates as hookable Makefile targets |
@@ -191,6 +194,13 @@ Exit criteria:
 
 Deliverables:
 
+- **`scope` skill** (`mode: advisory`, `tdd_gate: false`) — _deliver with `planning-review`_
+  - Elicits requirements before any planning artifact is written (reversal/question-first pattern)
+  - Core process: ask 3–5 targeted questions via `AskUserQuestion` (scope, completion signals, edge cases, non-functional constraints, not-doing) → record each Q&A pair as `record_event(event_kind="decision")` → output `docs/ideas/[slug].md` one-pager (MVP scope, assumptions, Not-Doing list, success criteria)
+  - Required for: new features, new epics, new capabilities. Exempt: bug fixes, tech debt tasks, spec-derived tasks.
+  - MCP tools: `record_event`, `artifacts`
+  - Context budget: ~60 lines of skill
+
 - **`tdd` skill** (`mode: execution`, `tdd_gate: true`) — _deliver first_
   - Enforces RED → GREEN → REFACTOR ordering at slice start; establishes the machine-enforceable gate all other execution skills depend on
   - Core process: choose target test → run failing test → record `record_event(test_result, passed=false)` via `make slice-start` → only then allow implementation → record `test_result(passed=true)` after passing
@@ -263,7 +273,7 @@ Dashboard auto-refresh hook:
 
 Exit criteria:
 
-- All 7 skills exist, pass the anatomy checklist, and reference their Makefile targets and MCP tools
+- All 8 skills exist, pass the anatomy checklist, and reference their Makefile targets and MCP tools (`tdd`, `incremental-implementation`, `scope`, `branch-lifecycle`, `handoff-lifecycle`, `branch-review`, `planning-review`, `plan-analyze`)
 - Each Phase 2 skill has a paired `.claude/commands/<skill>.md` entry point committed in the same slice
 - `make plan-analyze` runs the six detection passes against a sample task plan and produces a findings table
 - `make plan-review` invokes the planning-review skill
@@ -337,6 +347,7 @@ This epic has no external dependencies. All work is internal to the repo's agent
 
 ## Phase 2: Core Workflow Skills -- not-started
 
+- [ ] Create `scope` advisory skill with question-first intake process (3–5 `AskUserQuestion` calls, Q&A as MCP decisions, `docs/ideas/` one-pager output)
 - [ ] Create `branch-review` execution skill
 - [ ] Create `planning-review` execution skill
 - [ ] Create `plan-analyze` advisory skill with six detection passes

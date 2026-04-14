@@ -10,7 +10,7 @@ mcp_tools:
   - review_runs
   - record_event
   - get_handoff_state
-  - generate_current_task_md
+  - generate_dashboard_md
   - get_latest_slice_review_packet
   - handoff_close_check
   - search_handoff
@@ -72,7 +72,7 @@ Produce a structured, MCP-recorded set of review findings with a durable verdict
    - `fail`
 7. Record the verdict decision with `record_event(event={"event_kind":"decision", ...})`.
 8. Record the review run with `review_runs(review={"operation":"record", ...})`.
-9. Regenerate task context with `generate_current_task_md(...)`.
+9. Regenerate the operator view with `generate_dashboard_md()`.
 10. Respond with findings grouped by severity, then the verdict summary.
 
 ### Branch review scope commands
@@ -129,7 +129,7 @@ git log --oneline <base>...HEAD
 - Every finding mentioned to the user is already recorded in MCP with a stable ID.
 - A verdict decision exists via `record_event(event={"event_kind":"decision", ...})`.
 - A review-run record exists via `review_runs(review={"operation":"record", ...})`.
-- `generate_current_task_md(...)` has been run after the state-changing writes.
+- `generate_dashboard_md()` has been run after the state-changing writes.
 - The final response includes the verdict and confirms the handoff state was updated.
 
 ### Verification Evidence

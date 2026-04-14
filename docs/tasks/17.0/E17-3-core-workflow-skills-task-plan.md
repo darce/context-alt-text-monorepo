@@ -13,11 +13,11 @@
 
 ## Objective
 
-Create the remaining five Phase 2 execution/advisory skills (`branch-lifecycle`, `handoff-lifecycle`, `branch-review`, `planning-review`, `plan-analyze`), their paired `.claude/commands/` entry points, two new Makefile targets (`plan-review`, `plan-analyze`), and the PostToolUse dashboard auto-refresh hook. When complete, every major development workflow has a discoverable skill with a slash command entry point, and CURRENT_TASK.md + DASHBOARD.md regenerate automatically after every state-changing MCP write.
+Create the remaining six Phase 2 execution/advisory skills (`scope`, `branch-lifecycle`, `handoff-lifecycle`, `branch-review`, `planning-review`, `plan-analyze`), their paired `.claude/commands/` entry points, two new Makefile targets (`plan-review`, `plan-analyze`), and the PostToolUse dashboard auto-refresh hook. When complete, every major development workflow has a discoverable skill with a slash command entry point — including a question-first intake skill that elicits requirements before any planning artifact is written — and CURRENT_TASK.md + DASHBOARD.md regenerate automatically after every state-changing MCP write.
 
 ## Problem Statement
 
-After E17-2, two workflows remain without skills: the task lifecycle (task-start through task-finish with the invariant close sequence) and the review workflows (branch review, planning review, and plan analysis). Agents loading the 250-line `branch-review-guide.md` or the `planning-review-guide.md` in full is the dominant context-bloat pattern this epic targets. Similarly, `CURRENT_TASK.md` regeneration after `record_event` and `review_findings` writes is advisory only — no hook enforces it, causing stale dashboard state between agent writes.
+After E17-2, three workflow categories remain without skills: the task lifecycle (task-start through task-finish with the invariant close sequence), the review workflows (branch review, planning review, and plan analysis), and requirements intake for new features (the reversal/question-first pattern that should precede any planning artifact). Agents loading the 250-line `branch-review-guide.md` or the `planning-review-guide.md` in full is the dominant context-bloat pattern this epic targets. Similarly, `CURRENT_TASK.md` regeneration after `record_event` and `review_findings` writes is advisory only — no hook enforces it, causing stale dashboard state between agent writes.
 
 ## Constraints
 
@@ -44,7 +44,7 @@ After E17-2, two workflows remain without skills: the task lifecycle (task-start
 
 ## Current State Analysis
 
-- No `branch-lifecycle`, `handoff-lifecycle`, `branch-review`, `planning-review`, or `plan-analyze` skills exist.
+- No `scope`, `branch-lifecycle`, `handoff-lifecycle`, `branch-review`, `planning-review`, or `plan-analyze` skills exist.
 - **Prerequisite: E17-2 merged.** When E17-3 starts, `.claude/commands/tdd.md` and `.claude/commands/incremental-implementation.md` already exist (delivered by E17-2). Five command files remain to be created by this task.
 - `make plan-review` and `make plan-analyze` exist as stubs in `mk/handoff.mk`, pointing to Phase 2 skill files that do not yet exist. This task creates the skills those stubs reference; the targets themselves need no changes unless their guidance text needs refinement.
 - No PostToolUse hook regenerates views after `record_event`/`review_findings`/`review_runs` writes. `close_slice`, `update_task_status`, and `archive_task_state` already regenerate atomically server-side; this hook closes the remaining gap.
@@ -52,12 +52,12 @@ After E17-2, two workflows remain without skills: the task lifecycle (task-start
 
 ## Target Outcome
 
-Five skills exist in `.claude/skills/`. Five command files exist in `.claude/commands/`. Typing `/branch-review` loads the review skill directly instead of the 250-line guide. `make plan-analyze DOC=<path>` prints guidance pointing the agent to the `plan-analyze` skill. `make plan-review DOC=<path>` does the same for `planning-review`. CURRENT_TASK.md and DASHBOARD.md regenerate within one tool call of any `record_event`, `review_findings`, or `review_runs` write.
+Six skills exist in `.claude/skills/`. Six command files exist in `.claude/commands/`. Typing `/scope` before any new feature ask elicits 3–5 questions before any plan is generated. Typing `/branch-review` loads the review skill directly instead of the 250-line guide. `make plan-analyze DOC=<path>` prints guidance pointing the agent to the `plan-analyze` skill. `make plan-review DOC=<path>` does the same for `planning-review`. CURRENT_TASK.md and DASHBOARD.md regenerate within one tool call of any `record_event`, `review_findings`, or `review_runs` write.
 
 ## Context Loading
 
 - Template: `docs/agentic/templates/SKILL_ANATOMY.template.md`
-- Epic: `docs/epics/v0.4.0/skill-formalization-and-process-automation-epic.md` (Phase 2, remaining 5 skill entries)
+- Epic: `docs/epics/v0.4.0/skill-formalization-and-process-automation-epic.md` (Phase 2, remaining 6 skill entries including `scope`)
 - Lifecycle: `docs/agentic/lifecycle-map.md` (I1–I7 stage map, orchestrator Quick Reference)
 - Review guide (reference): `docs/agentic/rules/branch-review-guide.md` (executable subset to extract)
 - Planning review guide (reference): `docs/agentic/rules/planning-review-guide.md` (executable subset to extract)
@@ -83,6 +83,8 @@ Three slices in dependency order: lifecycle skills first (lowest dependency), th
 
 | Surface | File | Change |
 |---------|------|--------|
+| Skill | `.claude/skills/scope/SKILL.md` | New advisory skill (~60 lines) |
+| Command | `.claude/commands/scope.md` | New slash command (~15 lines) |
 | Skill | `.claude/skills/branch-lifecycle/SKILL.md` | New execution skill (~150 lines) |
 | Command | `.claude/commands/branch-lifecycle.md` | New slash command (~15 lines) |
 | Skill | `.claude/skills/handoff-lifecycle/SKILL.md` | New execution skill (~100 lines) |
@@ -112,7 +114,8 @@ Three slices in dependency order: lifecycle skills first (lowest dependency), th
 
 - Deterministic checks:
   - `grep -c 'mode: execution' .claude/skills/branch-lifecycle/SKILL.md .claude/skills/handoff-lifecycle/SKILL.md .claude/skills/branch-review/SKILL.md .claude/skills/planning-review/SKILL.md` → 4
-  - `grep -c 'mode: advisory' .claude/skills/plan-analyze/SKILL.md` → 1
+  - `grep -c 'mode: advisory' .claude/skills/scope/SKILL.md .claude/skills/plan-analyze/SKILL.md` → 2
+  - `grep 'AskUserQuestion' .claude/skills/scope/SKILL.md` → present
   - `grep 'tdd_gate: false' .claude/skills/branch-review/SKILL.md .claude/skills/plan-analyze/SKILL.md .claude/skills/planning-review/SKILL.md .claude/skills/handoff-lifecycle/SKILL.md` → 4 matches
   - `grep 'tdd_gate: true' .claude/skills/branch-lifecycle/SKILL.md` → 1
   - `grep 'review_mode.*analysis' .claude/skills/plan-analyze/SKILL.md` → present (confirming plan-analyze uses analysis mode)
@@ -157,12 +160,20 @@ Proof:
 - `grep 'switch_task\|archive.*done\|done.*archive' .claude/skills/handoff-lifecycle/SKILL.md` → present
 - All 10 anatomy sections in both skills
 
-### Slice 2: Review and Planning Skills
+### Slice 2: Review, Planning, and Intake Skills
 
-**Goal**: Create `branch-review`, `planning-review`, and `plan-analyze` skills with paired command files and new `make plan-review` / `make plan-analyze` agent-assisted Makefile targets.
+**Goal**: Create `scope`, `branch-review`, `planning-review`, and `plan-analyze` skills with paired command files and new `make plan-review` / `make plan-analyze` agent-assisted Makefile targets.
 
 Changes:
 
+- Create `.claude/skills/scope/SKILL.md`:
+  - Frontmatter: `mode: advisory`, `context_budget: 60`, `tdd_gate: false`, `makefile_target: null`, `mcp_tools: [record_event, artifacts]`
+  - Trigger: new feature requests, new epic scoping, new capability planning. NOT triggered by bug fixes, tech debt tasks, or tasks derived from approved specs.
+  - Core process (reversal pattern): ask 3–5 questions via `AskUserQuestion` **before generating any output** → categories: scope, completion signals, edge cases, non-functional constraints, not-doing → record each Q&A as `record_event(event_kind="decision")` → output `docs/ideas/[slug].md` one-pager (MVP scope, assumptions, Not-Doing list, success criteria)
+  - Common rationalizations: "I already know the scope"; "the user's prompt is clear enough"; "I'll ask questions later if I get stuck"
+  - Convergence: ≥3 questions asked and answered; Q&A recorded as MCP decisions; Not-Doing list present
+- Create `.claude/commands/scope.md`
+- Add routing row to `docs/agentic/instructions.md` Additional Routing
 - Create `.claude/skills/branch-review/SKILL.md`:
   - Frontmatter: `mode: execution`, `context_budget: 150`, `tdd_gate: false`, `makefile_target: review-run`, `mcp_tools: [get_latest_slice_review_packet, review_findings, review_runs, record_event, handoff_close_check]`; note `get_review_findings_summary`, `reconcile_review_findings` (agent-orchestrator-mcp)
   - Core process: `get_review_findings_summary` + `reconcile_review_findings` (pre-triage) → `get_latest_slice_review_packet` → `review_runs(list)` (check prior passes) → detection passes (per `branch-review-guide.md` categories) → `review_findings(batch_record)` → `review_runs(record)` → verify zero open findings → `record_event(decision, verdict)`
@@ -187,6 +198,9 @@ Changes:
 
 Proof:
 
+- `grep 'mode: advisory' .claude/skills/scope/SKILL.md` → 1
+- `grep 'AskUserQuestion' .claude/skills/scope/SKILL.md` → present
+- `grep 'Not-Doing\|not.doing' .claude/skills/scope/SKILL.md` → present (convergence criterion)
 - `grep 'review_mode.*analysis' .claude/skills/plan-analyze/SKILL.md` → present
 - `grep 'review_runs' .claude/skills/plan-analyze/SKILL.md` → 0
 - `grep 'get_review_findings_summary\|reconcile_review_findings' .claude/skills/branch-review/SKILL.md` → present
@@ -219,7 +233,7 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded `SKILL_ANATOMY.template.md`, epic Phase 2 entries for all 5 remaining skills
+- [ ] Loaded `SKILL_ANATOMY.template.md`, epic Phase 2 entries for all 6 remaining skills (including `scope`)
 - [ ] Read `branch-review-guide.md` and `planning-review-guide.md` to identify executable subset to extract
 - [ ] Reviewed `.claude/settings.json` existing PostToolUse hooks to confirm no conflict
 - [ ] Confirmed E17-2 is merged before starting (2 command files already exist)
@@ -233,14 +247,16 @@ Proof:
 - [ ] All 10 anatomy sections in each skill
 - [ ] Record handoff decision
 
-### Checklist for Slice 2: Review and Planning Skills
+### Checklist for Slice 2: Review, Planning, and Intake Skills
 
+- [ ] Create `scope` skill — verify `AskUserQuestion` present, Not-Doing convergence criterion present
+- [ ] Create `scope` command file and pair with skill in same commit
 - [ ] Create `branch-review` skill with pre-triage step (orchestrator tools)
 - [ ] Create `planning-review` skill
 - [ ] Create `plan-analyze` skill — verify `review_runs` absent, `review_mode="analysis"` present
-- [ ] All 3 command files created and paired
+- [ ] All 4 command files created and paired
 - [ ] Verify `make plan-review` and `make plan-analyze` stub targets reference correct skill paths
-- [ ] `instructions.md` routing rows added for all 3 skills
+- [ ] `instructions.md` routing rows added for all 4 skills
 - [ ] Record handoff decision
 
 ### Checklist for Slice 3: PostToolUse Dashboard Hook
@@ -253,7 +269,8 @@ Proof:
 
 ## Review Readiness
 
-- [ ] All 5 skills pass anatomy checklist
+- [ ] All 6 skills pass anatomy checklist
+- [ ] `scope` skill has `AskUserQuestion` in core process and Not-Doing as a convergence criterion
 - [ ] `plan-analyze` explicitly states it does not substitute for `planning-review`
 - [ ] PostToolUse hook exits 0 on failure — no tool-call blocking
 - [ ] No stale pseudo-tool names in any skill
@@ -261,8 +278,8 @@ Proof:
 
 ## Success Criteria
 
-- [ ] All 5 skills exist with correct `mode`, `tdd_gate`, frontmatter, and 10 anatomy sections
-- [ ] All 7 `.claude/commands/*.md` files exist (5 new + 2 from E17-2)
+- [ ] All 6 skills exist with correct `mode`, `tdd_gate`, frontmatter, and 10 anatomy sections
+- [ ] All 8 `.claude/commands/*.md` files exist (6 new + 2 from E17-2)
 - [ ] `make plan-review` and `make plan-analyze` run from repo root without error
 - [ ] PostToolUse hook regenerates both views after any `record_event` write
 - [ ] E17 Phase 2 exit criteria fully satisfied

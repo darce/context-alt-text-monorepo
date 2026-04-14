@@ -9,6 +9,7 @@
 
 | Step | Stage | Entry point | Skill | Key MCP tools | Exit gate |
 |------|-------|-------------|-------|---------------|-----------|
+| P0 | Intake _(new features/epics only)_ | (in session) | `scope` | `AskUserQuestion`, `record_event(decision)` | Q&A recorded in MCP; scope one-pager in `docs/ideas/`; Not-Doing list present |
 | P1 | Scope | `make context` | `investigate` | `set_handoff_state` | Problem traced to code; task ref initialized |
 | P2 | Assess | `make plan-analyze DOC=<path>` | `plan-analyze` | `review_findings(analysis)` | All findings cite `file:line`; priority ordered |
 | P3 | Spec | `make plan-review DOC=<path>` | `planning-review` | `review_findings` + `review_runs(record)` | ≥1 review run recorded; 0 open findings |
@@ -30,6 +31,7 @@
 | Target | Stage | What it does |
 |--------|-------|-------------|
 | `make context` | All | Verify worktree + branch alignment against active MCP task |
+| `(scope skill — in session)` | P0 | Ask 3–5 questions before any planning output; record Q&A as MCP decisions |
 | `make plan-analyze DOC=<path>` | P2, P4 | Agent-assisted: six detection passes against a planning artifact |
 | `make plan-review DOC=<path>` | P3–P4 | Agent-assisted: planning-review skill loop against an artifact |
 | `make task-start TASK=<id>` | I1 | Create feature branch + linked worktree + register MCP target in one shot |

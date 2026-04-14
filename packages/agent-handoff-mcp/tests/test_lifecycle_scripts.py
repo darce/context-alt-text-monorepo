@@ -235,6 +235,38 @@ def test_task_start_succeeds_when_existing_active_task_present(tmp_path: Path) -
     assert int(active["revision"]) >= 1  # rev incremented from cold-start 0
 
 
+def test_task_start_archives_previous_task_for_dashboard_status(tmp_path: Path) -> None:
+    """task-start should preserve the outgoing task's real dashboard status."""
+    from agent_handoff_mcp import RuntimeConfig, configure_runtime, generate_dashboard_md
+
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+
+    first = _run_script(
+        "task-start.sh", repo, "TS-DASH-1", "First task", env=env
+    )
+    assert first.returncode == 0, f"stdout={first.stdout!r} stderr={first.stderr!r}"
+
+    second = _run_script(
+        "task-start.sh", repo, "TS-DASH-2", "Second task", env=env
+    )
+    assert second.returncode == 0, f"stdout={second.stdout!r} stderr={second.stderr!r}"
+
+    archived = _read_archive_row(repo, "TS-DASH-1")
+    assert archived is not None
+    snapshot = json.loads(archived["snapshot_json"])
+    assert snapshot["active"]["task_ref"] == "TS-DASH-1"
+    assert snapshot["active"]["status"] == "in_progress"
+    assert snapshot["active"]["target_worktree_path"].endswith("context-alt-text-monorepo-ts-dash-1")
+
+    runtime = RuntimeConfig.for_repo(repo)
+    configure_runtime(runtime)
+    dashboard = generate_dashboard_md(write_file=False)
+    assert dashboard["ok"] is True
+    assert "TS-DASH-1" in dashboard["markdown"]
+    assert "in_progress" in dashboard["markdown"]
+
+
 # ---------------------------------------------------------------------------
 # task-finish.sh smoke tests
 # ---------------------------------------------------------------------------

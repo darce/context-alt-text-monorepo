@@ -1,6 +1,6 @@
 ---
 name: tdd
-description: Enforce RED -> GREEN -> REFACTOR with a recorded failing-test gate before any implementation edit.
+description: "Use at the start of any implementation slice. Triggers when `make slice-start` is the next step or when new test coverage is needed before any production edit."
 mode: execution
 context_budget: 90
 makefile_target: slice-start
@@ -54,16 +54,23 @@ This skill owns ordering, gate discipline, and required handoff evidence. Stack-
 
 ## Common Rationalizations
 
-- "I'll add the test after I know the code works."
-- "This is just config or glue, so the gate does not matter."
-- "The test is obvious; I can skip `make slice-start` once."
+| Rationalization | Why it fails | Required action |
+|---|---|---|
+| "I'll add the test after I know the code works." | A test written after passing code tests the implementation, not the behavior. It will pass immediately and prove nothing. The pre-merge gate requires a recorded failing-test event *before* implementation. | Write the failing test first. If you're not sure what to test, that uncertainty is information — resolve it before editing production code. |
+| "This is just config or glue, so the gate does not matter." | Config and glue code fail silently and are disproportionately the source of integration bugs. "Boring" code is often less understood, not less risky. | Apply the gate to config and glue slices. The test may be minimal, but the gate must exist. |
+| "The test is obvious; I can skip `make slice-start` once." | One skipped gate invalidates the audit trail for that slice. The pre-merge gate cannot distinguish "intentionally ungated" from "forgotten." | Run `make slice-start` even for the obvious case. It is two seconds. The recorded event is permanent evidence. |
 
 ## Red Flags
 
-- A production file is edited before the failing test is recorded.
-- The first failure is a syntax or import crash unrelated to the intended behavior.
-- No passing `test_result` evidence exists after the implementation turns green.
-- The diff starts expanding beyond one behavior path.
+Each flag is a re-entry trigger. When detected, stop and re-enter at the step shown — do not continue from where you are.
+
+| Flag | Re-entry point |
+|---|---|
+| Production file edited before failing test recorded | Step 2: write the failing test first. Do not record GREEN evidence for code written without a RED gate. |
+| First test failure is syntax/import noise unrelated to the behavior | Step 3: fix the noise, then confirm the failure is for the right reason before recording. |
+| Test passed on first run, never seen failing | Invalidate the result — if it never failed, it may not be testing new behavior. Re-enter Step 2 with a more targeted assertion. |
+| No passing `test_result` evidence after implementation turns green | Step 7: record the GREEN evidence. The slice cannot close without it. |
+| Diff expanding beyond one behavior path | Step 8: stop adding files, keep the current test green, commit or stash what's clean, then open a new slice. |
 
 ## Recovery
 

@@ -1,6 +1,6 @@
 ---
 name: incremental-implementation
-description: Break implementation into bounded vertical slices that each start with a recorded failing test and end with a reviewable commit.
+description: "Use when turning a reviewed task plan into implementation slices. Triggers when starting feature work from an approved plan or choosing the next slice under an active task."
 mode: execution
 context_budget: 100
 makefile_target: slice-commit
@@ -55,16 +55,22 @@ This skill owns slice sizing, vertical-path discipline, and plan-item advancemen
 
 ## Common Rationalizations
 
-- "I'll finish the backend first and wire the rest in later."
-- "These are only types or scaffolds, so a test-backed slice can wait."
-- "The slice is almost done; I'll split it after the big diff lands."
+| Rationalization | Why it fails | Required action |
+|---|---|---|
+| "I'll finish the backend first and wire the rest in later." | A backend-first pass creates half-wired layers that cannot be verified. Each layer added before the path is closed introduces assumptions that are only caught at integration. | Pick the smallest complete end-to-end path. One endpoint with one test, all the way through. |
+| "These are only types or scaffolds, so a test-backed slice can wait." | Scaffolds that land without tests establish interfaces no one has verified. They frequently drift from what the implementation actually needs when the "real" slice arrives. | If the scaffold cannot be tested, it is not yet small enough. Shrink it until one test can describe it. |
+| "The slice is almost done; I'll split it after the big diff lands." | Splitting after the fact means the tests for the second path must be written retroactively — they never had a red gate. And "almost done" is always further away than it looks from inside the diff. | Stop adding files. Ship the current path, commit, then start a new slice for the rest. |
 
 ## Red Flags
 
-- The diff touches multiple unrelated user paths.
-- `plan_cursor(... require_clean_slice=true)` is rejected because the previous slice still has open findings.
-- The first implementation edits happen before the failing test is recorded.
-- The slice ends with half-wired layers that cannot be verified together.
+Each flag is a re-entry trigger. Stop and re-enter at the step shown.
+
+| Flag | Re-entry point |
+|---|---|
+| Diff touches multiple unrelated user paths | Step 3: redefine the slice as one path. Defer the rest to the next slice. |
+| `plan_cursor(require_clean_slice=true)` rejected — prior slice has open findings | Step 2: resolve or explicitly defer/wontfix those findings before advancing the cursor. |
+| Implementation edits before failing test recorded | Step 4 (tdd skill, Step 2): write the failing test first. |
+| Slice ends with half-wired layers that cannot be verified together | Step 6: ship only what the test covers. Leave the next layer for the next slice. |
 
 ## Recovery
 

@@ -1,6 +1,6 @@
 ---
 name: review
-description: Run a structured branch or planning review, record findings in MCP, and finish with a durable verdict.
+description: "Use when asked to review a branch diff, task plan, PR, epic, or ADR. Triggers on: 'review', 'audit', 'flag gaps/bugs', 'propose improvements'."
 mode: execution
 context_budget: 250
 makefile_target: review-dispatch
@@ -102,10 +102,12 @@ git log --oneline <base>...HEAD
 
 ## Common Rationalizations
 
-- "I can mention the issue now and record it later."
-- "This looks minor, so I don't need the full checklist."
-- "The user only asked for a quick pass, so MCP bookkeeping can wait."
-- "A planning document doesn't need the same rigor as a code review."
+| Rationalization | Why it fails | Required action |
+|---|---|---|
+| "I can mention the issue now and record it later." | Findings without a stable `finding_id` cannot be tracked, deferred, or verified by the pre-merge gate. The gate audits MCP state, not chat history. | Record the finding before mentioning it. If MCP is unavailable, record a blocker instead of continuing. |
+| "This looks minor, so I don't need the full checklist." | Severity cannot be assessed by inspection before the checklist runs. Prior reviews have found contract drift, missing test coverage, and architecture violations on "minor" diffs. | Run the full checklist. Mark findings LOW where appropriate, but still record them. |
+| "The user only asked for a quick pass, so MCP bookkeeping can wait." | "Quick" describes the desired pace, not permission to skip recording discipline. An unrecorded pass leaves no evidence at the pre-merge gate. | Full checklist, expedited where straightforward. Recording takes two tool calls; omitting it voids the review. |
+| "A planning document doesn't need the same rigor as a code review." | Planning docs drive architecture decisions. A missed assumption in a task plan becomes a regression in code. The planning-review checklist exists for exactly this reason. | Use the planning-review guide. Record findings with the same MCP discipline as branch reviews. |
 
 ## Red Flags
 
@@ -129,6 +131,17 @@ git log --oneline <base>...HEAD
 - A review-run record exists via `review_runs(review={"operation":"record", ...})`.
 - `generate_current_task_md(...)` has been run after the state-changing writes.
 - The final response includes the verdict and confirms the handoff state was updated.
+
+### Verification Evidence
+
+Do not report a verdict until each claim below is backed by a fresh command run with quoted output. Stale results and assumed states do not count.
+
+| Claim | Command | Required output shape |
+|---|---|---|
+| Diff scope is understood | `git diff --stat <base>...HEAD` | File list with actual line counts quoted in response |
+| Tests pass at HEAD | `<stack test command>` | `N passed` with N > 0, exit 0 — quote the count |
+| No open findings on task | `review_findings(operation="list", status="open")` | `items: []` or explicit list of open items to address |
+| Verdict recorded | `review_runs(operation="list", task_ref=...)` | Entry with matching `review_run_id` and `verdict` |
 
 ## See Also
 

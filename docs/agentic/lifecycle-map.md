@@ -7,7 +7,7 @@
 
 ## Stage Map
 
-> **Phase 2 note:** Rows P0, P2, P3, and P3.5 use skill-based entry points (`scope`, `plan-analyze`, `planning-review`) that are **E17-3 deliverables — not yet on `main`**. Until E17-3 merges, use the full planning review guides directly: `docs/agentic/rules/planning-review-guide.md` and `docs/agentic/rules/branch-review-guide.md`. P1 and I1–I7 entry points are live today.
+> **Phase 2 note:** Rows P0, P2, P3, and P3.5 now use the E17-3 skill-based entry points (`scope`, `plan-analyze`, `planning-review`) on `main`. The full planning and branch review guides remain the canonical checklist/reference surfaces behind those entry points.
 
 | Step | Stage | Entry point | Skill | Key MCP tools | Exit gate |
 |------|-------|-------------|-------|---------------|-----------|

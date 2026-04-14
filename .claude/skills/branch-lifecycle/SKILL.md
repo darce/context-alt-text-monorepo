@@ -57,7 +57,7 @@ This skill owns the branch-scoped lifecycle. The `tdd` skill owns the failing-te
 5. Run the appropriate review workflow and resolve findings. Do not move to close-check while findings remain open.
 6. Run `make handoff-close-check` on the branch HEAD. The branch is not merge-ready until the enforced gate passes.
 7. Merge the reviewed branch, return the root worktree to `main`, and delete the merged feature branch only after the branch work is actually landed.
-8. Finish with the Worktree Status Integrity close sequence: `update_task_status(done)` -> `manage_worktree_lane(close)` when lanes exist -> archive the task state -> regenerate both task views.
+8. Finish with the Worktree Status Integrity close sequence: `update_task_status(done)` -> `manage_worktree_lane(close)` when lanes exist -> archive the task state -> keep `DASHBOARD.md` current, using `generate_current_task_md` only if an explicit task-scoped snapshot is needed.
 9. Run `make task-finish TASK=<task-ref>` so teardown, archive, and dashboard regeneration happen in the repo's canonical order.
 
 ## Common Rationalizations
@@ -93,8 +93,8 @@ Each flag is a re-entry trigger. Stop and re-enter at the step shown.
 - Slice work closed through recorded `close_slice` decisions.
 - Review completed with zero open findings.
 - `handoff_close_check(enforce=True)` passed on the final branch HEAD.
-- The task ended with the invariant close sequence: `update_task_status(done)` -> lane close when needed -> archive -> `generate_dashboard_md`.
-- Root worktree is back on `main`, the feature branch is no longer active, and both generated task views reflect the closed task.
+- The task ended with the invariant close sequence: `update_task_status(done)` -> lane close when needed -> archive -> `generate_dashboard_md` when a non-atomic write path requires it.
+- Root worktree is back on `main`, the feature branch is no longer active, and `DASHBOARD.md` reflects the closed task with `CURRENT_TASK.md` available on demand.
 
 ## See Also
 

@@ -30,7 +30,7 @@ After E17-2, three workflow categories remain without skills: the task lifecycle
 - `plan-analyze` is advisory (`mode: advisory`, `tdd_gate: false`); all others are execution skills.
 - `plan-analyze` does NOT record a review run — only `planning-review` does. The distinction must be explicit in the `plan-analyze` skill to prevent agents from confusing the two.
 - The PostToolUse hook runs `generate_current_task_md` + `generate_dashboard_md` as a shell command after `record_event`, `review_findings`, and `review_runs` writes. It must not introduce circular regeneration loops.
-- New Makefile targets (`plan-review`, `plan-analyze`) are agent-assisted — they print context and point to the skill; they do not run headless.
+- Existing `plan-review` and `plan-analyze` Makefile stubs are agent-assisted — they print context and point to the skill; this task verifies/fixes their guidance paths but does not create new headless targets.
 
 ## Workflow Principles
 
@@ -103,7 +103,7 @@ Three slices in dependency order: lifecycle skills first (lowest dependency), th
 | Makefile | `mk/handoff.mk` | Verify existing `plan-review` and `plan-analyze` stub targets reference the correct skill paths |
 | Settings | `.claude/settings.json` | Add PostToolUse hook for `record_event\|review_findings\|review_runs` |
 | Script | `scripts/hooks/regenerate-task-views.sh` | New shell script: calls `agent-handoff-mcp task` + `agent-handoff-mcp dashboard` |
-| Routing | `docs/agentic/instructions.md` | Add rows for all 5 skills to Additional Routing table |
+| Routing | `docs/agentic/instructions.md` | Add rows for all 6 skills to Additional Routing table |
 
 ## Related Files
 

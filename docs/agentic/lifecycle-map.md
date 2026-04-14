@@ -7,14 +7,16 @@
 
 ## Stage Map
 
+> **Phase 2 note:** Rows P0, P2, P3, and P3.5 use skill-based entry points (`scope`, `plan-analyze`, `planning-review`) that are **E17-3 deliverables — not yet on `main`**. Until E17-3 merges, use the full planning review guides directly: `docs/agentic/rules/planning-review-guide.md` and `docs/agentic/rules/branch-review-guide.md`. P1 and I1–I7 entry points are live today.
+
 | Step | Stage | Entry point | Skill | Key MCP tools | Exit gate |
 |------|-------|-------------|-------|---------------|-----------|
-| P0 | Intake _(new features/epics only)_ | (in session) | `scope` | `AskUserQuestion`, `record_event(decision)` | Q&A recorded in MCP; scope one-pager in `docs/ideas/`; Not-Doing list present |
+| P0 | Intake _(new features/epics only)_ | (in session) | `scope` _(E17-3)_ | `AskUserQuestion`, `record_event(decision)` | Q&A recorded in MCP; scope one-pager in `docs/ideas/`; Not-Doing list present |
 | P1 | Scope | `make context` | `investigate` | `set_handoff_state` | Problem traced to code; task ref initialized |
-| P2 | Assess | `make plan-analyze DOC=<path>` | `plan-analyze` | `review_findings(analysis)` | All findings cite `file:line`; priority ordered |
-| P3 | Spec | `make plan-review DOC=<path>` | `planning-review` | `review_findings` + `review_runs(record)` | ≥1 review run recorded; 0 open findings |
-| P3.5 | ADR _(conditional)_ | `make plan-review DOC=<path>` | `planning-review` | same | Alternatives documented; spec updated |
-| P4 | Task plan | `make plan-analyze` → `make plan-review` | `planning-review` | same | Slices trace to spec; `target_branch` declared |
+| P2 | Assess | `make plan-analyze DOC=<path>` _(E17-3)_ | `plan-analyze` _(E17-3)_ | `review_findings(analysis)` | All findings cite `file:line`; priority ordered |
+| P3 | Spec | `make plan-review DOC=<path>` _(E17-3)_ | `planning-review` _(E17-3)_ | `review_findings` + `review_runs(record)` | ≥1 review run recorded; 0 open findings |
+| P3.5 | ADR _(conditional)_ | `make plan-review DOC=<path>` _(E17-3)_ | `planning-review` _(E17-3)_ | same | Alternatives documented; spec updated |
+| P4 | Task plan | `make plan-analyze` → `make plan-review` _(E17-3)_ | `planning-review` _(E17-3)_ | same | Slices trace to spec; `target_branch` declared |
 | I1 | Branch start | `make task-start TASK=<id> OBJECTIVE="..."` | `branch-lifecycle` | `set_handoff_state(target_branch)` | Plan on `main`; worktree + branch exist; `make context` clean |
 | I2 | Slice: RED | `make slice-start` | `tdd` | `record_event(test_result, passed=false)` | Failing test recorded **before** any implementation edit |
 | I3 | Slice: GREEN | _(edit files)_ | `incremental-implementation` | _(none until commit)_ | Tests pass; ≤100 new lines since last test run |
@@ -31,9 +33,9 @@
 | Target | Stage | What it does |
 |--------|-------|-------------|
 | `make context` | All | Verify worktree + branch alignment against active MCP task |
-| `(scope skill — in session)` | P0 | Ask 3–5 questions before any planning output; record Q&A as MCP decisions |
-| `make plan-analyze DOC=<path>` | P2, P4 | Agent-assisted: six detection passes against a planning artifact |
-| `make plan-review DOC=<path>` | P3–P4 | Agent-assisted: planning-review skill loop against an artifact |
+| `(scope skill — in session)` _(E17-3)_ | P0 | Ask 3–5 questions before any planning output; record Q&A as MCP decisions |
+| `make plan-analyze DOC=<path>` _(E17-3)_ | P2, P4 | Agent-assisted: six detection passes against a planning artifact |
+| `make plan-review DOC=<path>` _(E17-3)_ | P3–P4 | Agent-assisted: planning-review skill loop against an artifact |
 | `make task-start TASK=<id>` | I1 | Create feature branch + linked worktree + register MCP target in one shot |
 | `make slice-start` | I2 | Record `test_result(passed=false)` as the TDD gate for the current slice |
 | `make slice-commit MSG="..."` | I4 | `git commit` + `close_slice` + `generate_current_task_md` atomically |

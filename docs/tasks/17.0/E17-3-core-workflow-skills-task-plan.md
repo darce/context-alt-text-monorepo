@@ -8,6 +8,10 @@
 > - **Epic Short ID**: E17
 > - **Target Branch**: `feature/e17-3`
 > - **Review Coverage Target**: 1
+>
+> **Prerequisites:** E17-3 is blocked until **E17-2 merges**. Verify before starting:
+> `ls .claude/commands/tdd.md .claude/commands/incremental-implementation.md` must both exist.
+> Without E17-2, 2 of the 8 target command files are absent and the success criteria at line 282 cannot be satisfied.
 
 ---
 
@@ -48,6 +52,7 @@ After E17-2, three workflow categories remain without skills: the task lifecycle
 - **Prerequisite: E17-2 merged.** When E17-3 starts, `.claude/commands/tdd.md` and `.claude/commands/incremental-implementation.md` already exist (delivered by E17-2). Five command files remain to be created by this task.
 - `make plan-review` and `make plan-analyze` exist as stubs in `mk/handoff.mk`, pointing to Phase 2 skill files that do not yet exist. This task creates the skills those stubs reference; the targets themselves need no changes unless their guidance text needs refinement.
 - No PostToolUse hook regenerates views after `record_event`/`review_findings`/`review_runs` writes. `close_slice`, `update_task_status`, and `archive_task_state` already regenerate atomically server-side; this hook closes the remaining gap.
+- `scripts/_task_start_inline.py` task-transition semantics were repaired in AHMCP-28: it now archives the outgoing task before activating the new one. The `handoff-lifecycle` skill here documents the already-corrected behavior; no further repair to `_task_start_inline.py` is in scope.
 - `branch-review-guide.md` (≥250 lines) and `planning-review-guide.md` are loaded in full today; skills will extract the executable subset.
 
 ## Target Outcome

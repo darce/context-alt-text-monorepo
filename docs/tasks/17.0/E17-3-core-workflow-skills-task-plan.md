@@ -17,7 +17,7 @@
 
 ## Objective
 
-Create the remaining six Phase 2 execution/advisory skills (`scope`, `branch-lifecycle`, `handoff-lifecycle`, `branch-review`, `planning-review`, `plan-analyze`), their paired `.claude/commands/` entry points, two new Makefile targets (`plan-review`, `plan-analyze`), and the PostToolUse dashboard auto-refresh hook. When complete, every major development workflow has a discoverable skill with a slash command entry point — including a question-first intake skill that elicits requirements before any planning artifact is written — and CURRENT_TASK.md + DASHBOARD.md regenerate automatically after every state-changing MCP write.
+Create the remaining six Phase 2 execution/advisory skills (`scope`, `branch-lifecycle`, `handoff-lifecycle`, `branch-review`, `planning-review`, `plan-analyze`), their paired `.claude/commands/` entry points, path-verification of the existing `plan-review` and `plan-analyze` Makefile stubs (already in `mk/handoff.mk`), and the PostToolUse dashboard auto-refresh hook. When complete, every major development workflow has a discoverable skill with a slash command entry point — including a question-first intake skill that elicits requirements before any planning artifact is written — and CURRENT_TASK.md + DASHBOARD.md regenerate automatically after every state-changing MCP write.
 
 ## Problem Statement
 
@@ -78,7 +78,7 @@ Six skills exist in `.claude/skills/`. Six command files exist in `.claude/comma
 | Boundary | Owner | Current Contract | Expected Change | Compatibility Needed? | Verification |
 |----------|-------|------------------|-----------------|----------------------|--------------|
 | `.claude/settings.json` PostToolUse | repo-wide | Existing hooks: `review_findings` → `ace-detect.py`; `get_handoff_state`/`load_session` → `slim-handoff-response.py`; `Bash` → `filter-test-output.py` | Add new PostToolUse hook matching `record_event\|review_findings\|review_runs` → regeneration script | No conflict — new matcher is additive; `review_findings` already has a hook, new hook adds a second handler | Manual: verify both hooks fire on `review_findings`; `CURRENT_TASK.md` and `DASHBOARD.md` updated after write |
-| Agent routing (`instructions.md`) | repo-wide | Additional Routing table has no skill references for review/lifecycle | Add rows for all 5 new skills | No | `grep 'branch-lifecycle\|handoff-lifecycle\|branch-review\|planning-review\|plan-analyze' docs/agentic/instructions.md` |
+| Agent routing (`instructions.md`) | repo-wide | Additional Routing table has no skill references for review/lifecycle | Add rows for all 6 new skills (2 in Slice 1: branch-lifecycle, handoff-lifecycle; 4 in Slice 2: scope, branch-review, planning-review, plan-analyze) | No | `grep 'scope\|branch-lifecycle\|handoff-lifecycle\|branch-review\|planning-review\|plan-analyze' docs/agentic/instructions.md` |
 
 ## Proposed Solution
 
@@ -209,7 +209,7 @@ Proof:
 - `grep 'review_mode.*analysis' .claude/skills/plan-analyze/SKILL.md` → present
 - `grep 'review_runs' .claude/skills/plan-analyze/SKILL.md` → 0
 - `grep 'get_review_findings_summary\|reconcile_review_findings' .claude/skills/branch-review/SKILL.md` → present
-- `grep 'plan-review\|plan-analyze' mk/handoff.mk` → 2 new targets
+- `grep 'plan-review\|plan-analyze' mk/handoff.mk` → 2 existing stub targets present
 
 ### Slice 3: PostToolUse Dashboard Hook
 
@@ -261,7 +261,7 @@ Proof:
 - [ ] Create `plan-analyze` skill — verify `review_runs` absent, `review_mode="analysis"` present
 - [ ] All 4 command files created and paired
 - [ ] Verify `make plan-review` and `make plan-analyze` stub targets reference correct skill paths
-- [ ] `instructions.md` routing rows added for all 4 skills
+- [ ] `instructions.md` routing rows added for all 4 skills added in Slice 2 (scope, branch-review, planning-review, plan-analyze); Slice 1 covers the other 2
 - [ ] Record handoff decision
 
 ### Checklist for Slice 3: PostToolUse Dashboard Hook

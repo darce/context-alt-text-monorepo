@@ -13,7 +13,7 @@
 
 ## Objective
 
-Close four failure classes that cause agent workflow discipline to degrade across sessions: orphan branches accumulate undetected, ad-hoc main-branch edits happen without handoff registration, cold-start agents reconstruct change state via raw git commands instead of querying handoff, and feature branches persist after tasks are archived from main. When this task is complete, the workflow enforces logging at every edit, the handoff DB is the source of truth for what changed, and orphan detection is automated.
+Close four failure classes that cause agent workflow discipline to degrade across sessions: orphan branches accumulate undetected, ad-hoc main-branch edits happen without handoff registration, cold-start agents reconstruct change state via raw git commands instead of querying handoff, and `make task-finish` has no post-archive branch-existence verification. When this task is complete, the workflow enforces logging at every edit, the handoff DB is the source of truth for what changed, and orphan detection is automated. Note: failure class #4 fix scope is limited to a post-archive warning in `make task-finish`; manual `archive_task_state` callers are out of scope.
 
 ## Problem Statement
 
@@ -52,7 +52,7 @@ Four failure classes confirmed in practice (investigation 2026-04-14):
 
 - `scripts/hooks/guard-main-branch.sh` checks file path against allowed-on-main patterns; does not check whether an active handoff task is registered.
 - `scripts/_task_finish_inline.py` calls `update_task_status`, `archive_task_state`, `generate_current_task_md`, `generate_dashboard_md` — no post-archive branch-delete verification.
-- `make context` calls `scripts/check_worktree.py` which verifies branch + worktree path against active handoff state but does not list dirty files or check for orphan branches.
+- `make context` calls `scripts/check-task-context.py` which verifies branch + worktree path against active handoff state and already emits dirty-file warnings (`_git_dirty_paths`, `_emit_integrity_warning_if_dirty`) but does not output a maintenance-task registration hint when no active task is registered, and does not check for orphan branches.
 - `make check-all` runs lint, tests, hooks validation — no branch audit.
 - Handoff DB has no `touched_files` table. `load_session` returns identity + open findings; no file-level change state.
 - Two orphan local branches confirmed: `feature/ahmcp-8-verified-test-search-and-read-surfaces`, `feature/slr-003-suppress-cleanup`.
@@ -71,7 +71,7 @@ Four failure classes confirmed in practice (investigation 2026-04-14):
 - Rules: `docs/agentic/rules/development-workflow.md` § Invariant Close Sequence, § Branch Isolation
 - Rules: `docs/agentic/rules/branch-review-guide.md`
 - Contracts: `docs/agentic/contracts/` (no boundary changes expected)
-- Code anchors: `scripts/hooks/guard-main-branch.sh`, `scripts/_task_finish_inline.py`, `scripts/check_worktree.py`, `Makefile`, `mk/lifecycle.mk`
+- Code anchors: `scripts/hooks/guard-main-branch.sh`, `scripts/_task_finish_inline.py`, `scripts/check-task-context.py`, `Makefile`, `mk/handoff.mk`
 - Handoff/MCP state: task ref `E17-4`, open findings after review passes
 
 ## Contract and Boundary Impact
@@ -80,7 +80,7 @@ Four failure classes confirmed in practice (investigation 2026-04-14):
 |---|---|---|---|---|---|
 | `agent-handoff-mcp` Python API | `packages/agent-handoff-mcp/` | No `touched_files` table | AHMCP-29 adds table + 2 tools + `load_session` field | yes — additive; existing callers unaffected | AHMCP-29 test suite |
 | PreToolUse hook | `scripts/hooks/guard-main-branch.sh` | Blocks code on main; silent otherwise | Adds warning when no active task | non-breaking — warning only | Manual: run hook with no active task + Edit call |
-| `make context` output | `scripts/check_worktree.py` | Prints alignment status | Adds dirty-file list + maintenance-task hint | non-breaking — additive output | `make context` on dirty main |
+| `make context` output | `scripts/check-task-context.py` | Prints alignment status + dirty-file warning (already present) | Adds maintenance-task registration hint when no active task | non-breaking — additive output | `make context` on dirty main with no active task |
 
 ## Proposed Solution
 
@@ -90,10 +90,10 @@ Four slices delivering the four failure-class fixes independently. Slices 1–3 
 
 | Surface | File | Change |
 |---|---|---|
-| Makefile target | `mk/lifecycle.mk` | Add `worktree-audit` target; add to `check-all` |
+| Makefile target | `Makefile` | Add `worktree-audit` target; add to `check-all` |
 | Audit script | `scripts/worktree_audit.py` | New: cross-reference git branches vs task_archives |
 | PreToolUse hook | `scripts/hooks/guard-main-branch.sh` | Extend: warn when no active handoff task on any Edit/Write |
-| Context check | `scripts/check_worktree.py` | Extend: print dirty files + maintenance-task hint when main is dirty and no active task |
+| Context check | `scripts/check-task-context.py` | Extend: add maintenance-task registration hint when main is dirty and no active task (dirty detection already present) |
 | Task finish script | `scripts/_task_finish_inline.py` | Extend: after archive, check if target_branch still exists; warn |
 | Workflow doc | `docs/agentic/rules/development-workflow.md` | Add: maintenance-task pattern, branch-delete invariant |
 | CLAUDE.md | `CLAUDE.md` | Add: maintenance-task pattern rule, orphan-audit note |
@@ -104,10 +104,10 @@ Four slices delivering the four failure-class fixes independently. Slices 1–3 
 
 | File | Note |
 |---|---|
-| `scripts/check_worktree.py` | Context check — extend for dirty-main detection |
-| `scripts/_task_finish_inline.py` | Task close — extend for branch-delete check |
+| `scripts/check-task-context.py` | Context check — extend to add maintenance-task hint (dirty detection already exists) |
+| `scripts/_task_finish_inline.py` | Task close — extend for post-archive branch-existence check |
 | `scripts/_task_start_inline.py` | Not changed; branch creation already correct |
-| `mk/lifecycle.mk` | Lifecycle targets; add `worktree-audit` |
+| `Makefile` | Root Makefile; add `worktree-audit` target |
 | `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py` | AHMCP-29 target; no changes in E17-4 scope |
 | `.claude/settings.json` | PostToolUse hook added after AHMCP-29 ships |
 
@@ -133,7 +133,7 @@ Four slices delivering the four failure-class fixes independently. Slices 1–3 
 Changes:
 
 - New `scripts/worktree_audit.py`: uses `git branch --list` to enumerate `feature/*` and `codex/*` local branches; queries `task_archives` and `handoff_state` via `agent_handoff_mcp.RuntimeConfig`; prints orphan list; exits 1 if any orphan found.
-- New `make worktree-audit` target in `mk/lifecycle.mk` (or `Makefile`): `PYTHONPATH=... python scripts/worktree_audit.py`
+- New `make worktree-audit` target in root `Makefile`: `PYTHONPATH=... python scripts/worktree_audit.py`
 - `make check-all` extended to include `make worktree-audit`
 
 Proof:
@@ -148,7 +148,7 @@ Proof:
 Changes:
 
 - `scripts/hooks/guard-main-branch.sh`: add check at end of allowed-edit path — if no active handoff task (query `get_handoff_state(sections='identity')` via Python), print warning block with the maintenance-task registration command. Non-blocking (exits 0 after warning).
-- `scripts/check_worktree.py`: when `git diff --name-only` on main returns non-empty files and no active task is registered, print the file list and `python -c "from agent_handoff_mcp import ...; set_handoff_state(task_ref='MAINT-<slug>', ...)"` hint.
+- `scripts/check-task-context.py`: existing dirty-file warning already prints modified files; add a maintenance-task registration hint after the dirty warning when on main with no active task registered — print the `set_handoff_state(task_ref='MAINT-<slug>', ...)` command.
 - `docs/agentic/rules/development-workflow.md`: add `§ Maintenance-Task Pattern` explaining the pattern and required invocation.
 - `CLAUDE.md`: add under Critical Rules: "Before ANY file edit on `main` (including docs, Makefile, scripts), verify an active handoff task is registered. For ad-hoc patches use the maintenance-task pattern: `set_handoff_state(task_ref='MAINT-<slug>', objective='...')`. Unregistered edits will trigger a hook warning."
 
@@ -158,19 +158,21 @@ Proof:
 - Simulate Edit call with no active task: hook prints warning block; edit still proceeds
 - `set_handoff_state(task_ref='MAINT-test')` then same Edit: hook is silent
 
-### Slice 3: Branch-Delete Enforcement at Task Finish
+### Slice 3: Branch-Delete Verification at Task Finish
 
-**Goal**: `make task-finish` warns if the feature branch is still present after `archive_task_state`.
+**Goal**: `make task-finish` verifies the feature branch is gone after the full sequence completes; warns if it persists.
+
+**Scope note**: `scripts/task-finish.sh` Step 4 deletes the feature branch (`git branch -d "$BRANCH"`) before Step 5 invokes `_task_finish_inline.py`. The check added here runs after archive and catches edge cases where Step 4's branch delete failed silently (e.g. unmerged commits preventing delete). Manual callers of `archive_task_state` that bypass `make task-finish` entirely are out of scope — they receive no warning regardless of branch state.
 
 Changes:
 
-- `scripts/_task_finish_inline.py`: after `archive_task_state` call, read `target_branch` from handoff state; run `git branch --list <target_branch>`; if branch still exists, print warning: "Branch `<target_branch>` still exists after archive. Delete it: `git branch -d <target_branch>`".
-- `docs/agentic/rules/development-workflow.md § Invariant Close Sequence`: add step 5: "If `target_branch != main`, verify `git branch --list <target_branch>` returns empty after archive; if not, `git branch -d <target_branch>`."
+- `scripts/_task_finish_inline.py`: after `archive_task_state` call, read `target_branch` from the now-archived task state; run `git branch --list <target_branch>`; if branch still exists, print warning: "Branch `<target_branch>` still exists after archive. Delete it: `git branch -d <target_branch>`". No-op on the normal path (branch already deleted by Step 4 of `task-finish.sh`).
+- `docs/agentic/rules/development-workflow.md § Invariant Close Sequence`: add note: "If `target_branch != main`, `make task-finish` verifies the branch is deleted after archive as a belt-and-suspenders check. Manual archive callers must delete the branch themselves."
 
 Proof:
 
-- Run `make task-finish` for a task whose branch was manually pre-deleted → no warning
-- Run `make task-finish` for a task whose branch still exists after archive → warning printed with the delete command
+- Run `make task-finish` for a task whose branch was already deleted at Step 4 → no warning (normal path)
+- Simulate failed Step 4 (branch present when `_task_finish_inline.py` runs) → warning printed with the delete command
 
 ### Slice 4: File-Touch Tracking (AHMCP-29)
 
@@ -220,16 +222,16 @@ Slices 1–3 are sequential single-lane work on `feature/e17-4`. Slice 4 (AHMCP-
 ### Checklist for Slice 2: Main-Change Guard and Context Improvement
 
 - [ ] `guard-main-branch.sh` extended: warning block when no active task
-- [ ] `check_worktree.py` extended: dirty-file list + maintenance-task hint when main dirty and no task
+- [ ] `check-task-context.py` extended: maintenance-task hint added when main is dirty and no active task (dirty-file list already present)
 - [ ] `development-workflow.md § Maintenance-Task Pattern` added
 - [ ] `CLAUDE.md` Critical Rules updated with maintenance-task requirement
 - [ ] Proof: warning fires on unregistered edit; silent with registered task
 
-### Checklist for Slice 3: Branch-Delete Enforcement at Task Finish
+### Checklist for Slice 3: Branch-Delete Verification at Task Finish
 
-- [ ] `_task_finish_inline.py` extended: post-archive branch-existence check
-- [ ] `development-workflow.md § Invariant Close Sequence` step 5 added
-- [ ] Proof: warning fires when branch persists; silent when already deleted
+- [ ] `_task_finish_inline.py` extended: post-archive branch-existence check (belt-and-suspenders; no-op on normal `make task-finish` path)
+- [ ] `development-workflow.md § Invariant Close Sequence` note added; manual archive scope limitation documented
+- [ ] Proof: no warning on normal path (branch deleted at Step 4); warning fires when branch persists after Step 4 failure
 
 ### Checklist for Slice 4: File-Touch Tracking (AHMCP-29)
 

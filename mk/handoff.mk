@@ -44,7 +44,7 @@ plan-analyze:
 	@printf '%s\n' \
 		"Agent-assisted target: plan-analyze" \
 		"Document: $(DOC)" \
-		"Skill: docs/agentic/skills/plan-analyze/SKILL.md (Phase 2 deliverable)" \
+		"Skill: .claude/skills/plan-analyze/SKILL.md (Phase 2 deliverable)" \
 		"Constraint surface: docs/agentic/constitution.md" \
 		"Review checklist: docs/agentic/rules/planning-review-guide.md" \
 		"Expected output: MCP findings with review_mode=analysis before planning review."
@@ -62,7 +62,7 @@ plan-review:
 	@printf '%s\n' \
 		"Agent-assisted target: plan-review" \
 		"Document: $(DOC)" \
-		"Skill: docs/agentic/skills/planning-review/SKILL.md (Phase 2 deliverable)" \
+		"Skill: .claude/skills/planning-review/SKILL.md (Phase 2 deliverable)" \
 		"Checklist: docs/agentic/rules/planning-review-guide.md" \
 		"Expected output: MCP findings + review_runs(record) + verdict decision."
 

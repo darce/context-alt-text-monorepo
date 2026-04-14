@@ -13,5 +13,5 @@ Loop:
 - confirm branch/worktree context
 - load the current task state with bounded reads
 - record decisions, blockers, and findings in MCP as work happens
-- regenerate `CURRENT_TASK.md` after non-atomic writes
+- regenerate `DASHBOARD.md` after non-atomic writes; use `CURRENT_TASK.md` only on demand
 - switch tasks safely and archive only after `done`

@@ -151,6 +151,7 @@ def test_dashboard_extension_lane_health_and_worker_status(tmp_path: Path) -> No
         register_dashboard_extension,
     )
     from agent_handoff_mcp.shared_schema import _get_db_connection
+
     from agent_orchestrator_mcp.api import configure_runtime, generate_dashboard_md
     from agent_orchestrator_mcp.orchestration.dashboard_extension import lane_worker_extension
 

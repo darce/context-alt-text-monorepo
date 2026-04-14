@@ -394,8 +394,7 @@ def test_render_current_task_md_with_decisions_but_no_active(isolated_handoff: d
     assert current_task_payload["task_ref"] == "E12-test-render"
     # Decision is stored in the active-task JSON (CURRENT_TASK.md)
     assert any(
-        "test_decision_for_render" in d.get("decision", "")
-        for d in current_task_payload.get("decisions_recent", [])
+        "test_decision_for_render" in d.get("decision", "") for d in current_task_payload.get("decisions_recent", [])
     )
     # Task appears in the dashboard All Tasks table
     assert "No active handoff state found." not in dash_md
@@ -1229,9 +1228,7 @@ def test_repair_provenance_rejects_branch_mismatch(isolated_handoff: dict) -> No
 
     # Row was NOT modified
     with _get_db_connection() as conn:
-        row = conn.execute(
-            "SELECT branch, commit_sha FROM review_findings WHERE finding_id = 'T1-BR-02'"
-        ).fetchone()
+        row = conn.execute("SELECT branch, commit_sha FROM review_findings WHERE finding_id = 'T1-BR-02'").fetchone()
     assert row["branch"] == _AHMCP15_OLD_BRANCH
     assert row["commit_sha"] == _AHMCP15_OLD_SHA
 
@@ -1381,11 +1378,7 @@ def test_repair_provenance_global_lookup_ambiguity_error(isolated_handoff: dict)
         branch=_AHMCP15_OLD_BRANCH,
         commit_sha=_AHMCP15_OLD_SHA,
     )
-    _parse(
-        mcp_server.set_handoff_state(
-            task_ref="task-B", objective="B", status="in_progress", expected_revision=0
-        )
-    )
+    _parse(mcp_server.set_handoff_state(task_ref="task-B", objective="B", status="in_progress", expected_revision=0))
     _seed_finding_with_provenance(
         task_ref="task-B",
         finding_id="DUP-BR-01",
@@ -1502,9 +1495,7 @@ def test_repair_provenance_accepts_stored_abbreviated_sha(
     # The stored row should be updated to the expanded canonical form
     assert result["finding"]["commit_sha"] == full_new
     with _get_db_connection() as conn:
-        row = conn.execute(
-            "SELECT commit_sha FROM review_findings WHERE id = ?", (db_id,)
-        ).fetchone()
+        row = conn.execute("SELECT commit_sha FROM review_findings WHERE id = ?", (db_id,)).fetchone()
     assert row["commit_sha"] == full_new
 
 
@@ -1570,9 +1561,7 @@ def test_repair_provenance_audit_decision_id_is_canonical(isolated_handoff: dict
     """
     from agent_handoff_mcp.slice_decision import classify_decision_id, is_canonical_decision
 
-    _parse(
-        mcp_server.set_handoff_state(task_ref="AHMCP-15", objective="obj", status="in_progress")
-    )
+    _parse(mcp_server.set_handoff_state(task_ref="AHMCP-15", objective="obj", status="in_progress"))
     _seed_finding_with_provenance(
         task_ref="AHMCP-15",
         finding_id="AHMCP-15-BR-99",
@@ -1597,17 +1586,13 @@ def test_repair_provenance_audit_decision_id_is_canonical(isolated_handoff: dict
     )
     assert result["ok"] is True, result
     audit_id = result["audit_decision_id"]
-    assert is_canonical_decision(audit_id), (
-        f"audit decision id {audit_id!r} must conform to the canonical grammar"
-    )
+    assert is_canonical_decision(audit_id), f"audit decision id {audit_id!r} must conform to the canonical grammar"
     assert classify_decision_id(audit_id) == "canonical"
 
     audit_report = _parse(mcp_server.audit_decision_ids(task_ref="AHMCP-15"))
     counts = audit_report["counts"]
     violations = audit_report["violations"]
-    assert counts["freeform"] == 0, (
-        f"audit_decision_ids must not see any freeform rows after repair: {audit_report}"
-    )
+    assert counts["freeform"] == 0, f"audit_decision_ids must not see any freeform rows after repair: {audit_report}"
     assert all(v["decision"] != audit_id for v in violations), (
         f"audit row {audit_id!r} should not be flagged as a violation: {violations}"
     )

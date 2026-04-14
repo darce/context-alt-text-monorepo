@@ -25,7 +25,7 @@ def _git(repo_root: Path, *args: str) -> str:
 
 
 def _slugify(value: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    slug = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
     return slug[:48] or "slice"
 
 
@@ -82,7 +82,7 @@ def main() -> int:
     if active.get("task_ref") == args.task_ref:
         revision = active.get("revision")
 
-    decision = args.decision or f"mk_slice_complete_{args.task_ref}_{_slugify(args.message)}"
+    decision = args.decision or f"cdx_slice_complete_{args.task_ref}_{_slugify(args.message)}"
     rationale = _build_rationale(args.message, commit_sha, changed_files)
     result = close_slice(
         session=args.session,

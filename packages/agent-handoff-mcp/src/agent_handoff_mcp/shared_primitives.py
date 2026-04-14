@@ -293,8 +293,8 @@ def _envelope(
         accumulated_warnings.append(
             f"oversize_response: ~{approx_bytes} bytes (~{approx_bytes // 4} tokens) exceeds "
             f"{RESPONSE_OVERSIZE_WARN_BYTES}-byte advisory threshold. Narrow the read with "
-            f"detail=\"summary\", lower top_n_decisions/top_n_tests/top_n_findings, "
-            f"sections=\"identity\" for routine identity-only checks, or fields=... to "
+            f'detail="summary", lower top_n_decisions/top_n_tests/top_n_findings, '
+            f'sections="identity" for routine identity-only checks, or fields=... to '
             f"project specific columns. See packages/agent-handoff-mcp/docs/guides/"
             f"token-efficient-usage.md for the full set of bounded-read levers."
         )

@@ -260,16 +260,12 @@ def test_stdio_tool_responses_return_native_dict_not_wrapped_string(tmp_path: Pa
     # `{"result": "<escaped JSON string>"}`. This is the path FastMCP wraps
     # when it sees a non-object return type.
     assert structured is not None, "Expected structured_content from FastMCP, got None"
-    assert not (
-        list(structured.keys()) == ["result"] and isinstance(structured["result"], str)
-    ), (
+    assert not (list(structured.keys()) == ["result"] and isinstance(structured["result"], str)), (
         "Double-serialization regression: structured_content is "
         f"{{'result': '<escaped JSON>'}} instead of a native dict. "
         f"Got: {structured!r}"
     )
-    assert "ok" in structured, (
-        f"structured_content missing 'ok' key — expected native envelope, got: {structured!r}"
-    )
+    assert "ok" in structured, f"structured_content missing 'ok' key — expected native envelope, got: {structured!r}"
     assert "tool" in structured, (
         f"structured_content missing 'tool' key — expected native envelope, got: {structured!r}"
     )

@@ -35,9 +35,7 @@ from agent_handoff_mcp.shared_write_context import (
 def git_repo(tmp_path: Path) -> tuple[Path, str]:
     """Create a minimal git repo and return (repo_path, full_HEAD_sha)."""
     subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True
-    )
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(
         ["git", "config", "user.email", "test@example.com"],
         cwd=tmp_path,
@@ -46,9 +44,7 @@ def git_repo(tmp_path: Path) -> tuple[Path, str]:
     )
     (tmp_path / "README.md").write_text("hello\n")
     subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True
-    )
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)
     head_sha = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=tmp_path,

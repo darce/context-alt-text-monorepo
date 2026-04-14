@@ -55,7 +55,7 @@ Choose your domain to load targeted context. Always load the matching testing gu
 | New feature / epic intake              | [../../.claude/skills/scope/SKILL.md](../../.claude/skills/scope/SKILL.md)                                                                         |
 | Starting an implementation slice       | [../../.claude/skills/tdd/SKILL.md](../../.claude/skills/tdd/SKILL.md) + `make slice-start TASK=<task-ref> TEST_CMD="<command>"`                   |
 | Decomposing feature work into slices   | [../../.claude/skills/incremental-implementation/SKILL.md](../../.claude/skills/incremental-implementation/SKILL.md) + `make slice-commit TASK=<task-ref> MSG="..."` |
-| Branch review                          | [../../.claude/skills/branch-review/SKILL.md](../../.claude/skills/branch-review/SKILL.md) + `make review-run`                                    |
+| Branch review                          | [../../.claude/skills/branch-review/SKILL.md](../../.claude/skills/branch-review/SKILL.md) + `make review-run` for lane/local working-tree review; use direct `main...HEAD` diff scope for committed feature-branch audit |
 | Planning document review               | [../../.claude/skills/planning-review/SKILL.md](../../.claude/skills/planning-review/SKILL.md) + `make plan-review DOC=<path>`                    |
 | Planning document analysis             | [../../.claude/skills/plan-analyze/SKILL.md](../../.claude/skills/plan-analyze/SKILL.md) + `make plan-analyze DOC=<path>`                         |
 | Anchoring a review to a decision ID    | [rules/development-workflow.md § Decision-ID Review Anchoring](rules/development-workflow.md#decision-id-review-anchoring)                          |

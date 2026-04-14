@@ -129,7 +129,40 @@ A feature branch is **merge-ready** only when **all** of the following are true:
 - **Handoff DB (authoritative).** `handoff_close_check(enforce=True)` is the canonical check.
 - **Branch isolation hook.** Blocks code edits on `main`, preventing the most common bypass.
 - **Documentation.** Referenced from [CLAUDE.md](../../../CLAUDE.md) Critical Rules for cold-start visibility.
-- **Reviewer sign-off.** The reviewer must cite the decision number of the artifact under review (e.g. "review of decision #966") for bidirectional traceability.
+- **Reviewer sign-off.** The reviewer must cite the slice-complete decision ID of the artifact under review (see [Decision-ID Review Anchoring](#decision-id-review-anchoring) below) for bidirectional traceability.
+
+### Decision-ID Review Anchoring
+
+> **Use handoff decision IDs as review anchors — they are easier to reference and verify than git commit SHAs.**
+
+Every `record_event(event_kind="decision", ...)` call returns a numeric `decision_id` (e.g. `#1452`). That ID is the stable, queryable handle for a slice. Reference it instead of typing or looking up commit SHAs wherever a human-readable anchor is needed.
+
+**Implementer pattern** — when recording a slice-complete decision, note the returned ID:
+```
+record_event(event_kind="decision", decision="cdx_slice_complete_E17-2_patches", ...)
+→ response: { "decision_id": 1452, ... }
+Announce: "Slice complete — decision #1452"
+```
+
+**Reviewer pattern** — pass the decision ID as `subject_path` in the review run:
+```
+review_runs(review={
+  "operation": "record",
+  "review_run_id": "<tag>-review-<task-ref>-<N>",
+  "subject_path": "decision #1452",
+  "verdict": "pass_with_findings",
+  ...
+})
+```
+Record the verdict decision body as: `"Reviewed slice-complete decision #1452 on task <task-ref>."` This creates a bidirectional chain queryable with `search_handoff("decision #1452")`.
+
+**Verification** — to confirm review coverage before the gate:
+```
+review_runs(review={"operation": "list", "task_ref": "<task-ref>"})
+# Inspect subject_path fields — must include the latest slice-complete decision ID.
+```
+
+**Why this is easier than commit SHAs:** decision IDs appear in tool responses and chat output and do not require a separate `git rev-parse` call. They survive branch rebases. The pre-merge gate (`handoff_close_check`) already validates that a review run exists for the task ref; the decision ID in `subject_path` provides the human-auditable link without changing the gate's enforcement logic.
 
 ### Pre-Merge Sequence
 
@@ -143,9 +176,10 @@ On the feature branch, after final commit:
 2.  Run review-ready and resolve all NOT READY reasons:
     make review-ready
 
-3.  Request review (planning or branch, per Context Routing). Reviewer records
-    findings in MCP. Reviewer records verdict decision linking to the reviewed
-    artifact's decision number.
+3.  Request review (planning or branch, per Context Routing). Pass the
+    slice-complete decision ID to the reviewer (see Decision-ID Review Anchoring
+    above). Reviewer records findings in MCP and records a review_run with
+    subject_path="decision #<slice-complete-id>".
 
 4.  For each open finding: fix the issue, then close it with verification_evidence:
     review_findings(operation="update", finding_id=..., status="fixed",
@@ -158,6 +192,7 @@ On the feature branch, after final commit:
 6.  Record the slice-complete decision:
     record_event(event_kind="decision", decision="<tag>_slice_complete_<work_ref>_<slug>",
                  actor={..., commit_sha=<HEAD>})
+    Note the returned decision_id — pass it to the reviewer in step 3.
 
 7.  Run the canonical close check:
     handoff_close_check(enforce=True, current_commit_sha=<HEAD>)

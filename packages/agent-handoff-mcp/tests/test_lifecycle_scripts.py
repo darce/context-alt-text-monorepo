@@ -125,9 +125,7 @@ def _make_env(repo: Path) -> dict[str, str]:
     python_wrapper = bin_dir / "python"
     if python_wrapper.exists() or python_wrapper.is_symlink():
         python_wrapper.unlink()
-    python_wrapper.write_text(
-        f'#!/bin/bash\nexec "{sys.executable}" "$@"\n'
-    )
+    python_wrapper.write_text(f'#!/bin/bash\nexec "{sys.executable}" "$@"\n')
     python_wrapper.chmod(0o755)
     env["PYENV_ROOT"] = str(pyenv_shim)
     env["PYENV_VERSION"] = pyenv_version
@@ -175,9 +173,7 @@ def _read_archive_row(repo: Path, task_ref: str) -> dict[str, object] | None:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        row = conn.execute(
-            "SELECT * FROM task_archives WHERE task_ref = ?", (task_ref,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM task_archives WHERE task_ref = ?", (task_ref,)).fetchone()
     finally:
         conn.close()
     return dict(row) if row is not None else None
@@ -196,9 +192,7 @@ def test_task_start_succeeds_on_cold_start(tmp_path: Path) -> None:
     not need an expected_revision."""
     repo = _build_fake_monorepo(tmp_path)
     env = _make_env(repo)
-    proc = _run_script(
-        "task-start.sh", repo, "TS-COLD-1", "Cold-start objective", env=env
-    )
+    proc = _run_script("task-start.sh", repo, "TS-COLD-1", "Cold-start objective", env=env)
     assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
     assert "OK rev=0" in proc.stdout, proc.stdout
     assert "MCP registration skipped" not in proc.stdout
@@ -215,16 +209,12 @@ def test_task_start_succeeds_when_existing_active_task_present(tmp_path: Path) -
     repo = _build_fake_monorepo(tmp_path)
     env = _make_env(repo)
 
-    first = _run_script(
-        "task-start.sh", repo, "TS-EXISTING-1", "First task", env=env
-    )
+    first = _run_script("task-start.sh", repo, "TS-EXISTING-1", "First task", env=env)
     assert first.returncode == 0, f"stdout={first.stdout!r} stderr={first.stderr!r}"
 
     # The first task-start created the row at rev=0. The second must
     # transparently fetch the revision and update.
-    second = _run_script(
-        "task-start.sh", repo, "TS-EXISTING-2", "Second task", env=env
-    )
+    second = _run_script("task-start.sh", repo, "TS-EXISTING-2", "Second task", env=env)
     assert second.returncode == 0, f"stdout={second.stdout!r} stderr={second.stderr!r}"
     assert "MCP registration skipped" not in second.stdout
     assert "MCP registration skipped" not in second.stderr
@@ -250,9 +240,7 @@ def test_task_finish_archives_active_task_with_status_done(tmp_path: Path) -> No
 
     # Bootstrap a task and create the matching feature branch (task-finish
     # expects the branch to exist and be merged into main).
-    started = _run_script(
-        "task-start.sh", repo, "TF-DONE-1", "Finish me", env=env
-    )
+    started = _run_script("task-start.sh", repo, "TF-DONE-1", "Finish me", env=env)
     assert started.returncode == 0, started.stderr
 
     # Simulate the merge: the feature branch is reachable from main.
@@ -262,9 +250,7 @@ def test_task_finish_archives_active_task_with_status_done(tmp_path: Path) -> No
     _git(repo, "merge", "--ff-only", "feature/tf-done-1")
 
     finished = _run_script("task-finish.sh", repo, "TF-DONE-1", env=env)
-    assert finished.returncode == 0, (
-        f"stdout={finished.stdout!r} stderr={finished.stderr!r}"
-    )
+    assert finished.returncode == 0, f"stdout={finished.stdout!r} stderr={finished.stderr!r}"
     assert "expected_revision is required" not in finished.stderr
     assert "syntax error" not in finished.stderr
     assert "Task TF-DONE-1 finished" in finished.stdout
@@ -273,8 +259,7 @@ def test_task_finish_archives_active_task_with_status_done(tmp_path: Path) -> No
     assert archived is not None
     snapshot = json.loads(archived["snapshot_json"])
     assert snapshot["active"]["status"] == "done", (
-        f"task-finish must capture status=done in archive snapshot, got "
-        f"{snapshot['active']['status']!r}"
+        f"task-finish must capture status=done in archive snapshot, got {snapshot['active']['status']!r}"
     )
 
 
@@ -300,9 +285,7 @@ def test_task_lifecycle_scripts_have_no_multiline_python_heredoc() -> None:
             if idx == -1:
                 break
             close_quote = text.find("'", idx + 5)
-            assert close_quote != -1, (
-                f"{script.name}: unterminated `-c '...'` starting at offset {idx}"
-            )
+            assert close_quote != -1, f"{script.name}: unterminated `-c '...'` starting at offset {idx}"
             body = text[idx + 5 : close_quote]
             assert "\n" not in body, (
                 f"{script.name}: multi-line `python -c '...'` heredoc detected at offset {idx} "
@@ -330,10 +313,7 @@ def test_lint_no_inline_python_heredoc_passes_on_current_scripts_tree() -> None:
         capture_output=True,
         text=True,
     )
-    assert proc.returncode == 0, (
-        f"lint-no-inline-python-heredoc failed on the current scripts/ tree:\n"
-        f"{proc.stderr}"
-    )
+    assert proc.returncode == 0, f"lint-no-inline-python-heredoc failed on the current scripts/ tree:\n{proc.stderr}"
 
 
 def test_lint_no_inline_python_heredoc_catches_synthetic_violation(tmp_path: Path) -> None:
@@ -343,13 +323,7 @@ def test_lint_no_inline_python_heredoc_catches_synthetic_violation(tmp_path: Pat
     fixture_dir = tmp_path / "fixture-scripts"
     fixture_dir.mkdir()
     bad_script = fixture_dir / "bad.sh"
-    bad_script.write_text(
-        "#!/usr/bin/env bash\n"
-        "python -c '\n"
-        "import os\n"
-        "print(\"hello\")\n"
-        "'\n"
-    )
+    bad_script.write_text("#!/usr/bin/env bash\npython -c '\nimport os\nprint(\"hello\")\n'\n")
     lint_script = REPO_ROOT / "scripts" / "hooks" / "lint-no-inline-python-heredoc.py"
     proc = subprocess.run(
         [sys.executable, str(lint_script), "--paths", str(fixture_dir / "*.sh")],
@@ -357,8 +331,7 @@ def test_lint_no_inline_python_heredoc_catches_synthetic_violation(tmp_path: Pat
         text=True,
     )
     assert proc.returncode == 1, (
-        f"lint guard should fail on a multi-line heredoc fixture; got "
-        f"exit={proc.returncode} stderr={proc.stderr!r}"
+        f"lint guard should fail on a multi-line heredoc fixture; got exit={proc.returncode} stderr={proc.stderr!r}"
     )
     assert "multi-line `python -c '...'` heredoc" in proc.stderr
     assert "bad.sh" in proc.stderr
@@ -372,10 +345,7 @@ def test_lint_no_inline_python_heredoc_allows_single_line_invocation(tmp_path: P
     fixture_dir = tmp_path / "fixture-scripts"
     fixture_dir.mkdir()
     ok_script = fixture_dir / "ok.sh"
-    ok_script.write_text(
-        "#!/usr/bin/env bash\n"
-        'python -c "import sys; print(sys.version)"\n'
-    )
+    ok_script.write_text('#!/usr/bin/env bash\npython -c "import sys; print(sys.version)"\n')
     lint_script = REPO_ROOT / "scripts" / "hooks" / "lint-no-inline-python-heredoc.py"
     proc = subprocess.run(
         [sys.executable, str(lint_script), "--paths", str(fixture_dir / "*.sh")],
@@ -383,8 +353,7 @@ def test_lint_no_inline_python_heredoc_allows_single_line_invocation(tmp_path: P
         text=True,
     )
     assert proc.returncode == 0, (
-        f"lint guard should allow single-line `python -c '...'`; got "
-        f"exit={proc.returncode} stderr={proc.stderr!r}"
+        f"lint guard should allow single-line `python -c '...'`; got exit={proc.returncode} stderr={proc.stderr!r}"
     )
 
 
@@ -400,9 +369,7 @@ def test_task_finish_aborts_when_working_tree_drifted_from_head(tmp_path: Path) 
     repo = _build_fake_monorepo(tmp_path)
     env = _make_env(repo)
 
-    started = _run_script(
-        "task-start.sh", repo, "TF-DRIFT-1", "Drift guard repro", env=env
-    )
+    started = _run_script("task-start.sh", repo, "TF-DRIFT-1", "Drift guard repro", env=env)
     assert started.returncode == 0, started.stderr
     _git(repo, "checkout", "-q", "main")
     _git(repo, "merge", "--ff-only", "feature/tf-drift-1")
@@ -423,8 +390,7 @@ def test_task_finish_aborts_when_working_tree_drifted_from_head(tmp_path: Path) 
     # The archive must NOT have been written when the integrity check fails.
     archived = _read_archive_row(repo, "TF-DRIFT-1")
     assert archived is None, (
-        "task-finish must abort BEFORE archiving when integrity check fails; "
-        f"found archive row: {archived}"
+        f"task-finish must abort BEFORE archiving when integrity check fails; found archive row: {archived}"
     )
 
 
@@ -435,9 +401,7 @@ def test_task_finish_allows_drift_listed_in_dirty_allowlist(tmp_path: Path) -> N
     repo = _build_fake_monorepo(tmp_path)
     env = _make_env(repo)
 
-    started = _run_script(
-        "task-start.sh", repo, "TF-ALLOW-1", "Allowlist repro", env=env
-    )
+    started = _run_script("task-start.sh", repo, "TF-ALLOW-1", "Allowlist repro", env=env)
     assert started.returncode == 0, started.stderr
     _git(repo, "checkout", "-q", "main")
     _git(repo, "merge", "--ff-only", "feature/tf-allow-1")
@@ -453,8 +417,7 @@ def test_task_finish_allows_drift_listed_in_dirty_allowlist(tmp_path: Path) -> N
 
     finished = _run_script("task-finish.sh", repo, "TF-ALLOW-1", env=env)
     assert finished.returncode == 0, (
-        f"task-finish should pass when drift is allowlisted; "
-        f"got {finished.returncode}\nstderr={finished.stderr!r}"
+        f"task-finish should pass when drift is allowlisted; got {finished.returncode}\nstderr={finished.stderr!r}"
     )
 
     archived = _read_archive_row(repo, "TF-ALLOW-1")
@@ -472,9 +435,7 @@ def test_check_task_context_warns_on_unexpected_dirty_paths(tmp_path: Path) -> N
     repo = _build_fake_monorepo(tmp_path)
     env = _make_env(repo)
 
-    started = _run_script(
-        "task-start.sh", repo, "CHECK-DIRTY-1", "Dirty repro", env=env
-    )
+    started = _run_script("task-start.sh", repo, "CHECK-DIRTY-1", "Dirty repro", env=env)
     assert started.returncode == 0, started.stderr
 
     # Tamper with a tracked file.
@@ -497,9 +458,7 @@ def test_check_task_context_silent_when_drift_is_allowlisted(tmp_path: Path) -> 
     repo = _build_fake_monorepo(tmp_path)
     env = _make_env(repo)
 
-    started = _run_script(
-        "task-start.sh", repo, "CHECK-ALLOW-1", "Allowlist repro", env=env
-    )
+    started = _run_script("task-start.sh", repo, "CHECK-ALLOW-1", "Allowlist repro", env=env)
     assert started.returncode == 0, started.stderr
 
     tracked = repo / "scripts" / "task-finish.sh"
@@ -535,9 +494,7 @@ def test_integrity_watcher_script_has_valid_shell_syntax() -> None:
         capture_output=True,
         text=True,
     )
-    assert proc.returncode == 0, (
-        f"integrity-watcher.sh failed bash -n syntax check:\n{proc.stderr}"
-    )
+    assert proc.returncode == 0, f"integrity-watcher.sh failed bash -n syntax check:\n{proc.stderr}"
 
 
 def test_integrity_watcher_smoke_mode_emits_valid_jsonl(tmp_path: Path) -> None:
@@ -575,9 +532,7 @@ def test_integrity_watcher_smoke_mode_emits_valid_jsonl(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
     )
-    assert proc.returncode == 0, (
-        f"integrity-watcher --smoke failed: stdout={proc.stdout!r} stderr={proc.stderr!r}"
-    )
+    assert proc.returncode == 0, f"integrity-watcher --smoke failed: stdout={proc.stdout!r} stderr={proc.stderr!r}"
     assert log_path.exists(), f"expected log at {log_path}"
 
     lines = [line for line in log_path.read_text().splitlines() if line]
@@ -645,9 +600,7 @@ def test_integrity_watcher_smoke_mode_resolves_primary_worktree_from_linked(
         capture_output=True,
         text=True,
     )
-    assert proc.returncode == 0, (
-        f"smoke from linked worktree failed: {proc.stderr!r}"
-    )
+    assert proc.returncode == 0, f"smoke from linked worktree failed: {proc.stderr!r}"
     assert log_path.exists()
     events = [json.loads(line) for line in log_path.read_text().splitlines() if line]
     write_event = next(e for e in events if e["event_kind"] == "write")
@@ -677,9 +630,7 @@ def test_lint_expected_revision_passes_on_current_scripts_tree() -> None:
         capture_output=True,
         text=True,
     )
-    assert proc.returncode == 0, (
-        f"lint-expected-revision failed on current scripts/ tree:\n{proc.stderr}"
-    )
+    assert proc.returncode == 0, f"lint-expected-revision failed on current scripts/ tree:\n{proc.stderr}"
 
 
 def test_lint_expected_revision_catches_missing_kwarg(tmp_path: Path) -> None:
@@ -698,8 +649,7 @@ def test_lint_expected_revision_catches_missing_kwarg(tmp_path: Path) -> None:
         text=True,
     )
     assert proc.returncode == 1, (
-        f"lint guard should fail when expected_revision is missing; "
-        f"got exit={proc.returncode} stderr={proc.stderr!r}"
+        f"lint guard should fail when expected_revision is missing; got exit={proc.returncode} stderr={proc.stderr!r}"
     )
     assert "set_handoff_state" in proc.stderr
     assert "expected_revision" in proc.stderr
@@ -720,8 +670,7 @@ def test_lint_expected_revision_allows_call_with_kwarg(tmp_path: Path) -> None:
         text=True,
     )
     assert proc.returncode == 0, (
-        f"lint guard should pass when expected_revision is present; "
-        f"got exit={proc.returncode} stderr={proc.stderr!r}"
+        f"lint guard should pass when expected_revision is present; got exit={proc.returncode} stderr={proc.stderr!r}"
     )
 
 
@@ -742,8 +691,7 @@ def test_lint_expected_revision_catches_aliased_import(tmp_path: Path) -> None:
         text=True,
     )
     assert proc.returncode == 1, (
-        f"lint guard should catch aliased import; "
-        f"got exit={proc.returncode} stderr={proc.stderr!r}"
+        f"lint guard should catch aliased import; got exit={proc.returncode} stderr={proc.stderr!r}"
     )
     assert "write_state" in proc.stderr
     assert "alias for set_handoff_state" in proc.stderr
@@ -754,8 +702,7 @@ def test_lint_expected_revision_reports_syntax_errors(tmp_path: Path) -> None:
     as a violation instead of silently skipping the broken file."""
     fixture = tmp_path / "_syntax_bad.py"
     fixture.write_text(
-        "from agent_handoff_mcp import set_handoff_state\n"
-        "set_handoff_state(\n"  # unterminated call
+        "from agent_handoff_mcp import set_handoff_state\nset_handoff_state(\n"  # unterminated call
     )
     lint_script = REPO_ROOT / "scripts" / "hooks" / "lint-expected-revision.py"
     proc = subprocess.run(
@@ -764,8 +711,7 @@ def test_lint_expected_revision_reports_syntax_errors(tmp_path: Path) -> None:
         text=True,
     )
     assert proc.returncode == 1, (
-        f"lint guard should fail on SyntaxError; "
-        f"got exit={proc.returncode} stderr={proc.stderr!r}"
+        f"lint guard should fail on SyntaxError; got exit={proc.returncode} stderr={proc.stderr!r}"
     )
     assert "SyntaxError" in proc.stderr
     assert "_syntax_bad.py" in proc.stderr

@@ -240,9 +240,7 @@ def test_update_task_status_active_task_rejects_missing_expected_revision(
     )
 
     # Bare call without expected_revision must be rejected.
-    rejected = _parse(
-        mcp_server.update_task_status(task_ref="finish-active-task", status="done")
-    )
+    rejected = _parse(mcp_server.update_task_status(task_ref="finish-active-task", status="done"))
     assert rejected["ok"] is False
     assert "expected_revision" in (rejected.get("error") or "")
 
@@ -515,9 +513,7 @@ def test_get_archived_task_omits_snapshot_when_include_snapshot_false(
     )
     _parse(mcp_server.archive_task_state(task_ref="archived-meta-only"))
 
-    fetched = _parse(
-        mcp_server.get_archived_task(task_ref="archived-meta-only", include_snapshot=False)
-    )
+    fetched = _parse(mcp_server.get_archived_task(task_ref="archived-meta-only", include_snapshot=False))
     assert fetched["ok"] is True
     assert fetched["archive"]["task_ref"] == "archived-meta-only"
     assert "snapshot" not in fetched

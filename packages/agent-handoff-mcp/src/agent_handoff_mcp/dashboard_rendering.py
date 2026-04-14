@@ -80,7 +80,7 @@ _STALE_THRESHOLD_HOURS = 24
 
 class _NeedsAttentionItem(TypedDict):
     task_ref: str
-    kind: str   # "findings", "blocked", "stale"
+    kind: str  # "findings", "blocked", "stale"
     detail: str
 
 
@@ -108,11 +108,13 @@ def _collect_needs_attention(
                 parts.append(f"{high} high")
             if medium:
                 parts.append(f"{medium} medium")
-            items.append({
-                "task_ref": task_ref,
-                "kind": "findings",
-                "detail": f"{high + medium} open ({', '.join(parts)})",
-            })
+            items.append(
+                {
+                    "task_ref": task_ref,
+                    "kind": "findings",
+                    "detail": f"{high + medium} open ({', '.join(parts)})",
+                }
+            )
             seen_tasks.add(task_ref)
 
     # Also surface active-task open findings by pulling them directly
@@ -132,11 +134,13 @@ def _collect_needs_attention(
                     parts.append(f"{high} high")
                 if medium:
                     parts.append(f"{medium} medium")
-                items.append({
-                    "task_ref": active_ref,
-                    "kind": "findings",
-                    "detail": f"{high + medium} open ({', '.join(parts)})",
-                })
+                items.append(
+                    {
+                        "task_ref": active_ref,
+                        "kind": "findings",
+                        "detail": f"{high + medium} open ({', '.join(parts)})",
+                    }
+                )
                 seen_tasks.add(active_ref)
 
     # --- Blocked tasks ---
@@ -144,11 +148,13 @@ def _collect_needs_attention(
         if int(row.get("open_blockers", 0)) > 0:
             task_ref = str(row["task_ref"])
             n = int(row["open_blockers"])
-            items.append({
-                "task_ref": task_ref,
-                "kind": "blocked",
-                "detail": f"blocked: {n} open blocker{'s' if n > 1 else ''}",
-            })
+            items.append(
+                {
+                    "task_ref": task_ref,
+                    "kind": "blocked",
+                    "detail": f"blocked: {n} open blocker{'s' if n > 1 else ''}",
+                }
+            )
 
     # --- Stale tasks (non-archived, no activity in >24 h) ---
     now = datetime.now(UTC)
@@ -166,11 +172,13 @@ def _collect_needs_attention(
         except ValueError:
             continue
         if ts < stale_cutoff:
-            items.append({
-                "task_ref": str(row["task_ref"]),
-                "kind": "stale",
-                "detail": f"stale: no activity since {ts.strftime('%Y-%m-%d %H:%M')} UTC",
-            })
+            items.append(
+                {
+                    "task_ref": str(row["task_ref"]),
+                    "kind": "stale",
+                    "detail": f"stale: no activity since {ts.strftime('%Y-%m-%d %H:%M')} UTC",
+                }
+            )
 
     return items
 
@@ -202,15 +210,17 @@ def _render_all_tasks_section(dashboard_rows: list[dict], active_task_ref: str |
 
     rows: list[DashboardTaskRow] = []
     for r in dashboard_rows:
-        rows.append({
-            "task_ref": str(r.get("task_ref", "")),
-            "status": str(r.get("status", "")),
-            "last_activity": r.get("last_activity"),
-            "open_blockers": int(r.get("open_blockers", 0)),
-            "pending_actions": int(r.get("pending_actions", 0)),
-            "open_findings": int(r.get("open_findings", 0)),
-            "archived_at": r.get("archived_at"),
-        })
+        rows.append(
+            {
+                "task_ref": str(r.get("task_ref", "")),
+                "status": str(r.get("status", "")),
+                "last_activity": r.get("last_activity"),
+                "open_blockers": int(r.get("open_blockers", 0)),
+                "pending_actions": int(r.get("pending_actions", 0)),
+                "open_findings": int(r.get("open_findings", 0)),
+                "archived_at": r.get("archived_at"),
+            }
+        )
     return _render_dashboard_section(rows, active_task_ref)
 
 
@@ -222,11 +232,7 @@ def _render_open_findings_section(open_findings: dict[str, list[dict]]) -> list[
     for task_ref, findings in sorted(open_findings.items()):
         lines.extend(["", f"  [{task_ref}]"])
         for f in findings:
-            location = (
-                f"{f.get('file_path')}:{f.get('line_start')}"
-                if f.get("line_start")
-                else f.get("file_path", "")
-            )
+            location = f"{f.get('file_path')}:{f.get('line_start')}" if f.get("line_start") else f.get("file_path", "")
             lines.append(
                 f"  [{f.get('severity', '').upper()}] {f.get('finding_id')}: {location} -- {f.get('description', '')}"
             )
@@ -240,11 +246,7 @@ def _render_deferred_findings_section(deferred_findings: dict[str, list[dict]]) 
     for task_ref, findings in sorted(deferred_findings.items()):
         lines.extend(["", f"  [{task_ref}]"])
         for f in findings:
-            location = (
-                f"{f.get('file_path')}:{f.get('line_start')}"
-                if f.get("line_start")
-                else f.get("file_path", "")
-            )
+            location = f"{f.get('file_path')}:{f.get('line_start')}" if f.get("line_start") else f.get("file_path", "")
             status_label = f.get("status", "deferred").upper()
             lines.append(
                 f"  [{status_label}] [{f.get('severity', '').upper()}] {f.get('finding_id')}: {location} -- {f.get('description', '')}"
@@ -259,15 +261,9 @@ def _render_deferred_findings_section(deferred_findings: dict[str, list[dict]]) 
 
 def _collect_dashboard_context(conn: sqlite3.Connection, task_ref: str | None) -> DashboardContext:
     """Query pre-aggregated data to pass to extensions."""
-    lanes = conn.execute(
-        "SELECT * FROM worktree_lanes ORDER BY updated_at DESC, id DESC LIMIT 20"
-    ).fetchall()
-    reports = conn.execute(
-        "SELECT * FROM worker_reports ORDER BY created_at DESC, id DESC LIMIT 20"
-    ).fetchall()
-    metrics = conn.execute(
-        "SELECT * FROM turn_metrics ORDER BY created_at DESC, id DESC LIMIT 20"
-    ).fetchall()
+    lanes = conn.execute("SELECT * FROM worktree_lanes ORDER BY updated_at DESC, id DESC LIMIT 20").fetchall()
+    reports = conn.execute("SELECT * FROM worker_reports ORDER BY created_at DESC, id DESC LIMIT 20").fetchall()
+    metrics = conn.execute("SELECT * FROM turn_metrics ORDER BY created_at DESC, id DESC LIMIT 20").fetchall()
     return {
         "worktree_lanes": [dict(r) for r in lanes],
         "worker_reports": [dict(r) for r in reports],

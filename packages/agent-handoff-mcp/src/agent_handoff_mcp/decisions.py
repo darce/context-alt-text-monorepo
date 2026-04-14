@@ -605,10 +605,9 @@ def handoff_close_check(
         InvalidCommitShaError,
         _validate_and_expand_commit_sha,
     )
+
     try:
-        normalized_current_commit_sha = _validate_and_expand_commit_sha(
-            normalized_current_commit_sha
-        )
+        normalized_current_commit_sha = _validate_and_expand_commit_sha(normalized_current_commit_sha)
     except InvalidCommitShaError as exc:
         return _envelope(
             ok=False,

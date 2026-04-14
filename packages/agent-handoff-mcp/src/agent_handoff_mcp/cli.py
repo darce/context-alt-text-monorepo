@@ -357,32 +357,38 @@ def _dispatch_export(args: argparse.Namespace) -> Any:
 
 def _dispatch_artifact_list(args: argparse.Namespace) -> Any:
     return artifacts(
-        artifact=cast(ArtifactsParam, {
-            "operation": "search",
-            "task_ref": args.task_ref,
-            "lane_id": args.lane_id,
-            "app_root": args.app_root,
-            "source_kind": args.source_kind,
-            "limit": args.limit,
-            "offset": args.offset,
-            "detail": args.detail,
-            "fields": args.fields,
-        })
+        artifact=cast(
+            ArtifactsParam,
+            {
+                "operation": "search",
+                "task_ref": args.task_ref,
+                "lane_id": args.lane_id,
+                "app_root": args.app_root,
+                "source_kind": args.source_kind,
+                "limit": args.limit,
+                "offset": args.offset,
+                "detail": args.detail,
+                "fields": args.fields,
+            },
+        )
     )
 
 
 def _dispatch_artifact_terms(args: argparse.Namespace) -> Any:
     return artifacts(
-        artifact=cast(ArtifactsParam, {
-            "operation": "get",
-            "source_id": args.source_id,
-            "task_ref": args.task_ref,
-            "source_label": args.source_label,
-            "include_terms": True,
-            "top_n_terms": args.top_n,
-            "detail": args.detail,
-            "fields": args.fields,
-        })
+        artifact=cast(
+            ArtifactsParam,
+            {
+                "operation": "get",
+                "source_id": args.source_id,
+                "task_ref": args.task_ref,
+                "source_label": args.source_label,
+                "include_terms": True,
+                "top_n_terms": args.top_n,
+                "detail": args.detail,
+                "fields": args.fields,
+            },
+        )
     )
 
 

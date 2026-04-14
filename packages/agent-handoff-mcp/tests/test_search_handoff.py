@@ -402,7 +402,6 @@ def test_search_all_record_types_by_default(isolated_env: dict) -> None:
     assert "blocker" in types_in_results
 
 
-
 def test_search_handoff_fields_project_results(isolated_env: dict) -> None:
     handoff_core.record_decision(session="s1", decision="projection keyword decision")
 

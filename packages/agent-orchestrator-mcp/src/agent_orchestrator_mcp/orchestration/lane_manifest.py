@@ -322,7 +322,9 @@ def load_manifest(
     return validate_manifest(data, path)
 
 
-def list_lanes(task_ref: str, *, orchestrator_root: str | None = None, manifest_dir: str | Path | None = None) -> list[str]:
+def list_lanes(
+    task_ref: str, *, orchestrator_root: str | None = None, manifest_dir: str | Path | None = None
+) -> list[str]:
     manifest = load_manifest(task_ref, orchestrator_root=orchestrator_root, manifest_dir=manifest_dir)
     lanes = manifest.get("lanes", {})
     if not isinstance(lanes, dict):

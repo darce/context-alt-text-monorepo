@@ -169,7 +169,9 @@ def _resolve_rules_dir(*, orchestrator_root: str | Path | None = None, rules_dir
     return RULES_DIR
 
 
-def _read_guide(filename: str, *, orchestrator_root: str | Path | None = None, rules_dir: str | Path | None = None) -> str:
+def _read_guide(
+    filename: str, *, orchestrator_root: str | Path | None = None, rules_dir: str | Path | None = None
+) -> str:
     """Read a review guide file from the rules directory."""
     guide_path = _resolve_rules_dir(orchestrator_root=orchestrator_root, rules_dir=rules_dir) / filename
     if not guide_path.is_file():

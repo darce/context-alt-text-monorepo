@@ -218,9 +218,7 @@ def test_main_requests_only_identity_and_recent_tests(
     monkeypatch.setattr(review_ready_module, "_run_git", lambda *args, **kwargs: "abc123def456")
     monkeypatch.setattr(agent_handoff_mcp, "get_handoff_state", fake_get_handoff_state)
     monkeypatch.setattr(agent_handoff_mcp, "handoff_close_check", fake_handoff_close_check)
-    monkeypatch.setattr(
-        handoff_review_findings_module, "get_review_findings_summary", fake_get_review_findings_summary
-    )
+    monkeypatch.setattr(handoff_review_findings_module, "get_review_findings_summary", fake_get_review_findings_summary)
 
     exit_code = main()
 

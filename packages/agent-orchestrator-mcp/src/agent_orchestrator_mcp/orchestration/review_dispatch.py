@@ -18,9 +18,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from lane_manifest import lane_route_hints, list_task_refs, route_patterns
 
-_handoff_read_shapes = import_module(
-    f"{__package__}.handoff_read_shapes" if __package__ else "handoff_read_shapes"
-)
+_handoff_read_shapes = import_module(f"{__package__}.handoff_read_shapes" if __package__ else "handoff_read_shapes")
 
 from agent_orchestrator_mcp.lanes import lane_communication
 
@@ -41,6 +39,7 @@ ISSUE_KIND_LABELS: dict[str, dict[str, str]] = {
         "noun": "next actions",
     },
 }
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Dispatch open handoff issues to the correct worker lanes.")
@@ -176,9 +175,7 @@ def _has_open_dispatch(task_ref: str, lane_id: str, subject: str) -> bool:
 def _load_open_handoff_items(task_ref: str) -> dict[str, list[dict[str, Any]]]:
     from agent_handoff_mcp import get_handoff_state  # noqa: PLC0415
 
-    payload = _json_load(
-        get_handoff_state(**_handoff_read_shapes.open_handoff_items_kwargs(task_ref))
-    )
+    payload = _json_load(get_handoff_state(**_handoff_read_shapes.open_handoff_items_kwargs(task_ref)))
     if payload.get("ok") is not True:
         raise RuntimeError(f"Unable to load open handoff state: {payload}")
 

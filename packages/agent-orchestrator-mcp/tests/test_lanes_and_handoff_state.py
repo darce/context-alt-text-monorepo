@@ -226,7 +226,9 @@ def test_list_turn_metrics_supports_bounded_read_parameters(isolated_handoff: di
             backend="codex-cli",
             model="gpt-5.4",
             token_usage=TokenUsage(total_tokens=100 + cycle, usage_source="observed"),
-            prompt_metrics=PromptMetrics(prompt_tokens=90 + cycle, prompt_chars=360 + cycle, prompt_token_source="observed"),
+            prompt_metrics=PromptMetrics(
+                prompt_tokens=90 + cycle, prompt_chars=360 + cycle, prompt_token_source="observed"
+            ),
             raw_usage={"cycle": cycle, "tokens": 100 + cycle},
         )
         assert created["ok"] is True
@@ -244,10 +246,10 @@ def test_list_turn_metrics_supports_bounded_read_parameters(isolated_handoff: di
 
     assert full["returned"] == 2
     assert set(shaped) == {"ok", "turn_metrics"}
-    assert shaped["turn_metrics"] == [{"id": full["turn_metrics"][0]["id"], "total_tokens": full["turn_metrics"][0]["total_tokens"]}]
+    assert shaped["turn_metrics"] == [
+        {"id": full["turn_metrics"][0]["id"], "total_tokens": full["turn_metrics"][0]["total_tokens"]}
+    ]
     assert len(json.dumps(shaped)) < len(json.dumps(full))
-
-
 
 
 def test_plan_cursor_crud_round_trip(isolated_handoff: dict) -> None:
@@ -426,7 +428,7 @@ def test_get_latest_slice_review_packet_filters_to_planning_slices(isolated_hand
                 "docs/tasks/12.0/slice-review-packet-and-cross-agent-review-task-plan.md",
                 "docs/agentic/rules/planning-review-guide.md",
             ],
-            test_commands=["rg -n \"slice review packet\" docs/agentic/rules/planning-review-guide.md"],
+            test_commands=['rg -n "slice review packet" docs/agentic/rules/planning-review-guide.md'],
             merge_ready=True,
         )
     )
@@ -495,9 +497,7 @@ def test_get_latest_slice_review_packet_uses_decision_rationale_when_worker_repo
         )
     )
 
-    payload = _parse(
-        mcp_server.get_latest_slice_review_packet(task_ref="slice-review-rationale-fallback")
-    )
+    payload = _parse(mcp_server.get_latest_slice_review_packet(task_ref="slice-review-rationale-fallback"))
 
     assert payload["ok"] is True
     assert payload["packet"]["scope_source"] == "slice_packet"
@@ -506,8 +506,6 @@ def test_get_latest_slice_review_packet_uses_decision_rationale_when_worker_repo
         "packages/agent-handoff-mcp/src/agent_handoff_mcp/orchestration/review_runner.py",
         "docs/agentic/rules/branch-review-guide.md",
     ]
-
-
 
 
 def test_get_latest_slice_review_packet_prefers_decision_changed_files_over_rationale(
@@ -539,9 +537,7 @@ def test_get_latest_slice_review_packet_prefers_decision_changed_files_over_rati
         )
     )
 
-    payload = _parse(
-        mcp_server.get_latest_slice_review_packet(task_ref="slice-review-decision-files")
-    )
+    payload = _parse(mcp_server.get_latest_slice_review_packet(task_ref="slice-review-decision-files"))
 
     assert payload["ok"] is True
     assert payload["packet"]["scope_source"] == "slice_packet"
@@ -756,8 +752,6 @@ def test_export_and_import_handoff_state_round_trip(isolated_handoff: dict) -> N
     assert len(state["lane_messages_open"]) == 1
 
 
-
-
 def test_worktree_lane_activity_and_reports_are_recorded_by_lane(isolated_handoff: dict) -> None:
     _parse(
         mcp_server.set_handoff_state(
@@ -933,7 +927,9 @@ def test_list_lane_messages_supports_bounded_read_parameters(isolated_handoff: d
         assert recorded["ok"] is True
 
     full = _parse(
-        mcp_server.lane_communication(kind="message", operation="list", task_ref="lane-messages-bounded", lane_id="frontend")
+        mcp_server.lane_communication(
+            kind="message", operation="list", task_ref="lane-messages-bounded", lane_id="frontend"
+        )
     )
     shaped = _parse(
         mcp_server.lane_communication(
@@ -950,7 +946,11 @@ def test_list_lane_messages_supports_bounded_read_parameters(isolated_handoff: d
     assert full["returned"] == 2
     assert set(shaped) == {"ok", "messages"}
     assert shaped["messages"] == [
-        {"id": full["messages"][0]["id"], "subject": full["messages"][0]["subject"], "status": full["messages"][0]["status"]}
+        {
+            "id": full["messages"][0]["id"],
+            "subject": full["messages"][0]["subject"],
+            "status": full["messages"][0]["status"],
+        }
     ]
     assert len(json.dumps(shaped)) < len(json.dumps(full))
 
@@ -1265,9 +1265,7 @@ def test_get_lane_activity_archival_format_returns_compact_summary(isolated_hand
         )
     )
 
-    activity = _parse(
-        mcp_server.get_lane_activity(task_ref="5.2.0", lane_id="backend", format="archival")
-    )
+    activity = _parse(mcp_server.get_lane_activity(task_ref="5.2.0", lane_id="backend", format="archival"))
 
     assert activity["ok"] is True
     assert activity["format"] == "archival"
@@ -1300,8 +1298,6 @@ def test_get_lane_activity_archival_format_returns_compact_summary(isolated_hand
     assert "retention contract" in activity["summary"]["decisions"]["latest_rationale_excerpt"]
 
 
-
-
 def test_get_lane_activity_archival_format_truncates_long_decision_rationale(isolated_handoff: dict) -> None:
     _parse(
         mcp_server.set_handoff_state(
@@ -1332,9 +1328,7 @@ def test_get_lane_activity_archival_format_truncates_long_decision_rationale(iso
         )
     )
 
-    activity = _parse(
-        mcp_server.get_lane_activity(task_ref="5.2.3", lane_id="backend", format="archival")
-    )
+    activity = _parse(mcp_server.get_lane_activity(task_ref="5.2.3", lane_id="backend", format="archival"))
 
     excerpt = activity["summary"]["decisions"]["latest_rationale_excerpt"]
     assert excerpt is not None
@@ -1361,9 +1355,7 @@ def test_get_lane_activity_archival_format_handles_empty_lane() -> None:
         )
     )
 
-    activity = _parse(
-        mcp_server.get_lane_activity(task_ref="5.2.1", lane_id="frontend", format="archival")
-    )
+    activity = _parse(mcp_server.get_lane_activity(task_ref="5.2.1", lane_id="frontend", format="archival"))
 
     assert activity["ok"] is True
     assert activity["summary"]["decisions"] == {
@@ -1400,9 +1392,7 @@ def test_get_lane_activity_rejects_unknown_format(isolated_handoff: dict) -> Non
         )
     )
 
-    activity = _parse(
-        mcp_server.get_lane_activity(task_ref="5.2.2", lane_id="backend", format="compact")
-    )
+    activity = _parse(mcp_server.get_lane_activity(task_ref="5.2.2", lane_id="backend", format="compact"))
 
     assert activity["ok"] is False
     assert activity["error"] == "Invalid format. Valid: archival, full."
@@ -1462,15 +1452,13 @@ def test_import_handoff_state_prefers_decoded_lane_message_payload(isolated_hand
     )
     assert response["ok"] is True
 
-    listed = _parse(
-        mcp_server.lane_communication(kind="brief", operation="list", task_ref="5.1.1", lane_id="frontend")
-    )
+    listed = _parse(mcp_server.lane_communication(kind="brief", operation="list", task_ref="5.1.1", lane_id="frontend"))
     assert listed["briefs"][0]["payload"]["summary"] == "fresh"
 
 
-
-
-def test_review_list_and_summary_surface_workspace_git_context(isolated_handoff: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_review_list_and_summary_surface_workspace_git_context(
+    isolated_handoff: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _parse(
         mcp_server.set_handoff_state(
             task_ref="4.12.0",
@@ -1493,7 +1481,9 @@ def test_review_list_and_summary_surface_workspace_git_context(isolated_handoff:
     monkeypatch.setattr(
         handoff_core,
         "_classify_commit_relation",
-        lambda reference_sha, candidate_sha: "descendant" if (reference_sha, candidate_sha) == ("abc123", "def456") else "same",
+        lambda reference_sha, candidate_sha: (
+            "descendant" if (reference_sha, candidate_sha) == ("abc123", "def456") else "same"
+        ),
     )
 
     listed_response = _parse(mcp_server.list_review_findings())
@@ -1508,8 +1498,6 @@ def test_review_list_and_summary_surface_workspace_git_context(isolated_handoff:
     assert summary["ok"] is True
     assert summary["workspace_git"]["commit_sha"] == "def456"
     assert summary["open_top"][0]["workspace_commit_relation"] == "descendant"
-
-
 
 
 def test_lane_reports_and_messages_accept_explicit_task_ref_cross_task(isolated_handoff: dict) -> None:
@@ -1641,8 +1629,6 @@ def test_lane_upsert_accepts_explicit_task_ref_cross_task(isolated_handoff: dict
     assert explicit_lane["lane"]["status"] == "blocked"
 
 
-
-
 def test_get_review_findings_summary_counts_and_limits(isolated_handoff: dict) -> None:
     _parse(
         mcp_server.set_handoff_state(
@@ -1712,8 +1698,6 @@ def test_get_review_findings_summary_counts_and_limits(isolated_handoff: dict) -
     assert len(summary["recent_updates"]) == 2
 
 
-
-
 def test_switch_task_clears_focus_on_restore(isolated_handoff: dict) -> None:
     """Switching away and back clears focus unless explicitly provided."""
     _parse(
@@ -1733,18 +1717,14 @@ def test_switch_task_clears_focus_on_restore(isolated_handoff: dict) -> None:
         )
     )
     # Switch back to A; focus should be cleared (restored from archive without focus)
-    result_response = _parse(
-        mcp_server.switch_task(task_ref="sw-focus-a")
-    )
+    result_response = _parse(mcp_server.switch_task(task_ref="sw-focus-a"))
     result = _data(result_response)
     assert result_response["ok"] is True
     assert result["active"].get("focus") is None
 
     # Now switch with explicit focus
     _parse(mcp_server.switch_task(task_ref="sw-focus-b"))
-    result2_response = _parse(
-        mcp_server.switch_task(task_ref="sw-focus-a", focus="resuming slice 3")
-    )
+    result2_response = _parse(mcp_server.switch_task(task_ref="sw-focus-a", focus="resuming slice 3"))
     result2 = _data(result2_response)
     assert result2_response["ok"] is True
     assert result2["active"]["focus"] == "resuming slice 3"

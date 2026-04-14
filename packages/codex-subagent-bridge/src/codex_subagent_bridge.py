@@ -264,9 +264,7 @@ class AppServerClient:
             if "method" in message:
                 self._pending_notifications.append(message)
                 continue
-            raise RuntimeError(
-                f"Unexpected JSON-RPC response while waiting for {method}: {message!r}"
-            )
+            raise RuntimeError(f"Unexpected JSON-RPC response while waiting for {method}: {message!r}")
 
     def _read_message(self, deadline: float) -> dict[str, Any]:
         proc = self._require_proc()
@@ -292,9 +290,7 @@ class AppServerClient:
             except json.JSONDecodeError as exc:
                 raise RuntimeError(f"codex app-server emitted invalid JSON: {exc}") from exc
             if not isinstance(message, dict):
-                raise RuntimeError(
-                    f"codex app-server emitted a non-object JSON-RPC message: {type(message).__name__}"
-                )
+                raise RuntimeError(f"codex app-server emitted a non-object JSON-RPC message: {type(message).__name__}")
             return message
 
     def _stderr_tail(self) -> str:
@@ -336,11 +332,7 @@ def _find_structured_content(value: Any) -> Any | None:
     if isinstance(value, dict):
         if "structuredContent" in value and value["structuredContent"] is not None:
             return value["structuredContent"]
-        if (
-            value.get("type") == "agentMessage"
-            and isinstance(value.get("text"), str)
-            and value["text"].strip()
-        ):
+        if value.get("type") == "agentMessage" and isinstance(value.get("text"), str) and value["text"].strip():
             return value["text"]
         for nested in value.values():
             found = _find_structured_content(nested)
@@ -447,8 +439,7 @@ def _resolve_codex_bin(explicit: str | None, env: Mapping[str, str] | None) -> s
             return str(candidate)
 
     raise RuntimeError(
-        "codex binary not found for codex-subagent bridge. "
-        "Install Codex, add it to PATH, or set CODEX_BIN."
+        "codex binary not found for codex-subagent bridge. Install Codex, add it to PATH, or set CODEX_BIN."
     )
 
 
@@ -459,9 +450,7 @@ def _normalize_reasoning_effort(value: str | None) -> str | None:
     if not normalized:
         return None
     if normalized not in _VALID_REASONING_EFFORTS:
-        raise RuntimeError(
-            f"Unsupported reasoning effort '{value}'. Valid values: low, medium, high, xhigh."
-        )
+        raise RuntimeError(f"Unsupported reasoning effort '{value}'. Valid values: low, medium, high, xhigh.")
     return normalized
 
 

@@ -12,9 +12,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from agent_handoff_mcp.enums import ReviewKind, ReviewScopeSource
 
-_handoff_read_shapes = import_module(
-    f"{__package__}.handoff_read_shapes" if __package__ else "handoff_read_shapes"
-)
+_handoff_read_shapes = import_module(f"{__package__}.handoff_read_shapes" if __package__ else "handoff_read_shapes")
 
 DEFAULT_BOUNDARY_PREFIXES = (
     "apps/",
@@ -29,6 +27,8 @@ DEFAULT_CONTRACT_PREFIXES = (
 CONTRACT_PREFIXES = DEFAULT_CONTRACT_PREFIXES
 DEFAULT_CONTRACT_CHECKLIST_PATH = "docs/agentic/rules/contract-change-checklist.md"
 CONTRACT_CHECKLIST_PATH = DEFAULT_CONTRACT_CHECKLIST_PATH
+
+
 @dataclass(frozen=True)
 class ReviewReadyResult:
     ready: bool
@@ -64,9 +64,7 @@ def _configure_runtime(orchestrator_root: Path) -> None:
     from agent_handoff_mcp.config import RuntimeConfig  # noqa: PLC0415
     from agent_handoff_mcp.runtime import configure_runtime  # noqa: PLC0415
 
-    configure_runtime(
-        RuntimeConfig.for_repo(orchestrator_root)
-    )
+    configure_runtime(RuntimeConfig.for_repo(orchestrator_root))
 
 
 def _load_ok_payload(name: str, payload: dict[str, Any] | str | bytes | bytearray) -> dict[str, Any]:
@@ -99,7 +97,9 @@ def evaluate_review_ready(
     contract_checklist_path: str = CONTRACT_CHECKLIST_PATH,
 ) -> ReviewReadyResult:
     boundary_files = [path for path in changed_files if path.startswith(boundary_prefixes)]
-    contract_files = [path for path in changed_files if path.startswith(contract_prefixes) or path == contract_checklist_path]
+    contract_files = [
+        path for path in changed_files if path.startswith(contract_prefixes) or path == contract_checklist_path
+    ]
 
     open_findings = int(review.get("counts", {}).get("status", {}).get("open", 0))
     open_blockers = int(close.get("checks", {}).get("open_blockers", {}).get("count", 0))

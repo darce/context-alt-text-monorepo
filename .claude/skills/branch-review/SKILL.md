@@ -1,6 +1,6 @@
 ---
 name: branch-review
-description: "Use when reviewing implementation changes on a feature branch. Triggers on `make review-run`, branch diff review requests, or pre-merge audit passes."
+description: "Use when reviewing implementation changes on a feature branch. Triggers on `make review-run` for lane/local working-tree review, branch diff review requests, or pre-merge audit passes."
 mode: execution
 context_budget: 150
 makefile_target: review-run
@@ -27,7 +27,7 @@ Use this skill for code and workflow diffs on feature branches. It runs the bran
 Use this skill when:
 
 - reviewing a feature branch diff before merge
-- running `make review-run`
+- running `make review-run` for lane/local working-tree review
 - auditing implementation changes under `apps/`, `packages/`, `scripts/`, or `mk/`
 
 Do not use it for task plans, epics, ADRs, or other planning artifacts.
@@ -46,7 +46,7 @@ This skill owns branch-review execution order. The guide owns the detailed check
 
 ## Core Process
 
-1. Load the latest slice review packet when available. If `agent-orchestrator-mcp` is unavailable, use the handoff-only fallback from `branch-review-guide.md`: `load_session` -> `search_handoff(queries=["slice_complete"], record_types=["decision"], limit=1)` -> `get_verified_tests` -> `review_findings(list)` and review against branch-diff scope.
+1. Start with a real review scope. `make review-run` is for lane/local working-tree review because `review_runner.py` only inspects local changed files. For committed feature-branch diff review, load the latest slice review packet when available or review `git diff main...HEAD` scope directly. If `agent-orchestrator-mcp` is unavailable, use the handoff-only fallback from `branch-review-guide.md`: `load_session` -> `search_handoff(queries=["slice_complete"], record_types=["decision"], limit=1)` -> `get_verified_tests` -> `review_findings(list)` and review against branch-diff scope.
 2. Pre-triage with `get_review_findings_summary` and `reconcile_review_findings` so old open findings are understood before new detection passes begin. When orchestrator is unavailable, state that the pass is using `branch_diff` fallback scope instead of `slice_packet`.
 3. Check prior review history with `review_runs(operation="list", review_mode="branch", ...)`.
 4. Run the branch-review checklist against the actual diff, touched contracts, and fresh verification evidence.

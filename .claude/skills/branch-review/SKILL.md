@@ -46,7 +46,7 @@ This skill owns branch-review execution order. The guide owns the detailed check
 
 ## Core Process
 
-1. Load the latest slice review packet when available. If `agent-orchestrator-mcp` is unavailable, use the handoff-only fallback from `branch-review-guide.md`: `load_session` -> `search_handoff("slice_complete")` -> `get_verified_tests` -> `review_findings(list)` and review against branch-diff scope.
+1. Load the latest slice review packet when available. If `agent-orchestrator-mcp` is unavailable, use the handoff-only fallback from `branch-review-guide.md`: `load_session` -> `search_handoff(queries=["slice_complete"], record_types=["decision"], limit=1)` -> `get_verified_tests` -> `review_findings(list)` and review against branch-diff scope.
 2. Pre-triage with `get_review_findings_summary` and `reconcile_review_findings` so old open findings are understood before new detection passes begin. When orchestrator is unavailable, state that the pass is using `branch_diff` fallback scope instead of `slice_packet`.
 3. Check prior review history with `review_runs(operation="list", review_mode="branch", ...)`.
 4. Run the branch-review checklist against the actual diff, touched contracts, and fresh verification evidence.

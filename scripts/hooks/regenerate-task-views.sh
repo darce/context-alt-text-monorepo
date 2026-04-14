@@ -21,6 +21,8 @@ tool_input = payload.get("tool_input") or payload.get("toolInput") or {}
 
 if "record_event" in tool_name:
     print("true")
+elif "set_handoff_state" in tool_name or "update_task_status" in tool_name:
+    print("true")
 elif "review_findings" in tool_name:
     operation = (tool_input.get("review") or {}).get("operation")
     print("true" if operation not in {"list", "get"} else "false")

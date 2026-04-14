@@ -132,7 +132,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/lane-maintenance.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context dashboard task-start task-finish
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context dashboard worktree-audit task-start task-finish
 
 # Default target
 help:
@@ -169,6 +169,8 @@ help:
 	@echo "  make review-ready [TASK=<task-ref>] [REVIEW_BASE=$(ORCHESTRATOR_BRANCH)]"
 	@echo "    Summarize pre-review readiness from handoff findings/blockers, CURRENT_TASK sync, test evidence, and contract co-change."
 	@echo "  make handoff-integrity-check - Run parser/lifecycle/sync guard checks"
+	@echo "  make worktree-audit"
+	@echo "    Detect orphan local feature/codex branches with no active or archived handoff registration."
 	@echo "  make handoff-dispatch TASK=<task-ref> [DRY_RUN=1]"
 	@echo "    Route open handoff review findings, blockers, and next actions from the orchestrator root to the correct worker lanes."
 	@echo "  make handoff-inbox TASK=<task-ref> [LANE=<lane>]"
@@ -247,6 +249,7 @@ check-all:
 			$(MAKE) lint-all; \
 			$(MAKE) lint-task-plans; \
 			$(MAKE) lint-scripts; \
+			$(MAKE) worktree-audit; \
 			$(MAKE) mypy-orchestrator; \
 			$(MAKE) test-all; \
 			echo ""; \
@@ -570,6 +573,10 @@ context:
 dashboard:
 	@PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src:$(MCP_PYTHONPATH)" \
 		$(MCP_CMD) $(MCP_STATE_ARGS) write-dashboard
+
+worktree-audit:
+	@PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src:$(MCP_PYTHONPATH)" \
+		$(MCP_PYTHON) scripts/worktree_audit.py
 
 # Convenience wrapper that scaffolds a feature branch + worktree + MCP task in
 # one go. Computes the canonical path /Users/.../context-alt-text-monorepo-<task>

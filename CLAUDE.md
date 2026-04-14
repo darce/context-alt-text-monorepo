@@ -86,6 +86,8 @@ A `PreToolUse` hook enforces this in both harnesses: VS Code runs `.github/hooks
 
 **Worktree naming convention** (mandatory for new tasks): `<repo-parent>/context-alt-text-monorepo-<lowercase-task-id>` paired with branch `feature/<lowercase-task-id>`. Examples: task `AHMCP-9` → worktree `context-alt-text-monorepo-ahmcp-9` on branch `feature/ahmcp-9`. The `make task-start TASK=<id>` helper enforces this convention and registers `target_worktree_path` on the active handoff state in one shot. The `make task-finish TASK=<id>` helper performs the post-merge teardown (worktree remove + branch delete + MCP archive).
 
+**Main-branch maintenance-task rule** (mandatory): before any permitted file edit on `main` (docs, Makefiles, configs, scripts), verify an active handoff task is registered. For ad-hoc patches use the maintenance-task pattern: `set_handoff_state(task_ref='MAINT-<slug>', objective='Describe the main-branch patch', status='in_progress')`. Unregistered permitted edits trigger a warning from the main-branch hook.
+
 **Context discipline for multi-agent flows:** Run `make context` at the start of every session to verify your shell is on the right `target_worktree_path` and `target_branch`. The `set_handoff_state` and `record_decision` write paths emit `context_drift` warnings (non-fatal) when actor branch or cwd diverges from the active task target — read those warnings and fix the drift before recording further events.
 
 See [development-workflow.md](docs/agentic/rules/development-workflow.md#branch-isolation-protocol-mandatory) for isolation tiers, worktree recovery, and rationale.

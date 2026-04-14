@@ -21,6 +21,14 @@ Protected code extensions: `*.py`, `*.ts`, `*.tsx`, `*.js`, `*.jsx`, `*.php`, `*
 - Do not mark a task-plan slice complete on initial implementation alone; unresolved branch-review or planning-review findings mean the checklist stays in-progress on `main`.
 - When a turn lands implementation on a feature branch but review remains open, update `main` to show the real intermediate state rather than prematurely checking the box.
 
+### Maintenance-Task Pattern
+
+Permitted `main` edits still need handoff registration. Before any ad-hoc doc, Makefile, config, or script patch on `main`, register a lightweight maintenance task such as:
+
+`set_handoff_state(task_ref='MAINT-<slug>', objective='Describe the main-branch patch', status='in_progress')`
+
+The main-branch guard now warns when permitted edits happen without an active task. This rollout is warning-only, but the registration step is still mandatory workflow discipline.
+
 **Before any code edit:**
 
 1. Create a feature branch: `git checkout -b feature/<task-id>-<slug>`
@@ -59,6 +67,8 @@ git worktree remove /path/to/linked-worktree              # clean up
 ```bash
 git checkout main                  # return root to main
 git branch -d feature/<merged>     # delete the merged branch
+
+`make task-finish` performs a belt-and-suspenders post-archive check for this invariant. If the task's `target_branch` still exists after archive, the script prints the exact `git branch -d ...` cleanup command. Manual `archive_task_state` callers still own branch deletion themselves.
 ```
 
 ### Dirty Worktree Teardown (MANDATORY)

@@ -327,10 +327,16 @@ Full checklists and pattern definitions: [playbooks/ace-pruning-playbook.md](pla
 Key gates (every slice):
 
 1. Every file-changing slice must end with a `slice_complete_*` decision. Format: [templates/slice-complete-template.md](templates/slice-complete-template.md). Enforced at write time.
-2. Call `generate_current_task_md(task_ref=<active-task-ref>)` after recording.
-3. Do not leave `CURRENT_TASK.md` stale. Record the missing decision before handoff if needed.
+2. Call `generate_dashboard_md()` after recording — DASHBOARD.md is the operator-facing view and must stay current.
+3. Do not leave DASHBOARD.md stale. Record the missing decision before handoff if needed.
 4. Update singleton state via `set_handoff_state(..., expected_revision=<current>, actor={ ... })`.
 5. Include `Handoff updated: yes` in the response.
+
+View regeneration policy:
+
+- **After every state-changing operation** (`record_event`, `review_findings`, `review_runs`): call `generate_dashboard_md()`. This keeps the cross-task operator view current — NEEDS ATTENTION, ALL TASKS, OPEN FINDINGS.
+- **On-demand only**: call `generate_current_task_md(task_ref=<ref>)` when a specific task's machine-readable JSON snapshot is needed (e.g., before handing off to another agent on the same task, or when producing a task-scoped report). Agents with live MCP access do not need this in the hot path — use `get_handoff_state` or `load_session` instead.
+- `close_slice` and `archive_task_state` regenerate both views atomically server-side; no extra call needed after those.
 
 Write-tool targeting rule:
 
@@ -341,9 +347,9 @@ During-work discipline:
 
 - Record blockers immediately: `record_event(event={event_kind: "blocker", task_ref: ..., actor: {...}, ...})`.
 - Record verification: `record_event(event={event_kind: "test_result", ...})`. Keep `result` concise.
-- Record findings: `review_findings(review={operation: "record", ...})` for 1-2; `batch_record` for 3+ (atomic write, single `CURRENT_TASK.md` flush).
+- Record findings: `review_findings(review={operation: "record", ...})` for 1-2; `batch_record` for 3+ (atomic write, single DB flush).
 - **Findings live in handoff, not in task plans.** The `scripts/hooks/guard-task-plan-findings.py` hook rejects 3+ consecutive finding-style bullets in task plans. Same scanner runs via `make lint-task-plans`. Reference findings by ID (`see AOMCP-3-BR-04 in handoff`), never by pasting.
-- **Regenerate `CURRENT_TASK.md`** after every state-changing operation (`record_event`, `review_findings(operation="update"|"batch_record")`).
+- **Regenerate DASHBOARD.md** after every state-changing operation (`record_event`, `review_findings(operation="update"|"batch_record")`).
 - Validate review state with `get_review_findings_summary(...)` and `review_findings(review={"operation":"list", ...})`, not direct `sqlite3`.
 
 Read discipline:

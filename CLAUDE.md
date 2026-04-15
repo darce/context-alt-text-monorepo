@@ -36,7 +36,7 @@ from agent_handoff_mcp import (
 configure_runtime(RuntimeConfig.for_repo(Path(".")))
 ```
 
-Never use raw `sqlite3` to query `handoff.db` directly; the schema is internal and will break. `DASHBOARD.md` is a last-resort stale read only when the Python package itself is also unavailable. Record a blocker when Claude Code MCP tool access does not restore after session restart. **Stop implementation work until at least the Python API is available.**
+Never use raw `sqlite3` to query `handoff.db` directly; the schema is internal and will break. `DASHBOARD.txt` is a last-resort stale read only when the Python package itself is also unavailable. Record a blocker when Claude Code MCP tool access does not restore after session restart. **Stop implementation work until at least the Python API is available.**
 
 ---
 
@@ -161,7 +161,7 @@ See [packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md](packages/a
 - A task response is incomplete if MCP handoff was not updated.
 - When a task is finished, set status to `done` via `update_task_status(task_ref=..., status="done")` before or after archiving. `close_slice` keeps status `in_progress` — it does not close the task. `archive_task_state` preserves whatever status the task had; archiving while `in_progress` leaves the dashboard permanently stale.
 - Slice completion format (enforced at write time): [docs/agentic/templates/slice-complete-template.md](docs/agentic/templates/slice-complete-template.md).
-- After every state-changing handoff operation (`record_event`, `review_findings(operation="update")`, `review_findings(operation="batch_record")`, `review_runs(operation="record")`, `set_handoff_state`, `update_task_status`), call `generate_dashboard_md()`. DASHBOARD.md is the operator-facing cross-task view and must stay current. Call `generate_current_task_md(task_ref=<ref>)` only on-demand for task-specific agent handoffs; agents with live MCP access should use `get_handoff_state`/`load_session` instead.
+- After every state-changing handoff operation (`record_event`, `review_findings(operation="update")`, `review_findings(operation="batch_record")`, `review_runs(operation="record")`, `set_handoff_state`, `update_task_status`), call `generate_dashboard_md()`. DASHBOARD.txt is the operator-facing cross-task view and must stay current. Call `generate_current_task_md(task_ref=<ref>)` only on-demand for task-specific agent handoffs; agents with live MCP access should use `get_handoff_state`/`load_session` instead.
 - When logging **3 or more review findings** in a single review pass, use `review_findings(review={"operation":"batch_record", ...})` instead of repeated `review_findings(review={"operation":"record", ...})` calls — one atomic write, one DB flush, per-item results returned.
 - Full handoff protocol: [docs/agentic/instructions.md](docs/agentic/instructions.md#mcp-handoff-contract-mandatory).
 

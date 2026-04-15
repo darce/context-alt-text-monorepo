@@ -1,4 +1,4 @@
-"""DASHBOARD.md rendering for agent_handoff_mcp.
+"""DASHBOARD.txt rendering for agent_handoff_mcp.
 
 Contains:
   - DashboardContext, DashboardSection, DashboardExtension types
@@ -14,6 +14,7 @@ Extension order field controls relative placement among extensions only.
 from __future__ import annotations
 
 import sqlite3
+import subprocess
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -305,12 +306,22 @@ def _render_epic_decisions_section(epic_ref: str, decisions: list[dict]) -> list
 # ---------------------------------------------------------------------------
 
 
-def _collect_task_test_status(conn: sqlite3.Connection) -> dict[str, dict]:
+def _collect_task_test_status(conn: sqlite3.Connection, epic_ref: str | None = None) -> dict[str, dict]:
     """Return per-task test summary: latest pass/fail and totals.
 
     Only includes tasks that have at least one verified_test row.
+    When *epic_ref* is set, only tasks whose task_ref matches the epic
+    prefix are returned (same pattern as ``_collect_epic_decisions``).
     """
-    rows = conn.execute("SELECT task_ref, passed, verified_at FROM verified_tests ORDER BY verified_at DESC").fetchall()
+    if epic_ref:
+        rows = conn.execute(
+            "SELECT task_ref, passed, verified_at FROM verified_tests"
+            " WHERE task_ref = ? OR task_ref LIKE ?"
+            " ORDER BY verified_at DESC",
+            (epic_ref, f"{epic_ref}-%"),
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT task_ref, passed, verified_at FROM verified_tests ORDER BY verified_at DESC").fetchall()
     summary: dict[str, dict] = {}
     for row in rows:
         ref = str(row["task_ref"])
@@ -361,6 +372,83 @@ def _collect_dashboard_context(conn: sqlite3.Connection, task_ref: str | None) -
 
 
 # ---------------------------------------------------------------------------
+# Workflow integrity checks
+# ---------------------------------------------------------------------------
+
+_GIT_TIMEOUT = 5
+
+
+def _collect_workflow_integrity(
+    target_branch: str | None,
+    target_worktree_path: str | None,
+) -> list[str]:
+    """Derive workflow-integrity anomalies from target_branch + live git state.
+
+    Returns a list of human-readable anomaly strings.  Empty list = clean.
+    All git subprocess calls use a bounded timeout; on TimeoutExpired the
+    caller receives a sentinel string instead of an exception.
+    """
+    if not target_branch:
+        return []
+
+    anomalies: list[str] = []
+
+    try:
+        # Check if target branch exists.
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", target_branch],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+        )
+        if result.returncode != 0:
+            anomalies.append(f"missing branch: {target_branch} does not exist")
+            return anomalies
+
+        # Check if branch is fully merged to main but not deleted.
+        merged = subprocess.run(
+            ["git", "branch", "--merged", "main"],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+        )
+        merged_branches = [b.strip().lstrip("* ") for b in merged.stdout.splitlines()]
+        if target_branch in merged_branches:
+            anomalies.append(f"undeleted merged branch: {target_branch} is fully merged to main")
+
+        # Check worktree alignment.
+        if target_worktree_path:
+            wt_list = subprocess.run(
+                ["git", "worktree", "list", "--porcelain"],
+                capture_output=True,
+                text=True,
+                timeout=_GIT_TIMEOUT,
+            )
+            worktree_found = False
+            for line in wt_list.stdout.splitlines():
+                if line.startswith("worktree ") and line[9:] == target_worktree_path:
+                    worktree_found = True
+                    break
+            if not worktree_found:
+                anomalies.append(f"missing worktree: {target_worktree_path} not found")
+
+    except subprocess.TimeoutExpired:
+        return ["git check timed out (5s)"]
+
+    return anomalies
+
+
+def _render_workflow_integrity_section(anomalies: list[str]) -> list[str]:
+    """Render WORKFLOW INTEGRITY section.  Returns empty list when no anomalies."""
+    if not anomalies:
+        return []
+    lines: list[str] = ["", "WORKFLOW INTEGRITY", "-" * 18]
+    for a in anomalies:
+        lines.append(f"  ! {a}")
+    return lines
+
+
+# ---------------------------------------------------------------------------
 # Primary render function
 # ---------------------------------------------------------------------------
 
@@ -376,6 +464,7 @@ def _render_dashboard_md(
     epic_ref: str | None = None,
     epic_decisions: list[dict] | None = None,
     task_test_status: dict[str, dict] | None = None,
+    integrity_anomalies: list[str] | None = None,
 ) -> str:
     sep = "=" * 80
     lines: list[str] = [
@@ -391,10 +480,13 @@ def _render_dashboard_md(
     if epic_ref and epic_decisions is not None:
         lines.extend(_render_epic_decisions_section(epic_ref, epic_decisions))
 
+    # Active-task findings and integrity alerts render before TEST STATUS.
+    lines.extend(_render_open_findings_section(open_findings))
+    lines.extend(_render_workflow_integrity_section(integrity_anomalies or []))
+
     if task_test_status is not None:
         lines.extend(_render_test_status_section(task_test_status))
 
-    lines.extend(_render_open_findings_section(open_findings))
     deferred_lines = _render_deferred_findings_section(deferred_findings)
     if deferred_lines:
         lines.extend(deferred_lines)
@@ -414,7 +506,7 @@ def _render_dashboard_md(
 
 
 def generate_dashboard_md(write_file: bool = True) -> dict:
-    """Generate DASHBOARD.md from the live handoff DB.
+    """Generate DASHBOARD.txt from the live handoff DB.
 
     Core sections (Needs Attention, All Tasks, Open Findings, Deferred/Won't Fix)
     are always rendered.  Extension sections (registered via
@@ -434,8 +526,14 @@ def generate_dashboard_md(write_file: bool = True) -> dict:
     )
 
     with _get_db_connection() as conn:
-        active_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
+        active_row = conn.execute(
+            "SELECT task_ref, target_branch, target_worktree_path FROM handoff_state WHERE id = 1"
+        ).fetchone()
         active_task_ref = str(active_row["task_ref"]) if active_row and active_row["task_ref"] else None
+        target_branch = str(active_row["target_branch"]) if active_row and active_row["target_branch"] else None
+        target_worktree_path = (
+            str(active_row["target_worktree_path"]) if active_row and active_row["target_worktree_path"] else None
+        )
 
         dashboard_rows = _collect_dashboard_rows(conn)
         open_findings = _collect_all_open_findings(conn, max_per_task=100)
@@ -443,7 +541,9 @@ def generate_dashboard_md(write_file: bool = True) -> dict:
         needs_attention = _collect_needs_attention(conn, dashboard_rows, open_findings)
         ctx = _collect_dashboard_context(conn, active_task_ref)
         epic_ref, epic_decisions = _collect_epic_decisions(conn, active_task_ref)
-        task_test_status = _collect_task_test_status(conn)
+        task_test_status = _collect_task_test_status(conn, epic_ref=epic_ref)
+
+    integrity_anomalies = _collect_workflow_integrity(target_branch, target_worktree_path)
 
     extension_sections: list[DashboardSection] = []
     for ext in _extensions:
@@ -464,6 +564,7 @@ def generate_dashboard_md(write_file: bool = True) -> dict:
         epic_ref=epic_ref,
         epic_decisions=epic_decisions,
         task_test_status=task_test_status,
+        integrity_anomalies=integrity_anomalies,
     )
 
     written = False

@@ -25,6 +25,15 @@
     ],
     "PostToolUse": [
       {
+        "matcher": "mcp_altcontext-mc_record_event|mcp_altcontext-mc_review_findings|mcp_altcontext-mc_review_runs|mcp_altcontext-mc_set_handoff_state|mcp_altcontext-mc_update_task_status|mcp__agent-handoff-mcp__record_event|mcp__agent-handoff-mcp__review_findings|mcp__agent-handoff-mcp__review_runs|mcp__agent-handoff-mcp__set_handoff_state|mcp__agent-handoff-mcp__update_task_status",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash scripts/hooks/regenerate-task-views.sh"
+          }
+        ]
+      },
+      {
         "matcher": "mcp_altcontext-mc_review_findings|mcp__agent-handoff-mcp__review_findings",
         "hooks": [
           {

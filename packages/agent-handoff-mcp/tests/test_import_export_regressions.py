@@ -182,7 +182,7 @@ def test_update_task_status_updates_archived_snapshot_and_dashboard(workspace_pa
 
     payload = _parse(mcp_server.generate_current_task_md(task_ref="task-b", write_file=False))
     assert payload["ok"] is True
-    # CURRENT_TASK.md is now active-task-only; cross-task data is in DASHBOARD.md.
+    # CURRENT_TASK.md is now active-task-only; cross-task data is in DASHBOARD.txt.
     ct_data = json.loads(payload["current_task_json"])
     assert ct_data["task_ref"] == "task-b"
     assert "task-a" not in payload["current_task_json"]

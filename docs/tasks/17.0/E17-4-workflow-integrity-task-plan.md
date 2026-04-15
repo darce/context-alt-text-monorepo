@@ -343,8 +343,8 @@ Slices 1–3 are sequential single-lane work on `feature/e17-4`. Slice 4 (AHMCP-
 - [x] `scripts/worktree_audit.py` written; queries handoff DB via RuntimeConfig; exits 1 on orphan
 - [x] `make worktree-audit` target added to Makefile
 - [x] `make check-all` includes `make worktree-audit`
-- [ ] Delete known orphan branches before or alongside the commit that wires `make worktree-audit` into `make check-all`
-- [ ] Proof: the currently known orphan branch(es) are detected; clean repo exits 0 after deletion
+- [x] Delete known orphan branches before or alongside the commit that wires `make worktree-audit` into `make check-all`
+- [x] Proof: the currently known orphan branch(es) are detected; clean repo exits 0 after deletion
 
 ### Checklist for Slice 2: Main-Change Guard and Context Improvement
 
@@ -362,12 +362,12 @@ Slices 1–3 are sequential single-lane work on `feature/e17-4`. Slice 4 (AHMCP-
 
 ### Checklist for Slice 4: File-Touch Tracking (AHMCP-31)
 
-- [ ] AHMCP-31 task scoped and `set_handoff_state` registered
-- [ ] AHMCP-31 merged: `touched_files` table, `record_file_touch`, `get_touched_files`
-- [ ] AHMCP-31 merged: `load_session` includes `touched_files`
-- [ ] PostToolUse hook added to `.claude/settings.json` after AHMCP-31 ships
-- [ ] PostToolUse hook distinguishes `Edit` (`edit`) from new-file `Write` (`add`); `delete` remains explicitly out of scope for this hook surface
-- [ ] Cold-start test passes: `load_session` returns touched files without `git diff`
+- [x] AHMCP-31 task scoped and `set_handoff_state` registered
+- [x] AHMCP-31 merged: `touched_files` table, `record_file_touch`, `get_touched_files`
+- [x] AHMCP-31 merged: `load_session` includes `touched_files`
+- [x] PostToolUse hook added to `.claude/settings.json` after AHMCP-31 ships
+- [x] PostToolUse hook distinguishes `Edit` (`edit`) from new-file `Write` (`add`); `delete` remains explicitly out of scope for this hook surface
+- [x] Cold-start test passes: `load_session` returns touched files without `git diff`
 
 ### Checklist for Slice 5: Startup Cascade Prevention
 
@@ -405,10 +405,10 @@ Slices 1–3 are sequential single-lane work on `feature/e17-4`. Slice 4 (AHMCP-
 
 ## Review Readiness
 
-- [ ] Slice 1: `make worktree-audit` exits 0 on clean repo; CI does not break on `make check-all`
+- [x] Slice 1: `make worktree-audit` exits 0 on clean repo; CI does not break on `make check-all`
 - [x] Slice 2: hook and context changes are non-breaking; no existing tests fail
 - [x] Slice 3: `_task_finish_inline.py` change is backward-compatible when branch already deleted
-- [x] AHMCP-31 has its own pre-merge gate; no E17-4 code depends on AHMCP-31 internals
+- [x] AHMCP-31 merged and PostToolUse hook wired; cold-start proof test passes (532/532)
 - [x] Slice 5: `make context` exits 0 on drift; no existing caller that depended on exit 2 regresses silently
 - [x] Slice 6: `task-plan-audit` passes on the current retroactive plan set and fails deterministically on a missing tagged-plan case
 - [ ] Slice 7: AHMCP-32 has its own pre-merge gate; no E17-4 code depends on AHMCP-32 internals
@@ -416,14 +416,14 @@ Slices 1–3 are sequential single-lane work on `feature/e17-4`. Slice 4 (AHMCP-
 
 ## Stretch Goals
 
-- [ ] `make worktree-prune` interactive target: for each orphan branch, prompt before `git branch -d`
+- [x] `make worktree-prune` interactive target: for each orphan branch, prompt before `git branch -d`
 - [ ] `record_file_touch` backfill: parse existing slice decisions' `## Changes` sections and insert historical touch records
 
 ## Success Criteria
 
-- [ ] `make check-all` exits 0 on clean repo; exits 1 with orphan list when orphan branches exist
+- [x] `make check-all` exits 0 on clean repo; exits 1 with orphan list when orphan branches exist
 - [x] Any agent starting a session on dirty main sees the dirty-file list and maintenance-task hint without running `git diff`
-- [ ] `load_session` (post AHMCP-31) returns `touched_files` for the active task — no `git diff` needed at cold start
+- [x] `load_session` (post AHMCP-31) returns `touched_files` for the active task — no `git diff` needed at cold start
 - [x] `development-workflow.md` and `CLAUDE.md` contain actionable, testable rules for the maintenance-task pattern and branch-delete invariant
 - [ ] `make context` + `ToolSearch` batched in one parallel message never cancels the ToolSearch, even on drift
 - [x] `agent-handoff-mcp` rejects fabricated 40-char SHAs via `InvalidCommitShaError` in `shared_write_context.py` — already shipped

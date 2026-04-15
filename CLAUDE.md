@@ -132,6 +132,16 @@ Whenever a handoff write accepts a `commit_sha` (`record_event(actor=...)`, `set
 
 See [docs/agentic/rules/testing-python.md § Commit SHA Provenance Discipline](docs/agentic/rules/testing-python.md#commit-sha-provenance-discipline-mandatory) for the full rationale and the AHMCP-10/AHMCP-11 audit-trail bug that motivated the enforcement.
 
+### MCP Write Branch Enforcement
+
+> **MCP write operations are blocked when the actor branch does not match the active task's `target_branch`.** Switch to the canonical worktree before recording decisions, findings, or test results.
+
+When `AGENT_HANDOFF_ENFORCE_BRANCH=1` is set, `record_event`, `review_findings`, `close_slice`, `set_handoff_state`, and other write paths raise `BranchMismatchError` if the caller's git branch diverges from the active task's `target_branch`. Writes to tasks targeting `main` or `master` are exempt. Default (env var unset): current warning-only behaviour preserved.
+
+**Enforcement:** Set `export AGENT_HANDOFF_ENFORCE_BRANCH=1` in the dev shell. Tests bypass via `AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT=1` (set automatically by both packages' `tests/conftest.py`). The error response names the expected branch and worktree path so the agent can self-correct.
+
+See [docs/agentic/rules/development-workflow.md § Branch Isolation](docs/agentic/rules/development-workflow.md#branch-isolation-protocol-mandatory) for the full rationale.
+
 ### Review Findings Placement
 
 > **Review findings live in agent-handoff-mcp, not in task plans. Never paste a finding list into a markdown file.**

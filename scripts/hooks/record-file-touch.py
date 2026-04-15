@@ -22,6 +22,16 @@ import subprocess
 import sys
 
 
+def _payload_value(payload: dict, snake_key: str, camel_key: str, default: str = "") -> str:
+    value = payload.get(snake_key)
+    if value:
+        return value
+    camel_value = payload.get(camel_key)
+    if camel_value:
+        return camel_value
+    return default
+
+
 def _git_repo_root() -> str:
     try:
         proc = subprocess.run(
@@ -75,15 +85,15 @@ def main() -> int:
     if not isinstance(data, dict):
         return 0
 
-    tool_name = data.get("tool_name", "")
+    tool_name = _payload_value(data, "tool_name", "toolName")
     if tool_name not in ("Edit", "Write"):
         return 0
 
-    tool_input = data.get("tool_input") or {}
+    tool_input = data.get("tool_input") or data.get("toolInput") or {}
     if not isinstance(tool_input, dict):
         return 0
 
-    file_path = tool_input.get("file_path", "")
+    file_path = _payload_value(tool_input, "file_path", "filePath")
     if not file_path:
         return 0
 

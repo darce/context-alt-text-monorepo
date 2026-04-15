@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
@@ -10,6 +11,16 @@ from pathlib import Path
 import pytest
 
 HOOK_SCRIPT = Path(__file__).parent / "record-file-touch.py"
+
+
+def _load_hook_module():
+    from importlib.util import module_from_spec, spec_from_file_location
+
+    spec = spec_from_file_location("record_file_touch_hook", str(HOOK_SCRIPT))
+    assert spec and spec.loader
+    mod = module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def _run_hook(payload: dict, cwd: Path | None = None) -> subprocess.CompletedProcess:
@@ -98,3 +109,37 @@ def test_determine_change_kind_write_untracked(tmp_path: Path) -> None:
     untracked = tmp_path / "new_file.py"
     untracked.write_text("hello")
     assert mod._determine_change_kind("Write", str(untracked)) == "add"
+
+
+def test_main_accepts_camel_case_post_tool_use_payload(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Hook should accept toolName/toolInput/filePath payload variants."""
+    mod = _load_hook_module()
+    tracked = tmp_path / "README.md"
+    tracked.write_text("hello")
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], *args, **kwargs) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(mod, "_git_repo_root", lambda: str(tmp_path))
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        mod.sys,
+        "stdin",
+        io.StringIO(
+            json.dumps(
+                {
+                    "toolName": "Edit",
+                    "toolInput": {"filePath": str(tracked)},
+                }
+            )
+        ),
+    )
+
+    assert mod.main() == 0
+    assert calls, "expected record_file_touch subprocess for camelCase payload"
+    assert calls[0][0] == sys.executable
+    assert "record_file_touch" in calls[0][2]
+    assert "file_path='README.md'" in calls[0][2]
+    assert "change_kind='edit'" in calls[0][2]

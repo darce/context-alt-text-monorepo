@@ -50,18 +50,18 @@ interface FetchWorkbenchMediaParams {
 const isWorkbenchMediaResponse = (value: unknown): value is WorkbenchMediaResponse =>
   Boolean(
     value &&
-      typeof value === 'object' &&
-      Array.isArray((value as WorkbenchMediaResponse).items) &&
-      typeof (value as WorkbenchMediaResponse).total === 'number' &&
-      typeof (value as WorkbenchMediaResponse).totalPages === 'number',
+    typeof value === 'object' &&
+    Array.isArray((value as WorkbenchMediaResponse).items) &&
+    typeof (value as WorkbenchMediaResponse).total === 'number' &&
+    typeof (value as WorkbenchMediaResponse).totalPages === 'number',
   );
 
 const isWorkbenchMediaDetailResponse = (value: unknown): value is WorkbenchMediaDetailApiResponse =>
   Boolean(
     value &&
-      typeof value === 'object' &&
-      'details_by_media' in value &&
-      typeof (value as { details_by_media?: unknown }).details_by_media === 'object',
+    typeof value === 'object' &&
+    'details_by_media' in value &&
+    typeof (value as { details_by_media?: unknown }).details_by_media === 'object',
   );
 
 export const fetchWorkbenchMedia = async ({

@@ -126,7 +126,7 @@ from .review_findings import (  # noqa: F401
     update_review_finding,
 )
 from .runtime import get_runtime_config
-from .touched_files import ChangeKind, DEFAULT_TOUCHED_FILES_LIMIT, get_touched_files, record_file_touch  # noqa: F401
+from .touched_files import DEFAULT_TOUCHED_FILES_LIMIT, ChangeKind, get_touched_files, record_file_touch  # noqa: F401
 from .verified_tests import get_verified_tests  # noqa: F401
 
 # FTS search constants and search_handoff

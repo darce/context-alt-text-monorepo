@@ -32,7 +32,7 @@ Five concrete defects confirmed in the live dashboard:
 - No change to `CURRENT_TASK.md` — that file is machine-readable for agent handoffs and intentionally uses markdown. Scope is `DASHBOARD` only.
 - `RuntimeConfig.dashboard_path` default changes from `workspace_root / "DASHBOARD.md"` to `workspace_root / "DASHBOARD"`. Callers that set `dashboard_path` explicitly are unaffected. Callers using the default must regenerate; the old `DASHBOARD.md` is not auto-deleted.
 - ANSI colour must be completely suppressible — `NO_COLOR=1` env var (standard convention) disables it unconditionally. No ANSI escape codes in non-tty writes (file output, CI).
-- `_render_dashboard_section` is shared between `CURRENT_TASK.md` and `DASHBOARD` rendering paths. The code-fence removal must not break the `CURRENT_TASK.md` path. Verify with grep before editing.
+- `_render_dashboard_section` is defined in `current_task_rendering.py` and imported by `dashboard_rendering.py`. The CURRENT_TASK.md render path uses `_render_current_task_md`, a separate function that does not call `_render_dashboard_section`. Confirm with `grep -n "_render_dashboard_section" src/agent_handoff_mcp/current_task_rendering.py` before editing to verify no new call sites were added since this plan was written.
 - Workflow-integrity data must stay derived from handoff state plus live git state. Do not overload persisted task progress status with git-cleanup metadata.
 
 ## Current State Analysis
@@ -116,13 +116,13 @@ Proof:
 
 Changes:
 
-- Add VS Code/Copilot parity for dashboard regeneration via `.github/hooks/terminal-guard.json`, or move dashboard refresh into the MCP write path so state-changing writes regenerate `DASHBOARD` regardless of harness.
+- Add VS Code/Copilot parity for dashboard regeneration by wiring `scripts/hooks/regenerate-task-views.sh` into `.github/hooks/terminal-guard.json` for the same post-tool events already covered in `.claude/settings.json` (`record_event`, `review_findings`, `review_runs`, `set_handoff_state`, `update_task_status`). Preferred over moving refresh into the MCP write path — the write-path approach risks adding latency to every MCP write in non-tty environments (CI, test runs) and couples a presentation concern to the storage layer.
 - Add a derived `WORKFLOW INTEGRITY` section in `dashboard_rendering.py` keyed to active/archived snapshot `target_branch` plus live git state. Render only anomalous states such as orphan branch, missing branch, undeleted merged branch, or worktree drift.
 - Reorder `_render_dashboard_md` so active-task `OPEN FINDINGS` and `WORKFLOW INTEGRITY` render before `TEST STATUS`.
 
 Proof:
 
-- A state-changing MCP write from either Claude or VS Code/Copilot updates `DASHBOARD` without a manual regeneration step.
+- After wiring `.github/hooks/terminal-guard.json`, a state-changing MCP write from either Claude or VS Code/Copilot updates `DASHBOARD` without a manual regeneration step. Verify by inspecting the terminal-guard hook event list matches `.claude/settings.json`.
 - With an active task that has open findings, those findings appear above `TEST STATUS`.
 - With no integrity anomalies, `WORKFLOW INTEGRITY` is omitted entirely.
 
@@ -164,7 +164,7 @@ Single-lane work on `feature/e17-5`. Slices 1 and 2 are independent of each othe
 ### Context and Ownership
 
 - [ ] Read `_render_dashboard_section` in `current_task_rendering.py` to confirm fence lines are dashboard-only (not shared with CURRENT_TASK path)
-- [ ] Confirm `_infer_epic_ref` handles all active task_ref formats in use (E17-N, AHMCP-N, MAINT-*)
+- [ ] Confirm `_infer_epic_ref` handles all active task_ref formats in use (E17-N, AHMCP-N, MAINT-*). Expected: `MAINT-*` refs return `None` so maintenance tasks see unfiltered TEST STATUS (same as the no-epic-ref fallback).
 
 ### Checklist for Slice 1: Plain-text Format and File Extension
 
@@ -185,7 +185,7 @@ Single-lane work on `feature/e17-5`. Slices 1 and 2 are independent of each othe
 
 ### Checklist for Slice 3: Refresh Parity and Integrity Alerts
 
-- [ ] VS Code/Copilot dashboard refresh parity added, or refresh moved into MCP write path
+- [ ] `scripts/hooks/regenerate-task-views.sh` wired into `.github/hooks/terminal-guard.json` for the same post-tool events as `.claude/settings.json`
 - [ ] Derived `WORKFLOW INTEGRITY` section renders only on anomalies
 - [ ] Active-task findings and integrity alerts render before `TEST STATUS`
 - [ ] Tests cover hook parity or write-path parity and anomaly-only integrity rendering

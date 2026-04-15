@@ -9,8 +9,6 @@
 
 ---
 
-## E17-6. Phase 3 Retrofit — Skill Anatomy Completion, Routing Redirect, and Planning Gate Wiring
-
 ## Objective
 
 Retrofit the 8 pre-E17 legacy skills to the anatomy template, add a headless `make check-skills` validator that enforces anatomy compliance in CI, redirect `CLAUDE.md` and `instructions.md` triggers to skills as primary entry points (removing inline prose that duplicates skill content), and wire `plan-analyze` as a required precheck before `make plan-review` can proceed. When this task is complete, every skill in `.claude/skills/` passes `make check-skills`, agents are routed to skills rather than bulk guide loading for every major workflow trigger, and the planning pipeline has a machine-enforced pre-review analysis gate.
@@ -167,7 +165,7 @@ Anatomy values by skill (to be confirmed against current body content during imp
 | refactor | advisory | false | null | [] |
 | security-audit | advisory | false | null | [] |
 | document-sync | advisory | false | null | [] |
-| daemon-lifecycle | execution | false | mcp-start (confirm) | mcp__agent-orchestrator-mcp__manage_orchestrator, mcp__agent-orchestrator-mcp__manage_worker |
+| daemon-lifecycle | execution | false | mcp-start | mcp__agent-orchestrator-mcp__manage_orchestrator, mcp__agent-orchestrator-mcp__manage_worker |
 | worktree-orchestrator | execution | false | null | mcp__agent-orchestrator-mcp__manage_worktree_lane, mcp__agent-orchestrator-mcp__dispatch_lane_work, mcp__agent-handoff-mcp__record_event |
 | worktree-worker | execution | true | null | mcp__agent-handoff-mcp__record_event, mcp__agent-handoff-mcp__close_slice, mcp__agent-orchestrator-mcp__worker_reports |
 | rescue-lane | execution | false | null | mcp__agent-handoff-mcp__record_event |
@@ -244,10 +242,10 @@ Changes:
 
 - New `scripts/check_plan_analyze.py`:
   - Accepts `--doc <path>` and `--task-ref <ref>` as arguments.
-  - Queries `review_findings(review={"operation":"list", "task_ref": ..., "filters": {"review_mode": "analysis"}})` via the `agent_handoff_mcp` Python API.
-  - Matches findings against the target document path (compares `finding.source_document` or equivalent field to the provided `--doc` path; see `review_findings` response schema for the correct field name at implementation time).
-  - Exits 0 if at least one analysis-mode finding exists for the document; exits 2 if none found (2 = gate-not-met, distinguishable from parse/API errors).
-  - Prints: "plan-analyze gate: PASS (N findings for <doc>)" or "plan-analyze gate: MISSING — run `make plan-analyze DOC=<doc>` before plan-review."
+  - Queries `review_runs(review={"operation":"list", "review_mode":"planning", "subject_path":<doc>, "task_ref":<ref>})` via the `agent_handoff_mcp` Python API. Note: `review_mode="analysis"` is not a valid enum value — valid values are `branch`, `release_audit`, `planning`. `plan-analyze` records runs with `review_mode="planning"`.
+  - Filters the returned runs to those whose `session` field starts with `plan-analyze`. This discriminates plan-analyze runs from full planning-review runs against the same document. Session naming convention: `plan-analyze-<doc-slug>-<date>`.
+  - Exits 0 if at least one matching run is found; exits 1 on API/infrastructure errors (import failure, DB unavailable); exits 2 if the gate is not met — no matching plan-analyze run for the document.
+  - Prints: "plan-analyze gate: PASS (N runs for <doc>)" or "plan-analyze gate: MISSING — run `make plan-analyze DOC=<doc>` before plan-review."
 - Extend `plan-review` target in `mk/handoff.mk`:
   - After the DOC/file existence checks, run `python scripts/check_plan_analyze.py --doc $(DOC) --task-ref $(TASK)`.
   - If script exits 2 and `PLAN_ANALYZE_REQUIRED` is not set: print the gate warning and continue (print the existing plan-review info block as before).
@@ -260,5 +258,5 @@ Proof:
 
 - `make plan-review DOC=<any plan without prior analysis run>` → prints gate warning, then proceeds to print the plan-review info block.
 - `make plan-review DOC=<same plan> PLAN_ANALYZE_REQUIRED=1` → exits 1 before printing the plan-review block.
-- Record a `plan-analyze` finding for the document via `review_findings(operation="record", review_mode="analysis", ...)` → `make plan-review DOC=<that doc>` → gate passes silently.
+- Record a `plan-analyze` review run for the document via `review_runs(operation="record", review_mode="planning", session="plan-analyze-<slug>-<date>", subject_path=<doc>)` → `make plan-review DOC=<that doc>` → gate passes silently.
 - `make plan-review DOC=<doc> TASK=E17-6` (explicit task ref) → check runs against the named task's findings.

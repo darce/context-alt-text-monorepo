@@ -402,6 +402,49 @@ def test_generate_dashboard_md_no_write_returns_markdown(isolated_handoff) -> No
     assert "DASHBOARD" in result["markdown"]
 
 
+def test_task_test_status_filtered_to_epic(isolated_handoff) -> None:
+    """TEST STATUS shows only tasks from the active epic (E17-5 Slice 2)."""
+    # Create an active task under the E17 epic.
+    mcp_server.set_handoff_state(task_ref="E17-4", objective="obj", status="in_progress")
+    # Record test results for two different epics.
+    mcp_server.record_event(
+        event={
+            "event_kind": "test_result",
+            "session": "epic-filter",
+            "command": "make test",
+            "passed": True,
+            "task_ref": "E17-4",
+        }
+    )
+    mcp_server.record_event(
+        event={
+            "event_kind": "test_result",
+            "session": "epic-filter",
+            "command": "make test",
+            "passed": True,
+            "task_ref": "AHMCP-9",
+        }
+    )
+    result = generate_dashboard_md(write_file=False)
+    assert result["ok"] is True
+    md = result["markdown"]
+    # Extract TEST STATUS section.
+    test_section_start = md.index("TEST STATUS")
+    # Find the next section heading (a line that is all-caps followed by dashes).
+    remaining = md[test_section_start + len("TEST STATUS"):]
+    next_heading = len(md)
+    for i, line in enumerate(remaining.split("\n")):
+        stripped = line.strip()
+        if stripped and stripped == stripped.upper() and len(stripped) > 3 and not stripped.startswith("-") and not stripped.startswith("─"):
+            next_heading = test_section_start + len("TEST STATUS") + sum(len(l) + 1 for l in remaining.split("\n")[:i])
+            break
+    test_section = md[test_section_start:next_heading]
+    # E17-family task must appear in TEST STATUS.
+    assert "E17-4" in test_section
+    # Cross-epic task must NOT appear in TEST STATUS.
+    assert "AHMCP-9" not in test_section
+
+
 def test_generate_dashboard_md_with_registered_extension(isolated_handoff) -> None:
     def my_ext(ctx: DashboardContext) -> list[DashboardSection]:
         return [{"heading": "Lane Health", "content": "3 lanes active", "order": 50}]

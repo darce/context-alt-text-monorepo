@@ -305,12 +305,22 @@ def _render_epic_decisions_section(epic_ref: str, decisions: list[dict]) -> list
 # ---------------------------------------------------------------------------
 
 
-def _collect_task_test_status(conn: sqlite3.Connection) -> dict[str, dict]:
+def _collect_task_test_status(conn: sqlite3.Connection, epic_ref: str | None = None) -> dict[str, dict]:
     """Return per-task test summary: latest pass/fail and totals.
 
     Only includes tasks that have at least one verified_test row.
+    When *epic_ref* is set, only tasks whose task_ref matches the epic
+    prefix are returned (same pattern as ``_collect_epic_decisions``).
     """
-    rows = conn.execute("SELECT task_ref, passed, verified_at FROM verified_tests ORDER BY verified_at DESC").fetchall()
+    if epic_ref:
+        rows = conn.execute(
+            "SELECT task_ref, passed, verified_at FROM verified_tests"
+            " WHERE task_ref = ? OR task_ref LIKE ?"
+            " ORDER BY verified_at DESC",
+            (epic_ref, f"{epic_ref}-%"),
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT task_ref, passed, verified_at FROM verified_tests ORDER BY verified_at DESC").fetchall()
     summary: dict[str, dict] = {}
     for row in rows:
         ref = str(row["task_ref"])
@@ -443,7 +453,7 @@ def generate_dashboard_md(write_file: bool = True) -> dict:
         needs_attention = _collect_needs_attention(conn, dashboard_rows, open_findings)
         ctx = _collect_dashboard_context(conn, active_task_ref)
         epic_ref, epic_decisions = _collect_epic_decisions(conn, active_task_ref)
-        task_test_status = _collect_task_test_status(conn)
+        task_test_status = _collect_task_test_status(conn, epic_ref=epic_ref)
 
     extension_sections: list[DashboardSection] = []
     for ext in _extensions:

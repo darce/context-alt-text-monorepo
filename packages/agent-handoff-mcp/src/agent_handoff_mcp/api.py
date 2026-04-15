@@ -66,7 +66,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "handoff_close_check": "Check task readiness to close: blockers, pending actions, findings, and optional fresh-test gate.",
     "audit_decision_ids": "Audit decision IDs for grammar conformance. Returns canonical/malformed/freeform classifications.",
     "generate_current_task_md": "Generate the machine-readable CURRENT_TASK.md snapshot for the active task.",
-    "generate_dashboard_md": "Generate DASHBOARD.md — the human-scoped observatory view with Needs Attention summary, All Tasks table, cross-task open findings, and optional extension sections (e.g. Lane Health from agent-orchestrator-mcp).",
+    "generate_dashboard_md": "Generate DASHBOARD.txt — the human-scoped observatory view with Needs Attention summary, All Tasks table, cross-task open findings, and optional extension sections (e.g. Lane Health from agent-orchestrator-mcp).",
     "export_handoff_state": "Export the task handoff state to a portable JSON snapshot.",
     "import_handoff_state": "Import a previously exported handoff state snapshot into the local database.",
     "archive_task_state": "Archive completed task state from the live handoff tables into archive storage.",
@@ -74,7 +74,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "get_verified_tests": "List verified test rows from the handoff ledger with optional task, lane, branch, commit, and pass/fail filters.",
     "update_task_status": "Update a task status without recording a slice decision. For the active task this requires expected_revision; for archived tasks it updates the archived snapshot status used by the dashboard.",
     "load_session": "Load session context: get_handoff_state + review_findings(list open) in one call. Pass sections to shape the nested state payload and detail to shape both state and findings.",
-    "close_slice": "Record a slice-complete decision, keep the task status in_progress, and regenerate CURRENT_TASK.md plus DASHBOARD.md. Requires expected_revision when the target task is currently active. Pass changed_files to persist structured review scope on the nested decision write.",
+    "close_slice": "Record a slice-complete decision, keep the task status in_progress, and regenerate CURRENT_TASK.md plus DASHBOARD.txt. Requires expected_revision when the target task is currently active. Pass changed_files to persist structured review scope on the nested decision write.",
     "artifacts": "Record, search, get, or purge artifact sources through one typed domain surface. Set artifact.operation to 'record', 'search', 'get', or 'purge'.",
     "search_handoff": "Search decisions, findings, blockers, actions, and verified tests by keyword with BM25 ranking. Pass detail='summary' to truncate snippets and fields='record_type,snippet' to project per-result fields.",
 }
@@ -1598,7 +1598,7 @@ def generate_current_task_md(
     Renders only the active task's data: objective, focus, status, blockers,
     actions, decisions, tests, findings, lanes, and coverage.  Cross-task
     sections (All Tasks table, findings from other tasks) have moved to
-    DASHBOARD.md — use generate_dashboard_md() to produce that file.
+    DASHBOARD.txt — use generate_dashboard_md() to produce that file.
 
     Args:
         task_ref: The task to render. Defaults to the active task.
@@ -1682,7 +1682,7 @@ def generate_current_task_md(
 
 
 def generate_dashboard_md(write_file: bool = True) -> dict:
-    """Generate DASHBOARD.md — the human-scoped observatory view.
+    """Generate DASHBOARD.txt — the human-scoped observatory view.
 
     Contains: Needs Attention summary, All Tasks table, cross-task open findings
     grouped by task_ref, deferred/wontfix findings, and any registered extension
@@ -1694,7 +1694,7 @@ def generate_dashboard_md(write_file: bool = True) -> dict:
     agent-orchestrator-mcp.
 
     Args:
-        write_file: Write the markdown to DASHBOARD.md alongside CURRENT_TASK.md.
+        write_file: Write the markdown to DASHBOARD.txt alongside CURRENT_TASK.md.
     """
     from .dashboard_rendering import generate_dashboard_md as _generate  # noqa: PLC0415
 
@@ -1711,7 +1711,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
             "## Task State Model\n\n"
             "One task is active at a time (stored in handoff_state id=1). "
             "Completed tasks are archived into task_archives with a status snapshot. "
-            "DASHBOARD.md renders the human-readable active-task view plus the cross-task dashboard, "
+            "DASHBOARD.txt renders the human-readable active-task view plus the cross-task dashboard, "
             "while CURRENT_TASK.md stores the machine-readable active-task snapshot. "
             "The dashboard renders both the active task's live status and each archived task's snapshot status. "
             "Non-archived, non-active tasks default to 'active' in the dashboard — "
@@ -1723,7 +1723,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
             "record test results with `record_event(event={event_kind:'test_result', ...})`, "
             "and record blockers with `record_event(event={event_kind:'blocker', ...})`.\n"
             "3. **Complete slices**: use `close_slice(...)` to record a slice-complete decision. "
-            "This keeps the task status as in_progress and regenerates CURRENT_TASK.md plus DASHBOARD.md.\n"
+            "This keeps the task status as in_progress and regenerates CURRENT_TASK.md plus DASHBOARD.txt.\n"
             "4. **Finish task**: when all slices are done, update status to done: "
             "`update_task_status(task_ref=..., status='done')`. "
             "Then archive: `archive_task_state(task_ref=...)`.\n"
@@ -1733,7 +1733,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
             "## Key Tool Guidance\n\n"
             "- `load_session`: use at session start to get state + open findings in one call.\n"
             "- `close_slice`: use for slice completions — it records a decision, keeps status "
-            "in_progress, and regenerates CURRENT_TASK.md plus DASHBOARD.md atomically.\n"
+            "in_progress, and regenerates CURRENT_TASK.md plus DASHBOARD.txt atomically.\n"
             "- `update_task_status`: use to change status (in_progress/done/blocked/review) "
             "without recording a decision. Works for both active and archived tasks.\n"
             "- `set_handoff_state`: use to update objective, focus, or status on the active task. "
@@ -1743,7 +1743,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
             "the task had at archive time.\n"
             "- `generate_current_task_md`: call after any state-changing operation "
             "(record_event, review_findings with record/batch_record/update) "
-            "to keep CURRENT_TASK.md machine-readable and DASHBOARD.md human-readable."
+            "to keep CURRENT_TASK.md machine-readable and DASHBOARD.txt human-readable."
         ),
     )
     _apply_tool_descriptions()

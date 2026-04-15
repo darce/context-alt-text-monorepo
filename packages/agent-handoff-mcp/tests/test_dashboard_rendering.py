@@ -353,8 +353,18 @@ def test_generate_dashboard_md_writes_file(isolated_handoff) -> None:
     assert result["path"] is not None
     dashboard_path = Path(result["path"])
     assert dashboard_path.exists()
+    assert dashboard_path.name == "DASHBOARD.txt"
     content = dashboard_path.read_text()
     assert "DASHBOARD" in content
+
+
+def test_dashboard_no_fences(isolated_handoff) -> None:
+    """ALL TASKS table must not contain backtick fences (E17-5 Slice 1)."""
+    mcp_server.set_handoff_state(task_ref="FENCE-1", objective="obj", status="in_progress")
+    result = generate_dashboard_md(write_file=False)
+
+    assert result["ok"] is True
+    assert "```" not in result["markdown"]
 
 
 def test_generate_dashboard_md_uses_runtime_dashboard_path(tmp_path: Path) -> None:

@@ -45,7 +45,7 @@ def test_runtime_config_defaults_to_workspace_task_state() -> None:
     assert runtime.state_dir == workspace_root / ".task-state"
     assert runtime.db_path == workspace_root / ".task-state" / "handoff.db"
     assert runtime.current_task_path == workspace_root / "CURRENT_TASK.md"
-    assert runtime.dashboard_path == workspace_root / "DASHBOARD.md"
+    assert runtime.dashboard_path == workspace_root / "DASHBOARD.txt"
     assert runtime.exports_dir == workspace_root / ".task-state" / "exports"
 
 

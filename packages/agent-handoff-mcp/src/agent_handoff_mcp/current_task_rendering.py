@@ -567,12 +567,11 @@ def _render_dashboard_section(tasks: list[DashboardTaskRow], active_task_ref: st
         f"  {sep * col_block}  {sep * col_act}  {sep * col_last}"
     )
 
-    lines: list[str] = ["", "ALL TASKS", "-" * 9, "", "```", header, separator]
+    lines: list[str] = ["", "ALL TASKS", "-" * 9, "", header, separator]
     if not tasks:
         lines.append(
             f"  {'(no tasks)':<{col_task}}  {'-':<{col_status}}  {'0':>{col_find}}  {'0':>{col_block}}  {'0':>{col_act}}  {'-':<{col_last}}"
         )
-        lines.append("```")
         return lines
     for task in tasks:
         task_ref = task.get("task_ref", "")
@@ -585,7 +584,6 @@ def _render_dashboard_section(tasks: list[DashboardTaskRow], active_task_ref: st
             f"{marker}{task_cell:<{col_task}}  {status:<{col_status}}  {task.get('open_findings', 0):>{col_find}}"
             f"  {task.get('open_blockers', 0):>{col_block}}  {task.get('pending_actions', 0):>{col_act}}  {last:<{col_last}}"
         )
-    lines.append("```")
     return lines
 
 

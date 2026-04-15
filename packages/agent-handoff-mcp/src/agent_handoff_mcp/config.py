@@ -102,7 +102,7 @@ class RuntimeConfig:
         resolved_dashboard_path = (
             Path(dashboard_path).expanduser().resolve()
             if dashboard_path is not None
-            else resolved_workspace_root / "DASHBOARD.md"
+            else resolved_workspace_root / "DASHBOARD.txt"
         )
         resolved_exports_dir = (
             Path(exports_dir).expanduser().resolve() if exports_dir is not None else resolved_state_dir / "exports"

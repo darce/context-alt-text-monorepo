@@ -20,7 +20,23 @@ On every session (cold start, mid-task re-entry, lane inherit):
 8. Decide whether `ctx7` is needed (upstream library behavior; see ctx7 criteria in instructions.md).
 9. Ensure the work has an MCP task. **Planning (assessments, specs, task plans) stays on `main`** — create the handoff task with `set_handoff_state(task_ref=..., objective=...)` and commit the plan as a docs artifact on `main`. No feature branch or worktree needed yet. **Implementation (code + tests)** requires a feature branch: run `make task-start TASK=<id> OBJECTIVE="..."` to create the branch + worktree + MCP target after the plan is approved. See [planning pipeline](docs/agentic/rules/planning-pipeline.md) for the full two-phase flow.
 
-If MCP tool calls unavailable (ToolSearch returns nothing for `mcp__agent-handoff-mcp__*`): **use the Python API via Bash as the primary fallback** — `from agent_handoff_mcp import RuntimeConfig, configure_runtime, get_handoff_state, ...` covers every operation. Call `configure_runtime(RuntimeConfig.for_repo(Path("<repo-root>")))` first. Never use raw `sqlite3` to query `handoff.db` directly; the schema is internal and will break. `DASHBOARD.md` is a last-resort stale read only when the Python package itself is also unavailable. Record a blocker when Claude Code MCP tool access does not restore after session restart. **Stop implementation work until at least the Python API is available.**
+If MCP tool calls unavailable (ToolSearch returns nothing for `mcp__agent-handoff-mcp__*`), or if you need a query the MCP tools don't directly expose: **use the Python API via Bash as the primary fallback.** Always import from the package root — never from submodules (`.config`, `.decisions`, `.core` are internal):
+
+```python
+from pathlib import Path
+from agent_handoff_mcp import (
+    RuntimeConfig, configure_runtime,          # setup (call configure_runtime first)
+    get_handoff_state, search_handoff,          # read state
+    record_event, record_decision,              # write decisions
+    review_findings, list_review_findings,      # findings CRUD
+    list_review_runs, record_review_run,        # review runs
+    set_handoff_state, update_task_status,      # task lifecycle
+    get_verified_tests, generate_dashboard_md,  # queries and rendering
+)
+configure_runtime(RuntimeConfig.for_repo(Path(".")))
+```
+
+Never use raw `sqlite3` to query `handoff.db` directly; the schema is internal and will break. `DASHBOARD.md` is a last-resort stale read only when the Python package itself is also unavailable. Record a blocker when Claude Code MCP tool access does not restore after session restart. **Stop implementation work until at least the Python API is available.**
 
 ---
 

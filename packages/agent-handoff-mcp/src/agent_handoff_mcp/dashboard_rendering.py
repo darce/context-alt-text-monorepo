@@ -1,4 +1,4 @@
-"""DASHBOARD.md rendering for agent_handoff_mcp.
+"""DASHBOARD.txt rendering for agent_handoff_mcp.
 
 Contains:
   - DashboardContext, DashboardSection, DashboardExtension types
@@ -506,7 +506,7 @@ def _render_dashboard_md(
 
 
 def generate_dashboard_md(write_file: bool = True) -> dict:
-    """Generate DASHBOARD.md from the live handoff DB.
+    """Generate DASHBOARD.txt from the live handoff DB.
 
     Core sections (Needs Attention, All Tasks, Open Findings, Deferred/Won't Fix)
     are always rendered.  Extension sections (registered via

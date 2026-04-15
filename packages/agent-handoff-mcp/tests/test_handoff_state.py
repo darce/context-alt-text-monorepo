@@ -21,7 +21,7 @@ def isolated_handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     state_dir = tmp_path / ".task-state"
     state_dir.mkdir(parents=True, exist_ok=True)
     current_task_path = tmp_path / "CURRENT_TASK.md"
-    dashboard_path = tmp_path / "DASHBOARD.md"
+    dashboard_path = tmp_path / "DASHBOARD.txt"
     runtime = RuntimeConfig.for_workspace(
         tmp_path,
         state_dir=state_dir,
@@ -1627,20 +1627,20 @@ def test_archive_and_dashboard_summary(isolated_handoff: dict) -> None:
         assert conn.execute("SELECT COUNT(*) FROM decisions WHERE task_ref = '4.99.0'").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM next_actions WHERE task_ref = '4.99.0'").fetchone()[0] == 0
 
-    # Archived task must appear in DASHBOARD.md (generate_dashboard_md replaces view="dashboard").
+    # Archived task must appear in DASHBOARD.txt (generate_dashboard_md replaces view="dashboard").
     dash_result = _parse(mcp_server.generate_dashboard_md(write_file=False))
     dash_md = dash_result["markdown"]
     assert "4.99.0" in dash_md
 
     # (a) Status is recovered from archived snapshot JSON; task was archived with status="done".
-    # The All Tasks table in DASHBOARD.md renders the status column.
+    # The All Tasks table in DASHBOARD.txt renders the status column.
     assert "done" in dash_md
 
-    # (b) CURRENT_TASK.md no longer renders the All Tasks table (moved to DASHBOARD.md).
+    # (b) CURRENT_TASK.md no longer renders the All Tasks table (moved to DASHBOARD.txt).
     _parse(mcp_server.set_handoff_state(task_ref="post-archive", objective="post-archive placeholder", status="active"))
     rendered = _parse(mcp_server.generate_current_task_md(task_ref="post-archive", write_file=False))
     current_task_data = json.loads(rendered["current_task_json"])
-    assert current_task_data["task_ref"] == "post-archive"  # cross-task data moved to DASHBOARD.md
+    assert current_task_data["task_ref"] == "post-archive"  # cross-task data moved to DASHBOARD.txt
     assert "4.99.0" not in rendered["current_task_json"]
 
 
@@ -1704,7 +1704,7 @@ def test_generate_current_task_md_prefers_live_status_over_archived_snapshot(iso
     payload = _parse(mcp_server.generate_current_task_md(task_ref="reactivated-task", write_file=False))
     data = json.loads(payload["current_task_json"])
 
-    # CURRENT_TASK.md shows active-task status only; All Tasks table is in DASHBOARD.md.
+    # CURRENT_TASK.md shows active-task status only; All Tasks table is in DASHBOARD.txt.
     assert data["task_ref"] == "reactivated-task"
     assert data["active"]["status"] == "done"
 
@@ -1744,7 +1744,7 @@ def test_generate_current_task_md_includes_dashboard_header(isolated_handoff: di
     payload = _parse(mcp_server.generate_current_task_md(task_ref="E12-11", write_file=False))
     data = json.loads(payload["current_task_json"])
 
-    # CURRENT_TASK.md is now active-task-only; All Tasks table moved to DASHBOARD.md.
+    # CURRENT_TASK.md is now active-task-only; All Tasks table moved to DASHBOARD.txt.
     assert data["task_ref"] == "E12-11"
     assert data["active"]["objective"] == "Dashboard active task"
     # Cross-task finding (E12-10) must not appear in active-task JSON
@@ -1775,7 +1775,7 @@ def test_internal_write_path_writes_current_task_json(isolated_handoff: dict) ->
     _write_current_task_md_from_state("iw-dashboard")
 
     # CURRENT_TASK.md is machine-readable JSON (active-task only).
-    # Cross-task sections (All Tasks table, other-task findings) live in DASHBOARD.md.
+    # Cross-task sections (All Tasks table, other-task findings) live in DASHBOARD.txt.
     current_task_payload = json.loads(isolated_handoff["current_task_path"].read_text())
     assert current_task_payload["task_ref"] == "iw-dashboard"
     assert current_task_payload["active"]["status"] == "in_progress"
@@ -2039,7 +2039,7 @@ def test_record_decision_accepts_structured_slice_completion_rationale(isolated_
 
 
 def test_generate_current_task_md_excludes_cross_task_findings(isolated_handoff: dict) -> None:
-    """CURRENT_TASK.md only shows the active task's own findings; cross-task data is in DASHBOARD.md."""
+    """CURRENT_TASK.md only shows the active task's own findings; cross-task data is in DASHBOARD.txt."""
     _parse(
         mcp_server.set_handoff_state(
             task_ref="daemon-3",
@@ -2117,7 +2117,7 @@ def test_generate_current_task_md_related_excludes_active_task(isolated_handoff:
 
 
 def test_generate_current_task_md_excludes_all_cross_task_findings(isolated_handoff: dict) -> None:
-    """Cross-task findings never appear in CURRENT_TASK.md; they belong in DASHBOARD.md."""
+    """Cross-task findings never appear in CURRENT_TASK.md; they belong in DASHBOARD.txt."""
     _parse(
         mcp_server.set_handoff_state(
             task_ref="daemon-active",
@@ -3128,7 +3128,7 @@ def test_close_slice_writes_current_task_json_on_success(isolated_handoff: dict)
     assert result["task_revision"] >= 1
 
     # CURRENT_TASK.md is machine-readable JSON (active-task only).
-    # Cross-task sections (All Tasks table, other-task findings) live in DASHBOARD.md.
+    # Cross-task sections (All Tasks table, other-task findings) live in DASHBOARD.txt.
     current_task_payload = json.loads(isolated_handoff["current_task_path"].read_text())
     assert current_task_payload["task_ref"] == "close-dashboard"
     assert current_task_payload["active"]["status"] == "in_progress"

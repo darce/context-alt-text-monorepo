@@ -78,7 +78,54 @@ PYTHONPATH=src python -m mypy src
 PYTHONPATH=src python -m pytest tests -q
 ```
 
-## Usage
+## Python API
+
+The package can be used directly as a library — this is the primary fallback when MCP tool calls are unavailable.
+
+**Always import from the package root** (`agent_handoff_mcp`), never from submodules like `.config`, `.decisions`, or `.core`. Submodules are internal and may change.
+
+```python
+from pathlib import Path
+from agent_handoff_mcp import (
+    RuntimeConfig,
+    configure_runtime,
+    get_handoff_state,
+    search_handoff,
+    record_event,
+    review_findings,
+    list_review_findings,
+    set_handoff_state,
+    update_task_status,
+    get_verified_tests,
+    generate_dashboard_md,
+)
+
+# Configure runtime before any read/write call
+configure_runtime(RuntimeConfig.for_repo(Path("/path/to/workspace")))
+
+# Read state
+state = get_handoff_state(sections="identity")
+
+# Search decisions
+results = search_handoff(queries=["slice_complete"], record_types=["decision"], limit=5)
+
+# List open findings
+findings = list_review_findings(status="open")
+```
+
+Without installation (monorepo source tree):
+
+```bash
+PYTHONPATH=packages/agent-handoff-mcp/src python3 -c "
+from pathlib import Path
+from agent_handoff_mcp import RuntimeConfig, configure_runtime, get_handoff_state
+configure_runtime(RuntimeConfig.for_repo(Path('.')))
+state = get_handoff_state(sections='identity')
+print(state['data']['active']['task_ref'])
+"
+```
+
+## CLI Usage
 
 Run the MCP server over stdio:
 

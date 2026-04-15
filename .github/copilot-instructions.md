@@ -53,6 +53,62 @@ Before editing code, use one of these isolation tiers:
 
 ---
 
+# Agent Cold-Start Orientation
+
+On every session start, context switch, or worktree change:
+
+1. Run `make context` to verify your shell is in the correct worktree on the correct branch.
+2. Query MCP state: `get_handoff_state(sections="identity")` to learn the active task, target branch, and target worktree path.
+3. If the active task has a `target_worktree_path`, `cd` to it before doing any work.
+4. Check open findings: `review_findings(operation="list", status="open")`.
+
+This protocol ensures you orient to the correct workspace state regardless of which agent set it up.
+
+# MCP and Python API Fallback
+
+`agent-handoff-mcp` is the primary state store for task state, decisions, findings, and review runs. `agent-orchestrator-mcp` extends it with lane management, worker control, and review dispatch. When MCP tool calls are available, use them directly. When they are unavailable (server not started, cold start, context switch), use the Python API as a fallback.
+
+**Correct import pattern** — always import from the package root, never from submodules:
+
+```python
+from pathlib import Path
+from agent_handoff_mcp import (
+    RuntimeConfig,
+    configure_runtime,
+    get_handoff_state,
+    search_handoff,
+    record_event,
+    review_findings,
+    list_review_findings,
+    get_verified_tests,
+)
+
+# Configure runtime FIRST — required before any read/write
+configure_runtime(RuntimeConfig.for_repo(Path(".")))
+
+# Then query state
+state = get_handoff_state(sections="identity")
+```
+
+**Common mistakes to avoid:**
+
+- `from agent_handoff_mcp.decisions import ...` — submodules are internal; use the top-level package
+- `from agent_handoff_mcp.config import get_runtime_config` — `get_runtime_config` is re-exported from the package root
+- `import sqlite3; conn.execute("SELECT ...")` — never query `handoff.db` directly; the schema is internal
+
+**Running in monorepo without install:**
+
+```bash
+PYTHONPATH=packages/agent-handoff-mcp/src python3 -c "
+from pathlib import Path
+from agent_handoff_mcp import RuntimeConfig, configure_runtime, get_handoff_state
+configure_runtime(RuntimeConfig.for_repo(Path('.')))
+print(get_handoff_state(sections='identity'))
+"
+```
+
+---
+
 # Project Instructions
 
 This is the `context-alt-text-monorepo`. Full agent instructions: `docs/agentic/instructions.md`.

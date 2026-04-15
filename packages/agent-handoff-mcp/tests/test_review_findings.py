@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_handoff_mcp import BranchMismatchError
 from agent_handoff_mcp import api as mcp_server
 from agent_handoff_mcp._shared import _get_db_connection, _render_current_task_md, _render_dashboard_section
 from agent_handoff_mcp.config import RuntimeConfig
@@ -141,6 +142,78 @@ def test_record_review_finding_accepts_planning_review_mode(isolated_handoff: di
     )
     assert result["ok"] is True
     assert result["finding"]["review_mode"] == "planning"
+
+
+def test_record_review_finding_raises_branch_mismatch_error_when_enforcement_enabled(
+    isolated_handoff: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT", raising=False)
+    monkeypatch.setenv("AGENT_HANDOFF_ENFORCE_BRANCH", "1")
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="rf-enforced",
+            objective="Enforce branch match on finding writes",
+            status="in_progress",
+            target_branch="feature/rf-enforced",
+        )
+    )
+
+    with pytest.raises(BranchMismatchError, match="feature/rf-enforced"):
+        mcp_server.record_review_finding(
+            session="s1",
+            finding_id="RF-ENFORCED-001",
+            severity="medium",
+            file_path="docs/plan.md",
+            description="Branch mismatch should fail before insert",
+            task_ref="rf-enforced",
+            actor={"agent": "test-agent", "branch": "feature/not-rf-enforced"},
+        )
+
+    with _get_db_connection() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM review_findings WHERE task_ref = ?",
+            ("rf-enforced",),
+        ).fetchone()[0]
+    assert count == 0
+
+
+def test_batch_record_review_findings_raises_branch_mismatch_error_when_enforcement_enabled(
+    isolated_handoff: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT", raising=False)
+    monkeypatch.setenv("AGENT_HANDOFF_ENFORCE_BRANCH", "1")
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="rf-batch-enforced",
+            objective="Enforce branch match on batch finding writes",
+            status="in_progress",
+            target_branch="feature/rf-batch-enforced",
+        )
+    )
+
+    with pytest.raises(BranchMismatchError, match="feature/rf-batch-enforced"):
+        mcp_server.batch_record_review_findings(
+            session="s1",
+            findings=[
+                {
+                    "finding_id": "RF-BATCH-001",
+                    "severity": "low",
+                    "file_path": "docs/plan.md",
+                    "description": "Batch write should fail before insert",
+                }
+            ],
+            task_ref="rf-batch-enforced",
+            actor={"agent": "test-agent", "branch": "feature/not-rf-batch-enforced"},
+        )
+
+    with _get_db_connection() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM review_findings WHERE task_ref = ?",
+            ("rf-batch-enforced",),
+        ).fetchone()[0]
+    assert count == 0
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +370,95 @@ def test_update_review_finding_global_ambiguity_error(isolated_handoff: dict) ->
     )
     assert result["ok"] is False
     assert "Ambiguous" in result["error"]
+
+
+def test_update_review_finding_raises_branch_mismatch_error_when_enforcement_enabled(
+    isolated_handoff: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT", raising=False)
+    monkeypatch.setenv("AGENT_HANDOFF_ENFORCE_BRANCH", "1")
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="rf-update-enforced",
+            objective="Enforce branch match on finding updates",
+            status="in_progress",
+            target_branch="feature/rf-update-enforced",
+        )
+    )
+    _parse(
+        mcp_server.record_review_finding(
+            session="seed",
+            finding_id="RF-UPD-001",
+            severity="medium",
+            file_path="docs/plan.md",
+            description="Seed finding",
+            task_ref="rf-update-enforced",
+            actor={"agent": "seed-agent", "branch": "feature/rf-update-enforced"},
+        )
+    )
+
+    with pytest.raises(BranchMismatchError, match="feature/rf-update-enforced"):
+        mcp_server.update_review_finding(
+            finding_id="RF-UPD-001",
+            task_ref="rf-update-enforced",
+            status="fixed",
+            resolution_notes="Should not be applied from the wrong branch",
+            actor={"agent": "test-agent", "branch": "feature/not-rf-update-enforced", "commit_sha": "abc123"},
+        )
+
+    row = _parse(mcp_server.list_review_findings(task_ref="rf-update-enforced", finding_id="RF-UPD-001"))["findings"][0]
+    assert row["status"] == "open"
+
+
+def test_repair_review_finding_provenance_raises_branch_mismatch_error_when_enforcement_enabled(
+    isolated_handoff: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT", raising=False)
+    monkeypatch.setenv("AGENT_HANDOFF_ENFORCE_BRANCH", "1")
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="rf-repair-enforced",
+            objective="Enforce branch match on provenance repair",
+            status="in_progress",
+            target_branch="feature/rf-repair-enforced",
+        )
+    )
+    _parse(
+        mcp_server.record_review_finding(
+            session="seed",
+            finding_id="RF-REPAIR-001",
+            severity="low",
+            file_path="docs/plan.md",
+            description="Seed finding for provenance repair",
+            task_ref="rf-repair-enforced",
+            actor={
+                "agent": "seed-agent",
+                "branch": "feature/rf-repair-enforced",
+                "commit_sha": "abc123",
+            },
+        )
+    )
+
+    with pytest.raises(BranchMismatchError, match="feature/rf-repair-enforced"):
+        mcp_server.repair_review_finding_provenance(
+            session="repair",
+            finding_id="RF-REPAIR-001",
+            expected_branch="feature/rf-repair-enforced",
+            expected_commit_sha="abc123",
+            new_branch="feature/rf-repair-enforced-fixed",
+            new_commit_sha="def456",
+            reason="Repair original provenance",
+            task_ref="rf-repair-enforced",
+            actor={"agent": "test-agent", "branch": "feature/not-rf-repair-enforced"},
+        )
+
+    finding = _parse(mcp_server.list_review_findings(task_ref="rf-repair-enforced", finding_id="RF-REPAIR-001"))[
+        "findings"
+    ][0]
+    assert finding["branch"] == "feature/rf-repair-enforced"
+    assert finding["commit_sha"] == "abc123"
 
 
 # ---------------------------------------------------------------------------

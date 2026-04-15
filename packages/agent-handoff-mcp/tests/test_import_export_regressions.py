@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_handoff_mcp import BranchMismatchError
 from agent_handoff_mcp import api as mcp_server
 from agent_handoff_mcp import core as handoff_core
 from agent_handoff_mcp.config import RuntimeConfig
@@ -159,6 +160,100 @@ def test_switch_task_clears_focus_on_restore(workspace_pair: dict[str, Path]) ->
     assert restored["active"]["task_ref"] == "task-a"
     assert restored["active"]["objective"] == "Restore me"
     assert restored["active"]["focus"] is None
+
+
+def test_archive_task_state_raises_branch_mismatch_error_when_enforcement_enabled(
+    workspace_pair: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_runtime(workspace_pair["source"])
+    monkeypatch.delenv("AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT", raising=False)
+    monkeypatch.setenv("AGENT_HANDOFF_ENFORCE_BRANCH", "1")
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="archive-enforced",
+            objective="Archive branch enforcement",
+            status="in_progress",
+            target_branch="feature/archive-enforced",
+        )
+    )
+
+    with pytest.raises(BranchMismatchError, match="feature/archive-enforced"):
+        mcp_server.archive_task_state(
+            task_ref="archive-enforced",
+            archive_by="test-agent",
+            archive_branch="feature/not-archive-enforced",
+        )
+
+    archived = _parse(mcp_server.get_archived_task("archive-enforced"))
+    assert archived["ok"] is False
+
+
+def test_update_task_status_archived_path_raises_branch_mismatch_error_when_enforcement_enabled(
+    workspace_pair: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_runtime(workspace_pair["source"])
+    monkeypatch.delenv("AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT", raising=False)
+    monkeypatch.setenv("AGENT_HANDOFF_ENFORCE_BRANCH", "1")
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="archived-status-a",
+            objective="Archived task A",
+            status="in_progress",
+            target_branch="feature/active-context",
+            actor={"agent": "seed-agent", "branch": "feature/active-context"},
+        )
+    )
+    _parse(mcp_server.archive_task_state(task_ref="archived-status-a", clear_active_if_matches=False))
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="active-context-task",
+            objective="Active context task",
+            status="in_progress",
+            expected_revision=0,
+            target_branch="feature/active-context",
+            actor={"agent": "seed-agent", "branch": "feature/active-context"},
+        )
+    )
+
+    with pytest.raises(BranchMismatchError, match="feature/active-context"):
+        mcp_server.update_task_status(
+            task_ref="archived-status-a",
+            status="done",
+            actor={"agent": "test-agent", "branch": "feature/not-active-context"},
+        )
+
+    archived = _parse(mcp_server.get_archived_task("archived-status-a"))
+    assert archived["ok"] is True
+    assert archived["archive"]["notes"] == "Archived archived-status-a"
+
+
+def test_switch_task_raises_branch_mismatch_error_when_enforcement_enabled(
+    workspace_pair: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_runtime(workspace_pair["source"])
+    monkeypatch.delenv("AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT", raising=False)
+    monkeypatch.setenv("AGENT_HANDOFF_ENFORCE_BRANCH", "1")
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="switch-source",
+            objective="Switch source",
+            status="in_progress",
+            target_branch="feature/switch-source",
+        )
+    )
+
+    with pytest.raises(BranchMismatchError, match="feature/switch-source"):
+        handoff_core.switch_task(
+            task_ref="switch-target",
+            objective="Switch target",
+            actor={"agent": "test-agent", "branch": "feature/not-switch-source"},
+        )
+
+    identity = _parse(mcp_server.get_handoff_state(sections="identity"))
+    assert identity["active"]["task_ref"] == "switch-source"
 
 
 def test_update_task_status_updates_archived_snapshot_and_dashboard(workspace_pair: dict[str, Path]) -> None:

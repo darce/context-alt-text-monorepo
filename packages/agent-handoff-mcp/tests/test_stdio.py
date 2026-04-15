@@ -6,6 +6,9 @@ from typing import Any
 
 from fastmcp.client import Client, PythonStdioTransport
 
+from agent_handoff_mcp import BranchMismatchError
+from agent_handoff_mcp.api import ToolEntry, _wrap_branch_mismatch_for_mcp
+
 # Tool families that must always be present on the consolidated 19-tool surface.
 _CORE_TOOLS = {
     "get_handoff_state",
@@ -280,6 +283,31 @@ def test_stdio_tool_responses_return_native_dict_not_wrapped_string(tmp_path: Pa
     # Secondary assertion: text content payload should also be the native envelope.
     assert "ok" in text_payload
     assert text_payload["tool"] == "get_handoff_state"
+
+
+def test_branch_mismatch_wrapper_returns_v2_error_envelope() -> None:
+    def _handler() -> dict:
+        raise BranchMismatchError(
+            task_ref="AHMCP-32",
+            expected_branch="feature/ahmcp-32",
+            actual_branch="feature/not-ahmcp-32",
+        )
+
+    wrapped = _wrap_branch_mismatch_for_mcp(
+        ToolEntry(
+            "record_event",
+            _handler,
+            "Test wrapper contract",
+        )
+    )
+
+    structured = wrapped()
+    assert structured["ok"] is False
+    assert structured["tool"] == "record_event"
+    assert structured["task_ref"] == "AHMCP-32"
+    assert structured["data"]["expected_branch"] == "feature/ahmcp-32"
+    assert structured["data"]["actual_branch"] == "feature/not-ahmcp-32"
+    assert "does not match active task" in structured["data"]["error"]
 
 
 def test_stdio_record_event_schema_exposes_discriminated_variants(tmp_path: Path) -> None:

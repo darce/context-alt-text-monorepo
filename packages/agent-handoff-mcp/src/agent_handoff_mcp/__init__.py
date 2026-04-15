@@ -54,11 +54,13 @@ from .dashboard_rendering import (
     register_dashboard_extension,
 )
 from .enums import ReviewKind, ReviewScopeSource
+from .shared_write_context import BranchMismatchError
 
 __all__ = [
     "DashboardContext",
     "DashboardExtension",
     "DashboardSection",
+    "BranchMismatchError",
     "PromptMetrics",
     "ResolvedWriteContext",
     "RuntimeConfig",

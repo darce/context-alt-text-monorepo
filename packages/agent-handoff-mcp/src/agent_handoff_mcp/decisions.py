@@ -157,6 +157,7 @@ def update_next_actions(
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         ctx = _resolve_write_actor(conn, actor)
+        warnings = collect_target_context_warnings(conn, ctx)
         task_revision = _current_task_revision(conn, resolved_task_ref)
         if operation == "add":
             if not action:
@@ -195,6 +196,7 @@ def update_next_actions(
                     "affected_ids": [cur.lastrowid],
                     "task_revision": task_revision,
                 },
+                warnings=warnings or None,
             )
         if action_id is None:
             return _envelope(
@@ -265,6 +267,7 @@ def update_next_actions(
                 "affected_ids": [action_id],
                 "task_revision": task_revision,
             },
+            warnings=warnings or None,
         )
 
 
@@ -335,6 +338,7 @@ def record_test_result(
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         ctx = _resolve_write_actor(conn, actor)
+        warnings = collect_target_context_warnings(conn, ctx)
         task_revision = _current_task_revision(conn, resolved_task_ref)
         cur = conn.execute(
             """
@@ -366,6 +370,7 @@ def record_test_result(
                 "affected_ids": [cur.lastrowid],
                 "task_revision": task_revision,
             },
+            warnings=warnings or None,
         )
 
 
@@ -386,6 +391,7 @@ def report_blocker(
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         ctx = _resolve_write_actor(conn, actor)
+        warnings = collect_target_context_warnings(conn, ctx)
         task_revision = _current_task_revision(conn, resolved_task_ref)
         if operation == "add":
             if not description:
@@ -414,6 +420,7 @@ def report_blocker(
                     "affected_ids": [cur.lastrowid],
                     "task_revision": task_revision,
                 },
+                warnings=warnings or None,
             )
         if blocker_id is None:
             return _envelope(
@@ -454,6 +461,7 @@ def report_blocker(
                 "affected_ids": [blocker_id],
                 "task_revision": task_revision,
             },
+            warnings=warnings or None,
         )
 
 

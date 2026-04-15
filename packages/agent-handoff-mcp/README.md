@@ -264,6 +264,12 @@ agent-handoff-mcp --workspace-root /path/to/workspace --tool-profile core serve-
 `review_findings` uses `operation="record" | "batch_record" | "update" | "list"`.
 `review_runs` uses `operation="record" | "list" | "coverage"`.
 
+Branch/worktree drift is surfaced through `warnings` on write responses. If you
+set `AGENT_HANDOFF_ENFORCE_BRANCH=1`, branch mismatches against the active
+task's `target_branch` fail before mutation on enforceable branches. Direct
+Python callers see `BranchMismatchError`; MCP clients receive the standard v2
+error envelope with `data.expected_branch` and `data.actual_branch`.
+
 CLI-only extras (not part of MCP registry): `artifact-list`, `artifact-terms`.
 
 Surface classes:

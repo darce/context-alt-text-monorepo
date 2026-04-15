@@ -35,6 +35,7 @@ from ._shared import (
     _workspace_root,
     _write_current_task_md_for_task,
     build_write_actor,
+    collect_target_context_warnings,
 )
 
 
@@ -590,6 +591,7 @@ def archive_task_state(
                 commit_sha=archive_commit_sha,
             ),
         )
+        warnings = collect_target_context_warnings(conn, ctx)
         if prune_working_rows and not allow_destructive_clear:
             working_counts = _count_task_rows(conn, resolved_task_ref)
             non_zero_sections = [section for section, count in working_counts.items() if count > 0]
@@ -646,6 +648,7 @@ def archive_task_state(
             "affected_ids": [resolved_task_ref],
             "task_revision": None,
         },
+        warnings=warnings or None,
     )
 
 
@@ -742,6 +745,7 @@ def update_task_status(
 
     with _get_db_connection() as conn:
         ctx = _resolve_write_actor(conn, actor)
+        warnings = collect_target_context_warnings(conn, ctx)
         active_row = conn.execute(
             "SELECT * FROM handoff_state WHERE id = 1 AND task_ref = ?",
             (task_ref,),
@@ -863,6 +867,7 @@ def update_task_status(
                 "task_revision": None,
             },
             artifacts=[{"type": "file", "path": "CURRENT_TASK.md"}] if regen_result == "ok" else None,
+            warnings=warnings or None,
         )
 
 
@@ -891,13 +896,18 @@ def switch_task(
 
     with _get_db_connection() as conn:
         ctx = _resolve_write_actor(conn, actor)
+        warnings = collect_target_context_warnings(conn, ctx)
         current = conn.execute("SELECT task_ref, objective, revision FROM handoff_state WHERE id = 1").fetchone()
 
         # Already active; nothing to do.
         if current is not None and str(current["task_ref"]) == task_ref:
             active = _row_to_dict(conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone())
             return _envelope(
-                ok=True, tool="switch_task", data={"already_active": True, "active": active}, task_ref=task_ref
+                ok=True,
+                tool="switch_task",
+                data={"already_active": True, "active": active},
+                task_ref=task_ref,
+                warnings=warnings or None,
             )
 
         # Resolve objective and target_branch for the target task.
@@ -1021,4 +1031,5 @@ def switch_task(
                 "task_revision": active.get("revision"),
             },
             artifacts=[{"type": "file", "path": "CURRENT_TASK.md"}] if regen_error is None else None,
+            warnings=warnings or None,
         )

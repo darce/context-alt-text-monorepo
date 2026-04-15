@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import functools
+import inspect
 import json
 import os
 import subprocess
@@ -20,6 +22,7 @@ from .config import RuntimeConfig
 from .core import PromptMetrics, ResolvedWriteContext, ReviewFindingDetails, TokenUsage
 from .review_findings import BatchFindingItem
 from .runtime import configure_runtime, get_runtime_config, reset_runtime_config
+from .shared_write_context import BranchMismatchError
 
 _core_record_decision = core.record_decision
 build_write_actor = core.build_write_actor
@@ -1735,6 +1738,33 @@ def generate_dashboard_md(write_file: bool = True) -> dict:
     return _generate(write_file=write_file)
 
 
+def _wrap_branch_mismatch_for_mcp(entry: ToolEntry) -> Callable[..., dict]:
+    """Return an MCP-only wrapper that adapts BranchMismatchError to a v2 envelope."""
+
+    handler = entry.handler
+    signature = inspect.signature(handler)
+
+    @functools.wraps(handler)
+    def _wrapped(*args: object, **kwargs: object) -> dict:
+        try:
+            return handler(*args, **kwargs)
+        except BranchMismatchError as exc:
+            return core._envelope(
+                ok=False,
+                tool=entry.name,
+                task_ref=exc.task_ref,
+                data={
+                    "error": str(exc),
+                    "task_ref": exc.task_ref,
+                    "expected_branch": exc.expected_branch,
+                    "actual_branch": exc.actual_branch,
+                },
+            )
+
+    _wrapped.__signature__ = signature.replace(return_annotation=dict)  # type: ignore[attr-defined]
+    return _wrapped
+
+
 def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
     configure_runtime(config)
     mcp = FastMCP(
@@ -1795,7 +1825,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
         # that used to translate `-> str` handlers into `-> dict` at this
         # registration site; the production handlers are now `-> dict` end to
         # end and the wrapper is dead code.
-        mcp.add_tool(entry.handler)
+        mcp.add_tool(_wrap_branch_mismatch_for_mcp(entry))
     return mcp
 
 

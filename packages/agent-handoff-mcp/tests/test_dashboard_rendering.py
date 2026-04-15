@@ -438,7 +438,7 @@ def test_task_test_status_filtered_to_epic(isolated_handoff) -> None:
     for i, line in enumerate(remaining.split("\n")):
         stripped = line.strip()
         if stripped and stripped == stripped.upper() and len(stripped) > 3 and not stripped.startswith("-") and not stripped.startswith("─"):
-            next_heading = test_section_start + len("TEST STATUS") + sum(len(l) + 1 for l in remaining.split("\n")[:i])
+            next_heading = test_section_start + len("TEST STATUS") + sum(len(ln) + 1 for ln in remaining.split("\n")[:i])
             break
     test_section = md[test_section_start:next_heading]
     # E17-family task must appear in TEST STATUS.

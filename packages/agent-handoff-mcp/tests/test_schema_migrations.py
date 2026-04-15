@@ -44,11 +44,20 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table,),
+    ).fetchone()
+    return row is not None
+
+
 def test_fresh_database_lands_at_current_schema_version(isolated_runtime: RuntimeConfig) -> None:
     """A brand-new DB should bootstrap to ``HANDOFF_SCHEMA_VERSION`` with every column present."""
     with _get_db_connection() as conn:
         user_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
         assert user_version == HANDOFF_SCHEMA_VERSION
+        assert _table_exists(conn, "touched_files") is True
         # Spot-check the column whose missing migration motivated AHMCP-9.
         assert "target_worktree_path" in _table_columns(conn, "handoff_state")
         assert "target_branch" in _table_columns(conn, "handoff_state")
@@ -88,6 +97,28 @@ def test_warm_start_migration_runs_when_version_bumped(isolated_runtime: Runtime
             f"user_version did not advance from 2 to {HANDOFF_SCHEMA_VERSION}; "
             "the bootstrap branch did not write the new sentinel"
         )
+
+
+def test_warm_start_migration_adds_touched_files_table(isolated_runtime: RuntimeConfig) -> None:
+    with _get_db_connection() as conn:
+        conn.execute("DROP TABLE touched_files")
+        conn.execute("PRAGMA user_version = 3")
+        conn.commit()
+
+    raw = sqlite3.connect(isolated_runtime.db_path)
+    try:
+        assert _table_exists(raw, "touched_files") is False
+        assert int(raw.execute("PRAGMA user_version").fetchone()[0]) == 3
+    finally:
+        raw.close()
+
+    with _get_db_connection() as conn:
+        assert _table_exists(conn, "touched_files") is True, (
+            "warm-start migration did not restore touched_files; "
+            "the new schema step is unreachable from the warm path"
+        )
+        user_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+        assert user_version == HANDOFF_SCHEMA_VERSION
 
 
 def test_repeated_open_on_current_database_is_a_noop(isolated_runtime: RuntimeConfig) -> None:

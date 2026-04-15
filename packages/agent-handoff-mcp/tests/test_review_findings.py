@@ -1064,6 +1064,8 @@ def test_next_actions_domain_tool_add_and_list(isolated_handoff: dict) -> None:
     [
         ("get_handoff_state", "query", "handoff_state"),
         ("next_actions", "action", "handoff_state"),
+        ("record_file_touch", "action", "handoff_state"),
+        ("get_touched_files", "query", "handoff_state"),
         ("review_findings", "action", "review_findings"),
         ("review_runs", "action", "review_runs"),
         ("handoff_close_check", "generator", "lifecycle"),

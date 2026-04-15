@@ -69,6 +69,8 @@ def test_http_server_lists_handoff_tools(tmp_path: Path) -> None:
         assert "review_runs" in tool_names
         assert "artifacts" in tool_names
         assert "handoff_close_check" in tool_names
+        assert "record_file_touch" in tool_names
+        assert "get_touched_files" in tool_names
         assert "record_decision" not in tool_names
         assert "update_next_actions" not in tool_names
         # orchestrator tools moved to agent-orchestrator-mcp server

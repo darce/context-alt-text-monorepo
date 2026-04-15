@@ -98,6 +98,8 @@ from agent_handoff_mcp import (
     update_task_status,
     get_verified_tests,
     generate_dashboard_md,
+    record_file_touch,
+    get_touched_files,
 )
 
 # Configure runtime before any read/write call
@@ -166,7 +168,7 @@ The v2 envelope is already compact, but callers still save the most tokens by sh
 
 - Use `get_handoff_state(sections="identity")` for routine task checks instead of a full state fetch.
 - Use `detail="summary"` on read surfaces such as `get_handoff_state`, `load_session`, `review_findings`, `search_handoff`, and `artifacts` when truncated text is acceptable.
-- Use `top_n_*`, `limit=`, and `fields=` to cap read size instead of trimming large payloads client-side.
+- Use `top_n_*`, `limit=`, and `fields=` to cap read size instead of trimming large payloads client-side. `load_session` accepts `top_n_touched_files` (default 20, max 200) to bound the additive `touched_files` list.
 - Read from the canonical `data` block — `result["data"]["active"]` etc. The legacy top-level mirror was removed in 0.3.0 and never returns.
 
 Package-local guidance and examples live in [docs/guides/token-efficient-usage.md](docs/guides/token-efficient-usage.md).
@@ -222,7 +224,7 @@ Source checkout adapter:
 
 ## Tool Surface
 
-`agent-handoff-mcp` now exposes a single **17-tool** MCP surface.
+`agent-handoff-mcp` now exposes a single **22-tool** MCP surface.
 
 Legacy `--tool-profile all|core|extended` inputs are still accepted for compatibility, but they all expose the same tool set:
 
@@ -230,7 +232,7 @@ Legacy `--tool-profile all|core|extended` inputs are still accepted for compatib
 agent-handoff-mcp --workspace-root /path/to/workspace --tool-profile core serve-stdio
 ```
 
-### Unified surface (17 tools)
+### Unified surface (22 tools)
 
 | CLI name | MCP tool |
 | --- | --- |
@@ -251,6 +253,11 @@ agent-handoff-mcp --workspace-root /path/to/workspace --tool-profile core serve-
 | `task-status` | `update_task_status` |
 | `artifacts` | `artifacts` |
 | `handoff-search` | `search_handoff` |
+| `get-verified-tests` | `get_verified_tests` |
+| `dashboard` | `generate_dashboard_md` |
+| `get-archived-task` | `get_archived_task` |
+| `record-file-touch` | `record_file_touch` |
+| `get-touched-files` | `get_touched_files` |
 
 `record_event` uses a typed `event` payload with `event_kind="decision" | "test_result" | "blocker"` so each variant keeps its own required fields.
 `next_actions` uses `operation="list" | "add" | "update" | "complete" | "skip"`.

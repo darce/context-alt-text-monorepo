@@ -812,8 +812,7 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
         )
         if not _has_index(conn, "touched_files", "idx_touched_files_task_touched"):
             conn.execute(
-                "CREATE INDEX idx_touched_files_task_touched "
-                "ON touched_files(task_ref, touched_at DESC, id DESC)"
+                "CREATE INDEX idx_touched_files_task_touched ON touched_files(task_ref, touched_at DESC, id DESC)"
             )
         needs_backfill = False
         for table in ("decisions", "blockers", "next_actions", "verified_tests", "review_findings"):

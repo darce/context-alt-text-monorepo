@@ -126,9 +126,7 @@ export const fetchTopUnlabeledClusters = async (
   }
 
   const singletonCount =
-    dataSource === 'backend_proxy'
-      ? undefined
-      : requireTopUnlabeledNumber(payload.singleton_count, 'singleton_count');
+    dataSource === 'backend_proxy' ? undefined : requireTopUnlabeledNumber(payload.singleton_count, 'singleton_count');
 
   return {
     clusters: payload.clusters.map(normalizeTopUnlabeledCluster),

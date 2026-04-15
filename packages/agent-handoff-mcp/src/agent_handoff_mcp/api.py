@@ -77,7 +77,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "record_file_touch": "Record one task-scoped file touch row for a file path and change kind. Append-only surface for the file-touch ledger.",
     "get_touched_files": "List task-scoped file-touch rows with deterministic newest-first ordering and a bounded limit.",
     "update_task_status": "Update a task status without recording a slice decision. For the active task this requires expected_revision; for archived tasks it updates the archived snapshot status used by the dashboard.",
-    "load_session": "Load session context: get_handoff_state + review_findings(list open) in one call. Pass sections to shape the nested state payload and detail to shape both state and findings.",
+    "load_session": "Load session context: get_handoff_state + review_findings(list open) + touched_files in one call. Pass sections to shape the nested state payload, detail to shape both state and findings, and top_n_touched_files (default 20, max 200) to bound the additive touched_files list.",
     "close_slice": "Record a slice-complete decision, keep the task status in_progress, and regenerate CURRENT_TASK.md plus DASHBOARD.txt. Requires expected_revision when the target task is currently active. Pass changed_files to persist structured review scope on the nested decision write.",
     "artifacts": "Record, search, get, or purge artifact sources through one typed domain surface. Set artifact.operation to 'record', 'search', 'get', or 'purge'.",
     "search_handoff": "Search decisions, findings, blockers, actions, and verified tests by keyword with BM25 ranking. Pass detail='summary' to truncate snippets and fields='record_type,snippet' to project per-result fields.",

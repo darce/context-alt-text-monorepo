@@ -3336,6 +3336,88 @@ def test_load_session_merges_state_and_findings(isolated_handoff: dict) -> None:
     assert any(f["finding_id"] == "ls-f1" for f in findings)
 
 
+def test_load_session_includes_touched_files(isolated_handoff: dict) -> None:
+    """load_session response includes additive touched_files for the resolved task."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="ls-touch-test",
+            objective="Load session with file touches",
+            status="in_progress",
+        )
+    )
+    handoff_core.record_file_touch(
+        file_path="packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py",
+        change_kind="edit",
+        session="s-ls-touch",
+        task_ref="ls-touch-test",
+    )
+    handoff_core.record_file_touch(
+        file_path="packages/agent-handoff-mcp/tests/test_handoff_state.py",
+        change_kind="edit",
+        session="s-ls-touch",
+        task_ref="ls-touch-test",
+    )
+
+    result = _parse(mcp_server.load_session(task_ref="ls-touch-test"))
+
+    assert result["ok"] is True
+    # Existing keys still present
+    assert "state" in result
+    assert "open_findings" in result
+    assert "open_findings_count" in result
+    # New additive key
+    assert "touched_files" in result
+    touches = result["touched_files"]
+    assert isinstance(touches, list)
+    assert len(touches) == 2
+    paths = {t["file_path"] for t in touches}
+    assert "packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py" in paths
+    assert "packages/agent-handoff-mcp/tests/test_handoff_state.py" in paths
+
+
+def test_load_session_touched_files_respects_limit(isolated_handoff: dict) -> None:
+    """top_n_touched_files limits the touched_files list in load_session."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="ls-limit-test",
+            objective="Touched files limit test",
+            status="in_progress",
+        )
+    )
+    for i in range(5):
+        handoff_core.record_file_touch(
+            file_path=f"src/file_{i}.py",
+            change_kind="edit",
+            session="s-limit",
+            task_ref="ls-limit-test",
+        )
+
+    result = _parse(mcp_server.load_session(task_ref="ls-limit-test", top_n_touched_files=2))
+
+    assert result["ok"] is True
+    assert len(result["touched_files"]) == 2
+
+
+def test_load_session_no_touches_returns_empty_list(isolated_handoff: dict) -> None:
+    """load_session returns empty touched_files list when no touches exist."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="ls-no-touch",
+            objective="No touches test",
+            status="in_progress",
+        )
+    )
+
+    result = _parse(mcp_server.load_session(task_ref="ls-no-touch"))
+
+    assert result["ok"] is True
+    assert result["touched_files"] == []
+    # Existing behavior preserved
+    assert "state" in result
+    assert "open_findings" in result
+    assert result["open_findings_count"] == 0
+
+
 # ---------------------------------------------------------------------------
 # classify_decision_id / audit_decision_ids (E12-3 stretch goal)
 # ---------------------------------------------------------------------------

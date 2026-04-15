@@ -15,9 +15,10 @@ Retrofit the 8 pre-E17 legacy skills to the anatomy template, add a headless `ma
 
 ## Problem Statement
 
-Phase 1 and Phase 2 of E17 created anatomy-compliant skills for the eight core workflows (tdd, incremental-implementation, scope, branch-lifecycle, handoff-lifecycle, branch-review, planning-review, plan-analyze) and retrofitted three early legacy skills (commit2git, review, investigate). Eight pre-E17 skills were left with either no frontmatter or partial frontmatter and missing anatomy sections:
+Phase 1 and Phase 2 of E17 created anatomy-compliant skills for the eight core workflows (tdd, incremental-implementation, scope, branch-lifecycle, handoff-lifecycle, branch-review, planning-review, plan-analyze). Three early legacy skills (commit2git, review, investigate) received partial Phase 1 retrofits (process content updates) but were not brought to full anatomy compliance — they still lack `tdd_gate`, `context_budget`, `makefile_target`, and `mcp_tools` frontmatter fields. Eleven pre-E17 skills require full or partial anatomy retrofit:
 
 - **No frontmatter**: refactor, security-audit, document-sync
+- **Partial frontmatter — Phase 1 retrofits** (missing tdd_gate, context_budget, makefile_target, mcp_tools): commit2git, investigate, review
 - **Partial frontmatter** (missing mode, tdd_gate, context_budget, makefile_target, mcp_tools): daemon-lifecycle, worktree-orchestrator, worktree-worker, rescue-lane, subfeature-committer
 
 Three structural gaps remain from the Phase 3 scope:
@@ -46,13 +47,16 @@ Three structural gaps remain from the Phase 3 scope:
 
 ## Current State Analysis
 
-**Skills directory**: `.claude/skills/` contains 19 skill directories. 11 are anatomy-compliant (full frontmatter + section headers). 8 are not:
+**Skills directory**: `.claude/skills/` contains 19 skill directories. 8 are anatomy-compliant (full frontmatter + section headers). 11 are not:
 
 | Skill | Frontmatter state | Missing |
 |---|---|---|
 | refactor | none | all fields + all sections |
 | security-audit | none | all fields + all sections |
 | document-sync | none | all fields + all sections |
+| commit2git | partial (name, description) | tdd_gate, context_budget, makefile_target, mcp_tools |
+| investigate | partial (name, description) | tdd_gate, context_budget, makefile_target, mcp_tools |
+| review | partial (name, description) | tdd_gate, context_budget, makefile_target, mcp_tools |
 | daemon-lifecycle | partial (name, description, argument-hint) | mode, tdd_gate, context_budget, makefile_target, mcp_tools; section headers |
 | worktree-orchestrator | partial (name, description) | mode, tdd_gate, context_budget, makefile_target, mcp_tools; section headers |
 | worktree-worker | partial (name, description) | mode, tdd_gate, context_budget, makefile_target, mcp_tools; section headers |
@@ -63,7 +67,7 @@ Three structural gaps remain from the Phase 3 scope:
 
 **CLAUDE.md**: The Key Triggers section points agents at `branch-review-guide.md` and `planning-review-guide.md` by file path. The Role Selection table does not reference skills. The Branch Review and Planning Review trigger descriptions do not mention the `/branch-review` or `/planning-review` slash commands or their skill files.
 
-**instructions.md**: Role routing table references guides as primary execution surfaces. Planning pipeline routing (Assessment → Spec → Task Plan) does not reference the `plan-analyze` skill as a required pre-step.
+**instructions.md**: The Additional Routing section (below the Role Selection table) already references some skills by slash command. The Role Selection table itself references guides as primary execution surfaces. Slice 3 needs to redirect the Role Selection table entries and add missing skill references, but the Additional Routing section requires less work than a full rewrite. Planning pipeline routing (Assessment → Spec → Task Plan) does not reference the `plan-analyze` skill as a required pre-step.
 
 **`mk/handoff.mk` plan-review target**: prints the skill name and expected output but performs no precheck. An agent can run `make plan-review` on a document with no prior `plan-analyze` findings.
 
@@ -150,9 +154,9 @@ Four slices deliver Phase 3. Slices 1 and 2 are independent and can be implement
 
 ### Slice 1: Skill Retrofit
 
-**Goal**: All 8 legacy skills pass the anatomy checklist after this slice. `make check-skills` (from Slice 2) exits 0 across all 19 skills.
+**Goal**: All 11 non-compliant skills pass the anatomy checklist after this slice. `make check-skills` (from Slice 2) exits 0 across all 19 skills.
 
-Changes — for each of the 8 skills:
+Changes — for each of the 11 skills (8 legacy + 3 Phase 1 partial retrofits):
 
 - Add or complete frontmatter: `name`, `description`, `mode` (advisory or execution), `tdd_gate` (true or false), `context_budget` (line count), `makefile_target` (null if no Makefile entry), `mcp_tools` (list of MCP tool names the skill composes, empty list if none).
 - Ensure these section headers exist in the body: `## Overview`, `## Trigger`, `## Core Process`, `## Red Flags`, `## Convergence Criteria`. Add stubs where absent; do not rewrite existing content.
@@ -165,6 +169,9 @@ Anatomy values by skill (to be confirmed against current body content during imp
 | refactor | advisory | false | null | [] |
 | security-audit | advisory | false | null | [] |
 | document-sync | advisory | false | null | [] |
+| commit2git | advisory | false | null | [] |
+| investigate | advisory | false | null | [] |
+| review | advisory | false | null | [mcp__agent-handoff-mcp__review_findings, mcp__agent-handoff-mcp__review_runs] |
 | daemon-lifecycle | execution | false | mcp-start | mcp__agent-orchestrator-mcp__manage_orchestrator, mcp__agent-orchestrator-mcp__manage_worker |
 | worktree-orchestrator | execution | false | null | mcp__agent-orchestrator-mcp__manage_worktree_lane, mcp__agent-orchestrator-mcp__dispatch_lane_work, mcp__agent-handoff-mcp__record_event |
 | worktree-worker | execution | true | null | mcp__agent-handoff-mcp__record_event, mcp__agent-handoff-mcp__close_slice, mcp__agent-orchestrator-mcp__worker_reports |
@@ -175,8 +182,9 @@ Anatomy values by skill (to be confirmed against current body content during imp
 
 Proof:
 
-- Each retrofitted skill's frontmatter renders without YAML parse errors (`python -c "import yaml; yaml.safe_load(open('.claude/skills/<name>/SKILL.md').read().split('---')[1])"`)
+- Each of the 11 retrofitted skills' frontmatter renders without YAML parse errors (`python -c "import yaml; yaml.safe_load(open('.claude/skills/<name>/SKILL.md').read().split('---')[1])"`)
 - All required section headers present in each file (`grep -l "## Convergence Criteria" .claude/skills/*/SKILL.md` returns all 19 paths)
+- Phase 1 retrofits (commit2git, investigate, review) gain `tdd_gate`, `context_budget`, `makefile_target`, `mcp_tools` without losing their existing process content
 
 ### Slice 2: `make check-skills` Validator
 
@@ -260,3 +268,56 @@ Proof:
 - `make plan-review DOC=<same plan> PLAN_ANALYZE_REQUIRED=1` → exits 1 before printing the plan-review block.
 - Record a `plan-analyze` review run for the document via `review_runs(operation="record", review_mode="planning", session="plan-analyze-<slug>-<date>", subject_path=<doc>)` → `make plan-review DOC=<that doc>` → gate passes silently.
 - `make plan-review DOC=<doc> TASK=E17-6` (explicit task ref) → check runs against the named task's findings.
+
+---
+
+## Consolidated Checklist
+
+### Context and Ownership
+
+- [ ] Verify current anatomy compliance count: 8 compliant, 11 non-compliant (including 3 Phase 1 partial retrofits)
+- [ ] Confirm `SKILL_ANATOMY.template.md` is the authoritative reference for required fields and sections
+
+### Checklist for Slice 1: Skill Retrofit
+
+- [ ] All 11 non-compliant skills have full frontmatter (name, description, mode, tdd_gate, context_budget, makefile_target, mcp_tools)
+- [ ] All 11 skills have required section headers (Overview, Trigger, Core Process, Red Flags, Convergence Criteria)
+- [ ] Phase 1 retrofits (commit2git, investigate, review) gain missing fields without losing existing process content
+- [ ] Common Rationalizations added to complex skills (refactor, worktree-orchestrator, worktree-worker, daemon-lifecycle)
+- [ ] Frontmatter YAML parses without error for all 19 skills
+
+### Checklist for Slice 2: `make check-skills` Validator
+
+- [ ] `scripts/check_skills.py` validates frontmatter fields, mode value, tdd_gate boolean, section headers, makefile_target wiring, mcp_tools wiring
+- [ ] `make check-skills` exits 0 after Slice 1 retrofit
+- [ ] `make check-skills` exits 1 on intentional anatomy violation (manual regression check)
+- [ ] `check-skills` added to `make check-all` without breaking existing steps
+
+### Checklist for Slice 3: Routing Redirect
+
+- [ ] `CLAUDE.md` Key Triggers point to skills and slash commands, not guide file paths
+- [ ] `instructions.md` Role Selection table references skills as primary entry points; Additional Routing section updated where needed
+- [ ] `branch-review-guide.md` carries "Reference Appendix" header
+- [ ] `planning-review-guide.md` carries "Reference Appendix" header
+
+### Checklist for Slice 4: Planning Pipeline Exit Gate
+
+- [ ] `scripts/check_plan_analyze.py` queries review_runs for plan-analyze sessions via Python API
+- [ ] Exit codes: 0 (pass), 1 (infrastructure error), 2 (gate unmet)
+- [ ] `make plan-review` prints warning when gate unmet; blocks with `PLAN_ANALYZE_REQUIRED=1`
+- [ ] `planning-pipeline.md` documents the gate requirement
+
+## Review Readiness
+
+- [ ] `make check-all` green after each slice
+- [ ] No changes to skill execution logic or MCP handoff protocol
+- [ ] No new MCP tools introduced
+
+## Success Criteria
+
+- [ ] `make check-skills` exits 0 across all 19 skills after retrofit
+- [ ] All 11 non-compliant skills pass full anatomy validation (frontmatter + sections + wiring)
+- [ ] Cold-start agent reading `CLAUDE.md` is routed to named skill and slash command for every major workflow trigger
+- [ ] Both review guides carry "Reference Appendix" label
+- [ ] `make plan-review` warns (or blocks with opt-in) when no prior plan-analyze run exists for the target document
+- [ ] `make check-all` completes without regression

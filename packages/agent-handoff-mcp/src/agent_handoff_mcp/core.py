@@ -606,12 +606,14 @@ def load_session(
     task_ref: str | None = None,
     sections: str | None = None,
     detail: str = "full",
+    top_n_touched_files: int = DEFAULT_TOUCHED_FILES_LIMIT,
 ) -> dict:
-    """Load session context: get_handoff_state + list_review_findings(open) in one call.
+    """Load session context: get_handoff_state + open findings + touched files.
 
     Passes ``sections`` and ``detail`` through to ``get_handoff_state`` and
     ``detail`` through to ``list_review_findings`` so callers can reduce
-    payload size without making two separate calls.
+    payload size without making two separate calls.  The ``top_n_touched_files``
+    parameter bounds the additive ``touched_files`` list (default 20).
     """
     state_envelope = get_handoff_state(task_ref=task_ref, sections=sections, detail=detail)
     if not state_envelope.get("ok"):
@@ -621,6 +623,9 @@ def load_session(
     findings_envelope = list_review_findings(task_ref=resolved_task_ref, status="open", detail=detail)
     findings_data = findings_envelope.get("data", {}) or {}
     findings_ok = bool(findings_envelope.get("ok"))
+    touches_envelope = get_touched_files(task_ref=resolved_task_ref, limit=top_n_touched_files)
+    touches_data = touches_envelope.get("data", {}) or {}
+    touches_ok = bool(touches_envelope.get("ok"))
     return _envelope(
         ok=True,
         tool="load_session",
@@ -628,6 +633,7 @@ def load_session(
             "state": state_data,
             "open_findings": findings_data.get("findings", []) if findings_ok else [],
             "open_findings_count": findings_data.get("total_matching", 0) if findings_ok else 0,
+            "touched_files": touches_data.get("touches", []) if touches_ok else [],
         },
         task_ref=resolved_task_ref,
     )

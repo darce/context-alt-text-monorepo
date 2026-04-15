@@ -375,7 +375,7 @@ def _build_current_task_render_state(
     """Assemble the CURRENT_TASK render state from the canonical task snapshot path.
 
     Contains only active-task data.  Cross-task sections (All Tasks table,
-    open/deferred findings from other tasks) are rendered by DASHBOARD.md via
+    open/deferred findings from other tasks) are rendered by DASHBOARD.txt via
     dashboard_rendering.generate_dashboard_md().
     """
     snapshot = _collect_task_snapshot(conn, task_ref)

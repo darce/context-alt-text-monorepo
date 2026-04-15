@@ -75,7 +75,7 @@ export const selectClusterSuggestions = ({
 
     // Try to find similarity from identitySuggestions if this cluster label is also suggested for identity
     const identityMatch = identitySuggestions?.matches?.find(
-      (match) => match.cluster_id === cluster.id || (match.label && match.label.toLowerCase() === key),
+      (match) => match.cluster_id === cluster.id || match.label?.toLowerCase() === key,
     );
 
     seen.add(key);

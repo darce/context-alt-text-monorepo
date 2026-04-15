@@ -1,4 +1,4 @@
-# E17-6. Phase 3 Retrofit — Skill Anatomy Completion, Routing Redirect, and Planning Gate Wiring
+# E17-6. Phase 3 Retrofit — Skill Anatomy Completion, Harness Protocol Contract, Routing Redirect, and Planning Gate Wiring
 
 - **Date**: 2026-04-14
 - **Author**: Claude Sonnet 4.6
@@ -11,7 +11,7 @@
 
 ## Objective
 
-Retrofit the 8 pre-E17 legacy skills to the anatomy template, add a headless `make check-skills` validator that enforces anatomy compliance in CI, redirect `CLAUDE.md` and `instructions.md` triggers to skills as primary entry points (removing inline prose that duplicates skill content), and wire `plan-analyze` as a required precheck before `make plan-review` can proceed. When this task is complete, every skill in `.claude/skills/` passes `make check-skills`, agents are routed to skills rather than bulk guide loading for every major workflow trigger, and the planning pipeline has a machine-enforced pre-review analysis gate.
+Retrofit the 11 non-compliant skills to the anatomy template, add a headless `make check-skills` validator that enforces anatomy compliance in CI, establish a canonical `harness-protocol.yaml` contract that defines cold-start steps, hook event matchers, and Python API fallback surface as a single source of truth for all agent harnesses (eliminating cross-harness drift), redirect `CLAUDE.md` and `instructions.md` triggers to skills as primary entry points (removing inline prose that duplicates skill content), and wire `plan-analyze` as a required precheck before `make plan-review` can proceed. When this task is complete, every skill passes `make check-skills`, both harness surfaces are verifiably in sync via `make check-harness-sync`, agents are routed to skills rather than bulk guide loading, and the planning pipeline has a machine-enforced pre-review analysis gate.
 
 ## Problem Statement
 
@@ -21,11 +21,12 @@ Phase 1 and Phase 2 of E17 created anatomy-compliant skills for the eight core w
 - **Partial frontmatter — Phase 1 retrofits** (missing tdd_gate, context_budget, makefile_target, mcp_tools): commit2git, investigate, review
 - **Partial frontmatter** (missing mode, tdd_gate, context_budget, makefile_target, mcp_tools): daemon-lifecycle, worktree-orchestrator, worktree-worker, rescue-lane, subfeature-committer
 
-Three structural gaps remain from the Phase 3 scope:
+Four structural gaps remain from the Phase 3 scope:
 
 1. **No anatomy enforcement**: There is no `make check-skills` target. Whether a skill is anatomy-compliant is checked manually. Any new skill can ship without required frontmatter.
-2. **Routing is still guide-first**: `CLAUDE.md` Key Triggers and `instructions.md` role routing still point agents at `branch-review-guide.md` and `planning-review-guide.md` as primary execution surfaces. Agents load 250+ lines of guide when the 150-line skills cover the executable path. The context bloat problem the skills were built to solve remains in the routing surface.
-3. **No planning gate**: `make plan-review` does not verify that a `plan-analyze` run has been recorded for the target document. The skill prompts agents to run plan-analyze first, but nothing enforces it.
+2. **Cross-harness protocol drift**: Cold-start steps, hook event matchers, and Python API fallback guidance are duplicated in prose across `CLAUDE.md`, `.github/copilot-instructions.md`, `.claude/settings.json`, and `.github/hooks/terminal-guard.json`. There is no canonical source. Drift is already observed: `.claude/settings.json` has a PostToolUse `regenerate-task-views.sh` hook for 5 MCP tool matchers; `.github/hooks/terminal-guard.json` does not have it at all. Claude agents guessed at 4 wrong Python API import paths because the fallback guidance used `...` instead of naming the importable surface. The `mcp-tool-routing.yaml` pattern (one canonical YAML → harnesses read it) proves the approach works; hook matchers and cold-start steps need the same treatment.
+3. **Routing is still guide-first**: `CLAUDE.md` Key Triggers and `instructions.md` role routing still point agents at `branch-review-guide.md` and `planning-review-guide.md` as primary execution surfaces. Agents load 250+ lines of guide when the 150-line skills cover the executable path. The context bloat problem the skills were built to solve remains in the routing surface.
+4. **No planning gate**: `make plan-review` does not verify that a `plan-analyze` run has been recorded for the target document. The skill prompts agents to run plan-analyze first, but nothing enforces it.
 
 ## Constraints
 
@@ -36,6 +37,9 @@ Three structural gaps remain from the Phase 3 scope:
 - The planning exit gate warns rather than hard-blocks on the first rollout. Hard enforcement (exit non-zero) is opt-in via `PLAN_ANALYZE_REQUIRED=1`. See Constraints note on slice 4.
 - No new MCP tools (per epic constraint). The plan-analyze precheck queries existing MCP review findings via the Python API.
 - No changes to skill execution logic or MCP handoff protocol.
+- `harness-protocol.yaml` is the canonical source for cross-harness protocol. Harness-specific surfaces (`.claude/settings.json`, `.github/hooks/terminal-guard.json`, `CLAUDE.md`, `.github/copilot-instructions.md`) are consumers, not sources. The YAML defines what must be true; the validator checks that it is.
+- `make check-harness-sync` must be headless and CI-safe. It parses the YAML contract and the two harness hook files, compares hook event matchers, and exits non-zero on drift. No MCP or network dependency.
+- Harness-specific prose (Copilot's tool-selection decision tree, Claude's `ToolSearch` syntax, IDE workarounds) stays in the harness-specific instruction files. The protocol contract covers only the shared behavioral surface: cold-start steps, hook event matchers, Python API fallback imports, and branch isolation policy.
 
 ## Terminology
 
@@ -44,6 +48,8 @@ Three structural gaps remain from the Phase 3 scope:
 - **Wiring check**: the `check-skills` validator step that confirms each skill's declared `makefile_target` appears as a target in the root `Makefile` (or `mk/` includes) and each `mcp_tools` entry appears in the known-tools registry.
 - **Reference appendix**: a guide labelled explicitly as reference documentation (not the execution surface) once a discrete execution skill covers its executable path. Agents are directed to the skill; the guide is linked for rationale and edge cases.
 - **Planning exit gate**: a precheck step in `make plan-review` that verifies at least one `plan-analyze` review run with recorded findings exists for the target document before the planning-review skill proceeds.
+- **Harness protocol contract**: a YAML file (`docs/agentic/contracts/harness-protocol.yaml`) that declares the canonical cold-start steps, hook event matchers, Python API fallback surface, and branch isolation policy shared by all agent harnesses. Harness-specific settings files are validated against this contract by `make check-harness-sync`.
+- **Harness projection**: the process of deriving harness-specific hook definitions (`.claude/settings.json`, `.github/hooks/terminal-guard.json`) and instruction sections (`CLAUDE.md`, `.github/copilot-instructions.md`) from the canonical protocol contract. Deterministic for hook matchers; prose for harness-specific capabilities.
 
 ## Current State Analysis
 
@@ -71,12 +77,18 @@ Three structural gaps remain from the Phase 3 scope:
 
 **`mk/handoff.mk` plan-review target**: prints the skill name and expected output but performs no precheck. An agent can run `make plan-review` on a document with no prior `plan-analyze` findings.
 
+**Cross-harness hook drift**: `.claude/settings.json` defines 4 PreToolUse and 4 PostToolUse hook blocks. `.github/hooks/terminal-guard.json` defines 4 PreToolUse and 3 PostToolUse hook blocks. The missing PostToolUse hook is `regenerate-task-views.sh` (dashboard refresh after state-changing MCP writes — matchers: `record_event`, `review_findings`, `review_runs`, `set_handoff_state`, `update_task_status`). `.claude/settings.json` also has `validate-mcp-dict-params.py` as a PreToolUse hook that `.github/hooks/terminal-guard.json` lacks. No validator exists to detect this drift.
+
+**Cross-harness instruction drift**: `CLAUDE.md` § Agent Startup Protocol defines 9 cold-start steps. `.github/copilot-instructions.md` § Agent Cold-Start Orientation defines 4 steps (recently added but not yet verified against CLAUDE.md for completeness). The Python API fallback section was duplicated in both files with slightly different content. No canonical source governs the shared behavioral protocol.
+
 ## Target Outcome
 
 - `make check-skills` exits 0 on a clean `.claude/skills/` run and non-zero with a named failure list on any anatomy violation. Integrated into `make check-all`.
 - All 19 skills in `.claude/skills/` pass `make check-skills`.
 - A cold-start agent reading `CLAUDE.md` Key Triggers is routed to a named skill and slash command — not to a guide file — for every major workflow trigger.
 - `branch-review-guide.md` and `planning-review-guide.md` carry an explicit "Reference Appendix" label at the top.
+- `docs/agentic/contracts/harness-protocol.yaml` defines canonical cold-start steps, hook event matchers (with MCP tool names), Python API fallback imports, and branch isolation policy.
+- `make check-harness-sync` exits 0 when both harness hook files match the protocol contract; exits non-zero and names every drifted hook on mismatch. Integrated into `make check-all`.
 - Running `make plan-review DOC=<path>` without a prior `plan-analyze` run (or with `PLAN_ANALYZE_REQUIRED=1`) prints a warning/block naming the missing analysis run.
 
 ## Context Loading
@@ -88,6 +100,10 @@ Three structural gaps remain from the Phase 3 scope:
 - Planning entry point: `mk/handoff.mk` plan-review and plan-analyze targets
 - Planning pipeline rules: `docs/agentic/rules/planning-pipeline.md`
 - Review guides: `docs/agentic/rules/branch-review-guide.md`, `docs/agentic/rules/planning-review-guide.md`
+- Harness hook surfaces: `.claude/settings.json`, `.github/hooks/terminal-guard.json`
+- Harness instruction surfaces: `CLAUDE.md` § Agent Startup Protocol, `.github/copilot-instructions.md`
+- Existing canonical YAML pattern: `docs/agentic/maps/mcp-tool-routing.yaml` (proves the one-YAML-many-consumers model)
+- Python API surface: `packages/agent-handoff-mcp/src/agent_handoff_mcp/__init__.py` (`__all__` list)
 
 ## Contract and Boundary Impact
 
@@ -100,10 +116,14 @@ Three structural gaps remain from the Phase 3 scope:
 | `docs/agentic/instructions.md` | docs | Role routing table references guides | Add skill as primary entry point; guide becomes reference link | non-breaking — additive | Manual review |
 | `branch-review-guide.md` | docs | Primary execution surface | Add "Reference Appendix" header | non-breaking — additive | File header present after slice |
 | `planning-review-guide.md` | docs | Primary execution surface | Add "Reference Appendix" header | non-breaking — additive | File header present after slice |
+| `harness-protocol.yaml` | `docs/agentic/contracts/` (new) | Does not exist | New canonical contract for cross-harness protocol | n/a — new file | `make check-harness-sync` exits 0 |
+| `make check-harness-sync` | `scripts/check_harness_sync.py` (new) | Does not exist | New validator; compares hook files against protocol contract | n/a — new target | Exits non-zero on intentional drift |
+| `.claude/settings.json` | `.claude/` | Claude Code hooks | Validated against protocol contract (no content changes needed if already in sync) | non-breaking — additive check only | `make check-harness-sync` passes |
+| `.github/hooks/terminal-guard.json` | `.github/hooks/` | VS Code/Copilot hooks | Add missing hooks to reach protocol parity; validated against contract | non-breaking — additive | `make check-harness-sync` passes |
 
 ## Proposed Solution
 
-Four slices deliver Phase 3. Slices 1 and 2 are independent and can be implemented in either order; Slice 3 depends on Slice 2 (routing redirect benefits from check-skills being in CI first); Slice 4 is independent.
+Five slices deliver Phase 3. Slices 1 and 2 are independent and can be implemented in either order. Slice 3 (harness protocol contract) is independent of Slices 1–2 but must precede Slice 4 (routing redirect), because the routing redirect should derive shared cold-start and fallback content from the canonical protocol rather than duplicating it in prose. Slice 5 (planning gate) is independent.
 
 ## Files and Surfaces to Change
 
@@ -119,7 +139,11 @@ Four slices deliver Phase 3. Slices 1 and 2 are independent and can be implement
 | Skill retrofit | `.claude/skills/subfeature-committer/SKILL.md` | Add missing frontmatter fields + section headers |
 | Check script | `scripts/check_skills.py` | New: validate frontmatter fields + section headers + wiring |
 | Makefile target | `mk/handoff.mk` or root `Makefile` | Add `check-skills` target; wire into `check-all` |
-| Routing surface | `CLAUDE.md` | Redirect Key Triggers to skills; remove inline prose duplicating skill content |
+| Harness protocol | `docs/agentic/contracts/harness-protocol.yaml` | New: canonical cold-start steps, hook event matchers, Python API surface, branch isolation policy |
+| Harness sync script | `scripts/check_harness_sync.py` | New: validate `.claude/settings.json` and `.github/hooks/terminal-guard.json` against protocol contract |
+| Makefile target | root `Makefile` | Add `check-harness-sync` target; wire into `check-all` |
+| Hook parity fix | `.github/hooks/terminal-guard.json` | Add missing PostToolUse hooks to match protocol contract (regenerate-task-views, validate-mcp-dict-params) |
+| Routing surface | `CLAUDE.md` | Redirect Key Triggers to skills; remove inline prose duplicating skill content; derive Python API fallback from protocol contract |
 | Routing surface | `docs/agentic/instructions.md` | Redirect role routing table to skills as primary entry points |
 | Reference label | `docs/agentic/rules/branch-review-guide.md` | Add "Reference Appendix" header block at top |
 | Reference label | `docs/agentic/rules/planning-review-guide.md` | Add "Reference Appendix" header block at top |
@@ -135,13 +159,20 @@ Four slices deliver Phase 3. Slices 1 and 2 are independent and can be implement
 | `docs/agentic/maps/mcp-tool-routing.yaml` | Source for known-tools registry in check-skills wiring check |
 | `.claude/skills/branch-review/SKILL.md` | Reference anatomy-compliant skill for retrofit comparison |
 | `docs/agentic/constitution.md` | Loaded by plan-analyze; referenced in planning gate |
+| `docs/agentic/maps/mcp-tool-routing.yaml` | Existing canonical-YAML-to-harness pattern; model for harness-protocol.yaml |
+| `.claude/settings.json` | Claude Code hooks; consumer of harness protocol contract |
+| `.github/hooks/terminal-guard.json` | VS Code/Copilot hooks; consumer of harness protocol contract |
+| `.github/copilot-instructions.md` | Copilot instruction surface; consumer of harness protocol contract |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/__init__.py` | Authoritative `__all__` list for Python API imports |
 
 ## Verification Strategy
 
 - Deterministic tests:
-  - `python scripts/check_skills.py` exits 0 after all 8 skills are retrofitted
+  - `python scripts/check_skills.py` exits 0 after all 11 skills are retrofitted
   - `make check-skills` exits 0; included in `make check-all` without breaking existing steps
   - `make check-skills` exits non-zero when a skill is missing a required field (manual: temporarily remove a field, verify failure, restore)
+  - `make check-harness-sync` exits 0 after hook parity fix; exits non-zero on intentional hook removal
+  - `make check-harness-sync --check-api-surface` validates Python API imports against live `__all__`
 - Runtime-parity checks:
   - `make plan-review DOC=<path>` with no prior `plan-analyze` findings → prints gate warning; with `PLAN_ANALYZE_REQUIRED=1` → exits non-zero
   - `make plan-review DOC=<path>` after a recorded `plan-analyze` run → gate is silent
@@ -214,9 +245,35 @@ Proof:
 - Temporarily add an unknown tool name to one skill's `mcp_tools` → wiring check fails with the tool name and skill named; remove it → exits 0.
 - `make check-all` completes without regression on other steps.
 
-### Slice 3: CLAUDE.md + instructions.md Routing Redirect
+### Slice 3: Harness Protocol Contract + Sync Validator
 
-**Goal**: Key Triggers and role routing in both documents point agents to skills as the primary execution entry point. Inline prose that duplicates skill content is removed. Both review guides are labelled as reference appendices.
+**Goal**: Establish a canonical YAML contract for cross-harness agent behavior and a headless validator that detects drift between the contract and each harness's hook/instruction surface.
+
+Changes:
+
+- New `docs/agentic/contracts/harness-protocol.yaml`:
+  - `cold_start.steps[]`: ordered list of session-start steps (id, description, tool/command, required flag). Canonical source for what both CLAUDE.md § Agent Startup Protocol and `.github/copilot-instructions.md` § Agent Cold-Start Orientation must cover.
+  - `hooks.post_tool_use{}` and `hooks.pre_tool_use{}`: each hook block declares a stable id, description, script path, and a list of MCP tool base names (e.g. `record_event`, `review_findings`) that trigger it. The validator expands these base names to the full matcher patterns (both `mcp_altcontext-mc_*` legacy and `mcp__agent-handoff-mcp__*` current) and checks that each harness hook file contains a matching entry.
+  - `python_api.package`, `python_api.setup`, `python_api.imports{}` (categorized: setup, read, write, findings, runs, rendering), `python_api.anti_patterns[]`: canonical reference for the Python API fallback surface. Derived from `agent_handoff_mcp.__all__` at authoring time; the validator can optionally cross-check against the live `__all__` list.
+  - `branch_isolation.protected_branches[]`, `branch_isolation.code_paths[]`, `branch_isolation.allowed_on_main[]`: canonical policy consumed by both guard-main-branch implementations.
+- New `scripts/check_harness_sync.py`:
+  - Parses `harness-protocol.yaml`.
+  - Parses `.claude/settings.json` and `.github/hooks/terminal-guard.json`.
+  - For each hook defined in the protocol, verifies both harness files contain a matching entry with equivalent MCP tool matchers. Reports missing hooks, extra hooks, and matcher drift by name.
+  - Optionally (`--check-api-surface`): imports `agent_handoff_mcp`, compares `__all__` against `python_api.imports` in the contract, reports additions/removals.
+  - Exits 0 on full sync; exits 1 on any drift with a named failure list.
+- New `check-harness-sync` target in root `Makefile`, wired into `check-all`.
+- Fix existing drift: add the missing `regenerate-task-views.sh` PostToolUse hook and `validate-mcp-dict-params.py` PreToolUse hook to `.github/hooks/terminal-guard.json` with matchers matching `.claude/settings.json`.
+
+Proof:
+
+- `make check-harness-sync` exits 0 after adding missing hooks to `terminal-guard.json`.
+- Temporarily remove a PostToolUse hook from `terminal-guard.json` → `make check-harness-sync` exits 1 and names the missing hook; restore → exits 0.
+- `make check-all` completes without regression.
+
+### Slice 4: CLAUDE.md + instructions.md Routing Redirect
+
+**Goal**: Key Triggers and role routing in both documents point agents to skills as the primary execution entry point. Inline prose that duplicates skill content is removed. Both review guides are labelled as reference appendices. The Python API fallback and cold-start protocol sections in both `CLAUDE.md` and `.github/copilot-instructions.md` reference `harness-protocol.yaml` as the canonical source rather than maintaining independent prose copies.
 
 Changes:
 
@@ -240,7 +297,7 @@ Proof:
 - Open `branch-review-guide.md` → "Reference Appendix" block visible as the first content element.
 - Manual agent cold-start check: reading CLAUDE.md, an agent sees `make review-run` → `.claude/skills/branch-review/SKILL.md` without needing to load the 250-line guide.
 
-### Slice 4: Planning Pipeline Exit Gate
+### Slice 5: Planning Pipeline Exit Gate
 
 **Goal**: `make plan-review` verifies that a `plan-analyze` run with recorded findings exists for the target document before the agent proceeds. Warning by default; hard block with `PLAN_ANALYZE_REQUIRED=1`.
 
@@ -293,14 +350,23 @@ Proof:
 - [ ] `make check-skills` exits 1 on intentional anatomy violation (manual regression check)
 - [ ] `check-skills` added to `make check-all` without breaking existing steps
 
-### Checklist for Slice 3: Routing Redirect
+### Checklist for Slice 3: Harness Protocol Contract + Sync Validator
+
+- [ ] `docs/agentic/contracts/harness-protocol.yaml` defines cold-start steps, hook event matchers, Python API imports, branch isolation policy
+- [ ] `scripts/check_harness_sync.py` validates both harness hook files against the protocol contract
+- [ ] `.github/hooks/terminal-guard.json` updated with missing hooks (regenerate-task-views, validate-mcp-dict-params)
+- [ ] `make check-harness-sync` exits 0; wired into `make check-all`
+- [ ] `make check-harness-sync` exits 1 on intentional drift (manual regression check)
+
+### Checklist for Slice 4: Routing Redirect
 
 - [ ] `CLAUDE.md` Key Triggers point to skills and slash commands, not guide file paths
+- [ ] `CLAUDE.md` and `.github/copilot-instructions.md` Python API fallback sections reference `harness-protocol.yaml` as canonical source
 - [ ] `instructions.md` Role Selection table references skills as primary entry points; Additional Routing section updated where needed
 - [ ] `branch-review-guide.md` carries "Reference Appendix" header
 - [ ] `planning-review-guide.md` carries "Reference Appendix" header
 
-### Checklist for Slice 4: Planning Pipeline Exit Gate
+### Checklist for Slice 5: Planning Pipeline Exit Gate
 
 - [ ] `scripts/check_plan_analyze.py` queries review_runs for plan-analyze sessions via Python API
 - [ ] Exit codes: 0 (pass), 1 (infrastructure error), 2 (gate unmet)
@@ -317,7 +383,9 @@ Proof:
 
 - [ ] `make check-skills` exits 0 across all 19 skills after retrofit
 - [ ] All 11 non-compliant skills pass full anatomy validation (frontmatter + sections + wiring)
+- [ ] `docs/agentic/contracts/harness-protocol.yaml` is the single source of truth for cold-start steps, hook matchers, Python API fallback surface, and branch isolation policy
+- [ ] `make check-harness-sync` exits 0 — both harness hook files match the protocol contract with no missing or drifted hooks
 - [ ] Cold-start agent reading `CLAUDE.md` is routed to named skill and slash command for every major workflow trigger
 - [ ] Both review guides carry "Reference Appendix" label
 - [ ] `make plan-review` warns (or blocks with opt-in) when no prior plan-analyze run exists for the target document
-- [ ] `make check-all` completes without regression
+- [ ] `make check-all` completes without regression (including both `check-skills` and `check-harness-sync`)

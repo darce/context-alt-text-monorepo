@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_handoff_mcp import PromptMetrics, TokenUsage
+from agent_handoff_mcp import BranchMismatchError, PromptMetrics, TokenUsage
 from agent_handoff_mcp import api as mcp_server
 from agent_handoff_mcp import core as handoff_core
 from agent_handoff_mcp import import_export as handoff_import_export
@@ -2871,6 +2871,260 @@ def test_set_handoff_state_emits_context_drift_warning_on_branch_mismatch(isolat
     assert any("context_drift" in w and "feature/some-other-branch" in w for w in warnings), (
         f"Expected context_drift warning in {warnings!r}"
     )
+
+
+def test_record_test_result_emits_context_drift_warning_on_branch_mismatch(isolated_handoff: dict) -> None:
+    """record_test_result inherits warning-only branch drift handling by default."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="test-drift-warn",
+            objective="Record test drift warning",
+            status="in_progress",
+            target_branch="feature/test-drift-warn",
+        )
+    )
+
+    result = _parse(
+        mcp_server.record_test_result(
+            session="s1",
+            command="pytest -q",
+            passed=True,
+            result="1 passed in 0.01s",
+            task_ref="test-drift-warn",
+            actor={"agent": "test-agent", "branch": "feature/some-other-branch"},
+        )
+    )
+    assert result["ok"] is True
+    warnings = result.get("warnings") or []
+    assert any("context_drift" in w and "feature/some-other-branch" in w for w in warnings)
+
+
+def test_record_test_result_raises_branch_mismatch_error_when_enforcement_enabled(
+    isolated_handoff: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Direct Python callers get BranchMismatchError before any test row is inserted."""
+    monkeypatch.delenv("AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT", raising=False)
+    monkeypatch.setenv("AGENT_HANDOFF_ENFORCE_BRANCH", "1")
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="test-drift-enforced",
+            objective="Record test drift enforcement",
+            status="in_progress",
+            target_branch="feature/test-drift-enforced",
+        )
+    )
+
+    with pytest.raises(BranchMismatchError, match="feature/test-drift-enforced"):
+        mcp_server.record_test_result(
+            session="s1",
+            command="pytest -q",
+            passed=True,
+            result="1 passed in 0.01s",
+            task_ref="test-drift-enforced",
+            actor={"agent": "test-agent", "branch": "feature/some-other-branch"},
+        )
+
+    with handoff_core._get_db_connection() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM verified_tests WHERE task_ref = ?",
+            ("test-drift-enforced",),
+        ).fetchone()[0]
+    assert count == 0
+
+
+def test_record_test_result_succeeds_on_matching_branch_when_enforcement_enabled(
+    isolated_handoff: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Matching branch writes still succeed when enforcement is enabled."""
+    monkeypatch.delenv("AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT", raising=False)
+    monkeypatch.setenv("AGENT_HANDOFF_ENFORCE_BRANCH", "1")
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="test-drift-match",
+            objective="Matching branch write",
+            status="in_progress",
+            target_branch="feature/test-drift-match",
+        )
+    )
+
+    result = _parse(
+        mcp_server.record_test_result(
+            session="s1",
+            command="pytest -q",
+            passed=True,
+            result="1 passed in 0.01s",
+            task_ref="test-drift-match",
+            actor={"agent": "test-agent", "branch": "feature/test-drift-match"},
+        )
+    )
+    assert result["ok"] is True
+
+
+def test_record_test_result_ignores_main_target_branch_when_enforcement_enabled(
+    isolated_handoff: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Enforcement remains non-blocking when the target branch is main/master."""
+    monkeypatch.delenv("AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT", raising=False)
+    monkeypatch.setenv("AGENT_HANDOFF_ENFORCE_BRANCH", "1")
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="test-drift-main-bypass",
+            objective="Main branch bypass",
+            status="in_progress",
+            target_branch="main",
+        )
+    )
+
+    result = _parse(
+        mcp_server.record_test_result(
+            session="s1",
+            command="pytest -q",
+            passed=True,
+            result="1 passed in 0.01s",
+            task_ref="test-drift-main-bypass",
+            actor={"agent": "test-agent", "branch": "feature/some-other-branch"},
+        )
+    )
+
+    assert result["ok"] is True
+    with handoff_core._get_db_connection() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM verified_tests WHERE task_ref = ?",
+            ("test-drift-main-bypass",),
+        ).fetchone()[0]
+    assert count == 1
+
+
+def test_record_test_result_keeps_cwd_drift_warning_only_when_enforcement_enabled(
+    isolated_handoff: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cwd/worktree drift stays non-fatal when branch enforcement is enabled."""
+    monkeypatch.delenv("AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT", raising=False)
+    monkeypatch.setenv("AGENT_HANDOFF_ENFORCE_BRANCH", "1")
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="test-cwd-drift-warning",
+            objective="Cwd drift stays warning-only",
+            status="in_progress",
+            target_branch="feature/target-branch",
+            target_worktree_path=str(Path.cwd() / "expected-worktree"),
+        )
+    )
+
+    result = _parse(
+        mcp_server.record_test_result(
+            session="s1",
+            command="pytest -q",
+            passed=True,
+            result="1 passed in 0.01s",
+            task_ref="test-cwd-drift-warning",
+            actor={"agent": "test-agent", "branch": "feature/target-branch"},
+        )
+    )
+
+    assert result["ok"] is True
+    warnings = result.get("warnings") or []
+    assert any("context_drift" in warning and "target_worktree_path" in warning for warning in warnings)
+
+
+def test_set_handoff_state_target_branch_transition_uses_resolved_target_when_enforcement_enabled(
+    isolated_handoff: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Updating target_branch should validate against the new branch target, not the old one."""
+    monkeypatch.delenv("AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT", raising=False)
+    monkeypatch.setenv("AGENT_HANDOFF_ENFORCE_BRANCH", "1")
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="branch-transition",
+            objective="Allow branch transition updates",
+            status="in_progress",
+            target_branch="feature/old-branch",
+        )
+    )
+
+    result = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="branch-transition",
+            status="in_progress",
+            expected_revision=0,
+            target_branch="feature/new-branch",
+            actor={"agent": "test-agent", "branch": "feature/new-branch"},
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["active"]["target_branch"] == "feature/new-branch"
+    warnings = result.get("warnings") or []
+    assert not any("context_drift" in warning and "target_branch" in warning for warning in warnings)
+
+
+def test_update_next_actions_raises_branch_mismatch_error_when_enforcement_enabled(
+    isolated_handoff: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """next_actions writes should fail before insert on branch mismatch."""
+    monkeypatch.delenv("AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT", raising=False)
+    monkeypatch.setenv("AGENT_HANDOFF_ENFORCE_BRANCH", "1")
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="next-action-enforced",
+            objective="Enforce branch match on next actions",
+            status="in_progress",
+            target_branch="feature/next-action-enforced",
+        )
+    )
+
+    with pytest.raises(BranchMismatchError, match="feature/next-action-enforced"):
+        mcp_server.update_next_actions(
+            operation="add",
+            action="Add the guarded next action",
+            task_ref="next-action-enforced",
+            actor={"agent": "test-agent", "branch": "feature/not-next-action-enforced"},
+        )
+
+    with handoff_core._get_db_connection() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM next_actions WHERE task_ref = ?",
+            ("next-action-enforced",),
+        ).fetchone()[0]
+    assert count == 0
+
+
+def test_report_blocker_raises_branch_mismatch_error_when_enforcement_enabled(
+    isolated_handoff: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """blocker writes should fail before insert on branch mismatch."""
+    monkeypatch.delenv("AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT", raising=False)
+    monkeypatch.setenv("AGENT_HANDOFF_ENFORCE_BRANCH", "1")
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="blocker-enforced",
+            objective="Enforce branch match on blockers",
+            status="in_progress",
+            target_branch="feature/blocker-enforced",
+        )
+    )
+
+    with pytest.raises(BranchMismatchError, match="feature/blocker-enforced"):
+        mcp_server.report_blocker(
+            operation="add",
+            description="Guarded blocker insert",
+            task_ref="blocker-enforced",
+            actor={"agent": "test-agent", "branch": "feature/not-blocker-enforced"},
+        )
+
+    with handoff_core._get_db_connection() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM blockers WHERE task_ref = ?",
+            ("blocker-enforced",),
+        ).fetchone()[0]
+    assert count == 0
 
 
 def test_current_task_md_renders_focus_section(isolated_handoff: dict) -> None:

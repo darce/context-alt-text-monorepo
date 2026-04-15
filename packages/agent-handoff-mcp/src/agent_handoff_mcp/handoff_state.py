@@ -112,6 +112,13 @@ def set_handoff_state(
                 _normalize_optional_text(current["target_worktree_path"]) if current["target_worktree_path"] else None
             )
         )
+        warnings = collect_target_context_warnings(
+            conn,
+            ctx,
+            target_branch=resolved_target_branch,
+            target_worktree_path=resolved_target_worktree_path,
+            task_ref=task_ref,
+        )
         updated = conn.execute(
             """
             UPDATE handoff_state
@@ -154,7 +161,6 @@ def set_handoff_state(
                 task_ref=task_ref,
                 data={"error": "Active handoff state missing after update."},
             )
-        warnings = collect_target_context_warnings(conn, ctx)
         return _envelope(
             ok=True,
             tool=_tool,

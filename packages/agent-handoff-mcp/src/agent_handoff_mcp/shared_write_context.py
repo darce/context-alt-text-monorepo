@@ -65,10 +65,38 @@ class InvalidCommitShaError(ValueError):
     """
 
 
+class BranchMismatchError(ValueError):
+    """Raised when branch enforcement is enabled and a write targets the wrong branch."""
+
+    def __init__(self, task_ref: str, expected_branch: str, actual_branch: str) -> None:
+        self.task_ref = task_ref
+        self.expected_branch = expected_branch
+        self.actual_branch = actual_branch
+        super().__init__(
+            f"actor.branch {actual_branch!r} does not match active task {task_ref!r} target_branch {expected_branch!r}."
+        )
+
+
 def _commit_sha_validation_enabled() -> bool:
     """Return ``False`` if the test bypass env var is set, else ``True``."""
     bypass = os.environ.get("AGENT_HANDOFF_SKIP_SHA_VALIDATION", "").strip().lower()
     return bypass not in {"1", "true", "yes", "on"}
+
+
+def _branch_enforcement_enabled() -> bool:
+    """Return ``True`` when env-gated branch enforcement should block writes."""
+    bypass = os.environ.get("AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT", "").strip().lower()
+    if bypass in {"1", "true", "yes", "on"}:
+        return False
+    enabled = os.environ.get("AGENT_HANDOFF_ENFORCE_BRANCH", "").strip().lower()
+    return enabled in {"1", "true", "yes", "on"}
+
+
+def _branch_target_is_enforceable(target_branch: str | None) -> bool:
+    normalized = _normalize_optional_text(target_branch)
+    if normalized is None:
+        return False
+    return normalized.lower() not in {"main", "master"}
 
 
 def _git_repo_root() -> str | None:
@@ -401,6 +429,10 @@ def _workspace_git_context() -> dict[str, str | None]:
 def collect_target_context_warnings(
     conn: sqlite3.Connection,
     ctx: ResolvedWriteContext,
+    *,
+    target_branch: str | None = None,
+    target_worktree_path: str | None = None,
+    task_ref: str | None = None,
 ) -> list[str]:
     """Return human-readable warnings when the resolved write context drifts from the active task target.
 
@@ -409,32 +441,52 @@ def collect_target_context_warnings(
     process working directory. Mismatches are returned as warning strings that
     callers can pass through to `_envelope(warnings=...)`.
 
-    The check is intentionally non-fatal: it surfaces drift without rejecting
-    the write, so cross-agent handoff loops still record state. If you need a
-    hard guard, layer it on top of these warnings at the call site.
+    By default the check is non-fatal: it surfaces drift without rejecting the
+    write, so cross-agent handoff loops still record state. When
+    AGENT_HANDOFF_ENFORCE_BRANCH is truthy and
+    AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT is not, branch mismatches on
+    enforceable target branches raise BranchMismatchError before the write is
+    applied. Worktree-path drift remains warning-only.
     """
     try:
-        active = conn.execute("SELECT target_branch, target_worktree_path FROM handoff_state WHERE id = 1").fetchone()
+        active = conn.execute(
+            "SELECT task_ref, target_branch, target_worktree_path FROM handoff_state WHERE id = 1"
+        ).fetchone()
     except sqlite3.OperationalError:
         # Schema is older than this build (missing column). Skip the check.
         return []
     if active is None:
         return []
     warnings: list[str] = []
-    target_branch = _normalize_optional_text(active["target_branch"]) if active["target_branch"] else None
-    target_worktree_path = (
-        _normalize_optional_text(active["target_worktree_path"]) if active["target_worktree_path"] else None
-    )
-    if target_branch and ctx.branch and ctx.branch != target_branch:
+    resolved_task_ref = _normalize_optional_text(task_ref)
+    if resolved_task_ref is None and active["task_ref"]:
+        resolved_task_ref = _normalize_optional_text(active["task_ref"])
+    resolved_target_branch = _normalize_optional_text(target_branch)
+    if resolved_target_branch is None and active["target_branch"]:
+        resolved_target_branch = _normalize_optional_text(active["target_branch"])
+    resolved_target_worktree_path = _normalize_optional_text(target_worktree_path)
+    if resolved_target_worktree_path is None and active["target_worktree_path"]:
+        resolved_target_worktree_path = _normalize_optional_text(active["target_worktree_path"])
+    if resolved_target_branch and ctx.branch and ctx.branch != resolved_target_branch:
+        if (
+            _branch_enforcement_enabled()
+            and _branch_target_is_enforceable(resolved_target_branch)
+            and resolved_task_ref is not None
+        ):
+            raise BranchMismatchError(
+                task_ref=resolved_task_ref,
+                expected_branch=resolved_target_branch,
+                actual_branch=ctx.branch,
+            )
         warnings.append(
             "context_drift: actor.branch={} but active task target_branch={}. "
             "Consider switching to the canonical worktree before recording further events.".format(
-                ctx.branch, target_branch
+                ctx.branch, resolved_target_branch
             )
         )
-    if target_worktree_path:
+    if resolved_target_worktree_path:
         cwd = os.path.abspath(os.getcwd())
-        canonical = os.path.abspath(target_worktree_path)
+        canonical = os.path.abspath(resolved_target_worktree_path)
         if cwd != canonical:
             warnings.append(
                 "context_drift: cwd={} but active task target_worktree_path={}. "

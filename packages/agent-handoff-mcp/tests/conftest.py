@@ -20,6 +20,9 @@ Two responsibilities:
    accepts synthetic test SHAs (`"abc123"`, `"def456"`, etc.) without
    trying to resolve them through git. Production callers always run
    without this env var set.
+4. Keep branch enforcement opt-in so ambient shell env does not change
+   unrelated test behavior. Enforcement tests delete the bypass and set
+   `AGENT_HANDOFF_ENFORCE_BRANCH=1` explicitly.
 """
 
 from __future__ import annotations
@@ -39,6 +42,7 @@ if str(SRC_ROOT) not in sys.path:
 # resolving them through git. This MUST be set before any
 # ``agent_handoff_mcp`` import that walks the validation path.
 os.environ.setdefault("AGENT_HANDOFF_SKIP_SHA_VALIDATION", "1")
+os.environ.setdefault("AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT", "1")
 
 
 def pytest_sessionstart(session) -> None:  # type: ignore[no-untyped-def]

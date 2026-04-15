@@ -35,6 +35,7 @@ from ._shared import (
     _workspace_git_context,
     _workspace_root,
     _write_current_task_md_for_task,
+    collect_target_context_warnings,
 )
 from .slice_decision import is_canonical_decision
 
@@ -242,6 +243,7 @@ def record_review_finding(
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         ctx = _resolve_write_actor(conn, actor)
+        warnings = collect_target_context_warnings(conn, ctx)
         existing = conn.execute(
             "SELECT status FROM review_findings WHERE task_ref = ? AND finding_id = ?", (resolved_task_ref, finding_id)
         ).fetchone()
@@ -308,6 +310,7 @@ def record_review_finding(
                 "affected_ids": [finding_id],
                 "task_revision": task_revision,
             },
+            warnings=warnings or None,
         )
 
 
@@ -393,6 +396,7 @@ def batch_record_review_findings(
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         ctx = _resolve_write_actor(conn, actor)
+        warnings = collect_target_context_warnings(conn, ctx)
 
         results: list[dict[str, object]] = []
         for item in findings:
@@ -490,6 +494,7 @@ def batch_record_review_findings(
             "affected_ids": affected_ids,
             "task_revision": task_revision,
         },
+        warnings=warnings or None,
     )
 
 
@@ -505,6 +510,7 @@ def _apply_finding_update(
     normalized_reopen_reason: str | None,
     normalized_verified_commit_sha: str | None,
     normalized_verification_evidence: str | None,
+    warnings: list[str] | None = None,
 ) -> dict:
     """Execute the UPDATE and return the JSON response."""
     finding_commit_sha = _normalize_optional_text(existing["commit_sha"])
@@ -583,6 +589,7 @@ def _apply_finding_update(
             "affected_ids": [finding_id_str],
             "task_revision": task_revision,
         },
+        warnings=warnings or None,
     )
 
 
@@ -684,6 +691,7 @@ def update_review_finding(
         )
     with _get_db_connection() as conn:
         ctx = _resolve_write_actor(conn, actor)
+        warnings = collect_target_context_warnings(conn, ctx)
         if task_ref is None:
             # Global lookup: skip active-task fallback when no task_ref provided.
             if normalized_finding_id is not None:
@@ -793,6 +801,7 @@ def update_review_finding(
             normalized_reopen_reason,
             normalized_verified_commit_sha,
             normalized_verification_evidence,
+            warnings=warnings,
         )
 
 
@@ -1021,6 +1030,7 @@ def repair_review_finding_provenance(
 
     with _get_db_connection() as conn:
         ctx = _resolve_write_actor(conn, actor)
+        warnings = collect_target_context_warnings(conn, ctx)
         if task_ref is None:
             rows = conn.execute(
                 "SELECT * FROM review_findings WHERE finding_id = ?", (normalized_finding_id,)
@@ -1192,6 +1202,7 @@ def repair_review_finding_provenance(
                 "affected_ids": [normalized_finding_id],
                 "task_revision": task_revision,
             },
+            warnings=warnings or None,
         )
 
 
@@ -1701,6 +1712,7 @@ def record_review_run(
         )
     with _get_db_connection() as conn:
         resolved_actor = _resolve_write_actor(conn, actor)
+        warnings = collect_target_context_warnings(conn, resolved_actor)
         resolved_task_ref = task_ref
         if resolved_task_ref is None:
             active_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
@@ -1755,6 +1767,7 @@ def record_review_run(
             "affected_ids": [review_run_id],
             "task_revision": task_revision,
         },
+        warnings=warnings or None,
     )
 
 

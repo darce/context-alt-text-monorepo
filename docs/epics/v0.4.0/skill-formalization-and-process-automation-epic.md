@@ -15,7 +15,7 @@ Formalize the branch review, planning review, handoff lifecycle, and branch life
 The process hardening epic (v0.3.0) built the durable substrate: handoff DB, review findings, pre-merge gate, branch isolation, worktree lanes. But agents still interact with that substrate through long-form prose guides (`branch-review-guide.md`, `planning-review-guide.md`, `planning-pipeline.md`, `development-workflow.md`) that are loaded in bulk and interpreted ad hoc. This creates four failure modes:
 
 1. **Context bloat.** Agents load 500-line review guides when they need a 20-step execution skill. The guide's educational value is high; its per-invocation token cost is also high.
-2. **Inconsistent skill formality.** The 11 existing skills vary from 64-line checklists (`rescue-lane`) to 291-line playbooks (`refactor`). None have context budgets. None distinguish advisory guidance from gated execution loops. None reference Makefile targets or MCP tools as their API surface.
+2. **Inconsistent skill formality.** The repo now contains 19 skills total: 11 pre-epic legacy skills plus 8 Phase 2 additions. The legacy set still varies from 64-line checklists (`rescue-lane`) to 291-line playbooks (`refactor`). None of those pre-epic skills originally had context budgets, consistent advisory vs execution tags, or Makefile/MCP declarations as their API surface.
 3. **Manual planning validation.** The planning-review checklist is entirely human-driven. The spec-kit evaluation (see `docs/assessments/agentic/agent-skills-vs-spec-kit-evaluation.md`) confirmed that spec-kit's analysis methodology — duplication, ambiguity, underspecification, constitution alignment, coverage gaps, terminology drift — is an LLM-powered prompt template, not a Python library. This means it can be adopted as a skill with zero runtime dependencies.
 4. **No machine-checkable constitution.** The repo's `[sr-NNN]` and `[rg-NNN]` rules are prose counters in `instructions.md`. They are not loadable as a validation reference that a plan-analyze skill can check against.
 
@@ -88,14 +88,14 @@ The most common source of stale `active` dashboard entries is tasks archived bef
 
 ## Current State
 
-- 11 skills exist in `.claude/skills/`, all with convergence criteria sections, none with context budgets or mode tags.
-- `.claude/commands/` is empty — no slash commands are defined.
+- Core workflow skills now exist in `.claude/skills/` with anatomy frontmatter, mode tags, and context budgets; the remaining legacy skills still need the Phase 3 retrofit pass.
+- `.claude/commands/` now contains the Phase 2 command adapters, but `.github/prompts/` is still empty and Codex still relies on root-instruction routing rather than a generated command adapter surface.
 - 80+ Makefile targets exist across 5 included modules, covering task/lane lifecycle, testing, linting, and orchestration.
-- 35 current MCP tools across `agent-handoff-mcp` (19) and `agent-orchestrator-mcp` (16).
+- 35 MCP tools at epic open across `agent-handoff-mcp` (19) and `agent-orchestrator-mcp` (16); see Phase 4 for the planned AHMCP-31/AHMCP-32 additions.
 - 13 templates in `docs/agentic/templates/`.
 - Review guides are 250+ lines each and loaded in bulk.
-- Planning validation is entirely manual (checklist in `planning-review-guide.md`).
-- No constitution document exists; rules are scattered as `[sr-NNN]`/`[rg-NNN]` counters in `instructions.md`.
+- Planning validation now has an agent-assisted `plan-analyze` path, but it is not yet wired into the planning pipeline exit gates.
+- `docs/agentic/constitution.md` now exists as the canonical rule source; the remaining Phase 3 work is to finish routing and validation integration around it.
 - The `superpowers-evaluation.md` and `agent-skills-vs-spec-kit-evaluation.md` assessments both recommend pattern extraction over wholesale vendoring.
 
 ## Applied Concepts from Sources
@@ -151,7 +151,7 @@ The planning exit gates wire `plan-analyze` as a required agent-executed step (a
 | Constitution is the single canonical source for `[sr/rg-NNN]` rules | `docs/agentic/constitution.md` becomes authoritative. Both `instructions.md` and `CLAUDE.md` reference it by path instead of duplicating rule text. This prevents three-way drift. |
 | Guides are preserved as reference docs, not replaced | Skills extract the executable path; guides retain rationale, edge cases, and context for human readers and complex scenarios. |
 | Makefile targets are the canonical invocation surface | Already the repo convention. Skills document what the target does; the target handles environment setup (PYTHONPATH, worktree detection, etc.). |
-| No new MCP tools in this epic | The existing 35 tools cover the state operations. Skills compose existing tools, not add new ones. Exception: if plan-analyze needs a `validate_constitution` helper, that would be a Phase 3 stretch. |
+| Phases 1-3 compose existing MCP tools; Phase 4 adds two narrow handoff extensions | The existing 35 tools covered the original skill-formalization scope. Phase 4 later introduced AHMCP-31 (`record_file_touch`, `get_touched_files`) and AHMCP-32 (`BranchMismatchError` enforcement path) as focused workflow-integrity exceptions rather than a change to the core design direction. |
 
 ### Data Model
 
@@ -159,10 +159,10 @@ No schema changes. The constitution is a new markdown document. Skills are new S
 
 ## Phased Delivery
 
-### Phase 1: Skill Anatomy Template and Constitution -- not-started
+### Phase 1: Skill Anatomy Template and Constitution -- done
 
-> **Status**: not-started
-> **Task plans**: not yet scoped
+> **Status**: done
+> **Task plans**: [E17-1](../../tasks/17.0/E17-1-skill-anatomy-template-and-constitution-task-plan.md)
 
 **Goal**: Establish the skill anatomy standard and the constitution document that all subsequent skills will reference.
 
@@ -183,10 +183,10 @@ Exit criteria:
 - `instructions.md` and `CLAUDE.md` reference `constitution.md` by path for rule definitions; inline rule text is replaced with references
 - At least 2 existing skills pass the anatomy checklist (frontmatter fields present, mode tagged, convergence criteria, context budget)
 
-### Phase 2: Core Workflow Skills -- not-started
+### Phase 2: Core Workflow Skills -- done
 
-> **Status**: not-started
-> **Task plans**: not yet scoped
+> **Status**: done
+> **Task plans**: [E17-2](../../tasks/17.0/E17-2-tdd-and-incremental-implementation-skills-task-plan.md) · [E17-3](../../tasks/17.0/E17-3-core-workflow-skills-task-plan.md)
 
 **Goal**: Create the discrete execution skills that replace bulk guide loading for the four core workflows.
 
@@ -265,7 +265,7 @@ New command files (one per skill, committed in the same slice as the skill):
 - `.claude/commands/incremental-implementation.md` — `/incremental-implementation` slash command entry point
 - `.claude/commands/handoff-lifecycle.md` — `/handoff-lifecycle` slash command entry point
 
-Each command file is ~15 lines: names the active skill, declares the Makefile entry point, and sets the execution context. This is the agent-agnostic invocation surface — a human or agent types `/branch-review` instead of relying on prose triggers in CLAUDE.md to load a 570-line guide.
+Each command file is ~15 lines: names the active skill, declares the Makefile entry point, and sets the execution context. In Phase 2 this delivered the first host adapter for Claude. Phase 4 extends that into a truly portable workflow surface: one canonical command manifest, generated `.claude/commands/*.md` and `.github/prompts/*.prompt.md` adapters, and root-instruction routing for Codex so `/branch-review` means the same thing everywhere.
 
 Dashboard auto-refresh hook:
 
@@ -289,9 +289,11 @@ Architectural decisions recorded during Phase 2:
 ### Phase 3: Retrofit and Integration -- not-started
 
 > **Status**: not-started
-> **Task plans**: not yet scoped
+> **Task plans**: [E17-6](../../tasks/17.0/E17-6-phase3-retrofit-task-plan.md)
 
 **Goal**: Retrofit remaining skills to the anatomy template, wire constitution validation into planning exit gates, and verify end-to-end flow.
+
+**Scope note**: Phase 3 is planned as a single task plan, `E17-6`. The anatomy-retrofit set is the eight non-compliant legacy skills called out there: `refactor`, `security-audit`, `document-sync`, `daemon-lifecycle`, `worktree-orchestrator`, `worktree-worker`, `rescue-lane`, and `subfeature-committer`. The same task also cleans up routing and cross-skill references for already-compliant surfaces such as `commit2git`, `review`, and `investigate`.
 
 Deliverables:
 
@@ -310,12 +312,14 @@ Exit criteria:
 - `branch-review-guide.md` and `planning-review-guide.md` are explicitly labelled as reference appendices, not primary execution surfaces
 - End-to-end test: cold-start agent -> `make context` -> `make plan-analyze` on a sample plan -> findings recorded in MCP -> `make plan-review` -> verdict recorded -> `make task-start` -> implementation -> `make task-finish` -> clean main
 
-### Phase 4: Workflow Integrity and Session Continuity -- not-started
+### Phase 4: Workflow Integrity and Session Continuity -- in_progress
 
-> **Status**: not-started
-> **Task plans**: [E17-4](../../tasks/17.0/E17-4-workflow-integrity-task-plan.md)
+> **Status**: in_progress
+> **Task plans**: [E17-4](../../tasks/17.0/E17-4-workflow-integrity-task-plan.md) · [E17-5](../../tasks/17.0/E17-5-dashboard-redesign-task-plan.md)
 
 **Goal**: Close four failure classes identified in practice that undermine workflow discipline and cold-start reliability.
+
+Started before Phase 3 because these failure classes were discovered while landing Phase 2 work and were actively blocking current delivery quality. `E17-5` is grouped here because it fixes operator-visible dashboard defects uncovered alongside `E17-4`, even though its rendering scope is orthogonal to the branch/workflow integrity fixes.
 
 **Root-cause findings** (investigation 2026-04-14):
 
@@ -329,13 +333,13 @@ Exit criteria:
 
 Deliverables:
 
-- **Orphan branch audit** (`make worktree-audit`): Python script cross-references `git branch --list 'feature/*'` and `git branch --list 'codex/*'` against every `task_archives.archived_branch` entry; flags branches with no registration. Included in `make check-all`.
+- **Orphan branch audit** (`make worktree-audit`): Python script cross-references `git branch --list 'feature/*'` and `git branch --list 'codex/*'` against active `handoff_state.target_branch` and archived task snapshot `target_branch`; flags branches with no registration. (`task_archives.archived_branch` is not authoritative — use the snapshot field.) Included in `make check-all`.
 
 - **Main-change guard extension** (`scripts/hooks/guard-main-branch.sh` + `.claude/settings.json`): PreToolUse hook warns when an Edit/Write is attempted with no active handoff task, regardless of file type. Introduces the **maintenance-task pattern** as a first-class workflow primitive: `set_handoff_state(task_ref='MAINT-<slug>', objective='...')` before any ad-hoc main-branch edit. `make context` reports when main is dirty with no active task.
 
 - **Branch-delete enforcement** (`scripts/_task_finish_inline.py` + `development-workflow.md`): `make task-finish` extended to verify `target_branch` is deleted after archive; warns if branch persists. New rule in `development-workflow.md`: when `archive_task_state` is called for a task whose `target_branch != main`, the archiving agent must also delete the branch as part of the close sequence.
 
-- **File-touch tracking** (requires AHMCP-29 as sub-task):
+- **File-touch tracking** (requires **AHMCP-31** as sub-task — AHMCP-29 was reassigned to `switch_task archived_previous` flag, merged at `befbdce8`):
   - New `touched_files` table in handoff.db: `(task_ref, file_path, change_kind, session, commit_sha, touched_at)`
   - New MCP tool `record_file_touch(task_ref, file_path, change_kind)` — agents call when they edit files; PostToolUse hook auto-calls it after every Edit/Write
   - New MCP query `get_touched_files(task_ref)` — returns structured `(file_path, change_kind)` list
@@ -345,6 +349,8 @@ Deliverables:
 
 - **CLAUDE.md and `development-workflow.md` updates**: document maintenance-task pattern, orphan-audit rule, and branch-delete requirement explicitly.
 
+- **Portable workflow surface** (E17-4 Slice 8): define workflow command ids once in `config/agent-workflows/portable_commands.json`, generate `.claude/commands/*.md` and `.github/prompts/*.prompt.md` from that manifest, and add root-instruction routing so Codex honors the same `/command` syntax. Validation target `make check-agent-workflows` fails on adapter drift. `scripts/generate_agent_workflows.py` validates `portable_commands.json` structurally at load time before rendering any adapter file, so malformed manifest entries fail fast with a descriptive error.
+
 Exit criteria:
 
 - `make worktree-audit` reports zero orphan branches on a clean repo; `make check-all` includes the orphan pass
@@ -352,8 +358,13 @@ Exit criteria:
 - PreToolUse hook warns on Edit/Write with no active handoff task
 - CLAUDE.md documents maintenance-task pattern; `development-workflow.md` documents branch-delete invariant
 - `make task-finish` warns if `target_branch` is not deleted after archive
-- AHMCP-29 delivered: `record_file_touch`, `get_touched_files`, `load_session` includes `touched_files`
+- AHMCP-31 delivered: `record_file_touch`, `get_touched_files`, `load_session` includes `touched_files`
 - Cold-start test: fresh session → `load_session` returns what previous agent edited without running `git diff`
+- `make context` exits 0 on drift (cascade-safe); startup batch `Bash(make context)` + `ToolSearch` completes without cancellation (E17-4 Slice 5)
+- `make task-plan-audit` exits 0 when all tagged commits on `main` have plan files; exits 1 on gap; included in `make check-all` (E17-4 Slice 6)
+- AHMCP-32 delivered: `agent-handoff-mcp` raises `BranchMismatchError` when `AGENT_HANDOFF_ENFORCE_BRANCH=1` and write comes from wrong branch (E17-4 Slice 7)
+- `/branch-review`, `/planning-review`, and the other workflow command ids resolve through one canonical manifest with generated Claude and VS Code adapters plus Codex instruction routing; `make check-agent-workflows` catches drift (E17-4 Slice 8)
+- DASHBOARD rendered as plain ASCII (no `.md` extension, no code fences); TEST STATUS scoped to active epic only (E17-5 Slices 1–2)
 
 ---
 
@@ -378,42 +389,44 @@ This epic has no external dependencies. All work is internal to the repo's agent
 | Workflow | `docs/agentic/rules/development-workflow.md` | Preserved as reference; Phase 4 adds branch-delete invariant and maintenance-task pattern |
 | Pipeline | `docs/agentic/rules/planning-pipeline.md` | Preserved as reference; exit gates wired to plan-analyze |
 | Instructions | `docs/agentic/instructions.md` | Rules extracted to constitution; routing updated to skills |
+| Portable workflow manifest | `config/agent-workflows/portable_commands.json` | Phase 4: canonical slash-command contract for all hosts |
+| VS Code prompt adapters | `.github/prompts/*.prompt.md` | Phase 4: generated workspace prompt files mirroring portable workflow commands |
 | Hooks | `scripts/hooks/guard-main-branch.sh` | Phase 4: extended to warn on Edit/Write with no active task |
 | Task finish | `scripts/_task_finish_inline.py` | Phase 4: extended to verify branch deletion after archive |
-| MCP handoff | `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py` | Phase 4 (AHMCP-29): `record_file_touch`, `get_touched_files`, `load_session` touched_files |
+| MCP handoff | `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py` | Phase 4 (AHMCP-31): `record_file_touch`, `get_touched_files`, `load_session` touched_files |
 | MCP orchestrator | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/api.py` | Existing tools composed by skills; no changes expected |
 
 ---
 
 # Consolidated Checklist
 
-## Phase 1: Skill Anatomy Template and Constitution -- not-started
+## Phase 1: Skill Anatomy Template and Constitution -- done
 
-- [ ] Create `docs/agentic/templates/SKILL_ANATOMY.template.md` with all required sections
-- [ ] Define frontmatter schema: `name`, `description`, `mode`, `context_budget`, `makefile_target`, `mcp_tools`
-- [ ] Create `docs/agentic/constitution.md` as the single canonical source for all `[sr-NNN]` and `[rg-NNN]` rules
-- [ ] Update `instructions.md` and `CLAUDE.md` to reference `constitution.md` by path instead of duplicating rule text
-- [ ] Retrofit `commit2git` skill to new anatomy
-- [ ] Retrofit `review` skill to new anatomy
-- [ ] Retrofit `investigate` skill to new anatomy
-- [ ] Verify retrofitted skills have: frontmatter, mode tag, context budget, convergence criteria, rationalizations, red flags
+- [x] Create `docs/agentic/templates/SKILL_ANATOMY.template.md` with all required sections
+- [x] Define frontmatter schema: `name`, `description`, `mode`, `context_budget`, `makefile_target`, `mcp_tools`
+- [x] Create `docs/agentic/constitution.md` as the single canonical source for all `[sr-NNN]` and `[rg-NNN]` rules
+- [x] Update `instructions.md` and `CLAUDE.md` to reference `constitution.md` by path instead of duplicating rule text
+- [x] Retrofit `commit2git` skill to new anatomy
+- [x] Retrofit `review` skill to new anatomy
+- [x] Retrofit `investigate` skill to new anatomy
+- [x] Verify retrofitted skills have: frontmatter, mode tag, context budget, convergence criteria, rationalizations, red flags
 
-## Phase 2: Core Workflow Skills -- not-started
+## Phase 2: Core Workflow Skills -- done
 
-- [ ] Create `scope` advisory skill with question-first intake process (3–5 `AskUserQuestion` calls, Q&A as MCP decisions, `docs/ideas/` one-pager output)
-- [ ] Create `branch-review` execution skill
-- [ ] Create `planning-review` execution skill
-- [ ] Create `plan-analyze` advisory skill with six detection passes
-- [ ] Create `branch-lifecycle` execution skill
-- [ ] Create `handoff-lifecycle` execution skill
-- [ ] Add `make plan-review` Makefile target
-- [ ] Add `make plan-analyze` Makefile target
-- [ ] Verify each skill references its Makefile targets and MCP tools in frontmatter
-- [ ] Verify each skill's context budget is under its declared target
-- [ ] Create paired `.claude/commands/<skill>.md` for each Phase 2 skill (7 files total)
-- [ ] Add PostToolUse hook in `.claude/settings.json` to auto-regenerate DASHBOARD.md (only) after state-changing `record_event`, `review_findings`, `review_runs`, `set_handoff_state`, `update_task_status` writes (read ops filtered; CURRENT_TASK.md on-demand)
+- [x] Create `scope` advisory skill with question-first intake process (3–5 `AskUserQuestion` calls, Q&A as MCP decisions, `docs/ideas/` one-pager output)
+- [x] Create `branch-review` execution skill
+- [x] Create `planning-review` execution skill
+- [x] Create `plan-analyze` advisory skill with six detection passes
+- [x] Create `branch-lifecycle` execution skill
+- [x] Create `handoff-lifecycle` execution skill
+- [x] Add `make plan-review` Makefile target
+- [x] Add `make plan-analyze` Makefile target
+- [x] Verify each skill references its Makefile targets and MCP tools in frontmatter
+- [x] Verify each skill's context budget is under its declared target
+- [x] Create paired `.claude/commands/<skill>.md` for each Phase 2 skill (7 files total; Phase 4 Slice 8 replaces these with generated adapters, so they are no longer hand-edited after that slice ships)
+- [x] Add PostToolUse hook in `.claude/settings.json` to auto-regenerate DASHBOARD.md (only) after state-changing `record_event`, `review_findings`, `review_runs`, `set_handoff_state`, `update_task_status` writes (read ops filtered; CURRENT_TASK.md on-demand)
 
-## Phase 3: Retrofit and Integration -- not-started
+## Phase 3: Retrofit and Integration -- not-started (E17-6)
 
 - [ ] Retrofit remaining skills to new anatomy
 - [ ] Add `make check-skills` validation target
@@ -422,19 +435,26 @@ This epic has no external dependencies. All work is internal to the repo's agent
 - [ ] Update `instructions.md` routing to point to skills as primary entry points
 - [ ] End-to-end validation of cold-start -> plan-analyze -> review -> implement -> finish flow
 
-## Phase 4: Workflow Integrity and Session Continuity -- not-started
+## Phase 4: Workflow Integrity and Session Continuity -- in_progress
 
-- [ ] Write `scripts/worktree_audit.py`: cross-reference local `feature/*` and `codex/*` branches against `task_archives`; exit non-zero if orphans found
+- [ ] Write `scripts/worktree_audit.py`: cross-reference local `feature/*` and `codex/*` branches against active `handoff_state.target_branch` and archived snapshot `target_branch`; exit non-zero if orphans found
 - [ ] Add `make worktree-audit` Makefile target; include in `make check-all`
 - [ ] Extend `scripts/hooks/guard-main-branch.sh`: warn (non-blocking) when Edit/Write invoked with no active handoff task; print maintenance-task registration command
 - [ ] Update `make context` output: report dirty main files + active-task status together
 - [ ] Document maintenance-task pattern in `CLAUDE.md` Critical Rules and `docs/agentic/rules/development-workflow.md`
 - [ ] Extend `scripts/_task_finish_inline.py`: after archive, verify `target_branch` deleted; warn if branch still exists
 - [ ] Document branch-delete invariant in `development-workflow.md § Invariant Close Sequence`
-- [ ] AHMCP-29: `touched_files` schema migration, `record_file_touch` MCP tool, `get_touched_files` MCP query
-- [ ] AHMCP-29: `load_session` response includes `touched_files` for active task
-- [ ] Wire PostToolUse hook to auto-call `record_file_touch` after Edit/Write in `.claude/settings.json`
+- [ ] AHMCP-31 (not AHMCP-29): `touched_files` schema migration, `record_file_touch` MCP tool, `get_touched_files` MCP query
+- [ ] AHMCP-31: `load_session` response includes `touched_files` for active task
+- [ ] Wire PostToolUse hook to auto-call `record_file_touch` after Edit/Write in `.claude/settings.json` and `.github/hooks/terminal-guard.json`
 - [ ] Cold-start verification: `load_session` returns `touched_files` without `git diff`
+- [ ] `check-task-context.py` drift exit changed from `sys.exit(2)` to `sys.exit(0)` — cascade-safe (E17-4 Slice 5)
+- [ ] `CLAUDE.md` Agent Startup Protocol: no-parallel-batch rule added (E17-4 Slice 5)
+- [ ] `scripts/task_plan_audit.py` written; `make task-plan-audit` added; included in `make check-all` (E17-4 Slice 6)
+- [ ] AHMCP-32: `BranchMismatchError` in `shared_write_context.py`; `AGENT_HANDOFF_ENFORCE_BRANCH=1` env gate (E17-4 Slice 7)
+- [ ] Portable workflow manifest added; `.claude/commands/*` and `.github/prompts/*` generated from one source; Codex root instructions route the same `/command` ids (E17-4 Slice 8)
+- [ ] E17-5 Slice 1: DASHBOARD written as plain ASCII (no `.md` extension, no code fences in ALL TASKS table)
+- [ ] E17-5 Slice 2: TEST STATUS section scoped to active epic prefix only (`_collect_task_test_status(epic_ref)` filter)
 
 ## Deferred (Post-v0.4.0)
 

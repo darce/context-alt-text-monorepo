@@ -1,0 +1,201 @@
+{
+  "version": 1,
+  "commands": [
+    {
+      "command_id": "scope",
+      "skill": "scope",
+      "makefile_target": "(in-session intake; no standalone make target)",
+      "description": "Question-first intake for new feature or epic work before drafting planning artifacts.",
+      "execution_context": "Use for new feature asks that still need clarification, boundaries, success criteria, and explicit not-doing language.",
+      "argument_schema": [
+        {
+          "name": "request",
+          "required": false,
+          "description": "Optional raw feature or epic ask to clarify before planning begins."
+        }
+      ],
+      "loop": [
+        "ask 3-5 targeted intake questions first",
+        "record the answers as MCP decisions",
+        "summarize MVP scope, assumptions, success criteria, and Not-Doing",
+        "hand off to assessment or spec drafting only after scope is bounded"
+      ]
+    },
+    {
+      "command_id": "branch-lifecycle",
+      "skill": "branch-lifecycle",
+      "makefile_target": "make task-start TASK=<task-ref> OBJECTIVE=\"...\"",
+      "secondary_targets": [
+        "make review-ready",
+        "make handoff-close-check",
+        "make task-finish TASK=<task-ref>"
+      ],
+      "description": "Task branch start, review gate, close-check, merge, and teardown workflow.",
+      "execution_context": "Use when moving a task through branch start, review readiness, close-check, merge, and teardown.",
+      "argument_schema": [
+        {
+          "name": "task-ref",
+          "required": true,
+          "description": "Active task reference being started or finished."
+        },
+        {
+          "name": "objective",
+          "required": false,
+          "description": "Task objective to pass to task-start when opening the branch."
+        }
+      ],
+      "loop": [
+        "create or enter the task branch/worktree",
+        "verify alignment with make context",
+        "advance slices through tdd and incremental-implementation",
+        "clear review-ready blockers and pass handoff-close-check",
+        "finish with the invariant close sequence and task teardown"
+      ]
+    },
+    {
+      "command_id": "branch-review",
+      "skill": "branch-review",
+      "makefile_target": "make review-run",
+      "description": "Implementation branch review workflow for lane or committed feature-branch diffs.",
+      "execution_context": "Use for implementation branch diffs, pre-merge review passes, and code audit requests.",
+      "argument_schema": [
+        {
+          "name": "scope",
+          "required": false,
+          "description": "Optional explicit diff scope such as main...HEAD when reviewing a committed feature branch."
+        }
+      ],
+      "loop": [
+        "decide whether the review scope is a lane/local working tree or a committed feature-branch diff",
+        "use make review-run only when reviewing lane/local working-tree scope",
+        "load the latest slice packet or branch diff",
+        "pre-triage existing findings",
+        "run the branch-review checklist",
+        "record findings, verdict decision, and branch review run",
+        "confirm whether the branch is actually merge-ready"
+      ]
+    },
+    {
+      "command_id": "handoff-lifecycle",
+      "skill": "handoff-lifecycle",
+      "makefile_target": "make context",
+      "secondary_targets": [
+        "load_session",
+        "switch_task"
+      ],
+      "description": "Session start, task switching, and task-view regeneration workflow.",
+      "execution_context": "Use when starting or resuming a session, switching active tasks, or keeping generated task views aligned after MCP writes.",
+      "argument_schema": [
+        {
+          "name": "task-ref",
+          "required": false,
+          "description": "Optional target task to switch into during the session."
+        }
+      ],
+      "loop": [
+        "confirm branch/worktree context",
+        "load the current task state with bounded reads",
+        "record decisions, blockers, and findings in MCP as work happens",
+        "regenerate DASHBOARD.md after non-atomic writes; use CURRENT_TASK.md only on demand",
+        "switch tasks safely and archive only after done"
+      ]
+    },
+    {
+      "command_id": "incremental-implementation",
+      "skill": "incremental-implementation",
+      "makefile_target": "make slice-start TASK=<task-ref> TEST_CMD=\"<command>\"",
+      "secondary_targets": [
+        "make slice-commit TASK=<task-ref> MSG=\"...\""
+      ],
+      "description": "Bounded vertical-slice implementation workflow.",
+      "execution_context": "Use when decomposing active task-plan work into bounded implementation slices instead of horizontal layer-by-layer waves.",
+      "argument_schema": [
+        {
+          "name": "task-ref",
+          "required": true,
+          "description": "Active task reference for the slice."
+        },
+        {
+          "name": "test-cmd",
+          "required": false,
+          "description": "Failing test command used to open the slice."
+        }
+      ],
+      "loop": [
+        "choose one end-to-end behavior path",
+        "advance the plan item cursor with a clean prior slice",
+        "open the slice through the tdd gate",
+        "keep the diff bounded to that one path",
+        "close with make slice-commit"
+      ]
+    },
+    {
+      "command_id": "plan-analyze",
+      "skill": "plan-analyze",
+      "makefile_target": "make plan-analyze DOC=<path>",
+      "description": "Pre-review planning analysis using the six detection passes.",
+      "execution_context": "Use for pre-review triage of a planning artifact before the formal planning-review pass.",
+      "argument_schema": [
+        {
+          "name": "doc",
+          "required": true,
+          "description": "Planning document path to analyze."
+        }
+      ],
+      "loop": [
+        "load the plan, constitution, and minimal adjacent anchors",
+        "run the six analysis passes",
+        "record findings with review_mode=\"analysis\"",
+        "recommend revise-first or proceed-to-planning-review",
+        "stop without recording a review run"
+      ]
+    },
+    {
+      "command_id": "planning-review",
+      "skill": "planning-review",
+      "makefile_target": "make plan-review DOC=<path>",
+      "description": "Formal planning review workflow for task plans, epics, ADRs, and similar artifacts.",
+      "execution_context": "Use for task plans, epics, ADRs, and other planning artifacts that need formal review before implementation.",
+      "argument_schema": [
+        {
+          "name": "doc",
+          "required": true,
+          "description": "Planning document path to review."
+        }
+      ],
+      "loop": [
+        "load the planning doc and minimum code/contract anchors",
+        "run the planning-review checklist",
+        "record findings and verdict in MCP",
+        "record the planning review run",
+        "block approval until open planning findings are resolved"
+      ]
+    },
+    {
+      "command_id": "tdd",
+      "skill": "tdd",
+      "makefile_target": "make slice-start TASK=<task-ref> TEST_CMD=\"<command>\"",
+      "description": "RED-first slice opening workflow.",
+      "execution_context": "Use at the start of every implementation slice before editing production files.",
+      "argument_schema": [
+        {
+          "name": "task-ref",
+          "required": true,
+          "description": "Active task reference for the slice."
+        },
+        {
+          "name": "test-cmd",
+          "required": true,
+          "description": "Failing test command recorded at slice start."
+        }
+      ],
+      "loop": [
+        "choose the behavior to change",
+        "run the failing test first",
+        "record the RED gate with make slice-start",
+        "implement the minimum to turn the test green",
+        "record passing test evidence, then hand off to make slice-commit"
+      ]
+    }
+  ]
+}

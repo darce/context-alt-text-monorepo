@@ -67,9 +67,9 @@ git worktree remove /path/to/linked-worktree              # clean up
 ```bash
 git checkout main                  # return root to main
 git branch -d feature/<merged>     # delete the merged branch
+```
 
 `make task-finish` performs a belt-and-suspenders post-archive check for this invariant. If the task's `target_branch` still exists after archive, the script prints the exact `git branch -d ...` cleanup command. Manual `archive_task_state` callers still own branch deletion themselves.
-```
 
 ### Dirty Worktree Teardown (MANDATORY)
 

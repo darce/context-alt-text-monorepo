@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""check-task-context.py — fail-fast worktree/branch alignment check.
+"""check-task-context.py — worktree/branch alignment check.
 
 Reads the active task from agent-handoff-mcp via the identity-only `sections`
 projection and compares its `target_worktree_path` and `target_branch` against
 the current process working directory and current git branch. Exits 0 when
-aligned, 2 when drift is detected, 1 on infrastructure errors.
+aligned or drift is detected, 1 on infrastructure errors.
 
 Run via `make context` at the start of every session.
 """
@@ -15,11 +15,12 @@ import json
 import os
 import subprocess
 import sys
+import importlib
 from pathlib import Path
+import types
 
 EXIT_OK = 0
 EXIT_INFRA_ERROR = 1
-EXIT_DRIFT = 2
 MAIN_BRANCHES = frozenset({"main", "master"})
 
 # Statuses that indicate the active task has reached a terminal state and the
@@ -27,10 +28,30 @@ MAIN_BRANCHES = frozenset({"main", "master"})
 # canonical "task complete, archive pending" status; `blocked` and `review`
 # stay surfaced because they represent open holds rather than completion.
 TERMINAL_STATUSES = frozenset({"done"})
+PACKAGE_SRC = Path(__file__).resolve().parents[1] / "packages" / "agent-handoff-mcp" / "src"
+PACKAGE_ROOT = PACKAGE_SRC / "agent_handoff_mcp"
+
+if str(PACKAGE_SRC) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_SRC))
 
 
 def _print_aligned(emoji: str, label: str, value: str) -> None:
     print(f"{emoji} {label:18s} {value}")
+
+
+def _ensure_lightweight_package() -> None:
+    package = sys.modules.get("agent_handoff_mcp")
+    if package is not None:
+        return
+    stub = types.ModuleType("agent_handoff_mcp")
+    stub.__path__ = [str(PACKAGE_ROOT)]  # type: ignore[attr-defined]
+    sys.modules["agent_handoff_mcp"] = stub
+
+
+def _import_handoff_attr(module_name: str, attr: str):
+    _ensure_lightweight_package()
+    module = importlib.import_module(f"agent_handoff_mcp.{module_name}")
+    return getattr(module, attr)
 
 
 def _detect_branch() -> str | None:
@@ -114,7 +135,8 @@ def _configure_runtime() -> bool:
     this divergence loop.
     """
     try:
-        from agent_handoff_mcp import RuntimeConfig, configure_runtime  # type: ignore
+        RuntimeConfig = _import_handoff_attr("config", "RuntimeConfig")
+        configure_runtime = _import_handoff_attr("runtime", "configure_runtime")
     except ImportError:
         return False
     runtime = RuntimeConfig.for_repo(Path.cwd())
@@ -124,7 +146,7 @@ def _configure_runtime() -> bool:
 
 def _load_active_state() -> dict | None:
     try:
-        from agent_handoff_mcp import get_handoff_state  # type: ignore
+        get_handoff_state = _import_handoff_attr("handoff_state", "get_handoff_state")
     except ImportError:
         print("⚠ agent_handoff_mcp not importable from this Python; skipping context check.", file=sys.stderr)
         return None
@@ -205,7 +227,7 @@ def main() -> int:
         # even on the drift path. A user who is in the wrong worktree
         # AND has unexpected dirty files needs to see both warnings.
         _emit_integrity_warning_if_dirty()
-        return EXIT_DRIFT
+        return EXIT_OK
 
     print()
     print("Context aligned ✓")
@@ -251,7 +273,7 @@ def _emit_integrity_warning_if_dirty() -> None:
     considered intentional drift; everything else is surfaced.
     """
     try:
-        from agent_handoff_mcp import RuntimeConfig  # type: ignore
+        RuntimeConfig = _import_handoff_attr("config", "RuntimeConfig")
     except ImportError:
         return
     runtime = RuntimeConfig.for_repo(Path.cwd())

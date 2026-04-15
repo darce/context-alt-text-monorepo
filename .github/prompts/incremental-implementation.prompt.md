@@ -2,7 +2,9 @@
 
 # /incremental-implementation
 
-Active skill: `incremental-implementation`
+Load the `incremental-implementation` skill for this workflow.
+
+Description: Bounded vertical-slice implementation workflow.
 
 Makefile entry point: `make slice-start TASK=<task-ref> TEST_CMD="<command>"`
 Secondary entry points:

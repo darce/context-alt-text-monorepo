@@ -44,7 +44,11 @@ TASK_FINISH_SCRIPT = REPO_ROOT / "scripts" / "task-finish.sh"
 TASK_START_INLINE = REPO_ROOT / "scripts" / "_task_start_inline.py"
 TASK_FINISH_INLINE = REPO_ROOT / "scripts" / "_task_finish_inline.py"
 CHECK_CONTEXT_SCRIPT = REPO_ROOT / "scripts" / "check-task-context.py"
+WORKTREE_AUDIT_SCRIPT = REPO_ROOT / "scripts" / "worktree_audit.py"
+WORKTREE_PRUNE_SCRIPT = REPO_ROOT / "scripts" / "worktree_prune.py"
+TASK_PLAN_AUDIT_SCRIPT = REPO_ROOT / "scripts" / "task_plan_audit.py"
 INTEGRITY_WATCHER_SCRIPT = REPO_ROOT / "scripts" / "integrity-watcher.sh"
+GUARD_MAIN_BRANCH_HOOK = REPO_ROOT / "scripts" / "hooks" / "guard-main-branch.sh"
 
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -79,11 +83,27 @@ def _build_fake_monorepo(tmp_path: Path) -> Path:
     shutil.copy2(TASK_START_INLINE, repo / "scripts" / "_task_start_inline.py")
     shutil.copy2(TASK_FINISH_INLINE, repo / "scripts" / "_task_finish_inline.py")
     shutil.copy2(CHECK_CONTEXT_SCRIPT, repo / "scripts" / "check-task-context.py")
+    if WORKTREE_AUDIT_SCRIPT.exists():
+        shutil.copy2(WORKTREE_AUDIT_SCRIPT, repo / "scripts" / "worktree_audit.py")
+    if WORKTREE_PRUNE_SCRIPT.exists():
+        shutil.copy2(WORKTREE_PRUNE_SCRIPT, repo / "scripts" / "worktree_prune.py")
+    if TASK_PLAN_AUDIT_SCRIPT.exists():
+        shutil.copy2(TASK_PLAN_AUDIT_SCRIPT, repo / "scripts" / "task_plan_audit.py")
     os.chmod(repo / "scripts" / "task-start.sh", 0o755)
     os.chmod(repo / "scripts" / "task-finish.sh", 0o755)
     os.chmod(repo / "scripts" / "_task_start_inline.py", 0o755)
     os.chmod(repo / "scripts" / "_task_finish_inline.py", 0o755)
     os.chmod(repo / "scripts" / "check-task-context.py", 0o755)
+    if (repo / "scripts" / "worktree_audit.py").exists():
+        os.chmod(repo / "scripts" / "worktree_audit.py", 0o755)
+    if (repo / "scripts" / "worktree_prune.py").exists():
+        os.chmod(repo / "scripts" / "worktree_prune.py", 0o755)
+    if (repo / "scripts" / "task_plan_audit.py").exists():
+        os.chmod(repo / "scripts" / "task_plan_audit.py", 0o755)
+    if GUARD_MAIN_BRANCH_HOOK.exists():
+        (repo / "scripts" / "hooks").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(GUARD_MAIN_BRANCH_HOOK, repo / "scripts" / "hooks" / "guard-main-branch.sh")
+        os.chmod(repo / "scripts" / "hooks" / "guard-main-branch.sh", 0o755)
 
     # Copy the agent-handoff-mcp source so the inline Python can import it.
     package_src = REPO_ROOT / "packages" / "agent-handoff-mcp" / "src"
@@ -151,6 +171,33 @@ def _run_script(
         text=True,
         check=check,
     )
+
+
+def _install_agent_handoff_cli_stub(repo: Path, payload: str) -> Path:
+    """Install an `agent-handoff-mcp` CLI stub that prints the given JSON payload."""
+
+    bin_dir = repo / ".test-bin"
+    bin_dir.mkdir(exist_ok=True)
+    stub = bin_dir / "agent-handoff-mcp"
+    stub.write_text(f"#!/bin/bash\ncat <<'EOF'\n{payload}\nEOF\n")
+    stub.chmod(0o755)
+    return bin_dir
+
+
+def _make_path_without_handoff_cli(repo: Path) -> str:
+    """Build a minimal PATH that keeps shell/git/python but omits agent-handoff-mcp."""
+
+    bin_dir = repo / ".test-bin-no-handoff"
+    bin_dir.mkdir(exist_ok=True)
+    for name in ("bash", "git", "python3", "cat"):
+        source = shutil.which(name)
+        if source is None:
+            raise AssertionError(f"required test binary {name!r} was not found on PATH")
+        target = bin_dir / name
+        if target.exists() or target.is_symlink():
+            target.unlink()
+        target.symlink_to(source)
+    return str(bin_dir)
 
 
 def _read_active_row(repo: Path) -> dict[str, object] | None:
@@ -504,6 +551,329 @@ def test_check_task_context_silent_when_drift_is_allowlisted(tmp_path: Path) -> 
         text=True,
     )
     assert "Working-tree integrity" not in proc.stdout, proc.stdout
+
+
+def test_check_task_context_returns_zero_on_drift(tmp_path: Path) -> None:
+    """E17-4 Slice 5: drift should warn without failing the caller."""
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+
+    started = _run_script("task-start.sh", repo, "CHECK-DRIFT-1", "Drift exit repro", env=env)
+    assert started.returncode == 0, started.stderr
+
+    proc = subprocess.run(
+        [sys.executable, str(repo / "scripts" / "check-task-context.py")],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, (
+        f"check-task-context must exit 0 on drift; got {proc.returncode}\nstdout={proc.stdout!r}\nstderr={proc.stderr!r}"
+    )
+    assert "Drift detected" in proc.stdout, proc.stdout
+
+
+def test_check_task_context_reports_dirty_main_without_active_task(tmp_path: Path) -> None:
+    """E17-4 Slice 2: dirty main with no task should print the maintenance-task hint."""
+
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+
+    tracked = repo / "scripts" / "check-task-context.py"
+    tracked.write_text(tracked.read_text() + "\n# dirty main repro\n")
+
+    proc = subprocess.run(
+        [sys.executable, str(repo / "scripts" / "check-task-context.py")],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, (
+        "check-task-context should keep dirty-main warnings non-fatal when there is no active task; "
+        f"got {proc.returncode}\nstdout={proc.stdout!r}\nstderr={proc.stderr!r}"
+    )
+    assert "No active handoff task. Nothing to check." in proc.stdout, proc.stdout
+    assert "Working-tree integrity" in proc.stdout, proc.stdout
+    assert "Register a maintenance task before continuing with main-branch edits" in proc.stdout, proc.stdout
+
+
+def test_guard_main_branch_warns_without_active_task(tmp_path: Path) -> None:
+    """E17-4 Slice 2: permitted main edits should warn when no task is registered."""
+
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+    stub_dir = _install_agent_handoff_cli_stub(repo, '{"data":{"active":null}}')
+    env["PATH"] = f"{stub_dir}:{env['PATH']}"
+
+    payload = json.dumps({"tool_input": {"file_path": str(repo / "README.md")}})
+    proc = subprocess.run(
+        [str(repo / "scripts" / "hooks" / "guard-main-branch.sh")],
+        cwd=repo,
+        env=env,
+        input=payload,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "Editing on main without an active handoff task" in proc.stderr, proc.stderr
+    assert "set_handoff_state(task_ref='MAINT-<slug>'" in proc.stderr, proc.stderr
+
+
+def test_guard_main_branch_is_silent_with_active_task(tmp_path: Path) -> None:
+    """E17-4 Slice 2: the warning should disappear once a task is active."""
+
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+    stub_dir = _install_agent_handoff_cli_stub(repo, '{"data":{"active":{"task_ref":"MAINT-test"}}}')
+    env["PATH"] = f"{stub_dir}:{env['PATH']}"
+
+    payload = json.dumps({"tool_input": {"file_path": str(repo / "README.md")}})
+    proc = subprocess.run(
+        [str(repo / "scripts" / "hooks" / "guard-main-branch.sh")],
+        cwd=repo,
+        env=env,
+        input=payload,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "Editing on main without an active handoff task" not in proc.stderr, proc.stderr
+
+
+def test_guard_main_branch_skips_warning_when_cli_is_unavailable(tmp_path: Path) -> None:
+    """E17-4 Slice 2: missing CLI should not masquerade as 'no active task'."""
+
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+    env["PATH"] = _make_path_without_handoff_cli(repo)
+
+    payload = json.dumps({"tool_input": {"file_path": str(repo / "README.md")}})
+    proc = subprocess.run(
+        [str(repo / "scripts" / "hooks" / "guard-main-branch.sh")],
+        cwd=repo,
+        env=env,
+        input=payload,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "Editing on main without an active handoff task" not in proc.stderr, proc.stderr
+
+
+def test_worktree_audit_uses_archived_snapshot_target_branch(tmp_path: Path) -> None:
+    """E17-4 Slice 1: archived snapshot target_branch registers a branch.
+
+    `archived_branch` stores archive provenance (often `main` at task-finish),
+    so the audit must consult the archived snapshot's active.target_branch
+    instead when deciding whether a local branch belongs to a known task.
+    """
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+
+    started = _run_script("task-start.sh", repo, "WA-SNAPSHOT-1", "Snapshot audit repro", env=env)
+    assert started.returncode == 0, started.stderr
+
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "--ff-only", "feature/wa-snapshot-1")
+
+    finished = _run_script("task-finish.sh", repo, "WA-SNAPSHOT-1", env=env)
+    assert finished.returncode == 0, finished.stderr
+
+    _git(repo, "branch", "feature/wa-snapshot-1", "main")
+
+    audit_script = repo / "scripts" / "worktree_audit.py"
+    assert audit_script.exists(), "worktree_audit.py must exist in the scripts tree"
+    proc = subprocess.run(
+        [sys.executable, str(audit_script)],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, (
+        "worktree_audit should treat archived snapshot target_branch as registered; "
+        f"got exit={proc.returncode}\nstdout={proc.stdout!r}\nstderr={proc.stderr!r}"
+    )
+
+
+def test_worktree_audit_reports_orphan_branch(tmp_path: Path) -> None:
+    """E17-4 Slice 1: orphan branches should fail the audit with a branch list."""
+
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+    _git(repo, "branch", "feature/wp-orphan-2", "main")
+
+    audit_script = repo / "scripts" / "worktree_audit.py"
+    assert audit_script.exists(), "worktree_audit.py must exist in the scripts tree"
+    proc = subprocess.run(
+        [sys.executable, str(audit_script)],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 1, (
+        "worktree_audit should fail when an orphan branch exists; "
+        f"got exit={proc.returncode}\nstdout={proc.stdout!r}\nstderr={proc.stderr!r}"
+    )
+    assert "feature/wp-orphan-2" in proc.stdout, proc.stdout
+    assert "orphan local branches detected" in proc.stdout, proc.stdout
+
+
+def test_worktree_prune_deletes_orphans_and_keeps_registered_branches(tmp_path: Path) -> None:
+    """E17-4 stretch: worktree-prune should delete only orphan branches."""
+
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+
+    started = _run_script("task-start.sh", repo, "WP-KEEP-1", "Keep registered branch", env=env)
+    assert started.returncode == 0, started.stderr
+
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "--ff-only", "feature/wp-keep-1")
+    finished = _run_script("task-finish.sh", repo, "WP-KEEP-1", env=env)
+    assert finished.returncode == 0, finished.stderr
+    _git(repo, "branch", "feature/wp-keep-1", "main")
+
+    _git(repo, "branch", "feature/wp-orphan-1", "main")
+
+    prune_script = repo / "scripts" / "worktree_prune.py"
+    assert prune_script.exists(), "worktree_prune.py must exist in the scripts tree"
+    proc = subprocess.run(
+        [sys.executable, str(prune_script), "--yes"],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r}\nstderr={proc.stderr!r}"
+
+    branches = _git(repo, "branch", "--list", "feature/wp-*").stdout
+    assert "feature/wp-orphan-1" not in branches, branches
+    assert "feature/wp-keep-1" in branches, branches
+
+
+def test_worktree_prune_dry_run_preserves_orphans(tmp_path: Path) -> None:
+    """E17-4 BR-11: dry-run should preview deletions without mutating branches."""
+
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+    _git(repo, "branch", "feature/wp-preview-1", "main")
+
+    prune_script = repo / "scripts" / "worktree_prune.py"
+    assert prune_script.exists(), "worktree_prune.py must exist in the scripts tree"
+    proc = subprocess.run(
+        [sys.executable, str(prune_script), "--dry-run"],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r}\nstderr={proc.stderr!r}"
+    assert "Dry run: would delete with `git branch -d`." in proc.stdout, proc.stdout
+    assert "previewed=1" in proc.stdout, proc.stdout
+
+    branches = _git(repo, "branch", "--list", "feature/wp-preview-1").stdout
+    assert "feature/wp-preview-1" in branches, branches
+
+
+def test_task_plan_audit_reports_missing_then_passes_with_plan(tmp_path: Path) -> None:
+    """E17-4 Slice 6: tagged commits without a plan file must fail the audit."""
+    repo = _build_fake_monorepo(tmp_path)
+
+    audit_script = repo / "scripts" / "task_plan_audit.py"
+    assert audit_script.exists(), "task_plan_audit.py must exist in the scripts tree"
+
+    _git(repo, "commit", "--allow-empty", "-q", "-m", "feat(AHMCP-31): add touched files")
+
+    missing = subprocess.run(
+        [sys.executable, str(audit_script)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+    assert missing.returncode == 1, (
+        f"task_plan_audit should fail when the tagged task has no plan file; got {missing.returncode}"
+    )
+    assert "AHMCP-31" in missing.stdout, missing.stdout
+
+    plan_dir = repo / "packages" / "agent-handoff-mcp" / "docs" / "tasks"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    (plan_dir / "AHMCP-31-touched-files-task-plan.md").write_text("# AHMCP-31\n")
+
+    clean = subprocess.run(
+        [sys.executable, str(audit_script)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+    assert clean.returncode == 0, (
+        f"task_plan_audit should pass once the tagged task has a plan file; got {clean.returncode}"
+    )
+
+
+def test_task_plan_audit_ignores_non_task_rule_tags(tmp_path: Path) -> None:
+    """E17-4 Slice 6: repo rule tags like RG-018 are not task refs."""
+    repo = _build_fake_monorepo(tmp_path)
+
+    audit_script = repo / "scripts" / "task_plan_audit.py"
+    assert audit_script.exists(), "task_plan_audit.py must exist in the scripts tree"
+
+    _git(repo, "commit", "--allow-empty", "-q", "-m", "docs(RG-018): document raw sqlite3 ban")
+
+    proc = subprocess.run(
+        [sys.executable, str(audit_script)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, (
+        "task_plan_audit should ignore non-task rule tags like RG-018; "
+        f"got {proc.returncode}\nstdout={proc.stdout!r}\nstderr={proc.stderr!r}"
+    )
+
+
+def test_task_finish_inline_warns_when_target_branch_still_exists(tmp_path: Path) -> None:
+    """E17-4 Slice 3: archive should warn when the feature branch still exists."""
+
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+
+    started = _run_script("task-start.sh", repo, "TF-BRANCH-1", "Branch persistence repro", env=env)
+    assert started.returncode == 0, started.stderr
+
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "--ff-only", "feature/tf-branch-1")
+
+    inline_env = env | {"REPO_ROOT": str(repo), "TASK": "TF-BRANCH-1"}
+    proc = subprocess.run(
+        [sys.executable, str(repo / "scripts" / "_task_finish_inline.py")],
+        cwd=repo,
+        env=inline_env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "still exists after archive" in proc.stderr, proc.stderr
+
+
+def test_task_finish_normal_path_does_not_warn_about_deleted_branch(tmp_path: Path) -> None:
+    """E17-4 Slice 3: normal task-finish should stay quiet after branch deletion."""
+
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+
+    started = _run_script("task-start.sh", repo, "TF-NO-WARN-1", "Normal finish repro", env=env)
+    assert started.returncode == 0, started.stderr
+
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "--ff-only", "feature/tf-no-warn-1")
+
+    finished = _run_script("task-finish.sh", repo, "TF-NO-WARN-1", env=env)
+    assert finished.returncode == 0, finished.stderr
+    assert "still exists after archive" not in finished.stderr, finished.stderr
 
 
 # ---------------------------------------------------------------------------

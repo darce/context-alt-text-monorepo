@@ -132,7 +132,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/lane-maintenance.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context dashboard worktree-audit task-start task-finish
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context dashboard worktree-audit worktree-prune task-plan-audit generate-agent-workflows check-agent-workflows task-start task-finish
 
 # Default target
 help:
@@ -171,6 +171,15 @@ help:
 	@echo "  make handoff-integrity-check - Run parser/lifecycle/sync guard checks"
 	@echo "  make worktree-audit"
 	@echo "    Detect orphan local feature/codex branches with no active or archived handoff registration."
+	@echo "  make worktree-prune"
+	@echo "    Interactively prompt to delete orphan local feature/codex branches with git branch -d."
+	@echo "    Add WORKTREE_PRUNE_ARGS=--dry-run to preview deletions without mutating git state."
+	@echo "  make task-plan-audit"
+	@echo "    Detect tagged main-branch task refs whose task-plan files are missing from docs/tasks surfaces."
+	@echo "  make generate-agent-workflows"
+	@echo "    Generate Claude and VS Code workflow adapters from config/agent-workflows/portable_commands.json."
+	@echo "  make check-agent-workflows"
+	@echo "    Fail if generated workflow adapters drift from the canonical manifest."
 	@echo "  make handoff-dispatch TASK=<task-ref> [DRY_RUN=1]"
 	@echo "    Route open handoff review findings, blockers, and next actions from the orchestrator root to the correct worker lanes."
 	@echo "  make handoff-inbox TASK=<task-ref> [LANE=<lane>]"
@@ -249,7 +258,9 @@ check-all:
 			$(MAKE) lint-all; \
 			$(MAKE) lint-task-plans; \
 			$(MAKE) lint-scripts; \
+			$(MAKE) check-agent-workflows; \
 			$(MAKE) worktree-audit; \
+			$(MAKE) task-plan-audit; \
 			$(MAKE) mypy-orchestrator; \
 			$(MAKE) test-all; \
 			echo ""; \
@@ -290,7 +301,7 @@ lint-all:
 			$(MAKE) lint-orchestrator; \
 			echo ""; \
 			echo "=== Linting Codex Subagent Bridge ==="; \
-			$(MAKE) -C packages/codex-subagent-bridge lint-bridge; \
+			$(MAKE) -C packages/codex-subagent-bridge lint-bridge PYTHON="$(PYTHON)"; \
 			echo ""; \
 			echo "=== Linting TypeScript (frontend) ==="; \
 			( cd apps/prototype-wp-alt-context && make lint ); \
@@ -404,7 +415,7 @@ format-all:
 	@echo "=== Formatting agent-orchestrator-mcp ==="
 	@$(MAKE) format-orchestrator
 	@echo "=== Formatting codex-subagent-bridge ==="
-	@$(MAKE) -C packages/codex-subagent-bridge format-bridge
+	@$(MAKE) -C packages/codex-subagent-bridge format-bridge PYTHON="$(PYTHON)"
 	@echo "=== Formatting description-service ==="
 	@( cd apps/prototype-description-service && $(MAKE) format )
 	@echo "=== Formatting WordPress plugin (TS/JS + PHP) ==="
@@ -559,8 +570,8 @@ ace-trends:
 # =============================================================================
 
 # Verify the current shell is aligned with the active task's target_branch and
-# target_worktree_path. Exits 0 when aligned, 2 on drift, 1 on infra error.
-# Run at the start of every session before recording any handoff state.
+# target_worktree_path. Exits 0 on aligned or drift-warning paths, 1 on infra
+# error. Run at the start of every session before recording any handoff state.
 # Usage: make context
 context:
 	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) scripts/check-task-context.py
@@ -577,6 +588,19 @@ dashboard:
 worktree-audit:
 	@PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src:$(MCP_PYTHONPATH)" \
 		$(MCP_PYTHON) scripts/worktree_audit.py
+
+worktree-prune:
+	@PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src:$(MCP_PYTHONPATH)" \
+		$(MCP_PYTHON) scripts/worktree_prune.py $(WORKTREE_PRUNE_ARGS)
+
+task-plan-audit:
+	@$(MCP_PYTHON) scripts/task_plan_audit.py
+
+generate-agent-workflows:
+	@$(MCP_PYTHON) scripts/generate_agent_workflows.py
+
+check-agent-workflows:
+	@$(MCP_PYTHON) scripts/generate_agent_workflows.py --check
 
 # Convenience wrapper that scaffolds a feature branch + worktree + MCP task in
 # one go. Computes the canonical path /Users/.../context-alt-text-monorepo-<task>

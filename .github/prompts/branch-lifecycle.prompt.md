@@ -2,7 +2,9 @@
 
 # /branch-lifecycle
 
-Active skill: `branch-lifecycle`
+Load the `branch-lifecycle` skill for this workflow.
+
+Description: Task branch start, review gate, close-check, merge, and teardown workflow.
 
 Makefile entry point: `make task-start TASK=<task-ref> OBJECTIVE="..."`
 Secondary entry points:

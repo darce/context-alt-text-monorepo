@@ -86,7 +86,7 @@ export const useClusterSaveAction = ({
       }
 
       const currentLabel = clusterLabel ?? '';
-      if (currentLabel && trimmed.toLowerCase() === currentLabel.toLowerCase()) {
+      if (currentLabel?.toLowerCase() === trimmed.toLowerCase()) {
         cancelEditing();
         return;
       }
@@ -101,7 +101,7 @@ export const useClusterSaveAction = ({
       let mutationStarted = false;
       try {
         let match = matchedCluster;
-        if (!match || match.label.toLowerCase() !== trimmed.toLowerCase()) {
+        if (match?.label.toLowerCase() !== trimmed.toLowerCase()) {
           match = await findClusterByLabel(trimmed, abortController.signal);
         }
 
@@ -109,7 +109,7 @@ export const useClusterSaveAction = ({
           return;
         }
 
-        if (match && match.label.toLowerCase() === currentLabel.toLowerCase()) {
+        if (match?.label.toLowerCase() === currentLabel.toLowerCase()) {
           cancelEditing();
           resetSaveStatus();
           return;

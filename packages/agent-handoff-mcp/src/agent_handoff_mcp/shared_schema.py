@@ -50,7 +50,8 @@ _log = logging.getLogger("agent_handoff_mcp")
 #   v3 — adds handoff_state.target_worktree_path (originally landed without
 #        a version bump, which silently broke `set_handoff_state` on every
 #        already-bootstrapped DB until AHMCP-9 fixed it).
-HANDOFF_SCHEMA_VERSION = 3
+#   v4 — adds touched_files task-level file-touch ledger.
+HANDOFF_SCHEMA_VERSION = 4
 _HANDOFF_REQUIRED_TABLES = frozenset(
     {
         "handoff_state",
@@ -58,6 +59,7 @@ _HANDOFF_REQUIRED_TABLES = frozenset(
         "blockers",
         "next_actions",
         "verified_tests",
+        "touched_files",
         "task_archives",
         "review_findings",
         "worktree_lanes",
@@ -177,6 +179,19 @@ CREATE TABLE IF NOT EXISTS verified_tests (
     branch        TEXT,
     commit_sha    TEXT,
     verified_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS touched_files (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_ref      TEXT NOT NULL,
+    file_path     TEXT NOT NULL,
+    change_kind   TEXT NOT NULL CHECK (change_kind IN ('edit', 'add', 'delete')),
+    session       TEXT,
+    commit_sha    TEXT,
+    lane_id       TEXT,
+    agent         TEXT,
+    branch        TEXT,
+    touched_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS task_archives (
@@ -363,6 +378,8 @@ CREATE INDEX IF NOT EXISTS idx_actions_task_status_priority
     ON next_actions(task_ref, status, priority, created_at);
 CREATE INDEX IF NOT EXISTS idx_tests_task_verified
     ON verified_tests(task_ref, verified_at DESC);
+CREATE INDEX IF NOT EXISTS idx_touched_files_task_touched
+    ON touched_files(task_ref, touched_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_task_archives_archived_at
     ON task_archives(archived_at DESC);
 CREATE INDEX IF NOT EXISTS idx_review_findings_task_status
@@ -777,6 +794,27 @@ def _dedupe_review_findings(conn: sqlite3.Connection, task_ref: str | None = Non
 
 def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
     try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS touched_files (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_ref      TEXT NOT NULL,
+                file_path     TEXT NOT NULL,
+                change_kind   TEXT NOT NULL CHECK (change_kind IN ('edit', 'add', 'delete')),
+                session       TEXT,
+                commit_sha    TEXT,
+                lane_id       TEXT,
+                agent         TEXT,
+                branch        TEXT,
+                touched_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """
+        )
+        if not _has_index(conn, "touched_files", "idx_touched_files_task_touched"):
+            conn.execute(
+                "CREATE INDEX idx_touched_files_task_touched "
+                "ON touched_files(task_ref, touched_at DESC, id DESC)"
+            )
         needs_backfill = False
         for table in ("decisions", "blockers", "next_actions", "verified_tests", "review_findings"):
             if not _has_column(conn, table, "lane_id"):

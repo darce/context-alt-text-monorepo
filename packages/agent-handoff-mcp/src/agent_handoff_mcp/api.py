@@ -45,6 +45,8 @@ _core_update_task_status = core.update_task_status
 _core_set_handoff_state = core.set_handoff_state
 get_handoff_state = core.get_handoff_state
 list_next_actions = core.list_next_actions
+record_file_touch = core.record_file_touch
+get_touched_files = core.get_touched_files
 
 record_artifact = core.record_artifact
 search_artifacts = core.search_artifacts
@@ -72,6 +74,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "archive_task_state": "Archive completed task state from the live handoff tables into archive storage.",
     "get_archived_task": "Read an archived task row from task_archives by task_ref. Returns archive metadata (archived_at/archived_by/archived_branch/archived_commit_sha/notes) plus the parsed snapshot when include_snapshot=True. Use this to inspect a task's terminal state without dropping to raw sqlite.",
     "get_verified_tests": "List verified test rows from the handoff ledger with optional task, lane, branch, commit, and pass/fail filters.",
+    "record_file_touch": "Record one task-scoped file touch row for a file path and change kind. Append-only surface for the file-touch ledger.",
+    "get_touched_files": "List task-scoped file-touch rows with deterministic newest-first ordering and a bounded limit.",
     "update_task_status": "Update a task status without recording a slice decision. For the active task this requires expected_revision; for archived tasks it updates the archived snapshot status used by the dashboard.",
     "load_session": "Load session context: get_handoff_state + review_findings(list open) in one call. Pass sections to shape the nested state payload and detail to shape both state and findings.",
     "close_slice": "Record a slice-complete decision, keep the task status in_progress, and regenerate CURRENT_TASK.md plus DASHBOARD.txt. Requires expected_revision when the target task is currently active. Pass changed_files to persist structured review scope on the nested decision write.",
@@ -1471,6 +1475,36 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--commit-sha"),
                 ArgSpec("--passed", choices=["true", "false"]),
                 ArgSpec("--limit", type=int, default=100),
+                ArgSpec("--offset", type=int, default=0),
+            ],
+            surface_class="query",
+            entity_family="handoff_state",
+        ),
+        ToolEntry(
+            "record_file_touch",
+            record_file_touch,
+            TOOL_DESCRIPTIONS["record_file_touch"],
+            profile="extended",
+            cli_name="record-file-touch",
+            cli_args=[
+                ArgSpec("--file-path", required=True),
+                ArgSpec("--change-kind", required=True, choices=["edit", "add", "delete"]),
+                ArgSpec("--session"),
+                ArgSpec("--commit-sha"),
+                ArgSpec("--task-ref"),
+            ],
+            surface_class="action",
+            entity_family="handoff_state",
+        ),
+        ToolEntry(
+            "get_touched_files",
+            get_touched_files,
+            TOOL_DESCRIPTIONS["get_touched_files"],
+            profile="extended",
+            cli_name="get-touched-files",
+            cli_args=[
+                ArgSpec("--task-ref"),
+                ArgSpec("--limit", type=int, default=20),
                 ArgSpec("--offset", type=int, default=0),
             ],
             surface_class="query",

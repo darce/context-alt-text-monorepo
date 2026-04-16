@@ -2,7 +2,9 @@
 
 # /tdd
 
-Active skill: `tdd`
+Load the `tdd` skill for this workflow.
+
+Description: RED-first slice opening workflow.
 
 Makefile entry point: `make slice-start TASK=<task-ref> TEST_CMD="<command>"`
 

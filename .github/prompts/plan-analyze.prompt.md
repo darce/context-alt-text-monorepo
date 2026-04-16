@@ -2,7 +2,9 @@
 
 # /plan-analyze
 
-Active skill: `plan-analyze`
+Load the `plan-analyze` skill for this workflow.
+
+Description: Pre-review planning analysis using the six detection passes.
 
 Makefile entry point: `make plan-analyze DOC=<path>`
 

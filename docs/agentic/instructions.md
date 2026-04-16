@@ -71,6 +71,19 @@ Choose your domain to load targeted context. Always load the matching testing gu
 | Codex custom MCP attachment            | [playbooks/codex-custom-mcp-playbook.md](playbooks/codex-custom-mcp-playbook.md)                                                                    |
 | Lane decomposition / orchestration     | [playbooks/worktree-codex-playbook.md](playbooks/worktree-codex-playbook.md) + [playbooks/lane-scoped-context.md](playbooks/lane-scoped-context.md) |
 
+### Portable Command Router
+
+If a user prompt begins with a registered `/command_id`, treat that prefix as a workflow command routed through `config/agent-workflows/portable_commands.json`. The manifest is the canonical command contract; `.claude/commands/*.md` and `.github/prompts/*.prompt.md` are generated host adapters, while Codex uses this router section directly because it has no native prompt registry.
+
+Current managed ids: `/scope`, `/branch-lifecycle`, `/branch-review`, `/handoff-lifecycle`, `/incremental-implementation`, `/plan-analyze`, `/planning-review`, `/tdd`.
+
+Routing rules:
+
+- Strip the leading `/command_id` token before normal intent analysis.
+- Load the mapped skill named in the manifest and use its `makefile_target` as the primary entry point when a make target exists.
+- Interpret the remainder of the user message using the manifest-defined argument names.
+- If generated adapters drift from the manifest, run `make generate-agent-workflows`; `make check-agent-workflows` is the repo gate for this contract.
+
 ## Agent Startup Protocol
 
 Run at every session start (cold start, mid-task re-entry, lane inherit).

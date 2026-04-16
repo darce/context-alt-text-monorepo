@@ -2,7 +2,9 @@
 
 # /scope
 
-Active skill: `scope`
+Load the `scope` skill for this workflow.
+
+Description: Question-first intake for new feature or epic work before drafting planning artifacts.
 
 Makefile entry point: `(in-session intake; no standalone make target)`
 

@@ -74,6 +74,11 @@ def main() -> int:
         if isinstance(active_row, dict) and active_row.get("task_ref") == task
         else None
     )
+    target_branch = (
+        active_row.get("target_branch")
+        if isinstance(active_row, dict) and active_row.get("task_ref") == task
+        else None
+    )
 
     try:
         state = update_task_status(
@@ -101,6 +106,20 @@ def main() -> int:
     dash = generate_dashboard_md()
     if not dash.get("ok"):
         print(f"\u26a0 generate_dashboard_md returned ok=False: {dash}", file=sys.stderr)
+
+    if isinstance(target_branch, str) and target_branch and target_branch not in {"main", "master"}:
+        branch_exists = subprocess.run(
+            ["git", "branch", "--list", target_branch],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if branch_exists.returncode == 0 and branch_exists.stdout.strip():
+            print(
+                f"\u26a0 Branch '{target_branch}' still exists after archive. Delete it: git branch -d {target_branch}",
+                file=sys.stderr,
+            )
 
     print("  OK")
     return 0

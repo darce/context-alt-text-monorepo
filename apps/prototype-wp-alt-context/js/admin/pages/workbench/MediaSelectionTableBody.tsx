@@ -149,7 +149,9 @@ const MediaSelectionRow = ({
       </td>
       <td>
         {item.tags.length === 0 ? (
-          <span className="acx-media-selection__tag acx-media-selection__tag--empty">{__('No tags', 'alt-context')}</span>
+          <span className="acx-media-selection__tag acx-media-selection__tag--empty">
+            {__('No tags', 'alt-context')}
+          </span>
         ) : (
           <ul className="acx-media-selection__tags">
             {item.tags.map((tag) => (

@@ -2,7 +2,9 @@
 
 # /handoff-lifecycle
 
-Active skill: `handoff-lifecycle`
+Load the `handoff-lifecycle` skill for this workflow.
+
+Description: Session start, task switching, and task-view regeneration workflow.
 
 Makefile entry point: `make context`
 Secondary entry points:

@@ -2,7 +2,9 @@
 
 # /branch-review
 
-Active skill: `branch-review`
+Load the `branch-review` skill for this workflow.
+
+Description: Implementation branch review workflow for lane or committed feature-branch diffs.
 
 Makefile entry point: `make review-run`
 

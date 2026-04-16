@@ -61,4 +61,37 @@ EOF
   exit 2
 fi
 
+# Warning-only rollout: permitted main-branch edits still require a handoff task.
+# If none is active, print a maintenance-task reminder but do not block the edit.
+ACTIVE_TASK=""
+if command -v agent-handoff-mcp >/dev/null 2>&1; then
+  ACTIVE_TASK=$(
+    agent-handoff-mcp --workspace-root "$REPO_ROOT" state --sections identity 2>/dev/null | python3 -c "
+import sys, json
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    print('')
+    raise SystemExit(0)
+data = payload.get('data') if isinstance(payload, dict) else None
+active = data.get('active') if isinstance(data, dict) else None
+task_ref = active.get('task_ref') if isinstance(active, dict) else ''
+print(task_ref or '')
+" 2>/dev/null || true
+  )
+fi
+
+if [ -z "$ACTIVE_TASK" ]; then
+  cat >&2 <<EOF
+WARNING: Editing on $BRANCH without an active handoff task.
+
+  File: $REL_PATH
+
+Register a maintenance task before continuing:
+  set_handoff_state(task_ref='MAINT-<slug>', objective='Describe the main-branch patch', status='in_progress')
+
+This rollout is warning-only for permitted main-branch edits.
+EOF
+fi
+
 exit 0

@@ -114,8 +114,7 @@ def test_warm_start_migration_adds_touched_files_table(isolated_runtime: Runtime
 
     with _get_db_connection() as conn:
         assert _table_exists(conn, "touched_files") is True, (
-            "warm-start migration did not restore touched_files; "
-            "the new schema step is unreachable from the warm path"
+            "warm-start migration did not restore touched_files; the new schema step is unreachable from the warm path"
         )
         user_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
         assert user_version == HANDOFF_SCHEMA_VERSION

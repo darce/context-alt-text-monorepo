@@ -2,7 +2,9 @@
 
 # /planning-review
 
-Active skill: `planning-review`
+Load the `planning-review` skill for this workflow.
+
+Description: Formal planning review workflow for task plans, epics, ADRs, and similar artifacts.
 
 Makefile entry point: `make plan-review DOC=<path>`
 

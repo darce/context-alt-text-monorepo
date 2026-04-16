@@ -47,7 +47,7 @@ plan-analyze:
 		"Skill: .claude/skills/plan-analyze/SKILL.md (Phase 2 deliverable)" \
 		"Constraint surface: docs/agentic/constitution.md" \
 		"Review checklist: docs/agentic/rules/planning-review-guide.md" \
-		"Expected output: MCP findings with review_mode=analysis before planning review."
+		"Expected output: MCP planning findings + a plan-analyze review_runs marker before planning review."
 
 plan-review:
 	@if [ -z "$(DOC)" ]; then \
@@ -59,6 +59,16 @@ plan-review:
 		echo "Document not found: $(DOC)"; \
 		exit 1; \
 	fi
+	@set +e; \
+		$(MCP_PYTHON) scripts/check_plan_analyze.py --doc "$(DOC)" $(if $(TASK),--task-ref $(TASK),); \
+		status=$$?; \
+		set -e; \
+		if [ "$$status" -eq 1 ]; then \
+			exit 1; \
+		fi; \
+		if [ "$$status" -eq 2 ] && [ "$(PLAN_ANALYZE_REQUIRED)" = "1" ]; then \
+			exit 2; \
+		fi
 	@printf '%s\n' \
 		"Agent-assisted target: plan-review" \
 		"Document: $(DOC)" \

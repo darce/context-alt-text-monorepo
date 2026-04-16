@@ -15,7 +15,7 @@ Allowlisted terminal uses
 - Build: make <target>
 - pyenv
 - Git write / coordination / history: commit, push, rebase, cherry-pick, worktree, stash,
-  fetch, pull, log, checkout, merge, branch, tag, add, rm, mv, reset
+  fetch, pull, log, checkout, merge, branch, tag, add, rm, mv, reset, reflog
 - Git metadata reads: diff --name-only, diff --shortstat, status -sb, ls-files, show --stat (narrow forms only)
 - Read-only measurement: wc (line/word/byte counts)
 - In-place file edits: sed -i (when replace_string_in_file fails on large blocks)
@@ -109,6 +109,9 @@ _ALLOWLIST: list[re.Pattern[str]] = [
         # git show --stat: read-only commit inspection (no native tool equivalent)
         r"^git\s+show\s+--stat\b",
         r"^git\s+-C\s+\S+\s+show\s+--stat\b",
+        # git reflog: read-only local history inspection
+        r"^git\s+reflog\b",
+        r"^git\s+-C\s+\S+\s+reflog\b",
         # git rev-parse / rev-list: read-only SHA, path, and commit-count resolution
         r"^git\s+rev-parse\b",
         r"^git\s+-C\s+\S+\s+rev-parse\b",

@@ -414,7 +414,7 @@ Summary: orchestrator stays on root branch; workers own `codex/*` branches with 
 
 ### Branch Review Trigger (MANDATORY)
 
-When a user request matches any of these patterns, **load and follow** [rules/branch-review-guide.md](rules/branch-review-guide.md) before starting the review:
+When a user request matches any of these patterns, route it through the [../../.claude/skills/branch-review/SKILL.md](../../.claude/skills/branch-review/SKILL.md) skill (or `/branch-review`) before starting the review:
 
 - "review" + ("implementation" | "code" | "changes" | "branch" | "PR" | "diff")
 - "audit" + ("branch" | "code")
@@ -423,13 +423,14 @@ When a user request matches any of these patterns, **load and follow** [rules/br
 
 **Procedure:**
 
-1. Read `rules/branch-review-guide.md` (process + checklist + report template).
-2. Read the relevant stack guide(s) based on files in the diff.
-3. Walk the common checklist + stack-specific checklist, citing files and lines.
-4. Classify each finding using the defined categories (ANTIPATTERN / DEAD_CODE / COMPLEXITY / GAP) and severities (HIGH / MEDIUM / LOW).
-5. Record findings in MCP handoff. Use `review_findings(review={"operation":"record", ...}, actor={ ... }, task_ref=...)` for 1-2 findings; use `review_findings(review={"operation":"batch_record", findings=[...], ...}, actor={ ... }, task_ref=...)` for 3 or more (atomic write, single post-write dashboard refresh, per-item results).
-6. Produce the markdown report using the template.
-7. Call `record_event(event={event_kind: "decision", actor: {...}, ...})` summarizing the review, then `generate_dashboard_md()`. Call `generate_current_task_md(...)` only if a task-scoped machine snapshot is explicitly needed.
+1. Read the `branch-review` skill and use `make review-run` when the workflow is agent-assisted.
+2. Use `rules/branch-review-guide.md` as the detailed checklist/report reference behind the skill.
+3. Read the relevant stack guide(s) based on files in the diff.
+4. Walk the common checklist + stack-specific checklist, citing files and lines.
+5. Classify each finding using the defined categories (ANTIPATTERN / DEAD_CODE / COMPLEXITY / GAP) and severities (HIGH / MEDIUM / LOW).
+6. Record findings in MCP handoff. Use `review_findings(review={"operation":"record", ...}, actor={ ... }, task_ref=...)` for 1-2 findings; use `review_findings(review={"operation":"batch_record", findings=[...], ...}, actor={ ... }, task_ref=...)` for 3 or more (atomic write, single post-write dashboard refresh, per-item results).
+7. Produce the markdown report using the template.
+8. Call `record_event(event={event_kind: "decision", actor: {...}, ...})` summarizing the review, then `generate_dashboard_md()`. Call `generate_current_task_md(...)` only if a task-scoped machine snapshot is explicitly needed.
 
 **Do NOT** perform ad-hoc reviews. The guide exists to ensure consistent, structured, cross-agent-visible output.
 
@@ -446,7 +447,7 @@ Branch review guidance is code-change specific. Planning-document reviews still 
 
 ### Planning Review Trigger (MANDATORY)
 
-When a user request matches any of these patterns, **load and follow** [rules/planning-review-guide.md](rules/planning-review-guide.md) before starting the review:
+When a user request matches any of these patterns, route it through the [../../.claude/skills/planning-review/SKILL.md](../../.claude/skills/planning-review/SKILL.md) skill (or `/planning-review`) before starting the review:
 
 - "review" + ("task plan" | "epic" | "roadmap" | "ADR" | "planning document")
 - "flag issues" | "flag gaps" | "flag obsolete assumptions" on a doc under `docs/`
@@ -455,11 +456,13 @@ When a user request matches any of these patterns, **load and follow** [rules/pl
 
 Procedure:
 
-1. Read `rules/planning-review-guide.md`.
-2. Review the document against the current codebase and adjacent planning/contracts.
-3. Record each finding in MCP handoff before presenting it.
-4. Cite both the planning-doc lines and the current code/contract lines that justify the finding.
-5. If asked to patch the document, resolve the recorded findings and then update their status.
+1. Run `plan-analyze` first (`make plan-analyze DOC=<path>` or `/plan-analyze`) so pre-review triage is recorded before formal review.
+2. Read the `planning-review` skill and use `make plan-review DOC=<path>` when the workflow is agent-assisted.
+3. Use `rules/planning-review-guide.md` as the detailed checklist/reference behind the skill.
+4. Review the document against the current codebase and adjacent planning/contracts.
+5. Record each finding in MCP handoff before presenting it.
+6. Cite both the planning-doc lines and the current code/contract lines that justify the finding.
+7. If asked to patch the document, resolve the recorded findings and then update their status.
 
 Do not use the branch review guide as a substitute for planning reviews.
 

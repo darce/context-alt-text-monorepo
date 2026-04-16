@@ -13,7 +13,7 @@
 |------|-------|-------------|-------|---------------|-----------|
 | P0 | Intake _(new features/epics only)_ | (in session) | `scope` _(E17-3)_ | `AskUserQuestion`, `record_event(decision)` | Q&A recorded in MCP; scope one-pager in `docs/ideas/`; Not-Doing list present |
 | P1 | Scope | `make context` | `investigate` | `set_handoff_state` | Problem traced to code; task ref initialized |
-| P2 | Assess | `make plan-analyze DOC=<path>` _(E17-3)_ | `plan-analyze` _(E17-3)_ | `review_findings(analysis)` | All findings cite `file:line`; priority ordered |
+| P2 | Assess | `make plan-analyze DOC=<path>` _(E17-3)_ | `plan-analyze` _(E17-3)_ | `review_findings(planning)` + `review_runs(record)` | All findings cite `file:line`; triage run recorded with `plan-analyze-*` session |
 | P3 | Spec | `make plan-review DOC=<path>` _(E17-3)_ | `planning-review` _(E17-3)_ | `review_findings` + `review_runs(record)` | ≥1 review run recorded; 0 open findings |
 | P3.5 | ADR _(conditional)_ | `make plan-review DOC=<path>` _(E17-3)_ | `planning-review` _(E17-3)_ | same | Alternatives documented; spec updated |
 | P4 | Task plan | `make plan-analyze` → `make plan-review` _(E17-3)_ | `planning-review` _(E17-3)_ | same | Slices trace to spec; `target_branch` declared |

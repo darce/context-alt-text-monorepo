@@ -12,6 +12,7 @@
         "timeout": 5
       },
       {
+        "matcher": "Edit|Write",
         "type": "command",
         "command": "python3 scripts/hooks/guard-task-plan-findings.py",
         "timeout": 5
@@ -20,6 +21,12 @@
         "matcher": "mcp_altcontext-mc_record_event|mcp_altcontext-mc_close_slice|mcp__agent-handoff-mcp__record_event|mcp__agent-handoff-mcp__close_slice",
         "type": "command",
         "command": "python3 scripts/hooks/guard-rationale-size.py",
+        "timeout": 5
+      },
+      {
+        "matcher": "mcp_altcontext-mc_record_event|mcp_altcontext-mc_review_findings|mcp_altcontext-mc_review_runs|mcp__agent-handoff-mcp__record_event|mcp__agent-handoff-mcp__review_findings|mcp__agent-handoff-mcp__review_runs",
+        "type": "command",
+        "command": "python3 scripts/hooks/validate-mcp-dict-params.py",
         "timeout": 5
       }
     ],

@@ -1,10 +1,21 @@
 ---
 name: daemon-lifecycle
 description: Start, stop, pause, resume, inspect, or recover orchestrator and worker daemons. Handles lock files, PID checks, and status files.
+mode: execution
+context_budget: 150
+makefile_target: daemon-status
+mcp_tools:
+  - manage_orchestrator
+  - manage_worker
+  - get_lane_activity
+tdd_gate: false
+disable-model-invocation: false
 argument-hint: "[start|stop|pause|resume|inspect] [orchestrator|worker]"
 ---
 
 # Daemon Lifecycle
+
+## Overview
 
 Use this skill when you need to operate on the orchestrator daemon or a lane-scoped worker daemon safely.
 
@@ -28,7 +39,7 @@ Operate the daemon through the supported control paths so the process state, loc
 - Use [../../rules/development-workflow.md](../../rules/development-workflow.md) for cross-boundary and review-readiness rules.
 - Treat this skill as the execution recipe for daemon operations, not as the canonical source of project-wide policy.
 
-## Steps
+## Core Process
 
 Preferred entrypoints:
 
@@ -85,6 +96,18 @@ Preferred entrypoints:
 - Do not treat a paused daemon as dead. Check pause/resume state before stale-lock recovery.
 - Keep daemon operations scoped to the current workspace/task state; do not point a worker control command at a different lane by guesswork.
 
+## Common Rationalizations
+
+- "I can just kill the process and sort out state later." Lock files and status files then drift out of sync with reality.
+- "Status looks stale, so I will restart blindly." You need an inspection pass first to distinguish stale locks from a healthy but paused daemon.
+- "Worker and orchestrator controls are interchangeable." They use different lifecycles and should be driven through their own supported paths.
+
+## Red Flags
+
+- Lock state, PID state, and status-file state disagree.
+- Recovery is about to mutate a daemon without a fresh inspection step.
+- The requested action targets the wrong lane, wrong worktree, or wrong daemon type.
+
 ## Recovery
 
 - If a daemon fails to start, inspect lock state, last log events, and status-file payload before retrying.
@@ -97,3 +120,9 @@ Preferred entrypoints:
 - The target daemon is running with a valid lock/status state, or it is cleanly stopped with stale artifacts removed.
 - Pause/resume state is reflected correctly in daemon status.
 - Any recovery action leaves a clear trail in logs or MCP state rather than an ambiguous partially-running process.
+
+## See Also
+
+- [../worktree-orchestrator/SKILL.md](../worktree-orchestrator/SKILL.md)
+- [../worktree-worker/SKILL.md](../worktree-worker/SKILL.md)
+- [../../rules/development-workflow.md](../../rules/development-workflow.md)

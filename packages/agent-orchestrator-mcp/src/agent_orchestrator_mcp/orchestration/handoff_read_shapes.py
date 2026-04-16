@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 OPEN_HANDOFF_SECTIONS = "findings_open,blockers_open,actions_pending"
-REVIEW_READY_STATE_SECTIONS = "tests_recent"
+REVIEW_READY_STATE_SECTIONS = "identity,tests_recent"
 GLOBAL_CONTEXT_SECTIONS = "blockers_open,actions_pending,findings_open,decisions_recent,tests_recent"
 REVIEW_READY_TEST_LIMIT = 4
 

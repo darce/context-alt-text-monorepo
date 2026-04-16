@@ -68,6 +68,8 @@ This protocol ensures you orient to the correct workspace state regardless of wh
 
 `agent-handoff-mcp` is the primary state store for task state, decisions, findings, and review runs. `agent-orchestrator-mcp` extends it with lane management, worker control, and review dispatch. When MCP tool calls are available, use them directly. When they are unavailable (server not started, cold start, context switch), use the Python API as a fallback.
 
+> **Canonical source:** [`docs/agentic/contracts/harness-protocol.yaml`](../docs/agentic/contracts/harness-protocol.yaml) `python_api_fallback.required_exports` is the authoritative list of package-root symbols every harness must keep importable. The example below is a practical subset used by VS Code/Copilot cold-start; the contract defines the minimum surface. If the two drift, fix the contract first, then re-sync both harness docs (CLAUDE.md and this file).
+
 **Correct import pattern** — always import from the package root, never from submodules:
 
 ```python

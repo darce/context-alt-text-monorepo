@@ -8,7 +8,9 @@
         "/Users/daniel/Development/context-alt-text-monorepo",
         "serve-stdio"
       ],
-      "env": {}
+      "env": {
+        "AGENT_HANDOFF_ENFORCE_BRANCH": "1"
+      }
     },
     "agent-orchestrator-mcp": {
       "type": "stdio",
@@ -18,7 +20,9 @@
         "/Users/daniel/Development/context-alt-text-monorepo",
         "serve-stdio"
       ],
-      "env": {}
+      "env": {
+        "AGENT_HANDOFF_ENFORCE_BRANCH": "1"
+      }
     },
     "context7": {
       "type": "stdio",

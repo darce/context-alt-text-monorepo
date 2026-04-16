@@ -35,6 +35,15 @@
     ],
     "PostToolUse": [
       {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/record-file-touch.py\""
+          }
+        ]
+      },
+      {
         "matcher": "mcp_altcontext-mc_review_findings|mcp__agent-handoff-mcp__review_findings",
         "hooks": [
           {

@@ -10,7 +10,7 @@
 
 On every session (cold start, mid-task re-entry, lane inherit):
 
-1. **Run `make context`** to verify your shell is in the right worktree on the right branch. The script reads `target_worktree_path` and `target_branch` from the active task and exits non-zero on drift. **Do not record any handoff state from a drifted shell.** If you see a drift warning, `cd` to the canonical path before continuing.
+1. **Run `make context`** in a standalone shell call to verify your shell is in the right worktree on the right branch. Do not batch it with MCP loading or other startup commands. The script reads `target_worktree_path` and `target_branch` from the active task and emits a warning on drift. **Do not record any handoff state from a drifted shell.** If you see a drift warning, `cd` to the canonical path before continuing.
 2. **Apply the [MCP Loading Protocol](docs/agentic/rules/mcp-loading-protocol.md)** before fetching state. Read [`docs/agentic/maps/mcp-tool-routing.yaml`](docs/agentic/maps/mcp-tool-routing.yaml) and surface only the MCP servers whose triggers match the current prompt / task scope. `agent-handoff-mcp` is always loaded; `agent-orchestrator-mcp`, `context7`, and `computer-use` are on-demand. Concretely on Claude Code: `ToolSearch select:mcp__<server>__*` to surface a deferred server when its triggers fire.
 3. Query MCP handoff state: `get_handoff_state(sections="identity")` for routine task checks; full `get_handoff_state(task_ref="<task>")` only for hot-state load.
 4. If in a lane, run `make lane-inbox` to pick up routed findings and dispatch messages.
@@ -86,6 +86,8 @@ A `PreToolUse` hook enforces this in both harnesses: VS Code runs `.github/hooks
 
 **Worktree naming convention** (mandatory for new tasks): `<repo-parent>/context-alt-text-monorepo-<lowercase-task-id>` paired with branch `feature/<lowercase-task-id>`. Examples: task `AHMCP-9` → worktree `context-alt-text-monorepo-ahmcp-9` on branch `feature/ahmcp-9`. The `make task-start TASK=<id>` helper enforces this convention and registers `target_worktree_path` on the active handoff state in one shot. The `make task-finish TASK=<id>` helper performs the post-merge teardown (worktree remove + branch delete + MCP archive).
 
+**Main-branch maintenance-task rule** (mandatory): before any permitted file edit on `main` (docs, Makefiles, configs, scripts), verify an active handoff task is registered. For ad-hoc patches use the maintenance-task pattern: `set_handoff_state(task_ref='MAINT-<slug>', objective='Describe the main-branch patch', status='in_progress')`. Unregistered permitted edits trigger a warning from the main-branch hook.
+
 **Context discipline for multi-agent flows:** Run `make context` at the start of every session to verify your shell is on the right `target_worktree_path` and `target_branch`. The `set_handoff_state` and `record_decision` write paths emit `context_drift` warnings (non-fatal) when actor branch or cwd diverges from the active task target — read those warnings and fix the drift before recording further events.
 
 See [development-workflow.md](docs/agentic/rules/development-workflow.md#branch-isolation-protocol-mandatory) for isolation tiers, worktree recovery, and rationale.
@@ -129,6 +131,16 @@ Whenever a handoff write accepts a `commit_sha` (`record_event(actor=...)`, `set
 **Enforcement:** The MCP write path validates every `commit_sha` against the active git repo via `git rev-parse --verify <sha>^{commit}` and rejects fabricated SHAs with an `InvalidCommitShaError`. Abbreviated SHAs (4–40 hex chars) that resolve uniquely are auto-expanded to the full 40-char form before storage, so callers may pass `bb24ee59` and the audit trail records `bb24ee5945273ebc4663b6d264023d9542823310`. Validation is bypassed in test sessions via `AGENT_HANDOFF_SKIP_SHA_VALIDATION=1` (set automatically by both packages' `tests/conftest.py`); production callers always run with validation enabled.
 
 See [docs/agentic/rules/testing-python.md § Commit SHA Provenance Discipline](docs/agentic/rules/testing-python.md#commit-sha-provenance-discipline-mandatory) for the full rationale and the AHMCP-10/AHMCP-11 audit-trail bug that motivated the enforcement.
+
+### MCP Write Branch Enforcement
+
+> **MCP write operations are blocked when the actor branch does not match the active task's `target_branch`.** Switch to the canonical worktree before recording decisions, findings, or test results.
+
+When `AGENT_HANDOFF_ENFORCE_BRANCH=1` is set, `record_event`, `review_findings`, `close_slice`, `set_handoff_state`, and other write paths raise `BranchMismatchError` if the caller's git branch diverges from the active task's `target_branch`. Writes to tasks targeting `main` or `master` are exempt. Default (env var unset): current warning-only behaviour preserved.
+
+**Enforcement:** Set `export AGENT_HANDOFF_ENFORCE_BRANCH=1` in the dev shell. Tests bypass via `AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT=1` (set automatically by both packages' `tests/conftest.py`). The error response names the expected branch and worktree path so the agent can self-correct.
+
+See [docs/agentic/rules/development-workflow.md § Branch Isolation](docs/agentic/rules/development-workflow.md#branch-isolation-protocol-mandatory) for the full rationale.
 
 ### Review Findings Placement
 
@@ -226,6 +238,8 @@ Epic titles: `E<number>. <Title>` · Task plans: `<EpicShortID>-<N>. <Title>` ·
 ---
 
 ## Key Triggers
+
+**Portable workflow commands**: when a prompt starts with a registered `/command_id`, route it through the canonical workflow manifest at `config/agent-workflows/portable_commands.json`. Claude-native adapters live in `.claude/commands/*.md`; VS Code/Copilot adapters live in `.github/prompts/*.prompt.md`; Codex uses this routing rule directly. Current managed ids: `/scope`, `/branch-lifecycle`, `/branch-review`, `/handoff-lifecycle`, `/incremental-implementation`, `/plan-analyze`, `/planning-review`, `/tdd`.
 
 **Branch review**: load [rules/branch-review-guide.md](docs/agentic/rules/branch-review-guide.md) when request matches: "review" + (implementation|code|changes|branch|PR|diff), "audit" + (branch|code), "propose improvements", "flag gaps/bugs".
 

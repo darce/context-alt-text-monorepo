@@ -102,12 +102,13 @@ def evaluate_review_ready(
     ]
 
     open_findings = int(review.get("counts", {}).get("status", {}).get("open", 0))
-    open_blockers = int(close.get("checks", {}).get("open_blockers", {}).get("count", 0))
-    current_task_in_sync = bool(close.get("checks", {}).get("current_task_sync", {}).get("is_in_sync"))
-    current_commit_summary_present = not bool(
-        close.get("checks", {}).get("current_commit_handoff", {}).get("is_violation")
-    )
-    tests_recent = state.get("tests_recent", []) or []
+    # Support both flat dict (test mocks) and nested envelope (production API)
+    close_checks = close.get("checks") or close.get("data", {}).get("checks", {})
+    open_blockers = int(close_checks.get("open_blockers", {}).get("count", 0))
+    current_task_in_sync = bool(close_checks.get("current_task_sync", {}).get("is_in_sync"))
+    current_commit_summary_present = not bool(close_checks.get("current_commit_handoff", {}).get("is_violation"))
+    # Support both flat dict (test mocks) and nested envelope (production API)
+    tests_recent = state.get("tests_recent") or state.get("data", {}).get("tests_recent", []) or []
     has_test_evidence = len(tests_recent) > 0
     contract_violation = bool(boundary_files and not contract_files)
 

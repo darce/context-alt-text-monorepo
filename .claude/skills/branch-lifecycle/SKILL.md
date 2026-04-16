@@ -53,12 +53,13 @@ This skill owns the branch-scoped lifecycle. The `tdd` skill owns the failing-te
 1. Start from a reviewed task plan on `main`. Create the branch/worktree with `make task-start TASK=<task-ref> OBJECTIVE="..."`, then run `make context` before editing.
 2. Confirm the implementation shell is on the task's `target_branch` and `target_worktree_path`. If the task is wrong, use `switch_task` instead of carrying changes across tasks.
 3. Run implementation through bounded TDD slices: `make slice-start` -> edit -> passing test evidence -> `make slice-commit`.
-4. Before requesting review, run `make review-ready` and clear every NOT READY reason. Treat missing tests, open findings, and contract drift as blockers, not cleanup.
-5. Run the appropriate review workflow and resolve findings. Do not move to close-check while findings remain open.
-6. Run `make handoff-close-check` on the branch HEAD. The branch is not merge-ready until the enforced gate passes.
-7. Merge the reviewed branch, return the root worktree to `main`, and delete the merged feature branch only after the branch work is actually landed.
-8. Finish with the Worktree Status Integrity close sequence: `update_task_status(done)` -> `manage_worktree_lane(close)` when lanes exist -> archive the task state -> keep `DASHBOARD.md` current, using `generate_current_task_md` only if an explicit task-scoped snapshot is needed.
-9. Run `make task-finish TASK=<task-ref>` so teardown, archive, and dashboard regeneration happen in the repo's canonical order.
+4. After each slice and before any lint or check pass, run `make format-all` (or the per-package variant in lane workers: `make format-handoff`, `make format-orchestrator`, `make format` from app dir). This auto-fixes the majority of lint violations. Do not manually fix lint errors without running the formatter first.
+5. Before requesting review, run `make review-ready` and clear every NOT READY reason. Treat missing tests, open findings, and contract drift as blockers, not cleanup.
+6. Run the appropriate review workflow and resolve findings. Do not move to close-check while findings remain open.
+7. Run `make handoff-close-check` on the branch HEAD. The branch is not merge-ready until the enforced gate passes.
+8. Merge the reviewed branch, return the root worktree to `main`, and delete the merged feature branch only after the branch work is actually landed.
+9. Finish with the Worktree Status Integrity close sequence: `update_task_status(done)` -> `manage_worktree_lane(close)` when lanes exist -> archive the task state -> keep `DASHBOARD.md` current, using `generate_current_task_md` only if an explicit task-scoped snapshot is needed.
+10. Run `make task-finish TASK=<task-ref>` so teardown, archive, and dashboard regeneration happen in the repo's canonical order.
 
 ## Common Rationalizations
 
@@ -67,6 +68,7 @@ This skill owns the branch-scoped lifecycle. The `tdd` skill owns the failing-te
 | "I'll just patch this on `main` and branch later." | Code on `main` breaks branch isolation and makes review provenance ambiguous. The hooks block it because the workflow is not trustworthy afterward. | Start or switch to the task branch before any code edit. |
 | "The worktree is already merged, so close order doesn't matter." | A merged branch can still leave stale lane rows, unarchived task state, or a dashboard that says the task is still active. Close order is what keeps operator state honest. | Run the documented close sequence in order, even after the merge succeeds. |
 | "I'll skip `handoff-close-check` this once because review already looked good." | Human review and gate evidence are different things. Missing close-check proof means stale tests, open findings, or missing slice decisions can still slip through. | Run the enforced gate on the final HEAD every time. |
+| "I'll just fix these lint errors manually, it's only a few." | `make format-all` auto-fixes the majority of lint violations. Manual fixes waste time and risk introducing inconsistent style. | Run `make format-all` first. Only manually fix what the formatter cannot. |
 
 ## Red Flags
 
@@ -76,9 +78,10 @@ Each flag is a re-entry trigger. Stop and re-enter at the step shown.
 |---|---|
 | Code edits appear on `main` | Step 1: stop, isolate the work onto the feature branch, then continue there. |
 | `make context` reports branch or worktree drift | Step 2: fix the shell context before recording any more MCP state. |
-| Review-ready reports missing tests, open findings, or contract drift | Step 4: clear the blocking condition before asking for review. |
-| `handoff-close-check` fails | Step 6: resolve the underlying missing evidence or open findings, then rerun the gate. |
-| Worktree teardown attempted before task status is `done` | Step 8: restore the close sequence and archive only after the task is explicitly done. |
+| Lint errors encountered without running `make format-all` first | Step 4: run the formatter before any manual lint fixes. |
+| Review-ready reports missing tests, open findings, or contract drift | Step 5: clear the blocking condition before asking for review. |
+| `handoff-close-check` fails | Step 7: resolve the underlying missing evidence or open findings, then rerun the gate. |
+| Worktree teardown attempted before task status is `done` | Step 9: restore the close sequence and archive only after the task is explicitly done. |
 
 ## Recovery
 

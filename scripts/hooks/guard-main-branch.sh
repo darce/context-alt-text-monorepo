@@ -63,10 +63,14 @@ fi
 
 # Warning-only rollout: permitted main-branch edits still require a handoff task.
 # If none is active, print a maintenance-task reminder but do not block the edit.
-ACTIVE_TASK=""
-if command -v agent-handoff-mcp >/dev/null 2>&1; then
-  ACTIVE_TASK=$(
-    agent-handoff-mcp --workspace-root "$REPO_ROOT" state --sections identity 2>/dev/null | python3 -c "
+# Only query (and warn) when the CLI is actually installed — a missing CLI must
+# not masquerade as "no active task" (E17-4 Slice 2 regression).
+if ! command -v agent-handoff-mcp >/dev/null 2>&1; then
+  exit 0
+fi
+
+ACTIVE_TASK=$(
+  agent-handoff-mcp --workspace-root "$REPO_ROOT" state --sections identity 2>/dev/null | python3 -c "
 import sys, json
 try:
     payload = json.load(sys.stdin)
@@ -78,8 +82,7 @@ active = data.get('active') if isinstance(data, dict) else None
 task_ref = active.get('task_ref') if isinstance(active, dict) else ''
 print(task_ref or '')
 " 2>/dev/null || true
-  )
-fi
+)
 
 if [ -z "$ACTIVE_TASK" ]; then
   cat >&2 <<EOF

@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any, Callable, Literal, cast
@@ -1883,6 +1884,34 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
     launcher = package_src / "agent_handoff_mcp_launcher.py"
     stdio_tools: list[str] = []
     with tempfile.TemporaryDirectory() as temp_dir:
+        _package_root = Path(__file__).resolve().parents[4]
+        _pythonpath_parts = [
+            str(_package_root / "packages" / "agent-handoff-mcp" / "src"),
+            str(_package_root / "packages" / "codex-subagent-bridge" / "src"),
+        ]
+        _existing_pp = os.environ.get("PYTHONPATH")
+        if _existing_pp:
+            _pythonpath_parts.append(_existing_pp)
+        cli_env = dict(**os.environ)
+        cli_env["PYTHONPATH"] = ":".join(p for p in _pythonpath_parts if p)
+
+        def _run_cli_probe() -> None:
+            cli_probe = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "agent_handoff_mcp",
+                    "--workspace-root",
+                    str(config.workspace_root),
+                    "state",
+                ],
+                cwd=str(config.workspace_root),
+                env=cli_env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            json.loads(cli_probe.stdout)
 
         async def _list_tools() -> list[str]:
             transport = PythonStdioTransport(
@@ -1896,34 +1925,16 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
                 tools = await client.list_tools()
                 return sorted(tool.name for tool in tools)
 
-        stdio_tools = asyncio.run(_list_tools())
-
-        _package_root = Path(__file__).resolve().parents[4]
-        _pythonpath_parts = [
-            str(_package_root / "packages" / "agent-handoff-mcp" / "src"),
-            str(_package_root / "packages" / "codex-subagent-bridge" / "src"),
-        ]
-        _existing_pp = os.environ.get("PYTHONPATH")
-        if _existing_pp:
-            _pythonpath_parts.append(_existing_pp)
-        cli_env = dict(**os.environ)
-        cli_env["PYTHONPATH"] = ":".join(p for p in _pythonpath_parts if p)
-        cli_probe = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "agent_handoff_mcp",
-                "--workspace-root",
-                str(config.workspace_root),
-                "state",
-            ],
-            cwd=str(config.workspace_root),
-            env=cli_env,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        json.loads(cli_probe.stdout)
+        # Run the two subprocess startup probes in parallel: each pays a full
+        # Python import + package init cost (~6–7s), so running them serially
+        # pushes `doctor` past the default pytest-timeout budget on loaded
+        # machines. The ThreadPoolExecutor kicks off the CLI probe while the
+        # asyncio event loop drives the stdio handshake; the future is
+        # awaited afterwards so any CalledProcessError still surfaces.
+        with ThreadPoolExecutor(max_workers=1) as _probe_pool:
+            cli_future = _probe_pool.submit(_run_cli_probe)
+            stdio_tools = asyncio.run(_list_tools())
+            cli_future.result()
 
     _registry = _build_tool_registry()
     _core_count = sum(1 for e in _registry if e.profile == "core")

@@ -306,7 +306,7 @@ Proof:
 
 - [x] `docs/agentic/contracts/harness-protocol.yaml` defines the shared Claude/VS Code protocol surface
 - [x] `scripts/check_harness_sync.py` validates both managed harness hook files
-- [x] Remaining shared-surface drift required by the contract is resolved
+- [x] `check-harness-sync` validates the `cold_start` and `branch_isolation` contract sections against both managed harness surfaces (cold-start phrases in `CLAUDE.md` and `.github/copilot-instructions.md`; protected branches, code roots, and file extensions in both `guard-main-branch` enforcers)
 - [x] `make check-harness-sync` is wired into `make check-all`
 
 ### Checklist for Slice 4: Routing Redirect
@@ -318,7 +318,7 @@ Proof:
 
 ### Checklist for Slice 5: Planning Gate
 
-- [x] `scripts/check_plan_analyze.py` checks recorded `plan-analyze-*` findings for the target document
+- [x] `scripts/check_plan_analyze.py` queries `list_review_findings(review_mode="planning")` and filters to findings whose `session` starts with `plan-analyze-` AND whose `file_path` matches the target document
 - [x] Exit codes are `0` pass, `1` infrastructure error, `2` gate unmet
 - [x] `make plan-review` warns/blocks correctly based on `PLAN_ANALYZE_REQUIRED`
 - [x] `planning-pipeline.md` documents the gate

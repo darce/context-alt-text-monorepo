@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""Verify that a planning artifact has a prior `plan-analyze` triage run."""
+"""Verify that a planning artifact has a prior `plan-analyze` triage run.
+
+The gate passes when at least one recorded review finding for the target
+document has both:
+  - ``session`` beginning with ``plan-analyze-``
+  - ``file_path`` equal to the repo-relative path of the target document
+
+The lookup uses ``list_review_findings(review_mode="planning")`` and filters
+the returned rows in Python, because the review-findings API does not expose
+``session`` or ``file_path`` as server-side query parameters.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +18,12 @@ import sys
 from pathlib import Path
 from typing import Any, Callable
 
-from agent_handoff_mcp import RuntimeConfig, configure_runtime, get_handoff_state, review_runs
+from agent_handoff_mcp import (
+    RuntimeConfig,
+    configure_runtime,
+    get_handoff_state,
+    list_review_findings,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PLAN_ANALYZE_PREFIX = "plan-analyze-"
@@ -34,6 +49,18 @@ def _active_task_ref(payload: dict[str, Any]) -> str | None:
     return task_ref if isinstance(task_ref, str) and task_ref else None
 
 
+def _is_plan_analyze_finding_for(finding: Any, relative_doc: str) -> bool:
+    if not isinstance(finding, dict):
+        return False
+    session = finding.get("session")
+    file_path = finding.get("file_path")
+    if not isinstance(session, str) or not session.startswith(PLAN_ANALYZE_PREFIX):
+        return False
+    if not isinstance(file_path, str) or file_path != relative_doc:
+        return False
+    return True
+
+
 def check_plan_analyze(
     *,
     doc_path: str,
@@ -42,41 +69,34 @@ def check_plan_analyze(
     runtime_factory: Callable[[Path], RuntimeConfig] = RuntimeConfig.for_repo,
     configure_runtime_fn: Callable[[RuntimeConfig], Any] = configure_runtime,
     get_handoff_state_fn: Callable[..., dict[str, Any]] = get_handoff_state,
-    review_runs_fn: Callable[..., dict[str, Any]] = review_runs,
+    list_review_findings_fn: Callable[..., dict[str, Any]] = list_review_findings,
 ) -> tuple[int, str]:
     relative_doc = _normalize_doc_path(repo_root, doc_path)
     try:
         configure_runtime_fn(runtime_factory(repo_root))
         resolved_task_ref = task_ref or _active_task_ref(get_handoff_state_fn(sections="identity", detail="summary"))
-        review_payload: dict[str, Any] = {
-            "operation": "list",
-            "subject_path": relative_doc,
-            "review_mode": "planning",
-            "limit": 100,
-        }
+        kwargs: dict[str, Any] = {"review_mode": "planning", "limit": 500}
         if resolved_task_ref is not None:
-            review_payload["task_ref"] = resolved_task_ref
-        result = review_runs_fn(review=review_payload)
+            kwargs["task_ref"] = resolved_task_ref
+        result = list_review_findings_fn(**kwargs)
     except Exception as exc:  # pragma: no cover - exercised via tests with stub failures
         return 1, f"plan-analyze gate: ERROR - {exc}"
 
     if not result.get("ok"):
         error = ((result.get("data") or {}).get("error")) if isinstance(result.get("data"), dict) else None
-        return 1, f"plan-analyze gate: ERROR - {error or 'unable to query review runs'}"
+        return 1, f"plan-analyze gate: ERROR - {error or 'unable to query review findings'}"
 
-    runs = ((result.get("data") or {}).get("runs")) if isinstance(result.get("data"), dict) else None
-    matching_runs = [
-        run for run in (runs or []) if isinstance(run, dict) and str(run.get("session", "")).startswith(PLAN_ANALYZE_PREFIX)
-    ]
-    if matching_runs:
-        return 0, f"plan-analyze gate: PASS ({len(matching_runs)} runs for {relative_doc})"
+    findings = ((result.get("data") or {}).get("findings")) if isinstance(result.get("data"), dict) else None
+    matching = [f for f in (findings or []) if _is_plan_analyze_finding_for(f, relative_doc)]
+    if matching:
+        return 0, f"plan-analyze gate: PASS ({len(matching)} findings for {relative_doc})"
     return 2, f"plan-analyze gate: MISSING - run `make plan-analyze DOC={relative_doc}` before plan-review."
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--doc", required=True, help="Planning document path to verify.")
-    parser.add_argument("--task-ref", help="Optional task_ref to scope the review-run lookup.")
+    parser.add_argument("--task-ref", help="Optional task_ref to scope the findings lookup.")
     args = parser.parse_args(argv)
 
     try:

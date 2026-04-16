@@ -22,6 +22,7 @@ cwd = "/Users/daniel/Development/context-alt-text-monorepo"
 
 [mcp_servers."altcontext-mcp".env]
 PYENV_VERSION = "description-service"
+AGENT_HANDOFF_ENFORCE_BRANCH = "1"
 
 [mcp_servers."altcontext-orchestrator-mcp"]
 command = "agent-orchestrator-mcp"
@@ -40,3 +41,4 @@ cwd = "/Users/daniel/Development/context-alt-text-monorepo"
 
 [mcp_servers."altcontext-orchestrator-mcp".env]
 PYENV_VERSION = "description-service"
+AGENT_HANDOFF_ENFORCE_BRANCH = "1"

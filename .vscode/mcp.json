@@ -21,7 +21,8 @@
       "env": {
         "PATH": "${env:PYENV_ROOT}/bin:${env:PYENV_ROOT}/shims:/usr/local/bin:${env:PATH}",
         "PYENV_VERSION": "description-service",
-        "PYENV_ROOT": "${env:PYENV_ROOT}"
+        "PYENV_ROOT": "${env:PYENV_ROOT}",
+        "AGENT_HANDOFF_ENFORCE_BRANCH": "1"
       }
     },
     "altcontext-orchestrator-mcp": {
@@ -40,7 +41,8 @@
       "env": {
         "PATH": "${env:PYENV_ROOT}/bin:${env:PYENV_ROOT}/shims:/usr/local/bin:${env:PATH}",
         "PYENV_VERSION": "description-service",
-        "PYENV_ROOT": "${env:PYENV_ROOT}"
+        "PYENV_ROOT": "${env:PYENV_ROOT}",
+        "AGENT_HANDOFF_ENFORCE_BRANCH": "1"
       }
     }
   }

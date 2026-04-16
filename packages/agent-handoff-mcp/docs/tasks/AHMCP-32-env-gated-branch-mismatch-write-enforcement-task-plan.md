@@ -44,7 +44,7 @@ When `AGENT_HANDOFF_ENFORCE_BRANCH=1` is set, write operations that would otherw
 - Rules: `docs/agentic/instructions.md`
 - Contracts: `docs/agentic/contracts/agent-handoff-mcp.md`
 - Parent task dependency: `docs/tasks/17.0/E17-4-workflow-integrity-task-plan.md` Slice 7
-- Scope intake: `docs/ideas/ahmcp-31-32-scope-note.md`
+- Scope intake: `docs/scopes/ahmcp-31-32-scope-note.md`
 - Recorded intake decision: `1726` (`scope_intake_AHMCP-32_package_only_mvp`)
 
 ## Contract and Boundary Impact

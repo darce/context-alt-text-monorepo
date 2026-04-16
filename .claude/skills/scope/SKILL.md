@@ -44,7 +44,7 @@ This skill owns the intake question pass and MCP decision logging for new featur
 1. Determine whether the request is a true new-feature intake. If the problem is already traced to code or an approved spec, skip this skill and move to the appropriate planning or implementation flow.
 2. Ask 3-5 targeted questions via `AskUserQuestion` before producing any plan. Cover scope, completion signals, edge cases, non-functional constraints, and explicit not-doing boundaries.
 3. Record the resulting answers as MCP decisions with `record_event(event_kind="decision", ...)` so later planning sessions can reuse the same intake context.
-4. Summarize the intake into one bounded scope note, preferably in `docs/ideas/<slug>.md` when a durable artifact is needed.
+4. Summarize the intake into one bounded scope note, preferably in `docs/scopes/<slug>.md` when a durable artifact is needed.
 5. End with a compact framing: MVP scope, assumptions, success criteria, and Not-Doing list.
 
 ## Common Rationalizations

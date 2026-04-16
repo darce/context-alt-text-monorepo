@@ -65,7 +65,7 @@ A `SKILL_ANATOMY.template.md` in `docs/agentic/templates/` that defines the cano
 - Rules: `docs/agentic/rules/planning-pipeline.md` (pipeline stage gates)
 - Rules: `docs/agentic/rules/development-workflow.md` (slice checklist)
 - Epic: `docs/epics/v0.4.0/skill-formalization-and-process-automation-epic.md` (Phase 1 deliverables and exit criteria)
-- Assessment: `docs/assessments/agentic/agent-skills-vs-spec-kit-evaluation.md` (anatomy patterns)
+- Assessment: `docs/assessments/agent-skills-vs-spec-kit-evaluation.md` (anatomy patterns)
 - Handoff/MCP state: task ref `E17`, findings `E17-PLAN-*` (all fixed)
 - External docs via `ctx7` only if: `addyosmani/agent-skills` patterns need verification against upstream examples
 
@@ -100,7 +100,7 @@ Three slices in dependency order:
 
 | File | Note |
 |------|------|
-| `docs/assessments/agentic/agent-skills-vs-spec-kit-evaluation.md` | Source of anatomy patterns and hybrid extraction recommendation |
+| `docs/assessments/agent-skills-vs-spec-kit-evaluation.md` | Source of anatomy patterns and hybrid extraction recommendation |
 | `.claude/skills/*/SKILL.md` (remaining 8) | Phase 3 retrofit candidates — not touched in this task |
 | `docs/agentic/rules/planning-review-guide.md` | Will be referenced by the `planning-review` skill in Phase 2 |
 | `docs/agentic/rules/branch-review-guide.md` | Will be referenced by the `branch-review` skill in Phase 2 |

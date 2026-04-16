@@ -175,7 +175,7 @@ Changes:
 - Create `.claude/skills/scope/SKILL.md`:
   - Frontmatter: `mode: advisory`, `context_budget: 60`, `tdd_gate: false`, `makefile_target: null`, `mcp_tools: [record_event, artifacts]`
   - Trigger: new feature requests, new epic scoping, new capability planning. NOT triggered by bug fixes, tech debt tasks, or tasks derived from approved specs.
-  - Core process (reversal pattern): ask 3–5 questions via `AskUserQuestion` **before generating any output** → categories: scope, completion signals, edge cases, non-functional constraints, not-doing → record each Q&A as `record_event(event_kind="decision")` → output `docs/ideas/[slug].md` one-pager (MVP scope, assumptions, Not-Doing list, success criteria)
+  - Core process (reversal pattern): ask 3–5 questions via `AskUserQuestion` **before generating any output** → categories: scope, completion signals, edge cases, non-functional constraints, not-doing → record each Q&A as `record_event(event_kind="decision")` → output `docs/scopes/[slug].md` one-pager (MVP scope, assumptions, Not-Doing list, success criteria)
   - Common rationalizations: "I already know the scope"; "the user's prompt is clear enough"; "I'll ask questions later if I get stuck"
   - Convergence: ≥3 questions asked and answered; Q&A recorded as MCP decisions; Not-Doing list present
 - Create `.claude/commands/scope.md`

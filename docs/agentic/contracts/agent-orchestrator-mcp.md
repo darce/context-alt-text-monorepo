@@ -125,6 +125,16 @@ Surface classes: `action` (mutates state/runtime), `query` (read-only), `generat
 | ------------------- | ------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `get_metrics_summary` | generator  | yes        | Derived metrics snapshot across lanes, retrieval, context pressure, process-health signals, and handoff-memory health.               |
 
+## Review-Ready Evaluation
+
+`make review-ready` invokes `review_ready.py` from the orchestrator package. It reads handoff state via `get_handoff_state(sections=...)` to check test evidence, open findings, and staleness.
+
+Behavioral constraints:
+
+- The `identity` token in `sections` is a special override that requests only the `active` and `limits` envelope fields; it cancels all other section tokens. To request data sections alongside identity, omit the `identity` token since identity fields are always included unconditionally.
+- `evaluate_review_ready` reads test evidence from `state["data"]["tests_recent"]` (the nested envelope path). Callers that mock the state for testing must place `tests_recent` under `data`.
+- Boundary-file detection uses `DEFAULT_BOUNDARY_PREFIXES` (`apps/`, `packages/agent-orchestrator-mcp/src/`, `packages/shared-contracts/schemas/`). Contract co-change is satisfied when at least one file from `DEFAULT_CONTRACT_PREFIXES` (`docs/agentic/contracts/`, `packages/shared-contracts/`) or the contract-change checklist also appears in the diff.
+
 ## `get_metrics_summary` Snapshot Shape
 
 `get_metrics_summary` is additive: existing top-level sections remain stable and new sections are appended rather than replacing prior keys.

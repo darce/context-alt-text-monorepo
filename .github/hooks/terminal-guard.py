@@ -82,6 +82,7 @@ _ALLOWLIST: list[re.Pattern[str]] = [
         r"^git\s+checkout\b",
         r"^git\s+merge\b",
         r"^git\s+branch\b",
+        r"^git\s+-C\s+\S+\s+branch\b",
         r"^git\s+tag\b",
         r"^git\s+add\b",
         r"^git\s+rm\b",
@@ -92,6 +93,10 @@ _ALLOWLIST: list[re.Pattern[str]] = [
         # git diff: metadata forms only (no full diff output)
         r"^git\s+diff\b.*--name-only\b",
         r"^git\s+diff\b.*--shortstat\b",
+        r"^git\s+diff\b.*--stat\b",
+        r"^git\s+-C\s+\S+\s+diff\b.*--name-only\b",
+        r"^git\s+-C\s+\S+\s+diff\b.*--shortstat\b",
+        r"^git\s+-C\s+\S+\s+diff\b.*--stat\b",
         # git status: narrow concise forms only; bare 'git status' is hard-blocked below
         r"^git\s+status\s+(-sb|--short|-s)\b",
         r"^git\s+-C\s+\S+\s+status\s+(-sb|--short|-s)\b",
@@ -121,6 +126,8 @@ _ALLOWLIST: list[re.Pattern[str]] = [
         r"^rm\s+(-r\s+)?(?!-)",
         # File metadata inspection (symlinks, permissions; list_dir lacks this)
         r"^ls\b",
+        # Python one-liners (agent-handoff-mcp API fallback, verification scripts)
+        r"^(?:python3?|\S*/python(?:3(?:\.\d+)?)?)\s+-c\b",
         # Database shell (development-only tool for investigation queries)
         r"^bash\s+(\S+/)?scripts/db_shell\.sh\b",
         r"^(\./|\S+/)?scripts/db_shell\.sh\b",

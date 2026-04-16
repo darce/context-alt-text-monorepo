@@ -1,4 +1,22 @@
+---
+name: security-audit
+description: Run a structured security audit over the monorepo and record actionable findings with credible exploit paths.
+mode: execution
+context_budget: 220
+makefile_target: null
+mcp_tools:
+  - review_findings
+  - review_runs
+  - record_event
+  - get_handoff_state
+  - generate_dashboard_md
+tdd_gate: false
+disable-model-invocation: false
+---
+
 # Security Audit
+
+## Overview
 
 Use this skill for systematic security auditing of the monorepo's packages, MCP servers, configuration, and dependencies.
 
@@ -43,6 +61,13 @@ Out of scope: WordPress core, LocalWP config, `~/Local Sites/`, system config, `
 **Standard mode** (default): 8/10 confidence gate. Only report findings with a clear exploit path or vulnerability pattern. Zero noise.
 
 **Comprehensive mode** (when user requests "thorough" or "comprehensive"): 2/10 confidence gate. Surface anything that _might_ be real, marked `TENTATIVE`.
+
+## Core Process
+
+1. Build the trust-boundary model before hunting for individual issues.
+2. Run the audit phases below from highest-leverage exposure paths to narrower checks.
+3. Filter aggressively for real exploitability before recording findings.
+4. Record findings, verdict, and closure evidence durably before reporting out.
 
 ## Phase 0 — Architecture Mental Model
 
@@ -251,6 +276,18 @@ Present findings grouped by phase, then by severity within each phase:
 
 End with `Handoff updated: yes`.
 
+## Common Rationalizations
+
+- "It is internal tooling, so the attack surface is tiny." Local tooling still handles credentials, shell execution, filesystems, and persistence.
+- "This looks suspicious, so it must be a finding." Security reviews become noisy fast; report only what has a credible exploit path or clearly marked tentative risk.
+- "Dependency audit output is enough." Package advisories are one input, not the full audit.
+
+## Red Flags
+
+- The audit is reporting findings without a clear affected trust boundary.
+- Secrets scanning or dependency review was skipped because the code "looked safe."
+- A suspected issue depends on behavior you have not verified in code or config.
+
 ## Recovery
 
 - If MCP is unavailable, record findings in a structured comment and transfer to MCP when access returns.
@@ -264,3 +301,9 @@ End with `Handoff updated: yes`.
 - A `record_review_run` entry exists for this audit.
 - A `record_decision` entry exists with the audit verdict.
 - Response includes `Handoff updated: yes`.
+
+## See Also
+
+- [../review/SKILL.md](../review/SKILL.md)
+- [../../contracts/](../../contracts/)
+- [../../rules/development-workflow.md](../../rules/development-workflow.md)

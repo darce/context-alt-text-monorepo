@@ -1,0 +1,75 @@
+version: 1
+
+cold_start:
+  shared_steps:
+    - "run make context at session start"
+    - "use MCP tools directly when available"
+    - "use agent_handoff_mcp package-root imports as the Python fallback surface"
+
+branch_isolation:
+  protected_branches:
+    - main
+    - master
+  code_roots:
+    - apps/
+    - packages/
+  protected_extensions:
+    - .py
+    - .ts
+    - .tsx
+    - .js
+    - .jsx
+    - .php
+    - .sql
+    - .sh
+    - .css
+    - .scss
+
+python_api_fallback:
+  package: agent_handoff_mcp
+  required_exports:
+    - RuntimeConfig
+    - configure_runtime
+    - get_handoff_state
+    - search_handoff
+    - review_findings
+    - review_runs
+    - record_event
+    - generate_current_task_md
+    - generate_dashboard_md
+    - handoff_close_check
+    - set_handoff_state
+    - switch_task
+    - update_task_status
+
+hooks:
+  pre_tool_use:
+    - id: task-plan-findings
+      matcher: Edit|Write
+      claude_command: python3 "$CLAUDE_PROJECT_DIR/scripts/hooks/guard-task-plan-findings.py"
+      vscode_command: python3 scripts/hooks/guard-task-plan-findings.py
+    - id: rationale-size
+      matcher: mcp_altcontext-mc_record_event|mcp_altcontext-mc_close_slice|mcp__agent-handoff-mcp__record_event|mcp__agent-handoff-mcp__close_slice
+      claude_command: python3 "$CLAUDE_PROJECT_DIR/scripts/hooks/guard-rationale-size.py"
+      vscode_command: python3 scripts/hooks/guard-rationale-size.py
+    - id: validate-mcp-dict-params
+      matcher: mcp_altcontext-mc_record_event|mcp_altcontext-mc_review_findings|mcp_altcontext-mc_review_runs|mcp__agent-handoff-mcp__record_event|mcp__agent-handoff-mcp__review_findings|mcp__agent-handoff-mcp__review_runs
+      claude_command: python3 "$CLAUDE_PROJECT_DIR/scripts/hooks/validate-mcp-dict-params.py"
+      vscode_command: python3 scripts/hooks/validate-mcp-dict-params.py
+  post_tool_use:
+    - id: record-file-touch
+      matcher: Edit|Write
+      claude_command: python3 "$CLAUDE_PROJECT_DIR/scripts/hooks/record-file-touch.py"
+      vscode_command: python3 scripts/hooks/record-file-touch.py
+    - id: ace-detect
+      matcher: mcp_altcontext-mc_review_findings|mcp__agent-handoff-mcp__review_findings
+      claude_command: python3 "$CLAUDE_PROJECT_DIR/scripts/hooks/ace-detect.py"
+      vscode_command: python3 scripts/hooks/ace-detect.py
+    - id: regenerate-task-views
+      matcher: mcp_altcontext-mc_record_event|mcp_altcontext-mc_review_findings|mcp_altcontext-mc_review_runs|mcp_altcontext-mc_set_handoff_state|mcp_altcontext-mc_update_task_status|mcp__agent-handoff-mcp__record_event|mcp__agent-handoff-mcp__review_findings|mcp__agent-handoff-mcp__review_runs|mcp__agent-handoff-mcp__set_handoff_state|mcp__agent-handoff-mcp__update_task_status
+      claude_command: bash "$CLAUDE_PROJECT_DIR/scripts/hooks/regenerate-task-views.sh"
+      vscode_command: bash scripts/hooks/regenerate-task-views.sh
+    - id: slim-handoff-response
+      matcher: mcp_altcontext-mc_get_handoff_state|mcp_altcontext-mc_load_session|mcp__agent-handoff-mcp__get_handoff_state|mcp__agent-handoff-mcp__load_session
+      claude_command: python3 "$CLAUDE_PROJECT_DIR/scripts/hooks/slim-handoff-response.py"
+      vscode_command: python3 scripts/hooks/slim-handoff-response.py

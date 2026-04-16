@@ -164,6 +164,12 @@ The broader handoff/tooling/Codex work is intentionally deferred to [E17-7](./E1
 | Planning gate         | `mk/handoff.mk`                                 | call `check_plan_analyze.py` from `plan-review`                      |
 | Planning pipeline doc | `docs/agentic/rules/planning-pipeline.md`       | document the pre-review gate                                         |
 
+### Incidental Fixes (flagged by E17-6-BR-06)
+
+| Surface | File | Note |
+|---|---|---|
+| Orchestrator read shapes | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/handoff_read_shapes.py` | One-line change: `REVIEW_READY_STATE_SECTIONS = "identity,tests_recent"` (was `"tests_recent"`). This is not a scope expansion — the test at `packages/agent-orchestrator-mcp/tests/test_ace_metrics.py:1225` already expects the `"identity,tests_recent"` form at HEAD, so the production constant was regressed out of parity with its test during E17-4 commit `490383dd`. The Phase 3 diff restores parity so `make test-orchestrator` stays green under the pre-merge gate; the full identity-section adoption for review-ready lives in E17-7, not here. |
+
 ## Verification Strategy
 
 - `python scripts/check_skills.py` exits 0 after the retrofit.

@@ -1,9 +1,22 @@
 ---
 name: worktree-orchestrator
 description: Split a task across Git worktrees. Decompose into bounded lanes, create worktrees, render worker briefs, enforce ownership, coordinate merge order.
+mode: execution
+context_budget: 200
+makefile_target: lane-open
+mcp_tools:
+  - manage_worktree_lane
+  - lane_communication
+  - get_lane_activity
+  - worker_reports
+  - plan_cursor
+tdd_gate: false
+disable-model-invocation: false
 ---
 
 # Worktree Orchestrator
+
+## Overview
 
 Use this skill when one main agent needs to coordinate worker agents in sibling Git worktrees.
 
@@ -11,7 +24,7 @@ Use this skill when one main agent needs to coordinate worker agents in sibling 
 
 Use this skill when a task should be split across stable seams such as owned paths, contract boundaries, or test packs, and one orchestrator agent needs to coordinate multiple worker lanes without losing shared task truth.
 
-## What this skill owns
+## Goal
 
 - deciding whether a task should be split into lanes
 - creating worker worktrees on `codex/*` branches
@@ -44,7 +57,7 @@ Use this skill when a task should be split across stable seams such as owned pat
 - `wp-proxy`: `apps/prototype-wp-alt-context/src/**`, `apps/prototype-wp-alt-context/tests/Unit/**`
 - `frontend`: `apps/prototype-wp-alt-context/js/**`
 
-## Standard workflow
+## Core Process
 
 ### 1. Create the lane
 
@@ -144,6 +157,18 @@ git checkout codex/<task>-<lane> -- path/to/file
   - [../../templates/DECISION_CROSS_LANE.template.md](../../templates/DECISION_CROSS_LANE.template.md)
 - Keep policy details in the canonical sources: [../../instructions.md](../../instructions.md) for startup and loading rules, and [../../rules/development-workflow.md#cross-boundary-change-protocol](../../rules/development-workflow.md#cross-boundary-change-protocol) for boundary validation.
 
+## Common Rationalizations
+
+- "I can split the task later if it gets messy." Late lane creation usually means ownership is already blurred.
+- "The worker can touch shared plans just this once." Shared planning state should stay centralized unless explicitly delegated.
+- "Merge order does not matter if each lane passes tests." Cross-lane integration still needs an orchestrated order and intake check.
+
+## Red Flags
+
+- Owned-path boundaries are unclear or overlapping.
+- The orchestrator is about to delegate work without a lane brief or test command.
+- Shared docs or contracts are drifting into worker-owned changes without an explicit delegation.
+
 ## Safety Constraints
 
 - Do not assign two workers to the same owned path set.
@@ -164,3 +189,9 @@ git checkout codex/<task>-<lane> -- path/to/file
 - Each active lane has a bounded owned path set, a worker brief, and a clear verification target.
 - Worker handoffs route back through MCP with merge-ready or blocker status instead of ad hoc chat-only summaries.
 - Final task truth, shared checklist state, and `CURRENT_TASK.md` are consistent with the orchestrator’s MCP updates.
+
+## See Also
+
+- [../worktree-worker/SKILL.md](../worktree-worker/SKILL.md)
+- [../rescue-lane/SKILL.md](../rescue-lane/SKILL.md)
+- [../../playbooks/worktree-orchestration-playbook.md](../../playbooks/worktree-orchestration-playbook.md)

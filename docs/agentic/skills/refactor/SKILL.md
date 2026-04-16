@@ -1,4 +1,20 @@
+---
+name: refactor
+description: Produce a structured refactoring evaluation for a codebase area and sequence the highest-value remediation work.
+mode: advisory
+context_budget: 200
+makefile_target: null
+mcp_tools:
+  - review_findings
+  - record_event
+  - get_handoff_state
+tdd_gate: false
+disable-model-invocation: false
+---
+
 # Refactor
+
+## Overview
 
 Use this skill to produce a structured refactoring evaluation of a codebase area, identifying code smells, design-system gaps, and improvement opportunities with a prioritized remediation sequence.
 
@@ -130,6 +146,13 @@ These rules from CLAUDE.md constrain remediation recommendations:
 - **rg-013**: `core.py` must remain pure handoff-state CRUD. No orchestration imports.
 
 When a finding aligns with an existing short rule or regression guard, cite the rule ID in the finding.
+
+## Core Process
+
+1. Determine the evaluation scope and the relevant dimensions to apply.
+2. Load only the context needed for the target area and stack.
+3. Run the structured evaluation phases below, recording durable findings when the review needs to survive handoff.
+4. End with a prioritized remediation sequence that explains dependency order instead of a flat issue dump.
 
 ## Phase 1 — Scope and Context
 
@@ -278,6 +301,18 @@ Regenerate task context: `generate_current_task_md(task_ref=<active-task-ref>)`.
 - If a target file has been significantly refactored since a prior evaluation, note which prior findings are resolved and which persist. Update prior finding status with `update_review_finding`.
 - If the scope is too broad for a single evaluation (e.g., "the whole monorepo"), recommend splitting by stack and produce one evaluation per dimension. Reference companion documents via the Cross-Document Overlap Index.
 
+## Common Rationalizations
+
+- "I can just list smells without sequencing them." A flat list loses the dependency order that makes a refactor plan actionable.
+- "The UI and code-structure issues are basically the same." They are different dimensions and should be assessed separately unless the overlap is explicit.
+- "This is only advisory, so MCP recording does not matter." Long-running refactor work frequently spans sessions; durable findings still help the next agent.
+
+## Red Flags
+
+- The target scope spans multiple stacks with no clear primary dimension.
+- The proposed remediation sequence depends on code paths you have not actually inspected.
+- Findings are drifting into bug review, security review, or branch review instead of refactoring guidance.
+
 ## Convergence Criteria
 
 - Every finding is recorded in MCP before being mentioned in the document.
@@ -288,3 +323,9 @@ Regenerate task context: `generate_current_task_md(task_ref=<active-task-ref>)`.
 - A checklist summarizes all actionable items.
 - A `record_decision` entry exists with the evaluation summary.
 - Response includes `Handoff updated: yes`.
+
+## See Also
+
+- [../investigate/SKILL.md](../investigate/SKILL.md)
+- [../review/SKILL.md](../review/SKILL.md)
+- [../../rules/development-workflow.md](../../rules/development-workflow.md)

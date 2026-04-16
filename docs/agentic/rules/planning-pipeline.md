@@ -192,6 +192,8 @@ The ADR is reviewed first; implementation task plans are derived from the approv
 
 Decompose spec items into implementation slices with proof commands, lane ownership, and merge order. Task plans describe how to build and verify, not what to build (that's the spec's job).
 
+`make plan-review` assumes `plan-analyze` already ran for the same document. The Make target warns by default and can hard-block with `PLAN_ANALYZE_REQUIRED=1` when no `plan-analyze-*` planning run exists for that artifact.
+
 ### Required content
 
 - **Spec item references** — trace each slice back to a spec item ID

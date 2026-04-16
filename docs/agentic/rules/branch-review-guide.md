@@ -1,5 +1,7 @@
 # Branch Review Guide
 
+> **Reference Appendix.** The skill at [`.claude/skills/branch-review/SKILL.md`](../../../.claude/skills/branch-review/SKILL.md) is the primary entry point for branch review. This guide is consulted from the skill, not loaded directly as the execution surface.
+
 > Structured checklist for reviewing feature branches before merge. Checklist items reference [`instructions.md`](../instructions.md).
 
 ## Quick Navigation

@@ -1,9 +1,22 @@
 ---
 name: worktree-worker
 description: Execute a delegated slice inside a worktree lane. Query scope from MCP, stay in owned paths, run lane-local tests, hand back merge-ready reports.
+mode: execution
+context_budget: 180
+makefile_target: lane-run
+mcp_tools:
+  - get_lane_activity
+  - lane_communication
+  - worker_reports
+  - review_findings
+  - record_event
+tdd_gate: true
+disable-model-invocation: false
 ---
 
 # Worktree Worker
+
+## Overview
 
 Use this skill when you are the worker agent assigned to a bounded worktree lane.
 
@@ -11,7 +24,7 @@ Use this skill when you are the worker agent assigned to a bounded worktree lane
 
 Use this skill when you are implementing a delegated lane slice with a defined owned-path boundary and you need to stay inside that scope until the work is ready for orchestrator review.
 
-## What this skill owns
+## Goal
 
 - reading lane scope from shared MCP state
 - staying inside owned paths
@@ -25,6 +38,13 @@ Use this skill when you are implementing a delegated lane slice with a defined o
 - Use [../../rules/development-workflow.md](../../rules/development-workflow.md) for cross-boundary, slice, and review-readiness rules.
 - Use [../../playbooks/worktree-orchestration-playbook.md](../../playbooks/worktree-orchestration-playbook.md) for the canonical lane lifecycle procedure (worker states, scope enforcement, handoff contract, health model).
 - This skill is an execution wrapper for this specific runtime. Shared process policy remains in the linked canonical docs above.
+
+## Core Process
+
+1. Confirm the lane scope, inbox, and owned paths before touching files.
+2. Implement only the delegated slice inside lane ownership boundaries.
+3. Run lane-local verification and collect the evidence needed for handback.
+4. Return the work through the lane handoff path instead of editing shared orchestrator state directly.
 
 ## Start-up checklist
 
@@ -107,6 +127,18 @@ Merge-ready and blocked reports auto-open a worker-to-orchestrator handoff messa
   - [../../templates/DECISION_CROSS_LANE.template.md](../../templates/DECISION_CROSS_LANE.template.md)
 - Do not hand off a changed boundary without citing at least one verification command result for that boundary in the lane report or decision entry.
 
+## Common Rationalizations
+
+- "This shared file change is tiny, so I will just include it." Small scope breaks still create orchestrator merge pain.
+- "I already know my lane scope." Polling the lane state first is cheaper than fixing ownership drift later.
+- "I can hand back without lane-local tests because the orchestrator will catch it." The worker owns first-pass verification.
+
+## Red Flags
+
+- The diff is crossing lane-owned path boundaries.
+- The inbox or lane activity contains unresolved blockers or findings you are about to ignore.
+- The worker is about to modify shared plans or sibling-lane files without explicit delegation.
+
 ## Safety Constraints
 
 - Do not mark the whole task complete.
@@ -129,3 +161,9 @@ Merge-ready and blocked reports auto-open a worker-to-orchestrator handoff messa
 - All changed files stay inside the lane’s owned paths.
 - Lane-local verification has been run and the results are ready to cite in the handoff.
 - The lane is handed back through the supported report/handoff path with a clear merge-ready or blocked status.
+
+## See Also
+
+- [../worktree-orchestrator/SKILL.md](../worktree-orchestrator/SKILL.md)
+- [../rescue-lane/SKILL.md](../rescue-lane/SKILL.md)
+- [../../playbooks/worktree-orchestration-playbook.md](../../playbooks/worktree-orchestration-playbook.md)

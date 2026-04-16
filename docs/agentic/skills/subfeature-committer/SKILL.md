@@ -1,10 +1,17 @@
 ---
 name: subfeature-committer
 description: Commit one already-isolated finished slice. Use /commit2git instead when multiple slices need grouping.
+mode: advisory
+context_budget: 120
+makefile_target: null
+mcp_tools: []
+tdd_gate: false
 disable-model-invocation: true
 ---
 
 # Subfeature Committer
+
+## Overview
 
 Use this skill when the branch has exactly one coherent finished slice ready to commit.
 
@@ -28,7 +35,7 @@ Create one clean commit for the current completed slice while leaving the rest o
 - Use [../../rules/development-workflow.md](../../rules/development-workflow.md) for slice, contract, and review-readiness rules.
 - Use this skill for the commit recipe only; do not copy broader process policy into commit notes or ad hoc local guidance.
 
-## Steps
+## Core Process
 
 1. Inspect the current diff shape:
    - `git status --short`
@@ -52,6 +59,18 @@ Create one clean commit for the current completed slice while leaving the rest o
 - Do not commit half-finished or ambiguous hunks just to make the tree smaller.
 - Stay in the current worktree and branch context; do not switch to a sibling worktree to perform the commit.
 
+## Common Rationalizations
+
+- "This is close enough to one slice." If the diff tells two stories, it is not ready for a single isolated commit.
+- "I will commit the extra hunks now and sort them out later." Cleanup commits are not a substitute for deliberate slice boundaries.
+- "Switching worktrees will make staging easier." This skill stays in the current branch and worktree on purpose.
+
+## Red Flags
+
+- The staged diff contains unrelated paths or outcomes.
+- The working tree still has multiple coherent slices that need grouping.
+- The commit message is describing a directory or file batch instead of an outcome.
+
 ## Recovery
 
 - If the slice boundary turns out to be mixed with unrelated work, unstage it and switch to `commit2git` or hunk-splitting.
@@ -63,3 +82,8 @@ Create one clean commit for the current completed slice while leaving the rest o
 - Exactly one coherent finished slice is committed.
 - The commit message names the completed outcome clearly.
 - Any remaining changes in the worktree are intentionally left for a later slice.
+
+## See Also
+
+- [../commit2git/SKILL.md](../commit2git/SKILL.md)
+- [../../rules/development-workflow.md](../../rules/development-workflow.md)

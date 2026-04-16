@@ -235,11 +235,11 @@ Deliverables:
 
 - **`plan-analyze` skill** (`mode: advisory`, `tdd_gate: false`)
   - Implements the six spec-kit detection passes as a structured prompt
-  - Core process: load plan + constitution + code anchors → run duplication/ambiguity/underspecification/constitution-alignment/coverage-gap/terminology-drift passes → produce findings table → record findings in MCP with `review_mode="analysis"`
+  - Core process: load plan + constitution + code anchors → run duplication/ambiguity/underspecification/constitution-alignment/coverage-gap/terminology-drift passes → produce findings table → record findings in MCP with `review_mode="planning"` under a `plan-analyze-*` session → record a planning-mode review run with the same `plan-analyze-*` session prefix
   - References the existing agent-assisted `make plan-analyze` stub as its Makefile entry point
   - MCP tools: `review_findings(batch_record)` for finding recording
   - Context budget: ~200 lines of skill + loaded plan + constitution
-  - **Gate semantics**: `plan-analyze` is a pre-review triage step, not a substitute for the required planning review pass. Its findings are recorded with `review_mode="analysis"` (distinct from `review_mode="planning"`). It does NOT record a review run via `review_runs(record)` — only `planning-review` does that. The planning pipeline exit gate still requires at least one `planning`-mode review run.
+  - **Gate semantics**: `plan-analyze` is a pre-review triage step, not a substitute for the required planning review pass. Its findings and run marker are both recorded under `review_mode="planning"`, but the session prefix (`plan-analyze-*` vs `plan-review-*`) keeps triage distinct from the formal planning-review pass. The planning pipeline exit gate checks for the `plan-analyze-*` run marker before `planning-review` proceeds.
 
 - **`handoff-lifecycle` skill** (`mode: execution`, `tdd_gate: false`)
   - Extracts the session-start → work → handoff → resume pattern from `instructions.md` agent startup protocol

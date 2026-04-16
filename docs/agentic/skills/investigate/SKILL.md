@@ -11,6 +11,7 @@ mcp_tools:
   - search_handoff
   - get_handoff_state
   - generate_current_task_md
+tdd_gate: true
 ---
 
 # Investigate

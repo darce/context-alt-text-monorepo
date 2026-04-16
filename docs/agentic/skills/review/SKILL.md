@@ -14,6 +14,7 @@ mcp_tools:
   - get_latest_slice_review_packet
   - handoff_close_check
   - search_handoff
+tdd_gate: false
 ---
 
 # Review

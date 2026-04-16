@@ -1,5 +1,7 @@
 # Planning Review Guide
 
+> **Reference Appendix.** The skill at [`.claude/skills/planning-review/SKILL.md`](../../../.claude/skills/planning-review/SKILL.md) is the primary entry point for planning review. This guide is consulted from the skill, not loaded directly as the execution surface.
+
 > **Purpose:** Structured review checklist for planning documents (assessments, specs, task plans, epics, roadmaps, ADRs, implementation plans, scope/dependency docs) before implementation or approval.
 > Planning reviews are document-and-codebase reviews, not branch-diff reviews. For code diffs, use [branch-review-guide.md](branch-review-guide.md).
 

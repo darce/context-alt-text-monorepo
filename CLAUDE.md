@@ -241,8 +241,8 @@ Epic titles: `E<number>. <Title>` · Task plans: `<EpicShortID>-<N>. <Title>` ·
 
 **Portable workflow commands**: when a prompt starts with a registered `/command_id`, route it through the canonical workflow manifest at `config/agent-workflows/portable_commands.json`. Claude-native adapters live in `.claude/commands/*.md`; VS Code/Copilot adapters live in `.github/prompts/*.prompt.md`; Codex uses this routing rule directly. Current managed ids: `/scope`, `/branch-lifecycle`, `/branch-review`, `/handoff-lifecycle`, `/incremental-implementation`, `/plan-analyze`, `/planning-review`, `/tdd`.
 
-**Branch review**: load [rules/branch-review-guide.md](docs/agentic/rules/branch-review-guide.md) when request matches: "review" + (implementation|code|changes|branch|PR|diff), "audit" + (branch|code), "propose improvements", "flag gaps/bugs".
+**Branch review**: route matching requests through the `branch-review` skill first (`.claude/skills/branch-review/SKILL.md` or `/branch-review`). Use [rules/branch-review-guide.md](docs/agentic/rules/branch-review-guide.md) as the detailed checklist/reference surface behind the skill, not as a separate ad-hoc entry point.
 
-**Planning review**: load [rules/planning-review-guide.md](docs/agentic/rules/planning-review-guide.md) when request matches: "review" + (task plan|epic|roadmap|ADR|planning document), "flag issues/gaps/obsolete assumptions" on a `docs/` file, "audit" + (plan|epic|roadmap).
+**Planning review**: route matching requests through the `planning-review` skill first (`.claude/skills/planning-review/SKILL.md` or `/planning-review`). Use [rules/planning-review-guide.md](docs/agentic/rules/planning-review-guide.md) as the detailed checklist/reference surface behind the skill, and use `plan-analyze` as the required pre-review triage step.
 
 Do NOT perform ad-hoc reviews. Both guides enforce structured, MCP-visible output.

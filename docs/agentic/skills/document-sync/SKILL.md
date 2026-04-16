@@ -1,4 +1,21 @@
+---
+name: document-sync
+description: Update repository documentation to match the current code and workflow surfaces after code changes land.
+mode: execution
+context_budget: 180
+makefile_target: null
+mcp_tools:
+  - search_handoff
+  - get_handoff_state
+  - record_event
+  - generate_current_task_md
+tdd_gate: false
+disable-model-invocation: false
+---
+
 # Document Sync
+
+## Overview
 
 Use this skill to update project documentation after code changes have been committed, ensuring docs stay in sync with the current state of the codebase.
 
@@ -42,6 +59,13 @@ Documentation surfaces in this monorepo, ordered by sync priority:
 10. **Task plans** (`docs/tasks/`) — only update status/completion markers, never rewrite scope
 
 Out of scope: `docs/literature/`, `docs/roadmaps/` (authored, not synced), app-level READMEs unless explicitly requested.
+
+## Core Process
+
+1. Start from the actual code or branch diff, not memory of what changed.
+2. Audit the highest-priority documentation surfaces first.
+3. Apply only factual sync updates; do not smuggle in new scope.
+4. Record the doc-sync outcome durably when the update matters for handoff continuity.
 
 ## Phase 1 — Diff Analysis
 
@@ -162,6 +186,18 @@ Needs user input: <count> items
 
 End with `Handoff updated: yes`.
 
+## Common Rationalizations
+
+- "This doc drift is small, so it can wait." Small documentation mismatches compound quickly across instructions, skills, and contracts.
+- "I already know what changed." Diff-based verification is safer than relying on session memory.
+- "Task plans should be rewritten while I am here." Task plans only get status and factual-sync updates unless the user explicitly asks for scope changes.
+
+## Red Flags
+
+- The requested "sync" would actually change scope or design intent.
+- A contract or instruction surface disagrees with the implementation and the discrepancy was not verified from code.
+- The update spans multiple documentation layers but only one was checked.
+
 ## Recovery
 
 - If MCP is unavailable, apply doc updates directly and record the decision when MCP returns.
@@ -176,3 +212,9 @@ End with `Handoff updated: yes`.
 - Any deferred items are recorded as MCP findings.
 - `CURRENT_TASK.md` has been regenerated.
 - Response includes `Handoff updated: yes`.
+
+## See Also
+
+- [../review/SKILL.md](../review/SKILL.md)
+- [../../rules/development-workflow.md](../../rules/development-workflow.md)
+- [../../instructions.md](../../instructions.md)

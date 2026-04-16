@@ -14,6 +14,6 @@ Execution context: Use for pre-review triage of a planning artifact before the f
 Loop:
 - load the plan, constitution, and minimal adjacent anchors
 - run the six analysis passes
-- record findings with review_mode="analysis"
+- record findings with review_mode="planning" under a plan-analyze session
+- record a planning review_run whose session starts with plan-analyze-
 - recommend revise-first or proceed-to-planning-review
-- stop without recording a review run

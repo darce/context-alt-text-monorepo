@@ -362,7 +362,7 @@ Slices 1–3 are sequential single-lane work on `feature/e17-4`. Slice 4 (AHMCP-
 
 ### Checklist for Slice 4: File-Touch Tracking (AHMCP-31)
 
-- [ ] AHMCP-31 task scoped and `set_handoff_state` registered
+- [x] AHMCP-31 task scoped and `set_handoff_state` registered
 - [x] AHMCP-31 merged: `touched_files` table, `record_file_touch`, `get_touched_files`
 - [x] AHMCP-31 merged: `load_session` includes `touched_files`
 - [x] PostToolUse hook added to `.claude/settings.json` after AHMCP-31 ships

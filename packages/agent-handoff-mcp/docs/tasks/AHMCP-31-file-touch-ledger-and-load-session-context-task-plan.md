@@ -44,7 +44,7 @@ The handoff ledger currently has no canonical task-level file-touch table. The c
 - Rules: `docs/agentic/instructions.md`
 - Contracts: `docs/agentic/contracts/agent-handoff-mcp.md`
 - Parent task dependency: `docs/tasks/17.0/E17-4-workflow-integrity-task-plan.md` Slice 4
-- Scope intake: `docs/ideas/ahmcp-31-32-scope-note.md`
+- Scope intake: `docs/scopes/ahmcp-31-32-scope-note.md`
 - Recorded intake decision: `1725` (`scope_intake_AHMCP-31_package_only_mvp`)
 
 ## Contract and Boundary Impact

@@ -44,7 +44,7 @@
 
 > Include this section when a P0 scope intake pass was conducted before assessment. Omit for bug fixes, tech debt tasks, and spec-derived tasks.
 
-- **Scope one-pager**: `docs/ideas/[slug].md` _(link if created)_
+- **Scope one-pager**: `docs/scopes/[slug].md` _(link if created)_
 - **Key Q&A decisions**: [MCP decision IDs where answers were recorded, e.g. `decision #NNN`]
 - **Not-Doing**: [Explicit out-of-scope items confirmed during intake]
 

@@ -11,7 +11,7 @@
 
 | Step | Stage | Entry point | Skill | Key MCP tools | Exit gate |
 |------|-------|-------------|-------|---------------|-----------|
-| P0 | Intake _(new features/epics only)_ | (in session) | `scope` _(E17-3)_ | `AskUserQuestion`, `record_event(decision)` | Q&A recorded in MCP; scope one-pager in `docs/ideas/`; Not-Doing list present |
+| P0 | Intake _(new features/epics only)_ | (in session) | `scope` _(E17-3)_ | `AskUserQuestion`, `record_event(decision)` | Q&A recorded in MCP; scope one-pager in `docs/scopes/`; Not-Doing list present |
 | P1 | Scope | `make context` | `investigate` | `set_handoff_state` | Problem traced to code; task ref initialized |
 | P2 | Assess | `make plan-analyze DOC=<path>` _(E17-3)_ | `plan-analyze` _(E17-3)_ | `review_findings(planning)` + `review_runs(record)` | All findings cite `file:line`; triage run recorded with `plan-analyze-*` session |
 | P3 | Spec | `make plan-review DOC=<path>` _(E17-3)_ | `planning-review` _(E17-3)_ | `review_findings` + `review_runs(record)` | ≥1 review run recorded; 0 open findings |

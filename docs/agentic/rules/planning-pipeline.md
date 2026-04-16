@@ -36,7 +36,7 @@ Not every stage is required. Small, well-understood changes can skip to a spec o
 
 ## Stage 0: Intake (new features and epics — conditional)
 
-**Artifact:** `docs/ideas/[slug].md` (scope one-pager)
+**Artifact:** `docs/scopes/[slug].md` (scope one-pager)
 **Skill:** `scope` _(Phase 2, E17)_
 **When required:** New features, new epics, new capabilities where the problem is not already traced to code. Skip for: bug fixes with a pre-identified error site, tech debt tasks with established scope, and tasks derived directly from an approved spec.
 
@@ -53,7 +53,7 @@ Elicit requirements **before** any planning artifact is written. The reversal pa
    - **Non-functional constraints**: any scale, security, or compliance requirements?
    - **Not-doing**: what is explicitly out of scope?
 2. Record each Q&A pair as `record_event(event_kind="decision")` so answers survive across sessions and agents.
-3. Output a `docs/ideas/[slug].md` one-pager: MVP scope, stated assumptions, Not-Doing list, success criteria.
+3. Output a `docs/scopes/[slug].md` one-pager: MVP scope, stated assumptions, Not-Doing list, success criteria.
 
 ### Exit gate → Assessment
 
@@ -61,7 +61,7 @@ Elicit requirements **before** any planning artifact is written. The reversal pa
 |-----------|-----------|
 | 3–5 questions asked and answered | Yes |
 | Answers recorded as MCP decisions | Yes |
-| Scope one-pager in `docs/ideas/` | Recommended |
+| Scope one-pager in `docs/scopes/` | Recommended |
 | Explicit Not-Doing list present | Yes |
 
 ---

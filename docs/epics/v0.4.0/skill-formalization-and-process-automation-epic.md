@@ -16,7 +16,7 @@ The process hardening epic (v0.3.0) built the durable substrate: handoff DB, rev
 
 1. **Context bloat.** Agents load 500-line review guides when they need a 20-step execution skill. The guide's educational value is high; its per-invocation token cost is also high.
 2. **Inconsistent skill formality.** The repo now contains 19 skills total: 11 pre-epic legacy skills plus 8 Phase 2 additions. The legacy set still varies from 64-line checklists (`rescue-lane`) to 291-line playbooks (`refactor`). None of those pre-epic skills originally had context budgets, consistent advisory vs execution tags, or Makefile/MCP declarations as their API surface.
-3. **Manual planning validation.** The planning-review checklist is entirely human-driven. The spec-kit evaluation (see `docs/assessments/agentic/agent-skills-vs-spec-kit-evaluation.md`) confirmed that spec-kit's analysis methodology — duplication, ambiguity, underspecification, constitution alignment, coverage gaps, terminology drift — is an LLM-powered prompt template, not a Python library. This means it can be adopted as a skill with zero runtime dependencies.
+3. **Manual planning validation.** The planning-review checklist is entirely human-driven. The spec-kit evaluation (see `docs/assessments/agent-skills-vs-spec-kit-evaluation.md`) confirmed that spec-kit's analysis methodology — duplication, ambiguity, underspecification, constitution alignment, coverage gaps, terminology drift — is an LLM-powered prompt template, not a Python library. This means it can be adopted as a skill with zero runtime dependencies.
 4. **No machine-checkable constitution.** The repo's `[sr-NNN]` and `[rg-NNN]` rules are prose counters in `instructions.md`. They are not loadable as a validation reference that a plan-analyze skill can check against.
 
 The v0.3.0 epic built the engine. This epic builds the cockpit.
@@ -109,7 +109,7 @@ The most common source of stale `active` dashboard entries is tasks archived bef
 | `github/spec-kit` | Six detection passes for plan validation (prompt-based, not code) | Adopt as the `plan-analyze` skill's core process |
 | `github/spec-kit` | Constitution-driven alignment checking | Create `constitution.md` from `[sr/rg-NNN]` rules as machine-loadable validation reference |
 | `github/spec-kit` | Before/after lifecycle hooks for stage transitions | Wire planning exit gates as hookable Makefile targets |
-| `docs/assessments/agentic/agent-skills-vs-spec-kit-evaluation.md` | Hybrid extraction recommendation | This epic implements the three-part recommendation from that assessment |
+| `docs/assessments/agent-skills-vs-spec-kit-evaluation.md` | Hybrid extraction recommendation | This epic implements the three-part recommendation from that assessment |
 
 ## Target Architecture
 
@@ -196,7 +196,7 @@ Deliverables:
 
 - **`scope` skill** (`mode: advisory`, `tdd_gate: false`) — _deliver with `planning-review`_
   - Elicits requirements before any planning artifact is written (reversal/question-first pattern)
-  - Core process: ask 3–5 targeted questions via `AskUserQuestion` (scope, completion signals, edge cases, non-functional constraints, not-doing) → record each Q&A pair as `record_event(event_kind="decision")` → output `docs/ideas/[slug].md` one-pager (MVP scope, assumptions, Not-Doing list, success criteria)
+  - Core process: ask 3–5 targeted questions via `AskUserQuestion` (scope, completion signals, edge cases, non-functional constraints, not-doing) → record each Q&A pair as `record_event(event_kind="decision")` → output `docs/scopes/[slug].md` one-pager (MVP scope, assumptions, Not-Doing list, success criteria)
   - Required for: new features, new epics, new capabilities. Exempt: bug fixes, tech debt tasks, spec-derived tasks.
   - MCP tools: `record_event`, `artifacts`
   - Context budget: ~60 lines of skill
@@ -414,7 +414,7 @@ This epic has no external dependencies. All work is internal to the repo's agent
 
 ## Phase 2: Core Workflow Skills -- done
 
-- [x] Create `scope` advisory skill with question-first intake process (3–5 `AskUserQuestion` calls, Q&A as MCP decisions, `docs/ideas/` one-pager output)
+- [x] Create `scope` advisory skill with question-first intake process (3–5 `AskUserQuestion` calls, Q&A as MCP decisions, `docs/scopes/` one-pager output)
 - [x] Create `branch-review` execution skill
 - [x] Create `planning-review` execution skill
 - [x] Create `plan-analyze` advisory skill with six detection passes

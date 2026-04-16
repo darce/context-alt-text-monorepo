@@ -3,14 +3,14 @@ from __future__ import annotations
 import re
 
 LEGACY_SLICE_COMPLETE_RE = re.compile(r"^slice_complete_\w+$")
-PREFIXED_SLICE_COMPLETE_RE = re.compile(r"^[a-z]{2,4}_slice_complete_[A-Za-z0-9_-]+_\w+$")
+PREFIXED_SLICE_COMPLETE_RE = re.compile(r"^[a-z]{2,12}_slice_complete_[A-Za-z0-9_-]+_\w+$")
 
 # Full canonical grammar: <author_tag>_<decision_kind>_<work_ref>_<slug>
-# - author_tag:    [a-z]{2,4}
+# - author_tag:    [a-z]{2,12}
 # - decision_kind: one or more underscore-delimited lowercase words, e.g. slice_complete
 # - work_ref:      task/epic reference, e.g. E12-1, ADPH-4, or any alphanumeric+hyphen token
 # - slug:          [a-z0-9][a-z0-9_]* (at least one char, starts with alphanumeric)
-CANONICAL_DECISION_RE = re.compile(r"^[a-z]{2,4}_[a-z][a-z0-9_]*_[A-Za-z0-9][A-Za-z0-9_-]*_[a-z0-9][a-z0-9_]*$")
+CANONICAL_DECISION_RE = re.compile(r"^[a-z]{2,12}_[a-z][a-z0-9_]*_[A-Za-z0-9][A-Za-z0-9_-]*_[a-z0-9][a-z0-9_]*$")
 
 
 def is_legacy_slice_complete_decision(decision: str) -> bool:

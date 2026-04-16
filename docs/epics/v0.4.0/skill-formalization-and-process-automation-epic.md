@@ -289,11 +289,11 @@ Architectural decisions recorded during Phase 2:
 ### Phase 3: Retrofit and Integration -- not-started
 
 > **Status**: not-started
-> **Task plans**: [E17-6](../../tasks/17.0/E17-6-phase3-retrofit-task-plan.md)
+> **Task plans**: [E17-6](../../tasks/17.0/E17-6-phase3-retrofit-task-plan.md) · [E17-7](../../tasks/17.0/E17-7-handoff-evolution-and-portable-workflow-task-plan.md)
 
-**Goal**: Retrofit remaining skills to the anatomy template, wire constitution validation into planning exit gates, and verify end-to-end flow.
+**Goal**: Complete the Phase 3 core retrofit and planning-gate integration, then land the approved follow-on handoff/tooling work without collapsing it back into one oversized task plan.
 
-**Scope note**: Phase 3 is planned as a single task plan, `E17-6`. The anatomy-retrofit set is the eight non-compliant legacy skills called out there: `refactor`, `security-audit`, `document-sync`, `daemon-lifecycle`, `worktree-orchestrator`, `worktree-worker`, `rescue-lane`, and `subfeature-committer`. The same task also cleans up routing and cross-skill references for already-compliant surfaces such as `commit2git`, `review`, and `investigate`.
+**Scope note**: Phase 3 is now split into two task plans. `E17-6` carries the core retrofit/gating/routing work required to finish the original Phase 3 deliverables: anatomy retrofit, `check-skills`, harness contract + sync validation, review-routing cleanup, and the `plan-analyze` pre-review gate. `E17-7` carries the approved follow-on work that was split out to keep `E17-6` reviewable: handoff-state evolution for concurrent tasks, raw test-trace storage, MCP tool-surface compression, and portable workflow normalization that brings Codex onto the same manifest-driven command contract as Claude and VS Code. `E17-6` lands first; `E17-7` follows after the core passes review.
 
 Deliverables:
 
@@ -303,6 +303,7 @@ Deliverables:
 - Update `CLAUDE.md` key triggers to reference skills instead of bulk guide loading
 - Update `instructions.md` routing table to point to skills as primary entry points, guides as reference
 - Mark `branch-review-guide.md` and `planning-review-guide.md` as reference appendices once their execution skills ship; move executable checklists into the skills and leave heuristics/rationale in the guides
+- After the core lands, complete the approved follow-on in `E17-7`: concurrent active-task support in handoff state, raw test-trace storage, MCP tool-surface compression, and manifest-driven portable workflow normalization that includes Codex router generation and validation
 
 Exit criteria:
 

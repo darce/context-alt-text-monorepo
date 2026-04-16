@@ -409,7 +409,7 @@ Slice-complete decision canonical form:
 <author_tag>_slice_complete_<work_ref>_<slug>
 ```
 
-- `author_tag`: 2-4 lowercase letters identifying the agent (e.g., `cdx`, `cop`, `cla`, `gem`)
+- `author_tag`: 2-12 lowercase letters identifying the agent (e.g., `cdx`, `copilot`, `claude`, `gemini`)
 - `work_ref`: task reference (e.g., `E12-1`)
 - `slug`: descriptive lowercase `[a-z0-9_]+`
 

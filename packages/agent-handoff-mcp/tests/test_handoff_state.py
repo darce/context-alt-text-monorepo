@@ -2924,7 +2924,7 @@ def test_is_slice_complete_rejects_invalid() -> None:
     assert handoff_core.is_slice_complete_decision("note_only") is False
     assert handoff_core.is_slice_complete_decision("review_complete") is False
     assert handoff_core.is_slice_complete_decision("_slice_complete_bad") is False
-    assert handoff_core.is_slice_complete_decision("toolong_slice_complete_E12-1_foo") is False
+    assert handoff_core.is_slice_complete_decision("thirteencharsz_slice_complete_E12-1_foo") is False
 
 
 def test_extract_slice_label_legacy() -> None:
@@ -3351,22 +3351,22 @@ def test_classify_decision_id_canonical() -> None:
 
 def test_classify_decision_id_legacy_slice() -> None:
     """Legacy slice_complete_* is classified as 'legacy_slice'."""
-    assert handoff_core.classify_decision_id("slice_complete_docs_audit") == "legacy_slice"
     assert handoff_core.classify_decision_id("slice_complete_foo") == "legacy_slice"
+    assert handoff_core.classify_decision_id("slice_complete_bar") == "legacy_slice"
 
 
 def test_classify_decision_id_malformed_slice() -> None:
     """Ids containing slice_complete but violating the grammar are 'malformed_slice'."""
     assert handoff_core.classify_decision_id("_slice_complete_bad") == "malformed_slice"
-    assert handoff_core.classify_decision_id("toolong_slice_complete_E12-1_foo") == "malformed_slice"
+    assert handoff_core.classify_decision_id("thirteencharsz_slice_complete_E12-1_foo") == "malformed_slice"
     assert handoff_core.classify_decision_id("ABC_slice_complete_E12-1_foo") == "malformed_slice"
 
 
 def test_classify_decision_id_freeform() -> None:
     """Ids with no slice_complete and no canonical form are 'freeform'."""
-    assert handoff_core.classify_decision_id("review_handoff_state_slice_audit") == "freeform"
     assert handoff_core.classify_decision_id("note_only") == "freeform"
     assert handoff_core.classify_decision_id("review_complete") == "freeform"
+    assert handoff_core.classify_decision_id("just_a_note") == "freeform"
 
 
 def test_audit_decision_ids_healthy_when_all_canonical(isolated_handoff: dict) -> None:
@@ -3424,7 +3424,7 @@ def test_audit_decision_ids_flags_malformed_slice(isolated_handoff: dict) -> Non
     with _sqlite3.connect(str(db_path)) as conn:
         conn.execute(
             "INSERT INTO decisions (task_ref, session, decision, created_at) "
-            "VALUES ('audit-bad', 's-bad', 'toolong_slice_complete_E12-1_foo', datetime('now'))"
+            "VALUES ('audit-bad', 's-bad', 'thirteencharsz_slice_complete_E12-1_foo', datetime('now'))"
         )
 
     result = _parse(mcp_server.audit_decision_ids(task_ref="audit-bad"))
@@ -3433,7 +3433,7 @@ def test_audit_decision_ids_flags_malformed_slice(isolated_handoff: dict) -> Non
     assert result["healthy"] is False
     assert result["counts"]["malformed_slice"] >= 1
     malformed_ids = [v["decision"] for v in result["violations"]]
-    assert "toolong_slice_complete_E12-1_foo" in malformed_ids
+    assert "thirteencharsz_slice_complete_E12-1_foo" in malformed_ids
 
 
 def test_audit_decision_ids_legacy_slice_not_in_default_violations(isolated_handoff: dict) -> None:
@@ -3451,7 +3451,7 @@ def test_audit_decision_ids_legacy_slice_not_in_default_violations(isolated_hand
     with _sqlite3.connect(str(db_path)) as conn:
         conn.execute(
             "INSERT INTO decisions (task_ref, session, decision, created_at) "
-            "VALUES ('audit-legacy', 's-leg', 'slice_complete_old_format', datetime('now'))"
+            "VALUES ('audit-legacy', 's-leg', 'slice_complete_legacyfmt', datetime('now'))"
         )
 
     result = _parse(mcp_server.audit_decision_ids(task_ref="audit-legacy"))
@@ -3478,7 +3478,7 @@ def test_audit_decision_ids_include_categories_override(isolated_handoff: dict) 
     with _sqlite3.connect(str(db_path)) as conn:
         conn.execute(
             "INSERT INTO decisions (task_ref, session, decision, created_at) "
-            "VALUES ('audit-legacy-override', 's-lo', 'slice_complete_old_format', datetime('now'))"
+            "VALUES ('audit-legacy-override', 's-lo', 'slice_complete_legacyfmt', datetime('now'))"
         )
 
     result = _parse(

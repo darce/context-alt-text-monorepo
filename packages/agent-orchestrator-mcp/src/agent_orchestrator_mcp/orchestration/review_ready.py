@@ -107,7 +107,8 @@ def evaluate_review_ready(
     current_commit_summary_present = not bool(
         close.get("checks", {}).get("current_commit_handoff", {}).get("is_violation")
     )
-    tests_recent = state.get("tests_recent", []) or []
+    # Support both flat dict (test mocks) and nested envelope (production API)
+    tests_recent = state.get("tests_recent") or state.get("data", {}).get("tests_recent", []) or []
     has_test_evidence = len(tests_recent) > 0
     contract_violation = bool(boundary_files and not contract_files)
 

@@ -284,57 +284,57 @@ Proof:
 
 ### Context and Ownership
 
-- [ ] Verify 11 non-compliant skills still need retrofit
-- [ ] Confirm `SKILL_ANATOMY.template.md` remains the anatomy authority
-- [ ] Confirm [E17-7](./E17-7-handoff-evolution-and-portable-workflow-task-plan.md) now owns the split-out follow-on work
+- [x] Verify 11 non-compliant skills still need retrofit
+- [x] Confirm `SKILL_ANATOMY.template.md` remains the anatomy authority
+- [x] Confirm [E17-7](./E17-7-handoff-evolution-and-portable-workflow-task-plan.md) now owns the split-out follow-on work
 
 ### Checklist for Slice 1: Skill Retrofit
 
-- [ ] All 11 non-compliant skills have full required frontmatter
-- [ ] All 11 non-compliant skills have required anatomy section headers
-- [ ] `commit2git`, `investigate`, and `review` gain `tdd_gate`
-- [ ] Frontmatter parses without YAML errors for all 19 skills
+- [x] All 11 non-compliant skills have full required frontmatter
+- [x] All 11 non-compliant skills have required anatomy section headers
+- [x] `commit2git`, `investigate`, and `review` gain `tdd_gate`
+- [x] Frontmatter parses without YAML errors for all 19 skills
 
 ### Checklist for Slice 2: `make check-skills`
 
-- [ ] `scripts/check_skills.py` validates anatomy fields, section headers, Makefile targets, and tool wiring
-- [ ] `make check-skills` passes after Slice 1
-- [ ] `make check-skills` fails on intentional regression
-- [ ] `check-skills` is wired into `make check-all`
+- [x] `scripts/check_skills.py` validates anatomy fields, section headers, Makefile targets, and tool wiring
+- [x] `make check-skills` passes after Slice 1
+- [x] `make check-skills` fails on intentional regression
+- [x] `check-skills` is wired into `make check-all`
 
 ### Checklist for Slice 3: Harness Protocol Contract
 
-- [ ] `docs/agentic/contracts/harness-protocol.yaml` defines the shared Claude/VS Code protocol surface
-- [ ] `scripts/check_harness_sync.py` validates both managed harness hook files
-- [ ] Remaining shared-surface drift required by the contract is resolved
-- [ ] `make check-harness-sync` is wired into `make check-all`
+- [x] `docs/agentic/contracts/harness-protocol.yaml` defines the shared Claude/VS Code protocol surface
+- [x] `scripts/check_harness_sync.py` validates both managed harness hook files
+- [x] Remaining shared-surface drift required by the contract is resolved
+- [x] `make check-harness-sync` is wired into `make check-all`
 
 ### Checklist for Slice 4: Routing Redirect
 
-- [ ] `CLAUDE.md` branch/planning review triggers point to skills, not guides
-- [ ] `docs/agentic/instructions.md` no longer has conflicting guide-first review routing
-- [ ] `branch-review-guide.md` is labelled reference-only
-- [ ] `planning-review-guide.md` is labelled reference-only
+- [x] `CLAUDE.md` branch/planning review triggers point to skills, not guides
+- [x] `docs/agentic/instructions.md` no longer has conflicting guide-first review routing
+- [x] `branch-review-guide.md` is labelled reference-only
+- [x] `planning-review-guide.md` is labelled reference-only
 
 ### Checklist for Slice 5: Planning Gate
 
-- [ ] `scripts/check_plan_analyze.py` checks recorded `plan-analyze-*` findings for the target document
-- [ ] Exit codes are `0` pass, `1` infrastructure error, `2` gate unmet
-- [ ] `make plan-review` warns/blocks correctly based on `PLAN_ANALYZE_REQUIRED`
-- [ ] `planning-pipeline.md` documents the gate
+- [x] `scripts/check_plan_analyze.py` checks recorded `plan-analyze-*` findings for the target document
+- [x] Exit codes are `0` pass, `1` infrastructure error, `2` gate unmet
+- [x] `make plan-review` warns/blocks correctly based on `PLAN_ANALYZE_REQUIRED`
+- [x] `planning-pipeline.md` documents the gate
 
 ## Review Readiness
 
 - [ ] `make check-all` stays green after each slice
-- [ ] No handoff-schema redesign is included in this task
-- [ ] No Codex portable-command work is included in this task
+- [x] No handoff-schema redesign is included in this task
+- [x] No Codex portable-command work is included in this task
 
 ## Success Criteria
 
-- [ ] `make check-skills` exits 0 across all 19 skills
-- [ ] All 11 non-compliant skills pass anatomy validation
-- [ ] `docs/agentic/contracts/harness-protocol.yaml` is the shared contract for the managed Claude/VS Code surfaces
-- [ ] `make check-harness-sync` exits 0 with no drift
-- [ ] Review routing points to skills as the primary execution surface
-- [ ] Both review guides are explicitly labelled as reference appendices
-- [ ] `make plan-review` warns or blocks when no prior `plan-analyze` findings exist for the target document
+- [x] `make check-skills` exits 0 across all 19 skills
+- [x] All 11 non-compliant skills pass anatomy validation
+- [x] `docs/agentic/contracts/harness-protocol.yaml` is the shared contract for the managed Claude/VS Code surfaces
+- [x] `make check-harness-sync` exits 0 with no drift
+- [x] Review routing points to skills as the primary execution surface
+- [x] Both review guides are explicitly labelled as reference appendices
+- [x] `make plan-review` warns or blocks when no prior `plan-analyze` findings exist for the target document

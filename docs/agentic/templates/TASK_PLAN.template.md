@@ -184,6 +184,8 @@ make lane-manifest-init TASK=<task-ref> LANE_IDS='<lane-a lane-b>' TASK_PLAN=doc
 
 ## Consolidated Checklist
 
+> **Checklist scope rule:** Describe work being delivered, not finding status. Do not add rows like `(BR-04 closed)`, `(fixed in MCP)`, or "resolve E15-7-BR-02"; finding status is queried from the handoff DB via `review_findings(review={"operation":"list","status":"open","task_ref":"<task>"})` or read from `DASHBOARD.txt`. See [`branch-review-guide.md` § Review Findings Placement](../rules/branch-review-guide.md#review-findings-placement-mandatory).
+
 ## Context and Ownership
 
 - [ ] Loaded the minimum authoritative rules, contracts, and handoff state before editing.

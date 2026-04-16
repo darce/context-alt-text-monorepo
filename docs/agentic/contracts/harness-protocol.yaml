@@ -2,9 +2,24 @@ version: 1
 
 cold_start:
   shared_steps:
-    - "run make context at session start"
-    - "use MCP tools directly when available"
-    - "use agent_handoff_mcp package-root imports as the Python fallback surface"
+    - id: make-context
+      description: "run make context at session start"
+      phrase: "make context"
+      references:
+        - CLAUDE.md
+        - .github/copilot-instructions.md
+    - id: mcp-tool-calls-first
+      description: "use MCP tool calls when available; fall back to the Python API on cold start or context switch"
+      phrase: "MCP tool calls"
+      references:
+        - CLAUDE.md
+        - .github/copilot-instructions.md
+    - id: python-api-fallback-imports
+      description: "use agent_handoff_mcp package-root imports as the Python fallback surface"
+      phrase: "from agent_handoff_mcp import"
+      references:
+        - CLAUDE.md
+        - .github/copilot-instructions.md
 
 branch_isolation:
   protected_branches:
@@ -24,6 +39,11 @@ branch_isolation:
     - .sh
     - .css
     - .scss
+  enforcers:
+    - path: .github/hooks/guard-main-branch.py
+      harness: vscode
+    - path: scripts/hooks/guard-main-branch.sh
+      harness: claude
 
 python_api_fallback:
   package: agent_handoff_mcp

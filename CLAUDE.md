@@ -20,7 +20,11 @@ On every session (cold start, mid-task re-entry, lane inherit):
 8. Decide whether `ctx7` is needed (upstream library behavior; see ctx7 criteria in instructions.md).
 9. Ensure the work has an MCP task. **Planning (assessments, specs, task plans) stays on `main`** — create the handoff task with `set_handoff_state(task_ref=..., objective=...)` and commit the plan as a docs artifact on `main`. No feature branch or worktree needed yet. **Implementation (code + tests)** requires a feature branch: run `make task-start TASK=<id> OBJECTIVE="..."` to create the branch + worktree + MCP target after the plan is approved. See [planning pipeline](docs/agentic/rules/planning-pipeline.md) for the full two-phase flow.
 
-If MCP tool calls unavailable (ToolSearch returns nothing for `mcp__agent-handoff-mcp__*`), or if you need a query the MCP tools don't directly expose: **use the Python API via Bash as the primary fallback.** Always import from the package root — never from submodules (`.config`, `.decisions`, `.core` are internal):
+If MCP tool calls unavailable (ToolSearch returns nothing for `mcp__agent-handoff-mcp__*`), or if you need a query the MCP tools don't directly expose: **use the Python API via Bash as the primary fallback.**
+
+> **Canonical source:** [`docs/agentic/contracts/harness-protocol.yaml`](docs/agentic/contracts/harness-protocol.yaml) `python_api_fallback.required_exports` is the authoritative list of package-root symbols every harness must keep importable. The example below is a practical superset used in this repo; the contract defines the minimum surface. If the two drift, fix the contract first, then re-sync both harness docs (CLAUDE.md and `.github/copilot-instructions.md`).
+
+Always import from the package root — never from submodules (`.config`, `.decisions`, `.core` are internal):
 
 ```python
 from pathlib import Path

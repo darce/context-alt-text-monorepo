@@ -61,19 +61,19 @@ Five concrete defects confirmed in the live dashboard:
 
 ## Files and Surfaces to Change
 
-| Surface                    | File                                                  | Change                                                                                                          |
-| -------------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Config default             | `src/agent_handoff_mcp/config.py`                     | Default `dashboard_path` from `DASHBOARD.md` → `DASHBOARD.txt`                                                  |
-| Code fence removal         | `src/agent_handoff_mcp/current_task_rendering.py`     | Remove backtick lines at 570, 575, 588 from `_render_dashboard_section`                                         |
-| Hook parity                | `.github/hooks/terminal-guard.json` or MCP write path | Add VS Code/Copilot dashboard-refresh parity or move refresh into write path                                    |
-| Test status filter         | `src/agent_handoff_mcp/dashboard_rendering.py`        | `_collect_task_test_status(conn, epic_ref)` — filter by epic prefix when provided                               |
-| Workflow integrity section | `src/agent_handoff_mcp/dashboard_rendering.py`        | Add derived `WORKFLOW INTEGRITY` section based on `target_branch` plus live git state; render only on anomalies |
-| Section order              | `src/agent_handoff_mcp/dashboard_rendering.py`        | Render active-task findings and integrity alerts before `TEST STATUS`                                           |
-| ANSI palette (stretch)     | `src/agent_handoff_mcp/dashboard_rendering.py`        | `_AnsiPalette` dataclass; `_ansi_enabled()` gate; apply to render functions                                     |
-| gitignore                  | `.gitignore`                                          | Line 92: `DASHBOARD.md` → `DASHBOARD.txt`                                                                       |
-| Docs refs                  | `CLAUDE.md`                                           | Two occurrences of `DASHBOARD.md` → `DASHBOARD.txt`                                                             |
+| Surface                    | File                                                  | Change                                                                                                                                         |
+| -------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Config default             | `src/agent_handoff_mcp/config.py`                     | Default `dashboard_path` from `DASHBOARD.md` → `DASHBOARD.txt`                                                                                 |
+| Code fence removal         | `src/agent_handoff_mcp/current_task_rendering.py`     | Remove backtick lines at 570, 575, 588 from `_render_dashboard_section`                                                                        |
+| Hook parity                | `.github/hooks/terminal-guard.json` or MCP write path | Add VS Code/Copilot dashboard-refresh parity or move refresh into write path                                                                   |
+| Test status filter         | `src/agent_handoff_mcp/dashboard_rendering.py`        | `_collect_task_test_status(conn, epic_ref)` — filter by epic prefix when provided                                                              |
+| Workflow integrity section | `src/agent_handoff_mcp/dashboard_rendering.py`        | Add derived `WORKFLOW INTEGRITY` section based on `target_branch` plus live git state; render only on anomalies                                |
+| Section order              | `src/agent_handoff_mcp/dashboard_rendering.py`        | Render active-task findings and integrity alerts before `TEST STATUS`                                                                          |
+| ANSI palette (stretch)     | `src/agent_handoff_mcp/dashboard_rendering.py`        | `_AnsiPalette` dataclass; `_ansi_enabled()` gate; apply to render functions                                                                    |
+| gitignore                  | `.gitignore`                                          | Line 92: `DASHBOARD.md` → `DASHBOARD.txt`                                                                                                      |
+| Docs refs                  | `CLAUDE.md`                                           | Two occurrences of `DASHBOARD.md` → `DASHBOARD.txt`                                                                                            |
 | API docstrings             | `src/agent_handoff_mcp/api.py`                        | 9 occurrences of `DASHBOARD.md` → `DASHBOARD.txt` in tool descriptions and docstrings (lines 69, 77, 1601, 1685, 1697, 1714, 1726, 1736, 1746) |
-| Tests                      | `tests/test_dashboard_rendering.py`                   | Verify no fences, epic-scoped test status, ANSI gate                                                            |
+| Tests                      | `tests/test_dashboard_rendering.py`                   | Verify no fences, epic-scoped test status, ANSI gate                                                                                           |
 
 ## Proposed Solution
 
@@ -177,36 +177,36 @@ Single-lane work on `feature/e17-5`. Slices 1 and 2 are independent of each othe
 
 ### Context and Ownership
 
-- [ ] Read `_render_dashboard_section` in `current_task_rendering.py` to confirm fence lines are dashboard-only (not shared with CURRENT_TASK path)
-- [ ] Confirm `_infer_epic_ref` handles all active task_ref formats in use (E17-N, AHMCP-N, MAINT-_). Expected: `MAINT-_`refs return`None` so maintenance tasks see unfiltered TEST STATUS (same as the no-epic-ref fallback).
+- [x] Read `_render_dashboard_section` in `current_task_rendering.py` to confirm fence lines are dashboard-only (not shared with CURRENT_TASK path)
+- [x] Confirm `_infer_epic_ref` handles all active task*ref formats in use (E17-N, AHMCP-N, MAINT-*). Expected: `MAINT-_`refs return`None` so maintenance tasks see unfiltered TEST STATUS (same as the no-epic-ref fallback).
 
 ### Checklist for Slice 1: Plain-text Format and File Extension
 
-- [ ] `config.py` default changed from `DASHBOARD.md` to `DASHBOARD.txt`
-- [ ] Three backtick lines removed from `current_task_rendering._render_dashboard_section`
-- [ ] `.gitignore` updated: `DASHBOARD.md` → `DASHBOARD.txt`
-- [ ] `CLAUDE.md` two references updated to `DASHBOARD.txt`
-- [ ] `api.py` all 9 occurrences updated to `DASHBOARD.txt`
-- [ ] `test_generate_dashboard_md_writes_file` updated to assert `DASHBOARD.txt`
-- [ ] Proof: `cat DASHBOARD.txt` shows no fence lines; `ls DASHBOARD.md` → not found
+- [x] `config.py` default changed from `DASHBOARD.md` to `DASHBOARD.txt`
+- [x] Three backtick lines removed from `current_task_rendering._render_dashboard_section`
+- [x] `.gitignore` updated: `DASHBOARD.md` → `DASHBOARD.txt`
+- [x] `CLAUDE.md` two references updated to `DASHBOARD.txt`
+- [x] `api.py` all 9 occurrences updated to `DASHBOARD.txt`
+- [x] `test_generate_dashboard_md_writes_file` updated to assert `DASHBOARD.txt`
+- [x] Proof: `cat DASHBOARD.txt` shows no fence lines; `ls DASHBOARD.md` → not found
 
 ### Checklist for Slice 2: Epic-Scoped Test Results
 
-- [ ] `_collect_task_test_status` accepts `epic_ref` parameter; filters query when set
-- [ ] `generate_dashboard_md` passes `epic_ref` from `_collect_epic_decisions` result
-- [ ] New test `test_task_test_status_filtered_to_epic` passes
-- [ ] Proof: active E17-4 task → TEST STATUS shows ≤10 E17-family rows, not 30+ cross-epic rows
+- [x] `_collect_task_test_status` accepts `epic_ref` parameter; filters query when set
+- [x] `generate_dashboard_md` passes `epic_ref` from `_collect_epic_decisions` result
+- [x] New test `test_task_test_status_filtered_to_epic` passes
+- [x] Proof: active E17-4 task → TEST STATUS shows ≤10 E17-family rows, not 30+ cross-epic rows
 
 ### Checklist for Slice 3a: Refresh Parity
 
-- [ ] `scripts/hooks/regenerate-task-views.sh` wired into `.github/hooks/terminal-guard.json` for the same post-tool events as `.claude/settings.json`
+- [x] `scripts/hooks/regenerate-task-views.sh` wired into `.github/hooks/terminal-guard.json` for the same post-tool events as `.claude/settings.json`
 
 ### Checklist for Slice 3b: Integrity Alerts and Section Reorder
 
-- [ ] Derived `WORKFLOW INTEGRITY` section renders only on anomalies
-- [ ] Git subprocess calls use `timeout=5`; timeout renders degraded-mode notice
-- [ ] Active-task findings and integrity alerts render before `TEST STATUS`
-- [ ] Tests cover anomaly-only integrity rendering and git timeout path
+- [x] Derived `WORKFLOW INTEGRITY` section renders only on anomalies
+- [x] Git subprocess calls use `timeout=5`; timeout renders degraded-mode notice
+- [x] Active-task findings and integrity alerts render before `TEST STATUS`
+- [x] Tests cover anomaly-only integrity rendering and git timeout path
 
 ### Checklist for Slice 4: ANSI Colour (Stretch)
 
@@ -216,16 +216,16 @@ Single-lane work on `feature/e17-5`. Slices 1 and 2 are independent of each othe
 
 ## Review Readiness
 
-- [ ] `make test-handoff` green after each slice
-- [ ] No change to `CURRENT_TASK.md` rendering (not in scope)
-- [ ] No change to `RuntimeConfig` fields — only the default value changes
+- [x] `make test-handoff` green after each slice
+- [x] No change to `CURRENT_TASK.md` rendering (not in scope)
+- [x] No change to `RuntimeConfig` fields — only the default value changes
 
 ## Success Criteria
 
-- [ ] `DASHBOARD.txt` is written by default; no `DASHBOARD.md` created
-- [ ] ALL TASKS section renders without any backtick fences in plain-text output
-- [ ] TEST STATUS section shows only tasks whose task_ref matches the active epic prefix
-- [ ] Dashboard refresh is harness-independent after state-changing MCP writes
-- [ ] Workflow-integrity anomalies surface in a dedicated derived section without changing task progress status; git subprocess calls bounded by 5s timeout with degraded-mode fallback
-- [ ] Active-task findings or integrity alerts appear before `TEST STATUS`
-- [ ] `make test-handoff` passes with new tests for fence absence, epic scoping, and git timeout path
+- [x] `DASHBOARD.txt` is written by default; no `DASHBOARD.md` created
+- [x] ALL TASKS section renders without any backtick fences in plain-text output
+- [x] TEST STATUS section shows only tasks whose task_ref matches the active epic prefix
+- [x] Dashboard refresh is harness-independent after state-changing MCP writes
+- [x] Workflow-integrity anomalies surface in a dedicated derived section without changing task progress status; git subprocess calls bounded by 5s timeout with degraded-mode fallback
+- [x] Active-task findings or integrity alerts appear before `TEST STATUS`
+- [x] `make test-handoff` passes with new tests for fence absence, epic scoping, and git timeout path

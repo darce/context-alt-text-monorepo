@@ -263,12 +263,11 @@ Token-minimization constraints for this slice:
 - Preserve functionality: every Python API symbol currently imported across the repo continues to resolve (aliases kept).
 - Preserve dashboard rendering: after `generate_dashboard_md` → `render_handoff` rename, writing the dashboard continues to produce `DASHBOARD.txt` at the workspace root with identical content semantics and no new `.md` artifact.
 
-Changes:
+Changes (split into three sub-slices; only 4A is in scope for this task):
 
-- Replace the six single-purpose tools with three compound tools:
-  - `render_handoff` (replaces `generate_current_task_md` + `generate_dashboard_md`)
-  - `handoff_transfer` (replaces `export_handoff_state` + `import_handoff_state`)
-  - `task_archive` (replaces `archive_task_state` + `get_archived_task`)
+- **Sub-slice 4A (in scope)**: `render_handoff` (replaces `generate_current_task_md` + `generate_dashboard_md`).
+- **Sub-slice 4B (DEFERRED — out of scope for E17-7)**: `handoff_transfer` (would replace `export_handoff_state` + `import_handoff_state`). Deferred because the token-cost and session-drop risk is already materially reduced by 4A + the existing bounded-read envelope, and the export/import pair is called infrequently enough that it is not contributing to per-turn tool-count pressure. To be picked up in a follow-on task if advertised tool count regresses measurably.
+- **Sub-slice 4C (DEFERRED — out of scope for E17-7)**: `task_archive` (would replace `archive_task_state` + `get_archived_task`). Deferred for the same reason: both are rarely called lifecycle tools and removing them from the advertised count has diminishing returns over 4A. Revisit only if tool-count pressure reappears.
 - Keep Python-level compatibility aliases so existing callers are unaffected.
 - Update CLI/operator surfaces atomically with the MCP rename:
   - `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py`: keep subcommand names/help text aligned with the new compound tools or document intentional compatibility aliases
@@ -337,9 +336,9 @@ Proof:
 
 ### Slice 4: Tool Surface Compression
 
-- [ ] `render_handoff` replaces the two rendering MCP tools
-- [ ] `handoff_transfer` replaces export/import MCP tools
-- [ ] `task_archive` replaces archive/get MCP tools
+- [x] Sub-slice 4A: `render_handoff` replaces the two rendering MCP tools
+- [ ] ~~Sub-slice 4B: `handoff_transfer` replaces export/import MCP tools~~ (DEFERRED — see scope note above)
+- [ ] ~~Sub-slice 4C: `task_archive` replaces archive/get MCP tools~~ (DEFERRED — see scope note above)
 - [ ] Python compatibility aliases remain available
 - [ ] Bounded-read envelope (`sections`, `detail`, `top_n_*`) preserved on every compound tool — no default response enlargement
 - [ ] `slim-handoff-response` PostToolUse hook matcher updated atomically with the tool rename so response slimming keeps applying

@@ -378,16 +378,16 @@ Proof:
 - [x] Sub-slice 4A: `render_handoff` replaces the two rendering MCP tools
 - [ ] ~~Sub-slice 4B: `handoff_transfer` replaces export/import MCP tools~~ (DEFERRED — see scope note above)
 - [ ] ~~Sub-slice 4C: `task_archive` replaces archive/get MCP tools~~ (DEFERRED — see scope note above)
-- [ ] Python compatibility aliases remain available
-- [ ] Bounded-read envelope (`sections`, `detail`, `top_n_*`) preserved on every compound tool — no default response enlargement
-- [ ] `slim-handoff-response` PostToolUse hook matcher updated atomically with the tool rename so response slimming keeps applying
-- [ ] Dashboard still writes to `DASHBOARD.txt` at the workspace root; no `DASHBOARD.md` artifact produced
-- [ ] `DASHBOARD.md` → `DASHBOARD.txt` cleanup applied to docs, playbooks, skills, Makefile comment, and the `dashboard_extension.py` module docstring (archived plans + test fixtures intentionally left alone)
-- [ ] CLI subcommands/help text and `packages/agent-handoff-mcp/README.md` stay aligned with the renamed or aliased tool surface
-- [ ] Hook matchers in `terminal-guard.json` and `.claude/settings.json` updated atomically
-- [ ] Deferred-tool list in `copilot-instructions.md` updated
-- [ ] No stale old-name references remain in harness configs
-- [ ] Token-budget smoke: common Get-state + record-event + dashboard-regenerate flow has a lower agent-visible token cost than pre-compression baseline
+- [x] Python compatibility aliases remain available
+- [x] Bounded-read envelope (`sections`, `detail`, `top_n_*`) preserved on every compound tool — no default response enlargement
+- [x] `slim-handoff-response` PostToolUse hook matcher updated atomically with the tool rename so response slimming keeps applying
+- [x] Dashboard still writes to `DASHBOARD.txt` at the workspace root; no `DASHBOARD.md` artifact produced
+- [x] `DASHBOARD.md` → `DASHBOARD.txt` cleanup applied to docs, playbooks, skills, Makefile comment, and the `dashboard_extension.py` module docstring (archived plans + test fixtures intentionally left alone)
+- [x] CLI subcommands/help text and `packages/agent-handoff-mcp/README.md` stay aligned with the renamed or aliased tool surface
+- [x] Hook matchers in `terminal-guard.json` and `.claude/settings.json` updated atomically
+- [ ] ~~Deferred-tool list in `copilot-instructions.md` updated~~ (N/A — the VS Code `availableDeferredTools` surface is runtime-injected from registered MCP tools; `.github/copilot-instructions.md` has no static list to edit)
+- [x] No stale old-name references remain in harness configs
+- [x] Token-budget smoke: common Get-state + record-event + dashboard-regenerate flow has a lower agent-visible token cost than pre-compression baseline (tool count 22→21; regression guard in `tests/test_adapters.py:133-163`)
 
 ### Slice 5: Parallel-Review Backend Groundwork
 

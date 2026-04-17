@@ -723,6 +723,7 @@ def test_export_and_import_handoff_state_round_trip(isolated_handoff: dict) -> N
         conn.execute("DELETE FROM decisions WHERE task_ref = '4.12.0'")
         conn.execute("DELETE FROM next_actions WHERE task_ref = '4.12.0'")
         conn.execute("DELETE FROM blockers WHERE task_ref = '4.12.0'")
+        conn.execute("DELETE FROM test_traces WHERE task_ref = '4.12.0'")
         conn.execute("DELETE FROM verified_tests WHERE task_ref = '4.12.0'")
         conn.execute("DELETE FROM review_findings WHERE task_ref = '4.12.0'")
         conn.execute("DELETE FROM worktree_lanes WHERE task_ref = '4.12.0'")

@@ -576,6 +576,10 @@ def import_handoff_state(
             incoming_counts = {
                 key: len(snapshot.get(key, [])) for key in (*required_sections, "plan_cursors", "turn_metrics")
             }
+            incoming_tests = snapshot.get("verified_tests") or []
+            incoming_counts["test_traces"] = sum(
+                len(row.get("traces") or []) for row in incoming_tests if isinstance(row, Mapping)
+            )
             potentially_cleared = [
                 section
                 for section, existing_count in existing_counts.items()

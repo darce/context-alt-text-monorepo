@@ -131,7 +131,7 @@ def test_render_review_ready_includes_not_ready_reasons() -> None:
     assert "Scope source: slice_packet" in rendered
     assert "- 2 open review finding(s)" in rendered
     assert "- 1 open blocker(s)" in rendered
-    assert "- CURRENT_TASK.md is out of sync with handoff state" in rendered
+    assert "- CURRENT_TASK.json is out of sync with handoff state" in rendered
     assert "- no structured slice-completion summary recorded for the current commit" in rendered
     assert "- no recorded test evidence in handoff state" in rendered
 

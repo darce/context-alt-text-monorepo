@@ -52,7 +52,7 @@ The file is not just long. It is carrying too many unrelated reasons to change:
 - archival summary composition
 - generic tool invocation wrappers
 - task snapshot construction
-- `CURRENT_TASK.md` rendering
+- `CURRENT_TASK.json` rendering
 
 This is a classic Fowler/Beck **Large Class** smell adapted to a Python module rather than a single class. The stronger associated smell is **Divergent Change**: schema work, rendering changes, git-context changes, and tool-wrapper compatibility work all land in the same file.
 
@@ -111,7 +111,7 @@ Notable structure points:
 - generic DB and normalization helpers run roughly lines 907-1466
 - archival summary helpers and `ArchivalSummaryBuilder` run roughly lines 1475-1641
 - generic tool invocation wrappers run roughly lines 1649-1752
-- snapshot and `CURRENT_TASK.md` rendering paths run roughly lines 1760-2051
+- snapshot and `CURRENT_TASK.json` rendering paths run roughly lines 1760-2051
 
 Function inventory is also high for a supposedly shared utility module:
 
@@ -176,7 +176,7 @@ Keep `_shared.py` temporarily as a re-export seam so `core.py` and tests do not 
 
 - new review schema or indexes
 - FTS bootstrap behavior
-- `CURRENT_TASK.md` formatting changes
+- `CURRENT_TASK.json` formatting changes
 - write-actor provenance changes
 - git commit relation checks
 - tool wrapper compatibility behavior
@@ -412,7 +412,7 @@ Refactorings:
 
 Target outcome:
 
-- a dedicated rendering module handling `CURRENT_TASK.md`
+- a dedicated rendering module handling `CURRENT_TASK.json`
 - snapshot collection and render formatting no longer interleaved conceptually
 
 Proof of completion:
@@ -544,4 +544,4 @@ This preserves the current public import surface while reducing the working-set 
 
 The core issue is not just that it is over 2k lines. The core issue is that it has become a convergence point for too many different change streams. The best response is a staged extraction, not cosmetic cleanup.
 
-If only one improvement is funded, prioritize extracting the `CURRENT_TASK.md` snapshot/rendering path plus a typed render-state object. That delivers the best mix of immediate readability improvement, lower regression risk, and clearer future seams for the rest of the file.
+If only one improvement is funded, prioritize extracting the `CURRENT_TASK.json` snapshot/rendering path plus a typed render-state object. That delivers the best mix of immediate readability improvement, lower regression risk, and clearer future seams for the rest of the file.

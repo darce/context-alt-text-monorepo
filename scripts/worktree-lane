@@ -81,7 +81,7 @@ default_worktree_path() {
 shared_mcp_args() {
   local orchestrator_root="$1"
   local workspace_root="$2"
-  printf -- '--workspace-root\0%s\0--state-dir\0%s/.task-state\0--current-task-path\0%s/CURRENT_TASK.md\0--exports-dir\0%s/.task-state/exports\0' \
+  printf -- '--workspace-root\0%s\0--state-dir\0%s/.task-state\0--current-task-path\0%s/CURRENT_TASK.json\0--exports-dir\0%s/.task-state/exports\0' \
     "$workspace_root" "$orchestrator_root" "$orchestrator_root" "$orchestrator_root"
 }
 

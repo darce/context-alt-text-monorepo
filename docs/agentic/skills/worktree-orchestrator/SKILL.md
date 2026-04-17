@@ -175,7 +175,7 @@ git checkout codex/<task>-<lane> -- path/to/file
 - Do not let workers rewrite shared plan truth unless explicitly assigned.
 - Reject out-of-scope files during intake.
 - Keep the overall task `in_progress` while individual lanes move to `review`, `merged`, or `closed`.
-- The orchestrator owns final MCP task updates and `CURRENT_TASK.md` generation.
+- The orchestrator owns final MCP task updates and `CURRENT_TASK.json` generation.
 
 ## Recovery
 
@@ -188,7 +188,7 @@ git checkout codex/<task>-<lane> -- path/to/file
 
 - Each active lane has a bounded owned path set, a worker brief, and a clear verification target.
 - Worker handoffs route back through MCP with merge-ready or blocker status instead of ad hoc chat-only summaries.
-- Final task truth, shared checklist state, and `CURRENT_TASK.md` are consistent with the orchestrator’s MCP updates.
+- Final task truth, shared checklist state, and `CURRENT_TASK.json` are consistent with the orchestrator’s MCP updates.
 
 ## See Also
 

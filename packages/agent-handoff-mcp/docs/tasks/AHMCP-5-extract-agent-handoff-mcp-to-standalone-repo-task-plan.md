@@ -40,7 +40,7 @@ Extract `agent-handoff-mcp` from the monorepo into `darce/mcp-agent-handoff` on 
 
 ## Terminology
 
-- **Core Handoff**: Portable modules (`core.py`, `config.py`, `runtime.py`, `enums.py`, `artifact_index.py`, `cli.py`, `api.py`) providing task-state CRUD, review findings, artifacts, search, export/import, and `CURRENT_TASK.md` generation.
+- **Core Handoff**: Portable modules (`core.py`, `config.py`, `runtime.py`, `enums.py`, `artifact_index.py`, `cli.py`, `api.py`) providing task-state CRUD, review findings, artifacts, search, export/import, and `CURRENT_TASK.json` generation.
 - **Orchestration tier**: Generic multi-agent layer (daemons, adapters, lane exec) that now lives in `agent-orchestrator-mcp` and remains in this monorepo for now.
 - **ACE**: Autonomous Coding Engine. Repo-specific playbook system. Stays in the monorepo; never ships in the extracted package.
 - **Consumer rewiring**: Updating all monorepo references (Makefile, CI, IDE configs, pyproject.toml) to install from git+ssh instead of source paths.
@@ -304,7 +304,7 @@ Proof:
 
 - [ ] No boundary-touching implementation left without matching contract evidence
 - [ ] Handoff decision records each slice completion
-- [ ] `CURRENT_TASK.md` regenerated after final slice
+- [ ] `CURRENT_TASK.json` regenerated after final slice
 
 ## Success Criteria
 

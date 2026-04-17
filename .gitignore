@@ -88,6 +88,7 @@ logs/
 apps/prototype-description-service/logs/
 
 # Operational ephemera (local)
+CURRENT_TASK.json
 CURRENT_TASK.md
 DASHBOARD.txt
 DASHBOARD.md

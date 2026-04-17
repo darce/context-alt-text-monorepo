@@ -29,10 +29,10 @@ Five concrete defects confirmed in the live dashboard:
 
 ## Constraints
 
-- No change to `CURRENT_TASK.md` — that file is machine-readable for agent handoffs and intentionally uses markdown. Scope is `DASHBOARD` only.
+- No change to `CURRENT_TASK.json` — that file is machine-readable for agent handoffs and intentionally uses markdown. Scope is `DASHBOARD` only.
 - `RuntimeConfig.dashboard_path` default changes from `workspace_root / "DASHBOARD.md"` to `workspace_root / "DASHBOARD.txt"`. Callers that set `dashboard_path` explicitly are unaffected. Callers using the default must regenerate; the old `DASHBOARD.md` is not auto-deleted.
 - ANSI colour must be completely suppressible — `NO_COLOR=1` env var (standard convention) disables it unconditionally. No ANSI escape codes in non-tty writes (file output, CI).
-- `_render_dashboard_section` is defined in `current_task_rendering.py` and imported by `dashboard_rendering.py`. The CURRENT_TASK.md render path uses `_render_current_task_md`, a separate function that does not call `_render_dashboard_section`. Confirm with `grep -n "_render_dashboard_section" src/agent_handoff_mcp/current_task_rendering.py` before editing to verify no new call sites were added since this plan was written.
+- `_render_dashboard_section` is defined in `current_task_rendering.py` and imported by `dashboard_rendering.py`. The CURRENT_TASK.json render path uses `_render_current_task_md`, a separate function that does not call `_render_dashboard_section`. Confirm with `grep -n "_render_dashboard_section" src/agent_handoff_mcp/current_task_rendering.py` before editing to verify no new call sites were added since this plan was written.
 - Workflow-integrity data must stay derived from handoff state plus live git state. Do not overload persisted task progress status with git-cleanup metadata.
 
 ## Current State Analysis
@@ -84,7 +84,7 @@ Five concrete defects confirmed in the live dashboard:
 Changes:
 
 - `config.py`: change `workspace_root / "DASHBOARD.md"` → `workspace_root / "DASHBOARD.txt"` in the `else` branch of `for_workspace()`.
-- `current_task_rendering.py:570,575,588`: delete the three `"```"` string literals from `_render_dashboard_section`. Verify the function is not called on the `CURRENT_TASK.md` render path (it is not — the CURRENT_TASK path calls `_render_current_task_md`, a separate function).
+- `current_task_rendering.py:570,575,588`: delete the three `"```"` string literals from `_render_dashboard_section`. Verify the function is not called on the `CURRENT_TASK.json` render path (it is not — the CURRENT_TASK path calls `_render_current_task_md`, a separate function).
 - `.gitignore:92`: `DASHBOARD.md` → `DASHBOARD.txt`.
 - `CLAUDE.md`: update two references to `DASHBOARD.txt`.
 - `api.py`: update all 9 occurrences of `DASHBOARD.md` → `DASHBOARD.txt` (lines 69, 77, 1601, 1685, 1697, 1714, 1726, 1736, 1746).
@@ -217,7 +217,7 @@ Single-lane work on `feature/e17-5`. Slices 1 and 2 are independent of each othe
 ## Review Readiness
 
 - [x] `make test-handoff` green after each slice
-- [x] No change to `CURRENT_TASK.md` rendering (not in scope)
+- [x] No change to `CURRENT_TASK.json` rendering (not in scope)
 - [x] No change to `RuntimeConfig` fields — only the default value changes
 
 ## Success Criteria

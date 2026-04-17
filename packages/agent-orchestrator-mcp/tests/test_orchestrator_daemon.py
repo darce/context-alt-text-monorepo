@@ -563,7 +563,7 @@ def _configure_real_runtime(tmp_path: Path, task_ref: str) -> RuntimeConfig:
     runtime = RuntimeConfig.for_workspace(
         tmp_path,
         state_dir=tmp_path / ".task-state",
-        current_task_path=tmp_path / "CURRENT_TASK.md",
+        current_task_path=tmp_path / "CURRENT_TASK.json",
         dashboard_path=tmp_path / "DASHBOARD.md",
         exports_dir=tmp_path / ".task-state" / "exports",
     )

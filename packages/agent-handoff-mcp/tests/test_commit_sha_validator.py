@@ -69,7 +69,7 @@ def _enable_validation(git_repo: tuple[Path, str], monkeypatch: pytest.MonkeyPat
     runtime = RuntimeConfig.for_workspace(
         repo_path,
         state_dir=repo_path / ".task-state",
-        current_task_path=repo_path / "CURRENT_TASK.md",
+        current_task_path=repo_path / "CURRENT_TASK.json",
     )
     from agent_handoff_mcp import shared_write_context
 

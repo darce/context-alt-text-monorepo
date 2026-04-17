@@ -207,8 +207,10 @@ def test_strip_env_prefix_handles_quoted_inline_env_assignment() -> None:
         # git log: read-only history queries
         "git log --oneline -n 5",
         "git --no-pager log --oneline --decorate main..feature/e17-7 --max-count=40",
+        "git --no-pager log --oneline --decorate --graph --max-count=25",
         "git log --format='%H %s' -n 4 | head -n 4",
         "git -C ${REPO_ROOT:-$PWD} log --oneline -n 5",
+        "git -C ${REPO_ROOT:-$PWD} --no-pager log --oneline -n 5",
         "git -C ${REPO_ROOT:-$PWD} --no-pager log --oneline --decorate main..feature/e17-7 --max-count=40",
         # git rev-parse / rev-list: read-only SHA, path, and commit-count resolution
         "git rev-parse HEAD",

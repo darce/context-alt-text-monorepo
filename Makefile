@@ -40,7 +40,7 @@ LANE_CONFIG_CMD = $(MCP_PYTHON) "$(ORCHESTRATION_DIR)/lane_config.py"
 MCP_PYTHONPATH := $(ORCHESTRATOR_ROOT)/packages/agent-orchestrator-mcp/src:$(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
 WORKTREE_MCP_PYTHONPATH := $(WORKTREE_ROOT_REAL)/packages/agent-orchestrator-mcp/src:$(WORKTREE_ROOT_REAL)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
 MCP_CMD = $(MCP_RUNTIME_ENV) agent-handoff-mcp
-MCP_STATE_ARGS = --workspace-root "$(ORCHESTRATOR_ROOT)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports"
+MCP_STATE_ARGS = --workspace-root "$(ORCHESTRATOR_ROOT)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.json" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports"
 PYTHON ?= $(MCP_PYTHON)
 ORCHESTRATOR_SRC := packages/agent-orchestrator-mcp/src
 ORCHESTRATOR_TESTS := packages/agent-orchestrator-mcp/tests
@@ -177,9 +177,13 @@ help:
 	@echo "  make task-plan-audit"
 	@echo "    Detect tagged main-branch task refs whose task-plan files are missing from docs/tasks surfaces."
 	@echo "  make generate-agent-workflows"
-	@echo "    Generate Claude and VS Code workflow adapters from config/agent-workflows/portable_commands.json."
+	@echo "    Generate Claude, VS Code, and Codex workflow artifacts from config/agent-workflows/portable_commands.json."
 	@echo "  make check-agent-workflows"
-	@echo "    Fail if generated workflow adapters drift from the canonical manifest."
+	@echo "    Fail if generated workflow artifacts drift from the canonical manifest."
+	@echo "  make check-codex-command-router"
+	@echo "    Fail if the marker-delimited Codex router blocks in docs drift from the manifest-rendered content."
+	@echo "  make smoke-agent-workflows [BACKEND=claude|copilot|codex]"
+	@echo "    Optional host-surface smoke check for /branch-review and /planning-review against the manifest contract."
 	@echo "  make handoff-dispatch TASK=<task-ref> [DRY_RUN=1]"
 	@echo "    Route open handoff review findings, blockers, and next actions from the orchestrator root to the correct worker lanes."
 	@echo "  make handoff-inbox TASK=<task-ref> [LANE=<lane>]"
@@ -235,7 +239,7 @@ help:
 	@echo "  make lane-path TASK=<task-ref> LANE=<lane>"
 	@echo "  make lane-commits TASK=<task-ref> LANE=<lane>"
 	@echo "  make lane-intake TASK=<task-ref> LANE=<lane> [DRY_RUN=1] [SKIP_TESTS=1] [SKIP_POST_INTAKE=1] [POST_INTAKE_CHECK_CMD='...']"
-	@echo "    Prints the latest merge-ready lane report, cherry-picks into a scratch worktree, runs lane-local verification there, fast-forwards root if clean, verifies CURRENT_TASK.md sync with agent-handoff-mcp handoff-close-check, then runs cross-lane post-intake verification from the orchestrator root."
+	@echo "    Prints the latest merge-ready lane report, cherry-picks into a scratch worktree, runs lane-local verification there, fast-forwards root if clean, verifies CURRENT_TASK.json sync with agent-handoff-mcp handoff-close-check, then runs cross-lane post-intake verification from the orchestrator root."
 	@echo "    Use SKIP_TESTS=1 to bypass scratch-worktree test commands, SKIP_POST_INTAKE=1 to skip the cross-lane gate, or POST_INTAKE_CHECK_CMD to override the default post-intake check command."
 	@echo "  make orchestrator-daemon [TASK=<task-ref>] [BACKEND=codex-cli|codex-subagent]"
 	@echo "    Shared singleton orchestrator loop rooted at $(ORCHESTRATOR_ROOT). Start it from any worktree; pause/resume/status use the same shared root state."
@@ -585,7 +589,7 @@ context:
 # Usage: make dashboard
 dashboard:
 	@PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src:$(MCP_PYTHONPATH)" \
-		$(MCP_CMD) $(MCP_STATE_ARGS) write-dashboard
+		$(MCP_CMD) $(MCP_STATE_ARGS) render-handoff --kind dashboard
 
 worktree-audit:
 	@PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src:$(MCP_PYTHONPATH)" \
@@ -603,6 +607,13 @@ generate-agent-workflows:
 
 check-agent-workflows:
 	@$(MCP_PYTHON) scripts/generate_agent_workflows.py --check
+	@$(MCP_PYTHON) scripts/generate_agent_workflows.py --check-codex-router-blocks
+
+check-codex-command-router:
+	@$(MCP_PYTHON) scripts/generate_agent_workflows.py --check-codex-router-blocks
+
+smoke-agent-workflows:
+	@$(MCP_PYTHON) scripts/smoke_agent_workflows.py $(if $(BACKEND),--backend $(BACKEND),)
 
 check-skills:
 	@$(MCP_PYTHON) scripts/check_skills.py

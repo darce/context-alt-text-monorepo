@@ -209,7 +209,7 @@ After the review:
 1. Confirm findings with `list_review_findings` or `get_review_findings_summary`.
 2. Record a verdict decision citing the decision number of the artifact under review (e.g., "review of decision #966") for bidirectional linking.
 3. If requested, patch the plan to resolve findings.
-4. Regenerate `CURRENT_TASK.md` with `generate_current_task_md(task_ref=<active-task-ref>)`. Always use the **active** task's ref, even if findings were recorded against a different task.
+4. Regenerate `CURRENT_TASK.json` with `render_handoff(kind='current_task', task_ref=<active-task-ref>)`. Always use the **active** task's ref, even if findings were recorded against a different task.
 5. Include `Handoff updated: yes` in the final response.
 
 ---

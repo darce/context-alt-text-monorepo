@@ -82,7 +82,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--current-task-path",
         type=Path,
         default=None,
-        help="CURRENT_TASK.md path (default: <workspace-root>/CURRENT_TASK.md).",
+        help="CURRENT_TASK.json path (default: <workspace-root>/CURRENT_TASK.json).",
     )
     parser.add_argument(
         "--exports-dir", type=Path, default=None, help="Exports directory (default: <state-dir>/exports)."

@@ -20,7 +20,7 @@ def isolated_handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Redirect handoff sqlite + generated markdown paths into tmp dir."""
     state_dir = tmp_path / ".task-state"
     state_dir.mkdir(parents=True, exist_ok=True)
-    current_task_path = tmp_path / "CURRENT_TASK.md"
+    current_task_path = tmp_path / "CURRENT_TASK.json"
     dashboard_path = tmp_path / "DASHBOARD.txt"
     runtime = RuntimeConfig.for_workspace(
         tmp_path,
@@ -44,7 +44,7 @@ def test_runtime_config_defaults_to_workspace_task_state() -> None:
 
     assert runtime.state_dir == workspace_root / ".task-state"
     assert runtime.db_path == workspace_root / ".task-state" / "handoff.db"
-    assert runtime.current_task_path == workspace_root / "CURRENT_TASK.md"
+    assert runtime.current_task_path == workspace_root / "CURRENT_TASK.json"
     assert runtime.dashboard_path == workspace_root / "DASHBOARD.txt"
     assert runtime.exports_dir == workspace_root / ".task-state" / "exports"
 
@@ -998,7 +998,7 @@ def test_new_writes_prefer_current_git_context_over_stale_handoff_state(tmp_path
     runtime = RuntimeConfig.for_workspace(
         tmp_path,
         state_dir=tmp_path / ".task-state",
-        current_task_path=tmp_path / "CURRENT_TASK.md",
+        current_task_path=tmp_path / "CURRENT_TASK.json",
     )
     mcp_server.configure_runtime(runtime)
 
@@ -1525,6 +1525,7 @@ def test_core_write_tools_accept_explicit_task_ref_cross_task(isolated_handoff: 
             task_ref="cross-write-a",
             objective="Task A",
             status="in_progress",
+            target_worktree_path="/tmp/cross-write-a",
         )
     )
 
@@ -1578,15 +1579,17 @@ def test_core_write_tools_accept_explicit_task_ref_cross_task(isolated_handoff: 
             objective="Task B",
             status="in_progress",
             expected_revision=0,
+            target_worktree_path="/tmp/cross-write-b",
         )
     )
 
     hidden = _parse(mcp_server.get_handoff_state(verbose=True))
-    assert hidden["task_ref"] == "cross-write-b"
-    assert hidden["decisions_recent"] == []
-    assert hidden["actions_pending"] == []
-    assert hidden["blockers_open"] == []
-    assert hidden["tests_recent"] == []
+    assert hidden["ok"] is False
+    assert "Ambiguous active task" in hidden["error"]
+
+    hidden_search = _parse(mcp_server.search_handoff(queries=["cross"], record_types=["decision"]))
+    assert hidden_search["ok"] is False
+    assert "Ambiguous active task" in hidden_search["error"]
 
     explicit = _parse(mcp_server.get_handoff_state(task_ref="cross-write-a", verbose=True))
     assert explicit["task_ref"] == "cross-write-a"
@@ -1636,7 +1639,7 @@ def test_archive_and_dashboard_summary(isolated_handoff: dict) -> None:
     # The All Tasks table in DASHBOARD.txt renders the status column.
     assert "done" in dash_md
 
-    # (b) CURRENT_TASK.md no longer renders the All Tasks table (moved to DASHBOARD.txt).
+    # (b) CURRENT_TASK.json no longer renders the All Tasks table (moved to DASHBOARD.txt).
     _parse(mcp_server.set_handoff_state(task_ref="post-archive", objective="post-archive placeholder", status="active"))
     rendered = _parse(mcp_server.generate_current_task_md(task_ref="post-archive", write_file=False))
     current_task_data = json.loads(rendered["current_task_json"])
@@ -1704,7 +1707,7 @@ def test_generate_current_task_md_prefers_live_status_over_archived_snapshot(iso
     payload = _parse(mcp_server.generate_current_task_md(task_ref="reactivated-task", write_file=False))
     data = json.loads(payload["current_task_json"])
 
-    # CURRENT_TASK.md shows active-task status only; All Tasks table is in DASHBOARD.txt.
+    # CURRENT_TASK.json shows active-task status only; All Tasks table is in DASHBOARD.txt.
     assert data["task_ref"] == "reactivated-task"
     assert data["active"]["status"] == "done"
 
@@ -1723,7 +1726,7 @@ def test_generate_current_task_md_includes_dashboard_header(isolated_handoff: di
             task_ref="E12-11",
             decision="cop_slice_complete_E12-11_dashboard_header",
             rationale=(
-                "## Changes\n- CURRENT_TASK.md header.\n\n"
+                "## Changes\n- CURRENT_TASK.json header.\n\n"
                 "## Verification\n- unit tests.\n\n"
                 "## Schema / Contract Changes\n- none.\n\n"
                 "## Open Threads\n- none."
@@ -1744,7 +1747,7 @@ def test_generate_current_task_md_includes_dashboard_header(isolated_handoff: di
     payload = _parse(mcp_server.generate_current_task_md(task_ref="E12-11", write_file=False))
     data = json.loads(payload["current_task_json"])
 
-    # CURRENT_TASK.md is now active-task-only; All Tasks table moved to DASHBOARD.txt.
+    # CURRENT_TASK.json is now active-task-only; All Tasks table moved to DASHBOARD.txt.
     assert data["task_ref"] == "E12-11"
     assert data["active"]["objective"] == "Dashboard active task"
     # Cross-task finding (E12-10) must not appear in active-task JSON
@@ -1774,7 +1777,7 @@ def test_internal_write_path_writes_current_task_json(isolated_handoff: dict) ->
 
     _write_current_task_md_from_state("iw-dashboard")
 
-    # CURRENT_TASK.md is machine-readable JSON (active-task only).
+    # CURRENT_TASK.json is machine-readable JSON (active-task only).
     # Cross-task sections (All Tasks table, other-task findings) live in DASHBOARD.txt.
     current_task_payload = json.loads(isolated_handoff["current_task_path"].read_text())
     assert current_task_payload["task_ref"] == "iw-dashboard"
@@ -2039,7 +2042,7 @@ def test_record_decision_accepts_structured_slice_completion_rationale(isolated_
 
 
 def test_generate_current_task_md_excludes_cross_task_findings(isolated_handoff: dict) -> None:
-    """CURRENT_TASK.md only shows the active task's own findings; cross-task data is in DASHBOARD.txt."""
+    """CURRENT_TASK.json only shows the active task's own findings; cross-task data is in DASHBOARD.txt."""
     _parse(
         mcp_server.set_handoff_state(
             task_ref="daemon-3",
@@ -2078,7 +2081,7 @@ def test_generate_current_task_md_excludes_cross_task_findings(isolated_handoff:
     data = json.loads(payload["current_task_json"])
     # Active task's own finding present
     assert any(f["finding_id"] == "D3-01" for f in data["findings_open"])
-    # Cross-task finding absent from CURRENT_TASK.md
+    # Cross-task finding absent from CURRENT_TASK.json
     assert all(f["finding_id"] != "D1-01" for f in data["findings_open"])
 
 
@@ -2117,7 +2120,7 @@ def test_generate_current_task_md_related_excludes_active_task(isolated_handoff:
 
 
 def test_generate_current_task_md_excludes_all_cross_task_findings(isolated_handoff: dict) -> None:
-    """Cross-task findings never appear in CURRENT_TASK.md; they belong in DASHBOARD.txt."""
+    """Cross-task findings never appear in CURRENT_TASK.json; they belong in DASHBOARD.txt."""
     _parse(
         mcp_server.set_handoff_state(
             task_ref="daemon-active",
@@ -2258,7 +2261,7 @@ def test_generate_current_task_md_includes_all_findings_history_for_resolved_cro
     )
     data = json.loads(payload["current_task_json"])
     # OC-001: All Review Findings History section removed from default render.
-    # Fixed findings from other tasks do not appear in CURRENT_TASK.md.
+    # Fixed findings from other tasks do not appear in CURRENT_TASK.json.
     finding_ids = {f["finding_id"] for f in data["findings_open"]}
     assert "D1-HISTORY" not in finding_ids
 
@@ -2286,7 +2289,7 @@ def test_generate_current_task_md_no_other_open_findings(isolated_handoff: dict)
 def test_generate_current_task_md_truncates_multiline_test_command(
     isolated_handoff: dict,
 ) -> None:
-    """Multi-line test commands are stored verbatim in CURRENT_TASK.md JSON."""
+    """Multi-line test commands are stored verbatim in CURRENT_TASK.json JSON."""
     multiline_cmd = (
         "ORCH_ROOT=\"$(dirname $(pwd))\" && make something && python3 - <<'PY'\n"
         "from agent_handoff_mcp import list_plan_cursors\n"
@@ -2848,6 +2851,123 @@ def test_set_handoff_state_target_worktree_path_default_none(isolated_handoff: d
     assert created["active"].get("target_worktree_path") is None
 
 
+def test_set_handoff_state_keeps_prior_task_row_addressable(isolated_handoff: dict) -> None:
+    """A second active task should not evict the first task's handoff row."""
+    first = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="multi-a",
+            objective="Task A",
+            status="in_progress",
+            target_worktree_path="/tmp/context-alt-text-monorepo-multi-a",
+        )
+    )
+    assert first["ok"] is True
+
+    second = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="multi-b",
+            objective="Task B",
+            status="in_progress",
+            target_worktree_path="/tmp/context-alt-text-monorepo-multi-b",
+        )
+    )
+    assert second["ok"] is True
+    assert second["active"]["task_ref"] == "multi-b"
+
+    task_a = _parse(mcp_server.get_handoff_state(task_ref="multi-a", sections="identity"))
+    assert task_a["ok"] is True
+    assert task_a["active"]["task_ref"] == "multi-a"
+    assert task_a["active"]["objective"] == "Task A"
+
+    with sqlite3.connect(isolated_handoff["db_path"]) as conn:
+        task_refs = [
+            row[0] for row in conn.execute("SELECT task_ref FROM handoff_state ORDER BY task_ref ASC").fetchall()
+        ]
+    assert task_refs == ["multi-a", "multi-b"]
+
+
+def test_set_handoff_state_revision_conflict_preserves_current_sentinel(isolated_handoff: dict) -> None:
+    """A failed non-current-task update must not orphan the id=1 sentinel."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="sentinel-a",
+            objective="Sentinel A",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="sentinel-b",
+            objective="Sentinel B",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="sentinel-b",
+            status="in_progress",
+            expected_revision=0,
+        )
+    )
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="sentinel-a",
+            status="in_progress",
+            expected_revision=0,
+        )
+    )
+
+    conflicted = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="sentinel-b",
+            status="in_progress",
+            expected_revision=0,
+        )
+    )
+
+    assert conflicted["ok"] is False
+    assert conflicted["error"] == "Revision conflict."
+
+    with sqlite3.connect(isolated_handoff["db_path"]) as conn:
+        sentinel_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
+    assert sentinel_row is not None
+    assert sentinel_row[0] == "sentinel-a"
+
+
+def test_get_handoff_state_omitted_task_ref_prefers_matching_worktree(
+    isolated_handoff: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When multiple active tasks exist, omitted task_ref resolves by target_worktree_path."""
+    task_a_root = Path(isolated_handoff["state_dir"]).parent / "lane-a"
+    task_b_root = Path(isolated_handoff["state_dir"]).parent / "lane-b"
+    task_a_root.mkdir()
+    task_b_root.mkdir()
+
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="lane-a",
+            objective="Lane A",
+            status="in_progress",
+            target_worktree_path=str(task_a_root),
+        )
+    )
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="lane-b",
+            objective="Lane B",
+            status="in_progress",
+            target_worktree_path=str(task_b_root),
+        )
+    )
+
+    monkeypatch.chdir(task_a_root)
+    resolved = _parse(mcp_server.get_handoff_state(sections="identity"))
+
+    assert resolved["ok"] is True
+    assert resolved["task_ref"] == "lane-a"
+    assert resolved["active"]["task_ref"] == "lane-a"
+
+
 def test_set_handoff_state_emits_context_drift_warning_on_branch_mismatch(isolated_handoff: dict) -> None:
     """When actor.branch differs from active task target_branch, write surfaces a warning."""
     _parse(
@@ -3128,7 +3248,7 @@ def test_report_blocker_raises_branch_mismatch_error_when_enforcement_enabled(
 
 
 def test_current_task_md_renders_focus_section(isolated_handoff: dict) -> None:
-    """CURRENT_TASK.md includes a Current Focus section when focus is set."""
+    """CURRENT_TASK.json includes a Current Focus section when focus is set."""
     _parse(
         mcp_server.set_handoff_state(
             task_ref="focus-md",
@@ -3145,7 +3265,7 @@ def test_current_task_md_renders_focus_section(isolated_handoff: dict) -> None:
 
 
 def test_current_task_md_omits_focus_when_null(isolated_handoff: dict) -> None:
-    """CURRENT_TASK.md does not render a focus section when focus is null."""
+    """CURRENT_TASK.json does not render a focus section when focus is null."""
     _parse(
         mcp_server.set_handoff_state(
             task_ref="focus-null-md",
@@ -3281,7 +3401,7 @@ def test_generate_current_task_md_renders_archived_non_active_task(isolated_hand
 
 # HANDOFF-REV-002 regression: close_slice atomicity on set_handoff_state failure
 def test_close_slice_does_not_write_md_on_state_failure(isolated_handoff: dict) -> None:
-    """close_slice returns ok=False and leaves CURRENT_TASK.md untouched when set_handoff_state fails."""
+    """close_slice returns ok=False and leaves CURRENT_TASK.json untouched when set_handoff_state fails."""
     _parse(
         mcp_server.set_handoff_state(
             task_ref="close-atomic-test",
@@ -3381,7 +3501,7 @@ def test_close_slice_writes_current_task_json_on_success(isolated_handoff: dict)
     assert isinstance(result["task_revision"], int)
     assert result["task_revision"] >= 1
 
-    # CURRENT_TASK.md is machine-readable JSON (active-task only).
+    # CURRENT_TASK.json is machine-readable JSON (active-task only).
     # Cross-task sections (All Tasks table, other-task findings) live in DASHBOARD.txt.
     current_task_payload = json.loads(isolated_handoff["current_task_path"].read_text())
     assert current_task_payload["task_ref"] == "close-dashboard"
@@ -3530,6 +3650,42 @@ def test_close_slice_surfaces_verbose_rationale_warning(isolated_handoff: dict) 
     assert any("1,500 chars" in warning for warning in warnings)
 
 
+def test_close_slice_accepts_explicit_non_current_task_ref(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="close-slice-a",
+            objective="Slice A",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="close-slice-b",
+            objective="Slice B",
+            status="in_progress",
+            expected_revision=0,
+        )
+    )
+
+    result = _parse(
+        mcp_server.close_slice(
+            session="s-close-a",
+            decision="cop_slice_complete_close_slice_non_current_a",
+            expected_revision=0,
+            task_ref="close-slice-a",
+            rationale=(
+                "## Changes\n- Completed slice A.\n\n"
+                "## Verification\n- none.\n\n"
+                "## Schema / Contract Changes\n- none.\n\n"
+                "## Open Threads\n- none."
+            ),
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["task_ref"] == "close-slice-a"
+
+
 def test_close_slice_allows_clean_rationale(isolated_handoff: dict) -> None:
     """A rationale that does not contain XML anti-pattern tags should pass through."""
     _parse(
@@ -3588,6 +3744,127 @@ def test_load_session_merges_state_and_findings(isolated_handoff: dict) -> None:
     assert isinstance(findings, list)
     assert result["open_findings_count"] >= 1
     assert any(f["finding_id"] == "ls-f1" for f in findings)
+
+
+def test_get_handoff_state_and_load_session_include_slices_completed(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="slice-status-test",
+            objective="Slice status surface",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.record_decision(
+            session="s-slice-status",
+            decision="cop_slice_complete_slice_status_test_s1",
+            rationale=(
+                "## Changes\n- Completed slice one.\n\n"
+                "## Verification\n- none.\n\n"
+                "## Schema / Contract Changes\n- none.\n\n"
+                "## Open Threads\n- none."
+            ),
+            task_ref="slice-status-test",
+        )
+    )
+    _parse(
+        mcp_server.record_decision(
+            session="s-slice-status",
+            decision="cop_progress_slice_status_test_followup",
+            rationale="Follow-up progress note.",
+            task_ref="slice-status-test",
+        )
+    )
+
+    state = _parse(
+        mcp_server.get_handoff_state(
+            task_ref="slice-status-test",
+            sections="slices_completed",
+        )
+    )
+    assert state["ok"] is True
+    assert [row["decision"] for row in state["slices_completed"]] == ["cop_slice_complete_slice_status_test_s1"]
+    assert state["slices_completed"][0]["slice_label"] == "slice_status_test_s1"
+
+    session = _parse(mcp_server.load_session(task_ref="slice-status-test", sections="slices_completed"))
+    state_data = session["state"].get("data", session["state"])
+    assert [row["decision"] for row in session["slices_completed"]] == ["cop_slice_complete_slice_status_test_s1"]
+    assert [row["decision"] for row in state_data["slices_completed"]] == ["cop_slice_complete_slice_status_test_s1"]
+
+
+def test_get_handoff_state_slices_completed_uses_independent_limit(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="slice-limit-test",
+            objective="Slice limit surface",
+            status="in_progress",
+        )
+    )
+    for idx in range(5):
+        _parse(
+            mcp_server.record_decision(
+                session="s-slice-limit",
+                decision=f"cop_slice_complete_slice_limit_test_s{idx}",
+                rationale=(
+                    f"## Changes\n- Completed slice {idx}.\n\n"
+                    "## Verification\n- none.\n\n"
+                    "## Schema / Contract Changes\n- none.\n\n"
+                    "## Open Threads\n- none."
+                ),
+                task_ref="slice-limit-test",
+            )
+        )
+        _parse(
+            mcp_server.record_decision(
+                session="s-slice-limit",
+                decision=f"cop_progress_slice_limit_test_note_{idx}",
+                rationale=f"Progress note {idx}.",
+                task_ref="slice-limit-test",
+            )
+        )
+
+    state = _parse(
+        mcp_server.get_handoff_state(
+            task_ref="slice-limit-test",
+            sections="decisions_recent,slices_completed",
+            top_n_decisions=2,
+            top_n_slices=4,
+        )
+    )
+
+    assert state["ok"] is True
+    assert len(state["decisions_recent"]) == 2
+    assert len(state["slices_completed"]) == 4
+
+
+def test_load_session_omits_slices_completed_when_not_requested(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="slice-session-identity",
+            objective="Identity-only load session",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.record_decision(
+            session="s-slice-identity",
+            decision="cop_slice_complete_slice_session_identity_s1",
+            rationale=(
+                "## Changes\n- Completed slice one.\n\n"
+                "## Verification\n- none.\n\n"
+                "## Schema / Contract Changes\n- none.\n\n"
+                "## Open Threads\n- none."
+            ),
+            task_ref="slice-session-identity",
+        )
+    )
+
+    session = _parse(mcp_server.load_session(task_ref="slice-session-identity", sections="identity"))
+
+    assert session["ok"] is True
+    assert "slices_completed" not in session
+    state_data = session["state"].get("data", session["state"])
+    assert "slices_completed" not in state_data
 
 
 def test_load_session_includes_touched_files(isolated_handoff: dict) -> None:
@@ -3670,6 +3947,42 @@ def test_load_session_no_touches_returns_empty_list(isolated_handoff: dict) -> N
     assert "state" in result
     assert "open_findings" in result
     assert result["open_findings_count"] == 0
+
+
+def test_close_slice_rejects_archived_task_ref(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="archived-close-slice",
+            objective="Archived close slice",
+            status="done",
+        )
+    )
+    _parse(mcp_server.archive_task_state(task_ref="archived-close-slice"))
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="archived-close-slice-current",
+            objective="Current task",
+            status="in_progress",
+        )
+    )
+
+    result = _parse(
+        mcp_server.close_slice(
+            session="s-archived-close-slice",
+            decision="cop_slice_complete_archived_close_slice_s1",
+            task_ref="archived-close-slice",
+            rationale=(
+                "## Changes\n- Attempted to close archived task.\n\n"
+                "## Verification\n- none.\n\n"
+                "## Schema / Contract Changes\n- none.\n\n"
+                "## Open Threads\n- none."
+            ),
+        )
+    )
+
+    assert result["ok"] is False
+    assert "Cannot close a slice on an archived task" in result["error"]
+    assert result["decision_recorded"] is False
 
 
 # ---------------------------------------------------------------------------

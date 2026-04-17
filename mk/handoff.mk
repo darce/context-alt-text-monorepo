@@ -4,7 +4,7 @@
 
 .PHONY: task state list-tasks lane-list mcp-serve-http handoff-close-check handoff-integrity-check handoff-inbox handoff-dispatch review-dispatch review-run review-ready plan-analyze plan-review slice-start slice-commit
 
-# Generate CURRENT_TASK.md from handoff DB
+# Generate CURRENT_TASK.json from handoff DB
 task:
 	@$(MCP_CMD) $(MCP_STATE_ARGS) task
 
@@ -123,7 +123,7 @@ slice-commit:
 		--repo-root "$(WORKTREE_ROOT_REAL)" \
 		--workspace-root "$(ORCHESTRATOR_ROOT)" \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
-		--current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" \
+		--current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.json" \
 		--exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports" \
 		--task-ref "$(TASK)" \
 		--session "$$SESSION_NAME" \

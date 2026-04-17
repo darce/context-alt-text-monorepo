@@ -55,6 +55,7 @@ python_api_fallback:
     - review_findings
     - review_runs
     - record_event
+    - render_handoff
     - generate_current_task_md
     - generate_dashboard_md
     - handoff_close_check

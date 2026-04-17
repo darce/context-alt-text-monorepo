@@ -12,7 +12,7 @@ Import map:
   - Write-context / git / actor resolution      -> shared_write_context
   - Schema SQL / DB bootstrap                   -> shared_schema
   - Generic DB query helpers                    -> shared_db_utils
-  - CURRENT_TASK.md rendering cluster           -> current_task_rendering
+  - CURRENT_TASK.json rendering cluster           -> current_task_rendering
   - Archival summary helpers                    -> shared_archival
   - Tool invocation adapters                    -> shared_tool_adapters
 
@@ -125,6 +125,8 @@ from .shared_primitives import (  # noqa: F401
     _excerpt_text,
     _exports_dir,
     _first_present,
+    _get_current_handoff_row,
+    _get_handoff_row_for_task,
     _has_structured_slice_summary,
     _json_response,
     _normalize_lane_message_payload,
@@ -137,6 +139,7 @@ from .shared_primitives import (  # noqa: F401
     _resolve_import_lane_id,
     _resolve_import_row_actor,
     _resolve_task_ref,
+    _resolve_workspace_handoff_row,
     _row_to_dict,
     _summarize_test_result,
     _utcnow_iso,
@@ -215,6 +218,8 @@ from .slice_decision import (  # noqa: F401
 def _annotate_review_finding(
     row: dict[str, object], *, workspace_branch: str | None, workspace_commit_sha: str | None
 ) -> dict[str, object]:
+    import json as _json  # noqa: PLC0415
+
     finding = dict(row)
     finding_branch = _normalize_optional_text(finding.get("branch"))
     finding_commit_sha = _normalize_optional_text(finding.get("commit_sha"))
@@ -226,4 +231,12 @@ def _annotate_review_finding(
     finding["workspace_branch_matches"] = branch_matches
     _classify_fn = _resolve_core_override("_classify_commit_relation", _classify_commit_relation)
     finding["workspace_commit_relation"] = _classify_fn(finding_commit_sha, workspace_commit_sha)
+    raw_merged_from = finding.pop("merged_from_json", None)
+    if raw_merged_from:
+        try:
+            parsed = _json.loads(raw_merged_from) if isinstance(raw_merged_from, str) else None
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict):
+            finding["merged_from"] = parsed
     return finding

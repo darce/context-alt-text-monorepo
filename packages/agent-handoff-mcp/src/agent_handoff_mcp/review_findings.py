@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import datetime as _dt
+import json
 import re
 import sqlite3
 from pathlib import Path
-from typing import TypedDict
+from typing import TypedDict, cast
 
 from ._shared import (
     BATCH_CLOSE_THRESHOLD,
@@ -41,10 +43,10 @@ from .slice_decision import is_canonical_decision
 
 
 def _write_current_task_md_for_active_context(conn: sqlite3.Connection, fallback_task_ref: str) -> None:
-    """Regenerate CURRENT_TASK.md for the active task when one exists.
+    """Regenerate CURRENT_TASK.json for the active task when one exists.
 
     Review findings are often recorded against non-active tasks during review
-    passes. CURRENT_TASK.md should stay anchored to the active task and render
+    passes. CURRENT_TASK.json should stay anchored to the active task and render
     cross-task findings in the aggregated sections rather than switching to the
     last task whose finding row was touched.
     """
@@ -58,7 +60,7 @@ def _write_current_task_md_for_active_context(conn: sqlite3.Connection, fallback
 
 def _current_task_revision(conn: sqlite3.Connection, task_ref: str) -> int | None:
     row = conn.execute(
-        "SELECT revision FROM handoff_state WHERE id = 1 AND task_ref = ?",
+        "SELECT revision FROM handoff_state WHERE task_ref = ?",
         (task_ref,),
     ).fetchone()
     return int(row["revision"]) if row is not None else None
@@ -324,6 +326,7 @@ class BatchFindingItem(TypedDict, total=False):
     description: str
     review_mode: str | None
     details: ReviewFindingDetails | None
+    merged_from_json: str | None
 
 
 def batch_record_review_findings(
@@ -412,13 +415,14 @@ def batch_record_review_findings(
                 (resolved_task_ref, finding_id),
             ).fetchone()
 
+            merged_from_json_value = item.get("merged_from_json")
             conn.execute(
                 """
                 INSERT INTO review_findings (
                     task_ref, lane_id, finding_id, severity, file_path, line_start, line_end,
                     description, fix, status, review_mode, session, agent, branch, commit_sha,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+                    merged_from_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
                 ON CONFLICT(task_ref, finding_id) DO UPDATE SET
                     severity = excluded.severity,
                     file_path = excluded.file_path,
@@ -444,7 +448,8 @@ def batch_record_review_findings(
                     lane_id = COALESCE(review_findings.lane_id, excluded.lane_id),
                     agent = COALESCE(review_findings.agent, excluded.agent),
                     branch = COALESCE(review_findings.branch, excluded.branch),
-                    commit_sha = COALESCE(review_findings.commit_sha, excluded.commit_sha)
+                    commit_sha = COALESCE(review_findings.commit_sha, excluded.commit_sha),
+                    merged_from_json = COALESCE(excluded.merged_from_json, review_findings.merged_from_json)
                 """,
                 (
                     resolved_task_ref,
@@ -461,6 +466,7 @@ def batch_record_review_findings(
                     ctx.agent,
                     ctx.branch,
                     ctx.commit_sha,
+                    merged_from_json_value,
                 ),
             )
 
@@ -496,6 +502,158 @@ def batch_record_review_findings(
         },
         warnings=warnings or None,
     )
+
+
+def _normalize_source_task_refs(raw: object) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        value = item.strip()
+        if value and value not in seen:
+            seen.add(value)
+            out.append(value)
+    return out
+
+
+def _auto_merge_session(target_task_ref: str) -> str:
+    ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"merge-{target_task_ref}-{ts}"
+
+
+def merge_review_findings(
+    session: str | None,
+    source_task_refs: list[str],
+    target_task_ref: str,
+    actor: WriteActor | None = None,
+) -> dict:
+    """Merge source task_refs' review findings into a coordinator target task_ref.
+
+    Every merged row carries a ``merged_from`` provenance pointer naming the
+    source ``(task_ref, session, finding_id)`` triple. Reuses the batch-record
+    UPSERT path so duplicate-id and reviewer-write-mode guards apply. Source
+    rows remain intact; merge is additive, not destructive.
+    """
+    clean_sources = _normalize_source_task_refs(source_task_refs)
+    if not clean_sources:
+        return _envelope(
+            ok=False,
+            tool="merge_review_findings",
+            data={"error": "source_task_refs must be a non-empty list of task_ref strings."},
+            entity="finding",
+        )
+    if not isinstance(target_task_ref, str) or not target_task_ref.strip():
+        return _envelope(
+            ok=False,
+            tool="merge_review_findings",
+            data={"error": "target_task_ref must be a non-empty string."},
+            entity="finding",
+        )
+    target = target_task_ref.strip()
+    if target in set(clean_sources):
+        return _envelope(
+            ok=False,
+            tool="merge_review_findings",
+            data={"error": "target_task_ref must not appear in source_task_refs."},
+            entity="finding",
+        )
+    effective_session = session.strip() if isinstance(session, str) and session.strip() else _auto_merge_session(target)
+
+    placeholders = ",".join(["?"] * len(clean_sources))
+    with _get_db_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT task_ref, session, finding_id, severity, file_path,
+                   line_start, line_end, description, fix, review_mode
+            FROM review_findings
+            WHERE task_ref IN ({placeholders})
+            ORDER BY task_ref, id
+            """,
+            tuple(clean_sources),
+        ).fetchall()
+
+    if not rows:
+        return _envelope(
+            ok=False,
+            tool="merge_review_findings",
+            data={
+                "error": "no findings available to merge from the given source_task_refs.",
+                "source_task_refs": clean_sources,
+            },
+            entity="finding",
+        )
+
+    items: list[BatchFindingItem] = []
+    for row in rows:
+        source_triple = {
+            "task_ref": str(row["task_ref"]),
+            "session": str(row["session"]),
+            "finding_id": str(row["finding_id"]),
+        }
+        details_payload: ReviewFindingDetails | None = None
+        if row["line_start"] is not None or row["line_end"] is not None or row["fix"] is not None:
+            details_payload = cast_details(line_start=row["line_start"], line_end=row["line_end"], fix=row["fix"])
+        item: BatchFindingItem = {
+            "finding_id": str(row["finding_id"]),
+            "severity": str(row["severity"]),
+            "file_path": str(row["file_path"]),
+            "description": str(row["description"]),
+            "review_mode": str(row["review_mode"]) if row["review_mode"] else None,
+            "details": details_payload,
+            "merged_from_json": json.dumps(source_triple, sort_keys=True),
+        }
+        items.append(item)
+
+    result = batch_record_review_findings(
+        session=effective_session,
+        findings=items,
+        actor=actor,
+        task_ref=target,
+    )
+    if not isinstance(result, dict) or not result.get("ok"):
+        return result
+
+    envelope_data = result.get("data", result)
+    merged_result = {
+        "task_ref": target,
+        "session": effective_session,
+        "source_task_refs": clean_sources,
+        "written": envelope_data.get("written", len(items)),
+        "results": envelope_data.get("results", []),
+    }
+    return _envelope(
+        ok=True,
+        tool="merge_review_findings",
+        data=merged_result,
+        task_ref=target,
+        entity="finding",
+        mutation={
+            "entity": "finding",
+            "operation": "merge",
+            "affected_ids": [item["finding_id"] for item in items],
+            "task_revision": _current_task_revision_for(target),
+        },
+        warnings=result.get("warnings"),
+    )
+
+
+def _current_task_revision_for(task_ref: str) -> int | None:
+    with _get_db_connection() as conn:
+        return _current_task_revision(conn, task_ref)
+
+
+def cast_details(line_start: object, line_end: object, fix: object) -> ReviewFindingDetails:
+    payload: dict[str, object] = {}
+    if isinstance(line_start, int):
+        payload["line_start"] = line_start
+    if isinstance(line_end, int):
+        payload["line_end"] = line_end
+    if isinstance(fix, str) and fix:
+        payload["fix"] = fix
+    return cast("ReviewFindingDetails", payload)
 
 
 def _apply_finding_update(

@@ -53,6 +53,6 @@ if [ "$SHOULD_RUN" != "true" ]; then
   exit 0
 fi
 
-agent-handoff-mcp --workspace-root "$WORKSPACE_ROOT" write-dashboard >/dev/null 2>&1 || true
+agent-handoff-mcp --workspace-root "$WORKSPACE_ROOT" render-handoff --kind dashboard >/dev/null 2>&1 || true
 
 exit 0

@@ -9,16 +9,16 @@ args = ["-y", "@upstash/context7-mcp@2.1.4"]
 command = "agent-handoff-mcp"
 args = [
   "--workspace-root",
-  "/Users/daniel/Development/context-alt-text-monorepo",
+  ".",
   "--state-dir",
-  "/Users/daniel/Development/context-alt-text-monorepo/.task-state",
+  ".task-state",
   "--current-task-path",
-  "/Users/daniel/Development/context-alt-text-monorepo/CURRENT_TASK.md",
+  "CURRENT_TASK.json",
   "--exports-dir",
-  "/Users/daniel/Development/context-alt-text-monorepo/.task-state/exports",
+  ".task-state/exports",
   "serve-stdio",
 ]
-cwd = "/Users/daniel/Development/context-alt-text-monorepo"
+cwd = "."
 
 [mcp_servers."altcontext-mcp".env]
 PYENV_VERSION = "description-service"
@@ -28,16 +28,16 @@ AGENT_HANDOFF_ENFORCE_BRANCH = "1"
 command = "agent-orchestrator-mcp"
 args = [
   "--workspace-root",
-  "/Users/daniel/Development/context-alt-text-monorepo",
+  ".",
   "--state-dir",
-  "/Users/daniel/Development/context-alt-text-monorepo/.task-state",
+  ".task-state",
   "--current-task-path",
-  "/Users/daniel/Development/context-alt-text-monorepo/CURRENT_TASK.md",
+  "CURRENT_TASK.json",
   "--exports-dir",
-  "/Users/daniel/Development/context-alt-text-monorepo/.task-state/exports",
+  ".task-state/exports",
   "serve-stdio",
 ]
-cwd = "/Users/daniel/Development/context-alt-text-monorepo"
+cwd = "."
 
 [mcp_servers."altcontext-orchestrator-mcp".env]
 PYENV_VERSION = "description-service"

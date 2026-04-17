@@ -8,7 +8,7 @@ mcp_tools:
   - search_handoff
   - get_handoff_state
   - record_event
-  - generate_current_task_md
+  - render_handoff
 tdd_gate: false
 disable-model-invocation: false
 ---
@@ -166,7 +166,7 @@ record_review_finding(
 )
 ```
 
-3. Regenerate task context: `generate_current_task_md(task_ref=<active-task-ref>)`.
+3. Regenerate task context: `render_handoff(kind='current_task', task_ref=<active-task-ref>)`.
 
 ## Response Format
 
@@ -210,7 +210,7 @@ End with `Handoff updated: yes`.
 - Cross-doc consistency check passes (no broken references).
 - A `record_decision` entry exists with the sync summary using slice-complete template structure.
 - Any deferred items are recorded as MCP findings.
-- `CURRENT_TASK.md` has been regenerated.
+- `CURRENT_TASK.json` has been regenerated.
 - Response includes `Handoff updated: yes`.
 
 ## See Also

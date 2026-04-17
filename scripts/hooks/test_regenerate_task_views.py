@@ -64,4 +64,5 @@ def test_review_findings_record_string_payload_triggers_refresh(tmp_path: Path) 
     )
     assert code == 0
     assert "--workspace-root" in calls
-    assert "write-dashboard" in calls
+    assert "render-handoff" in calls
+    assert "--kind dashboard" in calls

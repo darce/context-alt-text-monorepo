@@ -4,7 +4,8 @@ Extracted from _shared.py (Slice 3 of E12-10, task plan E12-10-shared-module-ext
 
 Ownership:
 - Ledger-owned DDL: handoff_state, decisions, blockers, next_actions, verified_tests,
-  review_findings, task_archives, review_runs, FTS virtual tables, triggers, indexes.
+  test_traces, review_findings, task_archives, review_runs, FTS virtual tables,
+  triggers, indexes.
 - Orchestration-owned DDL (currently bootstrapped here because E12-9 moved the Python
   orchestration code but did not relocate the DDL):
   worktree_lanes, worker_reports, lane_messages, plan_cursors, turn_metrics.
@@ -51,7 +52,10 @@ _log = logging.getLogger("agent_handoff_mcp")
 #        a version bump, which silently broke `set_handoff_state` on every
 #        already-bootstrapped DB until AHMCP-9 fixed it).
 #   v4 — adds touched_files task-level file-touch ledger.
-HANDOFF_SCHEMA_VERSION = 4
+#   v5 — re-keys handoff_state by task_ref while retaining id=1 as the
+#        current-task sentinel so multiple active task rows can coexist.
+#   v6 — adds test_traces for raw verification output archival.
+HANDOFF_SCHEMA_VERSION = 6
 _HANDOFF_REQUIRED_TABLES = frozenset(
     {
         "handoff_state",
@@ -59,6 +63,7 @@ _HANDOFF_REQUIRED_TABLES = frozenset(
         "blockers",
         "next_actions",
         "verified_tests",
+        "test_traces",
         "touched_files",
         "task_archives",
         "review_findings",
@@ -98,8 +103,8 @@ _HANDOFF_REQUIRED_FTS_TRIGGERS = frozenset(
 
 HANDOFF_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS handoff_state (
-    id                   INTEGER PRIMARY KEY CHECK (id = 1),
-    task_ref             TEXT NOT NULL,
+    id                   INTEGER UNIQUE CHECK (id IS NULL OR id = 1),
+    task_ref             TEXT PRIMARY KEY,
     objective            TEXT NOT NULL,
     focus                TEXT,
     status               TEXT NOT NULL DEFAULT 'in_progress'
@@ -181,6 +186,15 @@ CREATE TABLE IF NOT EXISTS verified_tests (
     verified_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS test_traces (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    verified_test_id INTEGER NOT NULL,
+    task_ref         TEXT NOT NULL,
+    trace_order      INTEGER NOT NULL DEFAULT 0,
+    trace            TEXT NOT NULL,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS touched_files (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     task_ref      TEXT NOT NULL,
@@ -230,6 +244,7 @@ CREATE TABLE IF NOT EXISTS review_findings (
     last_reopened_at TEXT,
     resolved_at   TEXT,
     verification_evidence TEXT,
+    merged_from_json TEXT,
     created_at    TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -378,12 +393,18 @@ CREATE INDEX IF NOT EXISTS idx_actions_task_status_priority
     ON next_actions(task_ref, status, priority, created_at);
 CREATE INDEX IF NOT EXISTS idx_tests_task_verified
     ON verified_tests(task_ref, verified_at DESC);
+CREATE INDEX IF NOT EXISTS idx_test_traces_test_order
+    ON test_traces(verified_test_id, trace_order, id);
+CREATE INDEX IF NOT EXISTS idx_test_traces_task_created
+    ON test_traces(task_ref, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_touched_files_task_touched
     ON touched_files(task_ref, touched_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_task_archives_archived_at
     ON task_archives(archived_at DESC);
 CREATE INDEX IF NOT EXISTS idx_review_findings_task_status
     ON review_findings(task_ref, status, severity);
+CREATE INDEX IF NOT EXISTS idx_review_findings_lane_status
+    ON review_findings(lane_id, status);
 CREATE INDEX IF NOT EXISTS idx_lanes_task_status
     ON worktree_lanes(task_ref, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_worker_reports_task_lane
@@ -554,6 +575,13 @@ def _has_column(conn: sqlite3.Connection, table_name: str, column_name: str) -> 
 def _has_index(conn: sqlite3.Connection, table_name: str, index_name: str) -> bool:
     rows = conn.execute(f"PRAGMA index_list({table_name})").fetchall()
     return any(str(row["name"]) == index_name for row in rows)
+
+
+def _handoff_state_uses_task_keyed_rows(conn: sqlite3.Connection) -> bool:
+    rows = conn.execute("PRAGMA table_info(handoff_state)").fetchall()
+    task_ref_pk = next((int(row["pk"]) for row in rows if str(row["name"]) == "task_ref"), 0)
+    id_pk = next((int(row["pk"]) for row in rows if str(row["name"]) == "id"), 0)
+    return task_ref_pk == 1 and id_pk == 0
 
 
 def _sqlite_objects_exist(conn: sqlite3.Connection, object_type: str, names: frozenset[str]) -> bool:
@@ -814,6 +842,22 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "CREATE INDEX idx_touched_files_task_touched ON touched_files(task_ref, touched_at DESC, id DESC)"
             )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS test_traces (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                verified_test_id INTEGER NOT NULL,
+                task_ref         TEXT NOT NULL,
+                trace_order      INTEGER NOT NULL DEFAULT 0,
+                trace            TEXT NOT NULL,
+                created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """
+        )
+        if not _has_index(conn, "test_traces", "idx_test_traces_test_order"):
+            conn.execute("CREATE INDEX idx_test_traces_test_order ON test_traces(verified_test_id, trace_order, id)")
+        if not _has_index(conn, "test_traces", "idx_test_traces_task_created"):
+            conn.execute("CREATE INDEX idx_test_traces_task_created ON test_traces(task_ref, created_at DESC, id DESC)")
         needs_backfill = False
         for table in ("decisions", "blockers", "next_actions", "verified_tests", "review_findings"):
             if not _has_column(conn, table, "lane_id"):
@@ -833,6 +877,7 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
             ("verification_evidence", "ALTER TABLE review_findings ADD COLUMN verification_evidence TEXT"),
             ("review_mode", "ALTER TABLE review_findings ADD COLUMN review_mode TEXT"),
             ("review_run_id", "ALTER TABLE review_findings ADD COLUMN review_run_id TEXT"),
+            ("merged_from_json", "ALTER TABLE review_findings ADD COLUMN merged_from_json TEXT"),
         ]:
             if not _has_column(conn, "review_findings", column):
                 conn.execute(sql)
@@ -872,6 +917,51 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
             conn.execute("ALTER TABLE handoff_state ADD COLUMN target_branch TEXT")
         if not _has_column(conn, "handoff_state", "target_worktree_path"):
             conn.execute("ALTER TABLE handoff_state ADD COLUMN target_worktree_path TEXT")
+        if not _handoff_state_uses_task_keyed_rows(conn):
+            conn.execute("ALTER TABLE handoff_state RENAME TO handoff_state_legacy_v4")
+            conn.execute(
+                """
+                CREATE TABLE handoff_state (
+                    id                   INTEGER UNIQUE CHECK (id IS NULL OR id = 1),
+                    task_ref             TEXT PRIMARY KEY,
+                    objective            TEXT NOT NULL,
+                    focus                TEXT,
+                    status               TEXT NOT NULL DEFAULT 'in_progress'
+                                         CHECK (status IN ('in_progress', 'blocked', 'review', 'done')),
+                    target_branch        TEXT,
+                    target_worktree_path TEXT,
+                    revision             INTEGER NOT NULL DEFAULT 0,
+                    updated_at           TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_by           TEXT,
+                    updated_branch       TEXT,
+                    updated_commit_sha   TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO handoff_state (
+                    id, task_ref, objective, focus, status,
+                    target_branch, target_worktree_path, revision,
+                    updated_at, updated_by, updated_branch, updated_commit_sha
+                )
+                SELECT
+                    CASE WHEN id = 1 THEN 1 ELSE NULL END,
+                    task_ref,
+                    objective,
+                    focus,
+                    status,
+                    target_branch,
+                    target_worktree_path,
+                    revision,
+                    updated_at,
+                    updated_by,
+                    updated_branch,
+                    updated_commit_sha
+                FROM handoff_state_legacy_v4
+                """
+            )
+            conn.execute("DROP TABLE handoff_state_legacy_v4")
         # TODO(E12-9-followon): turn_metrics DDL belongs in agent-orchestrator-mcp bootstrap.
         conn.execute(
             """
@@ -918,6 +1008,8 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
                 "CREATE INDEX idx_turn_metrics_task_backend_model "
                 "ON turn_metrics(task_ref, backend, model, created_at DESC, id DESC)"
             )
+        if not _has_index(conn, "review_findings", "idx_review_findings_lane_status"):
+            conn.execute("CREATE INDEX idx_review_findings_lane_status ON review_findings(lane_id, status)")
     except sqlite3.OperationalError as exc:
         if "locked" in str(exc).lower():
             _log.warning("DB locked during migration -- skipping (PRAGMA busy_timeout should prevent this)")

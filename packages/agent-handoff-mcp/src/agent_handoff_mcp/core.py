@@ -72,6 +72,7 @@ from ._shared import (  # noqa: F401
     _render_current_task_json,
     _render_current_task_md,
     _resolve_task_ref,
+    _resolve_workspace_handoff_row,
     _resolve_write_actor,
     _row_to_dict,
     _summarize_test_result,
@@ -317,8 +318,11 @@ def search_handoff(
             )
         effective_task_ref: str | None = task_ref
         if effective_task_ref is None:
-            _active = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
-            effective_task_ref = str(_active["task_ref"]) if _active else None
+            try:
+                resolved_row = _resolve_workspace_handoff_row(conn)
+            except ValueError as exc:
+                return _envelope(ok=False, tool="search_handoff", data={"error": str(exc)})
+            effective_task_ref = str(resolved_row["task_ref"]) if resolved_row is not None else None
 
         for rtype in validated_types:
             fts_table, has_status = _RECORD_TYPE_FTS_MAP[rtype]
@@ -606,6 +610,7 @@ def load_session(
     task_ref: str | None = None,
     sections: str | None = None,
     detail: str = "full",
+    top_n_slices: int = DEFAULT_HANDOFF_LIMITS["slices"],
     top_n_touched_files: int = DEFAULT_TOUCHED_FILES_LIMIT,
 ) -> dict:
     """Load session context: get_handoff_state + open findings + touched files.
@@ -615,7 +620,12 @@ def load_session(
     payload size without making two separate calls.  The ``top_n_touched_files``
     parameter bounds the additive ``touched_files`` list (default 20).
     """
-    state_envelope = get_handoff_state(task_ref=task_ref, sections=sections, detail=detail)
+    state_envelope = get_handoff_state(
+        task_ref=task_ref,
+        sections=sections,
+        detail=detail,
+        top_n_slices=top_n_slices,
+    )
     if not state_envelope.get("ok"):
         return state_envelope
     state_data = state_envelope.get("data", {}) or {}
@@ -626,17 +636,15 @@ def load_session(
     touches_envelope = get_touched_files(task_ref=resolved_task_ref, limit=top_n_touched_files)
     touches_data = touches_envelope.get("data", {}) or {}
     touches_ok = bool(touches_envelope.get("ok"))
-    return _envelope(
-        ok=True,
-        tool="load_session",
-        data={
-            "state": state_data,
-            "open_findings": findings_data.get("findings", []) if findings_ok else [],
-            "open_findings_count": findings_data.get("total_matching", 0) if findings_ok else 0,
-            "touched_files": touches_data.get("touches", []) if touches_ok else [],
-        },
-        task_ref=resolved_task_ref,
-    )
+    data = {
+        "state": state_data,
+        "open_findings": findings_data.get("findings", []) if findings_ok else [],
+        "open_findings_count": findings_data.get("total_matching", 0) if findings_ok else 0,
+        "touched_files": touches_data.get("touches", []) if touches_ok else [],
+    }
+    if "slices_completed" in state_data:
+        data["slices_completed"] = state_data["slices_completed"]
+    return _envelope(ok=True, tool="load_session", data=data, task_ref=resolved_task_ref)
 
 
 def close_slice(
@@ -649,16 +657,16 @@ def close_slice(
     focus: str | None = None,
     changed_files: list[str] | None = None,
 ) -> dict:
-    """Record a slice-complete decision, keep the task in progress, and regenerate CURRENT_TASK.md."""
+    """Record a slice-complete decision, keep the task in progress, and regenerate CURRENT_TASK.json."""
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
-        active_row = conn.execute(
-            "SELECT revision FROM handoff_state WHERE id = 1 AND task_ref = ?",
+        task_row = conn.execute(
+            "SELECT revision FROM handoff_state WHERE task_ref = ?",
             (resolved_task_ref,),
         ).fetchone()
 
-    if active_row is not None:
-        current_revision = int(active_row["revision"])
+    if task_row is not None:
+        current_revision = int(task_row["revision"])
         if expected_revision is None:
             return _envelope(
                 ok=False,
@@ -783,6 +791,6 @@ def close_slice(
             "operation": "close_slice",
             "task_revision": active_block.get("revision"),
         },
-        artifacts=[{"type": "current_task_md", "path": "CURRENT_TASK.md", "written": True}],
+        artifacts=[{"type": "current_task_md", "path": "CURRENT_TASK.json", "written": True}],
         warnings=warnings or None,
     )

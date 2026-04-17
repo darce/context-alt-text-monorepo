@@ -19,14 +19,13 @@ from .api import (
     build_handoff_mcp,
     configure_runtime,
     export_handoff_state,
-    generate_current_task_md,
-    generate_dashboard_md,
     get_handoff_state,
     get_verified_tests,
     handoff_close_check,
     import_handoff_state,
     next_actions,
     record_event,
+    render_handoff,
     review_findings,
     review_runs,
     run_doctor,
@@ -223,6 +222,10 @@ def _dispatch_get_verified_tests(args: argparse.Namespace) -> Any:
         branch=args.branch,
         commit_sha=args.commit_sha,
         passed=passed,
+        include_traces=args.include_traces,
+        correlated_file=args.correlated_file,
+        correlation_window_minutes=args.correlation_window_minutes,
+        exclude_never_passed=args.exclude_never_passed,
         limit=args.limit,
         offset=args.offset,
     )
@@ -252,6 +255,8 @@ def _dispatch_event_record(args: argparse.Namespace) -> Any:
         payload["passed"] = args.passed
         if args.result is not None:
             payload["result"] = args.result
+        if args.traces:
+            payload["traces"] = args.traces
         if args.exit_code is not None:
             payload["exit_code"] = args.exit_code
     else:
@@ -339,12 +344,12 @@ def _dispatch_artifacts(args: argparse.Namespace) -> Any:
     return artifacts(artifact=cast(ArtifactsParam, payload))
 
 
-def _dispatch_task(args: argparse.Namespace) -> Any:
-    return generate_current_task_md(task_ref=args.task_ref, write_file=not args.no_write)
-
-
-def _dispatch_dashboard(args: argparse.Namespace) -> Any:
-    return generate_dashboard_md(write_file=not args.no_write)
+def _dispatch_render_handoff(args: argparse.Namespace) -> Any:
+    return render_handoff(
+        kind=args.kind,
+        task_ref=getattr(args, "task_ref", None),
+        write_file=not args.no_write,
+    )
 
 
 def _dispatch_export(args: argparse.Namespace) -> Any:
@@ -405,8 +410,7 @@ _CLI_DISPATCH_OVERRIDES: dict[str, Callable[[argparse.Namespace], Any]] = {
     "review_runs": _dispatch_review_runs,
     "get_verified_tests": _dispatch_get_verified_tests,
     "artifacts": _dispatch_artifacts,
-    "generate_current_task_md": _dispatch_task,
-    "generate_dashboard_md": _dispatch_dashboard,  # CLI name: write-dashboard
+    "render_handoff": _dispatch_render_handoff,  # CLI name: render-handoff
     "export_handoff_state": _dispatch_export,
 }
 

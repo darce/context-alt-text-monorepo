@@ -15,12 +15,17 @@ from ._shared import (
     WriteActor,
     _envelope,
     _fetch_handoff_rows,
+    _get_current_handoff_row,
     _get_db_connection,
+    _get_handoff_row_for_task,
     _normalize_optional_text,
     _resolve_current_lane_row,
+    _resolve_workspace_handoff_row,
     _resolve_write_actor,
     _row_to_dict,
     collect_target_context_warnings,
+    extract_slice_label,
+    is_slice_complete_decision,
 )
 
 
@@ -44,10 +49,9 @@ def set_handoff_state(
         )
     with _get_db_connection() as conn:
         ctx = _resolve_write_actor(conn, actor)
-        current = conn.execute(
-            "SELECT revision, objective, focus, target_branch, target_worktree_path FROM handoff_state WHERE id = 1"
-        ).fetchone()
-        if current is None:
+        current = _get_current_handoff_row(conn)
+        task_row = _get_handoff_row_for_task(conn, task_ref)
+        if task_row is None:
             if objective is None:
                 return _envelope(
                     ok=False,
@@ -55,6 +59,8 @@ def set_handoff_state(
                     task_ref=task_ref,
                     data={"error": "objective is required when creating a new handoff state."},
                 )
+            if current is not None:
+                conn.execute("UPDATE handoff_state SET id = NULL WHERE id = 1")
             conn.execute(
                 """
                 INSERT INTO handoff_state (
@@ -74,7 +80,7 @@ def set_handoff_state(
                     ctx.commit_sha,
                 ),
             )
-            active = _row_to_dict(conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone())
+            active = _row_to_dict(_get_handoff_row_for_task(conn, task_ref))
             return _envelope(
                 ok=True,
                 tool=_tool,
@@ -93,23 +99,23 @@ def set_handoff_state(
                         "Fetch the active row first via get_handoff_state(sections='identity') "
                         "and pass its revision field as expected_revision."
                     ),
-                    "current_revision": int(current["revision"]),
+                    "current_revision": int(task_row["revision"]),
                 },
             )
-        resolved_objective = objective if objective is not None else str(current["objective"])
+        resolved_objective = objective if objective is not None else str(task_row["objective"])
         resolved_focus = (
-            focus if focus is not None else (_normalize_optional_text(current["focus"]) if current["focus"] else None)
+            focus if focus is not None else (_normalize_optional_text(task_row["focus"]) if task_row["focus"] else None)
         )
         resolved_target_branch = (
             target_branch
             if target_branch is not None
-            else (_normalize_optional_text(current["target_branch"]) if current["target_branch"] else None)
+            else (_normalize_optional_text(task_row["target_branch"]) if task_row["target_branch"] else None)
         )
         resolved_target_worktree_path = (
             target_worktree_path
             if target_worktree_path is not None
             else (
-                _normalize_optional_text(current["target_worktree_path"]) if current["target_worktree_path"] else None
+                _normalize_optional_text(task_row["target_worktree_path"]) if task_row["target_worktree_path"] else None
             )
         )
         warnings = collect_target_context_warnings(
@@ -122,14 +128,13 @@ def set_handoff_state(
         updated = conn.execute(
             """
             UPDATE handoff_state
-            SET task_ref = ?, objective = ?, focus = ?, status = ?,
+            SET objective = ?, focus = ?, status = ?,
                 target_branch = ?, target_worktree_path = ?,
                 revision = revision + 1, updated_at = datetime('now'),
                 updated_by = ?, updated_branch = ?, updated_commit_sha = ?
-            WHERE id = 1 AND revision = ?
+            WHERE task_ref = ? AND revision = ?
             """,
             (
-                task_ref,
                 resolved_objective,
                 resolved_focus,
                 status,
@@ -138,11 +143,12 @@ def set_handoff_state(
                 ctx.agent,
                 ctx.branch,
                 ctx.commit_sha,
+                task_ref,
                 expected_revision,
             ),
         )
         if updated.rowcount == 0:
-            latest = conn.execute("SELECT revision FROM handoff_state WHERE id = 1").fetchone()
+            latest = conn.execute("SELECT revision FROM handoff_state WHERE task_ref = ?", (task_ref,)).fetchone()
             return _envelope(
                 ok=False,
                 tool=_tool,
@@ -153,7 +159,16 @@ def set_handoff_state(
                     "current_revision": int(latest["revision"]) if latest else None,
                 },
             )
-        active = _row_to_dict(conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone())
+        if current is None or str(current["task_ref"]) != task_ref:
+            conn.execute(
+                "UPDATE handoff_state SET id = NULL WHERE id = 1 AND task_ref <> ?",
+                (task_ref,),
+            )
+            conn.execute(
+                "UPDATE handoff_state SET id = 1 WHERE task_ref = ?",
+                (task_ref,),
+            )
+        active = _row_to_dict(_get_handoff_row_for_task(conn, task_ref))
         if active is None:
             return _envelope(
                 ok=False,
@@ -179,6 +194,7 @@ _VALID_SECTIONS = frozenset(
         "blockers_open",
         "actions_pending",
         "decisions_recent",
+        "slices_completed",
         "tests_recent",
         "findings_open",
         "worktree_lanes",
@@ -229,6 +245,7 @@ def get_handoff_state(
     top_n_blockers: int = DEFAULT_HANDOFF_LIMITS["blockers"],
     top_n_actions: int = DEFAULT_HANDOFF_LIMITS["actions"],
     top_n_decisions: int = DEFAULT_HANDOFF_LIMITS["decisions"],
+    top_n_slices: int = DEFAULT_HANDOFF_LIMITS["slices"],
     top_n_tests: int = DEFAULT_HANDOFF_LIMITS["tests"],
     top_n_findings: int = DEFAULT_HANDOFF_LIMITS["findings"],
     verbose: bool = False,
@@ -242,6 +259,7 @@ def get_handoff_state(
     top_n_blockers = max(1, top_n_blockers)
     top_n_actions = max(1, top_n_actions)
     top_n_decisions = max(1, top_n_decisions)
+    top_n_slices = max(1, top_n_slices)
     top_n_tests = max(1, top_n_tests)
     top_n_findings = max(1, top_n_findings)
 
@@ -249,15 +267,26 @@ def get_handoff_state(
         return requested_sections is None or section in requested_sections
 
     with _get_db_connection() as conn:
-        active_row = conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone()
-        if active_row is None and task_ref is None:
+        current_row = _get_current_handoff_row(conn)
+        if current_row is None and task_ref is None:
             return _envelope(
                 ok=True, tool="get_handoff_state", data={"active": None, "message": "No active handoff state."}
             )
-        resolved_task_ref = task_ref or str(active_row["task_ref"])
+        if task_ref is None:
+            try:
+                resolved_row = _resolve_workspace_handoff_row(conn)
+            except ValueError as exc:
+                return _envelope(ok=False, tool="get_handoff_state", data={"error": str(exc)})
+            if resolved_row is None:
+                return _envelope(
+                    ok=True, tool="get_handoff_state", data={"active": None, "message": "No active handoff state."}
+                )
+            resolved_task_ref = str(resolved_row["task_ref"])
+            active_row = resolved_row
+        else:
+            resolved_task_ref = task_ref
+            active_row = _get_handoff_row_for_task(conn, resolved_task_ref)
         active = _row_to_dict(active_row) if active_row is not None else None
-        if active is not None and resolved_task_ref != active["task_ref"]:
-            active = None
 
         def query_limit(size: int) -> int:
             return size if not verbose else 10000
@@ -278,6 +307,7 @@ def get_handoff_state(
             "blockers": top_n_blockers,
             "actions": top_n_actions,
             "decisions": top_n_decisions,
+            "slices": top_n_slices,
             "tests": top_n_tests,
             "findings": top_n_findings,
             "write": {
@@ -324,6 +354,25 @@ def get_handoff_state(
                 params=(resolved_task_ref,),
             )
             result["decisions_recent"] = _apply_detail(rows, ("rationale",))
+
+        if _want("slices_completed"):
+            rows = _fetch_handoff_rows(
+                conn,
+                table="decisions",
+                where_sql="task_ref = ? AND decision LIKE '%slice_complete%'",
+                order_sql="created_at DESC",
+                limit=query_limit(top_n_slices),
+                params=(resolved_task_ref,),
+            )
+            slice_rows = []
+            for row in rows:
+                decision_id = str(row.get("decision") or "")
+                if not is_slice_complete_decision(decision_id):
+                    continue
+                shaped = dict(row)
+                shaped["slice_label"] = extract_slice_label(decision_id)
+                slice_rows.append(shaped)
+            result["slices_completed"] = _apply_detail(slice_rows, ("rationale",))
 
         if _want("tests_recent"):
             rows = _fetch_handoff_rows(

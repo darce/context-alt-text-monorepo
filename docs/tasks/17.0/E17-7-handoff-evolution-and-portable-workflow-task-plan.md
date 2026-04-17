@@ -305,7 +305,7 @@ Proof:
 - Tool count matches the re-scoped 4A-only compression target.
 - Hook matchers reference only the new compound tool names; no stale references remain.
 - After the rename, `render_handoff(kind="dashboard")` (or its equivalent compound invocation) writes exactly `DASHBOARD.txt` at the workspace root with no accompanying `DASHBOARD.md`; `cat DASHBOARD.txt` matches the previous `generate_dashboard_md()` output byte-for-byte modulo the timestamp line.
-- `grep -rn DASHBOARD.md` across tracked non-archive markdown + Makefile + the `dashboard_extension.py` module docstring returns zero hits after Slice 4 lands (a CI guard for this lives in E17-9 Slice 4).
+- `grep -rn DASHBOARD.md` across tracked non-archive markdown + Makefile + the `dashboard_extension.py` module docstring returns zero hits after Slice 4 lands (a CI guard for this lives in E17-8 Slice 3).
 - Agent-visible token budget check: the compressed tool surface reduces per-turn request token cost for common Get-state + record-event + dashboard-regenerate flows, measured against the pre-compression baseline captured during Slice 4 implementation.
 
 ### Slice 5: Parallel-Review Backend Groundwork (Additive)

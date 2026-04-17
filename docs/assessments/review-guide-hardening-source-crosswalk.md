@@ -331,7 +331,7 @@ This maps well to the epic’s Phase 4 direction without duplicating `agent-hand
 | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `get_handoff_state`                   | Session-start hook: load active task, open findings, and latest decisions; replaces any ad hoc session reconstruction.                                                 |
 | `list_review_findings(status="open")` | Pre-review hook: surface all unresolved findings before the reviewer loads the diff.                                                                                   |
-| `generate_current_task_md`            | Post-change hook: regenerate the human-readable mirror so the next session starts from an accurate `CURRENT_TASK.md`.                                                  |
+| `generate_current_task_md`            | Post-change hook: regenerate the human-readable mirror so the next session starts from an accurate `CURRENT_TASK.json`.                                                  |
 | `handoff_close_check`                 | Pre-completion hook: enforce the evidence gate before claiming work done; the lightest-weight placement for this call is a reminder at session end, not during review. |
 
 ## Recommended Concrete Edits By Guide

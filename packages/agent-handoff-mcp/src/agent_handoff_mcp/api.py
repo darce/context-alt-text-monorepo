@@ -21,7 +21,7 @@ from . import core
 from ._shared import WriteActor
 from .config import RuntimeConfig
 from .core import PromptMetrics, ResolvedWriteContext, ReviewFindingDetails, TokenUsage
-from .review_findings import BatchFindingItem
+from .review_findings import BatchFindingItem, merge_review_findings
 from .runtime import configure_runtime, get_runtime_config, reset_runtime_config
 from .shared_write_context import BranchMismatchError
 
@@ -67,22 +67,28 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "get_handoff_state": "Read task handoff summary (blockers, actions, findings). Pass sections='decisions_recent,findings_open' to select specific sections; active and limits are always included. Pass sections='identity' for an identity-only response (active + limits, no data sections). Pass detail='summary' to truncate long rationale and verification fields.",
     "record_event": "Record a decision, verification result, or blocker mutation through one typed event surface. Set event.event_kind to 'decision', 'test_result', or 'blocker' to select the required fields.",
     "next_actions": "List or mutate next-action items through one typed domain surface. Set action.operation to 'list', 'add', 'update', 'complete', or 'skip'.",
-    "review_findings": "Record, batch record, update, repair provenance, or list review findings through one typed domain surface. Set review.operation to 'record', 'batch_record', 'update', 'repair_provenance', or 'list'. The 'repair_provenance' operation is the bounded admin path for fixing a finding row whose source branch/commit_sha was attributed to the wrong commit (e.g. the reviewer's workspace HEAD instead of the actual buggy code's commit) — see ReviewFindingsRepairProvenanceOp.",
+    "review_findings": "Record, batch record, update, repair provenance, merge, or list review findings through one typed domain surface. Set review.operation to 'record', 'batch_record', 'update', 'repair_provenance', 'merge', or 'list'. The 'repair_provenance' operation is the bounded admin path for fixing a finding row whose source branch/commit_sha was attributed to the wrong commit (e.g. the reviewer's workspace HEAD instead of the actual buggy code's commit) — see ReviewFindingsRepairProvenanceOp. The 'merge' operation (coordinator-centric, additive) re-records findings from one or more source task_refs under a target coordinator task_ref with merged_from provenance — see ReviewFindingsMergeOp.",
     "review_runs": "Record, list, or summarize review-run coverage through one typed domain surface. Set review.operation to 'record', 'list', or 'coverage'.",
     "handoff_close_check": "Check task readiness to close: blockers, pending actions, findings, and optional fresh-test gate.",
     "audit_decision_ids": "Audit decision IDs for grammar conformance. Returns canonical/malformed/freeform classifications.",
-    "generate_current_task_md": "Generate the machine-readable CURRENT_TASK.md snapshot for the active task.",
-    "generate_dashboard_md": "Generate DASHBOARD.txt — the human-scoped observatory view with Needs Attention summary, All Tasks table, cross-task open findings, and optional extension sections (e.g. Lane Health from agent-orchestrator-mcp).",
+    "render_handoff": (
+        "Render the handoff surface files through one compound tool. "
+        "Set kind='current_task' to produce the machine-readable CURRENT_TASK.json "
+        "snapshot for the active task; set kind='dashboard' to produce DASHBOARD.txt — "
+        "the human-scoped observatory view with Needs Attention summary, All Tasks table, "
+        "cross-task open findings, and optional extension sections (e.g. Lane Health from "
+        "agent-orchestrator-mcp)."
+    ),
     "export_handoff_state": "Export the task handoff state to a portable JSON snapshot.",
     "import_handoff_state": "Import a previously exported handoff state snapshot into the local database.",
     "archive_task_state": "Archive completed task state from the live handoff tables into archive storage.",
     "get_archived_task": "Read an archived task row from task_archives by task_ref. Returns archive metadata (archived_at/archived_by/archived_branch/archived_commit_sha/notes) plus the parsed snapshot when include_snapshot=True. Use this to inspect a task's terminal state without dropping to raw sqlite.",
-    "get_verified_tests": "List verified test rows from the handoff ledger with optional task, lane, branch, commit, and pass/fail filters.",
+    "get_verified_tests": "List verified test rows from the handoff ledger with optional task, lane, branch, commit, pass/fail, trace, and changed-file correlation filters.",
     "record_file_touch": "Record one task-scoped file touch row for a file path and change kind. Append-only surface for the file-touch ledger.",
     "get_touched_files": "List task-scoped file-touch rows with deterministic newest-first ordering and a bounded limit.",
     "update_task_status": "Update a task status without recording a slice decision. For the active task this requires expected_revision; for archived tasks it updates the archived snapshot status used by the dashboard.",
     "load_session": "Load session context: get_handoff_state + review_findings(list open) + touched_files in one call. Pass sections to shape the nested state payload, detail to shape both state and findings, and top_n_touched_files (default 20, max 200) to bound the additive touched_files list.",
-    "close_slice": "Record a slice-complete decision, keep the task status in_progress, and regenerate CURRENT_TASK.md plus DASHBOARD.txt. Requires expected_revision when the target task is currently active. Pass changed_files to persist structured review scope on the nested decision write.",
+    "close_slice": "Record a slice-complete decision, keep the task status in_progress, and regenerate CURRENT_TASK.json plus DASHBOARD.txt. Requires expected_revision when the target task is currently active. Pass changed_files to persist structured review scope on the nested decision write.",
     "artifacts": "Record, search, get, or purge artifact sources through one typed domain surface. Set artifact.operation to 'record', 'search', 'get', or 'purge'.",
     "search_handoff": "Search decisions, findings, blockers, actions, and verified tests by keyword with BM25 ranking. Pass detail='summary' to truncate snippets and fields='record_type,snippet' to project per-result fields.",
 }
@@ -167,6 +173,10 @@ class RecordTestResultEvent(BaseModel):
     result: Annotated[
         str | None,
         Field(description="Optional stdout or summarized verification evidence for the command."),
+    ] = None
+    traces: Annotated[
+        list[str] | None,
+        Field(description="Optional raw verification trace payloads to archive alongside the summarized result."),
     ] = None
     exit_code: Annotated[int | None, Field(description="Optional process exit code for the command.")] = None
     actor: ActorParam = None
@@ -324,6 +334,33 @@ class ReviewFindingsRepairProvenanceOp(BaseModel):
     actor: ActorParam = None
 
 
+class ReviewFindingsMergeOp(BaseModel):
+    operation: Literal["merge"]
+    source_task_refs: Annotated[
+        list[str],
+        Field(
+            description=(
+                "Non-empty list of source task_refs whose review findings should be merged "
+                "into the coordinator target_task_ref. Duplicate entries are deduplicated."
+            )
+        ),
+    ]
+    target_task_ref: Annotated[
+        str,
+        Field(description="Coordinator task_ref under which the merged rows should live."),
+    ]
+    session: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional session prefix for merged rows. When omitted, auto-generated "
+                "as merge-<target_task_ref>-<utc-ts>."
+            )
+        ),
+    ] = None
+    actor: ActorParam = None
+
+
 class ReviewFindingsListOp(BaseModel):
     operation: Literal["list"]
     task_ref: TaskRefParam = None
@@ -348,6 +385,7 @@ ReviewFindingsParam = Annotated[
     | ReviewFindingsBatchRecordOp
     | ReviewFindingsUpdateOp
     | ReviewFindingsRepairProvenanceOp
+    | ReviewFindingsMergeOp
     | ReviewFindingsListOp,
     Field(discriminator="operation"),
 ]
@@ -357,6 +395,7 @@ _REVIEW_FINDINGS_ADAPTER: TypeAdapter[
     | ReviewFindingsBatchRecordOp
     | ReviewFindingsUpdateOp
     | ReviewFindingsRepairProvenanceOp
+    | ReviewFindingsMergeOp
     | ReviewFindingsListOp
 ] = TypeAdapter(ReviewFindingsParam)
 
@@ -575,6 +614,7 @@ def _validate_review_findings(
     | ReviewFindingsBatchRecordOp
     | ReviewFindingsUpdateOp
     | ReviewFindingsRepairProvenanceOp
+    | ReviewFindingsMergeOp
     | ReviewFindingsListOp
 ):
     return _REVIEW_FINDINGS_ADAPTER.validate_python(review)
@@ -724,6 +764,7 @@ def record_event(
             command=event_payload.command,
             passed=event_payload.passed,
             result=event_payload.result,
+            traces=event_payload.traces,
             exit_code=event_payload.exit_code,
             actor=resolved_actor,
             task_ref=event_payload.task_ref,
@@ -808,6 +849,10 @@ def record_test_result(
         str | None,
         Field(description="Optional stdout or summarized verification evidence for the command."),
     ] = None,
+    traces: Annotated[
+        list[str] | None,
+        Field(description="Optional raw verification trace payloads to archive alongside the summarized result."),
+    ] = None,
     exit_code: Annotated[int | None, Field(description="Optional process exit code for the command.")] = None,
     actor: ActorParam = None,
     task_ref: TaskRefParam = None,
@@ -817,6 +862,7 @@ def record_test_result(
         command=command,
         passed=passed,
         result=result,
+        traces=traces,
         exit_code=exit_code,
         actor=_dump_actor(actor),
         task_ref=task_ref,
@@ -829,6 +875,21 @@ def get_verified_tests(
     branch: Annotated[str | None, Field(description="Optional branch filter.")] = None,
     commit_sha: Annotated[str | None, Field(description="Optional commit SHA filter.")] = None,
     passed: Annotated[bool | None, Field(description="Optional pass/fail filter.")] = None,
+    include_traces: Annotated[bool, Field(description="When true, include raw archived traces in each row.")] = False,
+    correlated_file: Annotated[
+        str | None,
+        Field(description="Optional monorepo-relative file path used to correlate tests to changed_files decisions."),
+    ] = None,
+    correlation_window_minutes: Annotated[
+        int,
+        Field(
+            description="Absolute decision/test time window used for changed-file correlation when commit SHAs are missing."
+        ),
+    ] = 120,
+    exclude_never_passed: Annotated[
+        bool,
+        Field(description="When true, omit commands that never recorded a passing row in the filtered result set."),
+    ] = False,
     limit: Annotated[int, Field(description="Maximum number of tests to return.")] = 100,
     offset: Annotated[int, Field(description="Pagination offset.")] = 0,
 ) -> dict:
@@ -838,6 +899,10 @@ def get_verified_tests(
         branch=branch,
         commit_sha=commit_sha,
         passed=passed,
+        include_traces=include_traces,
+        correlated_file=correlated_file,
+        correlation_window_minutes=correlation_window_minutes,
+        exclude_never_passed=exclude_never_passed,
         limit=limit,
         offset=offset,
     )
@@ -968,6 +1033,13 @@ def review_findings(
             new_commit_sha=review_payload.new_commit_sha,
             reason=review_payload.reason,
             task_ref=review_payload.task_ref,
+            actor=_dump_actor(review_payload.actor),
+        )
+    if isinstance(review_payload, ReviewFindingsMergeOp):
+        return merge_review_findings(
+            session=review_payload.session,
+            source_task_refs=review_payload.source_task_refs,
+            target_task_ref=review_payload.target_task_ref,
             actor=_dump_actor(review_payload.actor),
         )
     return list_review_findings(
@@ -1284,6 +1356,12 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--command", dest="command", help="Test command."),
                 ArgSpec("--passed", action="store_true"),
                 ArgSpec("--result"),
+                ArgSpec(
+                    "--trace",
+                    action="append",
+                    dest="traces",
+                    help="Raw verification trace to archive. Repeat for multiple trace payloads.",
+                ),
                 ArgSpec("--exit-code", type=int),
                 ArgSpec("--operation", choices=["add", "resolve", "reopen"]),
                 ArgSpec("--description"),
@@ -1368,7 +1446,7 @@ def _build_tool_registry() -> list[ToolEntry]:
             surface_class="action",
             entity_family="review_runs",
         ),
-        # Close check + CURRENT_TASK.md (2)
+        # Close check + CURRENT_TASK.json (2)
         ToolEntry(
             "handoff_close_check",
             handoff_close_check,
@@ -1385,23 +1463,13 @@ def _build_tool_registry() -> list[ToolEntry]:
             entity_family="lifecycle",
         ),
         ToolEntry(
-            "generate_current_task_md",
-            generate_current_task_md,
-            TOOL_DESCRIPTIONS["generate_current_task_md"],
-            cli_name="task",
+            "render_handoff",
+            render_handoff,
+            TOOL_DESCRIPTIONS["render_handoff"],
+            cli_name="render-handoff",
             cli_args=[
-                ArgSpec("task_ref", nargs="?"),
-                ArgSpec("--no-write", action="store_true"),
-            ],
-            surface_class="generator",
-            entity_family="lifecycle",
-        ),
-        ToolEntry(
-            "generate_dashboard_md",
-            generate_dashboard_md,
-            TOOL_DESCRIPTIONS["generate_dashboard_md"],
-            cli_name="write-dashboard",
-            cli_args=[
+                ArgSpec("--kind", required=True, choices=["current_task", "dashboard"]),
+                ArgSpec("--task-ref", help="Task ref (only used when --kind=current_task)."),
                 ArgSpec("--no-write", action="store_true"),
             ],
             surface_class="generator",
@@ -1478,6 +1546,10 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--branch"),
                 ArgSpec("--commit-sha"),
                 ArgSpec("--passed", choices=["true", "false"]),
+                ArgSpec("--include-traces", action="store_true"),
+                ArgSpec("--correlated-file"),
+                ArgSpec("--correlation-window-minutes", type=int, default=120),
+                ArgSpec("--exclude-never-passed", action="store_true"),
                 ArgSpec("--limit", type=int, default=100),
                 ArgSpec("--offset", type=int, default=0),
             ],
@@ -1631,22 +1703,22 @@ def generate_current_task_md(
     task_ref: str | None = None,
     write_file: bool = True,
 ) -> dict:
-    """Generate CURRENT_TASK.md for the active task.
+    """Generate CURRENT_TASK.json for the active task.
 
     Renders only the active task's data: objective, focus, status, blockers,
     actions, decisions, tests, findings, lanes, and coverage.  Cross-task
     sections (All Tasks table, findings from other tasks) have moved to
-    DASHBOARD.txt — use generate_dashboard_md() to produce that file.
+    DASHBOARD.txt — call render_handoff(kind='dashboard') to produce that file.
 
     Args:
         task_ref: The task to render. Defaults to the active task.
-        write_file: Write the machine-readable CURRENT_TASK.md snapshot to disk.
+        write_file: Write the machine-readable CURRENT_TASK.json snapshot to disk.
 
     Return keys (data envelope):
         task_ref: resolved task reference.
-        path: absolute path to CURRENT_TASK.md (machine-readable JSON).
+        path: absolute path to CURRENT_TASK.json (machine-readable JSON).
         written: True when write_file=True.
-        current_task_json: JSON content of CURRENT_TASK.md; present only
+        current_task_json: JSON content of CURRENT_TASK.json; present only
             when write_file=False.
     """
     with core._get_db_connection() as conn:
@@ -1732,11 +1804,53 @@ def generate_dashboard_md(write_file: bool = True) -> dict:
     agent-orchestrator-mcp.
 
     Args:
-        write_file: Write the markdown to DASHBOARD.txt alongside CURRENT_TASK.md.
+        write_file: Write the markdown to DASHBOARD.txt alongside CURRENT_TASK.json.
     """
     from .dashboard_rendering import generate_dashboard_md as _generate  # noqa: PLC0415
 
     return _generate(write_file=write_file)
+
+
+def render_handoff(
+    kind: Annotated[
+        Literal["current_task", "dashboard"],
+        Field(
+            description=(
+                "Which handoff surface to render. 'current_task' writes CURRENT_TASK.json "
+                "for the requested (or active) task; 'dashboard' writes DASHBOARD.txt — "
+                "the cross-task observatory view."
+            )
+        ),
+    ],
+    task_ref: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Only used when kind='current_task'. Task reference to render. "
+                "Defaults to the active task when omitted."
+            )
+        ),
+    ] = None,
+    write_file: Annotated[
+        bool,
+        Field(description="Write the rendered artifact to disk. Defaults to True."),
+    ] = True,
+) -> dict:
+    """Compound renderer for CURRENT_TASK.json and DASHBOARD.txt.
+
+    Replaces the two single-purpose tools ``generate_current_task_md`` and
+    ``generate_dashboard_md``. The Python aliases remain importable for
+    backward compatibility, but the MCP surface advertises a single
+    ``render_handoff`` tool.
+    """
+    if kind == "current_task":
+        result = generate_current_task_md(task_ref=task_ref, write_file=write_file)
+    elif kind == "dashboard":
+        result = generate_dashboard_md(write_file=write_file)
+    else:  # pragma: no cover - pydantic rejects unknown kinds at boundary.
+        raise ValueError(f"Unknown render_handoff kind: {kind!r}")
+    result["tool"] = "render_handoff"
+    return result
 
 
 def _wrap_branch_mismatch_for_mcp(entry: ToolEntry) -> Callable[..., dict]:
@@ -1777,7 +1891,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
             "One task is active at a time (stored in handoff_state id=1). "
             "Completed tasks are archived into task_archives with a status snapshot. "
             "DASHBOARD.txt renders the human-readable active-task view plus the cross-task dashboard, "
-            "while CURRENT_TASK.md stores the machine-readable active-task snapshot. "
+            "while CURRENT_TASK.json stores the machine-readable active-task snapshot. "
             "The dashboard renders both the active task's live status and each archived task's snapshot status. "
             "Non-archived, non-active tasks default to 'active' in the dashboard — "
             "this is a rendering fallback, not a real stored status.\n\n"
@@ -1788,7 +1902,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
             "record test results with `record_event(event={event_kind:'test_result', ...})`, "
             "and record blockers with `record_event(event={event_kind:'blocker', ...})`.\n"
             "3. **Complete slices**: use `close_slice(...)` to record a slice-complete decision. "
-            "This keeps the task status as in_progress and regenerates CURRENT_TASK.md plus DASHBOARD.txt.\n"
+            "This keeps the task status as in_progress and regenerates CURRENT_TASK.json plus DASHBOARD.txt.\n"
             "4. **Finish task**: when all slices are done, update status to done: "
             "`update_task_status(task_ref=..., status='done')`. "
             "Then archive: `archive_task_state(task_ref=...)`.\n"
@@ -1798,7 +1912,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
             "## Key Tool Guidance\n\n"
             "- `load_session`: use at session start to get state + open findings in one call.\n"
             "- `close_slice`: use for slice completions — it records a decision, keeps status "
-            "in_progress, and regenerates CURRENT_TASK.md plus DASHBOARD.txt atomically.\n"
+            "in_progress, and regenerates CURRENT_TASK.json plus DASHBOARD.txt atomically.\n"
             "- `update_task_status`: use to change status (in_progress/done/blocked/review) "
             "without recording a decision. Works for both active and archived tasks.\n"
             "- `set_handoff_state`: use to update objective, focus, or status on the active task. "
@@ -1806,9 +1920,11 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
             "- `archive_task_state`: snapshots task state into archive storage. "
             "Does not change task status — the archived snapshot preserves whatever status "
             "the task had at archive time.\n"
-            "- `generate_current_task_md`: call after any state-changing operation "
-            "(record_event, review_findings with record/batch_record/update) "
-            "to keep CURRENT_TASK.md machine-readable and DASHBOARD.txt human-readable."
+            "- `render_handoff`: call after any state-changing operation "
+            "(record_event, review_findings with record/batch_record/update). "
+            "Use kind='current_task' to refresh the machine-readable CURRENT_TASK.json "
+            "snapshot, and kind='dashboard' to refresh the human-readable DASHBOARD.txt "
+            "observatory view."
         ),
     )
     _apply_tool_descriptions()
@@ -1970,7 +2086,7 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
         {
             "name": "after_task_switch",
             "trigger": "switch_task() completes",
-            "durable_output": "CURRENT_TASK.md regenerated for new active task",
+            "durable_output": "CURRENT_TASK.json regenerated for new active task",
             "evidence_path": str(config.current_task_path),
             "evidence_found": config.current_task_path.exists(),
         },

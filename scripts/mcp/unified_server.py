@@ -336,7 +336,7 @@ def _build_current_task_state_from_snapshot(snapshot: dict) -> dict:
 
 
 def _write_current_task_md_for_task(conn: sqlite3.Connection, task_ref: str) -> None:
-    """Regenerate CURRENT_TASK.md from DB state for the active task."""
+    """Regenerate CURRENT_TASK.json from DB state for the active task."""
     snapshot = _collect_task_snapshot(conn, task_ref)
     markdown = _render_current_task_md(_build_current_task_state_from_snapshot(snapshot))
     CURRENT_TASK_PATH.write_text(markdown)
@@ -1213,7 +1213,7 @@ mcp = FastMCP(
 MONOREPO_ROOT = Path(__file__).parent.parent.parent.resolve()
 TASK_STATE_DIR = _path_from_env("MCP_HANDOFF_STATE_DIR", MONOREPO_ROOT / ".task-state")
 HANDOFF_DB_PATH = TASK_STATE_DIR / "handoff.db"
-CURRENT_TASK_PATH = _path_from_env("MCP_HANDOFF_CURRENT_TASK_PATH", MONOREPO_ROOT / "CURRENT_TASK.md")
+CURRENT_TASK_PATH = _path_from_env("MCP_HANDOFF_CURRENT_TASK_PATH", MONOREPO_ROOT / "CURRENT_TASK.json")
 TASK_EXPORTS_DIR = _path_from_env("MCP_HANDOFF_EXPORTS_DIR", TASK_STATE_DIR / "exports")
 
 HANDOFF_SCHEMA_SQL = """
@@ -2583,7 +2583,7 @@ def handoff_close_check(
     - zero open review findings
     - review finding integrity is healthy
     - write provenance integrity is healthy (agent/branch populated)
-    - CURRENT_TASK.md matches deterministic DB-generated view
+    - CURRENT_TASK.json matches deterministic DB-generated view
     """
     with _get_db_connection() as conn:
         active_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
@@ -2637,7 +2637,7 @@ def handoff_close_check(
     if not provenance_integrity["healthy"]:
         failures.append("Write provenance integrity checks failed (missing agent/branch metadata).")
     if not current_task_in_sync:
-        failures.append("CURRENT_TASK.md is out of sync with handoff DB state.")
+        failures.append("CURRENT_TASK.json is out of sync with handoff DB state.")
 
     ready_to_close = len(failures) == 0
     payload = {
@@ -3244,7 +3244,7 @@ def _cli() -> None:
     p_state = subparsers.add_parser("state", help="Print current handoff state")
     p_state.add_argument("task_ref", nargs="?", help="Optional task reference")
 
-    p_task = subparsers.add_parser("task", help="Generate CURRENT_TASK.md")
+    p_task = subparsers.add_parser("task", help="Generate CURRENT_TASK.json")
     p_task.add_argument("task_ref", nargs="?", help="Optional task reference")
 
     p_export = subparsers.add_parser("export", help="Export handoff snapshot to JSON")

@@ -57,10 +57,26 @@ def _normalize_changed_files_payload(changed_files: Sequence[object] | None) -> 
 
 def _current_task_revision(conn: sqlite3.Connection, task_ref: str) -> int | None:
     row = conn.execute(
-        "SELECT revision FROM handoff_state WHERE id = 1 AND task_ref = ?",
+        "SELECT revision FROM handoff_state WHERE task_ref = ?",
         (task_ref,),
     ).fetchone()
     return int(row["revision"]) if row is not None else None
+
+
+def _normalize_test_traces_payload(
+    traces: Sequence[object] | None,
+    *,
+    fallback_result: str | None,
+) -> tuple[list[str], str | None]:
+    if traces is None:
+        return ([fallback_result] if isinstance(fallback_result, str) and fallback_result != "" else []), None
+
+    normalized: list[str] = []
+    for raw_trace in traces:
+        if not isinstance(raw_trace, str):
+            return [], "traces must be a list of raw trace strings."
+        normalized.append(raw_trace)
+    return normalized, None
 
 
 def record_decision(
@@ -330,11 +346,15 @@ def record_test_result(
     command: str,
     passed: bool,
     result: str | None = None,
+    traces: Sequence[str] | None = None,
     exit_code: int | None = None,
     actor: WriteActor | None = None,
     task_ref: str | None = None,
 ) -> dict:
     summarized_result = _summarize_test_result(result)
+    normalized_traces, traces_error = _normalize_test_traces_payload(traces, fallback_result=result)
+    if traces_error is not None:
+        return _envelope(ok=False, tool="record_test_result", data={"error": traces_error})
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         ctx = _resolve_write_actor(conn, actor)
@@ -358,7 +378,17 @@ def record_test_result(
                 ctx.commit_sha,
             ),
         )
+        for trace_order, trace in enumerate(normalized_traces):
+            conn.execute(
+                """
+                INSERT INTO test_traces (verified_test_id, task_ref, trace_order, trace, created_at)
+                VALUES (?, ?, ?, ?, datetime('now'))
+                """,
+                (cur.lastrowid, resolved_task_ref, trace_order, trace),
+            )
         test_row = _row_to_dict(conn.execute("SELECT * FROM verified_tests WHERE id = ?", (cur.lastrowid,)).fetchone())
+        if test_row is not None:
+            test_row["trace_count"] = len(normalized_traces)
         return _envelope(
             ok=True,
             tool="record_test_result",
@@ -493,7 +523,7 @@ def _collect_task_provenance_integrity(conn: sqlite3.Connection, task_ref: str) 
         table_checks[table_name] = {"count": len(items), "items": items}
         total_issues += len(items)
     active_row = conn.execute(
-        "SELECT updated_by, updated_branch, updated_commit_sha FROM handoff_state WHERE id = 1 AND task_ref = ?",
+        "SELECT updated_by, updated_branch, updated_commit_sha FROM handoff_state WHERE task_ref = ?",
         (task_ref,),
     ).fetchone()
     active_missing = None
@@ -586,7 +616,7 @@ def _evaluate_close_failures(
     if not provenance_integrity["healthy"]:
         failures.append("Write provenance integrity checks failed (missing agent/branch metadata).")
     if not current_task_in_sync:
-        failures.append("CURRENT_TASK.md is out of sync with handoff DB state.")
+        failures.append("CURRENT_TASK.json is out of sync with handoff DB state.")
     if require_fresh_tests and fresh_test_count == 0:
         failures.append("Fresh verification for the current commit is required before close.")
     if require_current_commit_summary and not structured_decisions:

@@ -10,7 +10,7 @@ mcp_tools:
   - record_event
   - search_handoff
   - get_handoff_state
-  - generate_current_task_md
+  - render_handoff
 tdd_gate: true
 ---
 
@@ -71,7 +71,7 @@ Identify and verify the root cause of a defect before applying a fix, then prese
 7. Only after confirming the root cause, implement the smallest fix, add a regression test, and run the relevant suite.
 8. Close or update the investigation finding with `review_findings(review={"operation":"update", ...})`.
 9. Record the investigation outcome with `record_event(event={"event_kind":"decision", ...})`.
-10. Regenerate task context with `generate_current_task_md(...)`.
+10. Regenerate task context with `render_handoff(kind='current_task', ...)`.
 
 ### Useful commands
 
@@ -110,7 +110,7 @@ Run the smallest relevant test command for the affected surface before widening 
 - The resulting fix is minimal and paired with a regression test when a fix is applied.
 - The investigation finding is updated with outcome and verification evidence.
 - The investigation outcome is recorded with `record_event(event={"event_kind":"decision", ...})`.
-- `generate_current_task_md(...)` has been run after the state-changing writes.
+- `render_handoff(kind='current_task', ...)` has been run after the state-changing writes.
 
 ## See Also
 

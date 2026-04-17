@@ -306,12 +306,19 @@ def _render_epic_decisions_section(epic_ref: str, decisions: list[dict]) -> list
 # ---------------------------------------------------------------------------
 
 
-def _collect_task_test_status(conn: sqlite3.Connection, epic_ref: str | None = None) -> dict[str, dict]:
+def _collect_task_test_status(
+    conn: sqlite3.Connection,
+    epic_ref: str | None = None,
+    active_task_ref: str | None = None,
+) -> dict[str, dict]:
     """Return per-task test summary: latest pass/fail and totals.
 
-    Only includes tasks that have at least one verified_test row.
-    When *epic_ref* is set, only tasks whose task_ref matches the epic
-    prefix are returned (same pattern as ``_collect_epic_decisions``).
+    Scoping (in order):
+      - *epic_ref* set: tasks matching the epic prefix (E17, E17-*, ...).
+      - *active_task_ref* set: just the active task.
+      - Neither: empty result. Never returns the full unbounded
+        verified_tests table — that surfaced 100+ stale rows to the
+        operator when the active task was non-epic (MAINT-*, AHMCP-*).
     """
     if epic_ref:
         rows = conn.execute(
@@ -320,10 +327,15 @@ def _collect_task_test_status(conn: sqlite3.Connection, epic_ref: str | None = N
             " ORDER BY verified_at DESC",
             (epic_ref, f"{epic_ref}-%"),
         ).fetchall()
-    else:
+    elif active_task_ref:
         rows = conn.execute(
-            "SELECT task_ref, passed, verified_at FROM verified_tests ORDER BY verified_at DESC"
+            "SELECT task_ref, passed, verified_at FROM verified_tests"
+            " WHERE task_ref = ?"
+            " ORDER BY verified_at DESC",
+            (active_task_ref,),
         ).fetchall()
+    else:
+        rows = []
     summary: dict[str, dict] = {}
     for row in rows:
         ref = str(row["task_ref"])
@@ -543,7 +555,9 @@ def generate_dashboard_md(write_file: bool = True) -> dict:
         needs_attention = _collect_needs_attention(conn, dashboard_rows, open_findings)
         ctx = _collect_dashboard_context(conn, active_task_ref)
         epic_ref, epic_decisions = _collect_epic_decisions(conn, active_task_ref)
-        task_test_status = _collect_task_test_status(conn, epic_ref=epic_ref)
+        task_test_status = _collect_task_test_status(
+            conn, epic_ref=epic_ref, active_task_ref=active_task_ref
+        )
 
     integrity_anomalies = _collect_workflow_integrity(target_branch, target_worktree_path)
 

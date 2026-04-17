@@ -1,7 +1,7 @@
-"""Orchestrator dashboard extension for DASHBOARD.md.
+"""Orchestrator dashboard extension for DASHBOARD.txt.
 
 Registers a ``DashboardExtension`` callback (per rg-014: late-binding imports)
-that appends two sections to the DASHBOARD.md human observatory view:
+that appends two sections to the DASHBOARD.txt human observatory view:
 
 - Lane Health (order=50): active/blocked/review lanes from the most recent
   ``worktree_lanes`` snapshot passed in ``DashboardContext``.

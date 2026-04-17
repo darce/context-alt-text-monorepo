@@ -7,9 +7,11 @@ import sys
 import tomllib
 from pathlib import Path
 
+import pytest
 from fastmcp.client import Client, PythonStdioTransport
 
 
+@pytest.mark.timeout(60)
 def test_vscode_adapter_points_to_installed_entrypoint_and_doctor_runs() -> None:
     """The vscode adapter wires up the right entrypoint and `doctor` reports
     a sane workspace_root.
@@ -142,6 +144,7 @@ def test_generic_stdio_adapter_launches_packaged_server(tmp_path: Path) -> None:
     assert "review_runs" in tool_names
 
 
+@pytest.mark.timeout(60)
 def test_legacy_tool_profile_flags_now_all_expose_the_same_22_tools(tmp_path: Path) -> None:
     """Default/core/extended launches all expose the unified 22-tool surface.
 

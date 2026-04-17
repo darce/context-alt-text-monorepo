@@ -113,7 +113,7 @@ Five follow-on gaps remain once the E17-6 core is separated:
 - Orchestrator tests: `packages/agent-orchestrator-mcp/tests/`
 - Tool bridge-gap investigation: `docs/assessments/review-runs-tool-bridge-gap-investigation-2026-04-16.md` (empirical evidence that tool count affects VS Code/Copilot session tool availability; motivates Slice 4)
 - CLI-vs-native-tools investigation: `docs/assessments/agent-handoff-mcp-cli-vs-native-tools-investigation-2026-04-16.md` (confirms that the CLI + Python API + native MCP tools share one backend; agent token cost is driven by tool count and response envelope size, not by which presentation is "chosen" — reinforces Slice 4 scope and constraints the acceptable rename surface)
-- DASHBOARD naming drift investigation: `docs/assessments/dashboard-md-vs-txt-guidance-drift-investigation-2026-04-16.md` (post-AHMCP-23 cleanup inventory; 18 active-surface files still say `DASHBOARD.md` though every writer produces `DASHBOARD.txt`; Slice 4 is the natural place to normalize the docs + docstring + Makefile comment surfaces because the `generate_dashboard_md` → `generate_md` rename touches them anyway)
+- DASHBOARD naming drift investigation: `docs/assessments/dashboard-md-vs-txt-guidance-drift-investigation-2026-04-16.md` (post-AHMCP-23 cleanup inventory; 18 active-surface files still say `DASHBOARD.md` though every writer produces `DASHBOARD.txt`; Slice 4 is the natural place to normalize the docs + docstring + Makefile comment surfaces because the `generate_dashboard_md` → `render_handoff` rename touches them anyway)
 
 ## Proposed Solution
 
@@ -238,6 +238,8 @@ Proof:
 
 **Goal**: store raw test traces and expose selective retrieval for cold-start debugging.
 
+Status note: this slice remains intentionally unchecked on `main`. Earlier Slice 3 work existed only as uncommitted `feature/e17-7` worktree state and never received a slice-complete decision, so the plan should continue to treat it as pending until it lands in a reviewable commit batch.
+
 Changes:
 
 - Bump `HANDOFF_SCHEMA_VERSION` and add the warm-start migration for `test_traces` in `shared_schema.py` so existing handoff databases gain the new table without requiring a reset.
@@ -266,24 +268,23 @@ Token-minimization constraints for this slice:
 - Preserve the bounded-read envelope contract (`sections`, `detail`, `top_n_*`, `fields`) on every compound tool — compound tools must not enlarge their default response shape.
 - Preserve the `slim-handoff-response` PostToolUse hook coverage when renaming matcher ids (atomic with the rename).
 - Preserve functionality: every Python API symbol currently imported across the repo continues to resolve (aliases kept).
-- Preserve dashboard rendering: after `generate_dashboard_md` → `generate_md` rename, writing the dashboard continues to produce `DASHBOARD.txt` at the workspace root with identical content semantics and no new `.md` artifact.
+- Preserve dashboard rendering: after `generate_dashboard_md` → `render_handoff` rename, writing the dashboard continues to produce `DASHBOARD.txt` at the workspace root with identical content semantics and no new `.md` artifact.
 
-Changes:
+Changes (split into three sub-slices; only 4A is in scope for this task):
 
-- Replace the six single-purpose tools with three compound tools:
-  - `generate_md` (replaces `generate_current_task_md` + `generate_dashboard_md`)
-  - `handoff_transfer` (replaces `export_handoff_state` + `import_handoff_state`)
-  - `task_archive` (replaces `archive_task_state` + `get_archived_task`)
+- **Sub-slice 4A (in scope)**: `render_handoff` (replaces `generate_current_task_md` + `generate_dashboard_md`).
+- **Sub-slice 4B (DEFERRED — out of scope for E17-7)**: `handoff_transfer` (would replace `export_handoff_state` + `import_handoff_state`). Deferred because the token-cost and session-drop risk is already materially reduced by 4A + the existing bounded-read envelope, and the export/import pair is called infrequently enough that it is not contributing to per-turn tool-count pressure. To be picked up in a follow-on task if advertised tool count regresses measurably.
+- **Sub-slice 4C (DEFERRED — out of scope for E17-7)**: `task_archive` (would replace `archive_task_state` + `get_archived_task`). Deferred for the same reason: both are rarely called lifecycle tools and removing them from the advertised count has diminishing returns over 4A. Revisit only if tool-count pressure reappears.
 - Keep Python-level compatibility aliases so existing callers are unaffected.
 - Update CLI/operator surfaces atomically with the MCP rename:
   - `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py`: keep subcommand names/help text aligned with the new compound tools or document intentional compatibility aliases
   - `packages/agent-handoff-mcp/README.md`: update the command map and examples to match the final surface
 - Update harness hook matchers atomically with the tool rename:
-  - `.github/hooks/terminal-guard.json`: update all PostToolUse matchers that reference old tool names (e.g. `mcp_altcontext-mc_generate_current_task_md` becomes `mcp_altcontext-mc_generate_md`)
-  - `.claude/settings.json`: update all PostToolUse hooks that reference old tool names (e.g. `mcp__agent-handoff-mcp__generate_dashboard_md` becomes `mcp__agent-handoff-mcp__generate_md`)
+  - `.github/hooks/terminal-guard.json`: update all PostToolUse matchers that reference old tool names (e.g. `mcp_altcontext-mc_generate_current_task_md` becomes `mcp_altcontext-mc_render_handoff`)
+  - `.claude/settings.json`: update all PostToolUse hooks that reference old tool names (e.g. `mcp__agent-handoff-mcp__generate_dashboard_md` becomes `mcp__agent-handoff-mcp__render_handoff`)
   - `.github/copilot-instructions.md`: update the deferred-tool list to reflect the new compound tool names
 - Update contracts docs to the new MCP tool names.
-- Normalize the post-AHMCP-23 `DASHBOARD.md` → `DASHBOARD.txt` drift atomically with the `generate_dashboard_md` → `generate_md` rename, because the same surfaces (contracts, playbooks, skills, instructions, lifecycle-map, development-workflow, the Makefile comment on `dashboard:`, the `dashboard_extension.py` module docstring) are touched by both changes:
+- Normalize the post-AHMCP-23 `DASHBOARD.md` → `DASHBOARD.txt` drift atomically with the `generate_dashboard_md` → `render_handoff` rename, because the same surfaces (contracts, playbooks, skills, instructions, lifecycle-map, development-workflow, the Makefile comment on `dashboard:`, the `dashboard_extension.py` module docstring) are touched by both changes:
   - `docs/agentic/contracts/agent-handoff-mcp.md`
   - `docs/agentic/instructions.md`
   - `docs/agentic/lifecycle-map.md`
@@ -302,9 +303,9 @@ Proof:
 - Compound-tool dispatch tests pass.
 - Python aliases still resolve.
 - CLI help/README examples match the final renamed or aliased surface.
-- Tool count matches the compressed target.
+- Tool count matches the re-scoped 4A-only compression target.
 - Hook matchers reference only the new compound tool names; no stale references remain.
-- After the rename, `generate_md(kind="dashboard")` (or its equivalent compound invocation) writes exactly `DASHBOARD.txt` at the workspace root with no accompanying `DASHBOARD.md`; `cat DASHBOARD.txt` matches the previous `generate_dashboard_md()` output byte-for-byte modulo the timestamp line.
+- After the rename, `render_handoff(kind="dashboard")` (or its equivalent compound invocation) writes exactly `DASHBOARD.txt` at the workspace root with no accompanying `DASHBOARD.md`; `cat DASHBOARD.txt` matches the previous `generate_dashboard_md()` output byte-for-byte modulo the timestamp line.
 - `grep -rn DASHBOARD.md` across tracked non-archive markdown + Makefile + the `dashboard_extension.py` module docstring returns zero hits after Slice 4 lands (a CI guard for this lives in E17-9 Slice 4).
 - Agent-visible token budget check: the compressed tool surface reduces per-turn request token cost for common Get-state + record-event + dashboard-regenerate flows, measured against the pre-compression baseline captured during Slice 4 implementation.
 
@@ -375,9 +376,9 @@ Proof:
 
 ### Slice 4: Tool Surface Compression
 
-- [ ] `generate_md` replaces the two rendering MCP tools
-- [ ] `handoff_transfer` replaces export/import MCP tools
-- [ ] `task_archive` replaces archive/get MCP tools
+- [x] Sub-slice 4A: `render_handoff` replaces the two rendering MCP tools
+- [ ] ~~Sub-slice 4B: `handoff_transfer` replaces export/import MCP tools~~ (DEFERRED — see scope note above)
+- [ ] ~~Sub-slice 4C: `task_archive` replaces archive/get MCP tools~~ (DEFERRED — see scope note above)
 - [ ] Python compatibility aliases remain available
 - [ ] Bounded-read envelope (`sections`, `detail`, `top_n_*`) preserved on every compound tool — no default response enlargement
 - [ ] `slim-handoff-response` PostToolUse hook matcher updated atomically with the tool rename so response slimming keeps applying

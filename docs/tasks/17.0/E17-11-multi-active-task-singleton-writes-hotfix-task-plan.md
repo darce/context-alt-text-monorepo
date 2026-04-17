@@ -18,7 +18,7 @@ This plan explicitly resolves the "does the sentinel survive?" open thread (PLAN
 - The sentinel has no legitimate role once `_resolve_workspace_handoff_row` can answer "which task is this worktree on?" from cwd/branch. Any surface that needs an "active task" answer will derive it from the caller's workspace or be passed an explicit `task_ref`.
 - Keeping the sentinel as a compatibility shim costs clarity and perpetuates exactly the eviction pattern we're trying to remove.
 
-Consequence: `handoff_state.id` remains the primary key but loses all semantic meaning as a pointer. No code may assume `id = 1` is "the active task". New rows get auto-assigned ids; `switch_task` no longer targets `id = 1`.
+Consequence: `task_ref` remains the real primary key (per [shared_schema.py:107](../../../packages/agent-handoff-mcp/src/agent_handoff_mcp/shared_schema.py#L107)). The `id` column stays as an ignored nullable legacy column constrained by `CHECK (id IS NULL OR id = 1)` ([shared_schema.py:106](../../../packages/agent-handoff-mcp/src/agent_handoff_mcp/shared_schema.py#L106)); no code may assume `id = 1` is "the active task" and no new row may set `id = 1`. All new rows insert with `id = NULL`, which the `UNIQUE`/`CHECK` constraint already permits without a schema change. `switch_task` no longer targets `id = 1` on either the read or the write side. This is code-only; no schema migration is needed and Non-Goals still hold.
 
 ## Motivation
 
@@ -66,7 +66,7 @@ Tests: two tasks coexist through a `switch_task` call; dashboard renders both; a
 
 This is the bug that blocks E17-10-style fixes. Three coordinated changes:
 
-- **a. Callee: make the guard task_ref-aware at every call site.** `collect_target_context_warnings` already accepts `task_ref` (since an earlier slice), but the `WHERE id = 1` fallback at `shared_write_context.py:451` must be replaced with either workspace-resolved lookup or an explicit error. The singleton fallback stays only as a last-resort for bootstrap callers that have neither task_ref nor workspace context.
+- **a. Callee: make the guard task_ref-aware at every call site.** `collect_target_context_warnings` already accepts `task_ref` (since an earlier slice). Per the Resolved open thread below, the singleton fallback at `shared_write_context.py:451` is **removed outright — no last-resort sentinel anywhere.** Resolution order at every call site becomes: (1) explicit `task_ref` parameter, (2) workspace-path lookup via `_resolve_workspace_handoff_row`, (3) return empty warnings (guard no-op, guard does not silently bind to any sentinel row). No code path falls back to `handoff_state WHERE id = 1` under any condition, including bootstrap.
 - **b. Caller ordering: resolve task_ref first.** Every write handler that today calls `collect_target_context_warnings(conn, ctx)` before `_resolve_task_ref(conn, task_ref)` must be re-ordered. Confirmed sites so far: `review_findings.py:852/881`, and per Slice 1 audit all analogous call sites in `record_event`, `close_slice`, `set_handoff_state`, `update_task_status`, `handoff_close_check`. Each must pass the resolved task_ref into the guard.
 - **c. Drift hook fallback.** When no task_ref can be extracted from tool input, walk the workspace path to find the matching row. Only use the sentinel as a last-resort fallback and log a warning.
 

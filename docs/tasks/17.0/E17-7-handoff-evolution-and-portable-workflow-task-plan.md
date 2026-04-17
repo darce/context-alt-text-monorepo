@@ -30,7 +30,7 @@ Five follow-on gaps remain once the E17-6 core is separated:
 
 1. **Singleton handoff state blocks parallel work**: `handoff_state WHERE id = 1` still assumes one active task at a time.
 2. **Cold starts lose failure detail**: `verified_tests.result` preserves only a 280-character summary, not raw trace content.
-3. **The MCP tool surface is larger than necessary**: several read/write tool pairs can be merged into compound tools without changing the Python API. An [investigation into a missing `review_runs` tool](../../assessments/review-runs-tool-bridge-gap-investigation-2026-04-16.md) confirmed that the VS Code/Copilot MCP session bridge may deprioritize or drop tools when the advertised tool count is high; compressing the surface reduces that risk. A second [CLI-vs-native-tools investigation](../../assessments/agent-handoff-mcp-cli-vs-native-tools-investigation-2026-04-16.md) confirmed that tool-count and per-call response size are the only levers that actually move the *agent's* token bill — shell-hook call sites (CLI, Python-in-shell) cost zero agent tokens regardless — so "minimize MCP token usage without breaking functionality" maps directly to this slice plus the existing bounded-read envelope (`sections=`, `detail=`, `top_n_*`). Slice 4 must preserve functionality including correct dashboard rendering at the authoritative `DASHBOARD.txt` path throughout the rename.
+3. **The MCP tool surface is larger than necessary**: several read/write tool pairs can be merged into compound tools without changing the Python API. An [investigation into a missing `review_runs` tool](../../assessments/review-runs-tool-bridge-gap-investigation-2026-04-16.md) confirmed that the VS Code/Copilot MCP session bridge may deprioritize or drop tools when the advertised tool count is high; compressing the surface reduces that risk. A second [CLI-vs-native-tools investigation](../../assessments/agent-handoff-mcp-cli-vs-native-tools-investigation-2026-04-16.md) confirmed that tool-count and per-call response size are the only levers that actually move the _agent's_ token bill — shell-hook call sites (CLI, Python-in-shell) cost zero agent tokens regardless — so "minimize MCP token usage without breaking functionality" maps directly to this slice plus the existing bounded-read envelope (`sections=`, `detail=`, `top_n_*`). Slice 4 must preserve functionality including correct dashboard rendering at the authoritative `DASHBOARD.txt` path throughout the rename.
 4. **Codex portable-command parity is incomplete**: `portable_commands.json` already generates Claude and VS Code adapters, but Codex still depends on handwritten router text in `instructions.md` and `CLAUDE.md`. That leaves `/branch-review`, `/planning-review`, and the other workflow ids vulnerable to drift in this harness.
 5. **Python runtime selection is not normalized across harnesses**: the repo already assumes the `description-service` pyenv, but the non-interactive contract is fragmented across `PYENV_VERSION=description-service`, `pyenv exec`, `.python-version`, and older config surfaces such as `.mcp.json`. That makes Python/MCP startup behavior drift-prone across hosts.
 
@@ -117,53 +117,54 @@ Five follow-on gaps remain once the E17-6 core is separated:
 
 ## Proposed Solution
 
-Four slices deliver the follow-on. Slice 1 is independent of the handoff-schema work and should land first because it closes the user-visible Codex command gap. Slices 2-4 then proceed in dependency order:
+Five slices deliver the follow-on. Slice 1 is independent of the handoff-schema work and should land first because it closes the user-visible Codex command gap. Slices 2-4 then proceed in dependency order. Slice 5 is orthogonal additive backend work that front-loads the `review_findings` pieces E17-9 depends on; it can land in parallel with Slices 1-4 but naturally follows Slice 2 because it touches the same table:
 
 1. Portable workflow normalization for Codex + Python runtime contract
 2. Multi-active-task registry + slice status / task-plan sync
 3. Test trace archive and change-outcome linkage
 4. MCP tool surface compression
+5. Parallel-review backend groundwork (additive: `review_findings.merge` + `(lane_id, status)` index)
 
 ## Contract and Boundary Impact
 
-| Boundary                              | Owner                                                                  | Current Contract                                                         | Expected Change                                                                | Compatibility Needed?                   | Verification                                  |
-| ------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------ | --------------------------------------- | --------------------------------------------- |
-| `portable_commands.json`              | `config/agent-workflows/`                                              | canonical command ids, Claude + VS Code adapters                         | extend to Codex router artifact content only                                   | non-breaking manifest authority         | generator/check passes                        |
-| `scripts/generate_agent_workflows.py` | scripts                                                                | writes Claude + VS Code adapters                                         | also writes Codex router artifact                                              | non-breaking generator expansion        | generated outputs match                       |
-| `make check-agent-workflows`          | root `Makefile`                                                        | checks Claude + VS Code adapters                                         | also checks Codex router artifact                                              | non-breaking stronger gate              | drift fails                                   |
-| `make check-codex-command-router`     | root `Makefile` (new)                                                  | does not exist                                                           | static Codex router drift gate over marker-delimited generated blocks only     | n/a — new target                        | handwritten/router drift fails                |
-| `make smoke-agent-workflows`          | root `Makefile` (new)                                                  | does not exist                                                           | optional runtime command-resolution smoke test                                 | n/a — new target                        | `/branch-review` + `/planning-review` resolve |
+| Boundary                              | Owner                                                                  | Current Contract                                                                                         | Expected Change                                                                                                               | Compatibility Needed?                   | Verification                                                            |
+| ------------------------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- | ----------------------------------------------------------------------- |
+| `portable_commands.json`              | `config/agent-workflows/`                                              | canonical command ids, Claude + VS Code adapters                                                         | extend to Codex router artifact content only                                                                                  | non-breaking manifest authority         | generator/check passes                                                  |
+| `scripts/generate_agent_workflows.py` | scripts                                                                | writes Claude + VS Code adapters                                                                         | also writes Codex router artifact                                                                                             | non-breaking generator expansion        | generated outputs match                                                 |
+| `make check-agent-workflows`          | root `Makefile`                                                        | checks Claude + VS Code adapters                                                                         | also checks Codex router artifact                                                                                             | non-breaking stronger gate              | drift fails                                                             |
+| `make check-codex-command-router`     | root `Makefile` (new)                                                  | does not exist                                                                                           | static Codex router drift gate over marker-delimited generated blocks only                                                    | n/a — new target                        | handwritten/router drift fails                                          |
+| `make smoke-agent-workflows`          | root `Makefile` (new)                                                  | does not exist                                                                                           | optional runtime command-resolution smoke test                                                                                | n/a — new target                        | `/branch-review` + `/planning-review` resolve                           |
 | Python harness env                    | `.vscode/mcp.json`, `.codex/config.toml`, `.mcp.json`, Makefiles, docs | mixed `pyenv activate`, `pyenv exec`, partial `PYENV_VERSION` wiring, and user-local absolute repo paths | normalize on `PYENV_VERSION=description-service` and portable env/workspace-relative path forms for non-interactive harnesses | non-breaking runtime normalization      | all harnesses launch against the same env without user-local path drift |
-| `handoff_state`                       | `shared_schema.py`                                                     | singleton row                                                            | task-ref keyed multi-row state                                                 | breaking internal schema                | tests pass                                    |
-| `load_session` / `get_handoff_state`  | `core.py`, `handoff_state.py`                                          | no explicit slice-status section                                         | add `slices_completed` section                                                 | non-breaking additive response          | cold-start status visible                     |
-| `verified_tests` + `test_traces`      | `shared_schema.py`, `verified_tests.py`, `decisions.py`                | summary-only result                                                      | raw traces + correlated-file retrieval                                         | non-breaking additive query params      | trace roundtrip works                         |
-| MCP tool registry                     | `api.py`                                                               | 6 single-purpose tools                                                   | 3 compound tools                                                               | breaking MCP names, Python aliases kept | tool count reduced                            |
-| Hook matchers                         | `terminal-guard.json`, `.claude/settings.json`                         | reference old tool names                                                 | reference compound tool names                                                  | atomic with tool rename                 | no stale references                           |
-| Deferred tool list                    | `.github/copilot-instructions.md`                                      | lists old tool names                                                     | lists compound tool names                                                      | atomic with tool rename                 | tool_search resolves                          |
+| `handoff_state`                       | `shared_schema.py`                                                     | singleton row                                                                                            | task-ref keyed multi-row state                                                                                                | breaking internal schema                | tests pass                                                              |
+| `load_session` / `get_handoff_state`  | `core.py`, `handoff_state.py`                                          | no explicit slice-status section                                                                         | add `slices_completed` section                                                                                                | non-breaking additive response          | cold-start status visible                                               |
+| `verified_tests` + `test_traces`      | `shared_schema.py`, `verified_tests.py`, `decisions.py`                | summary-only result                                                                                      | raw traces + correlated-file retrieval                                                                                        | non-breaking additive query params      | trace roundtrip works                                                   |
+| MCP tool registry                     | `api.py`                                                               | 6 single-purpose tools                                                                                   | 3 compound tools                                                                                                              | breaking MCP names, Python aliases kept | tool count reduced                                                      |
+| Hook matchers                         | `terminal-guard.json`, `.claude/settings.json`                         | reference old tool names                                                                                 | reference compound tool names                                                                                                 | atomic with tool rename                 | no stale references                                                     |
+| Deferred tool list                    | `.github/copilot-instructions.md`                                      | lists old tool names                                                                                     | lists compound tool names                                                                                                     | atomic with tool rename                 | tool_search resolves                                                    |
 
 ## Files and Surfaces to Change
 
-| Surface                 | File                                                                                                                                                                                              | Change                                                                                        |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| Portable manifest       | `config/agent-workflows/portable_commands.json`                                                                                                                                                   | extend manifest ownership to Codex router text where needed                                   |
-| Workflow generator      | `scripts/generate_agent_workflows.py`                                                                                                                                                             | generate Codex router artifact in addition to Claude + VS Code adapters                       |
-| Generated Codex router  | `docs/agentic/generated/codex-command-router.md` (new)                                                                                                                                            | generated Codex command-routing artifact plus the canonical block content inserted into consumer docs |
-| Codex router consumers  | `docs/agentic/instructions.md`, `CLAUDE.md`                                                                                                                                                       | replace handwritten command-id lists with one required marker-delimited generated block per file |
+| Surface                 | File                                                                                                                                                                                              | Change                                                                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Portable manifest       | `config/agent-workflows/portable_commands.json`                                                                                                                                                   | extend manifest ownership to Codex router text where needed                                                                         |
+| Workflow generator      | `scripts/generate_agent_workflows.py`                                                                                                                                                             | generate Codex router artifact in addition to Claude + VS Code adapters                                                             |
+| Generated Codex router  | `docs/agentic/generated/codex-command-router.md` (new)                                                                                                                                            | generated Codex command-routing artifact plus the canonical block content inserted into consumer docs                               |
+| Codex router consumers  | `docs/agentic/instructions.md`, `CLAUDE.md`                                                                                                                                                       | replace handwritten command-id lists with one required marker-delimited generated block per file                                    |
 | Harness runtime configs | `.vscode/mcp.json`, `.codex/config.toml`, `.mcp.json`                                                                                                                                             | normalize `PYENV_VERSION=description-service` and replace user-local absolute repo paths with portable env/workspace-relative forms |
-| Python command surfaces | root `Makefile`, `apps/prototype-description-service/Makefile`, package Makefiles where needed                                                                                                    | standardize non-interactive `description-service` selection                                   |
-| Startup docs            | `CLAUDE.md`, `docs/agentic/instructions.md`, `docs/agentic/BOOTSTRAP.md`, `.github/copilot-instructions.md`, `apps/prototype-description-service/README.md`                                       | front-load the canonical pyenv contract; demote `pyenv activate` to interactive-only guidance |
-| Static drift gate       | root `Makefile`                                                                                                                                                                                   | expand `check-agent-workflows`; add `check-codex-command-router`                              |
-| Runtime smoke test      | root `Makefile` and script(s)                                                                                                                                                                     | add optional `smoke-agent-workflows`                                                          |
-| Handoff schema          | `packages/agent-handoff-mcp/src/agent_handoff_mcp/shared_schema.py`                                                                                                                               | re-key `handoff_state`; add `test_traces`                                                     |
-| Task resolution         | `shared_primitives.py`, `handoff_state.py`, `core.py`, `import_export.py`, `shared_write_context.py`, `decisions.py`, `review_findings.py`, `current_task_rendering.py`, `dashboard_rendering.py` | update singleton task-resolution assumptions                                                  |
-| Slice status surface    | `core.py`, `handoff_state.py`                                                                                                                                                                     | add `slices_completed` section                                                                |
-| Task-plan sync          | `scripts/hooks/sync-task-plan-checkboxes.sh`, `scripts/context.sh`                                                                                                                                | auto-sync and stale-checkbox warning                                                          |
-| Verification surface    | `decisions.py`, `verified_tests.py`, `api.py`                                                                                                                                                     | raw traces + correlated-file lookup                                                           |
-| Tool compression        | `api.py`, `__init__.py`                                                                                                                                                                           | compound MCP tools + Python compatibility aliases                                             |
-| Handoff CLI surface     | `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py`, `packages/agent-handoff-mcp/README.md`                                                                                               | keep CLI subcommands and operator docs aligned with the compressed tool names                 |
-| Hook matchers           | `.github/hooks/terminal-guard.json`, `.claude/settings.json`                                                                                                                                      | update PostToolUse matchers from old tool names to compound tool names                        |
-| Deferred tool registry  | `.github/copilot-instructions.md`                                                                                                                                                                 | update deferred-tool list to reflect compound tool names                                      |
-| Contracts               | `docs/agentic/contracts/`                                                                                                                                                                         | update MCP tool surface documentation                                                         |
+| Python command surfaces | root `Makefile`, `apps/prototype-description-service/Makefile`, package Makefiles where needed                                                                                                    | standardize non-interactive `description-service` selection                                                                         |
+| Startup docs            | `CLAUDE.md`, `docs/agentic/instructions.md`, `docs/agentic/BOOTSTRAP.md`, `.github/copilot-instructions.md`, `apps/prototype-description-service/README.md`                                       | front-load the canonical pyenv contract; demote `pyenv activate` to interactive-only guidance                                       |
+| Static drift gate       | root `Makefile`                                                                                                                                                                                   | expand `check-agent-workflows`; add `check-codex-command-router`                                                                    |
+| Runtime smoke test      | root `Makefile` and script(s)                                                                                                                                                                     | add optional `smoke-agent-workflows`                                                                                                |
+| Handoff schema          | `packages/agent-handoff-mcp/src/agent_handoff_mcp/shared_schema.py`                                                                                                                               | re-key `handoff_state`; add `test_traces`                                                                                           |
+| Task resolution         | `shared_primitives.py`, `handoff_state.py`, `core.py`, `import_export.py`, `shared_write_context.py`, `decisions.py`, `review_findings.py`, `current_task_rendering.py`, `dashboard_rendering.py` | update singleton task-resolution assumptions                                                                                        |
+| Slice status surface    | `core.py`, `handoff_state.py`                                                                                                                                                                     | add `slices_completed` section                                                                                                      |
+| Task-plan sync          | deferred from Slice 2                                                                                                                                                                             | not retained in this slice; if revived later, coordinate with E17-8 allow-list sequencing before adding a main-worktree write path  |
+| Verification surface    | `decisions.py`, `verified_tests.py`, `api.py`                                                                                                                                                     | raw traces + correlated-file lookup                                                                                                 |
+| Tool compression        | `api.py`, `__init__.py`                                                                                                                                                                           | compound MCP tools + Python compatibility aliases                                                                                   |
+| Handoff CLI surface     | `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py`, `packages/agent-handoff-mcp/README.md`                                                                                                 | keep CLI subcommands and operator docs aligned with the compressed tool names                                                       |
+| Hook matchers           | `.github/hooks/terminal-guard.json`, `.claude/settings.json`                                                                                                                                      | update PostToolUse matchers from old tool names to compound tool names                                                              |
+| Deferred tool registry  | `.github/copilot-instructions.md`                                                                                                                                                                 | update deferred-tool list to reflect compound tool names                                                                            |
+| Contracts               | `docs/agentic/contracts/`                                                                                                                                                                         | update MCP tool surface documentation                                                                                               |
 
 ## Verification Strategy
 
@@ -224,15 +225,14 @@ Changes:
   - if exactly one active row matches, return it
   - if zero rows match or multiple rows match, raise an explicit ambiguity error naming the candidate task refs so CLI callers stop relying on the singleton fallback
 - Add `slices_completed` to `load_session` and `get_handoff_state`.
-- Carry forward the split-out task-plan sync/status ideas from the former E17-6 draft:
-  - `scripts/hooks/sync-task-plan-checkboxes.sh`
-  - stale-checkbox warning in `make context`
+- Do not retain the split-out task-plan sync/status ideas from the former E17-6 draft in Slice 2. They are deferred until the E17-8 allow-list sequencing lands on `main`; if revived later, attach the warning to the real `make context` entrypoint (`scripts/check-task-context.py`), not the stale `scripts/context.sh` path.
 
 Proof:
 
 - Two active tasks can coexist without eviction.
 - `load_session()` shows completed slices explicitly.
-- Task-plan checkbox sync/status surfaces work as documented.
+- Migration proof covers preservation: run the chosen in-place migration or export/reset/reimport path against a fixture DB containing two unrelated active tasks plus findings, decisions, and archive rows, then assert identical row counts and payload contents after the task-registry change.
+- Slice 2 no longer claims a task-plan checkbox sync hook or stale-checkbox warning.
 
 ### Slice 3: Test Trace Archive and Change-Outcome Linkage
 
@@ -254,7 +254,7 @@ Proof:
 
 **Goal**: reduce MCP tool count to improve session tool availability, simplify the API surface, and lower per-turn token cost without changing functionality or regressing dashboard rendering.
 
-Motivation: The [review_runs bridge-gap investigation](../../assessments/review-runs-tool-bridge-gap-investigation-2026-04-16.md) confirmed that tools can silently disappear from VS Code/Copilot sessions even when fully registered on the server side. The investigation identified tool-count batching in the session projection layer as a probable cause. The companion [CLI-vs-native-tools investigation](../../assessments/agent-handoff-mcp-cli-vs-native-tools-investigation-2026-04-16.md) narrowed the agent-visible token cost to two levers — (a) advertised tool count and (b) per-response envelope size — and confirmed that non-agent invocations (shell hooks, scripts importing the Python API) cost zero agent tokens regardless of transport. Reducing the advertised tool count is therefore both the only mitigation for session drop-out *and* the most direct per-turn token reduction. Per-response size stays governed by the existing bounded-read envelope (`sections=`, `detail="summary"`, `top_n_*`) and the `slim-handoff-response` hook; this slice does not alter those.
+Motivation: The [review_runs bridge-gap investigation](../../assessments/review-runs-tool-bridge-gap-investigation-2026-04-16.md) confirmed that tools can silently disappear from VS Code/Copilot sessions even when fully registered on the server side. The investigation identified tool-count batching in the session projection layer as a probable cause. The companion [CLI-vs-native-tools investigation](../../assessments/agent-handoff-mcp-cli-vs-native-tools-investigation-2026-04-16.md) narrowed the agent-visible token cost to two levers — (a) advertised tool count and (b) per-response envelope size — and confirmed that non-agent invocations (shell hooks, scripts importing the Python API) cost zero agent tokens regardless of transport. Reducing the advertised tool count is therefore both the only mitigation for session drop-out _and_ the most direct per-turn token reduction. Per-response size stays governed by the existing bounded-read envelope (`sections=`, `detail="summary"`, `top_n_*`) and the `slim-handoff-response` hook; this slice does not alter those.
 
 Token-minimization constraints for this slice:
 
@@ -300,8 +300,40 @@ Proof:
 - Tool count matches the compressed target.
 - Hook matchers reference only the new compound tool names; no stale references remain.
 - After the rename, `generate_md(kind="dashboard")` (or its equivalent compound invocation) writes exactly `DASHBOARD.txt` at the workspace root with no accompanying `DASHBOARD.md`; `cat DASHBOARD.txt` matches the previous `generate_dashboard_md()` output byte-for-byte modulo the timestamp line.
-- `grep -rn DASHBOARD.md` across tracked non-archive markdown + Makefile + the `dashboard_extension.py` module docstring returns zero hits after Slice 4 lands (a CI guard for this lives in E17-8 Slice 3).
+- `grep -rn DASHBOARD.md` across tracked non-archive markdown + Makefile + the `dashboard_extension.py` module docstring returns zero hits after Slice 4 lands (a CI guard for this lives in E17-9 Slice 4).
 - Agent-visible token budget check: the compressed tool surface reduces per-turn request token cost for common Get-state + record-event + dashboard-regenerate flows, measured against the pre-compression baseline captured during Slice 4 implementation.
+
+### Slice 5: Parallel-Review Backend Groundwork (Additive)
+
+**Goal**: front-load the two small additive `review_findings` pieces that the successor E17-9 parallel-review workflow depends on, so the new skill work in E17-9 does not block on a second cross-surface slice against the same table Slice 2 already touches.
+
+Motivation: The [parallel-reviews-and-autonomous-debug assessment](../../assessments/parallel-reviews-and-autonomous-debug-assessment-2026-04-16.md) proposes a parallel-branch-review skill (landed in E17-9) where multiple subagents — Claude Code Agent tool, `codex exec` subprocess, or `run_structured_turn` copilot bridge — each write findings under their own scoped `task_ref` and a coordinator merges them under the parent task. Two tiny backend additions are load-bearing for that coordinator and cheap to land here because the surfaces overlap Slice 2's `handoff_state` re-key work:
+
+1. A `merge` operation on `review_findings` so the coordinator can unify per-reviewer finding sets atomically instead of issuing N sequential `operation="record"` calls that bypass existing batch guards.
+2. An index on `(lane_id, status)` in the `review_findings` table so lane-scoped open-findings queries during the parallel-review fan-in stay fast as concurrent reviewers grow.
+
+Neither is required by Slices 1-4. Both are orthogonal additive backend changes. They are included here, rather than in E17-9, because (a) they touch the same schema surface Slice 2 already migrates, so landing them in the same cross-schema slice set avoids a second schema-touching slice in E17-9; and (b) they give E17-9 a clean dependency target rather than making E17-9's first slice both a schema change and a new skill.
+
+Changes:
+
+- Extend `review_findings(review=...)` with `operation="merge"`: accepts `source_task_refs` (list) and `target_task_ref` (string) plus an optional `session` prefix for the merged rows. When `session` is omitted, the implementation auto-generates `merge-<target_task_ref>-<utc-ts>` so merged rows remain attributable without caller-supplied session text. Internally reuses the `batch_record` path so existing guards — duplicate-id rejection, `verified_commit_sha` validation, branch enforcement, reviewer-write-mode checks — continue to apply. Every merged row records a `merged_from` provenance pointer stored in a nullable `merged_from_json` column as a JSON object keyed by the source `(task_ref, session, finding_id)` triple.
+- Add an idempotent SQL migration for `idx_review_findings_lane_status` using `CREATE INDEX IF NOT EXISTS ... ON review_findings(lane_id, status)` in `shared_schema.py`.
+- Append a short note on the `merge` operation to `packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md` (one paragraph, one example).
+- No CLI exposure in this slice; the E17-9 coordinator skill calls the Python API directly. If CLI exposure is desired later, it lands under E17-9.
+- No MCP tool surface compression concerns: the existing `review_findings` compound tool already dispatches by `operation`; adding `operation="merge"` does not grow the advertised tool count.
+
+Constraints:
+
+- `merge` must be a no-op write for empty source sets (validated error, not silent success) so coordinator bugs surface immediately.
+- Provenance is non-optional: every merged row stores `merged_from`. Readers (list/get ops) return `merged_from` when present; absent readers continue to work without it.
+- Migration for the new index must be additive — no data rewrite, no downtime, compatible with Slice 2's in-place migration path or coordinated export/reimport.
+
+Proof:
+
+- A test records findings under two distinct `task_ref`s with 3 findings each, calls `operation="merge"` with both source `task_ref`s into a coordinator `task_ref`, and asserts: (a) 6 rows appear under the coordinator `task_ref`, (b) each has a `merged_from` entry naming its source triple, (c) existing reviewer rows under the sources remain intact (merge is additive, not destructive).
+- A concurrent-merge test runs two coordinator merges against overlapping source `task_ref`s and asserts the second call fails deterministically with duplicate-id protection or lands a documented idempotent outcome.
+- `EXPLAIN QUERY PLAN SELECT ... FROM review_findings WHERE lane_id=? AND status='open'` reports use of `idx_review_findings_lane_status`.
+- All existing `review_findings` tests continue to pass; no response envelope enlargement on `list`/`get` operations when `merged_from` is absent.
 
 ---
 
@@ -309,24 +341,24 @@ Proof:
 
 ### Slice 1: Portable Workflow Normalization + Python Runtime Contract
 
-- [ ] `scripts/generate_agent_workflows.py` generates a Codex router artifact
-- [ ] `docs/agentic/instructions.md` and `CLAUDE.md` consume generated Codex router content
-- [ ] `docs/agentic/instructions.md` and `CLAUDE.md` use the required begin/end markers for the generated Codex router block
-- [ ] Conflicting guide-first review routing is removed from those surfaces
-- [ ] `.vscode/mcp.json`, `.codex/config.toml`, and `.mcp.json` all set `PYENV_VERSION=description-service`
-- [ ] `.codex/config.toml` and `.mcp.json` no longer hardcode user-local absolute repo paths
-- [ ] Startup docs front-load `PYENV_VERSION=description-service` as the canonical non-interactive Python/MCP rule
-- [ ] `pyenv activate description-service` remains documented only as optional interactive-shell setup
-- [ ] `make check-agent-workflows` validates Claude, VS Code, and Codex generated artifacts
-- [ ] `make check-codex-command-router` exists and fails on drift
-- [ ] `make smoke-agent-workflows` exists as an optional runtime validation
+- [x] `scripts/generate_agent_workflows.py` generates a Codex router artifact
+- [x] `docs/agentic/instructions.md` and `CLAUDE.md` consume generated Codex router content
+- [x] `docs/agentic/instructions.md` and `CLAUDE.md` use the required begin/end markers for the generated Codex router block
+- [x] Conflicting guide-first review routing is removed from those surfaces
+- [x] `.vscode/mcp.json`, `.codex/config.toml`, and `.mcp.json` all set `PYENV_VERSION=description-service`
+- [x] `.codex/config.toml` and `.mcp.json` no longer hardcode user-local absolute repo paths
+- [x] Startup docs front-load `PYENV_VERSION=description-service` as the canonical non-interactive Python/MCP rule
+- [x] `pyenv activate description-service` remains documented only as optional interactive-shell setup
+- [x] `make check-agent-workflows` validates Claude, VS Code, and Codex generated artifacts
+- [x] `make check-codex-command-router` exists and fails on drift
+- [x] `make smoke-agent-workflows` exists as an optional runtime validation
 
 ### Slice 2: Multi-Active Tasks + Slice Status
 
-- [ ] `handoff_state` re-keyed by `task_ref`
-- [ ] `_resolve_task_ref` handles concurrent active tasks safely
-- [ ] `slices_completed` is available in `load_session` and `get_handoff_state`
-- [ ] Task-plan checkbox sync and stale-checkbox warning are implemented if retained
+- [x] `handoff_state` re-keyed by `task_ref`
+- [x] `_resolve_task_ref` handles concurrent active tasks safely
+- [x] `slices_completed` is available in `load_session` and `get_handoff_state`
+- [x] Task-plan checkbox sync and stale-checkbox warning are explicitly deferred and not retained in Slice 2 scope
 
 ### Slice 3: Test Trace Archive
 
@@ -351,10 +383,20 @@ Proof:
 - [ ] No stale old-name references remain in harness configs
 - [ ] Token-budget smoke: common Get-state + record-event + dashboard-regenerate flow has a lower agent-visible token cost than pre-compression baseline
 
+### Slice 5: Parallel-Review Backend Groundwork
+
+- [x] `review_findings(operation="merge", ...)` implemented via the existing batch_record path; all existing guards apply
+- [x] Every merged row records `merged_from` provenance (source `(task_ref, session, finding_id)` triple stored in `merged_from_json`)
+- [x] Empty-source merge is a validated error, not a silent no-op
+- [x] Source reviewer rows remain intact after merge (additive, not destructive)
+- [x] `idx_review_findings_lane_status` migration added with `CREATE INDEX IF NOT EXISTS`; `EXPLAIN QUERY PLAN` confirms index use for `lane_id`+status queries
+- [x] Token-efficient usage guide updated with one-paragraph note and one example for `merge`
+- [x] No regression in existing `review_findings` tests; response envelope unchanged when `merged_from` absent
+
 ## Review Readiness
 
 - [ ] E17-6 core is approved or complete before this task starts
-- [ ] `make check-agent-workflows` is green after Slice 1
+- [x] `make check-agent-workflows` is green after Slice 1
 - [ ] `make test-handoff` is green after each schema/tooling slice
 - [ ] `make test-orchestrator` is green when schema-facing behavior changes
 

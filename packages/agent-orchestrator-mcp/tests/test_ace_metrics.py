@@ -1222,7 +1222,7 @@ def test_handoff_read_shape_helpers_expose_explicit_contract_bundles() -> None:
     }
     assert review_ready_state_kwargs("task-ref") == {
         "task_ref": "task-ref",
-        "sections": "identity,tests_recent",
+        "sections": "tests_recent",
         "detail": "summary",
         "top_n_tests": 4,
     }

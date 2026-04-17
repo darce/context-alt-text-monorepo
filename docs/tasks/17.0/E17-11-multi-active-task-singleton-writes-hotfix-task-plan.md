@@ -122,7 +122,7 @@ Plan consumes a single feature branch. If regressions surface, revert the merge 
 **Resolved (above):**
 - ~~Does `switch_task` retain a sentinel pointer?~~ **Resolved: no.** Greenfield + fresh DB for forks, so the sentinel is removed outright. See Greenfield Decision section.
 - ~~`archive_previous=False` kwarg for backward compat?~~ **Resolved: no.** Eviction is a bug, not a feature; no flag needed.
-- ~~`shared_write_context.py:451` sentinel fallback — keep or remove?~~ **Resolved: remove.** Guard returns empty warnings when no task_ref and no workspace context can be derived; it does not silently bind to a sentinel.
+- ~~`shared_write_context.py:451` sentinel fallback — keep or remove?~~ **Resolved: remove.** Guard raises `UnresolvedTaskContextError` when neither an explicit `task_ref` nor a workspace-path lookup yields a row. No sentinel fallback, no empty-warning no-op — matches the canonical Slice 3 rule re-stated at r3.
 
 **Resolved (r3):**
 - ~~Canonical unresolved-context rule for Slice 3~~ **Resolved: explicit task_ref → workspace lookup → `UnresolvedTaskContextError`.** No sentinel fallback, no warning-only no-op. This is now stated at the head of Slice 3 and applied by 3a, 3b, and 3c uniformly.
@@ -141,6 +141,9 @@ Plan consumes a single feature branch. If regressions surface, revert the merge 
 - ~~`UnresolvedTaskContextError` class home~~ **Resolved.** Defined in `shared_write_context.py` next to `BranchMismatchError` (matching the existing pattern at `:50/:68`) and re-exported from `agent_handoff_mcp/__init__.py`. Slice 3a names the file/home explicitly; Slices 3c and 4 import from there.
 - ~~Catalogue A known-hits list omitted 2g sites~~ **Resolved.** Catalogue A now enumerates every site with its owning slice in parens (2a, 2b, 2c, 2d, 2f, 2g, 3a).
 - ~~Drift-hook helper open thread~~ **Resolved.** `_resolve_workspace_handoff_row` suffices; Slice 3c binds the drift hook to it and no new helper is introduced. Only one open thread remains (dashboard "default task for this worktree"), and it is explicitly out of scope for this hot-fix.
+
+**Resolved (r7):**
+- ~~Stale r3-bullet at line 125 said guard "returns empty warnings" when no context resolvable — contradicts canonical rule.~~ **Resolved.** Bullet rewritten to state the canonical contract: guard raises `UnresolvedTaskContextError` when neither explicit `task_ref` nor workspace-path lookup yields a row. No empty-warning no-op anywhere in the plan.
 
 **Still open for review:**
 - Does the dashboard need a concept of "default task for this worktree" for operator UX (e.g. a single active-task summary at the top of `DASHBOARD.txt`), and if so is that derived from the invoking worktree's cwd at render time rather than stored anywhere? (Any affirmative answer is out of scope for this hot-fix per the narrowed Non-Goals bullet and would become a follow-on task.)

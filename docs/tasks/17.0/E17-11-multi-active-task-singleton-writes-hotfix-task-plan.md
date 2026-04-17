@@ -1,12 +1,24 @@
-# E17-11. Multi-active-task hot-fix: remove singleton `WHERE id = 1` writes
+# E17-11. Multi-active-task hot-fix: remove the singleton sentinel
 
-> Status: DRAFT (planning) — not yet reviewed
+> Status: DRAFT (planning) — planning-review in progress
 > Parent epic: E17 (Hoist Agentic System MVP)
+> Target Branch: `feature/e17-11`
+> Target Worktree: `/Users/daniel/Development/context-alt-text-monorepo-e17-11`
 > Created: 2026-04-17
 
 ## Objective
 
-Remove the remaining singleton `WHERE id = 1` assumptions from `agent-handoff-mcp` so multiple feature branches can register active tasks in parallel without evicting one another. E17-7 Slice 2 introduced the task_ref-keyed schema and workspace-path read resolution; this hot-fix finishes the job on the write paths that still collapse to `id = 1`.
+Remove the singleton sentinel (`handoff_state WHERE id = 1`) from `agent-handoff-mcp` so multiple feature branches can register active tasks in parallel without any row acting as "the active task". E17-7 Slice 2 introduced task_ref-keyed schema and workspace-path read resolution; this hot-fix deletes the remaining sentinel reads and writes, and redirects every downstream consumer to workspace- or task_ref-derived resolution.
+
+## Greenfield Decision: Sentinel Removed
+
+This plan explicitly resolves the "does the sentinel survive?" open thread (PLAN-01) as: **no**. Rationale:
+
+- Greenfield policy — no production users, no existing data to preserve, forked projects start with a fresh DB.
+- The sentinel has no legitimate role once `_resolve_workspace_handoff_row` can answer "which task is this worktree on?" from cwd/branch. Any surface that needs an "active task" answer will derive it from the caller's workspace or be passed an explicit `task_ref`.
+- Keeping the sentinel as a compatibility shim costs clarity and perpetuates exactly the eviction pattern we're trying to remove.
+
+Consequence: `handoff_state.id` remains the primary key but loses all semantic meaning as a pointer. No code may assume `id = 1` is "the active task". New rows get auto-assigned ids; `switch_task` no longer targets `id = 1`.
 
 ## Motivation
 
@@ -31,17 +43,24 @@ The read path ambiguity error (E17-8/E17-9 from the root worktree) confirms mult
 
 ### Slice 1 — Audit and catalogue every singleton site
 
-Two catalogues required — one for the write-guard callee, one for the caller ordering:
+Three catalogues required. The audit must cover *every* write or write-adjacent handler that implicitly derives task scope, not just the guard/resolve pairings (addresses PLAN-02):
 
-- **Callee audit.** Grep `packages/agent-handoff-mcp/src/agent_handoff_mcp/` for `id = 1`, `id=1`, and `handoff_state WHERE id`. Classify each hit: `read_for_active_task`, `read_for_specific_task`, `write_update`, `legacy_singleton`.
-- **Caller audit.** Grep the same tree for `collect_target_context_warnings(` and `_resolve_task_ref(`. For every call site that invokes both, record the ordering: does the call site resolve `task_ref` before the guard, or does it call the guard with an implicit singleton binding? Any site that calls the guard first is a bug.
-- Output: two markdown tables (callee catalogue + caller catalogue) committed as `docs/tasks/17.0/E17-11-catalogue.md` with recommended fix per hit.
+- **A. Sentinel reads (everywhere).** Grep `packages/agent-handoff-mcp/src/agent_handoff_mcp/` for `id = 1`, `id=1`, `WHERE id=1`, `handoff_state WHERE id`. Classify each hit: `read_active_as_pointer` (sentinel semantics — must be removed), `read_specific_row_by_id` (legitimate row lookup — keep), `write_upsert` (eviction path — remove). Known hits to cover explicitly: `import_export.py:949/1036` (switch_task), `shared_write_context.py:451` (guard fallback), `current_task_rendering.py:148` (activity CTE), `dashboard_rendering.py:542` (dashboard header active row), `review_findings.py:1876` (record_review_run implicit-task fallback).
+- **B. Implicit-task write handlers.** Grep for `collect_target_context_warnings(` **OR** `_resolve_task_ref(` **OR** `handoff_state WHERE id = 1` inside write handlers. Record every handler that derives `task_ref` implicitly (from the sentinel, from the guard's side effects, or from an undocumented fallback) rather than requiring it as a parameter. `record_review_run` is a confirmed example — it runs the guard then falls back to `WHERE id = 1` to pick a task_ref, even though no `_resolve_task_ref` call appears. Every such handler must be redesigned to require explicit `task_ref` or workspace-derived resolution.
+- **C. Caller ordering.** For every handler that calls both `collect_target_context_warnings(` and `_resolve_task_ref(`, record whether the guard runs before or after `task_ref` is resolved. Any site that calls the guard first is a bug.
+- Output: single markdown artifact `docs/tasks/17.0/E17-11-catalogue.md` with three tables (A, B, C), each row naming file/line, classification, and the remediation slice that owns it.
 
-### Slice 2 — Fix `switch_task` eviction
+### Slice 2 — Remove the sentinel: rewrite `switch_task` + migrate sentinel readers
 
-- Rewrite `switch_task` (`import_export.py:923`) so it does not archive the previously active task. Replace the singleton `SELECT ... WHERE id = 1` read (`:949`) and the `UPDATE ... WHERE id = 1` upsert (`:1036`) with a task_ref-keyed read and insert/update by `task_ref`. New semantics: "point the caller's working context at task X"; leave other rows in place.
-- Decision for planning review: does `switch_task` retain a sentinel pointer concept at all, or is "which task is active from this worktree" now purely derived from cwd/branch via `_resolve_workspace_handoff_row`? (Greenfield policy permits the cleaner answer.)
-- Tests covering: switch does not archive; two parallel tasks coexist; dashboard renders both; restoring an archived task still works.
+Per the Greenfield Decision above, `switch_task` does not retain a sentinel pointer. Deliverables:
+
+- **2a. Rewrite `switch_task`** (`import_export.py:923`). New semantics: "ensure a row exists for `task_ref`". Insert if missing, no-op if present, no archiving of any other row. Replace the singleton `SELECT ... WHERE id = 1` read (`:949`) with a `SELECT ... WHERE task_ref = ?` lookup. Replace the `UPDATE ... WHERE id = 1` upsert (`:1036`) with an INSERT-or-UPDATE keyed on `task_ref`. Drop `archived_previous`, `previous_task_ref` code paths entirely — they service the eviction pattern we're removing.
+- **2b. Migrate `current_task_rendering.py:148`** (activity-anchor CTE). The CTE includes `handoff_state.updated_at` as an activity anchor. Change the branch that reads `FROM handoff_state WHERE id = 1` to `FROM handoff_state WHERE task_ref = ?` (bound to the requested task_ref parameter already threaded through the caller).
+- **2c. Migrate `dashboard_rendering.py:542`** (dashboard header). The dashboard currently reads the sentinel to pick a single "active task" for the header. Since there is no longer a single active task, the dashboard is already a cross-task observatory. Remove the sentinel read and the `active_task_ref` / `target_branch` / `target_worktree_path` header values derived from it. Renderer surfaces that need per-task context (lane integrity, epic decisions, test status) switch to iterating all currently-active rows and rendering per-row.
+- **2d. Migrate `review_findings.py:1876`** (`record_review_run` implicit fallback). Remove the `WHERE id = 1` fallback. If `task_ref` is not passed in, require it (return an error naming the caller) — do not silently bind to any sentinel.
+- **2e. Delete dead code.** Remove any helper that existed only to service the sentinel. Examples expected: `archived_previous` bookkeeping in switch_task, any `get_active_task_ref()` helper that reads the sentinel.
+
+Tests: two tasks coexist through a `switch_task` call; dashboard renders both; archive-restore still works for genuinely archived tasks (archive path is unchanged); `record_review_run` without `task_ref` returns an explicit error.
 
 ### Slice 3 — Thread task_ref through every write caller before any guard runs
 
@@ -60,13 +79,18 @@ This is the bug that blocks E17-10-style fixes. Three coordinated changes:
 
 ## Consolidated Checklist
 
-- [ ] Slice 1a: callee catalogue complete (every `WHERE id = 1` hit).
-- [ ] Slice 1b: caller catalogue complete (every `collect_target_context_warnings` → `_resolve_task_ref` inversion).
-- [ ] Slice 2: `switch_task` no longer archives; task_ref-keyed read + upsert; regression test added.
+- [ ] Slice 1a: sentinel-read catalogue complete (every `WHERE id = 1` hit).
+- [ ] Slice 1b: implicit-task-handler catalogue complete (every write handler that derives `task_ref` from the sentinel or guard side effects, including `record_review_run`).
+- [ ] Slice 1c: caller-ordering catalogue complete (every `collect_target_context_warnings` → `_resolve_task_ref` inversion).
+- [ ] Slice 2a: `switch_task` rewritten; no archiving; task_ref-keyed insert/update; regression test added.
+- [ ] Slice 2b: `current_task_rendering.py` activity-anchor CTE migrated off sentinel.
+- [ ] Slice 2c: `dashboard_rendering.py` header migrated off sentinel; renders all active rows.
+- [ ] Slice 2d: `record_review_run` requires explicit `task_ref` (no sentinel fallback).
+- [ ] Slice 2e: dead sentinel-only helpers removed.
 - [ ] Slice 3a: guard callee `WHERE id = 1` fallback removed in favour of workspace-resolved or explicit error.
 - [ ] Slice 3b: every write caller resolves task_ref BEFORE invoking the guard; caller-ordering regression test green.
-- [ ] Slice 3c: drift hook fallback walks workspace path; sentinel is last-resort only.
-- [ ] Slice 4: multi-active e2e test green; caller-ordering regression test green; `switch_task` regression test green; docs updated.
+- [ ] Slice 3c: drift hook fallback walks workspace path; no sentinel fallback.
+- [ ] Slice 4: multi-active e2e test green; caller-ordering regression test green; `switch_task` regression test green; `record_review_run` no-task_ref error test green; docs updated; lint rule in `check_harness_sync.py` flags any new sentinel reads.
 
 ## Risk / Rollback
 
@@ -80,7 +104,12 @@ Plan consumes a single feature branch. If regressions surface, revert the merge 
 
 ## Open Threads for Planning Review
 
-- Does `switch_task` need an `archive_previous=False` kwarg for backward compat, or is breaking-change the right move (greenfield policy)? Related: does "active task from this worktree" become a derived query (cwd/branch → row) instead of a sentinel pointer?
-- Should the singleton fallback in `shared_write_context.py:451` be removed outright, kept as an error path with telemetry, or preserved as a bootstrap-only path for the very first row in a fresh DB?
+**Resolved (above):**
+- ~~Does `switch_task` retain a sentinel pointer?~~ **Resolved: no.** Greenfield + fresh DB for forks, so the sentinel is removed outright. See Greenfield Decision section.
+- ~~`archive_previous=False` kwarg for backward compat?~~ **Resolved: no.** Eviction is a bug, not a feature; no flag needed.
+- ~~`shared_write_context.py:451` sentinel fallback — keep or remove?~~ **Resolved: remove.** Guard returns empty warnings when no task_ref and no workspace context can be derived; it does not silently bind to a sentinel.
+
+**Still open for review:**
 - Does the drift hook need a new `target_worktree_path → task_ref` lookup helper, or does `_resolve_workspace_handoff_row` suffice?
-- How do we mechanically prevent the caller-ordering bug from reappearing? Options: (a) make the guard refuse to run without an explicit task_ref or workspace context; (b) lint rule in `scripts/check_harness_sync.py` that flags any `collect_target_context_warnings(` call inside a function body that also calls `_resolve_task_ref(` with the guard appearing first; (c) both.
+- How do we mechanically prevent the caller-ordering bug from reappearing? Options: (a) make the guard raise if called without `task_ref` or workspace context; (b) add a lint rule in `scripts/check_harness_sync.py` that flags any `collect_target_context_warnings(` call inside a function body that also calls `_resolve_task_ref(` with the guard appearing first; (c) both. Leaning (a)+(c): the guard refuses ambiguous calls at runtime, and the lint catches the inversion at CI time.
+- Does the dashboard need a concept of "default task for this worktree" for operator UX (e.g. a single active-task summary at the top of `DASHBOARD.txt`), and if so is that derived from the invoking worktree's cwd at render time rather than stored anywhere?

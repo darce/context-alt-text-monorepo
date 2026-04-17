@@ -329,9 +329,7 @@ def _collect_task_test_status(
         ).fetchall()
     elif active_task_ref:
         rows = conn.execute(
-            "SELECT task_ref, passed, verified_at FROM verified_tests"
-            " WHERE task_ref = ?"
-            " ORDER BY verified_at DESC",
+            "SELECT task_ref, passed, verified_at FROM verified_tests WHERE task_ref = ? ORDER BY verified_at DESC",
             (active_task_ref,),
         ).fetchall()
     else:
@@ -555,9 +553,7 @@ def generate_dashboard_md(write_file: bool = True) -> dict:
         needs_attention = _collect_needs_attention(conn, dashboard_rows, open_findings)
         ctx = _collect_dashboard_context(conn, active_task_ref)
         epic_ref, epic_decisions = _collect_epic_decisions(conn, active_task_ref)
-        task_test_status = _collect_task_test_status(
-            conn, epic_ref=epic_ref, active_task_ref=active_task_ref
-        )
+        task_test_status = _collect_task_test_status(conn, epic_ref=epic_ref, active_task_ref=active_task_ref)
 
     integrity_anomalies = _collect_workflow_integrity(target_branch, target_worktree_path)
 

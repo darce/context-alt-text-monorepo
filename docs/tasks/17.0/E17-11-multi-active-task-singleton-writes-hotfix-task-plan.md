@@ -36,7 +36,7 @@ The read path ambiguity error (E17-8/E17-9 from the root worktree) confirms mult
 ## Non-Goals
 
 - Schema change. The table already supports multi-row via E17-7 Slice 2; this hot-fix only updates the code paths.
-- Changing `DASHBOARD.txt` rendering (already cross-task).
+- Dashboard layout redesign beyond removing sentinel-derived header state. Slice 2c removes the single-sentinel-derived header fields and switches any per-task rendering to iterate currently-active rows; no other layout, ordering, or visual changes are in scope.
 - Refactoring `CURRENT_TASK.json` into per-task files (separate follow-up).
 
 ## Slices
@@ -66,9 +66,11 @@ Tests: two tasks coexist through a `switch_task` call; dashboard renders both; a
 
 This is the bug that blocks E17-10-style fixes. Three coordinated changes:
 
-- **a. Callee: make the guard task_ref-aware at every call site.** `collect_target_context_warnings` already accepts `task_ref` (since an earlier slice). Per the Resolved open thread below, the singleton fallback at `shared_write_context.py:451` is **removed outright — no last-resort sentinel anywhere.** Resolution order at every call site becomes: (1) explicit `task_ref` parameter, (2) workspace-path lookup via `_resolve_workspace_handoff_row`, (3) return empty warnings (guard no-op, guard does not silently bind to any sentinel row). No code path falls back to `handoff_state WHERE id = 1` under any condition, including bootstrap.
+**Canonical unresolved-context rule (load-bearing; applies to Slice 3a, 3c, and the drift hook):** resolution order is (1) explicit `task_ref` parameter, (2) workspace-path lookup via `_resolve_workspace_handoff_row`. On neither match, the write path raises `UnresolvedTaskContextError` with a message naming both env vars to set (`AGENT_HANDOFF_TASK_REF`) and the expected workspace invariant. **No sentinel fallback anywhere. No warning-only no-op.** This rule is the single contract for every call site below.
+
+- **a. Callee: make the guard task_ref-aware at every call site.** `collect_target_context_warnings` already accepts `task_ref` (since an earlier slice). The singleton fallback at `shared_write_context.py:451` is removed outright; the guard applies the canonical rule above and raises `UnresolvedTaskContextError` when neither explicit task_ref nor workspace lookup resolves. No code path falls back to `handoff_state WHERE id = 1` under any condition, including bootstrap.
 - **b. Caller ordering: resolve task_ref first.** Every write handler that today calls `collect_target_context_warnings(conn, ctx)` before `_resolve_task_ref(conn, task_ref)` must be re-ordered. Confirmed sites so far: `review_findings.py:852/881`, and per Slice 1 audit all analogous call sites in `record_event`, `close_slice`, `set_handoff_state`, `update_task_status`, `handoff_close_check`. Each must pass the resolved task_ref into the guard.
-- **c. Drift hook fallback.** When no task_ref can be extracted from tool input, walk the workspace path to find the matching row. Only use the sentinel as a last-resort fallback and log a warning.
+- **c. Drift hook fallback.** When no task_ref can be extracted from tool input, the hook performs workspace-path lookup via `_resolve_workspace_handoff_row`. If that also fails, the hook raises `UnresolvedTaskContextError` with the same contract used in 3a. No sentinel fallback; no warning-only no-op.
 
 ### Slice 4 — Regression tests + docs update
 
@@ -109,7 +111,10 @@ Plan consumes a single feature branch. If regressions surface, revert the merge 
 - ~~`archive_previous=False` kwarg for backward compat?~~ **Resolved: no.** Eviction is a bug, not a feature; no flag needed.
 - ~~`shared_write_context.py:451` sentinel fallback — keep or remove?~~ **Resolved: remove.** Guard returns empty warnings when no task_ref and no workspace context can be derived; it does not silently bind to a sentinel.
 
+**Resolved (r3):**
+- ~~Canonical unresolved-context rule for Slice 3~~ **Resolved: explicit task_ref → workspace lookup → `UnresolvedTaskContextError`.** No sentinel fallback, no warning-only no-op. This is now stated at the head of Slice 3 and applied by 3a, 3b, and 3c uniformly.
+- ~~Mechanical prevention of the caller-ordering bug~~ **Resolved: (a)+(c).** The guard raises `UnresolvedTaskContextError` at runtime when called without resolvable context, and `scripts/check_harness_sync.py` adds a lint rule that flags any `collect_target_context_warnings(` call appearing before `_resolve_task_ref(` in the same function body.
+
 **Still open for review:**
 - Does the drift hook need a new `target_worktree_path → task_ref` lookup helper, or does `_resolve_workspace_handoff_row` suffice?
-- How do we mechanically prevent the caller-ordering bug from reappearing? Options: (a) make the guard raise if called without `task_ref` or workspace context; (b) add a lint rule in `scripts/check_harness_sync.py` that flags any `collect_target_context_warnings(` call inside a function body that also calls `_resolve_task_ref(` with the guard appearing first; (c) both. Leaning (a)+(c): the guard refuses ambiguous calls at runtime, and the lint catches the inversion at CI time.
-- Does the dashboard need a concept of "default task for this worktree" for operator UX (e.g. a single active-task summary at the top of `DASHBOARD.txt`), and if so is that derived from the invoking worktree's cwd at render time rather than stored anywhere?
+- Does the dashboard need a concept of "default task for this worktree" for operator UX (e.g. a single active-task summary at the top of `DASHBOARD.txt`), and if so is that derived from the invoking worktree's cwd at render time rather than stored anywhere? (Any affirmative answer is out of scope for this hot-fix per the narrowed Non-Goals bullet and would become a follow-on task.)

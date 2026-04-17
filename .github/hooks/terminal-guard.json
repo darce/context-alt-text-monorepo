@@ -2,6 +2,13 @@
   "hooks": {
     "PreToolUse": [
       {
+        "matcher": "Edit|Write|apply_patch|create_file|replace_string_in_file|multi_replace_string_in_file",
+        "type": "command",
+        "command": "python3 .github/hooks/guard-worktree-drift.py",
+        "timeout": 5
+      },
+      {
+        "matcher": "Edit|Write|apply_patch|create_file|replace_string_in_file|multi_replace_string_in_file",
         "type": "command",
         "command": "python3 .github/hooks/guard-main-branch.py",
         "timeout": 5

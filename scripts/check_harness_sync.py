@@ -24,8 +24,12 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -35,6 +39,17 @@ CONTRACT_PATH = REPO_ROOT / "docs" / "agentic" / "contracts" / "harness-protocol
 CLAUDE_HOOKS_PATH = REPO_ROOT / ".claude" / "settings.json"
 VSCODE_HOOKS_PATH = REPO_ROOT / ".github" / "hooks" / "terminal-guard.json"
 PYTHON_EXPORTS_PATH = REPO_ROOT / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp" / "__init__.py"
+CONTRACT_RELATIVE = Path("docs/agentic/contracts/harness-protocol.yaml")
+FIXTURE_COPY_FILES = (
+    Path(".github/hooks/guard-main-branch.py"),
+    Path(".github/hooks/guard-worktree-drift.py"),
+    Path("scripts/hooks/_harness_protocol.py"),
+    Path("scripts/hooks/_worktree_drift.py"),
+    Path("scripts/hooks/guard-main-branch.sh"),
+    Path("scripts/hooks/guard-worktree-drift.sh"),
+)
+FIXTURE_PACKAGE_SRC = Path("packages/agent-handoff-mcp/src")
+EDIT_TOOL_MATCHER = "Edit|Write|apply_patch|create_file|replace_string_in_file|multi_replace_string_in_file"
 
 
 def _load_contract() -> dict:
@@ -154,21 +169,184 @@ def _check_cold_start(contract: dict, *, repo_root: Path = REPO_ROOT) -> list[st
     return errors
 
 
-def _token_present(token: str, text: str) -> bool:
-    """Return True when *token* appears as a literal OR a word-bounded form.
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
 
-    The protected-extension contract uses dot-prefixed forms (".py") but some
-    harness enforcers encode the extensions inside a regex alternation
-    (``\\.(py|ts|tsx|...)``) where the dot is shared and each token appears
-    bare. Treat either form as a valid reference.
-    """
-    if token in text:
-        return True
-    stripped = token.lstrip(".")
-    if not stripped:
-        return False
-    pattern = rf"(?<![A-Za-z0-9_]){re.escape(stripped)}(?![A-Za-z0-9_])"
-    return re.search(pattern, text) is not None
+
+def _fixture_env(repo: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    src_path = repo / FIXTURE_PACKAGE_SRC
+    env["PYTHONPATH"] = str(src_path) + (os.pathsep + env.get("PYTHONPATH", ""))
+    env["CLAUDE_PROJECT_DIR"] = str(repo)
+    return env
+
+
+def _render_contract_yaml(contract: dict) -> str:
+    branch_isolation = contract.get("branch_isolation") or {}
+    lines = ["version: 1", "", "branch_isolation:"]
+
+    def _append_string_list(key: str) -> None:
+        lines.append(f"  {key}:")
+        for value in branch_isolation.get(key, []):
+            lines.append(f"    - {value}")
+
+    for key in ("protected_branches", "code_roots", "protected_extensions", "root_protected_files"):
+        _append_string_list(key)
+
+    lines.append("  permitted_main_surfaces:")
+    for entry in branch_isolation.get("permitted_main_surfaces", []):
+        lines.append(f"    - pattern: {entry['pattern']!r}")
+        lines.append(f"      reason: {entry['reason']!r}")
+
+    lines.append("  enforcers:")
+    for entry in branch_isolation.get("enforcers", []):
+        lines.append(f"    - path: {entry['path']}")
+        lines.append(f"      harness: {entry['harness']}")
+
+    return "\n".join(lines) + "\n"
+
+
+def _build_guard_fixture(contract: dict, *, repo_root: Path) -> tuple[tempfile.TemporaryDirectory[str], Path]:
+    tmpdir = tempfile.TemporaryDirectory(prefix="check-harness-sync-")
+    repo = Path(tmpdir.name) / "repo"
+    repo.mkdir()
+
+    for relative in FIXTURE_COPY_FILES:
+        source = repo_root / relative
+        destination = repo / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        if destination.suffix == ".sh":
+            destination.chmod(0o755)
+
+    package_src = repo / FIXTURE_PACKAGE_SRC
+    package_src.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(REPO_ROOT / FIXTURE_PACKAGE_SRC, package_src)
+
+    contract_path = repo / CONTRACT_RELATIVE
+    contract_path.parent.mkdir(parents=True, exist_ok=True)
+    contract_path.write_text(_render_contract_yaml(contract), encoding="utf-8")
+
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "init")
+    return tmpdir, repo
+
+
+def _run_python_hook(script: Path, payload: dict, *, cwd: Path, env: dict[str, str]) -> tuple[int, dict | None, str]:
+    proc = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=cwd,
+        env=env,
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    stdout_json = json.loads(proc.stdout) if proc.stdout.strip() else None
+    return proc.returncode, stdout_json, proc.stderr
+
+
+def _run_shell_hook(script: Path, payload: dict, *, cwd: Path, env: dict[str, str]) -> tuple[int, dict | None, str]:
+    proc = subprocess.run(
+        [str(script)],
+        cwd=cwd,
+        env=env,
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    stdout_json = json.loads(proc.stdout) if proc.stdout.strip() else None
+    return proc.returncode, stdout_json, proc.stderr
+
+
+def _main_guard_paths(contract: dict) -> tuple[str, str]:
+    spec = contract.get("branch_isolation")
+    if not isinstance(spec, dict):
+        raise ValueError("branch_isolation must be a mapping")
+    enforcers = spec.get("enforcers") or []
+    if not isinstance(enforcers, list):
+        raise ValueError("branch_isolation.enforcers must be a list")
+
+    vscode_path = next(
+        (
+            item.get("path")
+            for item in enforcers
+            if isinstance(item, dict) and item.get("harness") == "vscode" and isinstance(item.get("path"), str)
+        ),
+        None,
+    )
+    claude_path = next(
+        (
+            item.get("path")
+            for item in enforcers
+            if isinstance(item, dict) and item.get("harness") == "claude" and isinstance(item.get("path"), str)
+        ),
+        None,
+    )
+    if not isinstance(vscode_path, str) or not isinstance(claude_path, str):
+        raise ValueError("branch_isolation.enforcers must include vscode and claude guard paths")
+    return vscode_path, claude_path
+
+
+def _first_protected_extension(spec: dict) -> str:
+    extensions = spec.get("protected_extensions") or []
+    if not isinstance(extensions, list) or not extensions:
+        raise ValueError("branch_isolation.protected_extensions must be a non-empty list")
+    extension = extensions[0]
+    if not isinstance(extension, str) or not extension.startswith("."):
+        raise ValueError("branch_isolation.protected_extensions entries must be dot-prefixed strings")
+    return extension
+
+
+def _path_for_code_root(code_root: str, extension: str) -> Path:
+    return Path(code_root.rstrip("/")) / f"fixture{extension}"
+
+
+def _ensure_parent(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _validate_permitted_main_surfaces(spec: dict) -> list[str]:
+    errors: list[str] = []
+    entries = spec.get("permitted_main_surfaces") or []
+    if not isinstance(entries, list) or not entries:
+        return ["branch_isolation.permitted_main_surfaces must be a non-empty list"]
+
+    sample_paths = (
+        "docs/tasks/17.0/sample.md",
+        "docs/assessments/sample.md",
+        "CLAUDE.md",
+        "docs/agentic/contracts/harness-protocol.yaml",
+    )
+    for idx, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            errors.append(f"branch_isolation.permitted_main_surfaces[{idx}] must be a mapping")
+            continue
+        pattern = entry.get("pattern")
+        reason = entry.get("reason")
+        if not isinstance(pattern, str) or not pattern:
+            errors.append(f"branch_isolation.permitted_main_surfaces[{idx}] missing non-empty `pattern`")
+            continue
+        if not isinstance(reason, str) or not reason:
+            errors.append(f"branch_isolation.permitted_main_surfaces[{idx}] missing non-empty `reason`")
+        try:
+            for sample in sample_paths:
+                Path(sample).match(pattern)
+        except (re.error, ValueError) as exc:
+            errors.append(
+                f"branch_isolation.permitted_main_surfaces[{idx}] has invalid glob `{pattern}`: {exc}"
+            )
+    return errors
 
 
 def _check_branch_isolation(contract: dict, *, repo_root: Path = REPO_ROOT) -> list[str]:
@@ -178,10 +356,34 @@ def _check_branch_isolation(contract: dict, *, repo_root: Path = REPO_ROOT) -> l
         return ["branch_isolation must be a mapping"]
     protected_branches = spec.get("protected_branches") or []
     code_roots = spec.get("code_roots") or []
-    protected_extensions = spec.get("protected_extensions") or []
+    root_protected_files = spec.get("root_protected_files") or []
     enforcers = spec.get("enforcers") or []
     if not isinstance(enforcers, list) or not enforcers:
         return ["branch_isolation.enforcers must be a non-empty list"]
+    errors.extend(_validate_permitted_main_surfaces(spec))
+    try:
+        vscode_payload = json.loads((repo_root / ".github" / "hooks" / "terminal-guard.json").read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"branch_isolation: unable to load `.github/hooks/terminal-guard.json`: {exc}")
+        return errors
+    main_guard_entry = next(
+        (
+            entry
+            for entry in vscode_payload.get("hooks", {}).get("PreToolUse", [])
+            if entry.get("command") == "python3 .github/hooks/guard-main-branch.py"
+        ),
+        None,
+    )
+    if main_guard_entry is None:
+        errors.append("branch_isolation: VS Code PreToolUse missing `guard-main-branch.py` entry")
+    elif main_guard_entry.get("matcher") != EDIT_TOOL_MATCHER:
+        errors.append(
+            "branch_isolation: VS Code `guard-main-branch.py` entry must scope to "
+            f"`{EDIT_TOOL_MATCHER}`"
+        )
+    helper_path = repo_root / "scripts" / "hooks" / "_harness_protocol.py"
+    if not helper_path.exists():
+        return ["branch_isolation: shared contract loader `scripts/hooks/_harness_protocol.py` not found"]
     for idx, enforcer in enumerate(enforcers):
         if not isinstance(enforcer, dict):
             errors.append(f"branch_isolation.enforcers[{idx}] must be a mapping with a `path`")
@@ -204,22 +406,291 @@ def _check_branch_isolation(contract: dict, *, repo_root: Path = REPO_ROOT) -> l
                 errors.append(
                     f"branch_isolation: `{path}` ({harness}) does not reference protected branch `{branch}`"
                 )
+        if "_harness_protocol" not in text or "load_branch_isolation_policy" not in text:
+            errors.append(
+                f"branch_isolation: `{path}` ({harness}) does not load policy from `scripts/hooks/_harness_protocol.py`"
+            )
+
+    if errors:
+        return errors
+
+    try:
+        vscode_path, claude_path = _main_guard_paths(contract)
+        extension = _first_protected_extension(spec)
+    except ValueError as exc:
+        return [f"branch_isolation: {exc}"]
+
+    tmpdir, fixture_repo = _build_guard_fixture(contract, repo_root=repo_root)
+    try:
+        env = _fixture_env(fixture_repo)
+        vscode_guard = fixture_repo / vscode_path
+        claude_guard = fixture_repo / claude_path
+
         for root in code_roots:
-            if not isinstance(root, str):
-                errors.append(f"branch_isolation: code_roots entries must be strings")
+            if not isinstance(root, str) or not root:
+                errors.append("branch_isolation: code_roots entries must be non-empty strings")
                 continue
-            if root not in text:
-                errors.append(
-                    f"branch_isolation: `{path}` ({harness}) does not reference code root `{root}`"
-                )
-        for ext in protected_extensions:
-            if not isinstance(ext, str):
-                errors.append(f"branch_isolation: protected_extensions entries must be strings")
+            rel_path = _path_for_code_root(root, extension)
+            absolute_path = fixture_repo / rel_path
+            _ensure_parent(absolute_path)
+
+            _, output, stderr = _run_python_hook(
+                vscode_guard,
+                {"toolName": "create_file", "toolInput": {"filePath": str(absolute_path)}},
+                cwd=fixture_repo,
+                env=env,
+            )
+            if output is None or output["hookSpecificOutput"]["permissionDecision"] != "block":
+                errors.append(f"branch_isolation: VS Code guard did not block code_root `{root}`")
+
+            shell_code, _, shell_stderr = _run_shell_hook(
+                claude_guard,
+                {"tool_input": {"file_path": str(absolute_path)}},
+                cwd=fixture_repo,
+                env=env,
+            )
+            if shell_code != 2 or "BLOCKED" not in shell_stderr:
+                errors.append(f"branch_isolation: Claude guard did not block code_root `{root}`")
+
+        for root_file in root_protected_files:
+            if not isinstance(root_file, str) or not root_file:
+                errors.append("branch_isolation: root_protected_files entries must be non-empty strings")
                 continue
-            if not _token_present(ext, text):
-                errors.append(
-                    f"branch_isolation: `{path}` ({harness}) does not reference protected extension `{ext}`"
-                )
+            absolute_path = fixture_repo / root_file
+            _ensure_parent(absolute_path)
+            _, output, _ = _run_python_hook(
+                vscode_guard,
+                {"toolName": "replace_string_in_file", "toolInput": {"filePath": str(absolute_path)}},
+                cwd=fixture_repo,
+                env=env,
+            )
+            if output is None or output["hookSpecificOutput"]["permissionDecision"] != "block":
+                errors.append(f"branch_isolation: VS Code guard did not block root protected file `{root_file}`")
+
+            shell_code, _, shell_stderr = _run_shell_hook(
+                claude_guard,
+                {"tool_input": {"file_path": str(absolute_path)}},
+                cwd=fixture_repo,
+                env=env,
+            )
+            if shell_code != 2 or "BLOCKED" not in shell_stderr:
+                errors.append(f"branch_isolation: Claude guard did not block root protected file `{root_file}`")
+
+        allowed_path = fixture_repo / "docs" / "notes.md"
+        _ensure_parent(allowed_path)
+        _, output, _ = _run_python_hook(
+            vscode_guard,
+            {"toolName": "create_file", "toolInput": {"filePath": str(allowed_path)}},
+            cwd=fixture_repo,
+            env=env,
+        )
+        if output is not None:
+            errors.append("branch_isolation: VS Code guard blocked allowed docs path `docs/notes.md`")
+
+        shell_code, _, _ = _run_shell_hook(
+            claude_guard,
+            {"tool_input": {"file_path": str(allowed_path)}},
+            cwd=fixture_repo,
+            env=env,
+        )
+        if shell_code != 0:
+            errors.append("branch_isolation: Claude guard blocked allowed docs path `docs/notes.md`")
+
+        contract_path = fixture_repo / CONTRACT_RELATIVE
+        contract_backup = fixture_repo / CONTRACT_RELATIVE.with_suffix(".yaml.bak")
+        contract_path.rename(contract_backup)
+        missing_target = fixture_repo / "scripts" / f"missing{extension}"
+        _ensure_parent(missing_target)
+        _, output, _ = _run_python_hook(
+            vscode_guard,
+            {"toolName": "create_file", "toolInput": {"filePath": str(missing_target)}},
+            cwd=fixture_repo,
+            env=env,
+        )
+        if output is None or output["hookSpecificOutput"]["permissionDecision"] != "block":
+            errors.append("branch_isolation: VS Code guard did not block when harness-protocol.yaml was missing")
+        elif "HarnessContractMissingError" not in output["hookSpecificOutput"]["permissionDecisionReason"]:
+            errors.append("branch_isolation: VS Code guard missing named HarnessContractMissingError reason")
+
+        shell_code, _, shell_stderr = _run_shell_hook(
+            claude_guard,
+            {"tool_input": {"file_path": str(missing_target)}},
+            cwd=fixture_repo,
+            env=env,
+        )
+        if shell_code != 2:
+            errors.append("branch_isolation: Claude guard did not block when harness-protocol.yaml was missing")
+        elif "HarnessContractMissingError" not in shell_stderr:
+            errors.append("branch_isolation: Claude guard missing named HarnessContractMissingError stderr")
+        contract_backup.rename(contract_path)
+    finally:
+        tmpdir.cleanup()
+    return errors
+
+
+def _seed_active_task(repo: Path, *, task_ref: str, branch: str, target_worktree_path: Path) -> None:
+    env = _fixture_env(repo)
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import json; "
+                "from pathlib import Path; "
+                "from agent_handoff_mcp import RuntimeConfig, configure_runtime, get_handoff_state, set_handoff_state; "
+                f"configure_runtime(RuntimeConfig.for_repo(Path({str(repo)!r}))); "
+                "identity = get_handoff_state(sections='identity'); "
+                "parsed = json.loads(identity) if isinstance(identity, str) else identity; "
+                "data = parsed.get('data') if isinstance(parsed, dict) else None; "
+                "active = data.get('active') if isinstance(data, dict) else None; "
+                "expected_revision = active.get('revision') if isinstance(active, dict) else None; "
+                f"set_handoff_state(task_ref={task_ref!r}, objective='fixture', status='in_progress', "
+                f"target_branch={branch!r}, target_worktree_path={str(target_worktree_path)!r}, "
+                "expected_revision=expected_revision)"
+            ),
+        ],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
+def _create_feature_worktree(repo: Path, branch: str = "feature/e17-8") -> Path:
+    worktree_path = repo.parent / "repo-feature"
+    _git(repo, "branch", branch, "main")
+    _git(repo, "worktree", "add", str(worktree_path), branch)
+    return worktree_path
+
+
+def _check_worktree_drift(contract: dict, *, repo_root: Path = REPO_ROOT) -> list[str]:
+    errors: list[str] = []
+    tmpdir, fixture_repo = _build_guard_fixture(contract, repo_root=repo_root)
+    try:
+        env = _fixture_env(fixture_repo)
+        feature_worktree = _create_feature_worktree(fixture_repo)
+        drift_guard = fixture_repo / ".github" / "hooks" / "guard-worktree-drift.py"
+        _seed_active_task(
+            fixture_repo,
+            task_ref="E17-8",
+            branch="feature/e17-8",
+            target_worktree_path=feature_worktree,
+        )
+
+        blocked_path = fixture_repo / "scripts" / "check.py"
+        _ensure_parent(blocked_path)
+        _, output, _ = _run_python_hook(
+            drift_guard,
+            {"toolName": "create_file", "toolInput": {"filePath": str(blocked_path)}},
+            cwd=fixture_repo,
+            env=env,
+        )
+        if output is None or output["hookSpecificOutput"]["permissionDecision"] != "block":
+            errors.append("worktree_drift: drift hook did not block a main-worktree code edit")
+        elif "WorkspaceRootDriftError" not in output["hookSpecificOutput"]["permissionDecisionReason"]:
+            errors.append("worktree_drift: block reason did not name WorkspaceRootDriftError")
+
+        allowed_path = fixture_repo / "docs" / "tasks" / "17.0" / "plan.md"
+        _ensure_parent(allowed_path)
+        _, output, _ = _run_python_hook(
+            drift_guard,
+            {"toolName": "create_file", "toolInput": {"filePath": str(allowed_path)}},
+            cwd=fixture_repo,
+            env=env,
+        )
+        if output is not None:
+            errors.append("worktree_drift: drift hook blocked an allow-listed main surface")
+
+        _seed_active_task(
+            fixture_repo,
+            task_ref="MAINT-dashboard",
+            branch="feature/e17-8",
+            target_worktree_path=feature_worktree,
+        )
+        _, output, _ = _run_python_hook(
+            drift_guard,
+            {"toolName": "create_file", "toolInput": {"filePath": str(blocked_path)}},
+            cwd=fixture_repo,
+            env=env,
+        )
+        if output is not None:
+            errors.append("worktree_drift: drift hook did not honor the MAINT-* bypass")
+
+        _seed_active_task(
+            fixture_repo,
+            task_ref="E17-8",
+            branch="feature/e17-8",
+            target_worktree_path=feature_worktree,
+        )
+        env_bypass = env | {"ALT_ALLOW_WORKTREE_DRIFT": "1"}
+        _, output, _ = _run_python_hook(
+            drift_guard,
+            {"toolName": "create_file", "toolInput": {"filePath": str(blocked_path)}},
+            cwd=fixture_repo,
+            env=env_bypass,
+        )
+        if output is not None:
+            errors.append("worktree_drift: drift hook did not honor ALT_ALLOW_WORKTREE_DRIFT=1")
+    finally:
+        tmpdir.cleanup()
+    return errors
+
+
+def _iter_dashboard_lint_files(repo_root: Path) -> list[Path]:
+    def _should_skip(path: Path) -> bool:
+        rel = path.relative_to(repo_root).as_posix()
+        if "/tests/" in rel or "/test_fixtures/" in rel or "/fixtures/" in rel:
+            return True
+        if rel.startswith("docs/tasks/archive/"):
+            return True
+        if rel.startswith("docs/tasks/") and rel.endswith("-task-plan.md"):
+            return True
+        if rel.startswith("docs/epics/") and rel.endswith("-epic.md"):
+            return True
+        return False
+
+    targets: list[Path] = []
+    for relative in (
+        Path("CLAUDE.md"),
+        Path(".github/copilot-instructions.md"),
+        Path("Makefile"),
+        Path("packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/dashboard_extension.py"),
+    ):
+        candidate = repo_root / relative
+        if candidate.exists():
+            targets.append(candidate)
+
+    for root in (
+        repo_root / "docs" / "agentic",
+        repo_root / ".claude",
+        repo_root / "docs" / "tasks",
+        repo_root / "docs" / "epics",
+    ):
+        if not root.exists():
+            continue
+        for path in root.rglob("*.md"):
+            if _should_skip(path):
+                continue
+            targets.append(path)
+    return targets
+
+
+def _check_dashboard_naming(*, repo_root: Path = REPO_ROOT) -> list[str]:
+    errors: list[str] = []
+    gitignore_path = repo_root / ".gitignore"
+    if gitignore_path.exists() and "DASHBOARD.md" not in gitignore_path.read_text():
+        errors.append(".gitignore is missing the `DASHBOARD.md` exclusion")
+
+    for path in _iter_dashboard_lint_files(repo_root):
+        try:
+            lines = path.read_text().splitlines()
+        except OSError:
+            continue
+        for lineno, line in enumerate(lines, start=1):
+            if "DASHBOARD.md" in line:
+                rel = path.relative_to(repo_root)
+                errors.append(f"dashboard_naming: stale `DASHBOARD.md` reference in `{rel}:{lineno}`")
     return errors
 
 
@@ -235,6 +706,8 @@ def run_checks(contract: dict, *, check_api_surface: bool = False, repo_root: Pa
     errors.extend(_check_hooks(contract, repo_root=repo_root))
     errors.extend(_check_cold_start(contract, repo_root=repo_root))
     errors.extend(_check_branch_isolation(contract, repo_root=repo_root))
+    errors.extend(_check_worktree_drift(contract, repo_root=repo_root))
+    errors.extend(_check_dashboard_naming(repo_root=repo_root))
     if check_api_surface:
         errors.extend(_check_python_api_surface(contract))
     return errors

@@ -9,10 +9,18 @@ import sys
 from pathlib import Path
 from typing import Any
 
+HELPER_DIR = Path(__file__).resolve().parents[2] / "scripts" / "hooks"
+if str(HELPER_DIR) not in sys.path:
+    sys.path.insert(0, str(HELPER_DIR))
 
-_CODE_EXTENSIONS = {".py", ".ts", ".tsx", ".js", ".jsx", ".php", ".sql", ".sh", ".css", ".scss"}
-_PROTECTED_ROOTS = ("apps/", "packages/")
-_EDIT_TOOLS = {"apply_patch", "create_file"}
+from _harness_protocol import (  # noqa: E402
+    HarnessContractMissingError,
+    is_branch_isolation_protected_path,
+    load_branch_isolation_policy,
+)
+
+
+_EDIT_TOOLS = {"apply_patch", "create_file", "replace_string_in_file", "multi_replace_string_in_file"}
 
 
 def _run_git(*args: str) -> str:
@@ -38,13 +46,20 @@ def _current_branch() -> str:
 
 def _to_repo_relative(path: str, repo_root: str) -> str:
     normalized_path = path.strip()
-    if repo_root and normalized_path.startswith(repo_root + "/"):
-        return normalized_path[len(repo_root) + 1 :]
-    return normalized_path
+    if not normalized_path:
+        return normalized_path
+    if not repo_root:
+        return normalized_path
+    try:
+        candidate = Path(normalized_path).expanduser().resolve(strict=False)
+        root = Path(repo_root).expanduser().resolve(strict=False)
+        return candidate.relative_to(root).as_posix()
+    except ValueError:
+        return normalized_path
 
 
 def _extract_candidate_paths(tool_name: str, tool_input: dict[str, Any]) -> list[str]:
-    if tool_name == "create_file":
+    if tool_name in {"create_file", "replace_string_in_file", "multi_replace_string_in_file"}:
         file_path = tool_input.get("filePath") or tool_input.get("file_path")
         return [str(file_path)] if isinstance(file_path, str) and file_path.strip() else []
 
@@ -66,18 +81,13 @@ def _extract_candidate_paths(tool_name: str, tool_input: dict[str, Any]) -> list
     return paths
 
 
-def _is_protected_code_path(path: str) -> bool:
-    if not path.startswith(_PROTECTED_ROOTS):
-        return False
-    return Path(path).suffix in _CODE_EXTENSIONS
-
-
 def _check_file_edit(
     tool_name: str,
     tool_input: dict[str, Any],
     *,
     branch: str,
     repo_root: str,
+    policy,
 ) -> tuple[str, list[str]] | None:
     if tool_name not in _EDIT_TOOLS:
         return None
@@ -87,7 +97,7 @@ def _check_file_edit(
     blocked_paths: list[str] = []
     for raw_path in _extract_candidate_paths(tool_name, tool_input):
         relative_path = _to_repo_relative(raw_path, repo_root)
-        if _is_protected_code_path(relative_path):
+        if is_branch_isolation_protected_path(relative_path, policy):
             blocked_paths.append(relative_path)
 
     if not blocked_paths:
@@ -109,7 +119,7 @@ def _build_reason(branch: str, blocked_paths: list[str]) -> str:
         "  1. Feature branch for single-agent work\n"
         "  2. Worktree isolation for delegated subtasks\n"
         "  3. Lane orchestration for multi-agent parallel work\n\n"
-        "Docs, configs, markdown, settings, and Makefiles remain allowed on main.\n"
+        "Docs, markdown, and permitted planning surfaces remain allowed on main.\n"
         "See: docs/agentic/rules/development-workflow.md#branch-isolation-protocol-mandatory"
     )
 
@@ -143,7 +153,24 @@ def main() -> None:
 
     branch = _current_branch()
     repo_root = _repo_root()
-    result = _check_file_edit(tool_name, tool_input, branch=branch, repo_root=repo_root)
+    workspace_root = Path(repo_root or Path.cwd())
+    try:
+        policy = load_branch_isolation_policy(workspace_root)
+    except HarnessContractMissingError as exc:
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "block",
+                        "permissionDecisionReason": str(exc),
+                    }
+                }
+            )
+        )
+        sys.exit(0)
+
+    result = _check_file_edit(tool_name, tool_input, branch=branch, repo_root=repo_root, policy=policy)
     if result is None:
         sys.exit(0)
 

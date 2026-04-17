@@ -198,7 +198,6 @@ def _collect_dashboard_rows(
         active_state AS (
             SELECT task_ref, status
             FROM handoff_state
-            WHERE id = 1
         )
         SELECT
             candidates.task_ref,

@@ -339,10 +339,6 @@ def _coerce_string_list(value: object) -> list[str]:
     return result
 
 
-def _get_current_handoff_row(conn: sqlite3.Connection) -> sqlite3.Row | None:
-    return conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone()
-
-
 def _get_handoff_row_for_task(conn: sqlite3.Connection, task_ref: str) -> sqlite3.Row | None:
     return conn.execute("SELECT * FROM handoff_state WHERE task_ref = ?", (task_ref,)).fetchone()
 

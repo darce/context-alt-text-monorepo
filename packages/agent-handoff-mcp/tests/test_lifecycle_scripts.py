@@ -260,7 +260,7 @@ def _read_active_row(repo: Path) -> dict[str, object] | None:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        row = conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone()
+        row = conn.execute("SELECT * FROM handoff_state ORDER BY datetime(updated_at) DESC LIMIT 1").fetchone()
     finally:
         conn.close()
     return dict(row) if row is not None else None
@@ -326,7 +326,12 @@ def test_task_start_succeeds_when_existing_active_task_present(tmp_path: Path) -
 
 
 def test_task_start_archives_previous_task_for_dashboard_status(tmp_path: Path) -> None:
-    """task-start should preserve the outgoing task's real dashboard status."""
+    """E17-11: task-start leaves the outgoing task's row in place (multi-active).
+
+    The greenfield multi-active-task model does not auto-archive outgoing
+    tasks; both coexist as live handoff_state rows and the dashboard shows
+    each one's live status.
+    """
     from agent_handoff_mcp import RuntimeConfig, configure_runtime, generate_dashboard_md
 
     repo = _build_fake_monorepo(tmp_path)
@@ -338,18 +343,12 @@ def test_task_start_archives_previous_task_for_dashboard_status(tmp_path: Path) 
     second = _run_script("task-start.sh", repo, "TS-DASH-2", "Second task", env=env)
     assert second.returncode == 0, f"stdout={second.stdout!r} stderr={second.stderr!r}"
 
-    archived = _read_archive_row(repo, "TS-DASH-1")
-    assert archived is not None
-    snapshot = json.loads(archived["snapshot_json"])
-    assert snapshot["active"]["task_ref"] == "TS-DASH-1"
-    assert snapshot["active"]["status"] == "in_progress"
-    assert snapshot["active"]["target_worktree_path"].endswith("context-alt-text-monorepo-ts-dash-1")
-
     runtime = RuntimeConfig.for_repo(repo)
     configure_runtime(runtime)
     dashboard = generate_dashboard_md(write_file=False)
     assert dashboard["ok"] is True
     assert "TS-DASH-1" in dashboard["markdown"]
+    assert "TS-DASH-2" in dashboard["markdown"]
     assert "in_progress" in dashboard["markdown"]
 
 

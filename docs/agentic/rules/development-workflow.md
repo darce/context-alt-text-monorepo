@@ -212,7 +212,7 @@ On the feature branch, after final commit:
     handoff_close_check(enforce=True, current_commit_sha=<HEAD>)
     Expected: ok=true, no failures
 
-8.  Merge the feature branch into main, return root to main, delete the feature branch, close any still-open post-merge review findings on the merged task from a descendant `main` context, archive the task, and regenerate DASHBOARD.txt (`generate_dashboard_md()`).
+8.  Merge the feature branch into main, return root to main, delete the feature branch, close any still-open post-merge review findings on the merged task from a descendant `main` context, archive the task, and regenerate DASHBOARD.txt (`render_handoff(kind='dashboard')`).
 ```
 
 ### When the Gate May Be Skipped
@@ -249,7 +249,7 @@ For every unit of work (feature slice, bug fix, refactor):
 9. Security pass: nonce/capability checks, escape/sanitize
 10. Accessibility pass: keyboard navigation, ARIA labels
 11. Run full test suite locally
-12. **Commit the slice** → `make slice-commit MSG="..."` (commits + `close_slice` + regenerates CURRENT_TASK.md and DASHBOARD.txt atomically server-side)
+12. **Commit the slice** → `make slice-commit MSG="..."` (commits + `close_slice` + regenerates CURRENT_TASK.json and DASHBOARD.txt atomically server-side)
 13. **Before requesting review**: `make review-ready`; confirm zero errors
 14. **Self-review with bug-finding heuristics**: Walk your diff through the [Bug-Finding Heuristics](branch-review-guide.md#bug-finding-heuristics-universal) checklist
 15. **Regression trap sweep (handoff-learned)**: Verify stale/offline flows keep manual recovery, remote calls use shared timeout helpers, retry loops are per-cycle bounded, import/update paths preserve payload/provenance integrity, and reopened findings include explicit rationale
@@ -537,15 +537,15 @@ refactor/clustering-pipeline
 
 ---
 
-## Session State with MCP Handoff + CURRENT_TASK.md
+## Session State with MCP Handoff + CURRENT_TASK.json
 
-MCP handoff state is the source of truth; `CURRENT_TASK.md` is a generated view. A `docs/tasks/` plan is optional; an MCP handoff task is not.
+MCP handoff state is the source of truth; `CURRENT_TASK.json` is a generated view. A `docs/tasks/` plan is optional; an MCP handoff task is not.
 
 Source-of-truth policy:
 
-- `.task-state/handoff.db` is authoritative. `CURRENT_TASK.md` is derived output -- never hand-edit it.
-- If markdown drifts from DB, regenerate (`generate_dashboard_md`) and continue from DB state.
-- After archiving a merged task, regenerate DASHBOARD.txt in the same cleanup slice (`generate_dashboard_md()`).
+- `.task-state/handoff.db` is authoritative. `CURRENT_TASK.json` is derived output -- never hand-edit it.
+- If markdown drifts from DB, regenerate (`render_handoff(kind='dashboard')`) and continue from DB state.
+- After archiving a merged task, regenerate DASHBOARD.txt in the same cleanup slice (`render_handoff(kind='dashboard')`).
 - A task is not fully cleaned up until its review findings are closed or explicitly deferred.
 
 **Use for:** every repo change, multi-session tasks, complex debugging, multi-phase implementations.
@@ -560,7 +560,7 @@ Source-of-truth policy:
 5. Close the slice in every active tracker before moving on. Mark completed/skipped MCP next actions and update task-plan checklist boxes.
 6. Before close/final handoff, run `handoff_close_check(enforce=True, current_commit_sha=<HEAD>)`.
 7. Before requesting review, run `make review-ready` and resolve all NOT READY reasons.
-8. Regenerate DASHBOARD.txt after merge/archive (mandatory): `generate_dashboard_md()`. If a completed task still appears in NEEDS ATTENTION, close or defer its remaining findings first.
+8. Regenerate DASHBOARD.txt after merge/archive (mandatory): `render_handoff(kind='dashboard')`. If a completed task still appears in NEEDS ATTENTION, close or defer its remaining findings first.
 9. Use template fallback only when MCP is unavailable.
 
 **Template location:** [templates/CURRENT_TASK.template.md](../templates/CURRENT_TASK.template.md)

@@ -89,7 +89,7 @@ Notes:
 - `make lane-run` launches the selected execution backend in the lane worktree using that generated prompt, requires a structured final handoff payload, and then auto-submits either `lane-handoff` or a blocked `lane-report` based on the result. `BACKEND=codex-cli` uses `codex exec`; `BACKEND=codex-subagent` routes through the Codex app-server bridge. Orchestrator-started `codex-subagent` workers can now inherit, explicitly set, or auto-tune reasoning effort per lane cycle.
 - Lanes may declare manifest-driven preflight gates. For example, `backend-domain` now checks local Postgres/env readiness before any subagent turn and will auto-submit `needs_guidance` if the DB capability is unavailable.
 - `make handoff-inbox` is the orchestrator polling command. It shows open worker-to-orchestrator lane messages and the latest merge-ready or blocked worker reports across lanes.
-- `make lane-dispatch ... MESSAGE="..."` is the orchestrator assignment command. It records a lane message in MCP and regenerates `CURRENT_TASK.md`.
+- `make lane-dispatch ... MESSAGE="..."` is the orchestrator assignment command. It records a lane message in MCP and regenerates `CURRENT_TASK.json`.
 - `make handoff-dispatch` is the orchestrator handoff-fanout command. Run reviews or update handoff state from the orchestrator root, then route unassigned open review findings, blockers, and next actions to the correct lane so workers see them in `make lane-inbox`.
 - `make review-dispatch` remains available as a backward-compatible alias for `make handoff-dispatch`.
 - `make lane-commit` stages the lane-owned paths and creates a default commit whose message begins with the lane name, for example `frontend: update retention admin UI`.

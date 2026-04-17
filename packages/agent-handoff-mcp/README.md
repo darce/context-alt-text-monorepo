@@ -8,7 +8,7 @@ This package owns handoff state and related workflow primitives:
 
 - task state, decisions, blockers, and next actions
 - review findings and review runs
-- generated `CURRENT_TASK.md` snapshots
+- generated `CURRENT_TASK.json` snapshots
 - lane registration, lane activity, worker reports, and lane messages
 - artifact indexing and derived metrics snapshots
 
@@ -20,7 +20,7 @@ By default, runtime state lives under the workspace you point the CLI at:
 
 - SQLite DB: `.task-state/handoff.db`
 - exports: `.task-state/exports/`
-- generated markdown: `CURRENT_TASK.md`
+- generated markdown: `CURRENT_TASK.json`
 
 Override these with CLI flags or `AGENT_HANDOFF_*` environment variables.
 
@@ -97,7 +97,7 @@ from agent_handoff_mcp import (
     set_handoff_state,
     update_task_status,
     get_verified_tests,
-    generate_dashboard_md,
+    render_handoff,
     record_file_touch,
     get_touched_files,
 )
@@ -243,7 +243,7 @@ agent-handoff-mcp --workspace-root /path/to/workspace --tool-profile core serve-
 | `review-findings` | `review_findings` |
 | `review-runs` | `review_runs` |
 | `handoff-close-check` | `handoff_close_check` |
-| `task` | `generate_current_task_md` |
+| `render-handoff` | `render_handoff` (kind=current_task/dashboard) |
 | *(no CLI)* | `load_session` |
 | *(no CLI)* | `close_slice` |
 | `audit-decisions` | `audit_decision_ids` |
@@ -254,7 +254,6 @@ agent-handoff-mcp --workspace-root /path/to/workspace --tool-profile core serve-
 | `artifacts` | `artifacts` |
 | `handoff-search` | `search_handoff` |
 | `get-verified-tests` | `get_verified_tests` |
-| `dashboard` | `generate_dashboard_md` |
 | `get-archived-task` | `get_archived_task` |
 | `record-file-touch` | `record_file_touch` |
 | `get-touched-files` | `get_touched_files` |

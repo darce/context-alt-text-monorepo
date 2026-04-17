@@ -1,4 +1,4 @@
-# AHMCP-25. DASHBOARD.md / CURRENT_TASK.md Surface Split
+# AHMCP-25. DASHBOARD.md / CURRENT_TASK.json Surface Split
 
 > **Metadata**
 >
@@ -13,18 +13,18 @@
 
 ## Objective
 
-`CURRENT_TASK.md` was originally a human-readable markdown dashboard used as the MCP
+`CURRENT_TASK.json` was originally a human-readable markdown dashboard used as the MCP
 fallback display surface. During active use it became clear that agents benefit more from
 a machine-readable JSON snapshot (for programmatic inspection) while humans benefit from
 a stable human-readable view (for VS Code preview, git diffs, and code review).
 
 This task splits the two concerns into separate files:
 
-- **`CURRENT_TASK.md`** — machine-readable JSON snapshot of the active task state.
+- **`CURRENT_TASK.json`** — machine-readable JSON snapshot of the active task state.
   Written by `generate_current_task_md` and read by `handoff_close_check`.
   Listed in `.gitignore` (generated, not tracked).
 - **`DASHBOARD.md`** — human-readable markdown mirror of the same state.
-  Written alongside `CURRENT_TASK.md` by `generate_current_task_md`.
+  Written alongside `CURRENT_TASK.json` by `generate_current_task_md`.
   Listed in `.gitignore` (generated, not tracked).
 
 The previously tracked `DASHBOARD.md` (a hand-maintained static file) is deleted.
@@ -49,7 +49,7 @@ Changed files:
 - `docs/agentic/instructions.md` — fallback text updated
 - `docs/agentic/contracts/agent-handoff-mcp.md` — contract updated with new surface descriptions
 - `docs/agentic/playbooks/host-adapters/worktree-codex-playbook.md` — playbook updated
-- `.gitignore` — `DASHBOARD.md` and `CURRENT_TASK.md` added as generated files
+- `.gitignore` — `DASHBOARD.md` and `CURRENT_TASK.json` added as generated files
 - `DASHBOARD.md` — deleted (replaced by generated file)
 
 ---

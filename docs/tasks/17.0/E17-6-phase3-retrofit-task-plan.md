@@ -84,7 +84,7 @@ The following work has been split out of this task and moved to [E17-7](./E17-7-
 - Multi-active-task handoff-state registry and task-resolution redesign
 - Slice-completion/session-status handoff enhancements
 - Raw test trace archive and change-outcome linkage
-- MCP tool-surface compression (`generate_md`, `handoff_transfer`, `task_archive`)
+- MCP tool-surface compression (`render_handoff`, `handoff_transfer`, `task_archive`)
 - Codex portable-command propagation from `portable_commands.json`
 - `make check-agent-workflows`, `make check-codex-command-router`, and `make smoke-agent-workflows` expansion
 

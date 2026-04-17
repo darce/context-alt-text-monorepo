@@ -9,7 +9,7 @@ mcp_tools:
   - review_runs
   - record_event
   - get_handoff_state
-  - generate_dashboard_md
+  - render_handoff
 tdd_gate: false
 disable-model-invocation: false
 ---

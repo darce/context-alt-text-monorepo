@@ -13,11 +13,11 @@
 
 ## Objective
 
-Implement the Tier 1 output-contract v2 changes (OC-001, OC-002, OC-003, OC-007) so `CURRENT_TASK.md` stops growing without bound, `close_slice` returns the decision and revision state callers need, and `export_handoff_state` stops embedding rendered markdown by default. Additionally, implement OC-008 (task initiation with branch binding) as an independent additive slice.
+Implement the Tier 1 output-contract v2 changes (OC-001, OC-002, OC-003, OC-007) so `CURRENT_TASK.json` stops growing without bound, `close_slice` returns the decision and revision state callers need, and `export_handoff_state` stops embedding rendered markdown by default. Additionally, implement OC-008 (task initiation with branch binding) as an independent additive slice.
 
 ## Problem Statement
 
-The approved output-contract v2 spec identified four low-risk changes that should land before the common envelope work: remove durable all-status findings history from `CURRENT_TASK.md`, cap cross-task findings in the render, return the recorded decision row from `close_slice`, and default exports to canonical state without embedded markdown. These changes are independent of the later envelope rollout, but they materially reduce token cost and stale render noise immediately.
+The approved output-contract v2 spec identified four low-risk changes that should land before the common envelope work: remove durable all-status findings history from `CURRENT_TASK.json`, cap cross-task findings in the render, return the recorded decision row from `close_slice`, and default exports to canonical state without embedded markdown. These changes are independent of the later envelope rollout, but they materially reduce token cost and stale render noise immediately.
 
 If they do not land first, Tier 2 will wrap an already-wasteful render path and preserve avoidable follow-up reads for `close_slice` callers.
 
@@ -26,7 +26,7 @@ If they do not land first, Tier 2 will wrap an already-wasteful render path and 
 - This task implements Tier 1 items from the approved spec: OC-001, OC-002, OC-003, OC-007, and OC-008.
 - OC-004 response envelopes are out of scope here; Tier 1 should preserve the pre-envelope response contract except for the explicitly approved new fields on `close_slice` and the `generate_current_task_md` parameter addition.
 - Active-task open findings remain uncapped; the cap applies only to cross-task grouped findings.
-- `CURRENT_TASK.md` remains a bounded render artifact, not the canonical long-term history store for findings.
+- `CURRENT_TASK.json` remains a bounded render artifact, not the canonical long-term history store for findings.
 - Contract docs and deterministic tests must move in the same slices as the behavior changes.
 
 ## Workflow Principles
@@ -38,7 +38,7 @@ If they do not land first, Tier 2 will wrap an already-wasteful render path and 
 
 ## Terminology
 
-- **Render artifact**: Generated markdown such as `CURRENT_TASK.md`; useful for hot-state consumption but not the canonical store.
+- **Render artifact**: Generated markdown such as `CURRENT_TASK.json`; useful for hot-state consumption but not the canonical store.
 - **Cross-task findings**: Findings from tasks other than the one currently being rendered.
 - **Mutation confirmation**: The minimum structured response a caller needs from a write tool to avoid an immediate follow-up read.
 - **Canonical export**: Exported handoff JSON that contains durable state, with rendered markdown included only when explicitly requested.
@@ -53,7 +53,7 @@ If they do not land first, Tier 2 will wrap an already-wasteful render path and 
 
 After this task:
 
-- `CURRENT_TASK.md` contains no durable all-status history section
+- `CURRENT_TASK.json` contains no durable all-status history section
 - cross-task findings render with a bounded per-task cap
 - `close_slice` returns both the recorded decision row and the new task revision
 - `export_handoff_state` omits `current_task_markdown` unless callers explicitly ask for it
@@ -124,7 +124,7 @@ Use environment-variable-based commands only. Do not hardcode user-local absolut
 
 ### Slice 1: Remove Unbounded Findings History and Cap Cross-Task Render Noise
 
-**Goal**: Make `CURRENT_TASK.md` bounded by removing durable all-status history and limiting cross-task findings.
+**Goal**: Make `CURRENT_TASK.json` bounded by removing durable all-status history and limiting cross-task findings.
 
 Changes:
 
@@ -180,7 +180,7 @@ Changes:
 - Add `target_branch` parameter to both `switch_task` (task init/switch boundary) and `set_handoff_state` (in-place update)
 - `switch_task` sets `target_branch` on init; `set_handoff_state` preserves existing value when omitted
 - Include `target_branch` in `get_handoff_state` active section (included via row dict)
-- Add `Target branch:` line to CURRENT_TASK.md render header when set
+- Add `Target branch:` line to CURRENT_TASK.json render header when set
 - Update `docs/agentic/contracts/agent-handoff-mcp.md` with the new schema field
 - Update `docs/agentic/contracts/agent-orchestrator-mcp.md` with the `switch_task` signature change (`switch_task` is registered on the orchestrator surface)
 
@@ -188,7 +188,7 @@ Proof:
 
 - `switch_task(task_ref="X", target_branch="feature/x")` persists and `get_handoff_state` returns it
 - `set_handoff_state` without `target_branch` preserves the existing value
-- CURRENT_TASK.md shows `Target branch: feature/x` in the header
+- CURRENT_TASK.json shows `Target branch: feature/x` in the header
 
 ## Lane-Ready Execution Brief
 
@@ -248,7 +248,7 @@ Proof:
 - [ ] `handoff_state` schema has `target_branch` column.
 - [ ] `HANDOFF_SCHEMA_VERSION` bumped with migration.
 - [ ] `set_handoff_state` accepts and persists `target_branch`.
-- [ ] CURRENT_TASK.md render header shows the target branch.
+- [ ] CURRENT_TASK.json render header shows the target branch.
 - [ ] Contract doc updated.
 
 ## Review Readiness
@@ -259,8 +259,8 @@ Proof:
 
 ## Success Criteria
 
-- [ ] `CURRENT_TASK.md` no longer includes durable all-status findings history.
+- [ ] `CURRENT_TASK.json` no longer includes durable all-status findings history.
 - [ ] Cross-task findings render is bounded without hiding active-task open work.
 - [ ] `close_slice` callers can confirm the recorded decision and revision without an immediate follow-up read.
 - [ ] Default exports contain canonical handoff state without embedded markdown.
-- [ ] Tasks can declare a target branch at init, discoverable from handoff state and CURRENT_TASK.md.
+- [ ] Tasks can declare a target branch at init, discoverable from handoff state and CURRENT_TASK.json.

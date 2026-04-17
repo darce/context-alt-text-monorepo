@@ -143,7 +143,7 @@ decide about auth 3 months ago?"). It has no concept of:
 - Structured decision/event recording with actor attribution
 - Review findings with status workflow (open -> fixed/deferred/wontfix)
 - Pre-merge gate enforcement (`handoff_close_check`)
-- Dashboard generation (CURRENT_TASK.md)
+- Dashboard generation (CURRENT_TASK.json)
 - Slice-complete checkpoints
 
 It could add value as a **long-term memory layer alongside** agent-handoff-mcp;
@@ -175,7 +175,7 @@ Seven repos were evaluated:
 - Decision/event recording with actor attribution
 - Review findings with status workflow (open -> fixed/deferred/wontfix)
 - Slice-complete checkpoints
-- CURRENT_TASK.md dashboard generation
+- CURRENT_TASK.json dashboard generation
 - Handoff close checks with enforcement
 
 ### Official MCP Memory Server

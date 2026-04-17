@@ -62,7 +62,7 @@ class ReviewCoverageSummary(TypedDict, total=False):
 
 
 class DashboardTaskRow(TypedDict):
-    """Cross-task dashboard row rendered at the top of CURRENT_TASK.md."""
+    """Cross-task dashboard row rendered at the top of CURRENT_TASK.json."""
 
     task_ref: str
     status: str
@@ -94,7 +94,7 @@ class CurrentTaskRenderState(TypedDict):
 
 
 def _normalize_current_task_json_for_compare(serialized: str) -> str:
-    """Normalize the machine-readable CURRENT_TASK.md payload for sync checks."""
+    """Normalize the machine-readable CURRENT_TASK.json payload for sync checks."""
 
     try:
         payload = json.loads(serialized)
@@ -131,7 +131,7 @@ def _infer_epic_ref(task_ref: str | None) -> str | None:
 def _collect_dashboard_rows(
     conn: sqlite3.Connection, limit: int = 20, include_archived: bool = True
 ) -> list[DashboardTaskRow]:
-    """Collect compact cross-task dashboard rows for CURRENT_TASK.md and dashboard view."""
+    """Collect compact cross-task dashboard rows for CURRENT_TASK.json and dashboard view."""
 
     limit = max(1, limit)
     archive_union = (
@@ -403,7 +403,7 @@ def _write_current_task_md_for_task(conn: sqlite3.Connection, task_ref: str) -> 
 
 
 def _write_current_task_md_from_state(task_ref: str) -> None:
-    """Write CURRENT_TASK.md for a task using the internal DB write path."""
+    """Write CURRENT_TASK.json for a task using the internal DB write path."""
     with _get_db_connection() as conn:
         _write_current_task_md_for_task(conn, task_ref)
 

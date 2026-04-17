@@ -339,7 +339,7 @@ What this does:
 
 1. Upserts the lane registration to `active` status.
 2. Sends an open `orchestrator_to_worker` lane message.
-3. Regenerates `CURRENT_TASK.md` as machine-readable state and `DASHBOARD.txt` as the human-readable dispatch surface.
+3. Regenerates `CURRENT_TASK.json` as machine-readable state and `DASHBOARD.txt` as the human-readable dispatch surface.
 
 The worker sees it the next time they run `make lane-inbox`.
 
@@ -454,7 +454,7 @@ Hardening behavior:
 Phase 5 represents the final delivery and audit stage:
 
 1. **Sub-Phase 5.1: Cross-Lane Verification.** Once all lanes are merged, run full integration tests (`make check-all`) in the orchestrator root.
-2. **Sub-Phase 5.2: Documentation Audit.** Verify all `docs/`, `CURRENT_TASK.md`, and `CHANGELOG` are consistent with the implemented reality.
+2. **Sub-Phase 5.2: Documentation Audit.** Verify all `docs/`, `CURRENT_TASK.json`, and `CHANGELOG` are consistent with the implemented reality.
 3. **Sub-Phase 5.3: Handoff Closure.** Perform a final `agent-handoff-mcp handoff-close-check --task-ref <task>` to ensure all findings are resolved and provenance is complete.
 
 ### Recipe: In-app orchestration via MCP
@@ -607,14 +607,14 @@ REPO_ROOT="${REPO_ROOT:-$PWD}"
 agent-handoff-mcp \
   --workspace-root "$REPO_ROOT" \
   --state-dir "$REPO_ROOT/.task-state" \
-  --current-task-path "$REPO_ROOT/CURRENT_TASK.md" \
+  --current-task-path "$REPO_ROOT/CURRENT_TASK.json" \
   --exports-dir "$REPO_ROOT/.task-state/exports" \
   review-summary --task-ref <task-ref>
 
 agent-handoff-mcp \
   --workspace-root "$REPO_ROOT" \
   --state-dir "$REPO_ROOT/.task-state" \
-  --current-task-path "$REPO_ROOT/CURRENT_TASK.md" \
+  --current-task-path "$REPO_ROOT/CURRENT_TASK.json" \
   --exports-dir "$REPO_ROOT/.task-state/exports" \
   dashboard
 ```
@@ -922,7 +922,7 @@ git stash pop
 ```bash
 make state                    # full MCP state dump
 make dashboard                # regenerate DASHBOARD.txt (human observatory)
-make task                     # regenerate CURRENT_TASK.md
+make task                     # regenerate CURRENT_TASK.json
 ```
 
 ### Lane-refresh refuses: "orchestrator workflow tooling has uncommitted changes"

@@ -30,7 +30,7 @@ def _configure_runtime(workspace_root: Path) -> RuntimeConfig:
     runtime = RuntimeConfig.for_workspace(
         workspace_root,
         state_dir=workspace_root / ".task-state",
-        current_task_path=workspace_root / "CURRENT_TASK.md",
+        current_task_path=workspace_root / "CURRENT_TASK.json",
     )
     mcp_server.configure_runtime(runtime)
     return runtime
@@ -108,6 +108,36 @@ def test_export_import_preserves_changed_files_json(workspace_pair: dict[str, Pa
     import json as _json
 
     assert set(_json.loads(decision["changed_files_json"])) == {"src/core.py", "docs/contract.md"}
+
+
+def test_export_import_preserves_test_traces(workspace_pair: dict[str, Path]) -> None:
+    export_path = workspace_pair["source"] / ".task-state" / "exports" / "test-traces-rt.json"
+    _parse(mcp_server.set_handoff_state(task_ref="trace-rt", objective="Trace round trip", status="in_progress"))
+    _parse(
+        mcp_server.record_test_result(
+            session="s1",
+            command="pytest tests/test_trace_rt.py -q",
+            passed=False,
+            result="1 failed in 0.01s",
+            traces=[
+                "============================= test session starts =============================",
+                "E   AssertionError: trace round trip",
+            ],
+        )
+    )
+    exported = _parse(mcp_server.export_handoff_state(task_ref="trace-rt", output_path=str(export_path)))
+    assert exported["ok"] is True
+
+    _configure_runtime(workspace_pair["target"])
+    imported = _parse(mcp_server.import_handoff_state(input_path=str(export_path), mode="merge", set_active=True))
+    assert imported["ok"] is True
+
+    tests = _parse(mcp_server.get_verified_tests(task_ref="trace-rt", include_traces=True))
+    assert tests["ok"] is True
+    assert tests["tests"][0]["traces"] == [
+        "============================= test session starts =============================",
+        "E   AssertionError: trace round trip",
+    ]
 
 
 def test_switch_task_returns_full_mutation_shape(workspace_pair: dict[str, Path]) -> None:
@@ -277,7 +307,7 @@ def test_update_task_status_updates_archived_snapshot_and_dashboard(workspace_pa
 
     payload = _parse(mcp_server.generate_current_task_md(task_ref="task-b", write_file=False))
     assert payload["ok"] is True
-    # CURRENT_TASK.md is now active-task-only; cross-task data is in DASHBOARD.txt.
+    # CURRENT_TASK.json is now active-task-only; cross-task data is in DASHBOARD.txt.
     ct_data = json.loads(payload["current_task_json"])
     assert ct_data["task_ref"] == "task-b"
     assert "task-a" not in payload["current_task_json"]

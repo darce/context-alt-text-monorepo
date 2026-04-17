@@ -90,6 +90,7 @@ DEFAULT_HANDOFF_LIMITS = {
     "blockers": 5,
     "actions": 5,
     "decisions": 3,
+    "slices": 20,
     "tests": 3,
     "findings": 10,
 }
@@ -338,10 +339,79 @@ def _coerce_string_list(value: object) -> list[str]:
     return result
 
 
+def _get_current_handoff_row(conn: sqlite3.Connection) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone()
+
+
+def _get_handoff_row_for_task(conn: sqlite3.Connection, task_ref: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM handoff_state WHERE task_ref = ?", (task_ref,)).fetchone()
+
+
+def _resolve_workspace_handoff_row(conn: sqlite3.Connection) -> sqlite3.Row | None:
+    rows = conn.execute(
+        "SELECT * FROM handoff_state ORDER BY CASE WHEN id = 1 THEN 0 ELSE 1 END, updated_at DESC, task_ref ASC"
+    ).fetchall()
+    if not rows:
+        return None
+    if len(rows) == 1:
+        return cast(sqlite3.Row, rows[0])
+
+    candidate_paths: list[str] = []
+    for raw_candidate in (str(_workspace_root()), os.getcwd()):
+        try:
+            normalized = _normalize_path_for_match(raw_candidate)
+        except (FileNotFoundError, OSError, RuntimeError):
+            continue
+        if normalized not in candidate_paths:
+            candidate_paths.append(normalized)
+
+    exact_matches: list[sqlite3.Row] = []
+    prefix_matches: list[sqlite3.Row] = []
+    registered_target_count = 0
+    for row in rows:
+        raw_target = _normalize_optional_text(row["target_worktree_path"])
+        if raw_target is None:
+            continue
+        registered_target_count += 1
+        try:
+            normalized_target = _normalize_path_for_match(raw_target)
+        except (FileNotFoundError, OSError, RuntimeError):
+            continue
+        for candidate in candidate_paths:
+            if candidate == normalized_target:
+                exact_matches.append(cast(sqlite3.Row, row))
+                break
+            if candidate.startswith(normalized_target + os.sep):
+                prefix_matches.append(cast(sqlite3.Row, row))
+                break
+
+    if len(exact_matches) == 1:
+        return exact_matches[0]
+    if len(exact_matches) > 1:
+        task_refs = ", ".join(sorted(str(row["task_ref"]) for row in exact_matches))
+        raise ValueError(f"Ambiguous active task for workspace path; matching task_refs: {task_refs}")
+    if len(prefix_matches) == 1:
+        return prefix_matches[0]
+    if len(prefix_matches) > 1:
+        task_refs = ", ".join(sorted(str(row["task_ref"]) for row in prefix_matches))
+        raise ValueError(f"Ambiguous active task for workspace path; matching task_refs: {task_refs}")
+
+    if registered_target_count == 0:
+        current_row = next((cast(sqlite3.Row, row) for row in rows if row["id"] == 1), None)
+        if current_row is not None:
+            return current_row
+
+    task_refs = ", ".join(sorted(str(row["task_ref"]) for row in rows))
+    raise ValueError(
+        "Ambiguous active task. Pass task_ref explicitly or run from a registered target_worktree_path. "
+        f"Known task_refs: {task_refs}"
+    )
+
+
 def _resolve_task_ref(conn: sqlite3.Connection, task_ref: str | None) -> str:
     if task_ref:
         return task_ref
-    row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
+    row = _resolve_workspace_handoff_row(conn)
     if row is None:
         raise ValueError("No active task in handoff_state. Call set_handoff_state first or pass task_ref explicitly.")
     return str(row["task_ref"])

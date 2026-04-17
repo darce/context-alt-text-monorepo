@@ -22,7 +22,7 @@ Finish the remaining local-sync work so the plugin can keep recognition results 
 - Planning/docs merge to `main`: `db95a4e8fcf3a2492ac1370fd0b5547a07973163`
 - Post-merge audit correction note: decision `#1497` (`cdx_note_INVEST-LOCAL-SYNC_post_merge_audit_corrections`)
 - Fresh frontend proof added during closure: test result `#663` (`43` vitest assertions across the two touched local-sync UI specs)
-- Clean closure gate: `handoff_close_check(task_ref="INVEST-LOCAL-SYNC")` passes once `CURRENT_TASK.md` is regenerated from the updated handoff DB state
+- Clean closure gate: `handoff_close_check(task_ref="INVEST-LOCAL-SYNC")` passes once `CURRENT_TASK.json` is regenerated from the updated handoff DB state
 
 ## Problem Statement
 
@@ -184,7 +184,7 @@ Changes:
 
 - Close or defer the remaining `VERIFY-1436-*` and `VERIFY-1438-*` findings based on the real branch SHA and the final implementation state
 - Update `INVEST-LOCAL-SYNC-004` and `006` to `fixed` or `deferred` with explicit rationale and verification
-- Regenerate `CURRENT_TASK.md`, record a fresh slice-complete decision, and run `handoff_close_check`
+- Regenerate `CURRENT_TASK.json`, record a fresh slice-complete decision, and run `handoff_close_check`
 
 Finding closure table:
 
@@ -246,7 +246,7 @@ Proof:
 
 - [x] Remaining review/provenance findings are updated against the real branch SHA.
 - [x] Slice 4 applies the explicit finding closure table rather than ad hoc cleanup.
-- [x] `CURRENT_TASK.md` is regenerated after handoff state changes.
+- [x] `CURRENT_TASK.json` is regenerated after handoff state changes.
 - [x] `handoff_close_check` passes or reports only intentionally deferred items.
 
 ## Review Readiness

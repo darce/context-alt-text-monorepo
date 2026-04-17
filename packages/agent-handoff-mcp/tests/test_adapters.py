@@ -37,7 +37,7 @@ def test_vscode_adapter_points_to_installed_entrypoint_and_doctor_runs() -> None
         "--state-dir",
         "${workspaceFolder}/.task-state",
         "--current-task-path",
-        "${workspaceFolder}/CURRENT_TASK.md",
+        "${workspaceFolder}/CURRENT_TASK.json",
         "--exports-dir",
         "${workspaceFolder}/.task-state/exports",
         "serve-stdio",
@@ -65,53 +65,38 @@ def test_vscode_adapter_points_to_installed_entrypoint_and_doctor_runs() -> None
 
 
 def test_project_codex_config_registers_installed_stdio_adapter() -> None:
-    """The Codex MCP config registers the installed handoff binary with
-    consistent path arguments.
-
-    This test deliberately does **not** compare the toml's path values
-    against ``Path(__file__).parents[3]``. The Codex CLI doesn't know about
-    git linked worktrees and always launches from the user's primary
-    checkout, so ``.codex/config.toml`` is intentionally pinned to that
-    primary path. When this test runs from a linked worktree (under
-    ``context-alt-text-monorepo-<task-id>/``), the test file's parent path
-    is the linked worktree's root, not the toml's pinned root, and the two
-    correctly do not match.
-
-    Instead, the test extracts the toml's own ``cwd`` value and verifies
-    **internal consistency**: every other path arg (`--workspace-root`,
-    `--state-dir`, `--current-task-path`, `--exports-dir`) must derive
-    from the same base. That catches drift between the toml's various
-    path values without coupling the test to where pytest happens to be
-    running.
-    """
+    """The project Codex adapter stays portable and repo-relative."""
     test_repo_root = Path(__file__).resolve().parents[3]
     config = tomllib.loads((test_repo_root / ".codex" / "config.toml").read_text())
 
     server = config["mcp_servers"]["altcontext-mcp"]
     assert server["command"] == "agent-handoff-mcp"
-
-    # Anchor every path assertion on the toml's own cwd, not on the test
-    # file's runtime location. This is what makes the test linked-worktree
-    # safe.
-    cwd = Path(server["cwd"])
-    assert cwd.is_absolute(), f"Codex cwd must be an absolute path; got {cwd!r}"
-    assert cwd.name == "context-alt-text-monorepo", (
-        f"Codex cwd should point at the primary monorepo checkout; got {cwd!r}"
-    )
-
+    assert server["cwd"] == "."
     assert server["args"] == [
         "--workspace-root",
-        str(cwd),
+        ".",
         "--state-dir",
-        str(cwd / ".task-state"),
+        ".task-state",
         "--current-task-path",
-        str(cwd / "CURRENT_TASK.md"),
+        "CURRENT_TASK.json",
         "--exports-dir",
-        str(cwd / ".task-state" / "exports"),
+        ".task-state/exports",
         "serve-stdio",
     ]
     assert server["env"]["PYENV_VERSION"] == "description-service"
     assert "PYTHONPATH" not in server["env"]
+
+
+def test_project_mcp_json_sets_runtime_env_and_relative_workspace_root() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    config = json.loads((repo_root / ".mcp.json").read_text())
+
+    for server_name in ("agent-handoff-mcp", "agent-orchestrator-mcp"):
+        server = config["mcpServers"][server_name]
+        assert server["command"] in {"agent-handoff-mcp", "agent-orchestrator-mcp"}
+        assert server["args"] == ["--workspace-root", ".", "serve-stdio"]
+        assert server["env"]["PYENV_VERSION"] == "description-service"
+        assert server["env"]["AGENT_HANDOFF_ENFORCE_BRANCH"] == "1"
 
 
 def test_generic_stdio_adapter_launches_packaged_server(tmp_path: Path) -> None:
@@ -145,12 +130,14 @@ def test_generic_stdio_adapter_launches_packaged_server(tmp_path: Path) -> None:
 
 
 @pytest.mark.timeout(60)
-def test_legacy_tool_profile_flags_now_all_expose_the_same_22_tools(tmp_path: Path) -> None:
-    """Default/core/extended launches all expose the unified 22-tool surface.
+def test_legacy_tool_profile_flags_now_all_expose_the_same_21_tools(tmp_path: Path) -> None:
+    """Default/core/extended launches all expose the unified 21-tool surface.
 
     AHMCP-8 adds `get_verified_tests` bringing the surface from 18 to 19 tools.
     AHMCP-23 adds `generate_dashboard_md` bringing the surface from 19 to 20 tools.
     AHMCP-31 adds `record_file_touch` and `get_touched_files` bringing the surface from 20 to 22 tools.
+    E17-7 Slice 4A compresses `generate_current_task_md` + `generate_dashboard_md`
+    into a single compound `render_handoff(kind=...)` tool, dropping the surface to 21.
     The count is a regression guard against accidental tool churn.
     """
     repo_root = Path(__file__).resolve().parents[3]
@@ -171,6 +158,6 @@ def test_legacy_tool_profile_flags_now_all_expose_the_same_22_tools(tmp_path: Pa
     core_count = asyncio.run(_count(["--tool-profile", "core"], "core-count.log"))
     extended_count = asyncio.run(_count(["--tool-profile", "extended"], "extended-count.log"))
 
-    assert default_count == 22, f"Expected 22 default tools, got {default_count}"
-    assert core_count == 22, f"Expected 22 tools for legacy core launch, got {core_count}"
-    assert extended_count == 22, f"Expected 22 tools for legacy extended launch, got {extended_count}"
+    assert default_count == 21, f"Expected 21 default tools, got {default_count}"
+    assert core_count == 21, f"Expected 21 tools for legacy core launch, got {core_count}"
+    assert extended_count == 21, f"Expected 21 tools for legacy extended launch, got {extended_count}"

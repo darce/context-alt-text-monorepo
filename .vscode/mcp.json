@@ -13,7 +13,7 @@
         "--state-dir",
         "${workspaceFolder}/.task-state",
         "--current-task-path",
-        "${workspaceFolder}/CURRENT_TASK.md",
+        "${workspaceFolder}/CURRENT_TASK.json",
         "--exports-dir",
         "${workspaceFolder}/.task-state/exports",
         "serve-stdio"
@@ -33,7 +33,7 @@
         "--state-dir",
         "${workspaceFolder}/.task-state",
         "--current-task-path",
-        "${workspaceFolder}/CURRENT_TASK.md",
+        "${workspaceFolder}/CURRENT_TASK.json",
         "--exports-dir",
         "${workspaceFolder}/.task-state/exports",
         "serve-stdio"

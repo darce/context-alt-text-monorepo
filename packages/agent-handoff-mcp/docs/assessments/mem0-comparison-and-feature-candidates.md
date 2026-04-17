@@ -30,7 +30,7 @@ Mem0 (mem0.ai) provides a cloud-hosted semantic memory store with an MCP server 
 | Close checks (`handoff_close_check`) | None | No completeness validation or close guards |
 | Archive (`archive_task_state`) | None | Memories are present or deleted; no snapshot/archive concept |
 | Session load (`load_session`) | Scoping by `session_id`/`run_id` | Mem0 uses filter dimensions rather than compound queries |
-| CURRENT_TASK.md generation | None | No rendered human-readable state mirror |
+| CURRENT_TASK.json generation | None | No rendered human-readable state mirror |
 
 ## Feature Candidates
 

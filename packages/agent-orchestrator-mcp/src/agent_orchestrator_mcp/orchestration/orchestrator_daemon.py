@@ -1109,7 +1109,7 @@ def _build_orchestrator_context(
     runtime = RuntimeConfig.for_repo(
         orchestrator_root,
         state_dir=state_dir,
-        current_task_path=orchestrator_root / "CURRENT_TASK.md",
+        current_task_path=orchestrator_root / "CURRENT_TASK.json",
         exports_dir=state_dir / "exports",
     )
     configure_runtime(runtime)
@@ -1320,7 +1320,7 @@ def main() -> int:
         runtime = RuntimeConfig.for_repo(
             orchestrator_root,
             state_dir=state_dir,
-            current_task_path=orchestrator_root / "CURRENT_TASK.md",
+            current_task_path=orchestrator_root / "CURRENT_TASK.json",
             exports_dir=state_dir / "exports",
         )
         configure_runtime(runtime)

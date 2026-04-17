@@ -37,7 +37,7 @@ def isolated_handoff(tmp_path: Path):
     """Redirect handoff sqlite + generated markdown paths into tmp dir."""
     state_dir = tmp_path / ".task-state"
     state_dir.mkdir(parents=True, exist_ok=True)
-    current_task_path = tmp_path / "CURRENT_TASK.md"
+    current_task_path = tmp_path / "CURRENT_TASK.json"
     runtime = RuntimeConfig.for_workspace(
         tmp_path,
         state_dir=state_dir,
@@ -379,7 +379,7 @@ def test_generate_dashboard_md_uses_runtime_dashboard_path(tmp_path: Path) -> No
     runtime = RuntimeConfig.for_workspace(
         tmp_path,
         state_dir=state_dir,
-        current_task_path=feature_root / "CURRENT_TASK.md",
+        current_task_path=feature_root / "CURRENT_TASK.json",
         dashboard_path=main_root / "DASHBOARD.md",
     )
     mcp_server.configure_runtime(runtime)

@@ -84,6 +84,20 @@ search_handoff(
 )
 ```
 
+### Coordinator-centric finding merges
+
+When a coordinator task consolidates review findings from several source task_refs (the E17-9 parallel-review flow, or a release-audit roll-up), use `review_findings(operation="merge", ...)` instead of re-recording findings by hand. The call reuses the atomic batch-record upsert path, copies source rows under the `target_task_ref`, and stamps each merged row with a `merged_from` pointer naming the source `(task_ref, session, finding_id)` triple. Source rows remain intact; the merge is additive, so re-running the same merge is an idempotent upsert rather than a duplication. Omit `session` to auto-generate `merge-<target_task_ref>-<utc-ts>` so merged rows stay attributable:
+
+```python
+review_findings(
+    review={
+        "operation": "merge",
+        "source_task_refs": ["SRC-A", "SRC-B"],
+        "target_task_ref": "COORD",
+    }
+)
+```
+
 ### Artifacts
 
 When browsing indexed artifacts, request summary mode or a field projection instead of full chunk content:

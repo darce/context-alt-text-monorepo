@@ -16,7 +16,7 @@ Reads the following from the environment (set by task-finish.sh):
 Configures the runtime against the primary worktree, sets task status
 to "done" with the correct expected_revision (the AHMCP-17 fix that
 mirrors the AHMCP-16 task-start.sh pattern), archives the task, and
-regenerates CURRENT_TASK.md. Exits 0 on success; non-zero failures
+regenerates CURRENT_TASK.json. Exits 0 on success; non-zero failures
 print to stderr but the script does NOT abort the surrounding bash
 flow — task-finish.sh treats the inline Python as best-effort because
 the worktree teardown happens before the archive call.

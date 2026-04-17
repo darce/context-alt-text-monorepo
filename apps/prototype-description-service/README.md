@@ -9,10 +9,12 @@ It uses a hexagonal-inspired layout with explicit application layers and HTTP in
 cd apps/prototype-description-service
 pyenv install 3.12.7  # if you don't have it yet
 pyenv virtualenv 3.12.7 description-service
-pyenv activate description-service
+pyenv activate description-service  # optional interactive shell convenience
 pip install -e ".[dev]"
 uvicorn api.main:app --reload
 ```
+
+For non-interactive harnesses and scripted commands, the canonical runtime selector is `PYENV_VERSION=description-service`; use `pyenv exec` only when the command launches Python directly.
 
 ### Face Detection (InsightFace)
 

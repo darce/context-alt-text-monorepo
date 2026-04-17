@@ -238,8 +238,6 @@ Proof:
 
 **Goal**: store raw test traces and expose selective retrieval for cold-start debugging.
 
-Status note: this slice remains intentionally unchecked on `main`. Earlier Slice 3 work existed only as uncommitted `feature/e17-7` worktree state and never received a slice-complete decision, so the plan should continue to treat it as pending until it lands in a reviewable commit batch.
-
 Changes:
 
 - Bump `HANDOFF_SCHEMA_VERSION` and add the warm-start migration for `test_traces` in `shared_schema.py` so existing handoff databases gain the new table without requiring a reset.
@@ -273,8 +271,9 @@ Token-minimization constraints for this slice:
 Changes (split into three sub-slices; only 4A is in scope for this task):
 
 - **Sub-slice 4A (in scope)**: `render_handoff` (replaces `generate_current_task_md` + `generate_dashboard_md`).
-- **Sub-slice 4B (DEFERRED — out of scope for E17-7)**: `handoff_transfer` (would replace `export_handoff_state` + `import_handoff_state`). Deferred because the token-cost and session-drop risk is already materially reduced by 4A + the existing bounded-read envelope, and the export/import pair is called infrequently enough that it is not contributing to per-turn tool-count pressure. To be picked up in a follow-on task if advertised tool count regresses measurably.
-- **Sub-slice 4C (DEFERRED — out of scope for E17-7)**: `task_archive` (would replace `archive_task_state` + `get_archived_task`). Deferred for the same reason: both are rarely called lifecycle tools and removing them from the advertised count has diminishing returns over 4A. Revisit only if tool-count pressure reappears.
+- **Sub-slice 4B (DEFERRED — out of scope for E17-7)**: `handoff_transfer` (would replace `export_handoff_state` + `import_handoff_state`). Deferred because the token-cost and session-drop risk is already materially reduced by 4A + the existing bounded-read envelope, and the export/import pair is called infrequently enough that it is not contributing to per-turn tool-count pressure. Carried forward as tech-debt: [packages/agent-handoff-mcp/docs/tech-debt/slice-4b-handoff-transfer-compound-tool.md](../../../packages/agent-handoff-mcp/docs/tech-debt/slice-4b-handoff-transfer-compound-tool.md).
+- **Sub-slice 4C (DEFERRED — out of scope for E17-7)**: `task_archive` (would replace `archive_task_state` + `get_archived_task`). Deferred for the same reason: both are rarely called lifecycle tools and removing them from the advertised count has diminishing returns over 4A. Carried forward as tech-debt: [packages/agent-handoff-mcp/docs/tech-debt/slice-4c-task-archive-compound-tool.md](../../../packages/agent-handoff-mcp/docs/tech-debt/slice-4c-task-archive-compound-tool.md).
+- **CURRENT_TASK.json demotion (DEFERRED — out of scope for E17-7)**: strip implicit `_write_current_task_md_*` side-effects from handoff write paths and keep render-on-demand only. Carried forward as tech-debt: [packages/agent-handoff-mcp/docs/tech-debt/demote-current-task-rendering.md](../../../packages/agent-handoff-mcp/docs/tech-debt/demote-current-task-rendering.md).
 - Keep Python-level compatibility aliases so existing callers are unaffected.
 - Update CLI/operator surfaces atomically with the MCP rename:
   - `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py`: keep subcommand names/help text aligned with the new compound tools or document intentional compatibility aliases
@@ -368,11 +367,11 @@ Proof:
 
 ### Slice 3: Test Trace Archive
 
-- [ ] `HANDOFF_SCHEMA_VERSION` bumped and warm-start migration adds `test_traces` for existing databases
-- [ ] `test_traces` table added
-- [ ] `record_test_result` stores optional traces
-- [ ] `get_verified_tests` supports `include_traces`, `correlated_file`, `correlation_window_minutes`, and `exclude_never_passed`
-- [ ] `include_traces=False` returns `trace_count` metadata without full trace bodies
+- [x] `HANDOFF_SCHEMA_VERSION` bumped and warm-start migration adds `test_traces` for existing databases
+- [x] `test_traces` table added
+- [x] `record_test_result` stores optional traces
+- [x] `get_verified_tests` supports `include_traces`, `correlated_file`, `correlation_window_minutes`, and `exclude_never_passed`
+- [x] `include_traces=False` returns `trace_count` metadata without full trace bodies
 
 ### Slice 4: Tool Surface Compression
 
@@ -402,9 +401,9 @@ Proof:
 
 ## Review Readiness
 
-- [ ] E17-6 core is approved or complete before this task starts
+- [x] E17-6 core is approved or complete before this task starts
 - [x] `make check-agent-workflows` is green after Slice 1
-- [ ] `make test-handoff` is green after each schema/tooling slice
+- [x] `make test-handoff` is green after each schema/tooling slice
 - [ ] `make test-orchestrator` is green when schema-facing behavior changes
 
 ## Success Criteria

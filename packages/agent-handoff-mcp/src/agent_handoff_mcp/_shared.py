@@ -218,6 +218,8 @@ from .slice_decision import (  # noqa: F401
 def _annotate_review_finding(
     row: dict[str, object], *, workspace_branch: str | None, workspace_commit_sha: str | None
 ) -> dict[str, object]:
+    import json as _json  # noqa: PLC0415
+
     finding = dict(row)
     finding_branch = _normalize_optional_text(finding.get("branch"))
     finding_commit_sha = _normalize_optional_text(finding.get("commit_sha"))
@@ -229,4 +231,12 @@ def _annotate_review_finding(
     finding["workspace_branch_matches"] = branch_matches
     _classify_fn = _resolve_core_override("_classify_commit_relation", _classify_commit_relation)
     finding["workspace_commit_relation"] = _classify_fn(finding_commit_sha, workspace_commit_sha)
+    raw_merged_from = finding.pop("merged_from_json", None)
+    if raw_merged_from:
+        try:
+            parsed = _json.loads(raw_merged_from) if isinstance(raw_merged_from, str) else None
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict):
+            finding["merged_from"] = parsed
     return finding

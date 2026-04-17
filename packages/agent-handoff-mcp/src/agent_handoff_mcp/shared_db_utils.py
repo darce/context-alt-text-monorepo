@@ -73,6 +73,7 @@ def _count_task_rows(conn: sqlite3.Connection, task_ref: str) -> dict[str, int]:
         "next_actions",
         "decisions",
         "verified_tests",
+        "test_traces",
         "review_findings",
         "worktree_lanes",
         "worker_reports",

@@ -63,6 +63,22 @@ def _current_task_revision(conn: sqlite3.Connection, task_ref: str) -> int | Non
     return int(row["revision"]) if row is not None else None
 
 
+def _normalize_test_traces_payload(
+    traces: Sequence[object] | None,
+    *,
+    fallback_result: str | None,
+) -> tuple[list[str], str | None]:
+    if traces is None:
+        return ([fallback_result] if isinstance(fallback_result, str) and fallback_result != "" else []), None
+
+    normalized: list[str] = []
+    for raw_trace in traces:
+        if not isinstance(raw_trace, str):
+            return [], "traces must be a list of raw trace strings."
+        normalized.append(raw_trace)
+    return normalized, None
+
+
 def record_decision(
     session: str,
     decision: str,
@@ -330,11 +346,15 @@ def record_test_result(
     command: str,
     passed: bool,
     result: str | None = None,
+    traces: Sequence[str] | None = None,
     exit_code: int | None = None,
     actor: WriteActor | None = None,
     task_ref: str | None = None,
 ) -> dict:
     summarized_result = _summarize_test_result(result)
+    normalized_traces, traces_error = _normalize_test_traces_payload(traces, fallback_result=result)
+    if traces_error is not None:
+        return _envelope(ok=False, tool="record_test_result", data={"error": traces_error})
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         ctx = _resolve_write_actor(conn, actor)
@@ -358,7 +378,17 @@ def record_test_result(
                 ctx.commit_sha,
             ),
         )
+        for trace_order, trace in enumerate(normalized_traces):
+            conn.execute(
+                """
+                INSERT INTO test_traces (verified_test_id, task_ref, trace_order, trace, created_at)
+                VALUES (?, ?, ?, ?, datetime('now'))
+                """,
+                (cur.lastrowid, resolved_task_ref, trace_order, trace),
+            )
         test_row = _row_to_dict(conn.execute("SELECT * FROM verified_tests WHERE id = ?", (cur.lastrowid,)).fetchone())
+        if test_row is not None:
+            test_row["trace_count"] = len(normalized_traces)
         return _envelope(
             ok=True,
             tool="record_test_result",

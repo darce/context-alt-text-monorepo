@@ -240,14 +240,19 @@ Proof:
 
 Changes:
 
-- Add `test_traces` table.
+- Bump `HANDOFF_SCHEMA_VERSION` and add the warm-start migration for `test_traces` in `shared_schema.py` so existing handoff databases gain the new table without requiring a reset.
+- Add the `test_traces` table.
 - Extend `record_test_result` / `record_event(test_result)` with optional traces.
-- Extend `get_verified_tests` with `include_traces`, `correlated_file`, `correlation_window_minutes`, and `exclude_never_passed`.
+- Extend `get_verified_tests` and the trace/correlation helpers in `verified_tests.py` with `include_traces`, `correlated_file`, `correlation_window_minutes`, and `exclude_never_passed`.
+- Thread the new trace/correlation retrieval surface through the operator-facing entrypoints in `decisions.py` and `api.py`.
 
 Proof:
 
 - Raw traces round-trip.
 - Correlated-file queries return meaningful failure history.
+- `correlation_window_minutes` narrows time-based matching as documented instead of returning stale unrelated failures.
+- `exclude_never_passed` filters commands that have never recorded a passing run.
+- `include_traces=False` omits full trace bodies and returns `trace_count` metadata instead.
 - Existing callers remain backward-compatible.
 
 ### Slice 4: MCP Tool Surface Compression
@@ -362,10 +367,11 @@ Proof:
 
 ### Slice 3: Test Trace Archive
 
+- [ ] `HANDOFF_SCHEMA_VERSION` bumped and warm-start migration adds `test_traces` for existing databases
 - [ ] `test_traces` table added
 - [ ] `record_test_result` stores optional traces
-- [ ] `get_verified_tests` supports trace and correlated-file retrieval
-- [ ] Bounded retention works
+- [ ] `get_verified_tests` supports `include_traces`, `correlated_file`, `correlation_window_minutes`, and `exclude_never_passed`
+- [ ] `include_traces=False` returns `trace_count` metadata without full trace bodies
 
 ### Slice 4: Tool Surface Compression
 

@@ -38,9 +38,7 @@ def _parse(raw: str | dict) -> dict:
 def isolated_handoff(tmp_path: Path) -> dict:
     state_dir = tmp_path / ".task-state"
     current_task_path = tmp_path / "CURRENT_TASK.json"
-    runtime = RuntimeConfig.for_workspace(
-        tmp_path, state_dir=state_dir, current_task_path=current_task_path
-    )
+    runtime = RuntimeConfig.for_workspace(tmp_path, state_dir=state_dir, current_task_path=current_task_path)
     mcp_server.configure_runtime(runtime)
     return {
         "state_dir": state_dir,
@@ -92,9 +90,7 @@ def test_merge_two_sources_appends_six_rows_with_provenance(isolated_handoff: di
     assert result["task_ref"] == "COORD"
     assert result["session"].startswith("merge-COORD-"), result["session"]
 
-    listed = _parse(
-        mcp_server.review_findings(review={"operation": "list", "task_ref": "COORD", "limit": 50})
-    )
+    listed = _parse(mcp_server.review_findings(review={"operation": "list", "task_ref": "COORD", "limit": 50}))
     assert listed["total_matching"] == 6
     ids_on_coord = sorted(f["finding_id"] for f in listed["findings"])
     assert ids_on_coord == ["A-1", "A-2", "A-3", "B-1", "B-2", "B-3"]
@@ -126,9 +122,7 @@ def test_merge_with_explicit_session_prefix_uses_it(isolated_handoff: dict) -> N
     )
     assert result["ok"] is True
     assert result["session"] == "coord-X-pass1"
-    listed = _parse(
-        mcp_server.review_findings(review={"operation": "list", "task_ref": "COORD-X"})
-    )
+    listed = _parse(mcp_server.review_findings(review={"operation": "list", "task_ref": "COORD-X"}))
     assert listed["findings"][0]["session"] == "coord-X-pass1"
 
 
@@ -201,9 +195,7 @@ def test_second_merge_overlapping_sources_is_idempotent_upsert(isolated_handoff:
     assert second["ok"] is True
     assert second["written"] == 2
 
-    listed = _parse(
-        mcp_server.review_findings(review={"operation": "list", "task_ref": "COORD-O"})
-    )
+    listed = _parse(mcp_server.review_findings(review={"operation": "list", "task_ref": "COORD-O"}))
     assert listed["total_matching"] == 2
 
 
@@ -214,14 +206,10 @@ def test_second_merge_overlapping_sources_is_idempotent_upsert(isolated_handoff:
 
 def test_lane_status_index_exists_and_is_used(isolated_handoff: dict) -> None:
     with _get_db_connection() as conn:
-        indexes = {
-            row[1]
-            for row in conn.execute("PRAGMA index_list('review_findings')").fetchall()
-        }
+        indexes = {row[1] for row in conn.execute("PRAGMA index_list('review_findings')").fetchall()}
         assert "idx_review_findings_lane_status" in indexes
         plan = conn.execute(
-            "EXPLAIN QUERY PLAN "
-            "SELECT id FROM review_findings WHERE lane_id = ? AND status = 'open'",
+            "EXPLAIN QUERY PLAN SELECT id FROM review_findings WHERE lane_id = ? AND status = 'open'",
             ("lane-A",),
         ).fetchall()
         plan_text = "\n".join(str(row[3]) for row in plan)
@@ -241,9 +229,7 @@ def test_merged_from_json_column_present(isolated_handoff: dict) -> None:
 
 def test_non_merged_finding_omits_merged_from(isolated_handoff: dict) -> None:
     _seed_source_findings("SRC-P", "p-sess", ["P-1"])
-    listed = _parse(
-        mcp_server.review_findings(review={"operation": "list", "task_ref": "SRC-P"})
-    )
+    listed = _parse(mcp_server.review_findings(review={"operation": "list", "task_ref": "SRC-P"}))
     assert listed["total_matching"] == 1
     assert "merged_from" not in listed["findings"][0]
     assert "merged_from_json" not in listed["findings"][0]

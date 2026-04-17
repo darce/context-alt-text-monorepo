@@ -855,13 +855,9 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
             """
         )
         if not _has_index(conn, "test_traces", "idx_test_traces_test_order"):
-            conn.execute(
-                "CREATE INDEX idx_test_traces_test_order ON test_traces(verified_test_id, trace_order, id)"
-            )
+            conn.execute("CREATE INDEX idx_test_traces_test_order ON test_traces(verified_test_id, trace_order, id)")
         if not _has_index(conn, "test_traces", "idx_test_traces_task_created"):
-            conn.execute(
-                "CREATE INDEX idx_test_traces_task_created ON test_traces(task_ref, created_at DESC, id DESC)"
-            )
+            conn.execute("CREATE INDEX idx_test_traces_task_created ON test_traces(task_ref, created_at DESC, id DESC)")
         needs_backfill = False
         for table in ("decisions", "blockers", "next_actions", "verified_tests", "review_findings"):
             if not _has_column(conn, table, "lane_id"):
@@ -1013,10 +1009,7 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
                 "ON turn_metrics(task_ref, backend, model, created_at DESC, id DESC)"
             )
         if not _has_index(conn, "review_findings", "idx_review_findings_lane_status"):
-            conn.execute(
-                "CREATE INDEX idx_review_findings_lane_status "
-                "ON review_findings(lane_id, status)"
-            )
+            conn.execute("CREATE INDEX idx_review_findings_lane_status ON review_findings(lane_id, status)")
     except sqlite3.OperationalError as exc:
         if "locked" in str(exc).lower():
             _log.warning("DB locked during migration -- skipping (PRAGMA busy_timeout should prevent this)")

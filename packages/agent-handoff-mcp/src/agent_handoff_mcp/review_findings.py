@@ -595,9 +595,7 @@ def merge_review_findings(
         }
         details_payload: ReviewFindingDetails | None = None
         if row["line_start"] is not None or row["line_end"] is not None or row["fix"] is not None:
-            details_payload = cast_details(
-                line_start=row["line_start"], line_end=row["line_end"], fix=row["fix"]
-            )
+            details_payload = cast_details(line_start=row["line_start"], line_end=row["line_end"], fix=row["fix"])
         item: BatchFindingItem = {
             "finding_id": str(row["finding_id"]),
             "severity": str(row["severity"]),

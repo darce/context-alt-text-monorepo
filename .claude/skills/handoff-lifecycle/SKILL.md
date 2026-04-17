@@ -70,7 +70,7 @@ Each flag is a re-entry trigger. Stop and re-enter at the step shown.
 | Flag | Re-entry point |
 |---|---|
 | `make context` shows branch or worktree drift | Step 1: realign shell context before continuing. |
-| Task write made, but `DASHBOARD.md` still reflects old state | Step 4: regenerate the dashboard view. |
+| Task write made, but `DASHBOARD.txt` still reflects old state | Step 4: regenerate the dashboard view. |
 | Session switches tasks by calling `set_handoff_state` directly over another active task | Step 5: switch with `switch_task` so the outgoing task archives safely. |
 | Archive requested while status is still `in_progress` | Step 6: set status truthfully first, then archive only when done. |
 
@@ -78,7 +78,7 @@ Each flag is a re-entry trigger. Stop and re-enter at the step shown.
 
 - If session context is stale, rerun `make context` and `load_session` instead of guessing what changed.
 - If a write landed on the wrong task, stop and repair task state before continuing with more writes.
-- If `DASHBOARD.md` or `CURRENT_TASK.md` is stale, regenerate it; do not patch the markdown manually.
+- If `DASHBOARD.txt` or `CURRENT_TASK.md` is stale, regenerate it; do not patch the markdown manually.
 - If a task was switched unsafely, restore the intended active task and archive state through `switch_task` / `update_task_status` in canonical order.
 
 ## Convergence Criteria

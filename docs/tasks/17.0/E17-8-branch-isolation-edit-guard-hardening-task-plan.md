@@ -6,6 +6,7 @@
 - **Epic Short ID**: E17
 - **Target Branch**: `feature/e17-8`
 - **Review Coverage Target**: 2
+- **Hard Prerequisites**: E17-6 must be merged to `main` before any slice of this plan is started. This plan modifies `docs/agentic/contracts/harness-protocol.yaml` and `scripts/check_harness_sync.py`; both are E17-6 deliverables. Do not branch `feature/e17-8` off `main` until `harness-protocol.yaml` and `check_harness_sync.py` are present there.
 
 ---
 
@@ -46,13 +47,13 @@ On 2026-04-16 an edit to `.github/hooks/terminal-guard.py` landed on `main` inst
 - No contract file reading
 - Warning-only maintenance-task check (lines 49-63) exists but doesn't block
 
-**harness-protocol.yaml** (E17-6, new on `feature/e17-6`):
+**harness-protocol.yaml** (E17-6, merged to `main`):
 - `branch_isolation.code_roots`: currently `["apps/", "packages/"]`
 - `branch_isolation.protected_extensions`: currently 10 extensions
 - No `code_roots` entry for `scripts/`, `.github/`, `.claude/`, `mk/`
 - No `root_protected_files` entry for root-level code-adjacent files such as `Makefile`
 
-**check_harness_sync.py** (E17-6, new):
+**check_harness_sync.py** (E17-6, merged to `main`):
 - Validates hooks section only; does not cross-check that guard scripts read the contract's `code_roots`
 
 ## Out of Scope
@@ -143,11 +144,11 @@ Changes:
 - Add `branch_isolation.root_protected_files: ["Makefile"]`.
 - Refactor `guard-main-branch.py`:
   - Load `code_roots`, `protected_extensions`, and `root_protected_files` from the contract YAML at runtime.
-  - Fall back to the current hardcoded values if the contract file is missing (CI resilience).
+  - Treat `harness-protocol.yaml` presence as a required runtime dependency: if the contract file is missing, the guard emits a loud error on stderr (naming the expected path and remediation) and exits with the permissive block default so the agent cannot silently operate on an under-protected surface. The prior "fall back to hardcoded values" wording is explicitly removed — expanding the hardcoded fallback would duplicate policy and invite drift, which Slice 3 exists to prevent.
   - Audit the VS Code harness file-mutating tool surface and expand `_EDIT_TOOLS` to every regular-file mutator; at minimum add `replace_string_in_file` and `multi_replace_string_in_file`.
 - Refactor `guard-main-branch.sh`:
   - Load `code_roots`, `protected_extensions`, and `root_protected_files` from the contract via an embedded `python3 -c` extraction.
-  - Fall back to the current hardcoded regex if the contract file is missing.
+  - Same contract-required policy as the VS Code guard: missing contract → loud stderr + block; no hardcoded fallback list.
 - Keep the `startswith(code_root) + extension_match` semantic unchanged; only the source of the lists changes.
 
 Design decision: root-level code-adjacent files are protected through `root_protected_files`, starting with `Makefile`. Additional root files stay out of scope unless the same accidental-main-edit pattern recurs.
@@ -160,7 +161,7 @@ Proof:
 - An edit to `docs/tasks/foo.md` on `main` is permitted.
 - An edit to `CLAUDE.md` on `main` is permitted.
 - Removing `scripts/` from the contract's `code_roots` causes `make check-harness-sync` to detect drift (Slice 3 dependency; manual verification until then).
-- The guards work when the contract file is missing (fallback path).
+- With `harness-protocol.yaml` temporarily moved aside, each guard emits a named stderr error and returns a block decision — there is no silent permissive fallback.
 
 ### Slice 2: Worktree-Drift PreToolUse Check
 
@@ -195,11 +196,12 @@ Proof:
 
 Changes:
 
-- Extend `scripts/check_harness_sync.py` with a `_check_branch_isolation()` function that:
-  - Reads `code_roots` and `protected_extensions` from `harness-protocol.yaml`.
-  - Parses `guard-main-branch.py` to extract the runtime-loaded or fallback `_PROTECTED_ROOTS` and `_CODE_EXTENSIONS`.
-  - Parses `guard-main-branch.sh` to extract the regex patterns for roots and extensions.
-  - Reports any contract values missing from either guard's runtime surface.
+- Extend `scripts/check_harness_sync.py` with a `_check_branch_isolation()` function that validates **behavior**, not duplicated literals. After Slice 1 the guards no longer carry a hardcoded fallback policy, so parsing guard source for `_PROTECTED_ROOTS` / regex literals would only inspect dead defaults or stale backups (the prior finding E17-8-PLAN-03). Instead the validator:
+  - Reads `code_roots`, `protected_extensions`, and `root_protected_files` from `harness-protocol.yaml` as the single source of truth.
+  - Drives each guard (`guard-main-branch.py`, `guard-main-branch.sh`) through a fixture harness: for each `code_root`, feed a synthetic PreToolUse payload of a file inside the root with a protected extension, and assert the guard returns a block decision. For a permitted-root fixture (e.g. `docs/foo.md`), assert the guard returns allow. Do the same for each entry in `root_protected_files`.
+  - Confirms wiring, not literals: parses the Python guard to assert it calls a contract-loader helper (e.g. `_load_contract_policy()`), and parses the shell guard to assert its embedded `python3 -c` extraction names `harness-protocol.yaml`. No duplicated policy lists are compared.
+  - Asserts that removing `harness-protocol.yaml` makes each guard emit the named contract-required stderr error and return a block decision (the Slice 1 no-fallback behavior).
+  - Reports any code_root / root_protected_file whose fixture does not exercise the expected decision. That output is the drift signal, not a literal diff.
 - Add a `_check_dashboard_naming()` function to the same validator that:
   - Greps tracked non-archive markdown (`git ls-files '*.md'` minus `docs/archive/**` and `**/tests/**`), the root `Makefile`, and `packages/agent-orchestrator-mcp/src/**/dashboard_extension.py` for the literal string `DASHBOARD.md`.
   - Fails with a named diff if any hit remains after E17-7 Slice 4 has landed. Depends on E17-7 Slice 4 — land this lint *after* the rename so the first run is clean.
@@ -210,8 +212,9 @@ Changes:
 Proof:
 
 - `make check-harness-sync` passes after Slices 1-2 and after E17-7 Slice 4 lands the dashboard-name normalization.
-- Removing a `code_root` entry from the contract (but leaving it in the guard fallback) causes the validator to detect drift.
-- Adding a new `code_root` to the contract without updating the guards causes the validator to detect drift.
+- Adding a new `code_root` to the contract and running the fixture harness produces a block decision from both guards for a file inside that root with a protected extension.
+- Removing the contract loader call from `guard-main-branch.py` (or breaking the `python3 -c` extraction in `guard-main-branch.sh`) causes the wiring check to fail with a named remediation message.
+- Moving `harness-protocol.yaml` aside causes each guard fixture to assert the contract-required stderr error and a block decision.
 - Reintroducing `DASHBOARD.md` into any tracked non-archive markdown, the Makefile, or the `dashboard_extension.py` docstring causes the validator to fail with a named line reference.
 - A manually dropped `DASHBOARD.md` in the repo root does not appear in `git status`.
 
@@ -232,11 +235,11 @@ Proof:
 - [ ] `harness-protocol.yaml` adds `root_protected_files: ["Makefile"]`
 - [ ] `guard-main-branch.py` reads from contract at runtime with hardcoded fallback
 - [ ] `guard-main-branch.py` `_EDIT_TOOLS` covers every regular-file mutator in the VS Code harness
-- [ ] `guard-main-branch.sh` reads from contract at runtime with hardcoded fallback via `python3 -c`
+- [ ] `guard-main-branch.sh` reads from contract at runtime via `python3 -c`; no hardcoded fallback list remains
 - [ ] Edits to `scripts/`, `.github/`, `.claude/`, `mk/` code files on `main` are blocked
 - [ ] Root `Makefile` edits on `main` are blocked
 - [ ] Edits to docs, markdown, and permitted config on `main` are not blocked
-- [ ] Guard works when contract file is missing (fallback path)
+- [ ] With contract missing, guards emit a named stderr error and return a block decision (no silent permissive fallback)
 
 ### Checklist for Slice 2: Worktree-Drift Check
 
@@ -250,7 +253,7 @@ Proof:
 
 ### Checklist for Slice 3: Sync Validator Extension + Dashboard Naming Lint
 
-- [ ] `check_harness_sync.py` validates `code_roots` and `protected_extensions` against both guards
+- [ ] `check_harness_sync.py` exercises both guards through a fixture harness (not via parsing duplicated literals) and asserts the contract-required stderr + block behavior when `harness-protocol.yaml` is moved aside
 - [ ] `check_harness_sync.py` validates absence of `DASHBOARD.md` in tracked non-archive markdown, the Makefile, and the `dashboard_extension.py` docstring (depends on E17-7 Slice 4 completion)
 - [ ] `.gitignore` excludes `DASHBOARD.md`
 - [ ] `make check-harness-sync` passes after Slices 1-2 and after E17-7 Slice 4

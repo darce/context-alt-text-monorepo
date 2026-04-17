@@ -42,7 +42,7 @@
 | `make review-ready` | I4→I5 | Check review readiness; print NOT READY reasons |
 | `make review-run` | I5 | Agent-assisted: branch-review skill; records findings + verdict |
 | `make handoff-close-check` | I6 | `handoff_close_check(enforce=True, current_commit_sha=HEAD)` |
-| `make task-finish TASK=<id>` | I7 | `update_task_status(done)` + `archive_task_state` + regenerate `CURRENT_TASK.md` + `DASHBOARD.md`; worktree remove + branch delete |
+| `make task-finish TASK=<id>` | I7 | `update_task_status(done)` + `archive_task_state` + regenerate `CURRENT_TASK.md` + `DASHBOARD.txt`; worktree remove + branch delete |
 
 ---
 

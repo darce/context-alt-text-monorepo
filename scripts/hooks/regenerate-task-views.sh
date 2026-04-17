@@ -19,15 +19,28 @@ except json.JSONDecodeError:
 tool_name = payload.get("tool_name") or payload.get("toolName") or ""
 tool_input = payload.get("tool_input") or payload.get("toolInput") or {}
 
+
+def _review_operation(ti):
+    review = ti.get("review")
+    if isinstance(review, str):
+        try:
+            review = json.loads(review)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(review, dict):
+        return None
+    return review.get("operation")
+
+
 if "record_event" in tool_name:
     print("true")
 elif "set_handoff_state" in tool_name or "update_task_status" in tool_name:
     print("true")
 elif "review_findings" in tool_name:
-    operation = (tool_input.get("review") or {}).get("operation")
+    operation = _review_operation(tool_input)
     print("true" if operation not in {"list", "get"} else "false")
 elif "review_runs" in tool_name:
-    operation = (tool_input.get("review") or {}).get("operation")
+    operation = _review_operation(tool_input)
     print("true" if operation not in {"list", "coverage"} else "false")
 else:
     print("false")

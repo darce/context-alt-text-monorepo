@@ -136,6 +136,13 @@ def test_strip_env_prefix_handles_quoted_command_substitution_assignment() -> No
     assert result.startswith('"$MAIN_ROOT/apps/prototype-wp-alt-context/vendor/bin/phpunit"')
 
 
+def test_strip_env_prefix_handles_quoted_inline_env_assignment() -> None:
+    result = _strip_env_prefix(
+        "PYTEST_TARGETS='tests/test_handoff_state.py tests/test_schema_migrations.py' make test-handoff"
+    )
+    assert result == "make test-handoff"
+
+
 # ---------------------------------------------------------------------------
 # Tier 1: Allowlist — commands whose terminal use is unambiguously correct.
 # Hook must pass through silently (exit 0, no JSON output).
@@ -192,14 +199,17 @@ def test_strip_env_prefix_handles_quoted_command_substitution_assignment() -> No
         "cd ${REPO_ROOT:-$PWD} && PYENV_VERSION=description-service pytest tests/ -v 2>&1 | tail -60",
         # Env-var prefixed commands
         "PYENV_VERSION=description-service pytest tests/ -x",
+        "PYTEST_TARGETS='tests/test_handoff_state.py tests/test_schema_migrations.py' make test-handoff",
         "export PYTHONPATH=pkg/src && pytest tests/",
         '${PYENV_ROOT:-$HOME/.pyenv}/versions/description-service/bin/python -m pytest packages/agent-handoff-mcp/tests/test_import_export_regressions.py -q',
         # git ls-files: read-only file listing
         "git ls-files --others --exclude-standard -- apps/prototype-description-service/",
         # git log: read-only history queries
         "git log --oneline -n 5",
+        "git --no-pager log --oneline --decorate main..feature/e17-7 --max-count=40",
         "git log --format='%H %s' -n 4 | head -n 4",
         "git -C ${REPO_ROOT:-$PWD} log --oneline -n 5",
+        "git -C ${REPO_ROOT:-$PWD} --no-pager log --oneline --decorate main..feature/e17-7 --max-count=40",
         # git rev-parse / rev-list: read-only SHA, path, and commit-count resolution
         "git rev-parse HEAD",
         "git rev-parse --show-toplevel",

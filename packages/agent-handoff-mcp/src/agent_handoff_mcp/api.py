@@ -882,7 +882,9 @@ def get_verified_tests(
     ] = None,
     correlation_window_minutes: Annotated[
         int,
-        Field(description="Absolute decision/test time window used for changed-file correlation when commit SHAs are missing."),
+        Field(
+            description="Absolute decision/test time window used for changed-file correlation when commit SHAs are missing."
+        ),
     ] = 120,
     exclude_never_passed: Annotated[
         bool,

@@ -62,7 +62,7 @@
         ]
       },
       {
-        "matcher": "mcp_altcontext-mc_get_handoff_state|mcp_altcontext-mc_load_session|mcp__agent-handoff-mcp__get_handoff_state|mcp__agent-handoff-mcp__load_session",
+        "matcher": "mcp_altcontext-mc_get_handoff_state|mcp_altcontext-mc_load_session|mcp_altcontext-mc_render_handoff|mcp__agent-handoff-mcp__get_handoff_state|mcp__agent-handoff-mcp__load_session|mcp__agent-handoff-mcp__render_handoff",
         "hooks": [
           {
             "type": "command",

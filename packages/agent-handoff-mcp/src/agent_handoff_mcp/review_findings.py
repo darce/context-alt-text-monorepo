@@ -51,7 +51,12 @@ def _write_current_task_md_for_active_context(conn: sqlite3.Connection, fallback
     last task whose finding row was touched.
     """
 
-    active_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
+    from .shared_primitives import _resolve_workspace_handoff_row  # noqa: PLC0415
+
+    try:
+        active_row = _resolve_workspace_handoff_row(conn)
+    except ValueError:
+        active_row = None
     render_task_ref = (
         str(active_row["task_ref"]) if active_row is not None and active_row["task_ref"] else fallback_task_ref
     )
@@ -1696,10 +1701,8 @@ def _collect_review_findings_integrity(conn: sqlite3.Connection, task_ref: str, 
             "SELECT COUNT(*) AS count FROM review_findings WHERE task_ref = ? AND status = 'open'", (task_ref,)
         ).fetchone()["count"]
     )
-    active_row = conn.execute("SELECT task_ref, status FROM handoff_state WHERE id = 1").fetchone()
-    active_status = (
-        str(active_row["status"]) if active_row is not None and str(active_row["task_ref"]) == task_ref else None
-    )
+    task_row = conn.execute("SELECT status FROM handoff_state WHERE task_ref = ?", (task_ref,)).fetchone()
+    active_status = str(task_row["status"]) if task_row is not None else None
     done_with_open_findings = bool(active_status == "done" and open_count > 0)
     stale_open_findings = []
     for row in conn.execute(

@@ -660,7 +660,12 @@ def handoff_close_check(
         )
     require_current_commit_summary = bool(normalized_current_commit_sha)
     with _get_db_connection() as conn:
-        active_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
+        from .shared_primitives import _resolve_workspace_handoff_row  # noqa: PLC0415
+
+        try:
+            active_row = _resolve_workspace_handoff_row(conn)
+        except ValueError:
+            active_row = None
         if task_ref is None:
             if active_row is None:
                 if allow_no_active_task:

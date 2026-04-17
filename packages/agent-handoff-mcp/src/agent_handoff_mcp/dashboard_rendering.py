@@ -536,6 +536,16 @@ def generate_dashboard_md(write_file: bool = True) -> dict:
         ]
         active_task_refs = [str(row["task_ref"]) for row in active_rows if row.get("task_ref")]
 
+        from .shared_primitives import _resolve_workspace_handoff_row  # noqa: PLC0415
+
+        try:
+            workspace_row = _resolve_workspace_handoff_row(conn)
+        except ValueError:
+            workspace_row = None
+        workspace_task_ref = (
+            str(workspace_row["task_ref"]) if workspace_row is not None and workspace_row["task_ref"] else None
+        )
+
         dashboard_rows = _collect_dashboard_rows(conn)
         open_findings = _collect_all_open_findings(conn, max_per_task=100)
         deferred_findings = _collect_all_deferred_findings(conn, max_per_task=100)
@@ -560,7 +570,7 @@ def generate_dashboard_md(write_file: bool = True) -> dict:
         open_findings=open_findings,
         deferred_findings=deferred_findings,
         needs_attention=needs_attention,
-        active_task_ref=None,
+        active_task_ref=workspace_task_ref,
         extension_sections=extension_sections,
         epic_decision_groups=epic_decision_groups,
         task_test_status=task_test_status,

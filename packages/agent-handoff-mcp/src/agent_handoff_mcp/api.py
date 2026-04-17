@@ -1724,7 +1724,12 @@ def generate_current_task_md(
     with core._get_db_connection() as conn:
         resolved_task_ref = task_ref
         if resolved_task_ref is None:
-            active_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
+            from .shared_primitives import _resolve_workspace_handoff_row  # noqa: PLC0415
+
+            try:
+                active_row = _resolve_workspace_handoff_row(conn)
+            except ValueError:
+                active_row = None
             resolved_task_ref = (
                 str(active_row["task_ref"]) if active_row is not None and active_row["task_ref"] else None
             )

@@ -1527,15 +1527,20 @@ def test_lane_reports_and_messages_accept_explicit_task_ref_cross_task(isolated_
         )
     )
 
-    hidden_report = _parse(
+    from agent_handoff_mcp import UnresolvedTaskContextError
+
+    # E17-11: with 2 active tasks and no task_ref, the write surface now
+    # raises UnresolvedTaskContextError instead of silently targeting a
+    # sentinel row. Previously this returned ok=False because the lane
+    # lookup failed against the wrong sentinel; both shapes reject the
+    # write — the new one is just louder.
+    with pytest.raises(UnresolvedTaskContextError):
         mcp_server.worker_reports(
             operation="record",
             lane_id="backend-domain",
             session="cross-task",
             summary="hidden",
         )
-    )
-    assert hidden_report["ok"] is False
 
     explicit_report = _parse(
         mcp_server.worker_reports(
@@ -1549,7 +1554,8 @@ def test_lane_reports_and_messages_accept_explicit_task_ref_cross_task(isolated_
     assert explicit_report["ok"] is True
     assert explicit_report["report"]["task_ref"] == "phase-5-a"
 
-    hidden_message = _parse(
+    # E17-11: ambiguous task resolution now raises instead of returning ok=False.
+    with pytest.raises(UnresolvedTaskContextError):
         mcp_server.lane_communication(
             kind="message",
             operation="record",
@@ -1558,8 +1564,6 @@ def test_lane_reports_and_messages_accept_explicit_task_ref_cross_task(isolated_
             direction="worker_to_orchestrator",
             message="hidden",
         )
-    )
-    assert hidden_message["ok"] is False
 
     explicit_message = _parse(
         mcp_server.lane_communication(
@@ -1575,15 +1579,13 @@ def test_lane_reports_and_messages_accept_explicit_task_ref_cross_task(isolated_
     assert explicit_message["ok"] is True
     assert explicit_message["message"]["task_ref"] == "phase-5-a"
 
-    hidden_update = _parse(
+    with pytest.raises(UnresolvedTaskContextError):
         mcp_server.lane_communication(
             kind="message",
             operation="update",
             message_id=explicit_message["message"]["id"],
             status="acknowledged",
         )
-    )
-    assert hidden_update["ok"] is False
 
     explicit_update = _parse(
         mcp_server.lane_communication(
@@ -1700,7 +1702,14 @@ def test_get_review_findings_summary_counts_and_limits(isolated_handoff: dict) -
 
 
 def test_switch_task_clears_focus_on_restore(isolated_handoff: dict) -> None:
-    """Switching away and back clears focus unless explicitly provided."""
+    """E17-11: switch_task preserves focus on the live row; overrides take effect.
+
+    The pre-E17-11 contract auto-archived outgoing tasks and restored them
+    from the archive snapshot (without focus) when switched back — so focus
+    silently cleared. Under the multi-active-task model rows coexist live;
+    switching back to task A finds the existing row and only updates fields
+    the caller passed. Focus therefore persists unless explicitly overridden.
+    """
     _parse(
         mcp_server.set_handoff_state(
             task_ref="sw-focus-a",
@@ -1709,7 +1718,6 @@ def test_switch_task_clears_focus_on_restore(isolated_handoff: dict) -> None:
             focus="deep in slice 2",
         )
     )
-    # Create second task and switch to it
     _parse(
         mcp_server.switch_task(
             task_ref="sw-focus-b",
@@ -1717,13 +1725,11 @@ def test_switch_task_clears_focus_on_restore(isolated_handoff: dict) -> None:
             status="in_progress",
         )
     )
-    # Switch back to A; focus should be cleared (restored from archive without focus)
     result_response = _parse(mcp_server.switch_task(task_ref="sw-focus-a"))
     result = _data(result_response)
     assert result_response["ok"] is True
-    assert result["active"].get("focus") is None
+    assert result["active"]["focus"] == "deep in slice 2"
 
-    # Now switch with explicit focus
     _parse(mcp_server.switch_task(task_ref="sw-focus-b"))
     result2_response = _parse(mcp_server.switch_task(task_ref="sw-focus-a", focus="resuming slice 3"))
     result2 = _data(result2_response)
@@ -1768,6 +1774,10 @@ def test_switch_task_regenerates_current_task_with_dashboard(isolated_handoff: d
     assert dash_result["ok"] is True
     md = dash_result["markdown"]
     assert "ALL TASKS" in md
+    # E17-11: multi-active-task — the dashboard "> " marker is now driven
+    # by a cwd match against target_worktree_path, not a singleton sentinel.
+    # With no registered worktree path, no row is marked active; both live
+    # rows appear as coexisting in_progress tasks.
     _assert_dashboard_row(
         md,
         "sw-dashboard-b",
@@ -1775,7 +1785,7 @@ def test_switch_task_regenerates_current_task_with_dashboard(isolated_handoff: d
         open_findings=0,
         open_blockers=0,
         pending_actions=0,
-        active=True,
+        active=False,
     )
     _assert_dashboard_row(
         md,

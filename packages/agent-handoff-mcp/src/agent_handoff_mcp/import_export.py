@@ -153,13 +153,13 @@ def _set_import_active_state(conn: sqlite3.Connection, task_ref: str, active: di
     )
     updated_branch = _normalize_optional_text(active.get("updated_branch")) or git_branch or "unknown-branch"
     updated_commit_sha = _normalize_optional_text(active.get("updated_commit_sha")) or git_commit
-    current = conn.execute("SELECT revision FROM handoff_state WHERE id = 1").fetchone()
+    current = conn.execute("SELECT revision FROM handoff_state WHERE task_ref = ?", (task_ref,)).fetchone()
     if current is None:
         conn.execute(
             """
             INSERT INTO handoff_state (
                 id, task_ref, objective, focus, status, revision, updated_at, updated_by, updated_branch, updated_commit_sha
-            ) VALUES (1, ?, ?, ?, ?, 0, datetime('now'), ?, ?, ?)
+            ) VALUES (NULL, ?, ?, ?, ?, 0, datetime('now'), ?, ?, ?)
             """,
             (
                 task_ref,
@@ -173,15 +173,15 @@ def _set_import_active_state(conn: sqlite3.Connection, task_ref: str, active: di
         )
         return
     conn.execute(
-        "UPDATE handoff_state SET task_ref = ?, objective = ?, focus = ?, status = ?, revision = revision + 1, updated_at = datetime('now'), updated_by = ?, updated_branch = ?, updated_commit_sha = ? WHERE id = 1",
+        "UPDATE handoff_state SET objective = ?, focus = ?, status = ?, revision = revision + 1, updated_at = datetime('now'), updated_by = ?, updated_branch = ?, updated_commit_sha = ? WHERE task_ref = ?",
         (
-            task_ref,
             active.get("objective", ""),
             active.get("focus"),
             active.get("status", "in_progress"),
             updated_by,
             updated_branch,
             updated_commit_sha,
+            task_ref,
         ),
     )
 
@@ -662,10 +662,8 @@ def archive_task_state(
         )
         active_cleared = False
         if clear_active_if_matches:
-            active_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
-            if active_row is not None and str(active_row["task_ref"]) == resolved_task_ref:
-                conn.execute("DELETE FROM handoff_state WHERE id = 1")
-                active_cleared = True
+            deleted = conn.execute("DELETE FROM handoff_state WHERE task_ref = ?", (resolved_task_ref,))
+            active_cleared = deleted.rowcount > 0
         pruned = False
         if prune_working_rows:
             for table in (
@@ -796,7 +794,7 @@ def update_task_status(
         ctx = _resolve_write_actor(conn, actor)
         warnings = collect_target_context_warnings(conn, ctx, task_ref=task_ref)
         active_row = conn.execute(
-            "SELECT * FROM handoff_state WHERE id = 1 AND task_ref = ?",
+            "SELECT * FROM handoff_state WHERE task_ref = ?",
             (task_ref,),
         ).fetchone()
 
@@ -887,7 +885,12 @@ def update_task_status(
             notes=f"Updated archived status to {status}",
         )
 
-        active_task_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
+        from .shared_primitives import _resolve_workspace_handoff_row  # noqa: PLC0415
+
+        try:
+            active_task_row = _resolve_workspace_handoff_row(conn)
+        except ValueError:
+            active_task_row = None
         regen_result = "skipped"
         if active_task_row is not None:
             try:

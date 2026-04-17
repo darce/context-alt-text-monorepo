@@ -553,9 +553,12 @@ def _resolve_write_actor(
     explicit_commit = _normalize_optional_text(actor.get("commit_sha")) if actor else None
     explicit_lane = _normalize_optional_text(actor.get("lane_id")) if actor else None
     default_agent = _normalize_optional_text(os.environ.get("AGENT_HANDOFF_DEFAULT_AGENT")) or "codex"
-    active = conn.execute(
-        "SELECT updated_by, updated_branch, updated_commit_sha FROM handoff_state WHERE id = 1"
-    ).fetchone()
+    from .shared_primitives import _resolve_workspace_handoff_row  # noqa: PLC0415
+
+    try:
+        active = _resolve_workspace_handoff_row(conn)
+    except ValueError:
+        active = None
     active_agent = _normalize_optional_text(active["updated_by"]) if active is not None else None
     active_branch = _normalize_optional_text(active["updated_branch"]) if active is not None else None
     active_commit = _normalize_optional_text(active["updated_commit_sha"]) if active is not None else None

@@ -6,14 +6,18 @@
 
 ## Branch Isolation Protocol (MANDATORY)
 
-**Code files must never be edited on the `main` branch.** This rule is enforced in both harnesses:
+**Code files must never be edited on the `main` branch.** The protected path policy lives in [harness-protocol.yaml](../contracts/harness-protocol.yaml) and is enforced in both harnesses:
 
-- **VS Code Copilot**: `.github/hooks/terminal-guard.json` runs `.github/hooks/guard-main-branch.py` on every `PreToolUse` event and blocks `apply_patch` / `create_file` requests that target code files under `apps/` or `packages/` while the current branch is `main`.
-- **Claude Code**: `.claude/settings.json` runs `scripts/hooks/guard-main-branch.sh` for `Edit|Write` requests and applies the same policy.
+- **VS Code Copilot**: `.github/hooks/terminal-guard.json` runs `.github/hooks/guard-main-branch.py` and `.github/hooks/guard-worktree-drift.py` on `PreToolUse`.
+- **Claude Code**: `.claude/settings.json` runs `scripts/hooks/guard-main-branch.sh` and `scripts/hooks/guard-worktree-drift.sh` on `PreToolUse`.
 
-Protected code extensions: `*.py`, `*.ts`, `*.tsx`, `*.js`, `*.jsx`, `*.php`, `*.sql`, `*.sh`, `*.css`, `*.scss`.
+Protected code roots: `apps/`, `packages/`, `scripts/`, `.github/hooks/`, `.claude/`, and `mk/`.
 
-**Allowed on `main`:** documentation, planning artifacts, configuration files, Makefiles, markdown, and settings. Feature branches and linked worktrees are created only when a plan is approved and implementation begins. See [planning-pipeline.md § Planning stays on main](planning-pipeline.md#planning-stays-on-main-implementation-branches-after-approval).
+Protected code extensions: `*.py`, `*.ts`, `*.tsx`, `*.js`, `*.jsx`, `*.php`, `*.sql`, `*.sh`, `*.css`, `*.scss`, `*.mk`.
+
+Protected root files: `Makefile`.
+
+**Allowed on `main`:** documentation, planning artifacts, markdown, and other repo-local surfaces that appear in `branch_isolation.permitted_main_surfaces`. Feature branches and linked worktrees are created only when a plan is approved and implementation begins. See [planning-pipeline.md § Planning stays on main](planning-pipeline.md#planning-stays-on-main-implementation-branches-after-approval).
 
 **Task-plan progress lives on `main`:** update checklist progress and status blocks in `docs/tasks/`, `docs/epics/`, and similar planning artifacts directly on `main` after each implementation or review turn so the consolidated checklist reflects the latest audited state. Code stays on `feature/<task-id>` branches; progress-only planning updates do not wait for the feature merge. If a feature branch also carries the same plan file, sync the branch copy after the `main` docs commit so merge-time docs do not regress.
 
@@ -21,13 +25,59 @@ Protected code extensions: `*.py`, `*.ts`, `*.tsx`, `*.js`, `*.jsx`, `*.php`, `*
 - Do not mark a task-plan slice complete on initial implementation alone; unresolved branch-review or planning-review findings mean the checklist stays in-progress on `main`.
 - When a turn lands implementation on a feature branch but review remains open, update `main` to show the real intermediate state rather than prematurely checking the box.
 
+### Main-Worktree Allow-List
+
+`branch_isolation.permitted_main_surfaces` in [harness-protocol.yaml](../contracts/harness-protocol.yaml) is a per-project configurable allow-list for legitimate edits that still belong on the primary `main` worktree while feature implementation happens in linked worktrees. Projects adopting this harness are expected to rewrite the list to match their own planning and operator surfaces; the entries below are this repo's current shipped policy:
+
+- `docs/tasks/**/*.md`: task-plan progress and checkbox sync on `main`
+- `docs/assessments/**`: assessment artifacts that land on `main` before or alongside implementation
+- `docs/scopes/**`: scope notes that stay on `main`
+- `docs/epics/**`: epic-level planning artifacts that stay on `main`
+- `CLAUDE.md`: canonical agent dispatcher that stays editable on `main`
+- `.github/copilot-instructions.md`: VS Code harness mirror of `CLAUDE.md`
+- `docs/agentic/BOOTSTRAP.md`: operator-facing cold-start reference
+- `docs/agentic/instructions.md`: canonical agent instructions surface
+- `docs/agentic/contracts/**`: harness contracts that stay editable on `main`
+- `docs/agentic/rules/**`: workflow rules that stay editable on `main`
+- `docs/agentic/maps/**`: routing and map artifacts that stay editable on `main`
+- `docs/agentic/generated/**`: generated agentic artifacts that can update on `main`
+- `docs/tasks/archive/**`: archived task snapshots that stay editable on `main`
+- `DASHBOARD.txt`: regenerated dashboard artifact on `main`
+- `CURRENT_TASK.md`: regenerated current-task snapshot on `main`
+
+Keep each allow-list entry narrow and explainable. If a surface exists only to support this repo's workflow, add it here with a reason in the contract. If a path is code or code-adjacent implementation, do not put it on this list just to bypass the guard.
+
 ### Maintenance-Task Pattern
 
 Permitted `main` edits still need handoff registration. Before any ad-hoc doc, Makefile, config, or script patch on `main`, register a lightweight maintenance task such as:
 
 `set_handoff_state(task_ref='MAINT-<slug>', objective='Describe the main-branch patch', status='in_progress')`
 
-The main-branch guard now warns when permitted edits happen without an active task. This rollout is warning-only, but the registration step is still mandatory workflow discipline.
+The main-branch guard now warns when permitted edits happen without an active task. This rollout is warning-only, but the registration step is still mandatory workflow discipline. The same `MAINT-*` convention is also a deliberate worktree-drift bypass for the PreToolUse drift guard, so intentional maintenance edits to the primary worktree do not trip `WorkspaceRootDriftError` while still leaving an auditable handoff trail.
+
+### Worktree-Drift Guard
+
+When an active task targets a linked worktree, the drift guard compares each edit target's canonical path against the task's stored `target_worktree_path`. If an edit resolves into a different worktree, the default action is **block** with `WorkspaceRootDriftError`.
+
+The guard passes silently only when one of these conditions is true:
+
+- there is no active task, no `target_worktree_path`, or the active task itself targets `main`
+- the task ref starts with `MAINT-`
+- the repo-relative path matches `branch_isolation.permitted_main_surfaces` on the primary worktree
+
+Every non-silent outcome writes a trace record to `.task-state/branch_isolation_guard.jsonl`.
+
+### `ALT_ALLOW_WORKTREE_DRIFT=1`
+
+Use `ALT_ALLOW_WORKTREE_DRIFT=1` only for intentional cross-worktree edits that do not fit the `MAINT-*` pattern or an existing allow-list entry. The override is shell-session scoped and downgrades the drift block to a logged pass for commands launched from that shell.
+
+Example:
+
+```bash
+ALT_ALLOW_WORKTREE_DRIFT=1 codex
+```
+
+Do not treat the env var as a permanent local setting. If a path should routinely be editable on the primary worktree, add a narrow `permitted_main_surfaces` entry instead. If the work is truly maintenance on `main`, use a `MAINT-*` task ref.
 
 **Before any code edit:**
 

@@ -225,6 +225,7 @@ Changes:
   - if exactly one active row matches, return it
   - if zero rows match or multiple rows match, raise an explicit ambiguity error naming the candidate task refs so CLI callers stop relying on the singleton fallback
 - Add `slices_completed` to `load_session` and `get_handoff_state`.
+- Prerequisite for any future checkbox-sync-on-`main` follow-on: [E17-8 branch-isolation edit-guard hardening task plan](E17-8-branch-isolation-edit-guard-hardening-task-plan.md) Slice 1 must already be merged so `branch_isolation.permitted_main_surfaces` includes `docs/tasks/**/*.md` on `main`.
 - Do not retain the split-out task-plan sync/status ideas from the former E17-6 draft in Slice 2. They are deferred until the E17-8 allow-list sequencing lands on `main`; if revived later, attach the warning to the real `make context` entrypoint (`scripts/check-task-context.py`), not the stale `scripts/context.sh` path.
 
 Proof:
@@ -363,6 +364,7 @@ Proof:
 - [x] `handoff_state` re-keyed by `task_ref`
 - [x] `_resolve_task_ref` handles concurrent active tasks safely
 - [x] `slices_completed` is available in `load_session` and `get_handoff_state`
+- [x] Any future checkbox-sync-on-`main` follow-on is gated on E17-8 Slice 1 landing `docs/tasks/**/*.md` in `permitted_main_surfaces`
 - [x] Task-plan checkbox sync and stale-checkbox warning are explicitly deferred and not retained in Slice 2 scope
 
 ### Slice 3: Test Trace Archive

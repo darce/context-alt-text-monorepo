@@ -3,7 +3,7 @@
 > Assessment of why `agent-handoff-mcp` still loses operational state across sessions and agents even though the ledger is durable, and what output-contract changes would make re-entry, parallel-task tracking, and future tool-surface consolidation more reliable.
 
 **Date:** 2026-04-02  
-**Scope:** `packages/agent-handoff-mcp`, current MCP contract, `CURRENT_TASK.md` generation, session-load/read outputs, and the existing tool-surface consolidation work.
+**Scope:** `packages/agent-handoff-mcp`, current MCP contract, `CURRENT_TASK.json` generation, session-load/read outputs, and the existing tool-surface consolidation work.
 
 **Related docs:**
 - `docs/tasks/tech-debt/agent-handoff-mcp-tool-surface-context-budget.md`
@@ -16,7 +16,7 @@ The package does not primarily have a storage problem. It already persists durab
 Three issues are causing most of the re-entry pain:
 
 1. tool outputs still mix canonical state with rendered artifacts and narrative fields
-2. `CURRENT_TASK.md` is carrying too much cross-task and historical content, so agents keep re-consuming presentation output instead of canonical records
+2. `CURRENT_TASK.json` is carrying too much cross-task and historical content, so agents keep re-consuming presentation output instead of canonical records
 3. several write and compound responses report success booleans instead of a reusable mutation envelope with revisions, changed entities, and artifact sync status
 
 The result is predictable:
@@ -36,7 +36,7 @@ The server already has a strong canonical store in SQLite, but the exposed read 
 
 Current examples:
 
-- `generate_current_task_md()` writes `CURRENT_TASK.md` by default and can also return the full markdown body inline when `write_file=false`
+- `generate_current_task_md()` writes `CURRENT_TASK.json` by default and can also return the full markdown body inline when `write_file=false`
 - `export_handoff_state()` includes `current_task_markdown` by default via `include_markdown=True`
 - the contract and README both describe `generate_current_task_md` as a normal generator alongside canonical reads, which encourages callers to treat markdown as session context rather than as a derived artifact
 
@@ -44,9 +44,9 @@ This makes it easy for callers to reload presentation output instead of ledger s
 
 **Impact:** Re-entry quality depends on whichever artifact the caller loaded first, not on a single canonical state view.
 
-### F2. `CURRENT_TASK.md` is still being asked to do too much
+### F2. `CURRENT_TASK.json` is still being asked to do too much
 
-`CURRENT_TASK.md` now includes:
+`CURRENT_TASK.json` now includes:
 
 - a compact dashboard header for other tasks
 - active task detail
@@ -56,9 +56,9 @@ This makes it easy for callers to reload presentation output instead of ledger s
 
 That is too much responsibility for a single presentation file.
 
-The biggest problem is not just size. It is semantic drift. `CURRENT_TASK.md` has become a mixed dashboard, history log, and operator handoff brief. That makes it expensive to regenerate and expensive to read. It also creates pressure to keep historical status labels like `[FIXED]` in the markdown render even though those rows already exist in the database and can be queried precisely.
+The biggest problem is not just size. It is semantic drift. `CURRENT_TASK.json` has become a mixed dashboard, history log, and operator handoff brief. That makes it expensive to regenerate and expensive to read. It also creates pressure to keep historical status labels like `[FIXED]` in the markdown render even though those rows already exist in the database and can be queried precisely.
 
-**Important constraint:** do not keep printing fixed handoff issues into `CURRENT_TASK.md`. Fixed, deferred, and wontfix history belongs in query/export surfaces, not in the default operator brief.
+**Important constraint:** do not keep printing fixed handoff issues into `CURRENT_TASK.json`. Fixed, deferred, and wontfix history belongs in query/export surfaces, not in the default operator brief.
 
 **Impact:** token-heavy markdown becomes the de facto memory layer, and agents lose track of which parallel tasks are live versus merely mentioned in history.
 
@@ -182,7 +182,7 @@ Suggested artifact shape:
 ```json
 {
   "artifact_type": "current_task_markdown",
-  "path": "/repo/CURRENT_TASK.md",
+  "path": "/repo/CURRENT_TASK.json",
   "written": true,
   "content_hash": "sha256:...",
   "content_available": false
@@ -191,9 +191,9 @@ Suggested artifact shape:
 
 This keeps markdown available without allowing it to pollute normal session state.
 
-### 3. Keep historical findings out of the default `CURRENT_TASK.md` render
+### 3. Keep historical findings out of the default `CURRENT_TASK.json` render
 
-Default `CURRENT_TASK.md` should contain only what an agent needs to resume work quickly:
+Default `CURRENT_TASK.json` should contain only what an agent needs to resume work quickly:
 
 - active task identity and focus
 - compact dashboard of parallel active/recent tasks
@@ -209,7 +209,7 @@ Do not include fixed, deferred, or wontfix findings in the default render. If hi
 - `get_handoff_state(sections=..., include_history=true)`
 - export or report-specific tools
 
-If a historical render is ever needed, it should be a different artifact class, not the default `CURRENT_TASK.md`.
+If a historical render is ever needed, it should be a different artifact class, not the default `CURRENT_TASK.json`.
 
 ### 4. Return structured mutation results from all write tools
 
@@ -247,7 +247,7 @@ Suggested write shape:
     {
       "artifact_type": "current_task_markdown",
       "written": true,
-      "path": "/repo/CURRENT_TASK.md"
+      "path": "/repo/CURRENT_TASK.json"
     }
   ],
   "notes": {
@@ -292,7 +292,7 @@ This is what would make cross-session and multi-agent re-entry reliable instead 
 
 ### 7. Add a compact parallel-work index to session loads
 
-The package should stop relying on `CURRENT_TASK.md` as the main multi-task overview.
+The package should stop relying on `CURRENT_TASK.json` as the main multi-task overview.
 
 `load_session()` should return a compact task index by default, for example:
 
@@ -381,7 +381,7 @@ If this report is turned into a spec, the spec should define:
 1. a versioned response envelope shared by every handoff tool
 2. a stable freshness model using task and section revisions or cursors
 3. artifact metadata rules that keep markdown out of default state payloads
-4. default omission of fixed/deferred/wontfix history from `CURRENT_TASK.md`
+4. default omission of fixed/deferred/wontfix history from `CURRENT_TASK.json`
 5. typed mutation result envelopes for every action tool
 6. a compact parallel-task index as part of session rebinds
 7. the boundary between keep-separate tools and semi-polymorphic tool families
@@ -396,7 +396,7 @@ The fix is to make canonical state unmistakable:
 - explicit freshness metadata
 - typed mutation results
 - markdown moved to optional artifacts
-- no fixed-history dump in default `CURRENT_TASK.md`
+- no fixed-history dump in default `CURRENT_TASK.json`
 
 Once that is in place, a leaner tool surface becomes realistic. Without it, more polymorphism would only hide the same state-keeping problems behind fewer names.
 
@@ -416,7 +416,7 @@ Once that is in place, a leaner tool surface becomes realistic. Without it, more
 
 **F2 is the highest-impact finding.** `_collect_all_findings_history()` in `current_task_rendering.py:307-326` runs an unbounded `SELECT * FROM review_findings` across all tasks and statuses. Every `generate_current_task_md` call renders every fixed, deferred, and wontfix finding that has ever existed in the ledger. At current scale (~1,800 findings), this already produces significant token pressure. This grows monotonically and never shrinks. Removing the "All Review Findings History" section from the default render is the single highest-value change in this report and should be implemented first.
 
-**F1 is structurally correct.** The split between `generate_current_task_md` (writes markdown to disk), `export_handoff_state` (embeds markdown by default via `include_markdown=True`), and `load_session` (returns canonical JSON) creates ambiguity about which output is authoritative. Agents that load `CURRENT_TASK.md` on cold start consume presentation state, not canonical state.
+**F1 is structurally correct.** The split between `generate_current_task_md` (writes markdown to disk), `export_handoff_state` (embeds markdown by default via `include_markdown=True`), and `load_session` (returns canonical JSON) creates ambiguity about which output is authoritative. Agents that load `CURRENT_TASK.json` on cold start consume presentation state, not canonical state.
 
 **The compound-tool direction is validated.** `load_session` and `close_slice` already prove the pattern works. The context-budget evaluation doc confirms these are the highest-value tools per token cost.
 
@@ -478,7 +478,7 @@ Target: **28 tools → 12 tools**, one profile, no hidden capabilities.
 
 **Enforcement model:** Each tool handler validates the `entity`/`view`/`scope` parameter against a strict schema map. Invalid entity families or malformed payloads fail fast with a structured error that includes the expected schema. The tool *description* stays compact (~120 tokens) and lists valid entity values; the per-entity payload contract lives in the spec doc, not in the tool definition.
 
-**Token budget estimate:** 12 tools × ~120 tokens ≈ 1,440 tokens per session. Savings: ~1,060 tokens vs current 28-tool surface. Combined with the CURRENT_TASK.md history removal (F2), total per-session savings could reach 2,000+ tokens.
+**Token budget estimate:** 12 tools × ~120 tokens ≈ 1,440 tokens per session. Savings: ~1,060 tokens vs current 28-tool surface. Combined with the CURRENT_TASK.json history removal (F2), total per-session savings could reach 2,000+ tokens.
 
 ### Response envelope
 
@@ -518,10 +518,10 @@ Based on impact-to-effort ratio, verified against code:
 
 | Priority | Change | Impact | Effort | Trace |
 |----------|--------|--------|--------|-------|
-| **P0** | Remove "All Review Findings History" from default CURRENT_TASK.md render | Eliminates unbounded token growth per regeneration | ~10 lines in `current_task_rendering.py` | F2 |
+| **P0** | Remove "All Review Findings History" from default CURRENT_TASK.json render | Eliminates unbounded token growth per regeneration | ~10 lines in `current_task_rendering.py` | F2 |
 | **P0** | Consolidate 28 tools → 12 with polymorphic dispatch | Reduces tool catalog from ~2,500 to ~1,440 tokens; eliminates profile split | Significant but bounded — server handlers already exist | F6, R-A/B/C |
 | **P1** | Common response envelope on all tools | Uniform structure for agent parsing; enables mutation tracking | Mechanical across all handlers | F1, F5 |
-| **P1** | Cap cross-task deferred findings in CURRENT_TASK.md | Prevents secondary token bloat | ~20 lines | R-MISS-1 |
+| **P1** | Cap cross-task deferred findings in CURRENT_TASK.json | Prevents secondary token bloat | ~20 lines | R-MISS-1 |
 | **P1** | Return decision row from `close_slice` | Eliminates most common follow-up read | ~5 lines in `core.py` | R-MISS-2 |
 | **P2** | Default `export_handoff_state` to `include_markdown=false` | Removes markdown from canonical export | One-line default change | F1 |
 | **P2** | Typed companion fields for prose (optional `decision_summary`, `resolution` structs) | Reduces prose parsing pressure | Additive schema change | F4 |
@@ -564,7 +564,7 @@ The consumer-facing contract in this monorepo (`docs/agentic/contracts/agent-han
 2. **Scope** — which tools and response surfaces are affected
 3. **Tool Surface** — the 12-tool unified surface with entity dispatch tables and per-entity payload schemas
 4. **Response Envelope** — the common schema all tools return (v2, required and optional fields, before/after examples)
-5. **CURRENT_TASK.md Render Contract** — what sections are included by default, what is opt-in, maximum sizes
+5. **CURRENT_TASK.json Render Contract** — what sections are included by default, what is opt-in, maximum sizes
 6. **Mutation Response Contract** — what every write tool must return beyond the entity row
 7. **Validation Criteria** — how to verify each change is correct (test commands, expected output shapes)
 

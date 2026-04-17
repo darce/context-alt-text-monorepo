@@ -448,17 +448,21 @@ def collect_target_context_warnings(
     enforceable target branches raise BranchMismatchError before the write is
     applied. Worktree-path drift remains warning-only.
     """
+    active_sql = "SELECT task_ref, target_branch, target_worktree_path FROM handoff_state WHERE id = 1"
+    active_params: tuple[object, ...] = ()
+    normalized_task_ref = _normalize_optional_text(task_ref)
+    if normalized_task_ref is not None:
+        active_sql = "SELECT task_ref, target_branch, target_worktree_path FROM handoff_state WHERE task_ref = ?"
+        active_params = (normalized_task_ref,)
     try:
-        active = conn.execute(
-            "SELECT task_ref, target_branch, target_worktree_path FROM handoff_state WHERE id = 1"
-        ).fetchone()
+        active = conn.execute(active_sql, active_params).fetchone()
     except sqlite3.OperationalError:
         # Schema is older than this build (missing column). Skip the check.
         return []
     if active is None:
         return []
     warnings: list[str] = []
-    resolved_task_ref = _normalize_optional_text(task_ref)
+    resolved_task_ref = normalized_task_ref
     if resolved_task_ref is None and active["task_ref"]:
         resolved_task_ref = _normalize_optional_text(active["task_ref"])
     resolved_target_branch = _normalize_optional_text(target_branch)

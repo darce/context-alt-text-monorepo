@@ -71,8 +71,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "review_runs": "Record, list, or summarize review-run coverage through one typed domain surface. Set review.operation to 'record', 'list', or 'coverage'.",
     "handoff_close_check": "Check task readiness to close: blockers, pending actions, findings, and optional fresh-test gate.",
     "audit_decision_ids": "Audit decision IDs for grammar conformance. Returns canonical/malformed/freeform classifications.",
-    "generate_current_task_md": "Generate the machine-readable CURRENT_TASK.md snapshot for the active task.",
-    "generate_dashboard_md": "Generate DASHBOARD.txt — the human-scoped observatory view with Needs Attention summary, All Tasks table, cross-task open findings, and optional extension sections (e.g. Lane Health from agent-orchestrator-mcp).",
+    "render_handoff": (
+        "Render the handoff surface files through one compound tool. "
+        "Set kind='current_task' to produce the machine-readable CURRENT_TASK.json "
+        "snapshot for the active task; set kind='dashboard' to produce DASHBOARD.txt — "
+        "the human-scoped observatory view with Needs Attention summary, All Tasks table, "
+        "cross-task open findings, and optional extension sections (e.g. Lane Health from "
+        "agent-orchestrator-mcp)."
+    ),
     "export_handoff_state": "Export the task handoff state to a portable JSON snapshot.",
     "import_handoff_state": "Import a previously exported handoff state snapshot into the local database.",
     "archive_task_state": "Archive completed task state from the live handoff tables into archive storage.",
@@ -82,7 +88,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "get_touched_files": "List task-scoped file-touch rows with deterministic newest-first ordering and a bounded limit.",
     "update_task_status": "Update a task status without recording a slice decision. For the active task this requires expected_revision; for archived tasks it updates the archived snapshot status used by the dashboard.",
     "load_session": "Load session context: get_handoff_state + review_findings(list open) + touched_files in one call. Pass sections to shape the nested state payload, detail to shape both state and findings, and top_n_touched_files (default 20, max 200) to bound the additive touched_files list.",
-    "close_slice": "Record a slice-complete decision, keep the task status in_progress, and regenerate CURRENT_TASK.md plus DASHBOARD.txt. Requires expected_revision when the target task is currently active. Pass changed_files to persist structured review scope on the nested decision write.",
+    "close_slice": "Record a slice-complete decision, keep the task status in_progress, and regenerate CURRENT_TASK.json plus DASHBOARD.txt. Requires expected_revision when the target task is currently active. Pass changed_files to persist structured review scope on the nested decision write.",
     "artifacts": "Record, search, get, or purge artifact sources through one typed domain surface. Set artifact.operation to 'record', 'search', 'get', or 'purge'.",
     "search_handoff": "Search decisions, findings, blockers, actions, and verified tests by keyword with BM25 ranking. Pass detail='summary' to truncate snippets and fields='record_type,snippet' to project per-result fields.",
 }
@@ -1368,7 +1374,7 @@ def _build_tool_registry() -> list[ToolEntry]:
             surface_class="action",
             entity_family="review_runs",
         ),
-        # Close check + CURRENT_TASK.md (2)
+        # Close check + CURRENT_TASK.json (2)
         ToolEntry(
             "handoff_close_check",
             handoff_close_check,
@@ -1385,23 +1391,13 @@ def _build_tool_registry() -> list[ToolEntry]:
             entity_family="lifecycle",
         ),
         ToolEntry(
-            "generate_current_task_md",
-            generate_current_task_md,
-            TOOL_DESCRIPTIONS["generate_current_task_md"],
-            cli_name="task",
+            "render_handoff",
+            render_handoff,
+            TOOL_DESCRIPTIONS["render_handoff"],
+            cli_name="render-handoff",
             cli_args=[
-                ArgSpec("task_ref", nargs="?"),
-                ArgSpec("--no-write", action="store_true"),
-            ],
-            surface_class="generator",
-            entity_family="lifecycle",
-        ),
-        ToolEntry(
-            "generate_dashboard_md",
-            generate_dashboard_md,
-            TOOL_DESCRIPTIONS["generate_dashboard_md"],
-            cli_name="write-dashboard",
-            cli_args=[
+                ArgSpec("--kind", required=True, choices=["current_task", "dashboard"]),
+                ArgSpec("--task-ref", help="Task ref (only used when --kind=current_task)."),
                 ArgSpec("--no-write", action="store_true"),
             ],
             surface_class="generator",
@@ -1631,22 +1627,22 @@ def generate_current_task_md(
     task_ref: str | None = None,
     write_file: bool = True,
 ) -> dict:
-    """Generate CURRENT_TASK.md for the active task.
+    """Generate CURRENT_TASK.json for the active task.
 
     Renders only the active task's data: objective, focus, status, blockers,
     actions, decisions, tests, findings, lanes, and coverage.  Cross-task
     sections (All Tasks table, findings from other tasks) have moved to
-    DASHBOARD.txt — use generate_dashboard_md() to produce that file.
+    DASHBOARD.txt — call render_handoff(kind='dashboard') to produce that file.
 
     Args:
         task_ref: The task to render. Defaults to the active task.
-        write_file: Write the machine-readable CURRENT_TASK.md snapshot to disk.
+        write_file: Write the machine-readable CURRENT_TASK.json snapshot to disk.
 
     Return keys (data envelope):
         task_ref: resolved task reference.
-        path: absolute path to CURRENT_TASK.md (machine-readable JSON).
+        path: absolute path to CURRENT_TASK.json (machine-readable JSON).
         written: True when write_file=True.
-        current_task_json: JSON content of CURRENT_TASK.md; present only
+        current_task_json: JSON content of CURRENT_TASK.json; present only
             when write_file=False.
     """
     with core._get_db_connection() as conn:
@@ -1732,11 +1728,53 @@ def generate_dashboard_md(write_file: bool = True) -> dict:
     agent-orchestrator-mcp.
 
     Args:
-        write_file: Write the markdown to DASHBOARD.txt alongside CURRENT_TASK.md.
+        write_file: Write the markdown to DASHBOARD.txt alongside CURRENT_TASK.json.
     """
     from .dashboard_rendering import generate_dashboard_md as _generate  # noqa: PLC0415
 
     return _generate(write_file=write_file)
+
+
+def render_handoff(
+    kind: Annotated[
+        Literal["current_task", "dashboard"],
+        Field(
+            description=(
+                "Which handoff surface to render. 'current_task' writes CURRENT_TASK.json "
+                "for the requested (or active) task; 'dashboard' writes DASHBOARD.txt — "
+                "the cross-task observatory view."
+            )
+        ),
+    ],
+    task_ref: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Only used when kind='current_task'. Task reference to render. "
+                "Defaults to the active task when omitted."
+            )
+        ),
+    ] = None,
+    write_file: Annotated[
+        bool,
+        Field(description="Write the rendered artifact to disk. Defaults to True."),
+    ] = True,
+) -> dict:
+    """Compound renderer for CURRENT_TASK.json and DASHBOARD.txt.
+
+    Replaces the two single-purpose tools ``generate_current_task_md`` and
+    ``generate_dashboard_md``. The Python aliases remain importable for
+    backward compatibility, but the MCP surface advertises a single
+    ``render_handoff`` tool.
+    """
+    if kind == "current_task":
+        result = generate_current_task_md(task_ref=task_ref, write_file=write_file)
+    elif kind == "dashboard":
+        result = generate_dashboard_md(write_file=write_file)
+    else:  # pragma: no cover - pydantic rejects unknown kinds at boundary.
+        raise ValueError(f"Unknown render_handoff kind: {kind!r}")
+    result["tool"] = "render_handoff"
+    return result
 
 
 def _wrap_branch_mismatch_for_mcp(entry: ToolEntry) -> Callable[..., dict]:
@@ -1777,7 +1815,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
             "One task is active at a time (stored in handoff_state id=1). "
             "Completed tasks are archived into task_archives with a status snapshot. "
             "DASHBOARD.txt renders the human-readable active-task view plus the cross-task dashboard, "
-            "while CURRENT_TASK.md stores the machine-readable active-task snapshot. "
+            "while CURRENT_TASK.json stores the machine-readable active-task snapshot. "
             "The dashboard renders both the active task's live status and each archived task's snapshot status. "
             "Non-archived, non-active tasks default to 'active' in the dashboard — "
             "this is a rendering fallback, not a real stored status.\n\n"
@@ -1788,7 +1826,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
             "record test results with `record_event(event={event_kind:'test_result', ...})`, "
             "and record blockers with `record_event(event={event_kind:'blocker', ...})`.\n"
             "3. **Complete slices**: use `close_slice(...)` to record a slice-complete decision. "
-            "This keeps the task status as in_progress and regenerates CURRENT_TASK.md plus DASHBOARD.txt.\n"
+            "This keeps the task status as in_progress and regenerates CURRENT_TASK.json plus DASHBOARD.txt.\n"
             "4. **Finish task**: when all slices are done, update status to done: "
             "`update_task_status(task_ref=..., status='done')`. "
             "Then archive: `archive_task_state(task_ref=...)`.\n"
@@ -1798,7 +1836,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
             "## Key Tool Guidance\n\n"
             "- `load_session`: use at session start to get state + open findings in one call.\n"
             "- `close_slice`: use for slice completions — it records a decision, keeps status "
-            "in_progress, and regenerates CURRENT_TASK.md plus DASHBOARD.txt atomically.\n"
+            "in_progress, and regenerates CURRENT_TASK.json plus DASHBOARD.txt atomically.\n"
             "- `update_task_status`: use to change status (in_progress/done/blocked/review) "
             "without recording a decision. Works for both active and archived tasks.\n"
             "- `set_handoff_state`: use to update objective, focus, or status on the active task. "
@@ -1806,9 +1844,11 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
             "- `archive_task_state`: snapshots task state into archive storage. "
             "Does not change task status — the archived snapshot preserves whatever status "
             "the task had at archive time.\n"
-            "- `generate_current_task_md`: call after any state-changing operation "
-            "(record_event, review_findings with record/batch_record/update) "
-            "to keep CURRENT_TASK.md machine-readable and DASHBOARD.txt human-readable."
+            "- `render_handoff`: call after any state-changing operation "
+            "(record_event, review_findings with record/batch_record/update). "
+            "Use kind='current_task' to refresh the machine-readable CURRENT_TASK.json "
+            "snapshot, and kind='dashboard' to refresh the human-readable DASHBOARD.txt "
+            "observatory view."
         ),
     )
     _apply_tool_descriptions()
@@ -1970,7 +2010,7 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
         {
             "name": "after_task_switch",
             "trigger": "switch_task() completes",
-            "durable_output": "CURRENT_TASK.md regenerated for new active task",
+            "durable_output": "CURRENT_TASK.json regenerated for new active task",
             "evidence_path": str(config.current_task_path),
             "evidence_found": config.current_task_path.exists(),
         },

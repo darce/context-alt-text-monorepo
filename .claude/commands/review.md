@@ -12,4 +12,4 @@ Loop:
 - run the full checklist from the selected guide — never skip sections
 - record every finding in MCP before mentioning it in chat
 - record verdict decision and review-run entry
-- regenerate the operator view with `generate_dashboard_md`; call `generate_current_task_md` only when a task-scoped snapshot is explicitly needed
+- regenerate the operator view with `render_handoff(kind='dashboard')`; call `render_handoff(kind='current_task')` only when a task-scoped snapshot is explicitly needed

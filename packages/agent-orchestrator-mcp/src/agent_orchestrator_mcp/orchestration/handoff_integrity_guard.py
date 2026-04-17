@@ -45,7 +45,7 @@ def _run_cli(
         "--state-dir",
         str(state_root / ".task-state"),
         "--current-task-path",
-        str(state_root / "CURRENT_TASK.md"),
+        str(state_root / "CURRENT_TASK.json"),
         "--exports-dir",
         str(state_root / ".task-state" / "exports"),
     ]

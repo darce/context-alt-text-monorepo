@@ -118,7 +118,7 @@ def evaluate_review_ready(
     if open_blockers:
         reasons.append(f"{open_blockers} open blocker(s)")
     if not current_task_in_sync:
-        reasons.append("CURRENT_TASK.md is out of sync with handoff state")
+        reasons.append("CURRENT_TASK.json is out of sync with handoff state")
     if not current_commit_summary_present:
         reasons.append("no structured slice-completion summary recorded for the current commit")
     if not has_test_evidence:

@@ -44,7 +44,7 @@ Future work such as extracting ACE-specific behavior, publishing packages public
 
 ## Terminology
 
-- **Core Handoff**: The extracted `agent-handoff-mcp` ledger package: task state, review findings, artifacts, export/import, search, and CURRENT_TASK.md generation.
+- **Core Handoff**: The extracted `agent-handoff-mcp` ledger package: task state, review findings, artifacts, export/import, search, and CURRENT_TASK.json generation.
 - **Orchestrator**: The monorepo-local `agent-orchestrator-mcp` package: daemons, workers, lane management, slice-review packets, review-summary helpers, and related runtime tooling.
 - **Consumer rewiring**: Updating Makefiles, CI, IDE configs, docs, and package metadata so the monorepo uses the extracted handoff package rather than local `packages/agent-handoff-mcp/src` paths.
 - **Live surfaces**: Runtime, config, contract, bootstrap, playbook, and package-local workflow files that operators actively use. Historical planning docs and generated metadata are not part of the live-surface cleanup proof.

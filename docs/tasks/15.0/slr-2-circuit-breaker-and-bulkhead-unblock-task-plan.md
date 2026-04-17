@@ -101,7 +101,7 @@ The spec no longer describes Tier 3 as ADR-blocked, and the next implementation-
 | `apps/prototype-description-service/recognition/interface_adapters/http/deps/session.py` | SLR-1 established the request-boundary ownership that Tier 3 work must preserve |
 | `apps/prototype-description-service/recognition/interface_adapters/http/routers/health.py` | Future consumer of breaker and bulkhead state exposure |
 | `apps/prototype-description-service/db/session.py` | Future bulkhead design adds a second engine or pool path here |
-| `CURRENT_TASK.md` | Must stay aligned with the planning review and unblock decisions |
+| `CURRENT_TASK.json` | Must stay aligned with the planning review and unblock decisions |
 
 ## Verification Strategy
 

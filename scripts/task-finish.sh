@@ -4,7 +4,7 @@
 # After a feature branch has been merged to main, this script runs the
 # canonical post-merge cleanup: returns the root worktree to main (if needed),
 # removes the linked worktree, deletes the feature branch, archives the MCP
-# task state, and regenerates CURRENT_TASK.md.
+# task state, and regenerates CURRENT_TASK.json.
 #
 # Usage:
 #   ./scripts/task-finish.sh <TASK_ID> [--merge]
@@ -203,7 +203,7 @@ if [[ -n "$INTEGRITY_DIRTY" ]]; then
   fi
 fi
 
-# Step 5: Archive the MCP task and regenerate CURRENT_TASK.md.
+# Step 5: Archive the MCP task and regenerate CURRENT_TASK.json.
 echo "→ Archiving MCP task state $TASK"
 # AHMCP-20: the inline Python that used to live here as a `python -c '...'`
 # heredoc now lives at scripts/_task_finish_inline.py. Bash quoting is no

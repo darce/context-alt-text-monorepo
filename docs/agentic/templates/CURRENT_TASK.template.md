@@ -1,7 +1,7 @@
-# CURRENT_TASK.md Template
+# CURRENT_TASK.json Template
 
-> Copy this template to the **monorepo root** as `CURRENT_TASK.md` when starting a multi-session task.
-> Location: `/context-alt-text-monorepo/CURRENT_TASK.md`
+> Copy this template to the **monorepo root** as `CURRENT_TASK.json` when starting a multi-session task.
+> Location: `/context-alt-text-monorepo/CURRENT_TASK.json`
 
 ---
 

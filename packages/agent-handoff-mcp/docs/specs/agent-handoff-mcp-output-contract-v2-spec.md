@@ -1,6 +1,6 @@
 # Output Contract v2 Specification
 
-> Spec for `agent-handoff-mcp` output contract changes: tool surface consolidation, response envelope, and CURRENT_TASK.md render cleanup.
+> Spec for `agent-handoff-mcp` output contract changes: tool surface consolidation, response envelope, and CURRENT_TASK.json render cleanup.
 
 **Date:** 2026-04-02
 **Status:** Draft
@@ -11,10 +11,10 @@
 
 ## Motivation
 
-The current tool surface (28 tools, ~2,500 tokens of catalog per session) and unbounded CURRENT_TASK.md rendering are the two largest contributors to context budget waste. Tool responses lack a common envelope, making agent parsing inconsistent. The profile split (core/extended) hides tools instead of removing them, creating a discovery problem.
+The current tool surface (28 tools, ~2,500 tokens of catalog per session) and unbounded CURRENT_TASK.json rendering are the two largest contributors to context budget waste. Tool responses lack a common envelope, making agent parsing inconsistent. The profile split (core/extended) hides tools instead of removing them, creating a discovery problem.
 
 This spec defines:
-1. Bounded CURRENT_TASK.md rendering (ready to implement)
+1. Bounded CURRENT_TASK.json rendering (ready to implement)
 2. A common response envelope for all tools (ready to implement)
 3. Richer mutation responses from compound tools (ready to implement)
 4. An ADR-backed tool-surface consolidation target (15-18 tools, see OC-005)
@@ -25,12 +25,12 @@ This spec defines:
 
 ## Spec Items
 
-### OC-001: Remove "All Review Findings History" from CURRENT_TASK.md
+### OC-001: Remove "All Review Findings History" from CURRENT_TASK.json
 
 **Trace:** F2
 **Priority:** P0
 
-The `_render_findings_section()` function renders a durable "## All Review Findings History" section that includes every finding (fixed, deferred, wontfix, open) across all tasks. `_collect_all_findings_history()` runs an unbounded `SELECT * FROM review_findings` with no status filter. At ~1,800 findings, this dominates CURRENT_TASK.md token cost and grows monotonically.
+The `_render_findings_section()` function renders a durable "## All Review Findings History" section that includes every finding (fixed, deferred, wontfix, open) across all tasks. `_collect_all_findings_history()` runs an unbounded `SELECT * FROM review_findings` with no status filter. At ~1,800 findings, this dominates CURRENT_TASK.json token cost and grows monotonically.
 
 **Change:** Remove the "All Review Findings History" section from the default render. Remove `_collect_all_findings_history()` from `_build_current_task_render_state()`. Historical findings remain accessible via the existing `list_review_findings(status="all")` tool.
 
@@ -56,7 +56,7 @@ else:
 
 ---
 
-### OC-002: Cap cross-task deferred findings in CURRENT_TASK.md
+### OC-002: Cap cross-task deferred findings in CURRENT_TASK.json
 
 **Trace:** R-MISS-1, F2
 **Priority:** P1
@@ -169,7 +169,7 @@ Tool responses currently have ad-hoc shapes. Every response includes `ok` but no
 | `scope.entity` | string\|null | on polymorphic tools | The entity family dispatched to |
 | `data` | object | yes | Tool-specific payload (current response body moves here) |
 | `mutation` | object\|null | on writes | Structured mutation metadata |
-| `artifacts` | array | yes | Render artifacts produced (e.g., CURRENT_TASK.md writes) |
+| `artifacts` | array | yes | Render artifacts produced (e.g., CURRENT_TASK.json writes) |
 | `warnings` | array | yes | Existing field, promoted to envelope |
 
 **Mutation shape** (present on write responses):
@@ -192,7 +192,7 @@ Tool responses currently have ad-hoc shapes. Every response includes `ok` but no
   "artifacts": [
     {
       "type": "current_task_md",
-      "path": "CURRENT_TASK.md",
+      "path": "CURRENT_TASK.json",
       "written": true
     }
   ]
@@ -310,7 +310,7 @@ Two independent version surfaces:
 **Trace:** F1
 **Priority:** P2
 
-`export_handoff_state` defaults to `include_markdown=True`, embedding the full CURRENT_TASK.md markdown in the export JSON. This mixes canonical state with rendered artifacts.
+`export_handoff_state` defaults to `include_markdown=True`, embedding the full CURRENT_TASK.json markdown in the export JSON. This mixes canonical state with rendered artifacts.
 
 **Change:** Flip default to `include_markdown=False`. Callers who need markdown in exports pass it explicitly.
 
@@ -343,7 +343,7 @@ def export_handoff_state(
 
 When a task is initialized via `switch_task`, the only branch information recorded is the write provenance (`updated_branch`) — which branch the write happened *from*. There is no way to declare "this task's work should happen on branch X." This means agents cannot discover the intended branch for a task from handoff state alone, and the planning pipeline's branch-per-task convention has no machine-readable anchor.
 
-**Change:** Add a `target_branch` column to `handoff_state` and a corresponding parameter to both `switch_task` (the task init/switch boundary) and `set_handoff_state` (for in-place updates). Include `target_branch` in the `active` section of `get_handoff_state` responses and in the CURRENT_TASK.md render header.
+**Change:** Add a `target_branch` column to `handoff_state` and a corresponding parameter to both `switch_task` (the task init/switch boundary) and `set_handoff_state` (for in-place updates). Include `target_branch` in the `active` section of `get_handoff_state` responses and in the CURRENT_TASK.json render header.
 
 **Before** (`shared_schema.py::handoff_state table`):
 ```sql
@@ -384,7 +384,7 @@ CREATE TABLE IF NOT EXISTS handoff_state (
 - `switch_task` accepts `target_branch` and persists it at task init
 - `set_handoff_state` accepts `target_branch` for in-place updates, preserving existing value when omitted
 - `get_handoff_state` includes `target_branch` in the `active` section
-- CURRENT_TASK.md render header includes `Target branch: <branch>` when set
+- CURRENT_TASK.json render header includes `Target branch: <branch>` when set
 - `HANDOFF_SCHEMA_VERSION` bumped and migration added
 - Existing tests updated to cover the new field
 
@@ -551,7 +551,7 @@ These items have concrete before/after code, verified symbols, and no design amb
 Task plan: `packages/agent-handoff-mcp/docs/tasks/AHMCP-2-bounded-current-task-rendering-and-mutation-output-task-plan.md`
 
 ```
-OC-001  Remove findings history from CURRENT_TASK.md     ~10 lines, independent
+OC-001  Remove findings history from CURRENT_TASK.json     ~10 lines, independent
 OC-002  Cap cross-task findings                           ~20 lines, independent
 OC-003  Enrich close_slice response                       ~5 lines, independent
 OC-007  Default exports to include_markdown=false         1 line, independent
@@ -610,7 +610,7 @@ Validation snippets are split by tier. Each snippet runs against the package sta
 ### Tier 1 validation (runs against pre-envelope response shapes)
 
 ```bash
-# --- OC-001: No findings history in CURRENT_TASK.md ---
+# --- OC-001: No findings history in CURRENT_TASK.json ---
 python -c "
 import json, os
 os.environ.setdefault('AGENT_HANDOFF_WORKSPACE_ROOT', '.')
@@ -626,7 +626,7 @@ print('OC-001 OK: no findings history section')
 "
 
 # --- OC-002: Cross-task findings capped ---
-# Verified via CURRENT_TASK.md content inspection:
+# Verified via CURRENT_TASK.json content inspection:
 # each cross-task section should have <= max_cross_task_findings entries per task_ref
 
 # --- OC-003: close_slice returns decision row ---

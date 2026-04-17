@@ -293,7 +293,7 @@ record_decision(
 )
 ```
 
-Regenerate task context: `generate_current_task_md(task_ref=<active-task-ref>)`.
+Regenerate task context: `render_handoff(kind='current_task', task_ref=<active-task-ref>)`.
 
 ## Recovery
 

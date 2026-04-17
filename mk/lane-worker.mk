@@ -20,13 +20,13 @@ lane-check: lane-worker-guard
 		if sh -lc "$$command_text" >"$$output_file" 2>&1; then \
 			cat "$$output_file"; \
 			result_text="$$(python3 -c 'from pathlib import Path; import sys; lines=[line.strip() for line in Path(sys.argv[1]).read_text(errors="replace").splitlines() if line.strip()]; tail=" | ".join(lines[-10:]) if lines else "command passed"; print(tail[:500])' "$$output_file")"; \
-			$(MCP_CMD) --workspace-root "$(LANE_WORKTREE_TARGET)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports" \
+			$(MCP_CMD) --workspace-root "$(LANE_WORKTREE_TARGET)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.json" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports" \
 				test --session "$(SESSION)" --command "$$command_text" --passed --result "$$result_text" --exit-code 0 >/dev/null; \
 		else \
 			status="$$?"; \
 			cat "$$output_file"; \
 			result_text="$$(python3 -c 'from pathlib import Path; import sys; lines=[line.strip() for line in Path(sys.argv[1]).read_text(errors="replace").splitlines() if line.strip()]; tail=" | ".join(lines[-10:]) if lines else "command failed"; print(tail[:500])' "$$output_file")"; \
-			$(MCP_CMD) --workspace-root "$(LANE_WORKTREE_TARGET)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports" \
+			$(MCP_CMD) --workspace-root "$(LANE_WORKTREE_TARGET)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.json" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports" \
 				test --session "$(SESSION)" --command "$$command_text" --result "$$result_text" --exit-code "$$status" >/dev/null; \
 			rm -f "$$output_file"; \
 			return "$$status"; \

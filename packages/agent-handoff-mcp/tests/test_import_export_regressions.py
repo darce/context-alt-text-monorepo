@@ -30,7 +30,7 @@ def _configure_runtime(workspace_root: Path) -> RuntimeConfig:
     runtime = RuntimeConfig.for_workspace(
         workspace_root,
         state_dir=workspace_root / ".task-state",
-        current_task_path=workspace_root / "CURRENT_TASK.md",
+        current_task_path=workspace_root / "CURRENT_TASK.json",
     )
     mcp_server.configure_runtime(runtime)
     return runtime
@@ -277,7 +277,7 @@ def test_update_task_status_updates_archived_snapshot_and_dashboard(workspace_pa
 
     payload = _parse(mcp_server.generate_current_task_md(task_ref="task-b", write_file=False))
     assert payload["ok"] is True
-    # CURRENT_TASK.md is now active-task-only; cross-task data is in DASHBOARD.txt.
+    # CURRENT_TASK.json is now active-task-only; cross-task data is in DASHBOARD.txt.
     ct_data = json.loads(payload["current_task_json"])
     assert ct_data["task_ref"] == "task-b"
     assert "task-a" not in payload["current_task_json"]

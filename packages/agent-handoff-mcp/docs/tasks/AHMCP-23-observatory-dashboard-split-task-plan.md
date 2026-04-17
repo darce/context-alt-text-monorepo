@@ -14,17 +14,17 @@
 
 ## Objective
 
-Split CURRENT_TASK.md into two generated files: a slim agent-scoped task view and a human-scoped observatory dashboard.  Introduce a `DashboardExtension` callback protocol so the orchestrator can inject lane/worker health into the dashboard without creating an upward dependency from handoff-mcp.
+Split CURRENT_TASK.json into two generated files: a slim agent-scoped task view and a human-scoped observatory dashboard.  Introduce a `DashboardExtension` callback protocol so the orchestrator can inject lane/worker health into the dashboard without creating an upward dependency from handoff-mcp.
 
 ## Problem Statement
 
-CURRENT_TASK.md currently serves two audiences with conflicting needs:
+CURRENT_TASK.json currently serves two audiences with conflicting needs:
 
 1. **Agents** need focused context about their active task.  Cross-task findings, the All Tasks table, and deferred/wontfix findings from completed work are noise that costs ~1.2K tokens per cold-start read with no actionability benefit.
 2. **Humans** need panoramic observability: what's broken everywhere, what's stale, who owns what.  The current rendering constrains this view to stay within agent context budgets, making it too sparse for real oversight.
 
 Handoff.db analysis (2026-04-10) confirmed:
-- 6 open + 2 wontfix findings across 4 non-active tasks rendered into every CURRENT_TASK.md
+- 6 open + 2 wontfix findings across 4 non-active tasks rendered into every CURRENT_TASK.json
 - The "All Tasks" table renders 20 rows regardless of which task is active
 - No "needs attention" aggregation — the human must scan each row to find what's broken
 
@@ -32,19 +32,19 @@ Handoff.db analysis (2026-04-10) confirmed:
 
 - **Dependency direction is sacred**: handoff-mcp MUST NOT import from orchestrator-mcp.  The extension pattern must be callback-based (handoff defines the protocol, orchestrator registers an implementation).
 - **Data collection functions are shared**: `_collect_dashboard_rows`, `_collect_all_open_findings`, `_collect_all_deferred_findings` already exist in `current_task_rendering.py` and should be reused, not duplicated.
-- **Greenfield policy applies**: No backward-compatibility shims for the old combined format.  CURRENT_TASK.md changes shape; consumers adapt.
+- **Greenfield policy applies**: No backward-compatibility shims for the old combined format.  CURRENT_TASK.json changes shape; consumers adapt.
 - **Both files are generated from the same DB**: `.task-state/handoff.db` remains the single source of truth.
 
 ## Workflow Principles
 
-- Single contract owner: handoff-mcp owns the data, the rendering protocol, and CURRENT_TASK.md.  The orchestrator is a dashboard extension provider, not a co-owner.
+- Single contract owner: handoff-mcp owns the data, the rendering protocol, and CURRENT_TASK.json.  The orchestrator is a dashboard extension provider, not a co-owner.
 - No speculative abstraction: the extension protocol supports exactly the use case we have (orchestrator adds sections).  No plugin registry, no versioned APIs.  Extensions use an `order` int for section placement relative to other extensions; core sections are fixed and always render first.
-- Delete over flag: the cross-task findings and All Tasks table are removed from CURRENT_TASK.md, not hidden behind a parameter.
+- Delete over flag: the cross-task findings and All Tasks table are removed from CURRENT_TASK.json, not hidden behind a parameter.
 - CLI graceful degradation: `make dashboard` loads only handoff-mcp and renders core sections (Needs Attention, All Tasks, Findings).  Extension sections (Lane Health, Worker Status) appear only when orchestrator-mcp is loaded and has registered its callback.  The CLI path must not import orchestrator-mcp.
 
 ## Terminology
 
-- **CURRENT_TASK.md**: Agent-scoped generated file.  Contains only active-task data after this change.
+- **CURRENT_TASK.json**: Agent-scoped generated file.  Contains only active-task data after this change.
 - **DASHBOARD.md**: Human-scoped generated file.  Contains the All Tasks table, cross-task findings, needs-attention summary, and orchestrator extension sections.
 - **DashboardExtension**: A callable that receives a `DashboardContext` TypedDict (pre-queried data) and returns a list of `DashboardSection` dicts.  Defined in handoff-mcp, implemented in orchestrator-mcp.
 - **DashboardContext**: A TypedDict passed to extensions containing pre-queried data they need (lane rows, worker report rows, turn metric rows), so extensions never touch the DB directly.
@@ -62,7 +62,7 @@ Handoff.db analysis (2026-04-10) confirmed:
 
 After this task:
 
-1. `CURRENT_TASK.md` contains only active-task data: objective, focus, status, blockers, actions, decisions, tests, findings for THIS task, lanes, coverage.  No All Tasks table.  No cross-task findings.  ~40-60% smaller for typical tasks.
+1. `CURRENT_TASK.json` contains only active-task data: objective, focus, status, blockers, actions, decisions, tests, findings for THIS task, lanes, coverage.  No All Tasks table.  No cross-task findings.  ~40-60% smaller for typical tasks.
 2. `DASHBOARD.md` contains the human observatory: Needs Attention summary, All Tasks table, cross-task open findings grouped by task, deferred/wontfix findings, and any registered extension sections.
 3. `generate_dashboard_md()` is exposed as an MCP tool in both handoff-mcp and orchestrator-mcp.
 4. Orchestrator-mcp registers a `DashboardExtension` callback that adds lane health and worker status sections when the orchestrator is active.
@@ -145,7 +145,7 @@ _Generated from .task-state/handoff.db_
   ○ 3 stale worktrees
 
 ## All Tasks                                # order 10
-  [ASCII table — moved from CURRENT_TASK.md]
+  [ASCII table — moved from CURRENT_TASK.json]
 
 ## Open Findings                            # order 20
   [Grouped by task_ref, severity-ordered]
@@ -181,7 +181,7 @@ _Generated from .task-state/handoff.db_
 |---|---|
 | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/dashboard_live.py` | Existing lane polling dashboard — complementary, not replaced |
 | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/ace_metrics.py` | Metrics snapshot — may feed future dashboard extension |
-| `docs/agentic/rules/development-workflow.md` | References CURRENT_TASK.md in Session State section — update references |
+| `docs/agentic/rules/development-workflow.md` | References CURRENT_TASK.json in Session State section — update references |
 
 ## Verification Strategy
 
@@ -213,15 +213,15 @@ Proof:
 - `cd packages/agent-handoff-mcp && make test-handoff` — new tests pass
 - `DASHBOARD.md` generated from test fixtures contains expected sections
 
-### Slice 2: Slim CURRENT_TASK.md
+### Slice 2: Slim CURRENT_TASK.json
 
-**Goal**: Remove cross-task data from CURRENT_TASK.md rendering.
+**Goal**: Remove cross-task data from CURRENT_TASK.json rendering.
 
 Changes:
 - Modify `_build_current_task_render_state()` to stop collecting `related_findings_open`, `related_findings_deferred`, and `dashboard_tasks`
 - Modify `_render_current_task_md()` to stop rendering the dashboard table and cross-task finding sections
 - Remove `_render_dashboard_section` from current_task_rendering (moved to dashboard_rendering in Slice 1)
-- Update existing tests that assert on cross-task content in CURRENT_TASK.md
+- Update existing tests that assert on cross-task content in CURRENT_TASK.json
 
 Proof:
 - `cd packages/agent-handoff-mcp && make test-handoff` — updated tests pass
@@ -264,12 +264,12 @@ Proof:
 - [x] `test_dashboard_rendering.py` covers render, extension, needs-attention
 - [x] Verification: `make test-handoff` passes
 
-### Checklist for Slice 2: Slim CURRENT_TASK.md
+### Checklist for Slice 2: Slim CURRENT_TASK.json
 
 - [x] `_build_current_task_render_state()` stops collecting cross-task data
 - [x] `_render_current_task_md()` stops rendering All Tasks table and cross-task findings
 - [x] Dashboard-specific render helpers moved to dashboard_rendering.py
-- [x] Existing tests updated for new CURRENT_TASK.md shape
+- [x] Existing tests updated for new CURRENT_TASK.json shape
 - [x] Verification: `make test-handoff` passes, output is measurably smaller
 
 ### Checklist for Slice 3: MCP tool + orchestrator integration
@@ -290,13 +290,13 @@ Proof:
 
 ## Stretch Goals
 
-- [ ] `make context` auto-regenerates DASHBOARD.md alongside CURRENT_TASK.md on session start
+- [ ] `make context` auto-regenerates DASHBOARD.md alongside CURRENT_TASK.json on session start
 - [ ] Dashboard includes a "Stale Tasks" section (no activity in >48h) with recommended actions
 - [ ] Dashboard includes task ownership derived from `actor.agent_id` on most recent decisions
 
 ## Success Criteria
 
-- [x] `CURRENT_TASK.md` contains zero cross-task findings and no All Tasks table
+- [x] `CURRENT_TASK.json` contains zero cross-task findings and no All Tasks table
 - [x] `DASHBOARD.md` contains Needs Attention, All Tasks, Open Findings, Deferred/Won't Fix sections
 - [x] Orchestrator extension sections (Lane Health, Worker Status) appear in DASHBOARD.md when orchestrator is loaded
 - [x] `generate_dashboard_md()` is callable as an MCP tool from both servers

@@ -21,7 +21,7 @@ from . import core
 from ._shared import WriteActor
 from .config import RuntimeConfig
 from .core import PromptMetrics, ResolvedWriteContext, ReviewFindingDetails, TokenUsage
-from .review_findings import BatchFindingItem
+from .review_findings import BatchFindingItem, merge_review_findings
 from .runtime import configure_runtime, get_runtime_config, reset_runtime_config
 from .shared_write_context import BranchMismatchError
 
@@ -67,7 +67,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "get_handoff_state": "Read task handoff summary (blockers, actions, findings). Pass sections='decisions_recent,findings_open' to select specific sections; active and limits are always included. Pass sections='identity' for an identity-only response (active + limits, no data sections). Pass detail='summary' to truncate long rationale and verification fields.",
     "record_event": "Record a decision, verification result, or blocker mutation through one typed event surface. Set event.event_kind to 'decision', 'test_result', or 'blocker' to select the required fields.",
     "next_actions": "List or mutate next-action items through one typed domain surface. Set action.operation to 'list', 'add', 'update', 'complete', or 'skip'.",
-    "review_findings": "Record, batch record, update, repair provenance, or list review findings through one typed domain surface. Set review.operation to 'record', 'batch_record', 'update', 'repair_provenance', or 'list'. The 'repair_provenance' operation is the bounded admin path for fixing a finding row whose source branch/commit_sha was attributed to the wrong commit (e.g. the reviewer's workspace HEAD instead of the actual buggy code's commit) — see ReviewFindingsRepairProvenanceOp.",
+    "review_findings": "Record, batch record, update, repair provenance, merge, or list review findings through one typed domain surface. Set review.operation to 'record', 'batch_record', 'update', 'repair_provenance', 'merge', or 'list'. The 'repair_provenance' operation is the bounded admin path for fixing a finding row whose source branch/commit_sha was attributed to the wrong commit (e.g. the reviewer's workspace HEAD instead of the actual buggy code's commit) — see ReviewFindingsRepairProvenanceOp. The 'merge' operation (coordinator-centric, additive) re-records findings from one or more source task_refs under a target coordinator task_ref with merged_from provenance — see ReviewFindingsMergeOp.",
     "review_runs": "Record, list, or summarize review-run coverage through one typed domain surface. Set review.operation to 'record', 'list', or 'coverage'.",
     "handoff_close_check": "Check task readiness to close: blockers, pending actions, findings, and optional fresh-test gate.",
     "audit_decision_ids": "Audit decision IDs for grammar conformance. Returns canonical/malformed/freeform classifications.",
@@ -83,7 +83,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "import_handoff_state": "Import a previously exported handoff state snapshot into the local database.",
     "archive_task_state": "Archive completed task state from the live handoff tables into archive storage.",
     "get_archived_task": "Read an archived task row from task_archives by task_ref. Returns archive metadata (archived_at/archived_by/archived_branch/archived_commit_sha/notes) plus the parsed snapshot when include_snapshot=True. Use this to inspect a task's terminal state without dropping to raw sqlite.",
-    "get_verified_tests": "List verified test rows from the handoff ledger with optional task, lane, branch, commit, and pass/fail filters.",
+    "get_verified_tests": "List verified test rows from the handoff ledger with optional task, lane, branch, commit, pass/fail, trace, and changed-file correlation filters.",
     "record_file_touch": "Record one task-scoped file touch row for a file path and change kind. Append-only surface for the file-touch ledger.",
     "get_touched_files": "List task-scoped file-touch rows with deterministic newest-first ordering and a bounded limit.",
     "update_task_status": "Update a task status without recording a slice decision. For the active task this requires expected_revision; for archived tasks it updates the archived snapshot status used by the dashboard.",
@@ -173,6 +173,10 @@ class RecordTestResultEvent(BaseModel):
     result: Annotated[
         str | None,
         Field(description="Optional stdout or summarized verification evidence for the command."),
+    ] = None
+    traces: Annotated[
+        list[str] | None,
+        Field(description="Optional raw verification trace payloads to archive alongside the summarized result."),
     ] = None
     exit_code: Annotated[int | None, Field(description="Optional process exit code for the command.")] = None
     actor: ActorParam = None
@@ -330,6 +334,33 @@ class ReviewFindingsRepairProvenanceOp(BaseModel):
     actor: ActorParam = None
 
 
+class ReviewFindingsMergeOp(BaseModel):
+    operation: Literal["merge"]
+    source_task_refs: Annotated[
+        list[str],
+        Field(
+            description=(
+                "Non-empty list of source task_refs whose review findings should be merged "
+                "into the coordinator target_task_ref. Duplicate entries are deduplicated."
+            )
+        ),
+    ]
+    target_task_ref: Annotated[
+        str,
+        Field(description="Coordinator task_ref under which the merged rows should live."),
+    ]
+    session: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional session prefix for merged rows. When omitted, auto-generated "
+                "as merge-<target_task_ref>-<utc-ts>."
+            )
+        ),
+    ] = None
+    actor: ActorParam = None
+
+
 class ReviewFindingsListOp(BaseModel):
     operation: Literal["list"]
     task_ref: TaskRefParam = None
@@ -354,6 +385,7 @@ ReviewFindingsParam = Annotated[
     | ReviewFindingsBatchRecordOp
     | ReviewFindingsUpdateOp
     | ReviewFindingsRepairProvenanceOp
+    | ReviewFindingsMergeOp
     | ReviewFindingsListOp,
     Field(discriminator="operation"),
 ]
@@ -363,6 +395,7 @@ _REVIEW_FINDINGS_ADAPTER: TypeAdapter[
     | ReviewFindingsBatchRecordOp
     | ReviewFindingsUpdateOp
     | ReviewFindingsRepairProvenanceOp
+    | ReviewFindingsMergeOp
     | ReviewFindingsListOp
 ] = TypeAdapter(ReviewFindingsParam)
 
@@ -581,6 +614,7 @@ def _validate_review_findings(
     | ReviewFindingsBatchRecordOp
     | ReviewFindingsUpdateOp
     | ReviewFindingsRepairProvenanceOp
+    | ReviewFindingsMergeOp
     | ReviewFindingsListOp
 ):
     return _REVIEW_FINDINGS_ADAPTER.validate_python(review)
@@ -730,6 +764,7 @@ def record_event(
             command=event_payload.command,
             passed=event_payload.passed,
             result=event_payload.result,
+            traces=event_payload.traces,
             exit_code=event_payload.exit_code,
             actor=resolved_actor,
             task_ref=event_payload.task_ref,
@@ -814,6 +849,10 @@ def record_test_result(
         str | None,
         Field(description="Optional stdout or summarized verification evidence for the command."),
     ] = None,
+    traces: Annotated[
+        list[str] | None,
+        Field(description="Optional raw verification trace payloads to archive alongside the summarized result."),
+    ] = None,
     exit_code: Annotated[int | None, Field(description="Optional process exit code for the command.")] = None,
     actor: ActorParam = None,
     task_ref: TaskRefParam = None,
@@ -823,6 +862,7 @@ def record_test_result(
         command=command,
         passed=passed,
         result=result,
+        traces=traces,
         exit_code=exit_code,
         actor=_dump_actor(actor),
         task_ref=task_ref,
@@ -835,6 +875,19 @@ def get_verified_tests(
     branch: Annotated[str | None, Field(description="Optional branch filter.")] = None,
     commit_sha: Annotated[str | None, Field(description="Optional commit SHA filter.")] = None,
     passed: Annotated[bool | None, Field(description="Optional pass/fail filter.")] = None,
+    include_traces: Annotated[bool, Field(description="When true, include raw archived traces in each row.")] = False,
+    correlated_file: Annotated[
+        str | None,
+        Field(description="Optional monorepo-relative file path used to correlate tests to changed_files decisions."),
+    ] = None,
+    correlation_window_minutes: Annotated[
+        int,
+        Field(description="Absolute decision/test time window used for changed-file correlation when commit SHAs are missing."),
+    ] = 120,
+    exclude_never_passed: Annotated[
+        bool,
+        Field(description="When true, omit commands that never recorded a passing row in the filtered result set."),
+    ] = False,
     limit: Annotated[int, Field(description="Maximum number of tests to return.")] = 100,
     offset: Annotated[int, Field(description="Pagination offset.")] = 0,
 ) -> dict:
@@ -844,6 +897,10 @@ def get_verified_tests(
         branch=branch,
         commit_sha=commit_sha,
         passed=passed,
+        include_traces=include_traces,
+        correlated_file=correlated_file,
+        correlation_window_minutes=correlation_window_minutes,
+        exclude_never_passed=exclude_never_passed,
         limit=limit,
         offset=offset,
     )
@@ -974,6 +1031,13 @@ def review_findings(
             new_commit_sha=review_payload.new_commit_sha,
             reason=review_payload.reason,
             task_ref=review_payload.task_ref,
+            actor=_dump_actor(review_payload.actor),
+        )
+    if isinstance(review_payload, ReviewFindingsMergeOp):
+        return merge_review_findings(
+            session=review_payload.session,
+            source_task_refs=review_payload.source_task_refs,
+            target_task_ref=review_payload.target_task_ref,
             actor=_dump_actor(review_payload.actor),
         )
     return list_review_findings(
@@ -1290,6 +1354,12 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--command", dest="command", help="Test command."),
                 ArgSpec("--passed", action="store_true"),
                 ArgSpec("--result"),
+                ArgSpec(
+                    "--trace",
+                    action="append",
+                    dest="traces",
+                    help="Raw verification trace to archive. Repeat for multiple trace payloads.",
+                ),
                 ArgSpec("--exit-code", type=int),
                 ArgSpec("--operation", choices=["add", "resolve", "reopen"]),
                 ArgSpec("--description"),
@@ -1474,6 +1544,10 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--branch"),
                 ArgSpec("--commit-sha"),
                 ArgSpec("--passed", choices=["true", "false"]),
+                ArgSpec("--include-traces", action="store_true"),
+                ArgSpec("--correlated-file"),
+                ArgSpec("--correlation-window-minutes", type=int, default=120),
+                ArgSpec("--exclude-never-passed", action="store_true"),
                 ArgSpec("--limit", type=int, default=100),
                 ArgSpec("--offset", type=int, default=0),
             ],

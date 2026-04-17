@@ -367,12 +367,10 @@ def _resolve_workspace_handoff_row(conn: sqlite3.Connection) -> sqlite3.Row | No
 
     exact_matches: list[sqlite3.Row] = []
     prefix_matches: list[sqlite3.Row] = []
-    registered_target_count = 0
     for row in rows:
         raw_target = _normalize_optional_text(row["target_worktree_path"])
         if raw_target is None:
             continue
-        registered_target_count += 1
         try:
             normalized_target = _normalize_path_for_match(raw_target)
         except (FileNotFoundError, OSError, RuntimeError):
@@ -396,11 +394,10 @@ def _resolve_workspace_handoff_row(conn: sqlite3.Connection) -> sqlite3.Row | No
         task_refs = ", ".join(sorted(str(row["task_ref"]) for row in prefix_matches))
         raise ValueError(f"Ambiguous active task for workspace path; matching task_refs: {task_refs}")
 
-    if registered_target_count == 0:
-        current_row = next((cast(sqlite3.Row, row) for row in rows if row["id"] == 1), None)
-        if current_row is not None:
-            return current_row
-
+    # E17-11 Slice 3a: no sentinel bootstrap fallback. The former
+    # branch returned the id=1 row whenever no target_worktree_path
+    # registrations existed; that path violated the canonical
+    # unresolved-context rule and is removed.
     task_refs = ", ".join(sorted(str(row["task_ref"]) for row in rows))
     raise ValueError(
         "Ambiguous active task. Pass task_ref explicitly or run from a registered target_worktree_path. "
@@ -411,7 +408,17 @@ def _resolve_workspace_handoff_row(conn: sqlite3.Connection) -> sqlite3.Row | No
 def _resolve_task_ref(conn: sqlite3.Connection, task_ref: str | None) -> str:
     if task_ref:
         return task_ref
-    row = _resolve_workspace_handoff_row(conn)
+    try:
+        row = _resolve_workspace_handoff_row(conn)
+    except ValueError as exc:
+        # E17-11: promote the resolver's ambiguity error into the
+        # canonical UnresolvedTaskContextError so callers can catch a
+        # single exception type across the write surface. The class is
+        # a ValueError subclass, so existing `except ValueError:`
+        # callers still match.
+        from .shared_write_context import UnresolvedTaskContextError
+
+        raise UnresolvedTaskContextError(str(exc)) from exc
     if row is None:
         raise ValueError("No active task in handoff_state. Call set_handoff_state first or pass task_ref explicitly.")
     return str(row["task_ref"])

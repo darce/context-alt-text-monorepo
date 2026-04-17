@@ -245,7 +245,7 @@ def record_review_finding(
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         ctx = _resolve_write_actor(conn, actor)
-        warnings = collect_target_context_warnings(conn, ctx)
+        warnings = collect_target_context_warnings(conn, ctx, task_ref=resolved_task_ref)
         existing = conn.execute(
             "SELECT status FROM review_findings WHERE task_ref = ? AND finding_id = ?", (resolved_task_ref, finding_id)
         ).fetchone()
@@ -399,7 +399,7 @@ def batch_record_review_findings(
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         ctx = _resolve_write_actor(conn, actor)
-        warnings = collect_target_context_warnings(conn, ctx)
+        warnings = collect_target_context_warnings(conn, ctx, task_ref=resolved_task_ref)
 
         results: list[dict[str, object]] = []
         for item in findings:
@@ -849,7 +849,7 @@ def update_review_finding(
         )
     with _get_db_connection() as conn:
         ctx = _resolve_write_actor(conn, actor)
-        warnings = collect_target_context_warnings(conn, ctx)
+        warnings = collect_target_context_warnings(conn, ctx, task_ref=task_ref)
         if task_ref is None:
             # Global lookup: skip active-task fallback when no task_ref provided.
             if normalized_finding_id is not None:
@@ -1188,7 +1188,7 @@ def repair_review_finding_provenance(
 
     with _get_db_connection() as conn:
         ctx = _resolve_write_actor(conn, actor)
-        warnings = collect_target_context_warnings(conn, ctx)
+        warnings = collect_target_context_warnings(conn, ctx, task_ref=task_ref)
         if task_ref is None:
             rows = conn.execute(
                 "SELECT * FROM review_findings WHERE finding_id = ?", (normalized_finding_id,)
@@ -1868,14 +1868,20 @@ def record_review_run(
             data={"error": f"Invalid verdict '{verdict}'. Valid: {', '.join(sorted(_REVIEW_RUN_VERDICTS))}"},
             entity="review_run",
         )
+    normalized_task_ref = _normalize_optional_text(task_ref)
+    if normalized_task_ref is None:
+        return _envelope(
+            ok=False,
+            tool="record_review_run",
+            data={
+                "error": "task_ref is required for record_review_run. Pass task_ref explicitly; no active-task fallback exists.",
+            },
+            entity="review_run",
+        )
     with _get_db_connection() as conn:
         resolved_actor = _resolve_write_actor(conn, actor)
-        warnings = collect_target_context_warnings(conn, resolved_actor)
-        resolved_task_ref = task_ref
-        if resolved_task_ref is None:
-            active_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
-            if active_row is not None and active_row["task_ref"]:
-                resolved_task_ref = str(active_row["task_ref"])
+        warnings = collect_target_context_warnings(conn, resolved_actor, task_ref=normalized_task_ref)
+        resolved_task_ref = normalized_task_ref
         existing = conn.execute("SELECT id FROM review_runs WHERE review_run_id = ?", (review_run_id,)).fetchone()
         if existing is not None:
             return _envelope(

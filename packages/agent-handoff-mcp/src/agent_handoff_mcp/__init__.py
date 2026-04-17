@@ -55,13 +55,14 @@ from .dashboard_rendering import (
     register_dashboard_extension,
 )
 from .enums import ReviewKind, ReviewScopeSource
-from .shared_write_context import BranchMismatchError
+from .shared_write_context import BranchMismatchError, UnresolvedTaskContextError
 
 __all__ = [
     "DashboardContext",
     "DashboardExtension",
     "DashboardSection",
     "BranchMismatchError",
+    "UnresolvedTaskContextError",
     "PromptMetrics",
     "ResolvedWriteContext",
     "RuntimeConfig",

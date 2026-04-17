@@ -145,7 +145,7 @@ def _collect_dashboard_rows(
             -- recent-activity anchor even when it has no decisions, actions, or other
             -- ledger entries. Intentional behavioral difference from the prior
             -- _get_handoff_dashboard_view, which excluded this source.
-            SELECT task_ref, updated_at FROM handoff_state WHERE id = 1
+            SELECT task_ref, updated_at FROM handoff_state
             UNION ALL
             SELECT task_ref, created_at AS updated_at FROM decisions
             UNION ALL
@@ -316,8 +316,8 @@ def _collect_all_deferred_findings(
 
 
 def _collect_task_snapshot(conn: sqlite3.Connection, task_ref: str) -> TaskSnapshot:
-    active_row = conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone()
-    active = _row_to_dict(active_row) if active_row is not None and active_row["task_ref"] == task_ref else None
+    active_row = conn.execute("SELECT * FROM handoff_state WHERE task_ref = ?", (task_ref,)).fetchone()
+    active = _row_to_dict(active_row) if active_row is not None else None
 
     def _rows(query: str) -> list[dict]:
         rows = [dict(row) for row in conn.execute(query, (task_ref,)).fetchall()]

@@ -856,12 +856,32 @@ def test_record_review_run_rejects_duplicate_id(isolated_handoff: dict) -> None:
         review_run_id="E12-8-dup",
         session="s",
         subject_path="docs/plan.md",
+        task_ref="E12-8",
     )
     first = _parse(mcp_server.record_review_run(**kwargs))
     assert first["ok"] is True
     second = _parse(mcp_server.record_review_run(**kwargs))
     assert second["ok"] is False
     assert "already exists" in second["error"]
+
+
+def test_record_review_run_requires_explicit_task_ref(isolated_handoff: dict) -> None:
+    result = _parse(
+        mcp_server.record_review_run(
+            review_run_id="E12-8-missing-task-ref",
+            session="s",
+            subject_path="docs/plan.md",
+        )
+    )
+    assert result["ok"] is False
+    assert "task_ref is required" in result["error"].lower()
+
+    with _get_db_connection() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM review_runs WHERE review_run_id = ?",
+            ("E12-8-missing-task-ref",),
+        ).fetchone()[0]
+    assert count == 0
 
 
 def test_record_review_run_rejects_invalid_verdict(isolated_handoff: dict) -> None:
@@ -946,6 +966,7 @@ def test_list_review_runs_filter_by_subject_path(isolated_handoff: dict) -> None
             review_run_id="sp-1",
             session="s",
             subject_path="docs/alpha.md",
+            task_ref="SP-TASK-1",
         )
     )
     _parse(
@@ -953,6 +974,7 @@ def test_list_review_runs_filter_by_subject_path(isolated_handoff: dict) -> None
             review_run_id="sp-2",
             session="s",
             subject_path="docs/beta.md",
+            task_ref="SP-TASK-2",
         )
     )
     result = _parse(mcp_server.list_review_runs(subject_path="docs/alpha.md"))
@@ -1024,6 +1046,7 @@ def test_get_review_coverage_by_subject_path(isolated_handoff: dict) -> None:
             review_run_id="sp-cov-run",
             session="s",
             subject_path="docs/target.md",
+            task_ref="SP-COV-TASK",
         )
     )
     result = _parse(mcp_server.get_review_coverage(subject_path="docs/target.md"))

@@ -23,7 +23,7 @@ from agent_orchestrator_mcp import lanes as lanes_module
 def isolated_handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Redirect handoff sqlite + generated markdown paths into tmp dir."""
     state_dir = tmp_path / ".task-state"
-    current_task_path = tmp_path / "CURRENT_TASK.md"
+    current_task_path = tmp_path / "CURRENT_TASK.json"
     runtime = RuntimeConfig.for_workspace(
         tmp_path,
         state_dir=state_dir,
@@ -559,7 +559,7 @@ def test_worker_worktree_scopes_open_lane_messages_to_its_registered_lane(tmp_pa
     backend_root.mkdir()
 
     shared_state_dir = orchestrator_root / ".task-state"
-    shared_current_task = orchestrator_root / "CURRENT_TASK.md"
+    shared_current_task = orchestrator_root / "CURRENT_TASK.json"
 
     mcp_server.configure_runtime(
         RuntimeConfig.for_workspace(
@@ -1761,7 +1761,7 @@ def test_switch_task_regenerates_current_task_with_dashboard(isolated_handoff: d
     assert result_response["ok"] is True
     assert result["current_task_md_regen"] == "ok"
 
-    # After AHMCP-23: "## All Tasks" lives in DASHBOARD.md, not CURRENT_TASK.md.
+    # After AHMCP-23: "## All Tasks" lives in DASHBOARD.md, not CURRENT_TASK.json.
     # Generate DASHBOARD.md and assert the cross-task sections are there.
     dash_result = mcp_server.generate_dashboard_md(write_file=False)
     assert dash_result["ok"] is True

@@ -29,7 +29,7 @@ def _parse(raw: str | dict) -> dict:
 @pytest.fixture()
 def isolated_handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     state_dir = tmp_path / ".task-state"
-    current_task_path = tmp_path / "CURRENT_TASK.md"
+    current_task_path = tmp_path / "CURRENT_TASK.json"
     runtime = RuntimeConfig.for_workspace(
         tmp_path,
         state_dir=state_dir,

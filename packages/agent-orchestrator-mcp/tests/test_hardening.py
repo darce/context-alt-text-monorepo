@@ -22,7 +22,7 @@ def isolated_handoff(tmp_path: Path):
     runtime = RuntimeConfig.for_workspace(
         tmp_path,
         state_dir=tmp_path / ".task-state",
-        current_task_path=tmp_path / "CURRENT_TASK.md",
+        current_task_path=tmp_path / "CURRENT_TASK.json",
     )
     mcp_server.configure_runtime(runtime)
     return runtime

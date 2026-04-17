@@ -56,7 +56,7 @@ The investigation found significantly more infrastructure than the 9.0 plan assu
 
 - Must use Python. The orchestration stack is Python; adding a TypeScript TUI (like pi-mono) would introduce a cross-language boundary for accessing SQLite, status files, and JSONL logs.
 - Textual is the TUI framework (already in use for `dashboard_tui.py`). Rich is the fallback.
-- `CURRENT_TASK.md` remains the single-task generated mirror. This TUI is orthogonal — it shows operational activity, not task state.
+- `CURRENT_TASK.json` remains the single-task generated mirror. This TUI is orthogonal — it shows operational activity, not task state.
 - The TUI must be a **read-mostly** surface. Operator actions route through existing `agent-handoff-mcp` / `agent-orchestrator-mcp` commands.
 - Must remain local-only (filesystem access to `.task-state/`, `logs/`). Remote/websocket access is a stretch goal.
 

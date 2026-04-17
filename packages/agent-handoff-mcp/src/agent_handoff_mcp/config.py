@@ -97,7 +97,7 @@ class RuntimeConfig:
         resolved_current_task_path = (
             Path(current_task_path).expanduser().resolve()
             if current_task_path is not None
-            else resolved_workspace_root / "CURRENT_TASK.md"
+            else resolved_workspace_root / "CURRENT_TASK.json"
         )
         resolved_dashboard_path = (
             Path(dashboard_path).expanduser().resolve()

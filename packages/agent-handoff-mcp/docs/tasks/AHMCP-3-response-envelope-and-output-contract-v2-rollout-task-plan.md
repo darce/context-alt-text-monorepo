@@ -40,7 +40,7 @@ This work should land only after Tier 1 changes are complete, so the envelope wr
 
 - **Envelope**: The new top-level response shape containing `ok`, `schema_version`, `tool`, `scope`, `data`, `mutation`, `artifacts`, and `warnings`.
 - **Mutation metadata**: Structured write-result context such as operation type, affected IDs, and the current task revision.
-- **Artifact metadata**: Structured records describing generated artifacts such as `CURRENT_TASK.md` writes.
+- **Artifact metadata**: Structured records describing generated artifacts such as `CURRENT_TASK.json` writes.
 - **Transport parity**: The same envelope shape is visible through direct Python calls, CLI wiring, stdio MCP, and HTTP MCP.
 
 ## Current State Analysis

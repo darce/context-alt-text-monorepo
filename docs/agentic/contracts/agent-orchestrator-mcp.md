@@ -61,7 +61,7 @@ Surface classes: `action` (mutates state/runtime), `query` (read-only), `generat
 
 | Tool                   | Surface class | Idempotent | Notes                                                                                                                                       |
 | ---------------------- | ------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `upsert_worktree_lane` | action        | no         | Updates lane metadata and regenerates `CURRENT_TASK.md`.                                                                                    |
+| `upsert_worktree_lane` | action        | no         | Updates lane metadata and regenerates `CURRENT_TASK.json`.                                                                                    |
 | `close_worktree_lane`  | action        | no         | Transitions lane status to merged or closed.                                                                                                |
 | `list_worktree_lanes`  | query         | yes        | Lists registered lane rows.                                                                                                                 |
 | `get_lane_activity`    | generator     | yes        | Aggregated lane summary across decisions, tests, blockers, and messages; supports `format="archival"` for compact retention-friendly summaries. |

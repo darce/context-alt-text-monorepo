@@ -57,7 +57,7 @@ def _normalize_changed_files_payload(changed_files: Sequence[object] | None) -> 
 
 def _current_task_revision(conn: sqlite3.Connection, task_ref: str) -> int | None:
     row = conn.execute(
-        "SELECT revision FROM handoff_state WHERE id = 1 AND task_ref = ?",
+        "SELECT revision FROM handoff_state WHERE task_ref = ?",
         (task_ref,),
     ).fetchone()
     return int(row["revision"]) if row is not None else None
@@ -493,7 +493,7 @@ def _collect_task_provenance_integrity(conn: sqlite3.Connection, task_ref: str) 
         table_checks[table_name] = {"count": len(items), "items": items}
         total_issues += len(items)
     active_row = conn.execute(
-        "SELECT updated_by, updated_branch, updated_commit_sha FROM handoff_state WHERE id = 1 AND task_ref = ?",
+        "SELECT updated_by, updated_branch, updated_commit_sha FROM handoff_state WHERE task_ref = ?",
         (task_ref,),
     ).fetchone()
     active_missing = None
@@ -586,7 +586,7 @@ def _evaluate_close_failures(
     if not provenance_integrity["healthy"]:
         failures.append("Write provenance integrity checks failed (missing agent/branch metadata).")
     if not current_task_in_sync:
-        failures.append("CURRENT_TASK.md is out of sync with handoff DB state.")
+        failures.append("CURRENT_TASK.json is out of sync with handoff DB state.")
     if require_fresh_tests and fresh_test_count == 0:
         failures.append("Fresh verification for the current commit is required before close.")
     if require_current_commit_summary and not structured_decisions:

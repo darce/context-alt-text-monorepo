@@ -32,7 +32,7 @@ def _configure_runtime(tmp_path: Path) -> None:
         api.RuntimeConfig.for_workspace(
             tmp_path,
             state_dir=tmp_path / ".task-state",
-            current_task_path=tmp_path / "CURRENT_TASK.md",
+            current_task_path=tmp_path / "CURRENT_TASK.json",
             exports_dir=tmp_path / ".task-state" / "exports",
         )
     )
@@ -170,7 +170,7 @@ def test_worker_start_uses_runtime_state_dir(tmp_path: Path) -> None:
         api.RuntimeConfig.for_workspace(
             tmp_path,
             state_dir=custom_state_dir,
-            current_task_path=tmp_path / "CURRENT_TASK.md",
+            current_task_path=tmp_path / "CURRENT_TASK.json",
             exports_dir=custom_state_dir / "exports",
         )
     )

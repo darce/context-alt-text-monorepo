@@ -41,10 +41,10 @@ from .slice_decision import is_canonical_decision
 
 
 def _write_current_task_md_for_active_context(conn: sqlite3.Connection, fallback_task_ref: str) -> None:
-    """Regenerate CURRENT_TASK.md for the active task when one exists.
+    """Regenerate CURRENT_TASK.json for the active task when one exists.
 
     Review findings are often recorded against non-active tasks during review
-    passes. CURRENT_TASK.md should stay anchored to the active task and render
+    passes. CURRENT_TASK.json should stay anchored to the active task and render
     cross-task findings in the aggregated sections rather than switching to the
     last task whose finding row was touched.
     """
@@ -58,7 +58,7 @@ def _write_current_task_md_for_active_context(conn: sqlite3.Connection, fallback
 
 def _current_task_revision(conn: sqlite3.Connection, task_ref: str) -> int | None:
     row = conn.execute(
-        "SELECT revision FROM handoff_state WHERE id = 1 AND task_ref = ?",
+        "SELECT revision FROM handoff_state WHERE task_ref = ?",
         (task_ref,),
     ).fetchone()
     return int(row["revision"]) if row is not None else None

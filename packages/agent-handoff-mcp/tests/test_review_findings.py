@@ -58,7 +58,7 @@ def _assert_dashboard_row(
 @pytest.fixture()
 def isolated_handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     state_dir = tmp_path / ".task-state"
-    current_task_path = tmp_path / "CURRENT_TASK.md"
+    current_task_path = tmp_path / "CURRENT_TASK.json"
     dashboard_path = tmp_path / "DASHBOARD.md"
     runtime = RuntimeConfig.for_workspace(
         tmp_path,
@@ -554,7 +554,7 @@ def test_render_current_task_md_with_decisions_but_no_active(isolated_handoff: d
     current_task_payload = json.loads(current_task_path.read_text())
     dash_md = Path(isolated_handoff["dashboard_path"]).read_text()
     assert current_task_payload["task_ref"] == "E12-test-render"
-    # Decision is stored in the active-task JSON (CURRENT_TASK.md)
+    # Decision is stored in the active-task JSON (CURRENT_TASK.json)
     assert any(
         "test_decision_for_render" in d.get("decision", "") for d in current_task_payload.get("decisions_recent", [])
     )
@@ -721,7 +721,7 @@ def test_render_dashboard_section_truncates_long_task_refs() -> None:
 
 
 def test_render_current_task_md_active_task_only() -> None:
-    """CURRENT_TASK.md renders active-task sections only; no All Tasks table or cross-task data."""
+    """CURRENT_TASK.json renders active-task sections only; no All Tasks table or cross-task data."""
     state: dict = {
         "task_ref": "E12-11",
         "active": {
@@ -1231,7 +1231,7 @@ def test_next_actions_domain_tool_add_and_list(isolated_handoff: dict) -> None:
         ("review_findings", "action", "review_findings"),
         ("review_runs", "action", "review_runs"),
         ("handoff_close_check", "generator", "lifecycle"),
-        ("generate_current_task_md", "generator", "lifecycle"),
+        ("render_handoff", "generator", "lifecycle"),
         ("export_handoff_state", "generator", "lifecycle"),
         ("load_session", "query", "session"),
         ("close_slice", "action", "lifecycle"),

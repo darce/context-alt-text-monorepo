@@ -7,7 +7,7 @@ makefile_target: slice-commit
 mcp_tools:
   - record_event
   - search_handoff
-  - generate_dashboard_md
+  - render_handoff
   - plan_cursor
 tdd_gate: true
 disable-model-invocation: false

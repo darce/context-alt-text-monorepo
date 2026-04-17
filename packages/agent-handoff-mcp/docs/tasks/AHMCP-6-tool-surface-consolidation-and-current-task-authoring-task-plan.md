@@ -65,7 +65,7 @@ After this task:
 - The extended profile exposes 15-18 tools instead of 28.
 - Five domain-scoped tools replace 17 individual tools: `record_event` (3→1), `review_findings` (4→1), `review_runs` (3→1), `next_actions` (2→1), `artifacts` (4→1).
 - `update_task_status` is implemented as a compatibility alias over `set_handoff_state` during migration; `load_session` remains as a short-lived compatibility alias until clients fully move to parameterized reads.
-- CURRENT_TASK.md bounded rendering remains the baseline behavior documented by the live contract.
+- CURRENT_TASK.json bounded rendering remains the baseline behavior documented by the live contract.
 - The remaining CURRENT_TASK authoring work in this task is limited to mutation-output improvements such as `close_slice` response enrichment; explicit `generate_current_task_md` remains the documented regeneration mechanism unless a later ADR changes that contract.
 - `close_slice` returns the recorded decision row and updated task revision, eliminating follow-up reads.
 - All downstream enumerators reflect the consolidated surface.
@@ -212,7 +212,7 @@ Changes:
 - Add `review_findings` tool with `record`, `batch_record`, `update`, `list` operations
 - Add `review_runs` tool with `record`, `list`, `coverage` operations
 - Remove seven individual tool registrations
-- Batch semantics (atomic transaction, single CURRENT_TASK.md flush) preserved in `batch_record` operation
+- Batch semantics (atomic transaction, single CURRENT_TASK.json flush) preserved in `batch_record` operation
 - Update `cli.py`, all transport tests, orchestrator re-exports/tests, and contract docs
 
 Proof:
@@ -240,7 +240,7 @@ Proof:
 - `set_handoff_state` accepts status-only updates that previously went through `update_task_status`, and the alias still resolves correctly during migration
 - Artifact FTS operations work through the domain tool
 
-### Slice 6: CURRENT_TASK.md Authoring Streamlining
+### Slice 6: CURRENT_TASK.json Authoring Streamlining
 
 **Goal**: Finish the remaining CURRENT_TASK-related authoring improvements without reopening already-landed bounded-render behavior or introducing a new write-surface contract.
 
@@ -322,7 +322,7 @@ Proof:
 - [x] Final tool count in 15-18 range
 - [x] CLI, transport tests, contract doc updated
 
-### Checklist for Slice 6: CURRENT_TASK.md Authoring Streamlining
+### Checklist for Slice 6: CURRENT_TASK.json Authoring Streamlining
 
 - [x] Existing bounded-render behavior verified against the live contract
 - [x] `close_slice` returns decision row and revision
@@ -353,8 +353,8 @@ Proof:
 
 - [x] Consolidated live surface exposes 15-18 tools (17 current, down from 28)
 - [x] Five domain tools (`record_event`, `review_findings`, `review_runs`, `next_actions`, `artifacts`) replace 17 individual tools
-- [x] CURRENT_TASK.md output is bounded (no all-status history; capped cross-task findings)
-- [ ] State-mutating tools auto-regenerate CURRENT_TASK.md
+- [x] CURRENT_TASK.json output is bounded (no all-status history; capped cross-task findings)
+- [ ] State-mutating tools auto-regenerate CURRENT_TASK.json
 - [x] `close_slice` returns enriched response (decision row + revision)
 - [x] All transport, CLI, and adapter tests pass with consolidated surface
 - [x] All downstream enumerators reflect the new tool names

@@ -52,7 +52,7 @@ Recover the lane through a bounded rescue branch and a documented MCP trail inst
    - lane-owned code paths
 6. Run the lane-local verification pack plus any targeted regression test needed for the rescue.
 7. Record the rescue outcome in MCP with a decision entry and any blocker or next-action updates required.
-8. Regenerate `CURRENT_TASK.md` after the decision write so the handoff surface reflects the rescue state.
+8. Regenerate `CURRENT_TASK.json` after the decision write so the handoff surface reflects the rescue state.
 
 ## Safety Constraints
 

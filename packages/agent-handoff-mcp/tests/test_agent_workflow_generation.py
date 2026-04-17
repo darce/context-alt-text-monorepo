@@ -7,6 +7,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 GENERATOR = REPO_ROOT / "scripts" / "generate_agent_workflows.py"
+CODEX_ROUTER_BEGIN = "<!-- BEGIN GENERATED: codex-command-router -->"
+CODEX_ROUTER_END = "<!-- END GENERATED: codex-command-router -->"
 
 
 def _run_generator(*args: str) -> subprocess.CompletedProcess[str]:
@@ -18,30 +20,42 @@ def _run_generator(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _write_temp_manifest(tmp_path: Path, payload: dict[str, object]) -> Path:
+    temp_repo = tmp_path / "repo"
+    manifest = temp_repo / "config" / "agent-workflows" / "portable_commands.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(json.dumps(payload))
+
+    instructions = temp_repo / "docs" / "agentic" / "instructions.md"
+    instructions.parent.mkdir(parents=True, exist_ok=True)
+    instructions.write_text(f"before\n{CODEX_ROUTER_BEGIN}\nplaceholder\n{CODEX_ROUTER_END}\nafter\n")
+
+    claude_md = temp_repo / "CLAUDE.md"
+    claude_md.write_text(f"before\n{CODEX_ROUTER_BEGIN}\nplaceholder\n{CODEX_ROUTER_END}\nafter\n")
+    return manifest
+
+
 def test_generate_agent_workflows_writes_expected_files(tmp_path: Path) -> None:
-    manifest = tmp_path / "portable_commands.json"
-    manifest.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "commands": [
-                    {
-                        "command_id": "branch-review",
-                        "skill": "branch-review",
-                        "makefile_target": "make review-run",
-                        "description": "Review a branch diff.",
-                        "execution_context": "Use for branch review.",
-                        "argument_schema": [
-                            {"name": "scope", "required": False, "description": "Optional diff scope."}
-                        ],
-                        "loop": ["load diff", "record findings"],
-                    }
-                ],
-            }
-        )
+    manifest = _write_temp_manifest(
+        tmp_path,
+        {
+            "version": 1,
+            "commands": [
+                {
+                    "command_id": "branch-review",
+                    "skill": "branch-review",
+                    "makefile_target": "make review-run",
+                    "description": "Review a branch diff.",
+                    "execution_context": "Use for branch review.",
+                    "argument_schema": [{"name": "scope", "required": False, "description": "Optional diff scope."}],
+                    "loop": ["load diff", "record findings"],
+                }
+            ],
+        },
     )
-    claude_out = tmp_path / ".claude" / "commands"
-    prompts_out = tmp_path / ".github" / "prompts"
+    temp_repo = manifest.parents[2]
+    claude_out = temp_repo / ".claude" / "commands"
+    prompts_out = temp_repo / ".github" / "prompts"
 
     proc = _run_generator(
         "--manifest",
@@ -62,29 +76,26 @@ def test_generate_agent_workflows_writes_expected_files(tmp_path: Path) -> None:
 
 
 def test_generate_agent_workflows_check_detects_drift(tmp_path: Path) -> None:
-    manifest = tmp_path / "portable_commands.json"
-    manifest.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "commands": [
-                    {
-                        "command_id": "planning-review",
-                        "skill": "planning-review",
-                        "makefile_target": "make plan-review DOC=<path>",
-                        "description": "Review a planning doc.",
-                        "execution_context": "Use for planning review.",
-                        "argument_schema": [
-                            {"name": "doc", "required": True, "description": "Planning document path."}
-                        ],
-                        "loop": ["load doc", "record findings"],
-                    }
-                ],
-            }
-        )
+    manifest = _write_temp_manifest(
+        tmp_path,
+        {
+            "version": 1,
+            "commands": [
+                {
+                    "command_id": "planning-review",
+                    "skill": "planning-review",
+                    "makefile_target": "make plan-review DOC=<path>",
+                    "description": "Review a planning doc.",
+                    "execution_context": "Use for planning review.",
+                    "argument_schema": [{"name": "doc", "required": True, "description": "Planning document path."}],
+                    "loop": ["load doc", "record findings"],
+                }
+            ],
+        },
     )
-    claude_out = tmp_path / ".claude" / "commands"
-    prompts_out = tmp_path / ".github" / "prompts"
+    temp_repo = manifest.parents[2]
+    claude_out = temp_repo / ".claude" / "commands"
+    prompts_out = temp_repo / ".github" / "prompts"
 
     first = _run_generator(
         "--manifest",

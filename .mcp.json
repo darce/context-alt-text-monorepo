@@ -5,10 +5,11 @@
       "command": "agent-handoff-mcp",
       "args": [
         "--workspace-root",
-        "/Users/daniel/Development/context-alt-text-monorepo",
+        ".",
         "serve-stdio"
       ],
       "env": {
+        "PYENV_VERSION": "description-service",
         "AGENT_HANDOFF_ENFORCE_BRANCH": "1"
       }
     },
@@ -17,10 +18,11 @@
       "command": "agent-orchestrator-mcp",
       "args": [
         "--workspace-root",
-        "/Users/daniel/Development/context-alt-text-monorepo",
+        ".",
         "serve-stdio"
       ],
       "env": {
+        "PYENV_VERSION": "description-service",
         "AGENT_HANDOFF_ENFORCE_BRANCH": "1"
       }
     },

@@ -79,6 +79,8 @@ See [maps/tech-stack.md](maps/tech-stack.md) for the full library manifest.
 
 Two MCP servers are registered for this workspace. VS Code and Claude Code manage their lifecycles automatically via `.vscode/mcp.json` and `.mcp.json`.
 
+Non-interactive harness rule: committed MCP configs use `PYENV_VERSION=description-service`; use `pyenv activate description-service` only for optional interactive shells.
+
 ### Core Ledger Server (`agent-handoff-mcp`)
 
 Handles task state, review findings, exports/imports, close checks, and artifacts (27 tools).
@@ -162,7 +164,7 @@ agent-orchestrator-mcp --workspace-root "$(pwd)" dispatch \
 For Codex app sessions on the same machine, prefer the checked-in project-scoped
 adapter at [`../../.codex/config.toml`](../../.codex/config.toml),
 which registers the local stdio server as `altcontext-mcp` with the required
-`PYENV_VERSION=description-service` and `PYTHONPATH` overrides.
+`PYENV_VERSION=description-service` contract and repo-relative startup paths.
 
 ### HTTP Transport (Codex Custom MCP)
 
@@ -208,7 +210,7 @@ Handoff guard commands:
 Phase 5 (Verification & Handoff) follows implementation:
 
 1. **5.1 Cross-Lane Verification**: `make check-all` from the root.
-2. **5.2 Documentation Audit**: Verify `docs/`, `CURRENT_TASK.md`, and `CHANGELOG`.
+2. **5.2 Documentation Audit**: Verify `docs/`, `CURRENT_TASK.json`, and `CHANGELOG`.
 3. **5.3 Handoff Closure**: `agent-handoff-mcp handoff-close-check --task-ref <task>`.
 
 174: **BackendAdapter Protocol**: Handled in `scripts/mcp/backend_adapter.py`. All backends (Codex, Claude, Local) must implement this protocol for `execute()` and reasoning effort resolution. The `adapters/` directory contains specific implementations (e.g., `claude_code.py`).
@@ -232,8 +234,8 @@ Phase 5 (Verification & Handoff) follows implementation:
 - `update_review_finding` with `status="open"` and `reopen_reason` performs the reopen (the former `reopen_review_finding` wrapper is no longer MCP-exposed).
 - `reconcile_review_findings` (on `agent-orchestrator-mcp`) validates state integrity (duplicates, done+open mismatch, stale open findings, provenance completeness, reopen metadata coherence) and can apply safe dedupe fixes.
 - `handoff_close_check` runs closure gates, including write-provenance checks and current-commit slice-summary presence, and can fail hard with `enforce=True`.
-- Review finding write operations auto-refresh `CURRENT_TASK.md`.
-- `CURRENT_TASK.md` is a generated view only; if drift is detected, regenerate from DB state.
+- Review finding write operations auto-refresh `CURRENT_TASK.json`.
+- `CURRENT_TASK.json` is a generated view only; if drift is detected, regenerate from DB state.
 - For finding verification/history, use `get_review_findings_summary` or `list_review_findings` instead of direct SQLite queries.
 
 ### Structured Handoff Search

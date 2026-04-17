@@ -12,7 +12,7 @@ Import map:
   - Write-context / git / actor resolution      -> shared_write_context
   - Schema SQL / DB bootstrap                   -> shared_schema
   - Generic DB query helpers                    -> shared_db_utils
-  - CURRENT_TASK.md rendering cluster           -> current_task_rendering
+  - CURRENT_TASK.json rendering cluster           -> current_task_rendering
   - Archival summary helpers                    -> shared_archival
   - Tool invocation adapters                    -> shared_tool_adapters
 
@@ -125,6 +125,8 @@ from .shared_primitives import (  # noqa: F401
     _excerpt_text,
     _exports_dir,
     _first_present,
+    _get_current_handoff_row,
+    _get_handoff_row_for_task,
     _has_structured_slice_summary,
     _json_response,
     _normalize_lane_message_payload,
@@ -137,6 +139,7 @@ from .shared_primitives import (  # noqa: F401
     _resolve_import_lane_id,
     _resolve_import_row_actor,
     _resolve_task_ref,
+    _resolve_workspace_handoff_row,
     _row_to_dict,
     _summarize_test_result,
     _utcnow_iso,

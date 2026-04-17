@@ -105,7 +105,9 @@ _ALLOWLIST: list[re.Pattern[str]] = [
         r"^git\s+-C\s+\S+\s+ls-files\b",
         # git log: read-only history queries
         r"^git\s+log\b",
+        r"^git\s+--no-pager\s+log\b",
         r"^git\s+-C\s+\S+\s+log\b",
+        r"^git\s+-C\s+\S+\s+--no-pager\s+log\b",
         # git show --stat: read-only commit inspection (no native tool equivalent)
         r"^git\s+show\s+--stat\b",
         r"^git\s+-C\s+\S+\s+show\s+--stat\b",

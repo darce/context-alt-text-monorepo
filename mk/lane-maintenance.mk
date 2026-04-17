@@ -235,7 +235,7 @@ lane-intake: lane-guard lane-orchestrator-guard
 		git log --oneline --reverse HEAD..$(LANE_BRANCH); \
 		echo ""; \
 		echo "[dry-run] create scratch worktree, cherry-pick $$COMMITS there, verify file scope against lane-owned paths, run lane-local verification, then fast-forward merge into $(ORCHESTRATOR_BRANCH)"; \
-		echo "[dry-run] preserve CURRENT_TASK.md regeneration via lane-upsert and verify CURRENT_TASK sync with $(MCP_CMD) handoff-close-check"; \
+		echo "[dry-run] preserve CURRENT_TASK.json regeneration via lane-upsert and verify CURRENT_TASK sync with $(MCP_CMD) handoff-close-check"; \
 		if [ "$(SKIP_POST_INTAKE)" = "1" ]; then \
 			echo "[dry-run] skip post-intake cross-lane verification because SKIP_POST_INTAKE=1"; \
 		else \
@@ -307,10 +307,10 @@ lane-intake: lane-guard lane-orchestrator-guard
 		fi; \
 		git merge --ff-only "$$SCRATCH_BRANCH"; \
 		$(MCP_CMD) $(MCP_STATE_ARGS) lane-upsert --task-ref "$(TASK)" --lane-id "$(LANE)" --worktree-path "$(LANE_WORKTREE)" --branch "$(LANE_BRANCH)" --status merged --notes "Merged into $(ORCHESTRATOR_BRANCH) via scratch intake."; \
-		CURRENT_TASK_PATH="$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md"; \
+		CURRENT_TASK_PATH="$(ORCHESTRATOR_ROOT)/CURRENT_TASK.json"; \
 		if ! $(MCP_CMD) $(MCP_STATE_ARGS) handoff-close-check --task-ref "$(TASK)" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("checks", {}).get("current_task_sync", {}).get("is_in_sync") else 1)'; then \
-			echo "WARNING: lane-upsert completed but handoff close-check reported CURRENT_TASK.md out of sync at $$CURRENT_TASK_PATH."; \
-			$(MCP_CMD) $(MCP_STATE_ARGS) blocker --operation add --description "CURRENT_TASK.md sync verification failed after lane $(LANE) intake for task $(TASK)."; \
+			echo "WARNING: lane-upsert completed but handoff close-check reported CURRENT_TASK.json out of sync at $$CURRENT_TASK_PATH."; \
+			$(MCP_CMD) $(MCP_STATE_ARGS) blocker --operation add --description "CURRENT_TASK.json sync verification failed after lane $(LANE) intake for task $(TASK)."; \
 			exit 1; \
 		fi; \
 		if [ "$(SKIP_POST_INTAKE)" = "1" ]; then \

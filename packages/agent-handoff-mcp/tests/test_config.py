@@ -15,7 +15,7 @@ def test_runtime_config_defaults_to_workspace_state() -> None:
     assert runtime.workspace_root == root
     assert runtime.state_dir == root / ".task-state"
     assert runtime.db_path == root / ".task-state" / "handoff.db"
-    assert runtime.current_task_path == root / "CURRENT_TASK.md"
+    assert runtime.current_task_path == root / "CURRENT_TASK.json"
     assert runtime.exports_dir == root / ".task-state" / "exports"
 
 
@@ -188,7 +188,7 @@ def test_from_args_collapses_linked_worktree_workspace_root_to_primary(
         f"(got {runtime.workspace_root}, expected {primary.resolve()})"
     )
     assert runtime.db_path == primary.resolve() / ".task-state" / "handoff.db"
-    assert runtime.current_task_path == primary.resolve() / "CURRENT_TASK.md"
+    assert runtime.current_task_path == primary.resolve() / "CURRENT_TASK.json"
     assert runtime.exports_dir == primary.resolve() / ".task-state" / "exports"
 
 

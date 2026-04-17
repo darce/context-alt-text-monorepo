@@ -10,8 +10,7 @@ mcp_tools:
   - close_slice
   - handoff_close_check
   - update_task_status
-  - generate_current_task_md
-  - generate_dashboard_md
+  - render_handoff
   - manage_worktree_lane
   - switch_task
 tdd_gate: true
@@ -58,7 +57,7 @@ This skill owns the branch-scoped lifecycle. The `tdd` skill owns the failing-te
 6. Run the appropriate review workflow and resolve findings. Do not move to close-check while findings remain open.
 7. Run `make handoff-close-check` on the branch HEAD. The branch is not merge-ready until the enforced gate passes.
 8. Merge the reviewed branch, return the root worktree to `main`, and delete the merged feature branch only after the branch work is actually landed.
-9. Finish with the Worktree Status Integrity close sequence: `update_task_status(done)` -> `manage_worktree_lane(close)` when lanes exist -> archive the task state -> keep `DASHBOARD.txt` current, using `generate_current_task_md` only if an explicit task-scoped snapshot is needed.
+9. Finish with the Worktree Status Integrity close sequence: `update_task_status(done)` -> `manage_worktree_lane(close)` when lanes exist -> archive the task state -> keep `DASHBOARD.txt` current, using `render_handoff(kind='current_task')` only if an explicit task-scoped snapshot is needed.
 10. Run `make task-finish TASK=<task-ref>` so teardown, archive, and dashboard regeneration happen in the repo's canonical order.
 
 ## Common Rationalizations
@@ -87,7 +86,7 @@ Each flag is a re-entry trigger. Stop and re-enter at the step shown.
 
 - If dirty code is inherited on `main`, stop and move it to the owning feature branch before starting new implementation.
 - If the wrong task is active, switch task state first and rerun `make context`.
-- If merge lands but archive/teardown does not, rerun the invariant close sequence instead of hand-editing `CURRENT_TASK.md` or `DASHBOARD.txt`.
+- If merge lands but archive/teardown does not, rerun the invariant close sequence instead of hand-editing `CURRENT_TASK.json` or `DASHBOARD.txt`.
 - If lanes were opened, close them before archiving so the dashboard does not report ghost worker state.
 
 ## Convergence Criteria
@@ -96,8 +95,8 @@ Each flag is a re-entry trigger. Stop and re-enter at the step shown.
 - Slice work closed through recorded `close_slice` decisions.
 - Review completed with zero open findings.
 - `handoff_close_check(enforce=True)` passed on the final branch HEAD.
-- The task ended with the invariant close sequence: `update_task_status(done)` -> lane close when needed -> archive -> `generate_dashboard_md` when a non-atomic write path requires it.
-- Root worktree is back on `main`, the feature branch is no longer active, and `DASHBOARD.txt` reflects the closed task with `CURRENT_TASK.md` available on demand.
+- The task ended with the invariant close sequence: `update_task_status(done)` -> lane close when needed -> archive -> `render_handoff(kind='dashboard')` when a non-atomic write path requires it.
+- Root worktree is back on `main`, the feature branch is no longer active, and `DASHBOARD.txt` reflects the closed task with `CURRENT_TASK.json` available on demand.
 
 ## See Also
 

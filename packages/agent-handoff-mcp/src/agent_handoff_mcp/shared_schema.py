@@ -51,7 +51,9 @@ _log = logging.getLogger("agent_handoff_mcp")
 #        a version bump, which silently broke `set_handoff_state` on every
 #        already-bootstrapped DB until AHMCP-9 fixed it).
 #   v4 — adds touched_files task-level file-touch ledger.
-HANDOFF_SCHEMA_VERSION = 4
+#   v5 — re-keys handoff_state by task_ref while retaining id=1 as the
+#        current-task sentinel so multiple active task rows can coexist.
+HANDOFF_SCHEMA_VERSION = 5
 _HANDOFF_REQUIRED_TABLES = frozenset(
     {
         "handoff_state",
@@ -98,8 +100,8 @@ _HANDOFF_REQUIRED_FTS_TRIGGERS = frozenset(
 
 HANDOFF_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS handoff_state (
-    id                   INTEGER PRIMARY KEY CHECK (id = 1),
-    task_ref             TEXT NOT NULL,
+    id                   INTEGER UNIQUE CHECK (id IS NULL OR id = 1),
+    task_ref             TEXT PRIMARY KEY,
     objective            TEXT NOT NULL,
     focus                TEXT,
     status               TEXT NOT NULL DEFAULT 'in_progress'
@@ -556,6 +558,13 @@ def _has_index(conn: sqlite3.Connection, table_name: str, index_name: str) -> bo
     return any(str(row["name"]) == index_name for row in rows)
 
 
+def _handoff_state_uses_task_keyed_rows(conn: sqlite3.Connection) -> bool:
+    rows = conn.execute("PRAGMA table_info(handoff_state)").fetchall()
+    task_ref_pk = next((int(row["pk"]) for row in rows if str(row["name"]) == "task_ref"), 0)
+    id_pk = next((int(row["pk"]) for row in rows if str(row["name"]) == "id"), 0)
+    return task_ref_pk == 1 and id_pk == 0
+
+
 def _sqlite_objects_exist(conn: sqlite3.Connection, object_type: str, names: frozenset[str]) -> bool:
     rows = conn.execute(
         f"SELECT name FROM sqlite_master WHERE type = ? AND name IN ({','.join('?' for _ in names)})",
@@ -872,6 +881,51 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
             conn.execute("ALTER TABLE handoff_state ADD COLUMN target_branch TEXT")
         if not _has_column(conn, "handoff_state", "target_worktree_path"):
             conn.execute("ALTER TABLE handoff_state ADD COLUMN target_worktree_path TEXT")
+        if not _handoff_state_uses_task_keyed_rows(conn):
+            conn.execute("ALTER TABLE handoff_state RENAME TO handoff_state_legacy_v4")
+            conn.execute(
+                """
+                CREATE TABLE handoff_state (
+                    id                   INTEGER UNIQUE CHECK (id IS NULL OR id = 1),
+                    task_ref             TEXT PRIMARY KEY,
+                    objective            TEXT NOT NULL,
+                    focus                TEXT,
+                    status               TEXT NOT NULL DEFAULT 'in_progress'
+                                         CHECK (status IN ('in_progress', 'blocked', 'review', 'done')),
+                    target_branch        TEXT,
+                    target_worktree_path TEXT,
+                    revision             INTEGER NOT NULL DEFAULT 0,
+                    updated_at           TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_by           TEXT,
+                    updated_branch       TEXT,
+                    updated_commit_sha   TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO handoff_state (
+                    id, task_ref, objective, focus, status,
+                    target_branch, target_worktree_path, revision,
+                    updated_at, updated_by, updated_branch, updated_commit_sha
+                )
+                SELECT
+                    CASE WHEN id = 1 THEN 1 ELSE NULL END,
+                    task_ref,
+                    objective,
+                    focus,
+                    status,
+                    target_branch,
+                    target_worktree_path,
+                    revision,
+                    updated_at,
+                    updated_by,
+                    updated_branch,
+                    updated_commit_sha
+                FROM handoff_state_legacy_v4
+                """
+            )
+            conn.execute("DROP TABLE handoff_state_legacy_v4")
         # TODO(E12-9-followon): turn_metrics DDL belongs in agent-orchestrator-mcp bootstrap.
         conn.execute(
             """

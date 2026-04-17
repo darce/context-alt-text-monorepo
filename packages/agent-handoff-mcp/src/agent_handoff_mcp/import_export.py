@@ -792,7 +792,7 @@ def update_task_status(
                     "affected_ids": [task_ref],
                     "task_revision": active.get("revision"),
                 },
-                artifacts=[{"type": "file", "path": "CURRENT_TASK.md"}] if regen == "ok" else None,
+                artifacts=[{"type": "file", "path": "CURRENT_TASK.json"}] if regen == "ok" else None,
             )
 
         archive_row = conn.execute(
@@ -866,7 +866,7 @@ def update_task_status(
                 "affected_ids": [task_ref],
                 "task_revision": None,
             },
-            artifacts=[{"type": "file", "path": "CURRENT_TASK.md"}] if regen_result == "ok" else None,
+            artifacts=[{"type": "file", "path": "CURRENT_TASK.json"}] if regen_result == "ok" else None,
             warnings=warnings or None,
         )
 
@@ -1030,6 +1030,6 @@ def switch_task(
                 "affected_ids": [task_ref],
                 "task_revision": active.get("revision"),
             },
-            artifacts=[{"type": "file", "path": "CURRENT_TASK.md"}] if regen_error is None else None,
+            artifacts=[{"type": "file", "path": "CURRENT_TASK.json"}] if regen_error is None else None,
             warnings=warnings or None,
         )

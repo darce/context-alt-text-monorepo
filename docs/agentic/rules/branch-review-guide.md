@@ -36,13 +36,13 @@ The reviewer can be human or agentic. Agent reviewers must:
 
 - Never present a finding in chat unless it has a stable `finding_id` in MCP.
 - If discussed before recording, immediately record it and reference the `finding_id`.
-- Never write review findings into task plans, ADRs, or other planning docs. Use MCP handoff and generated `CURRENT_TASK.md`.
+- Never write review findings into task plans, ADRs, or other planning docs. Use MCP handoff and generated `CURRENT_TASK.json`.
 
 ### Review Findings Placement (MANDATORY)
 
 Review findings live in `agent-handoff-mcp`. Record with `review_findings(review={"operation":"record"|"batch_record", ...})`, read with `review_findings(review={"operation":"list"|"get"})`. **Pasting a finding list into a task plan, epic, ADR, or any other markdown document is forbidden** -- it duplicates the source of truth and escapes the pre-merge gate.
 
-Reference findings by ID (`see AOMCP-3-BR-04 in handoff`), never by duplicating their bodies. `CURRENT_TASK.md` is the only sanctioned task-facing mirror.
+Reference findings by ID (`see AOMCP-3-BR-04 in handoff`), never by duplicating their bodies. `CURRENT_TASK.json` is the only sanctioned task-facing mirror.
 
 **Finding status is DB-only.** Do not mirror status into task-plan checklists or success criteria — no `(BR-08 closed)` / `(BR-09 fixed)` / `(deferred)` trailers, and no checklist items whose completion is keyed to a finding ID. A Slice checklist describes the work being delivered; the live status of any finding for that Slice is queried via `review_findings(review={"operation":"list","status":"open","task_ref":"<task>"})` or read from `DASHBOARD.txt`. Mirroring status in markdown invariably drifts: a finding is reopened, re-classified, or fixed on another branch, and the checkbox silently lies. The pre-merge gate (`handoff_close_check`) also only audits MCP-stored findings, so a "closed in the plan, still open in the DB" row blocks merge with no obvious cause.
 
@@ -338,7 +338,7 @@ Every finding **must** be recorded into MCP handoff for cross-agent visibility.
 
 ### Required Execution Surface
 
-Agents log findings through the handoff MCP server from the orchestrator root. Task plans may update checklist state, but review findings stay in MCP handoff and `CURRENT_TASK.md`.
+Agents log findings through the handoff MCP server from the orchestrator root. Task plans may update checklist state, but review findings stay in MCP handoff and `CURRENT_TASK.json`.
 
 Pattern:
 
@@ -355,7 +355,7 @@ Example:
 agent-handoff-mcp \
   --workspace-root /abs/path/to/repo \
   --state-dir /abs/path/to/repo/.task-state \
-  --current-task-path /abs/path/to/repo/CURRENT_TASK.md \
+  --current-task-path /abs/path/to/repo/CURRENT_TASK.json \
   --exports-dir /abs/path/to/repo/.task-state/exports \
   review-record \
   --session <review-session> \
@@ -370,7 +370,7 @@ agent-handoff-mcp \
 
 ### Recording Findings: Single vs Batch
 
-For 3+ findings in a single pass, use `batch_record_review_findings` (one SQLite transaction, one `CURRENT_TASK.md` flush).
+For 3+ findings in a single pass, use `batch_record_review_findings` (one SQLite transaction, one `CURRENT_TASK.json` flush).
 
 ```python
 # Preferred for 3+ findings
@@ -405,7 +405,7 @@ Call `review-record` / `record_review_finding` with:
 1. Call `review-summary` / `get_review_findings_summary` to confirm severity/status counts for the task.
 2. Use `review-list --status all` / `list_review_findings(status="all")` if you need full finding-by-finding verification.
 3. Call `decision` / `record_decision` summarizing the review (finding count by severity, session ID). **The verdict decision must cite the decision number of the artifact under review** (e.g., "review of decision #966") so the reviewed artifact and its review are bidirectionally linked in handoff search.
-4. Regenerate `CURRENT_TASK.md` if your workflow depends on it.
+4. Regenerate `CURRENT_TASK.json` if your workflow depends on it.
 5. If this review creates actionable lane work, run `make handoff-dispatch TASK=<task-ref>` from the orchestrator root after logging findings.
 6. If this review concludes the task, run `handoff_close_check(enforce=True)` before final handoff.
 7. Include `Handoff updated: yes` in the response.

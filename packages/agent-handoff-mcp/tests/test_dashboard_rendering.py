@@ -340,6 +340,37 @@ def test_needs_attention_all_clear_when_no_issues(isolated_handoff) -> None:
     assert not finding_or_blocked
 
 
+def test_collect_dashboard_rows_uses_all_live_handoff_rows_as_activity(isolated_handoff) -> None:
+    from agent_handoff_mcp.current_task_rendering import _collect_dashboard_rows
+    from agent_handoff_mcp.shared_schema import _get_db_connection
+
+    with _get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO handoff_state (
+                id, task_ref, objective, focus, status, target_branch,
+                revision, updated_at, updated_by, updated_branch, updated_commit_sha
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)
+            """,
+            (1, "TASK-A", "Task A", None, "in_progress", "feature/task-a", 0, "tester", "feature/task-a", "abc123"),
+        )
+        conn.execute(
+            """
+            INSERT INTO handoff_state (
+                id, task_ref, objective, focus, status, target_branch,
+                revision, updated_at, updated_by, updated_branch, updated_commit_sha
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)
+            """,
+            (None, "TASK-B", "Task B", None, "in_progress", "feature/task-b", 0, "tester", "feature/task-b", "def456"),
+        )
+        conn.commit()
+
+        rows = _collect_dashboard_rows(conn)
+
+    task_refs = {row["task_ref"] for row in rows}
+    assert task_refs >= {"TASK-A", "TASK-B"}
+
+
 # ---------------------------------------------------------------------------
 # generate_dashboard_md integration
 # ---------------------------------------------------------------------------
@@ -452,6 +483,112 @@ def test_task_test_status_filtered_to_epic(isolated_handoff) -> None:
     assert "E17-4" in test_section
     # Cross-epic task must NOT appear in TEST STATUS.
     assert "AHMCP-9" not in test_section
+
+
+def test_generate_dashboard_md_scopes_sections_to_all_live_rows(isolated_handoff) -> None:
+    """Recent decisions, test status, and integrity checks must not collapse to id=1."""
+    import subprocess as _sp
+
+    from agent_handoff_mcp.shared_schema import _get_db_connection
+
+    e17_worktree = "/tmp/e17-live-row"
+    e18_worktree = "/tmp/e18-live-row"
+
+    with _get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO handoff_state (
+                id, task_ref, objective, focus, status, target_branch, target_worktree_path,
+                revision, updated_at, updated_by, updated_branch, updated_commit_sha
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)
+            """,
+            (
+                1,
+                "E17-4",
+                "Task E17",
+                None,
+                "in_progress",
+                "feature/e17-live",
+                e17_worktree,
+                0,
+                "tester",
+                "feature/e17-live",
+                "abc123",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO handoff_state (
+                id, task_ref, objective, focus, status, target_branch, target_worktree_path,
+                revision, updated_at, updated_by, updated_branch, updated_commit_sha
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)
+            """,
+            (
+                None,
+                "E18-2",
+                "Task E18",
+                None,
+                "in_progress",
+                "feature/e18-missing",
+                e18_worktree,
+                0,
+                "tester",
+                "feature/e18-missing",
+                "def456",
+            ),
+        )
+        conn.execute(
+            "INSERT INTO decisions (task_ref, session, decision, created_at) VALUES (?, ?, ?, datetime('now'))",
+            (
+                "E17-4",
+                "dash-scope",
+                "cop_slice_complete_E17-4_scope",
+            ),
+        )
+        conn.execute(
+            "INSERT INTO decisions (task_ref, session, decision, created_at) VALUES (?, ?, ?, datetime('now'))",
+            (
+                "E18-2",
+                "dash-scope",
+                "cop_slice_complete_E18-2_scope",
+            ),
+        )
+        conn.execute(
+            "INSERT INTO verified_tests (task_ref, command, passed, session, verified_at) VALUES (?, ?, ?, ?, datetime('now'))",
+            ("E17-4", "make test-e17", 1, "dash-scope"),
+        )
+        conn.execute(
+            "INSERT INTO verified_tests (task_ref, command, passed, session, verified_at) VALUES (?, ?, ?, ?, datetime('now'))",
+            ("E18-2", "make test-e18", 1, "dash-scope"),
+        )
+        conn.commit()
+
+    def _fake_run(cmd, **kwargs):
+        if cmd[:3] == ["git", "rev-parse", "--verify"]:
+            if cmd[3] == "feature/e18-missing":
+                return _sp.CompletedProcess(cmd, returncode=128, stdout="", stderr="missing")
+            return _sp.CompletedProcess(cmd, returncode=0, stdout="ok", stderr="")
+        if cmd[:3] == ["git", "branch", "--merged"]:
+            return _sp.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+        if cmd[:3] == ["git", "worktree", "list"]:
+            return _sp.CompletedProcess(
+                cmd,
+                returncode=0,
+                stdout=f"worktree {e17_worktree}\nworktree {e18_worktree}\n",
+                stderr="",
+            )
+        return _sp.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+
+    with patch("agent_handoff_mcp.dashboard_rendering.subprocess.run", side_effect=_fake_run):
+        result = generate_dashboard_md(write_file=False)
+
+    assert result["ok"] is True
+    md = result["markdown"]
+    assert "RECENT DECISIONS (E17)" in md
+    assert "RECENT DECISIONS (E18)" in md
+    assert "E17-4" in md
+    assert "E18-2" in md
+    assert "feature/e18-missing" in md
 
 
 def test_section_order_findings_before_test_status(isolated_handoff) -> None:

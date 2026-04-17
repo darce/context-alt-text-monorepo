@@ -705,6 +705,7 @@ def test_record_decision_no_warning_with_model(isolated_handoff: dict) -> None:
             operation="add",
             description="Need API key",
             actor={"agent": "agent-a"},
+            task_ref="4.12.0",
         )
     )
     blocker_id = add_resp["blocker"]["id"]
@@ -714,6 +715,7 @@ def test_record_decision_no_warning_with_model(isolated_handoff: dict) -> None:
             operation="resolve",
             blocker_id=blocker_id,
             actor={"agent": "agent-a"},
+            task_ref="4.12.0",
         )
     )
     assert resolved["ok"] is True

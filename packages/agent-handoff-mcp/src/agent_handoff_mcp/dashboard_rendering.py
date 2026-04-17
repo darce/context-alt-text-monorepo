@@ -118,32 +118,6 @@ def _collect_needs_attention(
             )
             seen_tasks.add(task_ref)
 
-    # Also surface active-task open findings by pulling them directly
-    active_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
-    if active_row:
-        active_ref = str(active_row["task_ref"])
-        if active_ref not in seen_tasks:
-            rows = conn.execute(
-                "SELECT severity FROM review_findings WHERE task_ref = ? AND status = 'open'",
-                (active_ref,),
-            ).fetchall()
-            high = sum(1 for r in rows if r["severity"] == "high")
-            medium = sum(1 for r in rows if r["severity"] == "medium")
-            if high or medium:
-                parts = []
-                if high:
-                    parts.append(f"{high} high")
-                if medium:
-                    parts.append(f"{medium} medium")
-                items.append(
-                    {
-                        "task_ref": active_ref,
-                        "kind": "findings",
-                        "detail": f"{high + medium} open ({', '.join(parts)})",
-                    }
-                )
-                seen_tasks.add(active_ref)
-
     # --- Blocked tasks ---
     for row in dashboard_rows:
         if int(row.get("open_blockers", 0)) > 0:
@@ -262,26 +236,30 @@ def _render_deferred_findings_section(deferred_findings: dict[str, list[dict]]) 
 
 def _collect_epic_decisions(
     conn: sqlite3.Connection,
-    active_task_ref: str | None,
+    active_task_refs: list[str],
     limit: int = 8,
-) -> tuple[str | None, list[dict]]:
-    """Return (epic_ref, decisions) for the current epic.
+) -> list[tuple[str, list[dict]]]:
+    """Return recent decisions for each active epic represented by live rows.
 
-    Epic is inferred from the active task ref (e.g. E17-2 → E17).
-    If no epic can be inferred, returns (None, []).
+    Each distinct epic inferred from the live task refs contributes one section.
     """
     from .current_task_rendering import _infer_epic_ref  # noqa: PLC0415
 
-    epic_ref = _infer_epic_ref(active_task_ref)
-    if not epic_ref:
-        return None, []
-    rows = conn.execute(
-        "SELECT id, task_ref, decision, agent, created_at FROM decisions "
-        "WHERE task_ref = ? OR task_ref LIKE ? "
-        "ORDER BY created_at DESC LIMIT ?",
-        (epic_ref, f"{epic_ref}-%", limit),
-    ).fetchall()
-    return epic_ref, [dict(r) for r in rows]
+    sections: list[tuple[str, list[dict]]] = []
+    seen_epics: set[str] = set()
+    for task_ref in active_task_refs:
+        epic_ref = _infer_epic_ref(task_ref)
+        if not epic_ref or epic_ref in seen_epics:
+            continue
+        seen_epics.add(epic_ref)
+        rows = conn.execute(
+            "SELECT id, task_ref, decision, agent, created_at FROM decisions "
+            "WHERE task_ref = ? OR task_ref LIKE ? "
+            "ORDER BY created_at DESC LIMIT ?",
+            (epic_ref, f"{epic_ref}-%", limit),
+        ).fetchall()
+        sections.append((epic_ref, [dict(r) for r in rows]))
+    return sections
 
 
 def _render_epic_decisions_section(epic_ref: str, decisions: list[dict]) -> list[str]:
@@ -301,6 +279,13 @@ def _render_epic_decisions_section(epic_ref: str, decisions: list[dict]) -> list
     return lines
 
 
+def _render_epic_decisions_sections(epic_decision_groups: list[tuple[str, list[dict]]]) -> list[str]:
+    lines: list[str] = []
+    for epic_ref, decisions in epic_decision_groups:
+        lines.extend(_render_epic_decisions_section(epic_ref, decisions))
+    return lines
+
+
 # ---------------------------------------------------------------------------
 # New section: test status per task
 # ---------------------------------------------------------------------------
@@ -308,48 +293,54 @@ def _render_epic_decisions_section(epic_ref: str, decisions: list[dict]) -> list
 
 def _collect_task_test_status(
     conn: sqlite3.Connection,
-    epic_ref: str | None = None,
-    active_task_ref: str | None = None,
+    active_task_refs: list[str] | None = None,
 ) -> dict[str, dict]:
-    """Return per-task test summary: latest pass/fail and totals.
+    """Return per-task test summary across all live dashboard scopes.
 
-    Scoping (in order):
-      - *epic_ref* set: tasks matching the epic prefix (E17, E17-*, ...).
-      - *active_task_ref* set: just the active task.
-      - Neither: empty result. Never returns the full unbounded
-        verified_tests table — that surfaced 100+ stale rows to the
-        operator when the active task was non-epic (MAINT-*, AHMCP-*).
+    For epic-style task refs, include the full epic scope once. For non-epic
+    refs, include that task directly. Never returns the full unbounded table.
     """
-    if epic_ref:
-        rows = conn.execute(
-            "SELECT task_ref, passed, verified_at FROM verified_tests"
-            " WHERE task_ref = ? OR task_ref LIKE ?"
-            " ORDER BY verified_at DESC",
-            (epic_ref, f"{epic_ref}-%"),
-        ).fetchall()
-    elif active_task_ref:
-        rows = conn.execute(
-            "SELECT task_ref, passed, verified_at FROM verified_tests WHERE task_ref = ? ORDER BY verified_at DESC",
-            (active_task_ref,),
-        ).fetchall()
-    else:
-        rows = []
+    from .current_task_rendering import _infer_epic_ref  # noqa: PLC0415
+
     summary: dict[str, dict] = {}
-    for row in rows:
-        ref = str(row["task_ref"])
-        passed = bool(row["passed"])
-        ts = str(row["verified_at"] or "")
-        if ref not in summary:
-            summary[ref] = {
-                "latest_passed": passed,
-                "latest_at": ts[:16],
-                "pass_count": 0,
-                "fail_count": 0,
-            }
-        if passed:
-            summary[ref]["pass_count"] += 1
+    seen_scopes: set[tuple[str, str]] = set()
+    for task_ref in active_task_refs or []:
+        epic_ref = _infer_epic_ref(task_ref)
+        if epic_ref is not None:
+            scope = ("epic", epic_ref)
+            if scope in seen_scopes:
+                continue
+            seen_scopes.add(scope)
+            rows = conn.execute(
+                "SELECT task_ref, passed, verified_at FROM verified_tests"
+                " WHERE task_ref = ? OR task_ref LIKE ?"
+                " ORDER BY verified_at DESC",
+                (epic_ref, f"{epic_ref}-%"),
+            ).fetchall()
         else:
-            summary[ref]["fail_count"] += 1
+            scope = ("task", task_ref)
+            if scope in seen_scopes:
+                continue
+            seen_scopes.add(scope)
+            rows = conn.execute(
+                "SELECT task_ref, passed, verified_at FROM verified_tests WHERE task_ref = ? ORDER BY verified_at DESC",
+                (task_ref,),
+            ).fetchall()
+        for row in rows:
+            ref = str(row["task_ref"])
+            passed = bool(row["passed"])
+            ts = str(row["verified_at"] or "")
+            if ref not in summary:
+                summary[ref] = {
+                    "latest_passed": passed,
+                    "latest_at": ts[:16],
+                    "pass_count": 0,
+                    "fail_count": 0,
+                }
+            if passed:
+                summary[ref]["pass_count"] += 1
+            else:
+                summary[ref]["fail_count"] += 1
     return summary
 
 
@@ -391,61 +382,61 @@ _GIT_TIMEOUT = 5
 
 
 def _collect_workflow_integrity(
-    target_branch: str | None,
-    target_worktree_path: str | None,
+    active_rows: list[dict],
 ) -> list[str]:
-    """Derive workflow-integrity anomalies from target_branch + live git state.
+    """Derive workflow-integrity anomalies from all live dashboard rows.
 
     Returns a list of human-readable anomaly strings.  Empty list = clean.
     All git subprocess calls use a bounded timeout; on TimeoutExpired the
     caller receives a sentinel string instead of an exception.
     """
-    if not target_branch:
-        return []
-
     anomalies: list[str] = []
+    for active_row in active_rows:
+        target_branch = active_row.get("target_branch")
+        target_worktree_path = active_row.get("target_worktree_path")
+        task_ref = str(active_row.get("task_ref") or "")
+        if not target_branch:
+            continue
+        prefix = f"[{task_ref}] " if task_ref else ""
 
-    try:
-        # Check if target branch exists.
-        result = subprocess.run(
-            ["git", "rev-parse", "--verify", target_branch],
-            capture_output=True,
-            text=True,
-            timeout=_GIT_TIMEOUT,
-        )
-        if result.returncode != 0:
-            anomalies.append(f"missing branch: {target_branch} does not exist")
-            return anomalies
-
-        # Check if branch is fully merged to main but not deleted.
-        merged = subprocess.run(
-            ["git", "branch", "--merged", "main"],
-            capture_output=True,
-            text=True,
-            timeout=_GIT_TIMEOUT,
-        )
-        merged_branches = [b.strip().lstrip("* ") for b in merged.stdout.splitlines()]
-        if target_branch in merged_branches:
-            anomalies.append(f"undeleted merged branch: {target_branch} is fully merged to main")
-
-        # Check worktree alignment.
-        if target_worktree_path:
-            wt_list = subprocess.run(
-                ["git", "worktree", "list", "--porcelain"],
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--verify", str(target_branch)],
                 capture_output=True,
                 text=True,
                 timeout=_GIT_TIMEOUT,
             )
-            worktree_found = False
-            for line in wt_list.stdout.splitlines():
-                if line.startswith("worktree ") and line[9:] == target_worktree_path:
-                    worktree_found = True
-                    break
-            if not worktree_found:
-                anomalies.append(f"missing worktree: {target_worktree_path} not found")
+            if result.returncode != 0:
+                anomalies.append(f"{prefix}missing branch: {target_branch} does not exist")
+                continue
 
-    except subprocess.TimeoutExpired:
-        return ["git check timed out (5s)"]
+            merged = subprocess.run(
+                ["git", "branch", "--merged", "main"],
+                capture_output=True,
+                text=True,
+                timeout=_GIT_TIMEOUT,
+            )
+            merged_branches = [b.strip().lstrip("* ") for b in merged.stdout.splitlines()]
+            if target_branch in merged_branches:
+                anomalies.append(f"{prefix}undeleted merged branch: {target_branch} is fully merged to main")
+
+            if target_worktree_path:
+                wt_list = subprocess.run(
+                    ["git", "worktree", "list", "--porcelain"],
+                    capture_output=True,
+                    text=True,
+                    timeout=_GIT_TIMEOUT,
+                )
+                worktree_found = False
+                for line in wt_list.stdout.splitlines():
+                    if line.startswith("worktree ") and line[9:] == target_worktree_path:
+                        worktree_found = True
+                        break
+                if not worktree_found:
+                    anomalies.append(f"{prefix}missing worktree: {target_worktree_path} not found")
+
+        except subprocess.TimeoutExpired:
+            anomalies.append(f"{prefix}git check timed out (5s)")
 
     return anomalies
 
@@ -473,8 +464,7 @@ def _render_dashboard_md(
     needs_attention: list[_NeedsAttentionItem],
     active_task_ref: str | None,
     extension_sections: list[DashboardSection],
-    epic_ref: str | None = None,
-    epic_decisions: list[dict] | None = None,
+    epic_decision_groups: list[tuple[str, list[dict]]] | None = None,
     task_test_status: dict[str, dict] | None = None,
     integrity_anomalies: list[str] | None = None,
 ) -> str:
@@ -489,8 +479,8 @@ def _render_dashboard_md(
     lines.extend(_render_needs_attention_section(needs_attention))
     lines.extend(_render_all_tasks_section(dashboard_rows, active_task_ref))
 
-    if epic_ref and epic_decisions is not None:
-        lines.extend(_render_epic_decisions_section(epic_ref, epic_decisions))
+    if epic_decision_groups:
+        lines.extend(_render_epic_decisions_sections(epic_decision_groups))
 
     # Active-task findings and integrity alerts render before TEST STATUS.
     lines.extend(_render_open_findings_section(open_findings))
@@ -538,24 +528,23 @@ def generate_dashboard_md(write_file: bool = True) -> dict:
     )
 
     with _get_db_connection() as conn:
-        active_row = conn.execute(
-            "SELECT task_ref, target_branch, target_worktree_path FROM handoff_state WHERE id = 1"
-        ).fetchone()
-        active_task_ref = str(active_row["task_ref"]) if active_row and active_row["task_ref"] else None
-        target_branch = str(active_row["target_branch"]) if active_row and active_row["target_branch"] else None
-        target_worktree_path = (
-            str(active_row["target_worktree_path"]) if active_row and active_row["target_worktree_path"] else None
-        )
+        active_rows = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT task_ref, target_branch, target_worktree_path FROM handoff_state ORDER BY updated_at DESC, task_ref ASC"
+            ).fetchall()
+        ]
+        active_task_refs = [str(row["task_ref"]) for row in active_rows if row.get("task_ref")]
 
         dashboard_rows = _collect_dashboard_rows(conn)
         open_findings = _collect_all_open_findings(conn, max_per_task=100)
         deferred_findings = _collect_all_deferred_findings(conn, max_per_task=100)
         needs_attention = _collect_needs_attention(conn, dashboard_rows, open_findings)
-        ctx = _collect_dashboard_context(conn, active_task_ref)
-        epic_ref, epic_decisions = _collect_epic_decisions(conn, active_task_ref)
-        task_test_status = _collect_task_test_status(conn, epic_ref=epic_ref, active_task_ref=active_task_ref)
+        ctx = _collect_dashboard_context(conn, None)
+        epic_decision_groups = _collect_epic_decisions(conn, active_task_refs)
+        task_test_status = _collect_task_test_status(conn, active_task_refs=active_task_refs)
 
-    integrity_anomalies = _collect_workflow_integrity(target_branch, target_worktree_path)
+    integrity_anomalies = _collect_workflow_integrity(active_rows)
 
     extension_sections: list[DashboardSection] = []
     for ext in _extensions:
@@ -571,10 +560,9 @@ def generate_dashboard_md(write_file: bool = True) -> dict:
         open_findings=open_findings,
         deferred_findings=deferred_findings,
         needs_attention=needs_attention,
-        active_task_ref=active_task_ref,
+        active_task_ref=None,
         extension_sections=extension_sections,
-        epic_ref=epic_ref,
-        epic_decisions=epic_decisions,
+        epic_decision_groups=epic_decision_groups,
         task_test_status=task_test_status,
         integrity_anomalies=integrity_anomalies,
     )

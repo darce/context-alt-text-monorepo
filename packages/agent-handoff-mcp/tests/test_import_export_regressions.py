@@ -151,8 +151,13 @@ def test_switch_task_returns_full_mutation_shape(workspace_pair: dict[str, Path]
     assert switched["mutation"]["operation"] == "switch_task"
     assert switched["mutation"]["affected_ids"] == ["task-b"]
     assert isinstance(switched["mutation"]["task_revision"], int)
-    assert switched["archived_previous"] is True
-    assert switched["previous_task_ref"] == "task-a"
+    assert switched["archived_previous"] is False
+    assert switched["previous_task_ref"] is None
+    assert switched["active"]["task_ref"] == "task-b"
+
+    task_a = _parse(mcp_server.get_handoff_state(task_ref="task-a", sections="identity"))
+    assert task_a["ok"] is True
+    assert task_a["active"]["task_ref"] == "task-a"
 
 
 def test_export_defaults_to_no_markdown(workspace_pair: dict[str, Path]) -> None:
@@ -187,9 +192,13 @@ def test_switch_task_clears_focus_on_restore(workspace_pair: dict[str, Path]) ->
 
     restored = _parse(handoff_core.switch_task(task_ref="task-a"))
     assert restored["ok"] is True
+    assert restored["already_active"] is True
     assert restored["active"]["task_ref"] == "task-a"
     assert restored["active"]["objective"] == "Restore me"
-    assert restored["active"]["focus"] is None
+    assert restored["active"]["focus"] == "stale focus"
+    task_b = _parse(mcp_server.get_handoff_state(task_ref="task-b", sections="identity"))
+    assert task_b["ok"] is True
+    assert task_b["active"]["task_ref"] == "task-b"
 
 
 def test_archive_task_state_raises_branch_mismatch_error_when_enforcement_enabled(
@@ -472,8 +481,12 @@ def test_switch_task_preserves_target_branch_on_restore(workspace_pair: dict[str
 
     restored = _parse(handoff_core.switch_task(task_ref="task-a"))
     assert restored["ok"] is True
+    assert restored["already_active"] is True
     assert restored["active"]["task_ref"] == "task-a"
     assert restored["active"]["target_branch"] == "feature/task-a-work"
+    task_b = _parse(mcp_server.get_handoff_state(task_ref="task-b", sections="identity"))
+    assert task_b["ok"] is True
+    assert task_b["active"]["task_ref"] == "task-b"
 
 
 def test_import_handoff_state_prefers_decoded_lane_message_payload(workspace_pair: dict[str, Path]) -> None:

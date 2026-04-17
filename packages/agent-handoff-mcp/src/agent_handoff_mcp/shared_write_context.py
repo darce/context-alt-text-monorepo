@@ -77,6 +77,19 @@ class BranchMismatchError(ValueError):
         )
 
 
+class UnresolvedTaskContextError(ValueError):
+    """Raised when a write path cannot resolve an active task_ref.
+
+    The canonical resolution order is: (1) an explicit ``task_ref``
+    parameter, (2) a workspace-path lookup via
+    ``_resolve_workspace_handoff_row``. When neither resolves, callers
+    must fail closed rather than silently falling back to a sentinel
+    row (E17-11). Callers that hit this error should either pass
+    ``task_ref=`` explicitly, set ``AGENT_HANDOFF_TASK_REF``, or run
+    from the task's registered ``target_worktree_path``.
+    """
+
+
 def _commit_sha_validation_enabled() -> bool:
     """Return ``False`` if the test bypass env var is set, else ``True``."""
     bypass = os.environ.get("AGENT_HANDOFF_SKIP_SHA_VALIDATION", "").strip().lower()
@@ -448,18 +461,35 @@ def collect_target_context_warnings(
     enforceable target branches raise BranchMismatchError before the write is
     applied. Worktree-path drift remains warning-only.
     """
-    active_sql = "SELECT task_ref, target_branch, target_worktree_path FROM handoff_state WHERE id = 1"
-    active_params: tuple[object, ...] = ()
     normalized_task_ref = _normalize_optional_text(task_ref)
-    if normalized_task_ref is not None:
-        active_sql = "SELECT task_ref, target_branch, target_worktree_path FROM handoff_state WHERE task_ref = ?"
-        active_params = (normalized_task_ref,)
     try:
-        active = conn.execute(active_sql, active_params).fetchone()
+        if normalized_task_ref is not None:
+            active = conn.execute(
+                "SELECT task_ref, target_branch, target_worktree_path FROM handoff_state WHERE task_ref = ?",
+                (normalized_task_ref,),
+            ).fetchone()
+        else:
+            # E17-11 Slice 3a: no sentinel `WHERE id = 1` fallback.
+            # Delegate to workspace-path resolution. If that cannot
+            # resolve (ambiguous multi-task state or empty DB), the
+            # drift-check is best-effort — return no warnings rather than
+            # reject the write. Writers that require a specific task go
+            # through `_resolve_task_ref`, which raises its own error.
+            from .shared_primitives import _resolve_workspace_handoff_row
+
+            try:
+                active = _resolve_workspace_handoff_row(conn)
+            except ValueError:
+                return []
     except sqlite3.OperationalError:
         # Schema is older than this build (missing column). Skip the check.
         return []
     if active is None:
+        # No matching row to compare against: either an explicit task_ref
+        # pointed at a row that does not exist, or the handoff_state table
+        # is empty (bootstrap / test-isolation). Nothing to check.
+        # Ambiguous multi-row cases are handled above by the resolver
+        # raising UnresolvedTaskContextError.
         return []
     warnings: list[str] = []
     resolved_task_ref = normalized_task_ref

@@ -79,6 +79,7 @@ _ALLOWLIST: list[re.Pattern[str]] = [
         r"^git\s+fetch\b",
         r"^git\s+pull\b",
         r"^git\s+log\b",
+        r"^git\s+--no-pager\s+log\b",
         r"^git\s+checkout\b",
         r"^git\s+merge\b",
         r"^git\s+branch\b",
@@ -105,7 +106,9 @@ _ALLOWLIST: list[re.Pattern[str]] = [
         r"^git\s+-C\s+\S+\s+ls-files\b",
         # git log: read-only history queries
         r"^git\s+log\b",
+        r"^git\s+--no-pager\s+log\b",
         r"^git\s+-C\s+\S+\s+log\b",
+        r"^git\s+-C\s+\S+\s+--no-pager\s+log\b",
         # git show --stat: read-only commit inspection (no native tool equivalent)
         r"^git\s+show\s+--stat\b",
         r"^git\s+-C\s+\S+\s+show\s+--stat\b",
@@ -242,6 +245,7 @@ def _strip_env_prefix(cmd: str) -> str:
         r"^cd\s+\S+\s*&&\s*",           # cd <path> &&
         r"^export\s+\w+=\S+\s*&&\s*",   # export VAR=value &&
         r'^\w+=(?:"[^"]*"|\'[^\']*\'|\S+)\s*&&\s*',  # VAR="value with spaces|pipes" &&
+        r'^(?:\w+=(?:"[^"]*"|\'[^\']*\'|\S+)\s+)+',  # VAR="value with spaces" <cmd>
         r"^\w+=\S+\s*&&\s*",            # VAR=value &&
         r"^(\w+=\S+\s+)+",              # VAR=value inline prefix tokens
     ]

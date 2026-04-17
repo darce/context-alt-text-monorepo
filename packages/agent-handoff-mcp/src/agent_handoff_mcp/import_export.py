@@ -70,12 +70,46 @@ def _persist_task_archive_snapshot(
     )
 
 
+def _load_test_trace_map(conn: sqlite3.Connection, test_ids: list[int]) -> dict[int, list[str]]:
+    if not test_ids:
+        return {}
+    placeholders = ",".join("?" for _ in test_ids)
+    rows = conn.execute(
+        f"""
+        SELECT verified_test_id, trace
+        FROM test_traces
+        WHERE verified_test_id IN ({placeholders})
+        ORDER BY verified_test_id ASC, trace_order ASC, id ASC
+        """,
+        tuple(test_ids),
+    ).fetchall()
+    trace_map: dict[int, list[str]] = {}
+    for row in rows:
+        trace_map.setdefault(int(row["verified_test_id"]), []).append(str(row["trace"]))
+    return trace_map
+
+
+def _snapshot_with_test_traces(
+    conn: sqlite3.Connection, snapshot: TaskSnapshot | Mapping[str, object]
+) -> dict[str, object]:
+    payload = dict(snapshot)
+    raw_tests = payload.get("verified_tests")
+    if not isinstance(raw_tests, list):
+        return payload
+    tests = [dict(row) for row in raw_tests if isinstance(row, Mapping)]
+    trace_map = _load_test_trace_map(conn, [int(row["id"]) for row in tests if "id" in row])
+    for row in tests:
+        row["traces"] = trace_map.get(int(row["id"]), [])
+    payload["verified_tests"] = tests
+    return payload
+
+
 def export_handoff_state(
     task_ref: str | None = None, output_path: str | None = None, include_markdown: bool = False
 ) -> dict:
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
-        snapshot = _collect_task_snapshot(conn, resolved_task_ref)
+        snapshot = _snapshot_with_test_traces(conn, _collect_task_snapshot(conn, resolved_task_ref))
     payload: dict[str, object] = {
         "export_version": 1,
         "task_ref": resolved_task_ref,
@@ -259,6 +293,7 @@ def _import_snapshot(
             "blockers",
             "next_actions",
             "decisions",
+            "test_traces",
             "verified_tests",
             "review_findings",
             "worktree_lanes",
@@ -334,7 +369,7 @@ def _import_snapshot(
         agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(
             row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit
         )
-        conn.execute(
+        cursor = conn.execute(
             "INSERT INTO verified_tests (task_ref, lane_id, command, passed, exit_code, result, session, agent, branch, commit_sha, verified_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 task_ref,
@@ -350,6 +385,15 @@ def _import_snapshot(
                 row.get("verified_at") or now,
             ),
         )
+        traces = row.get("traces")
+        if isinstance(traces, list):
+            for trace_order, trace in enumerate(traces):
+                if not isinstance(trace, str):
+                    continue
+                conn.execute(
+                    "INSERT INTO test_traces (verified_test_id, task_ref, trace_order, trace, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (int(cursor.lastrowid), task_ref, trace_order, trace, row.get("verified_at") or now),
+                )
     for row in findings:
         agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(
             row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit
@@ -582,7 +626,7 @@ def archive_task_state(
 ) -> dict:
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
-        snapshot = _collect_task_snapshot(conn, resolved_task_ref)
+        snapshot = _snapshot_with_test_traces(conn, _collect_task_snapshot(conn, resolved_task_ref))
         ctx = _resolve_write_actor(
             conn,
             build_write_actor(
@@ -624,6 +668,7 @@ def archive_task_state(
                 "decisions",
                 "blockers",
                 "next_actions",
+                "test_traces",
                 "verified_tests",
                 "review_findings",
                 "worktree_lanes",

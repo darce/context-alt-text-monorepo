@@ -110,6 +110,36 @@ def test_export_import_preserves_changed_files_json(workspace_pair: dict[str, Pa
     assert set(_json.loads(decision["changed_files_json"])) == {"src/core.py", "docs/contract.md"}
 
 
+def test_export_import_preserves_test_traces(workspace_pair: dict[str, Path]) -> None:
+    export_path = workspace_pair["source"] / ".task-state" / "exports" / "test-traces-rt.json"
+    _parse(mcp_server.set_handoff_state(task_ref="trace-rt", objective="Trace round trip", status="in_progress"))
+    _parse(
+        mcp_server.record_test_result(
+            session="s1",
+            command="pytest tests/test_trace_rt.py -q",
+            passed=False,
+            result="1 failed in 0.01s",
+            traces=[
+                "============================= test session starts =============================",
+                "E   AssertionError: trace round trip",
+            ],
+        )
+    )
+    exported = _parse(mcp_server.export_handoff_state(task_ref="trace-rt", output_path=str(export_path)))
+    assert exported["ok"] is True
+
+    _configure_runtime(workspace_pair["target"])
+    imported = _parse(mcp_server.import_handoff_state(input_path=str(export_path), mode="merge", set_active=True))
+    assert imported["ok"] is True
+
+    tests = _parse(mcp_server.get_verified_tests(task_ref="trace-rt", include_traces=True))
+    assert tests["ok"] is True
+    assert tests["tests"][0]["traces"] == [
+        "============================= test session starts =============================",
+        "E   AssertionError: trace round trip",
+    ]
+
+
 def test_switch_task_returns_full_mutation_shape(workspace_pair: dict[str, Path]) -> None:
     _configure_runtime(workspace_pair["source"])
     _parse(mcp_server.set_handoff_state(task_ref="task-a", objective="Task A", status="in_progress"))

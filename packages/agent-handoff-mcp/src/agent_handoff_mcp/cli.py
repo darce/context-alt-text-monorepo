@@ -222,6 +222,10 @@ def _dispatch_get_verified_tests(args: argparse.Namespace) -> Any:
         branch=args.branch,
         commit_sha=args.commit_sha,
         passed=passed,
+        include_traces=args.include_traces,
+        correlated_file=args.correlated_file,
+        correlation_window_minutes=args.correlation_window_minutes,
+        exclude_never_passed=args.exclude_never_passed,
         limit=args.limit,
         offset=args.offset,
     )
@@ -251,6 +255,8 @@ def _dispatch_event_record(args: argparse.Namespace) -> Any:
         payload["passed"] = args.passed
         if args.result is not None:
             payload["result"] = args.result
+        if args.traces:
+            payload["traces"] = args.traces
         if args.exit_code is not None:
             payload["exit_code"] = args.exit_code
     else:

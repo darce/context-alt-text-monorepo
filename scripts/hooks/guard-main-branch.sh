@@ -5,7 +5,7 @@
 # Exit 0 = allow, Exit 2 = block (stderr shown to agent as reason).
 #
 # Policy: docs, configs, and planning artifacts may be edited on main.
-#         Code files under apps/ and packages/ require a feature branch.
+#         Contract-protected code-adjacent files require a feature branch.
 
 set -euo pipefail
 
@@ -33,17 +33,49 @@ if [ "$BRANCH" != "main" ] && [ "$BRANCH" != "master" ]; then
   exit 0
 fi
 
-# Convert absolute path to repo-relative.
+# Convert absolute path to repo-relative using canonical paths so /var vs
+# /private/var aliases do not bypass the prefix check in temp fixtures.
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
-if [ -n "$REPO_ROOT" ] && [[ "$FILE_PATH" == "$REPO_ROOT"/* ]]; then
-  REL_PATH="${FILE_PATH#"$REPO_ROOT"/}"
-else
-  REL_PATH="$FILE_PATH"
+REL_PATH=$(python3 -c '
+import sys
+from pathlib import Path
+
+raw_path = sys.argv[1]
+repo_root = sys.argv[2]
+if not repo_root:
+    print(raw_path)
+    raise SystemExit(0)
+
+candidate = Path(raw_path).expanduser().resolve(strict=False)
+root = Path(repo_root).expanduser().resolve(strict=False)
+try:
+    print(candidate.relative_to(root).as_posix())
+except ValueError:
+    print(raw_path)
+' "$FILE_PATH" "$REPO_ROOT")
+
+if ! SHOULD_BLOCK=$(python3 -c '
+import sys
+from pathlib import Path
+
+repo_root = Path(sys.argv[1])
+rel_path = sys.argv[2]
+sys.path.insert(0, str(repo_root / "scripts" / "hooks"))
+
+from _harness_protocol import HarnessContractMissingError, is_branch_isolation_protected_path, load_branch_isolation_policy
+
+try:
+    policy = load_branch_isolation_policy(repo_root)
+except HarnessContractMissingError as exc:
+    print(str(exc), file=sys.stderr)
+    raise SystemExit(2)
+
+print("1" if is_branch_isolation_protected_path(rel_path, policy) else "0")
+' "$REPO_ROOT" "$REL_PATH"); then
+  exit 2
 fi
 
-# Block code files under apps/ or packages/ on main.
-# Allow: docs, configs, Makefiles, markdown, templates, settings, etc.
-if [[ "$REL_PATH" =~ \.(py|ts|tsx|js|jsx|php|sql|sh|css|scss)$ ]] && [[ "$REL_PATH" =~ ^(apps/|packages/) ]]; then
+if [ "$SHOULD_BLOCK" = "1" ]; then
   cat >&2 <<EOF
 BLOCKED: Code file edits are not allowed on the main branch.
 

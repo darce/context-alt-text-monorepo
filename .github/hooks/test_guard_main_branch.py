@@ -16,6 +16,18 @@ _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
 
 _check_file_edit = _mod._check_file_edit
 _extract_candidate_paths = _mod._extract_candidate_paths
+HELPER_DIR = HOOK_SCRIPT.parents[2] / "scripts" / "hooks"
+sys.path.insert(0, str(HELPER_DIR))
+
+from _harness_protocol import BranchIsolationPolicy  # noqa: E402
+
+
+POLICY = BranchIsolationPolicy(
+    code_roots=("apps/", "packages/", "scripts/", ".github/hooks/", ".claude/", "mk/"),
+    protected_extensions=(".py", ".ts", ".tsx", ".js", ".jsx", ".php", ".sql", ".sh", ".css", ".scss", ".mk"),
+    root_protected_files=("Makefile",),
+    permitted_main_surfaces=(),
+)
 
 
 def _run_hook(payload: dict, cwd: str | None = None) -> tuple[int, dict | None]:
@@ -55,6 +67,7 @@ def test_check_file_edit_blocks_code_paths_on_main() -> None:
         {"filePath": "/repo/apps/prototype-description-service/api/main.py"},
         branch="main",
         repo_root="/repo",
+        policy=POLICY,
     )
     assert result == ("main", ["apps/prototype-description-service/api/main.py"])
 
@@ -65,6 +78,7 @@ def test_check_file_edit_allows_docs_on_main() -> None:
         {"filePath": "/repo/docs/agentic/rules/development-workflow.md"},
         branch="main",
         repo_root="/repo",
+        policy=POLICY,
     )
     assert result is None
 
@@ -81,6 +95,7 @@ def test_check_file_edit_allows_code_on_feature_branch() -> None:
         {"input": patch},
         branch="feature/e15-branch-guard",
         repo_root="/repo",
+        policy=POLICY,
     )
     assert result is None
 
@@ -101,8 +116,31 @@ def test_check_file_edit_blocks_mixed_patch_when_code_file_present() -> None:
         {"input": patch},
         branch="main",
         repo_root="/repo",
+        policy=POLICY,
     )
     assert result == ("main", ["packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/api.py"])
+
+
+def test_check_file_edit_blocks_root_makefile_on_main() -> None:
+    result = _check_file_edit(
+        "replace_string_in_file",
+        {"filePath": "/repo/Makefile"},
+        branch="main",
+        repo_root="/repo",
+        policy=POLICY,
+    )
+    assert result == ("main", ["Makefile"])
+
+
+def test_check_file_edit_blocks_scripts_path_on_main() -> None:
+    result = _check_file_edit(
+        "multi_replace_string_in_file",
+        {"file_path": "/repo/scripts/check_skills.py"},
+        branch="main",
+        repo_root="/repo",
+        policy=POLICY,
+    )
+    assert result == ("main", ["scripts/check_skills.py"])
 
 
 def test_hook_emits_block_json_for_create_file_on_main() -> None:

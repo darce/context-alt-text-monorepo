@@ -28,6 +28,10 @@ branch_isolation:
   code_roots:
     - apps/
     - packages/
+    - scripts/
+    - .github/hooks/
+    - .claude/
+    - mk/
   protected_extensions:
     - .py
     - .ts
@@ -39,6 +43,42 @@ branch_isolation:
     - .sh
     - .css
     - .scss
+    - .mk
+  root_protected_files:
+    - Makefile
+  # Repo-local allow-list: projects adopting this harness should rewrite these
+  # patterns to match their own legitimate main-worktree planning/doc surfaces.
+  permitted_main_surfaces:
+    - pattern: "docs/tasks/**/*.md"
+      reason: "Task-plan progress and checkbox sync on main"
+    - pattern: "docs/assessments/**"
+      reason: "Assessment artifacts land on main before or alongside implementation"
+    - pattern: "docs/scopes/**"
+      reason: "Scope notes stay on main"
+    - pattern: "docs/epics/**"
+      reason: "Epic-level planning artifacts stay on main"
+    - pattern: "CLAUDE.md"
+      reason: "Canonical agent dispatcher stays editable on main"
+    - pattern: ".github/copilot-instructions.md"
+      reason: "VS Code harness mirror of CLAUDE.md"
+    - pattern: "docs/agentic/BOOTSTRAP.md"
+      reason: "Operator-facing cold-start reference"
+    - pattern: "docs/agentic/instructions.md"
+      reason: "Canonical agent instructions surface"
+    - pattern: "docs/agentic/contracts/**"
+      reason: "Harness contracts stay editable on main"
+    - pattern: "docs/agentic/rules/**"
+      reason: "Workflow rules stay editable on main"
+    - pattern: "docs/agentic/maps/**"
+      reason: "Routing and map artifacts stay editable on main"
+    - pattern: "docs/agentic/generated/**"
+      reason: "Generated agentic artifacts can update on main"
+    - pattern: "docs/tasks/archive/**"
+      reason: "Archived task snapshots stay editable on main"
+    - pattern: "DASHBOARD.txt"
+      reason: "Dashboard artifact is regenerated on main"
+    - pattern: "CURRENT_TASK.md"
+      reason: "Current-task snapshot is regenerated on main"
   enforcers:
     - path: .github/hooks/guard-main-branch.py
       harness: vscode
@@ -65,6 +105,10 @@ python_api_fallback:
 
 hooks:
   pre_tool_use:
+    - id: worktree-drift
+      matcher: Edit|Write|apply_patch|create_file|replace_string_in_file|multi_replace_string_in_file
+      claude_command: bash "$CLAUDE_PROJECT_DIR/scripts/hooks/guard-worktree-drift.sh"
+      vscode_command: python3 .github/hooks/guard-worktree-drift.py
     - id: task-plan-findings
       matcher: Edit|Write
       claude_command: python3 "$CLAUDE_PROJECT_DIR/scripts/hooks/guard-task-plan-findings.py"
@@ -91,6 +135,6 @@ hooks:
       claude_command: bash "$CLAUDE_PROJECT_DIR/scripts/hooks/regenerate-task-views.sh"
       vscode_command: bash scripts/hooks/regenerate-task-views.sh
     - id: slim-handoff-response
-      matcher: mcp_altcontext-mc_get_handoff_state|mcp_altcontext-mc_load_session|mcp__agent-handoff-mcp__get_handoff_state|mcp__agent-handoff-mcp__load_session
+      matcher: mcp_altcontext-mc_get_handoff_state|mcp_altcontext-mc_load_session|mcp_altcontext-mc_render_handoff|mcp__agent-handoff-mcp__get_handoff_state|mcp__agent-handoff-mcp__load_session|mcp__agent-handoff-mcp__render_handoff
       claude_command: python3 "$CLAUDE_PROJECT_DIR/scripts/hooks/slim-handoff-response.py"
       vscode_command: python3 scripts/hooks/slim-handoff-response.py

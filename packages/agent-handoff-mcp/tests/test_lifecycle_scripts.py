@@ -49,6 +49,9 @@ WORKTREE_PRUNE_SCRIPT = REPO_ROOT / "scripts" / "worktree_prune.py"
 TASK_PLAN_AUDIT_SCRIPT = REPO_ROOT / "scripts" / "task_plan_audit.py"
 INTEGRITY_WATCHER_SCRIPT = REPO_ROOT / "scripts" / "integrity-watcher.sh"
 GUARD_MAIN_BRANCH_HOOK = REPO_ROOT / "scripts" / "hooks" / "guard-main-branch.sh"
+HARNESS_PROTOCOL_HELPER = REPO_ROOT / "scripts" / "hooks" / "_harness_protocol.py"
+WORKTREE_DRIFT_HELPER = REPO_ROOT / "scripts" / "hooks" / "_worktree_drift.py"
+WORKTREE_DRIFT_HOOK = REPO_ROOT / "scripts" / "hooks" / "guard-worktree-drift.sh"
 
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -104,6 +107,56 @@ def _build_fake_monorepo(tmp_path: Path) -> Path:
         (repo / "scripts" / "hooks").mkdir(parents=True, exist_ok=True)
         shutil.copy2(GUARD_MAIN_BRANCH_HOOK, repo / "scripts" / "hooks" / "guard-main-branch.sh")
         os.chmod(repo / "scripts" / "hooks" / "guard-main-branch.sh", 0o755)
+    if HARNESS_PROTOCOL_HELPER.exists():
+        (repo / "scripts" / "hooks").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(HARNESS_PROTOCOL_HELPER, repo / "scripts" / "hooks" / "_harness_protocol.py")
+    if WORKTREE_DRIFT_HELPER.exists():
+        (repo / "scripts" / "hooks").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(WORKTREE_DRIFT_HELPER, repo / "scripts" / "hooks" / "_worktree_drift.py")
+    if WORKTREE_DRIFT_HOOK.exists():
+        (repo / "scripts" / "hooks").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(WORKTREE_DRIFT_HOOK, repo / "scripts" / "hooks" / "guard-worktree-drift.sh")
+        os.chmod(repo / "scripts" / "hooks" / "guard-worktree-drift.sh", 0o755)
+    (repo / "docs" / "agentic" / "contracts").mkdir(parents=True, exist_ok=True)
+    (repo / "docs" / "agentic" / "contracts" / "harness-protocol.yaml").write_text(
+        """version: 1
+
+branch_isolation:
+  protected_branches:
+    - main
+    - master
+  code_roots:
+    - apps/
+    - packages/
+    - scripts/
+    - .github/hooks/
+    - .claude/
+    - mk/
+  protected_extensions:
+    - .py
+    - .ts
+    - .tsx
+    - .js
+    - .jsx
+    - .php
+    - .sql
+    - .sh
+    - .css
+    - .scss
+    - .mk
+  root_protected_files:
+    - Makefile
+  permitted_main_surfaces:
+    - pattern: "docs/tasks/**/*.md"
+      reason: "Task plans"
+  enforcers:
+    - path: .github/hooks/guard-main-branch.py
+      harness: vscode
+    - path: scripts/hooks/guard-main-branch.sh
+      harness: claude
+""",
+        encoding="utf-8",
+    )
 
     # Copy the agent-handoff-mcp source so the inline Python can import it.
     package_src = REPO_ROOT / "packages" / "agent-handoff-mcp" / "src"
@@ -640,6 +693,122 @@ def test_guard_main_branch_is_silent_with_active_task(tmp_path: Path) -> None:
     )
     assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
     assert "Editing on main without an active handoff task" not in proc.stderr, proc.stderr
+
+
+def test_guard_main_branch_blocks_scripts_code_path_on_main(tmp_path: Path) -> None:
+    """E17-8 Slice 1: script code paths are now protected by the contract."""
+
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+    payload = json.dumps({"tool_input": {"file_path": str(repo / "scripts" / "check-task-context.py")}})
+    proc = subprocess.run(
+        [str(repo / "scripts" / "hooks" / "guard-main-branch.sh")],
+        cwd=repo,
+        env=env,
+        input=payload,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert "Code file edits are not allowed on the main branch" in proc.stderr, proc.stderr
+    assert "scripts/check-task-context.py" in proc.stderr, proc.stderr
+
+
+def test_guard_worktree_drift_blocks_when_edit_targets_root_worktree(tmp_path: Path) -> None:
+    """E17-8 Slice 2: wrong-worktree edits should block by default."""
+
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+    env["CLAUDE_PROJECT_DIR"] = str(repo)
+
+    started = _run_script("task-start.sh", repo, "DRIFT-ASK-1", "Drift prompt repro", env=env)
+    assert started.returncode == 0, started.stderr
+
+    payload = json.dumps({"tool_input": {"file_path": str(repo / "README.md")}})
+    proc = subprocess.run(
+        [str(repo / "scripts" / "hooks" / "guard-worktree-drift.sh")],
+        cwd=repo,
+        env=env,
+        input=payload,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    parsed = json.loads(proc.stdout)
+    hook_output = parsed["hookSpecificOutput"]
+    assert hook_output["permissionDecision"] == "block"
+    assert "WorkspaceRootDrift" in hook_output["permissionDecisionReason"]
+
+
+def test_guard_worktree_drift_allows_target_worktree_edits(tmp_path: Path) -> None:
+    """E17-8 Slice 2: edits in the registered task worktree pass silently."""
+
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+    env["CLAUDE_PROJECT_DIR"] = str(repo)
+
+    started = _run_script("task-start.sh", repo, "DRIFT-ASK-2", "Same worktree repro", env=env)
+    assert started.returncode == 0, started.stderr
+
+    task_worktree = repo.parent / "context-alt-text-monorepo-drift-ask-2"
+    payload = json.dumps({"tool_input": {"file_path": str(task_worktree / "README.md")}})
+    proc = subprocess.run(
+        [str(repo / "scripts" / "hooks" / "guard-worktree-drift.sh")],
+        cwd=task_worktree,
+        env=env,
+        input=payload,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert proc.stdout.strip() == ""
+
+
+def test_guard_worktree_drift_allows_allowlisted_main_surface(tmp_path: Path) -> None:
+    """E17-8 Slice 2: allow-listed task-plan edits on main pass silently."""
+
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+    env["CLAUDE_PROJECT_DIR"] = str(repo)
+
+    started = _run_script("task-start.sh", repo, "DRIFT-ALLOW-1", "Allow-list repro", env=env)
+    assert started.returncode == 0, started.stderr
+
+    payload = json.dumps({"tool_input": {"file_path": str(repo / "docs" / "tasks" / "17.0" / "plan.md")}})
+    proc = subprocess.run(
+        [str(repo / "scripts" / "hooks" / "guard-worktree-drift.sh")],
+        cwd=repo,
+        env=env,
+        input=payload,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert proc.stdout.strip() == ""
+
+
+def test_guard_worktree_drift_allows_env_bypass(tmp_path: Path) -> None:
+    """E17-8 Slice 2: ALT_ALLOW_WORKTREE_DRIFT downgrades the block."""
+
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+    env["CLAUDE_PROJECT_DIR"] = str(repo)
+    env["ALT_ALLOW_WORKTREE_DRIFT"] = "1"
+
+    started = _run_script("task-start.sh", repo, "DRIFT-ALLOW-2", "Env bypass repro", env=env)
+    assert started.returncode == 0, started.stderr
+
+    payload = json.dumps({"tool_input": {"file_path": str(repo / "README.md")}})
+    proc = subprocess.run(
+        [str(repo / "scripts" / "hooks" / "guard-worktree-drift.sh")],
+        cwd=repo,
+        env=env,
+        input=payload,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    assert proc.stdout.strip() == ""
 
 
 def test_guard_main_branch_skips_warning_when_cli_is_unavailable(tmp_path: Path) -> None:

@@ -6,7 +6,7 @@ boundary_owner: agentic-tooling
 
 ## Purpose
 
-`agent-handoff-mcp` is the portable MCP server for agent coordination state. After the AHMCP-6 event, review, next-action, and artifact-domain consolidation plus profile-removal stretch work, AHMCP-8 verified-test search/read support, and AHMCP-23 observatory dashboard split, it exposes a single **20-tool** MCP surface for task state, review findings, verification evidence, artifacts, export/import, handoff close checks, and DASHBOARD.md generation. Orchestration, daemon lifecycle, lane management, and turn metrics are served by [`agent-orchestrator-mcp`](agent-orchestrator-mcp.md).
+`agent-handoff-mcp` is the portable MCP server for agent coordination state. After the AHMCP-6 event, review, next-action, and artifact-domain consolidation plus profile-removal stretch work, AHMCP-8 verified-test search/read support, and AHMCP-23 observatory dashboard split, it exposes a single **20-tool** MCP surface for task state, review findings, verification evidence, artifacts, export/import, handoff close checks, and DASHBOARD.txt generation. Orchestration, daemon lifecycle, lane management, and turn metrics are served by [`agent-orchestrator-mcp`](agent-orchestrator-mcp.md).
 
 ## Runtime Configuration
 
@@ -29,9 +29,9 @@ Default workspace-owned state:
 - artifact DB: `.task-state/mcp-artifacts.db`
 - exports: `.task-state/exports/`
 - generated machine-readable snapshot: `CURRENT_TASK.md` (JSON, active-task-only)
-- generated human-readable dashboard: `DASHBOARD.md` (pure ASCII, human-scoped observatory view)
+- generated human-readable dashboard: `DASHBOARD.txt` (pure ASCII, human-scoped observatory view)
 
-`CURRENT_TASK.md` is a deterministic JSON snapshot of the active task state (objective, status, findings, decisions, tests, blockers, actions, lanes). `DASHBOARD.md` is the human-readable ASCII observatory: Needs Attention summary, All Tasks table, cross-task open findings, deferred/wontfix findings, and registered extension sections (e.g. Lane Health from agent-orchestrator-mcp). Use `generate_current_task_md()` to refresh the JSON snapshot and `generate_dashboard_md()` to refresh the ASCII dashboard.
+`CURRENT_TASK.md` is a deterministic JSON snapshot of the active task state (objective, status, findings, decisions, tests, blockers, actions, lanes). `DASHBOARD.txt` is the human-readable ASCII observatory: Needs Attention summary, All Tasks table, cross-task open findings, deferred/wontfix findings, and registered extension sections (e.g. Lane Health from agent-orchestrator-mcp). Use `generate_current_task_md()` to refresh the JSON snapshot and `generate_dashboard_md()` to refresh the ASCII dashboard.
 
 The monorepo now consumes `agent-handoff-mcp` from the private git+ssh source for `darce/mcp-agent-handoff`; the installed binary shape stays the same.
 
@@ -77,7 +77,7 @@ Surface classes:
 | `review_runs` | action | no | Typed review-runs domain surface. `review.operation` selects `record`, `list`, or `coverage`. |
 | `handoff_close_check` | generator | yes | Derived readiness verdict from current state. |
 | `generate_current_task_md` | generator | no | Writes machine-readable JSON to `CURRENT_TASK.md` by default. Active-task-only output: objective, status, recent decisions, tests, findings, and actions for the active task ref. |
-| `generate_dashboard_md` | generator | no | Renders the human observatory view and writes pure-ASCII `DASHBOARD.md` by default. Includes All Tasks table, Needs Attention, Open Findings, Deferred/Won't Fix, and any registered extension sections (e.g. Lane Health, Worker Status from `agent-orchestrator-mcp`). Pass `write_file=False` to return the ASCII text without writing. |
+| `generate_dashboard_md` | generator | no | Renders the human observatory view and writes pure-ASCII `DASHBOARD.txt` by default. Includes All Tasks table, Needs Attention, Open Findings, Deferred/Won't Fix, and any registered extension sections (e.g. Lane Health, Worker Status from `agent-orchestrator-mcp`). Pass `write_file=False` to return the ASCII text without writing. |
 | `export_handoff_state` | generator | yes | Produces portable snapshot output. |
 | `import_handoff_state` | action | no | Imports snapshot into local DB; destructive in replace modes. |
 | `archive_task_state` | action | no | Moves active state into archive storage. |
@@ -85,7 +85,7 @@ Surface classes:
 | `get_touched_files` | query | yes | Lists touched-file rows for the resolved task. Optional: `task_ref`, `limit` (default 20, max 200), `offset`. Returns `touches` array with `total_matching` and `has_more` pagination metadata. |
 | `get_verified_tests` | query | yes | Lists verified test rows with optional task, lane, branch, commit, and pass/fail filters. |
 | `load_session` | query | yes | **Compound**: calls `get_handoff_state` + `review_findings(review={"operation":"list","status":"open"})` + `get_touched_files` in one invocation. Use at session start to minimise round trips. `sections` is passed through only to the nested `state` payload from `get_handoff_state`; `detail` is passed through to both nested state and findings; `top_n_touched_files` (default 20, max 200) bounds the additive `touched_files` list. Defaults preserve the pre-parameterization full payload behavior. |
-| `close_slice` | action | no | **Compound**: records a slice-complete decision, re-applies the active task as `in_progress`, and regenerates `CURRENT_TASK.md` plus `DASHBOARD.md`. Requires `expected_revision` when the target task is currently active. Accepts the same optional `changed_files` list as the decision variant of `record_event` and passes it through to the nested decision write. |
+| `close_slice` | action | no | **Compound**: records a slice-complete decision, re-applies the active task as `in_progress`, and regenerates `CURRENT_TASK.md` plus `DASHBOARD.txt`. Requires `expected_revision` when the target task is currently active. Accepts the same optional `changed_files` list as the decision variant of `record_event` and passes it through to the nested decision write. |
 | `update_task_status` | action | no | Updates task status without recording a slice decision. For the active task this requires `expected_revision`; for archived tasks it updates the archived snapshot status used by dashboard rendering. |
 | `audit_decision_ids` | query | yes | Audits recent decision IDs for grammar conformance. Returns canonical/malformed/freeform classifications per ID. |
 | `artifacts` | action | no | Typed artifacts domain surface. `artifact.operation` selects `record`, `search`, `get`, or `purge`. Search mode supports both ranked hits and source-list mode when `queries` is omitted or empty; get mode supports `include_terms=true`. |
@@ -122,7 +122,7 @@ Symptoms:
 - `agent-handoff-mcp` binary not found
 - import or launcher failure
 - wrong `--workspace-root` / `--state-dir`
-- missing `.task-state` or unwritable `CURRENT_TASK.md` / `DASHBOARD.md`
+- missing `.task-state` or unwritable `CURRENT_TASK.md` / `DASHBOARD.txt`
 
 Checks:
 
@@ -425,7 +425,7 @@ get_verified_tests(
 - `close_slice` requires a `session` string (same as the decision variant of `record_event`). Pass `task_ref` explicitly in multi-task flows. `focus` updates the active-task working context after the decision is recorded. `changed_files` passes through to the decision variant of `record_event` for structured review scope. The success response includes `decision` (full row) and `task_revision` (int) so callers can confirm state without a follow-up read.
 - `export_handoff_state` defaults to `include_markdown=False`. Pass `include_markdown=True` explicitly to embed CURRENT_TASK.md markdown in the export.
 - `generate_current_task_md` renders active-task-only output; cross-task sections have been moved to `generate_dashboard_md`. The "All Review Findings History" section has been removed from the default render; historical findings are available via `review_findings(review={"operation":"list","status":"all"})`.
-- `generate_dashboard_md` accepts `write_file` (default `True`) to control whether `DASHBOARD.md` is written to disk. Pass `write_file=False` to get the markdown without writing a file (useful in tests and CI diff checks). Extension sections (Lane Health, Worker Status) are contributed by `agent-orchestrator-mcp` via `register_dashboard_extension`.
+- `generate_dashboard_md` accepts `write_file` (default `True`) to control whether `DASHBOARD.txt` is written to disk. Pass `write_file=False` to get the markdown without writing a file (useful in tests and CI diff checks). Extension sections (Lane Health, Worker Status) are contributed by `agent-orchestrator-mcp` via `register_dashboard_extension`.
 - `set_handoff_state` accepts an optional `target_branch` parameter. When provided, it sets the task's intended work branch. When omitted on subsequent calls, the existing value is preserved. The field appears in `get_handoff_state` responses and in the CURRENT_TASK.md Active Status section.
 - `set_handoff_state` accepts an optional `target_worktree_path` parameter (introduced in the lane-orchestration improvements slice). It records the absolute filesystem path of the linked worktree where the task should be implemented. Used by `make context` and write-side context-drift warnings to fail-fast when an agent runs from the wrong directory in a multi-agent / multi-worktree workflow. When omitted on subsequent calls, the existing value is preserved.
 - Write surfaces that resolve actor context (`set_handoff_state`, `record_event`, `next_actions`, `review_findings`, and `review_runs`) emit `context_drift` warnings when the resolved actor branch differs from the active task's `target_branch`, or when the current process working directory differs from the active task's `target_worktree_path`.
@@ -563,11 +563,11 @@ Host-specific integrations (e.g. Codex skill wrappers, VS Code callbacks) trigge
 
 **Trigger:** `switch_task(task_ref=...)` completes (archives the prior task, activates the new task).
 
-**Side effects allowed:** `CURRENT_TASK.md` and `DASHBOARD.md` regeneration. `generate_current_task_md` runs for the new active task so the machine-readable snapshot and human-readable mirror reflect the switch immediately.
+**Side effects allowed:** `CURRENT_TASK.md` and `DASHBOARD.txt` regeneration. `generate_current_task_md` runs for the new active task so the machine-readable snapshot and human-readable mirror reflect the switch immediately.
 
-**Required durable output:** Updated machine-readable `CURRENT_TASK.md` plus human-readable `DASHBOARD.md` for the new task. If regeneration fails, the failure must be surfaced in the `switch_task` response, not silently swallowed.
+**Required durable output:** Updated machine-readable `CURRENT_TASK.md` plus human-readable `DASHBOARD.txt` for the new task. If regeneration fails, the failure must be surfaced in the `switch_task` response, not silently swallowed.
 
-**Operator visibility:** `DASHBOARD.md` must be current after `switch_task` returns, and `CURRENT_TASK.md` must remain parseable machine state. If either file appears stale, run `generate_current_task_md(task_ref=<new-task>)` explicitly.
+**Operator visibility:** `DASHBOARD.txt` must be current after `switch_task` returns, and `CURRENT_TASK.md` must remain parseable machine state. If either file appears stale, run `generate_current_task_md(task_ref=<new-task>)` explicitly.
 
 ---
 

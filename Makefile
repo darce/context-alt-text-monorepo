@@ -578,7 +578,7 @@ ace-trends:
 context:
 	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) scripts/check-task-context.py
 
-# Generate DASHBOARD.md — the human-scoped observatory view.
+# Generate DASHBOARD.txt — the human-scoped observatory view.
 # Renders Needs Attention, All Tasks, Open Findings, and Deferred sections.
 # Extension sections (Lane Health, Worker Status) appear only when
 # agent-orchestrator-mcp is loaded and has registered its extension callback.

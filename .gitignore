@@ -90,6 +90,7 @@ apps/prototype-description-service/logs/
 # Operational ephemera (local)
 CURRENT_TASK.md
 DASHBOARD.txt
+DASHBOARD.md
 .task-state/
 
 # local logs

@@ -77,7 +77,7 @@ make lane-intake TASK=<task> LANE=<lane>                       # Merge a lane
 make lane-refresh TASK=<task> LANE=<lane>                      # Sync lane to root
 make lane-list                                                 # List all lanes
 make state                                                     # Full MCP state
-make dashboard                                                 # Generate DASHBOARD.md (human observatory view)
+make dashboard                                                 # Generate DASHBOARD.txt (human observatory view)
 make orchestrator-daemon [TASK=<task>] [BACKEND=codex-cli|codex-subagent] [MODEL=gpt-5.4-mini]
 make artifact-list TASK=<task> [LANE=<lane>]                  # List indexed evidence
 make artifact-search TASK=<task> QUERY="schema missing"       # Search indexed evidence
@@ -339,7 +339,7 @@ What this does:
 
 1. Upserts the lane registration to `active` status.
 2. Sends an open `orchestrator_to_worker` lane message.
-3. Regenerates `CURRENT_TASK.md` as machine-readable state and `DASHBOARD.md` as the human-readable dispatch surface.
+3. Regenerates `CURRENT_TASK.md` as machine-readable state and `DASHBOARD.txt` as the human-readable dispatch surface.
 
 The worker sees it the next time they run `make lane-inbox`.
 
@@ -921,7 +921,7 @@ git stash pop
 
 ```bash
 make state                    # full MCP state dump
-make dashboard                # regenerate DASHBOARD.md (human observatory)
+make dashboard                # regenerate DASHBOARD.txt (human observatory)
 make task                     # regenerate CURRENT_TASK.md
 ```
 

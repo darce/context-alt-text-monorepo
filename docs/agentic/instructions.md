@@ -104,7 +104,7 @@ Cold start vs. mid-task re-entry:
 
 If MCP handoff is unavailable:
 
-- `DASHBOARD.md` = stale human-readable fallback; `CURRENT_TASK.md` = machine-readable state.
+- `DASHBOARD.txt` = stale human-readable fallback; `CURRENT_TASK.md` = machine-readable state.
 - Treat missing MCP as a blocker; record/report when access returns.
 
 ---
@@ -213,7 +213,7 @@ Reserve terminal for operations with no native-tool equivalent: test execution, 
 - Consolidate all checklists at the **bottom** of task documents. No scattered `- [ ]` items. No time estimates.
 - Planning docs must stay internally consistent (current state vs checklist vs success criteria vs ADR terms).
 - Record every planning-review finding in MCP handoff before presenting it in chat.
-- Do not log findings, `finding_id`s, or fix-status notes into task plans. MCP handoff is the canonical store; `DASHBOARD.md` and `CURRENT_TASK.md` are generated mirrors.
+- Do not log findings, `finding_id`s, or fix-status notes into task plans. MCP handoff is the canonical store; `DASHBOARD.txt` and `CURRENT_TASK.md` are generated mirrors.
 - Reference code locations by **function/target name**, not line numbers.
 - Pseudocode functions and CLI commands in plans must map to an existing API/import or be marked "new, to be created."
 - Validate enum values and status strings in plans against the actual API/schema.
@@ -344,8 +344,8 @@ Full checklists and pattern definitions: [playbooks/ace-pruning-playbook.md](pla
 Key gates (every slice):
 
 1. Every file-changing slice must end with a `slice_complete_*` decision. Format: [templates/slice-complete-template.md](templates/slice-complete-template.md). Enforced at write time.
-2. Call `generate_dashboard_md()` after recording — DASHBOARD.md is the operator-facing view and must stay current.
-3. Do not leave DASHBOARD.md stale. Record the missing decision before handoff if needed.
+2. Call `generate_dashboard_md()` after recording — DASHBOARD.txt is the operator-facing view and must stay current.
+3. Do not leave DASHBOARD.txt stale. Record the missing decision before handoff if needed.
 4. Update singleton state via `set_handoff_state(..., expected_revision=<current>, actor={ ... })`.
 5. Include `Handoff updated: yes` in the response.
 
@@ -366,7 +366,7 @@ During-work discipline:
 - Record verification: `record_event(event={event_kind: "test_result", ...})`. Keep `result` concise.
 - Record findings: `review_findings(review={operation: "record", ...})` for 1-2; `batch_record` for 3+ (atomic write, single DB flush).
 - **Findings live in handoff, not in task plans.** The `scripts/hooks/guard-task-plan-findings.py` hook rejects 3+ consecutive finding-style bullets in task plans. Same scanner runs via `make lint-task-plans`. Reference findings by ID (`see AOMCP-3-BR-04 in handoff`), never by pasting.
-- **Regenerate DASHBOARD.md** after every state-changing operation (`record_event`, `review_findings(operation="update"|"batch_record")`).
+- **Regenerate DASHBOARD.txt** after every state-changing operation (`record_event`, `review_findings(operation="update"|"batch_record")`).
 - Validate review state with `get_review_findings_summary(...)` and `review_findings(review={"operation":"list", ...})`, not direct `sqlite3`.
 
 Read discipline:

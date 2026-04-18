@@ -158,6 +158,8 @@ A long-lived editor buffer can silently regress files: the editor loads a file p
 
 The key behavior is **reload-on-disk-change**. An editor that reloads when a file changes on disk cannot clobber a merge.
 
+This repo commits the safe VS Code defaults in `.vscode/settings.json`, and `scripts/check_harness_sync.py` fails if those defaults drift.
+
 #### Detection-side mitigations (enforced by the lifecycle scripts)
 
 1. **`make context`** (every session start) prints a `⚠ Working-tree integrity` warning when `git diff --name-only HEAD` reports tracked files that are not listed in `.task-state/dirty-allowlist`. This catches stale buffer flushes that happened *between* sessions.

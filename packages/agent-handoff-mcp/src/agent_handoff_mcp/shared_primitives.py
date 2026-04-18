@@ -383,23 +383,49 @@ def _resolve_workspace_handoff_row(conn: sqlite3.Connection) -> sqlite3.Row | No
     if len(exact_matches) == 1:
         return exact_matches[0]
     if len(exact_matches) > 1:
-        task_refs = ", ".join(sorted(str(row["task_ref"]) for row in exact_matches))
-        raise ValueError(f"Ambiguous active task for workspace path; matching task_refs: {task_refs}")
+        _raise_ambiguous(exact_matches, reason="multiple target_worktree_path exact matches")
     if len(prefix_matches) == 1:
         return prefix_matches[0]
     if len(prefix_matches) > 1:
-        task_refs = ", ".join(sorted(str(row["task_ref"]) for row in prefix_matches))
-        raise ValueError(f"Ambiguous active task for workspace path; matching task_refs: {task_refs}")
+        _raise_ambiguous(prefix_matches, reason="multiple target_worktree_path prefix matches")
 
     # E17-11 Slice 3a: no sentinel bootstrap fallback. The former
     # branch returned the id=1 row whenever no target_worktree_path
     # registrations existed; that path violated the canonical
     # unresolved-context rule and is removed.
-    task_refs = ", ".join(sorted(str(row["task_ref"]) for row in rows))
-    raise ValueError(
-        "Ambiguous active task. Pass task_ref explicitly or run from a registered target_worktree_path. "
-        f"Known task_refs: {task_refs}"
+    # AHMCP-33: raise the structured AmbiguousWorkspaceContextError
+    # so read paths can surface candidates to the caller instead of
+    # emitting an opaque string.
+    _raise_ambiguous(
+        list(rows),
+        reason="no target_worktree_path match",
+        hint="Pass task_ref explicitly or run from a registered target_worktree_path.",
     )
+
+
+def _raise_ambiguous(
+    rows: list[sqlite3.Row], *, reason: str, hint: str | None = None
+) -> None:
+    from .shared_write_context import AmbiguousWorkspaceContextError  # noqa: PLC0415
+
+    candidates = [
+        {
+            "task_ref": str(row["task_ref"]),
+            "target_branch": _normalize_optional_text(row["target_branch"]),
+            "target_worktree_path": _normalize_optional_text(row["target_worktree_path"]),
+            "objective": _normalize_optional_text(row["objective"]),
+            "status": _normalize_optional_text(row["status"]),
+            "updated_at": _normalize_optional_text(row["updated_at"]),
+        }
+        for row in rows
+    ]
+    task_refs = ", ".join(sorted(c["task_ref"] for c in candidates))
+    prefix = "Ambiguous active task" if reason == "no target_worktree_path match" else "Ambiguous active task for workspace path"
+    parts = [f"{prefix}."]
+    if hint:
+        parts.append(hint)
+    parts.append(f"Known task_refs: {task_refs}")
+    raise AmbiguousWorkspaceContextError(" ".join(parts), candidates=candidates)
 
 
 def _resolve_task_ref(conn: sqlite3.Connection, task_ref: str | None) -> str:

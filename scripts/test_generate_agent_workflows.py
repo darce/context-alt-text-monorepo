@@ -246,3 +246,29 @@ def test_check_codex_skill_symlinks_flags_plain_file_squatting_on_slug(
     failures = _check_codex_skill_symlinks(_manifest(), codex_skills, claude_skills)
 
     assert any("branch-review" in f for f in failures)
+
+
+def test_check_codex_skill_symlinks_flags_manifest_entry_with_missing_source(
+    tmp_path: Path,
+) -> None:
+    """Manifest entry whose .claude/skills/<slug> source is gone must fail --check.
+
+    Regression guard for E17-12-BR-01: previously the check silently skipped
+    manifest entries with missing sources, allowing orphan /<skill> routes to
+    escape the gate when both .claude/skills/<slug> and .codex/skills/<slug>
+    were absent.
+    """
+    repo, claude_skills, codex_skills = _codex_skills_fixture(tmp_path)
+    _write_codex_skill_symlinks(_manifest(), codex_skills, claude_skills)
+    # Delete the canonical source AND its generated symlink so neither the
+    # first-loop missing-link check nor the stale-entry scan would catch it.
+    import shutil as _sh
+
+    _sh.rmtree(claude_skills / "branch-review")
+    (codex_skills / "branch-review").unlink()
+
+    failures = _check_codex_skill_symlinks(_manifest(), codex_skills, claude_skills)
+
+    assert any("branch-review" in f and "source" in f.lower() for f in failures), (
+        failures
+    )

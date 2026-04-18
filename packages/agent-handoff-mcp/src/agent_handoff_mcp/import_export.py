@@ -12,28 +12,31 @@ import sqlite3
 from collections.abc import Mapping
 from pathlib import Path
 
-from ._shared import (
-    HANDOFF_ACTIVE_STATUSES,
-    ResolvedWriteContext,
+from .current_task_rendering import (
     TaskSnapshot,
-    WriteActor,
     _build_current_task_state_from_snapshot,
     _collect_task_snapshot,
-    _count_task_rows,
-    _detect_git_write_context,
-    _envelope,
-    _get_db_connection,
-    _normalize_optional_text,
     _render_current_task_md,
+    _write_current_task_md_for_task,
+)
+from .shared_db_utils import _count_task_rows, _resolve_output_path
+from .shared_primitives import (
+    HANDOFF_ACTIVE_STATUSES,
+    _envelope,
+    _normalize_optional_text,
     _resolve_import_lane_id,
     _resolve_import_row_actor,
-    _resolve_output_path,
     _resolve_task_ref,
-    _resolve_write_actor,
     _row_to_dict,
     _utcnow_iso,
     _workspace_root,
-    _write_current_task_md_for_task,
+)
+from .shared_schema import _get_db_connection
+from .shared_write_context import (
+    ResolvedWriteContext,
+    WriteActor,
+    _detect_git_write_context,
+    _resolve_write_actor,
     build_write_actor,
     collect_target_context_warnings,
 )
@@ -265,6 +268,46 @@ def _import_turn_metrics(conn: sqlite3.Connection, task_ref: str, rows: list[dic
         )
 
 
+def _resolve_import_fallbacks(active: object, *, fallback_agent: str, fallback_branch: str, fallback_commit: str | None) -> tuple[str, str, str | None]:
+    if not isinstance(active, dict):
+        return fallback_agent, fallback_branch, fallback_commit
+    return (
+        _normalize_optional_text(active.get("updated_by")) or fallback_agent,
+        _normalize_optional_text(active.get("updated_branch")) or fallback_branch,
+        _normalize_optional_text(active.get("updated_commit_sha")) or fallback_commit,
+    )
+
+
+def _resolve_import_actor_values(
+    row: dict,
+    *,
+    fallback_agent: str,
+    fallback_branch: str,
+    fallback_commit: str | None,
+) -> tuple[str, str | None, str | None, str | None, str | None, str | None]:
+    return _resolve_import_row_actor(
+        row,
+        fallback_agent=fallback_agent,
+        fallback_branch=fallback_branch,
+        fallback_commit=fallback_commit,
+    )
+
+
+def _row_created_at(row: dict, now: str) -> object:
+    return row.get("created_at") or now
+
+
+def _row_updated_at(row: dict, now: str, *, fallback_keys: tuple[str, ...] = ()) -> object:
+    value = row.get("updated_at")
+    if value is not None:
+        return value
+    for key in fallback_keys:
+        candidate = row.get(key)
+        if candidate is not None:
+            return candidate
+    return row.get("created_at") or now
+
+
 def _import_snapshot(
     conn: sqlite3.Connection, task_ref: str, snapshot: dict, mode: str, set_active: bool
 ) -> dict[str, int]:
@@ -281,13 +324,12 @@ def _import_snapshot(
     active = snapshot.get("active")
     now = _utcnow_iso().replace("T", " ").replace("Z", "")
     git_branch, git_commit = _detect_git_write_context()
-    fallback_agent = _normalize_optional_text(os.environ.get("AGENT_HANDOFF_DEFAULT_AGENT")) or "codex"
-    fallback_branch = git_branch or "unknown-branch"
-    fallback_commit = git_commit
-    if isinstance(active, dict):
-        fallback_agent = _normalize_optional_text(active.get("updated_by")) or fallback_agent
-        fallback_branch = _normalize_optional_text(active.get("updated_branch")) or fallback_branch
-        fallback_commit = _normalize_optional_text(active.get("updated_commit_sha")) or fallback_commit
+    fallback_agent, fallback_branch, fallback_commit = _resolve_import_fallbacks(
+        active,
+        fallback_agent=_normalize_optional_text(os.environ.get("AGENT_HANDOFF_DEFAULT_AGENT")) or "codex",
+        fallback_branch=git_branch or "unknown-branch",
+        fallback_commit=git_commit,
+    )
     if mode == "replace_task":
         for table in (
             "blockers",
@@ -304,8 +346,11 @@ def _import_snapshot(
         ):
             conn.execute(f"DELETE FROM {table} WHERE task_ref = ?", (task_ref,))
     for row in blockers:
-        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(
-            row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit
+        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_actor_values(
+            row,
+            fallback_agent=fallback_agent,
+            fallback_branch=fallback_branch,
+            fallback_commit=fallback_commit,
         )
         conn.execute(
             "INSERT INTO blockers (task_ref, lane_id, description, status, agent, branch, commit_sha, resolved_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -318,12 +363,15 @@ def _import_snapshot(
                 branch,
                 commit_sha,
                 row.get("resolved_at"),
-                row.get("created_at") or now,
+                _row_created_at(row, now),
             ),
         )
     for row in actions:
-        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(
-            row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit
+        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_actor_values(
+            row,
+            fallback_agent=fallback_agent,
+            fallback_branch=fallback_branch,
+            fallback_commit=fallback_commit,
         )
         conn.execute(
             "INSERT INTO next_actions (task_ref, lane_id, action, priority, status, agent, branch, commit_sha, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -336,13 +384,16 @@ def _import_snapshot(
                 agent,
                 branch,
                 commit_sha,
-                row.get("created_at") or now,
-                row.get("updated_at") or row.get("created_at") or now,
+                _row_created_at(row, now),
+                _row_updated_at(row, now),
             ),
         )
     for row in decisions:
-        agent, branch, commit_sha, model, model_label, reasoning_level = _resolve_import_row_actor(
-            row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit
+        agent, branch, commit_sha, model, model_label, reasoning_level = _resolve_import_actor_values(
+            row,
+            fallback_agent=fallback_agent,
+            fallback_branch=fallback_branch,
+            fallback_commit=fallback_commit,
         )
         conn.execute(
             "INSERT INTO decisions (task_ref, lane_id, session, decision, rationale, agent, model, model_label, reasoning_level, input_tokens, output_tokens, total_tokens, changed_files_json, branch, commit_sha, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -362,12 +413,15 @@ def _import_snapshot(
                 row.get("changed_files_json", "[]"),
                 branch,
                 commit_sha,
-                row.get("created_at") or now,
+                _row_created_at(row, now),
             ),
         )
     for row in tests:
-        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(
-            row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit
+        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_actor_values(
+            row,
+            fallback_agent=fallback_agent,
+            fallback_branch=fallback_branch,
+            fallback_commit=fallback_commit,
         )
         cursor = conn.execute(
             "INSERT INTO verified_tests (task_ref, lane_id, command, passed, exit_code, result, session, agent, branch, commit_sha, verified_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -395,8 +449,11 @@ def _import_snapshot(
                     (int(cursor.lastrowid), task_ref, trace_order, trace, row.get("verified_at") or now),
                 )
     for row in findings:
-        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(
-            row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit
+        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_actor_values(
+            row,
+            fallback_agent=fallback_agent,
+            fallback_branch=fallback_branch,
+            fallback_commit=fallback_commit,
         )
         conn.execute(
             "INSERT INTO review_findings (task_ref, lane_id, finding_id, severity, file_path, line_start, line_end, description, fix, status, review_mode, session, agent, branch, commit_sha, resolution_notes, reopen_count, last_reopen_reason, last_reopened_at, resolved_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -421,8 +478,8 @@ def _import_snapshot(
                 row.get("last_reopen_reason"),
                 row.get("last_reopened_at"),
                 row.get("resolved_at"),
-                row.get("created_at") or now,
-                row.get("updated_at") or row.get("resolved_at") or row.get("created_at") or now,
+                _row_created_at(row, now),
+                _row_updated_at(row, now, fallback_keys=("resolved_at",)),
             ),
         )
     for row in lanes:
@@ -438,13 +495,16 @@ def _import_snapshot(
                 row.get("owner_agent"),
                 row.get("status", "planned"),
                 row.get("notes"),
-                row.get("created_at") or now,
-                row.get("updated_at") or row.get("created_at") or now,
+                _row_created_at(row, now),
+                _row_updated_at(row, now),
             ),
         )
     for row in reports:
-        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(
-            row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit
+        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_actor_values(
+            row,
+            fallback_agent=fallback_agent,
+            fallback_branch=fallback_branch,
+            fallback_commit=fallback_commit,
         )
         conn.execute(
             "INSERT INTO worker_reports (task_ref, lane_id, session, summary, changed_files_json, test_commands_json, blockers_json, merge_ready, status, agent, branch, commit_sha, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -461,12 +521,15 @@ def _import_snapshot(
                 agent,
                 branch,
                 commit_sha,
-                row.get("created_at") or now,
+                _row_created_at(row, now),
             ),
         )
     for row in messages:
-        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_row_actor(
-            row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit
+        agent, branch, commit_sha, _model, _model_label, _reasoning_level = _resolve_import_actor_values(
+            row,
+            fallback_agent=fallback_agent,
+            fallback_branch=fallback_branch,
+            fallback_commit=fallback_commit,
         )
         payload_json = row.get("payload_json")
         payload = row.get("payload")
@@ -486,8 +549,8 @@ def _import_snapshot(
                 agent,
                 branch,
                 commit_sha,
-                row.get("created_at") or now,
-                row.get("updated_at") or row.get("created_at") or now,
+                _row_created_at(row, now),
+                _row_updated_at(row, now),
             ),
         )
     _import_plan_cursors(conn, task_ref, plan_cursors, now)

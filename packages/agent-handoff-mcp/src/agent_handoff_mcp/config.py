@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _DEFAULT_TOOL_PROFILE = "all"
-_VALID_TOOL_PROFILES = ("all", "core", "extended")
+_VALID_TOOL_PROFILES = ("all",)
 _GIT_SUBPROCESS_TIMEOUT_SECONDS = 5
 
 
@@ -71,13 +71,11 @@ class RuntimeConfig:
     artifact_db_path: Path
     artifact_index_min_bytes: int = 4096
     artifact_index_min_lines: int = 80
-    tool_profile: str = _DEFAULT_TOOL_PROFILE  # "all"; legacy "core"/"extended" normalize to "all"
+    tool_profile: str = _DEFAULT_TOOL_PROFILE
 
     def __post_init__(self) -> None:
         if self.tool_profile not in _VALID_TOOL_PROFILES:
             raise ValueError(f"Invalid tool_profile: {self.tool_profile!r}")
-        if self.tool_profile in {"core", "extended"}:
-            object.__setattr__(self, "tool_profile", "all")
 
     @classmethod
     def for_workspace(

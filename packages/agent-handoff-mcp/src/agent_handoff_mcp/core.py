@@ -1,7 +1,6 @@
 """Core handoff module — thin re-export layer.
 
-Domain logic lives in submodules: _shared, handoff_state, decisions,
-review_findings, lanes, import_export.  This file keeps: plan cursor
+Domain logic lives in focused submodules. This file keeps: plan cursor
 functions, FTS search + search_handoff, compound tools (load_session,
 close_slice), artifact tools, deprecated aliases, and re-exports needed
 by api.py / __init__.py / tests.
@@ -14,19 +13,27 @@ import sqlite3
 
 from . import artifact_index as artifact_index
 
-# Re-exports: _shared public types, constants, and utilities
-from ._shared import (  # noqa: F401
+from .current_task_rendering import (  # noqa: F401
+    _build_current_task_state_from_snapshot,
+    _collect_all_deferred_findings,
+    _collect_all_open_findings,
+    _collect_dashboard_rows,
+    _collect_task_snapshot,
+    _fetch_related_open_findings,
+    _render_current_task_json,
+    _render_current_task_md,
+    _write_current_task_md_for_task,
+    _write_current_task_md_from_state,
+)
+from .shared_db_utils import _count_task_rows, _fetch_handoff_rows, _paginated_query  # noqa: F401
+from .shared_primitives import (  # noqa: F401
     ACTION_STATUSES,
     BATCH_CLOSE_THRESHOLD,
     BATCH_CLOSE_WINDOW_SECONDS,
     BLOCKER_STATUSES,
     CLOSEABLE_LANE_STATUSES,
     DEFAULT_HANDOFF_LIMITS,
-    # Status / set constants (accessed by tests and domain modules)
     HANDOFF_ACTIVE_STATUSES,
-    HANDOFF_FTS_SCHEMA_SQL,
-    # Schema constants
-    HANDOFF_SCHEMA_SQL,
     LANE_MESSAGE_DIRECTIONS,
     LANE_STATUSES,
     MANDATORY_SLICE_DECISION_HEADINGS,
@@ -44,47 +51,33 @@ from ._shared import (  # noqa: F401
     REVIEW_SCOPE_SOURCES,
     LaneMessagePayload,
     PromptMetrics,
-    ResolvedWriteContext,
     ReviewFindingDetails,
     TokenUsage,
-    # Public types (required by __init__.py)
-    WriteActor,
-    _build_current_task_state_from_snapshot,
-    _classify_commit_relation,
-    _collect_all_deferred_findings,
-    _collect_all_open_findings,
-    _collect_dashboard_rows,
-    _collect_task_snapshot,
-    _count_task_rows,
-    # Git helpers (monkeypatched by tests via handoff_core.X)
-    _detect_git_write_context,
     _envelope,
-    _fetch_handoff_rows,
-    _fetch_related_open_findings,
-    # DB + resolution utilities
-    _get_db_connection,
-    # Tool invocation + snapshot helpers (required by api.py via core.X)
-    _invoke_tool,
     _json_response,
     _normalize_lane_message_payload,
     _normalize_optional_text,
-    _paginated_query,
-    _render_current_task_json,
-    _render_current_task_md,
     _resolve_task_ref,
     _resolve_workspace_handoff_row,
-    _resolve_write_actor,
     _row_to_dict,
     _summarize_test_result,
-    _workspace_git_context,
     _workspace_root,
-    _write_current_task_md_for_task,
-    _write_current_task_md_from_state,
+)
+from .shared_schema import HANDOFF_FTS_SCHEMA_SQL, HANDOFF_SCHEMA_SQL, _get_db_connection  # noqa: F401
+from .shared_tool_adapters import _invoke_tool  # noqa: F401
+from .shared_write_context import (  # noqa: F401
+    ResolvedWriteContext,
+    WriteActor,
+    _classify_commit_relation,
+    _detect_git_write_context,
+    _resolve_write_actor,
+    _workspace_git_context,
     build_write_actor,
+)
+from .slice_decision import (  # noqa: F401
     classify_decision_id,
     extract_slice_label,
     is_canonical_decision,
-    # Slice decision helpers + lane message normalizer (required by tests)
     is_slice_complete_decision,
 )
 from .decisions import (  # noqa: F401
@@ -111,9 +104,6 @@ from .import_export import (  # noqa: F401
     update_task_status,
 )
 from .review_findings import (  # noqa: F401
-    _check_batch_close_guard,
-    _check_commit_relation_guard,
-    _check_reopen_escalation_guard,
     _collect_review_findings_integrity,
     batch_record_review_findings,
     get_review_coverage,
@@ -125,6 +115,11 @@ from .review_findings import (  # noqa: F401
     record_review_run,
     repair_review_finding_provenance,
     update_review_finding,
+)
+from .review_findings_updates import (  # noqa: F401
+    _check_batch_close_guard,
+    _check_commit_relation_guard,
+    _check_reopen_escalation_guard,
 )
 from .runtime import get_runtime_config
 from .touched_files import DEFAULT_TOUCHED_FILES_LIMIT, ChangeKind, get_touched_files, record_file_touch  # noqa: F401

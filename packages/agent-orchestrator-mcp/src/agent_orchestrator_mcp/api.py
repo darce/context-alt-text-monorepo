@@ -56,6 +56,7 @@ _HANDOFF_API_EXPORTS = frozenset(
         "record_review_finding",
         "record_review_run",
         "record_test_result",
+        "render_handoff",
         "report_blocker",
         "review_findings",
         "review_runs",

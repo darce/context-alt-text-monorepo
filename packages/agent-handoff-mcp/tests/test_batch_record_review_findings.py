@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from agent_handoff_mcp import api as mcp_server
-from agent_handoff_mcp._shared import _get_db_connection
+from agent_handoff_mcp.shared_schema import _get_db_connection
 from agent_handoff_mcp.config import RuntimeConfig
 
 
@@ -233,7 +233,7 @@ def test_batch_write_current_task_md_called_once(isolated_handoff: dict) -> None
     findings = [
         {"finding_id": f"BONCE-{i:02d}", "severity": "low", "file_path": "f.py", "description": "d"} for i in range(5)
     ]
-    with patch("agent_handoff_mcp.review_findings._write_current_task_md_for_task") as mock_write:
+    with patch("agent_handoff_mcp.review_findings_support._write_current_task_md_for_task") as mock_write:
         _parse(mcp_server.batch_record_review_findings(session="s1", task_ref="T9", findings=findings))
     mock_write.assert_called_once()
 

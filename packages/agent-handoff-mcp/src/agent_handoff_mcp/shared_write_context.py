@@ -126,11 +126,11 @@ def _git_repo_root() -> str | None:
     try:
         config = get_runtime_config()
         candidates.append(str(config.workspace_root))
-    except Exception:
+    except RuntimeError:
         pass
     try:
         candidates.append(os.getcwd())
-    except Exception:
+    except OSError:
         pass
     for candidate in candidates:
         try:
@@ -141,7 +141,7 @@ def _git_repo_root() -> str | None:
                 text=True,
                 timeout=_SUBPROCESS_TIMEOUT,
             )
-        except Exception:
+        except (OSError, subprocess.SubprocessError):
             continue
         if proc.returncode == 0:
             root = proc.stdout.strip()

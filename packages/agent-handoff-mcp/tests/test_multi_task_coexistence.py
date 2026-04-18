@@ -21,7 +21,7 @@ from agent_handoff_mcp import (
 
 def _configured_conn(tmp_path: Path) -> sqlite3.Connection:
     configure_runtime(RuntimeConfig.for_repo(tmp_path))
-    from agent_handoff_mcp._shared import _get_db_connection
+    from agent_handoff_mcp.shared_schema import _get_db_connection
 
     return _get_db_connection().__enter__()
 

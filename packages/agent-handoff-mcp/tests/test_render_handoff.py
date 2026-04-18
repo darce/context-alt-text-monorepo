@@ -11,8 +11,9 @@ Contract:
 - ``render_handoff(kind="dashboard", write_file=...)`` produces the same envelope shape
   and side effects as the legacy ``generate_dashboard_md`` call, writing
   ``DASHBOARD.txt`` at the workspace root with no ``DASHBOARD.md`` artifact.
-- The Python-level aliases ``generate_current_task_md`` and ``generate_dashboard_md``
-  continue to resolve for backward compatibility with existing callers.
+- The package and API surfaces expose only ``render_handoff`` for handoff rendering;
+    the retired single-purpose aliases are not importable from ``agent_handoff_mcp`` or
+    ``agent_handoff_mcp.api``.
 - The MCP tool registry exposes ``render_handoff`` (compound) and does not re-register
   the retired single-purpose names.
 """
@@ -125,16 +126,13 @@ def test_render_handoff_rejects_unknown_kind(isolated_handoff: dict) -> None:
         mcp_server.render_handoff(kind="bogus")  # type: ignore[arg-type]
 
 
-def test_python_aliases_still_resolve(isolated_handoff: dict) -> None:
-    """Existing callers that import the old names must keep working."""
-    _seed_task("alias-task")
+def test_package_and_api_surfaces_retire_legacy_render_aliases() -> None:
+    import agent_handoff_mcp as pkg
 
-    legacy_current = _parse(mcp_server.generate_current_task_md(task_ref="alias-task", write_file=False))
-    assert legacy_current["ok"] is True
-    assert legacy_current["task_ref"] == "alias-task"
-
-    legacy_dashboard = _parse(mcp_server.generate_dashboard_md(write_file=False))
-    assert legacy_dashboard["ok"] is True
+    assert not hasattr(pkg, "generate_current_task_md")
+    assert not hasattr(pkg, "generate_dashboard_md")
+    assert not hasattr(mcp_server, "generate_current_task_md")
+    assert not hasattr(mcp_server, "generate_dashboard_md")
 
 
 def test_package_exports_include_render_handoff() -> None:
@@ -142,6 +140,8 @@ def test_package_exports_include_render_handoff() -> None:
 
     assert hasattr(pkg, "render_handoff"), "render_handoff must be exported from the package root"
     assert "render_handoff" in pkg.__all__
+    assert "generate_current_task_md" not in pkg.__all__
+    assert "generate_dashboard_md" not in pkg.__all__
 
 
 def test_tool_registry_exposes_render_handoff_and_retires_old_names() -> None:

@@ -18,12 +18,11 @@ from fastmcp.client import Client, PythonStdioTransport
 from pydantic import BaseModel, Field, TypeAdapter
 
 from . import core
-from ._shared import WriteActor
 from .config import RuntimeConfig
 from .core import PromptMetrics, ResolvedWriteContext, ReviewFindingDetails, TokenUsage
 from .review_findings import BatchFindingItem, merge_review_findings
 from .runtime import configure_runtime, get_runtime_config, reset_runtime_config
-from .shared_write_context import BranchMismatchError
+from .shared_write_context import BranchMismatchError, WriteActor
 
 _core_record_decision = core.record_decision
 build_write_actor = core.build_write_actor
@@ -576,27 +575,23 @@ _ARTIFACTS_ADAPTER: TypeAdapter[ArtifactsRecordOp | ArtifactsSearchOp | Artifact
 )
 
 
-def _dump_actor(actor: WriteActorInput | dict[str, Any] | None) -> WriteActor | None:
+def _dump_actor(actor: WriteActorInput | None) -> WriteActor | None:
     if actor is None:
         return None
-    actor_model = WriteActorInput.model_validate(actor) if isinstance(actor, dict) else actor
     return cast(
         WriteActor,
-        {key: value for key, value in actor_model.model_dump(exclude_none=True).items() if isinstance(value, str)},
+        {key: value for key, value in actor.model_dump(exclude_none=True).items() if isinstance(value, str)},
     )
 
 
-def _validate_record_event(
-    event: RecordEventParam | dict[str, Any],
-) -> RecordDecisionEvent | RecordTestResultEvent | ReportBlockerEvent:
+def _validate_record_event(event: RecordEventParam) -> RecordDecisionEvent | RecordTestResultEvent | ReportBlockerEvent:
     return _RECORD_EVENT_ADAPTER.validate_python(event)
 
 
-def _dump_review_finding_details(details: ReviewFindingDetailsInput | dict[str, Any] | None) -> dict[str, Any] | None:
+def _dump_review_finding_details(details: ReviewFindingDetailsInput | None) -> dict[str, Any] | None:
     if details is None:
         return None
-    details_model = ReviewFindingDetailsInput.model_validate(details) if isinstance(details, dict) else details
-    payload = details_model.model_dump(exclude_none=True)
+    payload = details.model_dump(exclude_none=True)
     return payload or None
 
 
@@ -607,9 +602,7 @@ def _dump_batch_review_finding_item(item: ReviewFindingBatchItemInput) -> dict[s
     return payload
 
 
-def _validate_review_findings(
-    review: ReviewFindingsParam | dict[str, Any],
-) -> (
+def _validate_review_findings(review: ReviewFindingsParam) -> (
     ReviewFindingsRecordOp
     | ReviewFindingsBatchRecordOp
     | ReviewFindingsUpdateOp
@@ -620,20 +613,18 @@ def _validate_review_findings(
     return _REVIEW_FINDINGS_ADAPTER.validate_python(review)
 
 
-def _validate_review_runs(
-    review: ReviewRunsParam | dict[str, Any],
-) -> ReviewRunsRecordOp | ReviewRunsListOp | ReviewRunsCoverageOp:
+def _validate_review_runs(review: ReviewRunsParam) -> ReviewRunsRecordOp | ReviewRunsListOp | ReviewRunsCoverageOp:
     return _REVIEW_RUNS_ADAPTER.validate_python(review)
 
 
 def _validate_next_actions(
-    action: NextActionsParam | dict[str, Any],
+    action: NextActionsParam,
 ) -> NextActionsAddOp | NextActionsUpdateOp | NextActionsCompleteOp | NextActionsSkipOp | NextActionsListOp:
     return _NEXT_ACTIONS_ADAPTER.validate_python(action)
 
 
 def _validate_artifacts(
-    artifact: ArtifactsParam | dict[str, Any],
+    artifact: ArtifactsParam,
 ) -> ArtifactsRecordOp | ArtifactsSearchOp | ArtifactsGetOp | ArtifactsPurgeOp:
     return _ARTIFACTS_ADAPTER.validate_python(artifact)
 
@@ -1299,7 +1290,7 @@ class ToolEntry:
 def _build_tool_registry() -> list[ToolEntry]:
     """Build the handoff MCP tool registry (called lazily after all handlers defined)."""
     _re = _WORKER_REASONING_EFFORT_CHOICES
-    return [
+    task_and_event_tools = [
         # Task state (2)
         ToolEntry(
             "set_handoff_state",
@@ -1391,6 +1382,8 @@ def _build_tool_registry() -> list[ToolEntry]:
             surface_class="action",
             entity_family="handoff_state",
         ),
+    ]
+    review_tools = [
         # Review findings (1)
         ToolEntry(
             "review_findings",
@@ -1446,6 +1439,8 @@ def _build_tool_registry() -> list[ToolEntry]:
             surface_class="action",
             entity_family="review_runs",
         ),
+    ]
+    lifecycle_and_session_tools = [
         # Close check + CURRENT_TASK.json (2)
         ToolEntry(
             "handoff_close_check",
@@ -1635,6 +1630,8 @@ def _build_tool_registry() -> list[ToolEntry]:
             surface_class="query",
             entity_family="handoff_state",
         ),
+    ]
+    artifact_and_search_tools = [
         # Artifact tools (1)
         ToolEntry(
             "artifacts",
@@ -1697,30 +1694,13 @@ def _build_tool_registry() -> list[ToolEntry]:
             ],
         ),
     ]
+    return task_and_event_tools + review_tools + lifecycle_and_session_tools + artifact_and_search_tools
 
 
-def generate_current_task_md(
+def _render_current_task_result(
     task_ref: str | None = None,
     write_file: bool = True,
 ) -> dict:
-    """Generate CURRENT_TASK.json for the active task.
-
-    Renders only the active task's data: objective, focus, status, blockers,
-    actions, decisions, tests, findings, lanes, and coverage.  Cross-task
-    sections (All Tasks table, findings from other tasks) have moved to
-    DASHBOARD.txt — call render_handoff(kind='dashboard') to produce that file.
-
-    Args:
-        task_ref: The task to render. Defaults to the active task.
-        write_file: Write the machine-readable CURRENT_TASK.json snapshot to disk.
-
-    Return keys (data envelope):
-        task_ref: resolved task reference.
-        path: absolute path to CURRENT_TASK.json (machine-readable JSON).
-        written: True when write_file=True.
-        current_task_json: JSON content of CURRENT_TASK.json; present only
-            when write_file=False.
-    """
     with core._get_db_connection() as conn:
         resolved_task_ref = task_ref
         if resolved_task_ref is None:
@@ -1784,7 +1764,7 @@ def generate_current_task_md(
         ]
     return core._envelope(
         ok=True,
-        tool="generate_current_task_md",
+        tool="render_handoff",
         data={
             "task_ref": resolved_ref,
             "path": str(current_task_path),
@@ -1796,24 +1776,12 @@ def generate_current_task_md(
     )
 
 
-def generate_dashboard_md(write_file: bool = True) -> dict:
-    """Generate DASHBOARD.txt — the human-scoped observatory view.
-
-    Contains: Needs Attention summary, All Tasks table, cross-task open findings
-    grouped by task_ref, deferred/wontfix findings, and any registered extension
-    sections (e.g. Lane Health, Worker Status added by agent-orchestrator-mcp).
-
-    Core sections always render.  Extension sections appear only when
-    register_dashboard_extension() has been called by an extension provider.
-    The CLI path (make dashboard) renders core sections only without importing
-    agent-orchestrator-mcp.
-
-    Args:
-        write_file: Write the markdown to DASHBOARD.txt alongside CURRENT_TASK.json.
-    """
+def _render_dashboard_result(write_file: bool = True) -> dict:
     from .dashboard_rendering import generate_dashboard_md as _generate  # noqa: PLC0415
 
-    return _generate(write_file=write_file)
+    result = _generate(write_file=write_file)
+    result["tool"] = "render_handoff"
+    return result
 
 
 def render_handoff(
@@ -1841,20 +1809,13 @@ def render_handoff(
         Field(description="Write the rendered artifact to disk. Defaults to True."),
     ] = True,
 ) -> dict:
-    """Compound renderer for CURRENT_TASK.json and DASHBOARD.txt.
-
-    Replaces the two single-purpose tools ``generate_current_task_md`` and
-    ``generate_dashboard_md``. The Python aliases remain importable for
-    backward compatibility, but the MCP surface advertises a single
-    ``render_handoff`` tool.
-    """
+    """Compound renderer for CURRENT_TASK.json and DASHBOARD.txt."""
     if kind == "current_task":
-        result = generate_current_task_md(task_ref=task_ref, write_file=write_file)
+        result = _render_current_task_result(task_ref=task_ref, write_file=write_file)
     elif kind == "dashboard":
-        result = generate_dashboard_md(write_file=write_file)
+        result = _render_dashboard_result(write_file=write_file)
     else:  # pragma: no cover - pydantic rejects unknown kinds at boundary.
         raise ValueError(f"Unknown render_handoff kind: {kind!r}")
-    result["tool"] = "render_handoff"
     return result
 
 

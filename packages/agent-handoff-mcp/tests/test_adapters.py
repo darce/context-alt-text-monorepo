@@ -130,16 +130,8 @@ def test_generic_stdio_adapter_launches_packaged_server(tmp_path: Path) -> None:
 
 
 @pytest.mark.timeout(60)
-def test_legacy_tool_profile_flags_now_all_expose_the_same_21_tools(tmp_path: Path) -> None:
-    """Default/core/extended launches all expose the unified 21-tool surface.
-
-    AHMCP-8 adds `get_verified_tests` bringing the surface from 18 to 19 tools.
-    AHMCP-23 adds `generate_dashboard_md` bringing the surface from 19 to 20 tools.
-    AHMCP-31 adds `record_file_touch` and `get_touched_files` bringing the surface from 20 to 22 tools.
-    E17-7 Slice 4A compresses `generate_current_task_md` + `generate_dashboard_md`
-    into a single compound `render_handoff(kind=...)` tool, dropping the surface to 21.
-    The count is a regression guard against accidental tool churn.
-    """
+def test_only_all_tool_profile_is_accepted(tmp_path: Path) -> None:
+    """Legacy tool-profile aliases are rejected instead of silently normalized."""
     repo_root = Path(__file__).resolve().parents[3]
     launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
 
@@ -155,9 +147,23 @@ def test_legacy_tool_profile_flags_now_all_expose_the_same_21_tools(tmp_path: Pa
             return len(await client.list_tools())
 
     default_count = asyncio.run(_count([], "default-count.log"))
-    core_count = asyncio.run(_count(["--tool-profile", "core"], "core-count.log"))
-    extended_count = asyncio.run(_count(["--tool-profile", "extended"], "extended-count.log"))
-
     assert default_count == 21, f"Expected 21 default tools, got {default_count}"
-    assert core_count == 21, f"Expected 21 tools for legacy core launch, got {core_count}"
-    assert extended_count == 21, f"Expected 21 tools for legacy extended launch, got {extended_count}"
+
+    for value in ("core", "extended"):
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(launcher),
+                "--workspace-root",
+                str(repo_root),
+                "--tool-profile",
+                value,
+                "doctor",
+            ],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode != 0
+        assert "invalid choice" in result.stderr.lower() or "Invalid tool_profile" in result.stderr

@@ -7,7 +7,8 @@ import sqlite3
 from datetime import datetime
 from pathlib import PurePosixPath
 
-from ._shared import _envelope, _get_db_connection, _resolve_task_ref, _row_to_dict
+from .shared_primitives import _envelope, _resolve_task_ref, _row_to_dict
+from .shared_schema import _get_db_connection
 
 
 def _normalize_correlated_file(path: str | None) -> tuple[str | None, str | None]:

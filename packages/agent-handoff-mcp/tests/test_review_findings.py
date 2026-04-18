@@ -10,9 +10,33 @@ import pytest
 
 from agent_handoff_mcp import BranchMismatchError
 from agent_handoff_mcp import api as mcp_server
-from agent_handoff_mcp._shared import _get_db_connection, _render_current_task_md, _render_dashboard_section
+from agent_handoff_mcp.current_task_rendering import _render_current_task_md, _render_dashboard_section
+from agent_handoff_mcp.shared_schema import _get_db_connection
 from agent_handoff_mcp.config import RuntimeConfig
 from agent_handoff_mcp.current_task_rendering import _infer_epic_ref
+
+
+class _RenderCompatApi:
+    def __init__(self, wrapped: object) -> None:
+        self._wrapped = wrapped
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._wrapped, name)
+
+    def generate_current_task_md(self, task_ref: str | None = None, write_file: bool = True) -> dict:
+        result = self._wrapped.render_handoff(kind="current_task", task_ref=task_ref, write_file=write_file)
+        payload = dict(result)
+        payload["tool"] = "generate_current_task_md"
+        return payload
+
+    def generate_dashboard_md(self, write_file: bool = True) -> dict:
+        result = self._wrapped.render_handoff(kind="dashboard", write_file=write_file)
+        payload = dict(result)
+        payload["tool"] = "generate_dashboard_md"
+        return payload
+
+
+mcp_server = _RenderCompatApi(mcp_server)
 
 
 def _parse(raw: str | dict) -> dict:

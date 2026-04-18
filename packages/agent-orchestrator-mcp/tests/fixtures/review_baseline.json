@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-04-17T00:00:00Z",
+  "captured_by": "E17-9 Slice 1 — placeholder baseline pending live capture",
+  "fixture_diff_lines": 500,
+  "serial_branch_review_total_tokens": 48000,
+  "identity_response_bytes": 1600,
+  "measurement_method": "Serial /branch-review baseline captured against a ~500-line fixture diff (docs/tasks/17.0/E17-9-parallel-reviews-and-autonomous-bug-fix-loop-task-plan.md as the stand-in subject). `serial_branch_review_total_tokens` is read from agent-orchestrator-mcp `turn_metrics` aggregated across all reviewer turns in the serial run. `identity_response_bytes` is `len(json.dumps(get_handoff_state(sections='identity')['data']).encode('utf-8'))` against a populated task_ref. The /review-parallel coordinator-side envelope must stay <= 50% of `serial_branch_review_total_tokens`; the /auto-fix bounded-read identity response must stay <= `identity_response_bytes` + 10%. Numbers in this file are provisional placeholders pending the first live `/review-parallel` dogfood run; once real turn_metrics exist, replace these values with the measured tokens/bytes and bump `captured_at`.",
+  "notes": [
+    "Placeholder values are conservative overestimates chosen so the Slice 1/Slice 2 assertion tests can be wired immediately. The first live run will tighten them.",
+    "This fixture is consumed by the Slice 1 token-envelope test (to be written in a follow-up within E17-9) and by the Slice 2 bounded-reads test.",
+    "Keep `schema_version` at 1 until the shape changes; downstream tests assert on this field."
+  ]
+}

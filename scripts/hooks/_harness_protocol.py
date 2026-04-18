@@ -21,7 +21,7 @@ class HarnessContractMissingError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class PermittedMainSurface:
+class MainSurfacePattern:
     pattern: str
     reason: str
 
@@ -31,7 +31,8 @@ class BranchIsolationPolicy:
     code_roots: tuple[str, ...]
     protected_extensions: tuple[str, ...]
     root_protected_files: tuple[str, ...]
-    permitted_main_surfaces: tuple[PermittedMainSurface, ...]
+    protected_main_surfaces: tuple[MainSurfacePattern, ...]
+    permitted_main_surfaces: tuple[MainSurfacePattern, ...]
 
 
 def _contract_error(contract_path: Path, detail: str) -> HarnessContractMissingError:
@@ -194,29 +195,30 @@ def _require_string_list(mapping: dict[str, list[object]], key: str, *, contract
     return tuple(parsed)
 
 
-def _load_permitted_main_surfaces(
+def _load_surface_patterns(
     mapping: dict[str, list[object]],
     *,
+    key: str,
     contract_path: Path,
-) -> tuple[PermittedMainSurface, ...]:
-    values = mapping.get("permitted_main_surfaces", [])
+) -> tuple[MainSurfacePattern, ...]:
+    values = mapping.get(key, [])
     if not isinstance(values, list):
-        raise _contract_error(contract_path, "`branch_isolation.permitted_main_surfaces` must be a list.")
+        raise _contract_error(contract_path, f"`branch_isolation.{key}` must be a list.")
 
-    parsed: list[PermittedMainSurface] = []
+    parsed: list[MainSurfacePattern] = []
     for entry in values:
         if not isinstance(entry, dict):
             raise _contract_error(
                 contract_path,
-                "`branch_isolation.permitted_main_surfaces` entries must be mappings with `pattern` and `reason`.",
+                f"`branch_isolation.{key}` entries must be mappings with `pattern` and `reason`.",
             )
         pattern = entry.get("pattern")
         reason = entry.get("reason")
         if not isinstance(pattern, str) or not pattern:
-            raise _contract_error(contract_path, "Every permitted main surface requires a non-empty `pattern`.")
+            raise _contract_error(contract_path, f"Every `{key}` entry requires a non-empty `pattern`.")
         if not isinstance(reason, str) or not reason:
             raise _contract_error(contract_path, f"`{pattern}` is missing a non-empty `reason`.")
-        parsed.append(PermittedMainSurface(pattern=pattern, reason=reason))
+        parsed.append(MainSurfacePattern(pattern=pattern, reason=reason))
     return tuple(parsed)
 
 
@@ -227,7 +229,16 @@ def load_branch_isolation_policy(workspace_root: Path) -> BranchIsolationPolicy:
         code_roots=_require_string_list(mapping, "code_roots", contract_path=contract_path),
         protected_extensions=_require_string_list(mapping, "protected_extensions", contract_path=contract_path),
         root_protected_files=_require_string_list(mapping, "root_protected_files", contract_path=contract_path),
-        permitted_main_surfaces=_load_permitted_main_surfaces(mapping, contract_path=contract_path),
+        protected_main_surfaces=_load_surface_patterns(
+            mapping,
+            key="protected_main_surfaces",
+            contract_path=contract_path,
+        ),
+        permitted_main_surfaces=_load_surface_patterns(
+            mapping,
+            key="permitted_main_surfaces",
+            contract_path=contract_path,
+        ),
     )
 
 
@@ -236,6 +247,8 @@ def is_branch_isolation_protected_path(rel_path: str, policy: BranchIsolationPol
     if not normalized:
         return False
     if normalized in policy.root_protected_files:
+        return True
+    if find_protected_main_surface(normalized, policy) is not None:
         return True
     if PurePosixPath(normalized).suffix not in policy.protected_extensions:
         return False
@@ -255,15 +268,23 @@ def _matches_surface_pattern(candidate: PurePosixPath, normalized: str, pattern:
     return False
 
 
-def find_permitted_main_surface(rel_path: str, policy: BranchIsolationPolicy) -> PermittedMainSurface | None:
+def _find_surface_match(rel_path: str, surfaces: tuple[MainSurfacePattern, ...]) -> MainSurfacePattern | None:
     normalized = rel_path.strip().replace("\\", "/").lstrip("/")
     if not normalized:
         return None
     candidate = PurePosixPath(normalized)
-    for surface in policy.permitted_main_surfaces:
+    for surface in surfaces:
         if _matches_surface_pattern(candidate, normalized, surface.pattern):
             return surface
     return None
+
+
+def find_protected_main_surface(rel_path: str, policy: BranchIsolationPolicy) -> MainSurfacePattern | None:
+    return _find_surface_match(rel_path, policy.protected_main_surfaces)
+
+
+def find_permitted_main_surface(rel_path: str, policy: BranchIsolationPolicy) -> MainSurfacePattern | None:
+    return _find_surface_match(rel_path, policy.permitted_main_surfaces)
 
 
 def is_permitted_main_surface(rel_path: str, policy: BranchIsolationPolicy) -> tuple[bool, str | None]:

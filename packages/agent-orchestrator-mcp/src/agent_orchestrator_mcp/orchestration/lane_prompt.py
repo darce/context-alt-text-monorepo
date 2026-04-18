@@ -90,6 +90,7 @@ def _parse_args() -> argparse.Namespace:
     )
     return parser.parse_args()
 
+
 def _as_dicts(rows: Any) -> list[dict[str, Any]]:
     if not isinstance(rows, list):
         return []
@@ -319,8 +320,12 @@ def _actionable_state(activity: dict[str, Any]) -> dict[str, Any]:
         [action for action in _as_dicts(activity.get("actions")) if action.get("status") == ActionStatus.PENDING],
         key=lambda action: action.get("priority", 99),
     )
-    blockers = [blocker for blocker in _as_dicts(activity.get("blockers")) if blocker.get("status") == BlockerStatus.OPEN]
-    findings = [finding for finding in _as_dicts(activity.get("findings")) if finding.get("status") == FindingStatus.OPEN]
+    blockers = [
+        blocker for blocker in _as_dicts(activity.get("blockers")) if blocker.get("status") == BlockerStatus.OPEN
+    ]
+    findings = [
+        finding for finding in _as_dicts(activity.get("findings")) if finding.get("status") == FindingStatus.OPEN
+    ]
     worker_messages = [
         message
         for message in _as_dicts(activity.get("messages"))

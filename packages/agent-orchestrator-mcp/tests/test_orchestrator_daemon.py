@@ -59,7 +59,9 @@ def _load_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     helpers_module = sys.modules.get("orchestrator_helpers")
-    original_require_dict = helpers_module._require_dict_payload if helpers_module is not None else module._require_dict_payload
+    original_require_dict = (
+        helpers_module._require_dict_payload if helpers_module is not None else module._require_dict_payload
+    )
 
     def _compat_require_dict(payload: Any, *, source: str) -> dict[str, Any]:
         if isinstance(payload, str):

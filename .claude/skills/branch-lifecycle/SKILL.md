@@ -49,7 +49,7 @@ This skill owns the branch-scoped lifecycle. The `tdd` skill owns the failing-te
 
 ## Core Process
 
-1. Start from a reviewed task plan on `main`. Create the branch/worktree with `make task-start TASK=<task-ref> OBJECTIVE="..."`, then run `make context` before editing.
+1. Start from the task branch/worktree. If the task does not already have one, create it with `make task-start TASK=<task-ref> OBJECTIVE="..."` before the first planning or implementation edit, then run `make context`.
 2. Confirm the implementation shell is on the task's `target_branch` and `target_worktree_path`. If the task is wrong, use `switch_task` instead of carrying changes across tasks.
 3. Run implementation through bounded TDD slices: `make slice-start` -> edit -> passing test evidence -> `make slice-commit`.
 4. After each slice and before any lint or check pass, run `make format-all` (or the per-package variant in lane workers: `make format-handoff`, `make format-orchestrator`, `make format` from app dir). This auto-fixes the majority of lint violations. Do not manually fix lint errors without running the formatter first.

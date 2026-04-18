@@ -5,6 +5,7 @@ from .api import (
     batch_record_review_findings,
     build_handoff_mcp,
     build_write_actor,
+    close_slice,
     configure_runtime,
     export_handoff_state,
     get_archived_task,
@@ -16,13 +17,12 @@ from .api import (
     get_verified_tests,
     handoff_close_check,
     import_handoff_state,
-    load_session,
     list_next_actions,
     list_review_findings,
     list_review_runs,
+    load_session,
     next_actions,
     purge_artifacts,
-    close_slice,
     record_artifact,
     record_decision,
     record_event,
@@ -66,6 +66,7 @@ def generate_current_task_md(task_ref: str | None = None, write_file: bool = Tru
 def generate_dashboard_md(write_file: bool = True) -> dict:
     """Backward-compatible alias for rendering DASHBOARD.txt."""
     return render_handoff(kind="dashboard", write_file=write_file)
+
 
 __all__ = [
     "DashboardContext",

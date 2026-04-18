@@ -136,6 +136,7 @@ def test_dashboard_extension_lane_health_and_worker_status(tmp_path: Path) -> No
     then calls ``generate_dashboard_md(write_file=False)`` and asserts both
     extension sections appear in the output markdown.
     """
+    from agent_handoff_mcp import configure_runtime, generate_dashboard_md
     from agent_handoff_mcp.config import RuntimeConfig
     from agent_handoff_mcp.dashboard_rendering import (
         clear_dashboard_extensions,
@@ -143,7 +144,6 @@ def test_dashboard_extension_lane_health_and_worker_status(tmp_path: Path) -> No
     )
     from agent_handoff_mcp.shared_schema import _get_db_connection
 
-    from agent_handoff_mcp import configure_runtime, generate_dashboard_md
     from agent_orchestrator_mcp.orchestration.dashboard_extension import lane_worker_extension
 
     # Isolated runtime

@@ -47,6 +47,7 @@ FIXTURE_COPY_FILES = (
     Path(".github/hooks/guard-main-branch.py"),
     Path(".github/hooks/guard-worktree-drift.py"),
     Path("scripts/hooks/_branch_isolation_guard.py"),
+    Path("scripts/hooks/_guard_main_branch_inline.py"),
     Path("scripts/hooks/_harness_protocol.py"),
     Path("scripts/hooks/_worktree_drift.py"),
     Path("scripts/hooks/guard-main-branch.sh"),
@@ -59,6 +60,19 @@ REQUIRED_VSCODE_SETTINGS = {
     "files.refactoring.autoSave": False,
     "editor.formatOnSave": False,
 }
+REQUIRED_PROTECTED_MAIN_PATTERNS = (
+    "docs/tasks/**/*.md",
+    "docs/assessments/**",
+    "docs/scopes/**",
+    "docs/epics/**",
+    "docs/specs/**",
+    "docs/adrs/**",
+    "packages/*/docs/tasks/**",
+    "packages/*/docs/assessments/**",
+    "packages/*/docs/specs/**",
+    "packages/*/docs/epics/**",
+    "packages/*/docs/adrs/**",
+)
 
 
 def _load_contract() -> dict:
@@ -231,6 +245,11 @@ def _render_contract_yaml(contract: dict) -> str:
     for key in ("protected_branches", "code_roots", "protected_extensions", "root_protected_files"):
         _append_string_list(key)
 
+    lines.append("  protected_main_surfaces:")
+    for entry in branch_isolation.get("protected_main_surfaces", []):
+        lines.append(f"    - pattern: {entry['pattern']!r}")
+        lines.append(f"      reason: {entry['reason']!r}")
+
     lines.append("  permitted_main_surfaces:")
     for entry in branch_isolation.get("permitted_main_surfaces", []):
         lines.append(f"    - pattern: {entry['pattern']!r}")
@@ -348,37 +367,52 @@ def _ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
-def _validate_permitted_main_surfaces(spec: dict) -> list[str]:
+def _validate_surface_patterns(spec: dict, *, key: str, sample_paths: tuple[str, ...]) -> list[str]:
     errors: list[str] = []
-    entries = spec.get("permitted_main_surfaces") or []
+    entries = spec.get(key) or []
     if not isinstance(entries, list) or not entries:
-        return ["branch_isolation.permitted_main_surfaces must be a non-empty list"]
+        return [f"branch_isolation.{key} must be a non-empty list"]
 
-    sample_paths = (
-        "docs/tasks/17.0/sample.md",
-        "docs/assessments/sample.md",
-        "CLAUDE.md",
-        "docs/agentic/contracts/harness-protocol.yaml",
-    )
     for idx, entry in enumerate(entries):
         if not isinstance(entry, dict):
-            errors.append(f"branch_isolation.permitted_main_surfaces[{idx}] must be a mapping")
+            errors.append(f"branch_isolation.{key}[{idx}] must be a mapping")
             continue
         pattern = entry.get("pattern")
         reason = entry.get("reason")
         if not isinstance(pattern, str) or not pattern:
-            errors.append(f"branch_isolation.permitted_main_surfaces[{idx}] missing non-empty `pattern`")
+            errors.append(f"branch_isolation.{key}[{idx}] missing non-empty `pattern`")
             continue
         if not isinstance(reason, str) or not reason:
-            errors.append(f"branch_isolation.permitted_main_surfaces[{idx}] missing non-empty `reason`")
+            errors.append(f"branch_isolation.{key}[{idx}] missing non-empty `reason`")
         try:
             for sample in sample_paths:
                 Path(sample).match(pattern)
         except (re.error, ValueError) as exc:
             errors.append(
-                f"branch_isolation.permitted_main_surfaces[{idx}] has invalid glob `{pattern}`: {exc}"
+                f"branch_isolation.{key}[{idx}] has invalid glob `{pattern}`: {exc}"
             )
     return errors
+
+
+def _pattern_targets_planning_surface(pattern: str) -> bool:
+    if pattern.startswith("docs/tasks/archive/") or pattern == "docs/tasks/archive/**":
+        return False
+    return any(
+        pattern.startswith(prefix)
+        for prefix in (
+            "docs/tasks/",
+            "docs/assessments/",
+            "docs/scopes/",
+            "docs/epics/",
+            "docs/specs/",
+            "docs/adrs/",
+            "packages/*/docs/tasks/",
+            "packages/*/docs/assessments/",
+            "packages/*/docs/specs/",
+            "packages/*/docs/epics/",
+            "packages/*/docs/adrs/",
+        )
+    )
 
 
 def _check_branch_isolation(contract: dict, *, repo_root: Path = REPO_ROOT) -> list[str]:
@@ -392,7 +426,47 @@ def _check_branch_isolation(contract: dict, *, repo_root: Path = REPO_ROOT) -> l
     enforcers = spec.get("enforcers") or []
     if not isinstance(enforcers, list) or not enforcers:
         return ["branch_isolation.enforcers must be a non-empty list"]
-    errors.extend(_validate_permitted_main_surfaces(spec))
+    errors.extend(
+        _validate_surface_patterns(
+            spec,
+            key="protected_main_surfaces",
+            sample_paths=(
+                "docs/tasks/17.0/sample.md",
+                "docs/assessments/sample.md",
+                "docs/specs/sample.md",
+                "packages/foo/docs/tasks/sample.md",
+            ),
+        )
+    )
+    errors.extend(
+        _validate_surface_patterns(
+            spec,
+            key="permitted_main_surfaces",
+            sample_paths=(
+                "CLAUDE.md",
+                ".github/copilot-instructions.md",
+                "docs/agentic/contracts/harness-protocol.yaml",
+                "DASHBOARD.txt",
+            ),
+        )
+    )
+    protected_patterns = {
+        entry.get("pattern")
+        for entry in (spec.get("protected_main_surfaces") or [])
+        if isinstance(entry, dict) and isinstance(entry.get("pattern"), str)
+    }
+    for pattern in REQUIRED_PROTECTED_MAIN_PATTERNS:
+        if pattern not in protected_patterns:
+            errors.append(f"branch_isolation.protected_main_surfaces is missing required planning pattern `{pattern}`")
+    for idx, entry in enumerate(spec.get("permitted_main_surfaces") or []):
+        if not isinstance(entry, dict):
+            continue
+        pattern = entry.get("pattern")
+        if isinstance(pattern, str) and _pattern_targets_planning_surface(pattern):
+            errors.append(
+                "branch_isolation.permitted_main_surfaces "
+                f"must not include planning pattern `{pattern}` (entry {idx})"
+            )
     try:
         claude_payload = json.loads((repo_root / ".claude" / "settings.json").read_text())
     except (OSError, json.JSONDecodeError) as exc:
@@ -454,6 +528,14 @@ def _check_branch_isolation(contract: dict, *, repo_root: Path = REPO_ROOT) -> l
             errors.append(f"branch_isolation: enforcer `{path}` ({harness}) not found")
             continue
         text = full.read_text()
+        # AHMCP-20 delegation: if the enforcer delegates to a companion
+        # inline Python file, include that file's text when checking for
+        # policy-loading evidence.
+        companion_dir = full.parent
+        for companion_name in ("_guard_main_branch_inline.py",):
+            companion = companion_dir / companion_name
+            if companion.exists() and companion_name in text:
+                text += "\n" + companion.read_text()
         for branch in protected_branches:
             if not isinstance(branch, str):
                 errors.append(f"branch_isolation: protected_branches entries must be strings")
@@ -532,7 +614,27 @@ def _check_branch_isolation(contract: dict, *, repo_root: Path = REPO_ROOT) -> l
             if shell_code != 2 or "BLOCKED" not in shell_stderr:
                 errors.append(f"branch_isolation: Claude guard did not block root protected file `{root_file}`")
 
-        allowed_path = fixture_repo / "docs" / "notes.md"
+        planning_path = fixture_repo / "docs" / "tasks" / "12.0" / "fixture-task-plan.md"
+        _ensure_parent(planning_path)
+        _, output, _ = _run_python_hook(
+            vscode_guard,
+            {"toolName": "create_file", "toolInput": {"filePath": str(planning_path)}},
+            cwd=fixture_repo,
+            env=env,
+        )
+        if output is None or output["hookSpecificOutput"]["permissionDecision"] != "block":
+            errors.append("branch_isolation: VS Code guard did not block protected planning docs on main")
+
+        shell_code, _, shell_stderr = _run_shell_hook(
+            claude_guard,
+            {"tool_input": {"file_path": str(planning_path)}},
+            cwd=fixture_repo,
+            env=env,
+        )
+        if shell_code != 2 or "BLOCKED" not in shell_stderr:
+            errors.append("branch_isolation: Claude guard did not block protected planning docs on main")
+
+        allowed_path = fixture_repo / "CLAUDE.md"
         _ensure_parent(allowed_path)
         _, output, _ = _run_python_hook(
             vscode_guard,
@@ -541,7 +643,7 @@ def _check_branch_isolation(contract: dict, *, repo_root: Path = REPO_ROOT) -> l
             env=env,
         )
         if output is not None:
-            errors.append("branch_isolation: VS Code guard blocked allowed docs path `docs/notes.md`")
+            errors.append("branch_isolation: VS Code guard blocked allow-listed operator doc `CLAUDE.md`")
 
         shell_code, _, _ = _run_shell_hook(
             claude_guard,
@@ -550,7 +652,7 @@ def _check_branch_isolation(contract: dict, *, repo_root: Path = REPO_ROOT) -> l
             env=env,
         )
         if shell_code != 0:
-            errors.append("branch_isolation: Claude guard blocked allowed docs path `docs/notes.md`")
+            errors.append("branch_isolation: Claude guard blocked allow-listed operator doc `CLAUDE.md`")
 
         dirty_code_path = fixture_repo / _path_for_code_root(code_roots[0], extension)
         _ensure_parent(dirty_code_path)
@@ -672,7 +774,7 @@ def _check_worktree_drift(contract: dict, *, repo_root: Path = REPO_ROOT) -> lis
         elif "WorkspaceRootDriftError" not in output["hookSpecificOutput"]["permissionDecisionReason"]:
             errors.append("worktree_drift: block reason did not name WorkspaceRootDriftError")
 
-        allowed_path = fixture_repo / "docs" / "tasks" / "17.0" / "plan.md"
+        allowed_path = fixture_repo / "CLAUDE.md"
         _ensure_parent(allowed_path)
         _, output, _ = _run_python_hook(
             feature_guard,
@@ -681,7 +783,7 @@ def _check_worktree_drift(contract: dict, *, repo_root: Path = REPO_ROOT) -> lis
             env=env,
         )
         if output is not None:
-            errors.append("worktree_drift: drift hook blocked an allow-listed main surface")
+            errors.append("worktree_drift: drift hook blocked an allow-listed operator doc")
 
         maint_worktree = _create_worktree(
             fixture_repo,

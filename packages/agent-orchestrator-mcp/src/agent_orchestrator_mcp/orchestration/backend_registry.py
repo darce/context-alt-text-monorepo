@@ -151,6 +151,7 @@ def get_adapter(name: str, **kwargs: Any) -> BackendAdapter:
     # For CLI, we might pass codex_bin/args
     return cls(**kwargs)  # type: ignore[call-arg]
 
+
 def detect_runtime() -> str | None:
     # ... (existing detect_runtime)
     if os.environ.get("VSCODE_PID") or os.environ.get("VSCODE_IPC_HOOK_CLI"):

@@ -41,7 +41,7 @@ Code files under `apps/` or `packages/` must not be edited on `main`.
 
 - Enforced in the VS Code harness by `.github/hooks/guard-main-branch.py` via `.github/hooks/terminal-guard.json`
 - Enforced in the Claude harness by `scripts/hooks/guard-main-branch.sh` via `.claude/settings.json`
-- Allowed on `main`: docs, markdown, planning artifacts, settings, Makefiles, and other non-code config
+- Allowed on `main`: only explicitly permitted operator docs, settings, Makefiles, and other non-planning config surfaces; planning docs require a task branch from the first edit
 
 If you inherit dirty code changes on `main`, move them to a feature branch or stash them before starting new implementation work.
 

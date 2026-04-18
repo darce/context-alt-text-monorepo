@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
-import logging
 from pathlib import Path
 
 PYENV_VERSION_PATTERN = re.compile(r"\bPYENV_VERSION=([A-Za-z0-9._-]+)")

@@ -19,22 +19,18 @@ Protected code extensions: `*.py`, `*.ts`, `*.tsx`, `*.js`, `*.jsx`, `*.php`, `*
 
 Protected root files: `Makefile`.
 
-**Allowed on `main`:** documentation, planning artifacts, markdown, and other repo-local surfaces that appear in `branch_isolation.permitted_main_surfaces`. Feature branches and linked worktrees are created only when a plan is approved and implementation begins. See [planning-pipeline.md § Planning stays on main](planning-pipeline.md#planning-stays-on-main-implementation-branches-after-approval).
+**Allowed on `main`:** only non-planning operator docs, generated snapshots, and other repo-local surfaces that appear in `branch_isolation.permitted_main_surfaces`. Planning artifacts are protected on `main` and must be created and updated on the task branch from the first file write. See [planning-pipeline.md § Planning starts on the task branch](planning-pipeline.md#planning-starts-on-the-task-branch-from-the-first-artifact).
 
-**Task-plan progress lives on `main`:** update checklist progress and status blocks in `docs/tasks/`, `docs/epics/`, and similar planning artifacts directly on `main` after each implementation or review turn so the consolidated checklist reflects the latest audited state. Code stays on `feature/<task-id>` branches; progress-only planning updates do not wait for the feature merge. If a feature branch also carries the same plan file, sync the branch copy after the `main` docs commit so merge-time docs do not regress.
+**Task-plan progress lives on the task branch:** update checklist progress and status blocks in `docs/tasks/`, `docs/epics/`, package-local planning docs, and similar planning artifacts on the owning task branch after each implementation or review turn. MCP handoff remains the live cross-branch source of truth while the branch is open; the planning docs land on `main` only when the reviewed branch merges.
 
 - Treat checklist items as complete only after the relevant handoff review findings for that turn are fixed or explicitly resolved.
-- Do not mark a task-plan slice complete on initial implementation alone; unresolved branch-review or planning-review findings mean the checklist stays in-progress on `main`.
-- When a turn lands implementation on a feature branch but review remains open, update `main` to show the real intermediate state rather than prematurely checking the box.
+- Do not mark a task-plan slice complete on initial implementation alone; unresolved branch-review or planning-review findings mean the checklist stays in-progress on the task branch.
+- Do not mirror in-progress planning-doc status back to `main` while the task branch is still open; that split state is exactly the ambiguity this policy removes.
 
 ### Main-Worktree Allow-List
 
-`branch_isolation.permitted_main_surfaces` in [harness-protocol.yaml](../contracts/harness-protocol.yaml) is a per-project configurable allow-list for legitimate edits that still belong on the primary `main` worktree while feature implementation happens in linked worktrees. Projects adopting this harness are expected to rewrite the list to match their own planning and operator surfaces; the entries below are this repo's current shipped policy:
+`branch_isolation.permitted_main_surfaces` in [harness-protocol.yaml](../contracts/harness-protocol.yaml) is a per-project configurable allow-list for legitimate non-planning edits that still belong on the primary `main` worktree while task work happens in linked worktrees. Projects adopting this harness are expected to rewrite the list to match their own operator surfaces; the entries below are this repo's current shipped policy:
 
-- `docs/tasks/**/*.md`: task-plan progress and checkbox sync on `main`
-- `docs/assessments/**`: assessment artifacts that land on `main` before or alongside implementation
-- `docs/scopes/**`: scope notes that stay on `main`
-- `docs/epics/**`: epic-level planning artifacts that stay on `main`
 - `CLAUDE.md`: canonical agent dispatcher that stays editable on `main`
 - `.github/copilot-instructions.md`: VS Code harness mirror of `CLAUDE.md`
 - `docs/agentic/BOOTSTRAP.md`: operator-facing cold-start reference
@@ -45,13 +41,26 @@ Protected root files: `Makefile`.
 - `docs/agentic/generated/**`: generated agentic artifacts that can update on `main`
 - `docs/tasks/archive/**`: archived task snapshots that stay editable on `main`
 - `DASHBOARD.txt`: regenerated dashboard artifact on `main`
-- `CURRENT_TASK.md`: regenerated current-task snapshot on `main`
+- `CURRENT_TASK.json`: regenerated current-task snapshot on `main`
 
 Keep each allow-list entry narrow and explainable. If a surface exists only to support this repo's workflow, add it here with a reason in the contract. If a path is code or code-adjacent implementation, do not put it on this list just to bypass the guard.
 
+### Protected Planning Surfaces
+
+`branch_isolation.protected_main_surfaces` is the complementary contract list for non-code paths that are still protected on `main`. In this repo that list includes top-level and package-local planning artifacts such as:
+
+- `docs/tasks/**/*.md`, `packages/*/docs/tasks/**`
+- `docs/assessments/**`, `packages/*/docs/assessments/**`
+- `docs/scopes/**`
+- `docs/epics/**`, `packages/*/docs/epics/**`
+- `docs/specs/**`, `packages/*/docs/specs/**`
+- `docs/adrs/**`, `packages/*/docs/adrs/**`
+
+These paths must move with the task branch from the first edit onward. Do not add them back to `permitted_main_surfaces`.
+
 ### Maintenance-Task Pattern
 
-Permitted `main` edits still need handoff registration. Before any ad-hoc doc, Makefile, config, or script patch on `main`, register a lightweight maintenance task such as:
+Permitted `main` edits still need handoff registration. Before any ad-hoc operator doc, Makefile, config, or script patch on `main`, register a lightweight maintenance task such as:
 
 `set_handoff_state(task_ref='MAINT-<slug>', objective='Describe the main-branch patch', status='in_progress')`
 
@@ -79,7 +88,7 @@ Example:
 ALT_ALLOW_WORKTREE_DRIFT=1 codex
 ```
 
-Do not treat the env var as a permanent local setting. If a path should routinely be editable on the primary worktree, add a narrow `permitted_main_surfaces` entry instead. If the work is truly maintenance on `main`, use a `MAINT-*` task ref.
+Do not treat the env var as a permanent local setting. If a path should routinely be editable on the primary worktree, add a narrow `permitted_main_surfaces` entry instead. Planning docs are not eligible for that allow-list; if the work is truly maintenance on `main`, use a `MAINT-*` task ref.
 
 **Before any code edit:**
 

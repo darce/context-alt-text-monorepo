@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: block code-file edits on main/master in the VS Code harness."""
+"""PreToolUse hook: block protected edits on main/master in the VS Code harness."""
 from __future__ import annotations
 
 import datetime
@@ -50,7 +50,7 @@ def _current_branch() -> str:
 def _build_reason(branch: str, blocked_paths: list[str]) -> str:
     rendered_paths = "\n".join(f"  - {path}" for path in blocked_paths)
     return (
-        "BLOCKED: Code file edits are not allowed on the main branch.\n\n"
+        "BLOCKED: Protected edits are not allowed on the main branch.\n\n"
         f"Branch: {branch}\n"
         "Files:\n"
         f"{rendered_paths}\n\n"
@@ -61,7 +61,8 @@ def _build_reason(branch: str, blocked_paths: list[str]) -> str:
         "  1. Feature branch for single-agent work\n"
         "  2. Worktree isolation for delegated subtasks\n"
         "  3. Lane orchestration for multi-agent parallel work\n\n"
-        "Docs, markdown, and permitted planning surfaces remain allowed on main.\n"
+        "Only explicitly permitted operator docs/config surfaces remain allowed on main.\n"
+        "Planning docs and implementation files now require a feature branch from the first edit.\n"
         "See: docs/agentic/rules/development-workflow.md#branch-isolation-protocol-mandatory"
     )
 

@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import json
-import sqlite3
-from typing import TypedDict, cast
+from typing import TypedDict
 
 from .enums import FindingStatus
+from .review_findings_support import (
+    _auto_merge_session,
+    _current_task_revision,
+    _current_task_revision_for,
+    _normalize_source_task_refs,
+    _validate_review_mode_or_envelope,
+    _write_current_task_md_for_active_context,
+    cast_details,
+)
 from .shared_primitives import (
     REVIEW_FINDING_SEVERITIES,
     ReviewFindingDetails,
@@ -17,15 +25,6 @@ from .shared_primitives import (
 )
 from .shared_schema import _get_db_connection
 from .shared_write_context import WriteActor, _resolve_write_actor, collect_target_context_warnings
-from .review_findings_support import (
-    _auto_merge_session,
-    _current_task_revision,
-    _current_task_revision_for,
-    _normalize_source_task_refs,
-    _validate_review_mode_or_envelope,
-    _write_current_task_md_for_active_context,
-    cast_details,
-)
 
 _BATCH_MAX_SIZE = 100
 

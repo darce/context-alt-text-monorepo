@@ -12,7 +12,6 @@ import re
 import sqlite3
 
 from . import artifact_index as artifact_index
-
 from .current_task_rendering import (  # noqa: F401
     _build_current_task_state_from_snapshot,
     _collect_all_deferred_findings,
@@ -25,6 +24,48 @@ from .current_task_rendering import (  # noqa: F401
     _write_current_task_md_for_task,
     _write_current_task_md_from_state,
 )
+from .decisions import (  # noqa: F401
+    _collect_task_provenance_integrity,
+    audit_decision_ids,
+    handoff_close_check,
+    list_next_actions,
+    record_decision,
+    record_test_result,
+    report_blocker,
+    update_next_actions,
+)
+
+# Re-exports: domain modules (all accessed via api.py as core.X)
+from .handoff_state import get_handoff_state, set_handoff_state
+from .import_export import (  # noqa: F401
+    _import_snapshot,
+    _set_import_active_state,
+    archive_task_state,
+    export_handoff_state,
+    get_archived_task,
+    import_handoff_state,
+    switch_task,
+    update_task_status,
+)
+from .review_findings import (  # noqa: F401
+    _collect_review_findings_integrity,
+    batch_record_review_findings,
+    get_review_coverage,
+    get_review_findings_summary,
+    list_review_findings,
+    list_review_runs,
+    reconcile_review_findings,
+    record_review_finding,
+    record_review_run,
+    repair_review_finding_provenance,
+    update_review_finding,
+)
+from .review_findings_updates import (  # noqa: F401
+    _check_batch_close_guard,
+    _check_commit_relation_guard,
+    _check_reopen_escalation_guard,
+)
+from .runtime import get_runtime_config
 from .shared_db_utils import _count_task_rows, _fetch_handoff_rows, _paginated_query  # noqa: F401
 from .shared_primitives import (  # noqa: F401
     ACTION_STATUSES,
@@ -80,48 +121,6 @@ from .slice_decision import (  # noqa: F401
     is_canonical_decision,
     is_slice_complete_decision,
 )
-from .decisions import (  # noqa: F401
-    _collect_task_provenance_integrity,
-    audit_decision_ids,
-    handoff_close_check,
-    list_next_actions,
-    record_decision,
-    record_test_result,
-    report_blocker,
-    update_next_actions,
-)
-
-# Re-exports: domain modules (all accessed via api.py as core.X)
-from .handoff_state import get_handoff_state, set_handoff_state
-from .import_export import (  # noqa: F401
-    _import_snapshot,
-    _set_import_active_state,
-    archive_task_state,
-    export_handoff_state,
-    get_archived_task,
-    import_handoff_state,
-    switch_task,
-    update_task_status,
-)
-from .review_findings import (  # noqa: F401
-    _collect_review_findings_integrity,
-    batch_record_review_findings,
-    get_review_coverage,
-    get_review_findings_summary,
-    list_review_findings,
-    list_review_runs,
-    reconcile_review_findings,
-    record_review_finding,
-    record_review_run,
-    repair_review_finding_provenance,
-    update_review_finding,
-)
-from .review_findings_updates import (  # noqa: F401
-    _check_batch_close_guard,
-    _check_commit_relation_guard,
-    _check_reopen_escalation_guard,
-)
-from .runtime import get_runtime_config
 from .touched_files import DEFAULT_TOUCHED_FILES_LIMIT, ChangeKind, get_touched_files, record_file_touch  # noqa: F401
 from .verified_tests import get_verified_tests  # noqa: F401
 

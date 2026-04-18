@@ -5,11 +5,11 @@ Contains worktree lane management, turn metrics, worker reports, and lane messag
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import os
 import sqlite3
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
@@ -343,9 +343,12 @@ def _resolve_task_ref(conn: sqlite3.Connection, task_ref: str | None) -> str:
 
 
 def _resolve_write_actor(conn: sqlite3.Connection, actor: WriteActor | None):
-    from agent_handoff_mcp.shared_write_context import _resolve_write_actor as _handoff_resolve_write_actor  # noqa: PLC0415
+    from agent_handoff_mcp.shared_write_context import (
+        _resolve_write_actor as _handoff_resolve_write_actor,  # noqa: PLC0415
+    )
 
     return _handoff_resolve_write_actor(conn, actor)
+
 
 _VALID_DETAIL_LEVELS = {"full", "summary"}
 _LIST_SECTION_IDENTITY = "identity"

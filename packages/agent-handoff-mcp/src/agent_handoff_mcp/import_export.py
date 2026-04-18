@@ -268,7 +268,9 @@ def _import_turn_metrics(conn: sqlite3.Connection, task_ref: str, rows: list[dic
         )
 
 
-def _resolve_import_fallbacks(active: object, *, fallback_agent: str, fallback_branch: str, fallback_commit: str | None) -> tuple[str, str, str | None]:
+def _resolve_import_fallbacks(
+    active: object, *, fallback_agent: str, fallback_branch: str, fallback_commit: str | None
+) -> tuple[str, str, str | None]:
     if not isinstance(active, dict):
         return fallback_agent, fallback_branch, fallback_commit
     return (

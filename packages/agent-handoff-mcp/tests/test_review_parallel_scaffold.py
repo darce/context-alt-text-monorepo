@@ -1,14 +1,10 @@
-"""E17-9 Slice 1: /review-parallel scaffold invariants.
+"""E17-9 Slice 1: /review-parallel manifest guards plus coordinator runtime proof.
 
-These tests pin the repository state that the `/review-parallel` skill
-depends on. They do not measure runtime token cost — that sits on top
-of the baseline fixture and will be asserted by a follow-up slice that
-records real ``turn_metrics`` rows.
-
-What this file locks in:
+These tests cover both the static workflow surface and the coordinator-side
+runtime contract that the E17-9 plan promised:
 
 1. ``portable_commands.json`` exposes ``/review-parallel`` with the
-   argument schema the E17-9 plan requires — ``reviewers_count`` and
+   argument schema the plan requires — ``reviewers_count`` and
    ``reviewer_prompt_template`` only, and explicitly NO ``merge_strategy``
    knob (resolved planning finding E17-9-PLAN-09).
 2. ``.claude/skills/review-parallel/SKILL.md`` exists and carries the
@@ -22,13 +18,20 @@ What this file locks in:
    finding E17-9-PLAN-10).
 4. The Slice 1 baseline fixture
    ``packages/agent-orchestrator-mcp/tests/fixtures/review_baseline.json``
-   exists and declares the schema the token-envelope assertion will
-   consume (resolved planning finding E17-9-PLAN-11).
+   exists and declares the schema the token-envelope assertion consumes.
+5. A coordinator-level runtime contract test seeds reviewer-scoped task_refs,
+   merges them into the coordinator task, and proves ``merged_from``
+   provenance plus additive source-row retention.
+6. Coordinator-side envelope cost stays below half the recorded serial
+   baseline using a deterministic serialized-payload proxy. There is no
+   public turn-metrics recorder on this workflow surface yet, so the test
+   measures the merge/list payloads the coordinator itself handles.
 """
 
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -38,6 +41,23 @@ MANIFEST_PATH = REPO_ROOT / "config" / "agent-workflows" / "portable_commands.js
 SKILL_PATH = REPO_ROOT / ".claude" / "skills" / "review-parallel" / "SKILL.md"
 PROMPT_DIR = REPO_ROOT / "config" / "agent-workflows" / "prompts" / "review-parallel"
 BASELINE_PATH = REPO_ROOT / "packages" / "agent-orchestrator-mcp" / "tests" / "fixtures" / "review_baseline.json"
+
+
+def _parse(raw: str | dict) -> dict:
+    result = raw if isinstance(raw, dict) else json.loads(raw)
+    if isinstance(result, dict) and result.get("schema_version") == 2:
+        data = result.get("data", {})
+        scope = result.get("scope", {})
+        flat = {**result, **data}
+        if "task_ref" not in flat and scope.get("task_ref"):
+            flat["task_ref"] = scope["task_ref"]
+        return flat
+    return result
+
+
+def _approx_tokens(payload: dict) -> int:
+    serialized = json.dumps(payload, sort_keys=True).encode("utf-8")
+    return max(1, math.ceil(len(serialized) / 4))
 
 
 @pytest.fixture(scope="module")
@@ -51,6 +71,44 @@ def review_parallel_command(manifest: dict) -> dict:
         if entry["command_id"] == "review-parallel":
             return entry
     pytest.fail("review-parallel entry missing from portable_commands.json")
+
+
+@pytest.fixture()
+def isolated_handoff(tmp_path: Path) -> dict:
+    from agent_handoff_mcp import RuntimeConfig, configure_runtime
+
+    state_dir = tmp_path / ".task-state"
+    current_task_path = tmp_path / "CURRENT_TASK.json"
+    runtime = RuntimeConfig.for_workspace(tmp_path, state_dir=state_dir, current_task_path=current_task_path)
+    configure_runtime(runtime)
+    return {
+        "state_dir": state_dir,
+        "current_task_path": current_task_path,
+    }
+
+
+def _seed_reviewer_findings(task_ref: str, session: str, finding_prefix: str) -> list[str]:
+    from agent_handoff_mcp import batch_record_review_findings, set_handoff_state
+
+    finding_ids = [f"{finding_prefix}-{idx}" for idx in range(1, 4)]
+    _parse(set_handoff_state(task_ref=task_ref, objective=f"Reviewer scope for {task_ref}", status="in_progress"))
+    _parse(
+        batch_record_review_findings(
+            session=session,
+            task_ref=task_ref,
+            findings=[
+                {
+                    "finding_id": finding_id,
+                    "severity": "medium",
+                    "file_path": f"reviews/{task_ref.lower()}/{finding_id.lower()}.md",
+                    "description": f"Synthetic reviewer finding {finding_id}",
+                    "review_mode": "branch",
+                }
+                for finding_id in finding_ids
+            ],
+        )
+    )
+    return finding_ids
 
 
 def test_review_parallel_registered_in_manifest(review_parallel_command: dict) -> None:
@@ -126,17 +184,108 @@ def test_baseline_fixture_declares_expected_schema() -> None:
     assert payload["fixture_diff_lines"] >= 1
 
 
+def test_review_parallel_runtime_merge_contract_uses_scoped_reviewer_task_refs(isolated_handoff: dict) -> None:
+    from agent_handoff_mcp import review_findings, set_handoff_state
+
+    coordinator_task = "E17-9-COORD"
+    reviewer_a = f"{coordinator_task}-REV-A"
+    reviewer_b = f"{coordinator_task}-REV-B"
+    reviewer_a_ids = _seed_reviewer_findings(reviewer_a, "reviewer-a-pass", "A")
+    reviewer_b_ids = _seed_reviewer_findings(reviewer_b, "reviewer-b-pass", "B")
+    _parse(set_handoff_state(task_ref=coordinator_task, objective="Coordinator scope", status="in_progress"))
+
+    merge_result = _parse(
+        review_findings(
+            review={
+                "operation": "merge",
+                "source_task_refs": [reviewer_a, reviewer_b],
+                "target_task_ref": coordinator_task,
+                "session": "coord-merge-pass",
+            }
+        )
+    )
+    assert merge_result["ok"] is True, merge_result
+    assert merge_result["task_ref"] == coordinator_task
+    assert merge_result["written"] == len(reviewer_a_ids) + len(reviewer_b_ids)
+
+    merged_rows = _parse(
+        review_findings(
+            review={
+                "operation": "list",
+                "task_ref": coordinator_task,
+                "status": "open",
+                "limit": 20,
+            }
+        )
+    )
+    assert merged_rows["total_matching"] == 6
+
+    expected_sources = {
+        **{finding_id: reviewer_a for finding_id in reviewer_a_ids},
+        **{finding_id: reviewer_b for finding_id in reviewer_b_ids},
+    }
+    for finding in merged_rows["findings"]:
+        merged_from = finding.get("merged_from")
+        assert merged_from is not None, finding
+        assert merged_from["task_ref"] == expected_sources[finding["finding_id"]]
+        assert merged_from["finding_id"] == finding["finding_id"]
+
+    reviewer_a_rows = _parse(review_findings(review={"operation": "list", "task_ref": reviewer_a, "limit": 10}))
+    reviewer_b_rows = _parse(review_findings(review={"operation": "list", "task_ref": reviewer_b, "limit": 10}))
+    assert reviewer_a_rows["total_matching"] == 3
+    assert reviewer_b_rows["total_matching"] == 3
+    for finding in reviewer_a_rows["findings"] + reviewer_b_rows["findings"]:
+        assert "merged_from" not in finding
+
+
+def test_review_parallel_runtime_coordinator_envelope_stays_under_half_baseline(isolated_handoff: dict) -> None:
+    from agent_handoff_mcp import review_findings, set_handoff_state
+
+    baseline = json.loads(BASELINE_PATH.read_text())
+    coordinator_task = "E17-9-COORD-BUDGET"
+    reviewer_a = f"{coordinator_task}-REV-A"
+    reviewer_b = f"{coordinator_task}-REV-B"
+    _seed_reviewer_findings(reviewer_a, "reviewer-a-budget", "A")
+    _seed_reviewer_findings(reviewer_b, "reviewer-b-budget", "B")
+    _parse(set_handoff_state(task_ref=coordinator_task, objective="Coordinator budget scope", status="in_progress"))
+
+    merge_result = _parse(
+        review_findings(
+            review={
+                "operation": "merge",
+                "source_task_refs": [reviewer_a, reviewer_b],
+                "target_task_ref": coordinator_task,
+                "session": "coord-budget-pass",
+            }
+        )
+    )
+    merged_rows = _parse(
+        review_findings(
+            review={
+                "operation": "list",
+                "task_ref": coordinator_task,
+                "status": "open",
+                "limit": 20,
+                "detail": "summary",
+            }
+        )
+    )
+
+    coordinator_proxy_tokens = _approx_tokens(merge_result) + _approx_tokens(merged_rows)
+    half_baseline = int(baseline["serial_branch_review_total_tokens"] * 0.5)
+    assert coordinator_proxy_tokens <= half_baseline, (
+        f"Coordinator envelope proxy {coordinator_proxy_tokens} tokens exceeds "
+        f"half-baseline ceiling {half_baseline}. The merge/list payloads should stay "
+        f"well below the recorded serial /branch-review cost."
+    )
+
+
 def test_identity_response_stays_within_baseline_ceiling(tmp_path: Path) -> None:
     """E17-9-BR-03 (identity portion): the /auto-fix bounded-read contract
     requires the identity-only handoff response to stay <= baseline + 10%.
     Runtime assertion against a freshly-initialised task_ref so the test is
     hermetic and does not depend on live DB size."""
-    from agent_handoff_mcp import (  # noqa: PLC0415
-        RuntimeConfig,
-        configure_runtime,
-        get_handoff_state,
-        set_handoff_state,
-    )
+    from agent_handoff_mcp import RuntimeConfig, configure_runtime, get_handoff_state, set_handoff_state
 
     configure_runtime(RuntimeConfig.for_repo(tmp_path))
     set_handoff_state(

@@ -390,6 +390,37 @@ def test_task_finish_archives_active_task_with_status_done(tmp_path: Path) -> No
     )
 
 
+def test_task_finish_archives_non_active_task_with_status_done(tmp_path: Path) -> None:
+    """task-finish.sh must resolve the finished task's revision, not the current active task.
+
+    Regression for the post-merge MAINT-AHMCP-QUALITY-20260417 review:
+    finishing a task from the root worktree while another task is active
+    must still archive the finished task with status='done'.
+    """
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+
+    started = _run_script("task-start.sh", repo, "TF-DONE-OTHER-1", "Finish me later", env=env)
+    assert started.returncode == 0, started.stderr
+
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "--ff-only", "feature/tf-done-other-1")
+
+    other = _run_script("task-start.sh", repo, "TF-DONE-OTHER-2", "Stay active", env=env)
+    assert other.returncode == 0, other.stderr
+
+    finished = _run_script("task-finish.sh", repo, "TF-DONE-OTHER-1", env=env)
+    assert finished.returncode == 0, f"stdout={finished.stdout!r} stderr={finished.stderr!r}"
+    assert "expected_revision is required" not in finished.stderr
+
+    archived = _read_archive_row(repo, "TF-DONE-OTHER-1")
+    assert archived is not None
+    snapshot = json.loads(archived["snapshot_json"])
+    assert snapshot["active"]["status"] == "done", (
+        "task-finish must capture status=done for the target task even when another task is active"
+    )
+
+
 def test_task_lifecycle_scripts_have_no_multiline_python_heredoc() -> None:
     """AHMCP-20 / Layer 1 of the heredoc-eradication bug class fix.
 
@@ -421,6 +452,16 @@ def test_task_lifecycle_scripts_have_no_multiline_python_heredoc() -> None:
                 f"See scripts/_task_start_inline.py for the canonical example."
             )
             cursor = close_quote + 1
+
+
+def test_handoff_make_targets_use_render_handoff_current_task() -> None:
+    """slice-start/task must not call the removed CLI `task` subcommand."""
+
+    handoff_makefile = (REPO_ROOT / "mk" / "handoff.mk").read_text()
+
+    assert 'render-handoff --kind current_task' in handoff_makefile
+    assert '$(MCP_CMD) $(MCP_STATE_ARGS) task' not in handoff_makefile
+    assert 'task "$(TASK)"' not in handoff_makefile
 
 
 def test_lint_no_inline_python_heredoc_passes_on_current_scripts_tree() -> None:

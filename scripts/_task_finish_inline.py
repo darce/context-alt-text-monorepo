@@ -57,13 +57,11 @@ def main() -> int:
     # AHMCP-16-FU-01: when the task being finished is the active row
     # (handoff_state.id=1), update_task_status delegates to set_handoff_state
     # which requires expected_revision for any update of an existing row.
-    # Fetch the active row's revision via the identity-only sections
-    # projection and pass it through. When the task is NOT the active row
-    # (already cleared, or being archived from a snapshot context), the
-    # active payload is None and we pass expected_revision=None — that
-    # routes update_task_status to the archived-snapshot path which does
-    # not enforce optimistic concurrency.
-    identity = get_handoff_state(sections="identity")
+    # Fetch the target task's identity projection directly and pass its
+    # revision through. Relying on the root worktree's active task is
+    # wrong when finishing an older task while another task is currently
+    # active in the repo root.
+    identity = get_handoff_state(task_ref=task, sections="identity")
     if isinstance(identity, str):
         identity = json.loads(identity)
     identity_data = identity.get("data") if isinstance(identity, dict) else None

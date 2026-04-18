@@ -89,36 +89,21 @@ def _collect_orchestrator_events(logs_dir: Path) -> list[dict]:
 
 
 def _load_turn_metrics(state_dir: Path, task_ref: str) -> list[dict]:
-    handoff_db = state_dir / "handoff.db"
-    if not handoff_db.exists():
-        return []
-    try:
-        with sqlite3.connect(str(handoff_db)) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                """
-                SELECT *
-                FROM turn_metrics
-                WHERE task_ref = ?
-                ORDER BY created_at ASC, id ASC
-                """,
-                (task_ref,),
-            ).fetchall()
-    except sqlite3.Error:
-        return []
+    from agent_handoff_mcp import RuntimeConfig, configure_runtime, generate_current_task_md  # noqa: PLC0415
 
-    result: list[dict] = []
-    for row in rows:
-        payload = dict(row)
-        for key in ("attribution_json", "section_sizes_json", "raw_usage_json"):
-            raw_value = payload.get(key)
-            if isinstance(raw_value, str) and raw_value.strip():
-                try:
-                    payload[key.removesuffix("_json")] = json.loads(raw_value)
-                except json.JSONDecodeError:
-                    payload[key.removesuffix("_json")] = {}
-        result.append(payload)
-    return result
+    configure_runtime(RuntimeConfig.for_repo(state_dir.parent, state_dir=state_dir))
+    payload = generate_current_task_md(task_ref=task_ref, write_file=False)
+    if payload.get("ok") is not True:
+        error = payload.get("error") or payload.get("data", {}).get("error")
+        raise RuntimeError(f"generate_current_task_md failed for {task_ref}: {error}")
+    current_task_json = payload.get("data", {}).get("current_task_json")
+    if not isinstance(current_task_json, str):
+        raise RuntimeError(f"generate_current_task_md returned no current_task_json for {task_ref}")
+    state = json.loads(current_task_json)
+    rows = state.get("turn_metrics", [])
+    if not isinstance(rows, list):
+        raise RuntimeError(f"CURRENT_TASK.json returned non-list turn_metrics for {task_ref}")
+    return [row for row in rows if isinstance(row, dict)]
 
 
 # ---------------------------------------------------------------------------
@@ -751,7 +736,7 @@ def _handoff_memory(task_ref: str, state_dir: Path, workspace_root: Path) -> dic
             ).fetchone()
             result["total_decisions"] = int(decision_count)
             result["total_findings"] = int(finding_count)
-            result["data_available"] = True
+            result["data_available"] = bool(result["total_decisions"] or result["total_findings"])
     except (json.JSONDecodeError, RuntimeError, sqlite3.Error):
         pass
 

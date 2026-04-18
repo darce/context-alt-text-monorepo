@@ -18,9 +18,11 @@ from scripts.check_harness_sync import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COPY_PATHS = (
+    Path(".claude/settings.json"),
     Path(".github/hooks/guard-main-branch.py"),
     Path(".github/hooks/terminal-guard.json"),
     Path(".github/hooks/guard-worktree-drift.py"),
+    Path("scripts/hooks/_branch_isolation_guard.py"),
     Path("scripts/hooks/_harness_protocol.py"),
     Path("scripts/hooks/_worktree_drift.py"),
     Path("scripts/hooks/guard-main-branch.sh"),
@@ -206,6 +208,27 @@ def test_branch_isolation_requires_vscode_main_guard_matcher(tmp_path: Path) -> 
     contract = _valid_contract()
     errors = _check_branch_isolation(contract, repo_root=repo)
     assert any("guard-main-branch.py" in err and "scope" in err for err in errors)
+
+
+def test_branch_isolation_requires_claude_main_guard_matcher(tmp_path: Path) -> None:
+    repo = _write_repo(tmp_path)
+    payload = json.loads((repo / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    entry = next(
+        item
+        for item in payload["hooks"]["PreToolUse"]
+        if any(
+            hook.get("command") == 'bash "$CLAUDE_PROJECT_DIR/scripts/hooks/guard-main-branch.sh"'
+            for hook in item.get("hooks", [])
+        )
+    )
+    entry.pop("matcher", None)
+    (repo / ".claude" / "settings.json").write_text(
+        json.dumps(payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    contract = _valid_contract()
+    errors = _check_branch_isolation(contract, repo_root=repo)
+    assert any("guard-main-branch.sh" in err and "scope" in err for err in errors)
 
 
 def test_real_contract_passes_run_checks() -> None:

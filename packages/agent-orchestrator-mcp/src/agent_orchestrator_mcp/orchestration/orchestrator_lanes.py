@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -12,7 +13,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from _env import pythonpath_env
-from orchestrator_helpers import _json_load
+from orchestrator_helpers import _require_dict_payload
 
 # ---------------------------------------------------------------------------
 # Dispatch, poll, intake
@@ -40,7 +41,9 @@ def _run_handoff_dispatch(
     result = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
     if result.returncode != 0:
         raise RuntimeError(f"review_dispatch.py failed (exit {result.returncode}):\n{result.stderr.strip()}")
-    data: dict[str, Any] = _json_load(result.stdout)
+    data = json.loads(result.stdout)
+    if not isinstance(data, dict):
+        raise TypeError("review_dispatch.py stdout returned non-object JSON payload.")
     return data
 
 
@@ -151,7 +154,7 @@ def _lane_has_capacity(task_ref: str, lane_id: str) -> bool:
     """Return True when a lane has no open dispatch, no pending lane action, and no open plan cursor."""
     from agent_orchestrator_mcp.lanes import get_lane_activity, lane_communication, plan_cursor  # noqa: PLC0415
 
-    messages_payload = _json_load(
+    messages_payload = _require_dict_payload(
         lane_communication(
             kind="message",
             operation="list",
@@ -160,7 +163,8 @@ def _lane_has_capacity(task_ref: str, lane_id: str) -> bool:
             status="open",
             limit=200,
             fields="direction",
-        )
+        ),
+        source=f"lane_communication(list capacity messages:{lane_id})",
     )
     if messages_payload.get("ok") is not True:
         raise RuntimeError(f"Failed to list lane messages for {lane_id}.")
@@ -168,14 +172,15 @@ def _lane_has_capacity(task_ref: str, lane_id: str) -> bool:
         if isinstance(row, dict) and row.get("direction") == "orchestrator_to_worker":
             return False
 
-    activity_payload = _json_load(
+    activity_payload = _require_dict_payload(
         get_lane_activity(
             task_ref=task_ref,
             lane_id=lane_id,
             sections="actions",
             fields="status",
             limit_actions=50,
-        )
+        ),
+        source=f"get_lane_activity(capacity:{lane_id})",
     )
     if activity_payload.get("ok") is not True:
         raise RuntimeError(f"Failed to fetch lane activity for {lane_id}.")
@@ -183,7 +188,7 @@ def _lane_has_capacity(task_ref: str, lane_id: str) -> bool:
         if isinstance(row, dict) and row.get("status") == "pending":
             return False
 
-    cursor_payload = _json_load(
+    cursor_payload = _require_dict_payload(
         plan_cursor(
             operation="list",
             task_ref=task_ref,
@@ -191,7 +196,8 @@ def _lane_has_capacity(task_ref: str, lane_id: str) -> bool:
             lane_id=lane_id,
             limit=20,
             fields="plan_item_id",
-        )
+        ),
+        source=f"plan_cursor(list capacity:{lane_id})",
     )
     if cursor_payload.get("ok") is not True:
         raise RuntimeError(f"Failed to list plan cursors for {lane_id}.")
@@ -204,7 +210,7 @@ def _complete_lane_plan_cursor(
     """Mark the newest dispatched plan cursor for a lane complete."""
     from agent_orchestrator_mcp.lanes import plan_cursor  # noqa: PLC0415
 
-    payload = _json_load(
+    payload = _require_dict_payload(
         plan_cursor(
             operation="list",
             task_ref=task_ref,
@@ -212,7 +218,8 @@ def _complete_lane_plan_cursor(
             lane_id=lane_id,
             limit=20,
             fields="plan_item_id,summary,source_heading",
-        )
+        ),
+        source=f"plan_cursor(list complete:{lane_id})",
     )
     if payload.get("ok") is not True:
         raise RuntimeError(f"Failed to list plan cursors for {lane_id}.")
@@ -222,7 +229,7 @@ def _complete_lane_plan_cursor(
     row = rows[0]
     if not isinstance(row, dict):
         return None
-    update = _json_load(
+    update = _require_dict_payload(
         plan_cursor(
             operation="upsert",
             task_ref=task_ref,
@@ -232,7 +239,8 @@ def _complete_lane_plan_cursor(
             worker_message_id=worker_message_id,
             summary=str(row.get("summary") or ""),
             source_heading=str(row.get("source_heading") or "") or None,
-        )
+        ),
+        source=f"plan_cursor(upsert complete:{lane_id})",
     )
     if update.get("ok") is not True:
         raise RuntimeError(f"Failed to complete plan cursor for {lane_id}.")

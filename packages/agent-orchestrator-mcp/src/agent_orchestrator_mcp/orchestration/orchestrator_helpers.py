@@ -1,4 +1,4 @@
-"""Shared helpers for orchestrator modules: logging, JSON parsing, text normalization."""
+"""Shared helpers for orchestrator modules: logging, payload guards, text normalization."""
 
 from __future__ import annotations
 
@@ -37,19 +37,11 @@ def rotate_jsonl_if_needed(path: Path, max_bytes: int) -> None:
         pass
 
 
-def _json_load(payload: str | dict[str, Any]) -> dict[str, Any]:
-    """Normalise an inner-tool result to a dict.
-
-    Post-AHMCP-10 handoff handlers return native dicts (Slice 3 of
-    AHMCP-7); pre-AHMCP-10 they returned JSON strings. This helper
-    accepts both shapes so the orchestrator daemon code can be flipped
-    in lockstep without forcing every call site to change. Once the
-    string-return path is fully retired we can drop the str branch.
-    """
-    data = payload if isinstance(payload, dict) else json.loads(payload)
-    if not isinstance(data, dict):
-        raise RuntimeError("Expected JSON object payload from handoff tool.")
-    return data
+def _require_dict_payload(payload: Any, *, source: str) -> dict[str, Any]:
+    """Assert that a helper/tool call already returned a native dict payload."""
+    if isinstance(payload, dict):
+        return payload
+    raise TypeError(f"{source} returned {type(payload).__name__}; expected dict payload.")
 
 
 def _normalize_text(value: Any) -> str:

@@ -58,6 +58,19 @@ def _load_module():
         raise RuntimeError(f"Unable to load orchestrator_daemon module from {SCRIPT_PATH}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    helpers_module = sys.modules.get("orchestrator_helpers")
+    original_require_dict = helpers_module._require_dict_payload if helpers_module is not None else module._require_dict_payload
+
+    def _compat_require_dict(payload: Any, *, source: str) -> dict[str, Any]:
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        return original_require_dict(payload, source=source)
+
+    module._require_dict_payload = _compat_require_dict
+    for imported_name in ("orchestrator_helpers", "orchestrator_guidance", "orchestrator_lanes"):
+        imported_module = sys.modules.get(imported_name)
+        if imported_module is not None and hasattr(imported_module, "_require_dict_payload"):
+            imported_module._require_dict_payload = _compat_require_dict
     return module
 
 

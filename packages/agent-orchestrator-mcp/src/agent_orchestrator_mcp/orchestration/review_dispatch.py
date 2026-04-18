@@ -21,6 +21,7 @@ from lane_manifest import lane_route_hints, list_task_refs, route_patterns
 _handoff_read_shapes = import_module(f"{__package__}.handoff_read_shapes" if __package__ else "handoff_read_shapes")
 
 from agent_orchestrator_mcp.lanes import lane_communication
+from agent_orchestrator_mcp.orchestration.orchestrator_helpers import _require_dict_payload
 
 ISSUE_KIND_LABELS: dict[str, dict[str, str]] = {
     "review_findings": {
@@ -47,15 +48,6 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--task-ref", required=True)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
-
-
-def _json_load(payload: str | dict[str, Any]) -> dict[str, Any]:
-    """Normalise an inner-tool result to a dict (AHMCP-10 dict-return migration)."""
-    data = payload if isinstance(payload, dict) else json.loads(payload)
-    if not isinstance(data, dict):
-        raise RuntimeError("Expected JSON object payload from handoff tool.")
-    return data
-
 
 def _route_lane(task_ref: str, file_path: str) -> str | None:
     patterns = route_patterns(task_ref)
@@ -149,15 +141,18 @@ def _run_make_dispatch(
 
 
 def _has_open_dispatch(task_ref: str, lane_id: str, subject: str) -> bool:
-    payload = _json_load(
+    from agent_handoff_mcp.enums import LaneMessageDirection, MessageStatus  # noqa: PLC0415
+
+    payload = _require_dict_payload(
         lane_communication(
             kind="message",
             operation="list",
             task_ref=task_ref,
             lane_id=lane_id,
-            status="open",
+            status=MessageStatus.OPEN,
             limit=100,
-        )
+        ),
+        source=f"lane_communication(list dispatch:{lane_id})",
     )
     if payload.get("ok") is not True:
         raise RuntimeError(f"Unable to list open lane messages for {lane_id}: {payload}")
@@ -167,7 +162,7 @@ def _has_open_dispatch(task_ref: str, lane_id: str, subject: str) -> bool:
     for message in messages:
         if not isinstance(message, dict):
             continue
-        if message.get("direction") == "orchestrator_to_worker" and message.get("subject") == subject:
+        if message.get("direction") == LaneMessageDirection.ORCHESTRATOR_TO_WORKER and message.get("subject") == subject:
             return True
     return False
 
@@ -175,7 +170,10 @@ def _has_open_dispatch(task_ref: str, lane_id: str, subject: str) -> bool:
 def _load_open_handoff_items(task_ref: str) -> dict[str, list[dict[str, Any]]]:
     from agent_handoff_mcp import get_handoff_state  # noqa: PLC0415
 
-    payload = _json_load(get_handoff_state(**_handoff_read_shapes.open_handoff_items_kwargs(task_ref)))
+    payload = _require_dict_payload(
+        get_handoff_state(**_handoff_read_shapes.open_handoff_items_kwargs(task_ref)),
+        source=f"get_handoff_state(open items:{task_ref})",
+    )
     if payload.get("ok") is not True:
         raise RuntimeError(f"Unable to load open handoff state: {payload}")
 
@@ -193,14 +191,18 @@ def _load_open_handoff_items(task_ref: str) -> dict[str, list[dict[str, Any]]]:
 
 
 def _normalize_action_status(value: object) -> Literal["pending", "done", "skipped"]:
-    if value == "done":
-        return "done"
-    if value == "skipped":
-        return "skipped"
-    return "pending"
+    from agent_handoff_mcp.enums import ActionStatus  # noqa: PLC0415
+
+    if value == ActionStatus.DONE:
+        return ActionStatus.DONE
+    if value == ActionStatus.SKIPPED:
+        return ActionStatus.SKIPPED
+    return ActionStatus.PENDING
 
 
 def _stamp_issue_to_lane(issue_kind: str, issue: dict[str, Any], lane_id: str, dispatch_session: str) -> None:
+    from agent_handoff_mcp.enums import BlockerStatus, FindingStatus  # noqa: PLC0415
+
     from agent_handoff_mcp import (  # noqa: PLC0415
         report_blocker,
         update_next_actions,
@@ -210,37 +212,40 @@ def _stamp_issue_to_lane(issue_kind: str, issue: dict[str, Any], lane_id: str, d
 
     lane_actor = WriteActorInput(lane_id=lane_id)
     if issue_kind == "review_findings":
-        result = _json_load(
+        result = _require_dict_payload(
             update_review_finding(
-                status="open",
+                status=FindingStatus.OPEN,
                 finding_id=str(issue["finding_id"]),
                 session=dispatch_session,
                 actor=lane_actor,
-            )
+            ),
+            source=f"update_review_finding({issue['finding_id']})",
         )
         if result.get("ok") is not True:
             raise RuntimeError(f"Unable to stamp finding {issue['finding_id']} to lane {lane_id}: {result}")
         return
 
     if issue_kind == "blockers":
-        result = _json_load(
+        result = _require_dict_payload(
             report_blocker(
                 operation="reopen",
                 blocker_id=int(issue["id"]),
                 actor=lane_actor,
-            )
+            ),
+            source=f"report_blocker(reopen:{issue['id']})",
         )
         if result.get("ok") is not True:
             raise RuntimeError(f"Unable to stamp blocker #{issue['id']} to lane {lane_id}: {result}")
         return
 
-    result = _json_load(
+    result = _require_dict_payload(
         update_next_actions(
             operation="update",
             action_id=int(issue["id"]),
             status=_normalize_action_status(issue.get("status")),
             actor=lane_actor,
-        )
+        ),
+        source=f"update_next_actions({issue['id']})",
     )
     if result.get("ok") is not True:
         raise RuntimeError(f"Unable to stamp action #{issue['id']} to lane {lane_id}: {result}")
@@ -328,7 +333,7 @@ def main() -> int:
                 _stamp_issue_to_lane(issue_kind, item, lane_id, dispatch_session)
 
     if not args.dry_run:
-        decision = _json_load(
+        decision = _require_dict_payload(
             record_decision(
                 session=dispatch_session,
                 decision="Dispatched open handoff items from orchestrator root to worker lanes.",
@@ -337,7 +342,8 @@ def main() -> int:
                     for issue_kind in ISSUE_KIND_LABELS
                     for lane_id, item_refs in sorted(dispatched[issue_kind].items())
                 ),
-            )
+            ),
+            source="record_decision(review_dispatch)",
         )
         if decision.get("ok") is not True:
             raise RuntimeError(f"Unable to record handoff dispatch decision: {decision}")

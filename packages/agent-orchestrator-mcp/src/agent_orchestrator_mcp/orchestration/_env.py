@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import os
 import re
+import logging
 from pathlib import Path
 
 PYENV_VERSION_PATTERN = re.compile(r"\bPYENV_VERSION=([A-Za-z0-9._-]+)")
 CODEX_REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
 EFFORT_LADDER = ("low", "medium", "high", "xhigh")
 WORKER_REASONING_EFFORT_CHOICES = ("inherit", "auto", *CODEX_REASONING_EFFORTS)
+logger = logging.getLogger(__name__)
 
 
 def _escalate_effort(current: str) -> str | None:
@@ -39,13 +41,11 @@ def _lane_runtime_profile(
     if not task_ref or not lane_id:
         return None, []
     try:
-        from lane_manifest import get_lane_config
+        from agent_orchestrator_mcp.orchestration.lane_manifest import get_lane_config
 
         lane = get_lane_config(task_ref, lane_id, orchestrator_root=str(orchestrator_root))
     except (ImportError, FileNotFoundError, KeyError, ValueError) as exc:
-        import sys as _sys
-
-        print(f"_lane_runtime_profile: could not load lane config: {exc}", file=_sys.stderr)
+        logger.warning("_lane_runtime_profile: could not load lane config: %s", exc)
         return None, []
     if not isinstance(lane, dict):
         return None, []

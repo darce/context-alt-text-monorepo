@@ -1,18 +1,10 @@
 import importlib
 import os
 import subprocess
-import sys
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Callable, TypeAlias
+from typing import Any, Callable
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
-
-from backend_adapter import BackendAdapter
-
-AdapterFactory: TypeAlias = Callable[[], type[BackendAdapter]]
+from agent_orchestrator_mcp.orchestration.backend_adapter import BackendAdapter
 
 
 @dataclass(frozen=True)
@@ -28,46 +20,21 @@ class BackendCapabilities:
 @dataclass(frozen=True)
 class BackendSpec:
     kind: str
-    adapter_class: type[BackendAdapter] | AdapterFactory
+    adapter_path: str
     description: str
     module: str | None = None
     capabilities: BackendCapabilities = field(default_factory=BackendCapabilities)
 
-
-def _get_cli_adapter() -> type[BackendAdapter]:
-    from agent_orchestrator_mcp.orchestration.adapters.codex_cli import CodexCliAdapter
-
-    return CodexCliAdapter
-
-
-def _get_subagent_adapter() -> type[BackendAdapter]:
-    from agent_orchestrator_mcp.orchestration.adapters.codex_subagent import CodexSubagentAdapter
-
-    return CodexSubagentAdapter
-
-
-def _get_claude_adapter() -> type[BackendAdapter]:
-    from agent_orchestrator_mcp.orchestration.adapters.claude_code import ClaudeCodeAdapter
-
-    return ClaudeCodeAdapter
-
-
-def _get_local_model_adapter() -> type[BackendAdapter]:
-    from agent_orchestrator_mcp.orchestration.adapters.local_model import LocalModelAdapter
-
-    return LocalModelAdapter
-
-
-def _get_structured_turn_adapter() -> type[BackendAdapter]:
-    from agent_orchestrator_mcp.orchestration.adapters.structured_turn import StructuredTurnAdapter
-
-    return StructuredTurnAdapter
+    @property
+    def adapter_class(self) -> type[BackendAdapter]:
+        module_name, class_name = self.adapter_path.rsplit(".", 1)
+        return getattr(importlib.import_module(module_name), class_name)
 
 
 BACKENDS: dict[str, BackendSpec] = {
     "codex-cli": BackendSpec(
         kind="cli",
-        adapter_class=_get_cli_adapter,
+        adapter_path="agent_orchestrator_mcp.orchestration.adapters.codex_cli.CodexCliAdapter",
         description="Shell out to codex exec.",
         capabilities=BackendCapabilities(
             supports_structured_output=True,
@@ -78,7 +45,7 @@ BACKENDS: dict[str, BackendSpec] = {
     ),
     "codex-subagent": BackendSpec(
         kind="bridge",
-        adapter_class=_get_subagent_adapter,
+        adapter_path="agent_orchestrator_mcp.orchestration.adapters.codex_subagent.CodexSubagentAdapter",
         module="codex_subagent_bridge",
         description="Codex app-server via bridge module.",
         capabilities=BackendCapabilities(
@@ -90,7 +57,7 @@ BACKENDS: dict[str, BackendSpec] = {
     ),
     "copilot-host": BackendSpec(
         kind="bridge",
-        adapter_class=_get_subagent_adapter,
+        adapter_path="agent_orchestrator_mcp.orchestration.adapters.codex_subagent.CodexSubagentAdapter",
         module="vscode_copilot_bridge",
         description="VS Code Copilot runSubagent bridge (no worktree isolation).",
         capabilities=BackendCapabilities(
@@ -101,7 +68,7 @@ BACKENDS: dict[str, BackendSpec] = {
     ),
     "claude-code": BackendSpec(
         kind="cli",
-        adapter_class=_get_claude_adapter,
+        adapter_path="agent_orchestrator_mcp.orchestration.adapters.claude_code.ClaudeCodeAdapter",
         description="Anthropic Claude Code CLI.",
         capabilities=BackendCapabilities(
             supports_structured_output=True,
@@ -112,7 +79,7 @@ BACKENDS: dict[str, BackendSpec] = {
     ),
     "structured-turn": BackendSpec(
         kind="in-process",
-        adapter_class=_get_structured_turn_adapter,
+        adapter_path="agent_orchestrator_mcp.orchestration.adapters.structured_turn.StructuredTurnAdapter",
         description="Always-available in-repo adapter that composes run_structured_turn; anchors cross-vendor equivalence coverage.",
         capabilities=BackendCapabilities(
             is_available=True,
@@ -123,7 +90,7 @@ BACKENDS: dict[str, BackendSpec] = {
     ),
     "local-model-openai": BackendSpec(
         kind="api",
-        adapter_class=_get_local_model_adapter,
+        adapter_path="agent_orchestrator_mcp.orchestration.adapters.local_model.LocalModelAdapter",
         description="Generic OpenAI-compatible local model API.",
         capabilities=BackendCapabilities(
             supports_structured_output=True,
@@ -174,14 +141,8 @@ def resolve_bridge(name: str) -> Callable[..., dict[str, Any] | str]:
 def get_adapter(name: str, **kwargs: Any) -> BackendAdapter:
     """Get an initialized adapter instance for the named backend."""
     spec = get_backend_spec(name)
-    factory_or_cls = spec.adapter_class
-
-    # Resolve lazy loading if it's a factory function
-    # We check if it's a function (not a class) and callable.
-    if not isinstance(factory_or_cls, type) and callable(factory_or_cls):
-        cls = factory_or_cls()
-    else:
-        cls = factory_or_cls
+    module_name, class_name = spec.adapter_path.rsplit(".", 1)
+    cls = getattr(importlib.import_module(module_name), class_name)
 
     if spec.kind == "bridge":
         runner = resolve_bridge(name)
@@ -189,14 +150,6 @@ def get_adapter(name: str, **kwargs: Any) -> BackendAdapter:
 
     # For CLI, we might pass codex_bin/args
     return cls(**kwargs)  # type: ignore[call-arg]
-
-
-def find_codex(*args: Any, **kwargs: Any) -> str:
-    """Backward compatibility wrapper for tests."""
-    from agent_orchestrator_mcp.orchestration.adapters.codex_cli import find_codex as _find
-
-    return _find(*args, **kwargs)
-
 
 def detect_runtime() -> str | None:
     # ... (existing detect_runtime)
@@ -212,6 +165,8 @@ def probe_capabilities(name: str) -> BackendCapabilities:
     base = spec.capabilities
 
     if name == "codex-cli":
+        from agent_orchestrator_mcp.orchestration.adapters.codex_cli import find_codex  # noqa: PLC0415
+
         try:
             bin_path = find_codex()
             # Probe for reasoning-effort

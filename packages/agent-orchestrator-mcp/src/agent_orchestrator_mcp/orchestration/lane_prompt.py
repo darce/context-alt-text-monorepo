@@ -40,6 +40,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from _env import extract_pyenv_version
 from backend_registry import get_backend_spec
+from orchestrator_helpers import _require_dict_payload
 
 _handoff_read_shapes = importlib.import_module(
     f"{__package__}.handoff_read_shapes" if __package__ else "handoff_read_shapes"
@@ -88,15 +89,6 @@ def _parse_args() -> argparse.Namespace:
         help="Include compact task-wide context that is intentionally omitted from the default lane-scoped prompt.",
     )
     return parser.parse_args()
-
-
-def _json_load(payload: str | dict[str, Any]) -> dict[str, Any]:
-    """Normalise an inner-tool result to a dict (AHMCP-10 dict-return migration)."""
-    data = payload if isinstance(payload, dict) else json.loads(payload)
-    if not isinstance(data, dict):
-        raise RuntimeError("Expected JSON object payload from handoff tool.")
-    return data
-
 
 def _as_dicts(rows: Any) -> list[dict[str, Any]]:
     if not isinstance(rows, list):
@@ -309,21 +301,31 @@ def _latest_timestamp(rows: list[dict[str, Any]]) -> str:
 
 
 def _actionable_state(activity: dict[str, Any]) -> dict[str, Any]:
+    from agent_handoff_mcp.enums import (  # noqa: PLC0415
+        ActionStatus,
+        BlockerStatus,
+        FindingStatus,
+        LaneMessageDirection,
+        MessageStatus,
+    )
+
     messages = [
         message
         for message in _as_dicts(activity.get("messages"))
-        if message.get("direction") == "orchestrator_to_worker" and message.get("status") == "open"
+        if message.get("direction") == LaneMessageDirection.ORCHESTRATOR_TO_WORKER
+        and message.get("status") == MessageStatus.OPEN
     ]
     actions = sorted(
-        [action for action in _as_dicts(activity.get("actions")) if action.get("status") == "pending"],
+        [action for action in _as_dicts(activity.get("actions")) if action.get("status") == ActionStatus.PENDING],
         key=lambda action: action.get("priority", 99),
     )
-    blockers = [blocker for blocker in _as_dicts(activity.get("blockers")) if blocker.get("status") == "open"]
-    findings = [finding for finding in _as_dicts(activity.get("findings")) if finding.get("status") == "open"]
+    blockers = [blocker for blocker in _as_dicts(activity.get("blockers")) if blocker.get("status") == BlockerStatus.OPEN]
+    findings = [finding for finding in _as_dicts(activity.get("findings")) if finding.get("status") == FindingStatus.OPEN]
     worker_messages = [
         message
         for message in _as_dicts(activity.get("messages"))
-        if message.get("direction") == "worker_to_orchestrator" and message.get("status") == "open"
+        if message.get("direction") == LaneMessageDirection.WORKER_TO_ORCHESTRATOR
+        and message.get("status") == MessageStatus.OPEN
     ]
 
     actionable_rows: list[dict[str, Any]] = [*messages, *actions, *blockers, *findings]
@@ -565,7 +567,7 @@ def _artifact_context_section(
         if used >= budget_chars:
             break
         try:
-            payload = _json_load(_mcp_get_artifact(source_id=sid))
+            payload = _require_dict_payload(_mcp_get_artifact(source_id=sid), source=f"get_artifact({sid})")
             if not payload.get("ok"):
                 continue
             data = payload.get("data")
@@ -595,7 +597,10 @@ def _artifact_context_section(
     if not queries:
         return lines
     try:
-        payload = _json_load(_mcp_search_artifacts(queries=queries, task_ref=task_ref, lane_id=lane_id, limit=4))
+        payload = _require_dict_payload(
+            _mcp_search_artifacts(queries=queries, task_ref=task_ref, lane_id=lane_id, limit=4),
+            source=f"search_artifacts({lane_id})",
+        )
         data = payload.get("data")
         hits = data.get("hits") if isinstance(data, dict) else []
         if not isinstance(hits, list) or not hits:
@@ -806,8 +811,9 @@ def _prompt_budget_section(
 
 
 def _task_global_context(task_ref: str) -> dict[str, list[dict[str, Any]]]:
-    payload = _json_load(
-        get_handoff_state(**_handoff_read_shapes.global_context_kwargs(task_ref, limit=MAX_GLOBAL_ITEMS))
+    payload = _require_dict_payload(
+        get_handoff_state(**_handoff_read_shapes.global_context_kwargs(task_ref, limit=MAX_GLOBAL_ITEMS)),
+        source=f"get_handoff_state(global:{task_ref})",
     )
     return {
         "actions": [row for row in _as_dicts(payload.get("actions_pending")) if row.get("lane_id") in (None, "")],
@@ -1053,7 +1059,7 @@ def main() -> int:
     configure_runtime(runtime)
 
     history_limit = 20 if args.include_lane_history else 1
-    activity = _json_load(
+    activity = _require_dict_payload(
         get_lane_activity(
             lane_id=args.lane_id,
             task_ref=args.task_ref,
@@ -1062,7 +1068,8 @@ def main() -> int:
             limit_findings=50,
             limit_actions=50,
             limit_blockers=50,
-        )
+        ),
+        source=f"get_lane_activity(prompt:{args.lane_id})",
     )
     if activity.get("ok") is not True:
         raise RuntimeError(f"Unable to load lane activity: {activity}")

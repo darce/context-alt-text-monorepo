@@ -11,6 +11,8 @@
 - **VS Code Copilot**: `.github/hooks/terminal-guard.json` runs `.github/hooks/guard-main-branch.py` and `.github/hooks/guard-worktree-drift.py` on `PreToolUse`.
 - **Claude Code**: `.claude/settings.json` runs `scripts/hooks/guard-main-branch.sh` and `scripts/hooks/guard-worktree-drift.sh` on `PreToolUse`.
 
+The main-branch guard blocks in two cases: when the current edit targets a protected code path on `main`, and when protected code is already dirty on `main` and you try to keep editing anything else. That second case is deliberate: once implementation drift exists on `main`, the next step is to move it onto a feature branch or stash it, not continue layering more edits around it.
+
 Protected code roots: `apps/`, `packages/`, `scripts/`, `.github/hooks/`, `.claude/`, and `mk/`.
 
 Protected code extensions: `*.py`, `*.ts`, `*.tsx`, `*.js`, `*.jsx`, `*.php`, `*.sql`, `*.sh`, `*.css`, `*.scss`, `*.mk`.

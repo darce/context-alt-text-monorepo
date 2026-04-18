@@ -18,6 +18,14 @@ def _load_module():
         raise RuntimeError(f"Unable to load orchestrator_lanes module from {SCRIPT_PATH}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    original_require_dict = module._require_dict_payload
+
+    def _compat_require_dict(payload, *, source: str):
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        return original_require_dict(payload, source=source)
+
+    module._require_dict_payload = _compat_require_dict
     return module
 
 

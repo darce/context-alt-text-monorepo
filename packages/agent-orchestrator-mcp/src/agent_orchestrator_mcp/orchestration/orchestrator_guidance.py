@@ -13,9 +13,9 @@ if str(SCRIPT_DIR) not in sys.path:
 from orchestrator_helpers import (
     _combined_text,
     _json_list_text,
-    _json_load,
     _message_timestamp,
     _normalize_text,
+    _require_dict_payload,
 )
 
 # ---------------------------------------------------------------------------
@@ -119,7 +119,7 @@ class GuidanceResolution:
 def _list_open_worker_guidance(task_ref: str) -> list[dict[str, Any]]:
     from agent_orchestrator_mcp.lanes import lane_communication  # noqa: PLC0415
 
-    payload = _json_load(
+    payload = _require_dict_payload(
         lane_communication(
             kind="message",
             operation="list",
@@ -127,7 +127,8 @@ def _list_open_worker_guidance(task_ref: str) -> list[dict[str, Any]]:
             status="open",
             limit=200,
             fields="id,lane_id,session,direction,subject,message,status,created_at,updated_at",
-        )
+        ),
+        source="lane_communication(list worker guidance)",
     )
     if payload.get("ok") is not True:
         raise RuntimeError("Failed to list lane messages.")
@@ -159,7 +160,7 @@ def _dedupe_worker_guidance_messages(rows: list[dict[str, Any]]) -> list[dict[st
 def _list_open_dispatch_messages(task_ref: str, lane_id: str) -> list[dict[str, Any]]:
     from agent_orchestrator_mcp.lanes import lane_communication  # noqa: PLC0415
 
-    payload = _json_load(
+    payload = _require_dict_payload(
         lane_communication(
             kind="message",
             operation="list",
@@ -168,7 +169,8 @@ def _list_open_dispatch_messages(task_ref: str, lane_id: str) -> list[dict[str, 
             status="open",
             limit=200,
             fields="id,direction",
-        )
+        ),
+        source=f"lane_communication(list dispatch messages:{lane_id})",
     )
     if payload.get("ok") is not True:
         raise RuntimeError(f"Failed to list lane messages for {lane_id}.")
@@ -181,14 +183,15 @@ def _list_open_dispatch_messages(task_ref: str, lane_id: str) -> list[dict[str, 
 def _latest_lane_report(task_ref: str, lane_id: str, *, session: str | None = None) -> dict[str, Any] | None:
     from agent_orchestrator_mcp.lanes import worker_reports  # noqa: PLC0415
 
-    payload = _json_load(
+    payload = _require_dict_payload(
         worker_reports(
             operation="list",
             task_ref=task_ref,
             lane_id=lane_id,
             limit=20,
             fields="id,session,summary,blockers_json",
-        )
+        ),
+        source=f"worker_reports(list:{lane_id})",
     )
     if payload.get("ok") is not True:
         raise RuntimeError(f"Failed to list worker reports for {lane_id}.")
@@ -208,7 +211,10 @@ def _latest_lane_report(task_ref: str, lane_id: str, *, session: str | None = No
 def _lane_row(task_ref: str, lane_id: str) -> dict[str, Any]:
     from agent_orchestrator_mcp.lanes import manage_worktree_lane  # noqa: PLC0415
 
-    payload = _json_load(manage_worktree_lane(operation="list", task_ref=task_ref, status="all", limit=200))
+    payload = _require_dict_payload(
+        manage_worktree_lane(operation="list", task_ref=task_ref, status="all", limit=200),
+        source=f"manage_worktree_lane(list:{task_ref})",
+    )
     if payload.get("ok") is not True:
         raise RuntimeError(f"Failed to list lanes for {task_ref}.")
     for lane in payload.get("lanes", []):
@@ -220,7 +226,10 @@ def _lane_row(task_ref: str, lane_id: str) -> dict[str, Any]:
 def _lane_activity(task_ref: str, lane_id: str) -> dict[str, Any]:
     from agent_orchestrator_mcp.lanes import get_lane_activity  # noqa: PLC0415
 
-    payload = _json_load(get_lane_activity(lane_id=lane_id, task_ref=task_ref, limit_actions=50))
+    payload = _require_dict_payload(
+        get_lane_activity(lane_id=lane_id, task_ref=task_ref, limit_actions=50),
+        source=f"get_lane_activity({lane_id})",
+    )
     if payload.get("ok") is not True:
         raise RuntimeError(f"Failed to fetch lane activity for {lane_id}.")
     return payload

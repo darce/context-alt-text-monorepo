@@ -99,7 +99,6 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # --- tools snapshot ---
     snapshot_p = subparsers.add_parser("tools-snapshot", help="Capture a normalized tools/list snapshot.")
-    snapshot_p.add_argument("--phase", default="current", choices=["a1", "a2", "a3", "current"])
     snapshot_p.add_argument("--output", type=Path, default=None)
     snapshot_p.add_argument("--json", dest="json_output", action="store_true")
 
@@ -224,14 +223,12 @@ def main() -> None:
     if cmd == "tools-snapshot":
         output_path = args.output
         if output_path is None:
-            suffix = "" if args.phase == "current" else f"-{args.phase}"
-            output_path = config.state_dir / f"tools-list-snapshot{suffix}.json"
-        result = run_tools_snapshot(config, phase=args.phase, output_path=output_path)
+            output_path = config.state_dir / "tools-list-snapshot.json"
+        result = run_tools_snapshot(config, output_path=output_path)
         if getattr(args, "json_output", False):
             print(json.dumps(result, indent=2))
         else:
             print(f"server: {result['server']}")
-            print(f"phase: {result['phase']}")
             print(f"tool_count: {result['tool_count']}")
             print(
                 "estimated_tools_list_tokens: "

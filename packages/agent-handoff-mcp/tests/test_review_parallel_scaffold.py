@@ -131,3 +131,34 @@ def test_baseline_fixture_declares_expected_schema() -> None:
     assert payload["schema_version"] == 1, payload["schema_version"]
     assert isinstance(payload["measurement_method"], str)
     assert payload["fixture_diff_lines"] >= 1
+
+
+def test_identity_response_stays_within_baseline_ceiling(tmp_path: Path) -> None:
+    """E17-9-BR-03 (identity portion): the /auto-fix bounded-read contract
+    requires the identity-only handoff response to stay <= baseline + 10%.
+    Runtime assertion against a freshly-initialised task_ref so the test is
+    hermetic and does not depend on live DB size."""
+    from agent_handoff_mcp import (  # noqa: PLC0415
+        RuntimeConfig,
+        configure_runtime,
+        get_handoff_state,
+        set_handoff_state,
+    )
+
+    configure_runtime(RuntimeConfig.for_repo(tmp_path))
+    set_handoff_state(
+        task_ref="BASELINE-PROBE",
+        objective="Probe identity response size for E17-9-BR-03 ceiling assertion.",
+        status="in_progress",
+    )
+    resp = get_handoff_state(task_ref="BASELINE-PROBE", sections="identity")
+    data = resp["data"] if isinstance(resp, dict) and "data" in resp else resp
+    actual_bytes = len(json.dumps(data).encode("utf-8"))
+
+    payload = json.loads(BASELINE_PATH.read_text())
+    ceiling = int(payload["identity_response_bytes"] * 1.10)
+    assert actual_bytes <= ceiling, (
+        f"identity response {actual_bytes}B exceeds baseline ceiling {ceiling}B "
+        f"(baseline={payload['identity_response_bytes']}B + 10%). The bounded-read "
+        f"contract for /auto-fix requires identity to stay lean."
+    )

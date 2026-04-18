@@ -94,7 +94,7 @@ On 2026-04-16 an edit to `.github/hooks/terminal-guard.py` landed on `main` inst
 - E17-7 Slice 2 coordination: [`docs/tasks/17.0/E17-7-handoff-evolution-and-portable-workflow-task-plan.md`](E17-7-handoff-evolution-and-portable-workflow-task-plan.md) — checkbox-sync hook target surface
 - Motivating incident: `docs/scopes/e17-8-branch-isolation-edit-guard-scope.md`
 - Telemetry log: `.task-state/branch_isolation_guard.jsonl`
-- DASHBOARD naming drift investigation: `docs/assessments/dashboard-md-vs-txt-guidance-drift-investigation-2026-04-16.md` (motivates the Slice 3 lint guard on stale `DASHBOARD.md` references and the `.gitignore` entry for untracked strays; the rename itself lives in E17-7 Slice 4, not here)
+- DASHBOARD naming drift investigation: `docs/assessments/dashboard-md-vs-txt-guidance-drift-investigation-2026-04-16.md` (motivates the Slice 3 lint guard on stale `DASHBOARD.md` references and the `.gitignore` entry for untracked strays; the rename itself lives in E17-7 Slice 4, not here) <!-- lint-dashboard-txt: allow -->
 
 ## Contract and Boundary Impact
 
@@ -137,7 +137,7 @@ Four slices deliver the guard hardening. They land in order:
 | Harness contract | `docs/agentic/contracts/harness-protocol.yaml` | add worktree-drift hook entry |
 | Sync validator | `scripts/check_harness_sync.py` | add `code_roots` + `permitted_main_surfaces` drift check; add dashboard-naming lint |
 | Branch isolation docs | `docs/agentic/rules/development-workflow.md` | document expanded `code_roots`, worktree-drift guard, `permitted_main_surfaces` per-project configurability, and the `ALT_ALLOW_WORKTREE_DRIFT` escape hatch |
-| Gitignore | `.gitignore` | add `DASHBOARD.md` stray-file exclusion |
+| Gitignore | `.gitignore` | add `DASHBOARD.md` stray-file exclusion | <!-- lint-dashboard-txt: allow -->
 
 ## Verification Strategy
 
@@ -273,7 +273,7 @@ Proof:
 
 ### Slice 3: `check_harness_sync` Validation + Dashboard Naming Lint
 
-**Goal**: CI catches divergence between the contract's `code_roots`/`protected_extensions`/`permitted_main_surfaces` and the actual guard behavior, and catches reintroductions of the stale `DASHBOARD.md` name once E17-7 Slice 4 normalizes it to `DASHBOARD.txt`.
+**Goal**: CI catches divergence between the contract's `code_roots`/`protected_extensions`/`permitted_main_surfaces` and the actual guard behavior, and catches reintroductions of the stale `DASHBOARD.md` name once E17-7 Slice 4 normalizes it to `DASHBOARD.txt`. <!-- lint-dashboard-txt: allow -->
 
 Changes:
 
@@ -287,11 +287,11 @@ Changes:
   - Reports any code_root / root_protected_file / permitted_main_surface whose fixture does not exercise the expected decision. That output is the drift signal, not a literal diff.
 
 - Add a `_check_dashboard_naming()` function to the same validator that:
-  - Greps tracked non-archive markdown (`git ls-files '*.md'` minus `docs/archive/**` and `**/tests/**`), the root `Makefile`, and `packages/agent-orchestrator-mcp/src/**/dashboard_extension.py` for the literal string `DASHBOARD.md`.
+  - Greps tracked non-archive markdown (`git ls-files '*.md'` minus `docs/archive/**` and `**/tests/**`), the root `Makefile`, and `packages/agent-orchestrator-mcp/src/**/dashboard_extension.py` for the literal string `DASHBOARD.md`. <!-- lint-dashboard-txt: allow -->
   - Fails with a named diff if any hit remains after E17-7 Slice 4 has landed. Depends on E17-7 Slice 4 — land this lint *after* the rename so the first run is clean.
   - Rationale documented in `docs/assessments/dashboard-md-vs-txt-guidance-drift-investigation-2026-04-16.md`.
 
-- Add `DASHBOARD.md` to the repo-root `.gitignore` so stray untracked copies (produced by older local clones or pre-AHMCP-23 artifacts) stop surfacing in `git status` and cannot be accidentally committed.
+- Add `DASHBOARD.md` to the repo-root `.gitignore` so stray untracked copies (produced by older local clones or pre-AHMCP-23 artifacts) stop surfacing in `git status` and cannot be accidentally committed. <!-- lint-dashboard-txt: allow -->
 
 - Wire both new checks into `make check-harness-sync`.
 
@@ -303,8 +303,8 @@ Proof:
 - Removing a `pattern` or `reason` field from a `permitted_main_surfaces` entry causes the shape check to fail with a named line reference.
 - Intentionally breaking the drift hook's allow-list consultation (e.g. always returning block) causes the drift-hook fixture harness to fail on the task-plan path case.
 - Moving `harness-protocol.yaml` aside causes each guard fixture to assert the contract-required stderr error and a block decision.
-- Reintroducing `DASHBOARD.md` into any tracked non-archive markdown, the Makefile, or the `dashboard_extension.py` docstring causes the validator to fail with a named line reference.
-- A manually dropped `DASHBOARD.md` in the repo root does not appear in `git status`.
+- Reintroducing `DASHBOARD.md` into any tracked non-archive markdown, the Makefile, or the `dashboard_extension.py` docstring causes the validator to fail with a named line reference. <!-- lint-dashboard-txt: allow -->
+- A manually dropped `DASHBOARD.md` in the repo root does not appear in `git status`. <!-- lint-dashboard-txt: allow -->
 
 ### Slice 4: Coordination with E17-7 Slice 2 + Operator Documentation
 
@@ -375,13 +375,13 @@ Proof:
 - [ ] `check_harness_sync.py` exercises both main-branch guards through a fixture harness (not via parsing duplicated literals)
 - [ ] `check_harness_sync.py` exercises the worktree-drift hook through a fixture harness: block case, allow-list case, MAINT bypass, env-var bypass
 - [ ] `check_harness_sync.py` validates `permitted_main_surfaces` entry shape (`pattern` and `reason` non-empty; pattern is a valid glob)
-- [ ] `check_harness_sync.py` validates absence of `DASHBOARD.md` in tracked non-archive markdown, the Makefile, and the `dashboard_extension.py` docstring (depends on E17-7 Slice 4 completion)
+- [ ] `check_harness_sync.py` validates absence of `DASHBOARD.md` in tracked non-archive markdown, the Makefile, and the `dashboard_extension.py` docstring (depends on E17-7 Slice 4 completion) <!-- lint-dashboard-txt: allow -->
 - [ ] `check_harness_sync.py` asserts the contract-required stderr + block behavior when `harness-protocol.yaml` is moved aside
-- [ ] `.gitignore` excludes `DASHBOARD.md`
+- [ ] `.gitignore` excludes `DASHBOARD.md` <!-- lint-dashboard-txt: allow -->
 - [ ] `make check-harness-sync` passes after Slices 1-2 and after E17-7 Slice 4
 - [ ] Intentional contract drift is detected and reported
 - [ ] Intentional `permitted_main_surfaces` shape drift is detected and reported
-- [ ] Intentional `DASHBOARD.md` reintroduction is detected and reported
+- [ ] Intentional `DASHBOARD.md` reintroduction is detected and reported <!-- lint-dashboard-txt: allow -->
 - [ ] `make check-all` stays green
 
 ### Checklist for Slice 4: Coordination + Documentation
@@ -410,8 +410,8 @@ Proof:
 - [ ] `permitted_main_surfaces` ships with at least 15 entries covering task plans, assessments, scopes, epics, agent dispatchers, and generated artifacts
 - [ ] `permitted_main_surfaces` is documented as per-project configurable, not as a framework default
 - [ ] E17-7 Slice 2 checkbox-sync hook writes to `docs/tasks/**/*.md` on main without tripping the drift block
-- [ ] `make check-harness-sync` catches `code_roots`, `permitted_main_surfaces`, and `DASHBOARD.md` drift
-- [ ] `.gitignore` prevents stray untracked `DASHBOARD.md` from polluting `git status`
+- [ ] `make check-harness-sync` catches `code_roots`, `permitted_main_surfaces`, and `DASHBOARD.md` drift <!-- lint-dashboard-txt: allow -->
+- [ ] `.gitignore` prevents stray untracked `DASHBOARD.md` from polluting `git status` <!-- lint-dashboard-txt: allow -->
 - [ ] Existing permitted main-branch edits (docs, markdown, configs) work without friction
 - [ ] `development-workflow.md` documents the full operator-facing contract without pointing operators at this task plan
 

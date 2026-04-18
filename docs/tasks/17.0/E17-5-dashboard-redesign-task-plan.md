@@ -11,7 +11,7 @@
 
 ## Objective
 
-Redesign `DASHBOARD.txt` (currently `DASHBOARD.md`) as a pure terminal text file: strip all markdown conventions (code fences, `.md` → `.txt` extension), scope the TEST STATUS section to the active epic only (currently lists every task across all history), add hook parity so dashboard refresh is harness-independent, surface workflow-integrity anomalies as a derived section rather than overloading task status, and add an optional ANSI colour layer (low-priority stretch goal).
+Redesign `DASHBOARD.txt` (currently `DASHBOARD.md`) as a pure terminal text file: strip all markdown conventions (code fences, `.md` → `.txt` extension), scope the TEST STATUS section to the active epic only (currently lists every task across all history), add hook parity so dashboard refresh is harness-independent, surface workflow-integrity anomalies as a derived section rather than overloading task status, and add an optional ANSI colour layer (low-priority stretch goal). <!-- lint-dashboard-txt: allow -->
 
 ## Problem Statement
 
@@ -30,22 +30,22 @@ Five concrete defects confirmed in the live dashboard:
 ## Constraints
 
 - No change to `CURRENT_TASK.json` — that file is machine-readable for agent handoffs and intentionally uses markdown. Scope is `DASHBOARD` only.
-- `RuntimeConfig.dashboard_path` default changes from `workspace_root / "DASHBOARD.md"` to `workspace_root / "DASHBOARD.txt"`. Callers that set `dashboard_path` explicitly are unaffected. Callers using the default must regenerate; the old `DASHBOARD.md` is not auto-deleted.
+- `RuntimeConfig.dashboard_path` default changes from `workspace_root / "DASHBOARD.md"` to `workspace_root / "DASHBOARD.txt"`. Callers that set `dashboard_path` explicitly are unaffected. Callers using the default must regenerate; the old `DASHBOARD.md` is not auto-deleted. <!-- lint-dashboard-txt: allow -->
 - ANSI colour must be completely suppressible — `NO_COLOR=1` env var (standard convention) disables it unconditionally. No ANSI escape codes in non-tty writes (file output, CI).
 - `_render_dashboard_section` is defined in `current_task_rendering.py` and imported by `dashboard_rendering.py`. The CURRENT_TASK.json render path uses `_render_current_task_md`, a separate function that does not call `_render_dashboard_section`. Confirm with `grep -n "_render_dashboard_section" src/agent_handoff_mcp/current_task_rendering.py` before editing to verify no new call sites were added since this plan was written.
 - Workflow-integrity data must stay derived from handoff state plus live git state. Do not overload persisted task progress status with git-cleanup metadata.
 
 ## Current State Analysis
 
-- `config.py:105`: default `dashboard_path = workspace_root / "DASHBOARD.md"` → target: `workspace_root / "DASHBOARD.txt"`
+- `config.py:105`: default `dashboard_path = workspace_root / "DASHBOARD.md"` → target: `workspace_root / "DASHBOARD.txt"` <!-- lint-dashboard-txt: allow -->
 - `current_task_rendering.py:570,575,588`: three backtick fence lines in `_render_dashboard_section`
 - `dashboard_rendering._collect_task_test_status`: queries `verified_tests` with no `task_ref` filter — returns all historical rows
 - `dashboard_rendering._collect_epic_decisions`: already uses `_infer_epic_ref(active_task_ref)` to scope decisions — same pattern needed for test status
 - `_render_dashboard_md` currently emits `TEST STATUS` before `OPEN FINDINGS`, which hides urgent active-task issues below a long historical section
 - `.claude/settings.json` already runs `scripts/hooks/regenerate-task-views.sh` after state-changing MCP writes; `.github/hooks/terminal-guard.json` does not
-- `.gitignore:92`: `DASHBOARD.md` — must change to `DASHBOARD.txt`
-- `CLAUDE.md`: two plain-text references to `DASHBOARD.md` → `DASHBOARD.txt` in MCP fallback and handoff protocol sections
-- `api.py`: 9 occurrences of `DASHBOARD.md` across tool descriptions, docstrings, and `close_slice` / `generate_dashboard_md` signatures (lines 69, 77, 1601, 1685, 1697, 1714, 1726, 1736, 1746)
+- `.gitignore:92`: `DASHBOARD.md` — must change to `DASHBOARD.txt` <!-- lint-dashboard-txt: allow -->
+- `CLAUDE.md`: two plain-text references to `DASHBOARD.md` → `DASHBOARD.txt` in MCP fallback and handoff protocol sections <!-- lint-dashboard-txt: allow -->
+- `api.py`: 9 occurrences of `DASHBOARD.md` across tool descriptions, docstrings, and `close_slice` / `generate_dashboard_md` signatures (lines 69, 77, 1601, 1685, 1697, 1714, 1726, 1736, 1746) <!-- lint-dashboard-txt: allow -->
 - `_render_dashboard_md` signature in `dashboard_rendering.py`: accepts `task_test_status: dict[str, dict] | None` — already structured; caller in `generate_dashboard_md` must pass filtered dict
 
 ## Target Outcome
@@ -63,16 +63,16 @@ Five concrete defects confirmed in the live dashboard:
 
 | Surface                    | File                                                  | Change                                                                                                                                         |
 | -------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Config default             | `src/agent_handoff_mcp/config.py`                     | Default `dashboard_path` from `DASHBOARD.md` → `DASHBOARD.txt`                                                                                 |
+| Config default             | `src/agent_handoff_mcp/config.py`                     | Default `dashboard_path` from `DASHBOARD.md` → `DASHBOARD.txt`                                                                                 | <!-- lint-dashboard-txt: allow -->
 | Code fence removal         | `src/agent_handoff_mcp/current_task_rendering.py`     | Remove backtick lines at 570, 575, 588 from `_render_dashboard_section`                                                                        |
 | Hook parity                | `.github/hooks/terminal-guard.json` or MCP write path | Add VS Code/Copilot dashboard-refresh parity or move refresh into write path                                                                   |
 | Test status filter         | `src/agent_handoff_mcp/dashboard_rendering.py`        | `_collect_task_test_status(conn, epic_ref)` — filter by epic prefix when provided                                                              |
 | Workflow integrity section | `src/agent_handoff_mcp/dashboard_rendering.py`        | Add derived `WORKFLOW INTEGRITY` section based on `target_branch` plus live git state; render only on anomalies                                |
 | Section order              | `src/agent_handoff_mcp/dashboard_rendering.py`        | Render active-task findings and integrity alerts before `TEST STATUS`                                                                          |
 | ANSI palette (stretch)     | `src/agent_handoff_mcp/dashboard_rendering.py`        | `_AnsiPalette` dataclass; `_ansi_enabled()` gate; apply to render functions                                                                    |
-| gitignore                  | `.gitignore`                                          | Line 92: `DASHBOARD.md` → `DASHBOARD.txt`                                                                                                      |
-| Docs refs                  | `CLAUDE.md`                                           | Two occurrences of `DASHBOARD.md` → `DASHBOARD.txt`                                                                                            |
-| API docstrings             | `src/agent_handoff_mcp/api.py`                        | 9 occurrences of `DASHBOARD.md` → `DASHBOARD.txt` in tool descriptions and docstrings (lines 69, 77, 1601, 1685, 1697, 1714, 1726, 1736, 1746) |
+| gitignore                  | `.gitignore`                                          | Line 92: `DASHBOARD.md` → `DASHBOARD.txt`                                                                                                      | <!-- lint-dashboard-txt: allow -->
+| Docs refs                  | `CLAUDE.md`                                           | Two occurrences of `DASHBOARD.md` → `DASHBOARD.txt`                                                                                            | <!-- lint-dashboard-txt: allow -->
+| API docstrings             | `src/agent_handoff_mcp/api.py`                        | 9 occurrences of `DASHBOARD.md` → `DASHBOARD.txt` in tool descriptions and docstrings (lines 69, 77, 1601, 1685, 1697, 1714, 1726, 1736, 1746) | <!-- lint-dashboard-txt: allow -->
 | Tests                      | `tests/test_dashboard_rendering.py`                   | Verify no fences, epic-scoped test status, ANSI gate                                                                                           |
 
 ## Proposed Solution
@@ -83,17 +83,17 @@ Five concrete defects confirmed in the live dashboard:
 
 Changes:
 
-- `config.py`: change `workspace_root / "DASHBOARD.md"` → `workspace_root / "DASHBOARD.txt"` in the `else` branch of `for_workspace()`.
+- `config.py`: change `workspace_root / "DASHBOARD.md"` → `workspace_root / "DASHBOARD.txt"` in the `else` branch of `for_workspace()`. <!-- lint-dashboard-txt: allow -->
 - `current_task_rendering.py:570,575,588`: delete the three `"```"` string literals from `_render_dashboard_section`. Verify the function is not called on the `CURRENT_TASK.json` render path (it is not — the CURRENT_TASK path calls `_render_current_task_md`, a separate function).
-- `.gitignore:92`: `DASHBOARD.md` → `DASHBOARD.txt`.
+- `.gitignore:92`: `DASHBOARD.md` → `DASHBOARD.txt`. <!-- lint-dashboard-txt: allow -->
 - `CLAUDE.md`: update two references to `DASHBOARD.txt`.
-- `api.py`: update all 9 occurrences of `DASHBOARD.md` → `DASHBOARD.txt` (lines 69, 77, 1601, 1685, 1697, 1714, 1726, 1736, 1746).
+- `api.py`: update all 9 occurrences of `DASHBOARD.md` → `DASHBOARD.txt` (lines 69, 77, 1601, 1685, 1697, 1714, 1726, 1736, 1746). <!-- lint-dashboard-txt: allow -->
 
 Proof:
 
 - `cat DASHBOARD.txt` after regeneration shows no backtick lines
-- `ls DASHBOARD.md` → not found; `ls DASHBOARD.txt` → exists
-- `make test-handoff` — `test_generate_dashboard_md_writes_file` passes (update assertion to check `DASHBOARD.txt`, not `DASHBOARD.md`)
+- `ls DASHBOARD.md` → not found; `ls DASHBOARD.txt` → exists <!-- lint-dashboard-txt: allow -->
+- `make test-handoff` — `test_generate_dashboard_md_writes_file` passes (update assertion to check `DASHBOARD.txt`, not `DASHBOARD.md`) <!-- lint-dashboard-txt: allow -->
 - `test_generate_dashboard_md_uses_runtime_dashboard_path` passes unchanged (uses explicit path)
 
 ### Slice 2: Epic-Scoped Test Results
@@ -161,9 +161,9 @@ Changes (when prioritised):
   - New test: `test_dashboard_refresh_hook_parity` or equivalent write-path regression proving harness-independent refresh
   - New test: `test_workflow_integrity_section_only_on_anomalies` — integrity section omitted on clean state and present on anomaly
   - New test: `test_workflow_integrity_git_timeout` — subprocess timeout renders degraded-mode notice
-  - Updated test: `test_generate_dashboard_md_writes_file` — asserts filename `DASHBOARD.txt`, not `DASHBOARD.md`
+  - Updated test: `test_generate_dashboard_md_writes_file` — asserts filename `DASHBOARD.txt`, not `DASHBOARD.md` <!-- lint-dashboard-txt: allow -->
 - Runtime:
-  - `python -c "from agent_handoff_mcp import generate_dashboard_md; generate_dashboard_md()"` in monorepo root → `DASHBOARD.txt` created, no `DASHBOARD.md` written
+  - `python -c "from agent_handoff_mcp import generate_dashboard_md; generate_dashboard_md()"` in monorepo root → `DASHBOARD.txt` created, no `DASHBOARD.md` written <!-- lint-dashboard-txt: allow -->
   - `cat DASHBOARD.txt | grep '\`\`\`'` → empty (no fences)
   - Active task `E17-4` → TEST STATUS shows only `E17` family tasks
 
@@ -182,13 +182,13 @@ Single-lane work on `feature/e17-5`. Slices 1 and 2 are independent of each othe
 
 ### Checklist for Slice 1: Plain-text Format and File Extension
 
-- [x] `config.py` default changed from `DASHBOARD.md` to `DASHBOARD.txt`
+- [x] `config.py` default changed from `DASHBOARD.md` to `DASHBOARD.txt` <!-- lint-dashboard-txt: allow -->
 - [x] Three backtick lines removed from `current_task_rendering._render_dashboard_section`
-- [x] `.gitignore` updated: `DASHBOARD.md` → `DASHBOARD.txt`
+- [x] `.gitignore` updated: `DASHBOARD.md` → `DASHBOARD.txt` <!-- lint-dashboard-txt: allow -->
 - [x] `CLAUDE.md` two references updated to `DASHBOARD.txt`
 - [x] `api.py` all 9 occurrences updated to `DASHBOARD.txt`
 - [x] `test_generate_dashboard_md_writes_file` updated to assert `DASHBOARD.txt`
-- [x] Proof: `cat DASHBOARD.txt` shows no fence lines; `ls DASHBOARD.md` → not found
+- [x] Proof: `cat DASHBOARD.txt` shows no fence lines; `ls DASHBOARD.md` → not found <!-- lint-dashboard-txt: allow -->
 
 ### Checklist for Slice 2: Epic-Scoped Test Results
 
@@ -222,7 +222,7 @@ Single-lane work on `feature/e17-5`. Slices 1 and 2 are independent of each othe
 
 ## Success Criteria
 
-- [x] `DASHBOARD.txt` is written by default; no `DASHBOARD.md` created
+- [x] `DASHBOARD.txt` is written by default; no `DASHBOARD.md` created <!-- lint-dashboard-txt: allow -->
 - [x] ALL TASKS section renders without any backtick fences in plain-text output
 - [x] TEST STATUS section shows only tasks whose task_ref matches the active epic prefix
 - [x] Dashboard refresh is harness-independent after state-changing MCP writes

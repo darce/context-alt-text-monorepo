@@ -179,6 +179,26 @@ def test_matrix_never_fully_skips() -> None:
     assert len(available) >= 1
 
 
+def test_structured_turn_rejects_unavailable_backend_envelope(tmp_path: Path) -> None:
+    """E17-9-BR-01: {ok:false,error:...} envelope must surface as a hard failure, not
+    silently default to handoff_action='needs_guidance'."""
+    adapter_cls = backend_registry.get_backend_spec("structured-turn").adapter_class
+    if not isinstance(adapter_cls, type):
+        adapter_cls = adapter_cls()
+
+    unavailable_envelope = {
+        "ok": False,
+        "error": "codex-subagent backend is unavailable in this runtime. Provide a host bridge module.",
+        "backend": "codex-subagent",
+    }
+    adapter = adapter_cls(runner=mock.Mock(return_value=unavailable_envelope))
+
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    with pytest.raises(RuntimeError, match="codex-subagent"):
+        adapter.execute("review", {"type": "object"}, worktree)
+
+
 def test_drift_test_catches_silently_dropped_fields(tmp_path: Path) -> None:
     """An adapter wrapper that drops severity_distribution must fail the equivalence assertion."""
     adapter_cls = backend_registry.get_backend_spec("structured-turn").adapter_class

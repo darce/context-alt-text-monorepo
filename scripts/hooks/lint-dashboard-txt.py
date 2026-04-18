@@ -36,14 +36,9 @@ EXCLUDED_EXACT_FILES = {
 
 EXCLUDED_PATH_PREFIXES = (
     "docs/assessments/dashboard-md-vs-txt-",
-    "docs/tasks/17.0/E17-5-dashboard-redesign-",
-    "docs/tasks/17.0/E17-7-handoff-evolution-and-portable-workflow-",
-    "docs/tasks/17.0/E17-8-branch-isolation-edit-guard-hardening-",
-    "docs/tasks/17.0/E17-9-parallel-reviews-and-autonomous-bug-fix-loop-",
-    "packages/agent-handoff-mcp/docs/tasks/AHMCP-23-",
-    "packages/agent-handoff-mcp/docs/tasks/AHMCP-25-",
-    "packages/agent-handoff-mcp/docs/tasks/AHMCP-28-",
 )
+
+ALLOW_MARKER = "<!-- lint-dashboard-txt: allow -->"
 
 
 def is_excluded(path: Path) -> bool:
@@ -81,7 +76,7 @@ def scan_paths(paths: Iterable[Path]) -> list[str]:
         except OSError:
             continue
         for lineno, line in enumerate(text.splitlines(), start=1):
-            if OFFENDING_TOKEN in line:
+            if OFFENDING_TOKEN in line and ALLOW_MARKER not in line:
                 violations.append(f"{path}:{lineno}: {line.strip()}")
     return violations
 

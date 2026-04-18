@@ -26,7 +26,7 @@ from unittest import mock
 import pytest
 
 from agent_orchestrator_mcp.orchestration import backend_registry
-from agent_orchestrator_mcp.orchestration.backend_adapter import BackendResult
+from agent_orchestrator_mcp.orchestration.backend_adapter import BackendAdapter, BackendResult
 
 CANONICAL_RESPONSE: dict[str, Any] = {
     "handoff_action": "needs_guidance",

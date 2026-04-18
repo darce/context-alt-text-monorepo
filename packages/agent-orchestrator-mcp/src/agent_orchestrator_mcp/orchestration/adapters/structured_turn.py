@@ -96,9 +96,7 @@ class StructuredTurnAdapter(BackendAdapter):
         if isinstance(payload, dict) and payload.get("ok") is False:
             error_msg = payload.get("error") or "unknown backend error"
             backend_name = payload.get("backend") or self._downstream_backend
-            raise RuntimeError(
-                f"StructuredTurnAdapter downstream backend '{backend_name}' failed: {error_msg}"
-            )
+            raise RuntimeError(f"StructuredTurnAdapter downstream backend '{backend_name}' failed: {error_msg}")
 
         if isinstance(payload, dict) and "result" in payload and isinstance(payload["result"], dict):
             # api.run_structured_turn envelope: {"ok": bool, "backend": str, "result": {...}}
@@ -122,7 +120,9 @@ class StructuredTurnAdapter(BackendAdapter):
             raw_payload=result.raw_payload,
         )
 
-    def _default_runner(self, *, prompt: str, schema: dict[str, Any], cwd: str, env: dict[str, str] | None = None) -> dict[str, Any]:
+    def _default_runner(
+        self, *, prompt: str, schema: dict[str, Any], cwd: str, env: dict[str, str] | None = None
+    ) -> dict[str, Any]:
         from agent_orchestrator_mcp import api  # noqa: PLC0415
 
         response = api.run_structured_turn(

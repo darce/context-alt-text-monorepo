@@ -100,12 +100,8 @@ def test_auto_fix_skill_precondition_refuses_main() -> None:
     content = SKILL_PATH.read_text()
     lowered = content.lower()
     # The precondition must name main/master/None as refuse cases.
-    assert "main" in lowered and "master" in lowered, (
-        "Precondition must explicitly refuse main/master target_branch."
-    )
-    assert "target_branch" in content, (
-        "Precondition must reference `target_branch` from get_handoff_state."
-    )
+    assert "main" in lowered and "master" in lowered, "Precondition must explicitly refuse main/master target_branch."
+    assert "target_branch" in content, "Precondition must reference `target_branch` from get_handoff_state."
 
 
 def test_auto_fix_skill_names_per_iteration_exit_signal() -> None:
@@ -121,18 +117,10 @@ def test_auto_fix_skill_names_per_iteration_exit_signal() -> None:
 
 def test_auto_fix_skill_finalization_has_single_close_check() -> None:
     content = SKILL_PATH.read_text()
-    assert "handoff_close_check" in content, (
-        "Finalization must call handoff_close_check exactly once post-loop."
-    )
-    assert "require_fresh_tests" in content, (
-        "handoff_close_check must be invoked with require_fresh_tests=True."
-    )
-    assert "slice_complete" in content, (
-        "Finalization must record a canonical slice_complete decision."
-    )
-    assert "update_task_status" in content, (
-        "Finalization must set task status to done before the post-loop gate."
-    )
+    assert "handoff_close_check" in content, "Finalization must call handoff_close_check exactly once post-loop."
+    assert "require_fresh_tests" in content, "handoff_close_check must be invoked with require_fresh_tests=True."
+    assert "slice_complete" in content, "Finalization must record a canonical slice_complete decision."
+    assert "update_task_status" in content, "Finalization must set task status to done before the post-loop gate."
 
 
 def test_auto_fix_skill_forbids_documented_anti_patterns() -> None:
@@ -140,12 +128,10 @@ def test_auto_fix_skill_forbids_documented_anti_patterns() -> None:
     lowered = content.lower()
     # detail="full" is explicitly forbidden mid-loop.
     assert 'detail="full"' in content or "detail='full'" in content or 'detail=\\"full\\"' in content, (
-        "SKILL.md must explicitly call out detail=\"full\" as the forbidden mid-loop read shape."
+        'SKILL.md must explicitly call out detail="full" as the forbidden mid-loop read shape.'
     )
     # 300-second cadence is forbidden (Claude Code cache-miss trap).
-    assert "300" in content, (
-        "SKILL.md must explicitly forbid 300-second ScheduleWakeup waits."
-    )
+    assert "300" in content, "SKILL.md must explicitly forbid 300-second ScheduleWakeup waits."
     # Uncommitted-workspace iterations are an anti-pattern.
     assert "commit" in lowered, "SKILL.md must describe commit-per-iteration discipline."
 
@@ -153,9 +139,5 @@ def test_auto_fix_skill_forbids_documented_anti_patterns() -> None:
 def test_auto_fix_skill_harness_scoped_cadence() -> None:
     content = SKILL_PATH.read_text()
     # Cadence rule is Claude-Code-only; Codex/Copilot iterate inline.
-    assert "ScheduleWakeup" in content, (
-        "Cadence rule must name ScheduleWakeup (Claude Code primitive)."
-    )
-    assert "Codex" in content and "Copilot" in content, (
-        "Cadence block must document Codex + Copilot inline iteration."
-    )
+    assert "ScheduleWakeup" in content, "Cadence rule must name ScheduleWakeup (Claude Code primitive)."
+    assert "Codex" in content and "Copilot" in content, "Cadence block must document Codex + Copilot inline iteration."

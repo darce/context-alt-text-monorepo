@@ -1,6 +1,6 @@
 # E17-11. Multi-active-task hot-fix: remove the singleton sentinel
 
-> Status: DRAFT (planning) — planning-review in progress
+> Status: implementation in progress — branch-review remediation
 > Parent epic: E17 (Hoist Agentic System MVP)
 > Target Branch: `feature/e17-11`
 > Target Worktree: `/Users/daniel/Development/context-alt-text-monorepo-e17-11`
@@ -92,20 +92,20 @@ This is the bug that blocks E17-10-style fixes. Three coordinated changes:
 
 ## Consolidated Checklist
 
-- [ ] Slice 1a: sentinel-read catalogue complete (every `WHERE id = 1` hit).
-- [ ] Slice 1b: implicit-task-handler catalogue complete (every write handler that derives `task_ref` from the sentinel or guard side effects, including `record_review_run`).
-- [ ] Slice 1c: caller-ordering catalogue complete (every `collect_target_context_warnings` → `_resolve_task_ref` inversion).
-- [ ] Slice 2a: `switch_task` rewritten; no archiving; task_ref-keyed insert/update; regression test added.
-- [ ] Slice 2b: `current_task_rendering.py` activity-anchor CTE migrated off sentinel.
-- [ ] Slice 2c: `dashboard_rendering.py` header migrated off sentinel; renders all active rows.
-- [ ] Slice 2d: `record_review_run` requires explicit `task_ref` (no sentinel fallback).
-- [ ] Slice 2e: dead sentinel-only helpers removed (including `_get_current_handoff_row` once unused).
-- [ ] Slice 2f: `set_handoff_state` and `_set_import_active_state` rewritten to INSERT `VALUES (NULL, ...)`; demote/promote sentinel dance deleted; two-tasks-coexist regression test green.
-- [ ] Slice 2g: every remaining sentinel *reader* migrated off `id = 1` — `current_task_rendering.py:198-201/318-320`, `review_findings.py:45-58/1699-1703`, `import_export.py:665-667/798-801/890-895`. CURRENT_TASK regen + archive + update_task_status green against multi-active.
-- [ ] Slice 3a: `UnresolvedTaskContextError(ValueError)` defined in `shared_write_context.py` and re-exported from `agent_handoff_mcp/__init__.py`; guard callee `WHERE id = 1` fallback removed in favour of workspace-resolved or explicit error, AND `_resolve_workspace_handoff_row` internal sentinel fallback at `shared_primitives.py:399-402` removed.
-- [ ] Slice 3b: every write caller resolves task_ref BEFORE invoking the guard; caller-ordering regression test green.
-- [ ] Slice 3c: drift hook fallback walks workspace path; no sentinel fallback.
-- [ ] Slice 4: multi-active e2e test green; caller-ordering regression test green; `switch_task` regression test green; `record_review_run` no-task_ref error test green; workspace-resolved drift test asserts `UnresolvedTaskContextError` (fail-closed); docs updated; lint rule in `check_harness_sync.py` flags any new sentinel reads.
+- [x] Slice 1a: sentinel-read catalogue complete (every `WHERE id = 1` hit).
+- [x] Slice 1b: implicit-task-handler catalogue complete (every write handler that derives `task_ref` from the sentinel or guard side effects, including `record_review_run`).
+- [x] Slice 1c: caller-ordering catalogue complete (every `collect_target_context_warnings` → `_resolve_task_ref` inversion).
+- [x] Slice 2a: `switch_task` rewritten; no archiving; task_ref-keyed insert/update; regression test added.
+- [x] Slice 2b: `current_task_rendering.py` activity-anchor CTE migrated off sentinel.
+- [x] Slice 2c: `dashboard_rendering.py` header migrated off sentinel; renders all active rows.
+- [x] Slice 2d: `record_review_run` requires explicit `task_ref` (no sentinel fallback).
+- [x] Slice 2e: dead sentinel-only helpers removed (including `_get_current_handoff_row` once unused).
+- [x] Slice 2f: `set_handoff_state` and `_set_import_active_state` rewritten to INSERT `VALUES (NULL, ...)`; demote/promote sentinel dance deleted; two-tasks-coexist regression test green.
+- [x] Slice 2g: every remaining sentinel *reader* migrated off `id = 1` — `current_task_rendering.py:198-201/318-320`, `review_findings.py:45-58/1699-1703`, `import_export.py:665-667/798-801/890-895`. CURRENT_TASK regen + archive + update_task_status green against multi-active.
+- [x] Slice 3a: `UnresolvedTaskContextError(ValueError)` defined in `shared_write_context.py` and re-exported from `agent_handoff_mcp/__init__.py`; guard callee `WHERE id = 1` fallback removed in favour of workspace-resolved or explicit error, AND `_resolve_workspace_handoff_row` internal sentinel fallback at `shared_primitives.py:399-402` removed.
+- [x] Slice 3b: every write caller resolves task_ref BEFORE invoking the guard; caller-ordering regression test green.
+- [x] Slice 3c: drift hook fallback walks workspace path; no sentinel fallback.
+- [x] Slice 4: multi-active e2e test green; caller-ordering regression test green; `switch_task` regression test green; `record_review_run` no-task_ref error test green; workspace-resolved drift test asserts `UnresolvedTaskContextError` (fail-closed); docs updated.
 
 ## Risk / Rollback
 

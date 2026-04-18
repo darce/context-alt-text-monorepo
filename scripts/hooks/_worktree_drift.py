@@ -88,7 +88,7 @@ def _extract_candidate_paths(tool_name: str, tool_input: dict[str, Any]) -> list
     return paths
 
 
-def _load_handoff_exports() -> tuple[Any, Any, Any] | None:
+def _load_handoff_exports() -> tuple[Any, Any, Any, Any] | None:
     try:
         module = importlib.import_module("agent_handoff_mcp")
     except ImportError:
@@ -98,6 +98,7 @@ def _load_handoff_exports() -> tuple[Any, Any, Any] | None:
             getattr(module, "RuntimeConfig"),
             getattr(module, "configure_runtime"),
             getattr(module, "get_handoff_state"),
+            getattr(module, "UnresolvedTaskContextError", ValueError),
         )
     except AttributeError:
         return None
@@ -131,13 +132,15 @@ def _load_active_task(workspace_root: Path) -> ActiveTaskContext:
     if exports is None:
         primary = _primary_workspace_root(workspace_root)
         return ActiveTaskContext(None, None, None, primary)
-    RuntimeConfig, configure_runtime, get_handoff_state = exports
+    RuntimeConfig, configure_runtime, get_handoff_state, unresolved_task_context_error = exports
 
     try:
         runtime = RuntimeConfig.for_repo(workspace_root)
         configure_runtime(runtime)
         raw = get_handoff_state(sections="identity")
-    except Exception:
+    except Exception as exc:
+        if isinstance(exc, unresolved_task_context_error):
+            raise
         primary = _primary_workspace_root(workspace_root)
         return ActiveTaskContext(None, None, None, primary)
 
@@ -145,6 +148,17 @@ def _load_active_task(workspace_root: Path) -> ActiveTaskContext:
         parsed = json.loads(raw) if isinstance(raw, str) else raw
     except json.JSONDecodeError:
         return ActiveTaskContext(None, None, None, str(Path(runtime.workspace_root).resolve(strict=False)))
+
+    if isinstance(parsed, dict) and parsed.get("ok") is False:
+        error = parsed.get("error")
+        if not isinstance(error, str):
+            data = parsed.get("data")
+            if isinstance(data, dict) and isinstance(data.get("error"), str):
+                error = data.get("error")
+        if isinstance(error, str) and (
+            "Ambiguous active task" in error or "No active task in handoff_state" in error
+        ):
+            raise ValueError(error)
 
     data = parsed.get("data") if isinstance(parsed, dict) else None
     active = data.get("active") if isinstance(data, dict) else None
@@ -261,7 +275,15 @@ def evaluate_payload(
         else:
             context = ActiveTaskContext(active_task[0], active_task[1], active_task[2], primary_worktree)
     else:
-        context = _load_active_task(root)
+        try:
+            context = _load_active_task(root)
+        except ValueError as exc:
+            return DriftDecision(
+                outcome="block",
+                reason=f"UnresolvedTaskContextError: {exc}",
+                primary_worktree=_primary_workspace_root(root),
+                task_ref="(unresolved task context)",
+            )
 
     if not context.target_worktree:
         return None

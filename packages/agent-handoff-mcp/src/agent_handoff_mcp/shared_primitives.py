@@ -340,13 +340,14 @@ def _coerce_string_list(value: object) -> list[str]:
 
 
 def _get_handoff_row_for_task(conn: sqlite3.Connection, task_ref: str) -> sqlite3.Row | None:
-    return conn.execute("SELECT * FROM handoff_state WHERE task_ref = ?", (task_ref,)).fetchone()
+    return cast(
+        sqlite3.Row | None,
+        conn.execute("SELECT * FROM handoff_state WHERE task_ref = ?", (task_ref,)).fetchone(),
+    )
 
 
 def _resolve_workspace_handoff_row(conn: sqlite3.Connection) -> sqlite3.Row | None:
-    rows = conn.execute(
-        "SELECT * FROM handoff_state ORDER BY CASE WHEN id = 1 THEN 0 ELSE 1 END, updated_at DESC, task_ref ASC"
-    ).fetchall()
+    rows = conn.execute("SELECT * FROM handoff_state ORDER BY updated_at DESC, task_ref ASC").fetchall()
     if not rows:
         return None
     if len(rows) == 1:

@@ -454,12 +454,17 @@ def collect_target_context_warnings(
     process working directory. Mismatches are returned as warning strings that
     callers can pass through to `_envelope(warnings=...)`.
 
-    By default the check is non-fatal: it surfaces drift without rejecting the
-    write, so cross-agent handoff loops still record state. When
-    AGENT_HANDOFF_ENFORCE_BRANCH is truthy and
+    By default the check is non-fatal for branch/worktree drift: it surfaces
+    mismatches without rejecting the write, so cross-agent handoff loops still
+    record state. When AGENT_HANDOFF_ENFORCE_BRANCH is truthy and
     AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT is not, branch mismatches on
     enforceable target branches raise BranchMismatchError before the write is
     applied. Worktree-path drift remains warning-only.
+
+    Task resolution itself is fail-closed. When no explicit ``task_ref`` is
+    provided, the guard delegates to ``_resolve_workspace_handoff_row`` and
+    raises UnresolvedTaskContextError if the workspace cannot be resolved to a
+    single active row.
     """
     normalized_task_ref = _normalize_optional_text(task_ref)
     try:
@@ -470,20 +475,22 @@ def collect_target_context_warnings(
             ).fetchone()
         else:
             # E17-11 Slice 3a: no sentinel `WHERE id = 1` fallback.
-            # Delegate to workspace-path resolution. If that cannot
-            # resolve (ambiguous multi-task state or empty DB), the
-            # drift-check is best-effort — return no warnings rather than
-            # reject the write. Writers that require a specific task go
-            # through `_resolve_task_ref`, which raises its own error.
+            # Delegate to workspace-path resolution and fail closed when
+            # ambiguity or an unregistered cwd leaves the active row
+            # unresolved.
             from .shared_primitives import _resolve_workspace_handoff_row
 
             try:
                 active = _resolve_workspace_handoff_row(conn)
-            except ValueError:
-                return []
+            except ValueError as exc:
+                raise UnresolvedTaskContextError(str(exc)) from exc
     except sqlite3.OperationalError:
         # Schema is older than this build (missing column). Skip the check.
         return []
+    if active is None and normalized_task_ref is None:
+        raise UnresolvedTaskContextError(
+            "No active task in handoff_state. Call set_handoff_state first or pass task_ref explicitly."
+        )
     if active is None:
         # No matching row to compare against: either an explicit task_ref
         # pointed at a row that does not exist, or the handoff_state table

@@ -786,6 +786,62 @@ def test_guard_worktree_drift_allows_allowlisted_main_surface(tmp_path: Path) ->
     assert proc.stdout.strip() == ""
 
 
+def test_guard_worktree_drift_blocks_when_active_task_context_is_unresolved(tmp_path: Path) -> None:
+    """E17-11 Slice 4: ambiguous workspace state must fail closed."""
+
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+    env["CLAUDE_PROJECT_DIR"] = str(repo)
+
+    started = _run_script("task-start.sh", repo, "DRIFT-UNRESOLVED-1", "Unresolved context repro", env=env)
+    assert started.returncode == 0, started.stderr
+
+    db_path = repo / ".task-state" / "handoff.db"
+    other_worktree = repo.parent / "context-alt-text-monorepo-drift-unresolved-2"
+    other_worktree.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO handoff_state (
+                id, task_ref, objective, focus, status, target_branch,
+                target_worktree_path, revision, updated_at, updated_by,
+                updated_branch, updated_commit_sha
+            ) VALUES (?, ?, ?, ?, 'in_progress', ?, ?, 0,
+                      datetime('now'), 'tester', ?, ?)
+            """,
+            (
+                None,
+                "DRIFT-UNRESOLVED-2",
+                "Second unresolved task",
+                None,
+                "feature/drift-unresolved-2",
+                str(other_worktree),
+                "feature/drift-unresolved-2",
+                "abc123",
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    payload = json.dumps({"tool_input": {"file_path": str(repo / "scripts" / "check-task-context.py")}})
+    proc = subprocess.run(
+        [str(repo / "scripts" / "hooks" / "guard-worktree-drift.sh")],
+        cwd=repo,
+        env=env,
+        input=payload,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    parsed = json.loads(proc.stdout)
+    hook_output = parsed["hookSpecificOutput"]
+    assert hook_output["permissionDecision"] == "block"
+    assert "UnresolvedTaskContextError" in hook_output["permissionDecisionReason"]
+    assert "Ambiguous active task" in hook_output["permissionDecisionReason"]
+
+
 def test_guard_worktree_drift_allows_env_bypass(tmp_path: Path) -> None:
     """E17-8 Slice 2: ALT_ALLOW_WORKTREE_DRIFT downgrades the block."""
 

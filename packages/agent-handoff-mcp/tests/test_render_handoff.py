@@ -126,11 +126,11 @@ def test_render_handoff_rejects_unknown_kind(isolated_handoff: dict) -> None:
         mcp_server.render_handoff(kind="bogus")  # type: ignore[arg-type]
 
 
-def test_package_and_api_surfaces_retire_legacy_render_aliases() -> None:
+def test_package_surface_keeps_python_render_aliases_but_api_retires_them() -> None:
     import agent_handoff_mcp as pkg
 
-    assert not hasattr(pkg, "generate_current_task_md")
-    assert not hasattr(pkg, "generate_dashboard_md")
+    assert hasattr(pkg, "generate_current_task_md")
+    assert hasattr(pkg, "generate_dashboard_md")
     assert not hasattr(mcp_server, "generate_current_task_md")
     assert not hasattr(mcp_server, "generate_dashboard_md")
 
@@ -140,8 +140,8 @@ def test_package_exports_include_render_handoff() -> None:
 
     assert hasattr(pkg, "render_handoff"), "render_handoff must be exported from the package root"
     assert "render_handoff" in pkg.__all__
-    assert "generate_current_task_md" not in pkg.__all__
-    assert "generate_dashboard_md" not in pkg.__all__
+    assert "generate_current_task_md" in pkg.__all__
+    assert "generate_dashboard_md" in pkg.__all__
 
 
 def test_package_exports_include_load_session_and_close_slice() -> None:

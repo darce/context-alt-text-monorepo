@@ -57,6 +57,16 @@ from .dashboard_rendering import (
 from .enums import ReviewKind, ReviewScopeSource
 from .shared_write_context import BranchMismatchError, UnresolvedTaskContextError
 
+
+def generate_current_task_md(task_ref: str | None = None, write_file: bool = True) -> dict:
+    """Backward-compatible alias for rendering CURRENT_TASK.json."""
+    return render_handoff(kind="current_task", task_ref=task_ref, write_file=write_file)
+
+
+def generate_dashboard_md(write_file: bool = True) -> dict:
+    """Backward-compatible alias for rendering DASHBOARD.txt."""
+    return render_handoff(kind="dashboard", write_file=write_file)
+
 __all__ = [
     "DashboardContext",
     "DashboardExtension",
@@ -80,6 +90,8 @@ __all__ = [
     "close_slice",
     "configure_runtime",
     "export_handoff_state",
+    "generate_current_task_md",
+    "generate_dashboard_md",
     "render_handoff",
     "register_dashboard_extension",
     "get_archived_task",

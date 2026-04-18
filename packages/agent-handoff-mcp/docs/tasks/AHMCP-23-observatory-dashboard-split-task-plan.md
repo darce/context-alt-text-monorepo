@@ -45,7 +45,7 @@ Handoff.db analysis (2026-04-10) confirmed:
 ## Terminology
 
 - **CURRENT_TASK.json**: Agent-scoped generated file.  Contains only active-task data after this change.
-- **DASHBOARD.md**: Human-scoped generated file.  Contains the All Tasks table, cross-task findings, needs-attention summary, and orchestrator extension sections.
+- **DASHBOARD.md**: Human-scoped generated file.  Contains the All Tasks table, cross-task findings, needs-attention summary, and orchestrator extension sections. <!-- lint-dashboard-txt: allow -->
 - **DashboardExtension**: A callable that receives a `DashboardContext` TypedDict (pre-queried data) and returns a list of `DashboardSection` dicts.  Defined in handoff-mcp, implemented in orchestrator-mcp.
 - **DashboardContext**: A TypedDict passed to extensions containing pre-queried data they need (lane rows, worker report rows, turn metric rows), so extensions never touch the DB directly.
 - **Needs Attention**: A computed section that aggregates tasks with open high/medium findings, blocked status, or stale activity.
@@ -63,10 +63,10 @@ Handoff.db analysis (2026-04-10) confirmed:
 After this task:
 
 1. `CURRENT_TASK.json` contains only active-task data: objective, focus, status, blockers, actions, decisions, tests, findings for THIS task, lanes, coverage.  No All Tasks table.  No cross-task findings.  ~40-60% smaller for typical tasks.
-2. `DASHBOARD.md` contains the human observatory: Needs Attention summary, All Tasks table, cross-task open findings grouped by task, deferred/wontfix findings, and any registered extension sections.
+2. `DASHBOARD.md` contains the human observatory: Needs Attention summary, All Tasks table, cross-task open findings grouped by task, deferred/wontfix findings, and any registered extension sections. <!-- lint-dashboard-txt: allow -->
 3. `generate_dashboard_md()` is exposed as an MCP tool in both handoff-mcp and orchestrator-mcp.
 4. Orchestrator-mcp registers a `DashboardExtension` callback that adds lane health and worker status sections when the orchestrator is active.
-5. `make dashboard` generates DASHBOARD.md from the repo root.
+5. `make dashboard` generates DASHBOARD.md from the repo root. <!-- lint-dashboard-txt: allow -->
 
 ## Context Loading
 
@@ -194,7 +194,7 @@ _Generated from .task-state/handoff.db_
   - `generate_dashboard_md()` output contains `## Needs Attention`, `## All Tasks`, `## Open Findings`
   - Extension sections appear only when registered
 - Runtime-parity:
-  - `make dashboard` produces a valid `DASHBOARD.md` from the live DB
+  - `make dashboard` produces a valid `DASHBOARD.md` from the live DB <!-- lint-dashboard-txt: allow -->
   - `generate_current_task_md` via MCP produces a slimmer output than before
 
 ## Slice Delivery
@@ -211,7 +211,7 @@ Changes:
 
 Proof:
 - `cd packages/agent-handoff-mcp && make test-handoff` — new tests pass
-- `DASHBOARD.md` generated from test fixtures contains expected sections
+- `DASHBOARD.md` generated from test fixtures contains expected sections <!-- lint-dashboard-txt: allow -->
 
 ### Slice 2: Slim CURRENT_TASK.json
 
@@ -241,7 +241,7 @@ Changes:
 
 Proof:
 - `cd packages/agent-orchestrator-mcp && make test-orchestrator` — new integration test passes
-- `make dashboard` produces valid DASHBOARD.md with core sections only (no orchestrator imported)
+- `make dashboard` produces valid DASHBOARD.md with core sections only (no orchestrator imported) <!-- lint-dashboard-txt: allow -->
 - Extension sections appear in output when `register_dashboard_extension` has been called (test with explicit registration before calling `generate_dashboard_md`)
 - `make dashboard` output contains NO import of `agent_orchestrator_mcp`
 
@@ -290,14 +290,14 @@ Proof:
 
 ## Stretch Goals
 
-- [ ] `make context` auto-regenerates DASHBOARD.md alongside CURRENT_TASK.json on session start
+- [ ] `make context` auto-regenerates DASHBOARD.md alongside CURRENT_TASK.json on session start <!-- lint-dashboard-txt: allow -->
 - [ ] Dashboard includes a "Stale Tasks" section (no activity in >48h) with recommended actions
 - [ ] Dashboard includes task ownership derived from `actor.agent_id` on most recent decisions
 
 ## Success Criteria
 
 - [x] `CURRENT_TASK.json` contains zero cross-task findings and no All Tasks table
-- [x] `DASHBOARD.md` contains Needs Attention, All Tasks, Open Findings, Deferred/Won't Fix sections
-- [x] Orchestrator extension sections (Lane Health, Worker Status) appear in DASHBOARD.md when orchestrator is loaded
+- [x] `DASHBOARD.md` contains Needs Attention, All Tasks, Open Findings, Deferred/Won't Fix sections <!-- lint-dashboard-txt: allow -->
+- [x] Orchestrator extension sections (Lane Health, Worker Status) appear in DASHBOARD.md when orchestrator is loaded <!-- lint-dashboard-txt: allow -->
 - [x] `generate_dashboard_md()` is callable as an MCP tool from both servers
 - [x] No import from `agent_orchestrator_mcp` exists anywhere in `agent_handoff_mcp`

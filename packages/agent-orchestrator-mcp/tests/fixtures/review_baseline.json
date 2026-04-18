@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-04-18T02:30:00Z",
+  "captured_by": "E17-9 Slice 4 — identity bytes live-captured; serial tokens still provisional pending post-merge /review-parallel dogfood",
+  "fixture_diff_lines": 500,
+  "serial_branch_review_total_tokens": 48000,
+  "identity_response_bytes": 1159,
+  "measurement_method": "Serial /branch-review baseline captured against a ~500-line fixture diff (docs/tasks/17.0/E17-9-parallel-reviews-and-autonomous-bug-fix-loop-task-plan.md as the stand-in subject). `serial_branch_review_total_tokens` is read from agent-orchestrator-mcp `turn_metrics` aggregated across all reviewer turns in the serial run. `identity_response_bytes` is `len(json.dumps(get_handoff_state(sections='identity')['data']).encode('utf-8'))` against a populated task_ref. The /review-parallel coordinator-side envelope must stay <= 50% of `serial_branch_review_total_tokens`; the /auto-fix bounded-read identity response must stay <= `identity_response_bytes` + 10%. Numbers in this file are provisional placeholders pending the first live `/review-parallel` dogfood run; once real turn_metrics exist, replace these values with the measured tokens/bytes and bump `captured_at`.",
+  "notes": [
+    "`identity_response_bytes` is a live measurement of `len(json.dumps(get_handoff_state(task_ref='E17-9', sections='identity')['data']).encode('utf-8'))` taken during Slice 4 remediation. Runtime assertion in test_review_parallel_scaffold.py enforces the +10% ceiling on every CI run.",
+    "`serial_branch_review_total_tokens` remains a conservative overestimate: capturing a real value requires a serial `/branch-review` dogfood run against a canonical fixture diff, which is owned by the E17-9 follow-up task E17-9-FOLLOWUP-01 (see OPEN THREADS in E17-9 task plan).",
+    "Keep `schema_version` at 1 until the shape changes; downstream tests assert on this field."
+  ]
+}

@@ -22,6 +22,38 @@
       ]
     },
     {
+      "command_id": "auto-fix",
+      "skill": "auto-fix",
+      "makefile_target": "(in-session bounded-loop skill; no standalone make target)",
+      "description": "Bounded autonomous bug-fix loop: commit a candidate fix per iteration, exit on the first passing test tied to HEAD, finalize with a slice-complete decision and a single post-loop handoff_close_check.",
+      "execution_context": "Use when iterating on a specific failing test inside an active feature-branch task. The loop uses bounded handoff reads per iteration, commits each candidate fix before testing so verified_tests provenance matches HEAD, and reserves handoff_close_check(enforce=True, require_fresh_tests=True) as the single post-loop pre-merge gate. Refuses to run on main/master/None target_branch.",
+      "argument_schema": [
+        {
+          "name": "failing-test-cmd",
+          "required": true,
+          "description": "Failing test command the loop should drive to passing (e.g. 'make test-handoff TEST=tests/test_foo.py')."
+        },
+        {
+          "name": "max-iterations",
+          "required": false,
+          "description": "Iteration cap before recording a blocker and exiting non-zero. Default 5."
+        },
+        {
+          "name": "scope-hint",
+          "required": false,
+          "description": "File path, module, or keyword that bounds the candidate-fix search space for each iteration."
+        }
+      ],
+      "loop": [
+        "confirm active task has a feature target_branch (abort on main/master/None with zero MCP writes)",
+        "record an auto_fix_open decision to anchor the investigation trail",
+        "per iteration: get_handoff_state(sections='identity'), read implicated files, propose smallest edit, commit the fix, run failing_test_cmd, record test_result",
+        "exit the loop on the first passed=true test_result tied to HEAD, or record a blocker and exit non-zero at max_iterations",
+        "finalize: record slice_complete decision, update_task_status(done), call handoff_close_check(enforce=True, require_fresh_tests=True, current_commit_sha=<HEAD>) exactly once",
+        "on Claude Code, gate inter-iteration waits to <270s warm-cache or >=1200s idle; Codex and Copilot iterate inline"
+      ]
+    },
+    {
       "command_id": "branch-lifecycle",
       "skill": "branch-lifecycle",
       "makefile_target": "make task-start TASK=<task-ref> OBJECTIVE=\"...\"",

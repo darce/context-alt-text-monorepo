@@ -296,7 +296,16 @@ def get_handoff_state(
             try:
                 resolved_row = _resolve_workspace_handoff_row(conn)
             except ValueError as exc:
-                return _envelope(ok=False, tool="get_handoff_state", data={"error": str(exc)})
+                from .shared_write_context import AmbiguousWorkspaceContextError  # noqa: PLC0415
+
+                error_payload: dict = {"error": str(exc)}
+                if isinstance(exc, AmbiguousWorkspaceContextError):
+                    error_payload["candidates"] = exc.candidates
+                    error_payload["resolution"] = (
+                        "Pass task_ref=<one of the listed task_refs> to disambiguate. "
+                        "AHMCP-33: read paths surface candidates instead of failing opaque."
+                    )
+                return _envelope(ok=False, tool="get_handoff_state", data=error_payload)
             if resolved_row is None:
                 return _envelope(
                     ok=True, tool="get_handoff_state", data={"active": None, "message": "No active handoff state."}

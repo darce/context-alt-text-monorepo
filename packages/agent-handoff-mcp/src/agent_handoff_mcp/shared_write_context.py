@@ -90,6 +90,23 @@ class UnresolvedTaskContextError(ValueError):
     """
 
 
+class AmbiguousWorkspaceContextError(UnresolvedTaskContextError):
+    """Raised when the workspace resolver finds 2+ candidate tasks.
+
+    Attaches a ``candidates`` list — each entry is a mapping with
+    ``task_ref``, ``target_branch``, ``target_worktree_path``,
+    ``objective``, ``status``, and ``updated_at``. Read paths
+    (``get_handoff_state``, ``search_handoff``) surface these to the
+    caller so the ambiguity can be resolved by passing ``task_ref``
+    explicitly instead of bailing with an opaque string (AHMCP-33,
+    closes COLDSTART-H-02).
+    """
+
+    def __init__(self, message: str, candidates: list[dict] | None = None) -> None:
+        super().__init__(message)
+        self.candidates: list[dict] = list(candidates or [])
+
+
 def _commit_sha_validation_enabled() -> bool:
     """Return ``False`` if the test bypass env var is set, else ``True``."""
     bypass = os.environ.get("AGENT_HANDOFF_SKIP_SHA_VALIDATION", "").strip().lower()

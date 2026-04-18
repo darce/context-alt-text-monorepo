@@ -4,9 +4,9 @@
 - **Author**: Codex
 - **Owning Epic**: [docs/epics/v0.4.0/skill-formalization-and-process-automation-epic.md](../../epics/v0.4.0/skill-formalization-and-process-automation-epic.md)
 - **Epic Short ID**: E17
-- **Target Branch**: `feature/e17-12` (created by `make task-start` only after planning review passes)
+- **Target Branch**: `feature/e17-12` (branch created during scope migration from `main`; planning review runs on the feature branch per the updated planning-docs-on-feature-branch guidance)
 - **Review Coverage Target**: 2
-- **Hard Prerequisites**: E17-4 and E17-7 have merged to `main` (verified 2026-04-18: `config/agent-workflows/portable_commands.json`, `scripts/generate_agent_workflows.py`, the Codex router blocks in `docs/agentic/instructions.md` and `CLAUDE.md`, and the generated Claude/Copilot adapters are on `main`). This plan is ready to branch from `main` after planning review.
+- **Hard Prerequisites**: E17-4 and E17-7 have merged to `main` (verified 2026-04-18: `config/agent-workflows/portable_commands.json`, `scripts/generate_agent_workflows.py`, the Codex router blocks in `docs/agentic/instructions.md` and `CLAUDE.md`, and the generated Claude/Copilot adapters are on `main`). E17-12 is epic-derived follow-up work filed after the E17 phase mapping (E17-1..E17-7 across Phases 1-4) was frozen; it corrects E17-4 / E17-7 docs and closes the harness-discoverability gap those slices surfaced. Update the owning epic's phase list under a new "Phase 5 — Harness Discoverability Follow-up" heading as part of Slice 3 docs reconciliation.
 
 ---
 
@@ -40,7 +40,7 @@ The user's intake decision (handoff ledger id 1963, task_ref `E17-12`) chose: pu
 ## Current State Analysis
 
 - **`.codex/config.toml`** registers MCP servers (`context7`, `altcontext-mcp`, `altcontext-orchestrator-mcp`) and `codex_hooks = true`. No skill roots, no command registry.
-- **`.claude/skills/`** contains 22 skill directories (including `branch-review`, `planning-review`, `scope`, `tdd`, etc.). No Codex-side wiring points at this directory.
+- **`.claude/skills/`** contains multiple skill directories (including `branch-review`, `planning-review`, `scope`, `tdd`, `auto-fix`, etc.; the exact count is not load-bearing — any count drift is acceptable as long as the generator iterates over manifest entries rather than directory listings). No Codex-side wiring points at this directory.
 - **`config/agent-workflows/portable_commands.json`** version 1; 10 commands declared.
 - **`scripts/generate_agent_workflows.py`** renders three outputs: Claude command files under `.claude/commands/`, VS Code/Copilot prompts under `.github/prompts/`, and Codex router prose injected between `<!-- BEGIN/END GENERATED: codex-command-router -->` marker blocks in `docs/agentic/instructions.md` and `CLAUDE.md`. Generator has no Codex skill-registration code path.
 - **Codex app-server protocol (fixture)** exposes: `skills/list` with `cwds`, `forceReload`, `perCwdExtraUserRoots`; `skills/config/write` with `{enabled: bool, path: str}`; `SkillsChangedNotification` for local skill file changes. The live Codex binary's handling of these requests from a repo-committed bootstrap is not yet confirmed in this workspace.
@@ -70,10 +70,10 @@ The user's intake decision (handoff ledger id 1963, task_ref `E17-12`) chose: pu
 
 - Assessment: [`packages/agent-handoff-mcp/docs/assessments/codex-harness-slash-tools-and-skill-discovery-investigation-2026-04-18.md`](../../../packages/agent-handoff-mcp/docs/assessments/codex-harness-slash-tools-and-skill-discovery-investigation-2026-04-18.md)
 - Scope: [`docs/scopes/e17-12-codex-skill-discoverability-scope.md`](../../scopes/e17-12-codex-skill-discoverability-scope.md)
-- Codex protocol fixture: `packages/codex-subagent-bridge/tests/fixtures/codex_app_server_protocol.v2.schemas.json` (`SkillsListParams` lines 1718-1746; `SkillsConfigWriteParams` lines 2054-2070; `SkillsChangedNotification` lines 8790-8796; `skills/list` request lines 10216-10224; `skills/config/write` request lines 10528-10536)
+- Codex protocol fixture: `packages/codex-subagent-bridge/tests/fixtures/codex_app_server_protocol.v2.schemas.json` — definitions `SkillsListParams`, `SkillsConfigWriteParams`, `SkillsChangedNotification`, and request entries `skills/list` and `skills/config/write`. Reference definitions by name; line numbers drift with every fixture regeneration.
 - Current Codex config: `.codex/config.toml`
 - Canonical manifest: `config/agent-workflows/portable_commands.json`
-- Generator: `scripts/generate_agent_workflows.py` (Codex router rendering at `_render_codex_router_body` ~ lines 183-205; router consumers `CODEX_ROUTER_CONSUMERS` at lines 17-20)
+- Generator: `scripts/generate_agent_workflows.py` — Codex router rendering via `_render_codex_router_body`; router consumers declared in `CODEX_ROUTER_CONSUMERS`. Reference by symbol name; line numbers drift.
 - Generated router blocks: `docs/agentic/generated/codex-command-router.md` and the marker-delimited blocks in `docs/agentic/instructions.md` + `CLAUDE.md`
 - Upstream plans: [`docs/tasks/17.0/E17-4-workflow-integrity-task-plan.md`](E17-4-workflow-integrity-task-plan.md), [`docs/tasks/17.0/E17-7-handoff-evolution-and-portable-workflow-task-plan.md`](E17-7-handoff-evolution-and-portable-workflow-task-plan.md)
 - Skills directory: `.claude/skills/`
@@ -92,6 +92,8 @@ The user's intake decision (handoff ledger id 1963, task_ref `E17-12`) chose: pu
 | `docs/tasks/17.0/E17-4-...md`, `docs/tasks/17.0/E17-7-...md` | `docs/tasks/17.0/` | overstated UI-parity wording | corrected to match shipped behavior | content edit | planning-review Slice 3 |
 | `docs/agentic/contracts/harness-protocol.yaml` | `docs/agentic/contracts/` | harness protocol spec | document the Codex skill-registration surface (if shipped) or the retirement decision (if not) | additive | `make check-harness-sync` passes |
 | `portable_commands.json` | `config/agent-workflows/` | v1 manifest | **unchanged** — schema not re-architected | no change | manifest diff is zero |
+| `scripts/check-task-context.py` (Slice 0) | `scripts/` | silent-exit on `ok=false` error envelope | surface error to stderr; extract `_interpret_handoff_envelope` pure helper | behavior-preserving for success path | regression test in `scripts/test_check_task_context.py` |
+| `agent_handoff_mcp` envelope consumer contract (Slice 0) | `scripts/` | caller must render `ok=false` envelopes diagnostically | Slice 0 tightens the consumer-side contract; no upstream API change | additive / consumer-only | pytest suite under `scripts/` |
 
 ## Proposed Solution
 
@@ -124,6 +126,8 @@ Four slices deliver the work. Slice 0 is a small prerequisite bugfix uncovered d
 | Canonical instructions | `docs/agentic/instructions.md` | Codex parity section reflects shipped behavior (description + limitation, as applicable) |
 | CLAUDE.md router block | `CLAUDE.md` | no changes beyond generator regeneration if the router output changes |
 | Planning review record | handoff ledger | `e17-12_planning_review_outcome` recorded before `make task-start` |
+| Slice 0 script | `scripts/check-task-context.py` | surface `ok=false` error envelope via new `_interpret_handoff_envelope` pure helper; refactor `_load_active_state` to delegate |
+| Slice 0 regression test | `scripts/test_check_task_context.py` | new file — covers happy path, error envelope (ambiguous active task), ok=false without message, non-dict payload, missing `active` key |
 
 ## Verification Strategy
 
@@ -136,7 +140,7 @@ Slice 1 (Discovery):
 Slice 2 (Conditional implementation):
 
 - After `make generate-agent-workflows`, the new Codex skill-registration artifact exists at the path chosen in Slice 1 and contains entries generated verbatim from the manifest.
-- On a fresh clone (`git clone ... && cd ... && make bootstrap`), launching the Codex harness resolves `$branch-review` to `.claude/skills/branch-review/SKILL.md` without the operator editing any file outside the cloned tree.
+- On a fresh clone (`git clone ... && cd ... && pip install -e packages/agent-handoff-mcp && pip install -e packages/agent-orchestrator-mcp`), launching the Codex harness resolves `$branch-review` to `.claude/skills/branch-review/SKILL.md` without the operator editing any file outside the cloned tree.
 - At least one additional `$skill` (e.g. `$planning-review`) resolves the same way.
 - `make check-agent-workflows` detects drift between the manifest and the generated Codex skill-registration artifact (simulated by hand-editing the artifact and running the check).
 - Deleting the generated artifact causes `make check-agent-workflows --check` to fail with a named remediation.
@@ -213,7 +217,7 @@ Changes:
 - Commit the generated artifact at the path Slice 1 identified. The generator must be idempotent: `make generate-agent-workflows` twice produces identical output.
 - If Slice 1 outcome is (a), edit `.codex/config.toml` to include the generated skill-root block verbatim (generator overwrites the delimited block; operator-authored sections of `.codex/config.toml` are preserved via BEGIN/END markers analogous to the Codex router block markers).
 - If Slice 1 outcome is (b), the generated artifact is a new file under `.codex/` (e.g. `.codex/skills.json` or `.codex/skills.toml`) committed to the repo.
-- If Slice 1 outcome is (c), add a `scripts/codex/bootstrap_skills.py` (or equivalent) that is invoked as part of `make bootstrap` / the Codex session start hook and calls `skills/config/write` for each manifest entry against `$PWD/.claude/skills/<slug>/SKILL.md`. The script must refuse to run if it would write to a path outside the repo.
+- If Slice 1 outcome is (c), add a `scripts/codex/bootstrap_skills.py` (or equivalent) invoked by the Codex session start hook (registered via `.codex/hooks.json`) that calls `skills/config/write` for each manifest entry against `$PWD/.claude/skills/<slug>/SKILL.md`. The script must refuse to run if it would write to a path outside the repo.
 - Extend root `Makefile` `check-agent-workflows` target to call the generator in `--check` mode for the new Codex skill artifact.
 - Extend `docs/agentic/contracts/harness-protocol.yaml` with a new `codex.skill_registration` subsection documenting the path, the generator function, the verification command, and the `$skill` resolution semantics.
 
@@ -221,7 +225,7 @@ Proof:
 
 - `make generate-agent-workflows` twice produces a zero-diff result.
 - Hand-editing the generated Codex skill artifact and running `make check-agent-workflows` fails with a named diff against the manifest.
-- On a fresh clone (tested via `git clone` into a scratch directory + `make bootstrap`), launching Codex resolves `$branch-review` to `.claude/skills/branch-review/SKILL.md`.
+- On a fresh clone (tested via `git clone` into a scratch directory + `pip install -e packages/agent-handoff-mcp && pip install -e packages/agent-orchestrator-mcp`), launching Codex resolves `$branch-review` to `.claude/skills/branch-review/SKILL.md`.
 - `$planning-review` resolves on the same fresh clone, confirming the artifact is generic across all manifest entries.
 - For outcome (c), the bootstrap script exits non-zero when pointed at a path outside the repo.
 - `make check-harness-sync` passes after the `harness-protocol.yaml` additions.
@@ -259,7 +263,7 @@ Proof:
 - [ ] Scope note exists at `docs/scopes/e17-12-codex-skill-discoverability-scope.md`
 - [ ] Intake decision `e17-12_scope_intake_codex_skill_discoverability` (handoff ledger id 1963) references this task plan
 - [ ] Planning review passed (`make plan-review DOC=docs/tasks/17.0/E17-12-codex-skill-discoverability-task-plan.md`)
-- [ ] `make task-start TASK=E17-12 OBJECTIVE="..."` run only after planning review passes
+- [x] Feature branch `feature/e17-12` and worktree created during scope migration from `main` (planning docs moved to the branch per updated planning-docs-on-feature-branch guidance); planning review runs on the feature branch rather than gating `make task-start`
 
 ### Checklist for Slice 0: check-task-context.py Silent-Exit Fix
 

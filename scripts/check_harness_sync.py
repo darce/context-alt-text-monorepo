@@ -557,8 +557,8 @@ def _seed_active_task(repo: Path, *, task_ref: str, branch: str, target_worktree
     )
 
 
-def _create_feature_worktree(repo: Path, branch: str = "feature/e17-8") -> Path:
-    worktree_path = repo.parent / "repo-feature"
+def _create_worktree(repo: Path, *, branch: str, suffix: str) -> Path:
+    worktree_path = repo.parent / f"repo-{suffix}"
     _git(repo, "branch", branch, "main")
     _git(repo, "worktree", "add", str(worktree_path), branch)
     return worktree_path
@@ -569,8 +569,8 @@ def _check_worktree_drift(contract: dict, *, repo_root: Path = REPO_ROOT) -> lis
     tmpdir, fixture_repo = _build_guard_fixture(contract, repo_root=repo_root)
     try:
         env = _fixture_env(fixture_repo)
-        feature_worktree = _create_feature_worktree(fixture_repo)
-        drift_guard = fixture_repo / ".github" / "hooks" / "guard-worktree-drift.py"
+        feature_worktree = _create_worktree(fixture_repo, branch="feature/e17-8", suffix="feature")
+        feature_guard = feature_worktree / ".github" / "hooks" / "guard-worktree-drift.py"
         _seed_active_task(
             fixture_repo,
             task_ref="E17-8",
@@ -581,9 +581,9 @@ def _check_worktree_drift(contract: dict, *, repo_root: Path = REPO_ROOT) -> lis
         blocked_path = fixture_repo / "scripts" / "check.py"
         _ensure_parent(blocked_path)
         _, output, _ = _run_python_hook(
-            drift_guard,
+            feature_guard,
             {"toolName": "create_file", "toolInput": {"filePath": str(blocked_path)}},
-            cwd=fixture_repo,
+            cwd=feature_worktree,
             env=env,
         )
         if output is None or output["hookSpecificOutput"]["permissionDecision"] != "block":
@@ -594,40 +594,40 @@ def _check_worktree_drift(contract: dict, *, repo_root: Path = REPO_ROOT) -> lis
         allowed_path = fixture_repo / "docs" / "tasks" / "17.0" / "plan.md"
         _ensure_parent(allowed_path)
         _, output, _ = _run_python_hook(
-            drift_guard,
+            feature_guard,
             {"toolName": "create_file", "toolInput": {"filePath": str(allowed_path)}},
-            cwd=fixture_repo,
+            cwd=feature_worktree,
             env=env,
         )
         if output is not None:
             errors.append("worktree_drift: drift hook blocked an allow-listed main surface")
 
+        maint_worktree = _create_worktree(
+            fixture_repo,
+            branch="feature/maint-dashboard",
+            suffix="maint",
+        )
+        maint_guard = maint_worktree / ".github" / "hooks" / "guard-worktree-drift.py"
         _seed_active_task(
             fixture_repo,
             task_ref="MAINT-dashboard",
-            branch="feature/e17-8",
-            target_worktree_path=feature_worktree,
+            branch="feature/maint-dashboard",
+            target_worktree_path=maint_worktree,
         )
         _, output, _ = _run_python_hook(
-            drift_guard,
+            maint_guard,
             {"toolName": "create_file", "toolInput": {"filePath": str(blocked_path)}},
-            cwd=fixture_repo,
+            cwd=maint_worktree,
             env=env,
         )
         if output is not None:
             errors.append("worktree_drift: drift hook did not honor the MAINT-* bypass")
 
-        _seed_active_task(
-            fixture_repo,
-            task_ref="E17-8",
-            branch="feature/e17-8",
-            target_worktree_path=feature_worktree,
-        )
         env_bypass = env | {"ALT_ALLOW_WORKTREE_DRIFT": "1"}
         _, output, _ = _run_python_hook(
-            drift_guard,
+            feature_guard,
             {"toolName": "create_file", "toolInput": {"filePath": str(blocked_path)}},
-            cwd=fixture_repo,
+            cwd=feature_worktree,
             env=env_bypass,
         )
         if output is not None:

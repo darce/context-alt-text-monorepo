@@ -260,7 +260,7 @@ def _read_active_row(repo: Path) -> dict[str, object] | None:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        row = conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone()
+        row = conn.execute("SELECT * FROM handoff_state ORDER BY datetime(updated_at) DESC LIMIT 1").fetchone()
     finally:
         conn.close()
     return dict(row) if row is not None else None
@@ -326,7 +326,12 @@ def test_task_start_succeeds_when_existing_active_task_present(tmp_path: Path) -
 
 
 def test_task_start_archives_previous_task_for_dashboard_status(tmp_path: Path) -> None:
-    """task-start should preserve the outgoing task's real dashboard status."""
+    """E17-11: task-start leaves the outgoing task's row in place (multi-active).
+
+    The greenfield multi-active-task model does not auto-archive outgoing
+    tasks; both coexist as live handoff_state rows and the dashboard shows
+    each one's live status.
+    """
     from agent_handoff_mcp import RuntimeConfig, configure_runtime, generate_dashboard_md
 
     repo = _build_fake_monorepo(tmp_path)
@@ -338,18 +343,12 @@ def test_task_start_archives_previous_task_for_dashboard_status(tmp_path: Path) 
     second = _run_script("task-start.sh", repo, "TS-DASH-2", "Second task", env=env)
     assert second.returncode == 0, f"stdout={second.stdout!r} stderr={second.stderr!r}"
 
-    archived = _read_archive_row(repo, "TS-DASH-1")
-    assert archived is not None
-    snapshot = json.loads(archived["snapshot_json"])
-    assert snapshot["active"]["task_ref"] == "TS-DASH-1"
-    assert snapshot["active"]["status"] == "in_progress"
-    assert snapshot["active"]["target_worktree_path"].endswith("context-alt-text-monorepo-ts-dash-1")
-
     runtime = RuntimeConfig.for_repo(repo)
     configure_runtime(runtime)
     dashboard = generate_dashboard_md(write_file=False)
     assert dashboard["ok"] is True
     assert "TS-DASH-1" in dashboard["markdown"]
+    assert "TS-DASH-2" in dashboard["markdown"]
     assert "in_progress" in dashboard["markdown"]
 
 
@@ -785,6 +784,62 @@ def test_guard_worktree_drift_allows_allowlisted_main_surface(tmp_path: Path) ->
     )
     assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
     assert proc.stdout.strip() == ""
+
+
+def test_guard_worktree_drift_blocks_when_active_task_context_is_unresolved(tmp_path: Path) -> None:
+    """E17-11 Slice 4: ambiguous workspace state must fail closed."""
+
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+    env["CLAUDE_PROJECT_DIR"] = str(repo)
+
+    started = _run_script("task-start.sh", repo, "DRIFT-UNRESOLVED-1", "Unresolved context repro", env=env)
+    assert started.returncode == 0, started.stderr
+
+    db_path = repo / ".task-state" / "handoff.db"
+    other_worktree = repo.parent / "context-alt-text-monorepo-drift-unresolved-2"
+    other_worktree.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO handoff_state (
+                id, task_ref, objective, focus, status, target_branch,
+                target_worktree_path, revision, updated_at, updated_by,
+                updated_branch, updated_commit_sha
+            ) VALUES (?, ?, ?, ?, 'in_progress', ?, ?, 0,
+                      datetime('now'), 'tester', ?, ?)
+            """,
+            (
+                None,
+                "DRIFT-UNRESOLVED-2",
+                "Second unresolved task",
+                None,
+                "feature/drift-unresolved-2",
+                str(other_worktree),
+                "feature/drift-unresolved-2",
+                "abc123",
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    payload = json.dumps({"tool_input": {"file_path": str(repo / "scripts" / "check-task-context.py")}})
+    proc = subprocess.run(
+        [str(repo / "scripts" / "hooks" / "guard-worktree-drift.sh")],
+        cwd=repo,
+        env=env,
+        input=payload,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    parsed = json.loads(proc.stdout)
+    hook_output = parsed["hookSpecificOutput"]
+    assert hook_output["permissionDecision"] == "block"
+    assert "UnresolvedTaskContextError" in hook_output["permissionDecisionReason"]
+    assert "Ambiguous active task" in hook_output["permissionDecisionReason"]
 
 
 def test_guard_worktree_drift_allows_env_bypass(tmp_path: Path) -> None:

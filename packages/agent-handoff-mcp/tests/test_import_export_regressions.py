@@ -151,8 +151,13 @@ def test_switch_task_returns_full_mutation_shape(workspace_pair: dict[str, Path]
     assert switched["mutation"]["operation"] == "switch_task"
     assert switched["mutation"]["affected_ids"] == ["task-b"]
     assert isinstance(switched["mutation"]["task_revision"], int)
-    assert switched["archived_previous"] is True
-    assert switched["previous_task_ref"] == "task-a"
+    assert switched["archived_previous"] is False
+    assert switched["previous_task_ref"] is None
+    assert switched["active"]["task_ref"] == "task-b"
+
+    task_a = _parse(mcp_server.get_handoff_state(task_ref="task-a", sections="identity"))
+    assert task_a["ok"] is True
+    assert task_a["active"]["task_ref"] == "task-a"
 
 
 def test_export_defaults_to_no_markdown(workspace_pair: dict[str, Path]) -> None:
@@ -187,9 +192,46 @@ def test_switch_task_clears_focus_on_restore(workspace_pair: dict[str, Path]) ->
 
     restored = _parse(handoff_core.switch_task(task_ref="task-a"))
     assert restored["ok"] is True
+    assert restored["already_active"] is True
     assert restored["active"]["task_ref"] == "task-a"
     assert restored["active"]["objective"] == "Restore me"
-    assert restored["active"]["focus"] is None
+    assert restored["active"]["focus"] == "stale focus"
+    task_b = _parse(mcp_server.get_handoff_state(task_ref="task-b", sections="identity"))
+    assert task_b["ok"] is True
+    assert task_b["active"]["task_ref"] == "task-b"
+
+
+def test_switch_task_keeps_live_rows_and_restores_genuinely_archived_task(workspace_pair: dict[str, Path]) -> None:
+    """switch_task keeps live rows intact and can restore a separately archived task."""
+    _configure_runtime(workspace_pair["source"])
+
+    _parse(mcp_server.set_handoff_state(task_ref="task-a", objective="Task A", status="in_progress"))
+    _parse(mcp_server.set_handoff_state(task_ref="task-archived", objective="Archive me", status="in_progress"))
+    archived = _parse(mcp_server.archive_task_state(task_ref="task-archived"))
+    assert archived["ok"] is True
+
+    switched = _parse(handoff_core.switch_task(task_ref="task-b", objective="Task B"))
+    assert switched["ok"] is True
+    assert switched["archived_previous"] is False
+
+    active_a = _parse(mcp_server.get_handoff_state(task_ref="task-a", sections="identity"))
+    active_b = _parse(mcp_server.get_handoff_state(task_ref="task-b", sections="identity"))
+    archived_a = _parse(mcp_server.get_archived_task("task-a"))
+    archived_task = _parse(mcp_server.get_archived_task("task-archived"))
+    assert active_a["ok"] is True
+    assert active_b["ok"] is True
+    assert archived_a["ok"] is False
+    assert archived_task["ok"] is True
+
+    restored = _parse(handoff_core.switch_task(task_ref="task-archived"))
+    assert restored["ok"] is True
+    assert restored["active"]["task_ref"] == "task-archived"
+
+    restored_task = _parse(mcp_server.get_handoff_state(task_ref="task-archived", sections="identity"))
+    assert restored_task["ok"] is True
+    assert restored_task["active"]["task_ref"] == "task-archived"
+    assert _parse(mcp_server.get_handoff_state(task_ref="task-a", sections="identity"))["ok"] is True
+    assert _parse(mcp_server.get_handoff_state(task_ref="task-b", sections="identity"))["ok"] is True
 
 
 def test_archive_task_state_raises_branch_mismatch_error_when_enforcement_enabled(
@@ -472,8 +514,12 @@ def test_switch_task_preserves_target_branch_on_restore(workspace_pair: dict[str
 
     restored = _parse(handoff_core.switch_task(task_ref="task-a"))
     assert restored["ok"] is True
+    assert restored["already_active"] is True
     assert restored["active"]["task_ref"] == "task-a"
     assert restored["active"]["target_branch"] == "feature/task-a-work"
+    task_b = _parse(mcp_server.get_handoff_state(task_ref="task-b", sections="identity"))
+    assert task_b["ok"] is True
+    assert task_b["active"]["task_ref"] == "task-b"
 
 
 def test_import_handoff_state_prefers_decoded_lane_message_payload(workspace_pair: dict[str, Path]) -> None:

@@ -153,13 +153,13 @@ def _set_import_active_state(conn: sqlite3.Connection, task_ref: str, active: di
     )
     updated_branch = _normalize_optional_text(active.get("updated_branch")) or git_branch or "unknown-branch"
     updated_commit_sha = _normalize_optional_text(active.get("updated_commit_sha")) or git_commit
-    current = conn.execute("SELECT revision FROM handoff_state WHERE id = 1").fetchone()
+    current = conn.execute("SELECT revision FROM handoff_state WHERE task_ref = ?", (task_ref,)).fetchone()
     if current is None:
         conn.execute(
             """
             INSERT INTO handoff_state (
                 id, task_ref, objective, focus, status, revision, updated_at, updated_by, updated_branch, updated_commit_sha
-            ) VALUES (1, ?, ?, ?, ?, 0, datetime('now'), ?, ?, ?)
+            ) VALUES (NULL, ?, ?, ?, ?, 0, datetime('now'), ?, ?, ?)
             """,
             (
                 task_ref,
@@ -173,15 +173,15 @@ def _set_import_active_state(conn: sqlite3.Connection, task_ref: str, active: di
         )
         return
     conn.execute(
-        "UPDATE handoff_state SET task_ref = ?, objective = ?, focus = ?, status = ?, revision = revision + 1, updated_at = datetime('now'), updated_by = ?, updated_branch = ?, updated_commit_sha = ? WHERE id = 1",
+        "UPDATE handoff_state SET objective = ?, focus = ?, status = ?, revision = revision + 1, updated_at = datetime('now'), updated_by = ?, updated_branch = ?, updated_commit_sha = ? WHERE task_ref = ?",
         (
-            task_ref,
             active.get("objective", ""),
             active.get("focus"),
             active.get("status", "in_progress"),
             updated_by,
             updated_branch,
             updated_commit_sha,
+            task_ref,
         ),
     )
 
@@ -639,7 +639,7 @@ def archive_task_state(
                 commit_sha=archive_commit_sha,
             ),
         )
-        warnings = collect_target_context_warnings(conn, ctx)
+        warnings = collect_target_context_warnings(conn, ctx, task_ref=resolved_task_ref)
         if prune_working_rows and not allow_destructive_clear:
             working_counts = _count_task_rows(conn, resolved_task_ref)
             non_zero_sections = [section for section, count in working_counts.items() if count > 0]
@@ -662,10 +662,8 @@ def archive_task_state(
         )
         active_cleared = False
         if clear_active_if_matches:
-            active_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
-            if active_row is not None and str(active_row["task_ref"]) == resolved_task_ref:
-                conn.execute("DELETE FROM handoff_state WHERE id = 1")
-                active_cleared = True
+            deleted = conn.execute("DELETE FROM handoff_state WHERE task_ref = ?", (resolved_task_ref,))
+            active_cleared = deleted.rowcount > 0
         pruned = False
         if prune_working_rows:
             for table in (
@@ -794,9 +792,9 @@ def update_task_status(
 
     with _get_db_connection() as conn:
         ctx = _resolve_write_actor(conn, actor)
-        warnings = collect_target_context_warnings(conn, ctx)
+        warnings = collect_target_context_warnings(conn, ctx, task_ref=task_ref)
         active_row = conn.execute(
-            "SELECT * FROM handoff_state WHERE id = 1 AND task_ref = ?",
+            "SELECT * FROM handoff_state WHERE task_ref = ?",
             (task_ref,),
         ).fetchone()
 
@@ -887,7 +885,12 @@ def update_task_status(
             notes=f"Updated archived status to {status}",
         )
 
-        active_task_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
+        from .shared_primitives import _resolve_workspace_handoff_row  # noqa: PLC0415
+
+        try:
+            active_task_row = _resolve_workspace_handoff_row(conn)
+        except ValueError:
+            active_task_row = None
         regen_result = "skipped"
         if active_task_row is not None:
             try:
@@ -928,12 +931,10 @@ def switch_task(
     actor: WriteActor | None = None,
     target_branch: str | None = None,
 ) -> dict:
-    """Switch the active task, archiving the current one if different.
+    """Ensure a handoff row exists for ``task_ref`` without evicting other rows.
 
     If the target task was previously archived, its objective is restored
-    automatically.  Pass *objective* explicitly to override.
-    Focus is cleared on restore (stale focus from a previous session is misleading)
-    unless explicitly provided.
+    automatically. Pass *objective* explicitly to override.
     """
     if status not in HANDOFF_ACTIVE_STATUSES:
         return _envelope(
@@ -945,12 +946,46 @@ def switch_task(
 
     with _get_db_connection() as conn:
         ctx = _resolve_write_actor(conn, actor)
-        warnings = collect_target_context_warnings(conn, ctx)
-        current = conn.execute("SELECT task_ref, objective, revision FROM handoff_state WHERE id = 1").fetchone()
+        existing = conn.execute("SELECT * FROM handoff_state WHERE task_ref = ?", (task_ref,)).fetchone()
+        archived = None
+        if existing is None:
+            archived = conn.execute("SELECT task_ref FROM task_archives WHERE task_ref = ?", (task_ref,)).fetchone()
+        warnings = collect_target_context_warnings(
+            conn,
+            ctx,
+            task_ref=task_ref if existing is not None or archived is not None else None,
+        )
 
-        # Already active; nothing to do.
-        if current is not None and str(current["task_ref"]) == task_ref:
-            active = _row_to_dict(conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone())
+        # The task already has an active row; update only explicitly requested fields.
+        if existing is not None:
+            conn.execute(
+                """
+                UPDATE handoff_state
+                SET objective = ?,
+                    focus = ?,
+                    status = ?,
+                    target_branch = ?,
+                    revision = revision + 1,
+                    updated_at = datetime('now'),
+                    updated_by = ?,
+                    updated_branch = ?,
+                    updated_commit_sha = ?
+                WHERE task_ref = ?
+                """,
+                (
+                    objective if objective is not None else existing["objective"],
+                    focus if focus is not None else existing["focus"],
+                    status,
+                    target_branch if target_branch is not None else existing["target_branch"],
+                    ctx.agent,
+                    ctx.branch,
+                    ctx.commit_sha,
+                    task_ref,
+                ),
+            )
+            active = _row_to_dict(
+                conn.execute("SELECT * FROM handoff_state WHERE task_ref = ?", (task_ref,)).fetchone()
+            )
             return _envelope(
                 ok=True,
                 tool="switch_task",
@@ -987,71 +1022,34 @@ def switch_task(
                 task_ref=task_ref,
             )
 
-        # Archive the outgoing task so it can be restored later.
         archived_previous = False
         previous_task_ref = None
-        if current is not None:
-            previous_task_ref = str(current["task_ref"])
-            snapshot = _collect_task_snapshot(conn, previous_task_ref)
-            conn.execute(
-                """
-                INSERT INTO task_archives (task_ref, archived_at, archived_by, archived_branch, archived_commit_sha, notes, snapshot_json)
-                VALUES (?, datetime('now'), ?, ?, ?, ?, ?)
-                ON CONFLICT(task_ref) DO UPDATE SET
-                    archived_at = datetime('now'),
-                    archived_by = excluded.archived_by,
-                    archived_branch = excluded.archived_branch,
-                    archived_commit_sha = excluded.archived_commit_sha,
-                    notes = excluded.notes,
-                    snapshot_json = excluded.snapshot_json
-                """,
-                (
-                    previous_task_ref,
-                    ctx.agent,
-                    ctx.branch,
-                    ctx.commit_sha,
-                    f"Auto-archived by switch_task to {task_ref}",
-                    json.dumps(snapshot, sort_keys=True),
-                ),
-            )
-            archived_previous = True
 
-        # Upsert the singleton to point at the target task.
-        if current is None:
-            conn.execute(
-                "INSERT INTO handoff_state (id, task_ref, objective, focus, status, target_branch, revision, updated_at, updated_by, updated_branch, updated_commit_sha) VALUES (1, ?, ?, ?, ?, ?, 0, datetime('now'), ?, ?, ?)",
-                (
-                    task_ref,
-                    resolved_objective,
-                    resolved_focus,
-                    status,
-                    resolved_target_branch,
-                    ctx.agent,
-                    ctx.branch,
-                    ctx.commit_sha,
-                ),
-            )
-        else:
-            conn.execute(
-                "UPDATE handoff_state SET task_ref = ?, objective = ?, focus = ?, status = ?, target_branch = ?, revision = revision + 1, updated_at = datetime('now'), updated_by = ?, updated_branch = ?, updated_commit_sha = ? WHERE id = 1",
-                (
-                    task_ref,
-                    resolved_objective,
-                    resolved_focus,
-                    status,
-                    resolved_target_branch,
-                    ctx.agent,
-                    ctx.branch,
-                    ctx.commit_sha,
-                ),
-            )
+        conn.execute(
+            """
+            INSERT INTO handoff_state (
+                id, task_ref, objective, focus, status, target_branch,
+                revision, updated_at, updated_by, updated_branch, updated_commit_sha
+            ) VALUES (NULL, ?, ?, ?, ?, ?, 0, datetime('now'), ?, ?, ?)
+            """,
+            (
+                task_ref,
+                resolved_objective,
+                resolved_focus,
+                status,
+                resolved_target_branch,
+                ctx.agent,
+                ctx.branch,
+                ctx.commit_sha,
+            ),
+        )
 
-        active = _row_to_dict(conn.execute("SELECT * FROM handoff_state WHERE id = 1").fetchone())
+        active = _row_to_dict(conn.execute("SELECT * FROM handoff_state WHERE task_ref = ?", (task_ref,)).fetchone())
         if active is None:
             return _envelope(
                 ok=False,
                 tool="switch_task",
-                data={"error": "Active handoff state missing after task switch."},
+                data={"error": "Target handoff state missing after task switch."},
                 task_ref=task_ref,
             )
         regen_error: str | None = None

@@ -47,6 +47,15 @@
 | Integration | `recognition/tests/integration/` | Database, repository patterns              |
 | Unit        | `recognition/tests/unit/`        | Domain logic, pure functions               |
 
+## Handoff Write Resolution
+
+For backend tooling that writes through `packages/agent-handoff-mcp/`, resolve task context in this order only:
+
+1. Explicit `task_ref`
+2. Workspace-path lookup via `_resolve_workspace_handoff_row`
+
+There is no supported `handoff_state id = 1` sentinel fallback. If neither source resolves a single row, the write path must fail closed with `UnresolvedTaskContextError` instead of binding to an unrelated task.
+
 ## Key Diagrams
 
 - [agent-quick-start.mmd](../diagrams/backend-uml/agent-quick-start.mmd) — Endpoint → Service → Repo routing

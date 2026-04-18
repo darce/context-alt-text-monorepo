@@ -125,7 +125,6 @@ from .shared_primitives import (  # noqa: F401
     _excerpt_text,
     _exports_dir,
     _first_present,
-    _get_current_handoff_row,
     _get_handoff_row_for_task,
     _has_structured_slice_summary,
     _json_response,

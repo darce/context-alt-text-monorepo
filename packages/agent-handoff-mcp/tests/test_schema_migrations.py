@@ -287,13 +287,13 @@ def test_v4_handoff_state_migration_preserves_related_rows(isolated_runtime: Run
     assert create_second["ok"] is True
 
     with _get_db_connection() as conn:
-        rows = conn.execute(
-            "SELECT id, task_ref FROM handoff_state ORDER BY CASE WHEN id = 1 THEN 0 ELSE 1 END, task_ref"
-        ).fetchall()
+        rows = conn.execute("SELECT id, task_ref FROM handoff_state ORDER BY task_ref").fetchall()
         assert len(rows) == 2
-        assert rows[0][0] == 1
-        assert rows[0][1] == "mig-task-b"
+        # E17-11: both rows coexist with id = NULL; the v4 migration retains
+        # the legacy id = 1 row as-is, so the pre-migration row keeps its id
+        # while new inserts use id = NULL.
         assert {row[1] for row in rows} == {"mig-task-a", "mig-task-b"}
+        assert [row[1] for row in rows if row[0] is None] == ["mig-task-b"]
         assert conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM review_findings").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM task_archives").fetchone()[0] == 1

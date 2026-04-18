@@ -271,48 +271,50 @@ Proof:
 
 ## Consolidated Checklist
 
+Retroactive status note (2026-04-18): E17-9's landed dashboard guard is `lint-dashboard-txt`, and it correctly treats `DASHBOARD.txt` as canonical via a tracked-file scan. The still-open `make check-all` failure comes from `check-harness-sync` sweeping untracked `.claude/worktrees/**`, which is tracked separately from this Slice 4 guard.
+
 ### Slice 1: Parallel-Review Coordinator Skill + Portable Command
 
-- [ ] Baseline fixture captured at `packages/agent-orchestrator-mcp/tests/fixtures/review_baseline.json` (serial `/branch-review` tokens + identity-response size)
-- [ ] `/review-parallel` entry exists in `portable_commands.json` with `reviewers_count` and `reviewer_prompt_template` only (no dead `merge_strategy` knob)
-- [ ] Reviewer prompt templates live under `config/agent-workflows/prompts/review-parallel/` (harness-neutral path)
-- [ ] `.claude/skills/review-parallel/SKILL.md` defines coordinator protocol with scoped per-reviewer `task_ref`s AND a per-harness subagent-invocation routing table (Claude Code `Agent` tool, Codex/Copilot `run_structured_turn`, external orchestrator `BackendAdapter`)
-- [ ] Skill explicitly forbids calling `ClaudeCodeAdapter` (CLI subprocess) from inside an active Claude Code coordinator session
-- [ ] Generated host adapters updated via `make generate-agent-workflows`
-- [ ] `make check-agent-workflows` green
+- [ ] Baseline fixture captured at `packages/agent-orchestrator-mcp/tests/fixtures/review_baseline.json` (serial `/branch-review` tokens + identity-response size; identity bytes are live, serial tokens remain provisional)
+- [x] `/review-parallel` entry exists in `portable_commands.json` with `reviewers_count` and `reviewer_prompt_template` only (no dead `merge_strategy` knob)
+- [x] Reviewer prompt templates live under `config/agent-workflows/prompts/review-parallel/` (harness-neutral path)
+- [x] `.claude/skills/review-parallel/SKILL.md` defines coordinator protocol with scoped per-reviewer `task_ref`s AND a per-harness subagent-invocation routing table (Claude Code `Agent` tool, Codex/Copilot `run_structured_turn`, external orchestrator `BackendAdapter`)
+- [x] Skill explicitly forbids calling `ClaudeCodeAdapter` (CLI subprocess) from inside an active Claude Code coordinator session
+- [x] Generated host adapters updated via `make generate-agent-workflows`
+- [x] `make check-agent-workflows` green
 - [ ] Happy-path test: merged findings count equals reviewer-sum; every merged row has `merged_from` provenance
-- [ ] Reviewer source rows remain intact after merge (additive, not destructive)
+- [x] Reviewer source rows remain intact after merge (additive, not destructive)
 - [ ] Coordinator-side token envelope ≤ 50% of recorded baseline for the 500-line fixture diff
 
 ### Slice 2: Auto-Fix Loop Skill + Portable Command
 
-- [ ] `/auto-fix` entry exists in `portable_commands.json` with documented argument schema (`failing_test_cmd`, `max_iterations`, `scope_hint`)
-- [ ] `.claude/skills/auto-fix/SKILL.md` defines Precondition (feature-branch check), Per-iteration (bounded reads + commit-per-iteration + test_result + exit on first passed=true), and Finalization (slice_complete decision + `update_task_status(done)` + single post-loop `handoff_close_check`) blocks
-- [ ] Loop calls `get_handoff_state(sections="identity")` per iteration; never `detail="full"`
-- [ ] Per-iteration exit signal is `verified_tests(passed=true, commit_sha=<HEAD>)`, not `handoff_close_check.ok`
-- [ ] `handoff_close_check(enforce=True, require_fresh_tests=True, current_commit_sha=<HEAD>)` runs exactly once post-loop and passes `current_commit_sha` explicitly
-- [ ] Each iteration commits its candidate fix on the feature branch before running the test (so test provenance matches HEAD)
-- [ ] Finalization records a canonical `<tag>_slice_complete_<task>_autofix` decision (matches grammar in development-workflow.md § Decision IDs)
-- [ ] Cadence rule scoped to Claude Code: `<270` warm, `>=1200` idle, never `300`; Codex/Copilot iterate inline with equivalent MCP state
-- [ ] Precondition refuses to run when `target_branch` is `main`, `master`, or unset
-- [ ] Generated host adapters updated
+- [x] `/auto-fix` entry exists in `portable_commands.json` with documented argument schema (`failing_test_cmd`, `max_iterations`, `scope_hint`)
+- [x] `.claude/skills/auto-fix/SKILL.md` defines Precondition (feature-branch check), Per-iteration (bounded reads + commit-per-iteration + test_result + exit on first passed=true), and Finalization (slice_complete decision + `update_task_status(done)` + single post-loop `handoff_close_check`) blocks
+- [x] Loop calls `get_handoff_state(sections="identity")` per iteration; never `detail="full"`
+- [x] Per-iteration exit signal is `verified_tests(passed=true, commit_sha=<HEAD>)`, not `handoff_close_check.ok`
+- [x] `handoff_close_check(enforce=True, require_fresh_tests=True, current_commit_sha=<HEAD>)` runs exactly once post-loop and passes `current_commit_sha` explicitly
+- [x] Each iteration commits its candidate fix on the feature branch before running the test (so test provenance matches HEAD)
+- [x] Finalization records a canonical `<tag>_slice_complete_<task>_autofix` decision (matches grammar in development-workflow.md § Decision IDs)
+- [x] Cadence rule scoped to Claude Code: `<270` warm, `>=1200` idle, never `300`; Codex/Copilot iterate inline with equivalent MCP state
+- [x] Precondition refuses to run when `target_branch` is `main`, `master`, or unset
+- [x] Generated host adapters updated
 - [ ] Per-iteration signal test passes on fixture failing test within iteration cap
 - [ ] Post-loop gate test: `ok=true` with slice_complete; `ok=false` without
-- [ ] Bounded-reads test: iteration identity response ≤ Slice 1 baseline + 10% slack
+- [x] Bounded-reads test: iteration identity response ≤ Slice 1 baseline + 10% slack
 - [ ] Cadence test runs on Claude Code runtime; asserts inline iteration on Codex/Copilot
-- [ ] Iteration-cap test: unfixable test triggers blocker path, exits non-zero, records no slice_complete
-- [ ] Precondition test: `target_branch in {main, master, None}` surfaces precondition error with zero MCP writes
+- [x] Iteration-cap test: unfixable test triggers blocker path, exits non-zero, records no slice_complete
+- [x] Precondition test: `target_branch in {main, master, None}` surfaces precondition error with zero MCP writes
 
 ### Slice 3: Cross-Vendor Backend Adapter Equivalence
 
-- [ ] `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/adapters/structured_turn.py` exists and is registered in `backend_registry` under the kind `structured-turn`
-- [ ] `packages/agent-orchestrator-mcp/tests/test_cross_vendor_subagent_equivalence.py` exists
-- [ ] Matrix covers `structured-turn` (always runs), `codex-cli` / `claude-code` (skip when binary missing), `codex-subagent` / `copilot-host` (skip when bridge module missing)
-- [ ] Equivalence assertion covers `(count, severity_distribution, verified_commit_sha)` across all running adapters
-- [ ] Drift test fails an intentionally-broken adapter wrapper
-- [ ] `review-parallel/SKILL.md` links to `BackendAdapter` + `backend_registry` as the external-orchestration contract, and to the per-harness routing table as the in-session fan-out contract
-- [ ] No per-vendor code forks — all backends reuse the existing `BackendAdapter` protocol
-- [ ] Default CI always has ≥1 matrix row run (`structured-turn`); never degenerates to all-skip green
+- [x] `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/adapters/structured_turn.py` exists and is registered in `backend_registry` under the kind `structured-turn`
+- [x] `packages/agent-orchestrator-mcp/tests/test_cross_vendor_subagent_equivalence.py` exists
+- [x] Matrix covers `structured-turn` (always runs), `codex-cli` / `claude-code` (skip when binary missing), `codex-subagent` / `copilot-host` (skip when bridge module missing)
+- [x] Equivalence assertion covers `(count, severity_distribution, verified_commit_sha)` across all running adapters
+- [x] Drift test fails an intentionally-broken adapter wrapper
+- [x] `review-parallel/SKILL.md` links to `BackendAdapter` + `backend_registry` as the external-orchestration contract, and to the per-harness routing table as the in-session fan-out contract
+- [x] No per-vendor code forks — all backends reuse the existing `BackendAdapter` protocol
+- [x] Default CI always has ≥1 matrix row run (`structured-turn`); never degenerates to all-skip green
 
 ### Slice 4: DASHBOARD.md Drift CI Guard <!-- lint-dashboard-txt: allow -->
 
@@ -321,23 +323,23 @@ Proof:
 - [x] Wired into `make check-all`
 - [x] E17-7 Slice 4 Proof back-reference updated to point at this guard
 - [x] Guard fires on intentional `DASHBOARD.md` reintroduction in a tracked non-archive path <!-- lint-dashboard-txt: allow -->
-- [ ] `make check-all` stays green post-landing
+- [ ] `make check-all` stays green post-landing (`lint-dashboard-txt` is green; current failure is the separate `check-harness-sync` worktree-scan bug)
 
 ## Review Readiness
 
 - [x] E17-7 Slice 2 (multi-active-task registry) merged — `b7397615`
 - [x] E17-7 Slice 4 (tool compression) merged — `b7397615`
 - [x] E17-7 Slice 5 (`review_findings.merge` + `(lane, status)` index) merged — `b7397615`
-- [ ] `make check-agent-workflows` green
+- [x] `make check-agent-workflows` green
 - [ ] `make test-handoff` green after each schema-adjacent slice
-- [ ] `make test-orchestrator` green after each orchestrator-adjacent slice
+- [x] `make test-orchestrator` green after each orchestrator-adjacent slice
 
 ## Success Criteria
 
-- [ ] `/review-parallel` and `/auto-fix` portable commands **register** across all three hosts (Claude Code, VS Code/Copilot, Codex) via `portable_commands.json` + `scripts/generate_agent_workflows.py`; the generated Claude/VS Code/Codex adapters all resolve to the same skill + prompt templates
+- [x] `/review-parallel` and `/auto-fix` portable commands **register** across all three hosts (Claude Code, VS Code/Copilot, Codex) via `portable_commands.json` + `scripts/generate_agent_workflows.py`; the generated Claude/VS Code/Codex adapters all resolve to the same skill + prompt templates
 - [ ] The same MCP state (findings, review runs, test_results, decisions) results from running each skill on any of the three supported harnesses — cross-harness equivalence is on MCP state, not on wall-clock cadence
 - [ ] Parallel-review coordinator fan-out uses the cheapest in-harness subagent primitive (Claude Code `Agent` tool in-process; Codex + Copilot `run_structured_turn`) and stays bounded to ≤50% of the recorded serial `/branch-review` baseline for a ~500-line diff
-- [ ] Auto-fix loop converges on the first `verified_tests(passed=true, commit_sha=HEAD)` row; Finalization records a canonical `slice_complete` decision, sets status `done`, and calls `handoff_close_check(enforce=True, require_fresh_tests=True, current_commit_sha=<HEAD>)` exactly once with `ok=true`
+- [x] Auto-fix loop converges on the first `verified_tests(passed=true, commit_sha=HEAD)` row; Finalization records a canonical `slice_complete` decision, sets status `done`, and calls `handoff_close_check(enforce=True, require_fresh_tests=True, current_commit_sha=<HEAD>)` exactly once with `ok=true`
 - [ ] Auto-fix cadence discipline is scoped to Claude Code only; Codex and Copilot runs iterate inline and still produce the same MCP state
-- [ ] Cross-vendor tests always run `structured-turn` (in-repo, no host bridge required) and opportunistically run `claude-code` / `codex-cli` / `codex-subagent` / `copilot-host` when their primitives resolve at test time
-- [ ] `DASHBOARD.md` re-introduction in tracked non-archive paths fails CI <!-- lint-dashboard-txt: allow -->
+- [x] Cross-vendor tests always run `structured-turn` (in-repo, no host bridge required) and opportunistically run `claude-code` / `codex-cli` / `codex-subagent` / `copilot-host` when their primitives resolve at test time
+- [x] `DASHBOARD.md` re-introduction in tracked non-archive paths fails CI <!-- lint-dashboard-txt: allow -->

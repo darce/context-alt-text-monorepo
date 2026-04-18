@@ -14,6 +14,8 @@
 
 Expand the branch-isolation edit guard to cover all code-adjacent paths (scripts, hooks, config, Makefiles), drive the protected-path list from `harness-protocol.yaml` (single source of truth, per-project configurable), and add a PreToolUse worktree-drift check that **blocks** edits routed to the wrong worktree when an active task targets a different one — with an explicit per-project `permitted_main_surfaces` allow-list for the legitimate main-worktree planning edits (task plans, assessments, agentic docs, dashboard artifacts) and an `ALT_ALLOW_WORKTREE_DRIFT=1` escape hatch.
 
+Retroactive landing note (2026-04-18): the planning-doc surfaces that were originally described as generic main-branch exceptions landed as explicit entries in the contract-governed protected main-surface allow-list, `branch_isolation.permitted_main_surfaces` (`docs/tasks/**/*.md`, `docs/assessments/**`, `docs/scopes/**`, `docs/epics/**`). This plan now reflects that shipped shape rather than the earlier broader prose.
+
 ## Problem Statement
 
 On 2026-04-16 an edit to `.github/hooks/terminal-guard.py` landed on `main` instead of `feature/e17-6`. Five gaps enabled this:
@@ -332,88 +334,88 @@ Proof:
 
 ### Context and Ownership
 
-- [ ] Verify E17-6 has merged (harness-protocol.yaml is on main) — confirmed 2026-04-16
-- [ ] Confirm the guard scripts still use hardcoded path lists (no interim changes)
-- [ ] Confirm `check_harness_sync.py` does not already validate `code_roots` or `permitted_main_surfaces`
-- [ ] Confirm `scripts/hooks/_harness_protocol.py` does not exist
+- [x] Verify E17-6 has merged (harness-protocol.yaml is on main) — confirmed 2026-04-16
+- [x] Confirm the guard scripts still use hardcoded path lists (no interim changes)
+- [x] Confirm `check_harness_sync.py` does not already validate `code_roots` or `permitted_main_surfaces`
+- [x] Confirm `scripts/hooks/_harness_protocol.py` does not exist
 
 ### Checklist for Slice 1: Expand `code_roots` + Allow-List + Refactor Guards
 
-- [ ] `harness-protocol.yaml` `code_roots` includes `scripts/`, `.github/hooks/`, `.claude/`, `mk/`
-- [ ] `harness-protocol.yaml` adds `.mk` to `protected_extensions`
-- [ ] `harness-protocol.yaml` adds `root_protected_files: ["Makefile"]`
-- [ ] `harness-protocol.yaml` adds `permitted_main_surfaces` with at least the 15 default entries listed in Slice 1
-- [ ] Each `permitted_main_surfaces` entry has both `pattern` and `reason` fields populated
-- [ ] `scripts/hooks/_harness_protocol.py` exposes `load_branch_isolation_policy` and `is_permitted_main_surface`
-- [ ] `_harness_protocol.py` raises `HarnessContractMissingError` with a named remediation when the contract is absent
-- [ ] `guard-main-branch.py` reads from the shared loader; no hardcoded fallback list remains
-- [ ] `guard-main-branch.py` `_EDIT_TOOLS` covers every regular-file mutator in the VS Code harness
-- [ ] `guard-main-branch.sh` reads from the shared loader via `python3 -c`; no hardcoded fallback list remains
-- [ ] Edits to `scripts/`, `.github/hooks/`, `.claude/`, `mk/` code files on `main` are blocked
-- [ ] Root `Makefile` edits on `main` are blocked
-- [ ] Edits to docs, markdown, and permitted config on `main` are not blocked
-- [ ] With contract missing, guards emit a named stderr error and return a block decision (no silent permissive fallback)
+- [x] `harness-protocol.yaml` `code_roots` includes `scripts/`, `.github/hooks/`, `.claude/`, `mk/`
+- [x] `harness-protocol.yaml` adds `.mk` to `protected_extensions`
+- [x] `harness-protocol.yaml` adds `root_protected_files: ["Makefile"]`
+- [x] `harness-protocol.yaml` adds `permitted_main_surfaces` with at least the 15 default entries listed in Slice 1, including the planning-doc entries now formalized there
+- [x] Each `permitted_main_surfaces` entry has both `pattern` and `reason` fields populated
+- [x] `scripts/hooks/_harness_protocol.py` exposes `load_branch_isolation_policy` and `is_permitted_main_surface`
+- [x] `_harness_protocol.py` raises `HarnessContractMissingError` with a named remediation when the contract is absent
+- [x] `guard-main-branch.py` reads from the shared loader; no hardcoded fallback list remains
+- [x] `guard-main-branch.py` `_EDIT_TOOLS` covers every regular-file mutator in the VS Code harness
+- [x] `guard-main-branch.sh` reads from the shared loader via `python3 -c`; no hardcoded fallback list remains
+- [x] Edits to `scripts/`, `.github/hooks/`, `.claude/`, `mk/` code files on `main` are blocked
+- [x] Root `Makefile` edits on `main` are blocked
+- [x] Edits to docs, markdown, and permitted config on `main` are not blocked
+- [x] With contract missing, guards emit a named stderr error and return a block decision (no silent permissive fallback)
 
 ### Checklist for Slice 2: Worktree-Drift Check (Block-Mode + Escape Hatches)
 
-- [ ] `guard-worktree-drift.py` and `guard-worktree-drift.sh` implement the 9-step algorithm identically
-- [ ] Default escalation is **block** with `WorkspaceRootDriftError`, not ask, not warn
-- [ ] Edit-path resolution uses `Path(target).resolve()` — no relative-path matching
-- [ ] `ALT_ALLOW_WORKTREE_DRIFT=1` env var downgrades block to warn-only pass
-- [ ] `MAINT-*` task-ref prefix bypasses the drift check with a trace log
-- [ ] Edit paths matching `permitted_main_surfaces` globs on the main-root worktree pass with a trace log
-- [ ] No active task or null `target_worktree_path` passes silently
-- [ ] Active task targeting `main`/`master` passes silently (planning work)
-- [ ] Block error message names the edit target, containing worktree, expected `target_worktree_path`, and all three escape hatches
-- [ ] Hook registered in `terminal-guard.json` and `.claude/settings.json`
-- [ ] Hook registered in `harness-protocol.yaml` under `hooks.pre_tool_use`
+- [x] `guard-worktree-drift.py` and `guard-worktree-drift.sh` implement the 9-step algorithm identically
+- [x] Default escalation is **block** with `WorkspaceRootDriftError`, not ask, not warn
+- [x] Edit-path resolution uses `Path(target).resolve()` — no relative-path matching
+- [x] `ALT_ALLOW_WORKTREE_DRIFT=1` env var downgrades block to warn-only pass
+- [x] `MAINT-*` task-ref prefix bypasses the drift check with a trace log
+- [x] Edit paths matching `permitted_main_surfaces` globs on the main-root worktree pass with a trace log
+- [x] No active task or null `target_worktree_path` passes silently
+- [x] Active task targeting `main`/`master` passes silently (planning work)
+- [x] Block error message names the edit target, containing worktree, expected `target_worktree_path`, and all three escape hatches
+- [x] Hook registered in `terminal-guard.json` and `.claude/settings.json`
+- [x] Hook registered in `harness-protocol.yaml` under `hooks.pre_tool_use`
 - [ ] Performance: <200ms completion time
-- [ ] Trace log entries written to `.task-state/branch_isolation_guard.jsonl` for every non-silent outcome
+- [x] Trace log entries written to `.task-state/branch_isolation_guard.jsonl` for every non-silent outcome
 
 ### Checklist for Slice 3: Sync Validator Extension + Dashboard Naming Lint
 
-- [ ] `check_harness_sync.py` exercises both main-branch guards through a fixture harness (not via parsing duplicated literals)
-- [ ] `check_harness_sync.py` exercises the worktree-drift hook through a fixture harness: block case, allow-list case, MAINT bypass, env-var bypass
-- [ ] `check_harness_sync.py` validates `permitted_main_surfaces` entry shape (`pattern` and `reason` non-empty; pattern is a valid glob)
+- [x] `check_harness_sync.py` exercises both main-branch guards through a fixture harness (not via parsing duplicated literals)
+- [x] `check_harness_sync.py` exercises the worktree-drift hook through a fixture harness: block case, allow-list case, MAINT bypass, env-var bypass
+- [x] `check_harness_sync.py` validates `permitted_main_surfaces` entry shape (`pattern` and `reason` non-empty; pattern is a valid glob)
 - [ ] `check_harness_sync.py` validates absence of `DASHBOARD.md` in tracked non-archive markdown, the Makefile, and the `dashboard_extension.py` docstring (depends on E17-7 Slice 4 completion) <!-- lint-dashboard-txt: allow -->
-- [ ] `check_harness_sync.py` asserts the contract-required stderr + block behavior when `harness-protocol.yaml` is moved aside
-- [ ] `.gitignore` excludes `DASHBOARD.md` <!-- lint-dashboard-txt: allow -->
+- [x] `check_harness_sync.py` asserts the contract-required stderr + block behavior when `harness-protocol.yaml` is moved aside
+- [x] `.gitignore` excludes `DASHBOARD.md` <!-- lint-dashboard-txt: allow -->
 - [ ] `make check-harness-sync` passes after Slices 1-2 and after E17-7 Slice 4
-- [ ] Intentional contract drift is detected and reported
-- [ ] Intentional `permitted_main_surfaces` shape drift is detected and reported
-- [ ] Intentional `DASHBOARD.md` reintroduction is detected and reported <!-- lint-dashboard-txt: allow -->
+- [x] Intentional contract drift is detected and reported
+- [x] Intentional `permitted_main_surfaces` shape drift is detected and reported
+- [x] Intentional `DASHBOARD.md` reintroduction is detected and reported <!-- lint-dashboard-txt: allow -->
 - [ ] `make check-all` stays green
 
 ### Checklist for Slice 4: Coordination + Documentation
 
-- [ ] `development-workflow.md` documents `permitted_main_surfaces` as per-project configurable in `harness-protocol.yaml`, with the repo's current shipped list reproduced verbatim
-- [ ] `development-workflow.md` documents the `ALT_ALLOW_WORKTREE_DRIFT=1` env-var escape hatch (scope, trace-log location, when to use)
-- [ ] `development-workflow.md` `MAINT-*` subsection mentions the drift-hook bypass in addition to the main-branch edit permission
-- [ ] E17-7 Slice 2 checklist gains an explicit prerequisite bullet referencing this task plan's Slice 1 `permitted_main_surfaces` entry for `docs/tasks/**/*.md`
-- [ ] A reader of only `development-workflow.md` can configure a new project's `permitted_main_surfaces` correctly without reading this task plan
+- [x] `development-workflow.md` documents `permitted_main_surfaces` as per-project configurable in `harness-protocol.yaml`, with the repo's current shipped list reproduced verbatim
+- [x] `development-workflow.md` documents the `ALT_ALLOW_WORKTREE_DRIFT=1` env-var escape hatch (scope, trace-log location, when to use)
+- [x] `development-workflow.md` `MAINT-*` subsection mentions the drift-hook bypass in addition to the main-branch edit permission
+- [x] E17-7 Slice 2 checklist gains an explicit prerequisite bullet referencing this task plan's Slice 1 `permitted_main_surfaces` entry for `docs/tasks/**/*.md`
+- [x] A reader of only `development-workflow.md` can configure a new project's `permitted_main_surfaces` correctly without reading this task plan
 - [ ] `make check-all` stays green
 
 ## Review Readiness
 
-- [ ] E17-6 prerequisite confirmed merged (2026-04-16)
+- [x] E17-6 prerequisite confirmed merged (2026-04-16)
 - [ ] `make check-all` stays green after each slice
-- [ ] No MCP write-enforcement changes are included
-- [ ] No graduation of E17-4 Slice 2's warning-only main-change guard is included
-- [ ] E17-7 Slice 2 sequencing prerequisite (allow-list lands before checkbox-sync ships) is documented in both task plans
+- [x] No MCP write-enforcement changes are included
+- [x] No graduation of E17-4 Slice 2's warning-only main-change guard is included
+- [x] E17-7 Slice 2 sequencing prerequisite (allow-list lands before checkbox-sync ships) is documented in both task plans
 
 ## Success Criteria
 
-- [ ] Both main-branch guards read `code_roots`, `protected_extensions`, `root_protected_files`, and `permitted_main_surfaces` from `harness-protocol.yaml` via a shared loader
-- [ ] Root `Makefile` is protected through `root_protected_files`
-- [ ] `scripts/`, `.github/hooks/`, `.claude/`, and `mk/` code files are protected on `main`
-- [ ] Worktree-drift check **blocks by default** with `WorkspaceRootDriftError`; escape hatches (env var, `MAINT-*`, allow-list) each work as documented
-- [ ] `permitted_main_surfaces` ships with at least 15 entries covering task plans, assessments, scopes, epics, agent dispatchers, and generated artifacts
-- [ ] `permitted_main_surfaces` is documented as per-project configurable, not as a framework default
+- [x] Both main-branch guards read `code_roots`, `protected_extensions`, `root_protected_files`, and `permitted_main_surfaces` from `harness-protocol.yaml` via a shared loader
+- [x] Root `Makefile` is protected through `root_protected_files`
+- [x] `scripts/`, `.github/hooks/`, `.claude/`, and `mk/` code files are protected on `main`
+- [x] Worktree-drift check **blocks by default** with `WorkspaceRootDriftError`; escape hatches (env var, `MAINT-*`, allow-list) each work as documented
+- [x] `permitted_main_surfaces` ships with at least 15 entries covering task plans, assessments, scopes, epics, agent dispatchers, and generated artifacts
+- [x] `permitted_main_surfaces` is documented as per-project configurable, not as a framework default
 - [ ] E17-7 Slice 2 checkbox-sync hook writes to `docs/tasks/**/*.md` on main without tripping the drift block
 - [ ] `make check-harness-sync` catches `code_roots`, `permitted_main_surfaces`, and `DASHBOARD.md` drift <!-- lint-dashboard-txt: allow -->
-- [ ] `.gitignore` prevents stray untracked `DASHBOARD.md` from polluting `git status` <!-- lint-dashboard-txt: allow -->
-- [ ] Existing permitted main-branch edits (docs, markdown, configs) work without friction
-- [ ] `development-workflow.md` documents the full operator-facing contract without pointing operators at this task plan
+- [x] `.gitignore` prevents stray untracked `DASHBOARD.md` from polluting `git status` <!-- lint-dashboard-txt: allow -->
+- [x] Existing permitted main-branch edits (docs, markdown, configs) work without friction
+- [x] `development-workflow.md` documents the full operator-facing contract without pointing operators at this task plan
 
 ## Coordination Note
 

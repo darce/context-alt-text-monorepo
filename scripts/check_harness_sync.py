@@ -820,42 +820,57 @@ def _check_worktree_drift(contract: dict, *, repo_root: Path = REPO_ROOT) -> lis
     return errors
 
 
+_DASHBOARD_ALLOW_MARKER = "<!-- lint-dashboard-txt: allow -->"
+_DASHBOARD_EXTRA_FILES = (
+    Path("CLAUDE.md"),
+    Path(".github/copilot-instructions.md"),
+    Path("Makefile"),
+    Path("packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/dashboard_extension.py"),
+)
+
+
 def _iter_dashboard_lint_files(repo_root: Path) -> list[Path]:
-    def _should_skip(path: Path) -> bool:
-        rel = path.relative_to(repo_root).as_posix()
-        if "/tests/" in rel or "/test_fixtures/" in rel or "/fixtures/" in rel:
-            return True
+    def _should_skip(rel: str) -> bool:
         if rel.startswith("docs/tasks/archive/"):
             return True
-        if rel.startswith("docs/tasks/") and rel.endswith("-task-plan.md"):
+        if rel.startswith("docs/assessments/dashboard-md-vs-txt-"):
             return True
-        if rel.startswith("docs/epics/") and rel.endswith("-epic.md"):
+        if "/test_fixtures/" in rel or rel.startswith("test_fixtures/"):
             return True
+        parts = rel.split("/")
+        for i, part in enumerate(parts):
+            if part == "tests" and i + 1 < len(parts) and parts[i + 1] == "fixtures":
+                return True
         return False
 
     targets: list[Path] = []
-    for relative in (
-        Path("CLAUDE.md"),
-        Path(".github/copilot-instructions.md"),
-        Path("Makefile"),
-        Path("packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/dashboard_extension.py"),
-    ):
+    for relative in _DASHBOARD_EXTRA_FILES:
         candidate = repo_root / relative
         if candidate.exists():
             targets.append(candidate)
 
-    for root in (
-        repo_root / "docs" / "agentic",
-        repo_root / ".claude",
-        repo_root / "docs" / "tasks",
-        repo_root / "docs" / "epics",
-    ):
-        if not root.exists():
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_root), "ls-files", "-z", "--", "*.md"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return targets
+
+    seen = {p.resolve() for p in targets}
+    for rel in proc.stdout.split("\0"):
+        if not rel or not rel.endswith(".md") or _should_skip(rel):
             continue
-        for path in root.rglob("*.md"):
-            if _should_skip(path):
-                continue
-            targets.append(path)
+        path = repo_root / rel
+        if not path.exists():
+            continue
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        targets.append(path)
+        seen.add(resolved)
     return targets
 
 
@@ -871,7 +886,7 @@ def _check_dashboard_naming(*, repo_root: Path = REPO_ROOT) -> list[str]:
         except OSError:
             continue
         for lineno, line in enumerate(lines, start=1):
-            if "DASHBOARD.md" in line:
+            if "DASHBOARD.md" in line and _DASHBOARD_ALLOW_MARKER not in line:
                 rel = path.relative_to(repo_root)
                 errors.append(f"dashboard_naming: stale `DASHBOARD.md` reference in `{rel}:{lineno}`")
     return errors

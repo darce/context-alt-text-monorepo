@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import yaml
+
+
+def _git_init_and_add(repo: Path) -> None:
+    env = {"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null", "HOME": str(repo)}
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, env=env, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=repo, env=env, check=True)
 
 from scripts.check_harness_sync import (
     _build_guard_fixture,
@@ -233,17 +240,41 @@ def test_dashboard_naming_flags_live_surface_reference(tmp_path: Path) -> None:
     repo = _write_repo(tmp_path)
     (repo / "docs" / "agentic" / "rules").mkdir(parents=True, exist_ok=True)
     (repo / "docs" / "agentic" / "rules" / "workflow.md").write_text("Use DASHBOARD.md here\n", encoding="utf-8")
+    _git_init_and_add(repo)
     errors = _check_dashboard_naming(repo_root=repo)
     assert any("workflow.md:1" in err for err in errors)
 
 
-def test_dashboard_naming_ignores_task_plan_mentions(tmp_path: Path) -> None:
+def test_dashboard_naming_ignores_untracked_files(tmp_path: Path) -> None:
+    repo = _write_repo(tmp_path)
+    _git_init_and_add(repo)
+    stray_dir = repo / ".claude" / "worktrees" / "stale"
+    stray_dir.mkdir(parents=True, exist_ok=True)
+    (stray_dir / "stray.md").write_text("Use DASHBOARD.md here\n", encoding="utf-8")
+    errors = _check_dashboard_naming(repo_root=repo)
+    assert errors == []
+
+
+def test_dashboard_naming_flags_task_plan_mentions_without_allow_marker(tmp_path: Path) -> None:
     repo = _write_repo(tmp_path)
     (repo / "docs" / "tasks" / "17.0").mkdir(parents=True, exist_ok=True)
     (repo / "docs" / "tasks" / "17.0" / "E17-8-sample-task-plan.md").write_text(
         "Historical DASHBOARD.md note\n",
         encoding="utf-8",
     )
+    _git_init_and_add(repo)
+    errors = _check_dashboard_naming(repo_root=repo)
+    assert any("E17-8-sample-task-plan.md:1" in err for err in errors)
+
+
+def test_dashboard_naming_honors_allow_marker(tmp_path: Path) -> None:
+    repo = _write_repo(tmp_path)
+    (repo / "docs" / "tasks" / "17.0").mkdir(parents=True, exist_ok=True)
+    (repo / "docs" / "tasks" / "17.0" / "E17-8-sample-task-plan.md").write_text(
+        "Historical DASHBOARD.md note <!-- lint-dashboard-txt: allow -->\n",
+        encoding="utf-8",
+    )
+    _git_init_and_add(repo)
     errors = _check_dashboard_naming(repo_root=repo)
     assert errors == []
 
@@ -252,6 +283,7 @@ def test_dashboard_naming_flags_docs_tasks_reference_outside_task_plans(tmp_path
     repo = _write_repo(tmp_path)
     (repo / "docs" / "tasks").mkdir(parents=True, exist_ok=True)
     (repo / "docs" / "tasks" / "README.md").write_text("Use DASHBOARD.md here\n", encoding="utf-8")
+    _git_init_and_add(repo)
     errors = _check_dashboard_naming(repo_root=repo)
     assert any("docs/tasks/README.md:1" in err for err in errors)
 
@@ -260,6 +292,7 @@ def test_dashboard_naming_flags_docs_epics_reference_outside_epic_files(tmp_path
     repo = _write_repo(tmp_path)
     (repo / "docs" / "epics").mkdir(parents=True, exist_ok=True)
     (repo / "docs" / "epics" / "README.md").write_text("Use DASHBOARD.md here\n", encoding="utf-8")
+    _git_init_and_add(repo)
     errors = _check_dashboard_naming(repo_root=repo)
     assert any("docs/epics/README.md:1" in err for err in errors)
 

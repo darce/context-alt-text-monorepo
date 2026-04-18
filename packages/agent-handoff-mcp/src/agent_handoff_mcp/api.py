@@ -575,12 +575,13 @@ _ARTIFACTS_ADAPTER: TypeAdapter[ArtifactsRecordOp | ArtifactsSearchOp | Artifact
 )
 
 
-def _dump_actor(actor: WriteActorInput | None) -> WriteActor | None:
+def _dump_actor(actor: WriteActorInput | dict[str, Any] | None) -> WriteActor | None:
     if actor is None:
         return None
+    actor_model = WriteActorInput.model_validate(actor) if isinstance(actor, dict) else actor
     return cast(
         WriteActor,
-        {key: value for key, value in actor.model_dump(exclude_none=True).items() if isinstance(value, str)},
+        {key: value for key, value in actor_model.model_dump(exclude_none=True).items() if isinstance(value, str)},
     )
 
 
@@ -602,7 +603,9 @@ def _dump_batch_review_finding_item(item: ReviewFindingBatchItemInput) -> dict[s
     return payload
 
 
-def _validate_review_findings(review: ReviewFindingsParam) -> (
+def _validate_review_findings(
+    review: ReviewFindingsParam,
+) -> (
     ReviewFindingsRecordOp
     | ReviewFindingsBatchRecordOp
     | ReviewFindingsUpdateOp

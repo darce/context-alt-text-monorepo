@@ -111,21 +111,12 @@ def test_orchestrator_crud_tools_importable():
     assert callable(worker_reports)
 
 
-def test_tools_snapshot_counts_across_phases(tmp_path: Path) -> None:
+def test_tools_snapshot_captures_current_surface(tmp_path: Path) -> None:
     config = _make_config()
     current_output = tmp_path / "current.json"
     current_snapshot = run_tools_snapshot(config, phase="current", output_path=current_output)
     assert current_snapshot["tool_count"] == 16
     assert current_output.exists()
-
-    phase_counts = {
-        "a1": 38,
-        "a2": 39,
-        "a3": 44,
-    }
-    for phase, expected in phase_counts.items():
-        snapshot = run_tools_snapshot(config, phase=phase)
-        assert snapshot["tool_count"] == expected, f"{phase} should expose {expected} tools"
 
 
 def test_orchestration_dir_points_to_orchestration():
@@ -152,7 +143,7 @@ def test_dashboard_extension_lane_health_and_worker_status(tmp_path: Path) -> No
     )
     from agent_handoff_mcp.shared_schema import _get_db_connection
 
-    from agent_orchestrator_mcp.api import configure_runtime, generate_dashboard_md
+    from agent_handoff_mcp import configure_runtime, generate_dashboard_md
     from agent_orchestrator_mcp.orchestration.dashboard_extension import lane_worker_extension
 
     # Isolated runtime

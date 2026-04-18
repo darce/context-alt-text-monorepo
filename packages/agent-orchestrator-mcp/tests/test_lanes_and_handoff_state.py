@@ -1770,7 +1770,9 @@ def test_switch_task_regenerates_current_task_with_dashboard(isolated_handoff: d
 
     # After AHMCP-23: "## All Tasks" lives in DASHBOARD.md, not CURRENT_TASK.json.
     # Generate DASHBOARD.md and assert the cross-task sections are there.
-    dash_result = mcp_server.generate_dashboard_md(write_file=False)
+    from agent_handoff_mcp import generate_dashboard_md
+
+    dash_result = generate_dashboard_md(write_file=False)
     assert dash_result["ok"] is True
     md = dash_result["markdown"]
     assert "ALL TASKS" in md

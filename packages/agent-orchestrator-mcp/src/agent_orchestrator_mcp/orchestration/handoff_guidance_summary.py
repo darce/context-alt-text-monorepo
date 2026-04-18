@@ -2,19 +2,11 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import Any
 
 from agent_orchestrator_mcp.lanes import lane_communication, worker_reports
-
-
-def _json_load(payload: str | dict[str, Any]) -> dict[str, Any]:
-    """Normalise an inner-tool result to a dict (AHMCP-10 dict-return migration)."""
-    data = payload if isinstance(payload, dict) else json.loads(payload)
-    if not isinstance(data, dict):
-        raise RuntimeError("Expected JSON object payload.")
-    return data
+from agent_orchestrator_mcp.orchestration.orchestrator_helpers import _require_dict_payload
 
 
 def _normalize(value: Any) -> str:
@@ -34,7 +26,7 @@ def _summary_level(message: str) -> str:
 
 
 def _load_open_guidance(task_ref: str, lane_id: str | None = None) -> list[dict[str, Any]]:
-    payload = _json_load(
+    payload = _require_dict_payload(
         lane_communication(
             kind="message",
             operation="list",
@@ -43,7 +35,8 @@ def _load_open_guidance(task_ref: str, lane_id: str | None = None) -> list[dict[
             status="open",
             limit=200,
             fields="lane_id,direction,subject,message,status",
-        )
+        ),
+        source=f"lane_communication(list open guidance:{lane_id or task_ref})",
     )
     rows = payload.get("messages", [])
     if not isinstance(rows, list):
@@ -52,14 +45,15 @@ def _load_open_guidance(task_ref: str, lane_id: str | None = None) -> list[dict[
 
 
 def _load_recent_reports(task_ref: str, lane_id: str | None = None) -> dict[str, dict[str, Any]]:
-    payload = _json_load(
+    payload = _require_dict_payload(
         worker_reports(
             operation="list",
             task_ref=task_ref,
             lane_id=lane_id,
             limit=50,
             fields="lane_id,summary",
-        )
+        ),
+        source=f"worker_reports(list recent:{lane_id or task_ref})",
     )
     rows = payload.get("reports", [])
     result: dict[str, dict[str, Any]] = {}

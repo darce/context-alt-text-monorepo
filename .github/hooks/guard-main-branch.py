@@ -7,7 +7,6 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
 
 HELPER_DIR = Path(__file__).resolve().parents[2] / "scripts" / "hooks"
 if str(HELPER_DIR) not in sys.path:
@@ -15,12 +14,16 @@ if str(HELPER_DIR) not in sys.path:
 
 from _harness_protocol import (  # noqa: E402
     HarnessContractMissingError,
-    is_branch_isolation_protected_path,
     load_branch_isolation_policy,
+)
+from _branch_isolation_guard import (  # noqa: E402
+    check_file_edit as _check_file_edit,
+    extract_candidate_paths as _extract_candidate_paths,
+    find_dirty_protected_paths as _check_dirty_protected_paths,
 )
 
 
-_EDIT_TOOLS = {"apply_patch", "create_file", "replace_string_in_file", "multi_replace_string_in_file"}
+_PROTECTED_BRANCHES = {"main", "master"}
 
 
 def _run_git(*args: str) -> str:
@@ -44,67 +47,6 @@ def _current_branch() -> str:
     return _run_git("branch", "--show-current")
 
 
-def _to_repo_relative(path: str, repo_root: str) -> str:
-    normalized_path = path.strip()
-    if not normalized_path:
-        return normalized_path
-    if not repo_root:
-        return normalized_path
-    try:
-        candidate = Path(normalized_path).expanduser().resolve(strict=False)
-        root = Path(repo_root).expanduser().resolve(strict=False)
-        return candidate.relative_to(root).as_posix()
-    except ValueError:
-        return normalized_path
-
-
-def _extract_candidate_paths(tool_name: str, tool_input: dict[str, Any]) -> list[str]:
-    if tool_name in {"create_file", "replace_string_in_file", "multi_replace_string_in_file"}:
-        file_path = tool_input.get("filePath") or tool_input.get("file_path")
-        return [str(file_path)] if isinstance(file_path, str) and file_path.strip() else []
-
-    if tool_name != "apply_patch":
-        return []
-
-    patch_input = tool_input.get("input")
-    if not isinstance(patch_input, str) or not patch_input.strip():
-        return []
-
-    paths: list[str] = []
-    for line in patch_input.splitlines():
-        if not line.startswith("*** ") or " File: " not in line:
-            continue
-        _, raw_path = line.split(" File: ", 1)
-        parsed_path = raw_path.split(" -> ", 1)[0].strip()
-        if parsed_path:
-            paths.append(parsed_path)
-    return paths
-
-
-def _check_file_edit(
-    tool_name: str,
-    tool_input: dict[str, Any],
-    *,
-    branch: str,
-    repo_root: str,
-    policy,
-) -> tuple[str, list[str]] | None:
-    if tool_name not in _EDIT_TOOLS:
-        return None
-    if branch not in {"main", "master"}:
-        return None
-
-    blocked_paths: list[str] = []
-    for raw_path in _extract_candidate_paths(tool_name, tool_input):
-        relative_path = _to_repo_relative(raw_path, repo_root)
-        if is_branch_isolation_protected_path(relative_path, policy):
-            blocked_paths.append(relative_path)
-
-    if not blocked_paths:
-        return None
-    return branch, blocked_paths
-
-
 def _build_reason(branch: str, blocked_paths: list[str]) -> str:
     rendered_paths = "\n".join(f"  - {path}" for path in blocked_paths)
     return (
@@ -124,7 +66,23 @@ def _build_reason(branch: str, blocked_paths: list[str]) -> str:
     )
 
 
-def _log_telemetry(tool_name: str, blocked_paths: list[str], branch: str) -> None:
+def _build_dirty_reason(branch: str, dirty_paths: list[str]) -> str:
+    rendered_paths = "\n".join(f"  - {path}" for path in dirty_paths)
+    return (
+        "BLOCKED: Protected code files are already dirty on the main branch.\n\n"
+        f"Branch: {branch}\n"
+        "Dirty files:\n"
+        f"{rendered_paths}\n\n"
+        "Move the work onto a feature branch or stash it before making more edits.\n\n"
+        "Recommended recovery:\n"
+        "  1. git checkout -b feature/<task-id>-<slug>\n"
+        "  2. keep the dirty changes on that branch, or stash them intentionally\n"
+        "  3. return to main only after the protected paths are clean again\n\n"
+        "See: docs/agentic/rules/development-workflow.md#branch-isolation-protocol-mandatory"
+    )
+
+
+def _log_telemetry(tool_name: str, blocked_paths: list[str], branch: str, *, outcome: str) -> None:
     try:
         state_dir = Path(".task-state")
         state_dir.mkdir(exist_ok=True)
@@ -132,6 +90,7 @@ def _log_telemetry(tool_name: str, blocked_paths: list[str], branch: str) -> Non
             "timestamp": datetime.datetime.now(tz=datetime.timezone.utc).isoformat(),
             "tool": tool_name,
             "branch": branch,
+            "outcome": outcome,
             "paths": blocked_paths,
         }
         with (state_dir / "branch_isolation_guard.jsonl").open("a", encoding="utf-8") as handle:
@@ -170,19 +129,48 @@ def main() -> None:
         )
         sys.exit(0)
 
-    result = _check_file_edit(tool_name, tool_input, branch=branch, repo_root=repo_root, policy=policy)
-    if result is None:
+    result = _check_file_edit(
+        tool_name,
+        tool_input,
+        branch=branch,
+        repo_root=repo_root,
+        policy=policy,
+        protected_branches=_PROTECTED_BRANCHES,
+    )
+    if result is not None:
+        resolved_branch, blocked_paths = result
+        _log_telemetry(tool_name, blocked_paths, resolved_branch, outcome="attempted_protected_edit")
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "block",
+                        "permissionDecisionReason": _build_reason(resolved_branch, blocked_paths),
+                    }
+                }
+            )
+        )
         sys.exit(0)
 
-    resolved_branch, blocked_paths = result
-    _log_telemetry(tool_name, blocked_paths, resolved_branch)
+    dirty_result = _check_dirty_protected_paths(
+        branch=branch,
+        repo_root=repo_root,
+        policy=policy,
+        protected_branches=_PROTECTED_BRANCHES,
+    )
+    if dirty_result is None:
+        sys.exit(0)
+
+    resolved_branch, dirty_paths = dirty_result
+    _log_telemetry(tool_name, dirty_paths, resolved_branch, outcome="dirty_protected_main_paths")
     print(
         json.dumps(
             {
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "block",
-                    "permissionDecisionReason": _build_reason(resolved_branch, blocked_paths),
+                    "permissionDecisionReason": _build_dirty_reason(resolved_branch, dirty_paths),
                 }
             }
         )

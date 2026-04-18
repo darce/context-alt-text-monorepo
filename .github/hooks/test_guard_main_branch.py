@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -28,6 +29,11 @@ POLICY = BranchIsolationPolicy(
     root_protected_files=("Makefile",),
     permitted_main_surfaces=(),
 )
+FIXTURE_COPY_PATHS = (
+    Path(".github/hooks/guard-main-branch.py"),
+    Path("scripts/hooks/_branch_isolation_guard.py"),
+    Path("scripts/hooks/_harness_protocol.py"),
+)
 
 
 def _run_hook(payload: dict, cwd: str | None = None) -> tuple[int, dict | None]:
@@ -43,6 +49,54 @@ def _run_hook(payload: dict, cwd: str | None = None) -> tuple[int, dict | None]:
     if proc.stdout.strip():
         stdout_json = json.loads(proc.stdout)
     return proc.returncode, stdout_json
+
+
+def _write_fixture_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for relative in FIXTURE_COPY_PATHS:
+        destination = repo / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(HOOK_SCRIPT.parents[2] / relative, destination)
+
+    contract_path = repo / "docs" / "agentic" / "contracts" / "harness-protocol.yaml"
+    contract_path.parent.mkdir(parents=True, exist_ok=True)
+    contract_path.write_text(
+        """version: 1
+
+branch_isolation:
+  protected_branches:
+    - main
+    - master
+  code_roots:
+    - apps/
+    - packages/
+    - scripts/
+  protected_extensions:
+    - .py
+    - .sh
+    - .ts
+  root_protected_files:
+    - Makefile
+  permitted_main_surfaces:
+    - pattern: "docs/tasks/**/*.md"
+      reason: "Task plans"
+    - pattern: "docs/agentic/rules/**"
+      reason: "Workflow rules"
+  enforcers:
+    - path: .github/hooks/guard-main-branch.py
+      harness: vscode
+    - path: scripts/hooks/guard-main-branch.sh
+      harness: claude
+""",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+    return repo
 
 
 def test_extract_candidate_paths_from_apply_patch() -> None:
@@ -68,6 +122,7 @@ def test_check_file_edit_blocks_code_paths_on_main() -> None:
         branch="main",
         repo_root="/repo",
         policy=POLICY,
+        protected_branches={"main", "master"},
     )
     assert result == ("main", ["apps/prototype-description-service/api/main.py"])
 
@@ -79,6 +134,7 @@ def test_check_file_edit_allows_docs_on_main() -> None:
         branch="main",
         repo_root="/repo",
         policy=POLICY,
+        protected_branches={"main", "master"},
     )
     assert result is None
 
@@ -96,6 +152,7 @@ def test_check_file_edit_allows_code_on_feature_branch() -> None:
         branch="feature/e15-branch-guard",
         repo_root="/repo",
         policy=POLICY,
+        protected_branches={"main", "master"},
     )
     assert result is None
 
@@ -117,6 +174,7 @@ def test_check_file_edit_blocks_mixed_patch_when_code_file_present() -> None:
         branch="main",
         repo_root="/repo",
         policy=POLICY,
+        protected_branches={"main", "master"},
     )
     assert result == ("main", ["packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/api.py"])
 
@@ -128,6 +186,7 @@ def test_check_file_edit_blocks_root_makefile_on_main() -> None:
         branch="main",
         repo_root="/repo",
         policy=POLICY,
+        protected_branches={"main", "master"},
     )
     assert result == ("main", ["Makefile"])
 
@@ -139,26 +198,47 @@ def test_check_file_edit_blocks_scripts_path_on_main() -> None:
         branch="main",
         repo_root="/repo",
         policy=POLICY,
+        protected_branches={"main", "master"},
     )
     assert result == ("main", ["scripts/check_skills.py"])
 
 
-def test_hook_emits_block_json_for_create_file_on_main() -> None:
+def test_hook_emits_block_json_for_create_file_on_main(tmp_path: Path) -> None:
+    repo = _write_fixture_repo(tmp_path)
     payload = {
         "toolName": "create_file",
-        "toolInput": {"filePath": "/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/api/main.py"},
+        "toolInput": {"filePath": str(repo / "apps" / "prototype-description-service" / "api" / "main.py")},
     }
-    exit_code, output = _run_hook(payload, cwd="/Users/daniel/Development/context-alt-text-monorepo")
+    exit_code, output = _run_hook(payload, cwd=str(repo))
     assert exit_code == 0
     assert output is not None
     assert output["hookSpecificOutput"]["permissionDecision"] == "block"
 
 
-def test_hook_allows_doc_create_on_main() -> None:
+def test_hook_allows_doc_create_on_clean_main(tmp_path: Path) -> None:
+    repo = _write_fixture_repo(tmp_path)
     payload = {
         "toolName": "create_file",
-        "toolInput": {"filePath": "/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/rules/development-workflow.md"},
+        "toolInput": {"filePath": str(repo / "docs" / "agentic" / "rules" / "development-workflow.md")},
     }
-    exit_code, output = _run_hook(payload, cwd="/Users/daniel/Development/context-alt-text-monorepo")
+    exit_code, output = _run_hook(payload, cwd=str(repo))
     assert exit_code == 0
     assert output is None
+
+
+def test_hook_blocks_allowed_doc_edit_when_protected_paths_are_already_dirty(tmp_path: Path) -> None:
+    repo = _write_fixture_repo(tmp_path)
+    protected_path = repo / "packages" / "demo" / "worker.py"
+    protected_path.parent.mkdir(parents=True, exist_ok=True)
+    protected_path.write_text("print('dirty main')\n", encoding="utf-8")
+
+    payload = {
+        "toolName": "create_file",
+        "toolInput": {"filePath": str(repo / "docs" / "agentic" / "rules" / "development-workflow.md")},
+    }
+    exit_code, output = _run_hook(payload, cwd=str(repo))
+    assert exit_code == 0
+    assert output is not None
+    assert output["hookSpecificOutput"]["permissionDecision"] == "block"
+    assert "already dirty on the main branch" in output["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "packages/demo/worker.py" in output["hookSpecificOutput"]["permissionDecisionReason"]

@@ -11,21 +11,6 @@ set -euo pipefail
 
 INPUT=$(cat)
 
-# Extract file_path from the hook payload.
-FILE_PATH=$(echo "$INPUT" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    print(d.get('tool_input', {}).get('file_path', ''))
-except Exception:
-    print('')
-" 2>/dev/null || echo "")
-
-# No file path means this isn't a file-edit invocation — allow.
-if [ -z "$FILE_PATH" ]; then
-  exit 0
-fi
-
 # Determine current branch.
 BRANCH=$(git branch --show-current 2>/dev/null || echo "")
 
@@ -33,36 +18,28 @@ if [ "$BRANCH" != "main" ] && [ "$BRANCH" != "master" ]; then
   exit 0
 fi
 
-# Convert absolute path to repo-relative using canonical paths so /var vs
-# /private/var aliases do not bypass the prefix check in temp fixtures.
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
-REL_PATH=$(python3 -c '
-import sys
-from pathlib import Path
-
-raw_path = sys.argv[1]
-repo_root = sys.argv[2]
-if not repo_root:
-    print(raw_path)
-    raise SystemExit(0)
-
-candidate = Path(raw_path).expanduser().resolve(strict=False)
-root = Path(repo_root).expanduser().resolve(strict=False)
-try:
-    print(candidate.relative_to(root).as_posix())
-except ValueError:
-    print(raw_path)
-' "$FILE_PATH" "$REPO_ROOT")
-
-if ! SHOULD_BLOCK=$(python3 -c '
+if ! BLOCK_REASON=$(printf '%s' "$INPUT" | python3 -c '
+import json
 import sys
 from pathlib import Path
 
 repo_root = Path(sys.argv[1])
-rel_path = sys.argv[2]
+branch = sys.argv[2]
 sys.path.insert(0, str(repo_root / "scripts" / "hooks"))
 
-from _harness_protocol import HarnessContractMissingError, is_branch_isolation_protected_path, load_branch_isolation_policy
+from _branch_isolation_guard import check_file_edit, find_dirty_protected_paths
+from _harness_protocol import HarnessContractMissingError, load_branch_isolation_policy
+
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(0)
+
+tool_name = payload.get("toolName") or payload.get("tool_name") or ""
+tool_input = payload.get("toolInput") or payload.get("tool_input") or {}
+if not isinstance(tool_input, dict):
+    raise SystemExit(0)
 
 try:
     policy = load_branch_isolation_policy(repo_root)
@@ -70,26 +47,64 @@ except HarnessContractMissingError as exc:
     print(str(exc), file=sys.stderr)
     raise SystemExit(2)
 
-print("1" if is_branch_isolation_protected_path(rel_path, policy) else "0")
-' "$REPO_ROOT" "$REL_PATH"); then
+protected_branches = {"main", "master"}
+attempted = check_file_edit(
+    tool_name,
+    tool_input,
+    branch=branch,
+    repo_root=str(repo_root),
+    policy=policy,
+    protected_branches=protected_branches,
+)
+if attempted is not None:
+    resolved_branch, blocked_paths = attempted
+    rendered_paths = "\n".join(f"  - {path}" for path in blocked_paths)
+    print(
+        "BLOCKED: Code file edits are not allowed on the main branch.\n\n"
+        f"Branch: {resolved_branch}\n"
+        "Files:\n"
+        f"{rendered_paths}\n\n"
+        "Create a feature branch first:\n"
+        "  git checkout -b feature/<task-id>-<slug>\n\n"
+        "If you already have dirty code changes on main, move them to a feature branch or stash them before continuing.\n\n"
+        "Isolation options:\n"
+        "  1. Feature branch for single-agent work\n"
+        "  2. Worktree isolation for delegated subtasks\n"
+        "  3. Lane orchestration for multi-agent parallel work\n\n"
+        "Docs, markdown, and permitted planning surfaces remain allowed on main.\n"
+        "See: docs/agentic/rules/development-workflow.md#branch-isolation-protocol-mandatory"
+    )
+    raise SystemExit(0)
+
+dirty = find_dirty_protected_paths(
+    branch=branch,
+    repo_root=str(repo_root),
+    policy=policy,
+    protected_branches=protected_branches,
+)
+if dirty is None:
+    raise SystemExit(0)
+
+resolved_branch, dirty_paths = dirty
+rendered_paths = "\n".join(f"  - {path}" for path in dirty_paths)
+print(
+    "BLOCKED: Protected code files are already dirty on the main branch.\n\n"
+    f"Branch: {resolved_branch}\n"
+    "Dirty files:\n"
+    f"{rendered_paths}\n\n"
+    "Move the work onto a feature branch or stash it before making more edits.\n\n"
+    "Recommended recovery:\n"
+    "  1. git checkout -b feature/<task-id>-<slug>\n"
+    "  2. keep the dirty changes on that branch, or stash them intentionally\n"
+    "  3. return to main only after the protected paths are clean again\n\n"
+    "See: docs/agentic/rules/development-workflow.md#branch-isolation-protocol-mandatory"
+)
+' "$REPO_ROOT" "$BRANCH"); then
   exit 2
 fi
 
-if [ "$SHOULD_BLOCK" = "1" ]; then
-  cat >&2 <<EOF
-BLOCKED: Code file edits are not allowed on the main branch.
-
-  Branch: $BRANCH
-  File:   $REL_PATH
-
-Create a feature branch first:
-  git checkout -b feature/<task-id>-<slug>
-
-Or use worktree isolation for agent work:
-  Use the Agent tool with isolation: "worktree"
-
-See: docs/agentic/rules/development-workflow.md § Branch Isolation Protocol
-EOF
+if [ -n "$BLOCK_REASON" ]; then
+  printf '%s\n' "$BLOCK_REASON" >&2
   exit 2
 fi
 
@@ -119,8 +134,7 @@ print(task_ref or '')
 if [ -z "$ACTIVE_TASK" ]; then
   cat >&2 <<EOF
 WARNING: Editing on $BRANCH without an active handoff task.
-
-  File: $REL_PATH
+  Register a MAINT-* task before continuing.
 
 Register a maintenance task before continuing:
   set_handoff_state(task_ref='MAINT-<slug>', objective='Describe the main-branch patch', status='in_progress')

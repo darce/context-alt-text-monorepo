@@ -5,35 +5,347 @@ Contains worktree lane management, turn metrics, worker reports, and lane messag
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
+import os
 import sqlite3
 from collections.abc import Callable
-from typing import Any
+from pathlib import Path
+from typing import Any, TypedDict, cast
 
-from agent_handoff_mcp.current_task_rendering import _write_current_task_md_for_task
-from agent_handoff_mcp.shared_archival import _build_archival_lane_activity_summary
-from agent_handoff_mcp.shared_db_utils import _fetch_handoff_rows, _paginated_query
-from agent_handoff_mcp.shared_primitives import (
-    CLOSEABLE_LANE_STATUSES,
-    LANE_MESSAGE_DIRECTIONS,
-    LANE_STATUSES,
-    MESSAGE_STATUSES,
-    REPORT_STATUSES,
-    REVIEW_KINDS,
-    PromptMetrics,
-    TokenUsage,
-    _decode_lane_message_row_dict,
-    _decode_turn_metric_row_dict,
-    _json_response,
-    _normalize_lane_message_payload,
-    _normalize_optional_text,
-    _resolve_current_lane_row,
-    _resolve_task_ref,
-    _row_to_dict,
-    _workspace_root,
-)
-from agent_handoff_mcp.shared_schema import _get_db_connection
-from agent_handoff_mcp.shared_write_context import WriteActor, _resolve_write_actor
+CLOSEABLE_LANE_STATUSES = frozenset({"closed", "merged"})
+LANE_MESSAGE_DIRECTIONS = frozenset({"orchestrator_to_worker", "worker_to_orchestrator"})
+LANE_STATUSES = frozenset({"planned", "active", "blocked", "review", "merged", "closed"})
+MESSAGE_STATUSES = frozenset({"open", "acknowledged", "closed"})
+REPORT_STATUSES = frozenset({"submitted", "acknowledged", "superseded"})
+REVIEW_KINDS = frozenset({"branch", "planning"})
+
+
+@dataclass
+class TokenUsage:
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cached_input_tokens: int | None = None
+    reasoning_output_tokens: int | None = None
+    total_tokens: int | None = None
+    usage_source: str | None = None
+
+
+@dataclass
+class PromptMetrics:
+    model_context_window: int | None = None
+    prompt_tokens: int | None = None
+    prompt_chars: int | None = None
+    prompt_token_source: str | None = None
+    utilization_ratio: float | None = None
+    domain_signal_ratio: float | None = None
+    pressure_level: str | None = None
+
+
+class WriteActor(TypedDict, total=False):
+    agent: str
+    model: str
+    model_label: str
+    reasoning_level: str
+    branch: str
+    commit_sha: str
+    lane_id: str
+
+
+def _json_response(payload: dict[str, object]) -> dict[str, object]:
+    return dict(payload)
+
+
+def _normalize_optional_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized if normalized else None
+
+
+def _row_to_dict(row: sqlite3.Row | None) -> dict[str, object] | None:
+    return dict(row) if row is not None else None
+
+
+def _decode_lane_message_row_dict(row: dict[str, object]) -> dict[str, object]:
+    payload_json = row.get("payload_json")
+    if isinstance(payload_json, str) and payload_json.strip():
+        try:
+            payload = json.loads(payload_json)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            row["payload"] = payload
+    return row
+
+
+def _decode_turn_metric_row_dict(row: dict[str, object]) -> dict[str, object]:
+    for key, empty in (("attribution_json", {}), ("section_sizes_json", {}), ("raw_usage_json", None)):
+        raw_value = row.get(key)
+        if not isinstance(raw_value, str) or not raw_value.strip():
+            row[key.removesuffix("_json")] = empty
+            continue
+        try:
+            row[key.removesuffix("_json")] = json.loads(raw_value)
+        except json.JSONDecodeError:
+            row[key.removesuffix("_json")] = empty
+    return row
+
+
+def _coerce_string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        normalized = _normalize_optional_text(item)
+        if normalized is not None:
+            result.append(normalized)
+    return result
+
+
+def _normalize_lane_message_payload(payload: object) -> tuple[dict[str, object] | None, str | None]:
+    if payload is None:
+        return None, None
+    if not isinstance(payload, dict):
+        return None, "lane message payload must be an object when provided."
+    normalized: dict[str, object] = {}
+    for key in ("source_lane", "reason", "summary"):
+        value = _normalize_optional_text(payload.get(key))
+        if value is not None:
+            normalized[key] = value
+    for key in ("required_actions", "artifacts"):
+        values = _coerce_string_list(payload.get(key))
+        if values:
+            normalized[key] = values
+    raw_override = payload.get("owned_paths_override")
+    if isinstance(raw_override, str):
+        raw_override = [raw_override]
+    override_values = _coerce_string_list(raw_override)
+    if override_values:
+        normalized["owned_paths_override"] = override_values
+    return normalized, None
+
+
+def _workspace_root() -> Path:
+    from agent_handoff_mcp import get_runtime_config  # noqa: PLC0415
+
+    return get_runtime_config().workspace_root
+
+
+def _normalize_path_for_match(path_value: str | Path) -> str:
+    return os.path.normcase(str(Path(path_value).expanduser().resolve()))
+
+
+def _resolve_current_lane_row(conn: sqlite3.Connection, task_ref: str) -> sqlite3.Row | None:
+    workspace_path = _normalize_path_for_match(_workspace_root())
+    lane_rows = conn.execute(
+        "SELECT * FROM worktree_lanes WHERE task_ref = ? ORDER BY updated_at DESC, id DESC",
+        (task_ref,),
+    ).fetchall()
+    for row in lane_rows:
+        raw_path = _normalize_optional_text(row["worktree_path"])
+        if raw_path is None:
+            continue
+        if _normalize_path_for_match(raw_path) == workspace_path:
+            return cast(sqlite3.Row, row)
+    return None
+
+
+def _paginated_query(
+    conn: sqlite3.Connection,
+    table: str,
+    where_sql: str,
+    params: tuple[object, ...],
+    limit: int,
+    offset: int,
+    order_sql: str,
+    row_decoder: Callable[[dict[str, object]], dict[str, object]] = dict,
+) -> tuple[int, list[dict[str, object]]]:
+    total = int(conn.execute(f"SELECT COUNT(*) AS count FROM {table} WHERE {where_sql}", params).fetchone()["count"])
+    rows = [
+        row_decoder(dict(row))
+        for row in conn.execute(
+            f"SELECT * FROM {table} WHERE {where_sql} ORDER BY {order_sql} LIMIT ? OFFSET ?",
+            (*params, limit, offset),
+        ).fetchall()
+    ]
+    return total, rows
+
+
+def _fetch_handoff_rows(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    where_sql: str,
+    order_sql: str,
+    limit: int,
+    params: tuple[object, ...],
+) -> list[dict[str, object]]:
+    rows = conn.execute(
+        f"SELECT * FROM {table} WHERE {where_sql} ORDER BY {order_sql} LIMIT ?",
+        (*params, limit),
+    ).fetchall()
+    payload = [dict(row) for row in rows]
+    if table == "lane_messages":
+        return [_decode_lane_message_row_dict(row) for row in payload]
+    if table == "turn_metrics":
+        return [_decode_turn_metric_row_dict(row) for row in payload]
+    return payload
+
+
+def _excerpt_text(value: str | None, *, limit: int = 240) -> str | None:
+    normalized = _normalize_optional_text(value)
+    if normalized is None:
+        return None
+    collapsed = " ".join(normalized.split())
+    if len(collapsed) <= limit:
+        return collapsed
+    if limit <= 3:
+        return "." * limit
+    return f"{collapsed[: limit - 3].rstrip()}..."
+
+
+def _count_by_value(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    field: str,
+    task_ref: str,
+    lane_id: str,
+    allowed_values: frozenset[str],
+) -> dict[str, int]:
+    counts = {value: 0 for value in sorted(allowed_values)}
+    rows = conn.execute(
+        f"SELECT {field} AS value, COUNT(*) AS count FROM {table} WHERE task_ref = ? AND lane_id = ? GROUP BY {field}",
+        (task_ref, lane_id),
+    ).fetchall()
+    for row in rows:
+        value = _normalize_optional_text(row["value"])
+        if value is not None and value in counts:
+            counts[value] = int(row["count"])
+    return counts
+
+
+def _build_archival_lane_activity_summary(
+    conn: sqlite3.Connection,
+    *,
+    task_ref: str,
+    lane_id: str,
+) -> dict[str, object]:
+    decisions_total_row = conn.execute(
+        "SELECT COUNT(*) AS count FROM decisions WHERE task_ref = ? AND lane_id = ?",
+        (task_ref, lane_id),
+    ).fetchone()
+    latest_decision_row = conn.execute(
+        """
+        SELECT rationale
+        FROM decisions
+        WHERE task_ref = ? AND lane_id = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        (task_ref, lane_id),
+    ).fetchone()
+    reports_total_row = conn.execute(
+        "SELECT COUNT(*) AS count FROM worker_reports WHERE task_ref = ? AND lane_id = ?",
+        (task_ref, lane_id),
+    ).fetchone()
+    latest_report_row = conn.execute(
+        """
+        SELECT merge_ready
+        FROM worker_reports
+        WHERE task_ref = ? AND lane_id = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        """,
+        (task_ref, lane_id),
+    ).fetchone()
+    tests_summary_row = conn.execute(
+        """
+        SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN passed = 1 THEN 1 ELSE 0 END), 0) AS passed
+        FROM verified_tests
+        WHERE task_ref = ? AND lane_id = ?
+        """,
+        (task_ref, lane_id),
+    ).fetchone()
+    tests_total = int(tests_summary_row["total"]) if tests_summary_row else 0
+    tests_passed = int(tests_summary_row["passed"]) if tests_summary_row else 0
+    return {
+        "decisions": {
+            "count": int(decisions_total_row["count"]) if decisions_total_row else 0,
+            "latest_rationale_excerpt": _excerpt_text(
+                str(latest_decision_row["rationale"])
+                if latest_decision_row and latest_decision_row["rationale"] is not None
+                else None
+            ),
+        },
+        "findings": {
+            "counts_by_status": _count_by_value(
+                conn,
+                table="review_findings",
+                field="status",
+                task_ref=task_ref,
+                lane_id=lane_id,
+                allowed_values=frozenset({"open", "fixed", "wontfix", "deferred"}),
+            ),
+        },
+        "reports": {
+            "count": int(reports_total_row["count"]) if reports_total_row else 0,
+            "latest_merge_ready": (
+                bool(latest_report_row["merge_ready"])
+                if latest_report_row is not None and latest_report_row["merge_ready"] is not None
+                else None
+            ),
+        },
+        "messages": {
+            "counts_by_direction": _count_by_value(
+                conn,
+                table="lane_messages",
+                field="direction",
+                task_ref=task_ref,
+                lane_id=lane_id,
+                allowed_values=LANE_MESSAGE_DIRECTIONS,
+            ),
+            "counts_by_status": _count_by_value(
+                conn,
+                table="lane_messages",
+                field="status",
+                task_ref=task_ref,
+                lane_id=lane_id,
+                allowed_values=MESSAGE_STATUSES,
+            ),
+        },
+        "tests": {
+            "total": tests_total,
+            "passed": tests_passed,
+            "pass_rate": round(tests_passed / tests_total, 3) if tests_total else None,
+        },
+    }
+
+
+def _write_current_task_md_for_task(conn: sqlite3.Connection, task_ref: str) -> None:
+    del conn
+    from agent_handoff_mcp import generate_current_task_md  # noqa: PLC0415
+
+    generate_current_task_md(task_ref=task_ref, write_file=True)
+
+
+def _get_db_connection() -> sqlite3.Connection:
+    from agent_handoff_mcp.shared_schema import _get_db_connection as _handoff_get_db_connection  # noqa: PLC0415
+
+    return _handoff_get_db_connection()
+
+
+def _resolve_task_ref(conn: sqlite3.Connection, task_ref: str | None) -> str:
+    from agent_handoff_mcp.shared_primitives import _resolve_task_ref as _handoff_resolve_task_ref  # noqa: PLC0415
+
+    return _handoff_resolve_task_ref(conn, task_ref)
+
+
+def _resolve_write_actor(conn: sqlite3.Connection, actor: WriteActor | None):
+    from agent_handoff_mcp.shared_write_context import _resolve_write_actor as _handoff_resolve_write_actor  # noqa: PLC0415
+
+    return _handoff_resolve_write_actor(conn, actor)
 
 _VALID_DETAIL_LEVELS = {"full", "summary"}
 _LIST_SECTION_IDENTITY = "identity"
@@ -1398,10 +1710,12 @@ def _evaluate_clean_slice_gate(
     since: str | None,
 ) -> dict | None:
     """Check clean-slice preconditions. Returns error payload dict or None if clean."""
+    from agent_handoff_mcp.enums import FindingSeverity, FindingStatus  # noqa: PLC0415
+
     open_high_query = [
-        "SELECT COUNT(*) AS count FROM review_findings WHERE task_ref = ? AND status = 'open' AND severity = 'high'"
+        "SELECT COUNT(*) AS count FROM review_findings WHERE task_ref = ? AND status = ? AND severity = ?"
     ]
-    open_high_params: list[object] = [task_ref]
+    open_high_params: list[object] = [task_ref, FindingStatus.OPEN, FindingSeverity.HIGH]
     if lane_id is not None:
         open_high_query.append("AND lane_id = ?")
         open_high_params.append(lane_id)
@@ -1445,7 +1759,16 @@ def upsert_plan_cursor(
     task_ref: str | None = None,
     require_clean_slice: bool = False,
 ) -> dict:
-    valid_states = {"dispatched", "completed", "skipped", "escalated"}
+    from agent_handoff_mcp.enums import PlanCursorState  # noqa: PLC0415
+
+    valid_states = frozenset(
+        {
+            PlanCursorState.DISPATCHED,
+            PlanCursorState.COMPLETED,
+            PlanCursorState.SKIPPED,
+            PlanCursorState.ESCALATED,
+        }
+    )
     normalized_plan_item_id = _normalize_optional_text(plan_item_id)
     normalized_lane_id = _normalize_optional_text(lane_id)
     normalized_heading = _normalize_optional_text(source_heading)
@@ -1480,9 +1803,9 @@ def upsert_plan_cursor(
                     source_heading, summary, dispatch_count, dispatched_at, completed_at, created_at, updated_at
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?,
-                    CASE WHEN ? = 'dispatched' THEN 1 ELSE 0 END,
-                    CASE WHEN ? = 'dispatched' THEN datetime('now') ELSE NULL END,
-                    CASE WHEN ? = 'completed' THEN datetime('now') ELSE NULL END,
+                    CASE WHEN ? = ? THEN 1 ELSE 0 END,
+                    CASE WHEN ? = ? THEN datetime('now') ELSE NULL END,
+                    CASE WHEN ? = ? THEN datetime('now') ELSE NULL END,
                     datetime('now'), datetime('now')
                 )
                 """,
@@ -1496,8 +1819,11 @@ def upsert_plan_cursor(
                     normalized_heading,
                     normalized_summary,
                     state,
+                    PlanCursorState.DISPATCHED,
                     state,
+                    PlanCursorState.DISPATCHED,
                     state,
+                    PlanCursorState.COMPLETED,
                 ),
             )
             row = _row_to_dict(conn.execute("SELECT * FROM plan_cursors WHERE id = ?", (cur.lastrowid,)).fetchone())
@@ -1506,14 +1832,14 @@ def upsert_plan_cursor(
         next_heading = normalized_heading or _normalize_optional_text(existing["source_heading"])
         next_action_id = mcp_action_id if mcp_action_id is not None else existing["mcp_action_id"]
         next_worker_message_id = worker_message_id if worker_message_id is not None else existing["worker_message_id"]
-        dispatch_count = int(existing["dispatch_count"] or 0) + (1 if state == "dispatched" else 0)
+        dispatch_count = int(existing["dispatch_count"] or 0) + (1 if state == PlanCursorState.DISPATCHED else 0)
         conn.execute(
             """
             UPDATE plan_cursors
             SET state = ?, lane_id = ?, mcp_action_id = ?, worker_message_id = ?,
                 source_heading = ?, summary = ?, dispatch_count = ?,
-                dispatched_at = CASE WHEN ? = 'dispatched' THEN datetime('now') ELSE dispatched_at END,
-                completed_at = CASE WHEN ? = 'completed' THEN datetime('now') ELSE completed_at END,
+                dispatched_at = CASE WHEN ? = ? THEN datetime('now') ELSE dispatched_at END,
+                completed_at = CASE WHEN ? = ? THEN datetime('now') ELSE completed_at END,
                 updated_at = datetime('now')
             WHERE task_ref = ? AND plan_item_id = ?
             """,
@@ -1526,7 +1852,9 @@ def upsert_plan_cursor(
                 next_summary,
                 dispatch_count,
                 state,
+                PlanCursorState.DISPATCHED,
                 state,
+                PlanCursorState.COMPLETED,
                 resolved_task_ref,
                 normalized_plan_item_id,
             ),
@@ -1564,7 +1892,17 @@ def list_plan_cursors(
     fields: str | None = None,
     top_n_cursors: int | None = None,
 ) -> dict:
-    valid_states = {"all", "dispatched", "completed", "skipped", "escalated"}
+    from agent_handoff_mcp.enums import PlanCursorState  # noqa: PLC0415
+
+    valid_states = frozenset(
+        {
+            "all",
+            PlanCursorState.DISPATCHED,
+            PlanCursorState.COMPLETED,
+            PlanCursorState.SKIPPED,
+            PlanCursorState.ESCALATED,
+        }
+    )
     if state not in valid_states:
         return _json_response({"ok": False, "error": f"Invalid state. Valid: {', '.join(sorted(valid_states))}"})
     limit = _effective_limit(limit, top_n_cursors)

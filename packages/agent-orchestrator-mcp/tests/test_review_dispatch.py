@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 from pathlib import Path
 from unittest import mock
 
@@ -110,14 +109,12 @@ def test_leaves_multi_lane_actions_unassigned() -> None:
 def test_load_open_handoff_items_requests_only_dispatch_sections() -> None:
     module = _load_review_dispatch_module()
     mock_ahm = mock.MagicMock()
-    mock_ahm.get_handoff_state.return_value = json.dumps(
-        {
-            "ok": True,
-            "findings_open": [{"finding_id": "F-1"}],
-            "blockers_open": [{"id": 2}],
-            "actions_pending": [{"id": 3}],
-        }
-    )
+    mock_ahm.get_handoff_state.return_value = {
+        "ok": True,
+        "findings_open": [{"finding_id": "F-1"}],
+        "blockers_open": [{"id": 2}],
+        "actions_pending": [{"id": 3}],
+    }
 
     with mock.patch.dict(__import__("sys").modules, {"agent_handoff_mcp": mock_ahm}):
         issue_sets = module._load_open_handoff_items("task-ref")

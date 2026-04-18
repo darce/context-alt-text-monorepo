@@ -4,10 +4,14 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import logging
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
+_SUBPROCESS_TIMEOUT_SECONDS = 300
 
 
 def _lane_message_available() -> bool:
@@ -230,11 +234,21 @@ def main() -> int:
         return 0
 
     for command, critical in commands:
-        completed = subprocess.run(command, check=False)
+        try:
+            completed = subprocess.run(command, check=False, timeout=_SUBPROCESS_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "lane-result: command timed out after %ss: %s",
+                _SUBPROCESS_TIMEOUT_SECONDS,
+                command,
+            )
+            if critical:
+                return 124
+            continue
         if completed.returncode != 0:
             if critical:
                 return completed.returncode
-            print(f"lane-result: non-critical step failed (exit {completed.returncode}), continuing")
+            logger.warning("lane-result: non-critical step failed (exit %s), continuing", completed.returncode)
 
     artifact_ref = result.get("details_artifact_ref")
     if artifact_ref is not None and _lane_message_available():
@@ -249,7 +263,7 @@ def main() -> int:
                 artifact_ref=artifact_ref,
             )
         except Exception as exc:  # noqa: BLE001
-            print(f"lane-result: warning: artifact-carrying lane message failed: {exc}", file=sys.stderr)
+            logger.warning("lane-result: artifact-carrying lane message failed: %s", exc)
     return 0
 
 

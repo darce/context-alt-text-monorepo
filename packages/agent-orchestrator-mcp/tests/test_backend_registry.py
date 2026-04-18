@@ -49,7 +49,7 @@ def test_get_backend_spec_returns_registered_spec() -> None:
     spec = mod.get_backend_spec("codex-subagent")
     assert spec.kind == "bridge"
     assert spec.module == "codex_subagent_bridge"
-    assert spec.adapter_class is not None
+    assert spec.adapter_path.endswith(".CodexSubagentAdapter")
 
 
 def test_resolve_bridge_rejects_cli_backend() -> None:
@@ -82,39 +82,40 @@ def test_resolve_bridge_returns_runner() -> None:
 def test_get_adapter_returns_initialized_adapter() -> None:
     mod = _load_module()
     mock_cli = mock.Mock()
-    mock_factory = mock.Mock(return_value=mock_cli)
-    # Replace the adapter_class directly in the spec
+    mock_cls = mock.Mock(return_value=mock_cli)
     spec = mod.get_backend_spec("codex-cli")
     new_spec = mod.BackendSpec(
         kind=spec.kind,
-        adapter_class=mock_factory,
+        adapter_path="fake.adapters.MockCliAdapter",
         description=spec.description,
         capabilities=spec.capabilities,
     )
     with mock.patch.dict(mod.BACKENDS, {"codex-cli": new_spec}):
-        adapter = mod.get_adapter("codex-cli", codex_bin="/path/to/codex")
-        mock_factory.assert_called_once_with()
-        mock_cli.assert_called_once_with(codex_bin="/path/to/codex")
-        assert adapter is mock_cli.return_value
+        with mock.patch.object(mod.importlib, "import_module", return_value=mock.Mock(MockCliAdapter=mock_cls)):
+            adapter = mod.get_adapter("codex-cli", codex_bin="/path/to/codex")
+        mock_cls.assert_called_once_with(codex_bin="/path/to/codex")
+        assert adapter is mock_cli
 
 
 def test_get_adapter_for_bridge_returns_subagent_adapter() -> None:
     mod = _load_module()
     runner = mock.Mock()
     mock_sub = mock.Mock()
+    mock_cls = mock.Mock(return_value=mock_sub)
     spec = mod.get_backend_spec("codex-subagent")
     new_spec = mod.BackendSpec(
         kind=spec.kind,
-        adapter_class=mock.Mock(return_value=mock_sub),
+        adapter_path="fake.adapters.MockSubagentAdapter",
         description=spec.description,
         module=spec.module,
         capabilities=spec.capabilities,
     )
     with mock.patch.dict(mod.BACKENDS, {"codex-subagent": new_spec}):
         with mock.patch.object(mod, "resolve_bridge", return_value=runner):
-            adapter = mod.get_adapter("codex-subagent")
-            mock_sub.assert_called_once_with(runner, name="codex-subagent")
-            assert adapter is mock_sub.return_value
+            with mock.patch.object(mod.importlib, "import_module", return_value=mock.Mock(MockSubagentAdapter=mock_cls)):
+                adapter = mod.get_adapter("codex-subagent")
+        mock_cls.assert_called_once_with(runner, name="codex-subagent")
+        assert adapter is mock_sub
 
 
 def test_get_backend_choices_includes_copilot_host() -> None:
@@ -149,10 +150,9 @@ def test_cli_backend_capabilities() -> None:
 
 def test_register_backend_adds_new_entry() -> None:
     mod = _load_module()
-    mock_adapter = mock.Mock()
     custom_spec = mod.BackendSpec(
         kind="bridge",
-        adapter_class=mock_adapter,
+        adapter_path="fake.adapters.CustomAdapter",
         module="my_custom_bridge",
         description="Custom bridge for testing.",
         capabilities=mod.BackendCapabilities(
@@ -206,17 +206,19 @@ def test_find_codex_from_search_paths(tmp_path: Path) -> None:
 
     with (
         mock.patch("pathlib.Path.home", return_value=fake_home),
-        mock.patch.object(mod.Path, "exists", autospec=True) as mock_exists,
+        mock.patch("agent_orchestrator_mcp.orchestration.adapters.codex_cli.Path.exists", autospec=True) as mock_exists,
     ):
         mock_exists.side_effect = lambda self: str(self) == str(fake_bin)
-        # find_codex should pick it up from {home}/.local/bin/codex
-        # because we mocked exists() to only be True for that fake bin
-        assert mod.find_codex() == str(fake_bin)
+        from agent_orchestrator_mcp.orchestration.adapters.codex_cli import find_codex
+
+        assert find_codex() == str(fake_bin)
 
 
 def test_probe_capabilities_codex_cli_not_found() -> None:
     mod = _load_module()
-    with mock.patch.object(mod, "find_codex", side_effect=RuntimeError("not found")):
+    with mock.patch(
+        "agent_orchestrator_mcp.orchestration.adapters.codex_cli.find_codex", side_effect=RuntimeError("not found")
+    ):
         caps = mod.probe_capabilities("codex-cli")
         assert caps.is_available is False
         assert caps.supports_reasoning_effort is False
@@ -226,7 +228,7 @@ def test_probe_capabilities_codex_cli_found_with_reasoning() -> None:
     mod = _load_module()
     fake_help = "Options:\n  --reasoning-effort [low|medium|high]"
     with (
-        mock.patch.object(mod, "find_codex", return_value="/bin/codex"),
+        mock.patch("agent_orchestrator_mcp.orchestration.adapters.codex_cli.find_codex", return_value="/bin/codex"),
         mock.patch("subprocess.run", return_value=mock.Mock(returncode=0, stdout=fake_help)),
     ):
         caps = mod.probe_capabilities("codex-cli")
@@ -238,7 +240,7 @@ def test_probe_capabilities_codex_cli_found_without_reasoning() -> None:
     mod = _load_module()
     fake_help = "Options:\n  --model NAME"
     with (
-        mock.patch.object(mod, "find_codex", return_value="/bin/codex"),
+        mock.patch("agent_orchestrator_mcp.orchestration.adapters.codex_cli.find_codex", return_value="/bin/codex"),
         mock.patch("subprocess.run", return_value=mock.Mock(returncode=0, stdout=fake_help)),
     ):
         caps = mod.probe_capabilities("codex-cli")

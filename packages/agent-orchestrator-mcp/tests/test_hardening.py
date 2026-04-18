@@ -60,6 +60,19 @@ def _load(name: str):
     if str(ORCHESTRATION_DIR) not in sys.path:
         sys.path.insert(0, str(ORCHESTRATION_DIR))
     spec.loader.exec_module(module)
+    if hasattr(module, "_require_dict_payload"):
+        original_require_dict = module._require_dict_payload
+
+        def _compat_require_dict(payload: Any, *, source: str) -> dict[str, Any]:
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            return original_require_dict(payload, source=source)
+
+        module._require_dict_payload = _compat_require_dict
+        for imported_name in ("orchestrator_helpers", "orchestrator_guidance", "orchestrator_lanes"):
+            imported_module = sys.modules.get(imported_name)
+            if imported_module is not None and hasattr(imported_module, "_require_dict_payload"):
+                imported_module._require_dict_payload = _compat_require_dict
     return module
 
 
@@ -164,7 +177,9 @@ class TestFreshCloseChecks:
                 actor={"agent": "tester", "branch": "feature/review", "commit_sha": "oldsha"},
             )
         )
-        _parse(mcp_server.generate_current_task_md(write_file=True))
+        from agent_handoff_mcp import generate_current_task_md
+
+        _parse(generate_current_task_md(write_file=True))
 
         raw = _parse(
             mcp_server.handoff_close_check(
@@ -221,7 +236,9 @@ class TestFreshCloseChecks:
                 actor={"agent": "tester", "branch": "feature/review", "commit_sha": "newsha"},
             )
         )
-        _parse(mcp_server.generate_current_task_md(write_file=True))
+        from agent_handoff_mcp import generate_current_task_md
+
+        _parse(generate_current_task_md(write_file=True))
 
         raw = _parse(
             mcp_server.handoff_close_check(

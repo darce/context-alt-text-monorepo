@@ -14,6 +14,7 @@ import argparse
 import datetime
 import fcntl
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -40,6 +41,7 @@ _STATUS_FILE_VERSION = 1
 _OBSERVABILITY_HISTORY_LIMIT = 20
 BACKEND_CHOICES = get_backend_choices()
 SESSION_MODE_CHOICES = ("fresh_turn", "shared_lane")
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -203,8 +205,8 @@ def _fetch_mcp_lane_params(orchestrator_root: Path, task_ref: str, lane_id: str)
                     "backend": lane.get("backend"),
                     "reasoning_effort": lane.get("reasoning_effort"),
                 }
-    except Exception:
-        pass
+    except (ImportError, FileNotFoundError, KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        logger.warning("lane params unavailable for %s/%s: %s", task_ref, lane_id, exc)
     return {}
 
 
@@ -671,9 +673,8 @@ def _record_token_usage_to_handoff(
             raw_usage=token_usage,
             actor=actor_payload,
         )
-    except Exception:
-        # Best-effort; do not break the execution pipeline for telemetry logging
-        pass
+    except (RuntimeError, TypeError, ValueError, json.JSONDecodeError, OSError) as exc:
+        logger.warning("telemetry turn-metrics logging skipped for %s/%s: %s", task_ref, lane_id, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -1473,7 +1474,8 @@ def _run_worker_cycles(run_ctx: WorkerRunContext, single_pass: bool) -> "int | N
             review_output = _review_phase(run_ctx)
         except StopIteration:
             return run_ctx.handoff_exit if single_pass else None
-        except Exception:
+        except (RuntimeError, TypeError, ValueError, json.JSONDecodeError, OSError) as exc:
+            logger.warning("review phase failed for %s/%s cycle %s: %s", config.task_ref, config.lane_id, cycle, exc)
             break
         converged = review_output.get("converged", False)
         if converged:
@@ -1568,7 +1570,8 @@ def _setup_worker_run(config: WorkerConfig) -> "tuple[WorkerRunContext, str | No
         _lane_cfg = (
             _get_lane_config(config.task_ref, config.lane_id, orchestrator_root=str(config.orchestrator_root)) or {}
         )
-    except Exception:
+    except (ImportError, FileNotFoundError, KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        logger.warning("lane config unavailable for %s/%s: %s", config.task_ref, config.lane_id, exc)
         _lane_cfg = {}
     token_burn_threshold = int(_lane_cfg.get("token_burn_threshold") or 2_000_000)
 

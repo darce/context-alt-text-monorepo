@@ -41,8 +41,10 @@ VSCODE_HOOKS_PATH = REPO_ROOT / ".github" / "hooks" / "terminal-guard.json"
 PYTHON_EXPORTS_PATH = REPO_ROOT / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp" / "__init__.py"
 CONTRACT_RELATIVE = Path("docs/agentic/contracts/harness-protocol.yaml")
 FIXTURE_COPY_FILES = (
+    Path(".claude/settings.json"),
     Path(".github/hooks/guard-main-branch.py"),
     Path(".github/hooks/guard-worktree-drift.py"),
+    Path("scripts/hooks/_branch_isolation_guard.py"),
     Path("scripts/hooks/_harness_protocol.py"),
     Path("scripts/hooks/_worktree_drift.py"),
     Path("scripts/hooks/guard-main-branch.sh"),
@@ -362,10 +364,34 @@ def _check_branch_isolation(contract: dict, *, repo_root: Path = REPO_ROOT) -> l
         return ["branch_isolation.enforcers must be a non-empty list"]
     errors.extend(_validate_permitted_main_surfaces(spec))
     try:
+        claude_payload = json.loads((repo_root / ".claude" / "settings.json").read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"branch_isolation: unable to load `.claude/settings.json`: {exc}")
+        return errors
+    try:
         vscode_payload = json.loads((repo_root / ".github" / "hooks" / "terminal-guard.json").read_text())
     except (OSError, json.JSONDecodeError) as exc:
         errors.append(f"branch_isolation: unable to load `.github/hooks/terminal-guard.json`: {exc}")
         return errors
+    claude_main_guard_entry = next(
+        (
+            entry
+            for entry in claude_payload.get("hooks", {}).get("PreToolUse", [])
+            if any(
+                isinstance(hook, dict)
+                and hook.get("command") == 'bash "$CLAUDE_PROJECT_DIR/scripts/hooks/guard-main-branch.sh"'
+                for hook in entry.get("hooks", [])
+            )
+        ),
+        None,
+    )
+    if claude_main_guard_entry is None:
+        errors.append("branch_isolation: Claude PreToolUse missing `guard-main-branch.sh` entry")
+    elif claude_main_guard_entry.get("matcher") != EDIT_TOOL_MATCHER:
+        errors.append(
+            "branch_isolation: Claude `guard-main-branch.sh` entry must scope to "
+            f"`{EDIT_TOOL_MATCHER}`"
+        )
     main_guard_entry = next(
         (
             entry
@@ -495,6 +521,31 @@ def _check_branch_isolation(contract: dict, *, repo_root: Path = REPO_ROOT) -> l
         )
         if shell_code != 0:
             errors.append("branch_isolation: Claude guard blocked allowed docs path `docs/notes.md`")
+
+        dirty_code_path = fixture_repo / _path_for_code_root(code_roots[0], extension)
+        _ensure_parent(dirty_code_path)
+        dirty_code_path.write_text("print('dirty main')\n", encoding="utf-8")
+        _, output, _ = _run_python_hook(
+            vscode_guard,
+            {"toolName": "create_file", "toolInput": {"filePath": str(allowed_path)}},
+            cwd=fixture_repo,
+            env=env,
+        )
+        if output is None or output["hookSpecificOutput"]["permissionDecision"] != "block":
+            errors.append("branch_isolation: VS Code guard did not block when protected paths were already dirty on main")
+        elif "already dirty on the main branch" not in output["hookSpecificOutput"]["permissionDecisionReason"]:
+            errors.append("branch_isolation: VS Code dirty-main block reason was not specific")
+
+        shell_code, _, shell_stderr = _run_shell_hook(
+            claude_guard,
+            {"tool_input": {"file_path": str(allowed_path)}},
+            cwd=fixture_repo,
+            env=env,
+        )
+        if shell_code != 2:
+            errors.append("branch_isolation: Claude guard did not block when protected paths were already dirty on main")
+        elif "already dirty on the main branch" not in shell_stderr:
+            errors.append("branch_isolation: Claude dirty-main block reason was not specific")
 
         contract_path = fixture_repo / CONTRACT_RELATIVE
         contract_backup = fixture_repo / CONTRACT_RELATIVE.with_suffix(".yaml.bak")

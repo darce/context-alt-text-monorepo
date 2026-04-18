@@ -62,10 +62,10 @@ from orchestrator_guidance import (  # noqa: F401
 from orchestrator_helpers import (  # noqa: F401
     _combined_text,
     _json_list_text,
-    _json_load,
     _log,
     _message_timestamp,
     _normalize_text,
+    _require_dict_payload,
     _report_timestamp,
 )
 
@@ -108,14 +108,15 @@ def _poll_merge_ready_lanes(
 
     ready: list[str] = []
     for lane_id in lane_ids:
-        payload = _json_load(
+        payload = _require_dict_payload(
             worker_reports(
                 operation="list",
                 task_ref=task_ref,
                 lane_id=lane_id,
                 limit=1,
                 fields="merge_ready",
-            )
+            ),
+            source=f"worker_reports(list merge-ready:{lane_id})",
         )
         if payload.get("ok") is not True:
             continue
@@ -156,10 +157,15 @@ def _run_cross_lane_verify(
 
 
 def _has_open_plan_action(task_ref: str, plan_item_id: str) -> bool:
+    from agent_handoff_mcp.enums import ActionStatus  # noqa: PLC0415
+
     from agent_handoff_mcp import list_next_actions
 
     marker = f"[plan:{plan_item_id}]"
-    payload = _json_load(list_next_actions(task_ref=task_ref, status="pending", limit=200))
+    payload = _require_dict_payload(
+        list_next_actions(task_ref=task_ref, status=ActionStatus.PENDING, limit=200),
+        source=f"list_next_actions({task_ref})",
+    )
     if payload.get("ok") is not True:
         raise RuntimeError(f"Failed to list next actions for {task_ref}.")
     for row in payload.get("actions", []):
@@ -169,18 +175,21 @@ def _has_open_plan_action(task_ref: str, plan_item_id: str) -> bool:
 
 
 def _has_open_plan_message(task_ref: str, plan_item_id: str) -> bool:
+    from agent_handoff_mcp.enums import MessageStatus  # noqa: PLC0415
+
     from agent_orchestrator_mcp.lanes import lane_communication
 
     marker = f"[plan:{plan_item_id}]"
-    payload = _json_load(
+    payload = _require_dict_payload(
         lane_communication(
             kind="message",
             operation="list",
             task_ref=task_ref,
-            status="open",
+            status=MessageStatus.OPEN,
             limit=200,
             fields="subject,message",
-        )
+        ),
+        source=f"lane_communication(list plan messages:{task_ref})",
     )
     if payload.get("ok") is not True:
         raise RuntimeError(f"Failed to list lane messages for {task_ref}.")
@@ -203,20 +212,22 @@ def _escalate_plan_item(
     log: Any | None = None,
 ) -> None:
     from agent_handoff_mcp import record_decision  # noqa: PLC0415
+    from agent_handoff_mcp.enums import PlanCursorState  # noqa: PLC0415
 
     from agent_orchestrator_mcp.lanes import plan_cursor  # noqa: PLC0415
 
     if dry_run:
         return
-    _json_load(
+    _require_dict_payload(
         plan_cursor(
             operation="upsert",
             task_ref=task_ref,
             plan_item_id=plan_item_id,
-            state="escalated",
+            state=PlanCursorState.ESCALATED,
             summary=summary,
             source_heading=heading or None,
-        )
+        ),
+        source=f"plan_cursor(upsert escalate:{plan_item_id})",
     )
     record_decision(
         session=f"{task_ref}-orchestrator-daemon",
@@ -238,6 +249,8 @@ def _dispatch_plan_item(
     owned_paths_override: list[str] | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
+    from agent_handoff_mcp.enums import MessageStatus, PlanCursorState  # noqa: PLC0415
+
     from agent_handoff_mcp import record_decision, update_next_actions  # noqa: PLC0415
     from agent_handoff_mcp.api import WriteActorInput  # noqa: PLC0415
 
@@ -254,13 +267,14 @@ def _dispatch_plan_item(
     if dry_run:
         return result
 
-    action_payload = _json_load(
+    action_payload = _require_dict_payload(
         update_next_actions(
             operation="add",
             action=f"{marker} {summary}",
             priority=100,
             actor=lane_actor,
-        )
+        ),
+        source=f"update_next_actions(add:{plan_item_id})",
     )
     if action_payload.get("ok") is not True:
         raise RuntimeError(f"Failed to create next action for {plan_item_id}.")
@@ -268,7 +282,7 @@ def _dispatch_plan_item(
     action_id_raw = action.get("id") if isinstance(action, dict) else None
     action_id = int(action_id_raw) if action_id_raw is not None else None
 
-    message_payload = _json_load(
+    message_payload = _require_dict_payload(
         lane_communication(
             kind="message",
             operation="record",
@@ -277,24 +291,26 @@ def _dispatch_plan_item(
             direction="orchestrator_to_worker",
             subject=f"{lane_id} plan assignment",
             message=f"{marker} {summary}",
-            status="open",
+            status=MessageStatus.OPEN,
             payload={"owned_paths_override": owned_paths_override} if owned_paths_override else None,
-        )
+        ),
+        source=f"lane_communication(record:{plan_item_id})",
     )
     if message_payload.get("ok") is not True:
         raise RuntimeError(f"Failed to create lane message for {plan_item_id}.")
 
-    cursor_update = _json_load(
+    cursor_update = _require_dict_payload(
         plan_cursor(
             operation="upsert",
             task_ref=task_ref,
             plan_item_id=plan_item_id,
-            state="dispatched",
+            state=PlanCursorState.DISPATCHED,
             lane_id=lane_id,
             mcp_action_id=action_id,
             summary=summary,
             source_heading=heading or None,
-        )
+        ),
+        source=f"plan_cursor(upsert dispatch:{plan_item_id})",
     )
     if cursor_update.get("ok") is not True:
         raise RuntimeError(f"Failed to persist plan cursor for {plan_item_id}.")
@@ -315,6 +331,8 @@ def _dispatch_from_task_plan(
     dry_run: bool = False,
     log: Any | None = None,
 ) -> dict[str, Any] | None:
+    from agent_handoff_mcp.enums import PlanCursorState  # noqa: PLC0415
+
     from lane_manifest import load_manifest, task_plan_path
     from task_plan_parser import map_plan_item_to_lane, normalize_plan_item, parse_task_plan
 
@@ -346,17 +364,18 @@ def _dispatch_from_task_plan(
         if item.checked:
             continue
         normalized = normalize_plan_item(item)
-        cursor_payload = _json_load(
-            plan_cursor(operation="get", task_ref=task_ref, plan_item_id=normalized.plan_item_id)
+        cursor_payload = _require_dict_payload(
+            plan_cursor(operation="get", task_ref=task_ref, plan_item_id=normalized.plan_item_id),
+            source=f"plan_cursor(get:{normalized.plan_item_id})",
         )
         if cursor_payload.get("ok") is not True:
             raise RuntimeError(f"Failed to read plan cursor for {normalized.plan_item_id}.")
         cursor = cursor_payload.get("cursor")
         if isinstance(cursor, dict) and str(cursor.get("state") or "") in {
-            "dispatched",
-            "completed",
-            "skipped",
-            "escalated",
+            PlanCursorState.DISPATCHED,
+            PlanCursorState.COMPLETED,
+            PlanCursorState.SKIPPED,
+            PlanCursorState.ESCALATED,
         }:
             continue
 
@@ -480,6 +499,8 @@ def salvage_and_close_lane(
     }
 
     if not dry_run:
+        from agent_handoff_mcp.enums import LaneStatus  # noqa: PLC0415
+
         from agent_handoff_mcp import record_decision  # noqa: PLC0415
 
         from agent_orchestrator_mcp.lanes import manage_worktree_lane  # noqa: PLC0415
@@ -488,19 +509,20 @@ def salvage_and_close_lane(
         lane_cfg = all_lanes.get(lane_id)
         branch = (lane_cfg.get("branch") or "") if isinstance(lane_cfg, dict) else ""
 
-        _json_load(
+        _require_dict_payload(
             manage_worktree_lane(
                 operation="upsert",
                 lane_id=lane_id,
                 worktree_path=str(worktree) if worktree else "",
                 branch=branch,
-                status="closed",
+                status=LaneStatus.CLOSED,
                 task_ref=task_ref,
                 notes=(
                     f"salvage_and_close: {len(this_lane_files)} owned files preserved; "
                     f"{len(unclassified)} unclassified."
                 ),
-            )
+            ),
+            source=f"manage_worktree_lane(upsert salvage:{lane_id})",
         )
         record_decision(
             session=f"{task_ref}-orchestrator-daemon",
@@ -652,7 +674,10 @@ def _resolve_task_ref(orchestrator_root: Path, task_ref: str | None) -> str:
     try:
         from agent_handoff_mcp import get_handoff_state
 
-        state = _json_load(get_handoff_state(**_handoff_read_shapes.active_task_identity_kwargs()))
+        state = _require_dict_payload(
+            get_handoff_state(**_handoff_read_shapes.active_task_identity_kwargs()),
+            source="get_handoff_state(identity)",
+        )
         if state.get("ok") and state.get("task_ref"):
             return state["task_ref"]
     except Exception:
@@ -746,7 +771,10 @@ def _ensure_lane_workers(
 
     rows: list[dict[str, Any]] = []
     for lane_id in lane_ids:
-        status_payload = _json_load(manage_worker(task_ref=task_ref, lane_id=lane_id, action="status"))
+        status_payload = _require_dict_payload(
+            manage_worker(task_ref=task_ref, lane_id=lane_id, action="status"),
+            source=f"manage_worker(status:{lane_id})",
+        )
         if status_payload.get("ok") is not True:
             continue
 
@@ -825,7 +853,7 @@ def _ensure_lane_workers(
 
         # Decide if we should start it
         if worker_start_mode == "mcp" and not dry_run:
-            start_payload = _json_load(
+            start_payload = _require_dict_payload(
                 manage_worker(
                     task_ref=task_ref,
                     lane_id=lane_id,
@@ -833,7 +861,8 @@ def _ensure_lane_workers(
                     backend=backend,
                     reasoning_effort=worker_reasoning_effort,
                     model=model,
-                )
+                ),
+                source=f"manage_worker(start:{lane_id})",
             )
             if start_payload.get("ok"):
                 status_payload["running"] = True
@@ -907,6 +936,8 @@ def _dispatch_phase(ctx: OrchestratorContext) -> None:
 
 def _guidance_phase(ctx: OrchestratorContext) -> None:
     """Step 2: Resolve worker guidance handoffs and update guidance stall counters."""
+    from agent_handoff_mcp.enums import LaneStatus  # noqa: PLC0415
+
     ctx.guidance_results = _resolve_guidance_cycle(
         ctx.orchestrator_root,
         ctx.task_ref,
@@ -939,7 +970,7 @@ def _guidance_phase(ctx: OrchestratorContext) -> None:
         event_name = "guidance_resolved"
         if resolution.kind == "redispatch":
             event_name = "guidance_redispatched"
-        elif resolution.kind == "blocked":
+        elif resolution.lane_status == LaneStatus.BLOCKED:
             event_name = "guidance_escalated"
         ctx.log(
             "INFO",
@@ -1037,12 +1068,13 @@ def _lane_intake_phase(ctx: OrchestratorContext) -> None:
             cursor = _complete_lane_plan_cursor(ctx.task_ref, lane_id)
             if cursor is not None:
                 ctx.log("INFO", "plan_cursor_completed", lane=lane_id, plan_item_id=cursor.get("plan_item_id"))
+            from agent_handoff_mcp.enums import LaneStatus  # noqa: PLC0415
             from agent_orchestrator_mcp.lanes import manage_worktree_lane  # noqa: PLC0415
 
             manage_worktree_lane(
                 operation="close",
                 lane_id=lane_id,
-                status="merged",
+                status=LaneStatus.MERGED,
                 notes="Auto-closed by orchestrator daemon post-intake.",
                 task_ref=ctx.task_ref,
             )
@@ -1076,7 +1108,10 @@ def _lane_intake_phase(ctx: OrchestratorContext) -> None:
             )
         ctx.log("INFO", "verify_complete", lane=lane_id, passed=verify_ok)
 
-    close_check = _json_load(handoff_close_check(task_ref=ctx.task_ref))
+    close_check = _require_dict_payload(
+        handoff_close_check(task_ref=ctx.task_ref),
+        source=f"handoff_close_check({ctx.task_ref})",
+    )
     ctx.ready_to_close = bool(close_check.get("ready_to_close"))
     ctx.runtime_failure_count = 0
     ctx.log("INFO", "close_check_complete", ready_to_close=ctx.ready_to_close)

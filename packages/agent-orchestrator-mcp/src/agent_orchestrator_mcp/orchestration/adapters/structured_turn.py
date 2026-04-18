@@ -93,6 +93,13 @@ class StructuredTurnAdapter(BackendAdapter):
         if isinstance(payload, str):
             payload = json.loads(payload)
 
+        if isinstance(payload, dict) and payload.get("ok") is False:
+            error_msg = payload.get("error") or "unknown backend error"
+            backend_name = payload.get("backend") or self._downstream_backend
+            raise RuntimeError(
+                f"StructuredTurnAdapter downstream backend '{backend_name}' failed: {error_msg}"
+            )
+
         if isinstance(payload, dict) and "result" in payload and isinstance(payload["result"], dict):
             # api.run_structured_turn envelope: {"ok": bool, "backend": str, "result": {...}}
             payload = payload["result"]

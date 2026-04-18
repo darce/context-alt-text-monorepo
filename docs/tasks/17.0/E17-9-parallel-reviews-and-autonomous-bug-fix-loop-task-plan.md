@@ -16,7 +16,7 @@ Land the two new workflows identified in [docs/assessments/parallel-reviews-and-
 1. A parallel-branch-review coordinator that fans out to N ephemeral reviewers via the host subagent primitive (Claude Code Agent tool, `codex exec` subprocess, or `run_structured_turn` copilot bridge) and merges their findings under one coordinator `task_ref` via `review_findings(operation="merge", ...)`.
 2. An autonomous bug-fix loop that uses Bounded Handoff Reads, `handoff_close_check(enforce=True, require_fresh_tests=True)` as the convergence gate, and cache-TTL-aware cadence to iterate on a failing test until the fix lands without spending a task-plan's worth of tokens per iteration.
 
-Also close one loose CI back-reference from E17-7 Slice 4: a drift guard that prevents `DASHBOARD.md` from reappearing in tracked non-archive paths.
+Also close one loose CI back-reference from E17-7 Slice 4: a drift guard that prevents `DASHBOARD.md` from reappearing in tracked non-archive paths. <!-- lint-dashboard-txt: allow -->
 
 ## Why This Is Separate
 
@@ -32,7 +32,7 @@ Three gaps remain after E17-7 lands:
 
 2. **Autonomous bug fixing leaks tokens**: `handoff_close_check(enforce=True, require_fresh_tests=True)` is already a sound convergence gate for an auto-fix loop, but without Bounded Handoff Reads (`sections="identity"`, `detail="summary"`, low `top_n_*`) and cache-TTL-aware cadence each iteration pays a 5-30K token tax that compounds across tens of iterations. No skill or portable command codifies the bounded loop, so agents repeatedly re-invent it under-disciplined.
 
-3. **`DASHBOARD.md` drift has no CI home**: E17-7 Slice 4 Proof references a guard that "lives in E17-9 Slice 4" — this plan supplies that home, so the drift cannot silently reappear after the rename lands.
+3. **`DASHBOARD.md` drift has no CI home**: E17-7 Slice 4 Proof references a guard that "lives in E17-9 Slice 4" — this plan supplies that home, so the drift cannot silently reappear after the rename lands. <!-- lint-dashboard-txt: allow -->
 
 ## Constraints
 
@@ -58,14 +58,14 @@ Three gaps remain after E17-7 lands:
 - `review_findings.merge` and `idx_review_findings_lane_status` landed in E17-7 Slice 5 (commit `69ecdf73`, merged into `main` via `b7397615`).
 - `handoff_close_check(enforce=True, require_fresh_tests=True)` already enforces the pre-merge convergence criteria an auto-fix loop needs to treat as "done".
 - `config/agent-workflows/portable_commands.json` already drives eight commands; adding two more follows the existing pattern.
-- E17-7 Slice 4 Proof at [docs/tasks/17.0/E17-7-handoff-evolution-and-portable-workflow-task-plan.md:303](E17-7-handoff-evolution-and-portable-workflow-task-plan.md) points forward to "E17-9 Slice 4" for the `DASHBOARD.md` CI guard.
+- E17-7 Slice 4 Proof at [docs/tasks/17.0/E17-7-handoff-evolution-and-portable-workflow-task-plan.md:303](E17-7-handoff-evolution-and-portable-workflow-task-plan.md) points forward to "E17-9 Slice 4" for the `DASHBOARD.md` CI guard. <!-- lint-dashboard-txt: allow -->
 
 ## Target Outcome
 
 - `/review-parallel` skill + portable command fan out to N reviewers via the coordinator's in-harness cheapest subagent primitive (Claude Code `Agent` tool in-process; Codex + Copilot `run_structured_turn`; external orchestrator `BackendAdapter`), scope each reviewer to its own `task_ref`, and synthesize via `review_findings.merge` under the coordinator `task_ref`. All three harnesses produce the same MCP state.
 - `/auto-fix` skill + portable command execute a bounded loop around a failing test: per iteration, write the smallest candidate fix, commit it on the feature branch, run the test, record the result; exit on the first `passed=true` test_result tied to HEAD, or record a blocker after the iteration cap. Finalization records a canonical slice-complete decision, sets task status to `done`, and calls `handoff_close_check(enforce=True, require_fresh_tests=True, current_commit_sha=<HEAD>)` exactly once as the pre-merge gate. Per-iteration reads stay bounded. Cadence discipline is Claude-Code-only; Codex / Copilot iterate inline with identical MCP state.
 - Cross-vendor adapter tests cover an always-available in-repo backend (`StructuredTurnAdapter` via `run_structured_turn`) plus any host-supplied bridge backends that resolve at test time. Default CI proves equivalence for the in-repo backend and characterizes coverage for the others.
-- A CI guard (`make lint-dashboard-txt` or similar) fails on `DASHBOARD.md` re-introduction in tracked non-archive paths. Archived plans and test fixtures are excluded.
+- A CI guard (`make lint-dashboard-txt` or similar) fails on `DASHBOARD.md` re-introduction in tracked non-archive paths. Archived plans and test fixtures are excluded. <!-- lint-dashboard-txt: allow -->
 
 ## Context Loading
 
@@ -85,7 +85,7 @@ Four slices deliver the workflows and close the E17-7 back-reference:
 1. Parallel-review coordinator skill + portable command
 2. Auto-fix loop skill + portable command
 3. Cross-vendor subagent adapter equivalence tests
-4. `DASHBOARD.md` drift CI guard (closes E17-7 Slice 4 back-reference)
+4. `DASHBOARD.md` drift CI guard (closes E17-7 Slice 4 back-reference) <!-- lint-dashboard-txt: allow -->
 
 Slice 1 can land independently of Slices 2-3 once E17-7 Slice 5 is in place. Slice 2 depends on the Bounded Reads lever set already in place. Slice 3 exercises both Slice 1 and Slice 2 adapters, so it lands after them. Slice 4 is orthogonal and can land first or last.
 
@@ -100,7 +100,7 @@ Slice 1 can land independently of Slices 2-3 once E17-7 Slice 5 is in place. Sli
 | `StructuredTurnAdapter`              | `agent-orchestrator-mcp`           | none                                                                        | new `BackendAdapter` wrapping `run_structured_turn` for always-available cross-vendor test coverage | additive, no existing behaviour changed | Slice 3 matrix includes this adapter as the always-runnable row |
 | `review_findings` merge              | `core.py` (from E17-7 S5)          | single-task find + batch record                                             | coordinator merges per-reviewer `task_ref`s                          | E17-7 S5 prerequisite landed in `b7397615` | merge roundtrip test                           |
 | `handoff_close_check` gate           | `agent-handoff-mcp` API            | already enforces pre-merge criteria                                         | auto-fix loop calls it **once post-loop** as the pre-merge gate, never as a per-iteration exit condition | no API change                | post-loop gate test; per-iteration signal test |
-| Dashboard-filename lint              | `Makefile` / `mk/`                 | none                                                                        | new `make lint-dashboard-txt` target fails on `DASHBOARD.md` hits    | non-breaking CI addition     | drift sample fails the gate                    |
+| Dashboard-filename lint              | `Makefile` / `mk/`                 | none                                                                        | new `make lint-dashboard-txt` target fails on `DASHBOARD.md` hits    | non-breaking CI addition     | drift sample fails the gate                    | <!-- lint-dashboard-txt: allow -->
 
 ## Files and Surfaces to Change
 
@@ -114,7 +114,7 @@ Slice 1 can land independently of Slices 2-3 once E17-7 Slice 5 is in place. Sli
 | StructuredTurnAdapter    | `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/adapters/structured_turn.py` (new)              | in-repo `BackendAdapter` that calls `run_structured_turn` directly — always available in CI, no host bridge required; registered in `backend_registry` as `structured-turn` |
 | Generated adapters       | `.claude/commands/*.md`, `.github/prompts/*.prompt.md`, Codex router artifact                                             | regenerated from manifest                                                           |
 | Cross-vendor tests       | `packages/agent-orchestrator-mcp/tests/test_cross_vendor_subagent_equivalence.py` (new)                                   | exercise `StructuredTurnAdapter` (always runs) plus any bridge-backed adapters that resolve at test time |
-| Dashboard guard          | `Makefile` (new `lint-dashboard-txt` target) + supporting script if needed                                                | grep tracked non-archive paths for `DASHBOARD.md`, fail on match                    |
+| Dashboard guard          | `Makefile` (new `lint-dashboard-txt` target) + supporting script if needed                                                | grep tracked non-archive paths for `DASHBOARD.md`, fail on match                    | <!-- lint-dashboard-txt: allow -->
 | Documentation            | [docs/agentic/rules/branch-review-guide.md](../../agentic/rules/branch-review-guide.md), [docs/agentic/rules/development-workflow.md](../../agentic/rules/development-workflow.md) | link to new skills; note the host-subagent-primitive default for fan-out            |
 | E17-7 back-reference     | [docs/tasks/17.0/E17-7-handoff-evolution-and-portable-workflow-task-plan.md](E17-7-handoff-evolution-and-portable-workflow-task-plan.md) | update Slice 4 Proof to reference this plan's Slice 4 guard (housekeeping)          |
 
@@ -130,7 +130,7 @@ Slice 1 can land independently of Slices 2-3 once E17-7 Slice 5 is in place. Sli
 - Auto-fix cadence test (Claude-Code-only, skipped on Codex/Copilot runtimes): no `ScheduleWakeup` call at exactly 300s; all recorded waits are `<270` or `>=1200`. On Codex/Copilot runtimes, the test asserts the skill iterated inline (zero `ScheduleWakeup` invocations) and the end-to-end MCP state still matches.
 - Auto-fix branch-isolation precondition test: invoking `/auto-fix` with `active_task.target_branch in {main, master, None}` produces a clear precondition error and records no `verified_tests` rows.
 - Cross-vendor equivalence test: `StructuredTurnAdapter` always runs (in-repo, no bridge required); `codex-cli` runs when `codex` is on `PATH`; `claude-code` runs when `claude` is on `PATH`; `codex-subagent` / `copilot-host` skip cleanly when their host bridge modules are absent. All running adapters produce MCP rows that match structurally on `(count, severity_distribution, verified_commit_sha)`. A deliberate drift adapter (drops severity) fails the equivalence assertion.
-- Dashboard guard test: an intentional `DASHBOARD.md` reference in a tracked non-archive markdown file fails `make lint-dashboard-txt`; archived plans and test fixtures are excluded by path pattern.
+- Dashboard guard test: an intentional `DASHBOARD.md` reference in a tracked non-archive markdown file fails `make lint-dashboard-txt`; archived plans and test fixtures are excluded by path pattern. <!-- lint-dashboard-txt: allow -->
 - `make test-handoff` and `make test-orchestrator` stay green after each slice.
 
 ## Slice Delivery
@@ -251,19 +251,19 @@ Proof:
 - No in-repo code forks per vendor — all backends implement the same `BackendAdapter` protocol already in the tree.
 - The Slice 3 Goal language explicitly distinguishes "prove" (for `structured-turn`) from "characterize" (for vendor-bridge backends whose availability depends on the test host).
 
-### Slice 4: DASHBOARD.md Drift CI Guard
+### Slice 4: DASHBOARD.md Drift CI Guard <!-- lint-dashboard-txt: allow -->
 
-**Goal**: close the home-less CI guard back-reference from E17-7 Slice 4 Proof so the `DASHBOARD.md → DASHBOARD.txt` rename cannot silently regress.
+**Goal**: close the home-less CI guard back-reference from E17-7 Slice 4 Proof so the `DASHBOARD.md → DASHBOARD.txt` rename cannot silently regress. <!-- lint-dashboard-txt: allow -->
 
 Changes:
 
-- Add `make lint-dashboard-txt` target in the root `Makefile` (or include it under an existing `make lint-docs`/`make check-all` chain if one exists). The target greps tracked files (via `git ls-files`) for `DASHBOARD.md`, excludes `docs/tasks/archive/**`, `**/test_fixtures/**`, and `**/tests/**/fixtures/**`, and fails with a clear message on any match.
+- Add `make lint-dashboard-txt` target in the root `Makefile` (or include it under an existing `make lint-docs`/`make check-all` chain if one exists). The target greps tracked files (via `git ls-files`) for `DASHBOARD.md`, excludes `docs/tasks/archive/**`, `**/test_fixtures/**`, and `**/tests/**/fixtures/**`, and fails with a clear message on any match. <!-- lint-dashboard-txt: allow -->
 - Wire `lint-dashboard-txt` into `make check-all` so CI catches regressions on every branch.
 - Update [docs/tasks/17.0/E17-7-handoff-evolution-and-portable-workflow-task-plan.md](E17-7-handoff-evolution-and-portable-workflow-task-plan.md) Slice 4 Proof line so the back-reference points at this guard's final path (housekeeping edit; no code change).
 
 Proof:
 
-- Guard fires on a deliberately-reintroduced `DASHBOARD.md` reference in a tracked non-archive markdown file.
+- Guard fires on a deliberately-reintroduced `DASHBOARD.md` reference in a tracked non-archive markdown file. <!-- lint-dashboard-txt: allow -->
 - Guard does not flag archived task plans or test fixtures.
 - `make check-all` stays green post-landing.
 
@@ -314,13 +314,13 @@ Proof:
 - [ ] No per-vendor code forks — all backends reuse the existing `BackendAdapter` protocol
 - [ ] Default CI always has ≥1 matrix row run (`structured-turn`); never degenerates to all-skip green
 
-### Slice 4: DASHBOARD.md Drift CI Guard
+### Slice 4: DASHBOARD.md Drift CI Guard <!-- lint-dashboard-txt: allow -->
 
 - [x] `make lint-dashboard-txt` target exists in the root `Makefile`
 - [x] Archived plans and test fixtures excluded via path patterns
 - [x] Wired into `make check-all`
 - [x] E17-7 Slice 4 Proof back-reference updated to point at this guard
-- [x] Guard fires on intentional `DASHBOARD.md` reintroduction in a tracked non-archive path
+- [x] Guard fires on intentional `DASHBOARD.md` reintroduction in a tracked non-archive path <!-- lint-dashboard-txt: allow -->
 - [ ] `make check-all` stays green post-landing
 
 ## Review Readiness
@@ -340,4 +340,4 @@ Proof:
 - [ ] Auto-fix loop converges on the first `verified_tests(passed=true, commit_sha=HEAD)` row; Finalization records a canonical `slice_complete` decision, sets status `done`, and calls `handoff_close_check(enforce=True, require_fresh_tests=True, current_commit_sha=<HEAD>)` exactly once with `ok=true`
 - [ ] Auto-fix cadence discipline is scoped to Claude Code only; Codex and Copilot runs iterate inline and still produce the same MCP state
 - [ ] Cross-vendor tests always run `structured-turn` (in-repo, no host bridge required) and opportunistically run `claude-code` / `codex-cli` / `codex-subagent` / `copilot-host` when their primitives resolve at test time
-- [ ] `DASHBOARD.md` re-introduction in tracked non-archive paths fails CI
+- [ ] `DASHBOARD.md` re-introduction in tracked non-archive paths fails CI <!-- lint-dashboard-txt: allow -->

@@ -113,7 +113,7 @@ Five follow-on gaps remain once the E17-6 core is separated:
 - Orchestrator tests: `packages/agent-orchestrator-mcp/tests/`
 - Tool bridge-gap investigation: `docs/assessments/review-runs-tool-bridge-gap-investigation-2026-04-16.md` (empirical evidence that tool count affects VS Code/Copilot session tool availability; motivates Slice 4)
 - CLI-vs-native-tools investigation: `docs/assessments/agent-handoff-mcp-cli-vs-native-tools-investigation-2026-04-16.md` (confirms that the CLI + Python API + native MCP tools share one backend; agent token cost is driven by tool count and response envelope size, not by which presentation is "chosen" — reinforces Slice 4 scope and constraints the acceptable rename surface)
-- DASHBOARD naming drift investigation: `docs/assessments/dashboard-md-vs-txt-guidance-drift-investigation-2026-04-16.md` (post-AHMCP-23 cleanup inventory; 18 active-surface files still say `DASHBOARD.md` though every writer produces `DASHBOARD.txt`; Slice 4 is the natural place to normalize the docs + docstring + Makefile comment surfaces because the `generate_dashboard_md` → `render_handoff` rename touches them anyway)
+- DASHBOARD naming drift investigation: `docs/assessments/dashboard-md-vs-txt-guidance-drift-investigation-2026-04-16.md` (post-AHMCP-23 cleanup inventory; 18 active-surface files still say `DASHBOARD.md` though every writer produces `DASHBOARD.txt`; Slice 4 is the natural place to normalize the docs + docstring + Makefile comment surfaces because the `generate_dashboard_md` → `render_handoff` rename touches them anyway) <!-- lint-dashboard-txt: allow -->
 
 ## Proposed Solution
 
@@ -284,7 +284,7 @@ Changes (split into three sub-slices; only 4A is in scope for this task):
   - `.claude/settings.json`: update all PostToolUse hooks that reference old tool names (e.g. `mcp__agent-handoff-mcp__generate_dashboard_md` becomes `mcp__agent-handoff-mcp__render_handoff`)
   - `.github/copilot-instructions.md`: update the deferred-tool list to reflect the new compound tool names
 - Update contracts docs to the new MCP tool names.
-- Normalize the post-AHMCP-23 `DASHBOARD.md` → `DASHBOARD.txt` drift atomically with the `generate_dashboard_md` → `render_handoff` rename, because the same surfaces (contracts, playbooks, skills, instructions, lifecycle-map, development-workflow, the Makefile comment on `dashboard:`, the `dashboard_extension.py` module docstring) are touched by both changes:
+- Normalize the post-AHMCP-23 `DASHBOARD.md` → `DASHBOARD.txt` drift atomically with the `generate_dashboard_md` → `render_handoff` rename, because the same surfaces (contracts, playbooks, skills, instructions, lifecycle-map, development-workflow, the Makefile comment on `dashboard:`, the `dashboard_extension.py` module docstring) are touched by both changes: <!-- lint-dashboard-txt: allow -->
   - `docs/agentic/contracts/agent-handoff-mcp.md`
   - `docs/agentic/instructions.md`
   - `docs/agentic/lifecycle-map.md`
@@ -305,8 +305,8 @@ Proof:
 - CLI help/README examples match the final renamed or aliased surface.
 - Tool count matches the re-scoped 4A-only compression target.
 - Hook matchers reference only the new compound tool names; no stale references remain.
-- After the rename, `render_handoff(kind="dashboard")` (or its equivalent compound invocation) writes exactly `DASHBOARD.txt` at the workspace root with no accompanying `DASHBOARD.md`; `cat DASHBOARD.txt` matches the previous `generate_dashboard_md()` output byte-for-byte modulo the timestamp line.
-- `grep -rn DASHBOARD.md` across tracked non-archive markdown + Makefile + the `dashboard_extension.py` module docstring returns zero hits after Slice 4 lands (the CI guard for this lives in E17-9 Slice 4 at [scripts/hooks/lint-dashboard-txt.py](../../../scripts/hooks/lint-dashboard-txt.py), wired into `make lint-dashboard-txt` and `make check-all`).
+- After the rename, `render_handoff(kind="dashboard")` (or its equivalent compound invocation) writes exactly `DASHBOARD.txt` at the workspace root with no accompanying `DASHBOARD.md`; `cat DASHBOARD.txt` matches the previous `generate_dashboard_md()` output byte-for-byte modulo the timestamp line. <!-- lint-dashboard-txt: allow -->
+- `grep -rn DASHBOARD.md` across tracked non-archive markdown + Makefile + the `dashboard_extension.py` module docstring returns zero hits after Slice 4 lands (the CI guard for this lives in E17-9 Slice 4 at [scripts/hooks/lint-dashboard-txt.py](../../../scripts/hooks/lint-dashboard-txt.py), wired into `make lint-dashboard-txt` and `make check-all`). <!-- lint-dashboard-txt: allow -->
 - Agent-visible token budget check: the compressed tool surface reduces per-turn request token cost for common Get-state + record-event + dashboard-regenerate flows, measured against the pre-compression baseline captured during Slice 4 implementation.
 
 ### Slice 5: Parallel-Review Backend Groundwork (Additive)
@@ -383,8 +383,8 @@ Proof:
 - [x] Python compatibility aliases remain available
 - [x] Bounded-read envelope (`sections`, `detail`, `top_n_*`) preserved on every compound tool — no default response enlargement
 - [x] `slim-handoff-response` PostToolUse hook matcher updated atomically with the tool rename so response slimming keeps applying
-- [x] Dashboard still writes to `DASHBOARD.txt` at the workspace root; no `DASHBOARD.md` artifact produced
-- [x] `DASHBOARD.md` → `DASHBOARD.txt` cleanup applied to docs, playbooks, skills, Makefile comment, and the `dashboard_extension.py` module docstring (archived plans + test fixtures intentionally left alone)
+- [x] Dashboard still writes to `DASHBOARD.txt` at the workspace root; no `DASHBOARD.md` artifact produced <!-- lint-dashboard-txt: allow -->
+- [x] `DASHBOARD.md` → `DASHBOARD.txt` cleanup applied to docs, playbooks, skills, Makefile comment, and the `dashboard_extension.py` module docstring (archived plans + test fixtures intentionally left alone) <!-- lint-dashboard-txt: allow -->
 - [x] CLI subcommands/help text and `packages/agent-handoff-mcp/README.md` stay aligned with the renamed or aliased tool surface
 - [x] Hook matchers in `terminal-guard.json` and `.claude/settings.json` updated atomically
 - [ ] ~~Deferred-tool list in `copilot-instructions.md` updated~~ (N/A — the VS Code `availableDeferredTools` surface is runtime-injected from registered MCP tools; `.github/copilot-instructions.md` has no static list to edit)

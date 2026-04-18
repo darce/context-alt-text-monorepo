@@ -1,4 +1,4 @@
-# AHMCP-25. DASHBOARD.md / CURRENT_TASK.json Surface Split
+# AHMCP-25. DASHBOARD.md / CURRENT_TASK.json Surface Split <!-- lint-dashboard-txt: allow -->
 
 > **Metadata**
 >
@@ -23,12 +23,12 @@ This task splits the two concerns into separate files:
 - **`CURRENT_TASK.json`** — machine-readable JSON snapshot of the active task state.
   Written by `generate_current_task_md` and read by `handoff_close_check`.
   Listed in `.gitignore` (generated, not tracked).
-- **`DASHBOARD.md`** — human-readable markdown mirror of the same state.
+- **`DASHBOARD.md`** — human-readable markdown mirror of the same state. <!-- lint-dashboard-txt: allow -->
   Written alongside `CURRENT_TASK.json` by `generate_current_task_md`.
   Listed in `.gitignore` (generated, not tracked).
 
-The previously tracked `DASHBOARD.md` (a hand-maintained static file) is deleted.
-Agents reading CLAUDE.md are updated to use `DASHBOARD.md` as the stale MCP fallback.
+The previously tracked `DASHBOARD.md` (a hand-maintained static file) is deleted. <!-- lint-dashboard-txt: allow -->
+Agents reading CLAUDE.md are updated to use `DASHBOARD.md` as the stale MCP fallback. <!-- lint-dashboard-txt: allow -->
 
 ---
 
@@ -39,18 +39,18 @@ Agents reading CLAUDE.md are updated to use `DASHBOARD.md` as the stale MCP fall
 Changed files:
 - `packages/agent-handoff-mcp/src/agent_handoff_mcp/_shared.py` — JSON render helpers
 - `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py` — `generate_current_task_md` writes both surfaces
-- `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py` — `dashboard` subcommand targets `DASHBOARD.md`
+- `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py` — `dashboard` subcommand targets `DASHBOARD.md` <!-- lint-dashboard-txt: allow -->
 - `packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py` — sync-check uses JSON compare
 - `packages/agent-handoff-mcp/src/agent_handoff_mcp/current_task_rendering.py` — renders JSON + markdown
 - `packages/agent-handoff-mcp/src/agent_handoff_mcp/decisions.py` — `handoff_close_check` validates JSON
 - `packages/agent-handoff-mcp/tests/test_handoff_state.py` — updated assertions
 - `packages/agent-handoff-mcp/tests/test_review_findings.py` — updated assertions
-- `CLAUDE.md` — MCP fallback text updated to reference `DASHBOARD.md`
+- `CLAUDE.md` — MCP fallback text updated to reference `DASHBOARD.md` <!-- lint-dashboard-txt: allow -->
 - `docs/agentic/instructions.md` — fallback text updated
 - `docs/agentic/contracts/agent-handoff-mcp.md` — contract updated with new surface descriptions
 - `docs/agentic/playbooks/host-adapters/worktree-codex-playbook.md` — playbook updated
-- `.gitignore` — `DASHBOARD.md` and `CURRENT_TASK.json` added as generated files
-- `DASHBOARD.md` — deleted (replaced by generated file)
+- `.gitignore` — `DASHBOARD.md` and `CURRENT_TASK.json` added as generated files <!-- lint-dashboard-txt: allow -->
+- `DASHBOARD.md` — deleted (replaced by generated file) <!-- lint-dashboard-txt: allow -->
 
 ---
 

@@ -364,12 +364,19 @@ def _check_codex_skill_symlinks(
 
     # E17-12-BR-01: an orphan manifest entry whose canonical source has been
     # deleted would otherwise be silently skipped by _expected_codex_skill_symlinks.
+    # E17-12-BR-02: a source that exists but is missing SKILL.md resolves the
+    # symlink but leaves Codex unable to discover the skill on a fresh clone.
     for command in manifest["commands"]:
         slug = command["skill"]
         source = claude_skills_root / slug
         if not source.exists():
             failures.append(
                 f"manifest references skill {slug!r} but canonical source is missing: {source}"
+            )
+            continue
+        if not (source / "SKILL.md").is_file():
+            failures.append(
+                f"manifest references skill {slug!r} but source is missing SKILL.md: {source}"
             )
 
     for link, target in expected.items():

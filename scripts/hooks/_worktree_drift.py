@@ -266,6 +266,10 @@ def evaluate_payload(
     if not isinstance(tool_name, str) or not isinstance(tool_input, dict):
         return None
 
+    candidate_paths = _extract_candidate_paths(tool_name, tool_input)
+    if not candidate_paths:
+        return None
+
     if isinstance(active_task, ActiveTaskContext):
         context = active_task
     elif isinstance(active_task, tuple):
@@ -313,7 +317,7 @@ def evaluate_payload(
 
     allowlisted_decisions: list[DriftDecision] = []
     policy = None
-    for raw_path in _extract_candidate_paths(tool_name, tool_input):
+    for raw_path in candidate_paths:
         candidate_path = _candidate_abspath(raw_path, root)
         candidate_worktree = _candidate_worktree_root(candidate_path)
         if not candidate_worktree or candidate_worktree == target_worktree:

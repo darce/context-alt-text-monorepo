@@ -38,9 +38,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = REPO_ROOT / "docs" / "agentic" / "contracts" / "harness-protocol.yaml"
 CLAUDE_HOOKS_PATH = REPO_ROOT / ".claude" / "settings.json"
 VSCODE_HOOKS_PATH = REPO_ROOT / ".github" / "hooks" / "terminal-guard.json"
+VSCODE_SETTINGS_PATH = REPO_ROOT / ".vscode" / "settings.json"
 PYTHON_EXPORTS_PATH = REPO_ROOT / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp" / "__init__.py"
 CONTRACT_RELATIVE = Path("docs/agentic/contracts/harness-protocol.yaml")
 FIXTURE_COPY_FILES = (
+    Path(".vscode/settings.json"),
     Path(".claude/settings.json"),
     Path(".github/hooks/guard-main-branch.py"),
     Path(".github/hooks/guard-worktree-drift.py"),
@@ -52,6 +54,11 @@ FIXTURE_COPY_FILES = (
 )
 FIXTURE_PACKAGE_SRC = Path("packages/agent-handoff-mcp/src")
 EDIT_TOOL_MATCHER = "Edit|Write|apply_patch|create_file|replace_string_in_file|multi_replace_string_in_file"
+REQUIRED_VSCODE_SETTINGS = {
+    "files.autoSave": "off",
+    "files.refactoring.autoSave": False,
+    "editor.formatOnSave": False,
+}
 
 
 def _load_contract() -> dict:
@@ -168,6 +175,29 @@ def _check_cold_start(contract: dict, *, repo_root: Path = REPO_ROOT) -> list[st
                 errors.append(
                     f"cold_start: `{reference}` does not contain phrase `{phrase}` for step `{step_id}`"
                 )
+    return errors
+
+
+def _check_workspace_settings(*, repo_root: Path = REPO_ROOT) -> list[str]:
+    settings_path = repo_root / VSCODE_SETTINGS_PATH.relative_to(REPO_ROOT)
+    try:
+        payload = json.loads(settings_path.read_text())
+    except FileNotFoundError:
+        return ["workspace_settings: `.vscode/settings.json` not found"]
+    except (OSError, json.JSONDecodeError) as exc:
+        return [f"workspace_settings: unable to load `.vscode/settings.json`: {exc}"]
+
+    errors: list[str] = []
+    missing = object()
+    for key, expected in REQUIRED_VSCODE_SETTINGS.items():
+        actual = payload.get(key, missing)
+        if actual == expected:
+            continue
+        actual_repr = "<missing>" if actual is missing else repr(actual)
+        errors.append(
+            "workspace_settings: `.vscode/settings.json` must set "
+            f"`{key}` to {expected!r} (found {actual_repr})"
+        )
     return errors
 
 
@@ -756,6 +786,7 @@ def run_checks(contract: dict, *, check_api_surface: bool = False, repo_root: Pa
     errors: list[str] = []
     errors.extend(_check_hooks(contract, repo_root=repo_root))
     errors.extend(_check_cold_start(contract, repo_root=repo_root))
+    errors.extend(_check_workspace_settings(repo_root=repo_root))
     errors.extend(_check_branch_isolation(contract, repo_root=repo_root))
     errors.extend(_check_worktree_drift(contract, repo_root=repo_root))
     errors.extend(_check_dashboard_naming(repo_root=repo_root))

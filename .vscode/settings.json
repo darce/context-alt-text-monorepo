@@ -9,11 +9,13 @@
   "intelephense.environment.includePaths": ["${workspaceFolder}/phpstubs"],
   "php.validate.executablePath": "",
   "php.suggest.basic": false,
+  "files.autoSave": "off",
+  "files.refactoring.autoSave": false,
   "editor.quickSuggestions": {
     "comments": "off"
   },
   "editor.defaultFormatter": "esbenp.prettier-vscode",
-  "editor.formatOnSave": true,
+  "editor.formatOnSave": false,
   "[typescript]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"
   },

@@ -10,6 +10,7 @@ from scripts.check_harness_sync import (
     _check_branch_isolation,
     _check_cold_start,
     _check_dashboard_naming,
+    _check_workspace_settings,
     _check_worktree_drift,
     _load_contract,
     run_checks,
@@ -18,6 +19,7 @@ from scripts.check_harness_sync import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COPY_PATHS = (
+    Path(".vscode/settings.json"),
     Path(".claude/settings.json"),
     Path(".github/hooks/guard-main-branch.py"),
     Path(".github/hooks/terminal-guard.json"),
@@ -190,6 +192,32 @@ def test_dashboard_naming_flags_docs_epics_reference_outside_epic_files(tmp_path
     (repo / "docs" / "epics" / "README.md").write_text("Use DASHBOARD.md here\n", encoding="utf-8")
     errors = _check_dashboard_naming(repo_root=repo)
     assert any("docs/epics/README.md:1" in err for err in errors)
+
+
+def test_workspace_settings_pass_with_safe_defaults(tmp_path: Path) -> None:
+    repo = _write_repo(tmp_path)
+    settings_path = repo / ".vscode" / "settings.json"
+    payload = json.loads(settings_path.read_text(encoding="utf-8"))
+    payload["files.autoSave"] = "off"
+    payload["files.refactoring.autoSave"] = False
+    payload["editor.formatOnSave"] = False
+    settings_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    errors = _check_workspace_settings(repo_root=repo)
+    assert errors == []
+
+
+def test_workspace_settings_fail_when_format_on_save_is_enabled(tmp_path: Path) -> None:
+    repo = _write_repo(tmp_path)
+    settings_path = repo / ".vscode" / "settings.json"
+    payload = json.loads(settings_path.read_text(encoding="utf-8"))
+    payload["files.autoSave"] = "off"
+    payload["files.refactoring.autoSave"] = False
+    payload["editor.formatOnSave"] = True
+    settings_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    errors = _check_workspace_settings(repo_root=repo)
+    assert any("editor.formatOnSave" in err for err in errors)
 
 
 def test_branch_isolation_requires_vscode_main_guard_matcher(tmp_path: Path) -> None:

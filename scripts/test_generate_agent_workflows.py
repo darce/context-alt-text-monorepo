@@ -272,3 +272,22 @@ def test_check_codex_skill_symlinks_flags_manifest_entry_with_missing_source(
     assert any("branch-review" in f and "source" in f.lower() for f in failures), (
         failures
     )
+
+
+def test_check_codex_skill_symlinks_flags_source_missing_skill_md(
+    tmp_path: Path,
+) -> None:
+    """Manifest skill whose source directory exists but lacks SKILL.md must fail --check.
+
+    Regression guard for E17-12-BR-02: Codex only discovers
+    <cwd>/.codex/skills/<slug>/SKILL.md, so a canonical .claude/skills/<slug>
+    directory without SKILL.md yields a broken $-skill on a fresh clone even
+    though the symlink resolves.
+    """
+    repo, claude_skills, codex_skills = _codex_skills_fixture(tmp_path)
+    _write_codex_skill_symlinks(_manifest(), codex_skills, claude_skills)
+    (claude_skills / "branch-review" / "SKILL.md").unlink()
+
+    failures = _check_codex_skill_symlinks(_manifest(), codex_skills, claude_skills)
+
+    assert any("branch-review" in f and "SKILL.md" in f for f in failures), failures

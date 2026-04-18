@@ -198,10 +198,10 @@ def _normalize_action_status(value: object) -> Literal["pending", "done", "skipp
     from agent_handoff_mcp.enums import ActionStatus  # noqa: PLC0415
 
     if value == ActionStatus.DONE:
-        return ActionStatus.DONE
+        return "done"
     if value == ActionStatus.SKIPPED:
-        return ActionStatus.SKIPPED
-    return ActionStatus.PENDING
+        return "skipped"
+    return "pending"
 
 
 def _stamp_issue_to_lane(issue_kind: str, issue: dict[str, Any], lane_id: str, dispatch_session: str) -> None:
@@ -211,13 +211,12 @@ def _stamp_issue_to_lane(issue_kind: str, issue: dict[str, Any], lane_id: str, d
         update_review_finding,
     )
     from agent_handoff_mcp.api import WriteActorInput  # noqa: PLC0415
-    from agent_handoff_mcp.enums import FindingStatus  # noqa: PLC0415
 
     lane_actor = WriteActorInput(lane_id=lane_id)
     if issue_kind == "review_findings":
         result = _require_dict_payload(
             update_review_finding(
-                status=FindingStatus.OPEN,
+                status="open",
                 finding_id=str(issue["finding_id"]),
                 session=dispatch_session,
                 actor=lane_actor,

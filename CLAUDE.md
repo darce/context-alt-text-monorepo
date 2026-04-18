@@ -10,6 +10,10 @@
 
 On every session (cold start, mid-task re-entry, lane inherit):
 
+0. **Identify the task first.** Before `make context` or any MCP read that resolves the active task by cwd, decide which task owns this scope:
+   - **Existing feature-branch task (resumption):** proceed to step 1 from inside the task's `target_worktree_path`.
+   - **Ad-hoc / new work on `main` (e.g. `/branch-review`, audits, patches):** run `set_handoff_state(task_ref="MAINT-<slug>-<YYYYMMDD>", objective="...", status="in_progress")` FIRST, then pass `task_ref="MAINT-<slug>-<YYYYMMDD>"` to subsequent reads. Do **not** rely on cwd-based resolution on `main` — two or more active main-branch tasks trigger `Ambiguous active task` errors.
+   - **Ambiguous errors on startup** (`Ambiguous active task. Known task_refs: ...`) mean step 0 was skipped: either create/select the task_ref and pass it explicitly, or archive stale MAINT-* rows.
 1. **Run `make context`** in a standalone shell call to verify your shell is in the right worktree on the right branch. Do not batch it with MCP loading or other startup commands. The script reads `target_worktree_path` and `target_branch` from the active task and emits a warning on drift. **Do not record any handoff state from a drifted shell.** If you see a drift warning, `cd` to the canonical path before continuing.
 2. **Apply the [MCP Loading Protocol](docs/agentic/rules/mcp-loading-protocol.md)** before fetching state. Read [`docs/agentic/maps/mcp-tool-routing.yaml`](docs/agentic/maps/mcp-tool-routing.yaml) and surface only the MCP servers whose triggers match the current prompt / task scope. `agent-handoff-mcp` is always loaded; `agent-orchestrator-mcp`, `context7`, and `computer-use` are on-demand. Concretely on Claude Code: `ToolSearch select:mcp__<server>__*` to surface a deferred server when its triggers fire.
 3. Query MCP handoff state: `get_handoff_state(sections="identity")` for routine task checks; full `get_handoff_state(task_ref="<task>")` only for hot-state load.

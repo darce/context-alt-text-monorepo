@@ -6,7 +6,7 @@
 - **Task plan**: [docs/tasks/17.0/E17-12-codex-skill-discoverability-task-plan.md](../tasks/17.0/E17-12-codex-skill-discoverability-task-plan.md)
 - **Codex binary**: `/Applications/Codex.app/Contents/Resources/codex` (166 MB, macOS arm64, build reports userAgent `codex-subagent-bridge/0.116.0`)
 - **Probe harness**: `packages/codex-subagent-bridge` `AppServerClient._request(method, params)` driving Codex over stdio JSON-RPC
-- **Probe scripts** (not committed): `/tmp/e17-12-probe.py`, `/tmp/e17-12-probe2.py`, `/tmp/e17-12-probe3.py`, `/tmp/e17-12-probe4.py`
+- **Probe scripts**: [packages/codex-subagent-bridge/tests/manual/](../../packages/codex-subagent-bridge/tests/manual/) — `e17-12-probe.py` (baseline + map shape), `e17-12-probe2.py` (Shape A/B/C/D matrix), `e17-12-probe3.py` (persistence), `e17-12-probe4.py` (project-scope scan).
 - **Verified commit**: `cdccf6a31ed94d6e9863bb5c052b9dc882bacc55` on `feature/e17-12`
 
 ## Outcome

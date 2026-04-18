@@ -608,7 +608,11 @@ def _record_token_usage_to_handoff(
 
         config = RuntimeConfig.for_repo(orchestrator_root)
         api.configure_runtime(config)
-        from agent_orchestrator_mcp.lanes import turn_metrics  # noqa: PLC0415
+        from agent_orchestrator_mcp.lanes import (  # noqa: PLC0415
+            PromptMetrics,
+            TokenUsage,
+            turn_metrics,
+        )
 
         reasoning_tokens = totals.get("reasoning_output_tokens") or 0
         token_usage = entry.get("token_usage") or {}
@@ -651,7 +655,7 @@ def _record_token_usage_to_handoff(
             model=observed_model,
             thread_id=entry.get("thread_id"),
             turn_id=entry.get("turn_id"),
-            token_usage=api.TokenUsage(
+            token_usage=TokenUsage(
                 input_tokens=last.get("input_tokens"),
                 output_tokens=last.get("output_tokens"),
                 cached_input_tokens=last.get("cached_input_tokens"),
@@ -659,7 +663,7 @@ def _record_token_usage_to_handoff(
                 total_tokens=total_tokens,
                 usage_source=token_usage.get("usage_source") or "observed",
             ),
-            prompt_metrics=api.PromptMetrics(
+            prompt_metrics=PromptMetrics(
                 model_context_window=token_usage.get("model_context_window"),
                 prompt_tokens=context_utilization.get("prompt_tokens"),
                 prompt_chars=context_utilization.get("prompt_chars"),

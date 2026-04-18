@@ -261,6 +261,7 @@ check-all:
 		else \
 			$(MAKE) lint-all; \
 			$(MAKE) lint-task-plans; \
+			$(MAKE) lint-dashboard-txt; \
 			$(MAKE) lint-scripts; \
 			$(MAKE) check-skills; \
 			$(MAKE) check-harness-sync; \
@@ -384,6 +385,14 @@ fix-lint-mcp: fix-lint-handoff fix-lint-orchestrator
 # hooks are bypassed locally.
 lint-task-plans:
 	@python3 scripts/hooks/guard-task-plan-findings.py --scan-repo
+
+# E17-9 Slice 4 / E17-7 Slice 4 follow-up. Guard tracked files from
+# reintroducing the obsolete dashboard markdown name after the rename
+# to DASHBOARD.txt. Archived plans, test fixtures, test modules, the
+# rename/drift task plans, and the .gitignore exclusion entry are
+# excluded by the script's `is_excluded()` patterns.
+lint-dashboard-txt:
+	@python3 scripts/hooks/lint-dashboard-txt.py
 
 # AHMCP-20 / Layer 3 of the heredoc-eradication bug class fix.
 # Walks scripts/**/*.sh and fails on any multi-line `python -c '...'`

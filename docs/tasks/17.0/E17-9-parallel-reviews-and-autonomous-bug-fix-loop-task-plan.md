@@ -316,11 +316,11 @@ Proof:
 
 ### Slice 4: DASHBOARD.md Drift CI Guard
 
-- [ ] `make lint-dashboard-txt` target exists in the root `Makefile`
-- [ ] Archived plans and test fixtures excluded via path patterns
-- [ ] Wired into `make check-all`
-- [ ] E17-7 Slice 4 Proof back-reference updated to point at this guard
-- [ ] Guard fires on intentional `DASHBOARD.md` reintroduction in a tracked non-archive path
+- [x] `make lint-dashboard-txt` target exists in the root `Makefile`
+- [x] Archived plans and test fixtures excluded via path patterns
+- [x] Wired into `make check-all`
+- [x] E17-7 Slice 4 Proof back-reference updated to point at this guard
+- [x] Guard fires on intentional `DASHBOARD.md` reintroduction in a tracked non-archive path
 - [ ] `make check-all` stays green post-landing
 
 ## Review Readiness

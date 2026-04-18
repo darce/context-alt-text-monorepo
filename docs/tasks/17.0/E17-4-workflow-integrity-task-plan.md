@@ -302,7 +302,7 @@ Proof:
 
 **Goal**: the same workflow command ids and argument syntax work across all supported agent harnesses; host-specific wrappers become generated adapters instead of hand-maintained sources.
 
-**Root cause**: Phase 2 created `.claude/commands/*.md` and described them as the invocation surface, but that only covers Claude. VS Code/Copilot uses `.github/prompts/*.prompt.md` for workspace-native slash discovery and currently has no matching files. Codex has MCP attachment plus root instructions, but no native slash registry, so `/branch-review` only works when the root instruction prose happens to route it. The workflow ids are portable in theory, not in the checked-in host adapters.
+**Root cause**: Phase 2 created `.claude/commands/*.md` and described them as the invocation surface, but that only covers Claude. VS Code/Copilot uses `.github/prompts/*.prompt.md` for workspace-native slash discovery and currently has no matching files. Codex has MCP attachment plus root instructions, but no native slash registry, so `/branch-review` only works when the root instruction prose happens to route it. The workflow ids are portable in theory, not in the checked-in host adapters. **Addendum (E17-12 Slice 2)**: `$skill` resolution is now delivered in Codex via generated `.codex/skills/<slug>` symlinks pointing at `.claude/skills/<slug>`, emitted by `scripts/generate_agent_workflows.py`; `/command` routing in Codex still relies on the generator-owned router block in `instructions.md` and `CLAUDE.md`.
 
 Changes:
 

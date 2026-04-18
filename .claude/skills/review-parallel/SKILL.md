@@ -97,6 +97,10 @@ The coordinator must call the **in-process** subagent primitive the current harn
 - One branch-mode `review_runs` row records the combined pass under the coordinator `task_ref`.
 - A verdict decision on the coordinator `task_ref` ties the review to its commit SHA.
 
+## External Orchestration Contract
+
+The canonical surface for *external* orchestrators (no interactive harness) is the `BackendAdapter` protocol at [backend_adapter.py](../../../packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/backend_adapter.py) resolved via [backend_registry.py](../../../packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/backend_registry.py) (`get_adapter(<kind>)`). Registered kinds today: `structured-turn` (always-available in-repo anchor; see [structured_turn.py](../../../packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/adapters/structured_turn.py)), `codex-cli`, `claude-code`, `codex-subagent`, `copilot-host`, `local-model-openai`. Cross-vendor equivalence is proven by [test_cross_vendor_subagent_equivalence.py](../../../packages/agent-orchestrator-mcp/tests/test_cross_vendor_subagent_equivalence.py) on the `(count, severity_distribution, verified_commit_sha)` tuple. Inside an active harness session the Harness Routing table above is the contract; the `BackendAdapter` surface is reserved for external orchestration.
+
 ## See Also
 
 - [../branch-review/SKILL.md](../branch-review/SKILL.md)

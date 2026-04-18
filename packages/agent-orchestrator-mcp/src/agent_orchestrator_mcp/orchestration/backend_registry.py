@@ -58,6 +58,12 @@ def _get_local_model_adapter() -> type[BackendAdapter]:
     return LocalModelAdapter
 
 
+def _get_structured_turn_adapter() -> type[BackendAdapter]:
+    from agent_orchestrator_mcp.orchestration.adapters.structured_turn import StructuredTurnAdapter
+
+    return StructuredTurnAdapter
+
+
 BACKENDS: dict[str, BackendSpec] = {
     "codex-cli": BackendSpec(
         kind="cli",
@@ -102,6 +108,17 @@ BACKENDS: dict[str, BackendSpec] = {
             supports_sandbox=True,
             supports_sync_turn=False,
             supports_reasoning_effort=True,
+        ),
+    ),
+    "structured-turn": BackendSpec(
+        kind="in-process",
+        adapter_class=_get_structured_turn_adapter,
+        description="Always-available in-repo adapter that composes run_structured_turn; anchors cross-vendor equivalence coverage.",
+        capabilities=BackendCapabilities(
+            is_available=True,
+            supports_structured_output=True,
+            supports_sandbox=False,
+            supports_sync_turn=True,
         ),
     ),
     "local-model-openai": BackendSpec(

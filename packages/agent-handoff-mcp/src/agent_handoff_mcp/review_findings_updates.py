@@ -8,6 +8,12 @@ from dataclasses import dataclass
 
 from . import shared_write_context as _shared_write_context
 from .enums import FindingStatus
+from .review_findings_support import (
+    _canonical_repair_provenance_decision_id,
+    _classify_commit_relation,
+    _current_task_revision,
+    _write_current_task_md_for_active_context,
+)
 from .shared_primitives import (
     BATCH_CLOSE_THRESHOLD,
     BATCH_CLOSE_WINDOW_SECONDS,
@@ -28,12 +34,6 @@ from .shared_write_context import (
     WriteActor,
     _resolve_write_actor,
     collect_target_context_warnings,
-)
-from .review_findings_support import (
-    _canonical_repair_provenance_decision_id,
-    _classify_commit_relation,
-    _current_task_revision,
-    _write_current_task_md_for_active_context,
 )
 
 _LOG = logging.getLogger(__name__)
@@ -197,9 +197,7 @@ def _apply_finding_update(update_ctx: FindingUpdateContext, update_input: Findin
     finding_commit_sha = _normalize_optional_text(update_ctx.existing["commit_sha"])
     current_commit_sha = _normalize_optional_text(update_ctx.ctx.commit_sha)
     commit_relation = _classify_commit_relation(finding_commit_sha, current_commit_sha)
-    needs_descendant_ack = (
-        update_input.status == FindingStatus.FIXED and commit_relation == "descendant"
-    )
+    needs_descendant_ack = update_input.status == FindingStatus.FIXED and commit_relation == "descendant"
     target_db_id = int(update_ctx.existing["id"])
     reopen_transition_int = 1 if update_input.is_reopen_transition else 0
     update_ctx.conn.execute(
@@ -520,13 +518,33 @@ def repair_review_finding_provenance(
     normalized_new_commit_sha = new_commit_sha.strip() if isinstance(new_commit_sha, str) else None
     normalized_reason = reason.strip() if isinstance(reason, str) else None
     if not normalized_expected_branch:
-        return _envelope(ok=False, tool="repair_review_finding_provenance", data={"error": "expected_branch must not be empty."}, entity="finding")
+        return _envelope(
+            ok=False,
+            tool="repair_review_finding_provenance",
+            data={"error": "expected_branch must not be empty."},
+            entity="finding",
+        )
     if not normalized_expected_commit_sha:
-        return _envelope(ok=False, tool="repair_review_finding_provenance", data={"error": "expected_commit_sha must not be empty."}, entity="finding")
+        return _envelope(
+            ok=False,
+            tool="repair_review_finding_provenance",
+            data={"error": "expected_commit_sha must not be empty."},
+            entity="finding",
+        )
     if not normalized_new_branch:
-        return _envelope(ok=False, tool="repair_review_finding_provenance", data={"error": "new_branch must not be empty."}, entity="finding")
+        return _envelope(
+            ok=False,
+            tool="repair_review_finding_provenance",
+            data={"error": "new_branch must not be empty."},
+            entity="finding",
+        )
     if not normalized_new_commit_sha:
-        return _envelope(ok=False, tool="repair_review_finding_provenance", data={"error": "new_commit_sha must not be empty."}, entity="finding")
+        return _envelope(
+            ok=False,
+            tool="repair_review_finding_provenance",
+            data={"error": "new_commit_sha must not be empty."},
+            entity="finding",
+        )
     if not normalized_reason or len(normalized_reason) < 20:
         return _envelope(
             ok=False,
@@ -558,7 +576,11 @@ def repair_review_finding_provenance(
         if expanded_expected is not None:
             normalized_expected_commit_sha = expanded_expected
     except InvalidCommitShaError as exc:
-        _LOG.warning("repair_review_finding_provenance could not expand expected_commit_sha %s: %s", normalized_expected_commit_sha, exc)
+        _LOG.warning(
+            "repair_review_finding_provenance could not expand expected_commit_sha %s: %s",
+            normalized_expected_commit_sha,
+            exc,
+        )
 
     if (
         normalized_expected_branch == normalized_new_branch

@@ -112,7 +112,9 @@ def test_get_adapter_for_bridge_returns_subagent_adapter() -> None:
     )
     with mock.patch.dict(mod.BACKENDS, {"codex-subagent": new_spec}):
         with mock.patch.object(mod, "resolve_bridge", return_value=runner):
-            with mock.patch.object(mod.importlib, "import_module", return_value=mock.Mock(MockSubagentAdapter=mock_cls)):
+            with mock.patch.object(
+                mod.importlib, "import_module", return_value=mock.Mock(MockSubagentAdapter=mock_cls)
+            ):
                 adapter = mod.get_adapter("codex-subagent")
         mock_cls.assert_called_once_with(runner, name="codex-subagent")
         assert adapter is mock_sub
@@ -193,7 +195,7 @@ def test_detect_runtime_returns_none_with_vscode_but_no_copilot() -> None:
 
 
 def test_find_codex_from_search_paths(tmp_path: Path) -> None:
-    mod = _load_module()
+    _load_module()
     fake_home = tmp_path / "home"
     fake_home.mkdir()
     fake_bin = fake_home / ".local" / "bin" / "codex"

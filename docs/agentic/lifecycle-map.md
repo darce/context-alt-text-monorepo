@@ -1,13 +1,13 @@
 # Development Lifecycle Map
 
-> Primary navigation surface. Planning stages (P) run on `main`. Implementation stages (I) run on a feature branch.
+> Primary navigation surface. Planning stages (P) and implementation stages (I) both run on the task branch once an artifact will be written.
 > Full detail: [planning-pipeline.md](rules/planning-pipeline.md) · [development-workflow.md](rules/development-workflow.md)
 
 ---
 
 ## Stage Map
 
-> **Phase 2 note:** Rows P0, P2, P3, and P3.5 now use the E17-3 skill-based entry points (`scope`, `plan-analyze`, `planning-review`) on `main`. The full planning and branch review guides remain the canonical checklist/reference surfaces behind those entry points.
+> **Phase 2 note:** Rows P0, P2, P3, and P3.5 use the E17-3 skill-based entry points (`scope`, `plan-analyze`, `planning-review`) on the task branch once they emit artifacts. The full planning and branch review guides remain the canonical checklist/reference surfaces behind those entry points.
 
 | Step | Stage | Entry point | Skill | Key MCP tools | Exit gate |
 |------|-------|-------------|-------|---------------|-----------|
@@ -17,7 +17,7 @@
 | P3 | Spec | `make plan-review DOC=<path>` _(E17-3)_ | `planning-review` _(E17-3)_ | `review_findings` + `review_runs(record)` | ≥1 review run recorded; 0 open findings |
 | P3.5 | ADR _(conditional)_ | `make plan-review DOC=<path>` _(E17-3)_ | `planning-review` _(E17-3)_ | same | Alternatives documented; spec updated |
 | P4 | Task plan | `make plan-analyze` → `make plan-review` _(E17-3)_ | `planning-review` _(E17-3)_ | same | Slices trace to spec; `target_branch` declared |
-| I1 | Branch start | `make task-start TASK=<id> OBJECTIVE="..."` | `branch-lifecycle` | `set_handoff_state(target_branch)` | Plan on `main`; worktree + branch exist; `make context` clean |
+| I1 | Branch start | `make task-start TASK=<id> OBJECTIVE="..."` | `branch-lifecycle` | `set_handoff_state(target_branch)` | Worktree + branch exist before first planning artifact; `make context` clean |
 | I2 | Slice: RED | `make slice-start` | `tdd` | `record_event(test_result, passed=false)` | Failing test recorded **before** any implementation edit |
 | I3 | Slice: GREEN | _(edit files)_ | `incremental-implementation` | _(none until commit)_ | Tests pass; ≤100 new lines since last test run |
 | I4 | Slice: COMMIT | `make slice-commit MSG="..."` | `branch-lifecycle` | `close_slice` → `render_handoff(kind='current_task')` | `slice_complete` decision recorded; `CURRENT_TASK.json` regenerated |

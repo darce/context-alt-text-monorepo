@@ -49,6 +49,8 @@ WORKTREE_PRUNE_SCRIPT = REPO_ROOT / "scripts" / "worktree_prune.py"
 TASK_PLAN_AUDIT_SCRIPT = REPO_ROOT / "scripts" / "task_plan_audit.py"
 INTEGRITY_WATCHER_SCRIPT = REPO_ROOT / "scripts" / "integrity-watcher.sh"
 GUARD_MAIN_BRANCH_HOOK = REPO_ROOT / "scripts" / "hooks" / "guard-main-branch.sh"
+GUARD_MAIN_BRANCH_INLINE = REPO_ROOT / "scripts" / "hooks" / "_guard_main_branch_inline.py"
+BRANCH_ISOLATION_GUARD = REPO_ROOT / "scripts" / "hooks" / "_branch_isolation_guard.py"
 HARNESS_PROTOCOL_HELPER = REPO_ROOT / "scripts" / "hooks" / "_harness_protocol.py"
 WORKTREE_DRIFT_HELPER = REPO_ROOT / "scripts" / "hooks" / "_worktree_drift.py"
 WORKTREE_DRIFT_HOOK = REPO_ROOT / "scripts" / "hooks" / "guard-worktree-drift.sh"
@@ -107,6 +109,12 @@ def _build_fake_monorepo(tmp_path: Path) -> Path:
         (repo / "scripts" / "hooks").mkdir(parents=True, exist_ok=True)
         shutil.copy2(GUARD_MAIN_BRANCH_HOOK, repo / "scripts" / "hooks" / "guard-main-branch.sh")
         os.chmod(repo / "scripts" / "hooks" / "guard-main-branch.sh", 0o755)
+    if GUARD_MAIN_BRANCH_INLINE.exists():
+        (repo / "scripts" / "hooks").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(GUARD_MAIN_BRANCH_INLINE, repo / "scripts" / "hooks" / "_guard_main_branch_inline.py")
+    if BRANCH_ISOLATION_GUARD.exists():
+        (repo / "scripts" / "hooks").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(BRANCH_ISOLATION_GUARD, repo / "scripts" / "hooks" / "_branch_isolation_guard.py")
     if HARNESS_PROTOCOL_HELPER.exists():
         (repo / "scripts" / "hooks").mkdir(parents=True, exist_ok=True)
         shutil.copy2(HARNESS_PROTOCOL_HELPER, repo / "scripts" / "hooks" / "_harness_protocol.py")
@@ -459,8 +467,8 @@ def test_handoff_make_targets_use_render_handoff_current_task() -> None:
 
     handoff_makefile = (REPO_ROOT / "mk" / "handoff.mk").read_text()
 
-    assert 'render-handoff --kind current_task' in handoff_makefile
-    assert '$(MCP_CMD) $(MCP_STATE_ARGS) task' not in handoff_makefile
+    assert "render-handoff --kind current_task" in handoff_makefile
+    assert "$(MCP_CMD) $(MCP_STATE_ARGS) task" not in handoff_makefile
     assert 'task "$(TASK)"' not in handoff_makefile
 
 
@@ -750,7 +758,7 @@ def test_guard_main_branch_blocks_scripts_code_path_on_main(tmp_path: Path) -> N
         text=True,
     )
     assert proc.returncode == 2, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
-    assert "Code file edits are not allowed on the main branch" in proc.stderr, proc.stderr
+    assert "Protected edits are not allowed on the main branch" in proc.stderr, proc.stderr
     assert "scripts/check-task-context.py" in proc.stderr, proc.stderr
 
 

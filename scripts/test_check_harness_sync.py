@@ -7,12 +7,17 @@ from pathlib import Path
 import yaml
 
 from scripts.check_harness_sync import (
+    _build_guard_fixture,
     _check_branch_isolation,
     _check_cold_start,
     _check_dashboard_naming,
     _check_workspace_settings,
     _check_worktree_drift,
+    _fixture_env,
     _load_contract,
+    _main_guard_paths,
+    _run_python_hook,
+    _run_shell_hook,
     run_checks,
 )
 
@@ -25,6 +30,7 @@ COPY_PATHS = (
     Path(".github/hooks/terminal-guard.json"),
     Path(".github/hooks/guard-worktree-drift.py"),
     Path("scripts/hooks/_branch_isolation_guard.py"),
+    Path("scripts/hooks/_guard_main_branch_inline.py"),
     Path("scripts/hooks/_harness_protocol.py"),
     Path("scripts/hooks/_worktree_drift.py"),
     Path("scripts/hooks/guard-main-branch.sh"),
@@ -50,7 +56,20 @@ def _valid_contract() -> dict:
             "code_roots": ["apps/", "packages/", "scripts/"],
             "protected_extensions": [".py", ".sh", ".ts"],
             "root_protected_files": ["Makefile"],
-            "permitted_main_surfaces": [{"pattern": "docs/tasks/**/*.md", "reason": "Task plans"}],
+            "protected_main_surfaces": [
+                {"pattern": "docs/tasks/**/*.md", "reason": "Task plans require feature branches"},
+                {"pattern": "docs/assessments/**", "reason": "Assessments require feature branches"},
+                {"pattern": "docs/scopes/**", "reason": "Scope notes require feature branches"},
+                {"pattern": "docs/epics/**", "reason": "Epics require feature branches"},
+                {"pattern": "docs/specs/**", "reason": "Specs require feature branches"},
+                {"pattern": "docs/adrs/**", "reason": "ADRs require feature branches"},
+                {"pattern": "packages/*/docs/tasks/**", "reason": "Package task plans require feature branches"},
+                {"pattern": "packages/*/docs/assessments/**", "reason": "Package assessments require feature branches"},
+                {"pattern": "packages/*/docs/specs/**", "reason": "Package specs require feature branches"},
+                {"pattern": "packages/*/docs/epics/**", "reason": "Package epics require feature branches"},
+                {"pattern": "packages/*/docs/adrs/**", "reason": "Package ADRs require feature branches"},
+            ],
+            "permitted_main_surfaces": [{"pattern": "CLAUDE.md", "reason": "Agent dispatcher"}],
             "enforcers": [
                 {"path": ".github/hooks/guard-main-branch.py", "harness": "vscode"},
                 {"path": "scripts/hooks/guard-main-branch.sh", "harness": "claude"},
@@ -118,6 +137,39 @@ def test_branch_isolation_passes_against_both_harness_enforcers(tmp_path: Path) 
     assert errors == []
 
 
+def test_branch_isolation_blocks_protected_main_surface(tmp_path: Path) -> None:
+    repo = _write_repo(tmp_path)
+    contract = _valid_contract()
+    tmpdir, fixture_repo = _build_guard_fixture(contract, repo_root=repo)
+    try:
+        env = _fixture_env(fixture_repo)
+        vscode_path, claude_path = _main_guard_paths(contract)
+        vscode_guard = fixture_repo / vscode_path
+        claude_guard = fixture_repo / claude_path
+        planning_path = fixture_repo / "docs" / "tasks" / "12.0" / "fake-task-plan.md"
+        planning_path.parent.mkdir(parents=True, exist_ok=True)
+
+        _, output, _ = _run_python_hook(
+            vscode_guard,
+            {"toolName": "create_file", "toolInput": {"filePath": str(planning_path)}},
+            cwd=fixture_repo,
+            env=env,
+        )
+        assert output is not None
+        assert output["hookSpecificOutput"]["permissionDecision"] == "block"
+
+        shell_code, _, shell_stderr = _run_shell_hook(
+            claude_guard,
+            {"tool_input": {"file_path": str(planning_path)}},
+            cwd=fixture_repo,
+            env=env,
+        )
+        assert shell_code == 2
+        assert "BLOCKED" in shell_stderr
+    finally:
+        tmpdir.cleanup()
+
+
 def test_branch_isolation_fails_when_enforcer_missing_loader_wiring(tmp_path: Path) -> None:
     repo = _write_repo(tmp_path)
     (repo / "scripts" / "hooks" / "guard-main-branch.sh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
@@ -150,6 +202,24 @@ def test_branch_isolation_fails_when_permitted_surface_reason_missing(tmp_path: 
     contract["branch_isolation"]["permitted_main_surfaces"][0]["reason"] = ""
     errors = _check_branch_isolation(contract, repo_root=repo)
     assert any("permitted_main_surfaces[0]" in err and "reason" in err for err in errors)
+
+
+def test_branch_isolation_fails_when_protected_surface_reason_missing(tmp_path: Path) -> None:
+    repo = _write_repo(tmp_path)
+    contract = _valid_contract()
+    contract["branch_isolation"]["protected_main_surfaces"][0]["reason"] = ""
+    errors = _check_branch_isolation(contract, repo_root=repo)
+    assert any("protected_main_surfaces[0]" in err and "reason" in err for err in errors)
+
+
+def test_branch_isolation_fails_when_planning_surface_is_permitted_on_main(tmp_path: Path) -> None:
+    repo = _write_repo(tmp_path)
+    contract = _valid_contract()
+    contract["branch_isolation"]["permitted_main_surfaces"] = [
+        {"pattern": "docs/tasks/**/*.md", "reason": "stale policy"}
+    ]
+    errors = _check_branch_isolation(contract, repo_root=repo)
+    assert any("must not include planning pattern" in err for err in errors)
 
 
 def test_worktree_drift_passes_fixture_harness(tmp_path: Path) -> None:

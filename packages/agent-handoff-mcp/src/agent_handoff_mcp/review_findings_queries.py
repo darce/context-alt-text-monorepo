@@ -5,24 +5,28 @@ from __future__ import annotations
 import sqlite3
 
 from .enums import FindingStatus, HandoffStatus
-from .shared_primitives import (
-    REVIEW_FINDING_SEVERITIES,
-    REVIEW_FINDING_STATUSES,
-    _envelope,
-    _json_response,
-    _normalize_optional_text,
-    _parse_sqlite_datetime,
-    _resolve_task_ref,
-)
-from .shared_db_utils import _paginated_query
-from .shared_schema import _get_db_connection
-from .shared_write_context import WriteActor, _resolve_write_actor, _workspace_git_context, collect_target_context_warnings
 from .review_findings_support import (
     _annotate_review_finding,
     _current_task_revision,
     _validate_review_mode_or_envelope,
     _write_current_task_md_for_active_context,
     finding_file_modified_after,
+)
+from .shared_db_utils import _paginated_query
+from .shared_primitives import (
+    REVIEW_FINDING_SEVERITIES,
+    REVIEW_FINDING_STATUSES,
+    _envelope,
+    _json_response,
+    _normalize_optional_text,
+    _resolve_task_ref,
+)
+from .shared_schema import _get_db_connection
+from .shared_write_context import (
+    WriteActor,
+    _resolve_write_actor,
+    _workspace_git_context,
+    collect_target_context_warnings,
 )
 
 _FINDING_SUMMARY_FIELDS = ("description", "fix", "resolution_notes", "verification_evidence")
@@ -484,11 +488,17 @@ def record_review_run(
     session = (session or "").strip()
     subject_path = (subject_path or "").strip()
     if not review_run_id:
-        return _envelope(ok=False, tool="record_review_run", data={"error": "review_run_id is required."}, entity="review_run")
+        return _envelope(
+            ok=False, tool="record_review_run", data={"error": "review_run_id is required."}, entity="review_run"
+        )
     if not session:
-        return _envelope(ok=False, tool="record_review_run", data={"error": "session is required."}, entity="review_run")
+        return _envelope(
+            ok=False, tool="record_review_run", data={"error": "session is required."}, entity="review_run"
+        )
     if not subject_path:
-        return _envelope(ok=False, tool="record_review_run", data={"error": "subject_path is required."}, entity="review_run")
+        return _envelope(
+            ok=False, tool="record_review_run", data={"error": "subject_path is required."}, entity="review_run"
+        )
     if subject_kind not in _REVIEW_RUN_SUBJECT_KINDS:
         return _envelope(
             ok=False,

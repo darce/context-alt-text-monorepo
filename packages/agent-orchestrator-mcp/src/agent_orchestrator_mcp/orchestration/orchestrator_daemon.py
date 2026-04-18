@@ -65,8 +65,8 @@ from orchestrator_helpers import (  # noqa: F401
     _log,
     _message_timestamp,
     _normalize_text,
-    _require_dict_payload,
     _report_timestamp,
+    _require_dict_payload,
 )
 
 _handoff_read_shapes = import_module(f"{__package__}.handoff_read_shapes" if __package__ else "handoff_read_shapes")
@@ -157,9 +157,8 @@ def _run_cross_lane_verify(
 
 
 def _has_open_plan_action(task_ref: str, plan_item_id: str) -> bool:
-    from agent_handoff_mcp.enums import ActionStatus  # noqa: PLC0415
-
     from agent_handoff_mcp import list_next_actions
+    from agent_handoff_mcp.enums import ActionStatus  # noqa: PLC0415
 
     marker = f"[plan:{plan_item_id}]"
     payload = _require_dict_payload(
@@ -249,10 +248,9 @@ def _dispatch_plan_item(
     owned_paths_override: list[str] | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    from agent_handoff_mcp.enums import MessageStatus, PlanCursorState  # noqa: PLC0415
-
     from agent_handoff_mcp import record_decision, update_next_actions  # noqa: PLC0415
     from agent_handoff_mcp.api import WriteActorInput  # noqa: PLC0415
+    from agent_handoff_mcp.enums import MessageStatus, PlanCursorState  # noqa: PLC0415
 
     from agent_orchestrator_mcp.lanes import lane_communication, plan_cursor  # noqa: PLC0415
 
@@ -332,7 +330,6 @@ def _dispatch_from_task_plan(
     log: Any | None = None,
 ) -> dict[str, Any] | None:
     from agent_handoff_mcp.enums import PlanCursorState  # noqa: PLC0415
-
     from lane_manifest import load_manifest, task_plan_path
     from task_plan_parser import map_plan_item_to_lane, normalize_plan_item, parse_task_plan
 
@@ -499,9 +496,8 @@ def salvage_and_close_lane(
     }
 
     if not dry_run:
-        from agent_handoff_mcp.enums import LaneStatus  # noqa: PLC0415
-
         from agent_handoff_mcp import record_decision  # noqa: PLC0415
+        from agent_handoff_mcp.enums import LaneStatus  # noqa: PLC0415
 
         from agent_orchestrator_mcp.lanes import manage_worktree_lane  # noqa: PLC0415
 
@@ -1069,6 +1065,7 @@ def _lane_intake_phase(ctx: OrchestratorContext) -> None:
             if cursor is not None:
                 ctx.log("INFO", "plan_cursor_completed", lane=lane_id, plan_item_id=cursor.get("plan_item_id"))
             from agent_handoff_mcp.enums import LaneStatus  # noqa: PLC0415
+
             from agent_orchestrator_mcp.lanes import manage_worktree_lane  # noqa: PLC0415
 
             manage_worktree_lane(

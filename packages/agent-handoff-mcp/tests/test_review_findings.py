@@ -10,10 +10,9 @@ import pytest
 
 from agent_handoff_mcp import BranchMismatchError
 from agent_handoff_mcp import api as mcp_server
-from agent_handoff_mcp.current_task_rendering import _render_current_task_md, _render_dashboard_section
-from agent_handoff_mcp.shared_schema import _get_db_connection
 from agent_handoff_mcp.config import RuntimeConfig
-from agent_handoff_mcp.current_task_rendering import _infer_epic_ref
+from agent_handoff_mcp.current_task_rendering import _infer_epic_ref, _render_current_task_md, _render_dashboard_section
+from agent_handoff_mcp.shared_schema import _get_db_connection
 
 
 class _RenderCompatApi:

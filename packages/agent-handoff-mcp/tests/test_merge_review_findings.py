@@ -18,8 +18,8 @@ from pathlib import Path
 import pytest
 
 from agent_handoff_mcp import api as mcp_server
-from agent_handoff_mcp.shared_schema import _get_db_connection
 from agent_handoff_mcp.config import RuntimeConfig
+from agent_handoff_mcp.shared_schema import _get_db_connection
 
 
 def _parse(raw: str | dict) -> dict:

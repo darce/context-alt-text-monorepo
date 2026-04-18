@@ -150,6 +150,7 @@ def get_review_findings_summary(
         review_mode=review_mode,
     )
 
+
 manage_worktree_lane = _lanes.manage_worktree_lane
 get_lane_activity = _lanes.get_lane_activity
 turn_metrics = _lanes.turn_metrics
@@ -159,6 +160,7 @@ plan_cursor = _lanes.plan_cursor
 
 # Additional tools that belong to the orchestration surface
 get_latest_slice_review_packet = _lanes.get_latest_slice_review_packet
+
 
 def _register_dashboard_extensions() -> None:
     """Register orchestrator-side dashboard extensions at module load time.
@@ -196,6 +198,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "get_metrics_summary": "Return an ACE metrics snapshot for the active task covering token burn, context pressure, FTS5 retrieval, lane health, phase timing, and documentation fitness.",
 }
 
+
 def _apply_tool_descriptions() -> None:
     for name, description in TOOL_DESCRIPTIONS.items():
         tool = globals().get(name)
@@ -215,6 +218,7 @@ class ToolEntry:
     handler: Callable[..., Any]
     description: str
     deprecated_since: str | None = None  # Version string; non-None appends [DEPRECATED] to description
+
 
 def _current_tool_entries() -> list[ToolEntry]:
     return [
@@ -243,6 +247,7 @@ def _current_tool_entries() -> list[ToolEntry]:
         ToolEntry("list_available_backends", list_available_backends, TOOL_DESCRIPTIONS["list_available_backends"]),
         ToolEntry("get_metrics_summary", get_metrics_summary, TOOL_DESCRIPTIONS["get_metrics_summary"]),
     ]
+
 
 def _snapshot_registry(phase: str = "current") -> list[ToolEntry]:
     if phase != "current":

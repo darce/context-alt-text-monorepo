@@ -22,7 +22,11 @@ from .shared_primitives import (
 from .shared_schema import _get_db_connection
 from .shared_write_context import (
     _classify_commit_relation as _shared_classify_commit_relation,
+)
+from .shared_write_context import (
     _detect_git_write_context as _shared_detect_git_write_context,
+)
+from .shared_write_context import (
     _resolve_core_override,
 )
 from .slice_decision import is_canonical_decision
@@ -104,7 +108,9 @@ def _annotate_review_finding(
     return finding
 
 
-def _validate_review_mode_or_envelope(review_mode: str | None, *, tool: str, entity: str = "finding") -> tuple[str | None, dict | None]:
+def _validate_review_mode_or_envelope(
+    review_mode: str | None, *, tool: str, entity: str = "finding"
+) -> tuple[str | None, dict | None]:
     try:
         return _normalize_review_mode(review_mode), None
     except ValueError as exc:

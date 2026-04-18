@@ -46,17 +46,32 @@ branch_isolation:
     - .mk
   root_protected_files:
     - Makefile
-  # Repo-local allow-list: projects adopting this harness should rewrite these
-  # patterns to match their own legitimate main-worktree planning/doc surfaces.
-  permitted_main_surfaces:
+  protected_main_surfaces:
     - pattern: "docs/tasks/**/*.md"
-      reason: "Task-plan progress and checkbox sync on main"
+      reason: "Top-level task plans must live on a task branch from the first edit"
     - pattern: "docs/assessments/**"
-      reason: "Assessment artifacts land on main before or alongside implementation"
+      reason: "Top-level assessments must live on a task branch from the first edit"
     - pattern: "docs/scopes/**"
-      reason: "Scope notes stay on main"
+      reason: "Top-level scope notes must live on a task branch from the first edit"
     - pattern: "docs/epics/**"
-      reason: "Epic-level planning artifacts stay on main"
+      reason: "Top-level epic planning artifacts must live on a task branch from the first edit"
+    - pattern: "docs/specs/**"
+      reason: "Top-level specs must live on a task branch from the first edit"
+    - pattern: "docs/adrs/**"
+      reason: "Top-level ADRs must live on a task branch from the first edit"
+    - pattern: "packages/*/docs/tasks/**"
+      reason: "Package-local task plans must live on a task branch from the first edit"
+    - pattern: "packages/*/docs/assessments/**"
+      reason: "Package-local assessments must live on a task branch from the first edit"
+    - pattern: "packages/*/docs/specs/**"
+      reason: "Package-local specs must live on a task branch from the first edit"
+    - pattern: "packages/*/docs/epics/**"
+      reason: "Package-local epics must live on a task branch from the first edit"
+    - pattern: "packages/*/docs/adrs/**"
+      reason: "Package-local ADRs must live on a task branch from the first edit"
+  # Repo-local allow-list: projects adopting this harness should rewrite these
+  # patterns to match their own legitimate non-planning main-worktree surfaces.
+  permitted_main_surfaces:
     - pattern: "CLAUDE.md"
       reason: "Canonical agent dispatcher stays editable on main"
     - pattern: ".github/copilot-instructions.md"
@@ -77,7 +92,7 @@ branch_isolation:
       reason: "Archived task snapshots stay editable on main"
     - pattern: "DASHBOARD.txt"
       reason: "Dashboard artifact is regenerated on main"
-    - pattern: "CURRENT_TASK.md"
+    - pattern: "CURRENT_TASK.json"
       reason: "Current-task snapshot is regenerated on main"
   enforcers:
     - path: .github/hooks/guard-main-branch.py

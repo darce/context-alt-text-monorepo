@@ -16,17 +16,17 @@ Assessment ──→ Spec ──→ [ADR] ──→ Task Plan ──→ Implemen
 
 Not every stage is required. Small, well-understood changes can skip to a spec or task plan directly. The full pipeline prevents premature implementation of complex or contract-breaking work.
 
-### Planning stays on `main`; implementation branches after approval
+### Planning starts on the task branch from the first artifact
 
-**All planning artifacts (assessments, specs, ADRs, task plans) are written and reviewed on `main`.** No feature branch or worktree until the plan is approved and implementation begins.
+**Planning artifacts (assessments, specs, ADRs, task plans, scope notes, epics) are written and reviewed on the task branch from the first file edit.** Pure in-chat intake questions can happen before branch creation, but once a planning document will be written, create the task branch/worktree first.
 
 **Workflow:**
 
-1. **Plan on `main`**: write artifacts, record planning decisions and review findings in MCP.
-2. **Review on `main`**: human reviews in normal editor context. Findings via MCP. Plan updated until approved.
-3. **Branch when approved**: `make task-start TASK=<id> OBJECTIVE="..."` creates feature branch + worktree + MCP targets.
-4. **Implement on the feature branch**: code, tests, slices, pre-merge gate per [development workflow](development-workflow.md).
-5. **Merge via the gate**: `handoff_close_check(enforce=True)` passes. Planning artifacts already on `main`; code joins them.
+1. **Start the task branch**: `make task-start TASK=<id> OBJECTIVE="..."` creates the feature branch + worktree + MCP targets before the first planning artifact is written.
+2. **Plan on the task branch**: write artifacts, record planning decisions and review findings in MCP.
+3. **Review on the task branch**: human reviews in the task worktree context. Findings via MCP. Plan updated until approved.
+4. **Implement on the same task branch**: code, tests, slices, pre-merge gate per [development workflow](development-workflow.md).
+5. **Merge via the gate**: `handoff_close_check(enforce=True)` passes. Planning artifacts and implementation land together from the reviewed branch.
 
 **Use the full pipeline for:** contract/output format changes, tool surface changes, cross-service/cross-package boundary changes, multi-approach architectural decisions, multi-task-plan work.
 
@@ -36,7 +36,7 @@ Not every stage is required. Small, well-understood changes can skip to a spec o
 
 ## Stage 0: Intake (new features and epics — conditional)
 
-**Artifact:** `docs/scopes/[slug].md` (scope one-pager)
+**Artifact:** `docs/scopes/[slug].md` (scope one-pager on the task branch)
 **Skill:** `scope` _(Phase 2, E17)_
 **When required:** New features, new epics, new capabilities where the problem is not already traced to code. Skip for: bug fixes with a pre-identified error site, tech debt tasks with established scope, and tasks derived directly from an approved spec.
 
@@ -244,13 +244,13 @@ Full step-by-step lifecycle (I1–I7) with Makefile targets, MCP tool calls, and
 
 Key prerequisites before starting:
 
-- Task plan is committed on `main`. Verify: `git log main --oneline -- "docs/tasks/**/*<id>*"`
+- Task plan is committed on the task branch. Verify: `git log --oneline -- "docs/tasks/**/*<id>*"`
 - Commit or finish current work before switching branches (never stash — WIP commits are MCP-referenceable).
-- Run `make task-start TASK=<id> OBJECTIVE="..."` from root worktree; then `cd` to the linked worktree and `make context`.
+- Run `make task-start TASK=<id> OBJECTIVE="..."` before writing the first planning artifact; then `cd` to the linked worktree and `make context`.
 
 ### Retroactive task plans
 
-When work proceeds directly to implementation, retrofit a minimal plan on `main` before the feature branch merges:
+When work proceeds directly to implementation, retrofit a minimal plan on the task branch before the feature branch merges:
 
 - **Objective**: one paragraph — why the work was done
 - **Scope**: packages and files touched

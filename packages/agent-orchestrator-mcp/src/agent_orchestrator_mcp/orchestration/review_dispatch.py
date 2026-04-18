@@ -49,6 +49,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
+
 def _route_lane(task_ref: str, file_path: str) -> str | None:
     patterns = route_patterns(task_ref)
     normalized_path = file_path.strip()
@@ -162,7 +163,10 @@ def _has_open_dispatch(task_ref: str, lane_id: str, subject: str) -> bool:
     for message in messages:
         if not isinstance(message, dict):
             continue
-        if message.get("direction") == LaneMessageDirection.ORCHESTRATOR_TO_WORKER and message.get("subject") == subject:
+        if (
+            message.get("direction") == LaneMessageDirection.ORCHESTRATOR_TO_WORKER
+            and message.get("subject") == subject
+        ):
             return True
     return False
 
@@ -201,14 +205,13 @@ def _normalize_action_status(value: object) -> Literal["pending", "done", "skipp
 
 
 def _stamp_issue_to_lane(issue_kind: str, issue: dict[str, Any], lane_id: str, dispatch_session: str) -> None:
-    from agent_handoff_mcp.enums import BlockerStatus, FindingStatus  # noqa: PLC0415
-
     from agent_handoff_mcp import (  # noqa: PLC0415
         report_blocker,
         update_next_actions,
         update_review_finding,
     )
     from agent_handoff_mcp.api import WriteActorInput  # noqa: PLC0415
+    from agent_handoff_mcp.enums import FindingStatus  # noqa: PLC0415
 
     lane_actor = WriteActorInput(lane_id=lane_id)
     if issue_kind == "review_findings":

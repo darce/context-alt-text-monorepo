@@ -7,8 +7,7 @@ from enum import StrEnum
 
 from .shared_primitives import _envelope, _resolve_task_ref, _row_to_dict
 from .shared_schema import _get_db_connection
-from .shared_write_context import WriteActor, _resolve_write_actor
-from .shared_write_context import _validate_and_expand_commit_sha
+from .shared_write_context import WriteActor, _resolve_write_actor, _validate_and_expand_commit_sha
 
 DEFAULT_TOUCHED_FILES_LIMIT = 20
 

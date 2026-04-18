@@ -1,18 +1,26 @@
 """Probe 4: test project-scoped skills (.codex/skills/) and user-scoped symlinks."""
+
 from __future__ import annotations
-import json, os, sys, tempfile, shutil
+
+import json
+import os
+import shutil
+import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[4]
-sys.path.insert(0, str(REPO / 'packages' / 'codex-subagent-bridge' / 'src'))
+sys.path.insert(0, str(REPO / "packages" / "codex-subagent-bridge" / "src"))
 from codex_subagent_bridge import AppServerClient
 
+
 def names_scopes(r):
-    out=[]
+    out = []
     for e in r.get("data", []):
         for s in e.get("skills", []):
             out.append((s.get("name"), s.get("scope")))
     return sorted(out)
+
 
 # Temporarily create a symlink/dir inside .codex/skills/ to test project-scope
 proj_skills = REPO / ".codex" / "skills"

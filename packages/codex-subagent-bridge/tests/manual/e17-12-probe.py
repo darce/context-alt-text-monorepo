@@ -2,6 +2,7 @@
 
 Not committed. Output is summarized into the discovery report.
 """
+
 from __future__ import annotations
 
 import json
@@ -10,7 +11,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[4]
-sys.path.insert(0, str(REPO / 'packages' / 'codex-subagent-bridge' / 'src'))
+sys.path.insert(0, str(REPO / "packages" / "codex-subagent-bridge" / "src"))
 
 from codex_subagent_bridge import AppServerClient  # noqa: E402
 
@@ -41,11 +42,14 @@ def probe():
         # Try perCwdExtraUserRoots with the repo .claude/skills path
         skills_root = REPO / ".claude" / "skills"
         try:
-            r = client._request("skills/list", {
-                "cwds": [str(REPO)],
-                "forceReload": True,
-                "perCwdExtraUserRoots": {str(REPO): [str(skills_root)]},
-            })
+            r = client._request(
+                "skills/list",
+                {
+                    "cwds": [str(REPO)],
+                    "forceReload": True,
+                    "perCwdExtraUserRoots": {str(REPO): [str(skills_root)]},
+                },
+            )
             dump("skills/list (perCwdExtraUserRoots repo .claude/skills)", r)
         except Exception as exc:
             dump("skills/list (perCwdExtraUserRoots) ERROR", str(exc))
@@ -53,10 +57,13 @@ def probe():
         # skills/config/write with an in-repo path
         target_skill = skills_root / "branch-review" / "SKILL.md"
         try:
-            r = client._request("skills/config/write", {
-                "enabled": True,
-                "path": str(target_skill),
-            })
+            r = client._request(
+                "skills/config/write",
+                {
+                    "enabled": True,
+                    "path": str(target_skill),
+                },
+            )
             dump("skills/config/write (branch-review)", r)
         except Exception as exc:
             dump("skills/config/write ERROR", str(exc))

@@ -1,10 +1,14 @@
 """E17-12 Slice 1 probe (round 2): retry perCwdExtraUserRoots with sequence shape."""
+
 from __future__ import annotations
-import json, os, sys
+
+import json
+import os
+import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[4]
-sys.path.insert(0, str(REPO / 'packages' / 'codex-subagent-bridge' / 'src'))
+sys.path.insert(0, str(REPO / "packages" / "codex-subagent-bridge" / "src"))
 
 from codex_subagent_bridge import AppServerClient
 
@@ -36,50 +40,69 @@ def probe():
 
         # Shape A: list of paths (no cwd key)
         try:
-            r = client._request("skills/list", {
-                "cwds": [str(REPO)],
-                "forceReload": True,
-                "perCwdExtraUserRoots": [skills_root],
-            })
+            r = client._request(
+                "skills/list",
+                {
+                    "cwds": [str(REPO)],
+                    "forceReload": True,
+                    "perCwdExtraUserRoots": [skills_root],
+                },
+            )
             dump("A: perCwdExtraUserRoots=[path]", name_list(r))
         except Exception as exc:
             dump("A ERROR", str(exc))
 
         # Shape B: list of {cwd, roots}
         try:
-            r = client._request("skills/list", {
-                "cwds": [str(REPO)],
-                "forceReload": True,
-                "perCwdExtraUserRoots": [{"cwd": str(REPO), "roots": [skills_root]}],
-            })
+            r = client._request(
+                "skills/list",
+                {
+                    "cwds": [str(REPO)],
+                    "forceReload": True,
+                    "perCwdExtraUserRoots": [{"cwd": str(REPO), "roots": [skills_root]}],
+                },
+            )
             dump("B: [{cwd,roots:[path]}]", name_list(r))
         except Exception as exc:
             dump("B ERROR", str(exc))
 
         # Shape C: list of {cwd, extraUserRoots}
         try:
-            r = client._request("skills/list", {
-                "cwds": [str(REPO)],
-                "forceReload": True,
-                "perCwdExtraUserRoots": [{"cwd": str(REPO), "extraUserRoots": [skills_root]}],
-            })
+            r = client._request(
+                "skills/list",
+                {
+                    "cwds": [str(REPO)],
+                    "forceReload": True,
+                    "perCwdExtraUserRoots": [{"cwd": str(REPO), "extraUserRoots": [skills_root]}],
+                },
+            )
             dump("C: [{cwd,extraUserRoots}]", name_list(r))
         except Exception as exc:
             dump("C ERROR", str(exc))
 
         # Shape D: top-level extraUserRoots
         try:
-            r = client._request("skills/list", {
-                "cwds": [str(REPO)],
-                "forceReload": True,
-                "extraUserRoots": [skills_root],
-            })
+            r = client._request(
+                "skills/list",
+                {
+                    "cwds": [str(REPO)],
+                    "forceReload": True,
+                    "extraUserRoots": [skills_root],
+                },
+            )
             dump("D: extraUserRoots=[path]", name_list(r))
         except Exception as exc:
             dump("D ERROR", str(exc))
 
         # E: Inspect checked-in protocol fixture if available
-        fixture = REPO / 'packages' / 'codex-subagent-bridge' / 'tests' / 'fixtures' / 'codex_app_server_protocol.v2.schemas.json'
+        fixture = (
+            REPO
+            / "packages"
+            / "codex-subagent-bridge"
+            / "tests"
+            / "fixtures"
+            / "codex_app_server_protocol.v2.schemas.json"
+        )
         if fixture.exists():
             schema = json.loads(fixture.read_text())
             for key in ("skills/list", "skills/config/write"):

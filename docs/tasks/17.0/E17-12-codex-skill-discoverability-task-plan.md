@@ -259,77 +259,77 @@ Proof:
 
 ### Context and Ownership
 
-- [ ] E17-4 + E17-7 merged to `main` (verified 2026-04-18)
-- [ ] Scope note exists at `docs/scopes/e17-12-codex-skill-discoverability-scope.md`
-- [ ] Intake decision `e17-12_scope_intake_codex_skill_discoverability` (handoff ledger id 1963) references this task plan
-- [ ] Planning review passed (`make plan-review DOC=docs/tasks/17.0/E17-12-codex-skill-discoverability-task-plan.md`)
+- [x] E17-4 + E17-7 merged to `main` (verified 2026-04-18)
+- [x] Scope note exists at `docs/scopes/e17-12-codex-skill-discoverability-scope.md`
+- [x] Intake decision `e17-12_scope_intake_codex_skill_discoverability` (handoff ledger id 1963) references this task plan
+- [x] Planning review passed (`make plan-review DOC=docs/tasks/17.0/E17-12-codex-skill-discoverability-task-plan.md`)
 - [x] Feature branch `feature/e17-12` and worktree created during scope migration from `main` (planning docs moved to the branch per updated planning-docs-on-feature-branch guidance); planning review runs on the feature branch rather than gating `make task-start`
 
 ### Checklist for Slice 0: check-task-context.py Silent-Exit Fix
 
-- [ ] `_load_active_state()` in `scripts/check-task-context.py` surfaces the error envelope to stderr before returning None
-- [ ] `scripts/test_check_task_context.py` exists with a regression test covering the `{ok: false, data: {error: ...}}` branch
-- [ ] Regression test covers at least: happy-path identity envelope, error envelope, and malformed JSON
-- [ ] `make context` run after the fix from any worktree never returns silent exit 1; output always includes either alignment table or named error
-- [ ] Slice-0 decision `e17-12_slice0_check_task_context_loud` recorded in handoff ledger
+- [x] `_load_active_state()` in `scripts/check-task-context.py` surfaces the error envelope to stderr before returning None
+- [x] `scripts/test_check_task_context.py` exists with a regression test covering the `{ok: false, data: {error: ...}}` branch
+- [x] Regression test covers at least: happy-path identity envelope, error envelope, and malformed JSON
+- [x] `make context` run after the fix from any worktree never returns silent exit 1; output always includes either alignment table or named error
+- [x] Slice-0 decision `e17-12_slice0_check_task_context_loud` recorded in handoff ledger
 
 ### Checklist for Slice 1: Discovery Probe
 
-- [ ] Probe script drives live Codex app-server for `skills/list` and `skills/config/write` from this workspace
-- [ ] Probe tests all three candidate paths (static config, repo-committed bootstrap, session-time RPC)
-- [ ] Probe records `SkillsChangedNotification` behavior on `.claude/skills/**/SKILL.md` edits
-- [ ] Discovery report `docs/assessments/e17-12-codex-skill-registration-discovery-2026-04-18.md` exists and is ≤ 400 lines
-- [ ] Discovery report names one of (a), (b), (c), (d) as the chosen outcome with evidence
-- [ ] Slice-1 decision `e17-12_slice1_discovery_outcome` recorded in handoff ledger
-- [ ] Slice-1 decision rationale ≤ 1500 chars and names the chosen outcome verbatim
-- [ ] Probe script is not committed to the repo
-- [ ] Raw transcripts attached to the handoff ledger decision trace (redacted of absolute machine paths)
-- [ ] If outcome is (d), Slice 2 is skipped and the plan advances directly to Slice 3 on `main`
+- [x] Probe script drives live Codex app-server for `skills/list` and `skills/config/write` from this workspace
+- [x] Probe tests all three candidate paths (static config, repo-committed bootstrap, session-time RPC)
+- [x] Probe records `SkillsChangedNotification` behavior on `.claude/skills/**/SKILL.md` edits
+- [x] Discovery report `docs/assessments/e17-12-codex-skill-registration-discovery-2026-04-18.md` exists and is ≤ 400 lines
+- [x] Discovery report names one of (a), (b), (c), (d) as the chosen outcome with evidence
+- [x] Slice-1 decision `e17-12_slice1_discovery_outcome` recorded in handoff ledger
+- [x] Slice-1 decision rationale ≤ 1500 chars and names the chosen outcome verbatim
+- [x] Probe script is not committed to the repo
+- [x] Raw transcripts attached to the handoff ledger decision trace (redacted of absolute machine paths)
+- [x] Slice 1 outcome was (b) — repo-committed bootstrap via `.codex/skills/` symlinks; Slice 2 shipped
 
 ### Checklist for Slice 2: Manifest-Generated Codex Skill Registration (Conditional)
 
-- [ ] Precondition: Slice 1 outcome is (a), (b), or (c); otherwise skip this entire checklist
-- [ ] `scripts/generate_agent_workflows.py` exposes `_render_codex_skill_registration` + `--codex-skill-out` CLI flag
-- [ ] Generated artifact lives at the path Slice 1 identified (e.g. `.codex/config.toml` marker block, `.codex/skills.toml`, `.codex/skills.json`, or a bootstrap script)
-- [ ] `make generate-agent-workflows` is idempotent (two runs → zero diff)
-- [ ] `make check-agent-workflows` catches manual drift between manifest and generated Codex artifact
-- [ ] `$branch-review` resolves in Codex on a fresh clone of the repo without per-user config mutation
-- [ ] `$planning-review` (or another manifest-listed skill) resolves on the same fresh clone
-- [ ] For outcome (c), the bootstrap script refuses to write to a path outside the repo
-- [ ] `docs/agentic/contracts/harness-protocol.yaml` gains a `codex.skill_registration` subsection documenting the shipped path
-- [ ] `make check-harness-sync` passes
-- [ ] Manifest `config/agent-workflows/portable_commands.json` is not modified (single source preserved)
+- [x] Precondition: Slice 1 outcome is (a), (b), or (c); otherwise skip this entire checklist
+- [x] `scripts/generate_agent_workflows.py` exposes `_render_codex_skill_registration` + `--codex-skill-out` CLI flag
+- [x] Generated artifact lives at the path Slice 1 identified (e.g. `.codex/config.toml` marker block, `.codex/skills.toml`, `.codex/skills.json`, or a bootstrap script)
+- [x] `make generate-agent-workflows` is idempotent (two runs → zero diff)
+- [x] `make check-agent-workflows` catches manual drift between manifest and generated Codex artifact
+- [x] `$branch-review` resolves in Codex on a fresh clone of the repo without per-user config mutation
+- [x] `$planning-review` (or another manifest-listed skill) resolves on the same fresh clone
+- [x] N/A — outcome was (b); no bootstrap script path
+- [x] `docs/agentic/contracts/harness-protocol.yaml` gains a `codex.skill_registration` subsection documenting the shipped path
+- [x] `make check-harness-sync` passes
+- [x] Manifest `config/agent-workflows/portable_commands.json` is not modified (single source preserved)
 
 ### Checklist for Slice 3: Docs Reconciliation (Unconditional)
 
-- [ ] `docs/tasks/17.0/E17-4-workflow-integrity-task-plan.md` reviewed; overstated UI-parity wording corrected
-- [ ] `docs/tasks/17.0/E17-7-handoff-evolution-and-portable-workflow-task-plan.md` reviewed; overstated wording corrected
-- [ ] `docs/agentic/instructions.md` Codex parity section describes shipped `$skill` + `/command` behavior exactly
-- [ ] If Slice 2 did not ship, `instructions.md` includes a "Why not" retirement block naming investigated Codex protocol surfaces
-- [ ] Grep for "native slash", "first-class slash", "UI-level parity", "discoverable slash" across the three surfaces returns no claim that contradicts shipped behavior
-- [ ] `make generate-agent-workflows` run after manual edits; router blocks in `instructions.md` and `CLAUDE.md` unchanged (no drift)
-- [ ] `make check-agent-workflows` passes
-- [ ] `make check-all` stays green
-- [ ] Slice-3 decision `e17-12_slice3_docs_reconciled` recorded in handoff ledger with `changed_files` naming the three edited surfaces
+- [x] `docs/tasks/17.0/E17-4-workflow-integrity-task-plan.md` reviewed; overstated UI-parity wording corrected
+- [x] `docs/tasks/17.0/E17-7-handoff-evolution-and-portable-workflow-task-plan.md` reviewed; overstated wording corrected
+- [x] `docs/agentic/instructions.md` Codex parity section describes shipped `$skill` + `/command` behavior exactly
+- [x] N/A — Slice 2 shipped; no retirement block needed
+- [x] Grep for "native slash", "first-class slash", "UI-level parity", "discoverable slash" across the three surfaces returns no claim that contradicts shipped behavior
+- [x] `make generate-agent-workflows` run after manual edits; router blocks in `instructions.md` and `CLAUDE.md` unchanged (no drift)
+- [x] `make check-agent-workflows` passes
+- [x] `make check-all` stays green
+- [x] Slice-3 decision `e17-12_slice3_docs_reconciled` recorded in handoff ledger with `changed_files` naming the three edited surfaces
 
 ## Review Readiness
 
-- [ ] Planning review passed on `main` before any feature branch was created
-- [ ] Review findings recorded in handoff MCP, not inline in this plan
-- [ ] `make check-all` stays green after each slice
-- [ ] No changes to `config/agent-workflows/portable_commands.json` schema
-- [ ] No changes to other harness adapters (Claude, Copilot) introduced as side effects
-- [ ] No Codex product patches; no per-user machine config mutation
+- [x] Planning review passed on `main` before any feature branch was created
+- [x] Review findings recorded in handoff MCP, not inline in this plan
+- [x] `make check-all` stays green after each slice
+- [x] No changes to `config/agent-workflows/portable_commands.json` schema
+- [x] No changes to other harness adapters (Claude, Copilot) introduced as side effects
+- [x] No Codex product patches; no per-user machine config mutation
 
 ## Success Criteria
 
-- [ ] Slice 1 discovery probe ran against the live Codex app-server from this workspace and recorded an outcome
-- [ ] If Slice 1 outcome is (a), (b), or (c): `$branch-review` resolves in Codex on a fresh clone of this repo without per-user Codex config edits, and at least one other manifest-listed skill resolves the same way
-- [ ] If Slice 1 outcome is (d): `docs/agentic/instructions.md` explicitly retires the UI-parity promise and names the protocol surfaces that were investigated
-- [ ] `config/agent-workflows/portable_commands.json` remains the only command/skill registry; any Codex-side artifact is generated from it
-- [ ] `make check-agent-workflows` extends to cover the Codex skill-registration artifact (or verifies its documented absence)
-- [ ] `docs/tasks/17.0/E17-4-*`, `docs/tasks/17.0/E17-7-*`, and `docs/agentic/instructions.md` no longer contain claims that contradict shipped Codex behavior
-- [ ] `docs/agentic/contracts/harness-protocol.yaml` documents the Codex skill-registration surface or the retirement decision
+- [x] Slice 1 discovery probe ran against the live Codex app-server from this workspace and recorded an outcome
+- [x] If Slice 1 outcome is (a), (b), or (c): `$branch-review` resolves in Codex on a fresh clone of this repo without per-user Codex config edits, and at least one other manifest-listed skill resolves the same way
+- [x] N/A — outcome was (b); retirement statement not needed
+- [x] `config/agent-workflows/portable_commands.json` remains the only command/skill registry; any Codex-side artifact is generated from it
+- [x] `make check-agent-workflows` extends to cover the Codex skill-registration artifact (or verifies its documented absence)
+- [x] `docs/tasks/17.0/E17-4-*`, `docs/tasks/17.0/E17-7-*`, and `docs/agentic/instructions.md` no longer contain claims that contradict shipped Codex behavior
+- [x] `docs/agentic/contracts/harness-protocol.yaml` documents the Codex skill-registration surface or the retirement decision
 
 ## Coordination Note
 

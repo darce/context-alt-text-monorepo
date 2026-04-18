@@ -372,6 +372,102 @@ def test_update_review_finding_global_ambiguity_error(isolated_handoff: dict) ->
     assert "Ambiguous" in result["error"]
 
 
+def test_update_review_finding_explicit_task_ref_ignores_other_active_rows_for_branch_enforcement(
+    isolated_handoff: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit task_ref keeps branch enforcement scoped to the target finding task."""
+    monkeypatch.delenv("AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT", raising=False)
+    monkeypatch.setenv("AGENT_HANDOFF_ENFORCE_BRANCH", "1")
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="task-A",
+            objective="A",
+            status="in_progress",
+            target_branch="feature/task-a",
+        )
+    )
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="task-B",
+            objective="B",
+            status="in_progress",
+            target_branch="feature/task-b",
+        )
+    )
+    _parse(
+        mcp_server.record_review_finding(
+            session="seed",
+            finding_id="UPD-EXPLICIT-001",
+            severity="medium",
+            file_path="f.py",
+            description="explicit scope",
+            task_ref="task-B",
+            actor={"agent": "seed-agent", "branch": "feature/task-b"},
+        )
+    )
+
+    result = _parse(
+        mcp_server.update_review_finding(
+            finding_id="UPD-EXPLICIT-001",
+            task_ref="task-B",
+            status="fixed",
+            resolution_notes="Explicit task_ref should scope enforcement to task-B.",
+            actor={"agent": "test-agent", "branch": "feature/task-b"},
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["finding"]["status"] == "fixed"
+
+
+def test_update_review_finding_global_lookup_uses_finding_task_for_branch_enforcement(
+    isolated_handoff: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Global lookup enforces branch rules against the resolved finding task."""
+    monkeypatch.delenv("AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT", raising=False)
+    monkeypatch.setenv("AGENT_HANDOFF_ENFORCE_BRANCH", "1")
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="task-A",
+            objective="A",
+            status="in_progress",
+            target_branch="feature/task-a",
+        )
+    )
+    _parse(
+        mcp_server.record_review_finding(
+            session="seed",
+            finding_id="UPD-GLOBAL-BRANCH-001",
+            severity="medium",
+            file_path="f.py",
+            description="global branch enforcement",
+            task_ref="task-A",
+            actor={"agent": "seed-agent", "branch": "feature/task-a"},
+        )
+    )
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="task-B",
+            objective="B",
+            status="in_progress",
+            target_branch="feature/task-b",
+        )
+    )
+
+    with pytest.raises(BranchMismatchError, match="feature/task-a"):
+        mcp_server.update_review_finding(
+            finding_id="UPD-GLOBAL-BRANCH-001",
+            status="fixed",
+            resolution_notes="Should enforce against the finding task, not the active row.",
+            actor={"agent": "test-agent", "branch": "feature/not-task-a"},
+        )
+
+    row = _parse(mcp_server.list_review_findings(task_ref="task-A", finding_id="UPD-GLOBAL-BRANCH-001"))["findings"][0]
+    assert row["status"] == "open"
+
+
 def test_update_review_finding_raises_branch_mismatch_error_when_enforcement_enabled(
     isolated_handoff: dict,
     monkeypatch: pytest.MonkeyPatch,
@@ -458,6 +554,60 @@ def test_repair_review_finding_provenance_raises_branch_mismatch_error_when_enfo
         "findings"
     ][0]
     assert finding["branch"] == "feature/rf-repair-enforced"
+    assert finding["commit_sha"] == "abc123"
+
+
+def test_repair_review_finding_provenance_global_lookup_uses_finding_task_for_branch_enforcement(
+    isolated_handoff: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Global provenance repair enforces branch rules against the resolved finding task."""
+    monkeypatch.delenv("AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT", raising=False)
+    monkeypatch.setenv("AGENT_HANDOFF_ENFORCE_BRANCH", "1")
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="repair-A",
+            objective="A",
+            status="in_progress",
+            target_branch="feature/repair-a",
+        )
+    )
+    _parse(
+        mcp_server.record_review_finding(
+            session="seed",
+            finding_id="RF-REPAIR-GLOBAL-001",
+            severity="low",
+            file_path="docs/plan.md",
+            description="seed finding for global repair",
+            task_ref="repair-A",
+            actor={"agent": "seed-agent", "branch": "feature/repair-a", "commit_sha": "abc123"},
+        )
+    )
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="repair-B",
+            objective="B",
+            status="in_progress",
+            target_branch="feature/repair-b",
+        )
+    )
+
+    with pytest.raises(BranchMismatchError, match="feature/repair-a"):
+        mcp_server.repair_review_finding_provenance(
+            session="repair",
+            finding_id="RF-REPAIR-GLOBAL-001",
+            expected_branch="feature/repair-a",
+            expected_commit_sha="abc123",
+            new_branch="feature/repair-a-fixed",
+            new_commit_sha="def456",
+            reason="Repair original provenance for the resolved finding task.",
+            actor={"agent": "test-agent", "branch": "feature/not-repair-a"},
+        )
+
+    finding = _parse(mcp_server.list_review_findings(task_ref="repair-A", finding_id="RF-REPAIR-GLOBAL-001"))[
+        "findings"
+    ][0]
+    assert finding["branch"] == "feature/repair-a"
     assert finding["commit_sha"] == "abc123"
 
 

@@ -946,12 +946,15 @@ def switch_task(
 
     with _get_db_connection() as conn:
         ctx = _resolve_write_actor(conn, actor)
-        # switch_task targets a task that may not exist yet. Let the
-        # guard resolve the currently-active task (via workspace-path
-        # lookup) to enforce branch alignment against the pre-switch
-        # context rather than the yet-to-exist target row.
-        warnings = collect_target_context_warnings(conn, ctx)
         existing = conn.execute("SELECT * FROM handoff_state WHERE task_ref = ?", (task_ref,)).fetchone()
+        archived = None
+        if existing is None:
+            archived = conn.execute("SELECT task_ref FROM task_archives WHERE task_ref = ?", (task_ref,)).fetchone()
+        warnings = collect_target_context_warnings(
+            conn,
+            ctx,
+            task_ref=task_ref if existing is not None or archived is not None else None,
+        )
 
         # The task already has an active row; update only explicitly requested fields.
         if existing is not None:

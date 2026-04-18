@@ -3,11 +3,10 @@
 Canonical rule: resolution order for the write surface is
 (1) explicit ``task_ref`` → (2) workspace-path lookup via
 ``_resolve_workspace_handoff_row``. No ``WHERE id = 1`` sentinel
-fallback. When resolution fails, ``_resolve_task_ref`` raises
-``UnresolvedTaskContextError``; the drift-check guard
-``collect_target_context_warnings`` is best-effort and returns ``[]``
-(no raise) so legitimate cross-task operations (global finding
-lookups, merge) are not rejected.
+fallback. When resolution fails, both ``_resolve_task_ref`` and the
+drift-check guard ``collect_target_context_warnings`` raise
+``UnresolvedTaskContextError`` so write surfaces fail closed instead
+of binding to an unrelated task.
 
 Covers three guarantees:
 
@@ -20,8 +19,8 @@ B. ``_resolve_task_ref`` promotes that ambiguity into
    ``UnresolvedTaskContextError`` (a ``ValueError`` subclass), giving
    callers a single canonical exception type.
 
-C. ``collect_target_context_warnings`` does NOT raise on ambiguous
-   no-task-ref input — it returns ``[]`` so cross-task ops proceed.
+C. ``collect_target_context_warnings`` also raises
+    ``UnresolvedTaskContextError`` on ambiguous no-task-ref input.
 """
 
 from __future__ import annotations
@@ -32,7 +31,7 @@ from pathlib import Path
 import pytest
 
 import agent_handoff_mcp
-from agent_handoff_mcp import RuntimeConfig, configure_runtime
+from agent_handoff_mcp import RuntimeConfig, UnresolvedTaskContextError, configure_runtime
 from agent_handoff_mcp.core import ResolvedWriteContext
 from agent_handoff_mcp.shared_primitives import _resolve_workspace_handoff_row
 from agent_handoff_mcp.shared_write_context import collect_target_context_warnings
@@ -74,16 +73,15 @@ def test_unresolved_task_context_error_exported_from_package_root() -> None:
     assert issubclass(UnresolvedTaskContextError, ValueError)
 
 
-def test_guard_returns_empty_when_no_task_ref_and_no_workspace_match(
+def test_guard_raises_unresolved_when_no_task_ref_and_no_workspace_match(
     tmp_path: Path,
 ) -> None:
-    """Drift-check guard tolerates ambiguous no-task-ref input.
+    """Drift-check guard fails closed on ambiguous no-task-ref input.
 
     Two rows, neither with a cwd-matching ``target_worktree_path``.
     The guard delegates to ``_resolve_workspace_handoff_row`` which
-    raises ambiguity; the guard swallows the raise and returns ``[]``
-    so cross-task operations (e.g. global finding lookup) proceed.
-    The fail-closed contract lives in ``_resolve_task_ref`` instead.
+    raises ambiguity, and the guard promotes that into the canonical
+    ``UnresolvedTaskContextError``.
     """
     conn = _configured_conn(tmp_path)
     try:
@@ -109,7 +107,8 @@ def test_guard_returns_empty_when_no_task_ref_and_no_workspace_match(
             commit_sha="abc123",
             lane_id=None,
         )
-        assert collect_target_context_warnings(conn, ctx) == []
+        with pytest.raises(UnresolvedTaskContextError, match="Ambiguous active task"):
+            collect_target_context_warnings(conn, ctx)
     finally:
         conn.close()
 
@@ -127,7 +126,6 @@ def test_resolve_task_ref_raises_unresolved_on_ambiguity(
     canonical ``UnresolvedTaskContextError`` (a ``ValueError``
     subclass).
     """
-    from agent_handoff_mcp import UnresolvedTaskContextError
     from agent_handoff_mcp.shared_primitives import _resolve_task_ref
 
     conn = _configured_conn(tmp_path)

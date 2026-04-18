@@ -77,6 +77,19 @@ recognition/
 - `ruff check` and `mypy` must pass
 - `assert` only for internal invariants/tests; raise explicit exceptions for request validation and production behavior
 
+## Write Caller Ordering
+
+For `agent-handoff-mcp` write paths, resolve `task_ref` before calling `collect_target_context_warnings(...)`.
+
+Correct pattern:
+
+```python
+resolved_task_ref = _resolve_task_ref(conn, task_ref)
+warnings = collect_target_context_warnings(conn, ctx, task_ref=resolved_task_ref)
+```
+
+Calling the guard first lets branch enforcement or workspace drift checks bind to the wrong task row and was the root cause of the multi-active review-finding regressions fixed in E17-11.
+
 ---
 
 ## Tooling (Ruff replaces flake8/black/isort)

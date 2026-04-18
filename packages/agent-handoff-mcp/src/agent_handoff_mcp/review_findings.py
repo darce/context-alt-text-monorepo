@@ -854,7 +854,7 @@ def update_review_finding(
         )
     with _get_db_connection() as conn:
         ctx = _resolve_write_actor(conn, actor)
-        warnings = collect_target_context_warnings(conn, ctx, task_ref=task_ref)
+        warnings: list[str] = []
         if task_ref is None:
             # Global lookup: skip active-task fallback when no task_ref provided.
             if normalized_finding_id is not None:
@@ -900,6 +900,7 @@ def update_review_finding(
                     task_ref=resolved_task_ref,
                     entity="finding",
                 )
+        warnings = collect_target_context_warnings(conn, ctx, task_ref=resolved_task_ref)
         existing_status = str(existing["status"])
         is_reopen_transition = existing_status != "open" and status == "open"
         if is_reopen_transition and normalized_reopen_reason is None:
@@ -1193,7 +1194,7 @@ def repair_review_finding_provenance(
 
     with _get_db_connection() as conn:
         ctx = _resolve_write_actor(conn, actor)
-        warnings = collect_target_context_warnings(conn, ctx, task_ref=task_ref)
+        warnings: list[str] = []
         if task_ref is None:
             rows = conn.execute(
                 "SELECT * FROM review_findings WHERE finding_id = ?", (normalized_finding_id,)
@@ -1231,6 +1232,7 @@ def repair_review_finding_provenance(
                     task_ref=resolved_task_ref,
                     entity="finding",
                 )
+        warnings = collect_target_context_warnings(conn, ctx, task_ref=resolved_task_ref)
 
         existing_branch = _normalize_optional_text(existing["branch"])
         existing_commit_sha = _normalize_optional_text(existing["commit_sha"])

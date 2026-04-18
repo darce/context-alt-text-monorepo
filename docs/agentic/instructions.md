@@ -100,6 +100,16 @@ Command map:
 
 <!-- END GENERATED: codex-command-router -->
 
+## Codex Parity
+
+The repo ships two portable invocation surfaces to Codex. Both are generated from `config/agent-workflows/portable_commands.json` by `scripts/generate_agent_workflows.py`; neither requires per-user config mutation.
+
+**`$skill` resolution** — Codex natively scans `<repo>/.codex/skills/<slug>/SKILL.md` on every `skills/list` dispatch and surfaces each entry with `scope: "repo"`. The generator emits `.codex/skills/<slug>` as a symlink to `.claude/skills/<slug>` so skill bodies stay single-sourced. Drift is gated by `make check-agent-workflows`, which asserts every portable-manifest entry has a matching symlink whose target resolves to the canonical Claude skill directory. See [../../docs/assessments/e17-12-codex-skill-registration-discovery-2026-04-18.md](../assessments/e17-12-codex-skill-registration-discovery-2026-04-18.md) for the protocol-surface evidence behind this path.
+
+**`/command` resolution** — the Codex harness has no native slash-command registry, so `/branch-review`, `/planning-review`, etc. are routed by model reading of the generator-owned router block above (BEGIN/END marker-delimited). The same block is mirrored into `CLAUDE.md`. Manual edits inside the markers are overwritten by the next `make generate-agent-workflows` run.
+
+**Deliberately not shipped**: native UI-level `/command` chips in the Codex harness. The Codex app-server advertises no capability bit for extra slash-command roots, and the only per-session register surface (`skills/list perCwdExtraUserRoots`) is per-call and does not persist. That surface is documented for diagnostic tooling only and is not wired into any hook or config. See the discovery report linked above for the full static-config + `perCwdExtraUserRoots` + `skills/config/write` sweep.
+
 ## Agent Startup Protocol
 
 Run at every session start (cold start, mid-task re-entry, lane inherit).

@@ -271,18 +271,20 @@ Proof:
 
 ## Consolidated Checklist
 
+Retroactive status note (2026-04-18): E17-9's landed dashboard guard is `lint-dashboard-txt`, and it correctly treats `DASHBOARD.txt` as canonical via a tracked-file scan. The still-open `make check-all` failure comes from `check-harness-sync` sweeping untracked `.claude/worktrees/**`, which is tracked separately from this Slice 4 guard.
+
 ### Slice 1: Parallel-Review Coordinator Skill + Portable Command
 
-- [x] Baseline fixture captured at `packages/agent-orchestrator-mcp/tests/fixtures/review_baseline.json` (serial `/branch-review` tokens + identity-response size)
+- [ ] Baseline fixture captured at `packages/agent-orchestrator-mcp/tests/fixtures/review_baseline.json` (serial `/branch-review` tokens + identity-response size; identity bytes are live, serial tokens remain provisional)
 - [x] `/review-parallel` entry exists in `portable_commands.json` with `reviewers_count` and `reviewer_prompt_template` only (no dead `merge_strategy` knob)
 - [x] Reviewer prompt templates live under `config/agent-workflows/prompts/review-parallel/` (harness-neutral path)
 - [x] `.claude/skills/review-parallel/SKILL.md` defines coordinator protocol with scoped per-reviewer `task_ref`s AND a per-harness subagent-invocation routing table (Claude Code `Agent` tool, Codex/Copilot `run_structured_turn`, external orchestrator `BackendAdapter`)
 - [x] Skill explicitly forbids calling `ClaudeCodeAdapter` (CLI subprocess) from inside an active Claude Code coordinator session
 - [x] Generated host adapters updated via `make generate-agent-workflows`
 - [x] `make check-agent-workflows` green
-- [x] Happy-path test: merged findings count equals reviewer-sum; every merged row has `merged_from` provenance
+- [ ] Happy-path test: merged findings count equals reviewer-sum; every merged row has `merged_from` provenance
 - [x] Reviewer source rows remain intact after merge (additive, not destructive)
-- [x] Coordinator-side token envelope ≤ 50% of recorded baseline for the 500-line fixture diff
+- [ ] Coordinator-side token envelope ≤ 50% of recorded baseline for the 500-line fixture diff
 
 ### Slice 2: Auto-Fix Loop Skill + Portable Command
 
@@ -291,13 +293,13 @@ Proof:
 - [x] Loop calls `get_handoff_state(sections="identity")` per iteration; never `detail="full"`
 - [x] Per-iteration exit signal is `verified_tests(passed=true, commit_sha=<HEAD>)`, not `handoff_close_check.ok`
 - [x] `handoff_close_check(enforce=True, require_fresh_tests=True, current_commit_sha=<HEAD>)` runs exactly once post-loop and passes `current_commit_sha` explicitly
-- [ ] Each iteration commits its candidate fix on the feature branch before running the test (so test provenance matches HEAD)
+- [x] Each iteration commits its candidate fix on the feature branch before running the test (so test provenance matches HEAD)
 - [x] Finalization records a canonical `<tag>_slice_complete_<task>_autofix` decision (matches grammar in development-workflow.md § Decision IDs)
 - [x] Cadence rule scoped to Claude Code: `<270` warm, `>=1200` idle, never `300`; Codex/Copilot iterate inline with equivalent MCP state
 - [x] Precondition refuses to run when `target_branch` is `main`, `master`, or unset
 - [x] Generated host adapters updated
-- [x] Per-iteration signal test passes on fixture failing test within iteration cap
-- [x] Post-loop gate test: `ok=true` with slice_complete; `ok=false` without
+- [ ] Per-iteration signal test passes on fixture failing test within iteration cap
+- [ ] Post-loop gate test: `ok=true` with slice_complete; `ok=false` without
 - [x] Bounded-reads test: iteration identity response ≤ Slice 1 baseline + 10% slack
 - [ ] Cadence test runs on Claude Code runtime; asserts inline iteration on Codex/Copilot
 - [x] Iteration-cap test: unfixable test triggers blocker path, exits non-zero, records no slice_complete
@@ -321,7 +323,7 @@ Proof:
 - [x] Wired into `make check-all`
 - [x] E17-7 Slice 4 Proof back-reference updated to point at this guard
 - [x] Guard fires on intentional `DASHBOARD.md` reintroduction in a tracked non-archive path <!-- lint-dashboard-txt: allow -->
-- [ ] `make check-all` stays green post-landing
+- [ ] `make check-all` stays green post-landing (`lint-dashboard-txt` is green; current failure is the separate `check-harness-sync` worktree-scan bug)
 
 ## Review Readiness
 
@@ -329,7 +331,7 @@ Proof:
 - [x] E17-7 Slice 4 (tool compression) merged — `b7397615`
 - [x] E17-7 Slice 5 (`review_findings.merge` + `(lane, status)` index) merged — `b7397615`
 - [x] `make check-agent-workflows` green
-- [x] `make test-handoff` green after each schema-adjacent slice
+- [ ] `make test-handoff` green after each schema-adjacent slice
 - [x] `make test-orchestrator` green after each orchestrator-adjacent slice
 
 ## Success Criteria

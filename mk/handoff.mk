@@ -6,7 +6,7 @@
 
 # Generate CURRENT_TASK.json from handoff DB
 task:
-	@$(MCP_CMD) $(MCP_STATE_ARGS) task
+	@$(MCP_CMD) $(MCP_STATE_ARGS) render-handoff --kind current_task $(if $(TASK),--task-ref "$(TASK)",)
 
 # Print full handoff state
 state:
@@ -99,7 +99,7 @@ slice-start:
 		--command "$(TEST_CMD)" \
 		--result "$(or $(RESULT),Expected failing test before implementation begins.)" \
 		--exit-code $(or $(EXIT_CODE),1) >/dev/null
-	@$(MCP_CMD) $(MCP_STATE_ARGS) task "$(TASK)" >/dev/null
+	@$(MCP_CMD) $(MCP_STATE_ARGS) render-handoff --kind current_task --task-ref "$(TASK)" >/dev/null
 	@echo "Recorded failing test gate for $(TASK)."
 
 slice-commit:

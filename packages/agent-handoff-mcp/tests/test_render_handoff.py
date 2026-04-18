@@ -144,6 +144,15 @@ def test_package_exports_include_render_handoff() -> None:
     assert "generate_dashboard_md" not in pkg.__all__
 
 
+def test_package_exports_include_load_session_and_close_slice() -> None:
+    import agent_handoff_mcp as pkg
+
+    assert hasattr(pkg, "load_session"), "load_session must be exported from the package root"
+    assert hasattr(pkg, "close_slice"), "close_slice must be exported from the package root"
+    assert "load_session" in pkg.__all__
+    assert "close_slice" in pkg.__all__
+
+
 def test_tool_registry_exposes_render_handoff_and_retires_old_names() -> None:
     registry = mcp_server._build_tool_registry()  # type: ignore[attr-defined]
     names = {entry.name for entry in registry}

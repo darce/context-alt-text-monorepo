@@ -144,6 +144,39 @@ def _configure_runtime() -> bool:
     return True
 
 
+def _interpret_handoff_envelope(parsed: object) -> tuple[dict | None, str | None]:
+    """Map a parsed ``get_handoff_state`` response to ``(state, error_message)``.
+
+    Returns the state dict containing ``active`` on the happy path (``error`` is
+    ``None``), or ``(None, error_message)`` on every envelope shape the caller
+    should surface instead of silently treating as "no active task". The
+    ambiguous-workspace-path failure mode (two active tasks resolving to the
+    same ``target_worktree_path``) previously fell through to ``return None``
+    with no stderr, which made ``make context`` exit 1 with empty output.
+    """
+    if not isinstance(parsed, dict):
+        return None, f"⚠ get_handoff_state returned non-dict payload: {type(parsed).__name__}"
+    if parsed.get("ok") is False:
+        data = parsed.get("data")
+        error_msg = data.get("error") if isinstance(data, dict) else None
+        if error_msg:
+            hint = ""
+            if isinstance(error_msg, str) and "Ambiguous active task" in error_msg:
+                hint = (
+                    "\n  Archive the stale task (usually a MAINT-* entry) or "
+                    "give it a distinct target_worktree_path before retrying."
+                )
+            return None, f"⚠ get_handoff_state returned an error envelope: {error_msg}{hint}"
+        return None, f"⚠ get_handoff_state returned ok=false with no error message: {parsed}"
+    data = parsed.get("data")
+    if isinstance(data, dict) and "active" in data:
+        return data, None
+    if "active" in parsed:
+        return parsed, None
+    keys = list(parsed.keys())
+    return None, f"⚠ get_handoff_state payload missing 'active' key; top-level keys: {keys}"
+
+
 def _load_active_state() -> dict | None:
     try:
         get_handoff_state = _import_handoff_attr("handoff_state", "get_handoff_state")
@@ -163,12 +196,10 @@ def _load_active_state() -> dict | None:
     except json.JSONDecodeError as exc:
         print(f"⚠ get_handoff_state returned non-JSON payload: {exc}", file=sys.stderr)
         return None
-    data = parsed.get("data") if isinstance(parsed, dict) else None
-    if isinstance(data, dict) and "active" in data:
-        return data
-    if isinstance(parsed, dict) and "active" in parsed:
-        return parsed
-    return None
+    state, err = _interpret_handoff_envelope(parsed)
+    if err is not None:
+        print(err, file=sys.stderr)
+    return state
 
 
 def main() -> int:

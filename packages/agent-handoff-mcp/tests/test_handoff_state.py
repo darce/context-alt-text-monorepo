@@ -705,6 +705,7 @@ def test_record_decision_no_warning_with_model(isolated_handoff: dict) -> None:
             operation="add",
             description="Need API key",
             actor={"agent": "agent-a"},
+            task_ref="4.12.0",
         )
     )
     blocker_id = add_resp["blocker"]["id"]
@@ -714,6 +715,7 @@ def test_record_decision_no_warning_with_model(isolated_handoff: dict) -> None:
             operation="resolve",
             blocker_id=blocker_id,
             actor={"agent": "agent-a"},
+            task_ref="4.12.0",
         )
     )
     assert resolved["ok"] is True
@@ -2887,7 +2889,11 @@ def test_set_handoff_state_keeps_prior_task_row_addressable(isolated_handoff: di
 
 
 def test_set_handoff_state_revision_conflict_preserves_current_sentinel(isolated_handoff: dict) -> None:
-    """A failed non-current-task update must not orphan the id=1 sentinel."""
+    """E17-11: revision conflict on one task leaves every other row untouched.
+
+    Under the greenfield multi-active-task model every row has ``id = NULL``;
+    a failed update on task B must not orphan or mutate task A's row.
+    """
     _parse(
         mcp_server.set_handoff_state(
             task_ref="sentinel-a",
@@ -2929,9 +2935,9 @@ def test_set_handoff_state_revision_conflict_preserves_current_sentinel(isolated
     assert conflicted["error"] == "Revision conflict."
 
     with sqlite3.connect(isolated_handoff["db_path"]) as conn:
-        sentinel_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
-    assert sentinel_row is not None
-    assert sentinel_row[0] == "sentinel-a"
+        rows = conn.execute("SELECT task_ref, id FROM handoff_state ORDER BY task_ref").fetchall()
+    assert [r[0] for r in rows] == ["sentinel-a", "sentinel-b"]
+    assert [r[1] for r in rows] == [None, None]
 
 
 def test_get_handoff_state_omitted_task_ref_prefers_matching_worktree(

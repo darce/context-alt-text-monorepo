@@ -15,7 +15,6 @@ from ._shared import (
     WriteActor,
     _envelope,
     _fetch_handoff_rows,
-    _get_current_handoff_row,
     _get_db_connection,
     _get_handoff_row_for_task,
     _normalize_optional_text,
@@ -49,7 +48,6 @@ def set_handoff_state(
         )
     with _get_db_connection() as conn:
         ctx = _resolve_write_actor(conn, actor)
-        current = _get_current_handoff_row(conn)
         task_row = _get_handoff_row_for_task(conn, task_ref)
         if task_row is None:
             if objective is None:
@@ -59,14 +57,12 @@ def set_handoff_state(
                     task_ref=task_ref,
                     data={"error": "objective is required when creating a new handoff state."},
                 )
-            if current is not None:
-                conn.execute("UPDATE handoff_state SET id = NULL WHERE id = 1")
             conn.execute(
                 """
                 INSERT INTO handoff_state (
                     id, task_ref, objective, focus, status, target_branch, target_worktree_path,
                     revision, updated_at, updated_by, updated_branch, updated_commit_sha
-                ) VALUES (1, ?, ?, ?, ?, ?, ?, 0, datetime('now'), ?, ?, ?)
+                ) VALUES (NULL, ?, ?, ?, ?, ?, ?, 0, datetime('now'), ?, ?, ?)
                 """,
                 (
                     task_ref,
@@ -158,15 +154,6 @@ def set_handoff_state(
                     "expected_revision": expected_revision,
                     "current_revision": int(latest["revision"]) if latest else None,
                 },
-            )
-        if current is None or str(current["task_ref"]) != task_ref:
-            conn.execute(
-                "UPDATE handoff_state SET id = NULL WHERE id = 1 AND task_ref <> ?",
-                (task_ref,),
-            )
-            conn.execute(
-                "UPDATE handoff_state SET id = 1 WHERE task_ref = ?",
-                (task_ref,),
             )
         active = _row_to_dict(_get_handoff_row_for_task(conn, task_ref))
         if active is None:
@@ -267,12 +254,12 @@ def get_handoff_state(
         return requested_sections is None or section in requested_sections
 
     with _get_db_connection() as conn:
-        current_row = _get_current_handoff_row(conn)
-        if current_row is None and task_ref is None:
-            return _envelope(
-                ok=True, tool="get_handoff_state", data={"active": None, "message": "No active handoff state."}
-            )
         if task_ref is None:
+            any_row = conn.execute("SELECT 1 FROM handoff_state LIMIT 1").fetchone()
+            if any_row is None:
+                return _envelope(
+                    ok=True, tool="get_handoff_state", data={"active": None, "message": "No active handoff state."}
+                )
             try:
                 resolved_row = _resolve_workspace_handoff_row(conn)
             except ValueError as exc:

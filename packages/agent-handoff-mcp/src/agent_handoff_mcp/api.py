@@ -1724,7 +1724,12 @@ def generate_current_task_md(
     with core._get_db_connection() as conn:
         resolved_task_ref = task_ref
         if resolved_task_ref is None:
-            active_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
+            from .shared_primitives import _resolve_workspace_handoff_row  # noqa: PLC0415
+
+            try:
+                active_row = _resolve_workspace_handoff_row(conn)
+            except ValueError:
+                active_row = None
             resolved_task_ref = (
                 str(active_row["task_ref"]) if active_row is not None and active_row["task_ref"] else None
             )
@@ -1888,7 +1893,8 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
             "You are connected to the Agent Handoff MCP server. "
             "Use these tools for task state, review findings, exports, and close checks.\n\n"
             "## Task State Model\n\n"
-            "One task is active at a time (stored in handoff_state id=1). "
+            "Multiple tasks can be active concurrently. Live handoff_state rows are keyed by task_ref, "
+            "and callers that omit task_ref are resolved from the current workspace path. "
             "Completed tasks are archived into task_archives with a status snapshot. "
             "DASHBOARD.txt renders the human-readable active-task view plus the cross-task dashboard, "
             "while CURRENT_TASK.json stores the machine-readable active-task snapshot. "

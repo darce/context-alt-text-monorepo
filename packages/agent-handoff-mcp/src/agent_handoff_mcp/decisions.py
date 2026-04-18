@@ -107,7 +107,7 @@ def record_decision(
             warnings.append(
                 "actor is missing model/model_label; decision will render without model identity. Pass actor.model and actor.model_label for accurate provenance."
             )
-        warnings.extend(collect_target_context_warnings(conn, ctx))
+        warnings.extend(collect_target_context_warnings(conn, ctx, task_ref=resolved_task_ref))
         changed_files_json = json.dumps(normalized_changed_files) if normalized_changed_files is not None else "[]"
         cur = conn.execute(
             """
@@ -173,7 +173,7 @@ def update_next_actions(
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         ctx = _resolve_write_actor(conn, actor)
-        warnings = collect_target_context_warnings(conn, ctx)
+        warnings = collect_target_context_warnings(conn, ctx, task_ref=resolved_task_ref)
         task_revision = _current_task_revision(conn, resolved_task_ref)
         if operation == "add":
             if not action:
@@ -358,7 +358,7 @@ def record_test_result(
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         ctx = _resolve_write_actor(conn, actor)
-        warnings = collect_target_context_warnings(conn, ctx)
+        warnings = collect_target_context_warnings(conn, ctx, task_ref=resolved_task_ref)
         task_revision = _current_task_revision(conn, resolved_task_ref)
         cur = conn.execute(
             """
@@ -421,7 +421,7 @@ def report_blocker(
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         ctx = _resolve_write_actor(conn, actor)
-        warnings = collect_target_context_warnings(conn, ctx)
+        warnings = collect_target_context_warnings(conn, ctx, task_ref=resolved_task_ref)
         task_revision = _current_task_revision(conn, resolved_task_ref)
         if operation == "add":
             if not description:
@@ -660,7 +660,12 @@ def handoff_close_check(
         )
     require_current_commit_summary = bool(normalized_current_commit_sha)
     with _get_db_connection() as conn:
-        active_row = conn.execute("SELECT task_ref FROM handoff_state WHERE id = 1").fetchone()
+        from .shared_primitives import _resolve_workspace_handoff_row  # noqa: PLC0415
+
+        try:
+            active_row = _resolve_workspace_handoff_row(conn)
+        except ValueError:
+            active_row = None
         if task_ref is None:
             if active_row is None:
                 if allow_no_active_task:

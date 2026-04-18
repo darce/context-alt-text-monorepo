@@ -77,6 +77,19 @@ class BranchMismatchError(ValueError):
         )
 
 
+class UnresolvedTaskContextError(ValueError):
+    """Raised when a write path cannot resolve an active task_ref.
+
+    The canonical resolution order is: (1) an explicit ``task_ref``
+    parameter, (2) a workspace-path lookup via
+    ``_resolve_workspace_handoff_row``. When neither resolves, callers
+    must fail closed rather than silently falling back to a sentinel
+    row (E17-11). Callers that hit this error should either pass
+    ``task_ref=`` explicitly, set ``AGENT_HANDOFF_TASK_REF``, or run
+    from the task's registered ``target_worktree_path``.
+    """
+
+
 def _commit_sha_validation_enabled() -> bool:
     """Return ``False`` if the test bypass env var is set, else ``True``."""
     bypass = os.environ.get("AGENT_HANDOFF_SKIP_SHA_VALIDATION", "").strip().lower()
@@ -441,25 +454,49 @@ def collect_target_context_warnings(
     process working directory. Mismatches are returned as warning strings that
     callers can pass through to `_envelope(warnings=...)`.
 
-    By default the check is non-fatal: it surfaces drift without rejecting the
-    write, so cross-agent handoff loops still record state. When
-    AGENT_HANDOFF_ENFORCE_BRANCH is truthy and
+    By default the check is non-fatal for branch/worktree drift: it surfaces
+    mismatches without rejecting the write, so cross-agent handoff loops still
+    record state. When AGENT_HANDOFF_ENFORCE_BRANCH is truthy and
     AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT is not, branch mismatches on
     enforceable target branches raise BranchMismatchError before the write is
     applied. Worktree-path drift remains warning-only.
+
+    Task resolution itself is fail-closed. When no explicit ``task_ref`` is
+    provided, the guard delegates to ``_resolve_workspace_handoff_row`` and
+    raises UnresolvedTaskContextError if the workspace cannot be resolved to a
+    single active row.
     """
-    active_sql = "SELECT task_ref, target_branch, target_worktree_path FROM handoff_state WHERE id = 1"
-    active_params: tuple[object, ...] = ()
     normalized_task_ref = _normalize_optional_text(task_ref)
-    if normalized_task_ref is not None:
-        active_sql = "SELECT task_ref, target_branch, target_worktree_path FROM handoff_state WHERE task_ref = ?"
-        active_params = (normalized_task_ref,)
     try:
-        active = conn.execute(active_sql, active_params).fetchone()
+        if normalized_task_ref is not None:
+            active = conn.execute(
+                "SELECT task_ref, target_branch, target_worktree_path FROM handoff_state WHERE task_ref = ?",
+                (normalized_task_ref,),
+            ).fetchone()
+        else:
+            # E17-11 Slice 3a: no sentinel `WHERE id = 1` fallback.
+            # Delegate to workspace-path resolution and fail closed when
+            # ambiguity or an unregistered cwd leaves the active row
+            # unresolved.
+            from .shared_primitives import _resolve_workspace_handoff_row
+
+            try:
+                active = _resolve_workspace_handoff_row(conn)
+            except ValueError as exc:
+                raise UnresolvedTaskContextError(str(exc)) from exc
     except sqlite3.OperationalError:
         # Schema is older than this build (missing column). Skip the check.
         return []
+    if active is None and normalized_task_ref is None:
+        raise UnresolvedTaskContextError(
+            "No active task in handoff_state. Call set_handoff_state first or pass task_ref explicitly."
+        )
     if active is None:
+        # No matching row to compare against: either an explicit task_ref
+        # pointed at a row that does not exist, or the handoff_state table
+        # is empty (bootstrap / test-isolation). Nothing to check.
+        # Ambiguous multi-row cases are handled above by the resolver
+        # raising UnresolvedTaskContextError.
         return []
     warnings: list[str] = []
     resolved_task_ref = normalized_task_ref
@@ -523,9 +560,12 @@ def _resolve_write_actor(
     explicit_commit = _normalize_optional_text(actor.get("commit_sha")) if actor else None
     explicit_lane = _normalize_optional_text(actor.get("lane_id")) if actor else None
     default_agent = _normalize_optional_text(os.environ.get("AGENT_HANDOFF_DEFAULT_AGENT")) or "codex"
-    active = conn.execute(
-        "SELECT updated_by, updated_branch, updated_commit_sha FROM handoff_state WHERE id = 1"
-    ).fetchone()
+    from .shared_primitives import _resolve_workspace_handoff_row  # noqa: PLC0415
+
+    try:
+        active = _resolve_workspace_handoff_row(conn)
+    except ValueError:
+        active = None
     active_agent = _normalize_optional_text(active["updated_by"]) if active is not None else None
     active_branch = _normalize_optional_text(active["updated_branch"]) if active is not None else None
     active_commit = _normalize_optional_text(active["updated_commit_sha"]) if active is not None else None

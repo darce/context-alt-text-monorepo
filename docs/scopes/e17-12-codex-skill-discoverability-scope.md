@@ -24,7 +24,7 @@ Work is structured as four slices (0 is prerequisite infrastructure uncovered du
 
 ## Success Criteria
 
-- `$branch-review` (and at least one other portable skill) resolves in the Codex harness against the repo-local `.claude/skills/` directory without per-user Codex config edits.
+- `$branch-review` (and at least one other portable skill, canonically `$auto-fix` — the most recently generated entry in `portable_commands.json` and the one that exposed the gap when a user reported `"/auto-fix isn't a recognized command here. Some commands only work in the Claude Code terminal."`) resolves in the Codex harness against the repo-local `.claude/skills/` directory without per-user Codex config edits.
 - `docs/tasks/17.0/E17-4-*`, `docs/tasks/17.0/E17-7-*`, and `docs/agentic/instructions.md` accurately describe Codex parity — no overstated "UI-level discoverability" claims.
 - `config/agent-workflows/portable_commands.json` remains the only registry; any Codex-side artifact that ships is generated from it (`scripts/generate_agent_workflows.py`), not handwritten.
 - `make check-agent-workflows` continues to verify Claude, VS Code/Copilot, and Codex outputs together.

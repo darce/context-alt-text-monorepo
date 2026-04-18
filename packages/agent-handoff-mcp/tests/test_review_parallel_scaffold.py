@@ -37,14 +37,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 MANIFEST_PATH = REPO_ROOT / "config" / "agent-workflows" / "portable_commands.json"
 SKILL_PATH = REPO_ROOT / ".claude" / "skills" / "review-parallel" / "SKILL.md"
 PROMPT_DIR = REPO_ROOT / "config" / "agent-workflows" / "prompts" / "review-parallel"
-BASELINE_PATH = (
-    REPO_ROOT
-    / "packages"
-    / "agent-orchestrator-mcp"
-    / "tests"
-    / "fixtures"
-    / "review_baseline.json"
-)
+BASELINE_PATH = REPO_ROOT / "packages" / "agent-orchestrator-mcp" / "tests" / "fixtures" / "review_baseline.json"
 
 
 @pytest.fixture(scope="module")

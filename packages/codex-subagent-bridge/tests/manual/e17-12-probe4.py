@@ -1,12 +1,17 @@
-"""Probe 4: test project-scoped skills (.codex/skills/) and user-scoped symlinks."""
+"""Probe 4: test project-scoped skills (.codex/skills/) and user-scoped symlinks.
+
+E17-12-BR-03: always create a dedicated temporary `probe-test` entry under
+`.codex/skills/` regardless of whether the parent directory already exists,
+and always clean it up. Avoids silently skipping the discovery check in the
+shipped-repo condition where `.codex/skills/` already contains generated
+symlinks.
+"""
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import sys
-import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[4]
@@ -22,17 +27,20 @@ def names_scopes(r):
     return sorted(out)
 
 
-# Temporarily create a symlink/dir inside .codex/skills/ to test project-scope
 proj_skills = REPO / ".codex" / "skills"
-created = False
-if not proj_skills.exists():
-    proj_skills.mkdir(parents=True)
-    (proj_skills / "probe-test").mkdir()
-    (proj_skills / "probe-test" / "SKILL.md").write_text(
-        "---\nname: probe-test\ndescription: E17-12 project-scope probe. Remove after.\n---\n\n# Probe Test\nTemporary.\n"
+proj_skills.mkdir(parents=True, exist_ok=True)
+
+probe_dir = proj_skills / "probe-test"
+if probe_dir.exists() or probe_dir.is_symlink():
+    raise SystemExit(
+        f"Refusing to overwrite pre-existing {probe_dir}; remove it and rerun."
     )
-    created = True
-    print(f"Created temporary {proj_skills}/probe-test")
+
+probe_dir.mkdir()
+(probe_dir / "SKILL.md").write_text(
+    "---\nname: probe-test\ndescription: E17-12 project-scope probe. Remove after.\n---\n\n# Probe Test\nTemporary.\n"
+)
+print(f"Created temporary {probe_dir}")
 
 client = AppServerClient(cwd=str(REPO), env=dict(os.environ))
 client.start()
@@ -42,6 +50,5 @@ try:
     print("project-scope probe:", names_scopes(r))
 finally:
     client.close()
-    if created:
-        shutil.rmtree(proj_skills)
-        print(f"Removed {proj_skills}")
+    shutil.rmtree(probe_dir)
+    print(f"Removed {probe_dir}")

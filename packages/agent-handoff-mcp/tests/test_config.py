@@ -25,13 +25,13 @@ def test_runtime_config_default_tool_profile_is_all() -> None:
     assert runtime.tool_profile == "all"
 
 
-def test_runtime_config_legacy_tool_profile_override_to_core_normalizes_to_all() -> None:
+def test_runtime_config_rejects_legacy_core_tool_profile() -> None:
     root = Path("/tmp/agent-handoff").resolve()
-    runtime = RuntimeConfig.for_workspace(root, tool_profile="core")
-    assert runtime.tool_profile == "all"
+    with pytest.raises(ValueError, match="Invalid tool_profile"):
+        RuntimeConfig.for_workspace(root, tool_profile="core")
 
 
-def test_runtime_config_from_args_reads_legacy_tool_profile_env_and_normalizes_to_all() -> None:
+def test_runtime_config_from_args_rejects_legacy_tool_profile_env() -> None:
     root = Path("/tmp/agent-handoff").resolve()
 
     class FakeArgs:
@@ -42,8 +42,8 @@ def test_runtime_config_from_args_reads_legacy_tool_profile_env_and_normalizes_t
         tool_profile = None
 
     with mock.patch.dict(os.environ, {"AGENT_HANDOFF_TOOL_PROFILE": "core"}):
-        runtime = RuntimeConfig.from_args(FakeArgs())
-    assert runtime.tool_profile == "all"
+        with pytest.raises(ValueError, match="Invalid tool_profile"):
+            RuntimeConfig.from_args(FakeArgs())
 
 
 def test_runtime_config_from_args_defaults_to_all() -> None:
@@ -62,7 +62,7 @@ def test_runtime_config_from_args_defaults_to_all() -> None:
     assert runtime.tool_profile == "all"
 
 
-def test_runtime_config_from_args_cli_flag_takes_precedence_but_normalizes_to_all() -> None:
+def test_runtime_config_from_args_rejects_legacy_cli_tool_profile() -> None:
     root = Path("/tmp/agent-handoff").resolve()
 
     class FakeArgs:
@@ -73,8 +73,8 @@ def test_runtime_config_from_args_cli_flag_takes_precedence_but_normalizes_to_al
         tool_profile = "extended"
 
     with mock.patch.dict(os.environ, {"AGENT_HANDOFF_TOOL_PROFILE": "core"}):
-        runtime = RuntimeConfig.from_args(FakeArgs())
-    assert runtime.tool_profile == "all"
+        with pytest.raises(ValueError, match="Invalid tool_profile"):
+            RuntimeConfig.from_args(FakeArgs())
 
 
 def _run_git(cwd: Path, *args: str) -> None:

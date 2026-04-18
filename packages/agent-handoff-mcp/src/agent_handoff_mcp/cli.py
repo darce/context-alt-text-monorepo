@@ -486,8 +486,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--tool-profile",
         default=None,
-        choices=["all", "core", "extended"],
-        help="Legacy tool-profile selector. All launches now expose the same 17-tool surface; core/extended are accepted as deprecated aliases.",
+        choices=["all"],
+        help="Tool-profile selector. Only the unified 'all' surface is supported.",
     )
 
     subparsers = parser.add_subparsers(dest="subcommand", required=True)

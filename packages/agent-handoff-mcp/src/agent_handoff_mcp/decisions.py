@@ -12,23 +12,22 @@ import sqlite3
 from collections.abc import Sequence
 from pathlib import PurePosixPath
 
-from ._shared import (
+from .current_task_rendering import _collect_task_snapshot
+from .enums import ActionStatus, BlockerStatus, FindingStatus
+from .shared_primitives import (
     ACTION_STATUSES,
-    WriteActor,
-    _collect_task_snapshot,
     _current_task_path,
     _decision_rationale_size_warning,
     _envelope,
-    _get_db_connection,
     _has_structured_slice_summary,
     _normalize_optional_text,
     _resolve_task_ref,
-    _resolve_write_actor,
     _row_to_dict,
     _summarize_test_result,
     _validate_decision_payload,
-    collect_target_context_warnings,
 )
+from .shared_schema import _get_db_connection
+from .shared_write_context import WriteActor, _resolve_write_actor, collect_target_context_warnings
 from .slice_decision import classify_decision_id, is_slice_complete_decision
 
 
@@ -682,9 +681,9 @@ def handoff_close_check(
         active = snapshot["active"]
         active_task_matches = active is not None
         active_status = str(active["status"]) if active is not None else None
-        open_blockers = [row for row in snapshot["blockers"] if row.get("status") == "open"]
-        pending_actions = [row for row in snapshot["next_actions"] if row.get("status") == "pending"]
-        open_findings = [row for row in snapshot["review_findings"] if row.get("status") == "open"]
+        open_blockers = [row for row in snapshot["blockers"] if row.get("status") == BlockerStatus.OPEN]
+        pending_actions = [row for row in snapshot["next_actions"] if row.get("status") == ActionStatus.PENDING]
+        open_findings = [row for row in snapshot["review_findings"] if row.get("status") == FindingStatus.OPEN]
         fresh_test_count, current_commit_slice_decisions, structured_current_commit_decisions = (
             _collect_commit_verification_data(
                 conn,

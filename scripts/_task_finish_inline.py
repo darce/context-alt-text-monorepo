@@ -37,9 +37,8 @@ from agent_handoff_mcp import (
     RuntimeConfig,
     archive_task_state,
     configure_runtime,
-    generate_current_task_md,
-    generate_dashboard_md,
     get_handoff_state,
+    render_handoff,
     update_task_status,
 )
 
@@ -99,13 +98,13 @@ def main() -> int:
     if not archived.get("ok"):
         print(f"\u26a0 archive_task_state returned ok=False: {archived}", file=sys.stderr)
 
-    regen = generate_current_task_md()
+    regen = render_handoff(kind="current_task")
     if not regen.get("ok"):
-        print(f"\u26a0 generate_current_task_md returned ok=False: {regen}", file=sys.stderr)
+        print(f"\u26a0 render_handoff(kind='current_task') returned ok=False: {regen}", file=sys.stderr)
 
-    dash = generate_dashboard_md()
+    dash = render_handoff(kind="dashboard")
     if not dash.get("ok"):
-        print(f"\u26a0 generate_dashboard_md returned ok=False: {dash}", file=sys.stderr)
+        print(f"\u26a0 render_handoff(kind='dashboard') returned ok=False: {dash}", file=sys.stderr)
 
     if isinstance(target_branch, str) and target_branch and target_branch not in {"main", "master"}:
         branch_exists = subprocess.run(

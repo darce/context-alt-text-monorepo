@@ -24,6 +24,7 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import NotRequired, TypedDict, cast
 
+from .enums import ActionStatus, BlockerStatus, FindingStatus, MessageStatus
 from .runtime import get_runtime_config
 from .shared_primitives import _decode_lane_message_row_dict, _decode_turn_metric_row_dict, _row_to_dict
 from .shared_schema import _get_db_connection
@@ -353,17 +354,21 @@ def _build_current_task_state_from_snapshot(snapshot: TaskSnapshot) -> CurrentTa
     return {
         "task_ref": snapshot.get("task_ref"),
         "active": snapshot["active"],
-        "blockers_open": [row for row in snapshot["blockers"] if row.get("status") == "open"],
-        "actions_pending": [row for row in snapshot["next_actions"] if row.get("status") == "pending"],
+        "blockers_open": [row for row in snapshot["blockers"] if row.get("status") == BlockerStatus.OPEN],
+        "actions_pending": [row for row in snapshot["next_actions"] if row.get("status") == ActionStatus.PENDING],
         "decisions_recent": snapshot["decisions"],
         "tests_recent": snapshot["verified_tests"],
-        "findings_open": [row for row in snapshot["review_findings"] if row.get("status") == "open"],
+        "findings_open": [row for row in snapshot["review_findings"] if row.get("status") == FindingStatus.OPEN],
         "findings_deferred": [
-            row for row in snapshot["review_findings"] if row.get("status") in ("deferred", "wontfix")
+            row
+            for row in snapshot["review_findings"]
+            if row.get("status") in (FindingStatus.DEFERRED, FindingStatus.WONTFIX)
         ],
         "worktree_lanes": snapshot.get("worktree_lanes", []),
         "worker_reports_recent": snapshot.get("worker_reports", []),
-        "lane_messages_open": [row for row in snapshot.get("lane_messages", []) if row.get("status") == "open"],
+        "lane_messages_open": [
+            row for row in snapshot.get("lane_messages", []) if row.get("status") == MessageStatus.OPEN
+        ],
     }
 
 

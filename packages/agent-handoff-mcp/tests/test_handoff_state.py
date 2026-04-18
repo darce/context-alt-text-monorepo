@@ -15,6 +15,29 @@ from agent_handoff_mcp import shared_schema as handoff_schema
 from agent_handoff_mcp.config import RuntimeConfig
 
 
+class _RenderCompatApi:
+    def __init__(self, wrapped: object) -> None:
+        self._wrapped = wrapped
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._wrapped, name)
+
+    def generate_current_task_md(self, task_ref: str | None = None, write_file: bool = True) -> dict:
+        result = self._wrapped.render_handoff(kind="current_task", task_ref=task_ref, write_file=write_file)
+        payload = dict(result)
+        payload["tool"] = "generate_current_task_md"
+        return payload
+
+    def generate_dashboard_md(self, write_file: bool = True) -> dict:
+        result = self._wrapped.render_handoff(kind="dashboard", write_file=write_file)
+        payload = dict(result)
+        payload["tool"] = "generate_dashboard_md"
+        return payload
+
+
+mcp_server = _RenderCompatApi(mcp_server)
+
+
 @pytest.fixture()
 def isolated_handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Redirect handoff sqlite + generated markdown paths into tmp dir."""
@@ -1757,7 +1780,7 @@ def test_generate_current_task_md_includes_dashboard_header(isolated_handoff: di
 
 
 def test_internal_write_path_writes_current_task_json(isolated_handoff: dict) -> None:
-    from agent_handoff_mcp._shared import _write_current_task_md_from_state
+    from agent_handoff_mcp.current_task_rendering import _write_current_task_md_from_state
 
     _parse(
         mcp_server.set_handoff_state(
@@ -2382,7 +2405,7 @@ def test_generate_current_task_md_review_coverage_zero_runs(isolated_handoff: di
 
 def test_internal_write_path_includes_task_ref(isolated_handoff: dict) -> None:
     """_write_current_task_md_for_task must include task_ref in rendered output (not 'unknown')."""
-    from agent_handoff_mcp._shared import _write_current_task_md_from_state
+    from agent_handoff_mcp.current_task_rendering import _write_current_task_md_from_state
 
     _parse(
         mcp_server.set_handoff_state(
@@ -2414,7 +2437,7 @@ def test_internal_write_path_includes_task_ref(isolated_handoff: dict) -> None:
 
 def test_internal_write_path_includes_review_coverage(isolated_handoff: dict) -> None:
     """_write_current_task_md_for_task must render ## Review Coverage when runs exist."""
-    from agent_handoff_mcp._shared import _write_current_task_md_from_state
+    from agent_handoff_mcp.current_task_rendering import _write_current_task_md_from_state
 
     _parse(
         mcp_server.set_handoff_state(
@@ -2448,7 +2471,8 @@ def test_internal_write_path_reuses_existing_connection_for_review_coverage(
     import importlib
 
     _review_findings_mod = importlib.import_module("agent_handoff_mcp.review_findings")
-    from agent_handoff_mcp._shared import _get_db_connection, _write_current_task_md_for_task
+    from agent_handoff_mcp.current_task_rendering import _write_current_task_md_for_task
+    from agent_handoff_mcp.shared_schema import _get_db_connection
 
     _parse(
         mcp_server.set_handoff_state(

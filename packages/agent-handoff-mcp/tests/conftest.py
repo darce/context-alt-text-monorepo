@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import os
 import sys
+from functools import wraps
 from pathlib import Path
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +46,50 @@ os.environ.setdefault("AGENT_HANDOFF_SKIP_SHA_VALIDATION", "1")
 os.environ.setdefault("AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT", "1")
 
 
+def _wrap_typed_api_surface(api_module) -> None:  # type: ignore[no-untyped-def]
+    """Coerce legacy dict kwargs inside tests only.
+
+    Production code is expected to use the typed models directly. The test
+    suite still contains many direct Python helper calls with plain dicts,
+    so the compatibility shim lives here rather than in the production API.
+    """
+
+    actor_model = api_module.WriteActorInput
+    details_model = api_module.ReviewFindingDetailsInput
+
+    def _coerce_kwargs(kwargs: dict) -> dict:
+        updated = dict(kwargs)
+        actor = updated.get("actor")
+        if isinstance(actor, dict):
+            updated["actor"] = actor_model.model_validate(actor)
+        details = updated.get("details")
+        if isinstance(details, dict):
+            updated["details"] = details_model.model_validate(details)
+        return updated
+
+    def _wrap(name: str) -> None:
+        original = getattr(api_module, name)
+
+        @wraps(original)
+        def _wrapped(*args, **kwargs):  # type: ignore[no-untyped-def]
+            return original(*args, **_coerce_kwargs(kwargs))
+
+        setattr(api_module, name, _wrapped)
+
+    for name in (
+        "set_handoff_state",
+        "update_task_status",
+        "record_decision",
+        "update_next_actions",
+        "record_test_result",
+        "report_blocker",
+        "update_review_finding",
+        "record_review_run",
+        "close_slice",
+    ):
+        _wrap(name)
+
+
 def pytest_sessionstart(session) -> None:  # type: ignore[no-untyped-def]
     """Verify ``agent_handoff_mcp`` resolves to *this* worktree's source.
 
@@ -56,6 +101,7 @@ def pytest_sessionstart(session) -> None:  # type: ignore[no-untyped-def]
     import pytest
 
     import agent_handoff_mcp  # noqa: PLC0415 - intentional late import for the guard.
+    from agent_handoff_mcp import api as handoff_api  # noqa: PLC0415
 
     actual = Path(agent_handoff_mcp.__file__).resolve().parent
     if actual != EXPECTED_PACKAGE_DIR:
@@ -79,3 +125,5 @@ def pytest_sessionstart(session) -> None:  # type: ignore[no-untyped-def]
             "\n"
             f"  PYTHONPATH={SRC_ROOT} pytest tests -q\n"
         )
+
+    _wrap_typed_api_surface(handoff_api)

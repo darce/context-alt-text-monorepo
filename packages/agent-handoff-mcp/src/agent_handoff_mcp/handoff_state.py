@@ -5,27 +5,24 @@ Contains set_handoff_state and get_handoff_state.
 
 from __future__ import annotations
 
-from ._shared import (
+from .shared_db_utils import _fetch_handoff_rows
+from .shared_primitives import (
     DEFAULT_HANDOFF_LIMITS,
     HANDOFF_ACTIVE_STATUSES,
     RATIONALE_HARD_LIMIT_CHARS,
     RATIONALE_SOFT_LIMIT_CHARS,
     SLICE_COMPLETE_HARD_LIMIT_CHARS,
     SLICE_COMPLETE_REQUIRED_SECTIONS,
-    WriteActor,
     _envelope,
-    _fetch_handoff_rows,
-    _get_db_connection,
     _get_handoff_row_for_task,
     _normalize_optional_text,
     _resolve_current_lane_row,
     _resolve_workspace_handoff_row,
-    _resolve_write_actor,
     _row_to_dict,
-    collect_target_context_warnings,
-    extract_slice_label,
-    is_slice_complete_decision,
 )
+from .shared_schema import _get_db_connection
+from .shared_write_context import WriteActor, _resolve_write_actor, collect_target_context_warnings
+from .slice_decision import extract_slice_label, is_slice_complete_decision
 
 
 def set_handoff_state(

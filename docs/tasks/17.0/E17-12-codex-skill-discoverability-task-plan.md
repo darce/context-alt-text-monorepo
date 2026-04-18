@@ -95,7 +95,9 @@ The user's intake decision (handoff ledger id 1963, task_ref `E17-12`) chose: pu
 
 ## Proposed Solution
 
-Three slices deliver the work. Slice 1 is a time-boxed discovery probe that gates the implementation branch. Slice 2 is conditional: it only runs if Slice 1 confirms a repo-only path exists. Slice 3 runs unconditionally and reconciles the docs to match shipped behavior either way.
+Four slices deliver the work. Slice 0 is a small prerequisite bugfix uncovered during branch setup (the silent-exit path in `check-task-context.py` defeats the discovery slice's dependence on `make context`). Slice 1 is a time-boxed discovery probe that gates the implementation branch. Slice 2 is conditional: it only runs if Slice 1 confirms a repo-only path exists. Slice 3 runs unconditionally and reconciles the docs to match shipped behavior either way.
+
+0. **Slice 0 — `check-task-context.py` silent-exit fix.** When `get_handoff_state(sections='identity')` returns `{ok: false, data: {error: "..."}}` (e.g. two active tasks resolving to the same workspace path), `_load_active_state()` at `scripts/check-task-context.py:166-171` falls through to `return None` without printing, and `main()` exits 1 with empty stdout/stderr. Surface the error envelope to stderr and add a regression test covering the branch. This slice lands first so Slice 1's discovery probe can depend on `make context` being diagnostic-loud.
 
 1. **Slice 1 — Discovery probe (time-boxed).** Drive the live Codex app-server from this workspace and determine which of these paths, if any, register `.claude/skills/` as a discoverable skill root without per-user config mutation:
    - (a) a static declaration in `.codex/config.toml` (or a sibling repo-committed file) that Codex reads at session start
@@ -148,6 +150,26 @@ Slice 3 (Docs reconciliation):
 - `make check-all` stays green.
 
 ## Slice Delivery
+
+### Slice 0: `check-task-context.py` Silent-Exit Fix
+
+**Goal**: when the active-task identity query returns an error envelope (e.g. ambiguous workspace path resolution), surface the error loudly instead of exiting 1 with no output. The discovery slice's instrumentation depends on `make context` being diagnostic-loud.
+
+**Why here, not deferred**: hit during the E17-12 branch setup. Two active tasks (E17-12 and MAINT-RESTORE-E17-12-SCOPE-*) both resolved to the same workspace path; `get_handoff_state(sections='identity')` returned `{ok: false, data: {error: "Ambiguous active task..."}}`. `_load_active_state()` fell through to `return None` without printing, and `main()` exited 1 with empty stdout and stderr. The bug blocks any agent from diagnosing the problem when they next encounter it. Fixing it inside this task keeps the branch singular; deferring to a sibling task would require a second feature branch + review cycle for a five-line change.
+
+Changes:
+
+- `scripts/check-task-context.py`: in `_load_active_state()` (currently `scripts/check-task-context.py:147-171`), add a branch that detects the error envelope (`parsed.get("ok") is False`, or `isinstance(data, dict) and "error" in data`) and prints the underlying error message to stderr before returning `None`. Emit a remediation hint when the error mentions "Ambiguous active task" (suggest archiving the extra task).
+- `scripts/test_check_task_context.py` (new): pytest module that stubs `agent_handoff_mcp.handoff_state.get_handoff_state` with three fixtures — happy path with `active`, error envelope with `ok=false`, and malformed JSON — and asserts the script's stdout/stderr match expectations plus the exit code.
+- No changes to `agent_handoff_mcp` itself; the error envelope is the authoritative producer's contract and the consumer just needs to respect it.
+
+Proof:
+
+- Reproducer: registering two active tasks that resolve to the same workspace path and running `scripts/check-task-context.py` now prints the ambiguity error to stderr (with the matching `task_refs` list) and exits 1. Before the fix, exit 1 with zero output.
+- `scripts/test_check_task_context.py` passes; at least one test case covers the `{ok: false, data: {error: ...}}` branch and at least one covers the happy path.
+- `make context` from any worktree prints either the alignment table or a named error — never empty output.
+
+**Gate**: Slice 0 committed before Slice 1 begins. Recorded as `e17-12_slice0_check_task_context_loud` in the handoff ledger.
 
 ### Slice 1: Codex Skill-Registration Discovery Probe (Time-Boxed)
 
@@ -238,6 +260,14 @@ Proof:
 - [ ] Intake decision `e17-12_scope_intake_codex_skill_discoverability` (handoff ledger id 1963) references this task plan
 - [ ] Planning review passed (`make plan-review DOC=docs/tasks/17.0/E17-12-codex-skill-discoverability-task-plan.md`)
 - [ ] `make task-start TASK=E17-12 OBJECTIVE="..."` run only after planning review passes
+
+### Checklist for Slice 0: check-task-context.py Silent-Exit Fix
+
+- [ ] `_load_active_state()` in `scripts/check-task-context.py` surfaces the error envelope to stderr before returning None
+- [ ] `scripts/test_check_task_context.py` exists with a regression test covering the `{ok: false, data: {error: ...}}` branch
+- [ ] Regression test covers at least: happy-path identity envelope, error envelope, and malformed JSON
+- [ ] `make context` run after the fix from any worktree never returns silent exit 1; output always includes either alignment table or named error
+- [ ] Slice-0 decision `e17-12_slice0_check_task_context_loud` recorded in handoff ledger
 
 ### Checklist for Slice 1: Discovery Probe
 

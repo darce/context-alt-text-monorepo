@@ -1808,6 +1808,37 @@ def _render_current_task_result(
     )
 
 
+def list_active_tasks() -> list[dict[str, Any]]:
+    """Return every row currently in the live ``handoff_state`` table.
+
+    Each dict carries ``task_ref``, ``status``, ``target_branch``,
+    ``target_worktree_path``, ``updated_at``, and ``revision``. Archived
+    tasks are excluded; use ``get_archived_task`` for those.
+
+    This is the public, schema-stable path for tooling that needs to
+    enumerate live tasks (e.g. maintenance archival of stale ``MAINT-*``
+    rows) without dropping to raw ``sqlite3`` queries (see rg-018).
+    """
+    rows: list[dict[str, Any]] = []
+    with core._get_db_connection() as conn:
+        for raw in conn.execute(
+            "SELECT task_ref, status, target_branch, target_worktree_path, "
+            "updated_at, revision "
+            "FROM handoff_state ORDER BY updated_at DESC, task_ref ASC"
+        ).fetchall():
+            rows.append(
+                {
+                    "task_ref": raw["task_ref"],
+                    "status": raw["status"],
+                    "target_branch": raw["target_branch"],
+                    "target_worktree_path": raw["target_worktree_path"],
+                    "updated_at": raw["updated_at"],
+                    "revision": raw["revision"],
+                }
+            )
+    return rows
+
+
 def _render_dashboard_result(write_file: bool = True) -> dict:
     from .dashboard_rendering import generate_dashboard_md as _generate  # noqa: PLC0415
 

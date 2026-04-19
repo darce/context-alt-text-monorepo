@@ -280,6 +280,32 @@ def _to_repo_relative(path: str, repo_root: Path) -> str:
         return ""
 
 
+def extract_raw_write_targets(command: str) -> list[str]:
+    """Return the raw (unresolved) write-target tokens parsed out of `command`.
+
+    Mirrors the per-stage scanners used by scan_bash_command but skips the
+    repo-root filter applied by `_to_repo_relative`, so absolute paths that
+    resolve *outside* the current workspace are preserved. The caller (worktree
+    drift guard) needs these so cross-worktree writes — e.g. `sed -i` against
+    an absolute path pointing into the primary worktree from a linked feature
+    worktree — can still be compared against the active task's target_worktree.
+    """
+    if not command or not command.strip():
+        return []
+    targets: list[str] = []
+    for tokens in _iter_words(command):
+        targets.extend(_scan_redirects(tokens))
+        verb, args = _verb_of(tokens)
+        if not verb:
+            continue
+        if verb == "sed":
+            targets.extend(_scan_sed_in_place(args))
+        targets.extend(_scan_verb_targets(verb, args))
+        targets.extend(_scan_git_writeback(verb, args))
+    targets.extend(_scan_python_inline(command))
+    return targets
+
+
 def scan_bash_command(
     command: str,
     repo_root: Path,

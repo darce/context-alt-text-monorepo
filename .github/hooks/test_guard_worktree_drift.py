@@ -320,3 +320,34 @@ def test_evaluate_payload_bash_formatter_in_target_worktree_allowed(tmp_path: Pa
         active_task=("E17-9", str(feature_repo), "feature/e17-9"),
     )
     assert result is None
+
+
+def test_evaluate_payload_bash_absolute_path_cross_worktree_blocked(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """BR-01: absolute-path Bash write into another worktree must block.
+
+    From a linked feature worktree, `sed -i '' 's/x/y/' /<primary>/packages/foo.py`
+    previously slipped through because _to_repo_relative dropped paths outside
+    the feature worktree. The drift guard now preserves absolute tokens and
+    compares their hosting worktree against target_worktree.
+    """
+    main_repo = tmp_path / "repo-main"
+    feature_repo = tmp_path / "repo-feature"
+    (main_repo / "packages").mkdir(parents=True)
+    (main_repo / "packages" / "foo.py").write_text("x=1\n")
+    _write_contract(feature_repo)
+    abs_target = main_repo.resolve() / "packages" / "foo.py"
+    payload = {
+        "toolName": "Bash",
+        "toolInput": {"command": f"sed -i '' 's/x/y/' {abs_target}"},
+    }
+    monkeypatch.setattr(_mod, "_candidate_worktree_root", lambda _path: str(main_repo.resolve()))
+    result = evaluate_payload(
+        payload,
+        workspace_root=feature_repo,
+        active_task=("E17-9", str(feature_repo.resolve()), "feature/e17-9"),
+    )
+    assert result is not None
+    assert result.outcome == "block"
+    assert result.path is not None and result.path.endswith("packages/foo.py")

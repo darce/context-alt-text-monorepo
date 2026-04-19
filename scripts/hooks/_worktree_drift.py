@@ -99,7 +99,7 @@ def _extract_bash_candidate_paths(tool_input: dict[str, Any]) -> list[str]:
     if not isinstance(command, str) or not command.strip():
         return []
     try:
-        from _bash_isolation_guard import scan_bash_command
+        from _bash_isolation_guard import extract_raw_write_targets, scan_bash_command
         from _harness_protocol import HarnessContractMissingError, load_branch_isolation_policy
     except ImportError:
         return []
@@ -116,6 +116,37 @@ def _extract_bash_candidate_paths(tool_input: dict[str, Any]) -> list[str]:
             formatter_detected = True
             continue
         paths.append(entry)
+
+    # BR-01: scan_bash_command drops absolute paths resolving *outside*
+    # `workspace` (via _to_repo_relative). That leaves a cross-worktree bleed
+    # open — e.g. `sed -i` against an absolute path pointing into the primary
+    # worktree from a linked feature worktree. Pass absolute write-target
+    # tokens through to the drift comparison so _candidate_worktree_root can
+    # resolve their hosting worktree and reject the edit when it diverges from
+    # the active task's target_worktree.
+    workspace_resolved = workspace.resolve(strict=False)
+    seen: set[str] = set(paths)
+    for raw in extract_raw_write_targets(command):
+        raw_path = Path(raw).expanduser()
+        if not raw_path.is_absolute():
+            continue
+        try:
+            resolved = raw_path.resolve(strict=False)
+        except OSError:
+            resolved = raw_path
+        try:
+            resolved.relative_to(workspace_resolved)
+            inside_workspace = True
+        except ValueError:
+            inside_workspace = False
+        if inside_workspace:
+            continue  # already handled by scan_bash_command's relative branch
+        token = str(resolved)
+        if token in seen:
+            continue
+        seen.add(token)
+        paths.append(token)
+
     if formatter_detected:
         # Formatter invocations implicitly write across the cwd's worktree; use
         # the resolved workspace root so _candidate_worktree_root reports the

@@ -54,6 +54,75 @@ _PYTHON_OS_WRITE_RE = re.compile(
 _SED_IN_PLACE_FLAGS = {"-i", "--in-place"}
 
 
+# Formatter / linter-fix command families (FU-01). These rewrite files in place
+# across one or more code roots without naming individual targets in the shell
+# command, so the per-token scanners above miss them. When detected on main
+# without a MAINT-* task, the guard synthesises the configured code_roots as
+# blocked paths so the caller surfaces the contract-backed violation. The
+# registry is deliberately conservative: we match on the first "real" verb
+# (after sudo/env stripping via _verb_of) and a discriminating second token so
+# unrelated invocations (e.g. `make test-handoff`, `ruff check` without --fix)
+# do not trigger false positives.
+_FORMATTER_SUBCOMMAND_RULES: tuple[tuple[str, tuple[str, ...] | None], ...] = (
+    # Makefile-driven formatter / lint-fix targets.
+    ("make", ("format-all", "format-handoff", "format-orchestrator", "format-mcp",
+              "fix-lint-handoff", "fix-lint-orchestrator", "fix-lint-mcp",
+              "fix-php-style")),
+    # ruff format <paths...>  /  ruff check --fix
+    ("ruff", ("format",)),
+    # black <paths...>  — any invocation rewrites in place.
+    ("black", None),
+    # prettier --write / -w
+    ("prettier", None),
+    # npm / pnpm / yarn scripts typically aliased to formatters.
+    ("npm", ("format", "fmt", "lint:fix", "fix")),
+    ("pnpm", ("format", "fmt", "lint:fix", "fix")),
+    ("yarn", ("format", "fmt", "lint:fix", "fix")),
+    # Composer aliases used in the PHP plugin workspace.
+    ("composer", ("format", "fix-style", "run-format", "run-fix-style")),
+)
+
+# Secondary fix-flag scan: commands whose baseline behaviour is read-only but
+# which write to disk when a specific flag is present.
+_FORMATTER_FIX_FLAG_RULES: tuple[tuple[str, frozenset[str]], ...] = (
+    ("ruff", frozenset({"--fix", "--fix-only", "--unsafe-fixes"})),
+    ("eslint", frozenset({"--fix"})),
+    ("prettier", frozenset({"--write", "-w"})),
+    ("stylelint", frozenset({"--fix"})),
+)
+
+
+def _detect_formatter(verb: str, args: list[str]) -> bool:
+    """Return True when the verb+args look like an in-place formatter run."""
+    if not verb:
+        return False
+    for rule_verb, subcommands in _FORMATTER_SUBCOMMAND_RULES:
+        if verb != rule_verb:
+            continue
+        if subcommands is None:
+            # verb alone is sufficient (e.g. `black`, `prettier --write`).
+            return True
+        # npm/yarn/pnpm often require a literal "run" token before the script.
+        candidate_tokens = []
+        for token in args:
+            if token in {"run", "run-script", "exec", "--"}:
+                continue
+            if token.startswith("-"):
+                continue
+            candidate_tokens.append(token)
+            break  # Only the first positional matters for script selection.
+        if not candidate_tokens:
+            continue
+        if candidate_tokens[0] in subcommands:
+            return True
+    for rule_verb, fix_flags in _FORMATTER_FIX_FLAG_RULES:
+        if verb != rule_verb:
+            continue
+        if any(token in fix_flags for token in args):
+            return True
+    return False
+
+
 def _is_flag(token: str) -> bool:
     return token.startswith("-") and token != "-"
 
@@ -220,6 +289,7 @@ def scan_bash_command(
         return []
 
     candidate_paths: list[str] = []
+    formatter_detected = False
 
     for tokens in _iter_words(command):
         candidate_paths.extend(_scan_redirects(tokens))
@@ -230,6 +300,8 @@ def scan_bash_command(
             candidate_paths.extend(_scan_sed_in_place(args))
         candidate_paths.extend(_scan_verb_targets(verb, args))
         candidate_paths.extend(_scan_git_writeback(verb, args))
+        if not formatter_detected and _detect_formatter(verb, args):
+            formatter_detected = True
 
     candidate_paths.extend(_scan_python_inline(command))
 
@@ -242,4 +314,23 @@ def scan_bash_command(
         seen.add(relative)
         if is_branch_isolation_protected_path(relative, policy):
             blocked.append(relative)
+
+    # FU-01: a formatter invocation implicitly writes across every code_root in
+    # the contract. Emit the configured roots directly (with a `<root> (formatter)`
+    # label) so the caller surfaces a clear, contract-backed violation without
+    # fabricating file paths.
+    if formatter_detected:
+        for root in policy.code_roots:
+            normalized = root.strip("/")
+            if not normalized:
+                continue
+            label = f"{normalized}/ (formatter)"
+            if label not in seen:
+                seen.add(label)
+                blocked.append(label)
+        for root_file in policy.root_protected_files:
+            label = f"{root_file} (formatter)"
+            if label not in seen:
+                seen.add(label)
+                blocked.append(label)
     return blocked

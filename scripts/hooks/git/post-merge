@@ -1,7 +1,12 @@
 #!/bin/sh
-# Git post-merge hook: warn if protected paths are dirty on main (BR-16/BR-22).
+# Git post-merge hook: block if protected paths are dirty on main (BR-16/BR-22/FU-03).
 #
 # Installed via `make install-git-hooks`. Fires after a successful merge/pull.
+# Exits non-zero when the merge left protected paths dirty on main so the
+# operator/agent is forced to triage (stash, commit to a task branch, or
+# revert) rather than silently carrying the drift into the next session.
+# Git does not unwind the merge on a non-zero post-merge exit, but the loud
+# failure at prompt prevents the warning-only gap that motivated E17-8/FU-03.
 #
 # Args: $1=is_squash (1 if squash merge, else 0)
 
@@ -10,5 +15,5 @@ if [ -z "$REPO_ROOT" ]; then
     exit 0
 fi
 
-python3 "$REPO_ROOT/scripts/hooks/check_main_clean.py" --trigger post-merge || true
-exit 0
+python3 "$REPO_ROOT/scripts/hooks/check_main_clean.py" --trigger post-merge --block
+exit $?

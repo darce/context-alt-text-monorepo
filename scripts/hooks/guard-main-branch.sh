@@ -63,7 +63,11 @@ WARNING: Editing on $BRANCH without an active handoff task.
   Register a MAINT-* task before continuing.
 
 Register a maintenance task before continuing:
-  set_handoff_state(task_ref='MAINT-<slug>', objective='Describe the main-branch patch', status='in_progress')
+  set_handoff_state(task_ref='MAINT-<slug>', objective='Describe the main-branch patch', status='in_progress', target_branch='main', target_worktree_path='<repo-root>')
+
+Note: for MAINT-* tasks on main/master, target_worktree_path defaults to
+the current repo root when omitted. Passing it explicitly is still fine
+and wins over the default.
 
 This rollout is warning-only for permitted main-branch edits.
 EOF

@@ -124,6 +124,10 @@ hooks:
       matcher: Edit|Write|apply_patch|create_file|replace_string_in_file|multi_replace_string_in_file
       claude_command: bash "$CLAUDE_PROJECT_DIR/scripts/hooks/guard-worktree-drift.sh"
       vscode_command: python3 .github/hooks/guard-worktree-drift.py
+    - id: bash-main-branch
+      matcher: Bash
+      claude_command: python3 "$CLAUDE_PROJECT_DIR/scripts/hooks/guard-bash-main-branch.py"
+      vscode_command: python3 scripts/hooks/guard-bash-main-branch.py
     - id: task-plan-findings
       matcher: Edit|Write
       claude_command: python3 "$CLAUDE_PROJECT_DIR/scripts/hooks/guard-task-plan-findings.py"

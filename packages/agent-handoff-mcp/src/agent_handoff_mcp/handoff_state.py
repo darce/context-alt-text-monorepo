@@ -19,7 +19,37 @@ from .shared_primitives import (
     _resolve_current_lane_row,
     _resolve_workspace_handoff_row,
     _row_to_dict,
+    _workspace_root,
 )
+
+# Branches treated as the repo-root maintenance target. Maintenance tasks
+# (task_ref starting with MAINT-) created on these branches default
+# target_worktree_path to the configured workspace root so implicit
+# workspace-path resolution can disambiguate the root worktree against
+# concurrent feature-branch tasks after the E17-11 resolver hardening.
+_MAIN_BRANCH_NAMES = frozenset({"main", "master"})
+
+
+def _default_maint_target_worktree_path(
+    task_ref: str,
+    target_branch: str | None,
+    target_worktree_path: str | None,
+    actor_branch: str | None,
+) -> str | None:
+    """Return a defaulted target_worktree_path for main-scoped MAINT-* tasks.
+
+    Applies only when: task_ref starts with 'MAINT-', no explicit path was
+    passed, and either target_branch or the actor's branch is main/master.
+    Explicit caller-supplied paths always win.
+    """
+    if target_worktree_path is not None:
+        return target_worktree_path
+    if not task_ref.startswith("MAINT-"):
+        return None
+    branch_candidates = {b for b in (target_branch, actor_branch) if b}
+    if not branch_candidates or not (branch_candidates & _MAIN_BRANCH_NAMES):
+        return None
+    return str(_workspace_root())
 from .shared_schema import _get_db_connection
 from .shared_write_context import WriteActor, _resolve_write_actor, collect_target_context_warnings
 from .slice_decision import extract_slice_label, is_slice_complete_decision
@@ -54,6 +84,12 @@ def set_handoff_state(
                     task_ref=task_ref,
                     data={"error": "objective is required when creating a new handoff state."},
                 )
+            effective_target_worktree_path = _default_maint_target_worktree_path(
+                task_ref=task_ref,
+                target_branch=target_branch,
+                target_worktree_path=target_worktree_path,
+                actor_branch=ctx.branch,
+            )
             conn.execute(
                 """
                 INSERT INTO handoff_state (
@@ -67,7 +103,7 @@ def set_handoff_state(
                     focus,
                     status,
                     target_branch,
-                    target_worktree_path,
+                    effective_target_worktree_path,
                     ctx.agent,
                     ctx.branch,
                     ctx.commit_sha,

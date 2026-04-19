@@ -3,6 +3,7 @@ import os
 import subprocess
 
 from fastapi import FastAPI
+from starlette.middleware.cors import CORSMiddleware
 
 from api.logging_config import configure_logging
 from api.schemas.health import HealthResponse
@@ -96,6 +97,18 @@ def create_app() -> FastAPI:
         version="0.1.0",
         description="Experimental rewrite scaffolding for the description service.",
     )
+
+    security_settings = get_security_settings()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=security_settings.allowed_origins,
+        allow_credentials=False,
+        allow_origin_regex=None,
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "X-Api-Key", "X-Tenant-ID", "Content-Type"],
+        max_age=600,
+    )
+
     initialize_session_dependency_circuit_breaker(app)
 
     app.include_router(recognition_router, prefix="/recognition")

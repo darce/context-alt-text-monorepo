@@ -2,7 +2,7 @@
 """Detect dirty protected paths on the main branch (BR-16 / BR-22).
 
 Invoked from:
-  - git hooks (post-checkout, post-merge, post-rewrite) as a WARNING scanner
+  - git hooks (post-checkout, post-commit, post-merge, post-rewrite) as a WARNING scanner
   - git pre-push hook as a HARD BLOCK when pushing main
   - `make check-main-clean` as an on-demand operator/agent check
 
@@ -60,8 +60,8 @@ def main() -> int:
     parser.add_argument(
         "--trigger",
         default="manual",
-        help="Source hook/op that fired this scan (post-checkout, post-merge, "
-        "post-rewrite, pre-push, manual). Shown in the output header.",
+        help="Source hook/op that fired this scan (post-checkout, post-commit, "
+        "post-merge, post-rewrite, pre-push, manual). Shown in the output header.",
     )
     args = parser.parse_args()
 

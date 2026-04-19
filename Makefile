@@ -410,14 +410,15 @@ test-hooks:
 	@python3 -m pytest scripts/hooks .github/hooks -q --tb=short
 
 # E17-8 BR-16 / BR-22: on-demand scan for dirty protected paths on main.
-# Mirrors what post-checkout / post-merge / post-rewrite / pre-push run.
+# Mirrors what post-checkout / post-commit / post-merge / post-rewrite / pre-push run.
 # Prints OK when clean on main; silent / exit 0 on non-protected branches.
 check-main-clean:
 	@python3 scripts/hooks/check_main_clean.py --trigger manual
 
 # E17-8 BR-16 / BR-22: redirect git's per-repo hooks dir to the tracked
-# scripts/hooks/git/ directory so post-checkout, post-merge, post-rewrite
-# (warning-only) and pre-push (hard block) run on every clone+checkout.
+# scripts/hooks/git/ directory so post-checkout, post-commit, post-merge,
+# and post-rewrite (warning-only) plus pre-push (hard block) run on every
+# clone+checkout.
 # Idempotent: safe to re-run. Uninstall with `git config --unset core.hooksPath`.
 install-git-hooks:
 	@git config core.hooksPath scripts/hooks/git

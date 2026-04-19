@@ -121,3 +121,28 @@ def test_resolve_guidance_cycle_dedupes_to_newest_worker_message_per_lane(tmp_pa
     assert len(results) == 1
     assert results[0].worker_message_id == 21
     assert results[0].kind == "review"
+
+
+def test_guidance_resolution_kind_is_strenum_with_all_live_values() -> None:
+    """AOMCP-QA-L-02: resolution.kind is a StrEnum, not a bare str."""
+    mod = _load_module()
+
+    # The StrEnum surface must exist and expose every kind the code emits.
+    kind_enum = mod.GuidanceResolutionKind
+    assert kind_enum.MESSAGE == "message"
+    assert kind_enum.REVIEW == "review"
+    assert kind_enum.REDISPATCH == "redispatch"
+    assert kind_enum.BLOCKED == "blocked"
+    assert kind_enum.FATAL_ERROR == "fatal_error"
+
+    # GuidanceResolution.kind is the enum type after construction.
+    resolution = mod.GuidanceResolution(
+        kind=kind_enum.REVIEW,
+        lane_id="lane-a",
+        worker_message_id=1,
+    )
+    assert isinstance(resolution.kind, kind_enum)
+
+    # Equality against StrEnum members works (the canonical compare form).
+    assert resolution.kind == kind_enum.REVIEW
+    assert resolution.kind != kind_enum.FATAL_ERROR

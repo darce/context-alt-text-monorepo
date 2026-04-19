@@ -47,6 +47,7 @@ def _handle_sigterm(signum: int, frame: object) -> None:
 from orchestrator_guidance import (  # noqa: F401
     GUIDANCE_STALL_THRESHOLD,
     GuidanceResolution,
+    GuidanceResolutionKind,
     _apply_guidance_resolution,
     _classify_guidance,
     _dedupe_worker_guidance_messages,
@@ -941,7 +942,7 @@ def _guidance_phase(ctx: OrchestratorContext) -> None:
         log=ctx.log,
     )
     for resolution in ctx.guidance_results:
-        if resolution.kind == "fatal_error":
+        if resolution.kind == GuidanceResolutionKind.FATAL_ERROR:
             previous = ctx.guidance_stalls.get(resolution.lane_id)
             if previous and previous[0] == resolution.worker_message_id:
                 ctx.guidance_stalls[resolution.lane_id] = (resolution.worker_message_id, previous[1] + 1)
@@ -964,7 +965,7 @@ def _guidance_phase(ctx: OrchestratorContext) -> None:
             continue
         ctx.guidance_stalls.pop(resolution.lane_id, None)
         event_name = "guidance_resolved"
-        if resolution.kind == "redispatch":
+        if resolution.kind == GuidanceResolutionKind.REDISPATCH:
             event_name = "guidance_redispatched"
         elif resolution.lane_status == LaneStatus.BLOCKED:
             event_name = "guidance_escalated"

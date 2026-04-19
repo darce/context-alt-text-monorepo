@@ -39,6 +39,8 @@ _core_record_review_run = core.record_review_run
 list_review_runs = core.list_review_runs
 get_review_coverage = core.get_review_coverage
 handoff_close_check = core.handoff_close_check
+working_tree_integrity_check = core.working_tree_integrity_check
+post_merge_integrity_check = core.post_merge_integrity_check
 export_handoff_state = core.export_handoff_state
 import_handoff_state = core.import_handoff_state
 archive_task_state = core.archive_task_state
@@ -69,6 +71,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "review_findings": "Record, batch record, update, repair provenance, merge, or list review findings through one typed domain surface. Set review.operation to 'record', 'batch_record', 'update', 'repair_provenance', 'merge', or 'list'. The 'repair_provenance' operation is the bounded admin path for fixing a finding row whose source branch/commit_sha was attributed to the wrong commit (e.g. the reviewer's workspace HEAD instead of the actual buggy code's commit) — see ReviewFindingsRepairProvenanceOp. The 'merge' operation (coordinator-centric, additive) re-records findings from one or more source task_refs under a target coordinator task_ref with merged_from provenance — see ReviewFindingsMergeOp.",
     "review_runs": "Record, list, or summarize review-run coverage through one typed domain surface. Set review.operation to 'record', 'list', or 'coverage'.",
     "handoff_close_check": "Check task readiness to close: blockers, pending actions, findings, and optional fresh-test gate.",
+    "working_tree_integrity_check": "Compare tracked-but-modified paths against .task-state/dirty-allowlist (or an expected_dirty list). ok=True when clean or only expected paths diverge from HEAD.",
+    "post_merge_integrity_check": "Verify the working tree at HEAD matches a merge expectation. Run immediately after `git merge --ff-only` with the slice's changed_files. ok=False when paths outside expected_changed_files diverge from merged_sha.",
     "audit_decision_ids": "Audit decision IDs for grammar conformance. Returns canonical/malformed/freeform classifications.",
     "render_handoff": (
         "Render the handoff surface files through one compound tool. "
@@ -1458,6 +1462,31 @@ def _build_tool_registry() -> list[ToolEntry]:
                 ArgSpec("--current-commit-sha"),
             ],
             surface_class="generator",
+            entity_family="lifecycle",
+        ),
+        ToolEntry(
+            "working_tree_integrity_check",
+            working_tree_integrity_check,
+            TOOL_DESCRIPTIONS["working_tree_integrity_check"],
+            cli_name="working-tree-integrity-check",
+            cli_args=[
+                ArgSpec("--workspace-root"),
+                ArgSpec("--expected-dirty", nargs="*"),
+            ],
+            surface_class="query",
+            entity_family="lifecycle",
+        ),
+        ToolEntry(
+            "post_merge_integrity_check",
+            post_merge_integrity_check,
+            TOOL_DESCRIPTIONS["post_merge_integrity_check"],
+            cli_name="post-merge-integrity-check",
+            cli_args=[
+                ArgSpec("--merged-sha", required=True),
+                ArgSpec("--expected-changed-files", nargs="*", default=[]),
+                ArgSpec("--workspace-root"),
+            ],
+            surface_class="query",
             entity_family="lifecycle",
         ),
         ToolEntry(

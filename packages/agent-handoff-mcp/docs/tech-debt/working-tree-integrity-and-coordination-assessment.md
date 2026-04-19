@@ -42,7 +42,13 @@ The most consistent explanation that survives all the evidence: **a long-lived e
 
 ---
 
-## Item E: `working_tree_integrity_check` MCP Tool
+## Item E: `working_tree_integrity_check` MCP Tool — LANDED IN AHMCP-WT-INTEGRITY
+
+> **Status: implemented.** New `working_tree.py` module with the shared
+> `_check_working_tree_integrity` helper. `working_tree_integrity_check`
+> MCP tool exposes it; `handoff_close_check` now runs it as a new check
+> so the pre-merge gate refuses to pass when the tree has drifted from
+> HEAD. The remainder of this section is preserved as design rationale.
 
 ### Problem
 
@@ -107,7 +113,12 @@ Medium. Requires a new `_compute_decision_diff` helper in `decisions.py` (~80 li
 
 ---
 
-## Item G: `post_merge_integrity_check` MCP Tool
+## Item G: `post_merge_integrity_check` MCP Tool — LANDED IN AHMCP-WT-INTEGRITY
+
+> **Status: implemented.** Exposed as a new MCP tool that diffs the
+> working tree against `merged_sha` and returns `ok=False` with the
+> divergence list when paths outside `expected_changed_files` have been
+> modified since the merge committed. Shares `working_tree.py` with Item E.
 
 ### Problem
 

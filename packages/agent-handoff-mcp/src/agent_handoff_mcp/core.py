@@ -66,6 +66,11 @@ from .review_findings_updates import (  # noqa: F401
     _check_reopen_escalation_guard,
 )
 from .runtime import get_runtime_config
+from .working_tree import (  # noqa: F401
+    _check_working_tree_integrity,
+    post_merge_integrity_check,
+    working_tree_integrity_check,
+)
 from .shared_db_utils import _count_task_rows, _fetch_handoff_rows, _paginated_query  # noqa: F401
 from .shared_primitives import (  # noqa: F401
     ACTION_STATUSES,

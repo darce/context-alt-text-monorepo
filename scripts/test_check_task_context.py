@@ -113,3 +113,44 @@ def test_interpret_handoff_envelope_missing_active_key_surfaces_keys():
     assert state is None
     assert err is not None
     assert "active" in err
+
+
+# ---------- Root-worktree-on-non-main guard ----------
+
+
+def test_is_root_worktree_returns_true_for_root(tmp_path, monkeypatch):
+    """When .git is a directory (root worktree), _is_root_worktree returns True."""
+    mod = _load_module()
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    import subprocess
+    def fake_run(cmd, **kwargs):
+        class R:
+            returncode = 0
+            stdout = ".git"
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert mod._is_root_worktree() is True
+
+
+def test_is_root_worktree_returns_false_for_linked(tmp_path, monkeypatch):
+    """When .git is a file (linked worktree), _is_root_worktree returns False."""
+    mod = _load_module()
+    git_file = tmp_path / ".git"
+    git_file.write_text("gitdir: /some/path/.git/worktrees/feature")
+    monkeypatch.chdir(tmp_path)
+
+    import subprocess
+    def fake_run(cmd, **kwargs):
+        class R:
+            returncode = 0
+            stdout = ".git"
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert mod._is_root_worktree() is False

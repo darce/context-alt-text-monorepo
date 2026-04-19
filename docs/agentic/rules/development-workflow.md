@@ -45,7 +45,7 @@ Protected root files: `Makefile`.
 
 Keep each allow-list entry narrow and explainable. If a surface exists only to support this repo's workflow, add it here with a reason in the contract. If a path is code or code-adjacent implementation, do not put it on this list just to bypass the guard.
 
-## Shared Agentic Surface
+### Shared Agentic Surface
 
 E17-10 hoists the shared agentic surface into three standalone private repos:
 

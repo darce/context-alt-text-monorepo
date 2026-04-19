@@ -217,6 +217,7 @@ def _make_env(repo: Path) -> dict[str, str]:
         "AGENT_HANDOFF_CURRENT_TASK_PATH",
         "AGENT_HANDOFF_DASHBOARD_PATH",
         "AGENT_HANDOFF_EXPORTS_DIR",
+        "AGENT_HANDOFF_ENFORCE_BRANCH",
         "GIT_COMMON_DIR",
         "GIT_DIR",
         "GIT_INDEX_FILE",
@@ -242,6 +243,9 @@ def _make_env(repo: Path) -> dict[str, str]:
     # scripts running in this fake monorepo do not require a real git
     # commit object for every commit_sha they record.
     env["AGENT_HANDOFF_SKIP_SHA_VALIDATION"] = "1"
+    # Keep branch enforcement opt-in for lifecycle subprocesses too;
+    # ambient shells may set AGENT_HANDOFF_ENFORCE_BRANCH=1 globally.
+    env["AGENT_HANDOFF_SKIP_BRANCH_ENFORCEMENT"] = "1"
     return env
 
 

@@ -165,12 +165,10 @@ Six slices deliver the MVP. Slice 0 commits to the remote-repo topology and extr
 
 **Proof**
 
-- `gh repo view darce/agentic-system --json url,isPrivate` returns the created repo with `isPrivate: true`.
+- `gh repo view darce/agentic-system --json url,isPrivate && gh repo view darce/mcp-agent-orchestrator --json url,isPrivate && gh repo view darce/agentic-bootstrap --json url,isPrivate && grep -q E17-10-POST-MVP-SYNC docs/agentic/rules/development-workflow.md` proves all three Slice 0 repos exist as private remotes and the Shared Agentic Surface anchor is documented in this monorepo.
 - `git ls-remote git@github.com:darce/agentic-system.git refs/tags/v0.1.0` shows the tag.
 - `git clone git@github.com:darce/agentic-system.git /tmp/agentic-system-smoke && ls /tmp/agentic-system-smoke/.claude/skills/` lists the expected skill directories.
-- `docs/agentic/rules/development-workflow.md` has the new § Shared Agentic Surface section with the TODO anchor.
 - The MCP-package install URL documented in this plan matches the pattern `git+ssh://git@github.com/darce/<repo>.git@<tag>` in Slice 1's `[tool.hoisted]` table and Slice 3's `consumer-setup.md`, where `<repo>` is exactly `mcp-agent-handoff`, `mcp-agent-orchestrator`, or `agentic-bootstrap`. No install URL anywhere in the plan references `context-alt-text-monorepo`.
-- `gh repo view darce/mcp-agent-orchestrator --json url,isPrivate` and `gh repo view darce/agentic-bootstrap --json url,isPrivate` both return `isPrivate: true`.
 - `git ls-remote git@github.com:darce/mcp-agent-orchestrator.git refs/tags/v0.1.0` shows the tag (populated by Slice 1 once it tags the extracted repo).
 
 ### Slice 1 — MCP package release metadata and packaged-runtime path hardening
@@ -317,8 +315,8 @@ Six slices deliver the MVP. Slice 0 commits to the remote-repo topology and extr
 ## Consolidated Checklist
 
 - [ ] Slice 0: `darce/agentic-system` private repo created via `gh`; initial commit mirrors shared surface from monorepo `main` via the `rsync --archive --delete` + `git init` + commit recipe (no `git subtree split`); `v0.1.0` tag pushed.
-- [ ] Slice 0: `darce/mcp-agent-orchestrator` private repo created via `gh`; initial commit mirrors `packages/agent-orchestrator-mcp/` from monorepo `main`; `v0.1.0` tag pushed.
-- [ ] Slice 0: `darce/agentic-bootstrap` private repo created via `gh`; initial commit scaffolds the new `agentic-bootstrap` package; `v0.1.0` tag pushed (implementation continues in Slice 3).
+- [ ] Slice 0: `darce/mcp-agent-orchestrator` private repo created via `gh`; initial commit mirrors `packages/agent-orchestrator-mcp/` from monorepo `main`; release metadata and `v0.1.0` tag land in Slice 1.
+- [ ] Slice 0: `darce/agentic-bootstrap` private repo created via `gh`; README-only initial commit seeds the standalone repo; CLI implementation and first package tag `v0.1.0` land in Slice 3.
 - [ ] Slice 0: `docs/agentic/rules/development-workflow.md § Shared Agentic Surface` added with all three standalone remote URLs, one-way-sync-direction statement, and `TODO(E17-10-POST-MVP-SYNC)` anchor.
 - [ ] Slice 0: monorepo in-tree skills/hooks/contracts NOT deleted yet — rollback path preserved until Slice 5 proof.
 - [ ] Slice 1: existing path surface (`AGENT_HANDOFF_WORKSPACE_ROOT`, `AGENT_HANDOFF_STATE_DIR`, `AGENT_HANDOFF_CURRENT_TASK_PATH`, `AGENT_HANDOFF_DASHBOARD_PATH`, `AGENT_HANDOFF_EXPORTS_DIR`) is documented and tested; default state remains `<main-worktree-root>/.task-state/handoff.db`; linked-worktree convergence, non-git-repo `ConsumerRootResolutionError`, and existing ambiguous-candidate `AmbiguousWorkspaceContextError` paths are covered.
@@ -330,7 +328,7 @@ Six slices deliver the MVP. Slice 0 commits to the remote-repo topology and extr
 - [ ] Slice 2: `check-skills` and `check-harness-sync` consume the overlay; unit tests cover shared-only, local-only, overlapping, `BrokenOverlayError` on broken symlink, and YAML replace-semantics.
 - [ ] Slice 2: `.agentic-overlay.json` schema documented in `docs/agentic/contracts/overlay-manifest.yaml` (or equivalent); round-trip test green.
 - [ ] Slice 2: `scripts/lint_hoisted_paths.py` + `make lint-hoisted-paths` added to statically catch monorepo-only path leakage in hoisted surfaces.
-- [ ] Slice 3: `agentic-bootstrap` (developed in the standalone `darce/agentic-bootstrap` repo created in Slice 0) with `install`, `update`, `status`, `doctor`, `repair` commands; zero runtime deps beyond stdlib + `tomllib` (reader) + `tomlkit` (round-trip writer). `tomli_w` is explicitly rejected because it cannot preserve comments.
+- [ ] Slice 3: `agentic-bootstrap` (developed in the standalone `darce/agentic-bootstrap` repo created in Slice 0) with `install`, `update`, `status`, `doctor`, `repair` commands and the first standalone `v0.1.0` package tag pushed from that repo; zero runtime deps beyond stdlib + `tomllib` (reader) + `tomlkit` (round-trip writer). `tomli_w` is explicitly rejected because it cannot preserve comments.
 - [ ] Slice 3: four config writers implemented (`claude_mcp_config`, `vscode_mcp_config`, `codex_mcp_config`, `git_hook_config`) with per-writer unit tests for merge semantics, idempotency/value stability, and default symbolic console-script commands. The `codex_mcp_config` writer uses `tomlkit` so comments and key order in existing `.codex/config.toml` files are preserved across re-runs.
 - [ ] Slice 3: `agentic-bootstrap repair` unit tests cover missing-remote, corrupt-clone, SHA-mismatch, healthy-noop, **and dirty-clone guard (rg-017): abort-without-`--force-dirty`** (no destructive filesystem op; error names the dirty files and the `--force-dirty` flag) and **proceed-with-`--force-dirty`**.
 - [ ] Slice 3: `BrokenOverlayError` raised consistently by `doctor`, `repair`, `check-skills`, and `check-harness-sync` when overlay is broken; error message names `agentic-bootstrap repair` as the fix.

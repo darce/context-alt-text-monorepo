@@ -14,7 +14,7 @@
 
 Expand the branch-isolation edit guard to cover all code-adjacent paths (scripts, hooks, config, Makefiles), drive the protected-path list from `harness-protocol.yaml` (single source of truth, per-project configurable), and add a PreToolUse worktree-drift check that **blocks** edits routed to the wrong worktree when an active task targets a different one — with an explicit per-project `permitted_main_surfaces` allow-list for the legitimate main-worktree planning edits (task plans, assessments, agentic docs, dashboard artifacts) and an `ALT_ALLOW_WORKTREE_DRIFT=1` escape hatch.
 
-Retroactive landing note (2026-04-18): the planning-doc surfaces that were originally described as generic main-branch exceptions landed as explicit entries in the contract-governed protected main-surface allow-list, `branch_isolation.permitted_main_surfaces` (`docs/tasks/**/*.md`, `docs/assessments/**`, `docs/scopes/**`, `docs/epics/**`). This plan now reflects that shipped shape rather than the earlier broader prose.
+Retroactive landing note (2026-04-18, revised post-E17-8-BR-20): the planning-doc surfaces that were originally described as generic main-branch exceptions landed as explicit entries in a NEW contract-governed protected-main-surface list, `branch_isolation.protected_main_surfaces` — NOT in `permitted_main_surfaces`. The two surfaces have opposite meanings: `protected_main_surfaces` (planning docs: `docs/tasks/**/*.md`, `docs/assessments/**`, `docs/scopes/**`, `docs/epics/**`, `docs/specs/**`, `docs/adrs/**`, and 5 `packages/*/docs/**` variants) are additively BLOCKED on main via `is_branch_isolation_protected_path` → `find_protected_main_surface`; `permitted_main_surfaces` (operator-maintained docs/config: `CLAUDE.md`, `.github/copilot-instructions.md`, `docs/agentic/BOOTSTRAP.md`, `docs/agentic/instructions.md`, `docs/agentic/contracts/**`, `docs/agentic/rules/**`, `docs/agentic/maps/**`, `docs/agentic/generated/**`, `docs/tasks/archive/**`, `DASHBOARD.txt`, `CURRENT_TASK.json`) pass the drift check with a trace log. Both lists ship 11 entries each in this repo's `harness-protocol.yaml`. This plan now reflects that shipped shape rather than the earlier broader prose.
 
 ## Problem Statement
 
@@ -129,6 +129,7 @@ Four slices deliver the guard hardening. They land in order:
 | Surface | File | Change |
 |---|---|---|
 | Contract | `docs/agentic/contracts/harness-protocol.yaml` | expand `code_roots`; add `.mk` to `protected_extensions`; add `root_protected_files: ["Makefile"]`; add new `permitted_main_surfaces` list |
+| Contract (BR-20 retro-documented) | `docs/agentic/contracts/harness-protocol.yaml` | add NEW `protected_main_surfaces` list (11 entries) that ADDITIVELY BLOCKS planning-doc patterns on main independent of the existing `code_roots` + `protected_extensions` intersection. Loaded by `_harness_protocol.load_branch_isolation_policy` as `BranchIsolationPolicy.protected_main_surfaces: tuple[MainSurfacePattern, ...]`. Queried by `is_branch_isolation_protected_path` → `find_protected_main_surface`. |
 | Shared loader (new) | `scripts/hooks/_harness_protocol.py` | single-source contract loader used by both guards |
 | VS Code guard | `.github/hooks/guard-main-branch.py` | read policy via the shared loader; audit missing edit tools |
 | Claude guard | `scripts/hooks/guard-main-branch.sh` | read policy via `python3 -c "from _harness_protocol import ..."` |
@@ -344,7 +345,7 @@ Proof:
 - [x] `harness-protocol.yaml` `code_roots` includes `scripts/`, `.github/hooks/`, `.claude/`, `mk/`
 - [x] `harness-protocol.yaml` adds `.mk` to `protected_extensions`
 - [x] `harness-protocol.yaml` adds `root_protected_files: ["Makefile"]`
-- [x] `harness-protocol.yaml` adds `permitted_main_surfaces` with at least the 15 default entries listed in Slice 1, including the planning-doc entries now formalized there
+- [x] `harness-protocol.yaml` adds `permitted_main_surfaces` (11 operator-maintained entries: CLAUDE.md, .github/copilot-instructions.md, docs/agentic/{BOOTSTRAP.md, instructions.md, contracts/**, rules/**, maps/**, generated/**}, docs/tasks/archive/**, DASHBOARD.txt, CURRENT_TASK.json) and `protected_main_surfaces` (11 planning-doc entries listed in the retroactive landing note above). Both lists are configured per-project.
 - [x] Each `permitted_main_surfaces` entry has both `pattern` and `reason` fields populated
 - [x] `scripts/hooks/_harness_protocol.py` exposes `load_branch_isolation_policy` and `is_permitted_main_surface`
 - [x] `_harness_protocol.py` raises `HarnessContractMissingError` with a named remediation when the contract is absent
@@ -409,7 +410,7 @@ Proof:
 - [x] Root `Makefile` is protected through `root_protected_files`
 - [x] `scripts/`, `.github/hooks/`, `.claude/`, and `mk/` code files are protected on `main`
 - [x] Worktree-drift check **blocks by default** with `WorkspaceRootDriftError`; escape hatches (env var, `MAINT-*`, allow-list) each work as documented
-- [x] `permitted_main_surfaces` ships with at least 15 entries covering task plans, assessments, scopes, epics, agent dispatchers, and generated artifacts
+- [x] `permitted_main_surfaces` ships with 11 operator-maintained entries covering agent dispatchers, agentic contracts/rules/maps, and generated artifacts; planning docs (task plans, assessments, scopes, epics, specs, ADRs) are additively BLOCKED on main via the new `protected_main_surfaces` list (also 11 entries)
 - [x] `permitted_main_surfaces` is documented as per-project configurable, not as a framework default
 - [ ] E17-7 Slice 2 checkbox-sync hook writes to `docs/tasks/**/*.md` on main without tripping the drift block
 - [ ] `make check-harness-sync` catches `code_roots`, `permitted_main_surfaces`, and `DASHBOARD.md` drift <!-- lint-dashboard-txt: allow -->

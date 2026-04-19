@@ -27,8 +27,13 @@ repo_root = Path(sys.argv[1])
 branch = sys.argv[2]
 sys.path.insert(0, str(repo_root / "scripts" / "hooks"))
 
-from _branch_isolation_guard import check_file_edit, find_dirty_protected_paths
-from _harness_protocol import HarnessContractMissingError, load_branch_isolation_policy
+from _branch_isolation_guard import check_file_edit, extract_candidate_paths, find_dirty_protected_paths, to_repo_relative
+from _harness_protocol import (
+    HarnessContractMissingError,
+    find_permitted_main_surface,
+    is_branch_isolation_protected_path,
+    load_branch_isolation_policy,
+)
 
 try:
     payload = json.load(sys.stdin)
@@ -90,6 +95,37 @@ if dirty is None:
     raise SystemExit(0)
 
 resolved_branch, dirty_paths = dirty
+
+# BR-21: if every candidate edit path resolves to a permitted_main_surface AND
+# none of the candidate paths are themselves in the dirty-protected set, the
+# edit is a legitimate docs/config update that must not be blocked by unrelated
+# dirty code. Emit a warning and allow the edit; the dirty state still needs
+# remediation, but that is a separate cleanup.
+candidate_rel_paths = [
+    to_repo_relative(raw, str(repo_root))
+    for raw in extract_candidate_paths(tool_name, tool_input)
+]
+candidate_rel_paths = [p for p in candidate_rel_paths if p]
+all_permitted = bool(candidate_rel_paths) and all(
+    find_permitted_main_surface(p, policy) is not None for p in candidate_rel_paths
+)
+candidates_clean = not any(p in set(dirty_paths) for p in candidate_rel_paths)
+if all_permitted and candidates_clean:
+    rendered_paths = "\n".join(f"  - {path}" for path in dirty_paths)
+    print(
+        "WARNING: Protected code files are dirty on main, but this edit targets "
+        "only permitted_main_surfaces — allowing.\n\n"
+        f"Branch: {resolved_branch}\n"
+        "Dirty files (still need remediation):\n"
+        f"{rendered_paths}\n\n"
+        "Remediation options (not required for this edit):\n"
+        "  1. git checkout -b feature/<task-id>-<slug> to move dirty changes off main\n"
+        "  2. git stash push -m 'pre-main-cleanup' to set them aside\n"
+        "  3. git restore <files> to discard them\n",
+        file=sys.stderr,
+    )
+    raise SystemExit(0)
+
 rendered_paths = "\n".join(f"  - {path}" for path in dirty_paths)
 print(
     "BLOCKED: Protected code files are already dirty on the main branch.\n\n"

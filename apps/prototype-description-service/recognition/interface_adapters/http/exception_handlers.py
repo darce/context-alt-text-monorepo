@@ -20,7 +20,7 @@ from recognition.interface_adapters.http.middleware.correlation import (
 logger = logging.getLogger(__name__)
 
 
-def _trace_id_for(request: Request) -> str:
+def _correlation_id_for(request: Request) -> str:
     """Return the active correlation id, falling back to request header or a new id.
 
     The CorrelationIdMiddleware is registered app-wide, so ``get_correlation_id``
@@ -43,7 +43,7 @@ def _opaque_error_response(
         content={
             "error": error,
             "path": str(request.url),
-            "trace_id": _trace_id_for(request),
+            "correlation_id": _correlation_id_for(request),
         },
         headers=headers,
     )
@@ -70,32 +70,32 @@ class ValidationError(RecognitionError):
 
 async def recognition_exception_handler(request: Request, exc: RecognitionError) -> JSONResponse:
     """Handle known recognition errors with a structured payload."""
-    trace_id = _trace_id_for(request)
+    correlation_id = _correlation_id_for(request)
     return JSONResponse(
         status_code=exc.status_code,
         content={
             "error": exc.__class__.__name__,
             "message": exc.message,
             "path": str(request.url),
-            "trace_id": trace_id,
+            "correlation_id": correlation_id,
         },
     )
 
 
 async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Handle unexpected errors with a 500 response."""
-    trace_id = _trace_id_for(request)
-    logger.exception("Unhandled exception", extra={"trace_id": trace_id, "path": str(request.url)})
+    correlation_id = _correlation_id_for(request)
+    logger.exception("Unhandled exception", extra={"correlation_id": correlation_id, "path": str(request.url)})
     return _opaque_error_response(request=request, status_code=500, error="internal_server_error")
 
 
 async def pool_exhaustion_handler(request: Request, exc: PoolTimeoutError) -> JSONResponse:
     """Map SQLAlchemy pool checkout failures to a retryable 503."""
-    trace_id = _trace_id_for(request)
+    correlation_id = _correlation_id_for(request)
     logger.exception(
         "Database pool exhausted",
         extra={
-            "trace_id": trace_id,
+            "correlation_id": correlation_id,
             "path": str(request.url),
             "pool_stats": get_pool_stats(),
         },
@@ -110,14 +110,14 @@ async def pool_exhaustion_handler(request: Request, exc: PoolTimeoutError) -> JS
 
 async def cluster_not_found_exception_handler(request: Request, exc: ClusterNotFoundError) -> JSONResponse:
     """Translate domain cluster-not-found errors to HTTP 404."""
-    trace_id = _trace_id_for(request)
+    correlation_id = _correlation_id_for(request)
     return JSONResponse(
         status_code=status.HTTP_404_NOT_FOUND,
         content={
             "error": "ClusterNotFoundError",
             "message": str(exc),
             "path": str(request.url),
-            "trace_id": trace_id,
+            "correlation_id": correlation_id,
         },
     )
 
@@ -133,7 +133,7 @@ def _is_duplicate_cluster_label(exc: IntegrityError) -> bool:
 
 async def integrity_exception_handler(request: Request, exc: IntegrityError) -> JSONResponse:
     """Translate common DB constraint violations into friendlier HTTP errors."""
-    trace_id = _trace_id_for(request)
+    correlation_id = _correlation_id_for(request)
 
     if _is_duplicate_cluster_label(exc):
         return JSONResponse(
@@ -142,11 +142,11 @@ async def integrity_exception_handler(request: Request, exc: IntegrityError) -> 
                 "error": "DuplicateClusterLabel",
                 "message": "Cluster label already exists for this tenant.",
                 "path": str(request.url),
-                "trace_id": trace_id,
+                "correlation_id": correlation_id,
             },
         )
 
-    logger.exception("Unhandled integrity error", extra={"trace_id": trace_id, "path": str(request.url)})
+    logger.exception("Unhandled integrity error", extra={"correlation_id": correlation_id, "path": str(request.url)})
     return _opaque_error_response(
         request=request, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, error="integrity_error"
     )

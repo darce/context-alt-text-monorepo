@@ -176,5 +176,6 @@ def test_exception_handler_uses_contextvar_correlation_id() -> None:
 
     assert resp.status_code == 400
     body = resp.json()
-    assert body["trace_id"] == incoming
+    assert body["correlation_id"] == incoming
+    assert "trace_id" not in body
     assert resp.headers[CORRELATION_ID_HEADER] == incoming

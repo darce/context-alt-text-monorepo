@@ -13,7 +13,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 from fastmcp import FastMCP
 
@@ -118,13 +118,14 @@ def switch_task(
     target_branch: str | None = None,
 ):
     from agent_handoff_mcp import switch_task as _switch_task
+    from agent_handoff_mcp.api import WriteActor
 
     return _switch_task(
         task_ref=task_ref,
         objective=objective,
         focus=focus,
         status=status,
-        actor=actor,
+        actor=cast(WriteActor | None, actor),
         target_branch=target_branch,
     )
 

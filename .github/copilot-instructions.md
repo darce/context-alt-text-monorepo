@@ -57,6 +57,10 @@ Before editing code, use one of these isolation tiers:
 
 On every session start, context switch, or worktree change:
 
+0. **Identify the task first.** Before `make context` or any MCP read that resolves the active task by cwd, decide which task owns this scope:
+   - Existing feature-branch task → proceed to step 1 from inside the task's `target_worktree_path`.
+   - Ad-hoc / new work on `main` (e.g. `/branch-review`, audits, patches) → run `set_handoff_state(task_ref="MAINT-<slug>-<YYYYMMDD>", objective="...", status="in_progress")` FIRST, then pass `task_ref` explicitly to subsequent reads. Do not rely on cwd-based resolution on `main` — two or more active main-branch tasks trigger `Ambiguous active task` errors.
+   - `Ambiguous active task. Known task_refs: ...` on startup means step 0 was skipped: create/select the task_ref and pass it explicitly, or archive stale MAINT-* rows.
 1. Run `make context` to verify your shell is in the correct worktree on the correct branch.
 2. Query MCP state: `get_handoff_state(sections="identity")` to learn the active task, target branch, and target worktree path.
 3. If the active task has a `target_worktree_path`, `cd` to it before doing any work.

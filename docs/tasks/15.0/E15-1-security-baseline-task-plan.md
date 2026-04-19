@@ -13,7 +13,11 @@
 
 ## Objective
 
-Close the remaining security gaps that block public internet exposure of the recognition service. When this task is complete, the API enforces rate limits, rejects non-allowlisted browser origins, and supports no-downtime key rotation.
+Close the remaining security gaps that block public internet exposure of the recognition service. When this task is complete, the API enforces rate limits, rejects non-allowlisted browser origins, supports no-downtime key rotation, and emits audit-trail log events for every authentication decision (success and failure) with a non-reversible key fingerprint.
+
+### Explicit deliverable: auth-event fingerprint logging
+
+The owning epic lists "audit logging of auth events with key fingerprint" as an E15-1 deliverable. This plan delivers it as part of Slice 3 (key lifecycle) rather than deferring it, because the fingerprint derivation must be consistent with the key-storage hash already introduced by the lifecycle work. Scope: every `require_auth` outcome (success, invalid key, expired, revoked, tenant mismatch) emits a structured log entry containing `api_key_id` (when resolvable), a 12-char prefix of the stored hash (never the raw key), tenant claim, outcome code, and trace id. Rate-limit 429 events reuse the same emitter.
 
 ## Problem Statement
 
@@ -102,7 +106,8 @@ The deployed API at `api.altcontext.com` enforces per-key rate limits (429 with 
 | Auth dependency | `recognition/interface_adapters/http/deps/auth.py` | Add expiry/revocation checks; wire `Depends(require_auth)` upstream of rate limit |
 | Router wiring | `recognition/interface_adapters/http/routers/*.py` | Replace `Depends(require_auth)` with the chained `Depends(require_auth) + Depends(enforce_rate_limit)` on protected routers |
 | Security config | `recognition/config/security.py` | Add `allowed_origins` field; reuse existing `rate_limit_requests_per_minute` / `rate_limit_burst` |
-| App wiring | `api/main.py` | Register `CORSMiddleware` only (rate limit is dependency-based, not middleware) |
+| App wiring | `api/main.py` | Register `CORSMiddleware`; add fail-closed startup guard that raises when `RECOGNITION_ENV` is production-like and `dev_api_keys` is non-empty |
+| Auth audit log | `recognition/interface_adapters/http/deps/auth.py` + new `recognition/observability/auth_audit.py` | Emit structured log event (`api_key_id`, hash-prefix fingerprint, tenant claim, outcome code, trace id) on every `require_auth` decision and 429 rate-limit event |
 | DB model | `db/models/tenant.py` | Add `expires_at`, `revoked_at` to ApiKey |
 | Schema | `db/migrations/versions/001_identity_schema.py` | Edit baseline (greenfield policy: no follow-on migration) |
 | API key repository | `recognition/infrastructure/repositories/api_key_repository.py` | Filter expired/revoked keys in lookup |
@@ -128,10 +133,11 @@ The deployed API at `api.altcontext.com` enforces per-key rate limits (429 with 
   - `PYENV_VERSION=description-service pyenv exec python -m pytest recognition/tests/api/test_rate_limiting.py -v`
   - `PYENV_VERSION=description-service pyenv exec python -m pytest recognition/tests/api/test_cors.py -v`
   - `PYENV_VERSION=description-service pyenv exec python -m pytest recognition/tests/api/test_key_rotation.py -v`
-- Runtime-parity:
-  - `curl -H "X-Api-Key: <key>" https://api.altcontext.com/health` returns 200
-  - Repeated rapid requests trigger 429 with `Retry-After` header
-  - `curl -H "Origin: https://evil.com" -I https://api.altcontext.com/recognition/health` returns no CORS headers
+- Runtime-parity (must exercise **protected** endpoints — the `/health` root is intentionally unauthenticated and would pass even if auth/rate-limit wiring regressed):
+  - `curl -H "X-Api-Key: <key>" -H "X-Tenant-ID: <tenant>" https://api.altcontext.com/recognition/health/pool` returns 200
+  - Repeated rapid requests against `/recognition/clusters` (a protected route under `enforce_rate_limit`) trigger 429 with `Retry-After` header
+  - `curl -H "Origin: https://evil.com" -H "X-Api-Key: <key>" -I https://api.altcontext.com/recognition/clusters` returns no `Access-Control-Allow-Origin` header
+  - Revoked-key smoke: `manage_api_keys.py revoke --key-id <id>`, then a request with that key returns 401
 - Contract verification:
   - Security contract documents rate limiting, CORS, and rotation behavior
 
@@ -147,7 +153,8 @@ Changes:
 
 - Add `RateLimitTier` StrEnum to `recognition/config/security.py` with `STANDARD`/`PRO`/`ENTERPRISE` values and a `tier_rpm(tier, settings) -> int` helper that maps tier → RPM using `SecuritySettings.rate_limit_requests_per_minute` as the `STANDARD` baseline. Reconcile existing `'free'` string in `test_authentication.py` fixture to `RateLimitTier.STANDARD`.
 - Add `recognition/interface_adapters/http/deps/rate_limit.py` with `enforce_rate_limit(auth: AuthContext = Depends(require_auth))` — sliding-window counter keyed by `auth.api_key_id`, applying `RateLimitTier(auth.rate_limit_tier).tier_rpm(...)` if set, falling back to `STANDARD`.
-- **Dev/admin-key policy**: dev keys from `RECOGNITION_ALLOWED_API_KEYS` resolve to `api_key_id=None` in `auth.py` (line 212). These keys **bypass the limiter entirely** — they are local-only debugging keys per the security contract and must never ship to production. This is asserted by a startup check that logs a warning when `auth_enabled=True` and `dev_api_keys` is non-empty in a production-like environment. The limiter's `enforce_rate_limit` returns early with a no-op when `auth.api_key_id is None and auth.is_admin`.
+- **Dev/admin-key policy**: dev keys from `RECOGNITION_ALLOWED_API_KEYS` resolve to `api_key_id=None` in `auth.py` (line 212). These keys **bypass the limiter entirely** — they are local-only debugging keys per the security contract and must never ship to production. The limiter's `enforce_rate_limit` returns early with a no-op when `auth.api_key_id is None and auth.is_admin`.
+- **Fail-closed production guard**: add a startup check in `api/main.py` that raises `RuntimeError` (refusing to start the app) when `RECOGNITION_ENV` is one of `production`/`staging`/`demo` AND `SecuritySettings.dev_api_keys` is non-empty. A log-only warning is insufficient because operator misconfiguration must not silently ship dev-key semantics into a public environment. In local/dev environments (`RECOGNITION_ENV=local` or unset) the check downgrades to a WARNING-level log. `.env.prod.example` must ship with `RECOGNITION_ALLOWED_API_KEYS=` (empty) rather than any `CHANGE_ME` placeholder — a non-empty placeholder value will trip the fail-closed guard on accidental copy-paste deployment.
 - **429 response shape**: raise plain `HTTPException(status_code=429, detail="rate limit exceeded")` with `Retry-After` and `X-RateLimit-*` response headers, **matching the auth-boundary pattern** used by `require_auth` 401/403 errors (not the structured envelope used by domain errors like `RecognitionError`). This is pinned to avoid divergence between implementation and tests. Document the shape in `contracts/security.md` alongside the existing 401/403 section.
 - Update protected routers (`analyze.py`, `clusters.py`, `retention.py`, etc.) to depend on `enforce_rate_limit` in addition to `require_auth`. The chained dependency naturally pulls the auth context.
 - Add `recognition/tests/api/test_rate_limiting.py` with tests for: under limit (200), at limit (429), burst handling, per-key isolation (different keys do not share counters), `Retry-After` header presence, tier override behavior, **dev-key bypass** (a key from `RECOGNITION_ALLOWED_API_KEYS` is never rate-limited), and **auth-disabled bypass** (`RECOGNITION_AUTH_ENABLED=false` — limiter is a no-op since there is no key identity).
@@ -173,7 +180,7 @@ Changes:
   - `allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"]` (explicit list, not `*`)
   - `allow_headers=["Authorization", "X-Api-Key", "X-Tenant-ID", "Content-Type"]` (explicit list, not `*`)
   - `max_age=600` (10-minute preflight cache)
-- Add `recognition/tests/api/test_cors.py` with tests for: allowlisted origin gets CORS headers, non-allowlisted origin does not, preflight OPTIONS returns correct headers, empty allowlist blocks all CORS, **`allow_credentials=False` asserted in response headers**, **wildcard origin (`*`) rejected by config validation**.
+- Add `recognition/tests/api/test_cors.py` with tests for: allowlisted origin gets CORS headers, non-allowlisted origin does not, preflight OPTIONS returns correct headers, empty allowlist blocks all CORS, **`Access-Control-Allow-Credentials` header is absent from responses** (Starlette's `CORSMiddleware` omits the header entirely when `allow_credentials=False`, so the test asserts absence rather than `== "false"`), **wildcard origin (`*`) rejected by config validation**.
 - Update `.env.prod.example` with `RECOGNITION_ALLOWED_ORIGINS` (including a comment that the deploy defaults to empty = no browser CORS).
 - Update security contract CORS section with the secure-defaults rationale.
 
@@ -188,18 +195,23 @@ Proof:
 
 **Why not an HTTP admin router:** The current `is_admin` flag in `AuthContext` is set only for `RECOGNITION_ALLOWED_API_KEYS` dev keys -- DB-backed production keys always return `is_admin=False`. The security contract explicitly marks dev keys as local-only debugging keys. Building HTTP admin endpoints behind `is_admin` would either be unreachable in production (no admin keys exist) or would require shipping dev-key semantics into production, which contradicts the security baseline this task is meant to establish. A real production admin authority is a separate design concern out of scope for E15-1.
 
-**Operator workflow for this task:** beta-tester key provisioning happens via a CLI run by the operator with direct DB access. The CLI is a Python module under `scripts/manage_api_keys.py` that uses the existing repository layer. Once a future admin-authority design is settled, an HTTP admin surface can be added in a follow-up task.
+**Operator workflow for this task:** beta-tester key provisioning happens via a CLI run by the operator with direct DB access. The CLI is a Python module under `scripts/manage_api_keys.py` that delegates persistence to the API-key repository. The current `SqlAlchemyApiKeyRepository` only exposes `get_by_hash`/`touch`/`touch_by_id`, so this slice extends it with explicit write-boundary methods (`create`, `list_for_tenant`, `revoke`, `mark_expired_if_due`) before the CLI can call them; the CLI never issues raw SQL. Once a future admin-authority design is settled, an HTTP admin surface can be added in a follow-up task on top of those same repository methods.
 
 Changes:
 
 - Add `expires_at: datetime | None` and `revoked_at: datetime | None` to `ApiKey` model in `db/models/tenant.py`.
 - Edit baseline schema `db/migrations/versions/001_identity_schema.py` with the new columns (greenfield policy: no follow-on migration file).
-- Modify `api_key_repository.py` to filter `revoked_at IS NOT NULL` and `expires_at < now()` keys in lookup.
+- Extend `SqlAlchemyApiKeyRepository` (`recognition/infrastructure/repositories/api_key_repository.py`) with explicit write-boundary methods the CLI and `require_auth` path both call:
+  - `get_by_hash(...)` (existing) now filters `revoked_at IS NOT NULL` and `expires_at < now()` out of lookup
+  - `create(tenant_id, hashed_key, rate_limit_tier, expires_at=None) -> ApiKey`
+  - `list_for_tenant(tenant_id, include_revoked=False) -> list[ApiKey]`
+  - `revoke(api_key_id, now=...) -> ApiKey` (soft-revoke: sets `revoked_at`)
+  - All write methods are async, commit on the caller's session, and return the persisted row so the CLI can print deterministic output.
 - Modify `auth.py` `require_auth` to surface expired/revoked rejections with a descriptive 401 detail.
-- Add `apps/prototype-description-service/scripts/manage_api_keys.py` CLI with subcommands:
-  - `create --tenant <id> [--expires-in <days>]` — generates a raw key, stores hash, prints the raw key once to stdout
-  - `list --tenant <id>` — prints active keys (id, last4, created_at, last_used_at, expires_at)
-  - `revoke --key-id <id>` — soft-revoke (sets `revoked_at`)
+- Add `apps/prototype-description-service/scripts/manage_api_keys.py` CLI with subcommands that delegate to the repository methods above (never raw SQL):
+  - `create --tenant <id> [--expires-in <days>] [--tier <STANDARD|PRO|ENTERPRISE>]` — generates a raw key via `secrets.token_urlsafe(32)`, hashes it with the configured `api_key_hash_algorithm`, calls `repo.create(...)`, prints the raw key once to stdout
+  - `list --tenant <id> [--include-revoked]` — calls `repo.list_for_tenant(...)` and prints (id, last4, created_at, last_used_at, expires_at, revoked_at)
+  - `revoke --key-id <id>` — calls `repo.revoke(...)`
 - **Expiry semantics (pinned)**: key expiry is evaluated **per-request at the `require_auth` boundary only**. A request that passes `require_auth` at time T with a still-valid key completes normally even if the key expires at T+ε — in-flight requests are never interrupted. This matches how `revoked_at` is checked and avoids mid-request 401s.
 - **Rotation runbook (documented in `contracts/security.md`)**:
   1. Operator runs `manage_api_keys.py create --tenant <id>` and captures the raw key from stdout.
@@ -208,7 +220,9 @@ Changes:
   4. Tester configures the new key in the plugin Settings page.
   5. **Before revoking the old key**: operator runs `manage_api_keys.py list --tenant <id>` and confirms the new key's `last_used_at` is non-null and more recent than the old key's `last_used_at`. This is the signal that the tester has successfully cut over.
   6. Operator runs `manage_api_keys.py revoke --key-id <old-key-id>` to soft-revoke the old key.
+- Add `recognition/observability/auth_audit.py` with `emit_auth_event(outcome, api_key_id, key_hash, tenant_claim, trace_id)` — derives the fingerprint as `key_hash[:12]` (stored hash prefix; never touches the raw key) and logs a structured record via the standard logging stack. `require_auth` calls the emitter on every terminal path (success, 401, 403) and `enforce_rate_limit` calls it on 429. Raw API keys are never passed to the emitter.
 - Add `recognition/tests/api/test_key_rotation.py`: expired key rejected, revoked key rejected, two keys valid simultaneously, **in-flight request started before expiry completes normally even if expiry lapses during processing**.
+- Add `recognition/tests/api/test_auth_audit.py`: success / invalid-key / expired / revoked / tenant-mismatch / rate-limit paths each emit exactly one structured log record; the record contains `api_key_id` when resolvable and a 12-char hash-prefix fingerprint; the raw API key value never appears in any log record captured by `caplog`.
 - Add `recognition/tests/scripts/test_manage_api_keys.py`: CLI create/list/revoke happy paths, error cases, masking of stored hashes.
 - Update security contract: add the rotation/lifecycle behavior, the CLI provisioning ceremony, and an explicit note that an HTTP admin surface is deferred until a production admin authority is defined.
 - Document beta-tester onboarding flow in the security contract: operator runs `manage_api_keys.py create` for the tester's tenant, gives the raw key to the tester via a secure channel once, tester configures it in the plugin Settings page (which already accepts the key as a WP option).
@@ -249,13 +263,15 @@ Proof:
 - [ ] Security contract updated
 - [ ] All tests pass
 
-### Checklist for Slice 3: Key Rotation and Lifecycle
+### Checklist for Slice 3: Key Rotation, Lifecycle, and Auth Audit Logging
 
-- [ ] Failing tests written first (`test_key_rotation.py`)
-- [ ] `ApiKey` model columns added
+- [ ] Failing tests written first (`test_key_rotation.py`, `test_auth_audit.py`)
+- [ ] `ApiKey` model columns added (`expires_at`, `revoked_at`)
 - [ ] Schema migration updated (greenfield: `001_identity_schema.py`)
-- [ ] Repository filters expired/revoked keys
-- [ ] Operator CLI (`scripts/manage_api_keys.py`) with `create`/`list`/`revoke` subcommands
+- [ ] Repository extended with `create` / `list_for_tenant` / `revoke` write methods; `get_by_hash` filters expired/revoked keys
+- [ ] Operator CLI (`scripts/manage_api_keys.py`) with `create`/`list`/`revoke` subcommands, delegating to repo methods (no raw SQL)
+- [ ] Auth audit emitter (`recognition/observability/auth_audit.py`) wired into `require_auth` and `enforce_rate_limit`; fingerprint is hash-prefix only; raw keys never logged
+- [ ] Fail-closed startup guard in `api/main.py` refuses to start when `RECOGNITION_ENV` is production-like and `dev_api_keys` is non-empty; `.env.prod.example` ships with empty `RECOGNITION_ALLOWED_API_KEYS=`
 - [ ] HTTP admin surface explicitly deferred in security contract (no admin router shipped this task)
 - [ ] Security contract updated
 - [ ] Full `make check` passes
@@ -273,4 +289,6 @@ Proof:
 - [ ] Non-allowlisted browser origin receives no CORS headers
 - [ ] Two API keys can be valid simultaneously for the same tenant
 - [ ] Expired/revoked keys are rejected with 401
-- [ ] Security contract documents rate limiting, CORS, and rotation
+- [ ] Every auth decision (success/401/403/429) emits a structured audit event with a hash-prefix fingerprint; raw keys never appear in logs
+- [ ] Production-like deploy with `dev_api_keys` set refuses to start
+- [ ] Security contract documents rate limiting, CORS, rotation, and audit-log shape

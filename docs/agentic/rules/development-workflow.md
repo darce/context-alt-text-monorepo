@@ -45,6 +45,20 @@ Protected root files: `Makefile`.
 
 Keep each allow-list entry narrow and explainable. If a surface exists only to support this repo's workflow, add it here with a reason in the contract. If a path is code or code-adjacent implementation, do not put it on this list just to bypass the guard.
 
+## Shared Agentic Surface
+
+E17-10 hoists the shared agentic surface into three standalone private repos:
+
+- `git@github.com:darce/agentic-system.git` — canonical shared surface for skills, hooks, prompts, commands, contracts, and workflow generators
+- `git@github.com:darce/mcp-agent-orchestrator.git` — standalone orchestrator MCP package repo extracted from `packages/agent-orchestrator-mcp/`
+- `git@github.com:darce/agentic-bootstrap.git` — standalone bootstrap CLI repo that installs and updates the shared surface in consumer projects
+
+For the MVP, sync direction is one-way: this monorepo is the source of truth and Slice 0 extracts the shared surface into `darce/agentic-system`. Consumers clone the remote surface into `<consumer-root>/.agentic/remote/` and symlink from there; they do not install from `context-alt-text-monorepo` URLs.
+
+`TODO(E17-10-POST-MVP-SYNC)`: define the reverse-sync workflow for upstream edits made in `darce/agentic-system`, including how they are reviewed and merged back into this monorepo without drift.
+
+`TODO(E17-10-POST-MVP-CLEANUP)`: once Slice 5 proves the consumer flow end to end, delete the duplicated in-tree shared-surface copies from this monorepo or replace them with the agreed post-MVP sync model.
+
 ### Protected Planning Surfaces
 
 `branch_isolation.protected_main_surfaces` is the complementary contract list for non-code paths that are still protected on `main`. In this repo that list includes top-level and package-local planning artifacts such as:

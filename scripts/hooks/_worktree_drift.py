@@ -269,6 +269,18 @@ def _canonical_target_worktree(target_worktree_path: str | None) -> str | None:
     return str(Path(target_worktree_path).expanduser().resolve(strict=False))
 
 
+def _detect_current_branch(workspace: Path) -> str:
+    """Return the current branch name, or empty string on failure."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(workspace), "branch", "--show-current"],
+            capture_output=True, text=True, timeout=3, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
 def _candidate_abspath(raw_path: str, workspace_root: Path) -> Path:
     candidate = Path(raw_path).expanduser()
     if not candidate.is_absolute():
@@ -388,6 +400,31 @@ def evaluate_payload(
             task_ref=context.task_ref,
             target_worktree=target_worktree,
         )
+
+    # Root-worktree-on-non-main guard: if the agent is editing inside the
+    # root (primary) worktree while on a feature branch, block the edit.
+    # The root worktree must stay on main/master; feature work belongs in
+    # linked worktrees.
+    root_resolved = str(root.resolve(strict=False))
+    if root_resolved == primary_worktree:
+        actual_branch = _detect_current_branch(root)
+        if actual_branch and actual_branch not in MAIN_BRANCHES:
+            return DriftDecision(
+                outcome="block",
+                reason=(
+                    "RootWorktreeNotOnMainError: the root worktree is checked "
+                    f"out on branch '{actual_branch}', not main.\n\n"
+                    "The root worktree must stay on main. Use a linked worktree "
+                    "for feature branches:\n"
+                    "  git checkout main\n"
+                    f"  git worktree add ../<repo>-<task-id> -b {actual_branch}\n\n"
+                    "Escape hatch: ALT_ALLOW_WORKTREE_DRIFT=1"
+                ),
+                primary_worktree=primary_worktree,
+                task_ref=context.task_ref or "(unknown task)",
+                target_worktree=target_worktree,
+                path=candidate_paths[0] if candidate_paths else None,
+            )
 
     allowlisted_decisions: list[DriftDecision] = []
     policy = None

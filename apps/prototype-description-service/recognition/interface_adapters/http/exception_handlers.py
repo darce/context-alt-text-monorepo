@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import uuid
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
@@ -12,12 +11,24 @@ from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
 from db.session import get_pool_stats
 from recognition.domain.repositories import ClusterNotFoundError
+from recognition.interface_adapters.http.middleware.correlation import (
+    CORRELATION_ID_HEADER,
+    generate_correlation_id,
+    get_correlation_id,
+)
 
 logger = logging.getLogger(__name__)
 
 
 def _trace_id_for(request: Request) -> str:
-    return request.headers.get("X-Request-ID") or f"req-{uuid.uuid4()}"
+    """Return the active correlation id, falling back to request header or a new id.
+
+    The CorrelationIdMiddleware is registered app-wide, so ``get_correlation_id``
+    almost always returns the value already echoed in the response header. The
+    remaining fallbacks exist for handlers that run before the middleware has
+    had a chance to bind the contextvar (e.g. routing failures in tests).
+    """
+    return get_correlation_id() or request.headers.get(CORRELATION_ID_HEADER) or generate_correlation_id()
 
 
 def _opaque_error_response(

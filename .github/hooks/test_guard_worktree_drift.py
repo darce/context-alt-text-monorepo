@@ -381,3 +381,82 @@ def test_evaluate_payload_bash_relative_path_escapes_workspace_blocked(
     assert result is not None
     assert result.outcome == "block"
     assert result.path is not None and result.path.endswith("packages/foo.py")
+
+
+# ---------- Root-worktree-on-non-main guard ----------
+
+
+def test_evaluate_payload_blocks_root_worktree_on_non_main_branch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Root worktree on a feature branch must be blocked."""
+    root_repo = tmp_path / "repo-root"
+    (root_repo / "scripts").mkdir(parents=True)
+    payload = {
+        "toolName": "create_file",
+        "toolInput": {"filePath": str(root_repo / "scripts" / "check.py")},
+    }
+    monkeypatch.setattr(
+        _mod, "_candidate_worktree_root", lambda _path: str(root_repo.resolve())
+    )
+    monkeypatch.setattr(
+        _mod, "_detect_current_branch", lambda _ws: "feature/e17-10"
+    )
+    result = evaluate_payload(
+        payload,
+        workspace_root=root_repo,
+        active_task=("E17-10", str(root_repo), "feature/e17-10"),
+    )
+    assert result is not None
+    assert result.outcome == "block"
+    assert "RootWorktreeNotOnMainError" in (result.reason or "")
+
+
+def test_evaluate_payload_allows_root_worktree_on_main_branch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Root worktree on main should not trigger the root-worktree guard."""
+    root_repo = tmp_path / "repo-root"
+    feature_repo = tmp_path / "repo-feature"
+    (root_repo / "scripts").mkdir(parents=True)
+    payload = {
+        "toolName": "create_file",
+        "toolInput": {"filePath": str(root_repo / "scripts" / "check.py")},
+    }
+    monkeypatch.setattr(
+        _mod, "_candidate_worktree_root", lambda _path: str(root_repo.resolve())
+    )
+    monkeypatch.setattr(_mod, "_detect_current_branch", lambda _ws: "main")
+    result = evaluate_payload(
+        payload,
+        workspace_root=root_repo,
+        active_task=("E17-10", str(feature_repo), "feature/e17-10"),
+    )
+    # Should NOT be a RootWorktreeNotOnMainError
+    if result is not None:
+        assert "RootWorktreeNotOnMainError" not in (result.reason or "")
+
+
+def test_evaluate_payload_root_worktree_guard_skipped_for_maint_tasks(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """MAINT tasks bypass the root-worktree guard entirely."""
+    root_repo = tmp_path / "repo-root"
+    (root_repo / "scripts").mkdir(parents=True)
+    payload = {
+        "toolName": "create_file",
+        "toolInput": {"filePath": str(root_repo / "scripts" / "check.py")},
+    }
+    monkeypatch.setattr(
+        _mod, "_candidate_worktree_root", lambda _path: str(root_repo.resolve())
+    )
+    monkeypatch.setattr(
+        _mod, "_detect_current_branch", lambda _ws: "feature/maint-fix"
+    )
+    result = evaluate_payload(
+        payload,
+        workspace_root=root_repo,
+        active_task=("MAINT-FIX-20260419", str(root_repo), "main"),
+    )
+    assert result is not None
+    assert result.outcome == "maintenance_bypass"

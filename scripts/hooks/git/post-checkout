@@ -1,5 +1,6 @@
 #!/bin/sh
-# Git post-checkout hook: warn if protected paths are dirty on main (BR-16/BR-22).
+# Git post-checkout hook: warn if protected paths are dirty on main (BR-16/BR-22),
+# and warn if the root worktree is switched away from main.
 #
 # Installed via `make install-git-hooks` which sets core.hooksPath to
 # scripts/hooks/git. The scanner early-exits on non-protected branches.
@@ -12,4 +13,14 @@ if [ -z "$REPO_ROOT" ]; then
 fi
 
 python3 "$REPO_ROOT/scripts/hooks/check_main_clean.py" --trigger post-checkout || true
+
+# Root-worktree guard: warn loudly if a branch checkout switched the root
+# worktree away from main/master. Git has no pre-checkout hook, so this is
+# the earliest detection point. The PreToolUse guard in _worktree_drift.py
+# will hard-block subsequent edits.
+IS_BRANCH_CHECKOUT="${3:-0}"
+if [ "$IS_BRANCH_CHECKOUT" = "1" ]; then
+    python3 "$REPO_ROOT/scripts/hooks/check_root_on_main.py" || true
+fi
+
 exit 0

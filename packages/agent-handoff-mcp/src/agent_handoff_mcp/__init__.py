@@ -22,6 +22,7 @@ from .api import (
     list_review_runs,
     load_session,
     next_actions,
+    post_merge_integrity_check,
     purge_artifacts,
     record_artifact,
     record_decision,
@@ -44,6 +45,7 @@ from .api import (
     update_next_actions,
     update_review_finding,
     update_task_status,
+    working_tree_integrity_check,
 )
 from .config import RuntimeConfig
 from .core import PromptMetrics, ResolvedWriteContext, ReviewFindingDetails, TokenUsage, WriteActor
@@ -109,6 +111,7 @@ __all__ = [
     "list_review_findings",
     "list_review_runs",
     "next_actions",
+    "post_merge_integrity_check",
     "purge_artifacts",
     "record_artifact",
     "record_decision",
@@ -131,4 +134,5 @@ __all__ = [
     "update_task_status",
     "update_next_actions",
     "update_review_finding",
+    "working_tree_integrity_check",
 ]

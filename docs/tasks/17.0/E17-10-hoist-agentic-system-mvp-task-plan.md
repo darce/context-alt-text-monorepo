@@ -165,11 +165,10 @@ Six slices deliver the MVP. Slice 0 commits to the remote-repo topology and extr
 
 **Proof**
 
-- `gh repo view darce/agentic-system --json url,isPrivate && gh repo view darce/mcp-agent-orchestrator --json url,isPrivate && gh repo view darce/agentic-bootstrap --json url,isPrivate && grep -q E17-10-POST-MVP-SYNC docs/agentic/rules/development-workflow.md` proves all three Slice 0 repos exist as private remotes and the Shared Agentic Surface anchor is documented in this monorepo.
+- `gh repo view darce/agentic-system --json url,isPrivate && gh repo view darce/mcp-agent-orchestrator --json url,isPrivate && gh repo view darce/agentic-bootstrap --json url,isPrivate && grep -q E17-10-POST-MVP-SYNC docs/agentic/rules/development-workflow.md && grep -q E17-10-POST-MVP-CLEANUP docs/agentic/rules/development-workflow.md` proves all three Slice 0 repos exist as private remotes and the Shared Agentic Surface anchors are documented in this monorepo.
 - `git ls-remote git@github.com:darce/agentic-system.git refs/tags/v0.1.0` shows the tag.
 - `git clone git@github.com:darce/agentic-system.git /tmp/agentic-system-smoke && ls /tmp/agentic-system-smoke/.claude/skills/` lists the expected skill directories.
 - The MCP-package install URL documented in this plan matches the pattern `git+ssh://git@github.com/darce/<repo>.git@<tag>` in Slice 1's `[tool.hoisted]` table and Slice 3's `consumer-setup.md`, where `<repo>` is exactly `mcp-agent-handoff`, `mcp-agent-orchestrator`, or `agentic-bootstrap`. No install URL anywhere in the plan references `context-alt-text-monorepo`.
-- `git ls-remote git@github.com:darce/mcp-agent-orchestrator.git refs/tags/v0.1.0` shows the tag (populated by Slice 1 once it tags the extracted repo).
 
 ### Slice 1 — MCP package release metadata and packaged-runtime path hardening
 
@@ -196,6 +195,7 @@ Six slices deliver the MVP. Slice 0 commits to the remote-repo topology and extr
 - Unit test covers the linked-worktree convergence case: three worktrees of one project all resolve to the same `<main-worktree-root>/.task-state/handoff.db` and the same consumer-root dashboard/current-task outputs unless explicitly overridden.
 - A `pip install "git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.1.0"` against a scratch venv succeeds, and a script imports `agent_handoff_mcp`, calls `configure_runtime(RuntimeConfig(state_dir=Path("/tmp/e17-10-state")))`, writes a decision, asserts the DB was created at `/tmp/e17-10-state/handoff.db`, and confirms `run_doctor()` completes without a monorepo-relative stacktrace when no sibling `packages/` tree exists.
 - A `pip install "git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.0"` succeeds end-to-end: pip transitively resolves its `agent-handoff-mcp` dep from `darce/mcp-agent-handoff.git@v0.1.0` (the retargeted dep from this slice), no path dep falls back to `packages/`, and `import agent_orchestrator_mcp` succeeds in the scratch venv.
+- `git ls-remote git@github.com:darce/mcp-agent-orchestrator.git refs/tags/v0.1.0` shows the tag once Slice 1 tags the extracted standalone repo.
 - `pytest packages/agent-handoff-mcp/tests/test_runtime_config.py` green.
 
 ### Slice 2 — Overlay resolver and validator integration
@@ -254,6 +254,8 @@ Six slices deliver the MVP. Slice 0 commits to the remote-repo topology and extr
 - Unit tests for `agentic-bootstrap doctor`: broken symlink in overlay → exits non-zero with `BrokenOverlayError` pointing to the broken path AND naming `agentic-bootstrap repair` as the fix; drifted `core.hooksPath` → exits non-zero with the expected remediation message. Same named error raised from `check-skills` and `check-harness-sync` when they encounter the same broken overlay state.
 - Dry-run `install` against a scratch temp directory creates the expected symlinks, a valid `.agentic-overlay.json`, the three MCP-harness-config files (where the format detects as applicable), and the expected `core.hooksPath` wiring in the temp git repo. Slice 5 validates the full live run.
 - Writer tests assert the default emitted `command` values are symbolic console scripts, not absolute interpreter paths, and that `scripts/mcp/mcp-server.sh` is never referenced in the generated consumer config.
+- `git ls-remote git@github.com:darce/agentic-bootstrap.git refs/tags/v0.1.0` shows the first standalone bootstrap tag pushed from that repo.
+- A `pip install "git+ssh://git@github.com/darce/agentic-bootstrap.git@v0.1.0"` succeeds in a scratch venv before the consumer walk-through begins.
 - `docs/agentic/consumer-setup.md` exists and reviewer confirms it is standalone (no task-plan or epic references required to execute).
 
 ### Slice 4 — Daemon opt-in, token-cost warning, and polling-rework note

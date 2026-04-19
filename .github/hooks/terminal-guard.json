@@ -14,6 +14,12 @@
         "timeout": 5
       },
       {
+        "matcher": "Bash",
+        "type": "command",
+        "command": "python3 scripts/hooks/guard-bash-main-branch.py",
+        "timeout": 5
+      },
+      {
         "type": "command",
         "command": "python3 .github/hooks/terminal-guard.py",
         "timeout": 5

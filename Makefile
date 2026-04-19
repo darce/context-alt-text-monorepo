@@ -132,7 +132,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/lane-maintenance.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context dashboard worktree-audit worktree-prune task-plan-audit generate-agent-workflows check-agent-workflows check-skills check-harness-sync task-start task-finish
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context dashboard worktree-audit worktree-prune task-plan-audit generate-agent-workflows check-agent-workflows check-skills check-harness-sync task-start task-finish check-main-clean install-git-hooks
 
 # Default target
 help:
@@ -408,6 +408,21 @@ lint-scripts:
 # Addresses AHMCP-14-BR-02: hook tests were not reachable via package Makefiles.
 test-hooks:
 	@python3 -m pytest scripts/hooks .github/hooks -q --tb=short
+
+# E17-8 BR-16 / BR-22: on-demand scan for dirty protected paths on main.
+# Mirrors what post-checkout / post-merge / post-rewrite / pre-push run.
+# Prints OK when clean on main; silent / exit 0 on non-protected branches.
+check-main-clean:
+	@python3 scripts/hooks/check_main_clean.py --trigger manual
+
+# E17-8 BR-16 / BR-22: redirect git's per-repo hooks dir to the tracked
+# scripts/hooks/git/ directory so post-checkout, post-merge, post-rewrite
+# (warning-only) and pre-push (hard block) run on every clone+checkout.
+# Idempotent: safe to re-run. Uninstall with `git config --unset core.hooksPath`.
+install-git-hooks:
+	@git config core.hooksPath scripts/hooks/git
+	@echo "git core.hooksPath -> scripts/hooks/git"
+	@ls -1 scripts/hooks/git
 
 format-handoff:
 	@$(MAKE) -C packages/agent-handoff-mcp format-handoff

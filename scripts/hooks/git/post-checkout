@@ -1,0 +1,15 @@
+#!/bin/sh
+# Git post-checkout hook: warn if protected paths are dirty on main (BR-16/BR-22).
+#
+# Installed via `make install-git-hooks` which sets core.hooksPath to
+# scripts/hooks/git. The scanner early-exits on non-protected branches.
+#
+# Args: $1=prev_head $2=new_head $3=is_branch_checkout (1 for branch)
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [ -z "$REPO_ROOT" ]; then
+    exit 0
+fi
+
+python3 "$REPO_ROOT/scripts/hooks/check_main_clean.py" --trigger post-checkout || true
+exit 0

@@ -62,6 +62,30 @@ def test_expected_outputs_include_codex_router_artifact(tmp_path: Path) -> None:
     assert "/planning-review" in outputs[router_path]
 
 
+def test_expected_outputs_render_planning_review_gap_id_and_dashboard_steps(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    claude_out = repo / ".claude" / "commands"
+    prompts_out = repo / ".github" / "prompts"
+    codex_out = repo / "docs" / "agentic" / "generated"
+    manifest = _manifest()
+    manifest["commands"][1]["loop"] = [
+        "record findings and verdict in MCP",
+        "print stable handoff gap ids (`finding_id`) when reporting findings",
+        "refresh DASHBOARD.txt after state-changing handoff writes",
+    ]
+
+    outputs = _expected_outputs(manifest, claude_out, prompts_out, codex_out)
+
+    planning_command = outputs[claude_out / "planning-review.md"]
+    planning_prompt = outputs[prompts_out / "planning-review.prompt.md"]
+    assert "print stable handoff gap ids (`finding_id`) when reporting findings" in planning_command
+    assert "refresh DASHBOARD.txt after state-changing handoff writes" in planning_command
+    assert "print stable handoff gap ids (`finding_id`) when reporting findings" in planning_prompt
+    assert "refresh DASHBOARD.txt after state-changing handoff writes" in planning_prompt
+
+
 def test_check_outputs_fails_when_codex_router_is_missing(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     claude_out = repo / ".claude" / "commands"

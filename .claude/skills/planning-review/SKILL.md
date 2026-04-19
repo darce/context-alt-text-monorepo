@@ -17,7 +17,7 @@ disable-model-invocation: false
 
 ## Overview
 
-Use this skill for durable review of planning artifacts. It applies the planning-review checklist, records findings in MCP, and closes with a planning-mode review run plus verdict decision.
+Use this skill for durable review of planning artifacts. It applies the planning-review checklist, records findings in MCP, refreshes `DASHBOARD.txt`, and closes with a planning-mode review run plus verdict decision.
 
 ## Trigger
 
@@ -31,7 +31,7 @@ Do not use it for implementation diffs or pre-review triage of plan quality.
 
 ## Goal
 
-Produce a planning-review verdict backed by recorded findings and a planning-mode review run, with the artifact either cleared for the next stage or blocked on concrete gaps.
+Produce a planning-review verdict backed by recorded findings, printed handoff gap ids (`finding_id`), a refreshed `DASHBOARD.txt`, and a planning-mode review run, with the artifact either cleared for the next stage or blocked on concrete gaps.
 
 ## Canonical Policy
 
@@ -55,7 +55,8 @@ This skill owns planning-review execution order. The guide owns the detailed che
 5. Decide the planning verdict.
 6. Record the verdict decision with `record_event(event_kind="decision", ...)`.
 7. Record the planning review run with `review_runs(operation="record", review_mode="planning", ...)`.
-8. Confirm whether open findings remain before declaring the artifact ready.
+8. Refresh `DASHBOARD.txt` with `render_handoff(kind='dashboard')` after the state-changing writes land.
+9. Confirm whether open findings remain before declaring the artifact ready, and cite the stable handoff gap ids (`finding_id`) when reporting them.
 
 ## Common Rationalizations
 
@@ -82,8 +83,10 @@ This skill owns planning-review execution order. The guide owns the detailed che
 ## Convergence Criteria
 
 - Planning findings are recorded in MCP before they are reported.
+- Reported findings cite their stable handoff gap ids (`finding_id`).
 - A planning-mode review run exists for the pass.
 - A verdict decision exists for the artifact.
+- `DASHBOARD.txt` is refreshed after the planning-review writes.
 - The artifact is either cleared with zero open findings or blocked on explicit unresolved gaps.
 
 ## See Also

@@ -296,8 +296,6 @@ def evaluate_payload(
     if not target_worktree:
         return None
     primary_worktree = _canonical_target_worktree(context.primary_worktree) or _primary_workspace_root(root)
-    if context.target_branch and context.target_branch in MAIN_BRANCHES:
-        return None
     if context.task_ref and context.task_ref.startswith("MAINT-"):
         return DriftDecision(
             outcome="maintenance_bypass",
@@ -306,6 +304,11 @@ def evaluate_payload(
             task_ref=context.task_ref,
             target_worktree=target_worktree,
         )
+    # BR-18: main-branch targeting tasks (non-MAINT) still enforce drift. The
+    # previous blanket bypass `if target_branch in MAIN_BRANCHES: return None`
+    # silently disabled drift detection for any main-targeting task, creating a
+    # blind spot for E17-10 autonomous loops. MAINT tasks already bypass above;
+    # non-MAINT main tasks must edit from the root/primary worktree.
     if os.environ.get("ALT_ALLOW_WORKTREE_DRIFT") == "1":
         return DriftDecision(
             outcome="env_bypass",

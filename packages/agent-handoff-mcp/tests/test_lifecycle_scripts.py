@@ -54,6 +54,9 @@ BRANCH_ISOLATION_GUARD = REPO_ROOT / "scripts" / "hooks" / "_branch_isolation_gu
 HARNESS_PROTOCOL_HELPER = REPO_ROOT / "scripts" / "hooks" / "_harness_protocol.py"
 WORKTREE_DRIFT_HELPER = REPO_ROOT / "scripts" / "hooks" / "_worktree_drift.py"
 WORKTREE_DRIFT_HOOK = REPO_ROOT / "scripts" / "hooks" / "guard-worktree-drift.sh"
+CHECK_MAIN_CLEAN_SCRIPT = REPO_ROOT / "scripts" / "hooks" / "check_main_clean.py"
+POST_COMMIT_REFRESH_SHA = REPO_ROOT / "scripts" / "hooks" / "_post_commit_refresh_sha.py"
+POST_COMMIT_HOOK = REPO_ROOT / "scripts" / "hooks" / "git" / "post-commit"
 
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -115,12 +118,22 @@ def _build_fake_monorepo(tmp_path: Path) -> Path:
     if BRANCH_ISOLATION_GUARD.exists():
         (repo / "scripts" / "hooks").mkdir(parents=True, exist_ok=True)
         shutil.copy2(BRANCH_ISOLATION_GUARD, repo / "scripts" / "hooks" / "_branch_isolation_guard.py")
+    if CHECK_MAIN_CLEAN_SCRIPT.exists():
+        (repo / "scripts" / "hooks").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(CHECK_MAIN_CLEAN_SCRIPT, repo / "scripts" / "hooks" / "check_main_clean.py")
     if HARNESS_PROTOCOL_HELPER.exists():
         (repo / "scripts" / "hooks").mkdir(parents=True, exist_ok=True)
         shutil.copy2(HARNESS_PROTOCOL_HELPER, repo / "scripts" / "hooks" / "_harness_protocol.py")
+    if POST_COMMIT_REFRESH_SHA.exists():
+        (repo / "scripts" / "hooks").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(POST_COMMIT_REFRESH_SHA, repo / "scripts" / "hooks" / "_post_commit_refresh_sha.py")
     if WORKTREE_DRIFT_HELPER.exists():
         (repo / "scripts" / "hooks").mkdir(parents=True, exist_ok=True)
         shutil.copy2(WORKTREE_DRIFT_HELPER, repo / "scripts" / "hooks" / "_worktree_drift.py")
+    if POST_COMMIT_HOOK.exists():
+        (repo / "scripts" / "hooks" / "git").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(POST_COMMIT_HOOK, repo / "scripts" / "hooks" / "git" / "post-commit")
+        os.chmod(repo / "scripts" / "hooks" / "git" / "post-commit", 0o755)
     if WORKTREE_DRIFT_HOOK.exists():
         (repo / "scripts" / "hooks").mkdir(parents=True, exist_ok=True)
         shutil.copy2(WORKTREE_DRIFT_HOOK, repo / "scripts" / "hooks" / "guard-worktree-drift.sh")
@@ -195,6 +208,21 @@ def _make_env(repo: Path) -> dict[str, str]:
     which then misses the venv's site-packages.
     """
     env = os.environ.copy()
+    # Fake-repo lifecycle tests must not inherit caller git / handoff routing.
+    # Pytest and editor integrations can leak these vars from the real repo,
+    # which makes hook subprocesses resolve the wrong checkout or DB.
+    for key in (
+        "AGENT_HANDOFF_WORKSPACE_ROOT",
+        "AGENT_HANDOFF_STATE_DIR",
+        "AGENT_HANDOFF_CURRENT_TASK_PATH",
+        "AGENT_HANDOFF_DASHBOARD_PATH",
+        "AGENT_HANDOFF_EXPORTS_DIR",
+        "GIT_COMMON_DIR",
+        "GIT_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_WORK_TREE",
+    ):
+        env.pop(key, None)
     # Ensure the inline python -c invocation can find agent_handoff_mcp
     # by pointing at the fake monorepo's package source. The test
     # suite's `LOCAL_PYTHONPATH` is irrelevant inside the subprocess.
@@ -1147,6 +1175,73 @@ def test_task_finish_normal_path_does_not_warn_about_deleted_branch(tmp_path: Pa
     finished = _run_script("task-finish.sh", repo, "TF-NO-WARN-1", env=env)
     assert finished.returncode == 0, finished.stderr
     assert "still exists after archive" not in finished.stderr, finished.stderr
+
+
+def test_post_commit_refresh_helper_updates_active_task_commit_sha(tmp_path: Path) -> None:
+    """The helper subprocess should stamp HEAD onto the active task row."""
+
+    from agent_handoff_mcp import RuntimeConfig, configure_runtime, set_handoff_state
+
+    repo = _build_fake_monorepo(tmp_path)
+    env = _make_env(repo)
+    configure_runtime(RuntimeConfig.for_repo(repo))
+
+    seeded = set_handoff_state(
+        task_ref="PC-HOOK-1",
+        objective="Refresh commit SHA after commit",
+        status="in_progress",
+        target_branch="feature/pc-hook-1",
+    )
+    assert seeded["ok"] is True, seeded
+
+    _git(repo, "checkout", "-q", "-b", "feature/pc-hook-1")
+
+    touched = repo / "post-commit.txt"
+    touched.write_text("hook smoke test\n", encoding="utf-8")
+    _git(repo, "add", "post-commit.txt")
+    commit = subprocess.run(
+        ["git", "commit", "-q", "-m", "exercise post-commit hook"],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert commit.returncode == 0, commit.stderr
+
+    helper = subprocess.run(
+        [env["PYENV_ROOT"] + f"/versions/{env['PYENV_VERSION']}/bin/python", str(repo / "scripts" / "hooks" / "_post_commit_refresh_sha.py")],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert helper.returncode == 0, helper.stderr
+
+    head_sha = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    with sqlite3.connect(repo / ".task-state" / "handoff.db") as conn:
+        row = conn.execute(
+            "SELECT revision, updated_branch, updated_commit_sha FROM handoff_state WHERE task_ref = ?",
+            ("PC-HOOK-1",),
+        ).fetchone()
+
+    assert row is not None
+    revision, updated_branch, updated_commit_sha = row
+    assert updated_commit_sha == head_sha
+    assert updated_branch == "feature/pc-hook-1"
+    assert revision == 1
+
+
+def test_post_commit_hook_has_valid_shell_syntax() -> None:
+    """Static check: post-commit hook must parse cleanly under POSIX sh."""
+
+    proc = subprocess.run(
+        ["sh", "-n", str(POST_COMMIT_HOOK)],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, f"post-commit hook failed sh -n syntax check:\n{proc.stderr}"
 
 
 # ---------------------------------------------------------------------------

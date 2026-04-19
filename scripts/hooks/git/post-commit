@@ -1,0 +1,19 @@
+#!/bin/sh
+# Git post-commit hook: best-effort active-task SHA refresh plus warn-only dirty scan.
+#
+# Installed via `make install-git-hooks`. Never fails the commit: post-commit
+# is observability/housekeeping only. When git-lfs is present we still chain to
+# its post-commit hook so repos using LFS keep the default follow-up behavior.
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [ -z "$REPO_ROOT" ]; then
+    exit 0
+fi
+
+if command -v git-lfs >/dev/null 2>&1; then
+    git lfs post-commit "$@" >/dev/null 2>&1 || true
+fi
+
+python3 "$REPO_ROOT/scripts/hooks/_post_commit_refresh_sha.py" || true
+python3 "$REPO_ROOT/scripts/hooks/check_main_clean.py" --trigger post-commit || true
+exit 0

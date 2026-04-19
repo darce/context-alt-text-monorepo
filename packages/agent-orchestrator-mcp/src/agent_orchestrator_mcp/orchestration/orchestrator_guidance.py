@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -80,11 +81,26 @@ GUIDANCE_STALL_THRESHOLD = 3
 # ---------------------------------------------------------------------------
 
 
+class GuidanceResolutionKind(StrEnum):
+    """Closed set of resolution kinds emitted by the guidance classifier.
+
+    AOMCP-QA-L-02: replaces ad-hoc magic-string comparisons on
+    ``GuidanceResolution.kind`` so new kinds fail fast at construction and at
+    the (exhaustive) comparison sites.
+    """
+
+    MESSAGE = "message"
+    REVIEW = "review"
+    REDISPATCH = "redispatch"
+    BLOCKED = "blocked"
+    FATAL_ERROR = "fatal_error"
+
+
 class GuidanceResolution:
     def __init__(
         self,
         *,
-        kind: str,
+        kind: GuidanceResolutionKind | str,
         lane_id: str,
         worker_message_id: int,
         latest_report_id: int | None = None,
@@ -97,7 +113,8 @@ class GuidanceResolution:
         close_dispatch_ids: tuple[int, ...] = (),
         error: str | None = None,
     ) -> None:
-        self.kind = kind
+        # Coerce plain strings so downstream callers always see the StrEnum.
+        self.kind: GuidanceResolutionKind = GuidanceResolutionKind(kind)
         self.lane_id = lane_id
         self.worker_message_id = worker_message_id
         self.latest_report_id = latest_report_id
@@ -307,7 +324,7 @@ def _classify_guidance(
 
     if has_resolved_marker and not pending_actions:
         return GuidanceResolution(
-            kind="review",
+            kind=GuidanceResolutionKind.REVIEW,
             lane_id=lane_id,
             worker_message_id=worker_message_id,
             latest_report_id=latest_report_id,
@@ -323,7 +340,7 @@ def _classify_guidance(
     if next_assignment is not None:
         subject, message = next_assignment
         return GuidanceResolution(
-            kind="redispatch",
+            kind=GuidanceResolutionKind.REDISPATCH,
             lane_id=lane_id,
             worker_message_id=worker_message_id,
             latest_report_id=latest_report_id,
@@ -338,7 +355,7 @@ def _classify_guidance(
 
     if has_env_blocker:
         return GuidanceResolution(
-            kind="blocked",
+            kind=GuidanceResolutionKind.BLOCKED,
             lane_id=lane_id,
             worker_message_id=worker_message_id,
             latest_report_id=latest_report_id,
@@ -351,7 +368,7 @@ def _classify_guidance(
 
     if combined.strip():
         return GuidanceResolution(
-            kind="blocked",
+            kind=GuidanceResolutionKind.BLOCKED,
             lane_id=lane_id,
             worker_message_id=worker_message_id,
             latest_report_id=latest_report_id,
@@ -366,7 +383,7 @@ def _classify_guidance(
         )
 
     return GuidanceResolution(
-        kind="fatal_error",
+        kind=GuidanceResolutionKind.FATAL_ERROR,
         lane_id=lane_id,
         worker_message_id=worker_message_id,
         latest_report_id=latest_report_id,
@@ -438,14 +455,14 @@ def _apply_guidance_resolution(
         notes=resolution.lane_notes,
     )
 
-    if resolution.kind == "review":
+    if resolution.kind == GuidanceResolutionKind.REVIEW:
         for action in _pending_lane_actions(_lane_activity(task_ref, resolution.lane_id)):
             action_id = action.get("id")
             if action_id is None:
                 continue
             update_next_actions(operation="update", action_id=int(action_id), status="done")
 
-    if resolution.kind == "redispatch" and resolution.dispatch_message:
+    if resolution.kind == GuidanceResolutionKind.REDISPATCH and resolution.dispatch_message:
         _dispatch_payload: dict | None = None
         try:
             from agent_handoff_mcp import artifact_index as _art_idx
@@ -525,7 +542,7 @@ def _resolve_guidance_cycle(
             activity=activity,
             open_dispatches=open_dispatches,
         )
-        if resolution.kind == "fatal_error":
+        if resolution.kind == GuidanceResolutionKind.FATAL_ERROR:
             if not dry_run:
                 record_decision(
                     session=f"{task_ref}-orchestrator-daemon",

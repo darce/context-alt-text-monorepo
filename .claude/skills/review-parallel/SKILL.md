@@ -55,6 +55,8 @@ The coordinator must call the **in-process** subagent primitive the current harn
 
 ## Core Process
 
+0. **Ensure coordinator task scope before any cwd-resolving MCP read.** If `get_handoff_state(sections="identity")` returns `Ambiguous active task`, archive stale MAINT-* rows in one shot with `make maint-archive-stale` (or `MAINT_ARCHIVE_ARGS="--yes"`) and re-run `make context` (exits `2` on this ambiguity). If no task is active and this is ad-hoc work on main, register a coordinator MAINT task first — `set_handoff_state(task_ref="MAINT-<slug>-<YYYYMMDD>", objective="...", status="in_progress", target_branch="main")` — before step 1.
+
 1. Confirm the coordinator has an active `task_ref`. `get_handoff_state(sections="identity")` is the bounded read. If there is no active task, abort with a clear precondition error; do not write anything.
 2. Pick `N = reviewers_count` (default 2) and assign each reviewer a scoped `task_ref` following the convention `<coordinator-task-ref>-REV-<letter>`, using letters A, B, C, … in order. Record the coordinator/reviewer mapping as a decision: `record_event(event={"event_kind":"decision","decision":"<tag>_review_parallel_open_<coordinator>","rationale":"<mapping>"})`.
 3. For each reviewer index, invoke the subagent primitive from the routing table above. The reviewer receives:

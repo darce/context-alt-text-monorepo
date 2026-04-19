@@ -43,6 +43,11 @@ This skill owns planning-review execution order. The guide owns the detailed che
 
 ## Core Process
 
+0. **Ensure task scope before any cwd-resolving MCP read.** `search_handoff`, `review_runs`, `review_findings` without `task_ref` all resolve from cwd. On cold start:
+   - **Resumption:** work from the existing task's `target_worktree_path`; pass `task_ref` explicitly.
+   - **Ad-hoc planning review on main:** register a maintenance task first — `set_handoff_state(task_ref="MAINT-<slug>-<YYYYMMDD>", objective="...", status="in_progress", target_branch="main")`.
+   - **`Ambiguous active task` error:** run `make maint-archive-stale` (or `MAINT_ARCHIVE_ARGS="--yes"`), then re-run `make context`. `make context` exits `2` on this ambiguity.
+
 1. Load the planning artifact, the minimum prerequisite packet, and the relevant code or contract anchors.
 2. Check prior planning review history with `review_runs(operation="list", review_mode="planning", ...)`.
 3. Execute the planning-review checklist: current-state accuracy, internal consistency, architecture ownership, contract realism, naming compliance, pipeline readiness, and testability.

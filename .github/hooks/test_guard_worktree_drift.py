@@ -351,3 +351,33 @@ def test_evaluate_payload_bash_absolute_path_cross_worktree_blocked(
     assert result is not None
     assert result.outcome == "block"
     assert result.path is not None and result.path.endswith("packages/foo.py")
+
+
+def test_evaluate_payload_bash_relative_path_escapes_workspace_blocked(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """BR-01 part 2: `../`-style relative paths that escape the feature worktree
+    and land inside another worktree must also block. scan_bash_command drops
+    these via _to_repo_relative; the extractor must preserve them.
+    """
+    main_repo = tmp_path / "repo-main"
+    feature_repo = tmp_path / "repo-feature"
+    (main_repo / "packages").mkdir(parents=True)
+    (main_repo / "packages" / "foo.py").write_text("x=1\n")
+    feature_repo.mkdir()
+    _write_contract(feature_repo)
+    # Craft a relative path from feature_repo that resolves into main_repo.
+    rel = f"../{main_repo.name}/packages/foo.py"
+    payload = {
+        "toolName": "Bash",
+        "toolInput": {"command": f"sed -i '' 's/x/y/' {rel}"},
+    }
+    monkeypatch.setattr(_mod, "_candidate_worktree_root", lambda _path: str(main_repo.resolve()))
+    result = evaluate_payload(
+        payload,
+        workspace_root=feature_repo,
+        active_task=("E17-9", str(feature_repo.resolve()), "feature/e17-9"),
+    )
+    assert result is not None
+    assert result.outcome == "block"
+    assert result.path is not None and result.path.endswith("packages/foo.py")

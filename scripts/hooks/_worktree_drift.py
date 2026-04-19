@@ -117,23 +117,27 @@ def _extract_bash_candidate_paths(tool_input: dict[str, Any]) -> list[str]:
             continue
         paths.append(entry)
 
-    # BR-01: scan_bash_command drops absolute paths resolving *outside*
-    # `workspace` (via _to_repo_relative). That leaves a cross-worktree bleed
-    # open — e.g. `sed -i` against an absolute path pointing into the primary
-    # worktree from a linked feature worktree. Pass absolute write-target
-    # tokens through to the drift comparison so _candidate_worktree_root can
-    # resolve their hosting worktree and reject the edit when it diverges from
-    # the active task's target_worktree.
+    # BR-01: scan_bash_command drops paths resolving *outside* `workspace`
+    # (via _to_repo_relative). That leaves a cross-worktree bleed open for
+    # both absolute paths (`sed -i /<primary>/packages/foo.py`) and relative
+    # paths that escape the workspace via `..` (`sed -i ../context-alt-...`).
+    # Pass both shapes through to the drift comparison so
+    # _candidate_worktree_root can resolve their hosting worktree and reject
+    # the edit when it diverges from the active task's target_worktree.
     workspace_resolved = workspace.resolve(strict=False)
     seen: set[str] = set(paths)
     for raw in extract_raw_write_targets(command):
-        raw_path = Path(raw).expanduser()
-        if not raw_path.is_absolute():
+        if not raw or not isinstance(raw, str):
             continue
+        raw_path = Path(raw).expanduser()
+        if raw_path.is_absolute():
+            candidate = raw_path
+        else:
+            candidate = (workspace_resolved / raw_path)
         try:
-            resolved = raw_path.resolve(strict=False)
+            resolved = candidate.resolve(strict=False)
         except OSError:
-            resolved = raw_path
+            resolved = candidate
         try:
             resolved.relative_to(workspace_resolved)
             inside_workspace = True

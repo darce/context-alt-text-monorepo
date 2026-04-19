@@ -17,6 +17,7 @@ from recognition.interface_adapters.http.deps.circuit_breaker import (
     BreakerState,
     get_or_create_session_dependency_circuit_breaker,
 )
+from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.interface_adapters.http.schemas.responses import ConnectionPoolStats, HealthCheckResponse
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -55,6 +56,7 @@ async def health_check(
 @router.get("/pool", response_model=ConnectionPoolStats, summary="Connection pool statistics")
 async def pool_stats(
     _auth=Depends(require_auth),
+    _rl=Depends(enforce_rate_limit),
 ) -> ConnectionPoolStats:
     """Get connection pool statistics."""
     stats = get_pool_stats()

@@ -12,11 +12,12 @@ from fastapi.responses import StreamingResponse
 
 from recognition.application.events.broadcaster import get_event_broadcaster
 from recognition.interface_adapters.http.deps.auth import require_auth
+from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["events"], dependencies=[Depends(require_auth)])
+router = APIRouter(tags=["events"], dependencies=[Depends(require_auth), Depends(enforce_rate_limit)])
 
 
 async def _event_generator(request: Request, tenant_id: str):

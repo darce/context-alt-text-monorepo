@@ -32,6 +32,7 @@ from recognition.interface_adapters.http.dependencies import (
     require_auth,
     require_write_access,
 )
+from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id
 from recognition.interface_adapters.http.schemas.requests import BulkAcceptSuggestionsRequest, SuggestionActionRequest
 from recognition.interface_adapters.http.schemas.responses import (
@@ -46,7 +47,7 @@ from recognition.interface_adapters.http.schemas.responses import (
 from recognition.interface_adapters.http.validation import validate_entity_id, validate_paging
 from recognition.interface_adapters.schemas.suggestion_details import MergeSuggestionDetails, SuggestionDetails
 
-router = APIRouter(tags=["suggestions"], dependencies=[Depends(require_auth)])
+router = APIRouter(tags=["suggestions"], dependencies=[Depends(require_auth), Depends(enforce_rate_limit)])
 
 T_Suggestion = TypeVar("T_Suggestion")
 

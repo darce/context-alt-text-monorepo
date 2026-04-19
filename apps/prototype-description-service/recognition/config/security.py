@@ -3,8 +3,42 @@
 from __future__ import annotations
 
 import os
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
+
+
+class RateLimitTier(StrEnum):
+    """Per-key rate-limit tier. Values are the stored DB strings."""
+
+    STANDARD = "STANDARD"
+    PRO = "PRO"
+    ENTERPRISE = "ENTERPRISE"
+
+
+_TIER_MULTIPLIERS: dict[RateLimitTier, int] = {
+    RateLimitTier.STANDARD: 1,
+    RateLimitTier.PRO: 3,
+    RateLimitTier.ENTERPRISE: 10,
+}
+
+
+def tier_rpm(tier: RateLimitTier | str | None, settings: SecuritySettings) -> int:
+    """Return the per-minute request budget for ``tier`` given ``settings``.
+
+    STANDARD uses ``rate_limit_requests_per_minute`` as the baseline; PRO = 3x,
+    ENTERPRISE = 10x. Unknown / None tier strings reconcile to STANDARD.
+    """
+    if tier is None:
+        resolved = RateLimitTier.STANDARD
+    elif isinstance(tier, RateLimitTier):
+        resolved = tier
+    else:
+        try:
+            resolved = RateLimitTier(tier.upper() if isinstance(tier, str) else tier)
+        except ValueError:
+            resolved = RateLimitTier.STANDARD
+    return settings.rate_limit_requests_per_minute * _TIER_MULTIPLIERS[resolved]
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
@@ -38,4 +72,4 @@ def get_security_settings() -> SecuritySettings:
     return SecuritySettings()
 
 
-__all__ = ["SecuritySettings", "get_security_settings"]
+__all__ = ["RateLimitTier", "SecuritySettings", "get_security_settings", "tier_rpm"]

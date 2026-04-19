@@ -24,6 +24,7 @@ from recognition.interface_adapters.http.dependencies import (
     require_auth,
     require_write_access,
 )
+from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.interface_adapters.http.schemas.requests import (
     ApplyPresetRequest,
     ImportRequest,
@@ -42,7 +43,11 @@ from recognition.interface_adapters.http.schemas.responses import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/retention", tags=["retention"])
+router = APIRouter(
+    prefix="/retention",
+    tags=["retention"],
+    dependencies=[Depends(require_auth), Depends(enforce_rate_limit)],
+)
 
 RETENTION_MODES = {"retain_all", "dispose_after_ack", "purge_on_demand"}
 PURGE_SCOPES = {"disposed", "all"}

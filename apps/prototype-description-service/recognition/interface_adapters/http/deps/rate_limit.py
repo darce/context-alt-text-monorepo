@@ -20,6 +20,7 @@ from fastapi import Depends, HTTPException, status
 
 from recognition.config.security import RateLimitTier, get_security_settings, tier_rpm
 from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth
+from recognition.observability.auth_audit import emit_auth_event
 
 _WINDOW_SECONDS = 60
 
@@ -63,6 +64,13 @@ async def enforce_rate_limit(auth: AuthContext = Depends(require_auth)) -> AuthC
         if len(window) >= limit:
             oldest = window[0]
             retry_after = max(0, int(oldest + _WINDOW_SECONDS - now) + 1)
+            emit_auth_event(
+                "rate_limit",
+                api_key_id=auth.api_key_id,
+                key_hash=None,
+                tenant_claim=auth.tenant_claim,
+                trace_id=None,
+            )
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="rate limit exceeded",

@@ -36,6 +36,8 @@ API keys are stored in the `api_keys` database table with the following structur
 | `api_key_hash` | string   | Hash of the API key using `RECOGNITION_API_KEY_HASH_ALGORITHM` |
 | `created_at`   | datetime | Creation timestamp          |
 | `last_used_at` | datetime | Last usage timestamp        |
+| `expires_at`   | datetime | Optional expiry (UTC); NULL = never expires |
+| `revoked_at`   | datetime | Optional soft-revoke timestamp (UTC); NULL = not revoked |
 
 **Note**: Raw API keys are never stored; only their hashes are persisted.
 
@@ -270,3 +272,87 @@ $response = wp_remote_post($api_url . '/analyze', [
 ]);
 ```
 
+
+## Key Lifecycle (E15-1 Slice 3)
+
+Keys support no-downtime rotation, explicit expiry, and soft-revocation. All
+lifecycle writes go through `SqlAlchemyApiKeyRepository`; the CLI never issues
+raw SQL.
+
+- **`create(tenant_id, hashed_key, rate_limit_tier, expires_at=None)`**: inserts
+  a new active key. `expires_at` is optional.
+- **`get_by_hash(hashed)`**: returns the active row; filters out
+  `revoked_at IS NOT NULL` and `expires_at <= now()` (UTC).
+- **`classify_by_hash(hashed)`**: returns `"active" | "expired" | "revoked" |
+  "unknown"` so the auth boundary can emit a descriptive 401 (`api key expired`,
+  `api key revoked`) instead of a generic 403.
+- **`list_for_tenant(tenant_id, include_revoked=False)`**: operator listing.
+- **`revoke(api_key_id)`**: soft-revoke; sets `revoked_at` to now (UTC). The
+  row is preserved for audit.
+- **Expiry is evaluated only at the `require_auth` boundary.** A request that
+  passes auth at time T completes normally even if the key expires during the
+  request. In-flight requests are never interrupted.
+
+## Auth Audit Logging (E15-1 Slice 3)
+
+Logger name: **`recognition.auth_audit`**. Every terminal auth decision emits
+exactly one structured INFO record via `recognition.observability.auth_audit.emit_auth_event`.
+
+**Outcomes**: `success`, `invalid_key`, `expired`, `revoked`, `tenant_mismatch`,
+`rate_limit`.
+
+**Record structure** (via `logging` `extra=...`):
+
+- `outcome`: one of the strings above.
+- `api_key_id`: UUID string when the key resolves to a DB row; else `None`.
+- `fingerprint`: first 12 characters of the stored hash. Never the raw key.
+- `tenant_claim`: the claim resolved from the key (success) or the client-
+  supplied `X-Tenant-ID` on failure paths.
+- `trace_id`: request trace id when available.
+
+**Raw key never-logged rule**: emitters accept only the stored hash. Raw API
+keys MUST NOT be passed to this emitter, captured in exception messages, or
+printed outside the single stdout line written by `manage_api_keys.py create`.
+
+## Operator CLI: Key Rotation Ceremony
+
+Beta-tester key provisioning happens via `scripts/manage_api_keys.py`, run
+by an operator with direct DB access. An HTTP admin surface is explicitly
+**deferred** until a production admin authority is designed (the current
+`AuthContext.is_admin` flag only resolves for dev keys and cannot gate a
+production admin surface). The CLI delegates to `SqlAlchemyApiKeyRepository`
+and never issues raw SQL.
+
+**Commands**:
+
+- `create --tenant <uuid> [--expires-in <days>] [--tier STANDARD|PRO|ENTERPRISE]`
+  generates a 32-byte URL-safe secret, hashes it with
+  `RECOGNITION_API_KEY_HASH_ALGORITHM`, inserts a row, prints the raw key on
+  stdout (single line) and `key_id=<uuid>` on stderr.
+- `list --tenant <uuid> [--include-revoked]` prints tab-separated rows
+  `id, last4_of_hash, created_at, last_used_at, expires_at, revoked_at`.
+  Full stored hashes are never printed.
+- `revoke --key-id <uuid>` sets `revoked_at=now()` and writes
+  `revoked key_id=<uuid> revoked_at=<iso>` to stderr.
+
+**Rotation runbook**:
+
+1. Operator runs `manage_api_keys.py create --tenant <id>` and captures the
+   raw key from stdout.
+2. If the raw key is lost before it can be shared, revoke the new key and
+   restart the ceremony. Hash-only storage means the raw value is
+   unrecoverable — by design.
+3. Operator shares the raw key with the tester via an operator-approved
+   secure channel (e.g. 1Password shared vault, Signal). Plaintext email
+   and Slack DMs are disallowed.
+4. Tester configures the new key in the plugin Settings page.
+5. Before revoking the old key, operator runs
+   `manage_api_keys.py list --tenant <id>` and confirms the new key's
+   `last_used_at` is non-null and more recent than the old key's — the
+   signal that cutover succeeded.
+6. Operator runs `manage_api_keys.py revoke --key-id <old-key-id>` to
+   soft-revoke the old key.
+
+**HTTP admin surface: deferred.** No admin router ships with E15-1. A real
+production admin authority is required first; until then, provisioning is
+operator-only via this CLI.

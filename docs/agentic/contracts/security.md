@@ -222,6 +222,29 @@ Content-Type: application/json
 
 **Fail-closed startup guard**: `create_app()` refuses to start with `RuntimeError` when `RECOGNITION_RUNTIME_MODE=production` and `dev_api_keys` is non-empty. In non-production runtime modes, a WARNING log is emitted instead.
 
+## CORS Origin Allowlist
+
+Cross-origin browser requests are gated by a Starlette `CORSMiddleware` registered in `api/main.py` `create_app()`. The middleware runs before route dependencies so non-allowlisted origins never reach auth/rate-limit logic with CORS response headers attached.
+
+**Secure-defaults rationale**: the WordPress plugin is a server-side PHP caller and does not require CORS. The middleware is a defensive guard for future browser-origin callers (operator admin UI, marketing demo widget) that do not yet exist. Every knob is pinned to the tightest practical value so an operator who opts a single origin in does not accidentally widen the surface:
+
+| Setting                | Pinned value                                                      |
+| ---------------------- | ----------------------------------------------------------------- |
+| `allow_origins`        | `SecuritySettings.allowed_origins` (exact match only)             |
+| `allow_credentials`    | `False` (prevents credential-bearing cross-origin leaks)          |
+| `allow_origin_regex`   | `None` (no regex; exact match only)                               |
+| `allow_methods`        | `["GET", "POST", "PATCH", "DELETE", "OPTIONS"]` (explicit list)   |
+| `allow_headers`        | `["Authorization", "X-Api-Key", "X-Tenant-ID", "Content-Type"]`   |
+| `max_age`              | `600` (10-minute preflight cache)                                 |
+
+Because `allow_credentials=False`, Starlette omits the `Access-Control-Allow-Credentials` response header entirely.
+
+**Environment variable**: `RECOGNITION_ALLOWED_ORIGINS` — comma-separated list of exact origins (scheme + host + optional port). Empty whitespace entries are stripped. Example: `https://admin.example.com,https://demo.example.com`.
+
+**Deny-all default**: if `RECOGNITION_ALLOWED_ORIGINS` is unset or empty, the allowlist is `[]` and no origin receives CORS headers. Browser cross-origin requests are effectively blocked.
+
+**Wildcard rejection**: a `*` entry in `allowed_origins` raises `ValidationError` at `SecuritySettings` construction, refusing to start the app. Wildcards defeat the allowlist's purpose and would silently combine with any future `allow_credentials` change to enable credential leaks.
+
 ## WordPress Plugin Integration
 
 The WordPress plugin should:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class RateLimitTier(StrEnum):
@@ -65,6 +65,21 @@ class SecuritySettings(BaseModel):
     )
     rate_limit_burst: int = Field(default_factory=lambda: int(os.getenv("RECOGNITION_RATE_LIMIT_BURST", "10")))
     max_page_size: int = Field(default_factory=lambda: int(os.getenv("RECOGNITION_MAX_PAGE_SIZE", "500")))
+    allowed_origins: list[str] = Field(
+        default_factory=lambda: [
+            o.strip() for o in os.getenv("RECOGNITION_ALLOWED_ORIGINS", "").split(",") if o.strip()
+        ],
+        validate_default=True,
+    )
+
+    @field_validator("allowed_origins")
+    @classmethod
+    def _reject_wildcard_origin(cls, value: list[str]) -> list[str]:
+        """Wildcard '*' in allowed_origins defeats the allowlist — explicit listing only."""
+        for origin in value:
+            if origin.strip() == "*":
+                raise ValueError("RECOGNITION_ALLOWED_ORIGINS must not contain '*'; list explicit origins only.")
+        return value
 
 
 def get_security_settings() -> SecuritySettings:

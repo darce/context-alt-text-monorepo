@@ -15,9 +15,10 @@ from recognition.interface_adapters.http.dependencies import (
     get_observability_repository,
     require_auth,
 )
+from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.observability.persistence import ObservabilityRepository
 
-router = APIRouter(tags=["diagnostics"], dependencies=[Depends(require_auth)])
+router = APIRouter(tags=["diagnostics"], dependencies=[Depends(require_auth), Depends(enforce_rate_limit)])
 
 
 @router.get("/diagnostics/decisions", response_model=list[dict[str, Any]])

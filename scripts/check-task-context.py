@@ -21,14 +21,18 @@ import types
 
 EXIT_OK = 0
 EXIT_INFRA_ERROR = 1
+EXIT_AMBIGUOUS_TASK = 2  # recoverable; agent should run `make maint-archive-stale`
 MAIN_BRANCHES = frozenset({"main", "master"})
+AMBIGUITY_MARKER = "Ambiguous active task"
 
 # Statuses that indicate the active task has reached a terminal state and the
 # agent should start a new task before recording further work. `done` is the
 # canonical "task complete, archive pending" status; `blocked` and `review`
 # stay surfaced because they represent open holds rather than completion.
 TERMINAL_STATUSES = frozenset({"done"})
-PACKAGE_SRC = Path(__file__).resolve().parents[1] / "packages" / "agent-handoff-mcp" / "src"
+PACKAGE_SRC = (
+    Path(__file__).resolve().parents[1] / "packages" / "agent-handoff-mcp" / "src"
+)
 PACKAGE_ROOT = PACKAGE_SRC / "agent_handoff_mcp"
 
 if str(PACKAGE_SRC) not in sys.path:
@@ -61,7 +65,11 @@ def _detect_branch() -> str | None:
             stderr=subprocess.DEVNULL,
             timeout=5,
         )
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+    except (
+        subprocess.CalledProcessError,
+        FileNotFoundError,
+        subprocess.TimeoutExpired,
+    ):
         return None
     return out.decode("utf-8").strip()
 
@@ -144,6 +152,21 @@ def _configure_runtime() -> bool:
     return True
 
 
+def _is_ambiguous_active_task_error(parsed: object) -> bool:
+    """Return True iff ``parsed`` is an ambiguous-active-task error envelope.
+
+    Ambiguity is a recoverable failure mode: the caller should exit
+    non-zero but distinct from infra errors so wrappers (and humans)
+    can detect it and run ``make maint-archive-stale`` without having
+    to grep the error text.
+    """
+    if not isinstance(parsed, dict) or parsed.get("ok") is not False:
+        return False
+    data = parsed.get("data")
+    error_msg = data.get("error") if isinstance(data, dict) else None
+    return isinstance(error_msg, str) and AMBIGUITY_MARKER in error_msg
+
+
 def _interpret_handoff_envelope(parsed: object) -> tuple[dict | None, str | None]:
     """Map a parsed ``get_handoff_state`` response to ``(state, error_message)``.
 
@@ -155,56 +178,92 @@ def _interpret_handoff_envelope(parsed: object) -> tuple[dict | None, str | None
     with no stderr, which made ``make context`` exit 1 with empty output.
     """
     if not isinstance(parsed, dict):
-        return None, f"⚠ get_handoff_state returned non-dict payload: {type(parsed).__name__}"
+        return (
+            None,
+            f"⚠ get_handoff_state returned non-dict payload: {type(parsed).__name__}",
+        )
     if parsed.get("ok") is False:
         data = parsed.get("data")
         error_msg = data.get("error") if isinstance(data, dict) else None
         if error_msg:
             hint = ""
-            if isinstance(error_msg, str) and "Ambiguous active task" in error_msg:
+            if isinstance(error_msg, str) and AMBIGUITY_MARKER in error_msg:
                 hint = (
-                    "\n  Archive the stale task (usually a MAINT-* entry) or "
-                    "give it a distinct target_worktree_path before retrying."
+                    "\n  Archive stale MAINT-* rows with one command:"
+                    "\n    make maint-archive-stale          # interactive preview"
+                    '\n    make maint-archive-stale MAINT_ARCHIVE_ARGS="--yes"   # non-interactive'
+                    "\n  Then re-run `make context`."
+                    "\n  (Feature-task ambiguity instead? Give the task a distinct"
+                    "\n  target_worktree_path before retrying.)"
                 )
-            return None, f"⚠ get_handoff_state returned an error envelope: {error_msg}{hint}"
-        return None, f"⚠ get_handoff_state returned ok=false with no error message: {parsed}"
+            return (
+                None,
+                f"⚠ get_handoff_state returned an error envelope: {error_msg}{hint}",
+            )
+        return (
+            None,
+            f"⚠ get_handoff_state returned ok=false with no error message: {parsed}",
+        )
     data = parsed.get("data")
     if isinstance(data, dict) and "active" in data:
         return data, None
     if "active" in parsed:
         return parsed, None
     keys = list(parsed.keys())
-    return None, f"⚠ get_handoff_state payload missing 'active' key; top-level keys: {keys}"
+    return (
+        None,
+        f"⚠ get_handoff_state payload missing 'active' key; top-level keys: {keys}",
+    )
 
 
-def _load_active_state() -> dict | None:
+def _load_active_state() -> tuple[dict | None, str | None]:
+    """Return ``(state, failure_kind)``.
+
+    ``failure_kind`` is ``None`` on success, ``"ambiguous"`` when the
+    handoff envelope classifies as an ambiguous-active-task error
+    (recoverable — run ``make maint-archive-stale``), and ``"infra"``
+    for every other failure mode.
+    """
     try:
         get_handoff_state = _import_handoff_attr("handoff_state", "get_handoff_state")
     except ImportError:
-        print("⚠ agent_handoff_mcp not importable from this Python; skipping context check.", file=sys.stderr)
-        return None
+        print(
+            "⚠ agent_handoff_mcp not importable from this Python; skipping context check.",
+            file=sys.stderr,
+        )
+        return None, "infra"
     if not _configure_runtime():
-        print("⚠ failed to configure agent_handoff_mcp runtime; skipping context check.", file=sys.stderr)
-        return None
+        print(
+            "⚠ failed to configure agent_handoff_mcp runtime; skipping context check.",
+            file=sys.stderr,
+        )
+        return None, "infra"
     try:
         raw = get_handoff_state(sections="identity")
     except Exception as exc:  # pragma: no cover - defensive
-        print(f"⚠ get_handoff_state(sections='identity') failed: {exc}", file=sys.stderr)
-        return None
+        print(
+            f"⚠ get_handoff_state(sections='identity') failed: {exc}", file=sys.stderr
+        )
+        return None, "infra"
     try:
         parsed = json.loads(raw) if isinstance(raw, str) else raw
     except json.JSONDecodeError as exc:
         print(f"⚠ get_handoff_state returned non-JSON payload: {exc}", file=sys.stderr)
-        return None
+        return None, "infra"
     state, err = _interpret_handoff_envelope(parsed)
     if err is not None:
         print(err, file=sys.stderr)
-    return state
+        if _is_ambiguous_active_task_error(parsed):
+            return None, "ambiguous"
+        return None, "infra"
+    return state, None
 
 
 def main() -> int:
-    state = _load_active_state()
+    state, failure_kind = _load_active_state()
     if state is None:
+        if failure_kind == "ambiguous":
+            return EXIT_AMBIGUOUS_TASK
         return EXIT_INFRA_ERROR
     actual_branch = _detect_branch()
     active = state.get("active") if isinstance(state, dict) else None
@@ -219,7 +278,9 @@ def main() -> int:
     target_worktree_path = active.get("target_worktree_path")
     actual_path = os.path.abspath(os.getcwd())
 
-    print(f"Active task: {task_ref}  status={active.get('status', '?')}  rev={active.get('revision', '?')}")
+    print(
+        f"Active task: {task_ref}  status={active.get('status', '?')}  rev={active.get('revision', '?')}"
+    )
     print()
 
     drift = False
@@ -233,7 +294,11 @@ def main() -> int:
             print(f"                   expected: {canonical}")
             drift = True
     else:
-        _print_aligned("…", "worktree path", "(not set on task — recommend setting target_worktree_path)")
+        _print_aligned(
+            "…",
+            "worktree path",
+            "(not set on task — recommend setting target_worktree_path)",
+        )
 
     if target_branch:
         if actual_branch == target_branch:
@@ -243,7 +308,9 @@ def main() -> int:
             print(f"                   expected: {target_branch}")
             drift = True
     else:
-        _print_aligned("…", "branch", actual_branch or "(unknown — no target_branch on task)")
+        _print_aligned(
+            "…", "branch", actual_branch or "(unknown — no target_branch on task)"
+        )
 
     if drift:
         print()
@@ -252,7 +319,9 @@ def main() -> int:
         if target_branch:
             print(f"  git checkout {target_branch}")
         print()
-        print("Drift detected. Switch to the canonical context above before recording further events.")
+        print(
+            "Drift detected. Switch to the canonical context above before recording further events."
+        )
         # AHMCP-18 (item A): the working-tree integrity check is an
         # independent class of problem from worktree drift, so we run it
         # even on the drift path. A user who is in the wrong worktree
@@ -275,7 +344,7 @@ def main() -> int:
         print()
         print(f"⚠ Active task `{task_ref}` is in status `{status}`.")
         print("  Start a new task before recording further work:")
-        print("    make task-start TASK=<id> OBJECTIVE=\"...\"")
+        print('    make task-start TASK=<id> OBJECTIVE="..."')
         print("  or switch to an existing task with switch_task.")
 
     # AHMCP-18 (item A): working-tree integrity check.

@@ -627,6 +627,16 @@ worktree-prune:
 	@PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src:$(MCP_PYTHONPATH)" \
 		$(MCP_PYTHON) scripts/worktree_prune.py $(WORKTREE_PRUNE_ARGS)
 
+# Archive stale MAINT-* handoff rows whose status is already `done` or
+# `review`. Stale MAINT rows sharing the repo-root target_worktree_path
+# cause cwd-resolution ambiguity for cold-start /branch-review and other
+# ad-hoc skills. Run interactively; pass MAINT_ARCHIVE_ARGS="--yes" to
+# archive every hit without prompting, or "--dry-run" to preview.
+# Usage: make maint-archive-stale [MAINT_ARCHIVE_ARGS="--yes"]
+maint-archive-stale:
+	@PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src:$(MCP_PYTHONPATH)" \
+		$(MCP_PYTHON) scripts/maint_archive_stale.py $(MAINT_ARCHIVE_ARGS)
+
 task-plan-audit:
 	@$(MCP_PYTHON) scripts/task_plan_audit.py
 

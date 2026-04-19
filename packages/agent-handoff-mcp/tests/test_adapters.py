@@ -147,7 +147,7 @@ def test_only_all_tool_profile_is_accepted(tmp_path: Path) -> None:
             return len(await client.list_tools())
 
     default_count = asyncio.run(_count([], "default-count.log"))
-    assert default_count == 21, f"Expected 21 default tools, got {default_count}"
+    assert default_count == 23, f"Expected 23 default tools, got {default_count}"
 
     for value in ("core", "extended"):
         result = subprocess.run(

@@ -27,7 +27,8 @@ API key authentication and tenant isolation are already implemented (`auth.py`, 
 
 - Scope is `apps/prototype-description-service/` only; no WP plugin changes.
 - Rate limiting must be per-API-key (not per-IP) to support multi-tenant fairness.
-- CORS must allow the WP demo origin (configured via env var) while blocking arbitrary browser origins.
+- **Rate-limit deployment assumption**: the public demo runs a **single worker process** (uvicorn default or `--workers 1`). The in-memory counter is correct only under this assumption. Multi-worker deployment requires a shared counter store (Redis/DB) and is explicitly out of scope for this task — a follow-up task must introduce the shared store before horizontal scaling. This constraint is a success criterion, not an aspiration.
+- **CORS scope justification**: the WP plugin is a server-side PHP caller (`wp_remote_post`) and does not require CORS. The `CORSMiddleware` + origin allowlist introduced by Slice 2 is a **defensive guard for future browser-origin callers** (e.g. an operator admin UI or a marketing-site demo widget) that are anticipated but do not yet exist. The default origin allowlist is empty (deny-all) so the middleware is inert until an operator explicitly opts in an origin. If no browser caller materializes by the end of v0.4.0, Slice 2 may be removed in a follow-up task.
 - Key rotation must work without downtime: old key remains valid until explicitly revoked.
 - No new Python dependencies unless strictly necessary; prefer FastAPI/Starlette built-ins where possible.
 - Branch isolation: all code changes on `feature/e15-1-security-baseline`, not `main`.
@@ -40,7 +41,11 @@ API key authentication and tenant isolation are already implemented (`auth.py`, 
 
 ## Terminology
 
-- **Rate limit tier**: The `rate_limit_tier` field on `ApiKey` that can override the global default.
+- **Rate limit tier**: The `rate_limit_tier` field on `ApiKey` that can override the global default. Values are constrained to a centralized `RateLimitTier` StrEnum defined in `recognition/config/security.py`:
+  - `STANDARD` (default; uses `SecuritySettings.rate_limit_requests_per_minute`, currently 60 RPM)
+  - `PRO` (3× standard = 180 RPM)
+  - `ENTERPRISE` (10× standard = 600 RPM; also used for dev/admin keys, see dev-key policy below)
+  Existing DB rows with `rate_limit_tier='free'` (legacy test fixture) are reconciled to `STANDARD` in Slice 1 and the column value set is asserted via a migration-time check. Per short rule sr-007, all tier comparisons reference the enum; no scattered string literals.
 - **Origin allowlist**: A configured list of browser origins permitted to make cross-origin requests.
 - **Key rotation**: The ability to have two valid API keys for the same tenant simultaneously, allowing the old key to be revoked after the new key is verified.
 
@@ -140,17 +145,19 @@ The deployed API at `api.altcontext.com` enforces per-key rate limits (429 with 
 
 Changes:
 
-- Add `recognition/interface_adapters/http/deps/rate_limit.py` with `enforce_rate_limit(auth: AuthContext = Depends(require_auth))` -- sliding-window counter keyed by `auth.api_key_id`, applying `auth.rate_limit_tier` override if set, falling back to global `SecuritySettings.rate_limit_requests_per_minute`.
-- Raise `HTTPException(status_code=429, ...)` with `Retry-After` and `X-RateLimit-*` headers on breach. Use the existing exception handler pattern in `exception_handlers.py`.
+- Add `RateLimitTier` StrEnum to `recognition/config/security.py` with `STANDARD`/`PRO`/`ENTERPRISE` values and a `tier_rpm(tier, settings) -> int` helper that maps tier → RPM using `SecuritySettings.rate_limit_requests_per_minute` as the `STANDARD` baseline. Reconcile existing `'free'` string in `test_authentication.py` fixture to `RateLimitTier.STANDARD`.
+- Add `recognition/interface_adapters/http/deps/rate_limit.py` with `enforce_rate_limit(auth: AuthContext = Depends(require_auth))` — sliding-window counter keyed by `auth.api_key_id`, applying `RateLimitTier(auth.rate_limit_tier).tier_rpm(...)` if set, falling back to `STANDARD`.
+- **Dev/admin-key policy**: dev keys from `RECOGNITION_ALLOWED_API_KEYS` resolve to `api_key_id=None` in `auth.py` (line 212). These keys **bypass the limiter entirely** — they are local-only debugging keys per the security contract and must never ship to production. This is asserted by a startup check that logs a warning when `auth_enabled=True` and `dev_api_keys` is non-empty in a production-like environment. The limiter's `enforce_rate_limit` returns early with a no-op when `auth.api_key_id is None and auth.is_admin`.
+- **429 response shape**: raise plain `HTTPException(status_code=429, detail="rate limit exceeded")` with `Retry-After` and `X-RateLimit-*` response headers, **matching the auth-boundary pattern** used by `require_auth` 401/403 errors (not the structured envelope used by domain errors like `RecognitionError`). This is pinned to avoid divergence between implementation and tests. Document the shape in `contracts/security.md` alongside the existing 401/403 section.
 - Update protected routers (`analyze.py`, `clusters.py`, `retention.py`, etc.) to depend on `enforce_rate_limit` in addition to `require_auth`. The chained dependency naturally pulls the auth context.
-- Add `recognition/tests/api/test_rate_limiting.py` with tests for: under limit (200), at limit (429), burst handling, per-key isolation (different keys do not share counters), `Retry-After` header presence, tier override behavior.
+- Add `recognition/tests/api/test_rate_limiting.py` with tests for: under limit (200), at limit (429), burst handling, per-key isolation (different keys do not share counters), `Retry-After` header presence, tier override behavior, **dev-key bypass** (a key from `RECOGNITION_ALLOWED_API_KEYS` is never rate-limited), and **auth-disabled bypass** (`RECOGNITION_AUTH_ENABLED=false` — limiter is a no-op since there is no key identity).
 - Update `docs/agentic/contracts/security.md` rate limiting section.
 
 Proof:
 
 - `pytest recognition/tests/api/test_rate_limiting.py` passes
 - Rate limit headers present in integration test responses
-- Anonymous/disabled-auth requests bypass the limiter (auth disabled = no key identity = no per-key counter)
+- Anonymous/disabled-auth requests and dev keys bypass the limiter, asserted by dedicated tests
 
 ### Slice 2: CORS Origin Allowlist
 
@@ -158,11 +165,17 @@ Proof:
 
 Changes:
 
-- Add `allowed_origins: list[str]` to `SecuritySettings` (env: `RECOGNITION_ALLOWED_ORIGINS`, comma-separated).
-- Register `CORSMiddleware` in `api/main.py` with configured origins, allowed methods, and allowed headers.
-- Add `recognition/tests/api/test_cors.py` with tests for: allowlisted origin gets CORS headers, non-allowlisted origin does not, preflight OPTIONS returns correct headers, empty allowlist blocks all CORS.
-- Update `.env.prod.example` with `RECOGNITION_ALLOWED_ORIGINS`.
-- Update security contract CORS section.
+- Add `allowed_origins: list[str]` to `SecuritySettings` (env: `RECOGNITION_ALLOWED_ORIGINS`, comma-separated). Default is empty list (deny-all).
+- Register `CORSMiddleware` in `api/main.py` with **pinned secure defaults**:
+  - `allow_origins=settings.allowed_origins` (exact match only)
+  - `allow_credentials=False` (never `True` — would enable cross-origin credential leaks with any permissive origin)
+  - `allow_origin_regex=None` (no regex — exact match only to avoid over-broad patterns)
+  - `allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"]` (explicit list, not `*`)
+  - `allow_headers=["Authorization", "X-Api-Key", "X-Tenant-ID", "Content-Type"]` (explicit list, not `*`)
+  - `max_age=600` (10-minute preflight cache)
+- Add `recognition/tests/api/test_cors.py` with tests for: allowlisted origin gets CORS headers, non-allowlisted origin does not, preflight OPTIONS returns correct headers, empty allowlist blocks all CORS, **`allow_credentials=False` asserted in response headers**, **wildcard origin (`*`) rejected by config validation**.
+- Update `.env.prod.example` with `RECOGNITION_ALLOWED_ORIGINS` (including a comment that the deploy defaults to empty = no browser CORS).
+- Update security contract CORS section with the secure-defaults rationale.
 
 Proof:
 
@@ -187,7 +200,15 @@ Changes:
   - `create --tenant <id> [--expires-in <days>]` — generates a raw key, stores hash, prints the raw key once to stdout
   - `list --tenant <id>` — prints active keys (id, last4, created_at, last_used_at, expires_at)
   - `revoke --key-id <id>` — soft-revoke (sets `revoked_at`)
-- Add `recognition/tests/api/test_key_rotation.py`: expired key rejected, revoked key rejected, two keys valid simultaneously.
+- **Expiry semantics (pinned)**: key expiry is evaluated **per-request at the `require_auth` boundary only**. A request that passes `require_auth` at time T with a still-valid key completes normally even if the key expires at T+ε — in-flight requests are never interrupted. This matches how `revoked_at` is checked and avoids mid-request 401s.
+- **Rotation runbook (documented in `contracts/security.md`)**:
+  1. Operator runs `manage_api_keys.py create --tenant <id>` and captures the raw key from stdout.
+  2. **If the raw key is lost before it can be shared with the tester**: operator runs `manage_api_keys.py revoke --key-id <id>` on the just-created key and starts the ceremony over. The DB stores only the hash, so a lost raw key cannot be recovered — this is by design.
+  3. Operator shares the raw key with the tester through an operator-approved secure channel (e.g. 1Password shared vault, Signal). Plaintext email or Slack DMs are explicitly disallowed.
+  4. Tester configures the new key in the plugin Settings page.
+  5. **Before revoking the old key**: operator runs `manage_api_keys.py list --tenant <id>` and confirms the new key's `last_used_at` is non-null and more recent than the old key's `last_used_at`. This is the signal that the tester has successfully cut over.
+  6. Operator runs `manage_api_keys.py revoke --key-id <old-key-id>` to soft-revoke the old key.
+- Add `recognition/tests/api/test_key_rotation.py`: expired key rejected, revoked key rejected, two keys valid simultaneously, **in-flight request started before expiry completes normally even if expiry lapses during processing**.
 - Add `recognition/tests/scripts/test_manage_api_keys.py`: CLI create/list/revoke happy paths, error cases, masking of stored hashes.
 - Update security contract: add the rotation/lifecycle behavior, the CLI provisioning ceremony, and an explicit note that an HTTP admin surface is deferred until a production admin authority is defined.
 - Document beta-tester onboarding flow in the security contract: operator runs `manage_api_keys.py create` for the tester's tenant, gives the raw key to the tester via a secure channel once, tester configures it in the plugin Settings page (which already accepts the key as a WP option).
@@ -234,7 +255,8 @@ Proof:
 - [ ] `ApiKey` model columns added
 - [ ] Schema migration updated (greenfield: `001_identity_schema.py`)
 - [ ] Repository filters expired/revoked keys
-- [ ] Admin router with create/revoke endpoints
+- [ ] Operator CLI (`scripts/manage_api_keys.py`) with `create`/`list`/`revoke` subcommands
+- [ ] HTTP admin surface explicitly deferred in security contract (no admin router shipped this task)
 - [ ] Security contract updated
 - [ ] Full `make check` passes
 

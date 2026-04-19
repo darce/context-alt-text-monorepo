@@ -70,21 +70,92 @@ def _extract_candidate_paths(tool_name: str, tool_input: dict[str, Any]) -> list
         file_path = _payload_value(tool_input, "file_path", "filePath")
         return [str(file_path)] if isinstance(file_path, str) and file_path.strip() else []
 
-    if tool_name != "apply_patch":
-        return []
+    if tool_name == "apply_patch":
+        patch_input = tool_input.get("input")
+        if not isinstance(patch_input, str) or not patch_input.strip():
+            return []
+        paths: list[str] = []
+        for line in patch_input.splitlines():
+            if not line.startswith("*** ") or " File: " not in line:
+                continue
+            _, raw_path = line.split(" File: ", 1)
+            parsed_path = raw_path.split(" -> ", 1)[0].strip()
+            if parsed_path:
+                paths.append(parsed_path)
+        return paths
 
-    patch_input = tool_input.get("input")
-    if not isinstance(patch_input, str) or not patch_input.strip():
-        return []
+    # FU-02: Bash-dispatched mutations must flow through the drift check too,
+    # otherwise formatters / write-verbs / git restore silently write to
+    # whichever worktree the shell is cwd'd in — the exact recurrence that
+    # produced the 2026-04-18 "formatter drift" stash after E17-8 shipped.
+    if tool_name == "Bash":
+        return _extract_bash_candidate_paths(tool_input)
 
+    return []
+
+
+def _extract_bash_candidate_paths(tool_input: dict[str, Any]) -> list[str]:
+    command = _payload_value(tool_input, "command", "command")
+    if not isinstance(command, str) or not command.strip():
+        return []
+    try:
+        from _bash_isolation_guard import extract_raw_write_targets, scan_bash_command
+        from _harness_protocol import HarnessContractMissingError, load_branch_isolation_policy
+    except ImportError:
+        return []
+    workspace = _workspace_root()
+    try:
+        policy = load_branch_isolation_policy(workspace)
+    except HarnessContractMissingError:
+        return []
+    blocked = scan_bash_command(command, workspace, policy)
     paths: list[str] = []
-    for line in patch_input.splitlines():
-        if not line.startswith("*** ") or " File: " not in line:
+    formatter_detected = False
+    for entry in blocked:
+        if entry.endswith("(formatter)"):
+            formatter_detected = True
             continue
-        _, raw_path = line.split(" File: ", 1)
-        parsed_path = raw_path.split(" -> ", 1)[0].strip()
-        if parsed_path:
-            paths.append(parsed_path)
+        paths.append(entry)
+
+    # BR-01: scan_bash_command drops paths resolving *outside* `workspace`
+    # (via _to_repo_relative). That leaves a cross-worktree bleed open for
+    # both absolute paths (`sed -i /<primary>/packages/foo.py`) and relative
+    # paths that escape the workspace via `..` (`sed -i ../context-alt-...`).
+    # Pass both shapes through to the drift comparison so
+    # _candidate_worktree_root can resolve their hosting worktree and reject
+    # the edit when it diverges from the active task's target_worktree.
+    workspace_resolved = workspace.resolve(strict=False)
+    seen: set[str] = set(paths)
+    for raw in extract_raw_write_targets(command):
+        if not raw or not isinstance(raw, str):
+            continue
+        raw_path = Path(raw).expanduser()
+        if raw_path.is_absolute():
+            candidate = raw_path
+        else:
+            candidate = (workspace_resolved / raw_path)
+        try:
+            resolved = candidate.resolve(strict=False)
+        except OSError:
+            resolved = candidate
+        try:
+            resolved.relative_to(workspace_resolved)
+            inside_workspace = True
+        except ValueError:
+            inside_workspace = False
+        if inside_workspace:
+            continue  # already handled by scan_bash_command's relative branch
+        token = str(resolved)
+        if token in seen:
+            continue
+        seen.add(token)
+        paths.append(token)
+
+    if formatter_detected:
+        # Formatter invocations implicitly write across the cwd's worktree; use
+        # the resolved workspace root so _candidate_worktree_root reports the
+        # hosting worktree for the drift comparison.
+        paths.append(str(workspace))
     return paths
 
 

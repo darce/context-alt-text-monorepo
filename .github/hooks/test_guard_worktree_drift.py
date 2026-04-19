@@ -20,7 +20,7 @@ evaluate_payload = _mod.evaluate_payload
 _log_trace = _mod._log_trace
 DriftDecision = _mod.DriftDecision
 
-from _harness_protocol import BranchIsolationPolicy, PermittedMainSurface, find_permitted_main_surface  # noqa: E402
+from _harness_protocol import BranchIsolationPolicy, MainSurfacePattern, find_permitted_main_surface  # noqa: E402
 
 
 def test_evaluate_payload_returns_none_when_no_active_task(tmp_path: Path) -> None:
@@ -109,8 +109,9 @@ def test_find_permitted_main_surface_matches_trailing_double_star_patterns() -> 
         code_roots=("scripts/",),
         protected_extensions=(".py",),
         root_protected_files=("Makefile",),
+        protected_main_surfaces=(),
         permitted_main_surfaces=(
-            PermittedMainSurface(pattern="docs/assessments/**", reason="Assessments"),
+            MainSurfacePattern(pattern="docs/assessments/**", reason="Assessments"),
         ),
     )
 
@@ -233,3 +234,150 @@ def test_evaluate_payload_returns_maintenance_bypass(tmp_path: Path) -> None:
     result = evaluate_payload(payload, workspace_root=repo, active_task=("MAINT-test", str(repo / "feature"), "feature/test"))
     assert result is not None
     assert result.outcome == "maintenance_bypass"
+
+
+def _write_contract(repo: Path) -> None:
+    contract_dir = repo / "docs" / "agentic" / "contracts"
+    contract_dir.mkdir(parents=True, exist_ok=True)
+    (contract_dir / "harness-protocol.yaml").write_text(
+        """version: 1
+
+branch_isolation:
+  code_roots:
+    - apps/
+    - packages/
+    - scripts/
+  protected_extensions:
+    - .py
+    - .ts
+  root_protected_files:
+    - Makefile
+""",
+        encoding="utf-8",
+    )
+
+
+def test_evaluate_payload_bash_formatter_drift_blocked(tmp_path: Path, monkeypatch) -> None:
+    main_repo = tmp_path / "repo-main"
+    feature_repo = tmp_path / "repo-feature"
+    main_repo.mkdir()
+    _write_contract(main_repo)
+    payload = {"toolName": "Bash", "toolInput": {"command": "make format-all"}}
+    monkeypatch.setattr(_mod, "_candidate_worktree_root", lambda _path: str(main_repo.resolve()))
+    result = evaluate_payload(
+        payload,
+        workspace_root=main_repo,
+        active_task=("E17-9", str(feature_repo), "feature/e17-9"),
+    )
+    assert result is not None
+    assert result.outcome == "block"
+    assert result.candidate_worktree == str(main_repo.resolve())
+    assert result.target_worktree == str(feature_repo.resolve())
+
+
+def test_evaluate_payload_bash_explicit_path_drift_blocked(tmp_path: Path, monkeypatch) -> None:
+    main_repo = tmp_path / "repo-main"
+    feature_repo = tmp_path / "repo-feature"
+    main_repo.mkdir()
+    _write_contract(main_repo)
+    payload = {"toolName": "Bash", "toolInput": {"command": "sed -i 's/x/y/' packages/foo.py"}}
+    monkeypatch.setattr(_mod, "_candidate_worktree_root", lambda _path: str(main_repo.resolve()))
+    result = evaluate_payload(
+        payload,
+        workspace_root=main_repo,
+        active_task=("E17-9", str(feature_repo), "feature/e17-9"),
+    )
+    assert result is not None
+    assert result.outcome == "block"
+    assert result.path.endswith("packages/foo.py")
+
+
+def test_evaluate_payload_bash_readonly_command_ignored(tmp_path: Path, monkeypatch) -> None:
+    main_repo = tmp_path / "repo-main"
+    feature_repo = tmp_path / "repo-feature"
+    main_repo.mkdir()
+    _write_contract(main_repo)
+    payload = {"toolName": "Bash", "toolInput": {"command": "git status"}}
+    monkeypatch.setattr(_mod, "_candidate_worktree_root", lambda _path: str(main_repo.resolve()))
+    result = evaluate_payload(
+        payload,
+        workspace_root=main_repo,
+        active_task=("E17-9", str(feature_repo), "feature/e17-9"),
+    )
+    # git status does not touch protected paths — drift check emits nothing.
+    assert result is None
+
+
+def test_evaluate_payload_bash_formatter_in_target_worktree_allowed(tmp_path: Path, monkeypatch) -> None:
+    feature_repo = tmp_path / "repo-feature"
+    feature_repo.mkdir()
+    _write_contract(feature_repo)
+    payload = {"toolName": "Bash", "toolInput": {"command": "ruff format packages/"}}
+    monkeypatch.setattr(_mod, "_candidate_worktree_root", lambda _path: str(feature_repo.resolve()))
+    result = evaluate_payload(
+        payload,
+        workspace_root=feature_repo,
+        active_task=("E17-9", str(feature_repo), "feature/e17-9"),
+    )
+    assert result is None
+
+
+def test_evaluate_payload_bash_absolute_path_cross_worktree_blocked(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """BR-01: absolute-path Bash write into another worktree must block.
+
+    From a linked feature worktree, `sed -i '' 's/x/y/' /<primary>/packages/foo.py`
+    previously slipped through because _to_repo_relative dropped paths outside
+    the feature worktree. The drift guard now preserves absolute tokens and
+    compares their hosting worktree against target_worktree.
+    """
+    main_repo = tmp_path / "repo-main"
+    feature_repo = tmp_path / "repo-feature"
+    (main_repo / "packages").mkdir(parents=True)
+    (main_repo / "packages" / "foo.py").write_text("x=1\n")
+    _write_contract(feature_repo)
+    abs_target = main_repo.resolve() / "packages" / "foo.py"
+    payload = {
+        "toolName": "Bash",
+        "toolInput": {"command": f"sed -i '' 's/x/y/' {abs_target}"},
+    }
+    monkeypatch.setattr(_mod, "_candidate_worktree_root", lambda _path: str(main_repo.resolve()))
+    result = evaluate_payload(
+        payload,
+        workspace_root=feature_repo,
+        active_task=("E17-9", str(feature_repo.resolve()), "feature/e17-9"),
+    )
+    assert result is not None
+    assert result.outcome == "block"
+    assert result.path is not None and result.path.endswith("packages/foo.py")
+
+
+def test_evaluate_payload_bash_relative_path_escapes_workspace_blocked(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """BR-01 part 2: `../`-style relative paths that escape the feature worktree
+    and land inside another worktree must also block. scan_bash_command drops
+    these via _to_repo_relative; the extractor must preserve them.
+    """
+    main_repo = tmp_path / "repo-main"
+    feature_repo = tmp_path / "repo-feature"
+    (main_repo / "packages").mkdir(parents=True)
+    (main_repo / "packages" / "foo.py").write_text("x=1\n")
+    feature_repo.mkdir()
+    _write_contract(feature_repo)
+    # Craft a relative path from feature_repo that resolves into main_repo.
+    rel = f"../{main_repo.name}/packages/foo.py"
+    payload = {
+        "toolName": "Bash",
+        "toolInput": {"command": f"sed -i '' 's/x/y/' {rel}"},
+    }
+    monkeypatch.setattr(_mod, "_candidate_worktree_root", lambda _path: str(main_repo.resolve()))
+    result = evaluate_payload(
+        payload,
+        workspace_root=feature_repo,
+        active_task=("E17-9", str(feature_repo.resolve()), "feature/e17-9"),
+    )
+    assert result is not None
+    assert result.outcome == "block"
+    assert result.path is not None and result.path.endswith("packages/foo.py")

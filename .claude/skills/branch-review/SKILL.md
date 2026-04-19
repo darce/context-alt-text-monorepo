@@ -46,6 +46,11 @@ This skill owns branch-review execution order. The guide owns the detailed check
 
 ## Core Process
 
+0. **Ensure task scope before any cwd-resolving MCP read.** Every other step calls `load_session`, `search_handoff`, `review_findings`, etc. — these resolve the active task from cwd unless `task_ref` is passed explicitly. On cold start:
+   - **Resumption:** work from the existing task's `target_worktree_path`; pass `task_ref` explicitly to all subsequent MCP calls.
+   - **Ad-hoc on main (e.g. reviewing a merged commit):** register a maintenance task first — `set_handoff_state(task_ref="MAINT-<slug>-<YYYYMMDD>", objective="...", status="in_progress", target_branch="main")` — and pass that `task_ref` forward.
+   - **`Ambiguous active task` error:** archive stale MAINT-* rows in one shot with `make maint-archive-stale` (or `MAINT_ARCHIVE_ARGS="--yes"` non-interactively), then re-run `make context`. `make context` exits `2` (not `1`) specifically on this ambiguity.
+
 1. Start with a real review scope. `make review-run` is for lane/local working-tree review because `review_runner.py` only inspects local changed files. For committed feature-branch diff review, load the latest slice review packet when available or review `git diff main...HEAD` scope directly. If `agent-orchestrator-mcp` is unavailable, use the handoff-only fallback from `branch-review-guide.md`: `load_session` -> `search_handoff(queries=["slice_complete"], record_types=["decision"], limit=1)` -> `get_verified_tests` -> `review_findings(list)` and review against branch-diff scope.
 2. Pre-triage with `get_review_findings_summary` and `reconcile_review_findings` so old open findings are understood before new detection passes begin. When orchestrator is unavailable, state that the pass is using `branch_diff` fallback scope instead of `slice_packet`.
 3. Check prior review history with `review_runs(operation="list", review_mode="branch", ...)`.

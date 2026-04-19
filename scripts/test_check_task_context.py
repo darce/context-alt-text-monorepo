@@ -9,7 +9,9 @@ def _load_module():
     """Load check-task-context.py as a module (hyphen in filename blocks normal import)."""
     repo_root = Path(__file__).resolve().parents[1]
     script_path = repo_root / "scripts" / "check-task-context.py"
-    spec = importlib.util.spec_from_file_location("check_task_context_under_test", script_path)
+    spec = importlib.util.spec_from_file_location(
+        "check_task_context_under_test", script_path
+    )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules["check_task_context_under_test"] = module
@@ -57,6 +59,34 @@ def test_interpret_handoff_envelope_error_envelope_surfaces_message():
     assert "MAINT-RESTORE" in err
     # Hint for the specific ambiguity case:
     assert "Archive" in err or "archive" in err
+    # Must point agents at the one-command recovery path:
+    assert "make maint-archive-stale" in err
+
+
+def test_interpret_handoff_envelope_ambiguous_classifies_as_ambiguous():
+    """Ambiguity is recoverable (caller should return 0) — not an infra error."""
+    mod = _load_module()
+    parsed = {
+        "ok": False,
+        "data": {
+            "error": "Ambiguous active task for workspace path; matching task_refs: E17-12, MAINT-X-20260419",
+        },
+    }
+    assert mod._is_ambiguous_active_task_error(parsed) is True
+
+
+def test_interpret_handoff_envelope_non_ambiguous_errors_are_infra():
+    mod = _load_module()
+    assert (
+        mod._is_ambiguous_active_task_error(
+            {"ok": False, "data": {"error": "something else broke"}}
+        )
+        is False
+    )
+    assert (
+        mod._is_ambiguous_active_task_error({"ok": True, "data": {"active": None}})
+        is False
+    )
 
 
 def test_interpret_handoff_envelope_ok_false_without_error_message_still_surfaces():

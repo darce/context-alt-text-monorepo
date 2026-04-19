@@ -47,6 +47,11 @@ Identify and verify the root cause of a defect before applying a fix, then prese
 
 ## Core Process
 
+0. **Ensure task scope before any cwd-resolving MCP read.** `search_handoff`, `review_findings`, `get_handoff_state` without `task_ref` all resolve from cwd. On cold start:
+   - **Resumption:** work from the existing task's `target_worktree_path`; pass `task_ref` explicitly.
+   - **Ad-hoc investigation on main:** register a maintenance task first — `set_handoff_state(task_ref="MAINT-<slug>-<YYYYMMDD>", objective="...", status="in_progress", target_branch="main")`.
+   - **`Ambiguous active task` error:** run `make maint-archive-stale` (or `MAINT_ARCHIVE_ARGS="--yes"`), then re-run `make context`. `make context` exits `2` on this ambiguity.
+
 1. Collect symptoms before forming hypotheses:
    - exact error output
    - reproduction steps

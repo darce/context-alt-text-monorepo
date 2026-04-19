@@ -74,6 +74,27 @@ def _detect_branch() -> str | None:
     return out.decode("utf-8").strip()
 
 
+def _is_root_worktree() -> bool:
+    """Return True if the cwd is the root (non-linked) worktree.
+
+    Root worktrees have a `.git` directory; linked worktrees have a `.git`
+    file pointing to the shared gitdir.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            capture_output=True, text=True, timeout=3, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if proc.returncode != 0:
+        return False
+    git_dir = Path(proc.stdout.strip())
+    if not git_dir.is_absolute():
+        git_dir = Path.cwd() / git_dir
+    return git_dir.is_dir() and git_dir.name == ".git"
+
+
 def _git_dirty_paths() -> list[str] | None:
     """Return the relative paths of tracked-but-modified files (vs HEAD).
 
@@ -311,6 +332,19 @@ def main() -> int:
         _print_aligned(
             "…", "branch", actual_branch or "(unknown — no target_branch on task)"
         )
+
+    # Root-worktree-on-non-main guard: warn loudly if we are in the root
+    # worktree on a feature branch. This catches the workflow mistake where
+    # `git checkout feature/xxx` is run in the root instead of using a linked
+    # worktree. The PreToolUse guard will hard-block edits, but surfacing it
+    # here at `make context` time gives the agent an early heads-up.
+    if actual_branch and actual_branch not in MAIN_BRANCHES and _is_root_worktree():
+        _print_aligned("✗", "root worktree",
+                        f"on non-main branch '{actual_branch}'")
+        print("                   The root worktree must stay on main.")
+        print("                   Fix: git checkout main && git worktree add "
+              f"../<repo>-<task-id> -b {actual_branch}")
+        drift = True
 
     if drift:
         print()

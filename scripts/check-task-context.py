@@ -339,7 +339,13 @@ def _emit_maintenance_task_hint_if_needed(actual_branch: str | None) -> None:
         return
     print()
     print("  Register a maintenance task before continuing with main-branch edits:")
-    print("    set_handoff_state(task_ref='MAINT-<slug>', objective='Describe the main-branch patch', status='in_progress')")
+    print(
+        "    set_handoff_state(task_ref='MAINT-<slug>', objective='Describe the main-branch patch', "
+        "status='in_progress', target_branch='main')"
+    )
+    print(
+        "  (MAINT-* tasks on main/master default target_worktree_path to the current repo root.)"
+    )
 
 
 if __name__ == "__main__":

@@ -15,5 +15,7 @@ Loop:
 - load the planning doc and minimum code/contract anchors
 - run the planning-review checklist
 - record findings and verdict in MCP
+- print stable handoff gap ids (`finding_id`) when reporting findings
 - record the planning review run
+- refresh DASHBOARD.txt after state-changing handoff writes
 - block approval until open planning findings are resolved

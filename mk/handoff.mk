@@ -74,7 +74,7 @@ plan-review:
 		"Document: $(DOC)" \
 		"Skill: .claude/skills/planning-review/SKILL.md (Phase 2 deliverable)" \
 		"Checklist: docs/agentic/rules/planning-review-guide.md" \
-		"Expected output: MCP findings + review_runs(record) + verdict decision."
+		"Expected output: MCP findings (reported with finding_id / handoff gap ids) + review_runs(record) + verdict decision + DASHBOARD.txt refresh."
 
 slice-start:
 	@if [ -z "$(TASK)" ]; then \

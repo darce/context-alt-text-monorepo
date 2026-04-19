@@ -597,6 +597,7 @@ def _evaluate_close_failures(
     fresh_test_count: int,
     require_current_commit_summary: bool,
     structured_decisions: list,
+    working_tree_integrity: dict,
 ) -> list[str]:
     """Evaluate all close-check conditions and return failure messages."""
     failures: list[str] = []
@@ -620,6 +621,13 @@ def _evaluate_close_failures(
         failures.append("Fresh verification for the current commit is required before close.")
     if require_current_commit_summary and not structured_decisions:
         failures.append("A structured slice-completion summary for the current commit is required before close.")
+    if not working_tree_integrity["ok"]:
+        unexpected = working_tree_integrity.get("unexpected_dirty") or []
+        failures.append(
+            "Working tree has drifted from HEAD on "
+            f"{len(unexpected)} unexpected path(s). Commit, stash, or add to "
+            ".task-state/dirty-allowlist before closing."
+        )
     return failures
 
 
@@ -715,6 +723,9 @@ def handoff_close_check(
     latest_structured_current_commit_decision = (
         structured_current_commit_decisions[0] if structured_current_commit_decisions else None
     )
+    from .working_tree import _check_working_tree_integrity  # noqa: PLC0415 - late import
+
+    working_tree_integrity = _check_working_tree_integrity()
     failures = _evaluate_close_failures(
         active_task_matches=active_task_matches,
         active_status=active_status,
@@ -728,6 +739,7 @@ def handoff_close_check(
         fresh_test_count=fresh_test_count,
         require_current_commit_summary=require_current_commit_summary,
         structured_decisions=structured_current_commit_decisions,
+        working_tree_integrity=working_tree_integrity,
     )
     ready_to_close = len(failures) == 0
     data: dict = {
@@ -765,6 +777,13 @@ def handoff_close_check(
                 "current_commit_sha": normalized_current_commit_sha,
                 "count": fresh_test_count,
                 "is_violation": bool(require_fresh_tests and fresh_test_count == 0),
+            },
+            "working_tree_integrity": {
+                "ok": working_tree_integrity["ok"],
+                "unexpected_dirty": working_tree_integrity.get("unexpected_dirty", []),
+                "dirty_paths": working_tree_integrity.get("dirty_paths", []),
+                "allowlist_source": working_tree_integrity.get("allowlist_source"),
+                "is_violation": not working_tree_integrity["ok"],
             },
             "current_commit_handoff": {
                 "required": require_current_commit_summary,

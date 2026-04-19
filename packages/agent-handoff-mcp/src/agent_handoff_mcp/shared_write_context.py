@@ -95,11 +95,12 @@ class AmbiguousWorkspaceContextError(UnresolvedTaskContextError):
 
     Attaches a ``candidates`` list — each entry is a mapping with
     ``task_ref``, ``target_branch``, ``target_worktree_path``,
-    ``objective``, ``status``, and ``updated_at``. Read paths
-    (``get_handoff_state``, ``search_handoff``) surface these to the
-    caller so the ambiguity can be resolved by passing ``task_ref``
-    explicitly instead of bailing with an opaque string (AHMCP-33,
-    closes COLDSTART-H-02).
+    ``objective``, ``status``, and ``updated_at``. ``get_handoff_state``
+    surfaces these to the caller so the ambiguity can be resolved by
+    passing ``task_ref`` explicitly instead of bailing with an opaque
+    string (AHMCP-33, closes COLDSTART-H-02). Extending this to
+    ``search_handoff`` and other read entrypoints is tracked as a
+    follow-up.
     """
 
     def __init__(self, message: str, candidates: list[dict] | None = None) -> None:

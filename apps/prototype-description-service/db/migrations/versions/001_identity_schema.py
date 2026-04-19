@@ -75,6 +75,8 @@ def upgrade() -> None:
         sa.Column("rate_limit_tier", sa.String(length=50), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("last_used_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("revoked_at", sa.TIMESTAMP(timezone=True), nullable=True),
     )
 
     op.create_table(

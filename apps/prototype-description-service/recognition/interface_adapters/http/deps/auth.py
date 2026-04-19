@@ -19,6 +19,7 @@ from recognition.config.security import SecuritySettings, get_security_settings
 from recognition.infrastructure.repositories import SqlAlchemyApiKeyRepository
 from recognition.interface_adapters.http.deps.session import get_optional_session
 from recognition.interface_adapters.http.deps.tenant_common import normalize_tenant_id
+from recognition.observability.auth_audit import emit_auth_event
 
 logger = logging.getLogger(__name__)
 
@@ -161,16 +162,59 @@ async def _require_auth_impl(
             api_key = None
 
     if not api_key:
+        emit_auth_event(
+            "invalid_key",
+            api_key_id=None,
+            key_hash=None,
+            tenant_claim=x_tenant_id,
+            trace_id=None,
+        )
         if authorization or api_key_header_value:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid authorization scheme")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization header required")
 
-    tenant_claim, api_key_id, rate_limit_tier, is_admin = await _lookup_api_key(api_key, settings, session)
+    hashed_for_audit = _hash_api_key(api_key, settings.api_key_hash_algorithm)
+    try:
+        tenant_claim, api_key_id, rate_limit_tier, is_admin = await _lookup_api_key(api_key, settings, session)
+    except HTTPException as exc:
+        outcome: str
+        if exc.detail == "api key expired":
+            outcome = "expired"
+        elif exc.detail == "api key revoked":
+            outcome = "revoked"
+        elif exc.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN):
+            outcome = "invalid_key"
+        else:
+            outcome = None  # type: ignore[assignment]
+        if outcome is not None:
+            emit_auth_event(
+                outcome,  # type: ignore[arg-type]
+                api_key_id=None,
+                key_hash=hashed_for_audit,
+                tenant_claim=x_tenant_id,
+                trace_id=None,
+            )
+        raise
     if tenant_claim and x_tenant_id:
         provided = normalize_tenant_id(x_tenant_id)
         if tenant_claim != provided:
+            emit_auth_event(
+                "tenant_mismatch",
+                api_key_id=api_key_id,
+                key_hash=hashed_for_audit,
+                tenant_claim=x_tenant_id,
+                trace_id=None,
+            )
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
     _enqueue_api_key_telemetry(background_tasks, api_key_id)
+
+    emit_auth_event(
+        "success",
+        api_key_id=api_key_id,
+        key_hash=hashed_for_audit,
+        tenant_claim=tenant_claim,
+        trace_id=None,
+    )
 
     return AuthContext(
         token=api_key,
@@ -187,7 +231,12 @@ async def _lookup_api_key(
     settings: SecuritySettings,
     session: AsyncSession | None,
 ) -> tuple[str | None, str | None, str | None, bool]:
-    """Validate API key and return (tenant_id, api_key_id, rate_limit_tier, is_admin)."""
+    """Validate API key and return (tenant_id, api_key_id, rate_limit_tier, is_admin).
+
+    Returns the raw hash as a trailing tuple entry when available so the caller
+    can pass a non-reversible fingerprint to the audit emitter. Dev-key fallback
+    carries `hashed=None` since the dev path never touches the DB row.
+    """
     hashed = _hash_api_key(api_key, settings.api_key_hash_algorithm)
     if session is None or not hasattr(session, "execute"):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database unavailable")
@@ -210,6 +259,18 @@ async def _lookup_api_key(
 
     if api_key in settings.dev_api_keys:
         return None, None, "enterprise", True
+
+    # Distinguish expired/revoked from truly unknown so the 401 detail can tell
+    # operators what happened. classify_by_hash is a separate query and is only
+    # executed when the first lookup returned nothing.
+    try:
+        classification = await repo.classify_by_hash(hashed)
+    except Exception:  # pragma: no cover - defensive; treated as unknown
+        classification = "unknown"
+    if classification == "expired":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="api key expired")
+    if classification == "revoked":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="api key revoked")
 
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid or missing API key")
 

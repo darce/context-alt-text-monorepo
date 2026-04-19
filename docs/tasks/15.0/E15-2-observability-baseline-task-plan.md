@@ -6,7 +6,7 @@
 > - **Author**: Claude Opus 4.6
 > - **Owning Epic**: [docs/epics/v0.4.0/public-demo-launch-readiness-epic.md](../../epics/v0.4.0/public-demo-launch-readiness-epic.md)
 > - **Epic Short ID**: E15
-> - **Target Branch**: `feature/e15-2-observability-baseline`
+> - **Target Branch**: `feature/e15-2`
 > - **Review Coverage Target**: 2
 
 ---

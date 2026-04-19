@@ -378,7 +378,7 @@ Proof:
 - [x] `check_harness_sync.py` exercises both main-branch guards through a fixture harness (not via parsing duplicated literals)
 - [x] `check_harness_sync.py` exercises the worktree-drift hook through a fixture harness: block case, allow-list case, MAINT bypass, env-var bypass
 - [x] `check_harness_sync.py` validates `permitted_main_surfaces` entry shape (`pattern` and `reason` non-empty; pattern is a valid glob)
-- [ ] `check_harness_sync.py` validates absence of `DASHBOARD.md` in tracked non-archive markdown, the Makefile, and the `dashboard_extension.py` docstring (depends on E17-7 Slice 4 completion) <!-- lint-dashboard-txt: allow -->
+- [x] `check_harness_sync.py` validates absence of `DASHBOARD.md` in tracked non-archive markdown, the Makefile, and the `dashboard_extension.py` docstring (depends on E17-7 Slice 4 completion) <!-- lint-dashboard-txt: allow -->
 - [x] `check_harness_sync.py` asserts the contract-required stderr + block behavior when `harness-protocol.yaml` is moved aside
 - [x] `.gitignore` excludes `DASHBOARD.md` <!-- lint-dashboard-txt: allow -->
 - [ ] `make check-harness-sync` passes after Slices 1-2 and after E17-7 Slice 4

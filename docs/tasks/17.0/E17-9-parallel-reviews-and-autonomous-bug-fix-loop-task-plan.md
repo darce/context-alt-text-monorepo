@@ -275,16 +275,16 @@ Retroactive status note (2026-04-18): E17-9's landed dashboard guard is `lint-da
 
 ### Slice 1: Parallel-Review Coordinator Skill + Portable Command
 
-- [ ] Baseline fixture captured at `packages/agent-orchestrator-mcp/tests/fixtures/review_baseline.json` (serial `/branch-review` tokens + identity-response size; identity bytes are live, serial tokens remain provisional)
+- [x] Baseline fixture captured at `packages/agent-orchestrator-mcp/tests/fixtures/review_baseline.json` (serial `/branch-review` tokens + identity-response size; identity bytes are live, serial tokens remain provisional)
 - [x] `/review-parallel` entry exists in `portable_commands.json` with `reviewers_count` and `reviewer_prompt_template` only (no dead `merge_strategy` knob)
 - [x] Reviewer prompt templates live under `config/agent-workflows/prompts/review-parallel/` (harness-neutral path)
 - [x] `.claude/skills/review-parallel/SKILL.md` defines coordinator protocol with scoped per-reviewer `task_ref`s AND a per-harness subagent-invocation routing table (Claude Code `Agent` tool, Codex/Copilot `run_structured_turn`, external orchestrator `BackendAdapter`)
 - [x] Skill explicitly forbids calling `ClaudeCodeAdapter` (CLI subprocess) from inside an active Claude Code coordinator session
 - [x] Generated host adapters updated via `make generate-agent-workflows`
 - [x] `make check-agent-workflows` green
-- [ ] Happy-path test: merged findings count equals reviewer-sum; every merged row has `merged_from` provenance
+- [x] Happy-path test: merged findings count equals reviewer-sum; every merged row has `merged_from` provenance
 - [x] Reviewer source rows remain intact after merge (additive, not destructive)
-- [ ] Coordinator-side token envelope ≤ 50% of recorded baseline for the 500-line fixture diff
+- [x] Coordinator-side token envelope ≤ 50% of recorded baseline for the 500-line fixture diff
 
 ### Slice 2: Auto-Fix Loop Skill + Portable Command
 
@@ -298,8 +298,8 @@ Retroactive status note (2026-04-18): E17-9's landed dashboard guard is `lint-da
 - [x] Cadence rule scoped to Claude Code: `<270` warm, `>=1200` idle, never `300`; Codex/Copilot iterate inline with equivalent MCP state
 - [x] Precondition refuses to run when `target_branch` is `main`, `master`, or unset
 - [x] Generated host adapters updated
-- [ ] Per-iteration signal test passes on fixture failing test within iteration cap
-- [ ] Post-loop gate test: `ok=true` with slice_complete; `ok=false` without
+- [x] Per-iteration signal test passes on fixture failing test within iteration cap
+- [x] Post-loop gate test: `ok=true` with slice_complete; `ok=false` without
 - [x] Bounded-reads test: iteration identity response ≤ Slice 1 baseline + 10% slack
 - [ ] Cadence test runs on Claude Code runtime; asserts inline iteration on Codex/Copilot
 - [x] Iteration-cap test: unfixable test triggers blocker path, exits non-zero, records no slice_complete
@@ -337,8 +337,8 @@ Retroactive status note (2026-04-18): E17-9's landed dashboard guard is `lint-da
 ## Success Criteria
 
 - [x] `/review-parallel` and `/auto-fix` portable commands **register** across all three hosts (Claude Code, VS Code/Copilot, Codex) via `portable_commands.json` + `scripts/generate_agent_workflows.py`; the generated Claude/VS Code/Codex adapters all resolve to the same skill + prompt templates
-- [ ] The same MCP state (findings, review runs, test_results, decisions) results from running each skill on any of the three supported harnesses — cross-harness equivalence is on MCP state, not on wall-clock cadence
-- [ ] Parallel-review coordinator fan-out uses the cheapest in-harness subagent primitive (Claude Code `Agent` tool in-process; Codex + Copilot `run_structured_turn`) and stays bounded to ≤50% of the recorded serial `/branch-review` baseline for a ~500-line diff
+- [x] The same MCP state (findings, review runs, test_results, decisions) results from running each skill on any of the three supported harnesses — cross-harness equivalence is on MCP state, not on wall-clock cadence
+- [x] Parallel-review coordinator fan-out uses the cheapest in-harness subagent primitive (Claude Code `Agent` tool in-process; Codex + Copilot `run_structured_turn`) and stays bounded to ≤50% of the recorded serial `/branch-review` baseline for a ~500-line diff
 - [x] Auto-fix loop converges on the first `verified_tests(passed=true, commit_sha=HEAD)` row; Finalization records a canonical `slice_complete` decision, sets status `done`, and calls `handoff_close_check(enforce=True, require_fresh_tests=True, current_commit_sha=<HEAD>)` exactly once with `ok=true`
 - [ ] Auto-fix cadence discipline is scoped to Claude Code only; Codex and Copilot runs iterate inline and still produce the same MCP state
 - [x] Cross-vendor tests always run `structured-turn` (in-repo, no host bridge required) and opportunistically run `claude-code` / `codex-cli` / `codex-subagent` / `copilot-host` when their primitives resolve at test time

@@ -130,6 +130,51 @@ max_over_time(http_requests_in_flight[5m])
   lands on the OCI A1 host, split the DB pools so a pathological batch
   cannot exhaust the pool serving `/v1/describe` (PA-11, bulkhead).
 
+## Probe Integration
+
+### Caddy `reverse_proxy` health check
+
+Caddy's active upstream health check points at `/ready` so an unhealthy pod is
+pulled from the load-balancer pool without waiting for a 5xx on real traffic.
+Use `/ready` — not `/health` — because `/ready` rolls up the dependency
+probes; `/health` is liveness-only and would keep a DB-less pod in rotation.
+
+```caddyfile
+reverse_proxy description-service:8000 {
+    health_uri       /ready
+    health_interval  10s
+    health_timeout   2s
+    health_status    2xx
+}
+```
+
+### Prometheus Blackbox Exporter
+
+Blackbox hits `/health` for the cheap liveness probe — no auth, no I/O — and
+alerts on failure independently of the scrape-based metrics path.
+
+```yaml
+# blackbox.yml
+modules:
+  http_2xx_health:
+    prober: http
+    timeout: 5s
+    http:
+      valid_status_codes: [200]
+      method: GET
+      preferred_ip_protocol: ip4
+
+# prometheus.yml
+scrape_configs:
+  - job_name: blackbox-description-service
+    metrics_path: /probe
+    params:
+      module: [http_2xx_health]
+      target: [http://description-service:8000/health]
+    static_configs:
+      - targets: [blackbox-exporter:9115]
+```
+
 ## Tracing a Request by Correlation ID
 
 Every request is stamped with a correlation id from `X-Request-ID`; if the

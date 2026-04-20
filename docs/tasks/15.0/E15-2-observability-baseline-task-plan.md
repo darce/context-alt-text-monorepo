@@ -285,76 +285,76 @@ Proof:
 
 ### Context and Ownership
 
-- [ ] Loaded backend context map and testing guide before editing
-- [ ] Confirmed `python-json-logger` and `prometheus-client` package availability via `ctx7` or PyPI
-- [ ] Branch created: `feature/e15-2-observability-baseline`
+- [x] Loaded backend context map and testing guide before editing
+- [x] Confirmed `python-json-logger` and `prometheus-client` package availability via `ctx7` or PyPI
+- [x] Branch created: `feature/e15-2-observability-baseline`
 
 ### Checklist for Slice 1: Structured JSON Logging + Correlation ID
 
-- [ ] Failing tests written first (`test_correlation.py`)
-- [ ] JSON formatter replaces `ContextualFormatter`
-- [ ] Correlation ID middleware implemented and registered
-- [ ] `WatchedFileHandler` and `RecognitionFilter` preserved
-- [ ] Exception handlers use contextvars correlation ID
-- [ ] Reserved-key guard: caller `extra={}` nested under `context.*`; test asserts framework keys (`service`, `level`, `correlation_id`) cannot be clobbered (PA-12)
-- [ ] Queue-hop correlation propagation is explicitly **deferred** from E15-2 (PR-03); `recognition/worker/handlers/scan.py` and the scan-job schema are not modified in this task. A worker-observability follow-on task owns the schema + repository change.
-- [ ] `exception_handlers.py` response body key renamed `trace_id` → `correlation_id` across every error shape; test asserts no `trace_id` key remains (PA-03, PA-14, PA-17)
-- [ ] Log-rotation regression test in `test_log_rotation.py`: JSON output survives `make logs-rotate` with no partial lines (PA-11, PA-18)
-- [ ] `python-json-logger>=2.0.7,<3` pinned in `pyproject.toml`; `ctx7` verification cited in commit (PA-07)
-- [ ] All tests pass; `jq` validates log output
+- [x] Failing tests written first (`test_correlation.py`)
+- [x] JSON formatter replaces `ContextualFormatter`
+- [x] Correlation ID middleware implemented and registered
+- [x] `WatchedFileHandler` and `RecognitionFilter` preserved
+- [x] Exception handlers use contextvars correlation ID
+- [x] Reserved-key guard: caller `extra={}` nested under `context.*`; test asserts framework keys (`service`, `level`, `correlation_id`) cannot be clobbered (PA-12)
+- [x] Queue-hop correlation propagation is explicitly **deferred** from E15-2 (PR-03); `recognition/worker/handlers/scan.py` and the scan-job schema are not modified in this task. A worker-observability follow-on task owns the schema + repository change.
+- [x] `exception_handlers.py` response body key renamed `trace_id` → `correlation_id` across every error shape; test asserts no `trace_id` key remains (PA-03, PA-14, PA-17)
+- [x] Log-rotation regression test in `test_log_rotation.py`: JSON output survives `make logs-rotate` with no partial lines (PA-11, PA-18)
+- [x] `python-json-logger>=2.0.7,<3` pinned in `pyproject.toml`; `ctx7` verification cited in commit (PA-07)
+- [x] All tests pass; `jq` validates log output
 
 ### Checklist for Slice 2: Health and Readiness Probes
 
-- [ ] Failing tests written first (`test_health_probes.py`)
-- [ ] `/health` is liveness-only (no I/O, 200 if process up); test asserts the DB session factory is never entered during a `/health` request (PR-01)
-- [ ] `/ready` checks DB pool check-out + breaker-not-open + on-disk model cache — no worker liveness, no in-memory model-handle probe (PR-01)
-- [ ] Both endpoints unauthenticated and at root level (not under `/recognition`)
-- [ ] Handler shape is `def` (threadpooled) or fully async — no `async def` wrapping blocking DB calls (PA-04)
-- [ ] `HealthStatus(StrEnum)` introduced in `shared/health.py`; no magic-string status literals remain in health code (PA-09, sr-007)
-- [ ] Model-cache check performs a fresh `Path` stat on every call (no cached result); test asserts an unlinked ONNX file flips status to `UNHEALTHY` within one call (PA-10)
-- [ ] Model-cache check probes **on-disk files only**, not in-memory `FaceAnalysis` handle; enumerated `buffalo_l` bundle paths documented in runbook (PA-15)
-- [ ] Structured response schema documented in the runbook
-- [ ] Worker-liveness deferral noted in plan and runbook
-- [ ] All tests pass
+- [x] Failing tests written first (`test_health_probes.py`)
+- [x] `/health` is liveness-only (no I/O, 200 if process up); test asserts the DB session factory is never entered during a `/health` request (PR-01)
+- [x] `/ready` checks DB pool check-out + breaker-not-open + on-disk model cache — no worker liveness, no in-memory model-handle probe (PR-01)
+- [x] Both endpoints unauthenticated and at root level (not under `/recognition`)
+- [x] Handler shape is `def` (threadpooled) or fully async — no `async def` wrapping blocking DB calls (PA-04)
+- [x] `HealthStatus(StrEnum)` introduced in `shared/health.py`; no magic-string status literals remain in health code (PA-09, sr-007)
+- [x] Model-cache check performs a fresh `Path` stat on every call (no cached result); test asserts an unlinked ONNX file flips status to `UNHEALTHY` within one call (PA-10)
+- [x] Model-cache check probes **on-disk files only**, not in-memory `FaceAnalysis` handle; enumerated `buffalo_l` bundle paths documented in runbook (PA-15)
+- [x] Structured response schema documented in the runbook
+- [x] Worker-liveness deferral noted in plan and runbook
+- [x] All tests pass
 
 ### Checklist for Slice 2.5: Health Surface Consolidation
 
-- [ ] Subsystem routers (`recognition`/`roster`/`scene` health routers) removed
-- [ ] Orphaned `api/schemas/health.py` deleted (PA-16)
-- [ ] Auth-gated `/health/detailed` returns pool stats + breaker state + model-cache inventory
-- [ ] No references to `/recognition/health`, `/roster/health`, `/scene/health` remain in codebase
-- [ ] Tests updated for new URL surface
+- [x] Subsystem routers (`recognition`/`roster`/`scene` health routers) removed
+- [x] Orphaned `api/schemas/health.py` deleted (PA-16)
+- [x] Auth-gated `/health/detailed` returns pool stats + breaker state + model-cache inventory
+- [x] No references to `/recognition/health`, `/roster/health`, `/scene/health` remain in codebase
+- [x] Tests updated for new URL surface
 
 ### Checklist for Slice 3: Request Metrics and Runbook
 
-- [ ] Failing tests written first (`test_metrics.py`)
-- [ ] Prometheus middleware records latency + counts
-- [ ] `http_request_duration_seconds` buckets set to `(0.25, 0.5, 1, 2, 5, 10, 30, 60, +Inf)` initial values; revisit after one day of staging data
-- [ ] `path` label uses FastAPI route template (`request.scope["route"].path`), not raw URL; test asserts two UUIDs collapse to the same label (PA-06)
-- [ ] `/metrics` implemented as a FastAPI route with `Depends(require_auth)` (not an ASGI sub-app mount); body returns `generate_latest()` with `CONTENT_TYPE_LATEST`. Test asserts 401 without key, 200 with key (PA-05, PR-02)
-- [ ] Exception-path metrics: forced 500 produces bucket observation + `status_class=5xx` counter increment + gauge decrement (PA-13)
-- [ ] `prometheus-client>=0.20,<1` pinned in `pyproject.toml`; `ctx7` verification cited (PA-07)
-- [ ] `/metrics` endpoint exposes Prometheus text format
-- [ ] Runbook written (`docs/operations/observability-runbook.md`) including:
+- [x] Failing tests written first (`test_metrics.py`)
+- [x] Prometheus middleware records latency + counts
+- [x] `http_request_duration_seconds` buckets set to `(0.25, 0.5, 1, 2, 5, 10, 30, 60, +Inf)` initial values; revisit after one day of staging data
+- [x] `path` label uses FastAPI route template (`request.scope["route"].path`), not raw URL; test asserts two UUIDs collapse to the same label (PA-06)
+- [x] `/metrics` implemented as a FastAPI route with `Depends(require_auth)` (not an ASGI sub-app mount); body returns `generate_latest()` with `CONTENT_TYPE_LATEST`. Test asserts 401 without key, 200 with key (PA-05, PR-02)
+- [x] Exception-path metrics: forced 500 produces bucket observation + `status_class=5xx` counter increment + gauge decrement (PA-13)
+- [x] `prometheus-client>=0.20,<1` pinned in `pyproject.toml`; `ctx7` verification cited (PA-07)
+- [x] `/metrics` endpoint exposes Prometheus text format
+- [x] Runbook written (`docs/operations/observability-runbook.md`) including:
   - `histogram_quantile` PromQL formulas for P50/P95/P99
   - Coordinated-omission caveat (tail numbers are lower bounds because middleware records on response-complete)
   - Caddy `reverse_proxy` `health_uri /ready` snippet
   - Prometheus Blackbox Exporter probe config for `/health`
   - Known limits: bulkhead deferral for future VLM worker pool separation (PA-11)
-- [ ] Full `make check` passes
+- [x] Full `make check` passes
 
 ## Review Readiness
 
-- [ ] Auth policy consistent across the plan: `/health` and `/ready` are unauthenticated; `/metrics` and `/health/detailed` require `require_auth` (PR-01, PR-02)
-- [ ] Log format change does not break `make logs-rotate`
-- [ ] Correlation ID flows from request through domain logging to response
-- [ ] Handoff decision records the change with verification evidence
+- [x] Auth policy consistent across the plan: `/health` and `/ready` are unauthenticated; `/metrics` and `/health/detailed` require `require_auth` (PR-01, PR-02)
+- [x] Log format change does not break `make logs-rotate`
+- [x] Correlation ID flows from request through domain logging to response
+- [x] Handoff decision records the change with verification evidence
 
 ## Success Criteria
 
-- [ ] `jq . < logs/recognition.log` parses every line
-- [ ] Backend-generated correlation ID appears in both response header (`X-Request-ID`) and `correlation_id` field of every log line for the same request
-- [ ] Root `/health` (in `api/main.py`) returns 200 + `{"status":"ok"}` as a pure liveness probe with no I/O; root `/ready` (in `api/main.py`) returns dependency check details for DB + breaker + on-disk model cache. Worker liveness is intentionally excluded from both (PR-01)
-- [ ] `/metrics` exposes Prometheus histogram buckets for request duration and counters for requests by status class
-- [ ] Operator runbook documents the PromQL `histogram_quantile()` formula for deriving P50/P95/P99 from the histogram buckets
-- [ ] Operator can diagnose a failed sync from endpoints and logs alone
+- [x] `jq . < logs/recognition.log` parses every line
+- [x] Backend-generated correlation ID appears in both response header (`X-Request-ID`) and `correlation_id` field of every log line for the same request
+- [x] Root `/health` (in `api/main.py`) returns 200 + `{"status":"ok"}` as a pure liveness probe with no I/O; root `/ready` (in `api/main.py`) returns dependency check details for DB + breaker + on-disk model cache. Worker liveness is intentionally excluded from both (PR-01)
+- [x] `/metrics` exposes Prometheus histogram buckets for request duration and counters for requests by status class
+- [x] Operator runbook documents the PromQL `histogram_quantile()` formula for deriving P50/P95/P99 from the histogram buckets
+- [x] Operator can diagnose a failed sync from endpoints and logs alone

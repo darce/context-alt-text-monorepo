@@ -27,8 +27,8 @@ Anything beyond these five items (CI smoke harness, multi-site, custom theme, pu
 
 ## Non-Goals (explicit)
 
-- Automated E2E smoke gate -- owned by [E15-6](./E15-6-e2e-smoke-gate-automation-task-plan.md) and deferred to E15.5.
-- Local-sync audit closure -- owned by [E15-7](./E15-7-local-sync-completion-and-audit-closure-task-plan.md) and deferred to E15.5.
+- Automated E2E smoke gate -- owned by [E15-6](./E15-6-e2e-smoke-gate-automation-stub.md) and deferred to [E16. Public Demo Follow-Ons](../../epics/v0.4.1/public-demo-followons-epic.md).
+- Local-sync audit closure -- owned by [E15-7](./E15-7-local-sync-completion-and-audit-closure-task-plan.md) and deferred to [E16](../../epics/v0.4.1/public-demo-followons-epic.md).
 - User-account database / multi-tenant seating -- deferred per E14 "Deferred Follow-On: User-Account Database".
 - VLM / Phi-3.5 captioning -- out of MVP per E15 constraint "Recognition-only".
 

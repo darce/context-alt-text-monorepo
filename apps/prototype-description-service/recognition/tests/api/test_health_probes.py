@@ -1,9 +1,10 @@
-"""Slice 2a: root /health is liveness-only per PR-01.
+"""Slice 2a + 2-ready: root /health is liveness-only; /ready runs dep probes.
 
 Tests cover:
 - GET /health returns 200 with {"status": HealthStatus.OK, "timestamp": ...}.
 - GET /health performs no I/O (never enters a DB session factory).
 - HealthStatus is a StrEnum in shared.health with OK/DEGRADED/UNHEALTHY.
+- GET /ready runs DB + breaker + model-cache probes and aggregates status.
 """
 
 from __future__ import annotations
@@ -69,3 +70,153 @@ def test_root_health_does_not_open_db_session(monkeypatch) -> None:
 
     resp = client.get("/health")
     assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# /ready probes (Slice 2-ready): DB + breaker + model-cache
+# ---------------------------------------------------------------------------
+
+
+def _build_ready_app(
+    *,
+    db_ok: bool = True,
+    breaker_open: bool = False,
+    model_cache_dir=None,
+):
+    """Build an isolated FastAPI app with /ready and injected probe deps.
+
+    Each probe is overridden per test so the slice exercises the aggregator
+    and endpoint shape without spinning up a real DB, breaker, or InsightFace
+    bundle on disk.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from fastapi import FastAPI
+
+    from api.main import register_health_probes
+    from recognition.interface_adapters.http import dependencies
+    from recognition.interface_adapters.http.deps.circuit_breaker import (
+        BreakerState,
+        SessionDependencyCircuitBreaker,
+        initialize_session_dependency_circuit_breaker,
+    )
+
+    app = FastAPI()
+    breaker = SessionDependencyCircuitBreaker(failure_threshold=3, window_seconds=30, half_open_after_seconds=10)
+    if breaker_open:
+        breaker.state = BreakerState.OPEN
+    initialize_session_dependency_circuit_breaker(app, breaker=breaker)
+
+    register_health_probes(app, model_cache_dir=model_cache_dir)
+
+    async def _session_yielder():
+        if db_ok:
+            session = MagicMock()
+            session.execute = AsyncMock(return_value=None)
+            yield session
+        else:
+            yield None
+
+    app.dependency_overrides[dependencies.get_observability_session] = _session_yielder
+    return app
+
+
+def test_ready_healthy_when_all_deps_up(tmp_path) -> None:
+    """/ready returns 200 with status=ok and per-dep check entries when DB,
+    breaker, and model-cache bundle are all healthy.
+    """
+    from shared.health import HealthStatus
+
+    bundle = tmp_path / "buffalo_l"
+    bundle.mkdir()
+    (bundle / "det_10g.onnx").write_bytes(b"stub")
+
+    app = _build_ready_app(model_cache_dir=tmp_path)
+    client = TestClient(app)
+
+    resp = client.get("/ready")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == HealthStatus.OK.value
+    names = {check["name"] for check in body["checks"]}
+    assert names == {"database", "breaker", "model_cache"}
+    for check in body["checks"]:
+        assert check["status"] == HealthStatus.OK.value, check
+
+
+def test_ready_degraded_when_breaker_open(tmp_path) -> None:
+    """A tripped breaker is a degradation signal — the API can't reach the DB
+    right now but the process itself is alive. /ready still returns 200 so
+    load balancers don't pull the pod, but the status surfaces 'degraded'.
+    """
+    from shared.health import HealthStatus
+
+    bundle = tmp_path / "buffalo_l"
+    bundle.mkdir()
+    (bundle / "det_10g.onnx").write_bytes(b"stub")
+
+    app = _build_ready_app(breaker_open=True, model_cache_dir=tmp_path)
+    client = TestClient(app)
+
+    resp = client.get("/ready")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == HealthStatus.DEGRADED.value
+    breaker_check = next(c for c in body["checks"] if c["name"] == "breaker")
+    assert breaker_check["status"] == HealthStatus.DEGRADED.value
+
+
+def test_ready_unhealthy_when_db_down(tmp_path) -> None:
+    """When the observability session dep yields None (pool exhausted /
+    connection_unavailable), /ready must report UNHEALTHY and return 503 so
+    the load balancer pulls the pod from rotation.
+    """
+    from shared.health import HealthStatus
+
+    bundle = tmp_path / "buffalo_l"
+    bundle.mkdir()
+    (bundle / "det_10g.onnx").write_bytes(b"stub")
+
+    app = _build_ready_app(db_ok=False, model_cache_dir=tmp_path)
+    client = TestClient(app)
+
+    resp = client.get("/ready")
+
+    assert resp.status_code == 503, resp.text
+    body = resp.json()
+    assert body["status"] == HealthStatus.UNHEALTHY.value
+    db_check = next(c for c in body["checks"] if c["name"] == "database")
+    assert db_check["status"] == HealthStatus.UNHEALTHY.value
+
+
+def test_ready_model_cache_flips_unhealthy_when_bundle_missing(tmp_path) -> None:
+    """PA-10: the model-cache check must stat the filesystem on every call
+    (no caching). Unlinking the bundle between calls flips the next /ready
+    response to UNHEALTHY without any process restart.
+    """
+    from shared.health import HealthStatus
+
+    bundle = tmp_path / "buffalo_l"
+    bundle.mkdir()
+    det = bundle / "det_10g.onnx"
+    det.write_bytes(b"stub")
+
+    app = _build_ready_app(model_cache_dir=tmp_path)
+    client = TestClient(app)
+
+    first = client.get("/ready")
+    assert first.status_code == 200
+    assert first.json()["status"] == HealthStatus.OK.value
+
+    # Remove the bundle mid-process — no caching should hide this.
+    det.unlink()
+    bundle.rmdir()
+
+    second = client.get("/ready")
+    assert second.status_code == 503, second.text
+    body = second.json()
+    assert body["status"] == HealthStatus.UNHEALTHY.value
+    mc_check = next(c for c in body["checks"] if c["name"] == "model_cache")
+    assert mc_check["status"] == HealthStatus.UNHEALTHY.value

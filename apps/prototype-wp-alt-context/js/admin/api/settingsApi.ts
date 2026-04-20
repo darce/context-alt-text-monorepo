@@ -63,7 +63,7 @@ export const saveSettings = async (payload: SaveSettingsPayload): Promise<SaveSe
   return fetchRequiredApi<SaveSettingsResponse>(endpoint, {
     method: 'POST',
     restNonce: getConfig().nonce,
-    body: JSON.stringify(payload),
+    body: payload,
   });
 };
 

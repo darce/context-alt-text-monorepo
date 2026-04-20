@@ -192,6 +192,40 @@ def test_ready_unhealthy_when_db_down(tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Slice 2.5b: subsystem health routers consolidated away
+# ---------------------------------------------------------------------------
+
+
+def test_subsystem_health_routers_are_removed() -> None:
+    """PA-01 / Slice 2.5b: `/recognition/health`, `/recognition/health/pool`,
+    `/roster/health`, and `/scene/health` are consolidated behind root
+    `/health`, `/ready`, and `/health/detailed`. The old subsystem probes and
+    their orphan schema (`api.schemas.health`) must be gone so operators have
+    exactly one probe surface (no dashboards silently reading stale routes).
+    """
+    import importlib
+
+    from api.main import create_app
+
+    app = create_app()
+    client = TestClient(app)
+
+    for path in (
+        "/recognition/health",
+        "/recognition/health/pool",
+        "/roster/health",
+        "/scene/health",
+    ):
+        resp = client.get(path)
+        assert resp.status_code == 404, f"{path} still served: {resp.status_code}"
+
+    import pytest
+
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("api.schemas.health")
+
+
+# ---------------------------------------------------------------------------
 # /health/detailed (Slice 2.5a): auth-gated operator diagnostic
 # ---------------------------------------------------------------------------
 

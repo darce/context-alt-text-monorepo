@@ -29,8 +29,6 @@ from recognition.interface_adapters.http.deps.circuit_breaker import (
 from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
 from recognition.interface_adapters.http.middleware.correlation import CorrelationIdMiddleware
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
-from roster.interface_adapters.http.health_router import router as roster_router
-from scene.interface_adapters.http.health_router import router as scene_router
 from shared.health import HealthStatus
 
 # Configure logging to show diagnostic output
@@ -129,9 +127,7 @@ def create_app() -> FastAPI:
     initialize_session_dependency_circuit_breaker(app)
 
     app.include_router(recognition_router, prefix="/recognition")
-    app.include_router(roster_router, prefix="/roster")
     app.include_router(roster_curation_router, prefix="/roster")
-    app.include_router(scene_router, prefix="/scene")
     register_exception_handlers(app)
 
     register_health_probes(app)

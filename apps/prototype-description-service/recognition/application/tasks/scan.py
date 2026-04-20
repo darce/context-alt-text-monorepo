@@ -163,6 +163,7 @@ async def populate_scan_job_items_async(
     media_items: list[tuple[int, str]],
     scan_queue: ScanQueueService | None = None,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
+    correlation_id: str | None = None,
 ) -> None:
     """Populate scan job items outside the request context."""
     if scan_queue is not None:
@@ -170,6 +171,7 @@ async def populate_scan_job_items_async(
             job_id=uuid.UUID(str(job_id)),
             tenant_id=uuid.UUID(str(tenant_id)),
             media_items=media_items,
+            correlation_id=correlation_id,
         )
         return
 
@@ -191,6 +193,7 @@ async def populate_scan_job_items_async(
                 tenant_id=tenant_uuid,
                 media_items=media_items,
                 commit_hook=session.commit,
+                correlation_id=correlation_id,
             )
             await session.commit()
         finally:
@@ -209,6 +212,7 @@ async def chain_populate_and_process(
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     inline_processing: bool = False,
     adapter_provider: Callable[[], Awaitable[InsightFaceAdapter]] | None = None,
+    correlation_id: str | None = None,
 ) -> None:
     """Chain populate and optional inline processing to ensure order."""
     await populate_scan_job_items_async(
@@ -217,6 +221,7 @@ async def chain_populate_and_process(
         media_items=media_items,
         scan_queue=scan_queue,
         session_factory=session_factory,
+        correlation_id=correlation_id,
     )
     if inline_processing:
         await process_scan_job_inline(

@@ -77,6 +77,8 @@ class IdentityScanJobItem(Base):
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    correlation_id: Mapped[str | None] = mapped_column(Text)
+    correlation_source: Mapped[str | None] = mapped_column(Text)
 
     job: Mapped[IdentityScanJob] = relationship(back_populates="items")
 

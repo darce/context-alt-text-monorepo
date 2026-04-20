@@ -6,7 +6,7 @@
 > - **Author**: Claude Opus 4.6
 > - **Owning Epic**: [docs/epics/v0.4.0/public-demo-launch-readiness-epic.md](../../epics/v0.4.0/public-demo-launch-readiness-epic.md)
 > - **Epic Short ID**: E15
-> - **Target Branch**: `feature/e15-2-observability-baseline`
+> - **Target Branch**: `feature/e15-2`
 > - **Review Coverage Target**: 2
 
 ---
@@ -137,8 +137,8 @@ Derived from `plan-analyze-e15-2-observability-20260419-run-01` (see MCP finding
 | Log config | `api/logging_config.py` | Replace `ContextualFormatter` with JSON formatter |
 | Correlation middleware | `recognition/interface_adapters/http/middleware/correlation.py` | New: extract/generate request ID, store in contextvars |
 | App wiring | `api/main.py` | Register correlation + metrics middleware |
-| Root health/ready endpoints | `api/main.py` | Enhance existing root `/health` with dependency checks; add root `/ready` (both owned by `api/main.py`, not the recognition router) |
-| Subsystem health | `recognition/application/health.py` | Real dependency probes (DB, model cache) — invoked by root endpoints |
+| Root health/ready endpoints | `api/main.py` | Make root `/health` liveness-only (200 + `{"status":"ok"}`, no I/O) and add root `/ready` as the dependency probe (DB + breaker + on-disk model cache). Both owned by `api/main.py`, not the recognition router (PR-01, PR-04). |
+| Subsystem health | `recognition/application/health.py` | Real dependency probes (DB, breaker, on-disk model cache) — invoked by `/ready` and `/health/detailed`; **not** by liveness-only `/health` (PR-01, PR-04) |
 | Metrics middleware | `recognition/interface_adapters/http/middleware/metrics.py` | New: request timing + counters |
 | Metrics endpoint | `api/main.py` | `/metrics` FastAPI route guarded by `Depends(require_auth)`; body calls `prometheus_client.generate_latest()` and returns `CONTENT_TYPE_LATEST` — **not** an ASGI sub-app mount (PR-02) |
 | Dependencies | `pyproject.toml` | Add `python-json-logger>=2.0.7,<3` and `prometheus-client>=0.20,<1` with explicit version pins (PA-07); verify latest via `ctx7` before committing |

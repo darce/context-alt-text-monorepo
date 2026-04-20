@@ -1,7 +1,7 @@
 # E15. Public Demo Launch Readiness (v0.4.0)
 
 > **Epic Short ID**: E15
-> **Status**: active — Phase 1 + Phase 2 complete (pending merge); MVP narrowed to Phases 3, 4, and 6
+> **Status**: active — Phase 1 + Phase 2 merged to `main` (via `b6a2e272` and predecessors); MVP narrowed to Phases 3, 4, and 6
 > **Predecessors**: [production-readiness-epic.md](../v0.3.1/production-readiness-epic.md) (Phases 2-6), [self-hosting-epic.md](../v0.3.1/self-hosting-epic.md) (remaining deliverables)
 > **Successor (deferred follow-ons)**: [v0.4.1/public-demo-followons-epic.md](../v0.4.1/public-demo-followons-epic.md)
 > **Revision**: Apr 2026 — MVP close-out scope locked under handoff decision `scope_e15_mvp_close_intake_202604`. CI smoke-gate (Phase 5) and observability/auth follow-ons demoted to v0.4.1.
@@ -12,8 +12,8 @@ The MVP for E15 is **public WP demo URL live + one manual end-to-end pass**. Eve
 
 **In MVP:**
 
-- Phase 1 — Security Baseline (E15-1, E15-1b) — complete on `feature/e15-2`, pending merge to `main`
-- Phase 2 — Observability Baseline (E15-2) — complete on `feature/e15-2`, pending merge to `main`
+- Phase 1 — Security Baseline (E15-1, E15-1b) — merged to `main`
+- Phase 2 — Observability Baseline (E15-2) — merged to `main`
 - Phase 3 — WordPress Demo Provisioning (E15-3) — provider-agnostic plan
 - Phase 4 — End-to-End Verification (E15-4 in progress, E15-5 manual remote E2E)
 - Phase 6 — Local Sync Correctness (E15-7 in progress)
@@ -89,14 +89,14 @@ The recognition service, Docker stack, Caddy TLS proxy, persistent model cache, 
 | Gap                                                       | Source                             | Status                                                                              |
 | --------------------------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------- |
 | API key validation + tenant isolation                     | Production Readiness Phase 4       | **Complete** (`require_auth`, `api_key_repository.py`) — pre-existing               |
-| Browser origin allowlist (CORS)                           | Production Readiness Phase 4       | **Complete — E15-1 Slice 1** (merged on `feature/e15-2`, pending main merge)        |
-| Per-key rate limiting + deterministic 429                 | Production Readiness Phase 4       | **Complete — E15-1 Slice 2** (merged on `feature/e15-2`, pending main merge)        |
-| Key rotation / lifecycle surface                          | Production Readiness Phase 4       | **Complete — E15-1 Slice 3** (merged on `feature/e15-2`, pending main merge)        |
-| Plugin Settings UX (backend URL + key validation)         | Production Readiness Phase 4       | **Complete — E15-1b** (merged on `feature/e15-2`, pending main merge)               |
-| `/health`, `/ready`, `/health/detailed` endpoints         | Production Readiness Phase 5       | **Complete — E15-2 Slice 2 + 2.5** (`feature/e15-2`, pending main merge)            |
-| Structured JSON logs + correlation IDs                    | Production Readiness Phase 5       | **Complete — E15-2 Slice 1** (`feature/e15-2`, pending main merge)                  |
-| Request latency metrics + `/metrics` endpoint             | Production Readiness Phase 5       | **Complete — E15-2 Slice 3a** (`feature/e15-2`, pending main merge)                 |
-| Operations runbook                                        | Production Readiness Phase 5       | **Complete — E15-2 Slice 3b** (`feature/e15-2`, pending main merge)                 |
+| Browser origin allowlist (CORS)                           | Production Readiness Phase 4       | **Complete — E15-1 Slice 1** (merged to `main`)        |
+| Per-key rate limiting + deterministic 429                 | Production Readiness Phase 4       | **Complete — E15-1 Slice 2** (merged to `main`)        |
+| Key rotation / lifecycle surface                          | Production Readiness Phase 4       | **Complete — E15-1 Slice 3** (merged to `main`)        |
+| Plugin Settings UX (backend URL + key validation)         | Production Readiness Phase 4       | **Complete — E15-1b** (merged to `main`)               |
+| `/health`, `/ready`, `/health/detailed` endpoints         | Production Readiness Phase 5       | **Complete — E15-2 Slice 2 + 2.5** (merged to `main`)            |
+| Structured JSON logs + correlation IDs                    | Production Readiness Phase 5       | **Complete — E15-2 Slice 1** (merged to `main`)                  |
+| Request latency metrics + `/metrics` endpoint             | Production Readiness Phase 5       | **Complete — E15-2 Slice 3a** (merged to `main`)                 |
+| Operations runbook                                        | Production Readiness Phase 5       | **Complete — E15-2 Slice 3b** (merged to `main`)                 |
 | WordPress demo page                                       | Production Readiness Phase 6 / E14 | Not started — **E15-3** (provider-agnostic, this epic)                              |
 | Manual remote E2E verification                            | Production Readiness Phase 6 / E14 | Not started — **E15-5** (this epic)                                                 |
 | OCI budget alerts not verified                            | E14 / Production Readiness Phase 6 | Not started — folded into **E15-5**                                                 |
@@ -137,9 +137,9 @@ All E15 implementation work must happen on feature branches, never on `main`. `P
 
 ## Phased Delivery
 
-### Phase 1: Security Baseline -- complete (pending merge)
+### Phase 1: Security Baseline -- shipped
 
-> **Status**: complete on `feature/e15-2`, pending merge to `main`
+> **Status**: merged to `main` (E15-1 Slices 1–3 + E15-1b, via `feature/e15-2` → `b6a2e272`)
 > **Task plans**: [E15-1. Security Baseline](../../tasks/15.0/E15-1-security-baseline-task-plan.md), [E15-1b. Plugin Settings UX](../../tasks/15.0/E15-1b-plugin-settings-ux-task-plan.md)
 > **Source**: Production Readiness Phase 4
 
@@ -165,9 +165,9 @@ Exit criteria:
 
 ---
 
-### Phase 2: Observability Baseline -- complete (pending merge)
+### Phase 2: Observability Baseline -- shipped
 
-> **Status**: complete on `feature/e15-2`, pending merge to `main`. Slices delivered: 1 (JSON logs + correlation IDs), 2 (root `/health` liveness + `/ready` dependency probe), 2.5 (consolidation + auth-gated `/health/detailed`), 3a (Prometheus metrics middleware + auth-gated `/metrics`), 3b (operations runbook). Latest tip `b09fbec0`. Slice 3b branch review verdict: conditional pass. Worker/queue correlation propagation deferred to **E15-2b** in [v0.4.1](../v0.4.1/public-demo-followons-epic.md).
+> **Status**: merged to `main` (via `feature/e15-2` → `b6a2e272`). Slices delivered: 1 (JSON logs + correlation IDs), 2 (root `/health` liveness + `/ready` dependency probe), 2.5 (consolidation + auth-gated `/health/detailed`), 3a (Prometheus metrics middleware + auth-gated `/metrics`), 3b (operations runbook). Slice 3b branch review verdict: conditional pass. Worker/queue correlation propagation deferred to **E15-2b** in [v0.4.1](../v0.4.1/public-demo-followons-epic.md).
 > **Task plans**: [E15-2. Observability Baseline](../../tasks/15.0/E15-2-observability-baseline-task-plan.md)
 > **Source**: Production Readiness Phase 5
 
@@ -318,7 +318,7 @@ Exit criteria:
 
 # Consolidated Checklist
 
-## Phase 1: Security Baseline -- COMPLETE (pending merge) → [E15-1](../../tasks/15.0/E15-1-security-baseline-task-plan.md), [E15-1b](../../tasks/15.0/E15-1b-plugin-settings-ux-task-plan.md)
+## Phase 1: Security Baseline -- SHIPPED → [E15-1](../../tasks/15.0/E15-1-security-baseline-task-plan.md), [E15-1b](../../tasks/15.0/E15-1b-plugin-settings-ux-task-plan.md)
 
 > Source: Production Readiness Phase 4 + E14 Phase 1
 
@@ -328,7 +328,7 @@ Exit criteria:
 - [x] Implement no-downtime key rotation + beta-tester key provisioning ← _Prod Readiness P4_
 - [x] Add plugin-side backend URL/API key validation UX ← _Prod Readiness P4 (E15-1b)_
 
-## Phase 2: Observability Baseline -- COMPLETE (pending merge) → [E15-2](../../tasks/15.0/E15-2-observability-baseline-task-plan.md)
+## Phase 2: Observability Baseline -- SHIPPED → [E15-2](../../tasks/15.0/E15-2-observability-baseline-task-plan.md)
 
 > Source: Production Readiness Phase 5
 

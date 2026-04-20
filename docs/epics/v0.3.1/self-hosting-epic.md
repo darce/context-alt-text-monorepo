@@ -17,8 +17,8 @@
 | Postgres data persistence                                                          | **Verified**                    | E14-1 (archived)                                                                                 |
 | `acx-backend.service` systemd unit                                                 | **Live**                        | E14-1 (archived)                                                                                 |
 | API key validation + tenant isolation                                              | **Live**                        | E15-1                                                                                            |
-| CORS allowlist + rate limiting + key rotation                                      | **Live (pending merge)**        | E15-1                                                                                            |
-| Structured JSON logs + `/health` + `/ready` + `/metrics`                           | **Live (pending merge)**        | E15-2                                                                                            |
+| CORS allowlist + rate limiting + key rotation                                      | **Live**        | E15-1                                                                                            |
+| Structured JSON logs + `/health` + `/ready` + `/metrics`                           | **Live**        | E15-2                                                                                            |
 | WordPress demo provisioning                                                        | **Pending**                     | **E15-3**                                                                                        |
 | OCI budget alerts ($1/$5/$10)                                                      | **Pending**                     | **E15-5**                                                                                        |
 | ARM compatibility verification artifact                                            | **Pending**                     | **E15-5** (de facto verified by running A1 instance)                                             |

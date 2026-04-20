@@ -9,12 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.cors import CORSMiddleware
 
 from api.logging_config import configure_logging
+from db.session import get_pool_stats
 from recognition.application.health import (
     aggregate_status,
     check_breaker,
     check_database,
     check_model_cache,
 )
+from recognition.interface_adapters.http.deps.auth import require_auth
 from recognition.config.cache import configure_dev_cache
 from recognition.config.security import get_security_settings, validate_production_security
 from recognition.config.settings import RecognitionSettings
@@ -175,6 +177,30 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
             "status": status.value,
             "checks": [c.to_dict() for c in checks],
             "timestamp": datetime.now(UTC).isoformat(),
+        }
+
+    @app.get("/health/detailed", summary="Operator diagnostic (PA-01 / Slice 2.5)")
+    async def health_detailed(_: object = Depends(require_auth)) -> dict[str, object]:
+        # Auth-gated diagnostic surface. Returns pool stats + breaker state +
+        # model-cache inventory for operators; never hit by load-balancer
+        # probes. Shares aggregator + probes with /ready so the two stay in
+        # sync without duplicate implementations.
+        breaker = get_or_create_session_dependency_circuit_breaker(app)
+        mc_check = check_model_cache(cache_dir, model_name=model_name)
+        bundle = cache_dir / model_name
+        bundle_files = len(list(bundle.glob("*.onnx"))) if bundle.is_dir() else 0
+        return {
+            "status": mc_check.status.value,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "pool_stats": get_pool_stats(),
+            "breaker_state": breaker.state.value,
+            "model_cache": {
+                "model_name": model_name,
+                "cache_dir": str(cache_dir),
+                "bundle_files": bundle_files,
+                "status": mc_check.status.value,
+                "detail": mc_check.detail,
+            },
         }
 
 

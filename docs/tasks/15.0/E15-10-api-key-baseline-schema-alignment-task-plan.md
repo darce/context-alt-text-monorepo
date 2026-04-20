@@ -1,5 +1,7 @@
 # E15-10. API Key Baseline Schema Alignment
 
+> **Status: Superseded by E15-1 Slice 3 / archived 2026-04-11 (commit `ac37af09`).** The `api_keys` table, indexes, README entry, and migration-path regression coverage all landed on main; handoff state is archived. File retained for historical context only.
+
 > **Metadata**
 >
 > - **Date**: 2026-04-11
@@ -56,6 +58,6 @@ Proof:
 
 ## Success Criteria
 
-- [ ] Local runtime no longer fails auth with `relation "api_keys" does not exist` after the baseline schema is applied.
-- [ ] The migration, model, and bootstrap docs all agree that `api_keys` is part of the baseline auth store.
-- [ ] Tests cover the drift that allowed E15-8/E15-9 to pass while runtime bootstrap remained broken.
+- [x] Local runtime no longer fails auth with `relation "api_keys" does not exist` after the baseline schema is applied.
+- [x] The migration, model, and bootstrap docs all agree that `api_keys` is part of the baseline auth store.
+- [x] Tests cover the drift that allowed E15-8/E15-9 to pass while runtime bootstrap remained broken.

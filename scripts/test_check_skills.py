@@ -173,7 +173,24 @@ def test_broken_local_skill_symlink_reports_overlay_error(tmp_path: Path) -> Non
     assert any("agentic-bootstrap repair" in failure for failure in failures)
 
 
-def test_main_reports_overlay_resolved_skill_count(tmp_path: Path) -> None:
+def test_main_reports_flat_skill_count_without_overlay_manifest(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path, _valid_skill())
+    _write(repo / ".claude" / "skills" / "shared-only" / "SKILL.md", _valid_skill().replace("name: demo", "name: shared-only"))
+    script_path = Path(__file__).with_name("check_skills.py")
+
+    result = subprocess.run(
+        ["python3", str(script_path)],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "check-skills: OK (2 skills)"
+
+
+def test_main_reports_overlay_source_breakdown_when_manifest_exists(tmp_path: Path) -> None:
     repo = _make_repo(tmp_path, _valid_skill())
     _write(repo / ".claude" / "skills" / "shared-only" / "SKILL.md", _valid_skill().replace("name: demo", "name: shared-only"))
     _write(repo / "local" / ".claude" / "skills" / "local-only" / "SKILL.md", _valid_skill().replace("name: demo", "name: local-only"))
@@ -190,4 +207,4 @@ def test_main_reports_overlay_resolved_skill_count(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0
-    assert result.stdout.strip() == "check-skills: OK (3 skills)"
+    assert result.stdout.strip() == "check-skills: OK (3 skills; shared=1 local=1 overlapping=1)"

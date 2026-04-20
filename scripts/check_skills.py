@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ast
+from collections import Counter
 import json
 import re
 import sys
@@ -205,6 +206,22 @@ def _resolve_skill_files(repo_root: Path, skills_root: Path) -> tuple[list[Path]
     return resolved_files, []
 
 
+def _format_success_message(*, repo_root: Path, skills_root: Path) -> str:
+    skill_files, _overlay_failures = _resolve_skill_files(repo_root, skills_root)
+    if not (repo_root / ".agentic-overlay.json").is_file():
+        return f"check-skills: OK ({len(skill_files)} skills)"
+
+    counts: Counter[str] = Counter(
+        entry.source
+        for entry in resolve_surface("skills", repo_root)
+        if (entry.effective_path / "SKILL.md").is_file()
+    )
+    return (
+        "check-skills: OK "
+        f"({len(skill_files)} skills; shared={counts['shared']} local={counts['local']} overlapping={counts['overlapping']})"
+    )
+
+
 def check_skills(
     *,
     repo_root: Path = REPO_ROOT,
@@ -260,8 +277,7 @@ def main() -> int:
             print(f"  - {failure}", file=sys.stderr)
         return 1
 
-    skill_files, _overlay_failures = _resolve_skill_files(repo_root, skills_root)
-    print(f"check-skills: OK ({len(skill_files)} skills)")
+    print(_format_success_message(repo_root=repo_root, skills_root=skills_root))
     return 0
 
 

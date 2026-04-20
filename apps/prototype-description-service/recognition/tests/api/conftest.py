@@ -194,7 +194,9 @@ class FakeScanQueueService:
         self.messages[str(job_id)] = f"Queueing 0/{int(total)} items"
         return job_id
 
-    async def populate_scan_job_items(self, *, job_id, tenant_id, media_items, chunk_size=500):  # noqa: ANN001
+    async def populate_scan_job_items(  # noqa: ANN001
+        self, *, job_id, tenant_id, media_items, chunk_size=500, correlation_id=None
+    ):
         self.calls.append((str(tenant_id), list(media_items)))
         self.messages[str(job_id)] = f"Queued {len(media_items)} items"
         return len(media_items)

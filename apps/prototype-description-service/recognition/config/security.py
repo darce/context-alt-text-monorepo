@@ -87,4 +87,38 @@ def get_security_settings() -> SecuritySettings:
     return SecuritySettings()
 
 
-__all__ = ["RateLimitTier", "SecuritySettings", "get_security_settings", "tier_rpm"]
+class InsecureProductionConfigError(RuntimeError):
+    """Raised at startup when production config contains dev-only credentials."""
+
+
+def validate_production_security(
+    security: SecuritySettings | None = None,
+    runtime_mode: str | None = None,
+) -> None:
+    """Fail closed when production is configured with dev-only plaintext API keys.
+
+    ``RECOGNITION_ALLOWED_API_KEYS`` is a development bypass that lets unhashed
+    bearer tokens authenticate without a database-backed api_keys row. Leaving
+    it populated in a production deployment turns shared-secret strings into a
+    plaintext authentication surface that bypasses tenant isolation. Callers
+    invoke this at app startup so the process refuses to serve traffic rather
+    than silently accepting those credentials.
+    """
+    security = security or get_security_settings()
+    runtime_mode = runtime_mode or os.environ.get("RECOGNITION_RUNTIME_MODE", "production")
+    if runtime_mode == "production" and security.dev_api_keys:
+        raise InsecureProductionConfigError(
+            "RECOGNITION_ALLOWED_API_KEYS is set in production (RECOGNITION_RUNTIME_MODE=production). "
+            "Plaintext dev bypass keys must not be enabled outside development; unset the variable or "
+            "set RECOGNITION_RUNTIME_MODE to a non-production value."
+        )
+
+
+__all__ = [
+    "InsecureProductionConfigError",
+    "RateLimitTier",
+    "SecuritySettings",
+    "get_security_settings",
+    "tier_rpm",
+    "validate_production_security",
+]

@@ -80,6 +80,7 @@ class ScanQueueService:
         media_items: Sequence[tuple[int, str]],
         chunk_size: int | None = None,
         commit_hook: Callable[[], Awaitable[None]] | None = None,
+        correlation_id: str | None = None,
     ) -> int:
         """Populate scan job items in batches.
 
@@ -100,7 +101,9 @@ class ScanQueueService:
         media_ids: list[int] = []
         chunk_size = chunk_size or self._settings.enqueue_chunk_size
         for chunk in _chunk_items(media_items, chunk_size):
-            created = await self._repository.enqueue_items(job_id=job_id, tenant_id=tenant_id, items=chunk)
+            created = await self._repository.enqueue_items(
+                job_id=job_id, tenant_id=tenant_id, items=chunk, correlation_id=correlation_id
+            )
             enqueued_total += created
             media_ids.extend(media_id for media_id, _ in chunk)
             await self._repository.update_job_message(

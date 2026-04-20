@@ -9,11 +9,12 @@ from api.logging_config import configure_logging
 from api.schemas.health import HealthResponse
 from recognition.application.health import check_health as recognition_health
 from recognition.config.cache import configure_dev_cache
-from recognition.config.security import get_security_settings
+from recognition.config.security import get_security_settings, validate_production_security
 from recognition.config.settings import RecognitionSettings
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.circuit_breaker import initialize_session_dependency_circuit_breaker
 from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
+from recognition.interface_adapters.http.middleware.correlation import CorrelationIdMiddleware
 from roster.application.health import check_health as roster_health
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
 from roster.interface_adapters.http.health_router import router as roster_router
@@ -92,6 +93,9 @@ def create_app() -> FastAPI:
     _log_startup_info()
     _check_dev_key_guard()
 
+    # Refuse to boot if production is configured with dev-only plaintext API keys.
+    validate_production_security()
+
     app = FastAPI(
         title="Prototype Description Service",
         version="0.1.0",
@@ -108,6 +112,7 @@ def create_app() -> FastAPI:
         allow_headers=["Authorization", "X-Api-Key", "X-Tenant-ID", "Content-Type"],
         max_age=600,
     )
+    app.add_middleware(CorrelationIdMiddleware)
 
     initialize_session_dependency_circuit_breaker(app)
 

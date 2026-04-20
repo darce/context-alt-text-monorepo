@@ -80,6 +80,11 @@ Rules:
 | `sync_status` / sync-health vocabulary | `docs/agentic/contracts/conflict-resolution-sync-contract.md` plus PHP sync-status response surface |
 | `conflict_type` / `conflict_code` | `docs/agentic/contracts/conflict-resolution-sync-contract.md` |
 | MCP review modes and status values | `docs/agentic/contracts/agent-handoff-mcp.md` and `packages/agent-handoff-mcp/` |
+| `correlation_id` header / log field / `correlation_source` enum | `recognition/interface_adapters/http/middleware/correlation.py` — `X-Request-ID` header, `CorrelationSource` StrEnum (`api`, `worker`), JSON log `correlation_id` field |
+
+## E15-2b Scan-Queue Correlation Propagation
+
+No external HTTP contract shape changed for E15-2b. The `/recognition/analyze` request/response payloads are byte-identical. Internal persistence added two nullable columns on `identity_scan_job_items` (`correlation_id`, `correlation_source`) so the async worker can log against the same id as the enqueueing request. The `CorrelationSource` StrEnum is the canonical vocabulary and lives in `recognition/interface_adapters/http/middleware/correlation.py`. Handoff decisions: `claude_slice_complete_E15-2b_correlation_persistence`, `claude_slice_complete_E15-2b_worker_correlation_binding`.
 
 ## Remediation-Plan Finding IDs
 

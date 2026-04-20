@@ -389,11 +389,9 @@ async def _main() -> None:
 
     from sqlalchemy import text
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    from api.logging_config import configure_logging
+
+    configure_logging("INFO")
 
     postgres_dsn = os.environ.get("POSTGRES_DSN")
     if not postgres_dsn:

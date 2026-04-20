@@ -17,6 +17,10 @@ from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.scan.service import ScanService
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
+from recognition.interface_adapters.http.middleware.correlation import (
+    _correlation_id_var,
+    generate_correlation_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +52,14 @@ class ScanItemHandler:
 
         async def _process_item(item: ScanQueueItem) -> None:
             request_id = uuid.uuid4()
+            bound_correlation_id = item.correlation_id or generate_correlation_id()
+            token = _correlation_id_var.set(bound_correlation_id)
+            try:
+                await _run_item(item, request_id)
+            finally:
+                _correlation_id_var.reset(token)
+
+        async def _run_item(item: ScanQueueItem, request_id: uuid.UUID) -> None:
             async with semaphore, self._session_factory() as session:
                 await enable_rls_bypass(session)
                 repo = SqlAlchemyScanQueueRepository(session)

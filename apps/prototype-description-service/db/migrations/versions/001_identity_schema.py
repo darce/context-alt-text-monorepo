@@ -367,6 +367,8 @@ def upgrade() -> None:
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()),
         sa.Column("started_at", sa.TIMESTAMP(timezone=True)),
         sa.Column("completed_at", sa.TIMESTAMP(timezone=True)),
+        sa.Column("correlation_id", sa.Text(), nullable=True),
+        sa.Column("correlation_source", sa.Text(), nullable=True),
         sa.CheckConstraint(
             "status IN ('pending', 'processing', 'completed', 'failed', 'skipped', 'cancelled')",
             name="valid_item_status",

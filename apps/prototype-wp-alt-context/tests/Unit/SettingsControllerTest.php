@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
+use AltContext\Api\ProbeOutcome;
 use AltContext\Api\SettingsController;
+use AltContext\Api\TenantIdentity;
 use AltContext\Tests\TestCase;
 use WP_REST_Request;
 
@@ -177,57 +179,189 @@ class SettingsControllerTest extends TestCase
         $this->assertSame('https://old.example.com', get_option('acx_recognition_url'));
     }
 
-    // --- POST /settings/test ---
+    // --- POST /settings/test (probe dispatch) ---
 
-    public function testTestConnectionReturnsConnectedOnSuccess(): void
+    public function testProbeDispatchHitsAuthenticatedPoolEndpoint(): void
     {
-        $this->setUserCapability('manage_options', true);
-        $this->setOption('acx_recognition_url', 'https://api.example.com');
-        $this->setOption('acx_recognition_api_key', 'test-key');
+        $this->configureProbe();
+        $this->queueHttpResponse($this->buildOkResponse());
 
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => '[{"service":"recognition","status":"ok"}]',
-        ]);
-
-        $request = new WP_REST_Request('POST', '/acx/v1/settings/test');
-        $response = $this->controller->test_connection($request);
-
-        $data = $response->get_data();
-        $this->assertTrue($data['connected']);
-        $this->assertSame(200, $data['status_code']);
+        $response = $this->controller->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'));
+        $data     = $response->get_data();
 
         $calls = $this->getHttpCalls();
         $this->assertCount(1, $calls);
-        $this->assertStringContainsString('/health', $calls[0]['url']);
+        $this->assertStringEndsWith('/recognition/health/pool', $calls[0]['url']);
+        $this->assertStringNotContainsString('/recognition/health?', $calls[0]['url']);
         $this->assertSame('test-key', $calls[0]['args']['headers']['X-API-Key'] ?? null);
+        $this->assertSame(
+            TenantIdentity::derive_from_site_url(),
+            $calls[0]['args']['headers']['X-Tenant-ID'] ?? null
+        );
+
+        $this->assertSame(ProbeOutcome::CONNECTED, $data['outcome']);
+        $this->assertSame(200, $data['status_code']);
+        $this->assertArrayNotHasKey('connected', $data);
+        $this->assertArrayNotHasKey('error', $data);
     }
 
-    public function testTestConnectionReturnsNotConnectedOnFailure(): void
+    public function testProbeDispatchReturnsNotConfiguredWithoutHttpCall(): void
     {
         $this->setUserCapability('manage_options', true);
-        $this->setOption('acx_recognition_url', 'https://api.example.com');
+        // No URL set.
+        $this->setOption('acx_recognition_api_key', 'test-key');
 
-        $this->queueHttpResponse(new \WP_Error('http_request_failed', 'Connection refused'));
+        $response = $this->controller->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'));
+        $data     = $response->get_data();
 
-        $request = new WP_REST_Request('POST', '/acx/v1/settings/test');
-        $response = $this->controller->test_connection($request);
-
-        $data = $response->get_data();
-        $this->assertFalse($data['connected']);
-        $this->assertStringContainsString('Connection refused', $data['error']);
+        $this->assertSame(ProbeOutcome::NOT_CONFIGURED, $data['outcome']);
+        $this->assertArrayNotHasKey('connected', $data);
+        $this->assertArrayNotHasKey('error', $data);
+        $this->assertSame([], $this->getHttpCalls(), 'wp_remote_get must not be called when URL is missing');
     }
 
-    public function testTestConnectionReturnsErrorWhenUrlNotConfigured(): void
+    /**
+     * @dataProvider outcomeProvider
+     * @param array<string, mixed>|\WP_Error $stubbed
+     */
+    public function testProbeDispatchClassifiesResponse(
+        array|\WP_Error $stubbed,
+        string $expectedOutcome,
+        ?string $expectedDetail,
+    ): void {
+        $this->configureProbe();
+        $this->queueHttpResponse($stubbed);
+
+        $response = $this->controller->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'));
+        $data     = $response->get_data();
+
+        $this->assertSame($expectedOutcome, $data['outcome']);
+        $this->assertArrayNotHasKey('connected', $data);
+        $this->assertArrayNotHasKey('error', $data);
+        if (null !== $expectedDetail) {
+            $this->assertSame($expectedDetail, $data['detail'] ?? null);
+        }
+    }
+
+    public static function outcomeProvider(): array
     {
-        $this->setUserCapability('manage_options', true);
+        return [
+            'invalid_key_401' => [
+                [
+                    'response' => ['code' => 401, 'message' => 'Unauthorized'],
+                    'body'     => '{"detail": "Authorization header required"}',
+                ],
+                ProbeOutcome::INVALID_KEY,
+                'Authorization header required',
+            ],
+            'invalid_key_403' => [
+                [
+                    'response' => ['code' => 403, 'message' => 'Forbidden'],
+                    'body'     => '{"detail": "invalid or missing API key"}',
+                ],
+                ProbeOutcome::INVALID_KEY,
+                'invalid or missing API key',
+            ],
+            'expired' => [
+                [
+                    'response' => ['code' => 401, 'message' => 'Unauthorized'],
+                    'body'     => '{"detail": "api key expired"}',
+                ],
+                ProbeOutcome::EXPIRED,
+                'api key expired',
+            ],
+            'revoked' => [
+                [
+                    'response' => ['code' => 401, 'message' => 'Unauthorized'],
+                    'body'     => '{"detail": "api key revoked"}',
+                ],
+                ProbeOutcome::REVOKED,
+                'api key revoked',
+            ],
+            'tenant_mismatch' => [
+                [
+                    'response' => ['code' => 403, 'message' => 'Forbidden'],
+                    'body'     => '{"detail": "tenant mismatch"}',
+                ],
+                ProbeOutcome::TENANT_MISMATCH,
+                'tenant mismatch',
+            ],
+            'rate_limited' => [
+                [
+                    'response' => ['code' => 429, 'message' => 'Too Many Requests'],
+                    'body'     => '{"detail": "rate limit exceeded"}',
+                    'headers'  => ['Retry-After' => '42'],
+                ],
+                ProbeOutcome::RATE_LIMITED,
+                'rate limit exceeded',
+            ],
+            'server_error' => [
+                [
+                    'response' => ['code' => 500, 'message' => 'Internal Server Error'],
+                    'body'     => '{"detail": "boom"}',
+                ],
+                ProbeOutcome::SERVER_ERROR,
+                'boom',
+            ],
+            'network_error' => [
+                new \WP_Error('http_request_failed', 'Connection refused'),
+                ProbeOutcome::NETWORK_ERROR,
+                'Connection refused',
+            ],
+            'tls_error_certificate' => [
+                new \WP_Error('http_request_failed', 'SSL certificate problem: self signed certificate'),
+                ProbeOutcome::TLS_ERROR,
+                null,
+            ],
+            'tls_error_tls_keyword' => [
+                new \WP_Error('http_request_failed', 'TLS handshake failed'),
+                ProbeOutcome::TLS_ERROR,
+                null,
+            ],
+            'tls_error_ssl_keyword' => [
+                new \WP_Error('http_request_failed', 'SSL routines: error'),
+                ProbeOutcome::TLS_ERROR,
+                null,
+            ],
+        ];
+    }
 
-        $request = new WP_REST_Request('POST', '/acx/v1/settings/test');
-        $response = $this->controller->test_connection($request);
+    public function testProbeDispatchSurfacesRetryAfterAsInteger(): void
+    {
+        $this->configureProbe();
+        $this->queueHttpResponse([
+            'response' => ['code' => 429, 'message' => 'Too Many Requests'],
+            'body'     => '{"detail": "rate limit exceeded"}',
+            'headers'  => ['Retry-After' => '17'],
+        ]);
 
-        $data = $response->get_data();
-        $this->assertFalse($data['connected']);
-        $this->assertStringContainsString('not configured', $data['error']);
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $this->assertSame(ProbeOutcome::RATE_LIMITED, $data['outcome']);
+        $this->assertSame(17, $data['retry_after_seconds']);
+    }
+
+    public function testProbeDispatchOmitsRetryAfterWhenHeaderIsNonNumeric(): void
+    {
+        $this->configureProbe();
+        $this->queueHttpResponse([
+            'response' => ['code' => 429, 'message' => 'Too Many Requests'],
+            'body'     => '{"detail": "rate limit exceeded"}',
+            'headers'  => ['Retry-After' => 'Wed, 21 Oct 2026 07:28:00 GMT'],
+        ]);
+
+        $data = $this->controller
+            ->test_connection(new WP_REST_Request('POST', '/acx/v1/settings/test'))
+            ->get_data();
+
+        $this->assertSame(ProbeOutcome::RATE_LIMITED, $data['outcome']);
+        $this->assertArrayNotHasKey(
+            'retry_after_seconds',
+            $data,
+            'HTTP-date Retry-After must fall back to omitted per wire contract (integer delta-seconds only)'
+        );
     }
 
     // --- Permission ---
@@ -239,5 +373,25 @@ class SettingsControllerTest extends TestCase
 
         $this->setUserCapability('manage_options', true);
         $this->assertTrue($this->controller->can_manage_settings());
+    }
+
+    // --- Helpers ---
+
+    private function configureProbe(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_url', 'https://api.example.com');
+        $this->setOption('acx_recognition_api_key', 'test-key');
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function buildOkResponse(): array
+    {
+        return [
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body'     => '{"pool":"healthy"}',
+        ];
     }
 }

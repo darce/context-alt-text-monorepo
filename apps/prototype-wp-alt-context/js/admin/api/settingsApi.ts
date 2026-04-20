@@ -19,11 +19,35 @@ export interface SaveSettingsResponse {
   result: string;
 }
 
+export const TestConnectionOutcome = {
+  CONNECTED: 'connected',
+  NOT_CONFIGURED: 'not_configured',
+  INVALID_KEY: 'invalid_key',
+  EXPIRED: 'expired',
+  REVOKED: 'revoked',
+  TENANT_MISMATCH: 'tenant_mismatch',
+  RATE_LIMITED: 'rate_limited',
+  SERVER_ERROR: 'server_error',
+  NETWORK_ERROR: 'network_error',
+  TLS_ERROR: 'tls_error',
+} as const;
+
+export type TestConnectionOutcomeValue =
+  (typeof TestConnectionOutcome)[keyof typeof TestConnectionOutcome];
+
+const KNOWN_TEST_CONNECTION_OUTCOMES: ReadonlySet<string> = new Set(
+  Object.values(TestConnectionOutcome)
+);
+
+export const isTestConnectionOutcome = (value: unknown): value is TestConnectionOutcomeValue =>
+  typeof value === 'string' && KNOWN_TEST_CONNECTION_OUTCOMES.has(value);
+
 export interface TestConnectionResponse {
-  connected: boolean;
+  outcome: TestConnectionOutcomeValue;
   status_code?: number;
+  retry_after_seconds?: number;
+  detail?: string;
   body?: unknown;
-  error?: string;
 }
 
 export const fetchSettings = async (): Promise<SettingsResponse> => {
@@ -39,7 +63,7 @@ export const saveSettings = async (payload: SaveSettingsPayload): Promise<SaveSe
   return fetchRequiredApi<SaveSettingsResponse>(endpoint, {
     method: 'POST',
     restNonce: getConfig().nonce,
-    body: JSON.stringify(payload),
+    body: payload,
   });
 };
 

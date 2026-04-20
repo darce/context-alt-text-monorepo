@@ -19,11 +19,13 @@ This epic exists so the deferred work has a single owning artifact, an explicit 
 
 ### Theme A — Observability Continuity (extends E15-2)
 
+> **Stub-vs-plan placement rule (applies to every theme below).** Scoping stubs live on `main` under [`docs/tasks/tech-debt/`](../../tasks/tech-debt/) as part of v0.4.0 close-out. Full task plans get generated under [`docs/tasks/15.0/`](../../tasks/15.0/) only when the implementation slice is picked up under v0.4.1, after the stub's stated prerequisite has landed. This avoids mid-planning 404s and keeps v0.4.0 MVP scope narrowed to "demo URL live + manual E2E".
+
 | Task | Status | Owning Doc | Why It's Here |
 | ---- | ------ | ---------- | ------------- |
 | **E15-2b** Worker / Queue Correlation Propagation | Drafted (`feature/e15-2b` not started) | [E15-2b plan](../../tasks/15.0/E15-2b-worker-queue-correlation-task-plan.md) | E15-2 terminated correlation at the API boundary; once a request enqueues scan work, downstream worker logs are un-joinable. Required before any cross-hop tracing is meaningful. |
-| **td-correlation-dashboards** Cross-Tenant Correlation Dashboards | Stub (`feature/td-correlation-dashboards`) | `docs/tasks/tech-debt/correlation-dashboards.md` (on branch) | Promote E15-2 metrics into actual operator-facing dashboards keyed on `correlation_id` × tenant. Depends on E15-2b for cross-hop joins. |
-| **td-retry-attempt-observability** Retry / Attempt-Level Observability | Stub (`feature/td-retry-attempt-observability`) | `docs/tasks/tech-debt/retry-attempt-observability.md` (on branch) | Per-attempt latency / failure attribution for the worker queue. Pairs with E15-2b. |
+| **td-correlation-dashboards** Cross-Tenant Correlation Dashboards | Stub on `main` (source branch `feature/td-correlation-dashboards` retired) | [correlation-dashboards.md](../../tasks/tech-debt/correlation-dashboards.md) | Promote E15-2 metrics into actual operator-facing dashboards keyed on `correlation_id` × tenant. Depends on E15-2b for cross-hop joins. |
+| **td-retry-attempt-observability** Retry / Attempt-Level Observability | Stub on `main` (source branch `feature/td-retry-attempt-observability` retired) | [retry-attempt-observability.md](../../tasks/tech-debt/retry-attempt-observability.md) | Per-attempt latency / failure attribution for the worker queue. Pairs with E15-2b. |
 
 ### Theme B — Auth & Key Lifecycle Hardening (extends E15-1)
 
@@ -88,4 +90,4 @@ v0.4.1 is closed when:
 
 - **E15-2b queue schema change** is the only Theme-A item touching DB shape. Land it first to avoid revving migrations twice.
 - **Theme D blocked on Theme A** if the smoke gate wants to assert end-to-end correlation. Mitigation: scope the first CI cut to behavior assertions only, add correlation assertions in a follow-on slice.
-- **Tech-debt promotion drift.** `td-correlation-dashboards` and `td-retry-attempt-observability` currently live as scoping stubs on feature branches. Promote both to full task plans (under `docs/tasks/15.0/` or an v0.4.1-specific tasks dir) when picked up.
+- **Tech-debt promotion drift.** Resolved in v0.4.0 close-out: both stubs now live on `main` under [`docs/tasks/tech-debt/`](../../tasks/tech-debt/) per the stub-vs-plan placement rule above. Promote to full task plans under `docs/tasks/15.0/` when v0.4.1 implementation picks up (after E15-2b lands).

@@ -11,6 +11,11 @@ from pathlib import Path
 
 import yaml
 
+try:
+    from scripts.overlay_resolver import BrokenOverlayError, OverlayResolverError, resolve_surface
+except ModuleNotFoundError:
+    from overlay_resolver import BrokenOverlayError, OverlayResolverError, resolve_surface
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SKILLS_ROOT = REPO_ROOT / ".claude" / "skills"
 ROUTING_FILE = REPO_ROOT / "docs" / "agentic" / "maps" / "mcp-tool-routing.yaml"
@@ -51,10 +56,6 @@ MAKEFILE_RE = re.compile(r"^([A-Za-z0-9_.-]+):")
 
 
 class SkillCheckError(Exception):
-    pass
-
-
-class BrokenOverlayError(SkillCheckError):
     pass
 
 
@@ -185,88 +186,23 @@ def _validate_sections(body: str) -> list[str]:
     return [f"missing required section `{section}`" for section in REQUIRED_SECTIONS if section not in body]
 
 
-def _load_overlay_skill_roots(repo_root: Path) -> tuple[Path, Path] | None:
-    manifest_path = repo_root / ".agentic-overlay.json"
-    if not manifest_path.is_file():
-        return None
-
-    try:
-        manifest = json.loads(manifest_path.read_text())
-    except json.JSONDecodeError as exc:
-        raise SkillCheckError(f"overlay manifest is not valid JSON: {exc.msg}") from exc
-
-    if not isinstance(manifest, dict):
-        raise SkillCheckError("overlay manifest must parse to a mapping")
-
-    surfaces = manifest.get("surfaces")
-    if not isinstance(surfaces, dict):
-        raise SkillCheckError("overlay manifest must define a `surfaces` mapping")
-
-    skills = surfaces.get("skills")
-    if not isinstance(skills, dict):
-        raise SkillCheckError("overlay manifest must define `surfaces.skills`")
-
-    shared_root = skills.get("shared_root")
-    local_root = skills.get("local_root")
-    if not isinstance(shared_root, str) or not shared_root.strip():
-        raise SkillCheckError("overlay manifest `surfaces.skills.shared_root` must be a non-empty string")
-    if not isinstance(local_root, str) or not local_root.strip():
-        raise SkillCheckError("overlay manifest `surfaces.skills.local_root` must be a non-empty string")
-
-    return repo_root / shared_root, repo_root / local_root
-
-
-def _iter_skill_dirs(root: Path) -> dict[str, Path]:
-    if not root.exists():
-        return {}
-
-    skill_dirs: dict[str, Path] = {}
-    for entry in sorted(root.iterdir(), key=lambda path: path.name):
-        if entry.name.startswith("."):
-            continue
-        if entry.is_dir() or entry.is_symlink():
-            skill_dirs[entry.name] = entry
-    return skill_dirs
-
-
 def _resolve_skill_files(repo_root: Path, skills_root: Path) -> tuple[list[Path], list[str]]:
-    overlay_roots = _load_overlay_skill_roots(repo_root)
-    if overlay_roots is None:
+    if not (repo_root / ".agentic-overlay.json").is_file():
         return sorted(skills_root.glob("*/SKILL.md")), []
 
-    shared_root, local_root = overlay_roots
-    shared_dirs = _iter_skill_dirs(shared_root)
-    local_dirs = _iter_skill_dirs(local_root)
+    try:
+        resolved_entries = resolve_surface("skills", repo_root)
+    except BrokenOverlayError as exc:
+        return [], [f"BrokenOverlayError: {exc}"]
+    except OverlayResolverError as exc:
+        raise SkillCheckError(str(exc)) from exc
 
-    failures: list[str] = []
-    resolved_files: list[Path] = []
-
-    for skill_name in sorted(set(shared_dirs) | set(local_dirs)):
-        local_dir = local_dirs.get(skill_name)
-        shared_dir = shared_dirs.get(skill_name)
-
-        if local_dir is not None:
-            local_skill = local_dir / "SKILL.md"
-            if local_skill.is_file():
-                resolved_files.append(local_skill)
-                continue
-
-        if shared_dir is None:
-            continue
-
-        shared_skill = shared_dir / "SKILL.md"
-        if shared_skill.is_file():
-            resolved_files.append(shared_skill)
-            continue
-
-        if shared_dir.is_symlink() and not shared_dir.exists():
-            failures.append(
-                "BrokenOverlayError: "
-                f"{shared_dir.relative_to(repo_root)} points to a missing shared skill directory. "
-                "Run agentic-bootstrap repair to restore the overlay."
-            )
-
-    return resolved_files, failures
+    resolved_files = sorted(
+        entry.effective_path / "SKILL.md"
+        for entry in resolved_entries
+        if (entry.effective_path / "SKILL.md").is_file()
+    )
+    return resolved_files, []
 
 
 def check_skills(

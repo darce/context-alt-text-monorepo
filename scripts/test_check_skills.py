@@ -158,6 +158,21 @@ def test_broken_shared_skill_symlink_reports_overlay_error(tmp_path: Path) -> No
     assert any("agentic-bootstrap repair" in failure for failure in failures)
 
 
+def test_broken_local_skill_symlink_reports_overlay_error(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path, _valid_skill())
+    broken_target = repo / ".agentic" / "remote" / "local" / ".claude" / "skills" / "demo"
+    local_skill_dir = repo / "local" / ".claude" / "skills" / "demo"
+    local_skill_dir.parent.mkdir(parents=True, exist_ok=True)
+    local_skill_dir.symlink_to(broken_target)
+    _write_overlay_manifest(repo)
+
+    failures, exit_code = check_skills(repo_root=repo)
+
+    assert exit_code == 1
+    assert any("BrokenOverlayError" in failure for failure in failures)
+    assert any("agentic-bootstrap repair" in failure for failure in failures)
+
+
 def test_main_reports_overlay_resolved_skill_count(tmp_path: Path) -> None:
     repo = _make_repo(tmp_path, _valid_skill())
     _write(repo / ".claude" / "skills" / "shared-only" / "SKILL.md", _valid_skill().replace("name: demo", "name: shared-only"))

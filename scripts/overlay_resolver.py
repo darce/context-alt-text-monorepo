@@ -83,6 +83,34 @@ def _iter_surface_entries(root: Path) -> dict[str, Path]:
     return entries
 
 
+def _iter_hook_entries(anchor: Path) -> dict[str, Path]:
+    entries: dict[str, Path] = {}
+    hook_roots = (
+        anchor / ".github" / "hooks",
+        anchor / "scripts" / "hooks",
+    )
+
+    for hook_root in hook_roots:
+        if not hook_root.exists():
+            continue
+        for entry in sorted(hook_root.rglob("*"), key=lambda path: path.as_posix()):
+            if not (entry.is_file() or entry.is_symlink()):
+                continue
+            relative_from_root = entry.relative_to(hook_root)
+            if any(part.startswith(".") or part == "__pycache__" for part in relative_from_root.parts):
+                continue
+            entries[entry.relative_to(anchor).as_posix()] = entry
+    return entries
+
+
+def _hook_anchor_from_surface_root(surface_root: Path) -> Path:
+    suffix = Path(".github/hooks")
+    suffix_parts = suffix.parts
+    if surface_root.parts[-len(suffix_parts) :] == suffix_parts:
+        return surface_root.parents[1]
+    return surface_root
+
+
 def _validate_entry(path: Path, *, project_root: Path, label: str) -> None:
     if path.is_symlink() and not path.exists():
         raise BrokenOverlayError(
@@ -95,6 +123,12 @@ def resolve_surface(kind: SurfaceKind, project_root: Path) -> list[ResolvedPath]
     project_root = project_root.expanduser().resolve()
     roots = _surface_roots(project_root, kind)
     if roots is None:
+        if kind == "hooks":
+            return [
+                ResolvedPath(source="shared", effective_path=path, shared_path=path)
+                for path in _iter_hook_entries(project_root).values()
+            ]
+
         default_root = project_root / DEFAULT_SURFACE_ROOTS[kind]
         if not default_root.exists():
             return []
@@ -104,8 +138,12 @@ def resolve_surface(kind: SurfaceKind, project_root: Path) -> list[ResolvedPath]
         ]
 
     shared_root, local_root = roots
-    shared_entries = _iter_surface_entries(shared_root)
-    local_entries = _iter_surface_entries(local_root)
+    if kind == "hooks":
+        shared_entries = _iter_hook_entries(_hook_anchor_from_surface_root(shared_root))
+        local_entries = _iter_hook_entries(_hook_anchor_from_surface_root(local_root))
+    else:
+        shared_entries = _iter_surface_entries(shared_root)
+        local_entries = _iter_surface_entries(local_root)
     resolved: list[ResolvedPath] = []
 
     for name in sorted(set(shared_entries) | set(local_entries)):

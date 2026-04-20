@@ -1,13 +1,12 @@
 import logging
 import os
 import subprocess
+from datetime import UTC, datetime
 
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
 from api.logging_config import configure_logging
-from api.schemas.health import HealthResponse
-from recognition.application.health import check_health as recognition_health
 from recognition.config.cache import configure_dev_cache
 from recognition.config.security import get_security_settings, validate_production_security
 from recognition.config.settings import RecognitionSettings
@@ -15,11 +14,10 @@ from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.circuit_breaker import initialize_session_dependency_circuit_breaker
 from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
 from recognition.interface_adapters.http.middleware.correlation import CorrelationIdMiddleware
-from roster.application.health import check_health as roster_health
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
 from roster.interface_adapters.http.health_router import router as roster_router
-from scene.application.health import check_health as scene_health
 from scene.interface_adapters.http.health_router import router as scene_router
+from shared.health import HealthStatus
 
 # Configure logging to show diagnostic output
 configure_logging("INFO")
@@ -124,16 +122,15 @@ def create_app() -> FastAPI:
 
     @app.get(
         "/health",
-        response_model=list[HealthResponse],
-        summary="Aggregate health status for all subsystems",
+        summary="Liveness probe (PR-01)",
     )
-    def overall_health() -> list[HealthResponse]:
-        reports = [
-            recognition_health(),
-            roster_health(),
-            scene_health(),
-        ]
-        return [HealthResponse.model_validate(report.to_dict()) for report in reports]
+    def liveness() -> dict[str, str]:
+        # Liveness is process-up only: no DB, breaker, or disk I/O. The Caddy
+        # active probe hits this at 10s so it must never block on a dependency.
+        return {
+            "status": HealthStatus.OK.value,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
 
     return app
 

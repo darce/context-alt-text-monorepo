@@ -11,8 +11,22 @@ from __future__ import annotations
 
 import logging
 from contextvars import ContextVar
+from enum import StrEnum
 
 from uuid_extensions import uuid7
+
+
+class CorrelationSource(StrEnum):
+    """Origin of a correlation_id on a persisted scan queue row or log record.
+
+    Single import surface for API vs worker-origin correlation ids. All
+    producers (HTTP enqueue, worker fallback) and consumers (log fields,
+    repository writes, tests) must use these members instead of magic strings.
+    """
+
+    API = "api"
+    WORKER = "worker"
+
 
 try:
     from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -100,6 +114,7 @@ __all__ = [
     "CORRELATION_ID_PLACEHOLDER",
     "CorrelationIdFilter",
     "CorrelationIdMiddleware",
+    "CorrelationSource",
     "generate_correlation_id",
     "get_correlation_id",
 ]

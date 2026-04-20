@@ -29,6 +29,8 @@ class ScanQueueItem:
     created_at: datetime | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    correlation_id: str | None = None
+    correlation_source: str | None = None
 
 
 class ScanQueueRepository(Protocol):
@@ -60,6 +62,7 @@ class ScanQueueRepository(Protocol):
         job_id: uuid.UUID,
         tenant_id: uuid.UUID,
         items: Iterable[tuple[int, str]],
+        correlation_id: str | None = None,
     ) -> int:
         """Enqueue media items for a scan job.
 
@@ -67,6 +70,10 @@ class ScanQueueRepository(Protocol):
             job_id: Parent scan job id.
             tenant_id: Tenant id (RLS scope).
             items: Iterable of (media_id, media_url).
+            correlation_id: Optional request-scope correlation id to persist on
+                every row. When non-null, ``correlation_source`` is persisted as
+                ``CorrelationSource.API``; when null, both columns stay NULL and
+                the worker-fallback path owns generation.
 
         Returns:
             Number of enqueued items.

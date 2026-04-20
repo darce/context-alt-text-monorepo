@@ -77,8 +77,12 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         job_id: uuid.UUID,
         tenant_id: uuid.UUID,
         items: Iterable[tuple[int, str]],
+        correlation_id: str | None = None,
     ) -> int:
+        from recognition.interface_adapters.http.middleware.correlation import CorrelationSource
+
         now = datetime.now(tz=UTC)
+        correlation_source = CorrelationSource.API.value if correlation_id else None
         created = [
             IdentityScanJobItem(
                 id=uuid.uuid4(),
@@ -90,6 +94,8 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
                 attempts=0,
                 identities_detected=0,
                 created_at=now,
+                correlation_id=correlation_id,
+                correlation_source=correlation_source,
             )
             for media_id, media_url in items
         ]
@@ -303,7 +309,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
                 attempts = attempts + 1,
                 last_error = NULL
             WHERE id IN (SELECT id FROM claimed)
-            RETURNING id, job_id, tenant_id, media_id, media_url, status, attempts, identities_detected, last_error, created_at, started_at, completed_at
+            RETURNING id, job_id, tenant_id, media_id, media_url, status, attempts, identities_detected, last_error, created_at, started_at, completed_at, correlation_id, correlation_source
             """
         )
         result = await self._session.execute(
@@ -325,6 +331,8 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
                 created_at=row["created_at"],
                 started_at=row["started_at"],
                 completed_at=row["completed_at"],
+                correlation_id=row.get("correlation_id"),
+                correlation_source=row.get("correlation_source"),
             )
             for row in rows
         ]
@@ -346,7 +354,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
                 attempts = attempts + 1,
                 last_error = NULL
             WHERE id IN (SELECT id FROM claimed)
-            RETURNING id, job_id, tenant_id, media_id, media_url, status, attempts, identities_detected, last_error, created_at, started_at, completed_at
+            RETURNING id, job_id, tenant_id, media_id, media_url, status, attempts, identities_detected, last_error, created_at, started_at, completed_at, correlation_id, correlation_source
             """
         )
         result = await self._session.execute(claim_sql, {"limit": limit, "now": now})
@@ -365,6 +373,8 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
                 created_at=row["created_at"],
                 started_at=row["started_at"],
                 completed_at=row["completed_at"],
+                correlation_id=row.get("correlation_id"),
+                correlation_source=row.get("correlation_source"),
             )
             for row in rows
         ]
@@ -438,6 +448,8 @@ def _to_item(row: IdentityScanJobItem) -> ScanQueueItem:
         created_at=row.created_at,
         started_at=row.started_at,
         completed_at=row.completed_at,
+        correlation_id=row.correlation_id,
+        correlation_source=row.correlation_source,
     )
 
 

@@ -40,6 +40,7 @@ from recognition.interface_adapters.http.dependencies import (
     require_write_access,
 )
 from recognition.interface_adapters.http.job_utils import job_to_response as _job_to_response
+from recognition.interface_adapters.http.middleware.correlation import get_correlation_id
 from recognition.interface_adapters.http.schemas.requests import (
     AcknowledgeProjectionRequest,
     AnalyzeRequest,
@@ -226,6 +227,8 @@ async def _schedule_analysis(
     if session is not None and getattr(session, "bind", None) is not None and not is_postgres(session):
         session_factory = async_sessionmaker(bind=session.bind, expire_on_commit=False)
 
+    correlation_id = get_correlation_id()
+
     background_tasks.add_task(
         chain_populate_and_process,
         tenant_id=str(tenant_uuid),
@@ -237,6 +240,7 @@ async def _schedule_analysis(
         session_factory=session_factory,
         inline_processing=inline_processing,
         adapter_provider=get_shared_insightface_adapter if inline_processing else None,
+        correlation_id=correlation_id,
     )
 
     total = len(media_items)

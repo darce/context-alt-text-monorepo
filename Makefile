@@ -132,7 +132,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/lane-maintenance.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context dashboard worktree-audit worktree-prune task-plan-audit generate-agent-workflows check-agent-workflows check-skills check-harness-sync task-start task-finish check-main-clean install-git-hooks
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context dashboard worktree-audit worktree-prune task-plan-audit generate-agent-workflows check-agent-workflows check-skills check-harness-sync lint-hoisted-paths task-start task-finish check-main-clean install-git-hooks
 
 # Default target
 help:
@@ -265,6 +265,7 @@ check-all:
 			$(MAKE) lint-scripts; \
 			$(MAKE) check-skills; \
 			$(MAKE) check-harness-sync; \
+			$(MAKE) lint-hoisted-paths; \
 			$(MAKE) check-agent-workflows; \
 			$(MAKE) worktree-audit; \
 			$(MAKE) task-plan-audit; \
@@ -659,6 +660,9 @@ check-skills:
 
 check-harness-sync:
 	@$(MCP_PYTHON) scripts/check_harness_sync.py --check-api-surface
+
+lint-hoisted-paths:
+	@$(MCP_PYTHON) scripts/lint_hoisted_paths.py
 
 # Convenience wrapper that scaffolds a feature branch + worktree + MCP task in
 # one go. Computes the canonical path /Users/.../context-alt-text-monorepo-<task>

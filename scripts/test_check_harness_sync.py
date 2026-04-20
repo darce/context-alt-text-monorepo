@@ -27,6 +27,7 @@ from scripts.check_harness_sync import (
     _run_shell_hook,
     run_checks,
 )
+from scripts.overlay_resolver import resolve_surface
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -453,3 +454,30 @@ def test_branch_isolation_allows_permitted_surface_when_unrelated_protected_path
         assert shell_code == 0
     finally:
         tmpdir.cleanup()
+
+
+def test_overlay_manifest_contract_doc_example_round_trips_with_resolver(tmp_path: Path) -> None:
+    contract_doc = REPO_ROOT / "docs" / "agentic" / "contracts" / "overlay-manifest.yaml"
+    assert contract_doc.exists(), "overlay-manifest contract doc missing"
+
+    payload = yaml.safe_load(contract_doc.read_text(encoding="utf-8"))
+    assert isinstance(payload, dict)
+    example_manifest = payload.get("example_manifest")
+    assert isinstance(example_manifest, dict), "overlay-manifest contract doc must define example_manifest"
+    assert isinstance(example_manifest.get("remote_sha"), str) and example_manifest["remote_sha"]
+    surfaces = example_manifest.get("surfaces")
+    assert isinstance(surfaces, dict)
+    assert set(surfaces) == {"skills", "hooks", "commands", "prompts", "contracts"}
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".agentic" / "remote" / ".claude" / "skills" / "shared-only").mkdir(parents=True)
+    (repo / ".agentic" / "remote" / ".claude" / "skills" / "shared-only" / "SKILL.md").write_text("# shared\n")
+    (repo / "local" / ".claude" / "skills" / "local-only").mkdir(parents=True)
+    (repo / "local" / ".claude" / "skills" / "local-only" / "SKILL.md").write_text("# local\n")
+    (repo / ".agentic-overlay.json").write_text(json.dumps(example_manifest, indent=2) + "\n", encoding="utf-8")
+
+    resolved = resolve_surface("skills", repo)
+
+    assert [entry.effective_path.name for entry in resolved] == ["local-only", "shared-only"]
+    assert [entry.source for entry in resolved] == ["local", "shared"]

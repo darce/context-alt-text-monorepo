@@ -11,7 +11,6 @@ from recognition.interface_adapters.http.routers import (
     clusters,
     diagnostics,
     events,
-    health,
     media,
     retention,
     suggestions,
@@ -21,7 +20,6 @@ router = APIRouter(tags=["recognition"])
 
 
 # Mount sub-routers
-router.include_router(health.router)
 router.include_router(analyze.router)
 router.include_router(clusters.router)
 router.include_router(events.router)

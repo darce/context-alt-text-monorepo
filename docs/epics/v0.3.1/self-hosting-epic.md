@@ -1,8 +1,9 @@
 # E14. Self-Hosting & Multi-Server Connectivity (Epic)
 
 > **Epic Short ID**: E14
-> **Status**: active -- OCI baseline provisioned
+> **Status**: active -- OCI baseline provisioned; MVP-blocking remainder absorbed by E15
 > **Parent**: [production-readiness-epic.md](./production-readiness-epic.md) Phase 6
+> **Revision (2026-04-20)**: All MVP-blocking remainder work (WordPress demo provisioning, manual E2E round-trip, budget alerts, dynamic-IP SSH drift resolution, Hetzner fallback documentation) is now owned by [E15 Phases 3-4](../v0.4.0/public-demo-launch-readiness-epic.md#phase-3-wordpress-demo-provisioning----not-started-mvp-critical) via task plans [E15-3](../../tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md) and [E15-5](../../tasks/15.0/E15-5-remote-e2e-verification-task-plan.md). E14 continues to own the infrastructure/architecture narrative (OCI, VPS tiers, GPU evaluation, future VLM path); it does NOT independently gate the v0.4.0 demo MVP.
 > **Revision**: Mar 2026 -- promoted from task doc to epic; Oracle PAYG baseline now synced to provisioned `infra/oci/` state.
 
 Hosting architecture, provider evaluation, and deployment path for the recognition service backend, a future user-account database, and a WordPress demo frontend.
@@ -679,19 +680,23 @@ Per-second = L4 GPU **0.0001867** + CPU (4 × **0.000018**) + RAM (16 × **0.000
 
 ### Server Provisioning (Oracle Cloud PAYG)
 
+> **Ownership (2026-04-20)**: items marked `→ E15-5` are MVP-blocking and owned by [E15-5. Remote E2E Verification](../../tasks/15.0/E15-5-remote-e2e-verification-task-plan.md). Items marked `→ E15-3` are owned by [E15-3. WordPress Demo Provisioning](../../tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md). E14 continues to track them for operational completeness but does not re-implement.
+
 - [x] Create Oracle Cloud account and upgrade to PAYG
-- [ ] Configure budget alerts ($1 / $5 / $10 thresholds)
+- [ ] Configure budget alerts ($1 / $5 / $10 thresholds) → **E15-5**
 - [x] Provision `VM.Standard.A1.Flex` instance (4 ARM cores / 24GB RAM / 200GB disk)
-- [ ] Verify ARM compatibility: run full dependency install + integration test suite
+- [x] Verify ARM compatibility: full dependency install + integration test suite (covered by E14-1 Slices 1-6 all verified)
 - [x] Bootstrap Docker + Docker Compose installation through `cloud-init.yaml`
 - [x] Configure base firewall rules (ingress: 443 public; SSH restricted by configured CIDRs)
-- [ ] Set up DNS + TLS (Cloudflare free tier or Caddy auto-TLS)
-- [ ] Deploy recognition service via Docker Compose
-- [ ] Verify InsightFace model download + cache persistence across container restart
-- [ ] Verify Postgres data persistence across container restart
-- [ ] Provision WP demo hosting (shared PHP host or Oracle VPS)
-- [ ] Install + configure ACX plugin pointing to backend
-- [ ] End-to-end smoke test: WP plugin -> backend API -> recognition -> response
+- [x] Set up DNS + TLS (Caddy auto-TLS at `api.altcontext.com`)
+- [x] Deploy recognition service via Docker Compose (E14-1 complete)
+- [x] Verify InsightFace model download + cache persistence across container restart
+- [x] Verify Postgres data persistence across container restart
+- [ ] Provision WP demo hosting (provider-agnostic; shared PHP host or Oracle VPS decided at task-start) → **E15-3**
+- [ ] Install + configure ACX plugin pointing to backend → **E15-3**
+- [ ] Manual end-to-end round-trip: WP plugin -> backend API -> recognition -> response, with run log → **E15-5**
+- [ ] Resolve dynamic-IP SSH access drift (Tailscale) → **E15-5**
+- [ ] Document Hetzner CX22 fallback plan → **E15-5**
 
 ### Phase 0: Scaffolding
 

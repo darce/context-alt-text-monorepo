@@ -3,6 +3,19 @@
 > **Epic Short ID**: E15
 > **Status**: active
 > **Predecessors**: [production-readiness-epic.md](../v0.3.1/production-readiness-epic.md) (Phases 2-6), [self-hosting-epic.md](../v0.3.1/self-hosting-epic.md) (remaining deliverables)
+> **Successor (follow-on hardening)**: [../v0.4.1/demo-operational-hardening-epic.md](../v0.4.1/demo-operational-hardening-epic.md) (E15.5) -- carries E15-2b, E15-8, E15-9, E15-10, slr-1..4, td-correlation-dashboards, td-retry-attempt-observability out of the MVP path.
+> **Revision (2026-04-20)**: MVP completion signal is now explicit -- **demo URL live with a manually-executed E2E round-trip**. Phase 5 (automated smoke gate) and all follow-on hardening items have been moved to E15.5 so they do not gate v0.4.0.
+
+## MVP Completion Signal
+
+The MVP for E15 is declared complete when **all of the following are simultaneously true**:
+
+1. A public WordPress URL loads the ACX plugin against `api.altcontext.com`.
+2. A human operator can trigger a scan from that WP instance and observe a recognition result returned, captured in a short manual run log.
+3. Phases 1, 2, 3, and 4 are marked complete. Phase 5 (automated smoke gate) and Phase 6 (local-sync audit closure) are explicitly deferred to E15.5 and do not block MVP sign-off.
+4. OCI budget alerts at `$1 / $5 / $10` are active and at least one test alert has been triggered and acknowledged.
+
+Anything beyond these four conditions is post-MVP scope.
 
 ## Objective
 
@@ -101,10 +114,10 @@ All E15 implementation work must happen on feature branches, never on `main`. `P
 
 ## Phased Delivery
 
-### Phase 1: Security Baseline -- not-started
+### Phase 1: Security Baseline -- complete
 
-> **Status**: not-started
-> **Task plans**: [E15-1. Security Baseline](../../tasks/15.0/E15-1-security-baseline-task-plan.md)
+> **Status**: complete (2026-04 -- E15-1 + E15-1b merged on `main` at dc2baaff)
+> **Task plans**: [E15-1. Security Baseline](../../tasks/15.0/E15-1-security-baseline-task-plan.md), [E15-1b. Plugin Settings UX](../../tasks/15.0/E15-1b-plugin-settings-ux-task-plan.md)
 > **Source**: Production Readiness Phase 4
 
 **Goal**: Default deployment is safe for internet exposure under normal small-team ops.
@@ -129,10 +142,10 @@ Exit criteria:
 
 ---
 
-### Phase 2: Observability Baseline -- not-started
+### Phase 2: Observability Baseline -- complete (MVP scope)
 
-> **Status**: not-started
-> **Task plans**: [E15-2. Observability Baseline](../../tasks/15.0/E15-2-observability-baseline-task-plan.md)
+> **Status**: complete for MVP (2026-04 -- E15-2 Slice 3b merged at b09fbec0). Worker/queue correlation completion (E15-2b) is merged at 0f23968b. Grafana dashboards and retry-attempt histograms are deferred to E15.5 as `td-correlation-dashboards` / `td-retry-attempt-observability`.
+> **Task plans**: [E15-2. Observability Baseline](../../tasks/15.0/E15-2-observability-baseline-task-plan.md), [E15-2b. Worker/Queue Correlation](../../tasks/15.0/E15-2b-worker-queue-correlation-task-plan.md)
 > **Source**: Production Readiness Phase 5
 
 **Goal**: Failures are diagnosable without SSH access or manual log inspection.
@@ -151,11 +164,12 @@ Exit criteria:
 
 ---
 
-### Phase 3: WordPress Demo Provisioning -- not-started
+### Phase 3: WordPress Demo Provisioning -- not-started (MVP-critical)
 
-> **Status**: not-started
-> **Task plans**: E15-3 (to be scoped)
-> **Source**: Production Readiness Phase 6, E14 remaining
+> **Status**: not-started -- **MVP-critical**, blocks demo-URL-live signal.
+> **Task plans**: [E15-3. WordPress Demo Provisioning](../../tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md)
+> **Source**: Production Readiness Phase 6, E14 Phase 6 / WordPress demo scope
+> **Provider stance**: provider-agnostic. Pick the concrete host at task-start time; the plan scopes requirements (PHP 8.1+, cron, HTTPS, resource floor), not a specific vendor.
 
 **Goal**: A publicly accessible WordPress page demonstrates the ACX plugin against the live backend.
 
@@ -176,10 +190,10 @@ Exit criteria:
 
 ---
 
-### Phase 4: End-to-End Verification -- not-started
+### Phase 4: End-to-End Verification -- in-progress (MVP-critical, manual only)
 
-> **Status**: not-started
-> **Task plans**: E15-4 (existing: local reset hardening) + E15-5 (to be scoped: remote e2e)
+> **Status**: in-progress -- **MVP-critical**. Manual round-trip is the MVP exit criterion; automated smoke gate is explicitly deferred to Phase 5 / E15.5.
+> **Task plans**: [E15-4. Local Reset Bootstrap Hardening](../../tasks/15.0/E15-4-local-reset-bootstrap-hardening-task-plan.md) (in progress) + [E15-5. Remote E2E Verification](../../tasks/15.0/E15-5-remote-e2e-verification-task-plan.md) (manual round-trip + budget alerts + Tailscale SSH drift fix)
 > **Source**: Production Readiness Phase 6 exit criteria
 
 **Goal**: Prove the full WP-to-backend-to-recognition round trip works under realistic conditions.
@@ -201,11 +215,12 @@ Exit criteria:
 
 ---
 
-### Phase 5: E2E Smoke Gate Automation -- not-started
+### Phase 5: E2E Smoke Gate Automation -- deferred to E15.5
 
-> **Status**: not-started
-> **Task plans**: E15-6 (to be scoped)
+> **Status**: **deferred** -- moved to E15.5 follow-on epic. Not required for the MVP demo-URL-live signal.
+> **Task plans**: [E15-6. E2E Smoke Gate Automation](../../tasks/15.0/E15-6-e2e-smoke-gate-automation-task-plan.md) (stub; owned by E15.5 once MVP ships)
 > **Source**: Production Readiness Phase 2
+> **Deferral rationale**: the MVP demand is a demo URL with a manual round-trip log, not an automated regression net. Shipping the demo with manual verification unblocks stakeholder demos now; the smoke gate lands in E15.5 before we open the demo to wider audiences.
 
 **Goal**: Replace ad-hoc manual smoke checks with repeatable automation that validates sovereign behavior end-to-end.
 
@@ -224,11 +239,12 @@ Exit criteria:
 
 ---
 
-### Phase 6: Local Sync Correctness and Audit Closure -- in-progress
+### Phase 6: Local Sync Correctness and Audit Closure -- deferred to E15.5
 
-> **Status**: in-progress
+> **Status**: **deferred** to E15.5 -- does not gate the MVP demo-URL-live signal. E15-7 continues as the owning task but moves under E15.5.
 > **Task plans**: [E15-7. Local Sync Completion and Audit Closure](../../tasks/15.0/E15-7-local-sync-completion-and-audit-closure-task-plan.md)
 > **Source**: runtime investigation follow-up on sovereign local-read correctness
+> **Deferral rationale**: local-sync correctness is user-visible only after a demo audience is actively exercising offline/sync paths. The MVP demo URL is stakeholder-facing with a curator driving the flow; deferring the audit closure keeps MVP focus tight without regressing the sovereign model (no code change required to defer, just scope).
 
 **Goal**: Finish the remaining local-sync work so completed analyze/clustering flows produce durable local state, fallback envelopes stay contract-honest, and the sovereign read path can be merged with clean review evidence.
 
@@ -298,51 +314,58 @@ Exit criteria:
 
 # Consolidated Checklist
 
-## Phase 1: Security Baseline -- NOT STARTED → [E15-1](../../tasks/15.0/E15-1-security-baseline-task-plan.md)
+## Phase 1: Security Baseline -- COMPLETE → [E15-1](../../tasks/15.0/E15-1-security-baseline-task-plan.md) + [E15-1b](../../tasks/15.0/E15-1b-plugin-settings-ux-task-plan.md)
 
 > Source: Production Readiness Phase 4 + E14 Phase 1
 
-- [ ] Enforce strict API key validation without sensitive logging ← _Prod Readiness P4_
-- [ ] Add browser origin allowlist policy ← _Prod Readiness P4 + E14 P1_
-- [ ] Add rate limiting and deterministic 429 behavior ← _Prod Readiness P4_
-- [ ] Implement no-downtime key rotation + beta-tester key provisioning ← _Prod Readiness P4_
-- [ ] Add plugin-side backend URL/API key validation UX ← _Prod Readiness P4_
+- [x] Enforce strict API key validation without sensitive logging ← _Prod Readiness P4_
+- [x] Add browser origin allowlist policy ← _Prod Readiness P4 + E14 P1_
+- [x] Add rate limiting and deterministic 429 behavior ← _Prod Readiness P4_
+- [x] Implement no-downtime key rotation + beta-tester key provisioning ← _Prod Readiness P4_
+- [x] Add plugin-side backend URL/API key validation UX ← _Prod Readiness P4_ (E15-1b)
 
-## Phase 2: Observability Baseline -- NOT STARTED → [E15-2](../../tasks/15.0/E15-2-observability-baseline-task-plan.md)
+## Phase 2: Observability Baseline -- COMPLETE (MVP) → [E15-2](../../tasks/15.0/E15-2-observability-baseline-task-plan.md) + [E15-2b](../../tasks/15.0/E15-2b-worker-queue-correlation-task-plan.md)
 
 > Source: Production Readiness Phase 5
 
-- [ ] Emit structured JSON logs with correlation IDs ← _Prod Readiness P5_
-- [ ] Add `/health` and `/ready` endpoints with dependency checks ← _Prod Readiness P5_
-- [ ] Add latency and error metrics by endpoint class ← _Prod Readiness P5_
-- [ ] Document operator diagnostics flow/runbook ← _Prod Readiness P5_
+- [x] Emit structured JSON logs with correlation IDs ← _Prod Readiness P5_
+- [x] Add `/health` and `/ready` endpoints with dependency checks ← _Prod Readiness P5_
+- [x] Add latency and error metrics by endpoint class ← _Prod Readiness P5_
+- [x] Document operator diagnostics flow/runbook ← _Prod Readiness P5_
+- [x] Propagate correlation IDs across the queue/worker boundary ← _E15-2b_
+- [ ] Grafana dashboards for correlation + retry-attempt histograms ← **deferred to E15.5** (`td-correlation-dashboards`, `td-retry-attempt-observability`)
 
-## Phase 3: WordPress Demo Provisioning -- NOT STARTED → [E15-3](../../tasks/15.0/E15-3-wordpress-demo-provisioning-stub.md) (to be scoped)
+## Phase 3: WordPress Demo Provisioning -- NOT STARTED (MVP-critical) → [E15-3](../../tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md)
 
 > Source: Production Readiness Phase 6 + E14 remaining
 
-- [ ] Provision shared PHP hosting ← _Prod Readiness P6_
+- [ ] Select a concrete WP host at task-start (provider-agnostic scope) ← _E15-3_
+- [ ] Provision host with PHP 8.1+, real cron, HTTPS ← _Prod Readiness P6_
 - [ ] Install WordPress + ACX plugin ← _Prod Readiness P6 + E14_
 - [ ] Configure plugin with production backend URL and API key ← _Prod Readiness P6 + E14_
 - [ ] Seed demo content (media library with sample faces) ← _new for E15_
 - [ ] Set up Cloudflare DNS + TLS for WP host ← _Prod Readiness P6_
 
-## Phase 4: End-to-End Verification -- IN PROGRESS → [E15-4](../../tasks/15.0/E15-4-local-reset-bootstrap-hardening-task-plan.md) + [E15-5](../../tasks/15.0/E15-5-remote-e2e-verification-stub.md) (to be scoped)
+## Phase 4: End-to-End Verification -- IN PROGRESS (MVP-critical) → [E15-4](../../tasks/15.0/E15-4-local-reset-bootstrap-hardening-task-plan.md) + [E15-5](../../tasks/15.0/E15-5-remote-e2e-verification-task-plan.md)
 
 > Source: Production Readiness Phase 6 exit criteria + [tech-debt/dynamic-ip-ssh-access.md](../../tasks/tech-debt/dynamic-ip-ssh-access.md)
 
 - [ ] Complete local reset bootstrap hardening (E15-4, in progress) ← _finding INVEST-reset-env-contract-mismatch_
-- [ ] Verify OCI budget alerts ($1/$5/$10 thresholds) ← _Prod Readiness P6 + E14_
+- [ ] Verify OCI budget alerts ($1/$5/$10 thresholds) -- **MVP exit criterion** ← _Prod Readiness P6 + E14_
 - [ ] Resolve dynamic IP SSH access drift (Tailscale) ← _[tech-debt/dynamic-ip-ssh-access.md](../../tasks/tech-debt/dynamic-ip-ssh-access.md)_
-- [ ] Run end-to-end WP → backend → recognition → response smoke test ← _Prod Readiness P6 + E14_
+- [ ] Run manual WP → backend → recognition → response round-trip, capture run log -- **MVP exit criterion** ← _Prod Readiness P6 + E14_
 - [ ] Document Hetzner CX22 fallback plan ← _Prod Readiness P6 + E14_
 
-## Phase 5: E2E Smoke Gate Automation -- NOT STARTED → [E15-6](../../tasks/15.0/E15-6-e2e-smoke-gate-automation-stub.md) (to be scoped)
+## Phase 5: E2E Smoke Gate Automation -- DEFERRED to E15.5 → [E15-6](../../tasks/15.0/E15-6-e2e-smoke-gate-automation-task-plan.md)
 
-> Source: Production Readiness Phase 2
+> Source: Production Readiness Phase 2 -- **not required for MVP demo-URL-live signal**; owned by [E15.5](../v0.4.1/demo-operational-hardening-epic.md) once MVP ships.
 
-- [ ] Scaffold Playwright E2E path for sovereign flows ← _Prod Readiness P2_
-- [ ] Add WP-CLI seed/reset fixtures for deterministic setup ← _Prod Readiness P2_
-- [ ] Add deterministic backend outage/recovery controls for tests ← _Prod Readiness P2_
-- [ ] Automate required scenarios (offline persistence, local-read resilience, sync transitions) ← _Prod Readiness P2_
-- [ ] Add CI smoke job with trace/video artifacts ← _Prod Readiness P2_
+- [ ] Scaffold Playwright E2E path for sovereign flows ← _Prod Readiness P2_ (E15.5)
+- [ ] Add WP-CLI seed/reset fixtures for deterministic setup ← _Prod Readiness P2_ (E15.5)
+- [ ] Add deterministic backend outage/recovery controls for tests ← _Prod Readiness P2_ (E15.5)
+- [ ] Automate required scenarios (offline persistence, local-read resilience, sync transitions) ← _Prod Readiness P2_ (E15.5)
+- [ ] Add CI smoke job with trace/video artifacts ← _Prod Readiness P2_ (E15.5)
+
+## Phase 6: Local Sync Correctness and Audit Closure -- DEFERRED to E15.5 → [E15-7](../../tasks/15.0/E15-7-local-sync-completion-and-audit-closure-task-plan.md)
+
+> Source: runtime investigation follow-up -- **not required for MVP demo-URL-live signal**; owned by [E15.5](../v0.4.1/demo-operational-hardening-epic.md).

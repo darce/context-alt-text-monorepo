@@ -19,11 +19,28 @@ export interface SaveSettingsResponse {
   result: string;
 }
 
+export const TestConnectionOutcome = {
+  CONNECTED: 'connected',
+  NOT_CONFIGURED: 'not_configured',
+  INVALID_KEY: 'invalid_key',
+  EXPIRED: 'expired',
+  REVOKED: 'revoked',
+  TENANT_MISMATCH: 'tenant_mismatch',
+  RATE_LIMITED: 'rate_limited',
+  SERVER_ERROR: 'server_error',
+  NETWORK_ERROR: 'network_error',
+  TLS_ERROR: 'tls_error',
+} as const;
+
+export type TestConnectionOutcomeValue =
+  (typeof TestConnectionOutcome)[keyof typeof TestConnectionOutcome];
+
 export interface TestConnectionResponse {
-  connected: boolean;
+  outcome: TestConnectionOutcomeValue;
   status_code?: number;
+  retry_after_seconds?: number;
+  detail?: string;
   body?: unknown;
-  error?: string;
 }
 
 export const fetchSettings = async (): Promise<SettingsResponse> => {

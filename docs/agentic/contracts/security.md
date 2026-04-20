@@ -272,6 +272,51 @@ $response = wp_remote_post($api_url . '/analyze', [
 ]);
 ```
 
+### Plugin Probe Contract (E15-1b Slice 1)
+
+`POST /acx/v1/settings/test` probes the recognition service at
+`<base_url>/recognition/health/pool` (the authenticated pool-health endpoint —
+**not** an anonymous `/health`). The probe forwards `X-API-Key` and
+`X-Tenant-ID`, where the tenant UUID is derived by
+`AltContext\Api\TenantIdentity::derive_from_site_url()` (SHA-1 of
+`acx-site-tenant:<lowercase,untrailingslashed site_url>` formatted as a
+UUID-v5-shaped string). The same derivation is used for live recognition
+calls, so probe behaviour matches real request behaviour.
+
+The response body is a closed envelope — the frontend derives a boolean
+"connected" from `outcome === 'connected'` and **must not** receive a
+separate `connected` or `error` field:
+
+```json
+{
+  "outcome": "connected" | "not_configured" | "invalid_key" | "expired"
+           | "revoked" | "tenant_mismatch" | "rate_limited"
+           | "server_error" | "network_error" | "tls_error",
+  "status_code": 200,
+  "retry_after_seconds": 30,
+  "detail": "api key expired",
+  "body": { ... }
+}
+```
+
+Classification rules (must stay bit-identical to
+`SettingsController::classify_http_status()`):
+
+- Missing/empty URL → `not_configured` (200, no HTTP call).
+- 2xx → `connected`.
+- 401 + `detail == "api key expired"` → `expired`.
+- 401 + `detail == "api key revoked"` → `revoked`.
+- 401 (other) → `invalid_key`.
+- 403 + `detail == "tenant mismatch"` → `tenant_mismatch`.
+- 403 (other, e.g. `"invalid or missing API key"`) → `invalid_key`.
+- 429 → `rate_limited`. `Retry-After` is pinned to **integer delta-seconds
+  per RFC 7231 §7.1.3** (the form emitted by the recognition service's
+  `enforce_rate_limit` dependency). HTTP-date form is not supported; a
+  non-numeric header falls back to `retry_after_seconds: null` and the UI
+  renders a generic "wait a few seconds" hint.
+- ≥500 → `server_error`.
+- `WP_Error` with `certificate`/`SSL`/`TLS` in the message → `tls_error`.
+- All other `WP_Error` → `network_error`.
 
 ## Key Lifecycle (E15-1 Slice 3)
 

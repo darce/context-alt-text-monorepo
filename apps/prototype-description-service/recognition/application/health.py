@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from recognition.interface_adapters.http.deps.circuit_breaker import (
@@ -39,22 +38,27 @@ def check_health() -> HealthReport:
 
 
 async def check_database(session: AsyncSession | None) -> CheckResult:
-    """Probe DB reachability via a cheap SELECT 1 on the observability pool."""
+    """Reuse the session dependency's built-in SELECT 1 probe.
+
+    `get_observability_session` already runs SELECT 1 before yielding a live
+    session and yields None when the probe fails. A second SELECT 1 here would
+    double DB load on every /ready hit (BR-03) without adding signal.
+    """
     if session is None:
         return CheckResult("database", HealthStatus.UNHEALTHY, "connection_unavailable")
-    try:
-        await session.execute(text("SELECT 1"))
-    except Exception as exc:
-        return CheckResult("database", HealthStatus.UNHEALTHY, f"query_failed: {exc}")
     return CheckResult("database", HealthStatus.OK, "reachable")
 
 
 def check_breaker(breaker: SessionDependencyCircuitBreaker) -> CheckResult:
-    """A tripped breaker is a degradation, not an outage — the process is up
-    and can still answer liveness; readiness degrades so operators see it.
+    """An OPEN breaker means DB checkout is blocked — /ready fails (BR-02).
+
+    Readiness succeeds only when DB checks pass, the breaker is closed, and
+    the model bundle is present. An OPEN breaker violates that contract, so
+    the aggregate status flips UNHEALTHY and the handler returns 503 so the
+    load balancer pulls the pod until the breaker resets.
     """
     if breaker.state is BreakerState.OPEN:
-        return CheckResult("breaker", HealthStatus.DEGRADED, "open")
+        return CheckResult("breaker", HealthStatus.UNHEALTHY, "open")
     return CheckResult("breaker", HealthStatus.OK, breaker.state.value)
 
 

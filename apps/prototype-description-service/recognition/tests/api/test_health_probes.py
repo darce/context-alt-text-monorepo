@@ -145,10 +145,10 @@ def test_ready_healthy_when_all_deps_up(tmp_path) -> None:
         assert check["status"] == HealthStatus.OK.value, check
 
 
-def test_ready_degraded_when_breaker_open(tmp_path) -> None:
-    """A tripped breaker is a degradation signal — the API can't reach the DB
-    right now but the process itself is alive. /ready still returns 200 so
-    load balancers don't pull the pod, but the status surfaces 'degraded'.
+def test_ready_unhealthy_when_breaker_open(tmp_path) -> None:
+    """E15-2-BR-02: an OPEN breaker means DB checkout is blocked, so /ready
+    must fail-closed with 503 / UNHEALTHY. Readiness succeeds only when DB
+    checks pass, the breaker is closed, and the model bundle is present.
     """
     from shared.health import HealthStatus
 
@@ -161,11 +161,11 @@ def test_ready_degraded_when_breaker_open(tmp_path) -> None:
 
     resp = client.get("/ready")
 
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 503, resp.text
     body = resp.json()
-    assert body["status"] == HealthStatus.DEGRADED.value
+    assert body["status"] == HealthStatus.UNHEALTHY.value
     breaker_check = next(c for c in body["checks"] if c["name"] == "breaker")
-    assert breaker_check["status"] == HealthStatus.DEGRADED.value
+    assert breaker_check["status"] == HealthStatus.UNHEALTHY.value
 
 
 def test_ready_unhealthy_when_db_down(tmp_path) -> None:

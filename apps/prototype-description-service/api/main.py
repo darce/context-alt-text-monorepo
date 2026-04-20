@@ -1,25 +1,39 @@
 import logging
 import os
 import subprocess
+from datetime import UTC, datetime
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Response
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.cors import CORSMiddleware
 
 from api.logging_config import configure_logging
-from api.schemas.health import HealthResponse
-from recognition.application.health import check_health as recognition_health
+from db.session import get_pool_stats
+from recognition.application.health import (
+    aggregate_status,
+    check_breaker,
+    check_database,
+    check_model_cache,
+)
 from recognition.config.cache import configure_dev_cache
 from recognition.config.security import get_security_settings, validate_production_security
 from recognition.config.settings import RecognitionSettings
+from recognition.interface_adapters.http import dependencies as http_deps
 from recognition.interface_adapters.http import router as recognition_router
-from recognition.interface_adapters.http.deps.circuit_breaker import initialize_session_dependency_circuit_breaker
+from recognition.interface_adapters.http.deps.auth import require_auth
+from recognition.interface_adapters.http.deps.circuit_breaker import (
+    get_or_create_session_dependency_circuit_breaker,
+    initialize_session_dependency_circuit_breaker,
+)
 from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
 from recognition.interface_adapters.http.middleware.correlation import CorrelationIdMiddleware
-from roster.application.health import check_health as roster_health
+from recognition.interface_adapters.http.middleware.metrics import (
+    MetricsMiddleware,
+    get_default_metrics,
+)
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
-from roster.interface_adapters.http.health_router import router as roster_router
-from scene.application.health import check_health as scene_health
-from scene.interface_adapters.http.health_router import router as scene_router
+from shared.health import HealthStatus
 
 # Configure logging to show diagnostic output
 configure_logging("INFO")
@@ -113,29 +127,102 @@ def create_app() -> FastAPI:
         max_age=600,
     )
     app.add_middleware(CorrelationIdMiddleware)
+    app.add_middleware(MetricsMiddleware)
 
     initialize_session_dependency_circuit_breaker(app)
 
     app.include_router(recognition_router, prefix="/recognition")
-    app.include_router(roster_router, prefix="/roster")
     app.include_router(roster_curation_router, prefix="/roster")
-    app.include_router(scene_router, prefix="/scene")
     register_exception_handlers(app)
 
-    @app.get(
-        "/health",
-        response_model=list[HealthResponse],
-        summary="Aggregate health status for all subsystems",
-    )
-    def overall_health() -> list[HealthResponse]:
-        reports = [
-            recognition_health(),
-            roster_health(),
-            scene_health(),
-        ]
-        return [HealthResponse.model_validate(report.to_dict()) for report in reports]
+    register_health_probes(app)
+    register_metrics_route(app)
 
     return app
+
+
+def register_metrics_route(app: FastAPI) -> None:
+    """Attach auth-gated /metrics route that exposes Prometheus exposition.
+
+    Registered as a FastAPI route (not a Starlette ASGI sub-mount) so the
+    require_auth dependency runs; mounting make_asgi_app() would bypass
+    FastAPI deps and leave /metrics unauthenticated (PA-05, PR-02).
+    """
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+    metrics = get_default_metrics()
+
+    @app.get("/metrics", summary="Prometheus metrics (PA-05 / Slice 3a)")
+    def metrics_endpoint(_: object = Depends(require_auth)) -> Response:
+        return Response(
+            content=generate_latest(metrics.registry),
+            media_type=CONTENT_TYPE_LATEST,
+        )
+
+
+def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None) -> None:
+    """Attach root /health (liveness) + /ready (deps) to the given app.
+
+    Extracted from create_app so tests can mount the probes onto a bare
+    FastAPI instance without spinning up every subsystem router.
+    """
+    settings = RecognitionSettings()
+    cache_dir = model_cache_dir or settings.insightface.cache_dir
+    model_name = settings.insightface.model_name
+
+    @app.get("/health", summary="Liveness probe (PR-01)")
+    def liveness() -> dict[str, str]:
+        # Liveness is process-up only: no DB, breaker, or disk I/O. The Caddy
+        # active probe hits this at 10s so it must never block on a dependency.
+        return {
+            "status": HealthStatus.OK.value,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+
+    @app.get("/ready", summary="Readiness probe (PR-01)")
+    async def readiness(
+        response: Response,
+        session: AsyncSession | None = Depends(http_deps.get_observability_session),
+    ) -> dict[str, object]:
+        breaker = get_or_create_session_dependency_circuit_breaker(app)
+        checks = [
+            await check_database(session),
+            check_breaker(breaker),
+            check_model_cache(cache_dir, model_name=model_name),
+        ]
+        status = aggregate_status(checks)
+        # UNHEALTHY flips the HTTP code so load balancers pull the pod.
+        # OK and DEGRADED both stay 200 — degraded still serves traffic.
+        response.status_code = 503 if status is HealthStatus.UNHEALTHY else 200
+        return {
+            "status": status.value,
+            "checks": [c.to_dict() for c in checks],
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+
+    @app.get("/health/detailed", summary="Operator diagnostic (PA-01 / Slice 2.5)")
+    async def health_detailed(_: object = Depends(require_auth)) -> dict[str, object]:
+        # Auth-gated diagnostic surface. Returns pool stats + breaker state +
+        # model-cache inventory for operators; never hit by load-balancer
+        # probes. Shares aggregator + probes with /ready so the two stay in
+        # sync without duplicate implementations.
+        breaker = get_or_create_session_dependency_circuit_breaker(app)
+        mc_check = check_model_cache(cache_dir, model_name=model_name)
+        bundle = cache_dir / model_name
+        bundle_files = len(list(bundle.glob("*.onnx"))) if bundle.is_dir() else 0
+        return {
+            "status": mc_check.status.value,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "pool_stats": get_pool_stats(),
+            "breaker_state": breaker.state.value,
+            "model_cache": {
+                "model_name": model_name,
+                "cache_dir": str(cache_dir),
+                "bundle_files": bundle_files,
+                "status": mc_check.status.value,
+                "detail": mc_check.detail,
+            },
+        }
 
 
 app = create_app()

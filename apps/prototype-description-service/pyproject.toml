@@ -29,6 +29,7 @@ dependencies = [
     "imagehash>=4.3.0",
     "sse-starlette>=2.0.0,<3.0.0",
     "python-json-logger>=3.2.0,<4.0.0",
+    "prometheus-client>=0.20,<1",
 ]
 
 [tool.setuptools]

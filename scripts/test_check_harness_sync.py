@@ -106,6 +106,20 @@ def _write_repo(tmp_path: Path) -> Path:
     return repo
 
 
+def _write_overlay_manifest(repo: Path) -> None:
+    manifest = {
+        "schema_version": 1,
+        "remote_clone_path": str(repo / ".agentic" / "remote"),
+        "surfaces": {
+            "contracts": {
+                "shared_root": ".agentic/remote/docs/agentic/contracts",
+                "local_root": "local/docs/agentic/contracts",
+            }
+        },
+    }
+    (repo / ".agentic-overlay.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+
 def test_cold_start_passes_when_phrase_present_in_references(tmp_path: Path) -> None:
     repo = _write_repo(tmp_path)
     contract = _valid_contract()
@@ -367,3 +381,41 @@ def test_real_contract_passes_run_checks() -> None:
     contract = _load_contract()
     errors = run_checks(contract, check_api_surface=True)
     assert errors == [], errors
+
+
+def test_load_contract_uses_overlay_manifest_with_top_level_replace_semantics(tmp_path: Path) -> None:
+    repo = _write_repo(tmp_path)
+    shared_contract = repo / ".agentic" / "remote" / "docs" / "agentic" / "contracts" / "harness-protocol.yaml"
+    shared_contract.parent.mkdir(parents=True, exist_ok=True)
+    shared_contract.write_text(yaml.safe_dump(_valid_contract(), sort_keys=False), encoding="utf-8")
+
+    local_contract = repo / "local" / "docs" / "agentic" / "contracts" / "harness-protocol.yaml"
+    local_contract.parent.mkdir(parents=True, exist_ok=True)
+    local_contract.write_text(
+        yaml.safe_dump(
+            {
+                "branch_isolation": {
+                    "protected_branches": ["release"],
+                    "code_roots": ["apps/"],
+                    "protected_extensions": [".py"],
+                    "root_protected_files": ["Makefile"],
+                    "protected_main_surfaces": [
+                        {"pattern": "docs/tasks/**/*.md", "reason": "Task plans require feature branches"}
+                    ],
+                    "permitted_main_surfaces": [{"pattern": "CLAUDE.md", "reason": "Agent dispatcher"}],
+                    "enforcers": [
+                        {"path": ".github/hooks/guard-main-branch.py", "harness": "vscode"},
+                        {"path": "scripts/hooks/guard-main-branch.sh", "harness": "claude"},
+                    ],
+                }
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    _write_overlay_manifest(repo)
+
+    contract = _load_contract(repo_root=repo)
+
+    assert contract["branch_isolation"]["protected_branches"] == ["release"]
+    assert contract["cold_start"] == _valid_contract()["cold_start"]

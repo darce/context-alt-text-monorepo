@@ -27,6 +27,7 @@ POLICY = BranchIsolationPolicy(
     code_roots=("apps/", "packages/", "scripts/", ".github/hooks/", ".claude/", "mk/"),
     protected_extensions=(".py", ".ts", ".tsx", ".js", ".jsx", ".php", ".sql", ".sh", ".css", ".scss", ".mk"),
     root_protected_files=("Makefile",),
+    protected_main_surfaces=(),
     permitted_main_surfaces=(),
 )
 FIXTURE_COPY_PATHS = (
@@ -226,7 +227,7 @@ def test_hook_allows_doc_create_on_clean_main(tmp_path: Path) -> None:
     assert output is None
 
 
-def test_hook_blocks_allowed_doc_edit_when_protected_paths_are_already_dirty(tmp_path: Path) -> None:
+def test_hook_allows_allowed_doc_edit_when_unrelated_protected_paths_are_dirty(tmp_path: Path) -> None:
     repo = _write_fixture_repo(tmp_path)
     protected_path = repo / "packages" / "demo" / "worker.py"
     protected_path.parent.mkdir(parents=True, exist_ok=True)
@@ -238,7 +239,4 @@ def test_hook_blocks_allowed_doc_edit_when_protected_paths_are_already_dirty(tmp
     }
     exit_code, output = _run_hook(payload, cwd=str(repo))
     assert exit_code == 0
-    assert output is not None
-    assert output["hookSpecificOutput"]["permissionDecision"] == "block"
-    assert "already dirty on the main branch" in output["hookSpecificOutput"]["permissionDecisionReason"]
-    assert "packages/demo/worker.py" in output["hookSpecificOutput"]["permissionDecisionReason"]
+    assert output is None

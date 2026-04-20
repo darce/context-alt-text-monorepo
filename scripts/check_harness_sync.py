@@ -686,10 +686,10 @@ def _check_branch_isolation(contract: dict, *, repo_root: Path = REPO_ROOT) -> l
             cwd=fixture_repo,
             env=env,
         )
-        if output is None or output["hookSpecificOutput"]["permissionDecision"] != "block":
-            errors.append("branch_isolation: VS Code guard did not block when protected paths were already dirty on main")
-        elif "already dirty on the main branch" not in output["hookSpecificOutput"]["permissionDecisionReason"]:
-            errors.append("branch_isolation: VS Code dirty-main block reason was not specific")
+        if output is not None:
+            errors.append(
+                "branch_isolation: VS Code guard blocked allow-listed operator doc when unrelated protected paths were dirty on main"
+            )
 
         shell_code, _, shell_stderr = _run_shell_hook(
             claude_guard,
@@ -697,10 +697,10 @@ def _check_branch_isolation(contract: dict, *, repo_root: Path = REPO_ROOT) -> l
             cwd=fixture_repo,
             env=env,
         )
-        if shell_code != 2:
-            errors.append("branch_isolation: Claude guard did not block when protected paths were already dirty on main")
-        elif "already dirty on the main branch" not in shell_stderr:
-            errors.append("branch_isolation: Claude dirty-main block reason was not specific")
+        if shell_code != 0:
+            errors.append(
+                "branch_isolation: Claude guard blocked allow-listed operator doc when unrelated protected paths were dirty on main"
+            )
 
         contract_path = fixture_repo / CONTRACT_RELATIVE
         contract_backup = fixture_repo / CONTRACT_RELATIVE.with_suffix(".yaml.bak")

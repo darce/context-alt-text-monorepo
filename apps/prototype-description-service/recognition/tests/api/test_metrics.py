@@ -162,3 +162,45 @@ def test_exception_path_records_metrics_without_leak() -> None:
     buckets = _collect_samples(resp.text, "http_request_duration_seconds_bucket")
     boom_hits = [value for labels, value in buckets if labels.get("path") == "/boom" and labels.get("le") == "+Inf"]
     assert boom_hits and boom_hits[0] >= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Integration: real create_app() wiring (E15-2-BR-05, E15-2-BR-06)
+# ---------------------------------------------------------------------------
+
+
+def test_production_app_exposes_metrics_endpoint(monkeypatch) -> None:
+    """BR-05: `create_app()` must register `/metrics` so the production app
+    actually exposes Prometheus exposition. Anonymous calls are rejected by
+    `require_auth` (PA-05); an overridden auth dep returns the text exposition
+    recorded by the real `MetricsMiddleware` for a prior `/health` request.
+    """
+    monkeypatch.setenv("RECOGNITION_AUTH_ENABLED", "1")
+
+    from api.main import create_app
+    from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth
+
+    app = create_app()
+    client = TestClient(app)
+
+    # Anonymous: 401 from require_auth.
+    anon = client.get("/metrics")
+    assert anon.status_code == 401, anon.text
+
+    # Hit a real route so the middleware has something to observe.
+    assert client.get("/health").status_code == 200
+
+    async def _auth_ok() -> AuthContext:
+        return AuthContext(token=None, tenant_claim=None, enabled=False)
+
+    app.dependency_overrides[require_auth] = _auth_ok
+
+    resp = client.get("/metrics")
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"].startswith("text/plain")
+    body = resp.text
+    assert "http_request_duration_seconds_bucket" in body
+    assert "http_requests_total" in body
+    assert "http_requests_in_flight" in body
+    # The /health request we made above must appear under its route template.
+    assert 'path="/health"' in body

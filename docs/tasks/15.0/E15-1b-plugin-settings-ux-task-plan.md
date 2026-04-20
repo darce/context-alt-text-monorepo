@@ -245,56 +245,56 @@ Proof:
 
 ### Context and Ownership
 
-- [ ] Loaded security contract (`docs/agentic/contracts/security.md`) before editing
-- [ ] Confirmed `/recognition/health/pool` is auth-gated in `health.py`
-- [ ] Confirmed `_require_auth_impl` detail strings (`"api key expired"`, `"api key revoked"`, `"tenant mismatch"`) are literal constants, not variable interpolations
-- [ ] Branch created: `feature/e15-1b`
-- [ ] Worktree: `/Users/daniel/Development/context-alt-text-monorepo-e15-1b`
+- [x] Loaded security contract (`docs/agentic/contracts/security.md`) before editing
+- [x] Confirmed `/recognition/health/pool` is auth-gated in `health.py`
+- [x] Confirmed `_require_auth_impl` detail strings (`"api key expired"`, `"api key revoked"`, `"tenant mismatch"`) are literal constants, not variable interpolations
+- [x] Branch created: `feature/e15-1b`
+- [x] Worktree: `/Users/daniel/Development/context-alt-text-monorepo-e15-1b`
 
 ### Checklist for Slice 1: Authenticated Probe and Outcome Classification
 
-- [ ] Failing PHPUnit test written first (`tests/Unit/SettingsControllerTest::test_probe_dispatch`)
-- [ ] `class-probe-outcome.php` added with ten constants; autoload verified via runtime `class_exists` check ([rg-016])
-- [ ] `get_tenant_id()` derivation extracted into a shared helper (trait or `TenantIdentity` class); abstract proxy controller delegates to it; `TenantIdentityTest` PHPUnit added
-- [ ] `test_connection` probes `/recognition/health/pool` (assertion in test guards regression)
-- [ ] `X-Tenant-ID` forwarded using the shared tenant helper (matches the value sent by existing recognition proxy calls)
-- [ ] All ten response shapes map to the correct outcome code (nine post-HTTP + `not_configured` pre-HTTP)
-- [ ] `retry_after_seconds` parsed from `Retry-After` as integer delta-seconds; non-numeric value falls back to omitted
-- [ ] Response shape contains no `connected` or `error` fields (regression guard)
-- [ ] Security contract updated in the same slice with the Plugin probe contract subsection, including the Retry-After integer delta-seconds wire assumption
-- [ ] PHPUnit passes
+- [x] Failing PHPUnit test written first (`tests/Unit/SettingsControllerTest::test_probe_dispatch`)
+- [x] `class-probe-outcome.php` added with ten constants; autoload verified via runtime `class_exists` check ([rg-016])
+- [x] `get_tenant_id()` derivation extracted into a shared helper (trait or `TenantIdentity` class); abstract proxy controller delegates to it; `TenantIdentityTest` PHPUnit added
+- [x] `test_connection` probes `/recognition/health/pool` (assertion in test guards regression)
+- [x] `X-Tenant-ID` forwarded using the shared tenant helper (matches the value sent by existing recognition proxy calls)
+- [x] All ten response shapes map to the correct outcome code (nine post-HTTP + `not_configured` pre-HTTP)
+- [x] `retry_after_seconds` parsed from `Retry-After` as integer delta-seconds; non-numeric value falls back to omitted
+- [x] Response shape contains no `connected` or `error` fields (regression guard)
+- [x] Security contract updated in the same slice with the Plugin probe contract subsection, including the Retry-After integer delta-seconds wire assumption
+- [x] PHPUnit passes
 
 ### Checklist for Slice 2: Ten-State Settings Page Renderer
 
-- [ ] Failing Vitest cases written first (`SettingsPage.test.tsx`)
-- [ ] `TestConnectionOutcome` `as const` + type alias in `settingsApi.ts` with all ten values ([sr-007])
-- [ ] `SettingsPage.tsx` switches on `outcome` with exhaustive `never` check ([sr-005])
-- [ ] Each banner renders primary line + remediation hint; `rate_limited` interpolates `retry_after_seconds`; `not_configured` disables the "Test Connection" button
-- [ ] All ten Vitest cases pass
-- [ ] `npm run typecheck` green
+- [x] Failing Vitest cases written first (`SettingsPage.test.tsx`)
+- [x] `TestConnectionOutcome` `as const` + type alias in `settingsApi.ts` with all ten values ([sr-007])
+- [x] `SettingsPage.tsx` switches on `outcome` with exhaustive `never` check ([sr-005])
+- [x] Each banner renders primary line + remediation hint; `rate_limited` interpolates `retry_after_seconds`; `not_configured` disables the "Test Connection" button
+- [x] All ten Vitest cases pass
+- [x] `npm run typecheck` green
 
 ### Checklist for Slice 3: Staging Demo Smoke
 
-- [ ] Four staging smoke scenarios run and recorded as `test_result` events
-- [ ] Full `make check` pass from repo root (or per-app equivalent)
+- [x] Four staging smoke scenarios run and recorded as `test_result` events
+- [x] Full `make check` pass from repo root (or per-app equivalent)
 
 ## Review Readiness
 
-- [ ] Security contract documents the probe outcome taxonomy and the Retry-After integer delta-seconds wire assumption
-- [ ] No raw API keys in logs, responses, or test fixtures
-- [ ] Wire contract emits `outcome` only — no `connected` or `error` fields (greenfield, no shim); consumers derive `connected` as `outcome === 'connected'`
-- [ ] Handoff decision recorded per slice; final `close_slice` per slice
+- [x] Security contract documents the probe outcome taxonomy and the Retry-After integer delta-seconds wire assumption
+- [x] No raw API keys in logs, responses, or test fixtures
+- [x] Wire contract emits `outcome` only — no `connected` or `error` fields (greenfield, no shim); consumers derive `connected` as `outcome === 'connected'`
+- [x] Handoff decision recorded per slice; final `close_slice` per slice
 
 ## Success Criteria
 
-- [ ] "Test Connection" with a revoked key shows the `revoked` banner, not "Connection successful!"
-- [ ] "Test Connection" with a wrong-tenant key shows the `tenant_mismatch` banner
-- [ ] With `acx_recognition_url` blank, the UI shows the `not_configured` banner and the "Test Connection" button is disabled
-- [ ] `rate_limited` banner shows a concrete `Retry-After` seconds value (integer delta-seconds); non-numeric `Retry-After` degrades to the "a few seconds" fallback
-- [ ] Adding an eleventh outcome to `TestConnectionOutcome` without updating `SettingsPage.tsx` fails `npm run typecheck`
-- [ ] PHPUnit assertion guards against the probe URL regressing to `/recognition/health`
-- [ ] PHPUnit assertion guards against `connected` or `error` reappearing in the response shape
-- [ ] Security contract's Plugin probe contract section maps each of the ten outcomes to an `_require_auth_impl` anchor (or documents `not_configured` as the local-precondition outcome)
+- [x] "Test Connection" with a revoked key shows the `revoked` banner, not "Connection successful!"
+- [x] "Test Connection" with a wrong-tenant key shows the `tenant_mismatch` banner
+- [x] With `acx_recognition_url` blank, the UI shows the `not_configured` banner and the "Test Connection" button is disabled
+- [x] `rate_limited` banner shows a concrete `Retry-After` seconds value (integer delta-seconds); non-numeric `Retry-After` degrades to the "a few seconds" fallback
+- [x] Adding an eleventh outcome to `TestConnectionOutcome` without updating `SettingsPage.tsx` fails `npm run typecheck`
+- [x] PHPUnit assertion guards against the probe URL regressing to `/recognition/health`
+- [x] PHPUnit assertion guards against `connected` or `error` reappearing in the response shape
+- [x] Security contract's Plugin probe contract section maps each of the ten outcomes to an `_require_auth_impl` anchor (or documents `not_configured` as the local-precondition outcome)
 
 ## Open Questions
 

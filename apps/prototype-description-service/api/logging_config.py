@@ -72,6 +72,7 @@ class RecognitionFilter(logging.Filter):
             name.startswith("recognition.application")
             or name.startswith("recognition.infrastructure")
             or name.startswith("recognition.interface_adapters")
+            or name.startswith("recognition.worker")
             or name.startswith("db")
         )
         return allowed
@@ -93,9 +94,17 @@ def configure_logging(level: str = "INFO") -> None:
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper()))
     root.handlers.clear()
+    # Drop previously attached correlation filters so repeat calls don't stack.
+    for existing in list(root.filters):
+        if isinstance(existing, CorrelationIdFilter):
+            root.removeFilter(existing)
 
     recognition_filter = RecognitionFilter()
     correlation_filter = CorrelationIdFilter()
+    # Stamp every LogRecord at the root, so handlers attached by other systems
+    # (pytest's caplog, external aggregators injected via addHandler) also see
+    # the correlation_id attribute.
+    root.addFilter(correlation_filter)
 
     # Console handler: JSON so stdout/stderr aggregators parse fields without regex.
     console_handler = logging.StreamHandler(sys.stdout)

@@ -171,8 +171,6 @@ make help
 | ------------------------- | -------------------------------------------------------------------------------------- |
 | `GET /health`             | Liveness probe (PR-01). No I/O — returns `{status: "ok", timestamp}` as long as the process can respond. Used by the Caddy active probe on a 10s interval. |
 | `GET /ready`              | Readiness probe (PR-01). Runs DB (via the observability session dependency), session-dependency circuit breaker, and InsightFace model-cache checks and aggregates them. Returns 200 when all pass; 503 with `status: "unhealthy"` otherwise so load balancers can pull the pod. |
-| `GET /recognition/health` | Recognition subsystem health probe.                                                    |
-| `GET /roster/health`      | Roster subsystem health probe.                                                         |
-| `GET /scene/health`       | Scene analysis subsystem health probe.                                                 |
+| `GET /health/detailed`    | Auth-gated operator diagnostic (PA-01 / Slice 2.5). Returns full `get_pool_stats` for both engines, circuit-breaker state, and InsightFace model-cache inventory. Requires a valid API key via the `Authorization` header. |
 
-Subsystem endpoints (`/recognition/health`, `/roster/health`, `/scene/health`) still return a static `"ok"` status and will be consolidated behind `/health/detailed` in a later slice.
+The previous per-subsystem probes (`/recognition/health`, `/recognition/health/pool`, `/roster/health`, `/scene/health`) were consolidated into the three endpoints above in Slice 2.5; pool stats now live on `/health/detailed`.

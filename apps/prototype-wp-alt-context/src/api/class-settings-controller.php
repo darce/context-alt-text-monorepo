@@ -4,19 +4,30 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/class-probe-outcome.php';
+require_once __DIR__ . '/class-tenant-identity.php';
+
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
+use function apply_filters;
 use function current_user_can;
 use function defined;
 use function get_option;
+use function intval;
+use function is_array;
 use function is_string;
+use function is_wp_error;
+use function json_decode;
 use function register_rest_route;
+use function rtrim;
+use function stripos;
 use function substr;
 use function trim;
 use function update_option;
 use function wp_remote_get;
 use function wp_remote_retrieve_body;
+use function wp_remote_retrieve_headers;
 use function wp_remote_retrieve_response_code;
 
 /**
@@ -24,7 +35,9 @@ use function wp_remote_retrieve_response_code;
  *
  * GET  /acx/v1/settings          — read current config with source detection
  * POST /acx/v1/settings          — save URL and/or API key to WP options
- * POST /acx/v1/settings/test     — test connection to the recognition health endpoint
+ * POST /acx/v1/settings/test     — probe the authenticated recognition pool
+ *                                  endpoint and classify the response into one
+ *                                  of ten canonical {@see ProbeOutcome} codes
  */
 class SettingsController {
 
@@ -111,26 +124,25 @@ class SettingsController {
 
 	public function test_connection( WP_REST_Request $request ): WP_REST_Response {
 		$url_resolution = $this->resolve_url_source();
-		$key_resolution = $this->resolve_key_source();
+		$url            = $url_resolution['value'];
 
-		$url = $url_resolution['value'];
 		if ( '' === $url ) {
 			return new WP_REST_Response(
-				array(
-					'connected' => false,
-					'error'     => 'Recognition API URL is not configured.',
-				),
+				array( 'outcome' => ProbeOutcome::NOT_CONFIGURED ),
 				200
 			);
 		}
 
-		$health_url = rtrim( $url, '/' ) . '/recognition/health';
-		$headers    = array();
+		$key_resolution = $this->resolve_key_source();
+		$headers        = array(
+			'X-Tenant-ID' => TenantIdentity::derive_from_site_url(),
+		);
 		if ( '' !== $key_resolution['value'] ) {
 			$headers['X-API-Key'] = $key_resolution['value'];
 		}
 
-		$response = wp_remote_get(
+		$health_url = rtrim( $url, '/' ) . '/recognition/health/pool';
+		$response   = wp_remote_get(
 			$health_url,
 			array(
 				'headers' => $headers,
@@ -138,28 +150,140 @@ class SettingsController {
 			)
 		);
 
+		return new WP_REST_Response( $this->build_probe_payload( $response ), 200 );
+	}
+
+	/**
+	 * Build the full /settings/test response payload from the raw wp_remote_get
+	 * result. The wire contract is `{outcome, status_code?, retry_after_seconds?,
+	 * detail?, body?}`. Consumers derive a boolean "connected" from
+	 * `outcome === 'connected'`; the controller never emits that field itself.
+	 *
+	 * @param WP_Error|array<string, mixed> $response
+	 * @return array<string, mixed>
+	 */
+	private function build_probe_payload( WP_Error|array $response ): array {
 		if ( is_wp_error( $response ) ) {
-			return new WP_REST_Response(
-				array(
-					'connected' => false,
-					'error'     => $response->get_error_message(),
-				),
-				200
-			);
+			$message = (string) $response->get_error_message();
+			$outcome = $this->is_tls_failure( $message )
+				? ProbeOutcome::TLS_ERROR
+				: ProbeOutcome::NETWORK_ERROR;
+			$payload = array( 'outcome' => $outcome );
+			if ( '' !== $message ) {
+				$payload['detail'] = $message;
+			}
+			return $payload;
 		}
 
 		$status_code = (int) wp_remote_retrieve_response_code( $response );
 		$body        = wp_remote_retrieve_body( $response );
 		$decoded     = json_decode( $body, true );
+		$detail      = is_array( $decoded ) && isset( $decoded['detail'] ) && is_string( $decoded['detail'] )
+			? $decoded['detail']
+			: null;
 
-		return new WP_REST_Response(
-			array(
-				'connected'   => $status_code >= 200 && $status_code < 300,
-				'status_code' => $status_code,
-				'body'        => null !== $decoded ? $decoded : $body,
-			),
-			200
+		$outcome = $this->classify_http_status( $status_code, $detail );
+		$payload = array(
+			'outcome'     => $outcome,
+			'status_code' => $status_code,
+			'body'        => null !== $decoded ? $decoded : $body,
 		);
+		if ( null !== $detail ) {
+			$payload['detail'] = $detail;
+		}
+		if ( ProbeOutcome::RATE_LIMITED === $outcome ) {
+			$retry_after = $this->parse_retry_after( $this->retrieve_retry_after_header( $response ) );
+			if ( null !== $retry_after ) {
+				$payload['retry_after_seconds'] = $retry_after;
+			}
+		}
+		return $payload;
+	}
+
+	/**
+	 * @param array<string, mixed> $response
+	 */
+	private function retrieve_retry_after_header( array $response ): mixed {
+		$headers = wp_remote_retrieve_headers( $response );
+		if ( is_array( $headers ) ) {
+			return $headers['Retry-After']
+				?? $headers['retry-after']
+				?? null;
+		}
+		if ( $headers instanceof \ArrayAccess ) {
+			if ( isset( $headers['Retry-After'] ) ) {
+				return $headers['Retry-After'];
+			}
+			if ( isset( $headers['retry-after'] ) ) {
+				return $headers['retry-after'];
+			}
+		}
+		return null;
+	}
+
+	private function classify_http_status( int $status_code, ?string $detail ): string {
+		if ( $status_code >= 200 && $status_code < 300 ) {
+			return ProbeOutcome::CONNECTED;
+		}
+		if ( 401 === $status_code ) {
+			if ( 'api key expired' === $detail ) {
+				return ProbeOutcome::EXPIRED;
+			}
+			if ( 'api key revoked' === $detail ) {
+				return ProbeOutcome::REVOKED;
+			}
+			return ProbeOutcome::INVALID_KEY;
+		}
+		if ( 403 === $status_code ) {
+			if ( 'tenant mismatch' === $detail ) {
+				return ProbeOutcome::TENANT_MISMATCH;
+			}
+			return ProbeOutcome::INVALID_KEY;
+		}
+		if ( 429 === $status_code ) {
+			return ProbeOutcome::RATE_LIMITED;
+		}
+		if ( $status_code >= 500 ) {
+			return ProbeOutcome::SERVER_ERROR;
+		}
+		return ProbeOutcome::SERVER_ERROR;
+	}
+
+	private function is_tls_failure( string $message ): bool {
+		if ( '' === $message ) {
+			return false;
+		}
+		foreach ( array( 'certificate', 'SSL', 'TLS' ) as $keyword ) {
+			if ( false !== stripos( $message, $keyword ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Parse a Retry-After header value, treating it as integer delta-seconds
+	 * per RFC 7231 §7.1.3 — the form emitted by the recognition service's
+	 * enforce_rate_limit dependency (E15-1 Slice 1). HTTP-date form is not
+	 * supported; a non-numeric value falls back to null and the UI renders a
+	 * generic "wait a few seconds" hint.
+	 */
+	private function parse_retry_after( mixed $raw ): ?int {
+		if ( is_array( $raw ) ) {
+			$raw = $raw[0] ?? null;
+		}
+		if ( ! is_string( $raw ) ) {
+			return null;
+		}
+		$trimmed = trim( $raw );
+		if ( '' === $trimmed ) {
+			return null;
+		}
+		$parsed = intval( $trimmed );
+		if ( $parsed <= 0 ) {
+			return null;
+		}
+		return $parsed;
 	}
 
 	/**

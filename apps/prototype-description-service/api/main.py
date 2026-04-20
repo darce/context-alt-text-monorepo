@@ -2,16 +2,28 @@ import logging
 import os
 import subprocess
 from datetime import UTC, datetime
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Response
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.cors import CORSMiddleware
 
 from api.logging_config import configure_logging
+from recognition.application.health import (
+    aggregate_status,
+    check_breaker,
+    check_database,
+    check_model_cache,
+)
 from recognition.config.cache import configure_dev_cache
 from recognition.config.security import get_security_settings, validate_production_security
 from recognition.config.settings import RecognitionSettings
+from recognition.interface_adapters.http import dependencies as http_deps
 from recognition.interface_adapters.http import router as recognition_router
-from recognition.interface_adapters.http.deps.circuit_breaker import initialize_session_dependency_circuit_breaker
+from recognition.interface_adapters.http.deps.circuit_breaker import (
+    get_or_create_session_dependency_circuit_breaker,
+    initialize_session_dependency_circuit_breaker,
+)
 from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
 from recognition.interface_adapters.http.middleware.correlation import CorrelationIdMiddleware
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
@@ -120,10 +132,22 @@ def create_app() -> FastAPI:
     app.include_router(scene_router, prefix="/scene")
     register_exception_handlers(app)
 
-    @app.get(
-        "/health",
-        summary="Liveness probe (PR-01)",
-    )
+    register_health_probes(app)
+
+    return app
+
+
+def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None) -> None:
+    """Attach root /health (liveness) + /ready (deps) to the given app.
+
+    Extracted from create_app so tests can mount the probes onto a bare
+    FastAPI instance without spinning up every subsystem router.
+    """
+    settings = RecognitionSettings()
+    cache_dir = model_cache_dir or settings.insightface.cache_dir
+    model_name = settings.insightface.model_name
+
+    @app.get("/health", summary="Liveness probe (PR-01)")
     def liveness() -> dict[str, str]:
         # Liveness is process-up only: no DB, breaker, or disk I/O. The Caddy
         # active probe hits this at 10s so it must never block on a dependency.
@@ -132,7 +156,26 @@ def create_app() -> FastAPI:
             "timestamp": datetime.now(UTC).isoformat(),
         }
 
-    return app
+    @app.get("/ready", summary="Readiness probe (PR-01)")
+    async def readiness(
+        response: Response,
+        session: AsyncSession | None = Depends(http_deps.get_observability_session),
+    ) -> dict[str, object]:
+        breaker = get_or_create_session_dependency_circuit_breaker(app)
+        checks = [
+            await check_database(session),
+            check_breaker(breaker),
+            check_model_cache(cache_dir, model_name=model_name),
+        ]
+        status = aggregate_status(checks)
+        # UNHEALTHY flips the HTTP code so load balancers pull the pod.
+        # OK and DEGRADED both stay 200 — degraded still serves traffic.
+        response.status_code = 503 if status is HealthStatus.UNHEALTHY else 200
+        return {
+            "status": status.value,
+            "checks": [c.to_dict() for c in checks],
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
 
 
 app = create_app()

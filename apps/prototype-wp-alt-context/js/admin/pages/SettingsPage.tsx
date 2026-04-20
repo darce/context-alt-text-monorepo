@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import {
   fetchSettings,
+  isTestConnectionOutcome,
   saveSettings,
   testConnection,
   TestConnectionOutcome,
@@ -21,7 +22,20 @@ interface BannerCopy {
   remediation: string;
 }
 
+const unknownOutcomeBanner = (): BannerCopy => ({
+  tone: 'error',
+  role: 'alert',
+  primary: __('Unexpected response from the recognition service.', 'alt-context'),
+  remediation: __(
+    'The probe returned a response the plugin does not recognize. Confirm the recognition service and plugin are on compatible versions.',
+    'alt-context'
+  ),
+});
+
 const renderBanner = (result: TestConnectionResponse): BannerCopy => {
+  if (!isTestConnectionOutcome(result.outcome)) {
+    return unknownOutcomeBanner();
+  }
   const outcome: TestConnectionOutcomeValue = result.outcome;
   switch (outcome) {
     case TestConnectionOutcome.CONNECTED:

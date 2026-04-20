@@ -280,6 +280,20 @@ describe('SettingsPage', () => {
       expect(banner).toHaveTextContent('trust chain');
     });
 
+    it('renders a safe fallback banner when the outcome is not one of the known values', () => {
+      renderWithLoadedSettings();
+      act(() => {
+        capturedTestOptions!.onSuccess!({
+          outcome: 'something_new_from_the_future' as TestConnectionOutcomeValue,
+          status_code: 418,
+        });
+      });
+      const banner = screen.getByTestId('acx-test-connection-banner');
+      expect(banner).toHaveTextContent('Unexpected response');
+      expect(banner.className).toContain('notice-error');
+      expect(banner.getAttribute('role')).toBe('alert');
+    });
+
     it('falls back to network_error when the mutation itself rejects', () => {
       renderWithLoadedSettings();
       expect(capturedTestOptions?.onError).toBeDefined();

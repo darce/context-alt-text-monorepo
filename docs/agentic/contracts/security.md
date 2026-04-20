@@ -272,20 +272,35 @@ $response = wp_remote_post($api_url . '/analyze', [
 ]);
 ```
 
-### Plugin Probe Contract (E15-1b Slice 1)
+### Plugin Probe Wire Contract — `POST /acx/v1/settings/test` (E15-1b Slice 1)
 
-`POST /acx/v1/settings/test` probes the recognition service at
-`<base_url>/recognition/health/pool` (the authenticated pool-health endpoint —
-**not** an anonymous `/health`). The probe forwards `X-API-Key` and
-`X-Tenant-ID`, where the tenant UUID is derived by
-`AltContext\Api\TenantIdentity::derive_from_site_url()` (SHA-1 of
-`acx-site-tenant:<lowercase,untrailingslashed site_url>` formatted as a
-UUID-v5-shaped string). The same derivation is used for live recognition
-calls, so probe behaviour matches real request behaviour.
+This is the authoritative boundary definition for the plugin-facing
+connection-probe endpoint. Any change to the response shape, outcome
+taxonomy, or `Retry-After` semantics below is a cross-repo wire-contract
+change that must land in the same slice as the producing controller and
+the consuming React renderer.
 
-The response body is a closed envelope — the frontend derives a boolean
-"connected" from `outcome === 'connected'` and **must not** receive a
-separate `connected` or `error` field:
+**Request shape.** The plugin's `SettingsController::test_connection`
+issues a `GET` to `<base_url>/recognition/health/pool` — the authenticated
+pool-health endpoint — and forwards exactly two headers:
+
+- `X-API-Key`: the configured recognition key (blank keys are still sent
+  so the backend can return the authoritative 401/403 outcome instead of
+  the plugin short-circuiting).
+- `X-Tenant-ID`: the site-scoped UUID derived by
+  `AltContext\Api\TenantIdentity::derive_from_site_url()` (SHA-1 of
+  `acx-site-tenant:<lowercase,untrailingslashed site_url>`, formatted as a
+  UUID-v5-shaped string). The same derivation is used for live
+  recognition calls, so probe behaviour matches real request behaviour.
+
+There is **no anonymous `/health` probe** on this surface; any such
+request would succeed against a misconfigured backend and produce a false
+positive in the admin UI.
+
+**Response shape.** The response body is a closed envelope. The frontend
+derives a boolean "connected" from `outcome === 'connected'`; a separate
+`connected` or `error` field **must not** be added — consumers treat
+unknown keys as a contract break.
 
 ```json
 {
@@ -299,24 +314,48 @@ separate `connected` or `error` field:
 }
 ```
 
-Classification rules (must stay bit-identical to
-`SettingsController::classify_http_status()`):
+- `outcome` is always present and is one of the ten canonical values
+  enumerated by `AltContext\Api\ProbeOutcome` (PHP) and
+  `TestConnectionOutcome` (TS). The plugin renderer validates this string
+  at runtime and falls back to a safe "unexpected response" banner for
+  any unknown value so forward-incompatible payloads cannot crash the
+  Settings page.
+- `status_code` is present for every outcome that reached the backend
+  (i.e. every outcome except `not_configured`, `network_error`, and
+  `tls_error`).
+- `retry_after_seconds` is **only** emitted for `rate_limited` and is
+  an integer (>= 1). See the Retry-After rule below.
+- `detail` is the recognition service's error string when present, used
+  by the classifier to disambiguate `expired`/`revoked`/`invalid_key`
+  within 401 and `tenant_mismatch`/`invalid_key` within 403.
+- `body` is the raw decoded upstream body for debugging — not a
+  structured contract; consumers must not branch on it.
 
-- Missing/empty URL → `not_configured` (200, no HTTP call).
-- 2xx → `connected`.
-- 401 + `detail == "api key expired"` → `expired`.
-- 401 + `detail == "api key revoked"` → `revoked`.
-- 401 (other) → `invalid_key`.
-- 403 + `detail == "tenant mismatch"` → `tenant_mismatch`.
-- 403 (other, e.g. `"invalid or missing API key"`) → `invalid_key`.
-- 429 → `rate_limited`. `Retry-After` is pinned to **integer delta-seconds
-  per RFC 7231 §7.1.3** (the form emitted by the recognition service's
-  `enforce_rate_limit` dependency). HTTP-date form is not supported; a
-  non-numeric header falls back to `retry_after_seconds: null` and the UI
-  renders a generic "wait a few seconds" hint.
-- ≥500 → `server_error`.
-- `WP_Error` with `certificate`/`SSL`/`TLS` in the message → `tls_error`.
-- All other `WP_Error` → `network_error`.
+**Classification rules** (must stay bit-identical to
+`SettingsController::classify_http_status()`, and each outcome maps to
+the backend `_require_auth_impl` / rate-limit anchor shown):
+
+| Outcome            | Trigger                                                       | Backend anchor                                                        |
+| ------------------ | ------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `not_configured`   | Missing/empty URL → 200, **no HTTP call**                     | Plugin-local precondition (no recognition-service anchor)             |
+| `connected`        | HTTP 2xx                                                      | `/recognition/health/pool` authenticated success path                 |
+| `expired`          | HTTP 401 + `detail == "api key expired"`                      | `_require_auth_impl` → `classify_by_hash` returns `"expired"`         |
+| `revoked`          | HTTP 401 + `detail == "api key revoked"`                      | `_require_auth_impl` → `classify_by_hash` returns `"revoked"`         |
+| `invalid_key`      | HTTP 401 (other) **or** HTTP 403 `"invalid or missing API key"` | `_require_auth_impl` → `"Authorization header required"`, `"invalid authorization scheme"`, or 403 `"invalid or missing API key"` |
+| `tenant_mismatch`  | HTTP 403 + `detail == "tenant mismatch"`                      | `_require_auth_impl` tenant-scope check                               |
+| `rate_limited`     | HTTP 429                                                      | `enforce_rate_limit` dependency (`rate_limit.py`)                     |
+| `server_error`     | HTTP >= 500                                                   | Upstream service failure (no specific anchor)                         |
+| `tls_error`        | `WP_Error` with `certificate`, `SSL`, or `TLS` in the message | Transport-layer failure from `wp_remote_get`                          |
+| `network_error`    | Any other `WP_Error`                                          | Transport-layer failure from `wp_remote_get`                          |
+
+**Retry-After projection semantics.** `retry_after_seconds` is pinned to
+**integer delta-seconds per RFC 7231 §7.1.3** — the form the recognition
+service's `enforce_rate_limit` dependency emits (see Rate Limiting
+above). HTTP-date form is **not** supported on this surface. The
+controller parses via `intval`; a non-numeric or `<= 0` value causes the
+field to be omitted entirely, and the UI falls back to a generic "Retry
+after a few seconds." hint. The field is therefore a strict projection
+of the upstream integer header, not a derived/heuristic value.
 
 ## Key Lifecycle (E15-1 Slice 3)
 

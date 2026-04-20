@@ -35,6 +35,13 @@ export const TestConnectionOutcome = {
 export type TestConnectionOutcomeValue =
   (typeof TestConnectionOutcome)[keyof typeof TestConnectionOutcome];
 
+const KNOWN_TEST_CONNECTION_OUTCOMES: ReadonlySet<string> = new Set(
+  Object.values(TestConnectionOutcome)
+);
+
+export const isTestConnectionOutcome = (value: unknown): value is TestConnectionOutcomeValue =>
+  typeof value === 'string' && KNOWN_TEST_CONNECTION_OUTCOMES.has(value);
+
 export interface TestConnectionResponse {
   outcome: TestConnectionOutcomeValue;
   status_code?: number;

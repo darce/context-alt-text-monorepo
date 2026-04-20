@@ -510,3 +510,22 @@ def test_overlay_manifest_hooks_surface_includes_all_hook_subtrees(tmp_path: Pat
         ".agentic/remote/scripts/hooks/guard-main-branch.sh": "shared",
         ".agentic/remote/scripts/hooks/git/pre-push": "shared",
     }
+
+
+def test_hooks_surface_without_overlay_manifest_includes_github_and_scripts_hooks(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".github" / "hooks").mkdir(parents=True)
+    (repo / ".github" / "hooks" / "terminal-guard.json").write_text("{}\n", encoding="utf-8")
+    (repo / "scripts" / "hooks").mkdir(parents=True)
+    (repo / "scripts" / "hooks" / "guard-main-branch.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    resolved = resolve_surface("hooks", repo)
+
+    assert {
+        entry.effective_path.relative_to(repo).as_posix(): entry.source
+        for entry in resolved
+    } == {
+        ".github/hooks/terminal-guard.json": "shared",
+        "scripts/hooks/guard-main-branch.sh": "shared",
+    }

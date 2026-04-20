@@ -59,3 +59,13 @@ def test_lint_hoisted_paths_scans_overlay_resolved_local_entries(tmp_path: Path)
     assert exit_code == 1
     assert any(".claude/skills/demo/SKILL.md:1" in finding for finding in findings)
     assert any("repo-name-assumption" in finding for finding in findings)
+
+
+def test_lint_hoisted_paths_does_not_duplicate_hook_findings(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo / "scripts" / "hooks" / "bad.sh", "/Users/daniel/portable-break\n")
+
+    findings, exit_code = lint_hoisted_paths(repo_root=repo)
+
+    assert exit_code == 1
+    assert findings == ["scripts/hooks/bad.sh:1: hardcoded-user-home"]

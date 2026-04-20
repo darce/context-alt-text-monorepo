@@ -232,7 +232,7 @@ Reserve terminal for operations with no native-tool equivalent: test execution, 
 - Excess output → redirect to `/tmp/<name>.txt` and `read_file` (VS Code) or `sed -n` (Codex); do not re-run.
 - **Background terminals lack pyenv virtualenv activation.** Use foreground terminal for Python tests. Stale scrollback → `tee /tmp/` pattern.
 - **Use env vars**, not hardcoded paths. Prefer `${workspaceFolder}`, `${env:HOME}`, `${PYENV_ROOT:-$HOME/.pyenv}`, `${REPO_ROOT:-$PWD}`.
-- **Package-test Python harness workaround.** For `agent-orchestrator-mcp` / `agent-handoff-mcp`, do not invoke IDE Python environment setup. Pin `${env:HOME}/.pyenv/versions/description-service/bin/python`; run from foreground terminal with `PYENV_VERSION=description-service`. If IDE shows `Configuring a Python Environment`, stop and ask the user to run the terminal command.
+- **Package-test Python harness workaround.** For `agent-orchestrator-mcp` / `agent-handoff-mcp`, do not invoke IDE Python environment setup. Pin `${PYENV_ROOT:-$HOME/.pyenv}/versions/description-service/bin/python`; run from foreground terminal with `PYENV_VERSION=description-service`. If IDE shows `Configuring a Python Environment`, stop and ask the user to run the terminal command.
 
 ### Task Document Rules
 

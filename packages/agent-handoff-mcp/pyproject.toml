@@ -102,3 +102,8 @@ norecursedirs = [
     "build",
     "src/*.egg-info",
 ]
+
+[tool.hoisted]
+repository = "darce/mcp-agent-handoff"
+install_url = "git+ssh://git@github.com/darce/mcp-agent-handoff.git@v{version}"
+changelog = "CHANGELOG.md"

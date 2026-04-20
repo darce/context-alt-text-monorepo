@@ -9,7 +9,7 @@ MCP server for orchestration, lane management, worker daemons, review dispatch, 
 From the package root:
 
 ```bash
-python -m pip install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-handoff.git"
+python -m pip install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.1.0"
 python -m pip install -e ".[dev]"
 ```
 

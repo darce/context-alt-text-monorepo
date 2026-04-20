@@ -10,6 +10,10 @@ _VALID_TOOL_PROFILES = ("all",)
 _GIT_SUBPROCESS_TIMEOUT_SECONDS = 5
 
 
+class ConsumerRootResolutionError(RuntimeError):
+    """Raised when packaged consumer startup cannot infer a git-backed root."""
+
+
 def _resolve_primary_worktree_root(start_dir: Path) -> Path | None:
     """Resolve the primary git worktree root from a starting directory.
 
@@ -187,12 +191,33 @@ class RuntimeConfig:
         if not workspace_root:
             raise RuntimeError("AGENT_HANDOFF_WORKSPACE_ROOT must be set or passed via --workspace-root")
 
+        state_dir = getattr(args, "state_dir", None) or os.environ.get("AGENT_HANDOFF_STATE_DIR")
+        current_task_path = getattr(args, "current_task_path", None) or os.environ.get("AGENT_HANDOFF_CURRENT_TASK_PATH")
+        dashboard_path = getattr(args, "dashboard_path", None) or os.environ.get("AGENT_HANDOFF_DASHBOARD_PATH")
+        exports_dir = getattr(args, "exports_dir", None) or os.environ.get("AGENT_HANDOFF_EXPORTS_DIR")
+        start = Path(workspace_root).expanduser().resolve()
+
+        if (
+            _resolve_primary_worktree_root(start) is None
+            and state_dir is None
+            and current_task_path is None
+            and dashboard_path is None
+            and exports_dir is None
+        ):
+            raise ConsumerRootResolutionError(
+                "agent-handoff-mcp could not resolve <consumer-root> "
+                f"- caller cwd {start} is not inside a git repository. "
+                "Set AGENT_HANDOFF_WORKSPACE_ROOT and, if needed, "
+                "AGENT_HANDOFF_STATE_DIR / AGENT_HANDOFF_DASHBOARD_PATH / "
+                "AGENT_HANDOFF_CURRENT_TASK_PATH explicitly, or call "
+                "RuntimeConfig.for_workspace(...) for a non-git fixture."
+            )
+
         return cls.for_repo(
             workspace_root,
-            state_dir=getattr(args, "state_dir", None) or os.environ.get("AGENT_HANDOFF_STATE_DIR"),
-            current_task_path=getattr(args, "current_task_path", None)
-            or os.environ.get("AGENT_HANDOFF_CURRENT_TASK_PATH"),
-            dashboard_path=getattr(args, "dashboard_path", None) or os.environ.get("AGENT_HANDOFF_DASHBOARD_PATH"),
-            exports_dir=getattr(args, "exports_dir", None) or os.environ.get("AGENT_HANDOFF_EXPORTS_DIR"),
+            state_dir=state_dir,
+            current_task_path=current_task_path,
+            dashboard_path=dashboard_path,
+            exports_dir=exports_dir,
             tool_profile=getattr(args, "tool_profile", None) or os.environ.get("AGENT_HANDOFF_TOOL_PROFILE"),
         )

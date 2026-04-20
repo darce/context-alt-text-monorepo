@@ -48,7 +48,7 @@ from .api import (
     update_task_status,
     working_tree_integrity_check,
 )
-from .config import RuntimeConfig
+from .config import ConsumerRootResolutionError, RuntimeConfig
 from .core import PromptMetrics, ResolvedWriteContext, ReviewFindingDetails, TokenUsage, WriteActor
 from .dashboard_rendering import (
     DashboardContext,
@@ -76,6 +76,7 @@ __all__ = [
     "DashboardExtension",
     "DashboardSection",
     "BranchMismatchError",
+    "ConsumerRootResolutionError",
     "UnresolvedTaskContextError",
     "PromptMetrics",
     "ResolvedWriteContext",

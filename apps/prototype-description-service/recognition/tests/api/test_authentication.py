@@ -67,7 +67,7 @@ def test_token_tenant_mismatch_returns_403(monkeypatch) -> None:
 
     async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
         assert api_key == "good-key"
-        return token_tenant, "api-key-id", "free", False
+        return token_tenant, "api-key-id", "STANDARD", False
 
     from recognition.interface_adapters.http.deps import auth
 
@@ -86,7 +86,7 @@ def test_valid_api_key_allows_request(monkeypatch) -> None:
 
     async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
         assert api_key == "good-key"
-        return tenant_id, "api-key-id", "free", False
+        return tenant_id, "api-key-id", "STANDARD", False
 
     # Patch in the auth module where it's actually used
     from recognition.interface_adapters.http.deps import auth
@@ -109,7 +109,7 @@ def test_valid_x_api_key_header_allows_request_with_default_settings(monkeypatch
 
     async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
         assert api_key == "good-key"
-        return tenant_id, "api-key-id", "free", False
+        return tenant_id, "api-key-id", "STANDARD", False
 
     from recognition.interface_adapters.http.deps import auth
 
@@ -132,7 +132,7 @@ def test_valid_x_api_key_header_allows_request_when_configured(monkeypatch) -> N
 
     async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
         assert api_key == "good-key"
-        return tenant_id, "api-key-id", "free", False
+        return tenant_id, "api-key-id", "STANDARD", False
 
     from recognition.interface_adapters.http.deps import auth
 
@@ -201,7 +201,7 @@ async def test_lookup_api_key_is_pure_query_and_uses_nested_transaction() -> Non
     tenant_id = uuid.uuid4()
     api_key_id = uuid.uuid4()
     session.queue_execute_result(
-        scalar_one_or_none=SimpleNamespace(id=api_key_id, tenant_id=tenant_id, rate_limit_tier="free")
+        scalar_one_or_none=SimpleNamespace(id=api_key_id, tenant_id=tenant_id, rate_limit_tier="STANDARD")
     )
 
     result = await auth._lookup_api_key(
@@ -210,7 +210,7 @@ async def test_lookup_api_key_is_pure_query_and_uses_nested_transaction() -> Non
         session,
     )
 
-    assert result == (str(tenant_id), str(api_key_id), "free", False)
+    assert result == (str(tenant_id), str(api_key_id), "STANDARD", False)
     assert session.begin_nested_calls == 1
     assert session.nested_rollback_calls == 0
     assert session.flush_calls == 0
@@ -243,7 +243,7 @@ def test_valid_api_key_enqueues_background_telemetry(monkeypatch) -> None:
 
     async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
         assert api_key == "good-key"
-        return tenant_id, str(uuid.uuid4()), "free", False
+        return tenant_id, str(uuid.uuid4()), "STANDARD", False
 
     monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
     monkeypatch.setattr(auth, "async_session_factory", lambda: telemetry_session)
@@ -267,7 +267,7 @@ def test_valid_api_key_survives_background_telemetry_failure(monkeypatch) -> Non
 
     async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
         assert api_key == "good-key"
-        return tenant_id, str(uuid.uuid4()), "free", False
+        return tenant_id, str(uuid.uuid4()), "STANDARD", False
 
     monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
     monkeypatch.setattr(auth, "async_session_factory", lambda: telemetry_session)
@@ -289,7 +289,7 @@ async def test_require_auth_direct_call_allows_missing_background_tasks(monkeypa
 
     async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
         assert api_key == "good-key"
-        return tenant_id, "api-key-id", "free", False
+        return tenant_id, "api-key-id", "STANDARD", False
 
     monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
 
@@ -313,7 +313,7 @@ def test_tenant_mismatch_does_not_enqueue_background_telemetry(monkeypatch) -> N
 
     async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
         assert api_key == "good-key"
-        return token_tenant, str(uuid.uuid4()), "free", False
+        return token_tenant, str(uuid.uuid4()), "STANDARD", False
 
     monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
     monkeypatch.setattr(auth, "async_session_factory", lambda: telemetry_session)

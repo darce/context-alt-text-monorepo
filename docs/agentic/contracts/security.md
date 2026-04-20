@@ -36,6 +36,8 @@ API keys are stored in the `api_keys` database table with the following structur
 | `api_key_hash` | string   | Hash of the API key using `RECOGNITION_API_KEY_HASH_ALGORITHM` |
 | `created_at`   | datetime | Creation timestamp          |
 | `last_used_at` | datetime | Last usage timestamp        |
+| `expires_at`   | datetime | Optional expiry (UTC); NULL = never expires |
+| `revoked_at`   | datetime | Optional soft-revoke timestamp (UTC); NULL = not revoked |
 
 **Note**: Raw API keys are never stored; only their hashes are persisted.
 
@@ -187,6 +189,64 @@ Development API keys (from `RECOGNITION_ALLOWED_API_KEYS`, surfaced as `settings
 
 Structured `{error, message, path, trace_id}` payloads are used by the registered application exception handlers such as `RecognitionError`, `ClusterNotFoundError`, and duplicate-label `IntegrityError`. Generic 500 and pool exhaustion responses are intentionally opaque and omit `message`. Plain `HTTPException` responses raised directly by auth dependencies keep FastAPI's default `detail` shape instead of this envelope.
 
+## Rate Limiting
+
+Per-API-key sliding-window rate limiting is applied to every protected router after `require_auth` resolves the key identity. The limiter is implemented as a FastAPI dependency (`enforce_rate_limit` in `recognition/interface_adapters/http/deps/rate_limit.py`) rather than middleware so it can see the resolved `AuthContext.api_key_id` and `rate_limit_tier` without duplicating the DB lookup.
+
+**Tier mapping** (values are DB-stored strings; see `RateLimitTier` in `recognition/config/security.py`):
+
+| Tier         | Multiplier | Default RPM (with `RECOGNITION_RATE_LIMIT_RPM=60`) |
+| ------------ | ---------- | -------------------------------------------------- |
+| `STANDARD`   | 1x         | 60                                                 |
+| `PRO`        | 3x         | 180                                                |
+| `ENTERPRISE` | 10x        | 600                                                |
+
+Legacy DB rows with `rate_limit_tier='free'` or `NULL` reconcile to `STANDARD`.
+
+**429 response shape** (plain `HTTPException`, matching the 401/403 auth-boundary pattern — not the structured error envelope):
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: <seconds-until-window-reset>
+X-RateLimit-Limit: <requests-per-minute-for-this-key>
+X-RateLimit-Remaining: 0
+Content-Type: application/json
+
+{"detail": "rate limit exceeded"}
+```
+
+**Bypass rules** (both return immediately without counting):
+
+1. `RECOGNITION_AUTH_ENABLED=false` — auth is disabled; no key identity to rate-limit against.
+2. Dev keys from `RECOGNITION_ALLOWED_API_KEYS` — these resolve with `api_key_id=None` and `is_admin=True`; they are local-only debugging keys and must never ship to production.
+
+**Deployment constraint**: the in-memory counter is correct only under a single worker process. Multi-worker deployment requires a shared counter store (Redis/DB) and is out of scope for E15-1.
+
+**Fail-closed startup guard**: `create_app()` refuses to start with `RuntimeError` when `RECOGNITION_RUNTIME_MODE=production` and `dev_api_keys` is non-empty. In non-production runtime modes, a WARNING log is emitted instead.
+
+## CORS Origin Allowlist
+
+Cross-origin browser requests are gated by a Starlette `CORSMiddleware` registered in `api/main.py` `create_app()`. The middleware runs before route dependencies so non-allowlisted origins never reach auth/rate-limit logic with CORS response headers attached.
+
+**Secure-defaults rationale**: the WordPress plugin is a server-side PHP caller and does not require CORS. The middleware is a defensive guard for future browser-origin callers (operator admin UI, marketing demo widget) that do not yet exist. Every knob is pinned to the tightest practical value so an operator who opts a single origin in does not accidentally widen the surface:
+
+| Setting                | Pinned value                                                      |
+| ---------------------- | ----------------------------------------------------------------- |
+| `allow_origins`        | `SecuritySettings.allowed_origins` (exact match only)             |
+| `allow_credentials`    | `False` (prevents credential-bearing cross-origin leaks)          |
+| `allow_origin_regex`   | `None` (no regex; exact match only)                               |
+| `allow_methods`        | `["GET", "POST", "PATCH", "DELETE", "OPTIONS"]` (explicit list)   |
+| `allow_headers`        | `["Authorization", "X-Api-Key", "X-Tenant-ID", "Content-Type"]`   |
+| `max_age`              | `600` (10-minute preflight cache)                                 |
+
+Because `allow_credentials=False`, Starlette omits the `Access-Control-Allow-Credentials` response header entirely.
+
+**Environment variable**: `RECOGNITION_ALLOWED_ORIGINS` — comma-separated list of exact origins (scheme + host + optional port). Empty whitespace entries are stripped. Example: `https://admin.example.com,https://demo.example.com`.
+
+**Deny-all default**: if `RECOGNITION_ALLOWED_ORIGINS` is unset or empty, the allowlist is `[]` and no origin receives CORS headers. Browser cross-origin requests are effectively blocked.
+
+**Wildcard rejection**: a `*` entry in `allowed_origins` raises `ValidationError` at `SecuritySettings` construction, refusing to start the app. Wildcards defeat the allowlist's purpose and would silently combine with any future `allow_credentials` change to enable credential leaks.
+
 ## WordPress Plugin Integration
 
 The WordPress plugin should:
@@ -212,3 +272,87 @@ $response = wp_remote_post($api_url . '/analyze', [
 ]);
 ```
 
+
+## Key Lifecycle (E15-1 Slice 3)
+
+Keys support no-downtime rotation, explicit expiry, and soft-revocation. All
+lifecycle writes go through `SqlAlchemyApiKeyRepository`; the CLI never issues
+raw SQL.
+
+- **`create(tenant_id, hashed_key, rate_limit_tier, expires_at=None)`**: inserts
+  a new active key. `expires_at` is optional.
+- **`get_by_hash(hashed)`**: returns the active row; filters out
+  `revoked_at IS NOT NULL` and `expires_at <= now()` (UTC).
+- **`classify_by_hash(hashed)`**: returns `"active" | "expired" | "revoked" |
+  "unknown"` so the auth boundary can emit a descriptive 401 (`api key expired`,
+  `api key revoked`) instead of a generic 403.
+- **`list_for_tenant(tenant_id, include_revoked=False)`**: operator listing.
+- **`revoke(api_key_id)`**: soft-revoke; sets `revoked_at` to now (UTC). The
+  row is preserved for audit.
+- **Expiry is evaluated only at the `require_auth` boundary.** A request that
+  passes auth at time T completes normally even if the key expires during the
+  request. In-flight requests are never interrupted.
+
+## Auth Audit Logging (E15-1 Slice 3)
+
+Logger name: **`recognition.auth_audit`**. Every terminal auth decision emits
+exactly one structured INFO record via `recognition.observability.auth_audit.emit_auth_event`.
+
+**Outcomes**: `success`, `invalid_key`, `expired`, `revoked`, `tenant_mismatch`,
+`rate_limit`.
+
+**Record structure** (via `logging` `extra=...`):
+
+- `outcome`: one of the strings above.
+- `api_key_id`: UUID string when the key resolves to a DB row; else `None`.
+- `fingerprint`: first 12 characters of the stored hash. Never the raw key.
+- `tenant_claim`: the claim resolved from the key (success) or the client-
+  supplied `X-Tenant-ID` on failure paths.
+- `trace_id`: request trace id when available.
+
+**Raw key never-logged rule**: emitters accept only the stored hash. Raw API
+keys MUST NOT be passed to this emitter, captured in exception messages, or
+printed outside the single stdout line written by `manage_api_keys.py create`.
+
+## Operator CLI: Key Rotation Ceremony
+
+Beta-tester key provisioning happens via `scripts/manage_api_keys.py`, run
+by an operator with direct DB access. An HTTP admin surface is explicitly
+**deferred** until a production admin authority is designed (the current
+`AuthContext.is_admin` flag only resolves for dev keys and cannot gate a
+production admin surface). The CLI delegates to `SqlAlchemyApiKeyRepository`
+and never issues raw SQL.
+
+**Commands**:
+
+- `create --tenant <uuid> [--expires-in <days>] [--tier STANDARD|PRO|ENTERPRISE]`
+  generates a 32-byte URL-safe secret, hashes it with
+  `RECOGNITION_API_KEY_HASH_ALGORITHM`, inserts a row, prints the raw key on
+  stdout (single line) and `key_id=<uuid>` on stderr.
+- `list --tenant <uuid> [--include-revoked]` prints tab-separated rows
+  `id, last4_of_hash, created_at, last_used_at, expires_at, revoked_at`.
+  Full stored hashes are never printed.
+- `revoke --key-id <uuid>` sets `revoked_at=now()` and writes
+  `revoked key_id=<uuid> revoked_at=<iso>` to stderr.
+
+**Rotation runbook**:
+
+1. Operator runs `manage_api_keys.py create --tenant <id>` and captures the
+   raw key from stdout.
+2. If the raw key is lost before it can be shared, revoke the new key and
+   restart the ceremony. Hash-only storage means the raw value is
+   unrecoverable — by design.
+3. Operator shares the raw key with the tester via an operator-approved
+   secure channel (e.g. 1Password shared vault, Signal). Plaintext email
+   and Slack DMs are disallowed.
+4. Tester configures the new key in the plugin Settings page.
+5. Before revoking the old key, operator runs
+   `manage_api_keys.py list --tenant <id>` and confirms the new key's
+   `last_used_at` is non-null and more recent than the old key's — the
+   signal that cutover succeeded.
+6. Operator runs `manage_api_keys.py revoke --key-id <old-key-id>` to
+   soft-revoke the old key.
+
+**HTTP admin surface: deferred.** No admin router ships with E15-1. A real
+production admin authority is required first; until then, provisioning is
+operator-only via this CLI.

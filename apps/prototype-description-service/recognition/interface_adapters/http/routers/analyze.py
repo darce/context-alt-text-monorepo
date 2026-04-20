@@ -39,6 +39,7 @@ from recognition.interface_adapters.http.dependencies import (
     require_auth,
     require_write_access,
 )
+from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.interface_adapters.http.job_utils import job_to_response as _job_to_response
 from recognition.interface_adapters.http.schemas.requests import (
     AcknowledgeProjectionRequest,
@@ -54,7 +55,7 @@ from recognition.shared.db.dialect import is_postgres
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["analyze"], dependencies=[Depends(require_auth)])
+router = APIRouter(tags=["analyze"], dependencies=[Depends(require_auth), Depends(enforce_rate_limit)])
 
 
 async def _resolve_pipeline_job(

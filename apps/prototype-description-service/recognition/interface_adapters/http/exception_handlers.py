@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import uuid
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
@@ -12,12 +11,24 @@ from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
 from db.session import get_pool_stats
 from recognition.domain.repositories import ClusterNotFoundError
+from recognition.interface_adapters.http.middleware.correlation import (
+    CORRELATION_ID_HEADER,
+    generate_correlation_id,
+    get_correlation_id,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def _trace_id_for(request: Request) -> str:
-    return request.headers.get("X-Request-ID") or f"req-{uuid.uuid4()}"
+def _correlation_id_for(request: Request) -> str:
+    """Return the active correlation id, falling back to request header or a new id.
+
+    The CorrelationIdMiddleware is registered app-wide, so ``get_correlation_id``
+    almost always returns the value already echoed in the response header. The
+    remaining fallbacks exist for handlers that run before the middleware has
+    had a chance to bind the contextvar (e.g. routing failures in tests).
+    """
+    return get_correlation_id() or request.headers.get(CORRELATION_ID_HEADER) or generate_correlation_id()
 
 
 def _opaque_error_response(
@@ -32,7 +43,7 @@ def _opaque_error_response(
         content={
             "error": error,
             "path": str(request.url),
-            "trace_id": _trace_id_for(request),
+            "correlation_id": _correlation_id_for(request),
         },
         headers=headers,
     )
@@ -59,32 +70,32 @@ class ValidationError(RecognitionError):
 
 async def recognition_exception_handler(request: Request, exc: RecognitionError) -> JSONResponse:
     """Handle known recognition errors with a structured payload."""
-    trace_id = _trace_id_for(request)
+    correlation_id = _correlation_id_for(request)
     return JSONResponse(
         status_code=exc.status_code,
         content={
             "error": exc.__class__.__name__,
             "message": exc.message,
             "path": str(request.url),
-            "trace_id": trace_id,
+            "correlation_id": correlation_id,
         },
     )
 
 
 async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Handle unexpected errors with a 500 response."""
-    trace_id = _trace_id_for(request)
-    logger.exception("Unhandled exception", extra={"trace_id": trace_id, "path": str(request.url)})
+    correlation_id = _correlation_id_for(request)
+    logger.exception("Unhandled exception", extra={"correlation_id": correlation_id, "path": str(request.url)})
     return _opaque_error_response(request=request, status_code=500, error="internal_server_error")
 
 
 async def pool_exhaustion_handler(request: Request, exc: PoolTimeoutError) -> JSONResponse:
     """Map SQLAlchemy pool checkout failures to a retryable 503."""
-    trace_id = _trace_id_for(request)
+    correlation_id = _correlation_id_for(request)
     logger.exception(
         "Database pool exhausted",
         extra={
-            "trace_id": trace_id,
+            "correlation_id": correlation_id,
             "path": str(request.url),
             "pool_stats": get_pool_stats(),
         },
@@ -99,14 +110,14 @@ async def pool_exhaustion_handler(request: Request, exc: PoolTimeoutError) -> JS
 
 async def cluster_not_found_exception_handler(request: Request, exc: ClusterNotFoundError) -> JSONResponse:
     """Translate domain cluster-not-found errors to HTTP 404."""
-    trace_id = _trace_id_for(request)
+    correlation_id = _correlation_id_for(request)
     return JSONResponse(
         status_code=status.HTTP_404_NOT_FOUND,
         content={
             "error": "ClusterNotFoundError",
             "message": str(exc),
             "path": str(request.url),
-            "trace_id": trace_id,
+            "correlation_id": correlation_id,
         },
     )
 
@@ -122,7 +133,7 @@ def _is_duplicate_cluster_label(exc: IntegrityError) -> bool:
 
 async def integrity_exception_handler(request: Request, exc: IntegrityError) -> JSONResponse:
     """Translate common DB constraint violations into friendlier HTTP errors."""
-    trace_id = _trace_id_for(request)
+    correlation_id = _correlation_id_for(request)
 
     if _is_duplicate_cluster_label(exc):
         return JSONResponse(
@@ -131,11 +142,11 @@ async def integrity_exception_handler(request: Request, exc: IntegrityError) -> 
                 "error": "DuplicateClusterLabel",
                 "message": "Cluster label already exists for this tenant.",
                 "path": str(request.url),
-                "trace_id": trace_id,
+                "correlation_id": correlation_id,
             },
         )
 
-    logger.exception("Unhandled integrity error", extra={"trace_id": trace_id, "path": str(request.url)})
+    logger.exception("Unhandled integrity error", extra={"correlation_id": correlation_id, "path": str(request.url)})
     return _opaque_error_response(
         request=request, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, error="integrity_error"
     )

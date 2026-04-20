@@ -70,7 +70,7 @@ def test_unhandled_exceptions_return_structured_error(monkeypatch) -> None:
     body = resp.json()
     assert body["error"] == "internal_server_error"
     assert body["path"] == "http://testserver/recognition/jobs/job-xyz"
-    assert "trace_id" in body
+    assert "correlation_id" in body
     assert "message" not in body
 
 
@@ -103,7 +103,7 @@ def test_pool_exhaustion_returns_retryable_503() -> None:
     body = resp.json()
     assert body["error"] == "database_unavailable"
     assert body["path"] == "http://testserver/recognition/jobs/job-xyz"
-    assert "trace_id" in body
+    assert "correlation_id" in body
     assert "message" not in body
 
 
@@ -135,5 +135,5 @@ def test_integrity_fallback_hides_raw_error_details() -> None:
     body = resp.json()
     assert body["error"] == "integrity_error"
     assert body["path"] == "http://testserver/recognition/jobs/job-xyz"
-    assert "trace_id" in body
+    assert "correlation_id" in body
     assert "message" not in body

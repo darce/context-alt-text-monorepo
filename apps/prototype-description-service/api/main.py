@@ -16,18 +16,22 @@ from recognition.application.health import (
     check_database,
     check_model_cache,
 )
-from recognition.interface_adapters.http.deps.auth import require_auth
 from recognition.config.cache import configure_dev_cache
 from recognition.config.security import get_security_settings, validate_production_security
 from recognition.config.settings import RecognitionSettings
 from recognition.interface_adapters.http import dependencies as http_deps
 from recognition.interface_adapters.http import router as recognition_router
+from recognition.interface_adapters.http.deps.auth import require_auth
 from recognition.interface_adapters.http.deps.circuit_breaker import (
     get_or_create_session_dependency_circuit_breaker,
     initialize_session_dependency_circuit_breaker,
 )
 from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
 from recognition.interface_adapters.http.middleware.correlation import CorrelationIdMiddleware
+from recognition.interface_adapters.http.middleware.metrics import (
+    MetricsMiddleware,
+    get_default_metrics,
+)
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
 from shared.health import HealthStatus
 
@@ -123,6 +127,7 @@ def create_app() -> FastAPI:
         max_age=600,
     )
     app.add_middleware(CorrelationIdMiddleware)
+    app.add_middleware(MetricsMiddleware)
 
     initialize_session_dependency_circuit_breaker(app)
 
@@ -131,8 +136,28 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
 
     register_health_probes(app)
+    register_metrics_route(app)
 
     return app
+
+
+def register_metrics_route(app: FastAPI) -> None:
+    """Attach auth-gated /metrics route that exposes Prometheus exposition.
+
+    Registered as a FastAPI route (not a Starlette ASGI sub-mount) so the
+    require_auth dependency runs; mounting make_asgi_app() would bypass
+    FastAPI deps and leave /metrics unauthenticated (PA-05, PR-02).
+    """
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+    metrics = get_default_metrics()
+
+    @app.get("/metrics", summary="Prometheus metrics (PA-05 / Slice 3a)")
+    def metrics_endpoint(_: object = Depends(require_auth)) -> Response:
+        return Response(
+            content=generate_latest(metrics.registry),
+            media_type=CONTENT_TYPE_LATEST,
+        )
 
 
 def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None) -> None:

@@ -419,3 +419,37 @@ def test_load_contract_uses_overlay_manifest_with_top_level_replace_semantics(tm
 
     assert contract["branch_isolation"]["protected_branches"] == ["release"]
     assert contract["cold_start"] == _valid_contract()["cold_start"]
+
+
+def test_branch_isolation_allows_permitted_surface_when_unrelated_protected_paths_are_dirty(tmp_path: Path) -> None:
+    repo = _write_repo(tmp_path)
+    contract = _valid_contract()
+    tmpdir, fixture_repo = _build_guard_fixture(contract, repo_root=repo)
+    try:
+        env = _fixture_env(fixture_repo)
+        vscode_path, claude_path = _main_guard_paths(contract)
+        vscode_guard = fixture_repo / vscode_path
+        claude_guard = fixture_repo / claude_path
+        allowed_path = fixture_repo / "CLAUDE.md"
+
+        dirty_code_path = fixture_repo / "apps" / "fixture.py"
+        dirty_code_path.parent.mkdir(parents=True, exist_ok=True)
+        dirty_code_path.write_text("print('dirty main')\n", encoding="utf-8")
+
+        _, output, _ = _run_python_hook(
+            vscode_guard,
+            {"toolName": "create_file", "toolInput": {"filePath": str(allowed_path)}},
+            cwd=fixture_repo,
+            env=env,
+        )
+        assert output is None
+
+        shell_code, _, _ = _run_shell_hook(
+            claude_guard,
+            {"tool_input": {"file_path": str(allowed_path)}},
+            cwd=fixture_repo,
+            env=env,
+        )
+        assert shell_code == 0
+    finally:
+        tmpdir.cleanup()

@@ -14,12 +14,14 @@ if str(HELPER_DIR) not in sys.path:
 
 from _harness_protocol import (  # noqa: E402
     HarnessContractMissingError,
+    find_permitted_main_surface,
     load_branch_isolation_policy,
 )
 from _branch_isolation_guard import (  # noqa: E402
     check_file_edit as _check_file_edit,
     extract_candidate_paths as _extract_candidate_paths,
     find_dirty_protected_paths as _check_dirty_protected_paths,
+    to_repo_relative as _to_repo_relative,
 )
 
 
@@ -81,6 +83,19 @@ def _build_dirty_reason(branch: str, dirty_paths: list[str]) -> str:
         "  3. return to main only after the protected paths are clean again\n\n"
         "See: docs/agentic/rules/development-workflow.md#branch-isolation-protocol-mandatory"
     )
+
+
+def _permitted_candidate_paths(tool_name: str, tool_input: dict, repo_root: str, policy) -> list[str]:
+    candidate_paths = [
+        _to_repo_relative(raw_path, repo_root)
+        for raw_path in _extract_candidate_paths(tool_name, tool_input)
+    ]
+    normalized = [path for path in candidate_paths if path]
+    if not normalized:
+        return []
+    if not all(find_permitted_main_surface(path, policy) is not None for path in normalized):
+        return []
+    return normalized
 
 
 def _log_telemetry(tool_name: str, blocked_paths: list[str], branch: str, *, outcome: str) -> None:
@@ -164,6 +179,10 @@ def main() -> None:
         sys.exit(0)
 
     resolved_branch, dirty_paths = dirty_result
+    candidate_paths = _permitted_candidate_paths(tool_name, tool_input, repo_root, policy)
+    if candidate_paths and not any(path in set(dirty_paths) for path in candidate_paths):
+        sys.exit(0)
+
     _log_telemetry(tool_name, dirty_paths, resolved_branch, outcome="dirty_protected_main_paths")
     print(
         json.dumps(

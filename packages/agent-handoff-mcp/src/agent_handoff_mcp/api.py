@@ -97,6 +97,34 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
 }
 
 
+def _build_doctor_cli_env(module_file: str | Path, env: dict[str, str] | None = None) -> dict[str, str]:
+    cli_env = dict(os.environ if env is None else env)
+    pythonpath_parts: list[str] = []
+
+    resolved_module_file = Path(module_file).resolve()
+    for ancestor in resolved_module_file.parents:
+        packages_dir = ancestor / "packages"
+        handoff_src = packages_dir / "agent-handoff-mcp" / "src"
+        if not handoff_src.is_dir():
+            continue
+        pythonpath_parts.append(str(handoff_src))
+        bridge_src = packages_dir / "codex-subagent-bridge" / "src"
+        if bridge_src.is_dir():
+            pythonpath_parts.append(str(bridge_src))
+        break
+
+    existing_pythonpath = cli_env.get("PYTHONPATH")
+    if existing_pythonpath:
+        pythonpath_parts.append(existing_pythonpath)
+
+    if pythonpath_parts:
+        cli_env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
+    else:
+        cli_env.pop("PYTHONPATH", None)
+
+    return cli_env
+
+
 class WriteActorInput(BaseModel):
     agent: Annotated[
         str | None,
@@ -2030,16 +2058,7 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
     launcher = package_src / "agent_handoff_mcp_launcher.py"
     stdio_tools: list[str] = []
     with tempfile.TemporaryDirectory() as temp_dir:
-        _package_root = Path(__file__).resolve().parents[4]
-        _pythonpath_parts = [
-            str(_package_root / "packages" / "agent-handoff-mcp" / "src"),
-            str(_package_root / "packages" / "codex-subagent-bridge" / "src"),
-        ]
-        _existing_pp = os.environ.get("PYTHONPATH")
-        if _existing_pp:
-            _pythonpath_parts.append(_existing_pp)
-        cli_env = dict(**os.environ)
-        cli_env["PYTHONPATH"] = ":".join(p for p in _pythonpath_parts if p)
+        cli_env = _build_doctor_cli_env(__file__)
 
         def _run_cli_probe() -> None:
             cli_probe = subprocess.run(

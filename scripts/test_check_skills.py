@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import shutil
 from pathlib import Path
 
 from scripts.check_skills import check_skills
@@ -82,6 +85,20 @@ def _make_repo(tmp_path: Path, skill_content: str) -> Path:
     return repo
 
 
+def _write_overlay_manifest(repo: Path) -> None:
+    manifest = {
+        "schema_version": 1,
+        "remote_clone_path": str(repo / ".agentic" / "remote"),
+        "surfaces": {
+            "skills": {
+                "shared_root": ".claude/skills",
+                "local_root": "local/.claude/skills",
+            }
+        },
+    }
+    _write(repo / ".agentic-overlay.json", json.dumps(manifest, indent=2) + "\n")
+
+
 def test_missing_frontmatter_fails_with_named_error(tmp_path: Path) -> None:
     repo = _make_repo(tmp_path, "# Demo\n")
     failures, exit_code = check_skills(repo_root=repo)
@@ -101,3 +118,61 @@ def test_missing_required_section_fails_with_named_error(tmp_path: Path) -> None
     failures, exit_code = check_skills(repo_root=repo)
     assert exit_code == 1
     assert any("missing required section `## Goal`" in failure for failure in failures)
+
+
+def test_local_only_skill_is_validated_when_overlay_manifest_exists(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path, _valid_skill())
+    (repo / ".claude" / "skills" / "demo").rename(repo / ".claude" / "skills" / "demo.shared")
+    _write(repo / "local" / ".claude" / "skills" / "demo" / "SKILL.md", _valid_skill())
+    _write_overlay_manifest(repo)
+
+    failures, exit_code = check_skills(repo_root=repo)
+
+    assert exit_code == 0
+    assert failures == []
+
+
+def test_local_skill_wins_when_shared_skill_is_invalid(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path, "# broken shared skill\n")
+    _write(repo / "local" / ".claude" / "skills" / "demo" / "SKILL.md", _valid_skill())
+    _write_overlay_manifest(repo)
+
+    failures, exit_code = check_skills(repo_root=repo)
+
+    assert exit_code == 0
+    assert failures == []
+
+
+def test_broken_shared_skill_symlink_reports_overlay_error(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path, _valid_skill())
+    broken_target = repo / ".agentic" / "remote" / ".claude" / "skills" / "demo"
+    skill_dir = repo / ".claude" / "skills" / "demo"
+    shutil.rmtree(skill_dir)
+    skill_dir.symlink_to(broken_target)
+    _write_overlay_manifest(repo)
+
+    failures, exit_code = check_skills(repo_root=repo)
+
+    assert exit_code == 1
+    assert any("BrokenOverlayError" in failure for failure in failures)
+    assert any("agentic-bootstrap repair" in failure for failure in failures)
+
+
+def test_main_reports_overlay_resolved_skill_count(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path, _valid_skill())
+    _write(repo / ".claude" / "skills" / "shared-only" / "SKILL.md", _valid_skill().replace("name: demo", "name: shared-only"))
+    _write(repo / "local" / ".claude" / "skills" / "local-only" / "SKILL.md", _valid_skill().replace("name: demo", "name: local-only"))
+    _write(repo / "local" / ".claude" / "skills" / "demo" / "SKILL.md", _valid_skill())
+    _write_overlay_manifest(repo)
+    script_path = Path(__file__).with_name("check_skills.py")
+
+    result = subprocess.run(
+        ["python3", str(script_path)],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "check-skills: OK (3 skills)"

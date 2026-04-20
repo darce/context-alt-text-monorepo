@@ -33,10 +33,11 @@ def test_runtime_config_rejects_legacy_core_tool_profile() -> None:
 
 def test_runtime_config_from_args_rejects_legacy_tool_profile_env() -> None:
     root = Path("/tmp/agent-handoff").resolve()
+    explicit_state = root / ".task-state"
 
     class FakeArgs:
         workspace_root = str(root)
-        state_dir = None
+        state_dir = str(explicit_state)
         current_task_path = None
         exports_dir = None
         tool_profile = None
@@ -48,10 +49,11 @@ def test_runtime_config_from_args_rejects_legacy_tool_profile_env() -> None:
 
 def test_runtime_config_from_args_defaults_to_all() -> None:
     root = Path("/tmp/agent-handoff").resolve()
+    explicit_state = root / ".task-state"
 
     class FakeArgs:
         workspace_root = str(root)
-        state_dir = None
+        state_dir = str(explicit_state)
         current_task_path = None
         exports_dir = None
         tool_profile = None
@@ -64,10 +66,11 @@ def test_runtime_config_from_args_defaults_to_all() -> None:
 
 def test_runtime_config_from_args_rejects_legacy_cli_tool_profile() -> None:
     root = Path("/tmp/agent-handoff").resolve()
+    explicit_state = root / ".task-state"
 
     class FakeArgs:
         workspace_root = str(root)
-        state_dir = None
+        state_dir = str(explicit_state)
         current_task_path = None
         exports_dir = None
         tool_profile = "extended"
@@ -107,6 +110,24 @@ def git_repo_with_linked_worktree(tmp_path: Path) -> tuple[Path, Path]:
     return primary, linked
 
 
+@pytest.fixture
+def git_repo_with_two_linked_worktrees(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """Create a primary git repo plus two linked worktrees under tmp_path."""
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    _run_git(primary, "init", "-q", "-b", "main")
+    _run_git(primary, "config", "user.email", "test@example.com")
+    _run_git(primary, "config", "user.name", "Test User")
+    _run_git(primary, "commit", "--allow-empty", "-m", "init", "-q")
+    linked_one = tmp_path / "primary-feature-one"
+    linked_two = tmp_path / "primary-feature-two"
+    _run_git(primary, "branch", "feature/one")
+    _run_git(primary, "branch", "feature/two")
+    _run_git(primary, "worktree", "add", "-q", str(linked_one), "feature/one")
+    _run_git(primary, "worktree", "add", "-q", str(linked_two), "feature/two")
+    return primary, linked_one, linked_two
+
+
 def test_for_repo_resolves_primary_root_from_primary_worktree(
     git_repo_with_linked_worktree: tuple[Path, Path],
 ) -> None:
@@ -138,6 +159,55 @@ def test_for_repo_falls_back_to_start_dir_outside_git(tmp_path: Path) -> None:
     not_a_repo.mkdir()
     runtime = RuntimeConfig.for_repo(not_a_repo)
     assert runtime.workspace_root == not_a_repo.resolve()
+
+
+def test_from_args_rejects_non_git_workspace_root_without_explicit_path_overrides(tmp_path: Path) -> None:
+    """Packaged-consumer startup must fail fast outside git repos unless the
+    caller explicitly anchors the runtime paths."""
+    not_a_repo = tmp_path / "scratch"
+    not_a_repo.mkdir()
+
+    class FakeArgs:
+        workspace_root = str(not_a_repo)
+        state_dir = None
+        current_task_path = None
+        dashboard_path = None
+        exports_dir = None
+        tool_profile = None
+
+    with mock.patch.dict(os.environ, {}, clear=True):
+        with pytest.raises(RuntimeError, match="could not resolve <consumer-root>") as excinfo:
+            RuntimeConfig.from_args(FakeArgs())
+
+    assert excinfo.type.__name__ == "ConsumerRootResolutionError"
+    message = str(excinfo.value)
+    assert "AGENT_HANDOFF_WORKSPACE_ROOT" in message
+    assert "AGENT_HANDOFF_STATE_DIR" in message
+    assert "AGENT_HANDOFF_DASHBOARD_PATH" in message
+    assert "AGENT_HANDOFF_CURRENT_TASK_PATH" in message
+
+
+def test_from_args_allows_non_git_workspace_root_with_explicit_state_dir(tmp_path: Path) -> None:
+    """Explicit path overrides remain the escape hatch for non-git fixtures
+    and packaged-consumer setups that do not anchor at a repo root."""
+    not_a_repo = tmp_path / "scratch"
+    not_a_repo.mkdir()
+    explicit_state = tmp_path / "explicit-state"
+
+    class FakeArgs:
+        workspace_root = str(not_a_repo)
+        state_dir = str(explicit_state)
+        current_task_path = None
+        dashboard_path = None
+        exports_dir = None
+        tool_profile = None
+
+    with mock.patch.dict(os.environ, {}, clear=True):
+        runtime = RuntimeConfig.from_args(FakeArgs())
+
+    assert runtime.workspace_root == not_a_repo.resolve()
+    assert runtime.state_dir == explicit_state.resolve()
+    assert runtime.db_path == explicit_state.resolve() / "handoff.db"
 
 
 def test_for_repo_passes_through_explicit_state_dir(
@@ -189,7 +259,66 @@ def test_from_args_collapses_linked_worktree_workspace_root_to_primary(
     )
     assert runtime.db_path == primary.resolve() / ".task-state" / "handoff.db"
     assert runtime.current_task_path == primary.resolve() / "CURRENT_TASK.json"
+    assert runtime.dashboard_path == primary.resolve() / "DASHBOARD.txt"
     assert runtime.exports_dir == primary.resolve() / ".task-state" / "exports"
+
+
+@pytest.mark.parametrize(
+    ("env_name", "attribute_name", "relative_path"),
+    [
+        ("AGENT_HANDOFF_DASHBOARD_PATH", "dashboard_path", Path("artifacts") / "custom-dashboard.txt"),
+        ("AGENT_HANDOFF_CURRENT_TASK_PATH", "current_task_path", Path("artifacts") / "custom-current-task.json"),
+        ("AGENT_HANDOFF_EXPORTS_DIR", "exports_dir", Path("artifacts") / "exports"),
+    ],
+)
+def test_from_args_honors_output_path_env_overrides(
+    git_repo_with_linked_worktree: tuple[Path, Path],
+    tmp_path: Path,
+    env_name: str,
+    attribute_name: str,
+    relative_path: Path,
+) -> None:
+    primary, linked = git_repo_with_linked_worktree
+    override_path = tmp_path / relative_path
+
+    class FakeArgs:
+        workspace_root = str(linked)
+        state_dir = None
+        current_task_path = None
+        dashboard_path = None
+        exports_dir = None
+        tool_profile = None
+
+    with mock.patch.dict(os.environ, {env_name: str(override_path)}, clear=True):
+        runtime = RuntimeConfig.from_args(FakeArgs())
+
+    assert runtime.workspace_root == primary.resolve()
+    assert getattr(runtime, attribute_name) == override_path.resolve()
+
+
+def test_for_repo_collapses_multiple_linked_worktrees_to_one_primary_root(
+    git_repo_with_two_linked_worktrees: tuple[Path, Path, Path],
+) -> None:
+    primary, linked_one, linked_two = git_repo_with_two_linked_worktrees
+
+    primary_runtime = RuntimeConfig.for_repo(primary)
+    linked_one_runtime = RuntimeConfig.for_repo(linked_one)
+    linked_two_runtime = RuntimeConfig.for_repo(linked_two)
+
+    expected_root = primary.resolve()
+    expected_state_dir = expected_root / ".task-state"
+    expected_db_path = expected_state_dir / "handoff.db"
+    expected_current_task_path = expected_root / "CURRENT_TASK.json"
+    expected_dashboard_path = expected_root / "DASHBOARD.txt"
+    expected_exports_dir = expected_state_dir / "exports"
+
+    for runtime in (primary_runtime, linked_one_runtime, linked_two_runtime):
+        assert runtime.workspace_root == expected_root
+        assert runtime.state_dir == expected_state_dir
+        assert runtime.db_path == expected_db_path
+        assert runtime.current_task_path == expected_current_task_path
+        assert runtime.dashboard_path == expected_dashboard_path
+        assert runtime.exports_dir == expected_exports_dir
 
 
 def test_from_args_preserves_explicit_state_dir_override(
@@ -221,13 +350,14 @@ def test_from_args_preserves_explicit_state_dir_override(
 
 def test_runtime_config_rejects_invalid_tool_profile() -> None:
     root = Path("/tmp/agent-handoff").resolve()
+    explicit_state = root / ".task-state"
 
     with mock.patch.dict(os.environ, {"AGENT_HANDOFF_TOOL_PROFILE": "invalid"}):
         with mock.patch.dict(os.environ, {"AGENT_HANDOFF_WORKSPACE_ROOT": str(root)}, clear=False):
 
             class FakeArgs:
                 workspace_root = str(root)
-                state_dir = None
+                state_dir = str(explicit_state)
                 current_task_path = None
                 exports_dir = None
                 tool_profile = None

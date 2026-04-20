@@ -576,6 +576,16 @@ def test_run_review_record_findings_records_ids_and_line_refs(tmp_path: Path) ->
     mock_ahm = mock.MagicMock()
     mock_ahm.RuntimeConfig.for_workspace.return_value = mock.MagicMock()
     mock_ahm.configure_runtime = mock.MagicMock()
+    mock_ahm.get_latest_slice_review_packet.return_value = json.dumps(
+        {
+            "ok": True,
+            "packet": {
+                "changed_files": ["src/main.py"],
+                "review_kind": "branch",
+                "scope_source": "slice_packet",
+            },
+        }
+    )
     mock_ahm.batch_record_review_findings.return_value = json.dumps({"ok": True, "written": 1, "results": []})
 
     raw_result = {
@@ -599,12 +609,12 @@ def test_run_review_record_findings_records_ids_and_line_refs(tmp_path: Path) ->
     mock_adapter.execute.return_value = mock_result
 
     with (
-        mock.patch.object(module, "_changed_files", return_value=["src/main.py"]),
+        mock.patch.object(module, "_changed_files", return_value=["dirty/local.py"]),
         mock.patch.object(module, "_diff_stat", return_value="1 file changed"),
         mock.patch.object(module, "_detect_stack_guides", return_value=["branch-review-python.md"]),
         mock.patch.object(module, "get_adapter", return_value=mock_adapter),
         mock.patch.object(module, "get_lane_config", return_value={}),
-        mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}),
+        mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "agent_orchestrator_mcp.lanes": mock_ahm}),
     ):
         result = module.run_review(
             worktree_path=tmp_path,
@@ -612,6 +622,7 @@ def test_run_review_record_findings_records_ids_and_line_refs(tmp_path: Path) ->
             task_ref="daemon-1-review-runner",
             session="record-review-test",
             orchestrator_root=tmp_path,
+            use_latest_slice=True,
             record_findings=True,
         )
 
@@ -621,3 +632,83 @@ def test_run_review_record_findings_records_ids_and_line_refs(tmp_path: Path) ->
     assert kwargs["findings"][0]["details"]["line_start"] == 10
     assert kwargs["findings"][0]["details"]["line_end"] == 12
     assert kwargs["findings"][0]["details"]["fix"] == "Validate the payload before use."
+
+
+def test_run_review_rejects_record_findings_for_dirty_branch_diff_scope(tmp_path: Path) -> None:
+    module = _load_review_runner_module()
+    import pytest
+    import unittest.mock as mock
+
+    with (
+        mock.patch.object(module, "_changed_files", return_value=["src/main.py"]),
+        mock.patch.object(module, "_diff_stat", return_value="1 file changed"),
+        mock.patch.object(module, "_detect_stack_guides", return_value=["branch-review-python.md"]),
+        mock.patch.object(module, "get_lane_config", return_value={}),
+    ):
+        with pytest.raises(RuntimeError, match="refuses to record findings for branch_diff scope"):
+            module.run_review(
+                worktree_path=tmp_path,
+                task_ref="daemon-1-review-runner",
+                session="record-review-test",
+                orchestrator_root=tmp_path,
+                record_findings=True,
+                dry_run=True,
+            )
+
+
+def test_run_review_allows_record_findings_for_latest_slice_scope(tmp_path: Path) -> None:
+    module = _load_review_runner_module()
+    import unittest.mock as mock
+
+    mock_ahm = mock.MagicMock()
+    mock_ahm.RuntimeConfig.for_workspace.return_value = mock.MagicMock()
+    mock_ahm.configure_runtime = mock.MagicMock()
+    mock_ahm.get_latest_slice_review_packet.return_value = json.dumps(
+        {
+            "ok": True,
+            "packet": {
+                "changed_files": ["src/main.py"],
+                "review_kind": "branch",
+                "scope_source": "slice_packet",
+            },
+        }
+    )
+    mock_ahm.batch_record_review_findings.return_value = json.dumps({"ok": True, "written": 1, "results": []})
+
+    raw_result = {
+        "findings": [
+            {
+                "severity": "low",
+                "category": "GAP",
+                "file_path": "src/main.py",
+                "description": "Missing follow-up assertion.",
+                "line_start": 10,
+                "line_end": 10,
+                "fix": "Add the assertion.",
+            }
+        ],
+        "summary": "One low finding.",
+    }
+    mock_result = mock.Mock()
+    mock_result.raw_payload = raw_result
+    mock_adapter = mock.Mock()
+    mock_adapter.execute.return_value = mock_result
+
+    with (
+        mock.patch.object(module, "_changed_files", return_value=["dirty/local.py"]),
+        mock.patch.object(module, "_diff_stat", return_value="1 file changed"),
+        mock.patch.object(module, "_detect_stack_guides", return_value=["branch-review-python.md"]),
+        mock.patch.object(module, "get_adapter", return_value=mock_adapter),
+        mock.patch.object(module, "get_lane_config", return_value={}),
+        mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "agent_orchestrator_mcp.lanes": mock_ahm}),
+    ):
+        result = module.run_review(
+            worktree_path=tmp_path,
+            task_ref="daemon-1-review-runner",
+            session="record-review-test",
+            orchestrator_root=tmp_path,
+            use_latest_slice=True,
+            record_findings=True,
+        )
+
+    assert result["recorded_finding_ids"] == ["REVIEW-L-01"]

@@ -50,9 +50,9 @@ Reference findings by ID (`see AOMCP-3-BR-04 in handoff`), never by duplicating 
 
 ### Scope
 
-- Default: review **uncommitted working-directory changes** (`git status` / `git diff --name-only`).
-- Full branch audit before merge: `git diff --name-only main...HEAD`.
-- "Review the latest slice": prefer the MCP-backed slice review packet; branch diff is fallback only.
+- Local exploratory review: inspect **uncommitted working-directory changes** (`git status` / `git diff --name-only`) before commit when you need quick feedback.
+- Recorded branch review: use a committed scope only. Review `git diff --name-only main...HEAD`, or prefer the MCP-backed latest-slice packet when available.
+- `review_runner.py run --record-findings` must not sign off on dirty `branch_diff` scope. Commit or stash first, or rerun with latest-slice scope so findings attach to committed state.
 
 ### Automated Review
 

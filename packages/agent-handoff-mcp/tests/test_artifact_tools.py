@@ -520,6 +520,44 @@ def test_run_doctor_includes_fts5_check(tmp_path: Path) -> None:
     assert all(isinstance(count, int) and count > 0 for count in registry_counts.values())
 
 
+def test_run_doctor_skips_monorepo_pythonpath_when_running_from_site_packages(tmp_path: Path) -> None:
+    """Packaged installs must not inject nonexistent monorepo package paths."""
+    from unittest.mock import MagicMock, patch
+
+    state_dir = tmp_path / ".task-state"
+    runtime = RuntimeConfig.for_workspace(tmp_path, state_dir=state_dir)
+    mcp_server.configure_runtime(runtime)
+    handoff_core.set_handoff_state(
+        task_ref="doctor-packaged-install-test",
+        objective="Packaged install doctor check",
+        status="in_progress",
+    )
+
+    fake_api_file = tmp_path / "venv" / "lib" / "python3.13" / "site-packages" / "agent_handoff_mcp" / "api.py"
+    fake_api_file.parent.mkdir(parents=True)
+    fake_api_file.write_text("# packaged install stub\n")
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = json.dumps({"ok": True, "active_task": None})
+
+    def _drain_and_return_tools(coro: object) -> list[str]:
+        if hasattr(coro, "close"):
+            coro.close()
+        return ["record_artifact", "search_artifacts"]
+
+    with patch("agent_handoff_mcp.api.__file__", str(fake_api_file)), patch(
+        "agent_handoff_mcp.api.asyncio"
+    ) as mock_async, patch("agent_handoff_mcp.api.subprocess") as mock_sub, patch.dict(
+        "os.environ", {"PYTHONPATH": "existing-site-path"}, clear=True
+    ):
+        mock_async.run.side_effect = _drain_and_return_tools
+        mock_sub.run.return_value = mock_proc
+        mcp_server.run_doctor(runtime)
+
+    cli_env = mock_sub.run.call_args.kwargs["env"]
+    assert cli_env["PYTHONPATH"] == "existing-site-path"
+
+
 # ---------------------------------------------------------------------------
 # get_artifact with include_terms (successor to deprecated get_artifact_terms)
 # ---------------------------------------------------------------------------

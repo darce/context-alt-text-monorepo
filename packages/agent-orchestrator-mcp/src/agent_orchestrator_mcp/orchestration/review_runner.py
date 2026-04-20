@@ -124,6 +124,26 @@ def _changed_files(worktree_path: Path) -> list[str]:
     return sorted(files)
 
 
+def _assert_recordable_review_scope(
+    *,
+    record_findings: bool,
+    changed_files: list[str],
+    scope_source: ReviewScopeSource,
+) -> None:
+    """Reject recorded branch-diff reviews that still point at dirty local changes."""
+    if not record_findings:
+        return
+    if scope_source != "branch_diff":
+        return
+    if not changed_files:
+        return
+    raise RuntimeError(
+        "review_runner.py refuses to record findings for branch_diff scope when the worktree has uncommitted "
+        "changes. Commit or stash the dirty paths first, or rerun with --latest-slice so MCP findings map to "
+        "a committed slice packet instead of the working tree."
+    )
+
+
 def _diff_stat(worktree_path: Path) -> str:
     """Return a compact diff stat for the lane worktree (unstaged + staged)."""
     parts: list[str] = []
@@ -487,6 +507,11 @@ def run_review(
         use_latest_slice=use_latest_slice,
     )
     changed = scope["changed_files"]
+    _assert_recordable_review_scope(
+        record_findings=record_findings,
+        changed_files=changed,
+        scope_source=scope["scope_source"],
+    )
     stat = _diff_stat(worktree_path)
     guides = _detect_stack_guides(changed)
     prompt = _build_review_prompt(

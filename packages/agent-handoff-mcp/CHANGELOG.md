@@ -8,6 +8,16 @@ This file is the canonical migration notice for in-monorepo agents and
 external consumers. When you see a new entry, read the **Migration** block
 in that entry before relying on previously cached field shapes.
 
+## [Unreleased]
+
+### Packaging
+
+- **Hoist Agentic System MVP packaging metadata.** `pyproject.toml` now
+  declares a `[tool.hoisted]` table that points consumers at the standalone
+  install surface: `git+ssh://git@github.com/darce/mcp-agent-handoff.git@v{version}`.
+  This keeps the monorepo source aligned with the Slice 1 release contract
+  even before the standalone repo's release script is implemented.
+
 ## [0.4.0] — 2026-04-07
 
 ### Added

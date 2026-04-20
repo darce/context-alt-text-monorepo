@@ -41,6 +41,7 @@ from recognition.interface_adapters.http.dependencies import (
     require_auth,
     require_write_access,
 )
+from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id
 from recognition.interface_adapters.http.job_utils import (
     job_to_clustering_response as _job_to_clustering_response,
@@ -86,7 +87,7 @@ _logger = logging.getLogger(__name__)
 
 _INFERENCE_CAP = 20
 
-router = APIRouter(tags=["clusters"], dependencies=[Depends(require_auth)])
+router = APIRouter(tags=["clusters"], dependencies=[Depends(require_auth), Depends(enforce_rate_limit)])
 
 
 async def _load_topology_replay(session, tenant_id: str, idempotency_key: str | None) -> dict | None:

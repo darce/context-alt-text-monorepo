@@ -3,11 +3,14 @@ import os
 import subprocess
 
 from fastapi import FastAPI
+from starlette.middleware.cors import CORSMiddleware
 
 from api.logging_config import configure_logging
 from api.schemas.health import HealthResponse
 from recognition.application.health import check_health as recognition_health
 from recognition.config.cache import configure_dev_cache
+from recognition.config.security import get_security_settings
+from recognition.config.settings import RecognitionSettings
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.circuit_breaker import initialize_session_dependency_circuit_breaker
 from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
@@ -64,15 +67,48 @@ def _log_startup_info() -> None:
     configure_dev_cache()
 
 
+def _check_dev_key_guard() -> None:
+    """Fail-closed guard: refuse to start production with dev_api_keys configured.
+
+    Reuses the existing RECOGNITION_RUNTIME_MODE signal; no new env var.
+    """
+    recognition_settings = RecognitionSettings()
+    security_settings = get_security_settings()
+    if not security_settings.dev_api_keys:
+        return
+    if recognition_settings.runtime_mode == "production":
+        raise RuntimeError(
+            "Refusing to start: RECOGNITION_RUNTIME_MODE=production and dev_api_keys is non-empty "
+            "(RECOGNITION_ALLOWED_API_KEYS). Dev keys must never ship to production."
+        )
+    logger.warning(
+        "dev_api_keys is configured (RECOGNITION_ALLOWED_API_KEYS); allowed because runtime_mode=%s",
+        recognition_settings.runtime_mode,
+    )
+
+
 def create_app() -> FastAPI:
     # Log version info at startup
     _log_startup_info()
+    _check_dev_key_guard()
 
     app = FastAPI(
         title="Prototype Description Service",
         version="0.1.0",
         description="Experimental rewrite scaffolding for the description service.",
     )
+
+    security_settings = get_security_settings()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=security_settings.allowed_origins,
+        allow_credentials=False,
+        allow_origin_regex=None,
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "X-Api-Key", "X-Tenant-ID", "Content-Type"],
+        max_age=600,
+    )
+
     initialize_session_dependency_circuit_breaker(app)
 
     app.include_router(recognition_router, prefix="/recognition")

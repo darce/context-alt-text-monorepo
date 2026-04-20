@@ -167,11 +167,12 @@ make help
 
 ### Available health endpoints
 
-| Endpoint                  | Description                            |
-| ------------------------- | -------------------------------------- |
-| `GET /health`             | Aggregated status for every subsystem. |
-| `GET /recognition/health` | Recognition subsystem health probe.    |
-| `GET /roster/health`      | Roster subsystem health probe.         |
-| `GET /scene/health`       | Scene analysis subsystem health probe. |
+| Endpoint                  | Description                                                                            |
+| ------------------------- | -------------------------------------------------------------------------------------- |
+| `GET /health`             | Liveness probe (PR-01). No I/O — returns `{status: "ok", timestamp}` as long as the process can respond. Used by the Caddy active probe on a 10s interval. |
+| `GET /ready`              | Readiness probe (PR-01). Runs DB (via the observability session dependency), session-dependency circuit breaker, and InsightFace model-cache checks and aggregates them. Returns 200 when all pass; 503 with `status: "unhealthy"` otherwise so load balancers can pull the pod. |
+| `GET /recognition/health` | Recognition subsystem health probe.                                                    |
+| `GET /roster/health`      | Roster subsystem health probe.                                                         |
+| `GET /scene/health`       | Scene analysis subsystem health probe.                                                 |
 
-Each endpoint currently returns a static `"ok"` status. They are intended as integration points for future database, pgvector, or model checks.
+Subsystem endpoints (`/recognition/health`, `/roster/health`, `/scene/health`) still return a static `"ok"` status and will be consolidated behind `/health/detailed` in a later slice.

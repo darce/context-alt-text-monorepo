@@ -191,6 +191,67 @@ def test_ready_unhealthy_when_db_down(tmp_path) -> None:
     assert db_check["status"] == HealthStatus.UNHEALTHY.value
 
 
+# ---------------------------------------------------------------------------
+# /health/detailed (Slice 2.5a): auth-gated operator diagnostic
+# ---------------------------------------------------------------------------
+
+
+def test_health_detailed_requires_auth(monkeypatch, tmp_path) -> None:
+    """PA-05 / Slice 2.5: /health/detailed is the operator-diagnostic surface
+    (pool stats, breaker state, model-cache inventory). It must be auth-gated
+    via the same `require_auth` dependency used by /metrics and /health/pool.
+    """
+    monkeypatch.setenv("RECOGNITION_AUTH_ENABLED", "1")
+
+    bundle = tmp_path / "buffalo_l"
+    bundle.mkdir()
+    (bundle / "det_10g.onnx").write_bytes(b"stub")
+
+    app = _build_ready_app(model_cache_dir=tmp_path)
+    client = TestClient(app)
+
+    resp = client.get("/health/detailed")
+    assert resp.status_code == 401, resp.text
+
+
+def test_health_detailed_returns_diagnostic_payload(tmp_path) -> None:
+    """With auth satisfied, /health/detailed returns the full operator payload:
+    pool stats from both engines, breaker state string, model-cache inventory.
+    """
+    from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth
+    from shared.health import HealthStatus
+
+    bundle = tmp_path / "buffalo_l"
+    bundle.mkdir()
+    (bundle / "det_10g.onnx").write_bytes(b"stub")
+    (bundle / "w600k_r50.onnx").write_bytes(b"stub")
+
+    app = _build_ready_app(model_cache_dir=tmp_path)
+
+    async def _auth_ok() -> AuthContext:
+        return AuthContext(token=None, tenant_claim=None, enabled=False)
+
+    app.dependency_overrides[require_auth] = _auth_ok
+    client = TestClient(app)
+
+    resp = client.get("/health/detailed")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["status"] in {s.value for s in HealthStatus}
+    assert "timestamp" in body
+
+    pool_stats = body["pool_stats"]
+    assert set(pool_stats) == {"business", "observability"}
+
+    assert body["breaker_state"] in {"closed", "open", "half_open"}
+
+    mc = body["model_cache"]
+    assert mc["model_name"] == "buffalo_l"
+    assert mc["bundle_files"] == 2
+    assert mc["status"] == HealthStatus.OK.value
+
+
 def test_ready_model_cache_flips_unhealthy_when_bundle_missing(tmp_path) -> None:
     """PA-10: the model-cache check must stat the filesystem on every call
     (no caching). Unlinking the bundle between calls flips the next /ready

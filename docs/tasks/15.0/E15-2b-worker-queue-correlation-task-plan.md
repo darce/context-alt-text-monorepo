@@ -168,24 +168,24 @@ Worker fallback path (row with `correlation_id IS NULL`, e.g., from a pre-E15-2b
 
 ## Consolidated Checklist
 
-- [ ] Slice 1 RED tests land first
-- [ ] `001_identity_schema.py` updated with two nullable Text columns
-- [ ] `IdentityScanJobItem` mapped columns added
-- [ ] `CorrelationSource(StrEnum)` added to `middleware/correlation.py`; no magic strings in producer/consumer code (sr-007)
-- [ ] `ScanQueueItem` dataclass extended
-- [ ] `enqueue_items` signature + implementation carry correlation through
-- [ ] `ScanQueueService.populate_scan_job_items` accepts `correlation_id` kwarg and threads it through the chunk loop
-- [ ] `analyze.py` captures `get_correlation_id()` at request scope before `background_tasks.add_task` and forwards it as a kwarg
-- [ ] All claim paths return correlation fields
-- [ ] Slice 1 test file covers: kwarg-set, kwarg-omitted, HTTP-layer capture, round-trip through claim
-- [ ] Slice 2 RED tests land first
-- [ ] `scan_worker.py::main` switched from `logging.basicConfig` to shared `configure_logging()`
-- [ ] Worker handler resolves correlation from item or generates fallback via `CorrelationSource` enum
-- [ ] Worker handler sets + resets `_correlation_id_var` per item
-- [ ] `request_id=` log fragments removed from worker scan handler
-- [ ] `correlation_source` emitted in worker START log extra (enum `.value`)
-- [ ] Existing E15-2 Slice 1 tests remain green
-- [ ] Task plan Consolidated Checklist items checked off before task close
+- [x] Slice 1 RED tests land first
+- [x] `001_identity_schema.py` updated with two nullable Text columns
+- [x] `IdentityScanJobItem` mapped columns added
+- [x] `CorrelationSource(StrEnum)` added to `middleware/correlation.py`; no magic strings in producer/consumer code (sr-007)
+- [x] `ScanQueueItem` dataclass extended
+- [x] `enqueue_items` signature + implementation carry correlation through
+- [x] `ScanQueueService.populate_scan_job_items` accepts `correlation_id` kwarg and threads it through the chunk loop
+- [x] `analyze.py` captures `get_correlation_id()` at request scope before `background_tasks.add_task` and forwards it as a kwarg
+- [x] All claim paths return correlation fields
+- [x] Slice 1 test file covers: kwarg-set, kwarg-omitted, HTTP-layer capture, round-trip through claim
+- [x] Slice 2 RED tests land first
+- [x] `scan_worker.py::main` switched from `logging.basicConfig` to shared `configure_logging()`
+- [x] Worker handler resolves correlation from item or generates fallback via `CorrelationSource` enum
+- [x] Worker handler sets + resets `_correlation_id_var` per item
+- [x] `request_id=` log fragments removed from worker scan handler
+- [x] `correlation_source` emitted in worker START log extra (enum `.value`)
+- [x] Existing E15-2 Slice 1 tests remain green
+- [x] Task plan Consolidated Checklist items checked off before task close
 
 ## Dependencies
 

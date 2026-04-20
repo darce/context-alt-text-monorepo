@@ -34,6 +34,8 @@ from pathlib import Path
 
 import yaml
 
+from scripts.overlay_resolver import resolve_surface
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = REPO_ROOT / "docs" / "agentic" / "contracts" / "harness-protocol.yaml"
 CLAUDE_HOOKS_PATH = REPO_ROOT / ".claude" / "settings.json"
@@ -75,8 +77,29 @@ REQUIRED_PROTECTED_MAIN_PATTERNS = (
 )
 
 
-def _load_contract() -> dict:
-    payload = yaml.safe_load(CONTRACT_PATH.read_text()) or {}
+def _load_contract(*, repo_root: Path = REPO_ROOT) -> dict:
+    contract_path = repo_root / CONTRACT_RELATIVE
+    resolved_contract = next(
+        (
+            path
+            for path in resolve_surface("contracts", repo_root)
+            if path.effective_path.name == CONTRACT_RELATIVE.name
+        ),
+        None,
+    )
+
+    if resolved_contract is None:
+        payload = yaml.safe_load(contract_path.read_text()) or {}
+    elif resolved_contract.source == "overlapping":
+        shared_payload = yaml.safe_load(resolved_contract.shared_path.read_text()) or {}
+        local_payload = yaml.safe_load(resolved_contract.local_path.read_text()) or {}
+        if not isinstance(shared_payload, dict) or not isinstance(local_payload, dict):
+            raise ValueError("harness-protocol.yaml must parse to a mapping")
+        payload = dict(shared_payload)
+        payload.update(local_payload)
+    else:
+        payload = yaml.safe_load(resolved_contract.effective_path.read_text()) or {}
+
     if not isinstance(payload, dict):
         raise ValueError("harness-protocol.yaml must parse to a mapping")
     return payload

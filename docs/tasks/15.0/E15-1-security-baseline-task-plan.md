@@ -240,55 +240,55 @@ Proof:
 
 ### Context and Ownership
 
-- [ ] Loaded security contract (`docs/agentic/contracts/security.md`) before editing
-- [ ] Confirmed no external dependency context required via `ctx7`
-- [ ] Branch created: `feature/e15-1-security-baseline`
+- [x] Loaded security contract (`docs/agentic/contracts/security.md`) before editing
+- [x] Confirmed no external dependency context required via `ctx7`
+- [x] Branch created: `feature/e15-1-security-baseline`
 
 ### Checklist for Slice 1: Rate Limiting via Auth-Chained Dependency
 
-- [ ] Failing tests written first (`test_rate_limiting.py`)
-- [ ] `enforce_rate_limit` dependency implemented in `deps/rate_limit.py` (consumes `AuthContext` from chained `Depends(require_auth)`)
-- [ ] Protected routers updated to depend on `enforce_rate_limit`
-- [ ] Rate limit headers in responses (Retry-After, X-RateLimit-*)
-- [ ] Per-key counter isolation verified in tests
-- [ ] Security contract updated
-- [ ] All tests pass
+- [x] Failing tests written first (`test_rate_limiting.py`)
+- [x] `enforce_rate_limit` dependency implemented in `deps/rate_limit.py` (consumes `AuthContext` from chained `Depends(require_auth)`)
+- [x] Protected routers updated to depend on `enforce_rate_limit`
+- [x] Rate limit headers in responses (Retry-After, X-RateLimit-*)
+- [x] Per-key counter isolation verified in tests
+- [x] Security contract updated
+- [x] All tests pass
 
 ### Checklist for Slice 2: CORS Origin Allowlist
 
-- [ ] Failing tests written first (`test_cors.py`)
-- [ ] `allowed_origins` added to `SecuritySettings`
-- [ ] `CORSMiddleware` registered in `api/main.py`
-- [ ] `.env.prod.example` updated
-- [ ] Security contract updated
-- [ ] All tests pass
+- [x] Failing tests written first (`test_cors.py`)
+- [x] `allowed_origins` added to `SecuritySettings`
+- [x] `CORSMiddleware` registered in `api/main.py`
+- [x] `.env.prod.example` updated
+- [x] Security contract updated
+- [x] All tests pass
 
 ### Checklist for Slice 3: Key Rotation, Lifecycle, and Auth Audit Logging
 
-- [ ] Failing tests written first (`test_key_rotation.py`, `test_auth_audit.py`)
-- [ ] `ApiKey` model columns added (`expires_at`, `revoked_at`)
-- [ ] Schema migration updated (greenfield: `001_identity_schema.py`)
-- [ ] Repository extended with `create` / `list_for_tenant` / `revoke` write methods; `get_by_hash` filters expired/revoked keys
-- [ ] Operator CLI (`scripts/manage_api_keys.py`) with `create`/`list`/`revoke` subcommands, delegating to repo methods (no raw SQL)
-- [ ] Auth audit emitter (`recognition/observability/auth_audit.py`) wired into `require_auth` and `enforce_rate_limit`; fingerprint is hash-prefix only; raw keys never logged
-- [ ] Fail-closed startup guard in `api/main.py` refuses to start when `RecognitionSettings.runtime_mode == "production"` and `SecuritySettings.dev_api_keys` is non-empty; reuses existing `RECOGNITION_RUNTIME_MODE` signal (no new env var); `.env.prod.example` ships with empty `RECOGNITION_ALLOWED_API_KEYS=`
-- [ ] HTTP admin surface explicitly deferred in security contract (no admin router shipped this task)
-- [ ] Security contract updated
-- [ ] Full `make check` passes
+- [x] Failing tests written first (`test_key_rotation.py`, `test_auth_audit.py`)
+- [x] `ApiKey` model columns added (`expires_at`, `revoked_at`)
+- [x] Schema migration updated (greenfield: `001_identity_schema.py`)
+- [x] Repository extended with `create` / `list_for_tenant` / `revoke` write methods; `get_by_hash` filters expired/revoked keys
+- [x] Operator CLI (`scripts/manage_api_keys.py`) with `create`/`list`/`revoke` subcommands, delegating to repo methods (no raw SQL)
+- [x] Auth audit emitter (`recognition/observability/auth_audit.py`) wired into `require_auth` and `enforce_rate_limit`; fingerprint is hash-prefix only; raw keys never logged
+- [x] Fail-closed startup guard in `api/main.py` refuses to start when `RecognitionSettings.runtime_mode == "production"` and `SecuritySettings.dev_api_keys` is non-empty; reuses existing `RECOGNITION_RUNTIME_MODE` signal (no new env var); `.env.prod.example` ships with empty `RECOGNITION_ALLOWED_API_KEYS=`
+- [x] HTTP admin surface explicitly deferred in security contract (no admin router shipped this task)
+- [x] Security contract updated
+- [x] Full `make check` passes
 
 ## Review Readiness
 
-- [ ] Security contract updated in every slice that changes behavior
-- [ ] `.env.prod.example` documents all new env vars
-- [ ] No raw API keys logged anywhere
-- [ ] Handoff decision records the change with verification evidence
+- [x] Security contract updated in every slice that changes behavior
+- [x] `.env.prod.example` documents all new env vars
+- [x] No raw API keys logged anywhere
+- [x] Handoff decision records the change with verification evidence
 
 ## Success Criteria
 
-- [ ] Rate limit breach returns 429 with `Retry-After` header
-- [ ] Non-allowlisted browser origin receives no CORS headers
-- [ ] Two API keys can be valid simultaneously for the same tenant
-- [ ] Expired/revoked keys are rejected with 401
-- [ ] Every auth decision (success/401/403/429) emits a structured audit event with a hash-prefix fingerprint; raw keys never appear in logs
-- [ ] Production-like deploy with `dev_api_keys` set refuses to start
-- [ ] Security contract documents rate limiting, CORS, rotation, and audit-log shape
+- [x] Rate limit breach returns 429 with `Retry-After` header
+- [x] Non-allowlisted browser origin receives no CORS headers
+- [x] Two API keys can be valid simultaneously for the same tenant
+- [x] Expired/revoked keys are rejected with 401
+- [x] Every auth decision (success/401/403/429) emits a structured audit event with a hash-prefix fingerprint; raw keys never appear in logs
+- [x] Production-like deploy with `dev_api_keys` set refuses to start
+- [x] Security contract documents rate limiting, CORS, rotation, and audit-log shape

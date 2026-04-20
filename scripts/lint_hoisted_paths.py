@@ -18,7 +18,6 @@ except ModuleNotFoundError:
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SURFACE_KINDS = ("skills", "hooks", "commands", "prompts", "contracts")
 DIRECT_SCAN_ROOTS = {
-    "hooks": (Path("scripts/hooks"),),
     "workflows": (Path("config/agent-workflows"),),
 }
 SKIPPED_DIR_NAMES = {"__pycache__"}

@@ -1773,9 +1773,13 @@ def worker_loop(config: WorkerConfig) -> int:
     Returns 0 on clean handoff, 1 on failure.
     """
     from agent_handoff_mcp.enums import WorkerEventName  # noqa: PLC0415
+    from agent_orchestrator_mcp.orchestration.daemon_startup import (  # noqa: PLC0415
+        emit_daemon_startup_warning,
+    )
 
     run_ctx, dormant_state = _setup_worker_run(config)
     cfg = run_ctx.config
+    emit_daemon_startup_warning("worker", poll_interval=cfg.poll_interval)
     single_pass = cfg.single_pass
     handoff_retry_count = 0
     while True:
@@ -1787,6 +1791,7 @@ def worker_loop(config: WorkerConfig) -> int:
         )
         if exit_code is not None:
             if exit_code == -1:
+                # TODO(E17-10-REWORK): Pull-based poll -- see packages/agent-orchestrator-mcp/docs/reworks/event-driven-daemon-design-note.md
                 time.sleep(cfg.poll_interval)
                 continue
             return exit_code
@@ -1794,12 +1799,14 @@ def worker_loop(config: WorkerConfig) -> int:
         if lane_state is None:
             if single_pass:
                 return 1
+            # TODO(E17-10-REWORK): Pull-based poll -- see packages/agent-orchestrator-mcp/docs/reworks/event-driven-daemon-design-note.md
             time.sleep(cfg.poll_interval)
             continue
         dormant_state, should_wake = _handle_dormant_state(run_ctx, lane_state, dormant_state)
         if not should_wake:
             if single_pass:
                 return 0
+            # TODO(E17-10-REWORK): Pull-based poll -- see packages/agent-orchestrator-mcp/docs/reworks/event-driven-daemon-design-note.md
             time.sleep(cfg.poll_interval)
             continue
         run_ctx.final_result_path = None
@@ -1810,6 +1817,7 @@ def worker_loop(config: WorkerConfig) -> int:
         if single_pass:
             return run_ctx.handoff_exit if early_exit is None else early_exit
         run_ctx.log("INFO", WorkerEventName.POLL_SLEEP, interval=cfg.poll_interval)
+        # TODO(E17-10-REWORK): Pull-based poll -- see packages/agent-orchestrator-mcp/docs/reworks/event-driven-daemon-design-note.md
         time.sleep(cfg.poll_interval)
 
 

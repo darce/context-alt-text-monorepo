@@ -44,6 +44,33 @@ Pick up under E16 once:
 - E15 MVP is declared complete.
 - E15-7 (local-sync audit closure) has landed its first slice so sync-transition tests have a stable contract to assert against.
 
+## Consolidated Checklist
+
+> **Checklist scope rule:** Describe work being delivered, not finding status. Do not add rows like `(BR-04 closed)` or "resolve handoff issue X"; finding status lives in MCP / `DASHBOARD.txt`.
+
+## Context and Ownership
+
+- [ ] Loaded the current E15/E16 scope split and the active demo-flow contracts before reopening this stub.
+- [ ] Confirmed whether any new external tooling/runtime research is needed before E16 expands this into a full plan.
+- [ ] Kept ownership explicit: this file stays deferred until E16 picks it up; do not implement from the stub while it remains in E15.
+
+### Checklist for Slice 1: Stub expansion under E16
+
+- [ ] Convert this deferred stub into a full task plan using `docs/agentic/templates/TASK_PLAN.template.md`.
+- [ ] Carry forward the Playwright, WP reset/seed, deterministic outage, and CI artifact surfaces listed in Scope.
+- [ ] Define the proof bundle so offline persistence, local-read resilience, and sync-transition assertions are executable in CI.
+
+## Review Readiness
+
+- [ ] The future E16 plan names the runtime path, outage simulation mechanism, and artifact capture surfaces concretely.
+- [ ] The automation scope stays aligned with E15-3, E15-5, and E15-7 contracts instead of reinterpreting them.
+- [ ] Handoff explicitly records when the stub is re-opened and promoted to an active plan.
+
+## Success Criteria
+
+- [ ] E16 replaces this stub with a full task plan that preserves the deferred scope and unblock conditions.
+- [ ] The resulting automation plan is ready for implementation without relying on LocalWP private APIs.
+
 ## Handoff
 
 This file is intentionally a stub and NOT an active task plan. Do not start implementation against this plan while it remains deferred. When E16 picks it up, re-open this file and expand into full slices.

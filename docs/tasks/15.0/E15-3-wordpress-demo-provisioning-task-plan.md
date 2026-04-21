@@ -102,6 +102,45 @@ Exit: run log filed; local-read path verified; Phase 3 MVP exit criteria fully s
 - **Outbound egress blocked by host** -- shared hosts sometimes block outbound HTTPS on non-standard ports. Mitigation: the backend only uses 443, which is universally allowed; the host-shell `curl` check in Slice 1 catches this before WP install.
 - **API key exposure** -- raw key could end up in site exports or backups. Mitigation: key fingerprint only in decision record; raw key stored in host env/config only; never committed.
 
+## Consolidated Checklist
+
+> **Checklist scope rule:** Describe work being delivered, not finding status. Do not add rows like `(BR-04 closed)` or "resolve handoff issue X"; finding status lives in MCP / `DASHBOARD.txt`.
+
+## Context and Ownership
+
+- [ ] Loaded the host-selection constraints, backend contract anchors, and handoff state before provisioning.
+- [ ] Confirmed no extra external dependency context is required beyond the cited self-hosting epic, backend health surface, and WP host constraints.
+- [ ] Kept task ownership clean: E15-3 provisions the public WP demo, while E15-5, E15-5a, E15-6, and E15-7 stay in their declared scopes.
+
+### Checklist for Slice 1: Host decision + provisioning
+
+- [ ] Write `E15-3-host-decision-record.md` with the vendor, plan tier, annual cost, and criterion matrix.
+- [ ] Provision the chosen host and verify PHP/MySQL/cron/HTTPS plus outbound reachability to `api.altcontext.com`.
+- [ ] Capture a valid-cert `curl -I https://<chosen-wp-host>/` success result before moving on.
+
+### Checklist for Slice 2: WordPress + ACX plugin install
+
+- [ ] Install WordPress, upload the deployable ACX plugin ZIP from `apps/prototype-wp-alt-context/`, and activate it without PHP fatals.
+- [ ] Configure the plugin to use `https://api.altcontext.com` plus a freshly provisioned production key, recording only the fingerprint.
+- [ ] Capture a successful `/settings/test` probe in the run log with the exact build command used.
+
+### Checklist for Slice 3: Demo content seed + manual round-trip
+
+- [ ] Seed the demo media library with the provenance-tracked image set and run a manual Workbench scan.
+- [ ] File `E15-3-mvp-run-log.md` with timestamp, image count, latency, errors, and screenshot or annotated transcript evidence.
+- [ ] Verify the deterministic local-read fallback via an RFC5737 backend URL, then restore the production backend URL before closing the slice.
+
+## Review Readiness
+
+- [ ] The decision record, run log, and handoff state together capture host choice, live probe success, and manual round-trip proof.
+- [ ] No public-demo boundary is left undocumented when a host, TLS, DNS, or API-key choice changes.
+- [ ] E15-5 is notified only after all five MVP exit criteria are evidenced.
+
+## Success Criteria
+
+- [ ] A public WordPress demo URL is live with the ACX plugin active and successfully probing `api.altcontext.com`.
+- [ ] A curator can run the seeded-media demo path and see recognition results on the live site with the evidence checked into the named docs.
+
 ## Handoff
 
 When done, set `E15-3` status to `done`, archive task state, and notify E15-5 that it is unblocked.

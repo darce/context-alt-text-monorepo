@@ -56,11 +56,11 @@ Exit: SSH works from two networks, security list scrubbed of stale CIDRs, and bo
 - Verify the current Postgres backup mechanism on the OCI host. Expected baseline: the E14 self-hosting epic's MVP recommendation of a daily `pg_dump` cron. If that backup flow is not currently running, document that the Hetzner migration starts with a one-off `pg_dump` before transfer/restore and open a separate follow-up to automate ongoing backups.
 - Produce `docs/tasks/15.0/E15-5a-hetzner-fallback-plan.md` covering:
   - Hetzner sizing selection (CX22 as baseline candidate; escalate to CX32 if the current OCI A1.Flex memory high-water mark observed via `/metrics` exceeds 3 GB sustained, or if the image stack fails the A1.Flex-to-x86 workload parity check); document the measured memory/CPU baseline and the chosen SKU + estimated monthly cost.
-  - Which env vars + secrets move (`.env.prod` surface).
+  - Which env vars + secrets move (`prod/.env` surface).
   - Which DNS records change (`api.altcontext.com` A record -> Hetzner IP).
   - Postgres data migration path (`pg_dump` + transfer + restore), including whether it uses the standing backup mechanism or a one-off backup prerequisite.
   - Estimated time-to-cutover and the trigger condition (e.g. two consecutive OCI capacity failures on reboot, or a 24h outage).
-- This is a plan, not an execution. The plan exits when it passes `/planning-review` against the current `docker-compose.prod.yml` and `.env.prod.example` (same review bar as Slices 1 and 2).
+- This is a plan, not an execution. The plan exits when it passes `/planning-review` against the current `prod/.env` and `docker-compose.env.yml` surfaces (same review bar as Slices 1 and 2).
 
 Exit: fallback plan merged.
 
@@ -81,7 +81,46 @@ Exit: fallback plan merged.
 
 - **OCI alert delivery dropped as spam** -- silent failure mode for cost protection. Mitigation: Slice 1 test delivery is explicit; if the primary inbox drops it, route to a second address as secondary.
 - **Tailscale bypass of corporate network** -- n/a for solo operator, but documented as a future constraint if a second operator joins.
-- **Fallback-plan rot** -- the plan references `docker-compose.prod.yml` and `.env.prod.example`; both change over time. Mitigation: Slice 3 exit criterion is "reviews cleanly against the current files"; revisit whenever either file changes materially.
+- **Fallback-plan rot** -- the plan references `prod/.env` and `docker-compose.env.yml`; both change over time. Mitigation: Slice 3 exit criterion is "reviews cleanly against the current files"; revisit whenever either file changes materially.
+
+## Consolidated Checklist
+
+> **Checklist scope rule:** Describe work being delivered, not finding status. Do not add rows like `(BR-04 closed)` or "resolve handoff issue X"; finding status lives in MCP / `DASHBOARD.txt`.
+
+## Context and Ownership
+
+- [ ] Loaded the OCI operational context, fallback-plan anchors, and handoff state before making changes.
+- [ ] Confirmed no extra external dependency context is required beyond OCI, Tailscale, and the current compose/env surfaces already cited in the plan.
+- [ ] Kept task ownership clean: E15-5a owns OCI hygiene only, while E15-3a and E15-5 retain their gate-specific responsibilities.
+
+### Checklist for Slice 1: OCI budget alerts
+
+- [ ] Configure the `$1`, `$5`, and `$10` monthly OCI budgets with `100% actual spend` notification rules.
+- [ ] Verify ACX resources carry the shared `project=acx` tag filter before attaching the budgets.
+- [ ] Trigger and acknowledge a synthetic test alert, then record the budget IDs and timestamp in the run log and handoff state.
+
+### Checklist for Slice 2: Tailscale SSH drift fix
+
+- [ ] Install Tailscale on the OCI VM and verify the break-glass serial-console / allowlist recovery path before tightening SSH access.
+- [ ] Remove the stale home-IP CIDR allowlist once Tailscale-only SSH access is confirmed.
+- [ ] Verify SSH from two networks and document the canonical path plus break-glass recovery in `infra/oci/README.md`.
+
+### Checklist for Slice 3: Hetzner fallback plan (CX22 baseline; sizing analysis required)
+
+- [ ] Verify the current Postgres backup mechanism and document any one-off `pg_dump` prerequisite if the standing backup flow is absent.
+- [ ] Produce `E15-5a-hetzner-fallback-plan.md` with sizing, secrets/env migration, DNS cutover, data migration path, cutover timing, and trigger conditions.
+- [ ] Hold the fallback-plan slice open until it passes planning review against the current `prod/.env` and `docker-compose.env.yml` surfaces.
+
+## Review Readiness
+
+- [ ] The hygiene run log captures budget verification, Tailscale verification, and the fallback-plan handoff state needed by E15-5.
+- [ ] No operational hardening change lands without the matching operator documentation update.
+- [ ] E15-5 is unblocked only after the backend is cost-safe, SSH-reachable, and backed by a reviewed fallback plan.
+
+## Success Criteria
+
+- [ ] OCI budget alerts, Tailscale SSH hardening, and the Hetzner fallback plan all meet the three declared MVP exit criteria.
+- [ ] E15-5 can execute its remote E2E slice against a backend that is operationally safe enough for the public demo.
 
 ## Handoff
 

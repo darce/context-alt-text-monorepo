@@ -48,6 +48,33 @@ Exit: run log filed; green round-trip confirmed.
 - **Round-trip fails** -- indicates a gap between E15-1/E15-2 verification and real-world use. Mitigation: Slice 1 stops immediately and opens a blocker; root-cause before continuing.
 - **ARM evidence incomplete** -- the environment is working but the artifact is too thin to satisfy the E14 follow-on requirement. Mitigation: do not close the task until `uname -m`, image architecture, dependency evidence, and an integration-test transcript are all captured.
 
+## Consolidated Checklist
+
+> **Checklist scope rule:** Describe work being delivered, not finding status. Do not add rows like `(BR-04 closed)` or "resolve handoff issue X"; finding status lives in MCP / `DASHBOARD.txt`.
+
+## Context and Ownership
+
+- [ ] Loaded the live-demo task context, E14 ARM evidence requirement, and current handoff state before running the remote pass.
+- [ ] Confirmed no extra external dependency context is required beyond the live WP demo, backend observability surfaces, and ARM evidence anchors already cited here.
+- [ ] Kept the April 2026 scope split intact: E15-5 owns only the remote round-trip and ARM artifact, while OCI hygiene remains in E15-5a.
+
+### Checklist for Slice 1: Manual round-trip + run log
+
+- [ ] Trigger a live recognition scan from the public WP demo against the seeded media set.
+- [ ] Capture timestamp, WP origin, backend correlation IDs, latency evidence, and any errors in `E15-5-mvp-round-trip-log.md`.
+- [ ] File `E15-5-arm-compat-evidence.md` with `uname -m`, image architecture, dependency evidence, and a passing live A1 integration-test transcript.
+
+## Review Readiness
+
+- [ ] A failed live round-trip opens a blocker immediately and stops task closure.
+- [ ] The ARM evidence artifact is complete enough to satisfy the E14 delegation without follow-up archaeology.
+- [ ] Handoff records the slice-complete decision only after both deliverables are attached.
+
+## Success Criteria
+
+- [ ] The live public-demo round-trip succeeds and is documented in `E15-5-mvp-round-trip-log.md`.
+- [ ] The ARM compatibility evidence artifact is captured, linked, and sufficient to close the outstanding E14 follow-on.
+
 ## Handoff
 
 When done, set `E15-5` status to `done`, archive, and record a slice-complete decision covering the remote E2E pass plus the ARM evidence artifact. E15 Phase 4 closes only when [E15-4](./E15-4-local-reset-bootstrap-hardening-task-plan.md) and [E15-5a](./E15-5a-oci-operational-hygiene-task-plan.md) are also complete.

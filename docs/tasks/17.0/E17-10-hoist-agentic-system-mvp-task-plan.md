@@ -52,6 +52,11 @@ The agentic system works inside this monorepo only. Five gaps block multi-projec
 ## Constraints
 
 - **Install model is fixed (per scope decision).** MCP servers install as pip packages from `git+ssh://...` URLs in the MVP. Private PyPI or wheel mirrors are deferred to a later epic. Skills, hooks, contracts, and generated adapters install via the bootstrap CLI, which **symlinks** (not copies) from a consumer-local clone of the remote agentic repo.
+- **Canonical standalone remote repos are fixed for MVP.** The remote family is:
+  - `mcp-agent-handoff` (`darce/mcp-agent-handoff`)
+  - `mcp-agent-orchestrator` (`darce/mcp-agent-orchestrator`)
+  - `mcp-agentic-system` (`darce/mcp-agentic-system`)
+  - `mcp-agentic-bootstrap` (`darce/mcp-agentic-bootstrap`)
 - **Overlay model is fixed (per scope decision).** Shared symlinks + project-local `local/` counterparts with local precedence. Validators resolve the effective overlay, not the raw shared tree. YAML-valued surfaces (`harness-protocol.yaml`) merge with per-top-level-key local-override semantics; list values replace rather than concatenate. Slice 2 documents this contract.
 - **MVP success signal is fixed (per scope decision).** One MCP minor-version bump **plus** one shared-skill change propagates end-to-end via the documented update workflow with zero manual copying. Slice 5 validates this.
 - **No open-sourcing in MVP.** No LICENSE, no CONTRIBUTING, no badges, no public-PyPI upload, no social surfaces. Scope is private Daniel-owned repos only.

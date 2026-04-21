@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
@@ -28,6 +29,7 @@ class SliceReviewPacket(TypedDict):
     plan_item_id: str | None
     plan_cursor_id: int | None
     changed_files: list[str]
+    external_changed_files: dict[str, list[str]]
     test_commands: list[str]
     contract_files: list[str]
     review_kind: ReviewKind
@@ -35,6 +37,36 @@ class SliceReviewPacket(TypedDict):
     scope_source: ReviewScopeSource
     rationale_excerpt: str | None
     created_at: str
+
+
+_EXTERNAL_REPO_PREFIX_RE = re.compile(r"^([A-Za-z0-9._-]+):(.+)$")
+
+
+def _partition_changed_files(
+    raw: list[str],
+) -> tuple[list[str], dict[str, list[str]]]:
+    """Split decision ``changed_files`` into monorepo-relative and external.
+
+    External entries use a ``<repo_alias>:<path>`` convention (e.g.
+    ``mcp-agentic-bootstrap:src/foo.py``). The handoff packet contract
+    requires ``changed_files`` to be monorepo-relative so reviewers running
+    from the monorepo worktree can resolve them; external paths are
+    surfaced separately under their alias with the prefix stripped.
+    Order of paths within each bucket is preserved (E17-10-BR14-M-02).
+    """
+    monorepo: list[str] = []
+    external: dict[str, list[str]] = {}
+    for path in raw:
+        match = _EXTERNAL_REPO_PREFIX_RE.match(path)
+        if match is None:
+            monorepo.append(path)
+            continue
+        alias, rel = match.group(1), match.group(2)
+        # Defensive: a path that resembles "scheme:foo" without a "/" in the
+        # tail is almost certainly a real prefixed external path; one with a
+        # slash in the alias would have failed the regex above. Keep simple.
+        external.setdefault(alias, []).append(rel)
+    return monorepo, external
 
 
 def _normalize_json_list(raw_value: Any) -> list[str]:
@@ -240,6 +272,8 @@ def _build_packet_for_decision(
     if not changed_files:
         changed_files = _extract_changed_files_from_rationale(decision_row.get("rationale"))
 
+    changed_files, external_changed_files = _partition_changed_files(changed_files)
+
     test_commands = _normalize_json_list(matched_report.get("test_commands_json") if matched_report else None)
     if not test_commands:
         test_commands = _matching_test_commands(
@@ -269,6 +303,7 @@ def _build_packet_for_decision(
         "plan_item_id": plan_cursor.get("plan_item_id") if plan_cursor else None,
         "plan_cursor_id": int(plan_cursor["id"]) if plan_cursor else None,
         "changed_files": changed_files,
+        "external_changed_files": external_changed_files,
         "test_commands": test_commands,
         "contract_files": [path for path in changed_files if path.startswith(CONTRACT_PREFIXES)],
         "review_kind": review_kind,

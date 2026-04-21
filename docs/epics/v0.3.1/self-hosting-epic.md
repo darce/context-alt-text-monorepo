@@ -1,9 +1,30 @@
 # E14. Self-Hosting & Multi-Server Connectivity (Epic)
 
 > **Epic Short ID**: E14
-> **Status**: active -- OCI baseline provisioned
+> **Status**: active -- OCI backend live at `api.altcontext.com`; remaining deliverables folded into [E15](../v0.4.0/public-demo-launch-readiness-epic.md)
 > **Parent**: [production-readiness-epic.md](./production-readiness-epic.md) Phase 6
-> **Revision**: Mar 2026 -- promoted from task doc to epic; Oracle PAYG baseline now synced to provisioned `infra/oci/` state.
+> **Revision**: Apr 2026 -- backend deployment landed (E14-1 merged, archived); remaining hosting work (WP demo, budget alerts, ARM verification, Tailscale, end-to-end smoke) now owned by E15 Phases 3 + 4 under handoff decision `scope_e15_mvp_close_intake_202604`.
+
+## Status Snapshot (Apr 2026)
+
+| Surface                                                                            | Status                          | Owner                                                                                            |
+| ---------------------------------------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------ |
+| OCI A1.Flex backend instance                                                       | **Live** at `api.altcontext.com` | E14-1 (archived)                                                                                 |
+| `docker-compose.prod.yml` stack (FastAPI + scan worker + Postgres 17/pgvector + Caddy) | **Live**                        | E14-1 (archived)                                                                                 |
+| HTTPS / Let's Encrypt TLS via Caddy                                                | **Live**                        | E14-1 (archived)                                                                                 |
+| DNS A records for `api`, `staging.api`, `dev.api`                                  | **Live**                        | E14-1 (archived)                                                                                 |
+| InsightFace model cache persistence                                                | **Verified**                    | E14-1 (archived)                                                                                 |
+| Postgres data persistence                                                          | **Verified**                    | E14-1 (archived)                                                                                 |
+| `acx-backend.service` systemd unit                                                 | **Live**                        | E14-1 (archived)                                                                                 |
+| API key validation + tenant isolation                                              | **Live**                        | E15-1                                                                                            |
+| CORS allowlist + rate limiting + key rotation                                      | **Live**        | E15-1                                                                                            |
+| Structured JSON logs + `/health` + `/ready` + `/metrics`                           | **Live**        | E15-2                                                                                            |
+| WordPress demo provisioning                                                        | **Pending**                     | **E15-3**                                                                                        |
+| OCI budget alerts ($1/$5/$10)                                                      | **Pending**                     | **E15-5**                                                                                        |
+| ARM compatibility verification artifact                                            | **Pending**                     | **E15-5** (de facto verified by running A1 instance)                                             |
+| Dynamic IP SSH drift (Tailscale)                                                   | **Pending**                     | **E15-5** + [tech-debt/dynamic-ip-ssh-access.md](../../tasks/tech-debt/dynamic-ip-ssh-access.md) |
+| End-to-end WP → backend → recognition smoke test                                   | **Pending**                     | **E15-5**                                                                                        |
+| Hetzner CX22 fallback plan documented                                              | **Pending**                     | **E15-5**                                                                                        |
 
 Hosting architecture, provider evaluation, and deployment path for the recognition service backend, a future user-account database, and a WordPress demo frontend.
 
@@ -680,49 +701,49 @@ Per-second = L4 GPU **0.0001867** + CPU (4 × **0.000018**) + RAM (16 × **0.000
 ### Server Provisioning (Oracle Cloud PAYG)
 
 - [x] Create Oracle Cloud account and upgrade to PAYG
-- [ ] Configure budget alerts ($1 / $5 / $10 thresholds)
+- [ ] Configure budget alerts ($1 / $5 / $10 thresholds) ← **delegated to E15-5**
 - [x] Provision `VM.Standard.A1.Flex` instance (4 ARM cores / 24GB RAM / 200GB disk)
-- [ ] Verify ARM compatibility: run full dependency install + integration test suite
+- [ ] Verify ARM compatibility: capture full dependency install + integration test suite evidence ← **delegated to E15-5** (de facto verified by running A1 instance)
 - [x] Bootstrap Docker + Docker Compose installation through `cloud-init.yaml`
 - [x] Configure base firewall rules (ingress: 443 public; SSH restricted by configured CIDRs)
-- [ ] Set up DNS + TLS (Cloudflare free tier or Caddy auto-TLS)
-- [ ] Deploy recognition service via Docker Compose
-- [ ] Verify InsightFace model download + cache persistence across container restart
-- [ ] Verify Postgres data persistence across container restart
-- [ ] Provision WP demo hosting (shared PHP host or Oracle VPS)
-- [ ] Install + configure ACX plugin pointing to backend
-- [ ] End-to-end smoke test: WP plugin -> backend API -> recognition -> response
+- [x] Set up DNS + TLS (Caddy auto-TLS via Let's Encrypt; A records for `api`, `staging.api`, `dev.api` live)
+- [x] Deploy recognition service via Docker Compose (E14-1)
+- [x] Verify InsightFace model download + cache persistence across container restart (E14-1)
+- [x] Verify Postgres data persistence across container restart (E14-1)
+- [ ] Provision WP demo hosting (provider-agnostic) ← **delegated to E15-3**
+- [ ] Install + configure ACX plugin pointing to backend ← **delegated to E15-3**
+- [ ] End-to-end smoke test: WP plugin -> backend API -> recognition -> response ← **delegated to E15-5**
 
 ### Phase 0: Scaffolding
 
 > **Task plan**: [E14-1](../../tasks/14.0/E14-1-deploy-description-service-to-oci-task-plan.md) covers only the recognition-only deployment scaffolding items in this phase: the production Dockerfile, `docker-compose.prod.yml`, and the persisted `/data/cache` runtime path. The `Phi3CaptionAdapter`, `[vlm]` dependency group, and `HF_HOME` / `TORCH_HOME` work remain follow-on scope and are not owned by E14-1.
 
-- [ ] Create `apps/prototype-description-service/Dockerfile` (production-grade, multi-stage: base → recognition-only → recognition+vlm)
-- [ ] Create `apps/prototype-description-service/docker-compose.prod.yml` (API + Postgres + volume mounts)
-- [ ] Define `/data/cache` (or equivalent) and confirm it is writable + persisted
+- [x] Create `apps/prototype-description-service/Dockerfile` (production-grade, multi-stage: base → recognition-only → recognition+vlm) ← delivered by E14-1
+- [x] Create `apps/prototype-description-service/docker-compose.prod.yml` (API + Postgres + volume mounts) ← delivered by E14-1
+- [x] Define `/data/cache` (or equivalent) and confirm it is writable + persisted ← delivered by E14-1
 - [ ] Port `Phi3CaptionAdapter` and `Phi3ModelLoader` from `apps/archived-recognition-service/` into `apps/prototype-description-service/scene/`
 - [ ] Add `[vlm]` optional dependency group to `pyproject.toml` (torch, transformers, accelerate)
 - [ ] Configure `HF_HOME` + `TORCH_HOME` env vars to point at persistent volume mount
 
 ### Phase 1: Security & Connectivity
 
-- [ ] Implement `CORSMiddleware` in `api/main.py` using `ALLOWED_ORIGINS`
-- [ ] Enforce `X-API-Key` (or equivalent) globally on the API
+- [x] Implement `CORSMiddleware` in `api/main.py` using `ALLOWED_ORIGINS` ← delivered by E15-1
+- [x] Enforce `X-API-Key` (or equivalent) globally on the API ← delivered by E15-1
 - [ ] Add WordPress plugin setting for “Backend Base URL” + “API Key”
-- [ ] Add `.env.example` documenting production env vars
+- [x] Add `.env.example` documenting production env vars ← delivered by E15-1
 
 ### Phase 2: Deployment Verification
 
-- [ ] Dry-run build: `docker build -t recognition-service:latest .`
-- [ ] Start containers from scratch (empty cache) and confirm first-run model download works
-- [ ] Start containers again and confirm cache reuse (no redownload)
+- [x] Dry-run build: `docker build -t recognition-service:latest .` ← delivered by E14-1 verification
+- [x] Start containers from scratch (empty cache) and confirm first-run model download works ← delivered by E14-1 verification
+- [x] Start containers again and confirm cache reuse (no redownload) ← delivered by E14-1 verification
 - [ ] Verify requests from WP origin succeed and disallowed origins fail
 
 ### Phase 3: Tests
 
-- [ ] Add API/Integration test verifying CORS headers for allowed origins
-- [ ] Add auth test verifying missing/incorrect API key returns 401/403
-- [ ] Add a smoke test for “CPU fallback mode” (no GPU available)
+- [x] Add API/Integration test verifying CORS headers for allowed origins ← delivered by E15-1
+- [x] Add auth test verifying missing/incorrect API key returns 401/403 ← delivered by E15-1
+- [x] Add a smoke test for “CPU fallback mode” (no GPU available) ← delivered by E14-1
 
 ### Success Criteria
 

@@ -1,5 +1,13 @@
 # Alt Context Portable Packaging Runbook
 
+For LocalWP day-to-day development, pair this document with
+[localwp-development-runbook.md](./localwp-development-runbook.md). The short
+rule is:
+
+- use a stable-checkout symlink for active LocalWP iteration
+- use the ZIP artifact from this runbook for gates, reproducible smoke tests,
+  and release-style verification such as `E15-3a`
+
 ## Release Artifact
 
 Generate a production plugin ZIP from the monorepo root:
@@ -27,6 +35,9 @@ If `--no-build` is used with dev dependencies in `vendor/`, packaging fails inte
 2. Upload `dist/alt-context-<version>.zip`.
 3. Activate `Alt Context`.
 4. Open `Alt Context` admin pages to confirm the SPA loads.
+
+For `E15-3a`, prefer this standalone ZIP install over a symlinked LocalWP
+plugin path so the run log can point to a concrete tested artifact.
 
 ## Recognition Service Configuration
 

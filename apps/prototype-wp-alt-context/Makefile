@@ -1,4 +1,4 @@
-.PHONY: help check fix format lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset worker-daemon FORCE
+.PHONY: help check fix format lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset localwp-link gate-package worker-daemon FORCE
 
 help:
 	@echo "Available commands:"
@@ -12,6 +12,8 @@ help:
 	@echo "  make test-watch - Run frontend tests in watch mode"
 	@echo "  make check-php  - Run plugin PHP checks (cs, phpunit, phpstan)"
 	@echo "  make php-cs-fix - Auto-fix plugin PHP style violations (PHPCBF)"
+	@echo "  make localwp-link - Symlink plugin into a LocalWP site from a stable checkout (guarded)"
+	@echo "  make gate-package - Build the reproducible plugin ZIP for release/gate verification"
 	@echo "  make projection-reset - Truncate ACX projection tables (guarded; requires WP_PATH + confirmation)"
 	@echo "  make mcp        - Start the MCP server for AI agents (monorepo-wide)"
 	@echo "  make lane-*     - Worktree lane commands (forwarded to root Makefile; run 'make help' from repo root for full list)"
@@ -67,6 +69,17 @@ phpstan:
 mcp:
 	@cd ../.. && make mcp-start
 
+localwp-link:
+	@bash scripts/localwp/link-plugin.sh \
+		--wp-path "$(WP_PATH)" \
+		$(if $(PLUGIN_SOURCE),--plugin-source "$(PLUGIN_SOURCE)",) \
+		$(if $(filter 1,$(OVERWRITE)),--overwrite,) \
+		$(if $(filter 1,$(ALLOW_WORKTREE_SOURCE)),--allow-worktree-source,) \
+		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
+
+gate-package:
+	@bash scripts/release/package-plugin.sh $(if $(filter 1,$(NO_BUILD)),--no-build,)
+
 # Forward all lane-* targets to root Makefile (single rule, never goes stale)
 FORCE:
 
@@ -107,23 +120,12 @@ projection-reset:
 		echo "Invalid WP_PATH: $(WP_PATH) (missing wp-load.php)"; \
 		exit 1; \
 	fi
-	@if ! command -v wp >/dev/null 2>&1; then \
-		echo "wp command not found. Install WP-CLI first."; \
+	@_LOCALWP_WP="$$(git rev-parse --show-toplevel)/scripts/localwp-wp.sh"; \
+	if [ ! -x "$$_LOCALWP_WP" ]; then \
+		echo "LocalWP WP-CLI wrapper missing or not executable: $$_LOCALWP_WP"; \
 		exit 1; \
-	fi
-	@_LOCALWP_SOCK="$${LOCALWP_SOCKET:-}"; \
-	if [ -z "$$_LOCALWP_SOCK" ]; then \
-		_LOCALWP_SOCK="$$(find "$$HOME/Library/Application Support/Local/run" -name "mysqld.sock" -print -quit 2>/dev/null || true)"; \
 	fi; \
-	_WP_BIN="$$(which wp)"; \
-	if [ -n "$$_LOCALWP_SOCK" ] && [ -S "$$_LOCALWP_SOCK" ]; then \
-		echo "Using LocalWP MySQL socket: $$_LOCALWP_SOCK"; \
-		_SOCK_LINK="/tmp/_acx_mysqld.sock"; \
-		ln -sf "$$_LOCALWP_SOCK" "$$_SOCK_LINK"; \
-		_run_wp() { php -d "mysqli.default_socket=$$_SOCK_LINK" "$$_WP_BIN" "$$@"; }; \
-	else \
-		_run_wp() { php "$$_WP_BIN" "$$@"; }; \
-	fi; \
+	_run_wp() { "$$_LOCALWP_WP" "$$@"; }; \
 	SITE_URL_RAW="$$(_run_wp --quiet --skip-plugins --skip-themes --path="$(WP_PATH)" option get siteurl 2>&1 || true)"; \
 	if printf '%s\n' "$$SITE_URL_RAW" | grep -qi 'Error establishing a database connection\|Can'"'"'t connect\|Connection refused'; then \
 		echo "Database connection failed at $(WP_PATH)."; \

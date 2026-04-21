@@ -6,6 +6,9 @@ Cross-project scripts for the monorepo. App-specific scripts live under each app
 
 ```
 scripts/
+├── localwp-runtime.sh     # Resolve LocalWP socket/php paths without hard-coded hashes
+├── localwp-wp.sh          # Run WP-CLI with LocalWP-aware php/socket resolution
+├── localwp-gate-status.sh # Print LocalWP E15-3a gate status as JSON
 ├── localwp-db.sh          # Connect to LocalWP MySQL (auto-discovers socket)
 ├── worktree-lane          # Worktree + MCP helper for orchestrator/worker lanes
 └── mcp/
@@ -18,6 +21,59 @@ All orchestration Python modules (`ace_metrics`, `ace_reflect`, `worker_daemon`,
 [`packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/`](../packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/).
 Their tests live in [`packages/agent-orchestrator-mcp/tests/`](../packages/agent-orchestrator-mcp/tests/).
 
+## localwp-runtime.sh
+
+Resolve LocalWP runtime paths dynamically instead of relying on the hashed
+`~/Library/Application Support/Local/run/<hash>/...` directory directly.
+
+```bash
+./scripts/localwp-runtime.sh socket
+./scripts/localwp-runtime.sh php-bin
+```
+
+Supports `LOCALWP_SOCKET` and `LOCALWP_PHP_BIN` env overrides.
+
+## localwp-wp.sh
+
+Run WP-CLI against LocalWP without hard-coding the volatile MySQL socket path or
+depending on the shell's default PHP.
+
+```bash
+./scripts/localwp-wp.sh --path="$HOME/Development/wp-context-alt-text/app/public" option get siteurl
+./scripts/localwp-wp.sh --path="$HOME/Development/wp-context-alt-text/app/public" plugin status alt-context
+./scripts/localwp-wp.sh --print-plan
+```
+
+Behavior:
+- prefers `wp-nightly` when available for PHP 8.5+ compatibility
+- otherwise runs stable `wp` under `php@8.4` when present
+- otherwise falls back to the default PHP resolved by `localwp-runtime.sh`
+- injects the discovered LocalWP MySQL socket via `mysqli.default_socket`
+
+Supports `LOCALWP_WP_BIN`, `LOCALWP_WP_NIGHTLY_BIN`, `LOCALWP_WP_PHP84_BIN`,
+`LOCALWP_WP_DISABLE_PHP84`, `LOCALWP_WP_FILTER_KNOWN_NOISE`, `LOCALWP_SOCKET`,
+and `LOCALWP_PHP_BIN` env overrides.
+
+## localwp-gate-status.sh
+
+Summarize the LocalWP gate state for `E15-3a` in one JSON payload:
+
+```bash
+./scripts/localwp-gate-status.sh --wp-path "$HOME/Development/wp-context-alt-text/app/public"
+```
+
+Output includes:
+
+- `site_url`
+- `tenant_uuid`
+- plugin `status` and `version`
+- plugin Settings payload (`url_source`, `key_source`, masked last4)
+- effective key fingerprint (12-char SHA-256 prefix, never raw)
+- current `/settings/test` probe response
+
+Supports `LOCALWP_GATE_WP_WRAPPER` if you need to point the helper at an
+alternate LocalWP WP-CLI wrapper during tests or debugging.
+
 ## localwp-db.sh
 
 Connect to the LocalWP MySQL database without needing to know the volatile socket path.
@@ -28,7 +84,7 @@ Connect to the LocalWP MySQL database without needing to know the volatile socke
 ./scripts/localwp-db.sh -e "SELECT * FROM wp_acx_clusters"
 ```
 
-Supports `LOCALWP_SOCKET`, `LOCALWP_DB_NAME`, `LOCALWP_DB_USER`, `LOCALWP_DB_PASS` env overrides.
+Supports `LOCALWP_SOCKET`, `LOCALWP_DB_NAME`, `LOCALWP_DB_USER`, `LOCALWP_DB_PASS`, and `LOCALWP_MYSQL_BIN` env overrides.
 
 ## mcp/
 

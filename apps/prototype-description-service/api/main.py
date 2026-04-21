@@ -65,6 +65,19 @@ def _get_git_info() -> tuple[str, str]:
         return "unknown", "unknown"
 
 
+def _resolve_version_commit_sha() -> str:
+    """Prefer the build-arg SHA baked into the image; fall back to git in dev."""
+    env_sha = os.environ.get("APP_GIT_COMMIT_SHA", "").strip()
+    if env_sha:
+        return env_sha
+    commit, _ = _get_git_info()
+    return commit
+
+
+def _resolve_version_build_time() -> str:
+    return os.environ.get("APP_BUILD_TIME", "").strip() or "unknown"
+
+
 def _log_startup_info() -> None:
     """Log git commit and branch info at startup."""
     # Use db.startup namespace to pass the RecognitionFilter
@@ -137,8 +150,29 @@ def create_app() -> FastAPI:
 
     register_health_probes(app)
     register_metrics_route(app)
+    register_version_route(app)
 
     return app
+
+
+def register_version_route(app: FastAPI) -> None:
+    """Unauthenticated identity probe (E15-3a-BR-03).
+
+    Operators and the WordPress plugin need the deployed commit SHA without
+    grepping OCI logs. `/version` is liveness-cheap (env lookups only) and
+    must stay unauthenticated so clients can compare the deployed SHA against
+    a minimum-supported-commit constant *before* authenticating.
+    """
+    commit_sha = _resolve_version_commit_sha() or "unknown"
+    build_time = _resolve_version_build_time()
+
+    @app.get("/version", summary="Deployed identity (E15-3a-BR-03)")
+    def version() -> dict[str, str]:
+        return {
+            "commit_sha": commit_sha,
+            "build_time": build_time,
+            "version": app.version,
+        }
 
 
 def register_metrics_route(app: FastAPI) -> None:
@@ -170,13 +204,17 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
     cache_dir = model_cache_dir or settings.insightface.cache_dir
     model_name = settings.insightface.model_name
 
+    commit_sha = _resolve_version_commit_sha() or "unknown"
+
     @app.get("/health", summary="Liveness probe (PR-01)")
     def liveness() -> dict[str, str]:
         # Liveness is process-up only: no DB, breaker, or disk I/O. The Caddy
         # active probe hits this at 10s so it must never block on a dependency.
+        # commit_sha is a static identity string resolved at registration time.
         return {
             "status": HealthStatus.OK.value,
             "timestamp": datetime.now(UTC).isoformat(),
+            "commit_sha": commit_sha,
         }
 
     @app.get("/ready", summary="Readiness probe (PR-01)")

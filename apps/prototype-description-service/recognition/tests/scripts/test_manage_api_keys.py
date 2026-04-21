@@ -7,6 +7,9 @@ goes through SqlAlchemyApiKeyRepository against the in-memory db_session.
 from __future__ import annotations
 
 import hashlib
+import os
+import pathlib
+import subprocess
 import uuid
 
 import pytest
@@ -41,6 +44,21 @@ def _import_cli():
 def test_cli_module_importable() -> None:
     cli = _import_cli()
     assert hasattr(cli, "main")
+
+
+def test_cli_module_exec_help_succeeds() -> None:
+    app_root = pathlib.Path(__file__).resolve().parents[3]
+    result = subprocess.run(
+        ["python", "-m", "scripts.manage_api_keys", "--help"],
+        cwd=app_root,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYENV_VERSION": os.environ.get("PYENV_VERSION", "description-service")},
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "usage: manage_api_keys" in result.stdout
+    assert "create a new API key" in result.stdout
 
 
 @pytest.mark.asyncio

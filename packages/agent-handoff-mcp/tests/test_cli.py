@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import subprocess
 from pathlib import Path
 from unittest import mock
 
@@ -9,6 +10,20 @@ from agent_handoff_mcp import api, cli
 
 
 def _run_cli(argv: list[str], capsys) -> dict:
+    # E17-10 Slice 1 introduced ConsumerRootResolutionError in
+    # RuntimeConfig.from_args() when --workspace-root resolves to a path
+    # outside any git repo AND no explicit state/output overrides are
+    # passed. Test fixtures use pytest tmp_path (non-git) so we
+    # auto-inject --state-dir <workspace>/.task-state when the caller
+    # supplied --workspace-root without --state-dir. Production callers
+    # still must set state-dir or live inside a git repo.
+    if "--workspace-root" in argv and "--state-dir" not in argv:
+        ws_idx = argv.index("--workspace-root")
+        if ws_idx + 1 < len(argv):
+            ws_path = Path(argv[ws_idx + 1])
+            argv = list(argv)
+            argv.insert(ws_idx + 2, str(ws_path / ".task-state"))
+            argv.insert(ws_idx + 2, "--state-dir")
     original_argv = sys.argv
     sys.argv = argv
     try:
@@ -45,6 +60,12 @@ def _parse_response(raw: str | dict) -> dict:
 
 
 def test_doctor_cli_reports_workspace_paths(tmp_path: Path, capsys) -> None:
+    # E17-10 Slice 1: doctor spawns subprocess CLI probes that pass only
+    # --workspace-root. Initialize tmp_path as a git repo so those
+    # subprocesses pass the ConsumerRootResolutionError check. (The
+    # outer _run_cli helper auto-injects --state-dir, but the doctor's
+    # internal subprocess invocations do not.)
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
     payload = _run_cli(
         [
             "agent-handoff-mcp",

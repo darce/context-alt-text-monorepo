@@ -29,6 +29,7 @@ All four are required. Partial completion does not unlock MVP.
 - From the public WP URL, trigger a recognition scan against the seeded media.
 - Capture: timestamp, WP origin, backend correlation IDs (pulled from `/metrics` or log tail), observed latency percentiles, any errors.
 - File the evidence as `docs/tasks/15.0/E15-5-mvp-round-trip-log.md`.
+- Capture the ARM compatibility evidence that E14 delegated into this task: `uname -m`, container image architecture, a representative `pip freeze` or install transcript showing `aarch64` wheels where relevant, and a passing integration-test transcript against the live A1 instance. File it as `docs/tasks/15.0/E15-5-arm-compat-evidence.md`.
 - If the round-trip fails, open a blocker against the active handoff and stop here; resolve before continuing.
 
 Exit: run log filed; green round-trip confirmed.
@@ -66,6 +67,7 @@ Exit: fallback plan merged.
 ## Deliverables
 
 - `docs/tasks/15.0/E15-5-mvp-round-trip-log.md`
+- `docs/tasks/15.0/E15-5-arm-compat-evidence.md`
 - `docs/tasks/15.0/E15-5-hetzner-fallback-plan.md`
 - OCI budget IDs logged in the handoff state
 - Tailscale setup flow documented in `infra/oci/README.md`

@@ -37,6 +37,8 @@ This epic exists so the deferred work has a single owning artifact, an explicit 
 
 ### Theme C — Session-Lifecycle Resilience
 
+Theme C tasks operate on pool/session lifecycle state and do not depend on E15-7 local-sync closure.
+
 | Task | Status | Owning Doc | Why It's Here |
 | ---- | ------ | ---------- | ------------- |
 | **slr-1** Session Lifecycle Resilience | Drafted | [slr-1 plan](../../tasks/15.0/slr-1-session-lifecycle-resilience-task-plan.md) | Foundation slice. |

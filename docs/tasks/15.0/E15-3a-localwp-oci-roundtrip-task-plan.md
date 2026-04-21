@@ -40,9 +40,9 @@ All six are required. Partial completion does not unblock E15-3.
   - Backend base URL: `https://api.altcontext.com`
   - API key: production key (fingerprint only in run log; never raw).
 - Run the plugin's `/settings/test` connection probe.
-- Confirm the LocalWP origin is on the backend CORS allowlist (add it to the production allowlist if missing; this is a config change on the OCI host, not a code change).
+- Confirm the LocalWP origin is on the backend CORS allowlist. The production configuration surface is `RECOGNITION_ALLOWED_ORIGINS` in the OCI `.env` / `.env.prod` file that feeds `apps/prototype-description-service/docker-compose.prod.yml` (see `apps/prototype-description-service/.env.prod.example` and `docs/agentic/contracts/security.md`). If the origin is missing, add it there and restart `acx-backend.service` before retrying the probe.
 
-Exit: Settings page reports a successful probe; connection attempt logged with a correlation ID visible in OCI logs.
+Exit: Settings page reports a successful probe; connection attempt logged with a correlation ID visible via `cd /opt/acx-backend && sudo docker compose logs -f` (see `infra/oci/README.md`) or the equivalent stdout log view documented in `docs/operations/observability-runbook.md`.
 
 ### Slice 2 -- Scan round-trip against seeded media
 
@@ -50,23 +50,25 @@ Exit: Settings page reports a successful probe; connection attempt logged with a
 - Trigger a scan from the plugin Workbench.
 - Capture in the run log:
   - Request correlation IDs (from browser network tab or plugin debug log).
-  - Backend correlation IDs (from OCI log tail or `/metrics`).
-  - Observed P50/P95 latency for the representative calls.
+  - Backend correlation IDs (grep the OCI stdout logs per `docs/operations/observability-runbook.md#tracing-a-request-by-correlation-id`).
+  - Observed P50/P95 latency for the representative calls, derived from `/metrics` histogram buckets with the PromQL examples in `docs/operations/observability-runbook.md#promql-quantiles-from-the-histogram`.
   - Recognition result payload snapshot (redact any face embeddings; keep counts + labels).
 
 Exit: green round-trip; run log has before/after screenshots of plugin state.
 
 ### Slice 3 -- Security boundary checks
 
-- CORS rejection: from a second browser profile with a non-allowlisted origin (e.g. a throwaway `127.0.0.1:4000` dev server), issue a privileged request to the API. Capture the rejection response.
-- Rate limiting: issue sustained load against a single key until a 429 is observed; capture request-count and response headers. Test methodology documented in E15-1 Slice 2 verification notes.
+- CORS rejection: from a second browser profile with a non-allowlisted origin (e.g. a throwaway `127.0.0.1:4000` dev server), issue a privileged request to the API. Capture the rejection response. Per `docs/agentic/contracts/security.md`, the expected result is that the response omits `Access-Control-Allow-Origin` for the non-allowlisted origin.
+- Before the rate-limit test, provision a throwaway production-scoped test key via `apps/prototype-description-service/scripts/manage_api_keys.py create --tenant <id>`; record only its fingerprint in the run log and note that the key will be revoked immediately after the slice.
+- Rate limiting: issue sustained load against that single temporary key until a 429 is observed; capture request count plus the expected `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining: 0`, and `{"detail":"rate limit exceeded"}` evidence documented in `docs/agentic/contracts/security.md`.
+- Revoke the throwaway test key immediately after evidence capture via `apps/prototype-description-service/scripts/manage_api_keys.py revoke --key-id <id>` and record the revocation timestamp in the run log.
 
 Exit: CORS rejection evidence + 429 evidence filed in the run log.
 
 ### Slice 4 -- Sovereign local-read fallback (RFC5737 deterministic timeout)
 
 - Temporarily set the plugin backend URL to an RFC5737 address (`https://192.0.2.1`) to force a deterministic connect timeout.
-- Confirm the plugin renders cached state and surfaces the expected degraded-sync indicator.
+- Confirm the plugin renders cached state and surfaces the canonical outage-facing sync status used by the current UI (`sync_health=offline`, label `Waiting for service…`; see `docs/agentic/contracts/conflict-resolution-sync-contract.md` and `apps/prototype-wp-alt-context/js/admin/pages/workbench/SyncStatusIndicator.tsx`).
 - Revert the URL to `https://api.altcontext.com` before finishing the slice.
 - Capture fallback-render screenshot / annotated transcript.
 
@@ -77,6 +79,7 @@ Exit: fallback behavior verified; plugin restored to production URL.
 - `docs/tasks/15.0/E15-3a-localwp-oci-run-log.md` (single run log covering all four slices; redacted where appropriate).
 - If a CORS-allowlist addition was needed for the LocalWP origin, a decision record under `docs/tasks/15.0/E15-3a-cors-origin-decision.md` capturing the exact origin added, who approved it, and its lifetime (temporary vs. permanent).
 - Production API key fingerprint logged against the E15-1 key lifecycle surface.
+- A slice-complete MCP handoff write after each slice (`close_slice` or `record_event` with a `slice_complete_*` decision), not just at task end.
 
 ## Dependencies Not Owned Here
 
@@ -92,5 +95,7 @@ Exit: fallback behavior verified; plugin restored to production URL.
 - **Slice 3 rate-limit test burns production key budget** -- only relevant if the key has a cost ceiling. Mitigation: use a throwaway production-scoped test key whose revocation is scheduled immediately after the slice.
 
 ## Handoff
+
+After each slice, record the outcome in MCP handoff (`close_slice` or `record_event` with a `slice_complete_*` decision) before moving on to the next slice.
 
 When done, set `E15-3a` status to `done`, archive task state, and notify E15-3 that WP-host provisioning is unblocked. If the gate fails, file a blocker against the active handoff and stop; **do not start E15-3**.

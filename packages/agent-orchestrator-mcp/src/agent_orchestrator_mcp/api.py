@@ -199,6 +199,137 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "get_metrics_summary": "Return an ACE metrics snapshot for the active task covering token burn, context pressure, FTS5 retrieval, lane health, phase timing, and documentation fitness.",
 }
 
+_CONTRACT_RELATIVE_PATH = Path("docs/agentic/contracts/harness-protocol.yaml")
+_OVERLAY_MANIFEST_PATH = Path(".agentic-overlay.json")
+_DAEMONS_DISABLED_MESSAGE = (
+    "Daemons are opt-in. Enable via `orchestrator.daemons.enabled: true` in your "
+    "`local/harness-protocol.yaml`. See `docs/agentic/consumer-setup.md § Daemons` "
+    "for token-cost implications."
+)
+
+
+class DaemonsDisabledError(RuntimeError):
+    """Raised when a daemon start surface is invoked while daemons are disabled."""
+
+
+def _strip_yaml_comment(raw_line: str) -> str:
+    in_single = False
+    in_double = False
+    escaped = False
+    result: list[str] = []
+    for char in raw_line:
+        if escaped:
+            result.append(char)
+            escaped = False
+            continue
+        if char == "\\" and in_double:
+            result.append(char)
+            escaped = True
+            continue
+        if char == "'" and not in_double:
+            in_single = not in_single
+            result.append(char)
+            continue
+        if char == '"' and not in_single:
+            in_double = not in_double
+            result.append(char)
+            continue
+        if char == "#" and not in_single and not in_double:
+            break
+        result.append(char)
+    return "".join(result).rstrip()
+
+
+def _resolve_contract_paths(workspace_root: Path) -> tuple[Path, Path | None]:
+    default_path = workspace_root / _CONTRACT_RELATIVE_PATH
+    manifest_path = workspace_root / _OVERLAY_MANIFEST_PATH
+    if not manifest_path.is_file():
+        return default_path, None
+
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default_path, None
+    if not isinstance(payload, dict):
+        return default_path, None
+    surfaces = payload.get("surfaces")
+    if not isinstance(surfaces, dict):
+        return default_path, None
+    contracts = surfaces.get("contracts")
+    if not isinstance(contracts, dict):
+        return default_path, None
+
+    shared_root = contracts.get("shared_root")
+    local_root = contracts.get("local_root")
+    if not isinstance(shared_root, str) or not shared_root.strip():
+        return default_path, None
+
+    shared_path = workspace_root / shared_root / "harness-protocol.yaml"
+    local_path = None
+    if isinstance(local_root, str) and local_root.strip():
+        local_path = workspace_root / local_root / "harness-protocol.yaml"
+    return shared_path, local_path
+
+
+def _parse_daemons_enabled(contract_path: Path) -> bool | None:
+    try:
+        lines = contract_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+
+    in_orchestrator = False
+    in_daemons = False
+    for raw_line in lines:
+        stripped = _strip_yaml_comment(raw_line)
+        text = stripped.strip()
+        if not text:
+            continue
+        indent = len(raw_line) - len(raw_line.lstrip(" "))
+        if indent == 0:
+            in_orchestrator = text == "orchestrator:"
+            in_daemons = False
+            continue
+        if not in_orchestrator:
+            continue
+        if indent <= 0:
+            in_orchestrator = False
+            in_daemons = False
+            continue
+        if indent == 2:
+            in_daemons = text == "daemons:"
+            continue
+        if not in_daemons:
+            continue
+        if indent <= 2:
+            in_daemons = False
+            continue
+        if indent == 4 and text.startswith("enabled:"):
+            value = text.split(":", 1)[1].strip().lower()
+            if value == "true":
+                return True
+            if value == "false":
+                return False
+            return None
+    return None
+
+
+def _daemons_enabled_for_workspace(workspace_root: Path) -> bool:
+    shared_path, local_path = _resolve_contract_paths(workspace_root)
+    enabled = _parse_daemons_enabled(shared_path)
+    if local_path is not None and local_path.exists():
+        local_enabled = _parse_daemons_enabled(local_path)
+        if local_enabled is not None:
+            enabled = local_enabled
+    return True if enabled is None else enabled
+
+
+def _ensure_daemons_enabled() -> None:
+    runtime = get_runtime_config()
+    workspace_root = Path(runtime.workspace_root).expanduser().resolve()
+    if _daemons_enabled_for_workspace(workspace_root):
+        return
+    raise DaemonsDisabledError(_DAEMONS_DISABLED_MESSAGE)
+
 
 def _apply_tool_descriptions() -> None:
     for name, description in TOOL_DESCRIPTIONS.items():
@@ -676,6 +807,11 @@ def manage_orchestrator(
         )
     if operation in {"start", "single_cycle"} and (task_ref is None or not str(task_ref).strip()):
         return core._json_response({"ok": False, "error": f"Operation '{operation}' requires task_ref."})
+    if operation in {"start", "single_cycle"}:
+        try:
+            _ensure_daemons_enabled()
+        except DaemonsDisabledError as exc:
+            return core._json_response({"ok": False, "error": str(exc)})
     if operation == "start":
         return orchestrator_start(
             task_ref=str(task_ref),
@@ -933,6 +1069,11 @@ def manage_worker(
                 "error": f"Action '{action}' requires lane_id.",
             }
         )
+    if action in {"start", "start_all"}:
+        try:
+            _ensure_daemons_enabled()
+        except DaemonsDisabledError as exc:
+            return core._json_response({"ok": False, "error": str(exc)})
 
     if action == "start":
         return worker_start(
@@ -1067,6 +1208,11 @@ def dispatch_lane_work(
     task_ref: str | None = None,
     start_worker: bool = False,
 ) -> dict:
+    if start_worker:
+        try:
+            _ensure_daemons_enabled()
+        except DaemonsDisabledError as exc:
+            return core._json_response({"ok": False, "error": str(exc)})
     with core._get_db_connection() as conn:
         resolved_task_ref = core._resolve_task_ref(conn, task_ref)
         lane_row = _lanes._get_lane_row(conn, resolved_task_ref, lane_id)

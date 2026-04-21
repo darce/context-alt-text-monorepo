@@ -118,6 +118,10 @@ python_api_fallback:
     - switch_task
     - update_task_status
 
+orchestrator:
+  daemons:
+    enabled: false
+
 hooks:
   pre_tool_use:
     - id: worktree-drift

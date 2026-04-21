@@ -27,7 +27,21 @@ def _parse(payload: str | dict) -> dict:
     return payload
 
 
-def _configure_runtime(tmp_path: Path) -> None:
+def _write_harness_contract(tmp_path: Path, *, daemons_enabled: bool) -> None:
+    contract_path = tmp_path / "docs" / "agentic" / "contracts" / "harness-protocol.yaml"
+    contract_path.parent.mkdir(parents=True, exist_ok=True)
+    enabled = "true" if daemons_enabled else "false"
+    contract_path.write_text(
+        "version: 1\n"
+        "orchestrator:\n"
+        "  daemons:\n"
+        f"    enabled: {enabled}\n",
+        encoding="utf-8",
+    )
+
+
+def _configure_runtime(tmp_path: Path, *, daemons_enabled: bool = True) -> None:
+    _write_harness_contract(tmp_path, daemons_enabled=daemons_enabled)
     api.configure_runtime(
         api.RuntimeConfig.for_workspace(
             tmp_path,
@@ -36,6 +50,156 @@ def _configure_runtime(tmp_path: Path) -> None:
             exports_dir=tmp_path / ".task-state" / "exports",
         )
     )
+
+
+def test_manage_orchestrator_start_requires_daemon_opt_in(tmp_path: Path) -> None:
+    _write_harness_contract(tmp_path, daemons_enabled=False)
+
+    with (
+        mock.patch.object(api, "get_runtime_config", return_value=mock.Mock(workspace_root=tmp_path)),
+        mock.patch.object(api, "orchestrator_start") as mock_start,
+    ):
+        payload = _parse(api.manage_orchestrator(operation="start", task_ref="daemon-8"))
+
+    assert payload["ok"] is False
+    assert "Daemons are opt-in." in payload["error"]
+    mock_start.assert_not_called()
+
+
+def test_manage_orchestrator_single_cycle_requires_daemon_opt_in(tmp_path: Path) -> None:
+    _write_harness_contract(tmp_path, daemons_enabled=False)
+
+    with (
+        mock.patch.object(api, "get_runtime_config", return_value=mock.Mock(workspace_root=tmp_path)),
+        mock.patch.object(api, "orchestrator_single_cycle") as mock_single_cycle,
+    ):
+        payload = _parse(api.manage_orchestrator(operation="single_cycle", task_ref="daemon-8"))
+
+    assert payload["ok"] is False
+    assert "Daemons are opt-in." in payload["error"]
+    mock_single_cycle.assert_not_called()
+
+
+def test_manage_worker_start_requires_daemon_opt_in(tmp_path: Path) -> None:
+    _write_harness_contract(tmp_path, daemons_enabled=False)
+
+    with (
+        mock.patch.object(api, "get_runtime_config", return_value=mock.Mock(workspace_root=tmp_path)),
+        mock.patch.object(api, "worker_start") as mock_start,
+    ):
+        payload = _parse(api.manage_worker(task_ref="daemon-10", lane_id="frontend", action="start"))
+
+    assert payload["ok"] is False
+    assert "Daemons are opt-in." in payload["error"]
+    mock_start.assert_not_called()
+
+
+def test_manage_worker_start_all_requires_daemon_opt_in(tmp_path: Path) -> None:
+    _write_harness_contract(tmp_path, daemons_enabled=False)
+
+    with (
+        mock.patch.object(api, "get_runtime_config", return_value=mock.Mock(workspace_root=tmp_path)),
+        mock.patch.object(api, "worker_start_all") as mock_start_all,
+    ):
+        payload = _parse(api.manage_worker(task_ref="daemon-10", action="start_all"))
+
+    assert payload["ok"] is False
+    assert "Daemons are opt-in." in payload["error"]
+    mock_start_all.assert_not_called()
+
+
+def test_dispatch_lane_work_start_worker_requires_daemon_opt_in(tmp_path: Path) -> None:
+    _write_harness_contract(tmp_path, daemons_enabled=False)
+
+    with (
+        mock.patch.object(api, "get_runtime_config", return_value=mock.Mock(workspace_root=tmp_path)),
+        mock.patch.object(api.core, "_get_db_connection") as mock_conn_factory,
+        mock.patch.object(api.core, "_resolve_task_ref", return_value="daemon-10"),
+        mock.patch.object(api._lanes, "_get_lane_row", return_value={
+            "worktree_path": str(tmp_path / "frontend"),
+            "branch": "feature/frontend",
+            "title": "Frontend",
+            "objective": "Frontend lane",
+            "owner_agent": "codex",
+            "backend": "codex-subagent",
+            "model": None,
+            "reasoning_effort": "inherit",
+            "status": "active",
+            "notes": None,
+        }),
+        mock.patch.object(api, "manage_worktree_lane") as mock_manage_lane,
+        mock.patch.object(api, "worker_start") as mock_worker_start,
+    ):
+        mock_conn = mock.MagicMock()
+        mock_conn_factory.return_value.__enter__.return_value = mock_conn
+        payload = _parse(api.dispatch_lane_work(lane_id="frontend", task_ref="daemon-10", start_worker=True))
+
+    assert payload["ok"] is False
+    assert "Daemons are opt-in." in payload["error"]
+    mock_manage_lane.assert_not_called()
+    mock_worker_start.assert_not_called()
+
+
+def test_non_start_daemon_operations_remain_available_when_disabled(tmp_path: Path) -> None:
+    _write_harness_contract(tmp_path, daemons_enabled=False)
+
+    with (
+        mock.patch.object(api, "get_runtime_config", return_value=mock.Mock(workspace_root=tmp_path)),
+        mock.patch.object(api, "worker_status", return_value={"ok": True, "running": False}) as mock_status,
+        mock.patch.object(api, "orchestrator_stop", return_value={"ok": True, "running": False}) as mock_stop,
+    ):
+        worker_payload = _parse(api.manage_worker(task_ref="daemon-10", lane_id="frontend", action="status"))
+        orchestrator_payload = _parse(api.manage_orchestrator(operation="stop"))
+
+    assert worker_payload["ok"] is True
+    assert orchestrator_payload["ok"] is True
+    mock_status.assert_called_once()
+    mock_stop.assert_called_once()
+
+
+def test_daemons_enabled_for_workspace_defaults_false_from_contract(tmp_path: Path) -> None:
+    _write_harness_contract(tmp_path, daemons_enabled=False)
+
+    assert api._daemons_enabled_for_workspace(tmp_path) is False
+
+
+def test_daemons_enabled_for_workspace_uses_local_overlay_override(tmp_path: Path) -> None:
+    shared_contract = tmp_path / ".agentic" / "remote" / "docs" / "agentic" / "contracts"
+    local_contract = tmp_path / "local" / "docs" / "agentic" / "contracts"
+    shared_contract.mkdir(parents=True, exist_ok=True)
+    local_contract.mkdir(parents=True, exist_ok=True)
+    (shared_contract / "harness-protocol.yaml").write_text(
+        "version: 1\n"
+        "orchestrator:\n"
+        "  daemons:\n"
+        "    enabled: false\n",
+        encoding="utf-8",
+    )
+    (local_contract / "harness-protocol.yaml").write_text(
+        "version: 1\n"
+        "orchestrator:\n"
+        "  daemons:\n"
+        "    enabled: true\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".agentic-overlay.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "remote_clone_path": ".agentic/remote",
+                "remote_sha": "0123456789abcdef0123456789abcdef01234567",
+                "surfaces": {
+                    "contracts": {
+                        "shared_root": ".agentic/remote/docs/agentic/contracts",
+                        "local_root": "local/docs/agentic/contracts",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert api._daemons_enabled_for_workspace(tmp_path) is True
 
 
 def test_orchestrator_start_returns_pid_and_lock_path(tmp_path: Path) -> None:

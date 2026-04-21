@@ -146,6 +146,16 @@ The agentic system works inside this monorepo only. Five gaps block multi-projec
 
 Six slices deliver the MVP. Slice 0 commits to the remote-repo topology and extracts the shared surface into a new private repo — without this the bootstrap CLI has no remote to clone. Slice 1 is foundation (per-consumer DB isolation + package release metadata). Slice 2 adds overlay resolution and validator integration. Slice 3 ships the bootstrap CLI plus the single consumer-setup doc. Slice 4 gates daemons behind opt-in and records the rework note. Slice 5 validates the full update pipeline against a scratch consumer — the MVP success signal.
 
+### Implementation Sequencing Note (discovered 2026-04-21)
+
+In-monorepo slices (Slice 1 `ConsumerRootResolutionError`/`run_doctor` hardening, Slice 2 overlay resolver, Slice 4 daemon opt-in + rework note) landed before the remote repos were fully populated. Remote verification on 2026-04-21 showed all four standalone repos (`darce/mcp-agent-handoff`, `darce/mcp-agent-orchestrator`, `darce/agentic-system`, `darce/agentic-bootstrap`) are empty — Slice 0's bounded commit created the repos but did not push any content. Slice 5 (scratch-consumer install) is therefore blocked on three prerequisite extraction sub-slices that must be shipped in dependency order:
+
+- **P1** — Populate `darce/mcp-agent-handoff` from `packages/agent-handoff-mcp/` with release metadata, `CHANGELOG.md`, and `scripts/release_mcp_package.sh`; push `v0.1.0` tag. Gate: the Slice 1 smoke test (`pip install "git+ssh://...mcp-agent-handoff.git@v0.1.0"` into scratch venv + DB isolation assertion) goes green.
+- **P2** — Populate `darce/mcp-agent-orchestrator` from `packages/agent-orchestrator-mcp/` with the `agent-handoff-mcp` dep retargeted to `darce/mcp-agent-handoff.git@v0.1.0`, release metadata, and `scripts/release_mcp_package.sh`; push `v0.1.0` tag. Gate: transitive `pip install "git+ssh://...mcp-agent-orchestrator.git@v0.1.0"` resolves `agent-handoff-mcp` from the remote, not from a path dep. Requires P1 tag to exist.
+- **P3** — Populate `darce/agentic-system` by extracting the shared surface from monorepo `main` (rsync + single-initial-commit recipe); push `v0.1.0` tag. Implement the `agentic-bootstrap` CLI package in `darce/agentic-bootstrap` (Slice 3 scope) and push `v0.1.0` tag. Gate: `pip install "git+ssh://...agentic-bootstrap.git@v0.1.0"` installs the console script; dry-run `agentic-bootstrap install` against a temp dir succeeds. Requires P1 + P2 tags for config writers to emit correct install URLs.
+
+Slice 5 begins only after P1 + P2 + P3 are all green. P3 is the largest sub-slice (full CLI build); it maps directly to the Slice 3 spec already in this plan. The checklist below tracks the extraction/push state for each repo separately from the in-monorepo work.
+
 ### Slice 0 — Remote agentic repo extraction + topology commitment
 
 **Goal**: create the canonical remote repository the bootstrap CLI clones, and commit to the umbrella-vs-split topology the MVP will ship. Resolves the PA-01 "remote doesn't exist" gap; without this slice, Slices 3 and 5 have nothing to point at.
@@ -344,10 +354,10 @@ Six slices deliver the MVP. Slice 0 commits to the remote-repo topology and extr
 - [ ] Slice 3: `BrokenOverlayError` raised consistently by `doctor`, `repair`, `check-skills`, and `check-harness-sync` when overlay is broken; error message names `agentic-bootstrap repair` as the fix.
 - [ ] Slice 3: `docs/agentic/consumer-setup.md` written and self-contained.
 - [ ] Slice 3: consumer overlay includes `.github/hooks/`, `scripts/hooks/`, and `scripts/hooks/git/`; generated config never references monorepo-local `scripts/mcp/mcp-server.sh`, and bootstrap wiring sets `core.hooksPath` to the overlaid git-hook subtree.
-- [ ] Slice 4: `orchestrator.daemons.enabled` in `harness-protocol.yaml` defaults `false`; `DaemonsDisabledError` raised at **all three** entry points (`dispatch_lane_work(start_worker=True)`, `manage_worker(action in {start, start_all})`, `manage_orchestrator(operation in {start, single_cycle})`) on `false`; non-start operations remain unblocked.
-- [ ] Slice 4: one-shot WARNING emitted per process when any daemon starts; cites poll interval, MCP-queries/cycle, qualitative token-cost note, and design-note path. WARNING does NOT contain a tokens/hour figure (regex-asserted).
-- [ ] Slice 4: `packages/agent-orchestrator-mcp/docs/reworks/event-driven-daemon-design-note.md` exists with four alternatives and all cited anchors.
-- [ ] Slice 4: `TODO(E17-10-REWORK)` comment inserted immediately above the main-loop sleep in `orchestrator_loop()` and above each `time.sleep(cfg.poll_interval)` in `worker_loop()`; grep-based lint test green.
+- [x] Slice 4: `orchestrator.daemons.enabled` in `harness-protocol.yaml` defaults `false`; `DaemonsDisabledError` raised at **all three** entry points (`dispatch_lane_work(start_worker=True)`, `manage_worker(action in {start, start_all})`, `manage_orchestrator(operation in {start, single_cycle})`) on `false`; non-start operations remain unblocked.
+- [x] Slice 4: one-shot WARNING emitted per process when any daemon starts; cites poll interval, MCP-queries/cycle, qualitative token-cost note, and design-note path. WARNING does NOT contain a tokens/hour figure (regex-asserted).
+- [x] Slice 4: `packages/agent-orchestrator-mcp/docs/reworks/event-driven-daemon-design-note.md` exists with four alternatives and all cited anchors.
+- [x] Slice 4: `TODO(E17-10-REWORK)` comment inserted immediately above the main-loop sleep in `orchestrator_loop()` and above each `time.sleep(cfg.poll_interval)` in `worker_loop()`; grep-based lint test green.
 - [ ] Slice 5: scratch consumer at `~/Development/hoist-mvp-consumer/` installs MCP packages + `agentic-bootstrap`, runs overlay validators plus `lint-hoisted-paths`, writes to its own `.task-state/handoff.db`, and emits `DASHBOARD.txt` under the consumer root (not the monorepo root).
 - [ ] Slice 5: minor-version + shared-skill update propagates via `pip install --upgrade` + `agentic-bootstrap update`; `docs/agentic/proofs/e17-10-consumer-update-walkthrough.md` committed.
 - [ ] Slice 5: E17-11 (formerly E17-7 Slice 2) ordering tradeoff recorded in the proof doc.

@@ -5,8 +5,22 @@ from enum import StrEnum
 
 _MODEL_LABEL_PATTERNS = (
     (
-        re.compile(r"^claude-(opus|sonnet|haiku)-(\d+(?:\.\d+)?)(?:[-_].*)?$", re.IGNORECASE),
-        lambda match: f"Claude {match.group(1).title()} {match.group(2)}",
+        # Claude model IDs have two minor-version conventions:
+        #   1. dotted:         claude-opus-4.1          → Claude Opus 4.1
+        #   2. dash-separated: claude-opus-4-7          → Claude Opus 4.7
+        # Dash-separated minor must not collide with date suffixes:
+        #   claude-opus-4-0520  → Claude Opus 4  (0520 is a date, not minor)
+        #   claude-sonnet-4-20250514 → Claude Sonnet 4
+        # The (?!\d) negative lookahead bounds the minor to 1-2 digits followed
+        # by a non-digit boundary, which date suffixes (4+ digits) cannot satisfy.
+        re.compile(
+            r"^claude-(opus|sonnet|haiku)-(\d+(?:\.\d+)?)(?:-(\d{1,2})(?!\d))?(?:[-_].*)?$",
+            re.IGNORECASE,
+        ),
+        lambda match: (
+            f"Claude {match.group(1).title()} {match.group(2)}"
+            + (f".{match.group(3)}" if match.group(3) else "")
+        ),
     ),
     (
         re.compile(r"^gpt-(\d+(?:\.\d+)?)(?:[-_].*)?$", re.IGNORECASE),

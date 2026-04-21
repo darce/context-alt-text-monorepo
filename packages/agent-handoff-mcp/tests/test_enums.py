@@ -128,6 +128,19 @@ def test_model_identity_helpers_normalize_known_labels_and_skip_inherit() -> Non
     assert normalize_model_identity("Claude Opus 4", "inherit") == "Claude Opus 4"
 
 
+def test_normalize_model_label_handles_dash_separated_minor_version() -> None:
+    assert normalize_model_label("claude-opus-4-7") == "Claude Opus 4.7"
+    assert normalize_model_label("claude-sonnet-4-6") == "Claude Sonnet 4.6"
+    assert normalize_model_label("claude-haiku-4-5") == "Claude Haiku 4.5"
+    assert normalize_model_label("claude-haiku-4-5-20251001") == "Claude Haiku 4.5"
+
+
+def test_normalize_model_label_preserves_date_suffix_without_false_minor() -> None:
+    assert normalize_model_label("claude-opus-4-0520") == "Claude Opus 4"
+    assert normalize_model_label("claude-sonnet-4-20250514") == "Claude Sonnet 4"
+    assert normalize_model_label("claude-opus-4.1-20250101") == "Claude Opus 4.1"
+
+
 def test_build_write_actor_rejects_non_canonical_explicit_model_label() -> None:
     try:
         build_write_actor(model="claude-opus-4-0520", model_label="Opus 4.6")

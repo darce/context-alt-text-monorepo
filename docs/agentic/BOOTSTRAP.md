@@ -8,13 +8,13 @@
 ## Testing Commands
 
 ```bash
-# Backend (Python; non-interactive contract)
+# Backend (Python; PYENV_VERSION pin avoids silent env mismatch in ruff/mypy)
 cd apps/prototype-description-service
-PYENV_VERSION=description-service pyenv exec python -m pytest recognition/tests/api/         # API tests
-PYENV_VERSION=description-service pyenv exec python -m pytest recognition/tests/integration/ # Integration tests (DB)
-PYENV_VERSION=description-service pyenv exec python -m pytest recognition/tests/unit/        # Unit tests
-PYENV_VERSION=description-service pyenv exec python -m ruff check .                          # Lint
-PYENV_VERSION=description-service pyenv exec python -m mypy .                                # Types
+PYENV_VERSION=description-service pytest recognition/tests/api/         # API tests
+PYENV_VERSION=description-service pytest recognition/tests/integration/ # Integration tests (DB)
+PYENV_VERSION=description-service pytest recognition/tests/unit/        # Unit tests
+PYENV_VERSION=description-service ruff check .                          # Lint
+PYENV_VERSION=description-service mypy .                                # Types
 
 # Frontend (TypeScript/React)
 cd apps/prototype-wp-alt-context
@@ -80,14 +80,14 @@ See [maps/tech-stack.md](maps/tech-stack.md) for the full library manifest.
 
 Two MCP servers are registered for this workspace. VS Code and Claude Code manage their lifecycles automatically via `.vscode/mcp.json` and `.mcp.json`.
 
-Non-interactive harness rule: committed MCP configs define `PYENV_VERSION=description-service` in their env blocks; use `pyenv activate description-service` only for optional interactive shells. When a shell command needs the explicit interpreter path, use `${PYENV_ROOT:-$HOME/.pyenv}/versions/description-service/bin/python`.
+Non-interactive harness rule: committed MCP configs use `PYENV_VERSION=description-service`; use `pyenv activate description-service` only for optional interactive shells.
 
 ### Core Ledger Server (`agent-handoff-mcp`)
 
 Handles task state, review findings, exports/imports, close checks, and artifacts (27 tools).
 
 ```text
-.vscode/mcp.json  →  env { PYENV_VERSION=description-service, PYENV_ROOT, PATH }  →  agent-handoff-mcp --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --current-task-path ${workspaceFolder}/CURRENT_TASK.json --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
+.vscode/mcp.json  →  env { PYENV_VERSION=description-service, PYENV_ROOT, PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  agent-handoff-mcp --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --current-task-path ${workspaceFolder}/CURRENT_TASK.json --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
 ```
 
 ### Orchestration Server (`agent-orchestrator-mcp`)
@@ -95,7 +95,7 @@ Handles task state, review findings, exports/imports, close checks, and artifact
 Handles daemons, workers, lane management, plan cursors, and turn metrics (~38 tools).
 
 ```text
-.vscode/mcp.json  →  env { PYENV_VERSION=description-service, PYENV_ROOT, PATH }  →  agent-orchestrator-mcp --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --current-task-path ${workspaceFolder}/CURRENT_TASK.json --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
+.vscode/mcp.json  →  env { PYENV_VERSION=description-service, PYENV_ROOT, PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  agent-orchestrator-mcp --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --current-task-path ${workspaceFolder}/CURRENT_TASK.json --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
 ```
 
 Both servers share `handoff.db` and `mcp-artifacts.db` on disk; SQLite WAL mode makes concurrent readers safe. Install both:

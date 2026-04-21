@@ -24,7 +24,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from recognition.config.security import RateLimitTier, get_security_settings
-from recognition.infrastructure.repositories import SqlAlchemyApiKeyRepository
+from recognition.infrastructure.repositories.api_key_repository import SqlAlchemyApiKeyRepository
 
 
 def _build_parser() -> argparse.ArgumentParser:

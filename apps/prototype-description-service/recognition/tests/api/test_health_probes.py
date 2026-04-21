@@ -286,6 +286,30 @@ def test_health_detailed_returns_diagnostic_payload(tmp_path) -> None:
     assert mc["status"] == HealthStatus.OK.value
 
 
+def test_health_detailed_status_tracks_breaker_failure(tmp_path) -> None:
+    """Regression guard for 7ed215db: /health/detailed status must aggregate
+    DB + breaker + model-cache, not model-cache alone.
+    """
+    from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth
+    from shared.health import HealthStatus
+
+    bundle = tmp_path / "buffalo_l"
+    bundle.mkdir()
+    (bundle / "det_10g.onnx").write_bytes(b"stub")
+
+    app = _build_ready_app(breaker_open=True, model_cache_dir=tmp_path)
+
+    async def _auth_ok() -> AuthContext:
+        return AuthContext(token=None, tenant_claim=None, enabled=False)
+
+    app.dependency_overrides[require_auth] = _auth_ok
+    client = TestClient(app)
+
+    resp = client.get("/health/detailed")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == HealthStatus.UNHEALTHY.value
+
+
 def test_ready_model_cache_flips_unhealthy_when_bundle_missing(tmp_path) -> None:
     """PA-10: the model-cache check must stat the filesystem on every call
     (no caching). Unlinking the bundle between calls flips the next /ready

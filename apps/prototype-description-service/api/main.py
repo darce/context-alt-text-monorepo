@@ -201,17 +201,23 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
         }
 
     @app.get("/health/detailed", summary="Operator diagnostic (PA-01 / Slice 2.5)")
-    async def health_detailed(_: object = Depends(require_auth)) -> dict[str, object]:
+    async def health_detailed(
+        _: object = Depends(require_auth),
+        session: AsyncSession | None = Depends(http_deps.get_observability_session),
+    ) -> dict[str, object]:
         # Auth-gated diagnostic surface. Returns pool stats + breaker state +
         # model-cache inventory for operators; never hit by load-balancer
         # probes. Shares aggregator + probes with /ready so the two stay in
         # sync without duplicate implementations.
         breaker = get_or_create_session_dependency_circuit_breaker(app)
+        db_check = await check_database(session)
+        breaker_check = check_breaker(breaker)
         mc_check = check_model_cache(cache_dir, model_name=model_name)
+        status = aggregate_status([db_check, breaker_check, mc_check])
         bundle = cache_dir / model_name
         bundle_files = len(list(bundle.glob("*.onnx"))) if bundle.is_dir() else 0
         return {
-            "status": mc_check.status.value,
+            "status": status.value,
             "timestamp": datetime.now(UTC).isoformat(),
             "pool_stats": get_pool_stats(),
             "breaker_state": breaker.state.value,

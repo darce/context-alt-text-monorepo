@@ -51,16 +51,16 @@ Exit: three alerts configured + one verified test delivery.
 
 Exit: SSH works from two networks, security list scrubbed of stale CIDRs, and both the canonical Tailscale path and the verified break-glass recovery path are documented.
 
-### Slice 3 -- Hetzner CX22 fallback plan
+### Slice 3 -- Hetzner fallback plan (CX22 baseline; sizing analysis required)
 
 - Verify the current Postgres backup mechanism on the OCI host. Expected baseline: the E14 self-hosting epic's MVP recommendation of a daily `pg_dump` cron. If that backup flow is not currently running, document that the Hetzner migration starts with a one-off `pg_dump` before transfer/restore and open a separate follow-up to automate ongoing backups.
 - Produce `docs/tasks/15.0/E15-5a-hetzner-fallback-plan.md` covering:
-  - Hetzner CX22 sizing + estimated monthly cost.
+  - Hetzner sizing selection (CX22 as baseline candidate; escalate to CX32 if the current OCI A1.Flex memory high-water mark observed via `/metrics` exceeds 3 GB sustained, or if the image stack fails the A1.Flex-to-x86 workload parity check); document the measured memory/CPU baseline and the chosen SKU + estimated monthly cost.
   - Which env vars + secrets move (`.env.prod` surface).
   - Which DNS records change (`api.altcontext.com` A record -> Hetzner IP).
   - Postgres data migration path (`pg_dump` + transfer + restore), including whether it uses the standing backup mechanism or a one-off backup prerequisite.
   - Estimated time-to-cutover and the trigger condition (e.g. two consecutive OCI capacity failures on reboot, or a 24h outage).
-- This is a plan, not an execution. The plan exits when it reviews cleanly against the current `docker-compose.prod.yml` and `.env.prod.example`.
+- This is a plan, not an execution. The plan exits when it passes `/planning-review` against the current `docker-compose.prod.yml` and `.env.prod.example` (same review bar as Slices 1 and 2).
 
 Exit: fallback plan merged.
 

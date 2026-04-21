@@ -23,6 +23,7 @@ and the committed surface.
 from __future__ import annotations
 
 import ast
+from collections import Counter
 import json
 import os
 import re
@@ -103,6 +104,22 @@ def _load_contract(*, repo_root: Path = REPO_ROOT) -> dict:
     if not isinstance(payload, dict):
         raise ValueError("harness-protocol.yaml must parse to a mapping")
     return payload
+
+
+def _format_success_message(*, repo_root: Path = REPO_ROOT) -> str:
+    if not (repo_root / ".agentic-overlay.json").is_file():
+        return "check-harness-sync: OK"
+
+    counts: Counter[str] = Counter(
+        path.source
+        for path in resolve_surface("contracts", repo_root)
+        if path.effective_path.name == CONTRACT_RELATIVE.name
+    )
+    total = sum(counts.values())
+    return (
+        "check-harness-sync: OK "
+        f"(contracts={total}; shared={counts['shared']} local={counts['local']} overlapping={counts['overlapping']})"
+    )
 
 
 def _flatten_claude_entries(stage_entries: list[dict]) -> set[tuple[str, str]]:
@@ -944,7 +961,7 @@ def main(argv: list[str]) -> int:
         for error in errors:
             print(f"  - {error}", file=sys.stderr)
         return 1
-    print("check-harness-sync: OK")
+    print(_format_success_message())
     return 0
 
 

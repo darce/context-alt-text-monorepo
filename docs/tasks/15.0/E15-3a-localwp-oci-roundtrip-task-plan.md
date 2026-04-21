@@ -91,7 +91,7 @@ Exit: fallback behavior verified; plugin restored to production URL.
 
 - **LocalWP origin not on production CORS allowlist** -- probe returns CORS error, gate fails spuriously. Mitigation: Slice 1 includes an allowlist-update step before calling the gate failed; rollback path is documented.
 - **Raw API key leak into run log / repo** -- production key exposure. Mitigation: fingerprint-only in run log (same discipline as E15-3); run log reviewed before commit.
-- **RFC5737 timeout misreads as hard failure** -- plugin might render a different error state than the documented "degraded-sync indicator". Mitigation: Slice 4 captures whatever the plugin actually does, and any gap vs. the expected fallback UX becomes a new finding against E15-7 (local sync correctness), not a gate failure here.
+- **RFC5737 timeout misreads as hard failure** -- plugin might render a different error state than the canonical outage status (`sync_health=offline`, "Waiting for service…") per `docs/agentic/contracts/conflict-resolution-sync-contract.md` and the `SyncStatus` surface. Mitigation: Slice 4 captures whatever the plugin actually does, and any gap vs. the expected fallback UX becomes a new finding against E15-7 (local sync correctness), not a gate failure here.
 - **Slice 3 rate-limit test burns production key budget** -- only relevant if the key has a cost ceiling. Mitigation: use a throwaway production-scoped test key whose revocation is scheduled immediately after the slice.
 
 ## Handoff

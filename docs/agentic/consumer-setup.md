@@ -55,12 +55,14 @@ If you set explicit relative paths, they resolve from `AGENT_HANDOFF_WORKSPACE_R
 Use the package manager for MCP package upgrades and `agentic-bootstrap update` for the overlay clone:
 
 ```bash
-pip install --upgrade "git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.1.0"
-pip install --upgrade "git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.0"
-pip install --upgrade "git+ssh://git@github.com/darce/agentic-bootstrap.git@v0.1.0"
+pip install --upgrade "git+ssh://git@github.com/darce/mcp-agent-handoff.git"
+pip install --upgrade "git+ssh://git@github.com/darce/mcp-agent-orchestrator.git"
+pip install --upgrade "git+ssh://git@github.com/darce/agentic-bootstrap.git"
 
 agentic-bootstrap update
 ```
+
+Keep the install step pinned to a reviewed tag. The upgrade step intentionally omits a tag so pip can resolve the latest published release for each package.
 
 `agentic-bootstrap update` fetches the shared clone, checks out the requested ref, re-validates symlinks, and refreshes `.agentic-overlay.json` with the new remote SHA.
 

@@ -40,6 +40,12 @@ REQUIRED_SNIPPETS = (
     ".task-state/handoff.db",
 )
 
+REQUIRED_UPDATE_SNIPPETS = (
+    'pip install --upgrade "git+ssh://git@github.com/darce/mcp-agent-handoff.git"',
+    'pip install --upgrade "git+ssh://git@github.com/darce/mcp-agent-orchestrator.git"',
+    'pip install --upgrade "git+ssh://git@github.com/darce/agentic-bootstrap.git"',
+)
+
 
 def test_consumer_setup_doc_exists_and_is_standalone() -> None:
     assert DOC_PATH.exists(), "docs/agentic/consumer-setup.md is missing"
@@ -51,6 +57,14 @@ def test_consumer_setup_doc_exists_and_is_standalone() -> None:
 
     for snippet in REQUIRED_SNIPPETS:
         assert snippet in text, f"consumer-setup doc is missing required snippet: {snippet}"
+
+    update_section = text.split("## Update Workflow", 1)[1].split("## Doctor and Repair", 1)[0]
+    for snippet in REQUIRED_UPDATE_SNIPPETS:
+        assert snippet in update_section, f"consumer-setup doc is missing required update snippet: {snippet}"
+
+    assert "--upgrade \"git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.1.0\"" not in update_section
+    assert "--upgrade \"git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.0\"" not in update_section
+    assert "--upgrade \"git+ssh://git@github.com/darce/agentic-bootstrap.git@v0.1.0\"" not in update_section
 
     assert "E17-10" not in text, "consumer-setup doc must be standalone, not task-plan dependent"
     assert "task plan" not in text.lower(), "consumer-setup doc must not tell readers to consult the task plan"

@@ -326,3 +326,45 @@ class TestEdgeCases:
     def test_empty_stdout(self):
         resp = run_hook(make_bash_payload("pytest", ""))
         assert get_context(resp) is None
+
+    def test_string_tool_response_is_safely_ignored(self):
+        """Some harnesses emit a bare string for tool_response when the Bash
+        invocation itself fails (timeout, process error). The hook must not
+        crash — `(payload.get("tool_response") or {}).get(...)` was buggy
+        because a non-empty string is truthy and fell through to .get(),
+        raising AttributeError: 'str' object has no attribute 'get'."""
+        resp = run_hook({
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "pytest -q"},
+            "tool_response": "Bash command failed: timeout after 120s",
+        })
+        assert resp == {}
+
+    def test_string_tool_input_is_safely_ignored(self):
+        """Symmetric guard: tool_input must also be a dict."""
+        resp = run_hook({
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Bash",
+            "tool_input": "pytest -q",
+            "tool_response": {"stdout": "x" * 100, "stderr": "", "exitCode": 0},
+        })
+        assert resp == {}
+
+    def test_non_string_command_is_safely_ignored(self):
+        resp = run_hook({
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": 42},
+            "tool_response": {"stdout": "x" * 100, "stderr": "", "exitCode": 0},
+        })
+        assert resp == {}
+
+    def test_null_stdout_is_safely_ignored(self):
+        resp = run_hook({
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "pytest -q"},
+            "tool_response": {"stdout": None, "stderr": "", "exitCode": 0},
+        })
+        assert resp == {}

@@ -267,14 +267,25 @@ def main() -> None:
         print("{}")
         return
 
-    command = (payload.get("tool_input") or {}).get("command", "")
-    if not is_test_command(command):
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        print("{}")
+        return
+    command = tool_input.get("command", "")
+    if not isinstance(command, str) or not is_test_command(command):
         print("{}")
         return
 
-    response = payload.get("tool_response") or {}
-    stdout = response.get("stdout", "")
-    if not stdout or len(stdout) < 30:
+    # tool_response is normally a dict ({stdout, stderr, exitCode}), but some
+    # harnesses emit a bare string when the Bash tool itself failed (timeout,
+    # process error, etc.). Defend against that — `or {}` is not enough because
+    # a non-empty string is truthy and would fall through to .get().
+    response = payload.get("tool_response")
+    if not isinstance(response, dict):
+        print("{}")
+        return
+    stdout = response.get("stdout") or ""
+    if not isinstance(stdout, str) or len(stdout) < 30:
         print("{}")
         return
 

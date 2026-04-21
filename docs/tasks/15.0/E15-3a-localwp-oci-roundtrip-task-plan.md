@@ -59,9 +59,9 @@ Exit: green round-trip; run log has before/after screenshots of plugin state.
 ### Slice 3 -- Security boundary checks
 
 - CORS rejection: from a second browser profile with a non-allowlisted origin (e.g. a throwaway `127.0.0.1:4000` dev server), issue a privileged request to the API. Capture the rejection response. Per `docs/agentic/contracts/security.md`, the expected result is that the response omits `Access-Control-Allow-Origin` for the non-allowlisted origin.
-- Before the rate-limit test, provision a throwaway production-scoped test key via `cd apps/prototype-description-service && python -m scripts.manage_api_keys create --tenant <id>` (module-form invocation is mandated by the script's own usage block); record only its fingerprint in the run log and note that the key will be revoked immediately after the slice.
+- Before the rate-limit test, provision a throwaway production-scoped test key via `cd apps/prototype-description-service && python -m scripts.manage_api_keys --env prod create --tenant <id>` (module-form invocation + explicit `--env prod` are mandated by the script's own usage block; the DSN host guard refuses to run otherwise); record only its fingerprint in the run log and note that the key will be revoked immediately after the slice.
 - Rate limiting: issue sustained load against that single temporary key until a 429 is observed; capture request count plus the expected `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining: 0`, and `{"detail":"rate limit exceeded"}` evidence documented in `docs/agentic/contracts/security.md`.
-- Revoke the throwaway test key immediately after evidence capture via `cd apps/prototype-description-service && python -m scripts.manage_api_keys revoke --key-id <id>` and record the revocation timestamp in the run log.
+- Revoke the throwaway test key immediately after evidence capture via `cd apps/prototype-description-service && python -m scripts.manage_api_keys --env prod revoke --key-id <id>` and record the revocation timestamp in the run log.
 
 Exit: CORS rejection evidence + 429 evidence filed in the run log.
 

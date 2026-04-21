@@ -14,6 +14,7 @@ def _git_init_and_add(repo: Path) -> None:
     subprocess.run(["git", "add", "-A"], cwd=repo, env=env, check=True)
 
 from scripts.check_harness_sync import (
+    _format_success_message,
     _build_guard_fixture,
     _check_branch_isolation,
     _check_cold_start,
@@ -529,3 +530,19 @@ def test_hooks_surface_without_overlay_manifest_includes_github_and_scripts_hook
         ".github/hooks/terminal-guard.json": "shared",
         "scripts/hooks/guard-main-branch.sh": "shared",
     }
+
+
+def test_main_reports_overlay_contract_source_breakdown_when_manifest_exists(tmp_path: Path) -> None:
+    repo = _write_repo(tmp_path)
+    shared_contract = repo / ".agentic" / "remote" / "docs" / "agentic" / "contracts" / "harness-protocol.yaml"
+    shared_contract.parent.mkdir(parents=True, exist_ok=True)
+    shared_contract.write_text(yaml.safe_dump(_valid_contract(), sort_keys=False), encoding="utf-8")
+
+    local_contract = repo / "local" / "docs" / "agentic" / "contracts" / "harness-protocol.yaml"
+    local_contract.parent.mkdir(parents=True, exist_ok=True)
+    local_contract.write_text(yaml.safe_dump(_valid_contract(), sort_keys=False), encoding="utf-8")
+    _write_overlay_manifest(repo)
+
+    assert _format_success_message(repo_root=repo) == (
+        "check-harness-sync: OK (contracts=1; shared=0 local=0 overlapping=1)"
+    )

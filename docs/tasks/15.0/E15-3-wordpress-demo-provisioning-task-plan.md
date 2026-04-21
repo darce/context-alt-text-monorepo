@@ -28,7 +28,7 @@ Anything beyond these five items (CI smoke harness, multi-site, custom theme, pu
 ## Non-Goals (explicit)
 
 - Automated E2E smoke gate -- owned by [E15-6](./E15-6-e2e-smoke-gate-automation-stub.md) and deferred to [E16. Public Demo Follow-Ons](../../epics/v0.4.1/public-demo-followons-epic.md).
-- Local-sync audit closure -- owned by [E15-7](./E15-7-local-sync-completion-and-audit-closure-task-plan.md) and deferred to [E16](../../epics/v0.4.1/public-demo-followons-epic.md).
+- Local-sync audit closure -- owned by [E15-7](./E15-7-local-sync-completion-and-audit-closure-task-plan.md) (E15 Phase 6, in progress) and therefore not in E15-3 scope.
 - User-account database / multi-tenant seating -- deferred per E14 "Deferred Follow-On: User-Account Database".
 - VLM / Phi-3.5 captioning -- out of MVP per E15 constraint "Recognition-only".
 
@@ -79,7 +79,7 @@ Exit: Settings page reports a successful probe against the live backend.
 - Seed ~5-10 images into the WP media library using a recognizable sample set (non-sensitive, non-copyrighted; document provenance).
 - Open the plugin Workbench, trigger a scan, observe recognition results rendered for the seed media.
 - Capture a short run log (`E15-3-mvp-run-log.md`) with: scan timestamp, number of images, observed latency, any errors, and a screenshot or annotated transcript.
-- Verify the sovereign local-read path renders cached state when the backend is intentionally unreachable (simulate via blocking host egress temporarily or toggling the backend URL to an invalid host; restore before finishing).
+- Verify the sovereign local-read path renders cached state when the backend is intentionally unreachable by temporarily setting the plugin backend URL to an RFC5737 address (for example `https://192.0.2.1`) to force a deterministic connect timeout; confirm the plugin renders cached state and surfaces the expected degraded-sync indicator; revert the URL before finishing.
 
 Exit: run log filed; local-read path verified; Phase 3 MVP exit criteria fully satisfied.
 

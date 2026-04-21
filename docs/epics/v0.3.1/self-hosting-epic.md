@@ -718,32 +718,32 @@ Per-second = L4 GPU **0.0001867** + CPU (4 × **0.000018**) + RAM (16 × **0.000
 
 > **Task plan**: [E14-1](../../tasks/14.0/E14-1-deploy-description-service-to-oci-task-plan.md) covers only the recognition-only deployment scaffolding items in this phase: the production Dockerfile, `docker-compose.prod.yml`, and the persisted `/data/cache` runtime path. The `Phi3CaptionAdapter`, `[vlm]` dependency group, and `HF_HOME` / `TORCH_HOME` work remain follow-on scope and are not owned by E14-1.
 
-- [ ] Create `apps/prototype-description-service/Dockerfile` (production-grade, multi-stage: base → recognition-only → recognition+vlm)
-- [ ] Create `apps/prototype-description-service/docker-compose.prod.yml` (API + Postgres + volume mounts)
-- [ ] Define `/data/cache` (or equivalent) and confirm it is writable + persisted
+- [x] Create `apps/prototype-description-service/Dockerfile` (production-grade, multi-stage: base → recognition-only → recognition+vlm) ← delivered by E14-1
+- [x] Create `apps/prototype-description-service/docker-compose.prod.yml` (API + Postgres + volume mounts) ← delivered by E14-1
+- [x] Define `/data/cache` (or equivalent) and confirm it is writable + persisted ← delivered by E14-1
 - [ ] Port `Phi3CaptionAdapter` and `Phi3ModelLoader` from `apps/archived-recognition-service/` into `apps/prototype-description-service/scene/`
 - [ ] Add `[vlm]` optional dependency group to `pyproject.toml` (torch, transformers, accelerate)
 - [ ] Configure `HF_HOME` + `TORCH_HOME` env vars to point at persistent volume mount
 
 ### Phase 1: Security & Connectivity
 
-- [ ] Implement `CORSMiddleware` in `api/main.py` using `ALLOWED_ORIGINS`
-- [ ] Enforce `X-API-Key` (or equivalent) globally on the API
+- [x] Implement `CORSMiddleware` in `api/main.py` using `ALLOWED_ORIGINS` ← delivered by E15-1
+- [x] Enforce `X-API-Key` (or equivalent) globally on the API ← delivered by E15-1
 - [ ] Add WordPress plugin setting for “Backend Base URL” + “API Key”
-- [ ] Add `.env.example` documenting production env vars
+- [x] Add `.env.example` documenting production env vars ← delivered by E15-1
 
 ### Phase 2: Deployment Verification
 
-- [ ] Dry-run build: `docker build -t recognition-service:latest .`
-- [ ] Start containers from scratch (empty cache) and confirm first-run model download works
-- [ ] Start containers again and confirm cache reuse (no redownload)
+- [x] Dry-run build: `docker build -t recognition-service:latest .` ← delivered by E14-1 verification
+- [x] Start containers from scratch (empty cache) and confirm first-run model download works ← delivered by E14-1 verification
+- [x] Start containers again and confirm cache reuse (no redownload) ← delivered by E14-1 verification
 - [ ] Verify requests from WP origin succeed and disallowed origins fail
 
 ### Phase 3: Tests
 
-- [ ] Add API/Integration test verifying CORS headers for allowed origins
-- [ ] Add auth test verifying missing/incorrect API key returns 401/403
-- [ ] Add a smoke test for “CPU fallback mode” (no GPU available)
+- [x] Add API/Integration test verifying CORS headers for allowed origins ← delivered by E15-1
+- [x] Add auth test verifying missing/incorrect API key returns 401/403 ← delivered by E15-1
+- [x] Add a smoke test for “CPU fallback mode” (no GPU available) ← delivered by E14-1
 
 ### Success Criteria
 

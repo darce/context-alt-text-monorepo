@@ -1,8 +1,33 @@
 # E15. Public Demo Launch Readiness (v0.4.0)
 
 > **Epic Short ID**: E15
-> **Status**: active
+> **Status**: active — Phase 1 + Phase 2 merged to `main` (via `b6a2e272` and predecessors); MVP narrowed to Phases 3, 4, and 6
 > **Predecessors**: [production-readiness-epic.md](../v0.3.1/production-readiness-epic.md) (Phases 2-6), [self-hosting-epic.md](../v0.3.1/self-hosting-epic.md) (remaining deliverables)
+> **Successor (deferred follow-ons)**: [v0.4.1/public-demo-followons-epic.md](../v0.4.1/public-demo-followons-epic.md)
+> **Revision**: Apr 2026 — MVP close-out scope locked under handoff decision `scope_e15_mvp_close_intake_202604`. CI smoke-gate (Phase 5) and observability/auth follow-ons demoted to v0.4.1.
+
+## MVP Scope (Apr 2026 close-out)
+
+The MVP for E15 is **public WP demo URL live + one manual end-to-end pass**. Everything else moves to the [v0.4.1 follow-on epic](../v0.4.1/public-demo-followons-epic.md).
+
+**In MVP:**
+
+- Phase 1 — Security Baseline (E15-1, E15-1b) — merged to `main`
+- Phase 2 — Observability Baseline (E15-2) — merged to `main`
+- Phase 3 — WordPress Demo Provisioning (E15-3) — provider-agnostic plan
+- Phase 4 — End-to-End Verification (E15-4 in progress, E15-5 manual remote E2E)
+- Phase 6 — Local Sync Correctness (E15-7 in progress)
+
+**Deferred to v0.4.1:**
+
+- Phase 5 — CI E2E smoke gate automation (was E15-6)
+- E15-2b worker/queue correlation propagation
+- E15-8 auth transaction isolation core
+- E15-9 API key usage telemetry deferral
+- E15-10 API key baseline schema alignment
+- slr-1..4 session lifecycle resilience
+- td-correlation-dashboards (cross-tenant correlation_id dashboards)
+- td-retry-attempt-observability
 
 ## Objective
 
@@ -61,21 +86,32 @@ The recognition service, Docker stack, Caddy TLS proxy, persistent model cache, 
 
 ### Production Gaps (What This Epic Closes)
 
-| Gap                                                       | Source                             | Status                                                            |
-| --------------------------------------------------------- | ---------------------------------- | ----------------------------------------------------------------- |
-| API key validation + tenant isolation                     | Production Readiness Phase 4       | **Already implemented** (`require_auth`, `api_key_repository.py`) |
-| No browser origin allowlist (CORS)                        | Production Readiness Phase 4       | Not started -- **E15-1 Slice 2**                                  |
-| No per-key rate limiting / 429 behavior                   | Production Readiness Phase 4       | Not started -- **E15-1 Slice 1**                                  |
-| No key rotation/lifecycle surface                         | Production Readiness Phase 4       | Not started -- **E15-1 Slice 3**                                  |
-| No `/health` or `/ready` endpoints with dependency checks | Production Readiness Phase 5       | Not started                                                       |
-| No structured JSON logs or correlation IDs                | Production Readiness Phase 5       | Not started                                                       |
-| No request latency metrics                                | Production Readiness Phase 5       | Not started                                                       |
-| No WordPress demo page                                    | Production Readiness Phase 6 / E14 | Not started                                                       |
-| No E2E smoke gate automation                              | Production Readiness Phase 2       | Planned                                                           |
-| Local reset bootstrap contract mismatch                   | E15-4 (in progress)                | In progress                                                       |
-| Local-sync correctness and audit closure                  | New for E15                        | In progress -- **E15-7**                                          |
-| OCI budget alerts not verified                            | E14 / Production Readiness Phase 6 | Not started                                                       |
-| Dynamic IP SSH access drift                               | Tech debt                          | Decision pending                                                  |
+| Gap                                                       | Source                             | Status                                                                              |
+| --------------------------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------- |
+| API key validation + tenant isolation                     | Production Readiness Phase 4       | **Complete** (`require_auth`, `api_key_repository.py`) — pre-existing               |
+| Browser origin allowlist (CORS)                           | Production Readiness Phase 4       | **Complete — E15-1 Slice 1** (merged to `main`)        |
+| Per-key rate limiting + deterministic 429                 | Production Readiness Phase 4       | **Complete — E15-1 Slice 2** (merged to `main`)        |
+| Key rotation / lifecycle surface                          | Production Readiness Phase 4       | **Complete — E15-1 Slice 3** (merged to `main`)        |
+| Plugin Settings UX (backend URL + key validation)         | Production Readiness Phase 4       | **Complete — E15-1b** (merged to `main`)               |
+| `/health`, `/ready`, `/health/detailed` endpoints         | Production Readiness Phase 5       | **Complete — E15-2 Slice 2 + 2.5** (merged to `main`)            |
+| Structured JSON logs + correlation IDs                    | Production Readiness Phase 5       | **Complete — E15-2 Slice 1** (merged to `main`)                  |
+| Request latency metrics + `/metrics` endpoint             | Production Readiness Phase 5       | **Complete — E15-2 Slice 3a** (merged to `main`)                 |
+| Operations runbook                                        | Production Readiness Phase 5       | **Complete — E15-2 Slice 3b** (merged to `main`)                 |
+| WordPress demo page                                       | Production Readiness Phase 6 / E14 | Not started — **E15-3** (provider-agnostic, this epic)                              |
+| Manual remote E2E verification                            | Production Readiness Phase 6 / E14 | Not started — **E15-5** (this epic)                                                 |
+| OCI budget alerts not verified                            | E14 / Production Readiness Phase 6 | Not started — folded into **E15-5**                                                 |
+| ARM compatibility verification                            | E14                                | Not started — folded into **E15-5** (de facto verified by running A1 instance)      |
+| Dynamic IP SSH access drift                               | Tech debt                          | Folded into **E15-4 / E15-5** (Tailscale)                                           |
+| Local reset bootstrap contract mismatch                   | E15-4 (in progress)                | In progress                                                                         |
+| Local-sync correctness and audit closure                  | New for E15                        | In progress -- **E15-7**                                                            |
+| Worker/queue correlation propagation                      | E15-2 follow-on                    | **Deferred → v0.4.1 (E15-2b)**                                                      |
+| CI E2E smoke gate automation                              | Production Readiness Phase 2       | **Deferred → v0.4.1 (E15-6)**                                                       |
+| Auth transaction isolation core                           | E15-1 follow-on                    | **Deferred → v0.4.1 (E15-8)**                                                       |
+| API key usage telemetry                                   | E15-1 follow-on                    | **Deferred → v0.4.1 (E15-9)**                                                       |
+| API key baseline schema alignment                         | E15-1 follow-on                    | **Deferred → v0.4.1 (E15-10)**                                                      |
+| Session-lifecycle resilience (slr-1..4)                   | Reliability follow-on              | **Deferred → v0.4.1**                                                               |
+| Cross-tenant correlation dashboards                       | E15-2 follow-on                    | **Deferred → v0.4.1 (td-correlation-dashboards)**                                   |
+| Retry/attempt-level observability                         | E15-2 follow-on                    | **Deferred → v0.4.1 (td-retry-attempt-observability)**                              |
 
 ## Design Decisions
 
@@ -101,10 +137,10 @@ All E15 implementation work must happen on feature branches, never on `main`. `P
 
 ## Phased Delivery
 
-### Phase 1: Security Baseline -- not-started
+### Phase 1: Security Baseline -- shipped
 
-> **Status**: not-started
-> **Task plans**: [E15-1. Security Baseline](../../tasks/15.0/E15-1-security-baseline-task-plan.md)
+> **Status**: merged to `main` (E15-1 Slices 1–3 + E15-1b, via `feature/e15-2` → `b6a2e272`)
+> **Task plans**: [E15-1. Security Baseline](../../tasks/15.0/E15-1-security-baseline-task-plan.md), [E15-1b. Plugin Settings UX](../../tasks/15.0/E15-1b-plugin-settings-ux-task-plan.md)
 > **Source**: Production Readiness Phase 4
 
 **Goal**: Default deployment is safe for internet exposure under normal small-team ops.
@@ -129,9 +165,9 @@ Exit criteria:
 
 ---
 
-### Phase 2: Observability Baseline -- not-started
+### Phase 2: Observability Baseline -- shipped
 
-> **Status**: not-started
+> **Status**: merged to `main` (via `feature/e15-2` → `b6a2e272`). Slices delivered: 1 (JSON logs + correlation IDs), 2 (root `/health` liveness + `/ready` dependency probe), 2.5 (consolidation + auth-gated `/health/detailed`), 3a (Prometheus metrics middleware + auth-gated `/metrics`), 3b (operations runbook). Slice 3b branch review verdict: conditional pass. Worker/queue correlation propagation deferred to **E15-2b** in [v0.4.1](../v0.4.1/public-demo-followons-epic.md).
 > **Task plans**: [E15-2. Observability Baseline](../../tasks/15.0/E15-2-observability-baseline-task-plan.md)
 > **Source**: Production Readiness Phase 5
 
@@ -153,9 +189,9 @@ Exit criteria:
 
 ### Phase 3: WordPress Demo Provisioning -- not-started
 
-> **Status**: not-started
-> **Task plans**: E15-3 (to be scoped)
-> **Source**: Production Readiness Phase 6, E14 remaining
+> **Status**: not-started — task plan drafted Apr 2026
+> **Task plans**: [E15-3. WordPress Demo Provisioning](../../tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md)
+> **Source**: Production Readiness Phase 6, E14 remaining (subsumes E14 checklist items: provision WP demo hosting, install + configure ACX plugin)
 
 **Goal**: A publicly accessible WordPress page demonstrates the ACX plugin against the live backend.
 
@@ -176,11 +212,11 @@ Exit criteria:
 
 ---
 
-### Phase 4: End-to-End Verification -- not-started
+### Phase 4: End-to-End Verification -- in-progress
 
-> **Status**: not-started
-> **Task plans**: E15-4 (existing: local reset hardening) + E15-5 (to be scoped: remote e2e)
-> **Source**: Production Readiness Phase 6 exit criteria
+> **Status**: in-progress — E15-4 active (local reset hardening); E15-5 task plan drafted Apr 2026 (manual remote E2E + budget alerts + Tailscale + ARM verification)
+> **Task plans**: [E15-4. Local Reset Bootstrap Hardening](../../tasks/15.0/E15-4-local-reset-bootstrap-hardening-task-plan.md), [E15-5. Manual Remote E2E + Production Smoke](../../tasks/15.0/E15-5-manual-remote-e2e-task-plan.md)
+> **Source**: Production Readiness Phase 6 exit criteria; subsumes E14 checklist items: configure budget alerts, verify ARM compatibility, end-to-end smoke test, dynamic IP SSH access drift
 
 **Goal**: Prove the full WP-to-backend-to-recognition round trip works under realistic conditions.
 
@@ -201,26 +237,13 @@ Exit criteria:
 
 ---
 
-### Phase 5: E2E Smoke Gate Automation -- not-started
+### Phase 5: E2E Smoke Gate Automation -- DEFERRED to v0.4.1
 
-> **Status**: not-started
-> **Task plans**: E15-6 (to be scoped)
+> **Status**: deferred — moved to [v0.4.1 follow-on epic](../v0.4.1/public-demo-followons-epic.md) under handoff decision `scope_e15_mvp_close_intake_202604` (Apr 2026 MVP narrowing)
+> **Task plans**: [E15-6. E2E Smoke Gate Automation (stub)](../../tasks/15.0/E15-6-e2e-smoke-gate-automation-stub.md) — promoted to full plan inside v0.4.1
 > **Source**: Production Readiness Phase 2
 
-**Goal**: Replace ad-hoc manual smoke checks with repeatable automation that validates sovereign behavior end-to-end.
-
-Deliverables:
-
-- Playwright test harness for plugin E2E flows.
-- WP-CLI seed/reset helpers for deterministic fixtures.
-- Reproducible runtime path for CI (`wp-env` or Docker-based WP runtime).
-- Deterministic outage simulation path (service stop/proxy fault injection).
-- CI job that runs smoke tests and captures trace/video artifacts on failure.
-
-Exit criteria:
-
-- Required scenarios pass in CI:
-  - Offline label persistence.
+Rationale: MVP completion signal is "demo URL live + manual E2E pass once". CI smoke automation is high-value follow-on but not blocking for the public-demo launch. Manual verification covered by E15-5.
 
 ---
 
@@ -245,9 +268,6 @@ Exit criteria:
 - Fallback envelopes do not invent unsupported metadata or contradictory projection status.
 - Remaining local-sync findings are fixed or explicitly deferred with rationale.
 - `handoff_close_check(enforce=True, current_commit_sha=<HEAD>)` passes for the merge candidate branch.
-  - Local-read resilience with backend down.
-  - Sync-status transitions through outage/recovery.
-- Required flow does not depend on LocalWP private APIs.
 
 ## External Dependencies
 
@@ -298,51 +318,57 @@ Exit criteria:
 
 # Consolidated Checklist
 
-## Phase 1: Security Baseline -- NOT STARTED → [E15-1](../../tasks/15.0/E15-1-security-baseline-task-plan.md)
+## Phase 1: Security Baseline -- SHIPPED → [E15-1](../../tasks/15.0/E15-1-security-baseline-task-plan.md), [E15-1b](../../tasks/15.0/E15-1b-plugin-settings-ux-task-plan.md)
 
 > Source: Production Readiness Phase 4 + E14 Phase 1
 
-- [ ] Enforce strict API key validation without sensitive logging ← _Prod Readiness P4_
-- [ ] Add browser origin allowlist policy ← _Prod Readiness P4 + E14 P1_
-- [ ] Add rate limiting and deterministic 429 behavior ← _Prod Readiness P4_
-- [ ] Implement no-downtime key rotation + beta-tester key provisioning ← _Prod Readiness P4_
-- [ ] Add plugin-side backend URL/API key validation UX ← _Prod Readiness P4_
+- [x] Enforce strict API key validation without sensitive logging ← _Prod Readiness P4_
+- [x] Add browser origin allowlist policy ← _Prod Readiness P4 + E14 P1_
+- [x] Add rate limiting and deterministic 429 behavior ← _Prod Readiness P4_
+- [x] Implement no-downtime key rotation + beta-tester key provisioning ← _Prod Readiness P4_
+- [x] Add plugin-side backend URL/API key validation UX ← _Prod Readiness P4 (E15-1b)_
 
-## Phase 2: Observability Baseline -- NOT STARTED → [E15-2](../../tasks/15.0/E15-2-observability-baseline-task-plan.md)
+## Phase 2: Observability Baseline -- SHIPPED → [E15-2](../../tasks/15.0/E15-2-observability-baseline-task-plan.md)
 
 > Source: Production Readiness Phase 5
 
-- [ ] Emit structured JSON logs with correlation IDs ← _Prod Readiness P5_
-- [ ] Add `/health` and `/ready` endpoints with dependency checks ← _Prod Readiness P5_
-- [ ] Add latency and error metrics by endpoint class ← _Prod Readiness P5_
-- [ ] Document operator diagnostics flow/runbook ← _Prod Readiness P5_
+- [x] Emit structured JSON logs with correlation IDs ← _Prod Readiness P5 (Slice 1)_
+- [x] Add `/health` and `/ready` endpoints with dependency checks ← _Prod Readiness P5 (Slices 2 + 2.5)_
+- [x] Add latency and error metrics by endpoint class ← _Prod Readiness P5 (Slice 3a)_
+- [x] Document operator diagnostics flow/runbook ← _Prod Readiness P5 (Slice 3b)_
 
-## Phase 3: WordPress Demo Provisioning -- NOT STARTED → [E15-3](../../tasks/15.0/E15-3-wordpress-demo-provisioning-stub.md) (to be scoped)
+## Phase 3: WordPress Demo Provisioning -- NOT STARTED → [E15-3](../../tasks/15.0/E15-3-wordpress-demo-provisioning-task-plan.md)
 
 > Source: Production Readiness Phase 6 + E14 remaining
 
-- [ ] Provision shared PHP hosting ← _Prod Readiness P6_
+- [ ] Provision shared PHP hosting (provider-agnostic; vendor selected at provisioning time) ← _Prod Readiness P6_
 - [ ] Install WordPress + ACX plugin ← _Prod Readiness P6 + E14_
 - [ ] Configure plugin with production backend URL and API key ← _Prod Readiness P6 + E14_
 - [ ] Seed demo content (media library with sample faces) ← _new for E15_
 - [ ] Set up Cloudflare DNS + TLS for WP host ← _Prod Readiness P6_
 
-## Phase 4: End-to-End Verification -- IN PROGRESS → [E15-4](../../tasks/15.0/E15-4-local-reset-bootstrap-hardening-task-plan.md) + [E15-5](../../tasks/15.0/E15-5-remote-e2e-verification-stub.md) (to be scoped)
+## Phase 4: End-to-End Verification -- IN PROGRESS → [E15-4](../../tasks/15.0/E15-4-local-reset-bootstrap-hardening-task-plan.md) + [E15-5](../../tasks/15.0/E15-5-manual-remote-e2e-task-plan.md)
 
 > Source: Production Readiness Phase 6 exit criteria + [tech-debt/dynamic-ip-ssh-access.md](../../tasks/tech-debt/dynamic-ip-ssh-access.md)
 
 - [ ] Complete local reset bootstrap hardening (E15-4, in progress) ← _finding INVEST-reset-env-contract-mismatch_
-- [ ] Verify OCI budget alerts ($1/$5/$10 thresholds) ← _Prod Readiness P6 + E14_
-- [ ] Resolve dynamic IP SSH access drift (Tailscale) ← _[tech-debt/dynamic-ip-ssh-access.md](../../tasks/tech-debt/dynamic-ip-ssh-access.md)_
-- [ ] Run end-to-end WP → backend → recognition → response smoke test ← _Prod Readiness P6 + E14_
-- [ ] Document Hetzner CX22 fallback plan ← _Prod Readiness P6 + E14_
+- [ ] Verify OCI budget alerts ($1/$5/$10 thresholds) ← _Prod Readiness P6 + E14 (E15-5)_
+- [ ] Resolve dynamic IP SSH access drift (Tailscale) ← _[tech-debt/dynamic-ip-ssh-access.md](../../tasks/tech-debt/dynamic-ip-ssh-access.md) (E15-5)_
+- [ ] Run end-to-end WP → backend → recognition → response smoke test ← _Prod Readiness P6 + E14 (E15-5)_
+- [ ] Document Hetzner CX22 fallback plan ← _Prod Readiness P6 + E14 (E15-5)_
+- [ ] Capture ARM compatibility verification evidence ← _E14 (E15-5; de facto verified by running A1 instance, but missing recorded artifact)_
 
-## Phase 5: E2E Smoke Gate Automation -- NOT STARTED → [E15-6](../../tasks/15.0/E15-6-e2e-smoke-gate-automation-stub.md) (to be scoped)
+## Phase 5: E2E Smoke Gate Automation -- DEFERRED → [v0.4.1](../v0.4.1/public-demo-followons-epic.md)
 
-> Source: Production Readiness Phase 2
+> Source: Production Readiness Phase 2. Deferred under handoff decision `scope_e15_mvp_close_intake_202604`.
 
-- [ ] Scaffold Playwright E2E path for sovereign flows ← _Prod Readiness P2_
-- [ ] Add WP-CLI seed/reset fixtures for deterministic setup ← _Prod Readiness P2_
-- [ ] Add deterministic backend outage/recovery controls for tests ← _Prod Readiness P2_
-- [ ] Automate required scenarios (offline persistence, local-read resilience, sync transitions) ← _Prod Readiness P2_
-- [ ] Add CI smoke job with trace/video artifacts ← _Prod Readiness P2_
+All Phase 5 deliverables move to the v0.4.1 follow-on epic. MVP-blocking scenarios (offline persistence, local-read resilience, sync transitions) are validated manually as part of E15-5.
+
+## Phase 6: Local Sync Correctness -- IN PROGRESS → [E15-7](../../tasks/15.0/E15-7-local-sync-completion-and-audit-closure-task-plan.md)
+
+> Source: runtime investigation follow-up on sovereign local-read correctness
+
+- [ ] Direct local persistence path from completed analyze/clustering work into local projection ← _E15-7_
+- [ ] Truthful fallback response metadata + bounded projection-trigger behavior during polling ← _E15-7_
+- [ ] Snapshot/auth failure visibility ← _E15-7_
+- [ ] `handoff_close_check(enforce=True)` passes on merge candidate ← _E15-7_

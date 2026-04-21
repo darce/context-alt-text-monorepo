@@ -60,16 +60,32 @@ from pathlib import Path
 monorepo_hints = [p for p in sys.path if "context-alt-text-monorepo" in p]
 assert not monorepo_hints, f"monorepo path leaked into sys.path: {{monorepo_hints}}"
 
-# Guard: no path dep to packages/
+# (a) Both packages import from the venv's site-packages tree, not a
+# shadow checkout.  We assert __file__ explicitly instead of trusting a
+# locate_file() fallback that can collapse to '.' on edge distributions.
 import agent_orchestrator_mcp
+import agent_handoff_mcp
+
+orch_file = Path(agent_orchestrator_mcp.__file__).resolve()
+handoff_file = Path(agent_handoff_mcp.__file__).resolve()
+for label, pkg_file in (("agent_orchestrator_mcp", orch_file), ("agent_handoff_mcp", handoff_file)):
+    assert "site-packages" in pkg_file.parts, (
+        f"{{label}} imported from non-site-packages location: {{pkg_file}}"
+    )
+    assert "context-alt-text-monorepo" not in str(pkg_file), (
+        f"{{label}} __file__ leaks monorepo reference: {{pkg_file}}"
+    )
+    # Belt and braces: any 'packages/' segment in the import path means the
+    # monorepo's editable layout is shadowing the standalone install.
+    parts = pkg_file.parts
+    assert not (
+        "packages" in parts and "site-packages" not in parts
+    ), f"{{label}} resolved from monorepo packages/ tree: {{pkg_file}}"
+
+# (b) Distribution metadata names the standalone packages.
 import importlib.metadata as meta
-dist = meta.distribution("agent-orchestrator-mcp")
-# Check that agent-handoff-mcp dep is resolved from standalone repo, not packages/
-handoff_dist = meta.distribution("agent-handoff-mcp")
-handoff_loc = str(getattr(handoff_dist, 'locate_file', lambda p: p)('.'))
-assert "packages" not in handoff_loc or "site-packages" in handoff_loc, (
-    f"agent-handoff-mcp resolved from monorepo packages/ path: {{handoff_loc}}"
-)
+for dist_name in ("agent-orchestrator-mcp", "agent-handoff-mcp"):
+    dist = meta.distribution(dist_name)  # raises PackageNotFoundError on miss
 
 print("P2 smoke: PASS")
 """

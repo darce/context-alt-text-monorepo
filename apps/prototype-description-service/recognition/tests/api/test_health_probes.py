@@ -310,6 +310,79 @@ def test_health_detailed_status_tracks_breaker_failure(tmp_path) -> None:
     assert resp.json()["status"] == HealthStatus.UNHEALTHY.value
 
 
+# ---------------------------------------------------------------------------
+# E15-3a-BR-03: /version surface + commit_sha on /health
+# ---------------------------------------------------------------------------
+
+
+def test_version_endpoint_returns_identity_payload(monkeypatch) -> None:
+    """E15-3a-BR-03: operators must be able to observe the deployed commit SHA
+    from the client, not infer it from a behavior matrix against undocumented
+    auth paths. `/version` returns the canonical identity payload so the
+    WordPress plugin (and prod-smoke canary) can compare against a minimum-
+    supported-commit constant.
+    """
+    monkeypatch.setenv("APP_GIT_COMMIT_SHA", "af9d6504deadbeefcafebabe1234567890abcdef")
+    monkeypatch.setenv("APP_BUILD_TIME", "2026-04-06T12:34:56Z")
+
+    from api.main import create_app
+
+    app = create_app()
+    client = TestClient(app)
+
+    resp = client.get("/version")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["commit_sha"] == "af9d6504deadbeefcafebabe1234567890abcdef"
+    assert body["build_time"] == "2026-04-06T12:34:56Z"
+    assert body["version"] == "0.1.0"
+
+
+def test_version_endpoint_falls_back_to_unknown_when_env_missing(monkeypatch) -> None:
+    """When APP_GIT_COMMIT_SHA is unset in production images, /version must
+    still respond 200 with a sentinel value so the probe itself never 500s.
+    A missing SHA is itself a signal (image built without build-arg).
+    """
+    monkeypatch.delenv("APP_GIT_COMMIT_SHA", raising=False)
+    monkeypatch.delenv("APP_BUILD_TIME", raising=False)
+
+    from api.main import create_app
+
+    app = create_app()
+    client = TestClient(app)
+
+    resp = client.get("/version")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["version"] == "0.1.0"
+    # Allow either "unknown" or a git-detected short SHA (local dev);
+    # the contract is that the field is always present and a string.
+    assert isinstance(body["commit_sha"], str) and body["commit_sha"]
+    assert isinstance(body["build_time"], str)
+
+
+def test_root_health_includes_commit_sha(monkeypatch) -> None:
+    """E15-3a-BR-03: the liveness probe grows a commit_sha field so operators
+    diagnosing a stale deploy can read the SHA from the same endpoint Caddy
+    already hits. Liveness discipline (no DB/breaker/disk) is preserved —
+    commit_sha is a static identity string resolved once at import time.
+    """
+    monkeypatch.setenv("APP_GIT_COMMIT_SHA", "af9d6504deadbeefcafebabe1234567890abcdef")
+
+    from api.main import create_app
+
+    app = create_app()
+    client = TestClient(app)
+
+    resp = client.get("/health")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["commit_sha"] == "af9d6504deadbeefcafebabe1234567890abcdef"
+    # Dep-projection keys still forbidden (PR-01 liveness contract).
+    forbidden_keys = {"database", "breaker_state", "pool_stats", "checks", "model_cache"}
+    assert not (forbidden_keys & body.keys())
+
+
 def test_ready_model_cache_flips_unhealthy_when_bundle_missing(tmp_path) -> None:
     """PA-10: the model-cache check must stat the filesystem on every call
     (no caching). Unlinking the bundle between calls flips the next /ready

@@ -200,13 +200,14 @@ async def get_cluster(
 
 ```bash
 cd apps/prototype-description-service
-pyenv shell description-service       # Activate virtualenv
-make check                            # ruff + mypy + pytest (all three)
-pytest                                # Run all tests
-pytest recognition/tests/api/         # API tests only
-pytest recognition/tests/integration/ # Integration tests (DB)
-pytest recognition/tests/unit/        # Unit tests
-ruff check .                          # Lint
-ruff format .                         # Format
-PYENV_VERSION=description-service mypy .  # Type checking
+# Non-interactive pyenv contract — pin PYENV_VERSION per invocation.
+# For optional interactive shells only: `pyenv activate description-service`.
+PYENV_VERSION=description-service make check                            # ruff + mypy + pytest (all three)
+PYENV_VERSION=description-service pyenv exec python -m pytest                                # Run all tests
+PYENV_VERSION=description-service pyenv exec python -m pytest recognition/tests/api/         # API tests only
+PYENV_VERSION=description-service pyenv exec python -m pytest recognition/tests/integration/ # Integration tests (DB)
+PYENV_VERSION=description-service pyenv exec python -m pytest recognition/tests/unit/        # Unit tests
+PYENV_VERSION=description-service pyenv exec python -m ruff check .                          # Lint
+PYENV_VERSION=description-service pyenv exec python -m ruff format .                         # Format
+PYENV_VERSION=description-service pyenv exec python -m mypy .                                # Type checking
 ```

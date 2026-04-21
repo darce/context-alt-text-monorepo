@@ -93,10 +93,10 @@ Harden the local reset contract around one canonical env shape. The script shoul
 ## Verification Strategy
 
 - Deterministic tests:
-  - `cd apps/prototype-description-service && pyenv activate description-service && python -m pytest recognition/tests/unit/test_database_settings.py -q`
+  - `cd apps/prototype-description-service && PYENV_VERSION=description-service pyenv exec python -m pytest recognition/tests/unit/test_database_settings.py -q`
 - Runtime-parity / environment checks:
   - `cd apps/prototype-description-service && cp .env.example .env && ALLOW_DEV_DB_RESET=1 ./scripts/reset_dev_db.sh --help` is not applicable; use the real reset path instead
-  - `cd apps/prototype-description-service && pyenv activate description-service && make reset`
+  - `cd apps/prototype-description-service && PYENV_VERSION=description-service make reset`
 - Contract/fixture verification:
   - Assert `.env.example` contains the variables the reset script and compose stack consume (`PGUSER`, `PGPASSWORD`, `DB_NAME`, DSN expansions)
 - Manual verification:

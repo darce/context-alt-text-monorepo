@@ -36,16 +36,18 @@ Surface likely planning problems early, record them as planning findings under a
 - [../../../docs/agentic/instructions.md](../../../docs/agentic/instructions.md)
 - [../../../docs/agentic/constitution.md](../../../docs/agentic/constitution.md)
 - [../../../docs/agentic/rules/planning-review-guide.md](../../../docs/agentic/rules/planning-review-guide.md)
+- [../../../docs/agentic/templates/TASK_PLAN.template.md](../../../docs/agentic/templates/TASK_PLAN.template.md) for task plans under `docs/tasks/`
 
 This skill owns triage only. It records planning-mode findings and a `review_runs(operation="record", review_mode="planning", ...)` entry with a `plan-analyze-*` session prefix so `make plan-review` can confirm the pre-review pass happened. It does not replace the formal planning-review run.
 
 ## Core Process
 
 1. Load the planning artifact, the constitution, and only the minimum adjacent code or contract anchors needed to test the artifact's claims.
-2. Run six analysis passes: duplication, ambiguity, underspecification, constitution alignment, coverage gaps, and terminology drift.
-3. Turn concrete problems into MCP findings with `review_findings(..., review_mode="planning")`.
-4. Record a planning-mode review run whose `session` starts with `plan-analyze-` so the downstream gate can distinguish triage from the formal review pass.
-5. Summarize whether the artifact should proceed directly to `planning-review` or be revised first.
+2. If the artifact is a task plan under `docs/tasks/`, validate its structure against `docs/agentic/templates/TASK_PLAN.template.md`, including the `## Consolidated Checklist` section and its supporting `Context and Ownership`, per-slice checklist, `Review Readiness`, and `Success Criteria` blocks.
+3. Run six analysis passes: duplication, ambiguity, underspecification, constitution alignment, coverage gaps, and terminology drift.
+4. Turn concrete problems into MCP findings with `review_findings(..., review_mode="planning")`.
+5. Record a planning-mode review run whose `session` starts with `plan-analyze-` so the downstream gate can distinguish triage from the formal review pass.
+6. Summarize whether the artifact should proceed directly to `planning-review` or be revised first.
 
 ## Common Rationalizations
 

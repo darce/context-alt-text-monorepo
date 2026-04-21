@@ -38,6 +38,7 @@ Produce a planning-review verdict backed by recorded findings, printed handoff g
 - [../../../docs/agentic/instructions.md](../../../docs/agentic/instructions.md)
 - [../../../docs/agentic/rules/development-workflow.md](../../../docs/agentic/rules/development-workflow.md)
 - [../../../docs/agentic/rules/planning-review-guide.md](../../../docs/agentic/rules/planning-review-guide.md)
+- [../../../docs/agentic/templates/TASK_PLAN.template.md](../../../docs/agentic/templates/TASK_PLAN.template.md) for task plans under `docs/tasks/`
 
 This skill owns planning-review execution order. The guide owns the detailed checklist and severity model.
 
@@ -51,12 +52,13 @@ This skill owns planning-review execution order. The guide owns the detailed che
 1. Load the planning artifact, the minimum prerequisite packet, and the relevant code or contract anchors.
 2. Check prior planning review history with `review_runs(operation="list", review_mode="planning", ...)`.
 3. Execute the planning-review checklist: current-state accuracy, internal consistency, architecture ownership, contract realism, naming compliance, pipeline readiness, and testability.
-4. Record every finding in MCP with `review_findings`.
-5. Decide the planning verdict.
-6. Record the verdict decision with `record_event(event_kind="decision", ...)`.
-7. Record the planning review run with `review_runs(operation="record", review_mode="planning", ...)`.
-8. Refresh `DASHBOARD.txt` with `render_handoff(kind='dashboard')` after the state-changing writes land.
-9. Confirm whether open findings remain before declaring the artifact ready, and cite the stable handoff gap ids (`finding_id`) when reporting them.
+4. If the artifact is a task plan under `docs/tasks/`, verify it still conforms to `docs/agentic/templates/TASK_PLAN.template.md`, including the `## Consolidated Checklist` structure and the required supporting sections.
+5. Record every finding in MCP with `review_findings`.
+6. Decide the planning verdict.
+7. Record the verdict decision with `record_event(event_kind="decision", ...)`.
+8. Record the planning review run with `review_runs(operation="record", review_mode="planning", ...)`.
+9. Refresh `DASHBOARD.txt` with `render_handoff(kind='dashboard')` after the state-changing writes land.
+10. Confirm whether open findings remain before declaring the artifact ready, and cite the stable handoff gap ids (`finding_id`) when reporting them.
 
 ## Common Rationalizations
 

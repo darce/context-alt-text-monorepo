@@ -39,7 +39,10 @@ def _load_overlay_manifest(project_root: Path) -> dict | None:
     if not manifest_path.is_file():
         return None
 
-    payload = json.loads(manifest_path.read_text())
+    try:
+        payload = json.loads(manifest_path.read_text())
+    except json.JSONDecodeError as exc:
+        raise OverlayResolverError(f"overlay manifest is not valid JSON: {exc}") from exc
     if not isinstance(payload, dict):
         raise OverlayResolverError("overlay manifest must parse to a mapping")
     return payload

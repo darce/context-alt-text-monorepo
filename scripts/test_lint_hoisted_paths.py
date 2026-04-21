@@ -69,3 +69,16 @@ def test_lint_hoisted_paths_does_not_duplicate_hook_findings(tmp_path: Path) -> 
 
     assert exit_code == 1
     assert findings == ["scripts/hooks/bad.sh:1: hardcoded-user-home"]
+
+
+def test_lint_hoisted_paths_reports_malformed_overlay_manifest_as_infrastructure_error(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo / ".agentic-overlay.json", "{bad json\n")
+
+    findings, exit_code = lint_hoisted_paths(repo_root=repo)
+
+    assert exit_code == 1
+    assert findings == [
+        "infrastructure error: overlay manifest is not valid JSON: "
+        "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+    ]

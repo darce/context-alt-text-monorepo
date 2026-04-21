@@ -33,6 +33,8 @@ from scripts.overlay_resolver import resolve_surface
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COPY_PATHS = (
+    Path("scripts/check_harness_sync.py"),
+    Path("scripts/overlay_resolver.py"),
     Path(".vscode/settings.json"),
     Path(".claude/settings.json"),
     Path(".github/hooks/guard-main-branch.py"),
@@ -546,3 +548,40 @@ def test_main_reports_overlay_contract_source_breakdown_when_manifest_exists(tmp
     assert _format_success_message(repo_root=repo) == (
         "check-harness-sync: OK (contracts=1; shared=0 local=0 overlapping=1)"
     )
+
+
+def test_main_runs_by_absolute_path_outside_repo_root(tmp_path: Path) -> None:
+    repo = _write_repo(tmp_path)
+    script_path = repo / "scripts" / "check_harness_sync.py"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    result = subprocess.run(
+        ["python3", str(script_path)],
+        cwd=outside,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "check-harness-sync: OK"
+
+
+def test_main_reports_malformed_overlay_manifest_as_infrastructure_error(tmp_path: Path) -> None:
+    repo = _write_repo(tmp_path)
+    (repo / ".agentic-overlay.json").write_text("{bad json\n", encoding="utf-8")
+    script_path = repo / "scripts" / "check_harness_sync.py"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    result = subprocess.run(
+        ["python3", str(script_path)],
+        cwd=outside,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "check-harness-sync: infrastructure error:" in result.stderr

@@ -14,6 +14,20 @@ class ConsumerRootResolutionError(RuntimeError):
     """Raised when packaged consumer startup cannot infer a git-backed root."""
 
 
+def _resolve_runtime_path(path_value: str | Path, *, workspace_root: Path) -> Path:
+    """Resolve config paths relative to the runtime workspace root.
+
+    Explicit relative paths from harness config should anchor at the
+    declared workspace root, not the process cwd. This keeps consumer
+    configs like ".", ".task-state", and "CURRENT_TASK.json" stable even
+    when the server is launched from a different directory.
+    """
+    candidate = Path(path_value).expanduser()
+    if not candidate.is_absolute():
+        candidate = workspace_root / candidate
+    return candidate.resolve()
+
+
 def _resolve_primary_worktree_root(start_dir: Path) -> Path | None:
     """Resolve the primary git worktree root from a starting directory.
 
@@ -94,20 +108,24 @@ class RuntimeConfig:
     ) -> RuntimeConfig:
         resolved_workspace_root = Path(workspace_root).expanduser().resolve()
         resolved_state_dir = (
-            Path(state_dir).expanduser().resolve() if state_dir is not None else resolved_workspace_root / ".task-state"
+            _resolve_runtime_path(state_dir, workspace_root=resolved_workspace_root)
+            if state_dir is not None
+            else resolved_workspace_root / ".task-state"
         )
         resolved_current_task_path = (
-            Path(current_task_path).expanduser().resolve()
+            _resolve_runtime_path(current_task_path, workspace_root=resolved_workspace_root)
             if current_task_path is not None
             else resolved_workspace_root / "CURRENT_TASK.json"
         )
         resolved_dashboard_path = (
-            Path(dashboard_path).expanduser().resolve()
+            _resolve_runtime_path(dashboard_path, workspace_root=resolved_workspace_root)
             if dashboard_path is not None
             else resolved_workspace_root / "DASHBOARD.txt"
         )
         resolved_exports_dir = (
-            Path(exports_dir).expanduser().resolve() if exports_dir is not None else resolved_state_dir / "exports"
+            _resolve_runtime_path(exports_dir, workspace_root=resolved_workspace_root)
+            if exports_dir is not None
+            else resolved_state_dir / "exports"
         )
         return cls(
             workspace_root=resolved_workspace_root,

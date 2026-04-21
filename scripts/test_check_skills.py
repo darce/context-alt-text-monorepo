@@ -82,6 +82,8 @@ def _make_repo(tmp_path: Path, skill_content: str) -> Path:
         'TOOL_DESCRIPTIONS: dict[str, str] = {"review_findings": "x"}\n',
     )
     _write(repo / ".claude" / "skills" / "demo" / "SKILL.md", skill_content)
+    _write(repo / "scripts" / "check_skills.py", (Path(__file__).with_name("check_skills.py")).read_text())
+    _write(repo / "scripts" / "overlay_resolver.py", (Path(__file__).with_name("overlay_resolver.py")).read_text())
     return repo
 
 
@@ -176,11 +178,13 @@ def test_broken_local_skill_symlink_reports_overlay_error(tmp_path: Path) -> Non
 def test_main_reports_flat_skill_count_without_overlay_manifest(tmp_path: Path) -> None:
     repo = _make_repo(tmp_path, _valid_skill())
     _write(repo / ".claude" / "skills" / "shared-only" / "SKILL.md", _valid_skill().replace("name: demo", "name: shared-only"))
-    script_path = Path(__file__).with_name("check_skills.py")
+    script_path = repo / "scripts" / "check_skills.py"
+    outside = tmp_path / "outside"
+    outside.mkdir()
 
     result = subprocess.run(
         ["python3", str(script_path)],
-        cwd=repo,
+        cwd=outside,
         check=False,
         capture_output=True,
         text=True,
@@ -196,11 +200,13 @@ def test_main_reports_overlay_source_breakdown_when_manifest_exists(tmp_path: Pa
     _write(repo / "local" / ".claude" / "skills" / "local-only" / "SKILL.md", _valid_skill().replace("name: demo", "name: local-only"))
     _write(repo / "local" / ".claude" / "skills" / "demo" / "SKILL.md", _valid_skill())
     _write_overlay_manifest(repo)
-    script_path = Path(__file__).with_name("check_skills.py")
+    script_path = repo / "scripts" / "check_skills.py"
+    outside = tmp_path / "outside"
+    outside.mkdir()
 
     result = subprocess.run(
         ["python3", str(script_path)],
-        cwd=repo,
+        cwd=outside,
         check=False,
         capture_output=True,
         text=True,
@@ -208,3 +214,16 @@ def test_main_reports_overlay_source_breakdown_when_manifest_exists(tmp_path: Pa
 
     assert result.returncode == 0
     assert result.stdout.strip() == "check-skills: OK (3 skills; shared=1 local=1 overlapping=1)"
+
+
+def test_malformed_overlay_manifest_reports_infrastructure_error(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path, _valid_skill())
+    (repo / ".agentic-overlay.json").write_text("{bad json\n", encoding="utf-8")
+
+    failures, exit_code = check_skills(repo_root=repo)
+
+    assert exit_code == 1
+    assert failures == [
+        "infrastructure error: overlay manifest is not valid JSON: "
+        "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+    ]

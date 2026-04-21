@@ -33,9 +33,18 @@ import sys
 import tempfile
 from pathlib import Path
 
-import yaml
+try:
+    import yaml
+except ModuleNotFoundError as exc:
+    yaml = None
+    _YAML_IMPORT_ERROR = exc
+else:
+    _YAML_IMPORT_ERROR = None
 
-from scripts.overlay_resolver import resolve_surface
+try:
+    from scripts.overlay_resolver import OverlayResolverError, resolve_surface
+except ModuleNotFoundError:
+    from overlay_resolver import OverlayResolverError, resolve_surface
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = REPO_ROOT / "docs" / "agentic" / "contracts" / "harness-protocol.yaml"
@@ -954,15 +963,25 @@ def run_checks(contract: dict, *, check_api_surface: bool = False, repo_root: Pa
 
 def main(argv: list[str]) -> int:
     check_api_surface = "--check-api-surface" in argv
-    contract = _load_contract()
-    errors = run_checks(contract, check_api_surface=check_api_surface)
-    if errors:
-        print("check-harness-sync: FAILED", file=sys.stderr)
-        for error in errors:
-            print(f"  - {error}", file=sys.stderr)
+    if _YAML_IMPORT_ERROR is not None:
+        print(
+            "check-harness-sync: infrastructure error: PyYAML is required to load harness contracts",
+            file=sys.stderr,
+        )
         return 1
-    print(_format_success_message())
-    return 0
+    try:
+        contract = _load_contract()
+        errors = run_checks(contract, check_api_surface=check_api_surface)
+        if errors:
+            print("check-harness-sync: FAILED", file=sys.stderr)
+            for error in errors:
+                print(f"  - {error}", file=sys.stderr)
+            return 1
+        print(_format_success_message())
+        return 0
+    except (OverlayResolverError, ValueError, yaml.YAMLError) as exc:
+        print(f"check-harness-sync: infrastructure error: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

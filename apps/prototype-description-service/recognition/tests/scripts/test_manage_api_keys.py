@@ -65,7 +65,7 @@ def test_cli_module_exec_help_succeeds() -> None:
 async def test_create_prints_raw_key_only_to_stdout(db_session: AsyncSession, tenant_row: Tenant, capsys) -> None:
     cli = _import_cli()
     exit_code = await cli.run(
-        argv=["create", "--tenant", str(tenant_row.id), "--tier", "STANDARD"],
+        argv=["--env", "local", "create", "--tenant", str(tenant_row.id), "--tier", "STANDARD"],
         session=db_session,
     )
     assert exit_code == 0
@@ -98,7 +98,7 @@ async def test_list_masks_hash(db_session: AsyncSession, tenant_row: Tenant, cap
 
     capsys.readouterr()  # clear
     exit_code = await cli.run(
-        argv=["list", "--tenant", str(tenant_row.id)],
+        argv=["--env", "local", "list", "--tenant", str(tenant_row.id)],
         session=db_session,
     )
     assert exit_code == 0
@@ -122,7 +122,7 @@ async def test_revoke_sets_revoked_at(db_session: AsyncSession, tenant_row: Tena
     await db_session.commit()
 
     exit_code = await cli.run(
-        argv=["revoke", "--key-id", str(created.id)],
+        argv=["--env", "local", "revoke", "--key-id", str(created.id)],
         session=db_session,
     )
     assert exit_code == 0
@@ -137,7 +137,68 @@ async def test_revoke_sets_revoked_at(db_session: AsyncSession, tenant_row: Tena
 async def test_revoke_unknown_key_exits_1(db_session: AsyncSession, capsys) -> None:
     cli = _import_cli()
     exit_code = await cli.run(
-        argv=["revoke", "--key-id", str(uuid.uuid4())],
+        argv=["--env", "local", "revoke", "--key-id", str(uuid.uuid4())],
         session=db_session,
     )
     assert exit_code == 1
+
+
+def test_cli_requires_env_flag() -> None:
+    cli = _import_cli()
+    import asyncio
+
+    with pytest.raises(SystemExit):
+        asyncio.run(cli.run(argv=["create", "--tenant", str(uuid.uuid4())]))
+
+
+@pytest.mark.asyncio
+async def test_env_prod_rejects_localhost_dsn(db_session: AsyncSession, tenant_row: Tenant, capsys) -> None:
+    cli = _import_cli()
+    # session is supplied, so no new DSN is opened — BR-02's guard must
+    # still reject the env/DSN mismatch against the configured DSN.
+    exit_code = await cli.run(
+        argv=["--env", "prod", "list", "--tenant", str(tenant_row.id)],
+        session=db_session,
+    )
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "env=prod" in err
+    assert "localhost" in err or "127.0.0.1" in err or "local" in err
+
+
+@pytest.mark.asyncio
+async def test_env_local_rejects_remote_dsn(db_session: AsyncSession, tenant_row: Tenant, capsys, monkeypatch) -> None:
+    cli = _import_cli()
+    monkeypatch.setenv(
+        "POSTGRES_DSN",
+        "postgresql+asyncpg://u:p@db.altcontext.internal:5432/prod",
+    )
+    from db import settings as db_settings
+
+    db_settings.get_database_settings.cache_clear()
+
+    exit_code = await cli.run(
+        argv=["--env", "local", "list", "--tenant", str(tenant_row.id)],
+        session=db_session,
+    )
+    db_settings.get_database_settings.cache_clear()
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "env=local" in err
+
+
+def test_validate_env_vs_dsn_unit() -> None:
+    cli = _import_cli()
+    # prod must reject local hosts
+    assert cli._validate_env_vs_dsn("prod", "postgresql+asyncpg://u:p@localhost:5432/db") is not None
+    assert cli._validate_env_vs_dsn("prod", "postgresql+asyncpg://u:p@127.0.0.1:5432/db") is not None
+    assert cli._validate_env_vs_dsn("prod", "postgresql+asyncpg://u:p@host.local:5432/db") is not None
+    # prod accepts real remote hosts
+    assert cli._validate_env_vs_dsn("prod", "postgresql+asyncpg://u:p@db.altcontext.internal:5432/db") is None
+    # local/dev accept loopback and *.local
+    assert cli._validate_env_vs_dsn("local", "postgresql+asyncpg://u:p@localhost:5432/db") is None
+    assert cli._validate_env_vs_dsn("local", "postgresql+asyncpg://u:p@127.0.0.1:5432/db") is None
+    assert cli._validate_env_vs_dsn("dev", "postgresql+asyncpg://u:p@localhost:5432/db") is None
+    # local/dev reject remote hosts
+    assert cli._validate_env_vs_dsn("local", "postgresql+asyncpg://u:p@db.altcontext.internal:5432/db") is not None
+    assert cli._validate_env_vs_dsn("dev", "postgresql+asyncpg://u:p@db.altcontext.internal:5432/db") is not None

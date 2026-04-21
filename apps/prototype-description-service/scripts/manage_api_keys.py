@@ -5,9 +5,16 @@ Referenced from `.env.prod.example`. Delegates persistence to
 except the single post-create line on stdout.
 
 Usage:
-    python -m scripts.manage_api_keys create --tenant <uuid> [--expires-in <days>] [--tier STANDARD|PRO|ENTERPRISE]
-    python -m scripts.manage_api_keys list --tenant <uuid> [--include-revoked]
-    python -m scripts.manage_api_keys revoke --key-id <uuid>
+    python -m scripts.manage_api_keys --env {prod,dev,local} create --tenant <uuid> [--expires-in <days>] [--tier STANDARD|PRO|ENTERPRISE]
+    python -m scripts.manage_api_keys --env {prod,dev,local} list --tenant <uuid> [--include-revoked]
+    python -m scripts.manage_api_keys --env {prod,dev,local} revoke --key-id <uuid>
+
+`--env` is mandatory (E15-3a-BR-02): the CLI refuses to run against a DSN
+whose host does not match the declared environment. Prod aborts on loopback
+or *.local hosts; dev/local abort on any remote host. This prevents the
+original BR-02 incident where a "prod" key was silently written to a local
+dev DB because DSN resolution fell through to whatever the shell happened
+to configure.
 """
 
 from __future__ import annotations
@@ -20,15 +27,44 @@ import sys
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlparse
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from recognition.config.security import RateLimitTier, get_security_settings
 from recognition.infrastructure.repositories.api_key_repository import SqlAlchemyApiKeyRepository
 
+_ENV_CHOICES = ("prod", "dev", "local")
+
+
+def _dsn_host(dsn: str) -> str:
+    return (urlparse(dsn).hostname or "").lower()
+
+
+def _is_local_host(host: str) -> bool:
+    return host in {"localhost", "127.0.0.1", "::1"} or host.endswith(".local")
+
+
+def _validate_env_vs_dsn(env: str, dsn: str) -> str | None:
+    """Return an error string on mismatch, or None when env and DSN agree."""
+    host = _dsn_host(dsn)
+    if not host:
+        return f"env={env}: DSN has no host; refusing to run"
+    if env == "prod" and _is_local_host(host):
+        return f"env=prod but DSN host '{host}' looks local; refusing to run"
+    if env in {"dev", "local"} and not _is_local_host(host):
+        return f"env={env} but DSN host '{host}' is not a local host; refusing to run"
+    return None
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="manage_api_keys")
+    parser.add_argument(
+        "--env",
+        required=True,
+        choices=list(_ENV_CHOICES),
+        help="target environment; validated against the DSN host",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_create = sub.add_parser("create", help="create a new API key")
@@ -123,6 +159,19 @@ def _fmt(value: datetime | None) -> str:
 async def run(argv: Sequence[str] | None = None, *, session: AsyncSession | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
+
+    # BR-02 env/DSN guard runs before opening any connection. Read the
+    # configured DSN via the canonical settings accessor (no connection),
+    # validate, then proceed. When `session` is supplied by tests, we still
+    # validate against the configured DSN to keep the guard exercised.
+    from db.settings import get_database_settings
+
+    dsn = get_database_settings().postgres_dsn
+    mismatch = _validate_env_vs_dsn(args.env, dsn)
+    if mismatch is not None:
+        sys.stderr.write(f"error: {mismatch}\n")
+        sys.stderr.flush()
+        return 1
 
     opened_session = False
     if session is None:

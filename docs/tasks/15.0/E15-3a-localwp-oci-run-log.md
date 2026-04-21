@@ -187,11 +187,11 @@ response omits `Access-Control-Allow-Origin` for the non-allowlisted origin.
 
 | Field | Value |
 | --- | --- |
-| Create command | `cd apps/prototype-description-service && python -m scripts.manage_api_keys create --tenant <id>` |
+| Create command | `cd apps/prototype-description-service && python -m scripts.manage_api_keys --env prod create --tenant <id>` |
 | Created at | `<timestamp>` |
 | Key id | `<uuid>` |
 | Key fingerprint | `<fingerprint only>` |
-| Revocation command | `cd apps/prototype-description-service && python -m scripts.manage_api_keys revoke --key-id <id>` |
+| Revocation command | `cd apps/prototype-description-service && python -m scripts.manage_api_keys --env prod revoke --key-id <id>` |
 | Revoked at | `<timestamp>` |
 
 ### 429 Evidence

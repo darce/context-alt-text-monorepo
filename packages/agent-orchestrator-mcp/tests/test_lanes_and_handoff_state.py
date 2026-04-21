@@ -1812,3 +1812,82 @@ def test_switch_task_regenerates_current_task_with_dashboard(isolated_handoff: d
 # ---------------------------------------------------------------------------
 # Decision grammar helpers tests
 # ---------------------------------------------------------------------------
+
+
+def test_get_latest_slice_review_packet_partitions_external_changed_files(isolated_handoff: dict) -> None:
+    """Decisions whose `changed_files` carry a `<repo_alias>:` prefix (e.g.
+    `mcp-agentic-bootstrap:src/foo.py`) must NOT pollute the monorepo-relative
+    `changed_files` field. Reviewers operating from the monorepo worktree
+    cannot resolve such prefixed paths; the packet contract therefore
+    partitions them into a separate `external_changed_files` map keyed by
+    repo alias. (E17-10-BR14-M-02)
+    """
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="slice-review-packet-external",
+            objective="Test external changed_files partitioning",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.record_decision(
+            session="slice-ext",
+            decision="cdx_slice_complete_external_external_paths",
+            rationale=(
+                "## Changes\n- Added external paths.\n\n"
+                "## Verification\n- pytest.\n\n"
+                "## Schema / Contract Changes\n- None.\n\n"
+                "## Open Threads\n- none."
+            ),
+            changed_files=[
+                "mcp-agentic-bootstrap:src/agentic_bootstrap/cli.py",
+                "mcp-agentic-bootstrap:tests/test_subcommands.py",
+                "docs/agentic/contracts/agent-orchestrator-mcp.md",
+            ],
+        )
+    )
+
+    payload = _parse(mcp_server.get_latest_slice_review_packet(task_ref="slice-review-packet-external"))
+
+    assert payload["ok"] is True
+    packet = payload["packet"]
+    # Monorepo-relative paths only.
+    assert packet["changed_files"] == ["docs/agentic/contracts/agent-orchestrator-mcp.md"]
+    # External paths surfaced under the repo alias, with the prefix stripped.
+    assert packet["external_changed_files"] == {
+        "mcp-agentic-bootstrap": [
+            "src/agentic_bootstrap/cli.py",
+            "tests/test_subcommands.py",
+        ]
+    }
+    # contract_files must still be derived from monorepo-relative entries.
+    assert packet["contract_files"] == ["docs/agentic/contracts/agent-orchestrator-mcp.md"]
+
+
+def test_review_run_makefile_forwards_latest_slice_flag() -> None:
+    """`make review-run LATEST_SLICE=1` must forward `--latest-slice` to the
+    review_runner CLI so a clean committed-only branch can resolve scope from
+    the latest slice review packet instead of falling back to an empty
+    branch_diff. (E17-10-BR14-M-01)
+    """
+    from pathlib import Path as _Path
+
+    # Locate mk/handoff.mk by walking up from this test file to the
+    # monorepo root (it sits next to the Makefile).
+    here = _Path(__file__).resolve()
+    root = next(
+        parent for parent in here.parents if (parent / "mk" / "handoff.mk").is_file()
+    )
+    mk = (root / "mk" / "handoff.mk").read_text()
+
+    review_run_idx = mk.index("\nreview-run:")
+    next_target_idx = mk.index("\nreview-dispatch:", review_run_idx)
+    body = mk[review_run_idx:next_target_idx]
+    assert "LATEST_SLICE" in body, (
+        "review-run target must forward LATEST_SLICE to review_runner.py; "
+        "see E17-10-BR14-M-01."
+    )
+    assert "--latest-slice" in body, (
+        "review-run target must pass --latest-slice when LATEST_SLICE=1."
+    )
+

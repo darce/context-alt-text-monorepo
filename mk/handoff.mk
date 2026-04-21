@@ -222,6 +222,7 @@ review-run:
 		$(if $(SESSION),--session "$(SESSION)",) \
 		$(if $(BACKEND),--backend "$(BACKEND)",) \
 		$(if $(filter 1,$(RECORD_FINDINGS)),--record-findings,) \
+		$(if $(filter 1,$(LATEST_SLICE)),--latest-slice,) \
 		$(if $(ORCHESTRATOR_ROOT),--orchestrator-root "$(ORCHESTRATOR_ROOT)",$(if $(filter 1,$(RECORD_FINDINGS)),--orchestrator-root "$(WORKTREE_ROOT_REAL)",)) \
 		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
 

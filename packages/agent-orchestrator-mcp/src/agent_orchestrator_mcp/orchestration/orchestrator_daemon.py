@@ -1192,6 +1192,7 @@ def _run_orchestrator_cycle(ctx: OrchestratorContext) -> int:
         log("INFO", "daemon_paused")
         if single_pass:
             return 0
+        # TODO(E17-10-REWORK): Pull-based poll -- see packages/agent-orchestrator-mcp/docs/reworks/event-driven-daemon-design-note.md
         time.sleep(poll_interval)
         return -1  # continue
 
@@ -1218,6 +1219,7 @@ def _run_orchestrator_cycle(ctx: OrchestratorContext) -> int:
             log("ERROR", "terminal_error", reason="runtime_failure")
             return 1
         log("INFO", "poll_sleep", interval=poll_interval)
+        # TODO(E17-10-REWORK): Pull-based poll -- see packages/agent-orchestrator-mcp/docs/reworks/event-driven-daemon-design-note.md
         time.sleep(poll_interval)
         return -1  # continue
 
@@ -1234,6 +1236,7 @@ def _run_orchestrator_cycle(ctx: OrchestratorContext) -> int:
         return 0
 
     log("INFO", "poll_sleep", interval=poll_interval)
+    # TODO(E17-10-REWORK): Pull-based poll -- see packages/agent-orchestrator-mcp/docs/reworks/event-driven-daemon-design-note.md
     time.sleep(poll_interval)
     return -1  # continue
 
@@ -1264,6 +1267,11 @@ def orchestrator_loop(
         model,
         state_dir=state_dir,
     )
+    from agent_orchestrator_mcp.orchestration.daemon_startup import (  # noqa: PLC0415
+        emit_daemon_startup_warning,
+    )
+
+    emit_daemon_startup_warning("orchestrator", poll_interval=poll_interval)
     while True:
         result = _run_orchestrator_cycle(ctx)
         if result != -1:

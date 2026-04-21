@@ -47,19 +47,18 @@ Keep each allow-list entry narrow and explainable. If a surface exists only to s
 
 ### Shared Agentic Surface
 
-E17-10 hoists the shared agentic surface into three standalone private repos:
+E17-10 hoists the shared agentic surface into four standalone private repos under the `darce` org:
 
-- `git@github.com:darce/mcp-agentic-system.git` — canonical shared surface repo for skills, hooks, prompts, commands, contracts, and workflow generators
+- `git@github.com:darce/agentic-system.git` — canonical shared surface repo for skills, hooks, prompts, commands, contracts, and workflow generators
+- `git@github.com:darce/mcp-agent-handoff.git` — standalone handoff MCP package repo (pre-existing; backs `agent-handoff-mcp`)
 - `git@github.com:darce/mcp-agent-orchestrator.git` — standalone orchestrator MCP package repo extracted from `packages/agent-orchestrator-mcp/`
-- `git@github.com:darce/mcp-agentic-bootstrap.git` — standalone bootstrap CLI repo that installs and updates the shared surface in consumer projects
+- `git@github.com:darce/agentic-bootstrap.git` — standalone bootstrap CLI repo that installs and updates the shared surface in consumer projects
 
-The package side of the same distribution family also depends on `git@github.com:darce/mcp-agent-handoff.git` existing as the standalone handoff MCP repo. E17-10 originally inherited the historical assumption from AHMCP-5 that this remote already existed; if verification shows it is absent, recreate it before relying on any `git+ssh://git@github.com/darce/mcp-agent-handoff.git@<tag>` install path.
+MCP-server packages keep the `mcp-` prefix (`mcp-agent-handoff`, `mcp-agent-orchestrator`); shared-surface and CLI repos do not (`agentic-system`, `agentic-bootstrap`). The four URLs above are the canonical names referenced by `docs/agentic/consumer-setup.md` and the doc-lock test in `scripts/test_consumer_setup_doc.py`; do not introduce alternate prefixes.
 
-The standalone repo family uses a consistent `mcp-` prefix, even when a repo ships shared surfaces or a bootstrap CLI rather than an MCP server binary.
+For the MVP, sync direction is one-way: this monorepo is the source of truth and Slice 0 extracts the shared surface into `darce/agentic-system`. Consumers clone the remote surface into `<consumer-root>/.agentic/remote/` and symlink from there; they do not install from `context-alt-text-monorepo` URLs.
 
-For the MVP, sync direction is one-way: this monorepo is the source of truth and Slice 0 extracts the shared surface into `darce/mcp-agentic-system`. Consumers clone the remote surface into `<consumer-root>/.agentic/remote/` and symlink from there; they do not install from `context-alt-text-monorepo` URLs.
-
-`TODO(E17-10-POST-MVP-SYNC)`: define the reverse-sync workflow for upstream edits made in `darce/mcp-agentic-system`, including how they are reviewed and merged back into this monorepo without drift.
+`TODO(E17-10-POST-MVP-SYNC)`: define the reverse-sync workflow for upstream edits made in `darce/agentic-system`, including how they are reviewed and merged back into this monorepo without drift.
 
 `TODO(E17-10-POST-MVP-CLEANUP)`: once Slice 5 proves the consumer flow end to end, delete the duplicated in-tree shared-surface copies from this monorepo or replace them with the agreed post-MVP sync model.
 

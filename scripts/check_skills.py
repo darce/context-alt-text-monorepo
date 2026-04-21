@@ -10,7 +10,13 @@ import re
 import sys
 from pathlib import Path
 
-import yaml
+try:
+    import yaml
+except ModuleNotFoundError as exc:
+    yaml = None
+    _YAML_IMPORT_ERROR = exc
+else:
+    _YAML_IMPORT_ERROR = None
 
 try:
     from scripts.overlay_resolver import BrokenOverlayError, OverlayResolverError, resolve_surface
@@ -196,7 +202,7 @@ def _resolve_skill_files(repo_root: Path, skills_root: Path) -> tuple[list[Path]
     except BrokenOverlayError as exc:
         return [], [f"BrokenOverlayError: {exc}"]
     except OverlayResolverError as exc:
-        raise SkillCheckError(str(exc)) from exc
+        return [], [f"infrastructure error: {exc}"]
 
     resolved_files = sorted(
         entry.effective_path / "SKILL.md"
@@ -228,6 +234,9 @@ def check_skills(
     skills_root: Path | None = None,
     routing_file: Path | None = None,
 ) -> tuple[list[str], int]:
+    if _YAML_IMPORT_ERROR is not None:
+        return ["infrastructure error: PyYAML is required to load skill frontmatter"], 1
+
     skills_root = skills_root or (repo_root / ".claude" / "skills")
     routing_file = routing_file or (repo_root / "docs" / "agentic" / "maps" / "mcp-tool-routing.yaml")
 
@@ -262,7 +271,7 @@ def check_skills(
 
 
 def main() -> int:
-    repo_root = Path.cwd().resolve()
+    repo_root = REPO_ROOT
     skills_root = repo_root / ".claude" / "skills"
     routing_file = repo_root / "docs" / "agentic" / "maps" / "mcp-tool-routing.yaml"
 

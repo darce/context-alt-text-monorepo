@@ -223,6 +223,31 @@ def test_for_repo_passes_through_explicit_state_dir(
     assert runtime.db_path == custom_state.resolve() / "handoff.db"
 
 
+def test_for_workspace_resolves_relative_overrides_from_workspace_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace_root = tmp_path / "consumer"
+    launcher_cwd = tmp_path / "launcher"
+    workspace_root.mkdir()
+    launcher_cwd.mkdir()
+    monkeypatch.chdir(launcher_cwd)
+
+    runtime = RuntimeConfig.for_workspace(
+        workspace_root,
+        state_dir=".task-state",
+        current_task_path="CURRENT_TASK.json",
+        dashboard_path="DASHBOARD.txt",
+        exports_dir=".task-state/exports",
+    )
+
+    assert runtime.workspace_root == workspace_root.resolve()
+    assert runtime.state_dir == workspace_root.resolve() / ".task-state"
+    assert runtime.db_path == workspace_root.resolve() / ".task-state" / "handoff.db"
+    assert runtime.current_task_path == workspace_root.resolve() / "CURRENT_TASK.json"
+    assert runtime.dashboard_path == workspace_root.resolve() / "DASHBOARD.txt"
+    assert runtime.exports_dir == workspace_root.resolve() / ".task-state" / "exports"
+
+
 def test_resolve_primary_worktree_root_returns_none_for_missing_dir(tmp_path: Path) -> None:
     missing = tmp_path / "does-not-exist"
     assert _resolve_primary_worktree_root(missing) is None
@@ -346,6 +371,36 @@ def test_from_args_preserves_explicit_state_dir_override(
     assert runtime.workspace_root == primary.resolve()
     assert runtime.state_dir == explicit_state.resolve()
     assert runtime.db_path == explicit_state.resolve() / "handoff.db"
+
+
+def test_from_args_resolves_relative_overrides_from_workspace_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace_root = tmp_path / "consumer"
+    launcher_cwd = tmp_path / "launcher"
+    workspace_root.mkdir()
+    launcher_cwd.mkdir()
+    monkeypatch.chdir(launcher_cwd)
+
+    class FakeArgs:
+        pass
+
+    FakeArgs.workspace_root = str(workspace_root)
+    FakeArgs.state_dir = ".task-state"
+    FakeArgs.current_task_path = "CURRENT_TASK.json"
+    FakeArgs.dashboard_path = "DASHBOARD.txt"
+    FakeArgs.exports_dir = ".task-state/exports"
+    FakeArgs.tool_profile = None
+
+    with mock.patch.dict(os.environ, {}, clear=True):
+        runtime = RuntimeConfig.from_args(FakeArgs())
+
+    assert runtime.workspace_root == workspace_root.resolve()
+    assert runtime.state_dir == workspace_root.resolve() / ".task-state"
+    assert runtime.db_path == workspace_root.resolve() / ".task-state" / "handoff.db"
+    assert runtime.current_task_path == workspace_root.resolve() / "CURRENT_TASK.json"
+    assert runtime.dashboard_path == workspace_root.resolve() / "DASHBOARD.txt"
+    assert runtime.exports_dir == workspace_root.resolve() / ".task-state" / "exports"
 
 
 def test_runtime_config_rejects_invalid_tool_profile() -> None:

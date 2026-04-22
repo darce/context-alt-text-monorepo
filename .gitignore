@@ -99,3 +99,6 @@ DASHBOARD.md
 
 # local retry logs
 /retry-apply.log
+
+# Per-user Claude Code permissions allowlist (machine-specific paths)
+.claude/settings.local.json

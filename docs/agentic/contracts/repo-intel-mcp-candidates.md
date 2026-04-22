@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document classifies the non-handoff MCP tools that still exist in the legacy [`unified_server.py`](../../../scripts/mcp/unified_server.py) implementation. The portable [`agent-handoff-mcp`](agent-handoff-mcp.md) package does not expose these tools.
+This document classifies the non-handoff MCP tools that previously existed in the legacy `unified_server.py` implementation (deleted in the E17-10 followon cleanup). The portable [`agent-handoff-mcp`](agent-handoff-mcp.md) package does not expose these tools.
 
 The goal is to make the boundary explicit:
 
@@ -36,4 +36,4 @@ If a future MCP companion is justified, it should start as one narrow `repo-inte
 - `agent-handoff-mcp` remains handoff-only.
 - The non-handoff helpers stay out of the packaged handoff server.
 - No stub servers are created in this phase.
-- `unified_server.py` is now legacy reference code for any future repo-intel extraction, not the runtime contract for handoff.
+- `unified_server.py` was deleted in the E17-10 followon cleanup. Any future repo-intel MCP must be re-derived from this disposition table, not from the deleted code.

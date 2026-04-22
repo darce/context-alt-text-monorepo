@@ -42,7 +42,7 @@ from recognition.interface_adapters.http.dependencies import (
     require_write_access,
 )
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
-from recognition.interface_adapters.http.deps.tenant import get_tenant_id
+from recognition.interface_adapters.http.deps.tenant import get_authenticated_tenant_id
 from recognition.interface_adapters.http.job_utils import (
     job_to_clustering_response as _job_to_clustering_response,
 )
@@ -245,7 +245,7 @@ async def recover_orphan_identities(
 
 @router.get("/clusters", response_model=list[ClusterResponse])
 async def list_clusters(
-    tenant_id: str = Depends(get_tenant_id),
+    tenant_id: str = Depends(get_authenticated_tenant_id),
     limit: int = Query(50),
     offset: int = Query(0),
     include_outliers: bool = Query(False),
@@ -499,7 +499,7 @@ async def get_tenant_cluster_delta(
 
 @router.get("/clusters/top-unlabeled", response_model=list[ClusterResponse])
 async def get_top_unlabeled_clusters(
-    tenant_id: str = Depends(get_tenant_id),
+    tenant_id: str = Depends(get_authenticated_tenant_id),
     limit: int = Query(10),
     min_identity_count: int = Query(2, ge=1, description="Minimum identity count (default 2 to skip singletons)"),
     repo=Depends(get_cluster_repository),
@@ -627,7 +627,7 @@ async def undismiss_cluster(
 @router.get("/clusters/{cluster_id}/members", response_model=list[ClusterMemberResponse])
 async def list_cluster_members(
     cluster_id: str,
-    tenant_id: str = Depends(get_tenant_id),
+    tenant_id: str = Depends(get_authenticated_tenant_id),
     cluster_service_builder=Depends(get_cluster_service_builder),
 ) -> list[ClusterMemberResponse]:
     """List all identities in a cluster with membership data.

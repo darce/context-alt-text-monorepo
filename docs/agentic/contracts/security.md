@@ -396,7 +396,7 @@ exactly one structured INFO record via `recognition.observability.auth_audit.emi
 
 **Raw key never-logged rule**: emitters accept only the stored hash. Raw API
 keys MUST NOT be passed to this emitter, captured in exception messages, or
-printed outside the single stdout line written by `manage_api_keys.py create`.
+printed outside the single labeled stdout line written by `manage_api_keys.py create`.
 
 ## Operator CLI: Key Rotation Ceremony
 
@@ -411,30 +411,36 @@ and never issues raw SQL.
 
 - `create --tenant <uuid> [--expires-in <days>] [--tier STANDARD|PRO|ENTERPRISE]`
   generates a 32-byte URL-safe secret, hashes it with
-  `RECOGNITION_API_KEY_HASH_ALGORITHM`, inserts a row, prints the raw key on
-  stdout (single line) and `key_id=<uuid>` on stderr.
+  `RECOGNITION_API_KEY_HASH_ALGORITHM`, inserts a row, prints
+  `api_key=<secret>` on stdout (single line) and `key_id=<uuid>` on stderr.
 - `list --tenant <uuid> [--include-revoked]` prints tab-separated rows
   `id, last4_of_hash, created_at, last_used_at, expires_at, revoked_at`.
   Full stored hashes are never printed.
 - `revoke --key-id <uuid>` sets `revoked_at=now()` and writes
   `revoked key_id=<uuid> revoked_at=<iso>` to stderr.
+- `tenant create --tenant <uuid> --site-url <url>` creates or updates the
+  bootstrap tenant row without raw SQL.
+- `tenant list [--limit <n>]` prints tab-separated rows
+  `tenant_id, site_url, created_at`.
 
 **Rotation runbook**:
 
-1. Operator runs `manage_api_keys.py create --tenant <id>` and captures the
-   raw key from stdout.
-2. If the raw key is lost before it can be shared, revoke the new key and
+1. If the tenant row does not exist yet, operator runs
+   `manage_api_keys.py tenant create --tenant <id> --site-url <url>`.
+2. Operator runs `manage_api_keys.py create --tenant <id>` and captures the
+   `api_key=...` value from stdout.
+3. If the raw key is lost before it can be shared, revoke the new key and
    restart the ceremony. Hash-only storage means the raw value is
    unrecoverable — by design.
-3. Operator shares the raw key with the tester via an operator-approved
+4. Operator shares the raw key with the tester via an operator-approved
    secure channel (e.g. 1Password shared vault, Signal). Plaintext email
    and Slack DMs are disallowed.
-4. Tester configures the new key in the plugin Settings page.
-5. Before revoking the old key, operator runs
+5. Tester configures the new key in the plugin Settings page.
+6. Before revoking the old key, operator runs
    `manage_api_keys.py list --tenant <id>` and confirms the new key's
    `last_used_at` is non-null and more recent than the old key's — the
    signal that cutover succeeded.
-6. Operator runs `manage_api_keys.py revoke --key-id <old-key-id>` to
+7. Operator runs `manage_api_keys.py revoke --key-id <old-key-id>` to
    soft-revoke the old key.
 
 **HTTP admin surface: deferred.** No admin router ships with E15-1. A real

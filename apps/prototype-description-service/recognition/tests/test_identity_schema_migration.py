@@ -11,6 +11,8 @@ class _RecordingOp:
     created_tables: list[str] = field(default_factory=list)
     created_indexes: list[tuple[str, str]] = field(default_factory=list)
     executed_sql: list[str] = field(default_factory=list)
+    dropped_tables: list[str] = field(default_factory=list)
+    dropped_indexes: list[tuple[str, str | None]] = field(default_factory=list)
 
     def execute(self, sql: str) -> None:
         self.executed_sql.append(sql)
@@ -20,6 +22,12 @@ class _RecordingOp:
 
     def create_index(self, name: str, table_name: str, columns: list[str], *args, **kwargs) -> None:  # noqa: ANN002, ANN003
         self.created_indexes.append((name, table_name))
+
+    def drop_table(self, name: str, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+        self.dropped_tables.append(name)
+
+    def drop_index(self, name: str, table_name: str | None = None, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+        self.dropped_indexes.append((name, table_name))
 
 
 def test_identity_schema_upgrade_creates_api_keys_table(monkeypatch) -> None:
@@ -31,3 +39,48 @@ def test_identity_schema_upgrade_creates_api_keys_table(monkeypatch) -> None:
     assert "api_keys" in recorder.created_tables
     assert ("idx_api_keys_tenant", "api_keys") in recorder.created_indexes
     assert ("idx_api_keys_hash", "api_keys") in recorder.created_indexes
+
+
+def test_identity_schema_declares_expected_table_set() -> None:
+    assert identity_schema.EXPECTED_SCHEMA_TABLES == [
+        "tenants",
+        "api_keys",
+        "media_identities",
+        "curation_replay_records",
+        "identity_clusters",
+        "identity_members",
+        "identity_cluster_representatives",
+        "identity_scan_jobs",
+        "identity_scan_job_items",
+        "identity_clustering_jobs",
+        "identity_suggestions",
+        "cluster_merge_suggestions",
+        "name_suggestions",
+        "identity_cluster_blocks",
+        "identity_constraints",
+        "recognition_runs",
+        "recognition_events",
+        "clustering_feedback",
+        "audit_events",
+        "export_jobs",
+        "identity_cluster_refresh_queue",
+    ]
+
+
+def test_identity_schema_downgrade_drops_children_before_parents(monkeypatch) -> None:
+    recorder = _RecordingOp()
+    monkeypatch.setattr(identity_schema, "op", recorder)
+
+    identity_schema.downgrade()
+
+    assert ("idx_api_keys_hash", "api_keys") in recorder.dropped_indexes
+    assert ("idx_api_keys_tenant", "api_keys") in recorder.dropped_indexes
+    assert recorder.dropped_tables[-2:] == ["api_keys", "tenants"]
+    assert recorder.dropped_tables.index("identity_members") < recorder.dropped_tables.index("identity_clusters")
+    assert recorder.dropped_tables.index("identity_cluster_representatives") < recorder.dropped_tables.index(
+        "identity_clusters"
+    )
+    assert recorder.dropped_tables.index("identity_cluster_representatives") < recorder.dropped_tables.index(
+        "media_identities"
+    )
+    assert recorder.dropped_tables.index("recognition_events") < recorder.dropped_tables.index("recognition_runs")

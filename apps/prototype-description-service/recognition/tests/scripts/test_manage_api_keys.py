@@ -10,6 +10,7 @@ import hashlib
 import os
 import pathlib
 import subprocess
+import sys
 import uuid
 
 import pytest
@@ -49,7 +50,7 @@ def test_cli_module_importable() -> None:
 def test_cli_module_exec_help_succeeds() -> None:
     app_root = pathlib.Path(__file__).resolve().parents[3]
     result = subprocess.run(
-        ["python", "-m", "scripts.manage_api_keys", "--help"],
+        [sys.executable, "-m", "scripts.manage_api_keys", "--help"],
         cwd=app_root,
         capture_output=True,
         text=True,
@@ -70,10 +71,9 @@ async def test_create_prints_raw_key_only_to_stdout(db_session: AsyncSession, te
     )
     assert exit_code == 0
     captured = capsys.readouterr()
-    raw = captured.out.strip()
-    # Exactly one non-empty line in stdout, no "key_id" prefix.
-    assert raw
-    assert "key_id" not in captured.out
+    api_key_line = captured.out.strip()
+    assert api_key_line.startswith("api_key=")
+    raw = api_key_line.removeprefix("api_key=")
     assert "key_id=" in captured.err
 
     # Hash matches a stored row.
@@ -185,6 +185,47 @@ async def test_env_local_rejects_remote_dsn(db_session: AsyncSession, tenant_row
     assert exit_code == 1
     err = capsys.readouterr().err
     assert "env=local" in err
+
+
+@pytest.mark.asyncio
+async def test_tenant_create_bootstraps_row(db_session: AsyncSession, capsys) -> None:
+    cli = _import_cli()
+    tenant_id = uuid.uuid4()
+
+    exit_code = await cli.run(
+        argv=[
+            "--env",
+            "local",
+            "tenant",
+            "create",
+            "--tenant",
+            str(tenant_id),
+            "--site-url",
+            "https://tenant.example.test",
+        ],
+        session=db_session,
+    )
+
+    assert exit_code == 0
+    tenant = await db_session.get(Tenant, tenant_id)
+    assert tenant is not None
+    assert tenant.site_url == "https://tenant.example.test"
+    assert f"tenant_id={tenant_id}" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_tenant_list_prints_bootstrapped_rows(db_session: AsyncSession, capsys) -> None:
+    db_session.add(Tenant(id=uuid.uuid4(), site_url="https://first.example.test"))
+    db_session.add(Tenant(id=uuid.uuid4(), site_url="https://second.example.test"))
+    await db_session.commit()
+
+    cli = _import_cli()
+    exit_code = await cli.run(argv=["--env", "local", "tenant", "list"], session=db_session)
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "https://first.example.test" in out
+    assert "https://second.example.test" in out
 
 
 def test_validate_env_vs_dsn_unit() -> None:

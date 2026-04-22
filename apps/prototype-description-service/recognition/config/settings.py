@@ -17,16 +17,36 @@ from recognition.application.settings import ClusteringSettings
 from recognition.application.settings.scan import ScanSettings
 
 
+def _resolve_insightface_cache_root() -> Path:
+    """Resolve the InsightFace root cache dir from env or the legacy default."""
+    explicit_cache_dir = os.environ.get("INSIGHTFACE_CACHE_DIR", "").strip()
+    if explicit_cache_dir:
+        return Path(explicit_cache_dir)
+
+    explicit_home = os.environ.get("INSIGHTFACE_HOME", "").strip()
+    if explicit_home:
+        return Path(explicit_home)
+
+    return Path.home() / ".insightface"
+
+
 class InsightFaceSettings(BaseModel):
     """Settings for InsightFace face detection and embedding."""
 
     model_name: str = Field(default="buffalo_l", description="InsightFace model to use.")
     # NOTE: Changed from "auto" to "cpu" to bypass CoreML compilation errors on macOS
     device: str = Field(default="cpu", description="Device: 'auto', 'cpu', 'cuda', 'mps'.")
-    cache_dir: Path = Field(default=Path.home() / ".insightface" / "models", description="Model cache directory.")
+    cache_dir: Path = Field(
+        default_factory=_resolve_insightface_cache_root, description="InsightFace root cache directory."
+    )
     providers: list[str] = Field(default_factory=list, description="ONNX providers (empty = auto-detect).")
     det_thresh: float = Field(default=0.5, description="Face detection confidence threshold.")
     det_size: tuple[int, int] = Field(default=(640, 640), description="Detection input size.")
+
+    @property
+    def model_cache_dir(self) -> Path:
+        """Return the bundle parent that should contain `<model_name>/`."""
+        return self.cache_dir / "models"
 
 
 class IdentityDetectionSettings(BaseModel):

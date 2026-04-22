@@ -75,6 +75,6 @@ ENV MPLCONFIGDIR=/data/cache/matplotlib
 
 EXPOSE 8000
 
-# Entrypoint: run Alembic migrations then start uvicorn.
+# Entrypoint: run Alembic migrations, verify the schema footprint, then start uvicorn.
 # The POSTGRES_SYNC_DSN env var is used by Alembic (via db/migrations/env.py).
-CMD ["sh", "-c", "cd /app && alembic -c db/alembic.ini upgrade head && uvicorn api.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "cd /app && alembic -c db/alembic.ini upgrade head && python -m scripts.verify_identity_schema && uvicorn api.main:app --host 0.0.0.0 --port 8000"]

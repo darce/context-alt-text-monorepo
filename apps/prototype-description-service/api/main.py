@@ -201,7 +201,7 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
     FastAPI instance without spinning up every subsystem router.
     """
     settings = RecognitionSettings()
-    cache_dir = model_cache_dir or settings.insightface.cache_dir
+    cache_dir = model_cache_dir or settings.insightface.model_cache_dir
     model_name = settings.insightface.model_name
 
     commit_sha = _resolve_version_commit_sha() or "unknown"

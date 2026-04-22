@@ -36,6 +36,53 @@ TENANT_TABLES = [
     "export_jobs",
 ]
 
+EXPECTED_SCHEMA_TABLES = [
+    "tenants",
+    "api_keys",
+    "media_identities",
+    "curation_replay_records",
+    "identity_clusters",
+    "identity_members",
+    "identity_cluster_representatives",
+    "identity_scan_jobs",
+    "identity_scan_job_items",
+    "identity_clustering_jobs",
+    "identity_suggestions",
+    "cluster_merge_suggestions",
+    "name_suggestions",
+    "identity_cluster_blocks",
+    "identity_constraints",
+    "recognition_runs",
+    "recognition_events",
+    "clustering_feedback",
+    "audit_events",
+    "export_jobs",
+    "identity_cluster_refresh_queue",
+]
+
+DOWNGRADE_TABLE_ORDER = [
+    "audit_events",
+    "clustering_feedback",
+    "export_jobs",
+    "recognition_events",
+    "identity_cluster_blocks",
+    "name_suggestions",
+    "cluster_merge_suggestions",
+    "identity_suggestions",
+    "identity_scan_job_items",
+    "recognition_runs",
+    "identity_cluster_representatives",
+    "identity_members",
+    "curation_replay_records",
+    "identity_scan_jobs",
+    "identity_clustering_jobs",
+    "identity_constraints",
+    "identity_clusters",
+    "media_identities",
+    "api_keys",
+    "tenants",
+]
+
 
 def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
@@ -1293,24 +1340,11 @@ def downgrade() -> None:
     op.drop_index("idx_recognition_runs_scan_job", table_name="recognition_runs")
     op.drop_index("idx_recognition_runs_status", table_name="recognition_runs")
     op.drop_index("idx_recognition_runs_tenant", table_name="recognition_runs")
+    op.drop_index("idx_api_keys_hash", table_name="api_keys")
+    op.drop_index("idx_api_keys_tenant", table_name="api_keys")
     for table in TENANT_TABLES:
         op.execute(f"DROP POLICY IF EXISTS tenant_isolation_{table} ON {table}")
         op.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
         op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
-    op.drop_table("audit_events")
-    op.drop_table("clustering_feedback")
-    op.drop_table("export_jobs")
-    op.drop_table("recognition_events")
-    op.drop_table("recognition_runs")
-    op.drop_table("identity_cluster_blocks")
-    op.drop_table("name_suggestions")
-    op.drop_table("cluster_merge_suggestions")
-    op.drop_table("identity_suggestions")
-    op.drop_table("identity_scan_job_items")
-    op.drop_table("identity_scan_jobs")
-    op.drop_table("identity_cluster_representatives")
-    op.drop_table("identity_clustering_jobs")
-    op.drop_table("identity_members")
-    op.drop_table("curation_replay_records")
-    op.drop_table("identity_clusters")
-    op.drop_table("media_identities")
+    for table in DOWNGRADE_TABLE_ORDER:
+        op.drop_table(table)

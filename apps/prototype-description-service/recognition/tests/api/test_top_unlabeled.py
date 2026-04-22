@@ -5,10 +5,13 @@ from datetime import UTC, datetime
 
 import numpy as np
 import pytest
-from starlette.testclient import TestClient
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from recognition.domain.representative import ClusterRepresentative
-from recognition.tests.api.conftest import seed_cluster
+from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http import router as recognition_router
+from recognition.tests.api.conftest import FakeSession, seed_cluster
 
 
 @pytest.mark.asyncio
@@ -52,6 +55,52 @@ async def test_get_top_unlabeled_returns_clusters(
     assert body[1]["id"] == c3.id
     assert body[1]["identity_count"] == 5
     assert not any(c["label"] for c in body)
+
+
+def test_get_top_unlabeled_uses_authenticated_tenant_claim(
+    monkeypatch,
+    tenant_id: str,
+    fake_cluster_repository,
+) -> None:
+    captured: dict[str, str] = {}
+    monkeypatch.setenv("RECOGNITION_AUTH_ENABLED", "1")
+    app = FastAPI()
+    app.include_router(recognition_router, prefix="/recognition")
+
+    async def _session_dep():
+        yield FakeSession()
+
+    async def _cluster_repo_dep(session=None):  # noqa: ANN001
+        return fake_cluster_repository
+
+    app.dependency_overrides[dependencies.get_session] = _session_dep
+    app.dependency_overrides[dependencies.get_optional_session] = _session_dep
+    app.dependency_overrides[dependencies.get_cluster_repository] = _cluster_repo_dep
+
+    from recognition.interface_adapters.http.deps import auth
+
+    async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
+        assert api_key == "good-key"
+        return tenant_id, "key-1", "enterprise", False
+
+    monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
+
+    cluster_id = str(uuid.uuid4())
+    fake_cluster_repository.seed(cluster_id, label=None, identity_count=3)
+    original_get_top_unlabeled = fake_cluster_repository.get_top_unlabeled
+
+    async def _capturing_get_top_unlabeled(resolved_tenant_id: str, *args, **kwargs):  # noqa: ANN001
+        captured["tenant_id"] = resolved_tenant_id
+        return await original_get_top_unlabeled(resolved_tenant_id, *args, **kwargs)
+
+    fake_cluster_repository.get_top_unlabeled = _capturing_get_top_unlabeled
+
+    client = TestClient(app)
+    resp = client.get("/recognition/clusters/top-unlabeled", headers={"Authorization": "Bearer good-key"})
+
+    assert resp.status_code == 200
+    assert captured["tenant_id"] == tenant_id
+    assert [cluster["id"] for cluster in resp.json()] == [cluster_id]
 
 
 @pytest.mark.asyncio

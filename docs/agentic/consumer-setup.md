@@ -154,3 +154,24 @@ Each consumer repository keeps its own `.task-state/handoff.db`. Do not point mu
 The MVP target is Unix-like environments only: macOS and Linux.
 
 The overlay relies on symlinks and git-hook path wiring. Windows support is deferred until there is an explicit follow-on slice to define the expected symlink and hook behavior there.
+
+## Lessons Learned (E17-10-followon, 2026-04-22)
+
+### What worked
+
+- Bootstrap install was clean for all three real consumers (`hoist-mvp-consumer`, `darce.github.io`, `altcontext-marketing-monorepo`): `agentic-bootstrap install --target .` wrote the overlay manifest, symlinked `.claude/skills`, and dropped 12+ hooks under `scripts/hooks/` on first run.
+- Per-consumer DB isolation held: each consumer's `.task-state/handoff.db` only sees its own task_refs; cross-consumer probe via `get_handoff_state(task_ref=...)` showed zero foreign-ref leakage across three distinct DB files.
+- The doc-lock test (`scripts/test_consumer_setup_doc.py`) caught both pin-bumps (handoff v0.4.1→v0.4.2 and orchestrator v0.1.2→v0.1.3) before they landed silently.
+
+### What needed manual intervention
+
+- The orchestrator's `pyproject.toml` pins `agent-handoff-mcp` by exact git URL (`@v0.4.1`). Publishing handoff `v0.4.2` without bumping that URL pin caused pip resolution conflicts when consumers installed all three packages explicitly. Resolution: published `mcp-agent-orchestrator@v0.1.3` with the URL bumped to `@v0.4.2`, then re-pinned the consumer-setup doc to `@v0.1.3`.
+- `agentic-bootstrap` resolved via `PATH` after `source .venv/bin/activate` matched the pyenv shim (`~/.pyenv/versions/3.13.9/bin/agentic-bootstrap`) instead of the venv binary on consumers where pyenv shims sit ahead of the venv on `PATH`. Workaround: always invoke via the explicit `./.venv/bin/agentic-bootstrap` path. Doc and bootstrap install instructions should prefer the explicit-path form.
+- `agentic-bootstrap` v0.2.0 has no `--version` flag (only subcommands `install | status | doctor | update | repair`). Use `pip show agentic-bootstrap` for version reporting until a `--version` flag is added.
+- `agentic-bootstrap doctor --target <empty-dir>` correctly exits 1 with `missing_manifest: .agentic-overlay.json`. Doctor is meant to flag drift, not to be used as a pre-install smoke. Only call `doctor` after `install`.
+
+### Follow-on tasks opened
+
+- `MAINT-orchestrator-pyproject-pin-policy` — decide whether orchestrator should pin handoff via URL (current) vs version-only constraint (e.g. `agent-handoff-mcp>=0.4.1,<0.5`) so cleanup tags don't force orchestrator retags.
+- `MAINT-bootstrap-cli-version-flag` — add a `--version` flag to `agentic-bootstrap` so external smoke checks can verify the installed CLI without `pip show`.
+- `MAINT-consumer-setup-explicit-venv-path` — update `consumer-setup.md` install snippets to prefer `./.venv/bin/agentic-bootstrap` over `agentic-bootstrap` to avoid pyenv-shim shadowing.

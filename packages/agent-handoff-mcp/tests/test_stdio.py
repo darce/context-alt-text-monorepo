@@ -74,52 +74,58 @@ def test_stdio_server_lists_handoff_tools(tmp_path: Path) -> None:
     assert "run_structured_turn" not in tool_names
 
 
-def test_stdio_legacy_core_profile_still_exposes_all_23_tools(tmp_path: Path) -> None:
-    """Legacy --tool-profile core is accepted but now exposes the full 23-tool surface."""
+def test_stdio_legacy_core_profile_is_rejected(tmp_path: Path) -> None:
+    """Legacy --tool-profile core was retired; the launcher must reject it.
+
+    Canonical decision: commit ``11193d7a`` (`AHMCP: retire legacy handoff
+    compatibility surface`) collapsed the tool surface to a single ``all``
+    profile. The launcher's argparse layer rejects ``core``/``extended`` with
+    a non-zero exit, so the stdio Client cannot complete a handshake. We
+    assert the failure surfaces as a closed transport rather than a silently
+    accepted legacy alias.
+    """
     repo_root = Path(__file__).resolve().parents[3]
     launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
 
-    async def _run() -> set[str]:
+    async def _run() -> None:
         transport = PythonStdioTransport(
             script_path=launcher,
             args=["--workspace-root", str(repo_root), "--tool-profile", "core", "serve-stdio"],
             cwd=str(repo_root),
-            log_file=tmp_path / "core-profile-smoke.log",
+            log_file=tmp_path / "core-profile-rejected.log",
         )
         async with Client(transport) as client:
-            tools = await client.list_tools()
-            return {tool.name for tool in tools}
+            await client.list_tools()
 
-    tool_names = asyncio.run(_run())
-    missing_core = _CORE_TOOLS - tool_names
-    assert not missing_core, f"Core tools missing from legacy core launch: {missing_core}"
-    missing_extended = _EXTENDED_ONLY_TOOLS - tool_names
-    assert not missing_extended, f"Legacy extended tools missing from unified launch: {missing_extended}"
-    assert len(tool_names) == 23
+    import pytest
+
+    from mcp.shared.exceptions import McpError
+
+    with pytest.raises((McpError, RuntimeError, OSError)):
+        asyncio.run(_run())
 
 
-def test_stdio_extended_profile_exposes_all_23_tools(tmp_path: Path) -> None:
-    """Legacy --tool-profile extended still exposes the unified 23-tool surface."""
+def test_stdio_extended_profile_is_rejected(tmp_path: Path) -> None:
+    """Legacy --tool-profile extended is rejected for the same reason as core."""
     repo_root = Path(__file__).resolve().parents[3]
     launcher = (repo_root / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp_launcher.py").resolve()
 
-    async def _run() -> set[str]:
+    async def _run() -> None:
         transport = PythonStdioTransport(
             script_path=launcher,
             args=["--workspace-root", str(repo_root), "--tool-profile", "extended", "serve-stdio"],
             cwd=str(repo_root),
-            log_file=tmp_path / "extended-profile-smoke.log",
+            log_file=tmp_path / "extended-profile-rejected.log",
         )
         async with Client(transport) as client:
-            tools = await client.list_tools()
-            return {tool.name for tool in tools}
+            await client.list_tools()
 
-    tool_names = asyncio.run(_run())
-    assert _CORE_TOOLS <= tool_names, f"Core tools missing from extended profile: {_CORE_TOOLS - tool_names}"
-    assert _EXTENDED_ONLY_TOOLS <= tool_names, (
-        f"Extended tools missing from extended profile: {_EXTENDED_ONLY_TOOLS - tool_names}"
-    )
-    assert len(tool_names) == 23
+    import pytest
+
+    from mcp.shared.exceptions import McpError
+
+    with pytest.raises((McpError, RuntimeError, OSError)):
+        asyncio.run(_run())
 
 
 def _collect_schema_types(schema: dict[str, Any], root_schema: dict[str, Any]) -> set[str]:

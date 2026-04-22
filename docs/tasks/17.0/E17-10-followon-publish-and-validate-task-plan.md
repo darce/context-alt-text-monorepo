@@ -30,7 +30,7 @@ Until all four are addressed, the merged consumer-setup doc points at install UR
 
 - **No design changes to E17-10.** This plan executes the existing Implementation Sequencing Note (P1 + P2 + P3 + Slice 5). If a step in the merged plan turns out to be wrong, raise a planning finding against E17-10 instead of editing the plan in this slice — the plan is now archive-history. New decisions land in this follow-on plan.
 - **Single-initial-commit recipe per E17-10 Slice 0.** Each extraction repo gets one commit (`rsync --archive --delete <paths> <target>/`, then `git init && git add -A && git commit`). `git subtree split` is rejected for the same reason E17-10 rejected it: it preserves multi-commit history, which conflicts with the single-initial-commit constraint.
-- **Real standalone SSH remotes only.** Slice 4 (validation) installs from `git+ssh://git@github.com/darce/<repo>.git@v0.1.0` for all three MCP packages. No fallback to the monorepo URL, no `pip install -e`, no path deps.
+- **Real standalone SSH remotes only.** Slice 4 (validation) installs from `git+ssh://git@github.com/darce/<repo>.git@v0.1.0` for `mcp-agent-handoff` and `mcp-agent-orchestrator`, and `git+ssh://git@github.com/darce/agentic-bootstrap.git@v0.2.0` for the bootstrap CLI (the bootstrap is already published at v0.2.0; consumer-setup.md and the doc-lock test still pin v0.1.0 and MUST be reconciled to v0.2.0 in Slice 4 pre-flight). No fallback to the monorepo URL, no `pip install -e`, no path deps.
 - **Per-DB-file tenancy.** Each consumer (synthetic and real) writes to its own `<consumer-root>/.task-state/handoff.db`. No `tenant_id` column. No new env vars beyond the existing `AGENT_HANDOFF_*` surface.
 - **Daemons stay opt-in.** Real-consumer validation does not enable daemons; the host-subagent path remains the default, per E17-10 Constraint.
 - **Greenfield.** Consumers in Slice 5 are fresh repos for the agentic system. No data preservation, no migration. If the agentic surface schema changes mid-flight, recreate the consumer's `.task-state/`.
@@ -197,7 +197,8 @@ Changes:
 
 - Use a clean staging dir (`~/Development/mcp-agent-handoff/` is already empty and not a git clone — `rm -rf` is safe). Clone the empty `darce/mcp-agent-handoff` remote there.
 - `rsync --archive --delete --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' --exclude='.pytest_cache' --exclude='build' --exclude='dist' --exclude='*.egg-info' /Users/daniel/Development/context-alt-text-monorepo-e17-10-followon-publish-and-validate/packages/agent-handoff-mcp/ ~/Development/mcp-agent-handoff/`.
-- Verify the staged tree contains `pyproject.toml` with `[tool.hoisted]` table pointing at the standalone-repo URL pattern; verify `CHANGELOG.md` carries a `0.1.0` heading; verify no `apps/`, `context-alt-text-monorepo`, or other monorepo-only path literals leak into the staged tree (`grep -r --include='*.py' --include='*.toml' --include='*.md' 'context-alt-text-monorepo\|/Users/daniel\|apps/prototype' ~/Development/mcp-agent-handoff/` returns nothing).
+- **Rewrite release metadata to match the tag (PR-M-01):** edit `~/Development/mcp-agent-handoff/pyproject.toml` and set `version = "0.1.0"` (the monorepo source declares `0.4.0`, which would create a tag-vs-package-metadata split). Verify `~/Development/mcp-agent-handoff/CHANGELOG.md` has a `## 0.1.0 — initial standalone release` heading at the top (add it if absent). The pre-commit grep below MUST confirm `version = "0.1.0"` in the staged `pyproject.toml`.
+- Verify the staged tree contains `pyproject.toml` with `[tool.hoisted]` table pointing at the standalone-repo URL pattern AND `version = "0.1.0"`; verify `CHANGELOG.md` carries a `0.1.0` heading; verify no `apps/`, `context-alt-text-monorepo`, or other monorepo-only path literals leak into the staged tree (`grep -r --include='*.py' --include='*.toml' --include='*.md' 'context-alt-text-monorepo\|/Users/daniel\|apps/prototype' ~/Development/mcp-agent-handoff/` returns nothing).
 - `cd ~/Development/mcp-agent-handoff && git add -A && git commit -m "Initial extraction from context-alt-text-monorepo@d9aa69e5 — agent-handoff-mcp v0.1.0"`.
 - `git tag -a v0.1.0 -m "v0.1.0 — initial standalone release per E17-10 Slice 0/1"`.
 - `git push origin main && git push origin v0.1.0`.
@@ -218,6 +219,7 @@ Changes:
 - Clean stage `~/Development/mcp-agent-orchestrator/`; clone the empty remote.
 - `rsync --archive --delete --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' --exclude='.pytest_cache' --exclude='build' --exclude='dist' --exclude='*.egg-info' .../packages/agent-orchestrator-mcp/ ~/Development/mcp-agent-orchestrator/`.
 - Edit `~/Development/mcp-agent-orchestrator/pyproject.toml`: change the `agent-handoff-mcp` dep entry from its current floating form (`git+ssh://git@github.com/darce/mcp-agent-handoff.git`) to the tagged form (`git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.1.0`). Verify no path-based dep (`packages/agent-handoff-mcp`, `../agent-handoff-mcp`, `-e`) remains.
+- **Rewrite release metadata to match the tag (PR-M-01):** set `version = "0.1.0"` in `~/Development/mcp-agent-orchestrator/pyproject.toml` (overrides whatever the monorepo source declared). Add or confirm a `## 0.1.0 — initial standalone release` heading in `~/Development/mcp-agent-orchestrator/CHANGELOG.md`.
 - Path-leak grep as in Slice 1.
 - `git add -A && git commit -m "Initial extraction from context-alt-text-monorepo@d9aa69e5 — agent-orchestrator-mcp v0.1.0 (handoff dep pinned at v0.1.0)"`.
 - Tag and push as in Slice 1.
@@ -268,6 +270,7 @@ Proof:
 
 Changes:
 
+- **Pre-flight: bootstrap-version reconciliation (PR-H-01).** The bootstrap CLI is already published at `v0.2.0` but `docs/agentic/consumer-setup.md`, `scripts/test_consumer_setup_doc.py`, and the E17-10 P3 remote-smoke gate still pin `@v0.1.0`. Before any install, on this task branch (in the monorepo worktree): (a) edit `docs/agentic/consumer-setup.md` to replace `agentic-bootstrap.git@v0.1.0` with `@v0.2.0` in both the install and update sections; (b) update the doc-lock fixture in `scripts/test_consumer_setup_doc.py` (lines 25 and 67) to expect `@v0.2.0`; (c) run `python3 scripts/test_consumer_setup_doc.py` and confirm it passes; (d) verify the E17-10 P3 remote-smoke gate (`scripts/test_e17_10_p3_agentic_remotes.py` if it exists, otherwise the inline assertion in the smoke script) reflects `@v0.2.0`; (e) commit the doc + test updates on this task branch with message `docs(E17-10-followon): align bootstrap pins to published v0.2.0 (PR-H-01)`.
 - `mkdir -p ~/Development/hoist-mvp-consumer && cd ~/Development/hoist-mvp-consumer && git init --initial-branch=main && echo "# hoist-mvp-consumer" > README.md && git add README.md && git commit -m "Initial commit"`.
 - Create scratch venv: `python3 -m venv ~/Development/hoist-mvp-consumer/.venv && source ~/Development/hoist-mvp-consumer/.venv/bin/activate`.
 - Install all four packages from real standalone SSH remotes (no monorepo URL fallback): `pip install "git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.1.0" "git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.0" "git+ssh://git@github.com/darce/agentic-bootstrap.git@v0.2.0"`.
@@ -278,7 +281,7 @@ Proof:
 
 - `agentic-bootstrap install --target ~/Development/hoist-mvp-consumer/` exits 0.
 - `ls ~/Development/hoist-mvp-consumer/.agentic-overlay.json ~/Development/hoist-mvp-consumer/.claude/skills ~/Development/hoist-mvp-consumer/scripts/hooks ~/Development/hoist-mvp-consumer/docs/agentic/contracts/harness-protocol.yaml` all exist (some may be symlinks).
-- `load_session(task_ref="HOIST-MVP-PROBE")` returns a structured response (not an exception); the file `~/Development/hoist-mvp-consumer/.task-state/handoff.db` exists; `sqlite3 ~/Development/hoist-mvp-consumer/.task-state/handoff.db ".tables"` lists the expected handoff tables.
+- `load_session(task_ref="HOIST-MVP-PROBE")` returns a structured response (not an exception); the file `~/Development/hoist-mvp-consumer/.task-state/handoff.db` exists; the consumer's task surface is queryable via the public API (no raw `sqlite3` reads — per `rg-018`): `python3 -c "from pathlib import Path; from agent_handoff_mcp import RuntimeConfig, configure_runtime, get_handoff_state; configure_runtime(RuntimeConfig.for_repo(Path('/Users/daniel/Development/hoist-mvp-consumer'))); s = get_handoff_state(sections='identity'); assert 'HOIST-MVP-PROBE' in (s.get('data', {}).get('active', {}) or {}).get('task_ref', ''), s; print('handoff API OK; active=', s['data']['active']['task_ref'])"` exits 0.
 - The handoff path is the consumer root (`~/Development/hoist-mvp-consumer/`), NOT `/Users/daniel/Development/context-alt-text-monorepo/.task-state/`.
 - MCP `test_result` recorded with the install command sequence and the `load_session` output.
 
@@ -298,8 +301,15 @@ Changes (per consumer, run for both `~/Development/darce.github.io/` and `~/Deve
 Proof (per consumer):
 
 - The same four checks from Slice 4 pass for this consumer.
-- `<consumer-root>/.task-state/handoff.db` exists and is distinct from the synthetic consumer's DB and from this monorepo's DB (`stat` paths and inodes differ; `sqlite3 <db> "select task_ref from handoff_state"` lists ONLY the consumer's own probe task).
-- Cross-consumer leakage probe (executable; run from any cwd, expands `~` correctly): `python3 -c "import os, sqlite3; conn = sqlite3.connect(os.path.expanduser('~/Development/hoist-mvp-consumer/.task-state/handoff.db')); rows = [r[0] for r in conn.execute('SELECT task_ref FROM handoff_state').fetchall()]; assert all('darce-github-io' not in t and 'altcontext-marketing' not in t for t in rows), rows; print('synthetic-consumer isolated; task_refs:', rows)"` exits 0 AND prints only the synthetic consumer's own `HOIST-MVP-PROBE` row. Repeat the probe twice more, swapping the DB path to `~/Development/darce.github.io/.task-state/handoff.db` (assert no `hoist-mvp-consumer` and no `altcontext-marketing` strings in any task_ref) and `~/Development/altcontext-marketing-monorepo/.task-state/handoff.db` (assert no `hoist-mvp-consumer` and no `darce-github-io` strings).
+- `<consumer-root>/.task-state/handoff.db` exists and is distinct from the synthetic consumer's DB and from this monorepo's DB (`stat` paths and inodes differ — file-existence/inode comparison only; do NOT open the DB with `sqlite3`).
+- Cross-consumer isolation probe via the public API (per `rg-018`; no raw `sqlite3`). Run this exact one-liner from any cwd; it scopes `RuntimeConfig` to each consumer in turn and asserts that each runtime sees ONLY its own probe task_ref: `python3 -c "from pathlib import Path; from agent_handoff_mcp import RuntimeConfig, configure_runtime, search_handoff; 
+for root, own, foreign in [('/Users/daniel/Development/hoist-mvp-consumer', 'HOIST-MVP-PROBE', ['darce-github-io', 'altcontext-marketing']), ('/Users/daniel/Development/darce.github.io', 'HOIST-MVP-PROBE-darce-github-io', ['hoist-mvp-consumer', 'altcontext-marketing']), ('/Users/daniel/Development/altcontext-marketing-monorepo', 'HOIST-MVP-PROBE-altcontext-marketing', ['hoist-mvp-consumer', 'darce-github-io'])]:
+    configure_runtime(RuntimeConfig.for_repo(Path(root)))
+    res = search_handoff(query='', limit=200)
+    refs = [r.get('task_ref', '') for r in (res.get('data', {}).get('rows') or res.get('data', {}).get('results') or [])]
+    assert any(own in r for r in refs), (root, own, refs)
+    assert not any(any(f in r for f in foreign) for r in refs), (root, foreign, refs)
+    print('isolated:', root, '->', refs)"` exits 0 AND prints three lines, one per consumer, each listing only that consumer's own probe task_ref(s).
 - MCP `test_result` recorded for each consumer separately, naming the consumer in the `result` field.
 
 After both consumers pass, append a `## Lessons Learned` block to `docs/agentic/consumer-setup.md` (in the monorepo) summarizing any rough edges discovered or asserting "no lessons — install was clean for both real consumers." Commit that doc update on this task branch.
@@ -362,7 +372,7 @@ Proof of close-out:
 - [ ] `pip install` the three published packages from real `git+ssh://` URLs (no monorepo fallback).
 - [ ] `agentic-bootstrap install --target .` exits 0; symlinks + `.agentic-overlay.json` present.
 - [ ] First `load_session(task_ref="HOIST-MVP-PROBE")` returns structured response.
-- [ ] `~/Development/hoist-mvp-consumer/.task-state/handoff.db` exists; `sqlite3 ... ".tables"` lists handoff tables.
+- [ ] `~/Development/hoist-mvp-consumer/.task-state/handoff.db` exists; the consumer's task surface is queryable via `agent_handoff_mcp` public API (no raw `sqlite3` reads, per `rg-018`).
 - [ ] Handoff DB path is the synthetic consumer root, NOT the monorepo's `.task-state/`.
 - [ ] MCP `test_result` recorded.
 

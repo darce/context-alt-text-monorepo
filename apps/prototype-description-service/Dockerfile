@@ -58,6 +58,7 @@ COPY recognition/ recognition/
 COPY roster/ roster/
 COPY scene/ scene/
 COPY shared/ shared/
+COPY scripts/ scripts/
 COPY pyproject.toml .
 
 # Install the app package itself (editable-style so imports resolve)

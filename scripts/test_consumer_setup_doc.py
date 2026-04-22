@@ -66,5 +66,9 @@ def test_consumer_setup_doc_exists_and_is_standalone() -> None:
     assert "--upgrade \"git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.3\"" not in update_section
     assert "--upgrade \"git+ssh://git@github.com/darce/agentic-bootstrap.git@v0.2.0\"" not in update_section
 
-    assert "E17-10" not in text, "consumer-setup doc must be standalone, not task-plan dependent"
-    assert "task plan" not in text.lower(), "consumer-setup doc must not tell readers to consult the task plan"
+    # Standalone-ness: live instructions must not reference the task plan or task IDs.
+    # Historical retros under "## Lessons Learned" are exempt (they are dated, append-only
+    # change-log entries that name the slice that produced them).
+    pre_lessons = text.split("## Lessons Learned", 1)[0]
+    assert "E17-10" not in pre_lessons, "consumer-setup live instructions must be standalone, not task-plan dependent"
+    assert "task plan" not in pre_lessons.lower(), "consumer-setup live instructions must not tell readers to consult the task plan"

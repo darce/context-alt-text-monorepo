@@ -115,6 +115,40 @@ Five slices in dependency order. Slices 1-3 are extraction-and-tag operations ag
 
 The pre-flight checklist (run once at task start, not per-slice): `gh auth status` shows `repo` scope; `gh repo view darce/mcp-agent-handoff darce/mcp-agent-orchestrator darce/agentic-system darce/agentic-bootstrap --json name` returns all four; `gh repo view darce/mcp-agentic-bootstrap` and `darce/mcp-agentic-system` both 404; `~/Development/mcp-agent-handoff/`, `~/Development/mcp-agent-orchestrator/` exist as empty dirs (not git clones); local clones are created fresh by Slices 1-3.
 
+## Recovery / Re-tag Cascade
+
+If any extracted package's `v0.1.0` tag is found defective AFTER push and BEFORE the task closes, follow this cascade. The Workflow Principle "never force-push a tag" is absolute — every fix is a new patch tag, never a tag rewrite.
+
+**Trigger**: a defect is observed during Slice 4 (synthetic-consumer install/import/load_session) or Slice 5 (real-consumer flow) that traces to content shipped inside `darce/mcp-agent-handoff@v0.1.0`, `darce/mcp-agent-orchestrator@v0.1.0`, or `darce/agentic-system@v0.1.0`.
+
+**Version-bump rule**: bump the patch component only (`v0.1.0` → `v0.1.1`). Never reuse a tag name. Never `git push --force` a tag. Never delete a published tag from the remote (deleted tags can still be cached by `pip` and bootstrap clients).
+
+**Cascade** (apply in this order; stop at the lowest-affected layer):
+
+1. **Defect in `agent-handoff-mcp` content**:
+   - Re-extract handoff using the Slice 1 recipe with the fix already applied in the monorepo `packages/agent-handoff-mcp/`.
+   - New initial commit message: `"Re-extraction from context-alt-text-monorepo@<new-monorepo-sha> — agent-handoff-mcp v0.1.1"`.
+   - Tag `v0.1.1`, push `main` and tag.
+   - Then **MUST cascade to orchestrator** (next step), because orchestrator's published `v0.1.0` still pins handoff `@v0.1.0`.
+   - Then **MUST cascade to consumer re-install**.
+2. **Defect in `agent-orchestrator-mcp` content** (or cascade trigger from step 1):
+   - Re-extract orchestrator using the Slice 2 recipe.
+   - Retarget the handoff dep in the staged `pyproject.toml` to the latest published handoff tag (`@v0.1.1` if step 1 ran, else `@v0.1.0`).
+   - New initial commit: `"Re-extraction from context-alt-text-monorepo@<sha> — agent-orchestrator-mcp v0.1.1 (handoff dep pinned at v0.1.<N>)"`.
+   - Tag `v0.1.1`, push.
+   - Then **MUST cascade to consumer re-install**.
+3. **Defect in `agentic-system` shared surface** (or independently):
+   - Re-extract using the Slice 3 recipe; tag `v0.1.1`; push.
+   - Then **MUST cascade to consumer re-install** (bootstrap CLI clones `agentic-system@<tag>` per `agentic-bootstrap` config).
+4. **Consumer re-install** (synthetic + both real):
+   - In each consumer's venv: `pip install --upgrade "git+ssh://...mcp-agent-handoff.git@v0.1.<N>" "git+ssh://...mcp-agent-orchestrator.git@v0.1.<N>"` (and re-run `agentic-bootstrap install --target .` if `agentic-system` was re-tagged).
+   - Re-run the Slice 4 / Slice 5 proof commands against the new tags.
+   - Replace any prior `test_result` records: record fresh `test_result` events tied to the new branch HEAD AND naming the new tag in the `command` field.
+
+**Documentation**: every cascade execution appends a dated entry to the new `## Lessons Learned` block in `docs/agentic/consumer-setup.md` (per Slice 5) capturing trigger, layers re-tagged, and consumer re-install duration. The cascade itself is in scope of this task; opening a new follow-on task is only required if the defect needs source-code changes inside `packages/agent-{handoff,orchestrator}-mcp/src/` (see Constraints — extraction-only scope).
+
+**Anti-pattern**: do NOT attempt to short-circuit the cascade by re-tagging only the lowest-affected layer. If handoff defect ships, orchestrator and bootstrap clients still resolve handoff `@v0.1.0` transitively until orchestrator is also re-tagged with the updated dep pin.
+
 ## Files and Surfaces to Change
 
 | Surface                                | File                                                                       | Change                                                                                                              |
@@ -265,7 +299,7 @@ Proof (per consumer):
 
 - The same four checks from Slice 4 pass for this consumer.
 - `<consumer-root>/.task-state/handoff.db` exists and is distinct from the synthetic consumer's DB and from this monorepo's DB (`stat` paths and inodes differ; `sqlite3 <db> "select task_ref from handoff_state"` lists ONLY the consumer's own probe task).
-- `python3 -c "import sqlite3; assert sqlite3.connect('~/Development/hoist-mvp-consumer/.task-state/handoff.db'.replace('~', '<HOME>')).execute('SELECT 1').fetchone()"` does NOT find any HOIST-MVP-PROBE-`<other-consumer-shortname>` rows — i.e. each consumer's handoff state is isolated.
+- Cross-consumer leakage probe (executable; run from any cwd, expands `~` correctly): `python3 -c "import os, sqlite3; conn = sqlite3.connect(os.path.expanduser('~/Development/hoist-mvp-consumer/.task-state/handoff.db')); rows = [r[0] for r in conn.execute('SELECT task_ref FROM handoff_state').fetchall()]; assert all('darce-github-io' not in t and 'altcontext-marketing' not in t for t in rows), rows; print('synthetic-consumer isolated; task_refs:', rows)"` exits 0 AND prints only the synthetic consumer's own `HOIST-MVP-PROBE` row. Repeat the probe twice more, swapping the DB path to `~/Development/darce.github.io/.task-state/handoff.db` (assert no `hoist-mvp-consumer` and no `altcontext-marketing` strings in any task_ref) and `~/Development/altcontext-marketing-monorepo/.task-state/handoff.db` (assert no `hoist-mvp-consumer` and no `darce-github-io` strings).
 - MCP `test_result` recorded for each consumer separately, naming the consumer in the `result` field.
 
 After both consumers pass, append a `## Lessons Learned` block to `docs/agentic/consumer-setup.md` (in the monorepo) summarizing any rough edges discovered or asserting "no lessons — install was clean for both real consumers." Commit that doc update on this task branch.

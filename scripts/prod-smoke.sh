@@ -9,7 +9,7 @@
 # Probes (in order):
 #   1. GET /health                       — liveness (PR-01)
 #   2. GET /version                      — deployed identity (E15-3a-BR-03)
-#   3. GET /recognition/health           — recognition subsystem
+#   3. GET /ready                        — readiness (E15-2 consolidated surface)
 #   4. GET /recognition/clusters?limit=1 — auth'd read with X-Api-Key (E15-3a-BR-08)
 #
 # Usage:
@@ -95,7 +95,7 @@ probe_auth_get() {
 echo "prod-smoke against ${BASE_URL}"
 probe_unauth "/health"
 probe_unauth "/version"
-probe_unauth "/recognition/health"
+probe_unauth "/ready"
 probe_auth_get "/recognition/clusters?limit=1"
 
 if ((fail == 0)); then

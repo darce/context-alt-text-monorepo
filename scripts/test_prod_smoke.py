@@ -54,15 +54,21 @@ def test_probes_against_unreachable_host_fail_closed() -> None:
 
 
 def test_probe_list_documents_four_core_paths() -> None:
-    """The probe list must reference real backend routes (E15-3a-BR-08).
+    """The probe list must reference real backend routes (E15-3a-BR-08, BR-11).
 
     `/recognition/settings/test` and `/recognition/describe-minimal` were
-    invented in the original BR-04 slice and never existed in the FastAPI app,
-    so the smoke could not succeed against any deployed backend. The probe
-    list now references real routes only.
+    invented in the original BR-04 slice. `/recognition/health` was a real
+    route on the April-1st prod image but was removed in commit 6e475cfe
+    (E15-2 Slice 2.5b consolidated the health surface to /health + /ready +
+    /health/detailed). Replace it with /ready, the canonical readiness
+    probe per the consolidated surface.
     """
     text = SCRIPT.read_text(encoding="utf-8")
-    for path in ("/health", "/version", "/recognition/health", "/recognition/clusters"):
+    for path in ("/health", "/ready", "/version", "/recognition/clusters"):
         assert path in text, f"expected {path} in prod-smoke.sh"
-    for bogus in ("/recognition/settings/test", "/recognition/describe-minimal"):
-        assert bogus not in text, f"bogus invented path {bogus} must not be in prod-smoke.sh"
+    for bogus in (
+        "/recognition/settings/test",
+        "/recognition/describe-minimal",
+        "/recognition/health",
+    ):
+        assert bogus not in text, f"removed/bogus path {bogus} must not be in prod-smoke.sh"

@@ -342,7 +342,7 @@ If, on inspection of the published v0.1.0 surface, any file in the "Exclude" lis
 
 **Pre-flight: doc-lock reconciliation**:
 
-- Re-verify `docs/agentic/consumer-setup.md` and `scripts/test_consumer_setup_doc.py` already pin `agentic-bootstrap@v0.2.0`, `mcp-agent-handoff@v0.4.1` (set during the plan-rewrite slice), `agentic-system@v0.2.0` (or `v0.2.1` if Slice 4 re-tagged), and `mcp-agent-orchestrator@<Slice-2-tag>`.
+- Re-verify `docs/agentic/consumer-setup.md` and `scripts/test_consumer_setup_doc.py` already pin `agentic-bootstrap@v0.2.0`, `mcp-agent-handoff@v0.4.1`, and `mcp-agent-orchestrator@v0.1.1`. These are the only three consumer-installed packages; `agentic-system` is NOT pinned in `consumer-setup.md` because consumers do not `pip install` it directly — `agentic-bootstrap install` clones the agentic-system surface (default ref `v0.2.0`, or `v0.2.1` if Slice 4 re-tagged) into `.agentic/remote/`. The agentic-system ref therefore lives inside `agentic-bootstrap` (its default-clone ref) and the consumer's `.agentic-overlay.json`, not in `consumer-setup.md`.
 - If any pin lags reality, edit the file and the doc-lock fixture, then run `python3 scripts/test_consumer_setup_doc.py` and confirm it passes. If pins already match, this slice is a no-op verification.
 - If a commit was needed: `docs(E17-10-followon): align consumer-setup pins to current published tags`.
 

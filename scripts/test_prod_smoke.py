@@ -53,6 +53,21 @@ def test_probes_against_unreachable_host_fail_closed() -> None:
     assert "/version" in result.stderr
 
 
+def test_auth_probe_sends_x_tenant_id_header() -> None:
+    """The auth'd probe must send X-Tenant-ID (E15-3a-BR-12).
+
+    `/recognition/clusters` resolves tenant via the basic header/query resolver
+    (`get_tenant_id`), not via the auth context. So even tenant-scoped keys must
+    include `X-Tenant-ID` or the route returns 400 `tenant_id is required`.
+    The smoke script must pass the canary tenant alongside the API key, and
+    document the `--tenant-id` / `ACX_SMOKE_TENANT_ID` operator surface.
+    """
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert "X-Tenant-ID:" in text, "auth probe must set X-Tenant-ID header"
+    assert "--tenant-id" in text, "CLI must expose --tenant-id flag"
+    assert "ACX_SMOKE_TENANT_ID" in text, "env override must be documented"
+
+
 def test_probe_list_documents_four_core_paths() -> None:
     """The probe list must reference real backend routes (E15-3a-BR-08, BR-11).
 

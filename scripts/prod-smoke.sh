@@ -18,22 +18,25 @@
 # Env overrides:
 #   ACX_SMOKE_BASE_URL       default: https://api.altcontext.com
 #   ACX_SMOKE_API_KEY        required for auth'd probe
+#   ACX_SMOKE_TENANT_ID      required for auth'd probe; sent as X-Tenant-ID
 #   ACX_SMOKE_TIMEOUT        curl --max-time seconds (default 10)
 #
 set -euo pipefail
 
 BASE_URL="${ACX_SMOKE_BASE_URL:-https://api.altcontext.com}"
 API_KEY="${ACX_SMOKE_API_KEY:-}"
+TENANT_ID="${ACX_SMOKE_TENANT_ID:-}"
 TIMEOUT="${ACX_SMOKE_TIMEOUT:-10}"
 
 show_usage() {
 	cat <<'USAGE'
 Usage:
-  scripts/prod-smoke.sh [--base-url URL] [--api-key KEY] [--timeout SECONDS]
+  scripts/prod-smoke.sh [--base-url URL] [--api-key KEY] [--tenant-id UUID] [--timeout SECONDS]
 
 Options:
   --base-url   Backend root (default $ACX_SMOKE_BASE_URL or https://api.altcontext.com)
   --api-key    Canary key for auth'd probes (default $ACX_SMOKE_API_KEY)
+  --tenant-id  Canary tenant UUID sent as X-Tenant-ID (default $ACX_SMOKE_TENANT_ID)
   --timeout    Per-request curl timeout in seconds (default 10)
   --help       Show this help and exit
 
@@ -46,9 +49,10 @@ USAGE
 
 while (($# > 0)); do
 	case "$1" in
-		--base-url) BASE_URL="${2:-}"; shift 2 ;;
-		--api-key)  API_KEY="${2:-}";  shift 2 ;;
-		--timeout)  TIMEOUT="${2:-}";  shift 2 ;;
+		--base-url)  BASE_URL="${2:-}";  shift 2 ;;
+		--api-key)   API_KEY="${2:-}";   shift 2 ;;
+		--tenant-id) TENANT_ID="${2:-}"; shift 2 ;;
+		--timeout)   TIMEOUT="${2:-}";   shift 2 ;;
 		--help|-h)  show_usage; exit 0 ;;
 		*) echo "Unknown argument: $1" >&2; show_usage >&2; exit 2 ;;
 	esac
@@ -81,9 +85,15 @@ probe_auth_get() {
 		echo "skip ${path}: no --api-key supplied" >&2
 		return
 	fi
+	if [[ -z "${TENANT_ID}" ]]; then
+		echo "skip ${path}: no --tenant-id supplied" >&2
+		return
+	fi
 	local code
 	code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time "${TIMEOUT}" \
-		-H "X-Api-Key: ${API_KEY}" "${url}" || echo '000')"
+		-H "X-Api-Key: ${API_KEY}" \
+		-H "X-Tenant-ID: ${TENANT_ID}" \
+		"${url}" || echo '000')"
 	if [[ "${code}" != "200" ]]; then
 		echo "FAIL ${path}: HTTP ${code}" >&2
 		fail=1

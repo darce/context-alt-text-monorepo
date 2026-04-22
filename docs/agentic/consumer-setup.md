@@ -14,7 +14,7 @@ Use this guide when you want another private Daniel-owned repository to consume 
 Install the three package surfaces from their standalone repositories, then materialize the shared overlay into the current repo:
 
 ```bash
-pip install "git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.1.0"
+pip install "git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.1"
 pip install "git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.0"
 pip install "git+ssh://git@github.com/darce/agentic-bootstrap.git@v0.2.0"
 

@@ -20,7 +20,7 @@ REQUIRED_HEADINGS = (
 )
 
 REQUIRED_SNIPPETS = (
-    'git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.1.0',
+    'git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.1',
     'git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.0',
     'git+ssh://git@github.com/darce/agentic-bootstrap.git@v0.2.0',
     "agentic-bootstrap install --target .",
@@ -62,7 +62,7 @@ def test_consumer_setup_doc_exists_and_is_standalone() -> None:
     for snippet in REQUIRED_UPDATE_SNIPPETS:
         assert snippet in update_section, f"consumer-setup doc is missing required update snippet: {snippet}"
 
-    assert "--upgrade \"git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.1.0\"" not in update_section
+    assert "--upgrade \"git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.1\"" not in update_section
     assert "--upgrade \"git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.0\"" not in update_section
     assert "--upgrade \"git+ssh://git@github.com/darce/agentic-bootstrap.git@v0.2.0\"" not in update_section
 

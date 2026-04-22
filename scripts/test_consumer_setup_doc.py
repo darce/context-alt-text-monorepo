@@ -21,7 +21,7 @@ REQUIRED_HEADINGS = (
 
 REQUIRED_SNIPPETS = (
     'git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.2',
-    'git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.2',
+    'git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.3',
     'git+ssh://git@github.com/darce/agentic-bootstrap.git@v0.2.0',
     "agentic-bootstrap install --target .",
     "agentic-bootstrap update",
@@ -63,7 +63,7 @@ def test_consumer_setup_doc_exists_and_is_standalone() -> None:
         assert snippet in update_section, f"consumer-setup doc is missing required update snippet: {snippet}"
 
     assert "--upgrade \"git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.2\"" not in update_section
-    assert "--upgrade \"git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.2\"" not in update_section
+    assert "--upgrade \"git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.3\"" not in update_section
     assert "--upgrade \"git+ssh://git@github.com/darce/agentic-bootstrap.git@v0.2.0\"" not in update_section
 
     assert "E17-10" not in text, "consumer-setup doc must be standalone, not task-plan dependent"

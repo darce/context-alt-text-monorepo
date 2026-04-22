@@ -15,7 +15,7 @@ Install the three package surfaces from their standalone repositories, then mate
 
 ```bash
 pip install "git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.2"
-pip install "git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.2"
+pip install "git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.3"
 pip install "git+ssh://git@github.com/darce/agentic-bootstrap.git@v0.2.0"
 
 agentic-bootstrap install --target .

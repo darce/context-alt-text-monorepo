@@ -7,20 +7,18 @@
 # Exits non-zero on any probe failure so it can be wired into CI later.
 #
 # Probes (in order):
-#   1. GET  /health              — liveness (PR-01)
-#   2. GET  /version             — deployed identity (E15-3a-BR-03)
-#   3. GET  /recognition/health  — recognition subsystem
-#   4. POST /recognition/settings/test   — auth'd echo with X-Api-Key
-#   5. POST /recognition/describe-minimal (optional, flagged by ACX_SMOKE_RECOGNIZE=1)
+#   1. GET /health                       — liveness (PR-01)
+#   2. GET /version                      — deployed identity (E15-3a-BR-03)
+#   3. GET /recognition/health           — recognition subsystem
+#   4. GET /recognition/clusters?limit=1 — auth'd read with X-Api-Key (E15-3a-BR-08)
 #
 # Usage:
 #   scripts/prod-smoke.sh --base-url https://api.altcontext.com --api-key "$CANARY_KEY"
 #
 # Env overrides:
 #   ACX_SMOKE_BASE_URL       default: https://api.altcontext.com
-#   ACX_SMOKE_API_KEY        required for auth'd probes
+#   ACX_SMOKE_API_KEY        required for auth'd probe
 #   ACX_SMOKE_TIMEOUT        curl --max-time seconds (default 10)
-#   ACX_SMOKE_RECOGNIZE      set to 1 to exercise a minimal recognition call
 #
 set -euo pipefail
 
@@ -94,35 +92,11 @@ probe_auth_get() {
 	fi
 }
 
-probe_auth_post() {
-	local path="$1"
-	local body="${2:-{}}"
-	local url="${BASE_URL%/}${path}"
-	if [[ -z "${API_KEY}" ]]; then
-		echo "skip ${path}: no --api-key supplied" >&2
-		return
-	fi
-	local code
-	code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time "${TIMEOUT}" \
-		-H "X-Api-Key: ${API_KEY}" -H 'Content-Type: application/json' \
-		-X POST -d "${body}" "${url}" || echo '000')"
-	if [[ "${code}" != "200" ]]; then
-		echo "FAIL ${path}: HTTP ${code}" >&2
-		fail=1
-	else
-		echo "ok   ${path}: HTTP 200"
-	fi
-}
-
 echo "prod-smoke against ${BASE_URL}"
 probe_unauth "/health"
 probe_unauth "/version"
 probe_unauth "/recognition/health"
-probe_auth_post "/recognition/settings/test" '{}'
-
-if [[ "${ACX_SMOKE_RECOGNIZE:-0}" == "1" ]]; then
-	probe_auth_post "/recognition/describe-minimal" '{"prompt":"smoke"}'
-fi
+probe_auth_get "/recognition/clusters?limit=1"
 
 if ((fail == 0)); then
 	echo "all probes ok"

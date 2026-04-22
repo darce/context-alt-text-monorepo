@@ -54,7 +54,15 @@ def test_probes_against_unreachable_host_fail_closed() -> None:
 
 
 def test_probe_list_documents_four_core_paths() -> None:
-    """The probe list must include the four paths referenced in BR-04."""
+    """The probe list must reference real backend routes (E15-3a-BR-08).
+
+    `/recognition/settings/test` and `/recognition/describe-minimal` were
+    invented in the original BR-04 slice and never existed in the FastAPI app,
+    so the smoke could not succeed against any deployed backend. The probe
+    list now references real routes only.
+    """
     text = SCRIPT.read_text(encoding="utf-8")
-    for path in ("/health", "/version", "/recognition/health", "/recognition/settings/test"):
+    for path in ("/health", "/version", "/recognition/health", "/recognition/clusters"):
         assert path in text, f"expected {path} in prod-smoke.sh"
+    for bogus in ("/recognition/settings/test", "/recognition/describe-minimal"):
+        assert bogus not in text, f"bogus invented path {bogus} must not be in prod-smoke.sh"

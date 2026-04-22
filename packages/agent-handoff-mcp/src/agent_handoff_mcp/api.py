@@ -2057,6 +2057,15 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
     package_src = Path(__file__).resolve().parents[1]
     launcher = package_src / "agent_handoff_mcp_launcher.py"
     stdio_tools: list[str] = []
+    stdio_probe_error: str | None = None
+    cli_probe_error: str | None = None
+    # AGENT_HANDOFF_DOCTOR_STRICT=1 makes the stdio handshake a hard gate
+    # (CI release smokes set this). Default behaviour is diagnostic: capture
+    # the error into stdio_startup.error and continue so fresh consumer venvs
+    # — where the fastmcp Client subprocess can race or a transient stdio
+    # handshake error can fire — still get an actionable JSON report instead
+    # of an opaque exit-1.
+    strict_mode = os.environ.get("AGENT_HANDOFF_DOCTOR_STRICT", "").strip().lower() in {"1", "true", "yes", "on"}
     with tempfile.TemporaryDirectory() as temp_dir:
         cli_env = _build_doctor_cli_env(__file__)
 
@@ -2096,10 +2105,28 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
         # machines. The ThreadPoolExecutor kicks off the CLI probe while the
         # asyncio event loop drives the stdio handshake; the future is
         # awaited afterwards so any CalledProcessError still surfaces.
+        #
+        # In default (non-strict) mode, both probes are best-effort: errors
+        # are captured into stdio_probe_error / cli_probe_error and surfaced
+        # in the JSON report under checks.stdio_startup.error /
+        # checks.cli_fallback_startup. The doctor still exits 0 unless BOTH
+        # probes fail (signal: workspace is structurally broken). In strict
+        # mode (AGENT_HANDOFF_DOCTOR_STRICT=1) any probe failure re-raises.
         with ThreadPoolExecutor(max_workers=1) as _probe_pool:
             cli_future = _probe_pool.submit(_run_cli_probe)
-            stdio_tools = asyncio.run(_list_tools())
-            cli_future.result()
+            try:
+                stdio_tools = asyncio.run(_list_tools())
+            except (Exception, OSError) as exc:  # noqa: BLE001 — diagnostic capture
+                if strict_mode:
+                    cli_future.result()
+                    raise
+                stdio_probe_error = f"{type(exc).__name__}: {exc}"
+            try:
+                cli_future.result()
+            except (subprocess.CalledProcessError, OSError, json.JSONDecodeError) as exc:
+                if strict_mode:
+                    raise
+                cli_probe_error = f"{type(exc).__name__}: {exc}"
 
     _registry = _build_tool_registry()
     _core_count = sum(1 for e in _registry if e.profile == "core")
@@ -2148,8 +2175,31 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
         },
     ]
 
+    # Both stdio and CLI probes failed → workspace is structurally broken.
+    # Report ok=false so non-strict callers still see a non-positive signal
+    # without the doctor itself raising.
+    stdio_ok = stdio_probe_error is None
+    cli_ok = cli_probe_error is None
+    overall_ok = stdio_ok or cli_ok
+
+    stdio_startup_block: dict[str, Any] = {
+        "ok": stdio_ok,
+        "tool_count": len(stdio_tools),
+        "tool_profile": config.tool_profile,
+        "registry_counts": {
+            "core": _core_count,
+            "extended": _extended_count,
+            "total": len(_registry),
+        },
+    }
+    if stdio_probe_error is not None:
+        stdio_startup_block["error"] = stdio_probe_error
+    cli_startup_block: dict[str, Any] = {"ok": cli_ok}
+    if cli_probe_error is not None:
+        cli_startup_block["error"] = cli_probe_error
+
     return {
-        "ok": True,
+        "ok": overall_ok,
         "workspace_root": str(config.workspace_root),
         "state_dir": str(config.state_dir),
         "db_path": str(config.db_path),
@@ -2161,17 +2211,8 @@ def run_doctor(config: RuntimeConfig) -> dict[str, Any]:
             "fts5_available": True,
             "state_dir_writable": True,
             "handoff_fts_index": handoff_fts_check,
-            "stdio_startup": {
-                "ok": True,
-                "tool_count": len(stdio_tools),
-                "tool_profile": config.tool_profile,
-                "registry_counts": {
-                    "core": _core_count,
-                    "extended": _extended_count,
-                    "total": len(_registry),
-                },
-            },
-            "cli_fallback_startup": True,
+            "stdio_startup": stdio_startup_block,
+            "cli_fallback_startup": cli_startup_block,
         },
         "portable_hook_semantics": portable_hook_semantics,
     }

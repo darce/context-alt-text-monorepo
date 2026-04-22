@@ -18,6 +18,38 @@ in that entry before relying on previously cached field shapes.
   This keeps the monorepo source aligned with the Slice 1 release contract
   even before the standalone repo's release script is implemented.
 
+## [0.4.1] — 2026-04-22
+
+### Fixed
+
+- **`run_doctor` no longer hard-fails on transient stdio handshake errors
+  in fresh consumer venvs.** The stdio + CLI startup probes are now
+  best-effort by default: if either probe raises (e.g. `mcp.shared.exceptions.McpError:
+  Connection closed` from the fastmcp `Client`, or a `CalledProcessError`
+  from the CLI subprocess), the failure is captured into
+  `checks.stdio_startup.error` / `checks.cli_fallback_startup.error` in the
+  JSON report and `doctor` exits 0 unless **both** probes fail. Set
+  `AGENT_HANDOFF_DOCTOR_STRICT=1` (CI / release smokes) to restore the
+  hard-fail-on-any-probe-error behaviour.
+
+### Migration
+
+- Consumer setup scripts that parsed `payload["ok"]` as the only
+  health signal still work — `ok` now reflects whether at least one of
+  the two probes succeeded. Scripts that need the prior strict semantic
+  must export `AGENT_HANDOFF_DOCTOR_STRICT=1` before invoking `doctor`.
+- Programmatic readers of `checks.stdio_startup` and
+  `checks.cli_fallback_startup` should expect an optional `error` key on
+  each block, present only when that probe failed.
+
+### Versioning realignment
+
+- The standalone `darce/mcp-agent-handoff` v0.1.0 tag (the original
+  packaging cut) is retired in favour of the in-source `pyproject.toml`
+  version line. From v0.4.1 forward, the standalone repo always tags
+  `v<pyproject.version>`. Consumers pinned to `@v0.1.0` should re-pin to
+  `@v0.4.1` (or `@main` for tracking).
+
 ## [0.4.0] — 2026-04-07
 
 ### Added

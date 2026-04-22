@@ -7,6 +7,7 @@ verifying JSON response shapes, task-ref resolution, and error handling.
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -556,6 +557,105 @@ def test_run_doctor_skips_monorepo_pythonpath_when_running_from_site_packages(tm
 
     cli_env = mock_sub.run.call_args.kwargs["env"]
     assert cli_env["PYTHONPATH"] == "existing-site-path"
+
+
+def _setup_doctor_runtime(tmp_path: Path) -> RuntimeConfig:
+    """Bootstrap a workspace fixture sufficient for run_doctor to execute."""
+    state_dir = tmp_path / ".task-state"
+    runtime = RuntimeConfig.for_workspace(tmp_path, state_dir=state_dir)
+    mcp_server.configure_runtime(runtime)
+    handoff_core.set_handoff_state(
+        task_ref="doctor-soft-fail-test",
+        objective="run_doctor soft-fail regression",
+        status="in_progress",
+    )
+    return runtime
+
+
+def test_run_doctor_default_soft_fails_when_stdio_probe_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """AHMCP-15: stdio handshake errors must not abort `doctor` by default.
+
+    A fresh consumer venv can race the fastmcp Client against the launcher
+    subprocess and surface `McpError: Connection closed`. The doctor must
+    capture that into checks.stdio_startup.error and continue, exiting 0
+    so long as the CLI fallback probe succeeded.
+    """
+    from unittest.mock import MagicMock, patch
+
+    monkeypatch.delenv("AGENT_HANDOFF_DOCTOR_STRICT", raising=False)
+    runtime = _setup_doctor_runtime(tmp_path)
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = json.dumps({"ok": True, "active_task": None})
+
+    def _raise_stdio_error(coro: object) -> list[str]:
+        if hasattr(coro, "close"):
+            coro.close()
+        raise RuntimeError("Connection closed")  # stand-in for McpError
+
+    with patch("agent_handoff_mcp.api.asyncio") as mock_async, patch("agent_handoff_mcp.api.subprocess") as mock_sub:
+        mock_async.run.side_effect = _raise_stdio_error
+        mock_sub.run.return_value = mock_proc
+        result = mcp_server.run_doctor(runtime)
+
+    assert result["ok"] is True, "doctor must exit ok when CLI probe still works"
+    stdio_block = result["checks"]["stdio_startup"]
+    assert stdio_block["ok"] is False
+    assert "RuntimeError" in stdio_block["error"]
+    assert "Connection closed" in stdio_block["error"]
+    assert result["checks"]["cli_fallback_startup"]["ok"] is True
+
+
+def test_run_doctor_strict_mode_reraises_stdio_probe_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """AGENT_HANDOFF_DOCTOR_STRICT=1 restores hard-fail-on-probe-error semantics."""
+    from unittest.mock import MagicMock, patch
+
+    monkeypatch.setenv("AGENT_HANDOFF_DOCTOR_STRICT", "1")
+    runtime = _setup_doctor_runtime(tmp_path)
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = json.dumps({"ok": True, "active_task": None})
+
+    def _raise_stdio_error(coro: object) -> list[str]:
+        if hasattr(coro, "close"):
+            coro.close()
+        raise RuntimeError("Connection closed")
+
+    with patch("agent_handoff_mcp.api.asyncio") as mock_async, patch("agent_handoff_mcp.api.subprocess") as mock_sub:
+        mock_async.run.side_effect = _raise_stdio_error
+        mock_sub.run.return_value = mock_proc
+        with pytest.raises(RuntimeError, match="Connection closed"):
+            mcp_server.run_doctor(runtime)
+
+
+def test_run_doctor_reports_ok_false_when_both_probes_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When both stdio AND CLI probes fail, the workspace is structurally broken.
+
+    `doctor` does not raise (default mode), but reports `ok=False` so the
+    caller has a single boolean to check.
+    """
+    from unittest.mock import MagicMock, patch
+
+    monkeypatch.delenv("AGENT_HANDOFF_DOCTOR_STRICT", raising=False)
+    runtime = _setup_doctor_runtime(tmp_path)
+
+    def _raise_stdio_error(coro: object) -> list[str]:
+        if hasattr(coro, "close"):
+            coro.close()
+        raise RuntimeError("Connection closed")
+
+    cli_failure = subprocess.CalledProcessError(returncode=1, cmd=["agent_handoff_mcp"], stderr="boom")
+
+    with patch("agent_handoff_mcp.api.asyncio") as mock_async, patch("agent_handoff_mcp.api.subprocess") as mock_sub:
+        mock_async.run.side_effect = _raise_stdio_error
+        mock_sub.run.side_effect = cli_failure
+        mock_sub.CalledProcessError = subprocess.CalledProcessError
+        result = mcp_server.run_doctor(runtime)
+
+    assert result["ok"] is False
+    assert result["checks"]["stdio_startup"]["ok"] is False
+    assert result["checks"]["cli_fallback_startup"]["ok"] is False
+    assert "error" in result["checks"]["cli_fallback_startup"]
 
 
 # ---------------------------------------------------------------------------

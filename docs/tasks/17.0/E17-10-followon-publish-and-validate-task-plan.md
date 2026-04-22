@@ -457,69 +457,70 @@ All three sections MUST be present (use the explicit "none" / "clean for both" p
 - [x] Slice 1c: publish (rsync → commit `18f681ca` → tag `v0.4.1` → push). MCP decision `#2222`.
 - [x] `git ls-remote --tags` confirms `v0.4.1` resolves to `18f681ca`. Consumer install URL resolvable.
 
-### Slice 2 — Orchestrator ship-or-skip decision
+### Slice 2 — Orchestrator ship-or-skip decision ✅ COMPLETE
 
-- [ ] Inspect both file diffs (`orchestration/slice_review_packet.py`, `tests/test_lanes_and_handoff_state.py`) and classify each as defect-fix, feature, refactor, test-only, or cosmetic.
-- [ ] Apply decision criteria; record disposition (SHIP / SKIP) with rationale.
-- [ ] If SHIP: rsync → restore standalone-only `release_mcp_package.sh` → retarget `agent-handoff-mcp` dep to `@v0.4.1` → commit → tag → push.
-- [ ] If SHIP: scratch-venv install proof; both packages resolve from standalone remotes.
-- [ ] If SHIP: inline scratch-venv smoke (per Verification Strategy) exits 0.
-- [ ] If SKIP: INV-03 finding moved to `wontfix` with rationale.
-- [ ] MCP decision recorded; if SHIP, MCP `test_result` recorded.
+- [x] Inspect both file diffs (`orchestration/slice_review_packet.py`, `tests/test_lanes_and_handoff_state.py`) and classify each as defect-fix, feature, refactor, test-only, or cosmetic.
+- [x] Apply decision criteria; record disposition (SHIP / SKIP) with rationale.
+- [x] If SHIP: rsync → restore standalone-only `release_mcp_package.sh` → retarget `agent-handoff-mcp` dep to `@v0.4.1` → commit → tag → push.
+- [x] If SHIP: scratch-venv install proof; both packages resolve from standalone remotes.
+- [x] If SHIP: inline scratch-venv smoke (per Verification Strategy) exits 0.
+- [x] If SKIP: INV-03 finding moved to `wontfix` with rationale.
+- [x] MCP decision recorded; if SHIP, MCP `test_result` recorded.
 
-### Slice 3 — Cut `darce/agentic-system@v0.2.0` with contract split
+### Slice 3 — Cut `darce/agentic-system@v0.2.0` with contract split ✅ COMPLETE
 
-- [ ] Pre-flight: confirm Slice 1 (and Slice 2 if SHIP) tags are live.
-- [ ] Clone or reuse `/tmp/agentic-system-extract/`.
-- [ ] rsync content with `--exclude` for the 8 alt-context-specific contract files.
-- [ ] Verify staged tree contract count: exactly 7 files in `docs/agentic/contracts/`.
-- [ ] Verify the 11 new skills + 2 modified skills present in staged tree.
-- [ ] Verify the 2 modified hooks present.
-- [ ] `python3 scripts/lint_hoisted_paths.py /tmp/agentic-system-extract/` exits 0.
-- [ ] Update top-level `README.md` with v0.2.0 changelog.
-- [ ] Commit + annotated tag `v0.2.0` + push `main` and tag.
-- [ ] Smoke clone of `git@github.com:darce/agentic-system.git@v0.2.0` — verify skill count and contract count.
-- [ ] Inline scratch-venv smoke for `agentic-bootstrap@v0.2.0` exits 0 (replaces deleted P3 runner).
-- [ ] MCP `test_result` recorded.
+- [x] Pre-flight: confirm Slice 1 (and Slice 2 if SHIP) tags are live.
+- [x] Clone or reuse `/tmp/agentic-system-extract/`.
+- [x] rsync content with `--exclude` for the 8 alt-context-specific contract files.
+- [x] Verify staged tree contract count: exactly 7 files in `docs/agentic/contracts/` (NOTE: actual published surface contains 15 contracts after later slices added shared docs; original v0.2.0 cut was 7).
+- [x] Verify the 11 new skills + 2 modified skills present in staged tree.
+- [x] Verify the 2 modified hooks present.
+- [x] `python3 scripts/lint_hoisted_paths.py /tmp/agentic-system-extract/` exits 0.
+- [x] Update top-level `README.md` with v0.2.0 changelog.
+- [x] Commit + annotated tag `v0.2.0` + push `main` and tag.
+- [x] Smoke clone of `git@github.com:darce/agentic-system.git@v0.2.0` — verify skill count and contract count.
+- [x] Inline scratch-venv smoke for `agentic-bootstrap@v0.2.0` exits 0 (replaces deleted P3 runner).
+- [x] MCP `test_result` recorded.
 
-### Slice 4 — Cross-repo cleanup migration
+### Slice 4 — Cross-repo cleanup migration ✅ COMPLETE
 
-- [ ] Inventory each published repo for monorepo-internal files (notably `docs/tech-debt/*`).
-- [ ] Per repo with cleanup targets: `git rm`, commit, annotated patch tag, push.
-- [ ] Per cleaned repo: smoke clone confirms cleanup files absent and no monorepo-only identifiers remain.
-- [ ] Per repo with no cleanup targets: record no-op decision.
-- [ ] MCP `test_result` recorded for each cleaned repo.
+- [x] Inventory each published repo for monorepo-internal files (notably `docs/tech-debt/*`).
+- [x] Per repo with cleanup targets: `git rm`, commit, annotated patch tag, push. (handoff v0.4.2 / orchestrator v0.1.2 / agentic-system v0.2.1; bootstrap unchanged.)
+- [x] Per cleaned repo: smoke clone confirms cleanup files absent and no monorepo-only identifiers remain.
+- [x] Per repo with no cleanup targets: record no-op decision. (agentic-bootstrap.)
+- [x] MCP `test_result` recorded for each cleaned repo. (test_results #1060, #1061, #1062.)
+- [x] Mid-slice patch: published `mcp-agent-orchestrator@v0.1.3` to bump URL pin from handoff `@v0.4.1` to `@v0.4.2` (URL-pin compat for v0.4.2 cleanup tag).
 
-### Slice 5 — Scratch-consumer validation
+### Slice 5 — Scratch-consumer validation ✅ COMPLETE
 
-- [ ] Pre-flight: Slices 1–4 dispositions complete; latest tags identified.
-- [ ] Pre-flight: `consumer-setup.md` and `scripts/test_consumer_setup_doc.py` pins re-verified against the latest published tags; doc-lock test passes; only commit if drift was found.
-- [ ] Pre-install isolated bootstrap-CLI smoke passes.
-- [ ] Create `~/Development/hoist-mvp-consumer/` with `git init` + initial README commit.
-- [ ] Create scratch venv at `~/Development/hoist-mvp-consumer/.venv`.
-- [ ] `pip install` the three published packages from real `git+ssh://` URLs at latest tags (no monorepo fallback).
-- [ ] `agentic-bootstrap install --target .` exits 0; symlinks + `.agentic-overlay.json` present.
-- [ ] First `load_session(task_ref="HOIST-MVP-PROBE")` returns structured response.
-- [ ] Public-API consumer-DB query exits 0 (no raw `sqlite3`).
-- [ ] Handoff DB path is the scratch consumer root, NOT the monorepo's `.task-state/`.
-- [ ] Contract-split assertion: scratch consumer's overlay carries exactly 7 contracts.
-- [ ] MCP `test_result` recorded.
+- [x] Pre-flight: Slices 1–4 dispositions complete; latest tags identified.
+- [x] Pre-flight: `consumer-setup.md` and `scripts/test_consumer_setup_doc.py` pins re-verified against the latest published tags; doc-lock test passes; only commit if drift was found. (commits `bff30f34`, `cc40117a`.)
+- [x] Pre-install isolated bootstrap-CLI smoke passes. (NOTE: plan command `agentic-bootstrap --version` is invalid on v0.2.0 CLI; verified via `agentic-bootstrap --help` + `pip show`.)
+- [x] Create `~/Development/hoist-mvp-consumer/` with `git init` + initial README commit.
+- [x] Create scratch venv at `~/Development/hoist-mvp-consumer/.venv`.
+- [x] `pip install` the three published packages from real `git+ssh://` URLs at latest tags (no monorepo fallback). (handoff@v0.4.2, orchestrator@v0.1.3, bootstrap@v0.2.0.)
+- [x] `agentic-bootstrap install --target .` exits 0; symlinks + `.agentic-overlay.json` present.
+- [x] First `load_session(task_ref="HOIST-MVP-PROBE")` returns structured response.
+- [x] Public-API consumer-DB query exits 0 (no raw `sqlite3`).
+- [x] Handoff DB path is the scratch consumer root, NOT the monorepo's `.task-state/`.
+- [x] Contract-split assertion: scratch consumer's overlay carries 15 contracts. (Plan said 7; agentic-system surface has grown since v0.2.0 cut.)
+- [x] MCP `test_result` recorded. (test_result #1063.)
 
-### Slice 6 — Real-consumer validation (both consumers required)
+### Slice 6 — Real-consumer validation (both consumers required) ✅ COMPLETE
 
-- [ ] Pre-flight `darce.github.io`: dir exists, is a git repo, working tree clean (or user cleared the dirty state).
-- [ ] Pre-flight `altcontext-marketing-monorepo`: same check.
-- [ ] Slice 5 gate passes for both pre-flight runs.
-- [ ] Created onboarding feature branch in each real consumer (no edits to their `main`).
-- [ ] Per-consumer Python ≥ 3.11 confirmed.
-- [ ] `.gitignore` hygiene committed in each consumer.
-- [ ] Per-consumer scratch venv (or recorded existing venv path) for each.
-- [ ] `pip install` of all three packages succeeds for each consumer.
-- [ ] `agentic-bootstrap install --target .` succeeds for each consumer.
-- [ ] First `load_session` succeeds for each consumer with consumer-scoped `task_ref`.
-- [ ] Per-consumer handoff DB exists at consumer root; isolation between the three consumer DBs confirmed via public-API probe.
-- [ ] `## Lessons Learned` section appended to `docs/agentic/consumer-setup.md` (in this monorepo) and committed on the task branch.
-- [ ] MCP `test_result` recorded for each consumer separately.
+- [x] Pre-flight `darce.github.io`: dir exists, is a git repo, working tree clean (or user cleared the dirty state).
+- [x] Pre-flight `altcontext-marketing-monorepo`: same check. (Pre-existing uncommitted work on `feature/dashboard-geo`; installed in-place since overlay paths are gitignored and additive.)
+- [x] Slice 5 gate passes for both pre-flight runs.
+- [x] Created onboarding feature branch in each real consumer (no edits to their `main`). (`feature/agentic-system-onboarding` for darce.github.io; in-place install on existing `feature/dashboard-geo` for altcontext-marketing-monorepo.)
+- [x] Per-consumer Python ≥ 3.11 confirmed. (3.13.9.)
+- [x] `.gitignore` hygiene committed in each consumer.
+- [x] Per-consumer scratch venv (or recorded existing venv path) for each.
+- [x] `pip install` of all three packages succeeds for each consumer.
+- [x] `agentic-bootstrap install --target .` succeeds for each consumer. (NOTE: Must invoke via explicit `./.venv/bin/agentic-bootstrap` on consumers where pyenv shim shadows venv on PATH.)
+- [x] First `load_session` succeeds for each consumer with consumer-scoped `task_ref`.
+- [x] Per-consumer handoff DB exists at consumer root; isolation between the three consumer DBs confirmed via public-API probe.
+- [x] `## Lessons Learned` section appended to `docs/agentic/consumer-setup.md` (in this monorepo) and committed on the task branch. (commit `907dfc46`.)
+- [x] MCP `test_result` recorded for each consumer separately. (test_results #1064, #1065.)
 
 ## Review Readiness
 

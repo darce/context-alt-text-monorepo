@@ -157,6 +157,7 @@ hooks:
       matcher: mcp_altcontext-mc_record_event|mcp_altcontext-mc_review_findings|mcp_altcontext-mc_review_runs|mcp_altcontext-mc_set_handoff_state|mcp_altcontext-mc_update_task_status|mcp__agent-handoff-mcp__record_event|mcp__agent-handoff-mcp__review_findings|mcp__agent-handoff-mcp__review_runs|mcp__agent-handoff-mcp__set_handoff_state|mcp__agent-handoff-mcp__update_task_status
       claude_command: bash "$CLAUDE_PROJECT_DIR/scripts/hooks/regenerate-task-views.sh"
       vscode_command: bash scripts/hooks/regenerate-task-views.sh
+      codex_command: bash "$(git rev-parse --show-toplevel)/scripts/hooks/regenerate-task-views.sh"
     - id: slim-handoff-response
       matcher: mcp_altcontext-mc_get_handoff_state|mcp_altcontext-mc_load_session|mcp_altcontext-mc_render_handoff|mcp__agent-handoff-mcp__get_handoff_state|mcp__agent-handoff-mcp__load_session|mcp__agent-handoff-mcp__render_handoff
       claude_command: python3 "$CLAUDE_PROJECT_DIR/scripts/hooks/slim-handoff-response.py"

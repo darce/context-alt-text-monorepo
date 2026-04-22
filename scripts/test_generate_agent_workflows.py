@@ -86,6 +86,30 @@ def test_expected_outputs_render_planning_review_gap_id_and_dashboard_steps(
     assert "refresh DASHBOARD.txt after state-changing handoff writes" in planning_prompt
 
 
+def test_expected_outputs_render_branch_review_decision_and_dashboard_steps(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    claude_out = repo / ".claude" / "commands"
+    prompts_out = repo / ".github" / "prompts"
+    codex_out = repo / "docs" / "agentic" / "generated"
+    manifest = _manifest()
+    manifest["commands"][0]["loop"] = [
+        "load the latest slice packet or branch diff",
+        "when the review is packet-backed, print the handoff decision string (`decision`) and numeric row id (`decision_id`)",
+        "refresh DASHBOARD.txt after state-changing handoff writes",
+    ]
+
+    outputs = _expected_outputs(manifest, claude_out, prompts_out, codex_out)
+
+    branch_command = outputs[claude_out / "branch-review.md"]
+    branch_prompt = outputs[prompts_out / "branch-review.prompt.md"]
+    assert "print the handoff decision string (`decision`) and numeric row id (`decision_id`)" in branch_command
+    assert "refresh DASHBOARD.txt after state-changing handoff writes" in branch_command
+    assert "print the handoff decision string (`decision`) and numeric row id (`decision_id`)" in branch_prompt
+    assert "refresh DASHBOARD.txt after state-changing handoff writes" in branch_prompt
+
+
 def test_check_outputs_fails_when_codex_router_is_missing(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     claude_out = repo / ".claude" / "commands"

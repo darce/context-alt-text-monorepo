@@ -52,3 +52,17 @@ def test_codex_hooks_register_bash_test_output_filter() -> None:
     assert bash_entries, "expected a Bash PostToolUse hook registration for Codex"
     commands = [hook["command"] for entry in bash_entries for hook in entry.get("hooks", [])]
     assert any("scripts/hooks/filter-test-output.py" in command for command in commands)
+
+
+def test_codex_hooks_register_dashboard_refresh_for_state_changing_mcp_writes() -> None:
+    payload = _read_json(REPO_ROOT / ".codex" / "hooks.json")
+    entries = payload["hooks"]["PostToolUse"]
+    refresh_entries = [
+        entry
+        for entry in entries
+        if "mcp__agent-handoff-mcp__record_event" in entry.get("matcher", "")
+    ]
+
+    assert refresh_entries, "expected a Codex PostToolUse hook for handoff dashboard refresh"
+    commands = [hook["command"] for entry in refresh_entries for hook in entry.get("hooks", [])]
+    assert any("scripts/hooks/regenerate-task-views.sh" in command for command in commands)

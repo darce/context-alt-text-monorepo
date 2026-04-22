@@ -17,7 +17,9 @@ Loop:
 - decide whether the review scope is a lane/local working tree or a committed feature-branch diff
 - use make review-run only when reviewing lane/local working-tree scope
 - load the latest slice packet or branch diff
+- when the review is packet-backed, print the handoff decision string (`decision`) and numeric row id (`decision_id`)
 - pre-triage existing findings
 - run the branch-review checklist
 - record findings, verdict decision, and branch review run
+- refresh DASHBOARD.txt after state-changing handoff writes
 - confirm whether the branch is actually merge-ready

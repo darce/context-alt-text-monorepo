@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -19,6 +20,7 @@ from scripts.check_harness_sync import (
     _check_branch_isolation,
     _check_cold_start,
     _check_dashboard_naming,
+    _check_hooks,
     _check_workspace_settings,
     _check_worktree_drift,
     _fixture_env,
@@ -37,6 +39,7 @@ COPY_PATHS = (
     Path("scripts/overlay_resolver.py"),
     Path(".vscode/settings.json"),
     Path(".claude/settings.json"),
+    Path(".codex/hooks.json"),
     Path(".github/hooks/guard-main-branch.py"),
     Path(".github/hooks/terminal-guard.json"),
     Path(".github/hooks/guard-worktree-drift.py"),
@@ -86,7 +89,18 @@ def _valid_contract() -> dict:
                 {"path": "scripts/hooks/guard-main-branch.sh", "harness": "claude"},
             ],
         },
-        "hooks": {"pre_tool_use": [], "post_tool_use": []},
+        "hooks": {
+            "pre_tool_use": [],
+            "post_tool_use": [
+                {
+                    "id": "regenerate-task-views",
+                    "matcher": "mcp_altcontext-mc_record_event|mcp_altcontext-mc_review_findings|mcp_altcontext-mc_review_runs|mcp_altcontext-mc_set_handoff_state|mcp_altcontext-mc_update_task_status|mcp__agent-handoff-mcp__record_event|mcp__agent-handoff-mcp__review_findings|mcp__agent-handoff-mcp__review_runs|mcp__agent-handoff-mcp__set_handoff_state|mcp__agent-handoff-mcp__update_task_status",
+                    "claude_command": 'bash "$CLAUDE_PROJECT_DIR/scripts/hooks/regenerate-task-views.sh"',
+                    "vscode_command": "bash scripts/hooks/regenerate-task-views.sh",
+                    "codex_command": 'bash "$(git rev-parse --show-toplevel)/scripts/hooks/regenerate-task-views.sh"',
+                }
+            ],
+        },
     }
 
 
@@ -380,6 +394,23 @@ def test_branch_isolation_requires_claude_main_guard_matcher(tmp_path: Path) -> 
     assert any("guard-main-branch.sh" in err and "scope" in err for err in errors)
 
 
+def test_hooks_fail_when_codex_regenerate_task_views_hook_is_missing(tmp_path: Path) -> None:
+    repo = _write_repo(tmp_path)
+    payload = json.loads((repo / ".codex" / "hooks.json").read_text(encoding="utf-8"))
+    payload["hooks"]["PostToolUse"] = [
+        entry
+        for entry in payload["hooks"]["PostToolUse"]
+        if "regenerate-task-views.sh" not in json.dumps(entry)
+    ]
+    (repo / ".codex" / "hooks.json").write_text(
+        json.dumps(payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    errors = _check_hooks(_valid_contract(), repo_root=repo)
+    assert any("missing Codex hook `regenerate-task-views`" in err for err in errors)
+
+
 def test_real_contract_passes_run_checks() -> None:
     """Safety net: the committed harness-protocol.yaml plus real surfaces must pass."""
     contract = _load_contract()
@@ -557,7 +588,7 @@ def test_main_runs_by_absolute_path_outside_repo_root(tmp_path: Path) -> None:
     outside.mkdir()
 
     result = subprocess.run(
-        ["python3", str(script_path)],
+        [sys.executable, str(script_path)],
         cwd=outside,
         check=False,
         capture_output=True,
@@ -576,7 +607,7 @@ def test_main_reports_malformed_overlay_manifest_as_infrastructure_error(tmp_pat
     outside.mkdir()
 
     result = subprocess.run(
-        ["python3", str(script_path)],
+        [sys.executable, str(script_path)],
         cwd=outside,
         check=False,
         capture_output=True,

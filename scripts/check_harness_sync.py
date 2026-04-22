@@ -48,8 +48,6 @@ except ModuleNotFoundError:
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = REPO_ROOT / "docs" / "agentic" / "contracts" / "harness-protocol.yaml"
-CLAUDE_HOOKS_PATH = REPO_ROOT / ".claude" / "settings.json"
-VSCODE_HOOKS_PATH = REPO_ROOT / ".github" / "hooks" / "terminal-guard.json"
 VSCODE_SETTINGS_PATH = REPO_ROOT / ".vscode" / "settings.json"
 PYTHON_EXPORTS_PATH = REPO_ROOT / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp" / "__init__.py"
 CONTRACT_RELATIVE = Path("docs/agentic/contracts/harness-protocol.yaml")
@@ -159,14 +157,17 @@ def _flatten_vscode_entries(stage_entries: list[dict]) -> set[tuple[str, str]]:
     return found
 
 
-def _load_hook_pairs() -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
-    claude_payload = json.loads(CLAUDE_HOOKS_PATH.read_text())
-    vscode_payload = json.loads(VSCODE_HOOKS_PATH.read_text())
+def _load_hook_pairs(*, repo_root: Path = REPO_ROOT) -> tuple[set[tuple[str, str]], set[tuple[str, str]], set[tuple[str, str]]]:
+    claude_payload = json.loads((repo_root / ".claude" / "settings.json").read_text())
+    vscode_payload = json.loads((repo_root / ".github" / "hooks" / "terminal-guard.json").read_text())
+    codex_payload = json.loads((repo_root / ".codex" / "hooks.json").read_text())
     claude_hooks = claude_payload["hooks"]
     vscode_hooks = vscode_payload["hooks"]
+    codex_hooks = codex_payload["hooks"]
     return (
         _flatten_claude_entries(claude_hooks["PreToolUse"]) | _flatten_claude_entries(claude_hooks["PostToolUse"]),
         _flatten_vscode_entries(vscode_hooks["PreToolUse"]) | _flatten_vscode_entries(vscode_hooks["PostToolUse"]),
+        _flatten_claude_entries(codex_hooks.get("PreToolUse", [])) | _flatten_claude_entries(codex_hooks.get("PostToolUse", [])),
     )
 
 
@@ -188,7 +189,7 @@ def _load_python_exports() -> set[str]:
 
 
 def _check_hooks(contract: dict, *, repo_root: Path = REPO_ROOT) -> list[str]:
-    claude_pairs, vscode_pairs = _load_hook_pairs()
+    claude_pairs, vscode_pairs, codex_pairs = _load_hook_pairs(repo_root=repo_root)
     errors: list[str] = []
     hook_spec = contract.get("hooks", {})
     for stage in ("pre_tool_use", "post_tool_use"):
@@ -200,6 +201,10 @@ def _check_hooks(contract: dict, *, repo_root: Path = REPO_ROOT) -> list[str]:
                 errors.append(f"missing Claude hook `{item['id']}` ({stage})")
             if (matcher, vscode_command) not in vscode_pairs:
                 errors.append(f"missing VS Code hook `{item['id']}` ({stage})")
+            codex_command = item.get("codex_command")
+            if isinstance(codex_command, str) and codex_command:
+                if (matcher, codex_command) not in codex_pairs:
+                    errors.append(f"missing Codex hook `{item['id']}` ({stage})")
     return errors
 
 

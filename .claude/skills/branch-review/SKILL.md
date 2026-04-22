@@ -20,7 +20,7 @@ disable-model-invocation: false
 
 ## Overview
 
-Use this skill for code and workflow diffs on feature branches. It runs the branch-review checklist, records findings before chat output, and closes with a durable review verdict.
+Use this skill for code and workflow diffs on feature branches. It runs the branch-review checklist, records findings before chat output, refreshes `DASHBOARD.txt`, and closes with a durable review verdict.
 
 ## Trigger
 
@@ -34,7 +34,7 @@ Do not use it for task plans, epics, ADRs, or other planning artifacts.
 
 ## Goal
 
-Produce a branch-review verdict with MCP-recorded findings, a recorded review run, and clear evidence about whether the branch is genuinely merge-ready.
+Produce a branch-review verdict with MCP-recorded findings, the packet-backed handoff decision string plus numeric row id when available, a refreshed `DASHBOARD.txt`, a recorded review run, and clear evidence about whether the branch is genuinely merge-ready.
 
 ## Canonical Policy
 
@@ -51,7 +51,7 @@ This skill owns branch-review execution order. The guide owns the detailed check
    - **Ad-hoc on main (e.g. reviewing a merged commit):** register a maintenance task first — `set_handoff_state(task_ref="MAINT-<slug>-<YYYYMMDD>", objective="...", status="in_progress", target_branch="main")` — and pass that `task_ref` forward.
    - **`Ambiguous active task` error:** archive stale MAINT-* rows in one shot with `make maint-archive-stale` (or `MAINT_ARCHIVE_ARGS="--yes"` non-interactively), then re-run `make context`. `make context` exits `2` (not `1`) specifically on this ambiguity.
 
-1. Start with a real review scope. `make review-run` is for lane/local working-tree review because `review_runner.py` only inspects local changed files. For committed feature-branch diff review, load the latest slice review packet when available or review `git diff main...HEAD` scope directly. If `agent-orchestrator-mcp` is unavailable, use the handoff-only fallback from `branch-review-guide.md`: `load_session` -> `search_handoff(queries=["slice_complete"], record_types=["decision"], limit=1)` -> `get_verified_tests` -> `review_findings(list)` and review against branch-diff scope.
+1. Start with a real review scope. `make review-run` is for lane/local working-tree review because `review_runner.py` only inspects local changed files. For committed feature-branch diff review, load the latest slice review packet when available or review `git diff main...HEAD` scope directly. When the scope is packet-backed, cite both the stable decision string (`decision`) and numeric row id (`decision_id`) when reporting the slice under review. If `agent-orchestrator-mcp` is unavailable, use the handoff-only fallback from `branch-review-guide.md`: `load_session` -> `search_handoff(queries=["slice_complete"], record_types=["decision"], limit=1)` -> `get_verified_tests` -> `review_findings(list)` and review against branch-diff scope.
 2. Pre-triage with `get_review_findings_summary` and `reconcile_review_findings` so old open findings are understood before new detection passes begin. When orchestrator is unavailable, state that the pass is using `branch_diff` fallback scope instead of `slice_packet`.
 3. Check prior review history with `review_runs(operation="list", review_mode="branch", ...)`.
 4. Run the branch-review checklist against the actual diff, touched contracts, and fresh verification evidence.
@@ -59,7 +59,8 @@ This skill owns branch-review execution order. The guide owns the detailed check
 6. Decide the verdict: `pass`, `pass_with_findings`, `conditional_pass`, or `fail`.
 7. Record the verdict decision with `record_event(event_kind="decision", ...)`.
 8. Record the review run with `review_runs(operation="record", review_mode="branch", ...)`.
-9. Re-check whether open findings remain. If none remain and the branch claims readiness, `handoff_close_check` should be able to pass.
+9. Refresh `DASHBOARD.txt` with `render_handoff(kind='dashboard')` after the state-changing writes land.
+10. Re-check whether open findings remain. If none remain and the branch claims readiness, `handoff_close_check` should be able to pass.
 
 ## Common Rationalizations
 
@@ -89,6 +90,8 @@ This skill owns branch-review execution order. The guide owns the detailed check
 - Findings mentioned to the user are already recorded in MCP.
 - A branch-mode review run exists for the pass.
 - A verdict decision exists for the review.
+- Packet-backed review reports cite both `decision` and `decision_id`.
+- `DASHBOARD.txt` is refreshed after the branch-review writes.
 - The review scope is identified honestly as `slice_packet` when packet-backed or `branch_diff` when running fallback scope.
 - Merge-readiness claims are backed by fresh evidence, not assumption.
 

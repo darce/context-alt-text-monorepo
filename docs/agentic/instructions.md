@@ -326,7 +326,7 @@ Loading rules:
 
 Canonical handoff runtime:
 
-- `agent-handoff-mcp` exclusively. Legacy `scripts/mcp/unified_server.py` is deprecated (repo-intel-only); retirement tracked in [unified-server-retirement.md](../tasks/tech-debt/unified-server-retirement.md).
+- `agent-handoff-mcp` exclusively.
 - Install reference: [contracts/agent-handoff-mcp.md](contracts/agent-handoff-mcp.md). After E13 extraction, canonical external source is `darce/mcp-agent-handoff` (private git+ssh).
 
 Primary binary shape:
@@ -400,7 +400,7 @@ Read discipline:
 - Do not query `.task-state/handoff.db` directly when MCP tools are available.
 - `get_handoff_state` for active-task snapshot, `get_review_findings_summary` for counts, `review_findings(operation="list")` for detailed verification.
 - `finding_id` (e.g. `"H-OCI-28"`) for single-finding lookup. Optional `task_ref` on list/summary to query non-active tasks without switching.
-- Do **not** use legacy `scripts/mcp/unified_server.py`. Only supported surface: `agent-handoff-mcp` per [contracts/agent-handoff-mcp.md](contracts/agent-handoff-mcp.md). Removal tracked in [unified-server-retirement.md](../tasks/tech-debt/unified-server-retirement.md).
+- Only supported handoff surface: `agent-handoff-mcp` per [contracts/agent-handoff-mcp.md](contracts/agent-handoff-mcp.md).
 
 State integrity invariants:
 

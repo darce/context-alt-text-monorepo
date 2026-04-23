@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import shutil
+import sys
 from pathlib import Path
 
 from scripts.check_skills import check_skills
@@ -183,7 +184,7 @@ def test_main_reports_flat_skill_count_without_overlay_manifest(tmp_path: Path) 
     outside.mkdir()
 
     result = subprocess.run(
-        ["python3", str(script_path)],
+        [sys.executable, str(script_path)],
         cwd=outside,
         check=False,
         capture_output=True,
@@ -205,7 +206,7 @@ def test_main_reports_overlay_source_breakdown_when_manifest_exists(tmp_path: Pa
     outside.mkdir()
 
     result = subprocess.run(
-        ["python3", str(script_path)],
+        [sys.executable, str(script_path)],
         cwd=outside,
         check=False,
         capture_output=True,

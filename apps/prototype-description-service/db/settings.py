@@ -46,6 +46,12 @@ class DatabaseSettings:
     # back off on admission fail-fast responses (503 Retry-After).
     clustering_tenant_lock_timeout_ms: int
     clustering_admission_retry_after_seconds: int
+    # E15-3a-BR-21 Slice 3: clustering-dedicated circuit breaker counts
+    # QueryCanceledError on the clustering write path. Separate state from the
+    # SLR-3 session-dependency breaker -- see task plan PLAN-09.
+    clustering_breaker_failure_threshold: int
+    clustering_breaker_window_seconds: float
+    clustering_breaker_cooldown_seconds: float
 
 
 def _infer_sync_dsn(async_dsn: str) -> str:
@@ -138,6 +144,9 @@ def get_database_settings() -> DatabaseSettings:
     disable_stmt_cache = os.getenv("DB_DISABLE_STMT_CACHE", "0") == "1"
     clustering_tenant_lock_timeout_ms = int(os.getenv("DB_CLUSTERING_TENANT_LOCK_TIMEOUT_MS", "1000"))
     clustering_admission_retry_after_seconds = int(os.getenv("DB_CLUSTERING_ADMISSION_RETRY_AFTER_SECONDS", "5"))
+    clustering_breaker_failure_threshold = int(os.getenv("DB_CLUSTERING_BREAKER_FAILURE_THRESHOLD", "3"))
+    clustering_breaker_window_seconds = float(os.getenv("DB_CLUSTERING_BREAKER_WINDOW_SECONDS", "30"))
+    clustering_breaker_cooldown_seconds = float(os.getenv("DB_CLUSTERING_BREAKER_COOLDOWN_SECONDS", "30"))
 
     if disable_stmt_cache and "+asyncpg" in async_dsn:
         async_dsn = _disable_asyncpg_statement_cache(async_dsn)
@@ -161,6 +170,9 @@ def get_database_settings() -> DatabaseSettings:
         disable_stmt_cache=disable_stmt_cache,
         clustering_tenant_lock_timeout_ms=clustering_tenant_lock_timeout_ms,
         clustering_admission_retry_after_seconds=clustering_admission_retry_after_seconds,
+        clustering_breaker_failure_threshold=clustering_breaker_failure_threshold,
+        clustering_breaker_window_seconds=clustering_breaker_window_seconds,
+        clustering_breaker_cooldown_seconds=clustering_breaker_cooldown_seconds,
     )
 
 

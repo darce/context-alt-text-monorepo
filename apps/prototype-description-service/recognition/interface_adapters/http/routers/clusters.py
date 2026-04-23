@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from json import JSONDecodeError
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,6 +43,9 @@ from recognition.interface_adapters.http.dependencies import (
     get_suggestion_service,
     require_auth,
     require_write_access,
+)
+from recognition.interface_adapters.http.deps.clustering_circuit_breaker import (
+    get_or_create_clustering_circuit_breaker,
 )
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.interface_adapters.http.deps.tenant import get_authenticated_tenant_id
@@ -297,6 +300,7 @@ async def _raise_if_cluster_stale(*, cluster_repo, cluster_id: str, expected_bas
 @router.post("/clustering/jobs", response_model=ClusteringJobStatusResponse, status_code=status.HTTP_202_ACCEPTED)
 async def create_clustering_job(
     request: ClusteringJobRequest,
+    http_request: Request,
     auth=Depends(require_write_access),
     session=Depends(get_session),
     cluster_service_builder=Depends(get_cluster_service_builder),
@@ -347,25 +351,50 @@ async def create_clustering_job(
         # UPDATE below then runs under a narrow statement_timeout so a missed
         # probe still converts into a <1 s 503 instead of the 10 s cliff.
         _db_settings = get_database_settings()
+        # E15-3a-BR-21 Slice 3: clustering-dedicated circuit breaker fails fast
+        # ahead of any DB work once a run of QueryCanceledError confirms a
+        # zombie holder on tenants. PLAN-09: the clustering breaker is the sole
+        # fail-fast surface here, not the SLR-3 session-dependency breaker.
+        _breaker = get_or_create_clustering_circuit_breaker(http_request.app)
+        if not _breaker.allow_request():
+            _admission_status = status.HTTP_503_SERVICE_UNAVAILABLE
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error": "clustering_breaker_open",
+                    "reason": "clustering admission temporarily unavailable",
+                    "tenant_id": request.tenant_id,
+                },
+                headers={"Retry-After": str(_db_settings.clustering_admission_retry_after_seconds)},
+            )
         await _clustering_admission_probe(
             session,
             tenant_id=request.tenant_id,
             retry_after_seconds=_db_settings.clustering_admission_retry_after_seconds,
         )
-        await _acquire_tenant_lock_fast_fail(
-            session,
-            tenant_id=request.tenant_id,
-            lock_timeout_ms=_db_settings.clustering_tenant_lock_timeout_ms,
-            default_timeout=_db_settings.statement_timeout,
-            retry_after_seconds=_db_settings.clustering_admission_retry_after_seconds,
-        )
+        try:
+            await _acquire_tenant_lock_fast_fail(
+                session,
+                tenant_id=request.tenant_id,
+                lock_timeout_ms=_db_settings.clustering_tenant_lock_timeout_ms,
+                default_timeout=_db_settings.statement_timeout,
+                retry_after_seconds=_db_settings.clustering_admission_retry_after_seconds,
+            )
+        except HTTPException as exc:
+            # Narrow: a 503 from the lock helper is the QueryCanceledError path
+            # (SQLSTATE 57014). Count only that signal toward breaker failures.
+            if exc.status_code == status.HTTP_503_SERVICE_UNAVAILABLE:
+                _breaker.record_failure()
+            raise
         existing_job = await job_service.get_active_clustering_job_for_tenant(request.tenant_id)
         if existing_job is not None:
+            _breaker.record_success()
             return _job_to_clustering_response(existing_job)
 
         # The generic /recognition/jobs/{id}/stream endpoint handles all job types.
         job = await job_service.create_job(JobType.CLUSTERING, tenant_id=request.tenant_id)
         # Do NOT start the job - leave it in pending state for worker to pick up
+        _breaker.record_success()
         return _job_to_clustering_response(job)
     except HTTPException as exc:
         _admission_status = exc.status_code

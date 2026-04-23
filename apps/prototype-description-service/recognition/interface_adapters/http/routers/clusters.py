@@ -12,12 +12,14 @@ from json import JSONDecodeError
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import db.session as db_session_module
 from db.models import Tenant
 from db.models.identity import CurationReplayRecord
+from db.settings import get_database_settings
 from recognition.application.settings import ClusteringSettings
 from recognition.application.suggestions.label_inference import infer_suggested_label
 from recognition.application.tasks.clustering import run_background_surface_suggestions
@@ -44,10 +46,10 @@ from recognition.interface_adapters.http.dependencies import (
 )
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.interface_adapters.http.deps.tenant import get_authenticated_tenant_id
-from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
 from recognition.interface_adapters.http.job_utils import (
     job_to_clustering_response as _job_to_clustering_response,
 )
+from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
 from recognition.interface_adapters.http.schemas.requests import (
     AssignOutlierRequest,
     ClusteringJobRequest,
@@ -83,11 +85,133 @@ from recognition.interface_adapters.http.schemas.responses import (
     SplitTopologyCommandResponse,
 )
 from recognition.interface_adapters.http.validation import validate_entity_id, validate_label, validate_paging
+from recognition.shared.db.dialect import is_postgres
 from recognition.shared.ids import generate_id
 
 _logger = logging.getLogger(__name__)
 
 _INFERENCE_CAP = 20
+
+# E15-3a-BR-21 Slice 2: admission fail-fast queries. Documented on the probe
+# helper below. The defaults used for the default statement_timeout restore
+# are pulled from db.settings (DB_STATEMENT_TIMEOUT) so this stays in sync
+# with the global fault-isolation boundary.
+_CLUSTERING_ADMISSION_PROBE_SQL = """
+SELECT 1
+FROM pg_locks l
+JOIN pg_stat_activity a ON a.pid = l.pid
+WHERE l.relation = 'tenants'::regclass
+  AND l.granted = true
+  AND a.state = 'idle in transaction'
+  AND a.pid <> pg_backend_pid()
+LIMIT 1
+"""
+
+# Postgres SQLSTATE for a canceled statement (statement_timeout hit or explicit
+# pg_cancel_backend). We match by SQLSTATE rather than by asyncpg exception
+# type to keep the branch driver-agnostic.
+_QUERY_CANCELED_SQLSTATE = "57014"
+
+
+def _is_query_canceled(exc: DBAPIError) -> bool:
+    """Return True if the DBAPIError wraps a Postgres statement_timeout cancel."""
+    orig = getattr(exc, "orig", None)
+    if orig is None:
+        return False
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if sqlstate == _QUERY_CANCELED_SQLSTATE:
+        return True
+    cause = getattr(orig, "__cause__", None)
+    cause_sqlstate = getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)
+    return cause_sqlstate == _QUERY_CANCELED_SQLSTATE
+
+
+def _raise_admission_unavailable(*, reason: str, retry_after_seconds: int, tenant_id: str) -> None:
+    """Emit the BR-21-fast-fail log line and raise the canonical 503 response."""
+    _logger.warning(
+        "BR-21-fast-fail clustering admission reason=%s tenant_id=%s retry_after=%ss",
+        reason,
+        tenant_id,
+        retry_after_seconds,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Clustering temporarily unavailable",
+        headers={"Retry-After": str(retry_after_seconds)},
+    )
+
+
+async def _clustering_admission_probe(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    retry_after_seconds: int,
+) -> None:
+    """Best-effort pg_locks pre-flight check.
+
+    Returns None silently on non-Postgres backends (SQLite, FakeSession) and on
+    any probe error so a broken probe never blocks legitimate traffic. When a
+    row is found -- meaning another backend is ``idle in transaction`` while
+    holding a lock on ``tenants`` -- raises the canonical 503 Retry-After.
+    """
+    if not is_postgres(session):
+        return
+    try:
+        result = await session.execute(text(_CLUSTERING_ADMISSION_PROBE_SQL))
+    except Exception:  # pragma: no cover - probe is best-effort
+        _logger.debug("clustering admission probe failed", exc_info=True)
+        return
+    blocker = None
+    try:
+        blocker = result.scalar() if result is not None else None
+    except Exception:  # pragma: no cover - probe is best-effort
+        return
+    if blocker is None:
+        return
+    _raise_admission_unavailable(
+        reason="tenants_row_locked_by_idle_in_txn",
+        retry_after_seconds=retry_after_seconds,
+        tenant_id=tenant_id,
+    )
+
+
+async def _acquire_tenant_lock_fast_fail(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    lock_timeout_ms: int,
+    default_timeout: str,
+    retry_after_seconds: int,
+) -> None:
+    """Run the tenants ``SELECT ... FOR UPDATE`` under a narrow statement_timeout.
+
+    On non-Postgres backends the narrow SET LOCAL is skipped and the SELECT
+    runs under whatever timeout the dep already applied. On Postgres, the
+    caller's transaction temporarily lowers ``statement_timeout`` so a zombie
+    idle-in-transaction row lock fails in ~``lock_timeout_ms`` (not 10 s) and
+    is restored to ``default_timeout`` immediately after the SELECT so the
+    subsequent active-job lookup and INSERT keep the default safety budget.
+    """
+    postgres = is_postgres(session)
+    if postgres:
+        await session.execute(text(f"SET LOCAL statement_timeout = '{int(lock_timeout_ms)}ms'"))
+    try:
+        await session.execute(select(Tenant.id).where(Tenant.id == tenant_id).with_for_update())
+    except DBAPIError as exc:
+        if _is_query_canceled(exc):
+            _raise_admission_unavailable(
+                reason="tenants_for_update_timeout",
+                retry_after_seconds=retry_after_seconds,
+                tenant_id=tenant_id,
+            )
+        raise
+    finally:
+        if postgres:
+            try:
+                await session.execute(text(f"SET LOCAL statement_timeout = '{default_timeout}'"))
+            except Exception:  # pragma: no cover - restore is best-effort
+                _logger.debug("SET LOCAL statement_timeout restore failed", exc_info=True)
+
 
 router = APIRouter(tags=["clusters"], dependencies=[Depends(require_auth), Depends(enforce_rate_limit)])
 
@@ -216,7 +340,25 @@ async def create_clustering_job(
         # Async mode: create a pending job for background worker to process.
         # Reuse an existing pending/running clustering job for the tenant to avoid
         # duplicate expensive work from repeated clicks or repeated UI effects.
-        await session.execute(select(Tenant.id).where(Tenant.id == request.tenant_id).with_for_update())
+        #
+        # E15-3a-BR-21 Slice 2: admission fail-fast. A pg_locks probe is cheap
+        # (~ms) and returns a 503 ahead of any lock wait when a zombie idle-in-
+        # transaction session is holding the tenants row lock. The SELECT FOR
+        # UPDATE below then runs under a narrow statement_timeout so a missed
+        # probe still converts into a <1 s 503 instead of the 10 s cliff.
+        _db_settings = get_database_settings()
+        await _clustering_admission_probe(
+            session,
+            tenant_id=request.tenant_id,
+            retry_after_seconds=_db_settings.clustering_admission_retry_after_seconds,
+        )
+        await _acquire_tenant_lock_fast_fail(
+            session,
+            tenant_id=request.tenant_id,
+            lock_timeout_ms=_db_settings.clustering_tenant_lock_timeout_ms,
+            default_timeout=_db_settings.statement_timeout,
+            retry_after_seconds=_db_settings.clustering_admission_retry_after_seconds,
+        )
         existing_job = await job_service.get_active_clustering_job_for_tenant(request.tenant_id)
         if existing_job is not None:
             return _job_to_clustering_response(existing_job)
@@ -234,9 +376,9 @@ async def create_clustering_job(
     finally:
         _admission_elapsed_ms = (_time.perf_counter() - _admission_started_at) * 1000
         try:
-            get_default_metrics().clustering_admission_latency_ms.labels(
-                status=str(_admission_status)
-            ).observe(_admission_elapsed_ms)
+            get_default_metrics().clustering_admission_latency_ms.labels(status=str(_admission_status)).observe(
+                _admission_elapsed_ms
+            )
         except Exception:  # pragma: no cover - metrics must never break the handler
             _logger.debug("clustering_admission_latency_ms observation failed", exc_info=True)
 

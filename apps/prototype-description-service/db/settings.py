@@ -52,6 +52,13 @@ class DatabaseSettings:
     clustering_breaker_failure_threshold: int
     clustering_breaker_window_seconds: float
     clustering_breaker_cooldown_seconds: float
+    # E15-3a-BR-21 Slice 4: dedicated clustering pool so contention on
+    # SELECT ... FOR UPDATE of tenants cannot back up the business pool or the
+    # observability pool. Sized narrow on purpose -- saturating this pool
+    # triggers fast 503s instead of blocking unrelated traffic.
+    clustering_pool_size: int
+    clustering_max_overflow: int
+    clustering_pool_timeout: int
 
 
 def _infer_sync_dsn(async_dsn: str) -> str:
@@ -147,6 +154,9 @@ def get_database_settings() -> DatabaseSettings:
     clustering_breaker_failure_threshold = int(os.getenv("DB_CLUSTERING_BREAKER_FAILURE_THRESHOLD", "3"))
     clustering_breaker_window_seconds = float(os.getenv("DB_CLUSTERING_BREAKER_WINDOW_SECONDS", "30"))
     clustering_breaker_cooldown_seconds = float(os.getenv("DB_CLUSTERING_BREAKER_COOLDOWN_SECONDS", "30"))
+    clustering_pool_size = int(os.getenv("DB_CLUSTERING_POOL_SIZE", "2"))
+    clustering_max_overflow = int(os.getenv("DB_CLUSTERING_MAX_OVERFLOW", "1"))
+    clustering_pool_timeout = int(os.getenv("DB_CLUSTERING_POOL_TIMEOUT", "5"))
 
     if disable_stmt_cache and "+asyncpg" in async_dsn:
         async_dsn = _disable_asyncpg_statement_cache(async_dsn)
@@ -173,6 +183,9 @@ def get_database_settings() -> DatabaseSettings:
         clustering_breaker_failure_threshold=clustering_breaker_failure_threshold,
         clustering_breaker_window_seconds=clustering_breaker_window_seconds,
         clustering_breaker_cooldown_seconds=clustering_breaker_cooldown_seconds,
+        clustering_pool_size=clustering_pool_size,
+        clustering_max_overflow=clustering_max_overflow,
+        clustering_pool_timeout=clustering_pool_timeout,
     )
 
 

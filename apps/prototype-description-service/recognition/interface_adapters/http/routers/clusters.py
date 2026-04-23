@@ -20,6 +20,7 @@ import db.session as db_session_module
 from db.models import Tenant
 from db.models.identity import CurationReplayRecord
 from db.settings import get_database_settings
+from db.tenant_context import set_tenant_context
 from recognition.application.settings import ClusteringSettings
 from recognition.application.suggestions.label_inference import infer_suggested_label
 from recognition.application.tasks.clustering import run_background_surface_suggestions
@@ -37,7 +38,10 @@ from recognition.interface_adapters.http.dependencies import (
     build_cluster_service,
     get_cluster_repository,
     get_cluster_service_builder,
+    get_cluster_service_builder_clustering,
+    get_clustering_session,
     get_persisted_cluster_job_service,
+    get_persisted_cluster_job_service_clustering,
     get_session,
     get_suggestion_refresh_service,
     get_suggestion_service,
@@ -48,6 +52,10 @@ from recognition.interface_adapters.http.deps.clustering_circuit_breaker import 
     get_or_create_clustering_circuit_breaker,
 )
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
+from recognition.interface_adapters.http.deps.session import (
+    _apply_postgres_session_safety_settings,
+    _resolve_pg_backend_pid,
+)
 from recognition.interface_adapters.http.deps.tenant import get_authenticated_tenant_id
 from recognition.interface_adapters.http.job_utils import (
     job_to_clustering_response as _job_to_clustering_response,
@@ -314,9 +322,13 @@ async def create_clustering_job(
     request: ClusteringJobRequest,
     http_request: Request,
     auth=Depends(require_write_access),
-    session=Depends(get_session),
-    cluster_service_builder=Depends(get_cluster_service_builder),
-    job_service=Depends(get_persisted_cluster_job_service),
+    # E15-3a-BR-21 Slice 4: all three deps bind to the clustering pool so
+    # FastAPI's DI cache hands the same AsyncSession to each. Saturating the
+    # clustering pool under contention cannot block unrelated traffic on the
+    # business or observability pools (bulkhead).
+    session=Depends(get_clustering_session),
+    cluster_service_builder=Depends(get_cluster_service_builder_clustering),
+    job_service=Depends(get_persisted_cluster_job_service_clustering),
 ) -> ClusteringJobStatusResponse:
     """Trigger clustering for unclustered identities."""
     _logger.info("Clustering request: tenant_id=%s, mode=%s", request.tenant_id, request.mode)
@@ -330,8 +342,9 @@ async def create_clustering_job(
             _admission_status = status.HTTP_403_FORBIDDEN
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
-        cluster_service = await cluster_service_builder(request.tenant_id)
         if request.mode == "sync":
+            # Legacy sync mode: build the service on-demand; no owned-txn block.
+            cluster_service = await cluster_service_builder(request.tenant_id)
             try:
                 result = await cluster_service.cluster_unclustered_identities(request.tenant_id)
             except Exception as exc:
@@ -356,12 +369,6 @@ async def create_clustering_job(
         # Async mode: create a pending job for background worker to process.
         # Reuse an existing pending/running clustering job for the tenant to avoid
         # duplicate expensive work from repeated clicks or repeated UI effects.
-        #
-        # E15-3a-BR-21 Slice 2: admission fail-fast. A pg_locks probe is cheap
-        # (~ms) and returns a 503 ahead of any lock wait when a zombie idle-in-
-        # transaction session is holding the tenants row lock. The SELECT FOR
-        # UPDATE below then runs under a narrow statement_timeout so a missed
-        # probe still converts into a <1 s 503 instead of the 10 s cliff.
         _db_settings = get_database_settings()
         # E15-3a-BR-21 Slice 3: clustering-dedicated circuit breaker fails fast
         # ahead of any DB work once a run of QueryCanceledError confirms a
@@ -379,35 +386,62 @@ async def create_clustering_job(
                 },
                 headers={"Retry-After": str(_db_settings.clustering_admission_retry_after_seconds)},
             )
-        await _clustering_admission_probe(
-            session,
-            tenant_id=request.tenant_id,
-            retry_after_seconds=_db_settings.clustering_admission_retry_after_seconds,
-        )
-        try:
-            await _acquire_tenant_lock_fast_fail(
+
+        # E15-3a-BR-21 Slice 4: route-owned transaction. Wraps the full
+        # unit-of-work (pg_locks probe + SELECT FOR UPDATE + lookup + INSERT)
+        # in one session.begin() on one connection. Ordering matters:
+        #
+        #   (1) safety settings  (statement_timeout + idle_in_txn_timeout)
+        #   (2) set_tenant_context  (required before any tenant-scoped SQL)
+        #   (3) pg_backend_pid      (PLAN-07: resolved inside the owned txn
+        #                            so log correlation joins pg_stat_activity
+        #                            for *this* connection, not a stale one)
+        #   (4) cluster_service builder + reassignment onto job_service
+        #       (PLAN-12: builder's set_tenant_context + ensure_tenant_exists
+        #        SQL must land inside the owned txn, not during dep resolution)
+        #   (5) pg_locks admission probe            (S2)
+        #   (6) narrow SET LOCAL statement_timeout  (S2)
+        #   (7) SELECT ... FOR UPDATE               (S2)
+        #   (8) restore SET LOCAL to default        (PLAN-08)
+        #   (9) active-job lookup
+        #   (10) INSERT new job row
+        #
+        # session.begin() commits on clean exit and rolls back on exception.
+        tenant_uuid = UUID(request.tenant_id)
+        async with session.begin():
+            await _apply_postgres_session_safety_settings(session)  # (1)
+            await set_tenant_context(session, tenant_uuid)  # (2)
+            await _resolve_pg_backend_pid(session)  # (3) PLAN-07
+            cluster_service = await cluster_service_builder(request.tenant_id)  # (4) PLAN-12
+            job_service.cluster_service = cluster_service
+            await _clustering_admission_probe(  # (5)
                 session,
                 tenant_id=request.tenant_id,
-                lock_timeout_ms=_db_settings.clustering_tenant_lock_timeout_ms,
-                default_timeout=_db_settings.statement_timeout,
                 retry_after_seconds=_db_settings.clustering_admission_retry_after_seconds,
             )
-        except HTTPException as exc:
-            # Narrow: a 503 from the lock helper is the QueryCanceledError path
-            # (SQLSTATE 57014). Count only that signal toward breaker failures.
-            if exc.status_code == status.HTTP_503_SERVICE_UNAVAILABLE:
-                _breaker.record_failure()
-            raise
-        existing_job = await job_service.get_active_clustering_job_for_tenant(request.tenant_id)
-        if existing_job is not None:
-            _breaker.record_success()
-            return _job_to_clustering_response(existing_job)
+            try:
+                await _acquire_tenant_lock_fast_fail(  # (6), (7), (8)
+                    session,
+                    tenant_id=request.tenant_id,
+                    lock_timeout_ms=_db_settings.clustering_tenant_lock_timeout_ms,
+                    default_timeout=_db_settings.statement_timeout,
+                    retry_after_seconds=_db_settings.clustering_admission_retry_after_seconds,
+                )
+            except HTTPException as exc:
+                # Narrow: a 503 from the lock helper is the QueryCanceledError
+                # path (SQLSTATE 57014). Count only that signal toward breaker
+                # failures.
+                if exc.status_code == status.HTTP_503_SERVICE_UNAVAILABLE:
+                    _breaker.record_failure()
+                raise
+            existing_job = await job_service.get_active_clustering_job_for_tenant(request.tenant_id)  # (9)
+            if existing_job is not None:
+                _breaker.record_success()
+                return _job_to_clustering_response(existing_job)
 
-        # The generic /recognition/jobs/{id}/stream endpoint handles all job types.
-        job = await job_service.create_job(JobType.CLUSTERING, tenant_id=request.tenant_id)
-        # Do NOT start the job - leave it in pending state for worker to pick up
-        _breaker.record_success()
-        return _job_to_clustering_response(job)
+            job = await job_service.create_job(JobType.CLUSTERING, tenant_id=request.tenant_id)  # (10)
+            _breaker.record_success()
+            return _job_to_clustering_response(job)
     except HTTPException as exc:
         _admission_status = exc.status_code
         raise

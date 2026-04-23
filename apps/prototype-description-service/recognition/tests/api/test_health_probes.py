@@ -276,7 +276,7 @@ def test_health_detailed_returns_diagnostic_payload(tmp_path) -> None:
     assert "timestamp" in body
 
     pool_stats = body["pool_stats"]
-    assert set(pool_stats) == {"business", "observability"}
+    assert set(pool_stats) == {"business", "observability", "clustering"}
 
     assert body["breaker_state"] in {"closed", "open", "half_open"}
 

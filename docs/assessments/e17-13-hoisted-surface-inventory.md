@@ -37,6 +37,20 @@ The recorded SHAs are the peeled tag commits from `git ls-remote --tags <repo> r
 No deletion slice may start while any Slice 1 prerequisite remains pending.
 The scratch proof removed the `pending` state, but it surfaced two mismatches that still block deletion: bootstrap `v0.2.0` installed `agentic-system` at `ac7a77c4e29cd0f16a6945510445330f8d448caf` instead of the selected `v0.2.1` commit `2a03e136bf3359485d4305c7562162bd45fa30df`, and `agent-handoff-mcp --workspace-root . doctor` resolved the root monorepo path instead of the feature worktree path.
 
+## Mismatch Disposition
+
+Bootstrap default needs to change, not the selected `agentic-system` ref.
+
+- `agentic-bootstrap@v0.2.0` is still cloning the historical `v0.1.0` commit `ac7a77c4e29cd0f16a6945510445330f8d448caf`, while the already-published cleanup tags establish `darce/agentic-system@v0.2.1` as the current shared-surface target for this task.
+- The follow-on publication record already says bootstrap's default clone ref should be `v0.2.0`, or `v0.2.1` once the Slice 4 cleanup retag exists. Because the scratch proof landed on `v0.1.0`, the stale side is bootstrap's embedded default, not the `E17-13` selected ref.
+- The required remediation is to advance the bootstrap default clone ref to `darce/agentic-system@v0.2.1` in a bootstrap patch release before any deletion slice relies on bootstrap-managed overlay install behavior.
+
+`agent-handoff-mcp --workspace-root . doctor` reporting the primary worktree path is expected current behavior, not a new package defect.
+
+- `AHMCP-16-BR-01` intentionally changed `RuntimeConfig.from_args()` so linked worktrees route through `for_repo()` and collapse to the primary worktree's shared `.task-state/handoff.db`.
+- The current local package source and the packaged adapter regression both document that `RuntimeConfig.from_args()` routes linked worktrees through `for_repo()`, so doctor reporting the primary worktree path from a feature worktree is the designed result of the divergence-loop fix.
+- No `agent-handoff-mcp` package change is required for the observed doctor output. A per-worktree runtime would need explicit path overrides or a different CLI contract, not a reversion of the current default behavior.
+
 ## Package Classification
 
 | Path | Classification | Current decision |
@@ -68,6 +82,6 @@ Reasoning:
 
 ## Next Verification Pass
 
-1. Reconcile why `darce/agentic-bootstrap@v0.2.0` installs `agentic-system` at `ac7a77c4e29cd0f16a6945510445330f8d448caf` instead of the selected `v0.2.1` commit `2a03e136bf3359485d4305c7562162bd45fa30df`.
-2. Reconcile why `agent-handoff-mcp --workspace-root . doctor` reports the root monorepo path when run from the feature worktree with the external package install.
-3. Promote the resulting evidence and mismatch disposition into handoff before marking Slice 1 complete.
+1. Cut or consume a bootstrap patch that advances the default clone ref from `agentic-system@v0.1.0` to `agentic-system@v0.2.1`.
+2. Keep the handoff doctor root-path collapse documented as expected `for_repo()` behavior unless a future task intentionally introduces a per-worktree CLI mode.
+3. Promote the resulting evidence and disposition into handoff before marking Slice 1 complete.

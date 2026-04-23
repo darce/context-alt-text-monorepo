@@ -41,8 +41,11 @@ def test_unknown_argument_exits_two() -> None:
 
 
 def test_probes_against_unreachable_host_fail_closed() -> None:
+    # Post-BR-23 the script requires --api-key/--tenant-id or --unauth-only;
+    # pass --unauth-only so the test continues to exercise the unauth probe
+    # failure propagation (the original intent of this test).
     result = subprocess.run(
-        ["bash", str(SCRIPT), "--base-url", "http://127.0.0.1:1", "--timeout", "2"],
+        ["bash", str(SCRIPT), "--base-url", "http://127.0.0.1:1", "--timeout", "2", "--unauth-only"],
         capture_output=True,
         text=True,
         check=False,
@@ -66,6 +69,59 @@ def test_auth_probe_sends_x_tenant_id_header() -> None:
     assert "X-Tenant-ID:" in text, "auth probe must set X-Tenant-ID header"
     assert "--tenant-id" in text, "CLI must expose --tenant-id flag"
     assert "ACX_SMOKE_TENANT_ID" in text, "env override must be documented"
+
+
+def test_missing_api_key_without_unauth_opt_in_exits_two() -> None:
+    """E15-3a-BR-23: missing auth credentials must fail argument validation.
+
+    If the script is invoked without --api-key or --tenant-id and without an
+    explicit --unauth-only opt-in, the authenticated path is the only probe
+    that exercises the plugin-facing contract; skipping it silently while
+    the unauth probes are 200 would let a broken auth path pass the release
+    gate. Fail with exit 2 (invalid arguments) before any network call so
+    the operator sees the misconfiguration immediately.
+    """
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "--base-url", "https://example.invalid", "--timeout", "1"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2, (result.returncode, result.stderr, result.stdout)
+    combined = result.stderr + result.stdout
+    assert "api-key" in combined.lower() or "tenant-id" in combined.lower()
+    assert "unauth-only" in combined.lower() or "--unauth-only" in combined
+
+
+def test_unauth_only_opt_in_allows_missing_auth_credentials() -> None:
+    """E15-3a-BR-23: --unauth-only acknowledges the skip explicitly.
+
+    When operators legitimately want to probe only public surfaces (e.g. in
+    a pre-auth deploy), --unauth-only must be the documented opt-in. With
+    the flag set, the script may exit 1 because of the unreachable host but
+    must NOT exit 2 for missing credentials, and must not FAIL on an auth
+    probe path it is no longer running.
+    """
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "--base-url", "http://127.0.0.1:1", "--timeout", "2", "--unauth-only"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 2, (result.stderr, result.stdout)
+    combined = result.stderr + result.stdout
+    assert "FAIL /recognition/clusters" not in combined
+
+
+def test_unauth_only_flag_documented_in_help() -> None:
+    """Operators must see --unauth-only in the usage output."""
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert "--unauth-only" in result.stdout
 
 
 def test_probe_list_documents_four_core_paths() -> None:

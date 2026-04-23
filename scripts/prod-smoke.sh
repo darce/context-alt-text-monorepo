@@ -27,32 +27,38 @@ BASE_URL="${ACX_SMOKE_BASE_URL:-https://api.altcontext.com}"
 API_KEY="${ACX_SMOKE_API_KEY:-}"
 TENANT_ID="${ACX_SMOKE_TENANT_ID:-}"
 TIMEOUT="${ACX_SMOKE_TIMEOUT:-10}"
+UNAUTH_ONLY=0
 
 show_usage() {
 	cat <<'USAGE'
 Usage:
-  scripts/prod-smoke.sh [--base-url URL] [--api-key KEY] [--tenant-id UUID] [--timeout SECONDS]
+  scripts/prod-smoke.sh [--base-url URL] [--api-key KEY] [--tenant-id UUID] [--timeout SECONDS] [--unauth-only]
 
 Options:
-  --base-url   Backend root (default $ACX_SMOKE_BASE_URL or https://api.altcontext.com)
-  --api-key    Canary key for auth'd probes (default $ACX_SMOKE_API_KEY)
-  --tenant-id  Canary tenant UUID sent as X-Tenant-ID (default $ACX_SMOKE_TENANT_ID)
-  --timeout    Per-request curl timeout in seconds (default 10)
-  --help       Show this help and exit
+  --base-url     Backend root (default $ACX_SMOKE_BASE_URL or https://api.altcontext.com)
+  --api-key      Canary key for auth'd probes (default $ACX_SMOKE_API_KEY); required unless --unauth-only
+  --tenant-id    Canary tenant UUID sent as X-Tenant-ID (default $ACX_SMOKE_TENANT_ID); required unless --unauth-only
+  --timeout      Per-request curl timeout in seconds (default 10)
+  --unauth-only  Skip the authenticated /recognition/clusters probe. Use only for
+                 pre-auth deploys where the API key is not yet provisioned. Release
+                 gates for production MUST run without this flag so a broken
+                 plugin-facing auth path cannot silently pass the smoke (E15-3a-BR-23).
+  --help         Show this help and exit
 
 Exit codes:
   0  all probes passed
   1  a probe failed (stderr names which one)
-  2  invalid arguments
+  2  invalid arguments (including missing --api-key / --tenant-id without --unauth-only)
 USAGE
 }
 
 while (($# > 0)); do
 	case "$1" in
-		--base-url)  BASE_URL="${2:-}";  shift 2 ;;
-		--api-key)   API_KEY="${2:-}";   shift 2 ;;
-		--tenant-id) TENANT_ID="${2:-}"; shift 2 ;;
-		--timeout)   TIMEOUT="${2:-}";   shift 2 ;;
+		--base-url)    BASE_URL="${2:-}";  shift 2 ;;
+		--api-key)     API_KEY="${2:-}";   shift 2 ;;
+		--tenant-id)   TENANT_ID="${2:-}"; shift 2 ;;
+		--timeout)     TIMEOUT="${2:-}";   shift 2 ;;
+		--unauth-only) UNAUTH_ONLY=1;      shift 1 ;;
 		--help|-h)  show_usage; exit 0 ;;
 		*) echo "Unknown argument: $1" >&2; show_usage >&2; exit 2 ;;
 	esac
@@ -61,6 +67,18 @@ done
 if [[ -z "${BASE_URL}" ]]; then
 	echo "error: --base-url is required" >&2
 	exit 2
+fi
+
+# E15-3a-BR-23: fail argument validation when the auth credentials are
+# missing unless the caller explicitly opted into unauth-only mode. The
+# previous behaviour silently skipped the authenticated probe and still
+# exited 0 if the unauth paths were 200, letting a broken plugin-facing
+# auth contract slip past the release gate.
+if (( UNAUTH_ONLY == 0 )); then
+	if [[ -z "${API_KEY}" || -z "${TENANT_ID}" ]]; then
+		echo "error: --api-key and --tenant-id are required (or pass --unauth-only to skip the authenticated probe)" >&2
+		exit 2
+	fi
 fi
 
 fail=0
@@ -81,14 +99,8 @@ probe_unauth() {
 probe_auth_get() {
 	local path="$1"
 	local url="${BASE_URL%/}${path}"
-	if [[ -z "${API_KEY}" ]]; then
-		echo "skip ${path}: no --api-key supplied" >&2
-		return
-	fi
-	if [[ -z "${TENANT_ID}" ]]; then
-		echo "skip ${path}: no --tenant-id supplied" >&2
-		return
-	fi
+	# Argument validation above guarantees API_KEY and TENANT_ID are set
+	# whenever this is called; --unauth-only callers skip the call entirely.
 	local code
 	code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time "${TIMEOUT}" \
 		-H "X-Api-Key: ${API_KEY}" \
@@ -106,7 +118,11 @@ echo "prod-smoke against ${BASE_URL}"
 probe_unauth "/health"
 probe_unauth "/version"
 probe_unauth "/ready"
-probe_auth_get "/recognition/clusters?limit=1"
+if (( UNAUTH_ONLY == 1 )); then
+	echo "skip /recognition/clusters: --unauth-only was set; authenticated probe bypassed"
+else
+	probe_auth_get "/recognition/clusters?limit=1"
+fi
 
 if ((fail == 0)); then
 	echo "all probes ok"

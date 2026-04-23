@@ -85,7 +85,13 @@ def _log_startup_info() -> None:
     """Log git commit and branch info at startup."""
     # Use db.startup namespace to pass the RecognitionFilter
     startup_logger = logging.getLogger("db.startup")
-    commit, branch = _get_git_info()
+    # E15-3a-BR-20: prefer the build-arg APP_GIT_COMMIT_SHA baked into the
+    # image (same source /version uses). Inside the Docker container `git
+    # rev-parse` has no `.git` dir and returns "unknown", so the old banner
+    # read "Git: unknown (unknown)" even though /version reported the real
+    # SHA. Branch still comes from _get_git_info for dev ergonomics.
+    commit = _resolve_version_commit_sha() or "unknown"
+    _, branch = _get_git_info()
 
     # Get port from environment (set by start script, defaults to 8000)
     port = os.environ.get("PORT", "8000")

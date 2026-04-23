@@ -23,6 +23,9 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.exc import DBAPIError
 
+from recognition.interface_adapters.http.deps.clustering_circuit_breaker import (
+    get_or_create_clustering_circuit_breaker,
+)
 from recognition.interface_adapters.http.routers import clusters as clusters_module
 from recognition.tests.api.conftest import FakeSession
 
@@ -265,3 +268,57 @@ async def test_admission_path_latency_is_sub_second_on_happy_path() -> None:
     elapsed_ms = (time.perf_counter() - started) * 1000
 
     assert elapsed_ms < 1000, f"admission path took {elapsed_ms:.2f}ms (>=1000ms budget)"
+
+
+# ---------------------------------------------------------------------------
+# Breaker integration (Slice 3): open breaker short-circuits before probe.
+# ---------------------------------------------------------------------------
+
+
+def test_open_breaker_short_circuits_with_503_before_repo(api_client, tenant_id, fake_job_service) -> None:
+    """With the clustering breaker OPEN, POST /clustering/jobs returns 503 ahead of any repo work."""
+    breaker = get_or_create_clustering_circuit_breaker(api_client.app)
+    breaker.force_open()
+
+    try:
+        starting_jobs = len(fake_job_service.repository.jobs)
+        resp = api_client.post(
+            "/recognition/clustering/jobs",
+            json={"tenant_id": tenant_id, "mode": "async"},
+        )
+
+        assert resp.status_code == 503
+        assert resp.headers.get("Retry-After") == "5"
+        # No job was created, breaker fast-path bypassed the whole admission chain.
+        assert len(fake_job_service.repository.jobs) == starting_jobs
+    finally:
+        breaker.record_success()  # reset to CLOSED so other tests sharing state are unaffected
+
+
+def test_breaker_records_failure_on_query_canceled_503(api_client, tenant_id, monkeypatch) -> None:
+    """A QueryCanceledError 503 from the lock helper must tick the breaker."""
+    breaker = get_or_create_clustering_circuit_breaker(api_client.app)
+    breaker.record_success()  # ensure CLOSED + zero failures for a clean baseline
+
+    async def _raise_503(session, *, tenant_id, lock_timeout_ms, default_timeout, retry_after_seconds):  # noqa: ANN001
+        raise HTTPException(
+            status_code=503,
+            detail={"reason": "tenant_lock_query_canceled", "tenant_id": tenant_id},
+            headers={"Retry-After": str(retry_after_seconds)},
+        )
+
+    async def _probe_noop(session, *, tenant_id, retry_after_seconds):  # noqa: ANN001
+        return None
+
+    monkeypatch.setattr(clusters_module, "_acquire_tenant_lock_fast_fail", _raise_503)
+    monkeypatch.setattr(clusters_module, "_clustering_admission_probe", _probe_noop)
+
+    resp = api_client.post(
+        "/recognition/clustering/jobs",
+        json={"tenant_id": tenant_id, "mode": "async"},
+    )
+
+    assert resp.status_code == 503
+    snapshot = breaker.snapshot()
+    assert snapshot.failure_count == 1
+    breaker.record_success()  # clean up for subsequent tests

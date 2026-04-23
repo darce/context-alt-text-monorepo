@@ -26,6 +26,9 @@ from recognition.interface_adapters.http.deps.circuit_breaker import (
     get_or_create_session_dependency_circuit_breaker,
     initialize_session_dependency_circuit_breaker,
 )
+from recognition.interface_adapters.http.deps.clustering_circuit_breaker import (
+    initialize_clustering_circuit_breaker,
+)
 from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
 from recognition.interface_adapters.http.middleware.correlation import CorrelationIdMiddleware
 from recognition.interface_adapters.http.middleware.metrics import (
@@ -143,6 +146,7 @@ def create_app() -> FastAPI:
     app.add_middleware(MetricsMiddleware)
 
     initialize_session_dependency_circuit_breaker(app)
+    initialize_clustering_circuit_breaker(app)
 
     app.include_router(recognition_router, prefix="/recognition")
     app.include_router(roster_curation_router, prefix="/roster")

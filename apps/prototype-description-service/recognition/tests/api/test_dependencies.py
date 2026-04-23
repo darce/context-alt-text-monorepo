@@ -70,8 +70,11 @@ def test_clusters_router_invokes_cluster_service_dependency(tenant_id) -> None:
     app.include_router(recognition_router, prefix="/recognition")
     app.dependency_overrides[dependencies.get_session] = _session_override
     app.dependency_overrides[dependencies.get_optional_session] = _session_override
+    app.dependency_overrides[dependencies.get_clustering_session] = _session_override
     app.dependency_overrides[dependencies.get_cluster_service_builder] = fake_cluster_service_builder
+    app.dependency_overrides[dependencies.get_cluster_service_builder_clustering] = fake_cluster_service_builder
     app.dependency_overrides[dependencies.get_persisted_cluster_job_service] = fake_job_service_dep
+    app.dependency_overrides[dependencies.get_persisted_cluster_job_service_clustering] = fake_job_service_dep
 
     client = TestClient(app)
     resp = client.post("/recognition/clustering/jobs", json={"tenant_id": tenant_id, "mode": "sync"})
@@ -122,8 +125,11 @@ def test_clusters_router_does_not_resolve_scan_service_for_clustering_jobs(tenan
     app.include_router(recognition_router, prefix="/recognition")
     app.dependency_overrides[dependencies.get_session] = _session_override
     app.dependency_overrides[dependencies.get_optional_session] = _session_override
+    app.dependency_overrides[dependencies.get_clustering_session] = _session_override
     app.dependency_overrides[dependencies.get_cluster_service_builder] = fake_cluster_service_builder
+    app.dependency_overrides[dependencies.get_cluster_service_builder_clustering] = fake_cluster_service_builder
     app.dependency_overrides[dependencies.get_persisted_cluster_job_service] = fake_job_service_dep
+    app.dependency_overrides[dependencies.get_persisted_cluster_job_service_clustering] = fake_job_service_dep
     app.dependency_overrides[dependencies.get_scan_service_builder] = should_not_run_scan_builder
 
     client = TestClient(app)

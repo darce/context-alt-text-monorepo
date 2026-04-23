@@ -17,7 +17,11 @@ from fastapi.exceptions import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.session import async_session_factory, observability_async_session_factory
+from db.session import (
+    async_session_factory,
+    clustering_async_session_factory,
+    observability_async_session_factory,
+)
 from db.settings import get_database_settings
 from db.tenant_context import set_tenant_context
 from recognition.interface_adapters.http.deps.circuit_breaker import (
@@ -252,6 +256,38 @@ async def get_optional_session(
         await session.close()
 
 
+async def get_clustering_session(
+    request: Request,
+) -> AsyncIterator[AsyncSession]:
+    """Yield a session from the dedicated clustering pool (E15-3a-BR-21 Slice 4).
+
+    Deliberately *bare*: no ``execute`` (no ``SELECT 1`` probe, no
+    ``set_tenant_context``, no ``_apply_postgres_session_safety_settings``).
+    The clustering route owns the first transaction via
+    ``async with session.begin():`` and drives every statement in order inside
+    that block (PLAN-07/10/11/12).
+
+    * Does **not** consult the SLR-3 session-dependency breaker (PLAN-09);
+      the clustering circuit breaker is the fail-fast surface on this path.
+    * Does **not** call ``_apply_postgres_session_safety_settings`` here
+      (PLAN-10); the route applies it as the first statement inside
+      ``session.begin()`` so safety settings share the owned transaction.
+    * Cleans up via ``session.close()`` in ``finally``. Rollback on exception
+      happens inside ``session.begin()``'s context exit; any error outside the
+      block is still surfaced via close.
+    """
+    # ``request`` is accepted for future clustering-breaker integration at the
+    # dep level (parity with get_session), but the current contract is that
+    # the breaker is consulted *inside the route* before any DB work -- see
+    # clusters.create_clustering_job.
+    _ = request
+    session = clustering_async_session_factory()
+    try:
+        yield session
+    finally:
+        await session.close()
+
+
 async def get_observability_session(
     request: Request,  # kept for future observability-specific circuit breaker (SLR-4-BR-01)
 ) -> AsyncIterator[AsyncSession | None]:
@@ -299,6 +335,7 @@ __all__ = [
     "get_session",
     "get_optional_session",
     "get_observability_session",
+    "get_clustering_session",
     "_apply_postgres_session_safety_settings",
     "_resolve_pg_backend_pid",
 ]

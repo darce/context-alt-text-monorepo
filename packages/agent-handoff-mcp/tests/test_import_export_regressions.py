@@ -347,7 +347,7 @@ def test_update_task_status_updates_archived_snapshot_and_dashboard(workspace_pa
     assert updated["ok"] is True
     assert updated["updated_scope"] == "archived"
 
-    payload = _parse(mcp_server.generate_current_task_md(task_ref="task-b", write_file=False))
+    payload = _parse(mcp_server.render_handoff(kind="current_task", task_ref="task-b", write_file=False))
     assert payload["ok"] is True
     # CURRENT_TASK.json is now active-task-only; cross-task data is in DASHBOARD.txt.
     ct_data = json.loads(payload["current_task_json"])

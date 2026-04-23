@@ -278,12 +278,28 @@ def _install_agent_handoff_cli_stub(repo: Path, payload: str) -> Path:
 
 
 def _make_path_without_handoff_cli(repo: Path) -> str:
-    """Build a minimal PATH that keeps shell/git/python but omits agent-handoff-mcp."""
+    """Build a minimal PATH that keeps shell/git/python but omits agent-handoff-mcp.
+
+    ``python3`` resolves to ``sys.executable`` directly because
+    ``shutil.which('python3')`` can return a pyenv shim (e.g.
+    ``$PYENV_ROOT/shims/python3``) depending on how the test session was
+    launched. A shim re-invokes ``pyenv-exec`` which shells out to ``tr``
+    and ``sed`` — those are deliberately absent from this minimal PATH,
+    so the shim would exit 127 and break the hook subprocess under the
+    ``make test-handoff`` invocation (which prepends the pyenv shims dir
+    to PATH). Using ``sys.executable`` points the symlink at the real
+    interpreter and sidesteps the shim entirely.
+    """
 
     bin_dir = repo / ".test-bin-no-handoff"
     bin_dir.mkdir(exist_ok=True)
-    for name in ("bash", "git", "python3", "cat"):
-        source = shutil.which(name)
+    resolvers: dict[str, str | None] = {
+        "bash": shutil.which("bash"),
+        "git": shutil.which("git"),
+        "python3": sys.executable,
+        "cat": shutil.which("cat"),
+    }
+    for name, source in resolvers.items():
         if source is None:
             raise AssertionError(f"required test binary {name!r} was not found on PATH")
         target = bin_dir / name

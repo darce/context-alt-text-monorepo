@@ -1,13 +1,13 @@
 # E15-3a LocalWP -> OCI Round-Trip Run Log
 
 > **Task**: [E15-3a-localwp-oci-roundtrip-task-plan.md](./E15-3a-localwp-oci-roundtrip-task-plan.md)
-> **Status**: in progress
+> **Status**: Slice 1 complete; Slices 2-4 pending
 > **Operator**: `Daniel`
-> **Execution Date**: `2026-04-21`
+> **Execution Dates**: Slice 1 `2026-04-23`; Slices 2-4 `<pending>`
 > **LocalWP Site**: `wp-context-alt-text`
 > **LocalWP Origin**: `http://localhost:10010`
 > **Backend Base URL**: `https://api.altcontext.com`
-> **Plugin Build Source**: `apps/prototype-wp-alt-context/`
+> **Plugin Build Source**: `apps/prototype-wp-alt-context/` (build `28d78e6a`, packaged as `dist/alt-context-0.0.2.zip`)
 
 This run log is the single evidence surface for the full LocalWP plugin ->
 OCI backend -> recognition round trip. Record only key fingerprints, never raw
@@ -17,22 +17,25 @@ API keys or secrets.
 
 | Artifact | Status | Notes |
 | --- | --- | --- |
-| Production API key fingerprint recorded | ☐ | Fingerprint only |
-| Slice 1 successful `/settings/test` probe | ☐ | Include outcome + backend correlation ID |
-| Slice 2 green scan round-trip | ☐ | Include screenshots + redacted payload snapshot |
-| Slice 3 CORS rejection evidence | ☐ | Include response evidence from non-allowlisted origin |
-| Slice 3 rate-limit 429 evidence | ☐ | Include headers/body + throwaway key lifecycle |
-| Slice 4 offline fallback evidence | ☐ | Include screenshot / annotated transcript |
-| Representative backend correlation IDs captured from OCI stdout | ☐ | Plugin proxy does not surface these in-browser |
-| Representative latency evidence captured from `/metrics` | ☐ | P50/P95 at minimum |
-| Final gate verdict recorded | ☐ | Pass only when all six MVP exit criteria are met |
+| Production API key fingerprint recorded | [x] | `short_id=7592`, UI `****I-xM`, `key_id=3a5d9583-25f8-4dfb-a07b-4129708bd4ef` |
+| Slice 1 successful `/settings/test` probe | [x] | outcome=`connected`, 200, correlation_id `req-069ea56c-bb67-7398-8000-58009f0df015` |
+| Slice 2 green scan round-trip | [ ] | Include screenshots + redacted payload snapshot |
+| Slice 3 CORS rejection evidence | [ ] | Include response evidence from non-allowlisted origin |
+| Slice 3 rate-limit 429 evidence | [ ] | Include headers/body + throwaway key lifecycle |
+| Slice 4 offline fallback evidence | [ ] | Include screenshot / annotated transcript |
+| Representative backend correlation IDs captured from OCI stdout | [x] (Slice 1) / [ ] (Slices 2-3) | Plugin proxy does not surface these in-browser |
+| Representative latency evidence captured from `/metrics` | [ ] | P50/P95 at minimum (Slice 2) |
+| Final gate verdict recorded | [ ] | Pass only when all six MVP exit criteria are met |
 
 ## Operator Setup
 
 | Field | Value |
 | --- | --- |
-| Plugin version / commit | `0.0.2 / 695ee966` |
-| Production API key fingerprint | `877684081a57` (stored LocalWP option; backend currently rejects it) |
+| Plugin version / commit | `0.0.2 / 28d78e6af452650d2a8e7250268149c9b5232b73` |
+| Plugin ZIP SHA256 | `5c9ab7cd572e2caca641e00d630e0fc5901da52969ce5c1bac81f93beed9f486` |
+| Backend image SHA | `c13e28fc1d4909250398c0cf3c28fd197a3611fd` (verified via `GET /version`) |
+| Tenant UUID | `c0ce73dc-1c66-56a4-ae32-6eb966810988` (SHA1-derived from `http://localhost:10010`) |
+| Production API key fingerprint | `short_id=7592` / UI `****I-xM` / `key_id=3a5d9583-25f8-4dfb-a07b-4129708bd4ef` |
 | Throwaway rate-limit test key fingerprint | `<fill during Slice 3>` |
 | Throwaway rate-limit test key id | `<fill during Slice 3>` |
 | OCI environment | `prod` |
@@ -43,12 +46,12 @@ API keys or secrets.
 
 | Exit Criterion | Evidence | Status |
 | --- | --- | --- |
-| 1. LocalWP plugin installed/configured and probe succeeds | [Slice 1](#slice-1--localwp-configuration--connection-probe) | ☐ |
-| 2. Workbench scan returns recognition results from OCI | [Slice 2](#slice-2--scan-round-trip-against-seeded-media) | ☐ |
-| 3. CORS rejects non-allowlisted privileged origin | [Slice 3A](#slice-3a--cors-rejection-check) | ☐ |
-| 4. Per-key rate limiting produces deterministic 429 | [Slice 3B](#slice-3b--rate-limit-check) | ☐ |
-| 5. Local read path renders cached state during outage simulation | [Slice 4](#slice-4--sovereign-local-read-fallback-rfc5737-timeout) | ☐ |
-| 6. Run log captures fingerprints, correlation IDs, latency, CORS/429/fallback evidence | This document | ☐ |
+| 1. LocalWP plugin installed/configured and probe succeeds | [Slice 1](#slice-1--localwp-configuration--connection-probe) | [x] |
+| 2. Workbench scan returns recognition results from OCI | [Slice 2](#slice-2--scan-round-trip-against-seeded-media) | [ ] |
+| 3. CORS rejects non-allowlisted privileged origin | [Slice 3A](#slice-3a--cors-rejection-check) | [ ] |
+| 4. Per-key rate limiting produces deterministic 429 | [Slice 3B](#slice-3b--rate-limit-check) | [ ] |
+| 5. Local read path renders cached state during outage simulation | [Slice 4](#slice-4--sovereign-local-read-fallback-rfc5737-timeout) | [ ] |
+| 6. Run log captures fingerprints, correlation IDs, latency, CORS/429/fallback evidence | This document | partial (Slice 1 only) |
 
 ## Slice 1 — LocalWP Configuration + Connection Probe
 
@@ -57,57 +60,79 @@ API keys or secrets.
 | Setting | Value |
 | --- | --- |
 | Backend URL | `https://api.altcontext.com` |
-| API key fingerprint | `877684081a57` |
+| API key fingerprint | `short_id=7592` / UI `****I-xM` |
 | LocalWP origin | `http://localhost:10010` |
-| ACX plugin active | `yes` |
+| ACX plugin active | `yes` (build `28d78e6a` via `dist/alt-context-0.0.2.zip`) |
 
 ### CORS Allowlist Pre-Check
 
+The Slice 1 probe is server-side (`wp_remote_get` in the PHP plugin controller,
+not a browser XHR), so CORS was not gated on this request. CORS rejection
+behavior for real browser-origin XHRs is exercised in Slice 3A.
+
 | Item | Value |
 | --- | --- |
-| `RECOGNITION_ALLOWED_ORIGINS` inspected | `not yet` |
-| LocalWP origin already present | `unknown` |
-| OCI env file touched | `/opt/acx-backend/prod/.env` or `n/a` |
-| `acx-prod.service` restarted | `yes / no` |
-| Decision record needed | `yes / no` |
-| Decision record path | `docs/tasks/15.0/E15-3a-cors-origin-decision.md` or `n/a` |
+| `RECOGNITION_ALLOWED_ORIGINS` inspected | `n/a for server-side probe` |
+| LocalWP origin already present | `n/a` |
+| OCI env file touched | `n/a` |
+| `acx-prod.service` restarted | `no` |
+| Decision record needed | `no` |
+| Decision record path | `n/a` |
 
 ### Probe Result
 
 | Field | Value |
 | --- | --- |
-| Probe time | `2026-04-21 12:35:14 EDT` |
-| Probe outcome | `invalid_key` |
-| HTTP status code | `401` |
+| Probe time | `2026-04-23 17:28:44 UTC` |
+| Probe outcome | `connected` |
+| HTTP status code | `200` |
 | `retry_after_seconds` | `n/a` |
-| Backend correlation ID | `not yet captured` |
-| OCI log excerpt reference | `pending OCI-side log capture after valid production key is configured` |
+| Backend correlation ID | `req-069ea56c-bb67-7398-8000-58009f0df015` |
+| OCI log excerpt reference | See "OCI log excerpt" below |
+| Plugin UI message | `Connection successful. The plugin authenticated against the recognition service and the pool is healthy.` |
+
+### OCI log excerpt
+
+```
+api-1  | INFO:     172.18.0.2:55556 - "GET /health/detailed HTTP/1.1" 200 OK
+api-1  | {"correlation_id": "req-069ea56c-bb67-7398-8000-58009f0df015",
+         "name": "recognition.interface_adapters.http.deps.session",
+         "message": "session_dependency_timing dependency=get_observability_session
+                     available=True tenant_id= total_ms=77.06 probe_ms=36.21
+                     tenant_context_ms=n/a conn_id=0xe941e9dd5c70"}
+api-1  | {"correlation_id": "req-069ea56c-bb67-7398-8000-58009f0df015",
+         "name": "recognition.interface_adapters.http.deps.session",
+         "message": "session_dependency_timing dependency=get_optional_session
+                     available=True tenant_id=c0ce73dc-1c66-56a4-ae32-6eb966810988
+                     total_ms=317.00 probe_ms=44.56 tenant_context_ms=0.96
+                     conn_id=0xe941ebc84620"}
+```
 
 ### Notes
 
-Paste or summarize the exact plugin-visible `/settings/test` outcome and the
-matching OCI-side correlation evidence here.
+Slice 1 was initially blocked because the plugin was probing the removed
+endpoint `/recognition/health/pool` (consolidated into `/health/detailed` in
+backend Slice 2.5), which returned 404 and was classified as `SERVER_ERROR` by
+`classify_http_status` in `class-settings-controller.php`. That was recorded as
+finding `E15-3a-BR-19` and fixed on commit `28d78e6a` (plugin now probes
+`/health/detailed`; existing `X-API-Key` + `X-Tenant-ID` headers already satisfy
+the backend `require_auth` dependency).
 
-```text
-Packaged plugin artifact `dist/alt-context-0.0.2.zip` from the `E15-3a`
-worktree was installed into LocalWP, replacing the previous stable-checkout
-symlink that carried `.env.local` dev overrides.
+After the fix was packaged into `dist/alt-context-0.0.2.zip` and installed into
+the LocalWP site, and after the leaked initial key was rotated (revoked; new
+key `short_id=7592` issued scoped to tenant `c0ce73dc-...`), the probe returned
+the successful response above.
 
-Current plugin-visible settings after ZIP install:
-- `url=https://api.altcontext.com` (`url_source=option`)
-- `api_key_set=true` (`key_source=option`, fingerprint `877684081a57`)
+### Operator-visible notes (non-blocking)
 
-`POST /acx/v1/settings/test` now reaches `api.altcontext.com`, but the backend
-responds with:
-
-```json
-{"outcome":"invalid_key","status_code":401,"detail":"invalid authorization scheme"}
-```
-
-This blocks Slice 1 completion until the correct production API key is supplied
-to the LocalWP plugin settings and the OCI logs are checked for the matching
-request/correlation evidence.
-```
+- Startup log banner still prints `Git: unknown (unknown)` (from
+  `api/main.py::_log_startup_info`). The `/version` endpoint correctly returns
+  `c13e28fc1d4909250398c0cf3c28fd197a3611fd` via `_resolve_version_commit_sha`
+  (reads `APP_GIT_COMMIT_SHA` env var, baked in at build time via BR-03 wiring).
+  The startup banner uses `_get_git_info()` which shells out to `git` inside the
+  container and has no `.git` dir, so it always falls through to `"unknown"`.
+  This is a cosmetic log-banner bug (BR-03 follow-up), not a functional failure.
+  See finding `E15-3a-BR-20` for the post-gate cleanup item.
 
 ## Slice 2 — Scan Round-Trip Against Seeded Media
 
@@ -245,10 +270,14 @@ The current UI contract expects the degraded status to surface as
 
 | Item | Result |
 | --- | --- |
-| All six MVP exit criteria satisfied | `yes / no` |
-| E15-3 unblocked | `yes / no` |
-| Follow-up task needed | `<none or task ref>` |
+| All six MVP exit criteria satisfied | `pending Slices 2-4` |
+| E15-3 unblocked | `pending` |
+| Follow-up task needed | `E15-3a-BR-20 (cosmetic startup log banner) scheduled post-gate` |
 
 ## Open Issues / Follow-Ons
 
-- `<none yet>`
+- `E15-3a-BR-20`: startup log banner in `api/main.py::_log_startup_info` prints
+  `Git: unknown (unknown)` because it calls `_get_git_info()` (shells out to
+  `git` inside the container and finds no `.git`). `/version` correctly returns
+  `APP_GIT_COMMIT_SHA`; only the banner is affected. Non-blocking; scheduled
+  for post-gate cleanup.

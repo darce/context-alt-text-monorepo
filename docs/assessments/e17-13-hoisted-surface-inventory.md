@@ -19,22 +19,23 @@ The `git ls-remote --heads --tags` steps remain the authoritative remote-SHA cap
 
 | Repo | Selected tag | Resolved commit SHA | Capture status |
 | --- | --- | --- | --- |
-| `darce/mcp-agent-handoff` | `v0.4.2` | pending `git ls-remote` capture | pending |
-| `darce/mcp-agent-orchestrator` | `v0.1.3` | pending `git ls-remote` capture | pending |
-| `darce/agentic-system` | `v0.2.1` | pending `git ls-remote` capture | pending |
-| `darce/agentic-bootstrap` | `v0.2.0` | pending `git ls-remote` capture | pending |
+| `darce/mcp-agent-handoff` | `v0.4.2` | `0f7f62e9cf9f030dd4871115066bd6da17801068` | captured 2026-04-23 |
+| `darce/mcp-agent-orchestrator` | `v0.1.3` | `11cf321a4e9671f01f8d02b5bf3790042656c162` | captured 2026-04-23 |
+| `darce/agentic-system` | `v0.2.1` | `2a03e136bf3359485d4305c7562162bd45fa30df` | captured 2026-04-23 |
+| `darce/agentic-bootstrap` | `v0.2.0` | `d5f43300a8eeca81cc8c2c44e429e67b4fb5062f` | captured 2026-04-23 |
 
-`Resolved commit SHA` remains blank until the exact remote tag-to-commit mapping is captured from `git ls-remote --heads --tags` and copied into this table.
+The recorded SHAs are the peeled tag commits from `git ls-remote --tags <repo> refs/tags/<tag> refs/tags/<tag>^{}` so downstream slices compare runtime behavior against the actual tagged commit, not the annotated-tag object id.
 
 ## Scratch Install Gate
 
 | Target | Required command | Current status | Notes |
 | --- | --- | --- | --- |
-| `darce/agentic-bootstrap@v0.2.0` | `pip install "git+ssh://git@github.com/darce/agentic-bootstrap.git@v0.2.0"` | pending scratch install proof | Must pass before any deletion slice starts because bootstrap owns the shared overlay install path. |
-| `darce/mcp-agent-handoff@v0.4.2` | `pip install "git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.2"` plus `agent-handoff-mcp --workspace-root . doctor` | pending scratch install proof | Confirms the monorepo can consume the external handoff CLI without local package-source fallback. |
-| `darce/mcp-agent-orchestrator@v0.1.3` | `pip install "git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.3"` plus `agent-orchestrator-mcp --workspace-root . --help` | pending scratch install proof | Confirms the monorepo can consume the external orchestrator CLI without local package-source fallback. |
+| `darce/agentic-bootstrap@v0.2.0` | `pip install "git+ssh://git@github.com/darce/agentic-bootstrap.git@v0.2.0"` | install + smoke passed on 2026-04-23 | scratch venv: `/tmp/e17-13-proof.nHQuBj/venv`; bootstrap install target: `/tmp/e17-13-proof.nHQuBj/consumer`; `agentic-bootstrap install --target .` succeeded; `agentic-bootstrap doctor --target .` succeeded after correcting the CLI invocation to include the required `--target`; install output reported `installed agentic-system overlay: git@github.com:darce/agentic-system.git@ac7a77c4e29cd0f16a6945510445330f8d448caf -> .`, which does not match the selected `v0.2.1` commit and must be adjudicated before deletion work starts. |
+| `darce/mcp-agent-handoff@v0.4.2` | `pip install "git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.2"` plus `agent-handoff-mcp --workspace-root . doctor` | install + smoke passed on 2026-04-23 | scratch venv: `/tmp/e17-13-proof.nHQuBj/venv`; doctor exited 0; the doctor JSON reported `workspace_root` as `/Users/daniel/Development/context-alt-text-monorepo` instead of the feature worktree path, so the external CLI currently reaches a root-worktree state path even when invoked from `feature/e17-13`. |
+| `darce/mcp-agent-orchestrator@v0.1.3` | `pip install "git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.3"` plus `agent-orchestrator-mcp --workspace-root . --help` | install + smoke passed on 2026-04-23 | scratch venv: `/tmp/e17-13-proof.nHQuBj/venv`; `--help` exited 0 and printed the expected command set (`serve`, `doctor`, `orchestrator-start`, `dispatch`, `metrics`, ...). |
 
 No deletion slice may start while any Slice 1 prerequisite remains pending.
+The scratch proof removed the `pending` state, but it surfaced two mismatches that still block deletion: bootstrap `v0.2.0` installed `agentic-system` at `ac7a77c4e29cd0f16a6945510445330f8d448caf` instead of the selected `v0.2.1` commit `2a03e136bf3359485d4305c7562162bd45fa30df`, and `agent-handoff-mcp --workspace-root . doctor` resolved the root monorepo path instead of the feature worktree path.
 
 ## Package Classification
 
@@ -67,6 +68,6 @@ Reasoning:
 
 ## Next Verification Pass
 
-1. Capture the remote SHAs behind the selected tags with `git ls-remote --heads --tags` for all four repos.
-2. Run scratch-install proof for `darce/agentic-bootstrap@v0.2.0`, `darce/mcp-agent-handoff@v0.4.2`, and `darce/mcp-agent-orchestrator@v0.1.3`.
-3. Promote the resulting SHA evidence into the handoff decision and mark the Slice 1 checklist items complete.
+1. Reconcile why `darce/agentic-bootstrap@v0.2.0` installs `agentic-system` at `ac7a77c4e29cd0f16a6945510445330f8d448caf` instead of the selected `v0.2.1` commit `2a03e136bf3359485d4305c7562162bd45fa30df`.
+2. Reconcile why `agent-handoff-mcp --workspace-root . doctor` reports the root monorepo path when run from the feature worktree with the external package install.
+3. Promote the resulting evidence and mismatch disposition into handoff before marking Slice 1 complete.

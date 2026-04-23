@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -35,8 +36,6 @@ REQUIRED_SNIPPETS = (
     "agent-orchestrator-mcp --workspace-root . --help",
     "agentic-bootstrap install --target",
     "Resolved commit SHA",
-    "pending `git ls-remote` capture",
-    "pending scratch install proof",
     "No deletion slice may start while any Slice 1 prerequisite remains pending.",
 )
 
@@ -50,6 +49,24 @@ REQUIRED_GENERATOR_DECISION = (
     "Retain in monorepo as a local driver",
     "generated outputs",
     "external workflow definitions",
+)
+
+REQUIRED_REMOTE_REF_PATTERNS = (
+    r"\| `darce/mcp-agent-handoff` \| `v0\.4\.2` \| `[0-9a-f]{40}` \| captured 2026-04-23 \|",
+    r"\| `darce/mcp-agent-orchestrator` \| `v0\.1\.3` \| `[0-9a-f]{40}` \| captured 2026-04-23 \|",
+    r"\| `darce/agentic-system` \| `v0\.2\.1` \| `[0-9a-f]{40}` \| captured 2026-04-23 \|",
+    r"\| `darce/agentic-bootstrap` \| `v0\.2\.0` \| `[0-9a-f]{40}` \| captured 2026-04-23 \|",
+)
+
+REQUIRED_INSTALL_RESULT_SNIPPETS = (
+    "install + smoke passed on 2026-04-23",
+    "scratch venv:",
+    "bootstrap install target:",
+)
+
+FORBIDDEN_PENDING_SNIPPETS = (
+    "pending `git ls-remote` capture",
+    "pending scratch install proof",
 )
 
 
@@ -72,4 +89,19 @@ def test_e17_13_inventory_assessment_exists_and_locks_slice_1_inputs() -> None:
     for snippet in REQUIRED_GENERATOR_DECISION:
         assert snippet in text, (
             f"inventory assessment is missing generator decision detail: {snippet}"
+        )
+
+    for pattern in REQUIRED_REMOTE_REF_PATTERNS:
+        assert re.search(pattern, text), (
+            f"inventory assessment is missing resolved remote ref row: {pattern}"
+        )
+
+    for snippet in REQUIRED_INSTALL_RESULT_SNIPPETS:
+        assert snippet in text, (
+            f"inventory assessment is missing scratch install result detail: {snippet}"
+        )
+
+    for snippet in FORBIDDEN_PENDING_SNIPPETS:
+        assert snippet not in text, (
+            f"inventory assessment still has pending placeholder text: {snippet}"
         )

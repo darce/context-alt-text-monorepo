@@ -25,6 +25,12 @@ except ImportError:  # pragma: no cover - starlette is a FastAPI dep
 # (0.005..10) has a sparse tail for this workload.
 DEFAULT_BUCKETS: tuple[float, ...] = (0.25, 0.5, 1, 2, 5, 10, 30, 60)
 
+# Clustering-admission buckets target the E15-3a-BR-21 SLO (<1 s fail-fast,
+# admission probe in single-digit ms on the happy path). Values are milliseconds.
+CLUSTERING_ADMISSION_BUCKETS_MS: tuple[float, ...] = (
+    5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000,
+)
+
 
 class MetricsRegistry:
     """Bundle of request metrics bound to a ``CollectorRegistry``.
@@ -51,6 +57,16 @@ class MetricsRegistry:
         self.in_flight = Gauge(
             "http_requests_in_flight",
             "HTTP requests currently in flight",
+            registry=self.registry,
+        )
+        # E15-3a-BR-21 Slice 1: clustering write-path admission latency.
+        # Labelled by response status so operators can distinguish happy-path
+        # 202 Accepted from 503 fail-fast admission rejections.
+        self.clustering_admission_latency_ms = Histogram(
+            "clustering_admission_latency_ms",
+            "Clustering write-path admission latency in milliseconds (E15-3a-BR-21)",
+            labelnames=("status",),
+            buckets=CLUSTERING_ADMISSION_BUCKETS_MS,
             registry=self.registry,
         )
 
@@ -115,6 +131,7 @@ class MetricsMiddleware:
 
 
 __all__ = [
+    "CLUSTERING_ADMISSION_BUCKETS_MS",
     "DEFAULT_BUCKETS",
     "MetricsMiddleware",
     "MetricsRegistry",

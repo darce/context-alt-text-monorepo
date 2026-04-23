@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time as _time
 from datetime import UTC, datetime
 from json import JSONDecodeError
 from uuid import UUID
@@ -43,6 +44,7 @@ from recognition.interface_adapters.http.dependencies import (
 )
 from recognition.interface_adapters.http.deps.rate_limit import enforce_rate_limit
 from recognition.interface_adapters.http.deps.tenant import get_authenticated_tenant_id
+from recognition.interface_adapters.http.middleware.metrics import get_default_metrics
 from recognition.interface_adapters.http.job_utils import (
     job_to_clustering_response as _job_to_clustering_response,
 )
@@ -178,43 +180,65 @@ async def create_clustering_job(
 ) -> ClusteringJobStatusResponse:
     """Trigger clustering for unclustered identities."""
     _logger.info("Clustering request: tenant_id=%s, mode=%s", request.tenant_id, request.mode)
-    if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+    # E15-3a-BR-21 Slice 1: admission-latency floor. Time the full handler so
+    # S2's fail-fast claim (<1 s backend-measured) is directly observable in
+    # `clustering_admission_latency_ms` once S2 lands.
+    _admission_started_at = _time.perf_counter()
+    _admission_status: int = status.HTTP_202_ACCEPTED
+    try:
+        if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
+            _admission_status = status.HTTP_403_FORBIDDEN
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
-    cluster_service = await cluster_service_builder(request.tenant_id)
-    if request.mode == "sync":
+        cluster_service = await cluster_service_builder(request.tenant_id)
+        if request.mode == "sync":
+            try:
+                result = await cluster_service.cluster_unclustered_identities(request.tenant_id)
+            except Exception as exc:
+                _admission_status = status.HTTP_500_INTERNAL_SERVER_ERROR
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+            finished_at = getattr(result, "finished_at", None)
+            completed = getattr(result, "completed", 0)
+            total = getattr(result, "total", 0)
+            clusters_created = getattr(result, "clusters_created", 0)
+            job_id = getattr(result, "job_id", str(generate_id()))
+            return ClusteringJobStatusResponse(
+                id=str(job_id),
+                type=JobType.CLUSTERING.value,
+                status="completed",
+                progress=JobProgressResponse(completed=completed, total=total),
+                started_at=result.started_at if hasattr(result, "started_at") else datetime.now(tz=UTC),
+                finished_at=finished_at,
+                clusters_created=clusters_created,
+                total_identities_clustered=completed,
+            )
+
+        # Async mode: create a pending job for background worker to process.
+        # Reuse an existing pending/running clustering job for the tenant to avoid
+        # duplicate expensive work from repeated clicks or repeated UI effects.
+        await session.execute(select(Tenant.id).where(Tenant.id == request.tenant_id).with_for_update())
+        existing_job = await job_service.get_active_clustering_job_for_tenant(request.tenant_id)
+        if existing_job is not None:
+            return _job_to_clustering_response(existing_job)
+
+        # The generic /recognition/jobs/{id}/stream endpoint handles all job types.
+        job = await job_service.create_job(JobType.CLUSTERING, tenant_id=request.tenant_id)
+        # Do NOT start the job - leave it in pending state for worker to pick up
+        return _job_to_clustering_response(job)
+    except HTTPException as exc:
+        _admission_status = exc.status_code
+        raise
+    except Exception:
+        _admission_status = status.HTTP_500_INTERNAL_SERVER_ERROR
+        raise
+    finally:
+        _admission_elapsed_ms = (_time.perf_counter() - _admission_started_at) * 1000
         try:
-            result = await cluster_service.cluster_unclustered_identities(request.tenant_id)
-        except Exception as exc:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
-        finished_at = getattr(result, "finished_at", None)
-        completed = getattr(result, "completed", 0)
-        total = getattr(result, "total", 0)
-        clusters_created = getattr(result, "clusters_created", 0)
-        job_id = getattr(result, "job_id", str(generate_id()))
-        return ClusteringJobStatusResponse(
-            id=str(job_id),
-            type=JobType.CLUSTERING.value,
-            status="completed",
-            progress=JobProgressResponse(completed=completed, total=total),
-            started_at=result.started_at if hasattr(result, "started_at") else datetime.now(tz=UTC),
-            finished_at=finished_at,
-            clusters_created=clusters_created,
-            total_identities_clustered=completed,
-        )
-
-    # Async mode: create a pending job for background worker to process.
-    # Reuse an existing pending/running clustering job for the tenant to avoid
-    # duplicate expensive work from repeated clicks or repeated UI effects.
-    await session.execute(select(Tenant.id).where(Tenant.id == request.tenant_id).with_for_update())
-    existing_job = await job_service.get_active_clustering_job_for_tenant(request.tenant_id)
-    if existing_job is not None:
-        return _job_to_clustering_response(existing_job)
-
-    # The generic /recognition/jobs/{id}/stream endpoint handles all job types.
-    job = await job_service.create_job(JobType.CLUSTERING, tenant_id=request.tenant_id)
-    # Do NOT start the job - leave it in pending state for worker to pick up
-    return _job_to_clustering_response(job)
+            get_default_metrics().clustering_admission_latency_ms.labels(
+                status=str(_admission_status)
+            ).observe(_admission_elapsed_ms)
+        except Exception:  # pragma: no cover - metrics must never break the handler
+            _logger.debug("clustering_admission_latency_ms observation failed", exc_info=True)
 
 
 @router.post("/clusters/recover-orphans", response_model=OrphanRecoveryResponse)

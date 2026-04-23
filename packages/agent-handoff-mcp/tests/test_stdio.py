@@ -265,6 +265,15 @@ def test_stdio_tool_responses_return_native_dict_not_wrapped_string(tmp_path: Pa
         )
         async with Client(transport) as client:
             result = await client.call_tool("get_handoff_state", {"sections": "identity"})
+            structured = result.structured_content or {}
+            candidates = structured.get("data", {}).get("candidates", [])
+            if structured.get("ok") is False and candidates:
+                # Resolve via explicit task_ref when ambient workspace state has
+                # multiple active tasks (AHMCP-33 ambiguity surface).
+                result = await client.call_tool(
+                    "get_handoff_state",
+                    {"sections": "identity", "task_ref": candidates[0]["task_ref"]},
+                )
             text_payload = _json.loads(result.content[0].text)
             structured = result.structured_content
             return text_payload, structured

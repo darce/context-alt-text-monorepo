@@ -39,6 +39,13 @@ class DatabaseSettings:
     breaker_window_seconds: int
     breaker_half_open_after_seconds: int
     disable_stmt_cache: bool
+    # E15-3a-BR-21 Slice 2: narrow per-statement timeout applied around the
+    # clustering handler's tenants SELECT ... FOR UPDATE so a zombie
+    # idle-in-transaction row lock fails in ~<1 s instead of riding the global
+    # 10 s statement_timeout cliff. retry_after tells the caller how long to
+    # back off on admission fail-fast responses (503 Retry-After).
+    clustering_tenant_lock_timeout_ms: int
+    clustering_admission_retry_after_seconds: int
 
 
 def _infer_sync_dsn(async_dsn: str) -> str:
@@ -129,6 +136,8 @@ def get_database_settings() -> DatabaseSettings:
     breaker_window_seconds = int(os.getenv("DB_BREAKER_WINDOW_SECONDS", "30"))
     breaker_half_open_after_seconds = int(os.getenv("DB_BREAKER_HALF_OPEN_AFTER_SECONDS", "10"))
     disable_stmt_cache = os.getenv("DB_DISABLE_STMT_CACHE", "0") == "1"
+    clustering_tenant_lock_timeout_ms = int(os.getenv("DB_CLUSTERING_TENANT_LOCK_TIMEOUT_MS", "1000"))
+    clustering_admission_retry_after_seconds = int(os.getenv("DB_CLUSTERING_ADMISSION_RETRY_AFTER_SECONDS", "5"))
 
     if disable_stmt_cache and "+asyncpg" in async_dsn:
         async_dsn = _disable_asyncpg_statement_cache(async_dsn)
@@ -150,6 +159,8 @@ def get_database_settings() -> DatabaseSettings:
         breaker_window_seconds=breaker_window_seconds,
         breaker_half_open_after_seconds=breaker_half_open_after_seconds,
         disable_stmt_cache=disable_stmt_cache,
+        clustering_tenant_lock_timeout_ms=clustering_tenant_lock_timeout_ms,
+        clustering_admission_retry_after_seconds=clustering_admission_retry_after_seconds,
     )
 
 

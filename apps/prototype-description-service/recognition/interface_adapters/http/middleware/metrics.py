@@ -28,7 +28,17 @@ DEFAULT_BUCKETS: tuple[float, ...] = (0.25, 0.5, 1, 2, 5, 10, 30, 60)
 # Clustering-admission buckets target the E15-3a-BR-21 SLO (<1 s fail-fast,
 # admission probe in single-digit ms on the happy path). Values are milliseconds.
 CLUSTERING_ADMISSION_BUCKETS_MS: tuple[float, ...] = (
-    5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000,
+    5,
+    10,
+    25,
+    50,
+    100,
+    250,
+    500,
+    1000,
+    2500,
+    5000,
+    10000,
 )
 
 

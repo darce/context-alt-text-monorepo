@@ -201,10 +201,16 @@ docker exec acx-dev-postgres-1 pg_isready -U acx_dev
 Build and push a new image from `apps/prototype-description-service/`:
 
 ```bash
-# Build on local Mac (Apple Silicon)
+# Build on local Mac (Apple Silicon).
+# --build-arg GIT_COMMIT_SHA stamps the image so /health and /version
+# surface the real deployed commit (E15-3a-BR-03). Without it the runtime
+# falls back to APP_GIT_COMMIT_SHA=unknown and the plugin backend_too_old
+# probe cannot detect deploy lag.
 source ~/.zshrc
 cd apps/prototype-description-service
-docker build --platform linux/arm64 -t iad.ocir.io/idu2kqqe2jxy/acx-backend:dev .
+docker build --platform linux/arm64 \
+  --build-arg GIT_COMMIT_SHA=$(git rev-parse HEAD) \
+  -t iad.ocir.io/idu2kqqe2jxy/acx-backend:dev .
 docker push iad.ocir.io/idu2kqqe2jxy/acx-backend:dev
 
 # Deploy to dev

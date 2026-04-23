@@ -1,7 +1,7 @@
 # E15-3a. LocalWP -> OCI Backend Round-Trip Verification (MVP-critical gate)
 
 > **Task Short ID**: E15-3a
-> **Status**: scoped -- not started
+> **Status**: in-progress -- BR-* remediation shipped; operator roundtrip (Slices 1-4) pending
 > **Epic**: [E15. Public Demo Launch Readiness](../../epics/v0.4.0/public-demo-launch-readiness-epic.md) Phase 3 (pre-provisioning gate)
 > **Predecessors**: E15-1 (security baseline) merged; E15-2 (observability baseline) merged. OCI backend live at `api.altcontext.com`.
 > **Blocks**: [E15-3](./E15-3-wordpress-demo-provisioning-task-plan.md) (WP demo provisioning). A failing gate here means the OCI backend cannot yet serve a real ACX plugin instance, which makes buying shared PHP hosting premature.
@@ -100,9 +100,9 @@ Exit: fallback behavior verified; plugin restored to production URL.
 
 ## Context and Ownership
 
-- [ ] Loaded the minimum authoritative rules, contracts, and handoff state before running the gate.
-- [ ] Confirmed no extra external dependency context is required beyond the cited OCI, security, and sync contract docs.
-- [ ] Kept ownership boundaries intact: E15-3a covers the LocalWP -> OCI gate only; E15-3, E15-5, E15-5a, and E15-6 stay in their declared scopes.
+- [x] Loaded the minimum authoritative rules, contracts, and handoff state before running the gate.
+- [x] Confirmed no extra external dependency context is required beyond the cited OCI, security, and sync contract docs.
+- [x] Kept ownership boundaries intact: E15-3a covers the LocalWP -> OCI gate only; E15-3, E15-5, E15-5a, and E15-6 stay in their declared scopes.
 
 ### Checklist for Slice 1: LocalWP configuration + connection probe
 

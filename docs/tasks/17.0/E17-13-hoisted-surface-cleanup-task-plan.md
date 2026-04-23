@@ -298,13 +298,18 @@ make lane-manifest-init TASK=E17-13 LANE_IDS='mcp-cutover agentic-overlay docs-r
 
 ### Checklist for Slice 1: External Ref and Bootstrap Prerequisite Gate
 
-- [ ] Verified all four external repos are reachable over SSH.
-- [ ] Confirmed selected refs/tags/SHAs for `mcp-agent-handoff`, `mcp-agent-orchestrator`, `agentic-system`, and `agentic-bootstrap`.
-- [ ] Test-installed `agentic-bootstrap@v0.2.0` first; only triggered recovery/republish if the tag install failed.
-- [ ] Wrote `docs/assessments/e17-13-hoisted-surface-inventory.md` with owner classification and deletion gates.
-- [ ] Classified every `packages/*` directory, including `codex-subagent-bridge` and `shared-contracts`.
-- [ ] Decided ownership of `scripts/generate_agent_workflows.py` and the `generate-agent-workflows` / `check-agent-workflows` targets.
-- [ ] Recorded verification evidence in handoff.
+- [x] Verified all four external repos are reachable over SSH.
+- [x] Confirmed selected refs/tags/SHAs for `mcp-agent-handoff`, `mcp-agent-orchestrator`, `agentic-system`, and `agentic-bootstrap`.
+- [x] Test-installed `agentic-bootstrap@v0.2.0` first; only triggered recovery/republish if the tag install failed.
+- [x] Wrote `docs/assessments/e17-13-hoisted-surface-inventory.md` with owner classification and deletion gates.
+- [x] Classified every `packages/*` directory, including `codex-subagent-bridge` and `shared-contracts`.
+- [x] Decided ownership of `scripts/generate_agent_workflows.py` and the `generate-agent-workflows` / `check-agent-workflows` targets.
+- [x] Recorded verification evidence in handoff.
+
+Handoff provenance discipline for remaining slices:
+
+- For Slice 2+ handoff writes, capture `git rev-parse HEAD` from the feature worktree and pass that SHA as `actor.commit_sha`.
+- Do not rely on the root worktree's ambient HEAD.
 
 ### Checklist for Slice 2: External MCP Runtime Cutover
 

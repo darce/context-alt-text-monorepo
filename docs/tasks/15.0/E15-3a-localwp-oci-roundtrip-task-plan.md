@@ -1,7 +1,7 @@
 # E15-3a. LocalWP -> OCI Backend Round-Trip Verification (MVP-critical gate)
 
 > **Task Short ID**: E15-3a
-> **Status**: scoped -- not started
+> **Status**: in-progress -- BR-* remediation shipped; operator roundtrip (Slices 1-4) pending
 > **Epic**: [E15. Public Demo Launch Readiness](../../epics/v0.4.0/public-demo-launch-readiness-epic.md) Phase 3 (pre-provisioning gate)
 > **Predecessors**: E15-1 (security baseline) merged; E15-2 (observability baseline) merged. OCI backend live at `api.altcontext.com`.
 > **Blocks**: [E15-3](./E15-3-wordpress-demo-provisioning-task-plan.md) (WP demo provisioning). A failing gate here means the OCI backend cannot yet serve a real ACX plugin instance, which makes buying shared PHP hosting premature.
@@ -59,9 +59,9 @@ Exit: green round-trip; run log has before/after screenshots of plugin state.
 ### Slice 3 -- Security boundary checks
 
 - CORS rejection: from a second browser profile with a non-allowlisted origin (e.g. a throwaway `127.0.0.1:4000` dev server), issue a privileged request to the API. Capture the rejection response. Per `docs/agentic/contracts/security.md`, the expected result is that the response omits `Access-Control-Allow-Origin` for the non-allowlisted origin.
-- Before the rate-limit test, provision a throwaway production-scoped test key via `cd apps/prototype-description-service && python -m scripts.manage_api_keys create --tenant <id>` (module-form invocation is mandated by the script's own usage block); record only its fingerprint in the run log and note that the key will be revoked immediately after the slice.
+- Before the rate-limit test, provision a throwaway production-scoped test key via `cd apps/prototype-description-service && python -m scripts.manage_api_keys --env prod create --tenant <id>` (module-form invocation + explicit `--env prod` are mandated by the script's own usage block; the DSN host guard refuses to run otherwise); record only its fingerprint in the run log and note that the key will be revoked immediately after the slice.
 - Rate limiting: issue sustained load against that single temporary key until a 429 is observed; capture request count plus the expected `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining: 0`, and `{"detail":"rate limit exceeded"}` evidence documented in `docs/agentic/contracts/security.md`.
-- Revoke the throwaway test key immediately after evidence capture via `cd apps/prototype-description-service && python -m scripts.manage_api_keys revoke --key-id <id>` and record the revocation timestamp in the run log.
+- Revoke the throwaway test key immediately after evidence capture via `cd apps/prototype-description-service && python -m scripts.manage_api_keys --env prod revoke --key-id <id>` and record the revocation timestamp in the run log.
 
 Exit: CORS rejection evidence + 429 evidence filed in the run log.
 
@@ -100,9 +100,9 @@ Exit: fallback behavior verified; plugin restored to production URL.
 
 ## Context and Ownership
 
-- [ ] Loaded the minimum authoritative rules, contracts, and handoff state before running the gate.
-- [ ] Confirmed no extra external dependency context is required beyond the cited OCI, security, and sync contract docs.
-- [ ] Kept ownership boundaries intact: E15-3a covers the LocalWP -> OCI gate only; E15-3, E15-5, E15-5a, and E15-6 stay in their declared scopes.
+- [x] Loaded the minimum authoritative rules, contracts, and handoff state before running the gate.
+- [x] Confirmed no extra external dependency context is required beyond the cited OCI, security, and sync contract docs.
+- [x] Kept ownership boundaries intact: E15-3a covers the LocalWP -> OCI gate only; E15-3, E15-5, E15-5a, and E15-6 stay in their declared scopes.
 
 ### Checklist for Slice 1: LocalWP configuration + connection probe
 

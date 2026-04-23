@@ -191,8 +191,8 @@ class SettingsControllerTest extends TestCase
 
         $calls = $this->getHttpCalls();
         $this->assertCount(1, $calls);
-        $this->assertStringEndsWith('/recognition/health/pool', $calls[0]['url']);
-        $this->assertStringNotContainsString('/recognition/health?', $calls[0]['url']);
+        $this->assertStringEndsWith('/health/detailed', $calls[0]['url']);
+        $this->assertStringNotContainsString('/recognition/health/pool', $calls[0]['url']);
         $this->assertSame('test-key', $calls[0]['args']['headers']['X-API-Key'] ?? null);
         $this->assertSame(
             TenantIdentity::derive_from_site_url(),

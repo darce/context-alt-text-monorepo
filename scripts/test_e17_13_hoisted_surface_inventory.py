@@ -12,6 +12,7 @@ REQUIRED_HEADINGS = (
     "## Selected External Refs",
     "## Remote Ref Evidence",
     "## Scratch Install Gate",
+    "## Mismatch Disposition",
     "## Package Classification",
     "## Deletion Gate Matrix",
     "## Generator Ownership Decision",
@@ -64,6 +65,16 @@ REQUIRED_INSTALL_RESULT_SNIPPETS = (
     "bootstrap install target:",
 )
 
+REQUIRED_DISPOSITION_SNIPPETS = (
+    "Bootstrap default needs to change, not the selected `agentic-system` ref.",
+    "`agentic-bootstrap@v0.2.0` is still cloning the historical `v0.1.0` commit `ac7a77c4e29cd0f16a6945510445330f8d448caf`",
+    "advance the bootstrap default clone ref to `darce/agentic-system@v0.2.1`",
+    "`agent-handoff-mcp --workspace-root . doctor` reporting the primary worktree path is expected current behavior",
+    "AHMCP-16-BR-01",
+    "`RuntimeConfig.from_args()` routes linked worktrees through `for_repo()`",
+    "No `agent-handoff-mcp` package change is required for the observed doctor output.",
+)
+
 FORBIDDEN_PENDING_SNIPPETS = (
     "pending `git ls-remote` capture",
     "pending scratch install proof",
@@ -99,6 +110,11 @@ def test_e17_13_inventory_assessment_exists_and_locks_slice_1_inputs() -> None:
     for snippet in REQUIRED_INSTALL_RESULT_SNIPPETS:
         assert snippet in text, (
             f"inventory assessment is missing scratch install result detail: {snippet}"
+        )
+
+    for snippet in REQUIRED_DISPOSITION_SNIPPETS:
+        assert snippet in text, (
+            f"inventory assessment is missing mismatch disposition detail: {snippet}"
         )
 
     for snippet in FORBIDDEN_PENDING_SNIPPETS:

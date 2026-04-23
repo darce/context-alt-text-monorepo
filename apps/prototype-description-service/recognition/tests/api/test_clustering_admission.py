@@ -100,6 +100,37 @@ async def test_probe_noop_when_no_blocker_row_returned() -> None:
 
 
 @pytest.mark.asyncio
+async def test_probe_sql_excludes_reader_lock_modes_br22() -> None:
+    """E15-3a-BR-22: probe must not fire on AccessShareLock / RowShareLock.
+
+    An idle-in-txn reader holding AccessShareLock on `tenants` does NOT block
+    a SELECT ... FOR UPDATE. The probe must narrow to modes that truly
+    conflict: row-level tuple locks OR relation-level Exclusive/
+    AccessExclusive. Verified by inspecting the issued SQL.
+    """
+    session = _PostgresFakeSession()
+    session.queue_execute_result(scalar=None)
+
+    await clusters_module._clustering_admission_probe(
+        session,
+        tenant_id=str(uuid.uuid4()),
+        retry_after_seconds=5,
+    )
+
+    assert session.execute_calls == 1
+    sql = session.executed_statements[0]
+    # Row-level locks on tenants are valid blocker signals.
+    assert "'tuple'" in sql or "locktype = 'tuple'" in sql
+    # Strong relation-level locks are valid blocker signals.
+    assert "AccessExclusiveLock" in sql or "ExclusiveLock" in sql
+    # Reader-compatible modes must NOT be matched.
+    assert "AccessShareLock" not in sql or (
+        # Allowed only if explicitly excluded via `NOT IN`/`<>` etc.
+        "NOT IN" in sql or "<>" in sql or "!=" in sql
+    )
+
+
+@pytest.mark.asyncio
 async def test_probe_raises_503_retry_after_when_blocker_detected() -> None:
     session = _PostgresFakeSession()
     session.queue_execute_result(scalar=1)

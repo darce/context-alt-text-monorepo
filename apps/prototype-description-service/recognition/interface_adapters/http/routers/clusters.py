@@ -99,6 +99,14 @@ _INFERENCE_CAP = 20
 # helper below. The defaults used for the default statement_timeout restore
 # are pulled from db.settings (DB_STATEMENT_TIMEOUT) so this stays in sync
 # with the global fault-isolation boundary.
+# E15-3a-BR-22: narrow the probe to lock modes that actually conflict with
+# a SELECT ... FOR UPDATE. SELECT FOR UPDATE acquires a relation-level
+# RowShareLock plus a row-level tuple lock. The only relation-level modes
+# that conflict with RowShareLock are ExclusiveLock and AccessExclusiveLock
+# (readers' AccessShareLock and our own RowShareLock are compatible). The
+# row-level conflict shows up in pg_locks with locktype='tuple' on the
+# relation. Anything else -- in particular a reader's AccessShareLock held
+# by an idle-in-txn backend -- is NOT a blocker and must not trip the probe.
 _CLUSTERING_ADMISSION_PROBE_SQL = """
 SELECT 1
 FROM pg_locks l
@@ -107,6 +115,10 @@ WHERE l.relation = 'tenants'::regclass
   AND l.granted = true
   AND a.state = 'idle in transaction'
   AND a.pid <> pg_backend_pid()
+  AND (
+    l.locktype = 'tuple'
+    OR (l.locktype = 'relation' AND l.mode IN ('ExclusiveLock', 'AccessExclusiveLock'))
+  )
 LIMIT 1
 """
 

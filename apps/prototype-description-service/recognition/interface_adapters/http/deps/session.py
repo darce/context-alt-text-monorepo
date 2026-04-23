@@ -70,6 +70,34 @@ async def _resolve_connection_id(session: AsyncSession) -> str | None:
     return hex(id(async_connection))
 
 
+async def _resolve_pg_backend_pid(session: AsyncSession) -> int | None:
+    """Best-effort Postgres backend PID for joining logs to ``pg_stat_activity``.
+
+    Distinct from :func:`_resolve_connection_id` (which returns a Python object
+    id). The backend PID is the value present in ``pg_stat_activity.pid`` and
+    ``pg_locks.pid``, so it is what operators need when diagnosing zombie
+    ``idle in transaction`` sessions (see E15-3a-BR-21).
+    """
+    if not is_postgres(session):
+        return None
+    try:
+        result = await session.execute(text("SELECT pg_backend_pid()"))
+    except Exception:
+        return None
+    if result is None:
+        return None
+    try:
+        value = result.scalar()
+    except Exception:
+        return None
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _log_session_dependency_timing(
     dependency_name: str,
     *,
@@ -79,10 +107,11 @@ def _log_session_dependency_timing(
     probe_ms: float | None = None,
     tenant_context_ms: float | None = None,
     conn_id: str | None = None,
+    pg_backend_pid: int | None = None,
 ) -> None:
     """Emit structured timing for session dependencies to support later latency aggregation."""
     logger.info(
-        "session_dependency_timing dependency=%s available=%s tenant_id=%s total_ms=%.2f probe_ms=%s tenant_context_ms=%s conn_id=%s",
+        "session_dependency_timing dependency=%s available=%s tenant_id=%s total_ms=%.2f probe_ms=%s tenant_context_ms=%s conn_id=%s pg_backend_pid=%s",
         dependency_name,
         available,
         tenant_id or "",
@@ -90,6 +119,7 @@ def _log_session_dependency_timing(
         f"{probe_ms:.2f}" if probe_ms is not None else "n/a",
         f"{tenant_context_ms:.2f}" if tenant_context_ms is not None else "n/a",
         conn_id or "n/a",
+        pg_backend_pid if pg_backend_pid is not None else "n/a",
     )
 
 
@@ -126,6 +156,7 @@ async def get_session(
     session_available = False
     tenant_context_ms: float | None = None
     conn_id: str | None = None
+    pg_backend_pid: int | None = None
     try:
         await _apply_postgres_session_safety_settings(session)
         if tenant_id:
@@ -133,6 +164,7 @@ async def get_session(
             await set_tenant_context(session, uuid.UUID(str(tenant_id)))
             tenant_context_ms = (_time.perf_counter() - tenant_context_started_at) * 1000
         conn_id = await _resolve_connection_id(session)
+        pg_backend_pid = await _resolve_pg_backend_pid(session)
         session_available = True
         breaker.record_success()
         yield session
@@ -150,6 +182,7 @@ async def get_session(
             tenant_id=tenant_id,
             tenant_context_ms=tenant_context_ms,
             conn_id=conn_id,
+            pg_backend_pid=pg_backend_pid,
         )
         await session.close()
 
@@ -175,6 +208,7 @@ async def get_optional_session(
     tenant_context_ms: float | None = None
     session_available = False
     conn_id: str | None = None
+    pg_backend_pid: int | None = None
     try:
         try:
             probe_started_at = _time.perf_counter()
@@ -186,6 +220,7 @@ async def get_optional_session(
                 await set_tenant_context(session, uuid.UUID(str(tenant_id)))
                 tenant_context_ms = (_time.perf_counter() - tenant_context_started_at) * 1000
             conn_id = await _resolve_connection_id(session)
+            pg_backend_pid = await _resolve_pg_backend_pid(session)
         except ValueError:
             raise
         except Exception:
@@ -212,6 +247,7 @@ async def get_optional_session(
             probe_ms=probe_ms,
             tenant_context_ms=tenant_context_ms,
             conn_id=conn_id,
+            pg_backend_pid=pg_backend_pid,
         )
         await session.close()
 
@@ -225,6 +261,7 @@ async def get_observability_session(
     probe_ms: float | None = None
     session_available = False
     conn_id: str | None = None
+    pg_backend_pid: int | None = None
     try:
         try:
             probe_started_at = _time.perf_counter()
@@ -232,6 +269,7 @@ async def get_observability_session(
             probe_ms = (_time.perf_counter() - probe_started_at) * 1000
             await _apply_postgres_session_safety_settings(session)
             conn_id = await _resolve_connection_id(session)
+            pg_backend_pid = await _resolve_pg_backend_pid(session)
         except ValueError:
             raise
         except Exception:
@@ -252,6 +290,7 @@ async def get_observability_session(
             tenant_id=None,
             probe_ms=probe_ms,
             conn_id=conn_id,
+            pg_backend_pid=pg_backend_pid,
         )
         await session.close()
 
@@ -260,4 +299,6 @@ __all__ = [
     "get_session",
     "get_optional_session",
     "get_observability_session",
+    "_apply_postgres_session_safety_settings",
+    "_resolve_pg_backend_pid",
 ]

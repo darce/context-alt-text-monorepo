@@ -6,7 +6,7 @@ command = "npx"
 args = ["-y", "@upstash/context7-mcp@2.1.4"]
 
 [mcp_servers."mcp-agent-handoff"]
-command = "agent-handoff-mcp"
+command = "mcp-agent-handoff"
 args = [
   "--workspace-root",
   ".",
@@ -25,7 +25,7 @@ PYENV_VERSION = "description-service"
 AGENT_HANDOFF_ENFORCE_BRANCH = "1"
 
 [mcp_servers."mcp-agent-orchestrator"]
-command = "agent-orchestrator-mcp"
+command = "mcp-agent-orchestrator"
 args = [
   "--workspace-root",
   ".",

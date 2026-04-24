@@ -6,7 +6,7 @@ boundary_owner: agentic-tooling
 
 ## Purpose
 
-`agent-handoff-mcp` is the portable MCP server for agent coordination state. After the AHMCP-6 event, review, next-action, and artifact-domain consolidation plus profile-removal stretch work, AHMCP-8 verified-test search/read support, and AHMCP-23 observatory dashboard split, it exposes a unified MCP surface for task state, review findings, verification evidence, artifacts, export/import, handoff close checks, and DASHBOARD.txt generation. Orchestration, daemon lifecycle, lane management, and turn metrics are served by [`agent-orchestrator-mcp`](agent-orchestrator-mcp.md). Use `agent-handoff-mcp --workspace-root "$(pwd)" doctor` to inspect the live registered tool surface from the installed package.
+`agent-handoff-mcp` is the portable MCP server for agent coordination state. After the AHMCP-6 event, review, next-action, and artifact-domain consolidation plus profile-removal stretch work, AHMCP-8 verified-test search/read support, and AHMCP-23 observatory dashboard split, it exposes a unified MCP surface for task state, review findings, verification evidence, artifacts, export/import, handoff close checks, and DASHBOARD.txt generation. Orchestration, daemon lifecycle, lane management, and turn metrics are served by [`agent-orchestrator-mcp`](agent-orchestrator-mcp.md). Use `mcp-agent-handoff --workspace-root "$(pwd)" doctor` to inspect the live registered tool surface from the installed package.
 
 ## Runtime Configuration
 
@@ -50,8 +50,8 @@ uv tool install "agent-orchestrator-mcp @ git+ssh://git@github.com/darce/mcp-age
 python3 -m pip install -e packages/codex-subagent-bridge
 
 # Validate runtime wiring, writable state dirs, and FTS5 support
-agent-handoff-mcp --workspace-root "$(pwd)" doctor
-agent-orchestrator-mcp --workspace-root "$(pwd)" doctor
+mcp-agent-handoff --workspace-root "$(pwd)" doctor
+mcp-agent-orchestrator --workspace-root "$(pwd)" doctor
 ```
 
 Notes:
@@ -126,7 +126,7 @@ Symptoms:
 Checks:
 
 ```bash
-agent-handoff-mcp --workspace-root /path/to/repo doctor
+mcp-agent-handoff --workspace-root /path/to/repo doctor
 python3 -m agent_handoff_mcp --workspace-root /path/to/repo doctor
 ls -ld /path/to/repo/.task-state /path/to/repo/.task-state/exports
 ```
@@ -169,8 +169,8 @@ Symptoms:
 Checks:
 
 ```bash
-agent-handoff-mcp --workspace-root /path/to/repo doctor
-agent-handoff-mcp --workspace-root /path/to/repo state
+mcp-agent-handoff --workspace-root /path/to/repo doctor
+mcp-agent-handoff --workspace-root /path/to/repo state
 ```
 
 Recovery:
@@ -189,9 +189,9 @@ Symptoms:
 Checks:
 
 ```bash
-agent-handoff-mcp --workspace-root /path/to/repo doctor
-agent-handoff-mcp --workspace-root /path/to/repo state
-agent-handoff-mcp --workspace-root /path/to/repo review-findings --operation list
+mcp-agent-handoff --workspace-root /path/to/repo doctor
+mcp-agent-handoff --workspace-root /path/to/repo state
+mcp-agent-handoff --workspace-root /path/to/repo review-findings --operation list
 ```
 
 Recovery:
@@ -257,7 +257,7 @@ triggers use `CREATE TRIGGER IF NOT EXISTS` so they are schema-idempotent.
    empty, bulk-inserts all source rows into the FTS table (handles cold-start upgrades).
 
 FTS5 unavailability degrades silently so existing handoff operations are never blocked. Call
-`agent-handoff-mcp doctor` to verify FTS5 is available.
+`mcp-agent-handoff doctor` to verify FTS5 is available.
 
 ### Tool Signature
 
@@ -309,7 +309,7 @@ search_handoff(
 ### CLI Subcommand
 
 ```bash
-agent-handoff-mcp --workspace-root <repo> handoff-search \
+mcp-agent-handoff --workspace-root <repo> handoff-search \
     --query "retry policy" \
     --query "circuit breaker" \
     --task-ref my-task \
@@ -460,9 +460,9 @@ Internal utility functions (`get_review_findings_summary`, `reconcile_review_fin
 
 Primary entrypoints:
 
-- `agent-handoff-mcp --workspace-root <repo> serve-stdio`
-- `agent-handoff-mcp --workspace-root <repo> serve-http`
-- `agent-handoff-mcp --workspace-root <repo> doctor`
+- `mcp-agent-handoff --workspace-root <repo> serve-stdio`
+- `mcp-agent-handoff --workspace-root <repo> serve-http`
+- `mcp-agent-handoff --workspace-root <repo> doctor`
 
 Fallback subcommands:
 
@@ -472,7 +472,7 @@ Fallback subcommands:
 - `decision` — requires `--session` and `--decision`; `--rationale` is optional but mandatory for `slice_complete_*` decisions:
 
   ```bash
-  agent-handoff-mcp --workspace-root <repo> event \
+  mcp-agent-handoff --workspace-root <repo> event \
     --event-kind decision \
     --session "<agent>-<task-slug>" \
     --decision "cdx_slice_complete_<work_ref>_<slug>" \
@@ -511,7 +511,7 @@ Current runtime behavior:
 Example:
 
 ```bash
-agent-handoff-mcp --workspace-root /path/to/repo serve-http
+mcp-agent-handoff --workspace-root /path/to/repo serve-http
 ```
 
 ## Portable Hook Semantics

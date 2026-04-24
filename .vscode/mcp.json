@@ -6,7 +6,7 @@
       "type": "stdio"
     },
     "mcp-agent-handoff": {
-      "command": "agent-handoff-mcp",
+      "command": "mcp-agent-handoff",
       "args": [
         "--workspace-root",
         "${workspaceFolder}",
@@ -26,7 +26,7 @@
       }
     },
     "mcp-agent-orchestrator": {
-      "command": "agent-orchestrator-mcp",
+      "command": "mcp-agent-orchestrator",
       "args": [
         "--workspace-root",
         "${workspaceFolder}",

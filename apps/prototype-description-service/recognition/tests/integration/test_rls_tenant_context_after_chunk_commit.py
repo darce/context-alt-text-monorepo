@@ -278,7 +278,7 @@ def test_resolve_postgres_test_dsn_returns_empty_when_no_real_postgres_config(mo
         "recognition.tests.integration.test_rls_tenant_context_after_chunk_commit.get_database_settings",
         lambda: DatabaseSettings(
             postgres_dsn=DEFAULT_POSTGRES_TEST_DSN,
-            postgres_sync_dsn="postgresql+psycopg://context:context@localhost:5432/context_alt_text",
+            postgres_sync_dsn="postgresql+psycopg://context:context@localhost:5432/alt_context",
             pgvector_dimension=512,
             pool_size=20,
             max_overflow=10,

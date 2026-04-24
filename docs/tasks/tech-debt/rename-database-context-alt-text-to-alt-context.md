@@ -73,4 +73,4 @@ done
 
 ## Decision
 
-Pending. Execute during next commit batch or as part of E16-1 (business database setup) since both involve database naming.
+**Executed 2026-04-24** on `MAINT-db-rename-context-alt-text-to-alt-context-20260424`. Active-file rename complete (see branch `feature/maint-db-rename-context-alt-text-to-alt-context-20260424`). Archive files intentionally not updated -- they are historical references and should remain accurate to the names in use at the time they were written. VM env-file updates and dev pgdata wipe follow in a separate operator step; see the VM restart procedure above.

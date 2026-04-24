@@ -12,7 +12,7 @@ DEFAULT_PGUSER = "context"
 DEFAULT_PGPASSWORD = "context"
 DEFAULT_PGHOST = "localhost"
 DEFAULT_PGPORT = "5432"
-DEFAULT_DB_NAME = "context_alt_text_service"
+DEFAULT_DB_NAME = "alt_context_service"
 
 DEFAULT_ASYNC_DSN_TEMPLATE = "postgresql+asyncpg://{PGUSER}:{PGPASSWORD}@{PGHOST}:{PGPORT}/{DB_NAME}"
 DEFAULT_SYNC_DSN_TEMPLATE = "postgresql+psycopg://{PGUSER}:{PGPASSWORD}@{PGHOST}:{PGPORT}/{DB_NAME}"

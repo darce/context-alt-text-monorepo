@@ -34,7 +34,7 @@ done
 # Select credentials based on mode
 DB_HOST="${PGHOST:-localhost}"
 DB_PORT="${PGPORT:-5432}"
-DB_NAME="${DB_NAME:-context_alt_text_service}"
+DB_NAME="${DB_NAME:-alt_context_service}"
 
 if [[ "$USE_ADMIN" == true ]]; then
   DB_USER="${ADMIN_PGUSER:-context_admin}"

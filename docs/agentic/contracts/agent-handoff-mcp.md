@@ -6,7 +6,7 @@ boundary_owner: agentic-tooling
 
 ## Purpose
 
-`agent-handoff-mcp` is the portable MCP server for agent coordination state. After the AHMCP-6 event, review, next-action, and artifact-domain consolidation plus profile-removal stretch work, AHMCP-8 verified-test search/read support, and AHMCP-23 observatory dashboard split, it exposes a single **23-tool** MCP surface for task state, review findings, verification evidence, artifacts, export/import, handoff close checks, and DASHBOARD.txt generation. Orchestration, daemon lifecycle, lane management, and turn metrics are served by [`agent-orchestrator-mcp`](agent-orchestrator-mcp.md).
+`agent-handoff-mcp` is the portable MCP server for agent coordination state. After the AHMCP-6 event, review, next-action, and artifact-domain consolidation plus profile-removal stretch work, AHMCP-8 verified-test search/read support, and AHMCP-23 observatory dashboard split, it exposes a unified MCP surface for task state, review findings, verification evidence, artifacts, export/import, handoff close checks, and DASHBOARD.txt generation. Orchestration, daemon lifecycle, lane management, and turn metrics are served by [`agent-orchestrator-mcp`](agent-orchestrator-mcp.md). Use `agent-handoff-mcp --workspace-root "$(pwd)" doctor` to inspect the live registered tool surface from the installed package.
 
 ## Runtime Configuration
 

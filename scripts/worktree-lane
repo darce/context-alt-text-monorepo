@@ -52,17 +52,17 @@ resolve_python_command() {
 resolve_mcp_command() {
   resolve_python_command
 
-  if command -v agent-handoff-mcp >/dev/null 2>&1; then
-    MCP_CMD=(agent-handoff-mcp)
+  if command -v mcp-agent-handoff >/dev/null 2>&1; then
+    MCP_CMD=(mcp-agent-handoff)
     return
   fi
 
-  if [ -x "$HOME/.local/bin/agent-handoff-mcp" ]; then
-    MCP_CMD=("$HOME/.local/bin/agent-handoff-mcp")
+  if [ -x "$HOME/.local/bin/mcp-agent-handoff" ]; then
+    MCP_CMD=("$HOME/.local/bin/mcp-agent-handoff")
     return
   fi
 
-  die "required command not found: agent-handoff-mcp (install darce/mcp-agent-handoff first)"
+  die "required command not found: mcp-agent-handoff (install darce/mcp-agent-handoff first)"
 }
 
 git_root() {
@@ -273,7 +273,7 @@ case "$subcommand" in
     if [ "$dry_run" -eq 1 ]; then
       cat <<EOF
 [dry-run] git -C $orchestrator_root worktree add $worktree_path -b $branch
-[dry-run] agent-handoff-mcp lane-upsert for lane $lane_id using shared state at $orchestrator_root/.task-state
+[dry-run] mcp-agent-handoff lane-upsert for lane $lane_id using shared state at $orchestrator_root/.task-state
 EOF
       exit 0
     fi
@@ -474,13 +474,13 @@ EOF
         cat <<EOF
 [dry-run] git -C $orchestrator_root worktree remove --force $worktree_path
 [dry-run] git -C $orchestrator_root branch -D $branch
-[dry-run] agent-handoff-mcp lane-upsert --lane-id $lane_id --worktree-path $worktree_path --branch $branch --status closed
+[dry-run] mcp-agent-handoff lane-upsert --lane-id $lane_id --worktree-path $worktree_path --branch $branch --status closed
 EOF
       else
         cat <<EOF
 [dry-run] git -C $orchestrator_root worktree remove $worktree_path
 [dry-run] git -C $orchestrator_root branch -d $branch
-[dry-run] agent-handoff-mcp lane-upsert --lane-id $lane_id --worktree-path $worktree_path --branch $branch --status closed
+[dry-run] mcp-agent-handoff lane-upsert --lane-id $lane_id --worktree-path $worktree_path --branch $branch --status closed
 EOF
       fi
       exit 0
@@ -620,13 +620,13 @@ EOF
         changed_files_text="$(bullet_list)"
       fi
       cat <<EOF
-[dry-run] agent-handoff-mcp lane-report for lane $lane_id in shared state at $orchestrator_root/.task-state
+[dry-run] mcp-agent-handoff lane-report for lane $lane_id in shared state at $orchestrator_root/.task-state
 [dry-run] changed files:
 $changed_files_text
 EOF
       if [ -n "$message" ]; then
         cat <<EOF
-[dry-run] agent-handoff-mcp lane-message direction=$direction subject=${subject:-"(none)"}
+[dry-run] mcp-agent-handoff lane-message direction=$direction subject=${subject:-"(none)"}
 EOF
       fi
       exit 0

@@ -119,7 +119,7 @@ python3 -m pip install -e packages/codex-subagent-bridge
 PYENV_VERSION=description-service python3 -m pip install -e "apps/prototype-description-service[dashboard,dev]"
 
 # Verify writable state dirs, bridge import paths, and SQLite FTS5 support
-agent-handoff-mcp --workspace-root "$(pwd)" doctor
+mcp-agent-handoff --workspace-root "$(pwd)" doctor
 ```
 
 Notes:
@@ -455,7 +455,7 @@ Phase 5 represents the final delivery and audit stage:
 
 1. **Sub-Phase 5.1: Cross-Lane Verification.** Once all lanes are merged, run full integration tests (`make check-all`) in the orchestrator root.
 2. **Sub-Phase 5.2: Documentation Audit.** Verify all `docs/`, `CURRENT_TASK.json`, and `CHANGELOG` are consistent with the implemented reality.
-3. **Sub-Phase 5.3: Handoff Closure.** Perform a final `agent-handoff-mcp handoff-close-check --task-ref <task>` to ensure all findings are resolved and provenance is complete.
+3. **Sub-Phase 5.3: Handoff Closure.** Perform a final `mcp-agent-handoff handoff-close-check --task-ref <task>` to ensure all findings are resolved and provenance is complete.
 
 ### Recipe: In-app orchestration via MCP
 
@@ -520,7 +520,7 @@ make artifact-search TASK=<task-ref> QUERY="column missing" [LANE=<lane-id>]
 make artifact-list TASK=<task-ref> [LANE=<lane-id>]
 
 # Full-fidelity readback by source id
-agent-handoff-mcp --workspace-root "$(pwd)" artifact-get --source-id <id>
+mcp-agent-handoff --workspace-root "$(pwd)" artifact-get --source-id <id>
 ```
 
 Operational guidance:

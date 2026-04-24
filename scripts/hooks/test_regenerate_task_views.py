@@ -12,7 +12,7 @@ HOOK_SCRIPT = REPO_ROOT / "scripts" / "hooks" / "regenerate-task-views.sh"
 
 
 def _write_fake_cli(tmp_path: Path) -> Path:
-    fake_cli = tmp_path / "agent-handoff-mcp"
+    fake_cli = tmp_path / "mcp-agent-handoff"
     fake_cli.write_text(
         "#!/usr/bin/env bash\n"
         "echo \"$@\" >> \"$TMP_HOOK_LOG\"\n"

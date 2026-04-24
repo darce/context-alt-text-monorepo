@@ -5,7 +5,7 @@
 # Core handoff targets (task, dashboard, state, handoff-close-check) remain in mk/handoff.mk.
 # =============================================================================
 
-ORCHESTRATOR_MCP_CMD = $(MCP_RUNTIME_ENV) agent-orchestrator-mcp $(MCP_STATE_ARGS)
+ORCHESTRATOR_MCP_CMD = $(MCP_RUNTIME_ENV) mcp-agent-orchestrator $(MCP_STATE_ARGS)
 
 .PHONY: worker-daemon worker-daemon-status worker-daemon-stop worker-daemon-resume worker-daemon-tail orchestrator-daemon daemon-pause daemon-resume daemon-status
 

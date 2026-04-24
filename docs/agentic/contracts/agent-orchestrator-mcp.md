@@ -6,7 +6,7 @@ boundary_owner: agentic-tooling
 
 ## Purpose
 
-`agent-orchestrator-mcp` is the MCP server for orchestration, daemon lifecycle, lane management, worker coordination, plan cursors, and turn metrics. It was extracted from `agent-handoff-mcp` in E12-5 and shares `handoff.db` and `mcp-artifacts.db` with `agent-handoff-mcp`; SQLite WAL mode makes concurrent readers safe. Use `agent-orchestrator-mcp --workspace-root "$(pwd)" doctor` to inspect the live registered tool surface from the installed package.
+`agent-orchestrator-mcp` is the MCP server for orchestration, daemon lifecycle, lane management, worker coordination, plan cursors, and turn metrics. It was extracted from `agent-handoff-mcp` in E12-5 and shares `handoff.db` and `mcp-artifacts.db` with `agent-handoff-mcp`; SQLite WAL mode makes concurrent readers safe. Use `mcp-agent-orchestrator --workspace-root "$(pwd)" doctor` to inspect the live registered tool surface from the installed package.
 
 For task state, review findings, artifacts, and close checks see [`agent-handoff-mcp.md`](agent-handoff-mcp.md).
 
@@ -36,7 +36,7 @@ uv tool install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-ha
 uv tool install "agent-orchestrator-mcp @ git+ssh://git@github.com/darce/mcp-agent-orchestrator.git"
 
 # Validate runtime wiring and orchestration/ directory resolution
-agent-orchestrator-mcp --workspace-root "$(pwd)" doctor
+mcp-agent-orchestrator --workspace-root "$(pwd)" doctor
 ```
 
 Notes:
@@ -342,8 +342,8 @@ All execution backends MUST implement the `BackendAdapter` protocol defined by t
 
 Primary entrypoints:
 
-- `agent-orchestrator-mcp --workspace-root <repo> serve-stdio`
-- `agent-orchestrator-mcp --workspace-root <repo> doctor`
+- `mcp-agent-orchestrator --workspace-root <repo> serve-stdio`
+- `mcp-agent-orchestrator --workspace-root <repo> doctor`
 
 Operational subcommands (all require `--workspace-root`):
 

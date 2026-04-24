@@ -291,7 +291,7 @@ lint-all:
 			( cd apps/prototype-wp-alt-context && make lint ); \
 			echo ""; \
 		echo "=== Linting PHP (plugin) ==="; \
-		( cd apps/prototype-wp-alt-context && composer cs-check ); \
+		$(MAKE) -C apps/prototype-wp-alt-context php-cs; \
 		echo ""; \
 		echo "✅ Linting complete"; \
 	fi

@@ -29,7 +29,7 @@ END
 $$;
 
 -- Grant privileges on the database
-GRANT ALL PRIVILEGES ON DATABASE context_alt_text_service TO recognition_test_user;
+GRANT ALL PRIVILEGES ON DATABASE alt_context_service TO recognition_test_user;
 
 -- Grant schema privileges
 GRANT ALL PRIVILEGES ON SCHEMA public TO recognition_test_user;

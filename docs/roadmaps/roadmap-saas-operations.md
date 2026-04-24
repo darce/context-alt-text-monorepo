@@ -39,7 +39,7 @@ OCI VM (129.213.40.111)
 │   ├── leads            ← CRM / marketing leads
 │   └── billing_events   ← Polar webhook audit log
 │
-├── Recognition Postgres (context_alt_text_service) — existing
+├── Recognition Postgres (alt_context_service) — existing
 │   ├── tenant_id column on all tables (FK concept, not enforced cross-DB)
 │   ├── RLS policies check tenant_id from session context
 │   └── Validates API keys by calling business DB or cached lookup
@@ -146,7 +146,7 @@ User Browser
        │
        └─ Two Postgres instances
             ├─ acx_business (accounts, keys, usage, CRM)
-            └─ context_alt_text_service (recognition data)
+            └─ alt_context_service (recognition data)
 ```
 
 ## Implementation Phases

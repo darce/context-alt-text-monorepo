@@ -106,35 +106,24 @@ make mypy           # Type checking
 make check          # All checks (ruff + mypy + pytest)
 ```
 
-## In-Monorepo Package Test Invocation (MANDATORY)
+## External MCP Package Verification (E17-13)
 
-For `packages/agent-handoff-mcp/` and `packages/agent-orchestrator-mcp/`, **always use the Makefile target**:
+For the E17-13 cleanup path, verify `agent-handoff-mcp` and `agent-orchestrator-mcp` as packaged standalone installs, not via worktree-local package test targets.
 
 ```bash
-cd packages/agent-handoff-mcp && make test-handoff
-cd packages/agent-orchestrator-mcp && make test-orchestrator
+python3 -m venv /tmp/e17-13-external-mcp
+/tmp/e17-13-external-mcp/bin/pip install --quiet \
+    "git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.2" \
+    "git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.3"
+/tmp/e17-13-external-mcp/bin/agent-handoff-mcp --workspace-root . doctor
+/tmp/e17-13-external-mcp/bin/agent-orchestrator-mcp --workspace-root . --help
 ```
 
-The Makefile sets `PYTHONPATH` to the current worktree's `src/`. Direct `pytest` uses the environment-wide editable install, which may resolve to a different worktree's source, producing false-positive results.
-
-### Enforcement
-
-Both packages' `tests/conftest.py` contain a `pytest_sessionstart` guard that aborts the session if the package import resolves to a different worktree's source. The conftest also prepends the worktree-local `src/` to `sys.path`, so direct `pytest` from the correct package directory works; cross-worktree invocations trigger the guard.
+This is the external-install verification convention that replaces the package-local conftest/Makefile guard guidance for the cleanup task. The proof must run in a scratch venv with no editable installs from this monorepo, so the result reflects the published `git+ssh://` artifacts rather than a worktree-local import path.
 
 ### Background
 
-Added in `AHMCP-13` after `AHMCP-10` regressed 65 orchestrator tests: verification ran in a linked worktree but the editable install resolved to the root checkout's pre-refactor source, producing a false-positive "586 passed" claim.
-
-### If you must invoke pytest directly
-
-Set `PYTHONPATH` explicitly:
-
-```bash
-PYTHONPATH=packages/agent-handoff-mcp/src:packages/agent-orchestrator-mcp/src \
-  pyenv exec python -m pytest packages/agent-handoff-mcp/tests -q
-```
-
-The conftest guard still verifies correct resolution.
+The older package-local guard model existed to keep linked worktrees from silently resolving to the wrong editable install. E17-13 now needs the stronger consumer-facing proof: validate the published refs directly and keep local package-source assumptions out of the verification path.
 
 ## Commit SHA Provenance Discipline (MANDATORY)
 

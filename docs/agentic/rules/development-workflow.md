@@ -336,11 +336,11 @@ For every unit of work (feature slice, bug fix, refactor):
 16. **Escalate when risk warrants**: If the slice crosses audit triggers such as architecture transitions, multi-service state machines, persistence changes, or broad UI state surfaces, run the [Multi-Lens Audit Workflow](branch-review-guide.md#multi-lens-audit-workflow) instead of a single-lens branch review
 17. **End-of-turn user report must cite handoff evidence**: When a turn records a handoff decision, the final user-facing report for that turn must include the decision number (for example `Handoff decision: #1452`) so the chat summary and MCP trail stay explicitly linked.
 
-Package-test execution note:
+External-install verification note:
 
-- For `packages/agent-handoff-mcp/` and `packages/agent-orchestrator-mcp/`, **always use the Makefile target** (`make test-handoff` / `make test-orchestrator`), never direct `pytest`. The Makefile sets `PYTHONPATH` to the worktree-local `src/` so imports resolve correctly. Direct `pytest` in linked worktrees silently tests against the editable install path (typically root checkout). Both packages' `conftest.py` enforce this with a `pytest_sessionstart` guard. See [testing-python.md § In-Monorepo Package Test Invocation](testing-python.md#in-monorepo-package-test-invocation-mandatory).
+- For the E17-13 MCP cleanup path, verify `agent-handoff-mcp` and `agent-orchestrator-mcp` from pinned `pip install` commands against the standalone repos in a scratch venv, not the old package-local Makefile guard guidance.
+- The live verification contract is: pinned `pip install` from the standalone repos in a scratch venv, then `agent-handoff-mcp --workspace-root . doctor` plus `agent-orchestrator-mcp --workspace-root . --help` CLI/import smoke checks.
 - Do not hardcode absolute filesystem paths; prefer `${PYENV_ROOT:-$HOME/.pyenv}` and `${REPO_ROOT:-$PWD}`.
-- Canonical: `cd "$REPO_ROOT/packages/agent-handoff-mcp" && make test-handoff`
 
 Commit SHA provenance discipline:
 

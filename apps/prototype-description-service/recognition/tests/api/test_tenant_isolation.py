@@ -103,8 +103,12 @@ def test_suggestions_require_tenant_header() -> None:
     assert resp_accept.status_code in {400, 422}
 
 
-def test_query_param_tenant_fallback(monkeypatch) -> None:
-    """Query param may be used when header is absent."""
+def test_query_param_tenant_rejected_on_authenticated_route(monkeypatch) -> None:
+    """Sensitive routes that depend on ``get_authenticated_tenant_id`` must not
+    honour a ``tenant_id`` query param — it is intentionally ignored so the
+    tenant claim comes from the authenticated context or an ``X-Tenant-ID``
+    admin override. Hardened in commit e79e19b7 (E15-3a-BR-15).
+    """
     collected: dict[str, str] = {}
 
     def builder():
@@ -129,9 +133,8 @@ def test_query_param_tenant_fallback(monkeypatch) -> None:
 
     resp = client.get("/recognition/clusters", params={"tenant_id": tenant_value})
 
-    assert resp.status_code == 200
-    assert collected["tenant_id"] == tenant_value
-    assert collected["service_tenant"] == tenant_value
+    assert resp.status_code == 400
+    assert collected == {}
 
 
 def test_session_context_is_reset_by_next_request_setup(monkeypatch) -> None:

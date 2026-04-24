@@ -127,7 +127,7 @@ uv tool install "agent-orchestrator-mcp @ git+ssh://git@github.com/darce/mcp-age
 
 ### Validation
 
-Command Palette → `MCP: List Servers` → both "altcontext-mcp" and "altcontext-orchestrator-mcp" should appear.
+Command Palette → `MCP: List Servers` → both "mcp-agent-handoff" and "mcp-agent-orchestrator" should appear.
 
 ```bash
 agent-handoff-mcp --workspace-root "$(pwd)" doctor       # prints the live registered tool list
@@ -164,7 +164,7 @@ agent-orchestrator-mcp --workspace-root "$(pwd)" dispatch \
 
 For Codex app sessions on the same machine, prefer the checked-in project-scoped
 adapter at [`../../.codex/config.toml`](../../.codex/config.toml),
-which registers the local stdio server as `altcontext-mcp` with the required
+which registers the local stdio server as `mcp-agent-handoff` with the required
 `PYENV_VERSION=description-service` contract and repo-relative startup paths.
 
 ### HTTP Transport (Codex Custom MCP)

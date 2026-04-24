@@ -39,7 +39,7 @@ The user's intake decision (handoff ledger id 1963, task_ref `E17-12`) chose: pu
 
 ## Current State Analysis
 
-- **`.codex/config.toml`** registers MCP servers (`context7`, `altcontext-mcp`, `altcontext-orchestrator-mcp`) and `codex_hooks = true`. No skill roots, no command registry.
+- **`.codex/config.toml`** registers MCP servers (`context7`, `mcp-agent-handoff`, `mcp-agent-orchestrator`) and `codex_hooks = true`. No skill roots, no command registry.
 - **`.claude/skills/`** contains multiple skill directories (including `branch-review`, `planning-review`, `scope`, `tdd`, `auto-fix`, etc.; the exact count is not load-bearing — any count drift is acceptable as long as the generator iterates over manifest entries rather than directory listings). No Codex-side wiring points at this directory.
 - **`config/agent-workflows/portable_commands.json`** version 1; 10 commands declared.
 - **`scripts/generate_agent_workflows.py`** renders three outputs: Claude command files under `.claude/commands/`, VS Code/Copilot prompts under `.github/prompts/`, and Codex router prose injected between `<!-- BEGIN/END GENERATED: codex-command-router -->` marker blocks in `docs/agentic/instructions.md` and `CLAUDE.md`. Generator has no Codex skill-registration code path.

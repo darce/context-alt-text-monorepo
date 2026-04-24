@@ -5,7 +5,7 @@
       "args": ["-y", "@upstash/context7-mcp@2.1.4"],
       "type": "stdio"
     },
-    "altcontext-mcp": {
+    "mcp-agent-handoff": {
       "command": "agent-handoff-mcp",
       "args": [
         "--workspace-root",
@@ -25,7 +25,7 @@
         "AGENT_HANDOFF_ENFORCE_BRANCH": "1"
       }
     },
-    "altcontext-orchestrator-mcp": {
+    "mcp-agent-orchestrator": {
       "command": "agent-orchestrator-mcp",
       "args": [
         "--workspace-root",

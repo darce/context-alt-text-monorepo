@@ -278,7 +278,7 @@ def test_resolve_postgres_test_dsn_returns_empty_when_no_real_postgres_config(mo
         "recognition.tests.integration.test_rls_tenant_context_after_chunk_commit.get_database_settings",
         lambda: DatabaseSettings(
             postgres_dsn=DEFAULT_POSTGRES_TEST_DSN,
-            postgres_sync_dsn="postgresql+psycopg://context:context@localhost:5432/alt_context",
+            postgres_sync_dsn="postgresql+psycopg://context:context@localhost:5432/alt_context_service",
             pgvector_dimension=512,
             pool_size=20,
             max_overflow=10,
@@ -293,6 +293,14 @@ def test_resolve_postgres_test_dsn_returns_empty_when_no_real_postgres_config(mo
             breaker_window_seconds=30,
             breaker_half_open_after_seconds=10,
             disable_stmt_cache=False,
+            clustering_tenant_lock_timeout_ms=1000,
+            clustering_admission_retry_after_seconds=5,
+            clustering_breaker_failure_threshold=3,
+            clustering_breaker_window_seconds=30.0,
+            clustering_breaker_cooldown_seconds=30.0,
+            clustering_pool_size=2,
+            clustering_max_overflow=1,
+            clustering_pool_timeout=5,
         ),
     )
 

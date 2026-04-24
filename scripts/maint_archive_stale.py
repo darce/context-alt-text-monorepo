@@ -25,9 +25,6 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-HANDOFF_SRC = REPO_ROOT / "packages" / "agent-handoff-mcp" / "src"
-if str(HANDOFF_SRC) not in sys.path:
-    sys.path.insert(0, str(HANDOFF_SRC))
 
 
 STALE_STATUSES = frozenset({"done", "review"})

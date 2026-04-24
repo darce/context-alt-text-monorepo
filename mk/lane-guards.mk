@@ -68,7 +68,7 @@ lane-manifest-init:
 		exit 1; \
 	fi
 	@set -eu; \
-	set -- $(MCP_PYTHON) "$(ORCHESTRATION_DIR)/generate_lane_manifest.py" --task-ref "$(TASK)"; \
+	set -- $(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.generate_lane_manifest --task-ref "$(TASK)"; \
 	for lane in $(LANE_IDS); do set -- "$$@" --lane "$$lane"; done; \
 	if [ -n "$(TASK_PLAN)" ]; then set -- "$$@" --task-plan "$(TASK_PLAN)"; fi; \
 	if [ "$(DRY_RUN)" = "1" ]; then \

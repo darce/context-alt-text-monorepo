@@ -31,6 +31,7 @@ from recognition.interface_adapters.http.deps.services import (
     get_cluster_repository,
     get_cluster_service,
     get_cluster_service_builder,
+    get_cluster_service_builder_clustering,
     get_job_repo,
     get_job_service,
     get_job_service_dependency,
@@ -38,6 +39,7 @@ from recognition.interface_adapters.http.deps.services import (
     get_merge_suggestion_repository,
     get_observability_repository,
     get_persisted_cluster_job_service,
+    get_persisted_cluster_job_service_clustering,
     get_persisted_job_service,
     get_retention_export_service,
     get_retention_import_service,
@@ -57,6 +59,7 @@ from recognition.interface_adapters.http.deps.services import (
 
 # Re-export session management
 from recognition.interface_adapters.http.deps.session import (
+    get_clustering_session,
     get_observability_session,
     get_optional_session,
     get_session,
@@ -78,6 +81,7 @@ __all__ = [
     "get_session",
     "get_optional_session",
     "get_observability_session",
+    "get_clustering_session",
     "get_authenticated_tenant_id",
     # Authentication
     "AuthContext",
@@ -102,6 +106,7 @@ __all__ = [
     "build_cluster_service",
     "get_cluster_service",
     "get_cluster_service_builder",
+    "get_cluster_service_builder_clustering",
     "get_scan_service_builder",
     "get_scan_queue_service_factory",
     "get_scan_queue_service",
@@ -111,6 +116,7 @@ __all__ = [
     "get_job_service",
     "get_job_service_dependency",
     "get_persisted_cluster_job_service",
+    "get_persisted_cluster_job_service_clustering",
     "get_persisted_job_service",
     "RetentionPolicyServiceProtocol",
     "RetentionExportServiceProtocol",

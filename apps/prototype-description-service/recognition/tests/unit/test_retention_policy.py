@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -73,6 +74,26 @@ def test_recognition_settings_rejects_invalid_retention_mode(monkeypatch: pytest
 
     with pytest.raises(ValidationError, match="default_retention_mode"):
         RecognitionSettings()
+
+
+def test_insightface_cache_dir_prefers_explicit_cache_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INSIGHTFACE_CACHE_DIR", "/data/cache/insightface")
+    monkeypatch.setenv("INSIGHTFACE_HOME", "/ignored/home")
+
+    settings = RecognitionSettings()
+
+    assert settings.insightface.cache_dir == Path("/data/cache/insightface")
+    assert settings.insightface.model_cache_dir == Path("/data/cache/insightface/models")
+
+
+def test_insightface_cache_dir_falls_back_to_insightface_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("INSIGHTFACE_CACHE_DIR", raising=False)
+    monkeypatch.setenv("INSIGHTFACE_HOME", "/data/cache/insightface-home")
+
+    settings = RecognitionSettings()
+
+    assert settings.insightface.cache_dir == Path("/data/cache/insightface-home")
+    assert settings.insightface.model_cache_dir == Path("/data/cache/insightface-home/models")
 
 
 @pytest.mark.asyncio

@@ -141,7 +141,7 @@ class SettingsController {
 			$headers['X-API-Key'] = $key_resolution['value'];
 		}
 
-		$health_url = rtrim( $url, '/' ) . '/recognition/health/pool';
+		$health_url = rtrim( $url, '/' ) . '/health/detailed';
 		$response   = wp_remote_get(
 			$health_url,
 			array(

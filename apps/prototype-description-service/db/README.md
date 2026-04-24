@@ -51,8 +51,9 @@ pip install -e .
 createdb context_alt_text_service             # or use psql -c "CREATE DATABASE ..."
 psql -d context_alt_text_service -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 
-# 4. Apply the baseline migration
+# 4. Apply the baseline migration and verify the schema footprint
 alembic -c db/alembic.ini upgrade head
+python -m scripts.verify_identity_schema
 
 ## 3.1 Dedicated database owner (optional but recommended)
 
@@ -98,6 +99,7 @@ psql -d context_alt_text_service -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 # (Option B) Keep the DB but rollback objects
 alembic -c db/alembic.ini downgrade base
 alembic -c db/alembic.ini upgrade head
+python -m scripts.verify_identity_schema
 ````
 
 > ⚠️ Dropping the database requires a superuser or a role that owns the DB.
@@ -107,8 +109,9 @@ alembic -c db/alembic.ini upgrade head
 
 1. **Clone repo & install deps** – follow the bootstrap workflow above.
 2. **Verify env vars** – `cat .env` and ensure DSNs point to the right host.
-3. **Run migrations** – `alembic -c db/alembic.ini upgrade head` (re-run on schema changes).
-4. **Smoke test** – `uvicorn api.main:app --reload` then hit `GET /health`.
+3. **Run migrations** – `alembic -c db/alembic.ini upgrade head`.
+4. **Verify schema footprint** – `python -m scripts.verify_identity_schema` must report the baseline table set before the service boots.
+5. **Smoke test** – `uvicorn api.main:app --reload` then hit `GET /health`.
 
 If you see errors similar to `type "vector" does not exist`, confirm that the
 extension was installed in the target database **before** running migrations.
@@ -121,6 +124,7 @@ extension was installed in the target database **before** running migrations.
 | Autogenerate models diff        | `alembic -c db/alembic.ini revision --autogenerate -m "..."`                       |
 | Inspect current head            | `alembic -c db/alembic.ini current`                                                |
 | Re-run latest migration         | `alembic -c db/alembic.ini downgrade -1 && alembic -c db/alembic.ini upgrade head` |
+| Verify baseline schema footprint | `python -m scripts.verify_identity_schema`                                         |
 
 Keep this guide close whenever you need to rebuild or reseed the prototype
 environment.

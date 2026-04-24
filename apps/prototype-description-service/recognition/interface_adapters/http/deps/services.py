@@ -44,6 +44,7 @@ from recognition.infrastructure.repositories import (
 )
 from recognition.infrastructure.services import SuggestionExtensionService
 from recognition.interface_adapters.http.deps.session import (
+    get_clustering_session,
     get_observability_session,
     get_optional_session,
     get_session,
@@ -605,6 +606,73 @@ async def get_persisted_cluster_job_service(
     )
 
 
+# ---------------------------------------------------------------------------
+# E15-3a-BR-21 Slice 4: clustering-flavored factories.
+#
+# These wrap the same ClusterService / JobService constructors as the
+# non-clustering factories, but bind to ``get_clustering_session`` so FastAPI's
+# dep cache hands the same clustering-pool session to every dep injected into
+# ``POST /recognition/clustering/jobs``.
+#
+# Intentional differences from the non-clustering variants (see task plan
+# PLAN-10, PLAN-11, PLAN-12):
+#
+#   * ``get_cluster_service_builder_clustering`` does *not* pre-await
+#     ``build_cluster_service(tenant_id)`` during dep resolution. Invoking the
+#     builder emits ``set_tenant_context`` + ``ensure_tenant_exists`` SQL,
+#     which would autobegin a transaction on the *bare* clustering session
+#     before the route enters ``async with session.begin():``. Instead, we
+#     return the builder itself so the route can ``await builder(tenant_id)``
+#     inside its own owned transaction (PLAN-12).
+#
+#   * ``get_persisted_cluster_job_service_clustering`` does *not* delegate to
+#     ``get_job_service()``, which autobegins a txn via ``SELECT 1`` +
+#     ``set_tenant_context``. Instead, it constructs ``JobService`` directly
+#     from ``SqlAlchemyJobRepository(session)`` with ``cluster_service=None``
+#     so the route can later assign the cluster service *after* the owned
+#     transaction has applied safety settings and tenant context (PLAN-11).
+# ---------------------------------------------------------------------------
+
+
+def get_cluster_service_builder_clustering(
+    session: AsyncSession = Depends(get_clustering_session),
+    settings: ClusteringSettings = Depends(get_settings),
+) -> Callable[[str], Awaitable[ClusterService]]:
+    """Clustering-pool builder for the route-owned transaction (PLAN-12).
+
+    Returns a builder bound to the *clustering* session so FastAPI's DI cache
+    hands the same session to ``get_persisted_cluster_job_service_clustering``.
+    The route invokes the returned builder inside its own ``session.begin()``
+    so ``build_cluster_service``'s internal ``set_tenant_context`` +
+    ``ensure_tenant_exists`` SQL lands inside the owned transaction.
+    """
+
+    async def _builder(tenant_id: str) -> ClusterService:
+        return await build_cluster_service(session=session, tenant_id=tenant_id, settings=settings)
+
+    return _builder
+
+
+async def get_persisted_cluster_job_service_clustering(
+    session: AsyncSession = Depends(get_clustering_session),
+) -> JobService:
+    """Clustering-pool JobService wired without any pre-route SQL (PLAN-11).
+
+    Must not:
+      * call ``get_job_service()`` (that helper issues ``SELECT 1`` +
+        ``set_tenant_context``, autobegining a txn on the bare clustering
+        session before the route's ``session.begin()`` block).
+      * pre-await ``cluster_service_builder(tenant_id)`` (that would trigger
+        ``build_cluster_service`` SQL on the clustering session).
+
+    Constructs ``JobService`` directly with ``cluster_service=None`` so the
+    route assigns the real cluster service *inside* its owned txn block, after
+    safety settings + tenant context have been applied.
+    """
+    repo = SqlAlchemyJobRepository(session)
+    return JobService(repository=repo, cluster_service=None, scan_service=None)
+
+
 __all__ = [
     "get_settings",
     "get_shared_insightface_adapter",
@@ -625,5 +693,7 @@ __all__ = [
     "get_job_service_dependency",
     "get_persisted_job_service",
     "get_persisted_cluster_job_service",
+    "get_cluster_service_builder_clustering",
+    "get_persisted_cluster_job_service_clustering",
     "get_merge_suggestion_repository",
 ]

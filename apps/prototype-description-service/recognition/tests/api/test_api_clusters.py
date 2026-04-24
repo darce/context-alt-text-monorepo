@@ -6,9 +6,13 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from recognition.domain.job import Job, JobStatus, JobType
-from recognition.tests.api.conftest import seed_cluster
+from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http import router as recognition_router
+from recognition.tests.api.conftest import FakeSession, seed_cluster
 
 
 def test_clustering_job_async_returns_status(api_client, tenant_id, fake_job_service) -> None:
@@ -92,6 +96,44 @@ def test_list_clusters_returns_seeded_data(api_client, tenant_id, fake_cluster_s
     assert resp.status_code == 200
     body = resp.json()
     assert any(cluster["id"] == seeded.id for cluster in body)
+
+
+def test_list_clusters_uses_authenticated_tenant_claim(monkeypatch, tenant_id, fake_cluster_service) -> None:
+    captured: dict[str, str] = {}
+    monkeypatch.setenv("RECOGNITION_AUTH_ENABLED", "1")
+
+    app = FastAPI()
+    app.include_router(recognition_router, prefix="/recognition")
+
+    async def _session_dep():
+        yield FakeSession()
+
+    def cluster_builder():
+        async def _build(resolved_tenant_id: str):
+            captured["tenant_id"] = resolved_tenant_id
+            return fake_cluster_service
+
+        return _build
+
+    app.dependency_overrides[dependencies.get_session] = _session_dep
+    app.dependency_overrides[dependencies.get_optional_session] = _session_dep
+    app.dependency_overrides[dependencies.get_cluster_service_builder] = cluster_builder
+
+    from recognition.interface_adapters.http.deps import auth
+
+    async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
+        assert api_key == "good-key"
+        return tenant_id, "key-1", "enterprise", False
+
+    monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
+
+    seeded = seed_cluster(fake_cluster_service, tenant_id)
+    client = TestClient(app)
+    resp = client.get("/recognition/clusters", headers={"Authorization": "Bearer good-key"})
+
+    assert resp.status_code == 200
+    assert captured["tenant_id"] == tenant_id
+    assert any(cluster["id"] == seeded.id for cluster in resp.json())
 
 
 def test_patch_cluster_label_updates_cluster(api_client, tenant_id, fake_cluster_service) -> None:

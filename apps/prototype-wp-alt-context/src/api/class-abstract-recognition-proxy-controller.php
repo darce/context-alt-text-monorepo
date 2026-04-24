@@ -115,7 +115,8 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 				$this->record_proxy_failure( $policy, $failure_key, $circuit_key );
 			}
 
-			if ( $status >= 500 && $attempt < $max_retries - 1 ) {
+			$response_headers = wp_remote_retrieve_headers( $response );
+			if ( $status >= 500 && ! $this->is_backend_retry_after( $status, $response_headers ) && $attempt < $max_retries - 1 ) {
 				$delay_ms = $base_delay_ms * ( 2 ** $attempt );
 				usleep( $delay_ms * 1000 );
 				continue;
@@ -126,7 +127,6 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			}
 
 			$response_body = wp_remote_retrieve_body( $response );
-			$response_headers = wp_remote_retrieve_headers( $response );
 			return new WP_REST_Response( json_decode( $response_body, true ), $status, $this->normalize_response_headers( $response_headers ) );
 		}
 
@@ -282,6 +282,44 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		$age = max( 0, time() - $timestamp );
 
 		return $age > $threshold;
+	}
+
+	/**
+	 * E15-3a-BR-21 Slice 5: 503 + Retry-After is an explicit backend signal to
+	 * back off. Short-circuit the retry loop instead of burning additional
+	 * attempts against an already-overloaded backend. Other 5xx codes (502,
+	 * 504) still retry, and 503 without Retry-After still retries.
+	 *
+	 * @param mixed $response_headers Case-insensitive header dictionary (array
+	 *                                or Traversable) returned by wp_remote_retrieve_headers.
+	 */
+	private function is_backend_retry_after( int $status, mixed $response_headers ): bool {
+		if ( 503 !== $status ) {
+			return false;
+		}
+
+		$headers = array();
+		if ( is_array( $response_headers ) ) {
+			$headers = $response_headers;
+		} elseif ( $response_headers instanceof Traversable ) {
+			foreach ( $response_headers as $key => $value ) {
+				$headers[ (string) $key ] = $value;
+			}
+		}
+
+		foreach ( $headers as $key => $value ) {
+			if ( 'retry-after' !== strtolower( trim( (string) $key ) ) ) {
+				continue;
+			}
+			if ( is_int( $value ) ) {
+				return true;
+			}
+			if ( is_string( $value ) && '' !== trim( $value ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	protected function get_proxy_policy(): RecognitionProxyPolicy {

@@ -6,7 +6,6 @@
 # For app-specific commands, use the Makefile in each app directory.
 #
 # Quick Start:
-#   make mcp-start    # Start the MCP server for AI agents
 #   make check-all    # Run all linters and tests across the monorepo
 #
 # Structure:
@@ -40,9 +39,6 @@ WORKTREE_MCP_PYTHONPATH := $(WORKTREE_ROOT_REAL)/packages/codex-subagent-bridge/
 MCP_CMD = $(MCP_RUNTIME_ENV) agent-handoff-mcp
 MCP_STATE_ARGS = --workspace-root "$(ORCHESTRATOR_ROOT)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.json" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports"
 PYTHON ?= $(MCP_PYTHON)
-EXTERNAL_MCP_VENV ?= /tmp/e17-13-external-mcp
-EXTERNAL_MCP_HANDOFF_REF := git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.2
-EXTERNAL_MCP_ORCHESTRATOR_REF := git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.3
 
 # --- Task / lane inference ---
 _ACTIVE_TASK_CMD = $(shell $(MCP_CMD) $(MCP_STATE_ARGS) state 2>/dev/null | python3 -c 'import sys,json; data=json.load(sys.stdin); print(data.get("task_ref",""))' 2>/dev/null)
@@ -131,7 +127,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/lane-maintenance.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context dashboard worktree-audit worktree-prune task-plan-audit generate-agent-workflows check-agent-workflows check-skills check-harness-sync lint-hoisted-paths task-start task-finish check-main-clean install-git-hooks
+.PHONY: help check-all check-frontend lint-all format-all test-all clean-all reset-local fix-php-style dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context dashboard worktree-audit worktree-prune task-plan-audit generate-agent-workflows check-agent-workflows check-skills check-harness-sync lint-hoisted-paths task-start task-finish check-main-clean install-git-hooks
 
 # Default target
 help:
@@ -141,9 +137,6 @@ help:
 	@echo "Cross-Repo Operations:"
 	@echo "  make check-all        - Run all checks (lint + types + tests)"
 	@echo "  make format-all       - Fix lint + format across all apps and packages (run before check-all)"
-	@echo "  make check-mcp        - Run lint, mypy, and tests for both MCP packages"
-	@echo "  make check-handoff    - Lint, mypy, tests for agent-handoff-mcp"
-	@echo "  make check-orchestrator - Lint, mypy, tests for agent-orchestrator-mcp"
 	@echo "  make check-frontend   - Run frontend checks (lint + types + arch + tests)"
 	@echo "  make lint-all         - Run linters for all apps and packages"
 	@echo "  make test-all         - Run tests for all apps and packages"
@@ -154,12 +147,6 @@ help:
 	@echo "App-Specific Commands:"
 	@echo "  cd apps/prototype-description-service && make help"
 	@echo "  cd apps/prototype-wp-alt-context && make help"
-	@echo ""
-	@echo "MCP Server (AI Agent Tooling):"
-	@echo "  make mcp          - Start the MCP server for AI agents manually"
-	@echo "  make gemini-cli-setup - Register the MCP server with gemini-cli"
-	@echo "  VS Code auto-manages via .vscode/mcp.json — no manual start needed."
-	@echo "  See docs/agentic/BOOTSTRAP.md for details."
 	@echo ""
 	@echo "Handoff Integrity:"
 	@echo "  make list-tasks"
@@ -268,22 +255,10 @@ check-all:
 			$(MAKE) check-agent-workflows; \
 			$(MAKE) worktree-audit; \
 			$(MAKE) task-plan-audit; \
-			$(MAKE) check-mcp; \
 			$(MAKE) test-all; \
 			echo ""; \
 			echo "✅ All monorepo checks passed!"; \
 		fi
-
-check-mcp:
-	@set -eu; \
-	EXTERNAL_MCP_VENV="$(EXTERNAL_MCP_VENV)"; \
-	python3 -m venv "$$EXTERNAL_MCP_VENV"; \
-	"$$EXTERNAL_MCP_VENV/bin/pip" install --quiet \
-		"$(EXTERNAL_MCP_HANDOFF_REF)" \
-		"$(EXTERNAL_MCP_ORCHESTRATOR_REF)"; \
-	"$$EXTERNAL_MCP_VENV/bin/agent-handoff-mcp" --workspace-root "$(WORKTREE_ROOT_REAL)" doctor; \
-	"$$EXTERNAL_MCP_VENV/bin/agent-orchestrator-mcp" --workspace-root "$(WORKTREE_ROOT_REAL)" --help >/dev/null; \
-	echo "✅ External MCP package verification passed!"
 
 check-frontend:
 	@set -eu; \
@@ -455,22 +430,6 @@ reset-local:
 fix-php-style:
 	@cd apps/prototype-wp-alt-context && make php-cs-fix
 	@echo "✅ PHP style auto-fixes applied"
-
-# =============================================================================
-# MCP Server (Manual Start)
-# =============================================================================
-
-mcp: mcp-start
-
-mcp-start:
-	@echo "Starting MCP Server manually..."
-	@agent-handoff-mcp --workspace-root "$(PWD)" serve-stdio
-
-gemini-cli-setup:
-	@echo "Registering agent-handoff-mcp with gemini-cli..."
-	@gemini mcp add context-alt-text-handoff "agent-handoff-mcp" -- --workspace-root "$(PWD)" serve-stdio
-	@echo "✓ MCP server 'context-alt-text-handoff' registered with gemini-cli"
-	@echo "💡 Tip: Store your API key in a .env file at the monorepo root to keep it out of your .zshrc."
 
 # =============================================================================
 # Development Shortcuts

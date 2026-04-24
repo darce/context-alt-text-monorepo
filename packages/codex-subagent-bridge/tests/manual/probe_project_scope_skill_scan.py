@@ -32,9 +32,7 @@ proj_skills.mkdir(parents=True, exist_ok=True)
 
 probe_dir = proj_skills / "probe-test"
 if probe_dir.exists() or probe_dir.is_symlink():
-    raise SystemExit(
-        f"Refusing to overwrite pre-existing {probe_dir}; remove it and rerun."
-    )
+    raise SystemExit(f"Refusing to overwrite pre-existing {probe_dir}; remove it and rerun.")
 
 probe_dir.mkdir()
 (probe_dir / "SKILL.md").write_text(

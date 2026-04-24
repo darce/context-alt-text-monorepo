@@ -223,11 +223,11 @@ Reserve terminal for operations with no native-tool equivalent: test execution, 
 **Terminal output discipline** (both environments, when terminal is required):
 
 - Pipe through `tail -n 30`, `head -n 50`, or `grep -E '<pattern>'` for unbounded output.
-- **Test runs (MANDATORY):** Capture with `tee` to `/tmp/`, then `read_file` the capture. Do NOT rely on terminal output alone.
-  - Python (apps): `cd <app-dir> && pyenv exec python -m pytest <path> -q 2>&1 | tee /tmp/pytest_<suite>.txt`
-  - Python (in-monorepo packages): **always use the Makefile target**, never direct `pytest`. `cd packages/agent-handoff-mcp && make test-handoff 2>&1 | tee /tmp/pytest_handoff.txt` (or `make test-orchestrator`). The Makefile sets `PYTHONPATH` to the current worktree's `src/`; direct `pytest` resolves to whichever editable install is registered env-wide. Both `tests/conftest.py` enforce this with a `pytest_sessionstart` guard. See [rules/testing-python.md § In-Monorepo Package Test Invocation](rules/testing-python.md#in-monorepo-package-test-invocation-mandatory).
-  - Vitest: `cd <app-dir> && npx vitest run <path> 2>&1 | tee /tmp/vitest_<suite>.txt`
-  - PHP: `cd <app-dir> && vendor/bin/phpunit <path> 2>&1 | tee /tmp/phpunit_<suite>.txt`
+- **Test runs (MANDATORY):** Capture to `/tmp/`, then `read_file` the capture. Do NOT rely on terminal output alone.
+  - Python (apps): `cd <app-dir> && pyenv exec python -m pytest <path> -q > /tmp/pytest_<suite>.txt 2>&1`
+  - Python (external MCP package verification): create a scratch venv, install from standalone `git+ssh://` refs, then run CLI/import smoke from that environment. Example: `python3 -m venv /tmp/e17-13-external-mcp && /tmp/e17-13-external-mcp/bin/pip install --quiet "git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.2" "git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.3" > /tmp/pytest_external_mcp.txt 2>&1 && /tmp/e17-13-external-mcp/bin/agent-handoff-mcp --workspace-root . doctor >> /tmp/pytest_external_mcp.txt 2>&1 && /tmp/e17-13-external-mcp/bin/agent-orchestrator-mcp --workspace-root . --help >> /tmp/pytest_external_mcp.txt 2>&1`. Do not use `make test-handoff` or `make test-orchestrator` for this cleanup verification path.
+  - Vitest: `cd <app-dir> && npx vitest run <path> > /tmp/vitest_<suite>.txt 2>&1`
+  - PHP: `cd <app-dir> && vendor/bin/phpunit <path> > /tmp/phpunit_<suite>.txt 2>&1`
   - Then: `read_file("/tmp/pytest_<suite>.txt")`. Never `cat` in terminal. If output is truncated/polluted, just `read_file` the capture.
 - Excess output → redirect to `/tmp/<name>.txt` and `read_file` (VS Code) or `sed -n` (Codex); do not re-run.
 - **Background terminals lack pyenv virtualenv activation.** Use foreground terminal for Python tests. Stale scrollback → `tee /tmp/` pattern.

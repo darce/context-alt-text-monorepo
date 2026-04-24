@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ast
 from collections import Counter
+import importlib.util
 import json
 import re
 import sys
@@ -51,19 +52,46 @@ REQUIRED_SECTIONS = (
 )
 VALID_MODES = {"advisory", "execution"}
 SERVER_API_FILES = {
-    "agent-handoff-mcp": REPO_ROOT / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp" / "api.py",
-    "agent-orchestrator-mcp": REPO_ROOT
-    / "packages"
-    / "agent-orchestrator-mcp"
-    / "src"
-    / "agent_orchestrator_mcp"
-    / "api.py",
+    "agent-handoff-mcp": (
+        "agent_handoff_mcp",
+        REPO_ROOT / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp" / "api.py",
+    ),
+    "agent-orchestrator-mcp": (
+        "agent_orchestrator_mcp",
+        REPO_ROOT / "packages" / "agent-orchestrator-mcp" / "src" / "agent_orchestrator_mcp" / "api.py",
+    ),
 }
 MAKEFILE_RE = re.compile(r"^([A-Za-z0-9_.-]+):")
 
 
 class SkillCheckError(Exception):
     pass
+
+
+def _resolve_package_file(local_path: Path, *, package_name: str, relative_name: str) -> Path:
+    if local_path.is_file():
+        return local_path
+
+    spec = importlib.util.find_spec(package_name)
+    if spec is None:
+        raise SkillCheckError(f"unable to resolve `{package_name}` from local source or the import path")
+
+    candidate_dirs: list[Path] = []
+    if spec.submodule_search_locations:
+        candidate_dirs.extend(Path(path).resolve() for path in spec.submodule_search_locations)
+    if spec.origin:
+        candidate_dirs.append(Path(spec.origin).resolve().parent)
+
+    seen_dirs: set[Path] = set()
+    for package_dir in candidate_dirs:
+        if package_dir in seen_dirs:
+            continue
+        seen_dirs.add(package_dir)
+        candidate = package_dir / relative_name
+        if candidate.is_file():
+            return candidate
+
+    raise SkillCheckError(f"unable to resolve `{package_name}/{relative_name}` from local source or the import path")
 
 
 def _load_frontmatter_and_body(path: Path) -> tuple[dict, str]:
@@ -124,12 +152,14 @@ def _load_known_tools() -> set[str]:
 
     known_tools: set[str] = set()
     for server_name in sorted(server_names):
-        api_path = SERVER_API_FILES.get(server_name)
-        if api_path is None:
+        api_spec = SERVER_API_FILES.get(server_name)
+        if api_spec is None:
             # External services such as context7 or computer-use do not ship a
             # local API manifest in this repo, so they cannot contribute local
             # skill-wiring entries here.
             continue
+        package_name, local_path = api_spec
+        api_path = _resolve_package_file(local_path, package_name=package_name, relative_name="api.py")
         known_tools.update(_extract_literal_tool_names(api_path))
     return known_tools
 

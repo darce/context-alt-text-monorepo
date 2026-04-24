@@ -122,6 +122,25 @@ def _validate_entry(path: Path, *, project_root: Path, label: str) -> None:
         )
 
 
+def _is_declared_remote_root(path: Path, *, project_root: Path) -> bool:
+    try:
+        relative_path = path.relative_to(project_root)
+    except ValueError:
+        return False
+    return relative_path.parts[:2] == (".agentic", "remote")
+
+
+def _resolve_shared_root(kind: SurfaceKind, *, project_root: Path, declared_root: Path) -> Path:
+    if declared_root.exists():
+        return declared_root
+
+    fallback_root = project_root / DEFAULT_SURFACE_ROOTS[kind]
+    if _is_declared_remote_root(declared_root, project_root=project_root) and fallback_root.exists():
+        return fallback_root
+
+    return declared_root
+
+
 def resolve_surface(kind: SurfaceKind, project_root: Path) -> list[ResolvedPath]:
     project_root = project_root.expanduser().resolve()
     roots = _surface_roots(project_root, kind)
@@ -141,6 +160,7 @@ def resolve_surface(kind: SurfaceKind, project_root: Path) -> list[ResolvedPath]
         ]
 
     shared_root, local_root = roots
+    shared_root = _resolve_shared_root(kind, project_root=project_root, declared_root=shared_root)
     if kind == "hooks":
         shared_entries = _iter_hook_entries(_hook_anchor_from_surface_root(shared_root))
         local_entries = _iter_hook_entries(_hook_anchor_from_surface_root(local_root))

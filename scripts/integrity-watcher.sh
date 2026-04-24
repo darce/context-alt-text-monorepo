@@ -76,15 +76,16 @@ MAX_BYTES="${INTEGRITY_WATCHER_MAX_BYTES:-5242880}"
 SESSION_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 
 # ---------------------------------------------------------------------------
-# Default watched paths: the source dirs of the two MCP packages plus the
-# lifecycle scripts. Override by passing explicit args.
+# Default watched paths: root-owned lifecycle and contract surfaces. The MCP
+# package implementations now live in external repositories. Override by
+# passing explicit args.
 # ---------------------------------------------------------------------------
 
 if [[ "${#ARGS[@]}" -eq 0 ]]; then
   WATCH_PATHS=(
-    "$PRIMARY_ROOT/packages/agent-handoff-mcp/src"
-    "$PRIMARY_ROOT/packages/agent-orchestrator-mcp/src"
     "$PRIMARY_ROOT/scripts"
+    "$PRIMARY_ROOT/mk"
+    "$PRIMARY_ROOT/docs/agentic/contracts"
   )
 else
   WATCH_PATHS=("${ARGS[@]}")

@@ -43,18 +43,31 @@ if ! command -v agent-handoff-mcp >/dev/null 2>&1; then
 fi
 
 ACTIVE_TASK=$(
-  agent-handoff-mcp --workspace-root "$REPO_ROOT" state --sections identity 2>/dev/null | python3 -c "
-import sys, json
+  python3 - "$REPO_ROOT" <<'PY' 2>/dev/null || true
+import json
+import subprocess
+import sys
+
+repo_root = sys.argv[1]
 try:
-    payload = json.load(sys.stdin)
+    proc = subprocess.run(
+        ["agent-handoff-mcp", "--workspace-root", repo_root, "state", "--sections", "identity"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise SystemExit(0)
+    payload = json.loads(proc.stdout)
 except Exception:
-    print('')
     raise SystemExit(0)
-data = payload.get('data') if isinstance(payload, dict) else None
-active = data.get('active') if isinstance(data, dict) else None
-task_ref = active.get('task_ref') if isinstance(active, dict) else ''
-print(task_ref or '')
-" 2>/dev/null || true
+
+data = payload.get("data") if isinstance(payload, dict) else None
+active = data.get("active") if isinstance(data, dict) else None
+task_ref = active.get("task_ref") if isinstance(active, dict) else ""
+print(task_ref or "")
+PY
 )
 
 if [ -z "$ACTIVE_TASK" ]; then

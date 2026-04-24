@@ -105,9 +105,6 @@ def main() -> int:
     change_kind = _determine_change_kind(tool_name, file_path)
 
     try:
-        env = os.environ.copy()
-        src_path = os.path.join(repo_root, "packages", "agent-handoff-mcp", "src")
-        env["PYTHONPATH"] = src_path + (os.pathsep + env.get("PYTHONPATH", ""))
         subprocess.run(
             [
                 sys.executable,
@@ -121,7 +118,6 @@ def main() -> int:
             ],
             capture_output=True,
             timeout=10,
-            env=env,
         )
     except Exception:
         pass

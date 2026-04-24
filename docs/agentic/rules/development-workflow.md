@@ -51,7 +51,7 @@ E17-10 hoists the shared agentic surface into four standalone private repos unde
 
 - `git@github.com:darce/agentic-system.git` — canonical shared surface repo for skills, hooks, prompts, commands, contracts, and workflow generators
 - `git@github.com:darce/mcp-agent-handoff.git` — standalone handoff MCP package repo (pre-existing; backs `agent-handoff-mcp`)
-- `git@github.com:darce/mcp-agent-orchestrator.git` — standalone orchestrator MCP package repo extracted from `packages/agent-orchestrator-mcp/`
+- `git@github.com:darce/mcp-agent-orchestrator.git` — standalone orchestrator MCP package repo consumed by this monorepo through the installed `agent-orchestrator-mcp` entrypoint
 - `git@github.com:darce/agentic-bootstrap.git` — standalone bootstrap CLI repo that installs and updates the shared surface in consumer projects
 
 MCP-server packages keep the `mcp-` prefix (`mcp-agent-handoff`, `mcp-agent-orchestrator`); shared-surface and CLI repos do not (`agentic-system`, `agentic-bootstrap`). The four URLs above are the canonical names referenced by `docs/agentic/consumer-setup.md` and the doc-lock test in `scripts/test_consumer_setup_doc.py`; do not introduce alternate prefixes.
@@ -198,8 +198,8 @@ Escape hatch: `.task-state/dirty-allowlist` -- a newline-delimited list of repo-
 # Files I'm intentionally editing in parallel with task work:
 docs/agentic/instructions.md
 docs/agentic/rules/development-workflow.md
-# Pre-existing orchestrator package work that pre-dates the active task:
-packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/api.py
+# Pre-existing external package work that pre-dates the active task:
+external/mcp-agent-orchestrator/src/agent_orchestrator_mcp/api.py
 ```
 
 ---
@@ -398,7 +398,7 @@ Trigger paths:
 - `apps/prototype-description-service/`
 - `apps/prototype-wp-alt-context/src/`
 - `apps/prototype-wp-alt-context/js/`
-- `packages/agent-handoff-mcp/`
+- Installed `agent-handoff-mcp`
 - `docs/agentic/contracts/`
 
 1. **Discover the owning contract.** Check [../contracts/](../contracts/). If none exists for a new cross-boundary call, scaffold the contract first.

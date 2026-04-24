@@ -52,14 +52,8 @@ REQUIRED_SECTIONS = (
 )
 VALID_MODES = {"advisory", "execution"}
 SERVER_API_FILES = {
-    "agent-handoff-mcp": (
-        "agent_handoff_mcp",
-        REPO_ROOT / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp" / "api.py",
-    ),
-    "agent-orchestrator-mcp": (
-        "agent_orchestrator_mcp",
-        REPO_ROOT / "packages" / "agent-orchestrator-mcp" / "src" / "agent_orchestrator_mcp" / "api.py",
-    ),
+    "agent-handoff-mcp": ("agent_handoff_mcp", "api.py"),
+    "agent-orchestrator-mcp": ("agent_orchestrator_mcp", "api.py"),
 }
 MAKEFILE_RE = re.compile(r"^([A-Za-z0-9_.-]+):")
 
@@ -68,13 +62,10 @@ class SkillCheckError(Exception):
     pass
 
 
-def _resolve_package_file(local_path: Path, *, package_name: str, relative_name: str) -> Path:
-    if local_path.is_file():
-        return local_path
-
+def _resolve_package_file(*, package_name: str, relative_name: str) -> Path:
     spec = importlib.util.find_spec(package_name)
     if spec is None:
-        raise SkillCheckError(f"unable to resolve `{package_name}` from local source or the import path")
+        raise SkillCheckError(f"unable to resolve `{package_name}` from the import path")
 
     candidate_dirs: list[Path] = []
     if spec.submodule_search_locations:
@@ -91,7 +82,7 @@ def _resolve_package_file(local_path: Path, *, package_name: str, relative_name:
         if candidate.is_file():
             return candidate
 
-    raise SkillCheckError(f"unable to resolve `{package_name}/{relative_name}` from local source or the import path")
+    raise SkillCheckError(f"unable to resolve `{package_name}/{relative_name}` from the import path")
 
 
 def _load_frontmatter_and_body(path: Path) -> tuple[dict, str]:
@@ -158,8 +149,8 @@ def _load_known_tools() -> set[str]:
             # local API manifest in this repo, so they cannot contribute local
             # skill-wiring entries here.
             continue
-        package_name, local_path = api_spec
-        api_path = _resolve_package_file(local_path, package_name=package_name, relative_name="api.py")
+        package_name, relative_name = api_spec
+        api_path = _resolve_package_file(package_name=package_name, relative_name=relative_name)
         known_tools.update(_extract_literal_tool_names(api_path))
     return known_tools
 

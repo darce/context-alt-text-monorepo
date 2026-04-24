@@ -14,7 +14,7 @@
 | Suggestion extension API | `backend` | `docs/agentic/contracts/suggestion-extensions-api.md` | Recognition-service suggestion routes | WordPress proxy, React review UI |
 | Recognition media XMP mapping | `wp-proxy` | `docs/agentic/contracts/recognition-media-xmp-mapping.md` | WordPress XMP persistence flow under `apps/prototype-wp-alt-context/src/media/` | XMP writer, retention/export surfaces |
 | Conflict resolution and sync contract | `wp-proxy` | `docs/agentic/contracts/conflict-resolution-sync-contract.md` | WordPress sync/conflict response mappers | React workbench conflict UI |
-| MCP handoff surface | `agentic-tooling` | `docs/agentic/contracts/agent-handoff-mcp.md` | `packages/agent-handoff-mcp/` API and CLI surface | Orchestrator, workers, review flows |
+| MCP handoff surface | `agentic-tooling` | `docs/agentic/contracts/agent-handoff-mcp.md` | Installed `agent-handoff-mcp` API and CLI surface | Orchestrator, workers, review flows |
 
 ## Contract-Change Steps
 
@@ -79,7 +79,7 @@ Rules:
 | `curation_state` | Python enum in backend domain, PHP backed enum in plugin domain, TypeScript exported const/type in admin API types |
 | `sync_status` / sync-health vocabulary | `docs/agentic/contracts/conflict-resolution-sync-contract.md` plus PHP sync-status response surface |
 | `conflict_type` / `conflict_code` | `docs/agentic/contracts/conflict-resolution-sync-contract.md` |
-| MCP review modes and status values | `docs/agentic/contracts/agent-handoff-mcp.md` and `packages/agent-handoff-mcp/` |
+| MCP review modes and status values | `docs/agentic/contracts/agent-handoff-mcp.md` and installed `agent-handoff-mcp` |
 | `correlation_id` header / log field / `correlation_source` enum | `recognition/interface_adapters/http/middleware/correlation.py` — `X-Request-ID` header, `CorrelationSource` StrEnum (`api`, `worker`), JSON log `correlation_id` field |
 
 ## E15-2b Scan-Queue Correlation Propagation

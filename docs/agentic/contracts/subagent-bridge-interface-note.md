@@ -11,8 +11,8 @@ def run_subagent(
 ) -> dict | str: ...
 ```
 
-Bridge backends are now registered centrally through
-[`backend_registry.py`](../../../packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/backend_registry.py).
+Bridge backends are now registered centrally through the installed
+`agent_orchestrator_mcp.orchestration.backend_registry` module.
 `lane_exec.py` and `review_runner.py` no longer hardcode bridge imports directly;
 they validate the backend name through the registry and dispatch any backend whose
 registered `kind` is `"bridge"` through `resolve_bridge(backend_name)`.

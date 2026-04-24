@@ -289,9 +289,9 @@ Output-contract-v2 pipeline artifacts:
 
 | Stage | Artifact | Path |
 |-------|----------|------|
-| Assessment | Output state-keeping report | `packages/agent-handoff-mcp/docs/assessments/agent-handoff-mcp-output-state-keeping-report.md` |
-| Spec | Output contract v2 spec | `packages/agent-handoff-mcp/docs/specs/agent-handoff-mcp-output-contract-v2-spec.md` |
+| Assessment | Output state-keeping report | external `darce/mcp-agent-handoff` docs |
+| Spec | Output contract v2 spec | external `darce/mcp-agent-handoff` docs |
 | ADR | Typed tool surface consolidation | `docs/adrs/ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md` |
-| Task plan (Tier 1) | Bounded rendering + mutation output | `packages/agent-handoff-mcp/docs/tasks/AHMCP-2-bounded-current-task-rendering-and-mutation-output-task-plan.md` |
-| Task plan (Tier 2) | Response envelope rollout | `packages/agent-handoff-mcp/docs/tasks/AHMCP-3-response-envelope-and-output-contract-v2-rollout-task-plan.md` |
-| Task plan (design) | Tool surface consolidation ADR | `packages/agent-handoff-mcp/docs/tasks/AHMCP-4-typed-tool-surface-consolidation-adr-task-plan.md` |
+| Task plan (Tier 1) | Bounded rendering + mutation output | external `darce/mcp-agent-handoff` docs |
+| Task plan (Tier 2) | Response envelope rollout | external `darce/mcp-agent-handoff` docs |
+| Task plan (design) | Tool surface consolidation ADR | external `darce/mcp-agent-handoff` docs |

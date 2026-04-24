@@ -6,7 +6,7 @@ boundary_owner: agentic-tooling
 
 ## Purpose
 
-`agent-orchestrator-mcp` is the MCP server for orchestration, daemon lifecycle, lane management, worker coordination, plan cursors, and turn metrics. It was extracted from `agent-handoff-mcp` in E12-5 and exposes **~38 tools**. It shares `handoff.db` and `mcp-artifacts.db` with `agent-handoff-mcp`; SQLite WAL mode makes concurrent readers safe.
+`agent-orchestrator-mcp` is the MCP server for orchestration, daemon lifecycle, lane management, worker coordination, plan cursors, and turn metrics. It was extracted from `agent-handoff-mcp` in E12-5 and exposes **16 registered MCP tools**. It shares `handoff.db` and `mcp-artifacts.db` with `agent-handoff-mcp`; SQLite WAL mode makes concurrent readers safe.
 
 For task state, review findings, artifacts, and close checks see [`agent-handoff-mcp.md`](agent-handoff-mcp.md).
 
@@ -33,7 +33,7 @@ Runtime bootstrap:
 
 ```bash
 uv tool install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-handoff.git"
-uv tool install ./packages/agent-orchestrator-mcp
+uv tool install "agent-orchestrator-mcp @ git+ssh://git@github.com/darce/mcp-agent-orchestrator.git"
 
 # Validate runtime wiring and orchestration/ directory resolution
 agent-orchestrator-mcp --workspace-root "$(pwd)" doctor
@@ -42,7 +42,7 @@ agent-orchestrator-mcp --workspace-root "$(pwd)" doctor
 Notes:
 
 - `doctor` verifies the `orchestration/` directory, daemon script presence, and DB accessibility.
-- When running from repo source: `PYTHONPATH="packages/agent-orchestrator-mcp/src:packages/codex-subagent-bridge/src" python3 -m agent_orchestrator_mcp ...`.
+- When developing the external orchestrator repo from source, run its package tests from that checkout. This monorepo consumes the installed `agent-orchestrator-mcp` entrypoint.
 
 ## MCP Tool Surface
 
@@ -133,7 +133,7 @@ Behavioral constraints:
 
 - The `identity` token in `sections` is a special override that requests only the `active` and `limits` envelope fields; it cancels all other section tokens. To request data sections alongside identity, omit the `identity` token since identity fields are always included unconditionally.
 - `evaluate_review_ready` reads test evidence from `state["data"]["tests_recent"]` (the nested envelope path). Callers that mock the state for testing must place `tests_recent` under `data`.
-- Boundary-file detection uses `DEFAULT_BOUNDARY_PREFIXES` (`apps/`, `packages/agent-orchestrator-mcp/src/`, `packages/shared-contracts/schemas/`). Contract co-change is satisfied when at least one file from `DEFAULT_CONTRACT_PREFIXES` (`docs/agentic/contracts/`, `packages/shared-contracts/`) or the contract-change checklist also appears in the diff.
+- Boundary-file detection uses root-owned orchestration and contract surfaces (`apps/`, `mk/`, `scripts/worktree-lane`, `config/lane-orchestration/`, `docs/agentic/contracts/`). External package implementation changes are reviewed in `darce/mcp-agent-orchestrator`.
 
 ## `get_metrics_summary` Snapshot Shape
 
@@ -324,7 +324,7 @@ Lane manifests at `config/lane-orchestration/<task-ref>.json` support these hard
 
 ## BackendAdapter Protocol
 
-All execution backends MUST implement the `BackendAdapter` protocol defined in `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/backend_registry.py`. This ensures consistent handling of `execute()` and `resolve_reasoning_effort()` across Codex, Claude, and local models.
+All execution backends MUST implement the `BackendAdapter` protocol defined by the installed `agent_orchestrator_mcp.orchestration.backend_registry` module in the external orchestrator package. This ensures consistent handling of `execute()` and `resolve_reasoning_effort()` across Codex, Claude, and local models.
 
 ## Tool Signatures (Key)
 

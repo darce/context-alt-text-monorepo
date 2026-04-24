@@ -50,7 +50,7 @@ except ModuleNotFoundError:
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = REPO_ROOT / "docs" / "agentic" / "contracts" / "harness-protocol.yaml"
 VSCODE_SETTINGS_PATH = REPO_ROOT / ".vscode" / "settings.json"
-PYTHON_EXPORTS_RELATIVE = Path("packages/agent-handoff-mcp/src/agent_handoff_mcp/__init__.py")
+PYTHON_EXPORTS_RELATIVE = Path("agent_handoff_mcp/__init__.py")
 CONTRACT_RELATIVE = Path("docs/agentic/contracts/harness-protocol.yaml")
 FIXTURE_COPY_FILES = (
     Path(".vscode/settings.json"),
@@ -64,7 +64,7 @@ FIXTURE_COPY_FILES = (
     Path("scripts/hooks/guard-main-branch.sh"),
     Path("scripts/hooks/guard-worktree-drift.sh"),
 )
-FIXTURE_PACKAGE_SRC = Path("packages/agent-handoff-mcp/src")
+FIXTURE_PACKAGE_SRC = Path(".test-fixtures/agent-handoff-mcp/src")
 EDIT_TOOL_MATCHER = "Edit|Write|apply_patch|create_file|replace_string_in_file|multi_replace_string_in_file"
 REQUIRED_VSCODE_SETTINGS = {
     "files.autoSave": "off",
@@ -127,6 +127,26 @@ def _resolve_package_source_root(local_root: Path, *, package_name: str) -> Path
         return Path(spec.origin).resolve().parent.parent
 
     raise ValueError(f"unable to resolve `{package_name}` from local source or the import path")
+
+
+def _copy_package_source_root(local_root: Path, destination: Path, *, package_name: str) -> None:
+    if local_root.is_dir():
+        shutil.copytree(local_root, destination)
+        return
+
+    spec = importlib.util.find_spec(package_name)
+    if spec is None:
+        raise ValueError(f"unable to resolve `{package_name}` from local source or the import path")
+
+    if spec.submodule_search_locations:
+        package_dir = Path(next(iter(spec.submodule_search_locations))).resolve()
+    elif spec.origin:
+        package_dir = Path(spec.origin).resolve().parent
+    else:
+        raise ValueError(f"unable to resolve `{package_name}` from local source or the import path")
+
+    destination.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(package_dir, destination / package_dir.name)
 
 
 def _load_contract(*, repo_root: Path = REPO_ROOT) -> dict:
@@ -381,9 +401,10 @@ def _build_guard_fixture(contract: dict, *, repo_root: Path) -> tuple[tempfile.T
 
     package_src = repo / FIXTURE_PACKAGE_SRC
     package_src.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(
-        _resolve_package_source_root(repo_root / FIXTURE_PACKAGE_SRC, package_name="agent_handoff_mcp"),
+    _copy_package_source_root(
+        repo_root / FIXTURE_PACKAGE_SRC,
         package_src,
+        package_name="agent_handoff_mcp",
     )
 
     contract_path = repo / CONTRACT_RELATIVE
@@ -931,7 +952,7 @@ _DASHBOARD_EXTRA_FILES = (
     Path("CLAUDE.md"),
     Path(".github/copilot-instructions.md"),
     Path("Makefile"),
-    Path("packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/dashboard_extension.py"),
+    Path("docs/agentic/contracts/agent-orchestrator-mcp.md"),
 )
 
 

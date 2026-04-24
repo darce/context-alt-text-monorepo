@@ -137,8 +137,8 @@ Both daemons default to `BACKEND=codex-cli`.
 - `BACKEND=local-model-openai`: uses a generic OpenAI-compatible local model API (Ollama, vLLM).
 
 Backend dispatch is now registry-based, not duplicated per caller. The shared
-registry lives at
-[`backend_registry.py`](../../../packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/backend_registry.py).
+registry lives in the installed
+`agent_orchestrator_mcp.orchestration.backend_registry` module.
 `lane_exec.py`, `review_runner.py`, and the daemon CLI surfaces all read backend
 choices from that registry. New bridge backends should be added there instead of
 editing `if backend == ...` branches in multiple files.

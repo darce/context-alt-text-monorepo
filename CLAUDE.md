@@ -176,7 +176,7 @@ The handoff response envelope appends an `oversize_response: ...` advisory warni
 - Lower `top_n_blockers`, `top_n_actions`, `top_n_decisions`, `top_n_tests`, `top_n_findings` to reduce row counts.
 - `fields=...` (where supported) to project specific columns.
 
-See [packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md](packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md) for the full set of bounded-read levers and example call patterns.
+See the installed `agent-handoff-mcp` package documentation for the full set of bounded-read levers and example call patterns.
 
 ### MCP Handoff (MANDATORY)
 

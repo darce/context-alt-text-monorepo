@@ -6,7 +6,7 @@ boundary_owner: agentic-tooling
 
 ## Purpose
 
-`agent-handoff-mcp` is the portable MCP server for agent coordination state. After the AHMCP-6 event, review, next-action, and artifact-domain consolidation plus profile-removal stretch work, AHMCP-8 verified-test search/read support, and AHMCP-23 observatory dashboard split, it exposes a single **20-tool** MCP surface for task state, review findings, verification evidence, artifacts, export/import, handoff close checks, and DASHBOARD.txt generation. Orchestration, daemon lifecycle, lane management, and turn metrics are served by [`agent-orchestrator-mcp`](agent-orchestrator-mcp.md).
+`agent-handoff-mcp` is the portable MCP server for agent coordination state. After the AHMCP-6 event, review, next-action, and artifact-domain consolidation plus profile-removal stretch work, AHMCP-8 verified-test search/read support, and AHMCP-23 observatory dashboard split, it exposes a single **23-tool** MCP surface for task state, review findings, verification evidence, artifacts, export/import, handoff close checks, and DASHBOARD.txt generation. Orchestration, daemon lifecycle, lane management, and turn metrics are served by [`agent-orchestrator-mcp`](agent-orchestrator-mcp.md).
 
 ## Runtime Configuration
 
@@ -18,7 +18,7 @@ Supported config inputs:
 - `--state-dir` or `AGENT_HANDOFF_STATE_DIR`
 - `--current-task-path` or `AGENT_HANDOFF_CURRENT_TASK_PATH`
 - `--exports-dir` or `AGENT_HANDOFF_EXPORTS_DIR`
-- `--tool-profile` or `AGENT_HANDOFF_TOOL_PROFILE` — legacy compatibility input. `all`, `core`, and `extended` are accepted, but all launches now expose the same 19-tool surface.
+- `--tool-profile` or `AGENT_HANDOFF_TOOL_PROFILE` — legacy compatibility input. The installed server exposes the unified `all` surface.
 - `AGENT_HANDOFF_DEFAULT_AGENT`
 - `AGENT_HANDOFF_DEFAULT_BRANCH`
 - `AGENT_HANDOFF_DEFAULT_COMMIT_SHA`
@@ -44,7 +44,7 @@ cd "${REPO_ROOT:-$PWD}"
 uv tool install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-handoff.git"
 
 # Orchestration server (daemons, workers, lanes, metrics)
-uv tool install ./packages/agent-orchestrator-mcp
+uv tool install "agent-orchestrator-mcp @ git+ssh://git@github.com/darce/mcp-agent-orchestrator.git"
 
 # Codex subagent bridge for BACKEND=codex-subagent
 python3 -m pip install -e packages/codex-subagent-bridge
@@ -362,7 +362,7 @@ get_verified_tests(
       "lane_id": "backend-domain",
       "branch": "feature/my-task",
       "commit_sha": "0123456789abcdef0123456789abcdef01234567",
-      "command": "PYENV_VERSION=description-service pytest packages/agent-handoff-mcp/tests/test_schema_migrations.py -q",
+      "command": "PYENV_VERSION=description-service pytest tests/test_schema_migrations.py -q",
       "passed": true,
       "verified_at": "2026-04-10 03:20:23"
     }
@@ -495,7 +495,7 @@ Fallback subcommands:
 
 Orchestration subcommands (`orchestrator-start`, `worker-start`, `dispatch`, `orchestrator-cycle`, `worker-events`, `list-backends`, `metrics`, etc.) are served exclusively by `agent-orchestrator-mcp`. See [`agent-orchestrator-mcp.md`](agent-orchestrator-mcp.md).
 
-**CLI surface note:** `agent-handoff-mcp` CLI is ledger-only. It exposes `serve-stdio`, `serve-http`, `doctor`, `dashboard`, and the 17 ledger MCP tools as CLI wrappers, plus two CLI-only artifact variants (`artifact-list`, `artifact-terms`). All orchestration and lane-management commands are exclusively on `agent-orchestrator-mcp`.
+**CLI surface note:** `agent-handoff-mcp` CLI is ledger-only. It exposes `serve-stdio`, `serve-http`, `doctor`, `render-handoff`, the ledger MCP tools as CLI wrappers, and two CLI-only artifact variants (`artifact-list`, `artifact-terms`). All orchestration and lane-management commands are exclusively on `agent-orchestrator-mcp`.
 
 ## HTTP Transport
 

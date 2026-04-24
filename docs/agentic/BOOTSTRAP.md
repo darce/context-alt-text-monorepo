@@ -84,7 +84,7 @@ Non-interactive harness rule: committed MCP configs use `PYENV_VERSION=descripti
 
 ### Core Ledger Server (`agent-handoff-mcp`)
 
-Handles task state, review findings, exports/imports, close checks, and artifacts (27 tools).
+Handles task state, review findings, exports/imports, close checks, and artifacts (23 registered MCP tools).
 
 ```text
 .vscode/mcp.json  →  env { PYENV_VERSION=description-service, PYENV_ROOT, PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  agent-handoff-mcp --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --current-task-path ${workspaceFolder}/CURRENT_TASK.json --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
@@ -92,7 +92,7 @@ Handles task state, review findings, exports/imports, close checks, and artifact
 
 ### Orchestration Server (`agent-orchestrator-mcp`)
 
-Handles daemons, workers, lane management, plan cursors, and turn metrics (~38 tools).
+Handles daemons, workers, lane management, plan cursors, and turn metrics (16 registered MCP tools).
 
 ```text
 .vscode/mcp.json  →  env { PYENV_VERSION=description-service, PYENV_ROOT, PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  agent-orchestrator-mcp --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --current-task-path ${workspaceFolder}/CURRENT_TASK.json --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
@@ -102,7 +102,7 @@ Both servers share `handoff.db` and `mcp-artifacts.db` on disk; SQLite WAL mode 
 
 ```bash
 uv tool install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-handoff.git"
-uv tool install ./packages/agent-orchestrator-mcp
+uv tool install "agent-orchestrator-mcp @ git+ssh://git@github.com/darce/mcp-agent-orchestrator.git"
 ```
 
 The old repo-intel helpers remain a separate decomposition task and are not part of either package.
@@ -112,17 +112,17 @@ The old repo-intel helpers remain a separate decomposition task and are not part
 - VS Code 1.99+ with Copilot (or other MCP-capable client)
 - `.vscode/mcp.json` already committed to the repo
 - Python 3.11+ environment
-- Installed `agent-handoff-mcp` plus the repo-local `packages/agent-orchestrator-mcp/src`
+- Installed `agent-handoff-mcp` and `agent-orchestrator-mcp` from their external repositories
 - Python resolved through pyenv or another Python 3.11+ environment with the
   package dependencies installed
 
 ### Install Options
 
-Local install from a checked-out repo:
+Install from the external MCP repositories:
 
 ```bash
 uv tool install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-handoff.git"
-uv tool install /path/to/context-alt-text-monorepo/packages/agent-orchestrator-mcp
+uv tool install "agent-orchestrator-mcp @ git+ssh://git@github.com/darce/mcp-agent-orchestrator.git"
 ```
 
 ### Validation
@@ -130,15 +130,15 @@ uv tool install /path/to/context-alt-text-monorepo/packages/agent-orchestrator-m
 Command Palette → `MCP: List Servers` → both "altcontext-mcp" and "altcontext-orchestrator-mcp" should appear.
 
 ```bash
-agent-handoff-mcp --workspace-root "$(pwd)" doctor       # 27 tools
-agent-orchestrator-mcp --workspace-root "$(pwd)" doctor  # ~38 tools
+agent-handoff-mcp --workspace-root "$(pwd)" doctor       # 23 registered MCP tools
+agent-orchestrator-mcp --workspace-root "$(pwd)" doctor  # 16 registered MCP tools
 ```
 
 ### Available Tools
 
-**`agent-handoff-mcp`** (core ledger, 27 tools): task state, decisions, findings, blockers, tests, actions, artifacts, export/import, close check, `load_session`, `close_slice`, `search_handoff`.
+**`agent-handoff-mcp`** (core ledger, 23 registered MCP tools): task state, decisions, findings, blockers, tests, actions, artifacts, export/import, close check, session loading, slice closure, and handoff search.
 
-**`agent-orchestrator-mcp`** (~38 tools): daemon lifecycle, workers, lane management, plan cursors, turn metrics, dispatch, backends, cross-task tools (`switch_task`, `get_review_findings_summary`, `reconcile_review_findings`, `get_latest_slice_review_packet`).
+**`agent-orchestrator-mcp`** (16 registered MCP tools): daemon lifecycle, workers, lane management, plan cursors, turn metrics, dispatch, backends, cross-task tools (`switch_task`, `get_review_findings_summary`, `reconcile_review_findings`, `get_latest_slice_review_packet`).
 
 Example CLI equivalents:
 
@@ -264,7 +264,7 @@ A count of `-1` for any table means the table is absent and structured search is
 
 `make lane-run` automates worker execution via `codex exec`. The pipeline:
 
-1. `packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration/lane_prompt.py` renders an actionable worker prompt from MCP state (open lane messages, pending actions, open blockers, open findings).
+1. `agent_orchestrator_mcp.orchestration.lane_prompt` renders an actionable worker prompt from MCP state (open lane messages, pending actions, open blockers, open findings).
 2. `codex exec` runs in the lane worktree with that prompt.
 3. The worker outputs a structured JSON result matching the schema from `scripts/mcp/lane_result.py schema`.
 4. `scripts/mcp/lane_result.py handoff` converts the result into a `scripts/worktree-lane report` call.

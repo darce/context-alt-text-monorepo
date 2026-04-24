@@ -49,7 +49,7 @@
 
 ## Handoff Write Resolution
 
-For backend tooling that writes through `packages/agent-handoff-mcp/`, resolve task context in this order only:
+For backend tooling that writes through the installed `agent-handoff-mcp`, resolve task context in this order only:
 
 1. Explicit `task_ref`
 2. Workspace-path lookup via `_resolve_workspace_handoff_row`

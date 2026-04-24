@@ -17,12 +17,7 @@ from _harness_protocol import HarnessContractMissingError, find_permitted_main_s
 
 
 MAIN_BRANCHES = frozenset({"main", "master"})
-PACKAGE_SRC = Path(__file__).resolve().parents[2] / "packages" / "agent-handoff-mcp" / "src"
-PACKAGE_ROOT = PACKAGE_SRC / "agent_handoff_mcp"
 TRACE_LOG_NAME = "branch_isolation_guard.jsonl"
-
-if str(PACKAGE_SRC) not in sys.path:
-    sys.path.insert(0, str(PACKAGE_SRC))
 
 
 @dataclass(frozen=True)

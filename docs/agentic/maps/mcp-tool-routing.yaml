@@ -49,8 +49,10 @@ on_demand:
         - run_structured_turn
         - reconcile_review_findings
       paths:
-        - "packages/agent-orchestrator-mcp/**"
         - "config/lane-orchestration/**"
+        - "docs/agentic/contracts/agent-orchestrator-mcp.md"
+        - "mk/lane-*.mk"
+        - "mk/orchestrator.mk"
         - "scripts/worktree-lane/**"
       roles:
         - orchestration

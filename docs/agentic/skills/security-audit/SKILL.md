@@ -44,8 +44,8 @@ Produce a structured, MCP-recorded security assessment with actionable findings.
 
 This audit covers the monorepo content within the plugin boundary rule:
 
-- `packages/agent-handoff-mcp/` — MCP server handling task state, review findings, decisions
-- `packages/agent-orchestrator-mcp/` — MCP server handling orchestration, lane management, worker daemons
+- Installed `agent-handoff-mcp` — MCP server handling task state, review findings, decisions
+- Installed `agent-orchestrator-mcp` — MCP server handling orchestration, lane management, worker daemons
 - `packages/codex-subagent-bridge/` — Bridge for external agent integration
 - `apps/prototype-description-service/` — Python backend service
 - `apps/prototype-wp-alt-context/` — WordPress plugin (PHP + React/TS)
@@ -115,8 +115,7 @@ For Python packages:
 ls packages/*/requirements*.txt packages/*/poetry.lock packages/*/uv.lock 2>/dev/null
 
 # Review direct dependencies
-cat packages/agent-handoff-mcp/pyproject.toml | grep -A 30 '\[project\]'
-cat packages/agent-orchestrator-mcp/pyproject.toml | grep -A 30 '\[project\]'
+python -m pip show agent-handoff-mcp agent-orchestrator-mcp
 ```
 
 For Node.js:
@@ -164,11 +163,11 @@ This is the most critical phase for this monorepo. MCP servers handle cross-agen
 Read and audit these files:
 
 ```
-packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py
-packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py
-packages/agent-handoff-mcp/src/agent_handoff_mcp/shared_db_utils.py
-packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/api.py
-packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/lanes.py
+agent_handoff_mcp.api
+agent_handoff_mcp.core
+agent_handoff_mcp.shared_db_utils
+agent_orchestrator_mcp.api
+agent_orchestrator_mcp.lanes
 ```
 
 ## Phase 4 — CI/CD Pipeline Security

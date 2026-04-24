@@ -115,7 +115,7 @@ The repo ships two portable invocation surfaces to Codex. Both are generated fro
 Run at every session start (cold start, mid-task re-entry, lane inherit).
 
 1. Apply the **[MCP Loading Protocol](rules/mcp-loading-protocol.md)** before any MCP read. Read [`maps/mcp-tool-routing.yaml`](maps/mcp-tool-routing.yaml) and surface only servers whose triggers match the current prompt + task scope. `agent-handoff-mcp` always loaded; others (`agent-orchestrator-mcp`, `context7`, `computer-use`) on-demand. Harness-agnostic.
-2. Query MCP handoff state. Routine check: `get_handoff_state(sections="identity")` (cheapest read — returns `active` + `limits`). Hot-state load: full `get_handoff_state(task_ref="<task>")`. On `oversize_response` warning (~20 KB/~5 k tokens), narrow with `sections=...`, `detail="summary"`, lower `top_n_*`, or `fields=...` per [token-efficient-usage.md](../../packages/agent-handoff-mcp/docs/guides/token-efficient-usage.md).
+2. Query MCP handoff state. Routine check: `get_handoff_state(sections="identity")` (cheapest read — returns `active` + `limits`). Hot-state load: full `get_handoff_state(task_ref="<task>")`. On `oversize_response` warning (~20 KB/~5 k tokens), narrow with `sections=...`, `detail="summary"`, lower `top_n_*`, or `fields=...` per the installed `agent-handoff-mcp` package documentation.
 3. In a lane: run `make lane-inbox` to pick up routed findings, blockers, and dispatch messages before editing.
 4. Load role routing from the Role Selection table. Read the linked context map, guidelines, and testing guide.
 5. Check open findings: `review_findings(review={"operation":"list","status":"open"})`.

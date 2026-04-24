@@ -93,7 +93,7 @@ OCI VM
 │       ├── payload      JSONB
 │       └── received_at  TIMESTAMPTZ
 │
-└── Recognition Postgres (context_alt_text_service) — existing
+└── Recognition Postgres (alt_context_service) — existing
     ├── tenant_id on all tables (same UUID as business.tenants.id)
     ├── RLS policies enforce tenant isolation
     └── No FK to business DB — trusts middleware-set session context

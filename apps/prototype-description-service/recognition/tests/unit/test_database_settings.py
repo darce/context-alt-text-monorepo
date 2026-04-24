@@ -16,7 +16,7 @@ def test_database_settings_expand_env_file_references(monkeypatch, tmp_path: Pat
                 "PGPASSWORD=context",
                 "PGHOST=localhost",
                 "PGPORT=5432",
-                "DB_NAME=context_alt_text_service",
+                "DB_NAME=alt_context_service",
                 "POSTGRES_DSN=postgresql+asyncpg://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${DB_NAME}",
             )
         )
@@ -33,8 +33,8 @@ def test_database_settings_expand_env_file_references(monkeypatch, tmp_path: Pat
     finally:
         settings_module.get_database_settings.cache_clear()
 
-    assert settings.postgres_dsn == "postgresql+asyncpg://context:context@localhost:5432/context_alt_text_service"
-    assert settings.postgres_sync_dsn == "postgresql+psycopg://context:context@localhost:5432/context_alt_text_service"
+    assert settings.postgres_dsn == "postgresql+asyncpg://context:context@localhost:5432/alt_context_service"
+    assert settings.postgres_sync_dsn == "postgresql+psycopg://context:context@localhost:5432/alt_context_service"
 
 
 def test_env_example_defines_reset_prerequisites() -> None:
@@ -61,8 +61,8 @@ def test_database_settings_default_to_canonical_local_database_name(monkeypatch,
     finally:
         settings_module.get_database_settings.cache_clear()
 
-    assert settings.postgres_dsn == "postgresql+asyncpg://context:context@localhost:5432/context_alt_text_service"
-    assert settings.postgres_sync_dsn == "postgresql+psycopg://context:context@localhost:5432/context_alt_text_service"
+    assert settings.postgres_dsn == "postgresql+asyncpg://context:context@localhost:5432/alt_context_service"
+    assert settings.postgres_sync_dsn == "postgresql+psycopg://context:context@localhost:5432/alt_context_service"
 
 
 def test_database_settings_expose_timeout_defaults(monkeypatch, tmp_path: Path) -> None:
@@ -105,7 +105,7 @@ def test_database_settings_can_disable_asyncpg_statement_cache(monkeypatch, tmp_
 
     for key in ("PGUSER", "PGPASSWORD", "PGHOST", "PGPORT", "DB_NAME", "POSTGRES_SYNC_DSN"):
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("POSTGRES_DSN", "postgresql+asyncpg://context:context@localhost:5432/context_alt_text_service")
+    monkeypatch.setenv("POSTGRES_DSN", "postgresql+asyncpg://context:context@localhost:5432/alt_context_service")
     monkeypatch.setenv("DB_DISABLE_STMT_CACHE", "1")
     monkeypatch.setenv("DB_STATEMENT_TIMEOUT", "11s")
     monkeypatch.setenv("DB_IDLE_IN_TXN_TIMEOUT", "31s")

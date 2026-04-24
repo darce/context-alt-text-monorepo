@@ -6,6 +6,8 @@ import shutil
 import sys
 from pathlib import Path
 
+import pytest
+
 from scripts.check_skills import check_skills
 
 
@@ -88,14 +90,19 @@ def _make_repo(tmp_path: Path, skill_content: str) -> Path:
     return repo
 
 
-def _write_overlay_manifest(repo: Path) -> None:
+def _write_overlay_manifest(
+    repo: Path,
+    *,
+    shared_root: str = ".claude/skills",
+    local_root: str = "local/.claude/skills",
+) -> None:
     manifest = {
         "schema_version": 1,
         "remote_clone_path": str(repo / ".agentic" / "remote"),
         "surfaces": {
             "skills": {
-                "shared_root": ".claude/skills",
-                "local_root": "local/.claude/skills",
+                "shared_root": shared_root,
+                "local_root": local_root,
             }
         },
     }
@@ -139,6 +146,33 @@ def test_local_skill_wins_when_shared_skill_is_invalid(tmp_path: Path) -> None:
     repo = _make_repo(tmp_path, "# broken shared skill\n")
     _write(repo / "local" / ".claude" / "skills" / "demo" / "SKILL.md", _valid_skill())
     _write_overlay_manifest(repo)
+
+    failures, exit_code = check_skills(repo_root=repo)
+
+    assert exit_code == 0
+    assert failures == []
+
+
+def test_overlay_manifest_falls_back_to_live_shared_skills_when_remote_root_is_missing(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path, _valid_skill())
+    _write(repo / "local" / ".claude" / "skills" / "local-only" / "SKILL.md", _valid_skill().replace("name: demo", "name: local-only"))
+    _write_overlay_manifest(repo, shared_root=".agentic/remote/.claude/skills")
+
+    failures, exit_code = check_skills(repo_root=repo)
+
+    assert exit_code == 0
+    assert failures == []
+
+
+def test_check_skills_falls_back_to_importable_mcp_api_when_local_package_source_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _make_repo(tmp_path, _valid_skill())
+    shutil.rmtree(repo / "packages" / "agent-handoff-mcp")
+    site_packages = tmp_path / "site-packages"
+    _write(site_packages / "agent_handoff_mcp" / "__init__.py", "")
+    _write(site_packages / "agent_handoff_mcp" / "api.py", 'TOOL_DESCRIPTIONS: dict[str, str] = {"review_findings": "x"}\n')
+    monkeypatch.syspath_prepend(str(site_packages))
 
     failures, exit_code = check_skills(repo_root=repo)
 

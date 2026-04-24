@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-TASK_TAG_RE = re.compile(r"^(?:feat|fix|docs|refactor|test)\(((?:AHMCP|E\d+)-\d+)\):\s+", re.IGNORECASE)
+TASK_TAG_RE = re.compile(r"^(?:feat|fix|docs|refactor|test)\((E\d+-\d+)\):\s+", re.IGNORECASE)
 PLAN_DIRS = (
     Path("docs") / "tasks",
 )

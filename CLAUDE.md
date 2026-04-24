@@ -115,20 +115,22 @@ This project has NO production users and NO existing data to preserve.
 - No data migrations. Schema changes go directly in `001_identity_schema.py`.
 - Clean rewrites over backward-compatibility shims. Delete-over-flag.
 
-### In-Monorepo Package Test Invocation
+### External MCP Package Verification
 
-> **Always invoke `agent-handoff-mcp` and `agent-orchestrator-mcp` tests via the package Makefile target, never via a direct `pytest` command.**
+> **For E17-13 cleanup and later consumer-bound verification, validate the MCP packages from standalone refs in a scratch venv instead of using package-local Makefile targets.**
 
 ```bash
-cd packages/agent-handoff-mcp && make test-handoff
-cd packages/agent-orchestrator-mcp && make test-orchestrator
+python3 -m venv /tmp/e17-13-external-mcp
+/tmp/e17-13-external-mcp/bin/pip install --quiet \
+    "git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.2" \
+    "git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.3"
+/tmp/e17-13-external-mcp/bin/agent-handoff-mcp --workspace-root . doctor
+/tmp/e17-13-external-mcp/bin/agent-orchestrator-mcp --workspace-root . --help
 ```
 
-The Makefile sets `PYTHONPATH` to the **current worktree's** `src/` directory before invoking pytest. Direct `pytest` invocations rely on whichever editable install is registered in the Python environment, and editable installs are environment-wide: a single `pip install -e packages/agent-handoff-mcp` from one checkout makes every Python interpreter in the venv resolve `import agent_handoff_mcp` to that path regardless of which git worktree the test session is running from. Linked worktrees inherit that pointer, so a refactor that lives only in the linked worktree's source will silently NOT be exercised by tests run inside that worktree — pytest runs against the root worktree's source instead, producing false-positive verification reports.
+This external-install verification path proves the monorepo can consume the packaged MCP surfaces without any editable install from this checkout. Use a scratch venv, not a worktree-local `PYTHONPATH` override, and keep the verification anchored to the published `git+ssh://` refs the task plan selected.
 
-**Enforcement:** Both packages' `tests/conftest.py` contain a `pytest_sessionstart` guard that imports the package, compares its resolved `__file__` against the worktree-local source path, and aborts the session with a `pytest.UsageError` if they differ. The guard cannot be bypassed without editing the conftest. The error message names the Makefile target the caller should use.
-
-See [docs/agentic/rules/testing-python.md § In-Monorepo Package Test Invocation](docs/agentic/rules/testing-python.md#in-monorepo-package-test-invocation-mandatory) for the full rationale and the AHMCP-10 regression that motivated the enforcement.
+See [docs/agentic/rules/testing-python.md § External MCP Package Verification](docs/agentic/rules/testing-python.md#external-mcp-package-verification-e17-13) for the live convention used by this cleanup task.
 
 ### Commit SHA Provenance Discipline
 
@@ -221,7 +223,7 @@ Derived copy from the canonical source: [docs/agentic/constitution.md](docs/agen
 - [rg-009] helpful=1 harmful=0 :: No task-specific logic in generic modules. If a generic utility contains `if task_ref == "some-task"` or hardcoded domain strings for a specific task, extract that logic to a config-driven policy module or the task's manifest. It becomes dead code once the task is done.
 - [rg-010] helpful=1 harmful=0 :: IDE tool output may be stale after external writes. Editor-integrated `read_file` and `grep_search` tools read from the IDE's in-memory file model, not from disk. After git operations (rebase, cherry-pick, merge, worktree intake) or edits by other agents/terminals, the model can lag behind the filesystem. When a review finding seems surprising, cross-check with a terminal command (`grep -n`, `wc -l`, `sed -n`) before recording it. This caused an entire review cycle of false positives against `scripts/mcp/orchestrator_daemon.py` (IDE showed ~700 lines, disk had 850).
 - [rg-013] helpful=1 harmful=0 :: `agent_handoff_mcp/core.py` must remain pure handoff-state CRUD. No orchestration imports, no subprocess calls, no lock management. Scope: the standalone `agent-handoff-mcp` package available to the active workspace. Enforce during code review.
-- [rg-014] helpful=1 harmful=0 :: `agent_orchestrator_mcp` modules must use late-binding imports (function-level) for `agent_handoff_mcp` symbols to preserve the clean split seam and avoid load-time coupling. Scope: `packages/agent-orchestrator-mcp/`.
+- [rg-014] helpful=1 harmful=0 :: `agent_orchestrator_mcp` modules must use late-binding imports (function-level) for `agent_handoff_mcp` symbols to preserve the clean split seam and avoid load-time coupling. Scope: the standalone `agent-orchestrator-mcp` package available to the active workspace.
 - [rg-015] helpful=1 harmful=0 :: Boundary adapters must not invent contract metadata. When a controller/client/adapter wraps or normalizes remote payloads, every envelope field (`limit`, `offset`, `total`, `data_source`, status/projection metadata) must come from the request, the upstream payload, or an explicitly documented fallback. Never fabricate pagination or provenance metadata from convenience guesses like `count(payload)` unless the contract explicitly defines that derivation. If the upstream shape violates the expected contract, return an explicit error instead of silently supporting both shapes.
 - [rg-016] helpful=0 harmful=0 :: PHP runtime autoload parity must match tests. New runtime classes added under `apps/prototype-wp-alt-context/src/` with WordPress-style filenames (`class-*.php`, `interface-*.php`) are not PSR-4 autoloadable via Composer by default. When a new class is introduced in this naming scheme, either add the explicit `require_once` from the owning runtime entrypoint or use a PSR-4-compliant filename, and verify with a real runtime-style check such as `php -r "require 'vendor/autoload.php'; var_export(class_exists('AltContext\\\\Foo\\\\Bar'));"`
 - [rg-017] helpful=1 harmful=0 :: Never force-remove a dirty linked worktree without triaging every uncommitted file. Uncommitted edits in a linked worktree are local to that worktree and do not exist in the root or on any branch. `git worktree remove --force` on a dirty worktree permanently discards those edits. Before removing: run `git -C <path> status --short`; if dirty files exist, commit task-owned changes on the branch, move cross-task bleed to the root worktree, and confirm redundant files against main. If >5 dirty files or multiple task refs are present, stop and ask the user. See [development-workflow.md § Dirty Worktree Teardown](docs/agentic/rules/development-workflow.md#dirty-worktree-teardown-mandatory).

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -21,10 +23,12 @@ from scripts.check_harness_sync import (
     _check_cold_start,
     _check_dashboard_naming,
     _check_hooks,
+    _check_python_api_surface,
     _check_workspace_settings,
     _check_worktree_drift,
     _fixture_env,
     _load_contract,
+    _load_python_exports,
     _main_guard_paths,
     _run_python_hook,
     _run_shell_hook,
@@ -104,6 +108,28 @@ def _valid_contract() -> dict:
     }
 
 
+def _copy_handoff_package_src(destination: Path) -> None:
+    local_src = REPO_ROOT / "packages" / "agent-handoff-mcp" / "src"
+    if local_src.exists():
+        shutil.copytree(local_src, destination)
+        return
+
+    spec = importlib.util.find_spec("agent_handoff_mcp")
+    if spec is None:
+        raise FileNotFoundError("agent_handoff_mcp package source is not available for fixture setup")
+
+    package_dir: Path | None = None
+    if spec.submodule_search_locations:
+        package_dir = Path(next(iter(spec.submodule_search_locations))).resolve()
+    elif spec.origin:
+        package_dir = Path(spec.origin).resolve().parent
+
+    if package_dir is None:
+        raise FileNotFoundError("agent_handoff_mcp package source is not available for fixture setup")
+
+    shutil.copytree(package_dir.parent, destination)
+
+
 def _write_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -117,7 +143,7 @@ def _write_repo(tmp_path: Path) -> Path:
             destination.chmod(0o755)
     package_src = repo / "packages" / "agent-handoff-mcp" / "src"
     package_src.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(REPO_ROOT / "packages" / "agent-handoff-mcp" / "src", package_src)
+    _copy_handoff_package_src(package_src)
     contract_path = repo / "docs" / "agentic" / "contracts" / "harness-protocol.yaml"
     contract_path.parent.mkdir(parents=True, exist_ok=True)
     contract_path.write_text(yaml.safe_dump(_valid_contract(), sort_keys=False), encoding="utf-8")
@@ -136,6 +162,13 @@ def _write_overlay_manifest(repo: Path) -> None:
         },
     }
     (repo / ".agentic-overlay.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+
+def _write_importable_handoff_package(site_packages: Path, *, exports: list[str]) -> None:
+    package_root = site_packages / "agent_handoff_mcp"
+    package_root.mkdir(parents=True, exist_ok=True)
+    exported = ", ".join(repr(name) for name in exports)
+    (package_root / "__init__.py").write_text(f"__all__ = [{exported}]\n", encoding="utf-8")
 
 
 def test_cold_start_passes_when_phrase_present_in_references(tmp_path: Path) -> None:
@@ -416,6 +449,34 @@ def test_real_contract_passes_run_checks() -> None:
     contract = _load_contract()
     errors = run_checks(contract, check_api_surface=True)
     assert errors == [], errors
+
+
+def test_load_contract_falls_back_to_live_contract_surface_when_remote_root_is_missing(tmp_path: Path) -> None:
+    repo = _write_repo(tmp_path)
+    _write_overlay_manifest(repo)
+
+    contract = _load_contract(repo_root=repo)
+
+    assert contract["version"] == 1
+    assert _format_success_message(repo_root=repo) == "check-harness-sync: OK (contracts=1; shared=1 local=0 overlapping=0)"
+
+
+def test_python_api_surface_falls_back_to_importable_package_when_local_source_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _write_repo(tmp_path)
+    shutil.rmtree(repo / "packages" / "agent-handoff-mcp")
+    site_packages = tmp_path / "site-packages"
+    _write_importable_handoff_package(site_packages, exports=["RuntimeConfig", "configure_runtime"])
+    monkeypatch.syspath_prepend(str(site_packages))
+
+    exports = _load_python_exports(repo_root=repo)
+
+    assert exports == {"RuntimeConfig", "configure_runtime"}
+    assert _check_python_api_surface(
+        {"python_api_fallback": {"required_exports": ["RuntimeConfig", "configure_runtime"]}},
+        repo_root=repo,
+    ) == []
 
 
 def test_load_contract_uses_overlay_manifest_with_top_level_replace_semantics(tmp_path: Path) -> None:

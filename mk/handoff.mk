@@ -139,7 +139,7 @@ review-ready:
 		exit 1; \
 	fi
 	@PYTHONPATH="$(WORKTREE_MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) "$(WORKTREE_ORCHESTRATION_DIR)/review_ready.py" \
+		$(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.review_ready \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--worktree-root "$(WORKTREE_ROOT_REAL)" \
 		--task-ref "$(TASK)" \
@@ -147,7 +147,7 @@ review-ready:
 
 # CI/local guard for parser + lifecycle + close-check integrity
 handoff-integrity-check:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(PYTHON) "$(ORCHESTRATION_DIR)/handoff_integrity_guard.py"
+	@$(MCP_PYTHON) "$(WORKTREE_ROOT_REAL)/scripts/mcp/handoff_integrity_guard.py"
 
 handoff-inbox:
 	@if [ "$(IN_ORCHESTRATOR_ROOT)" != "1" ]; then \
@@ -179,7 +179,7 @@ handoff-inbox:
 	@echo ""; \
 	echo "Guidance summary:"; \
 	PYTHONPATH="$(MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) "$(ORCHESTRATION_DIR)/handoff_guidance_summary.py" \
+		$(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.handoff_guidance_summary \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		$(if $(LANE),--lane-id "$(LANE)",)
@@ -204,7 +204,7 @@ handoff-dispatch:
 		exit 1; \
 	fi
 	@PYTHONPATH="$(WORKTREE_MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) "$(WORKTREE_ORCHESTRATION_DIR)/review_dispatch.py" \
+		$(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.review_dispatch \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
@@ -215,7 +215,7 @@ review-run:
 		exit 1; \
 	fi
 	@PYTHONPATH="$(WORKTREE_MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) "$(WORKTREE_ORCHESTRATION_DIR)/review_runner.py" run \
+		$(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.review_runner run \
 		--worktree-path "$(or $(WORKTREE_PATH),$(LANE_WORKTREE_TARGET))" \
 		$(if $(LANE),--lane-id "$(LANE)",) \
 		$(if $(TASK),--task-ref "$(TASK)",) \

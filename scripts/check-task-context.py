@@ -15,9 +15,7 @@ import json
 import os
 import subprocess
 import sys
-import importlib
 from pathlib import Path
-import types
 
 EXIT_OK = 0
 EXIT_INFRA_ERROR = 1
@@ -30,32 +28,10 @@ AMBIGUITY_MARKER = "Ambiguous active task"
 # canonical "task complete, archive pending" status; `blocked` and `review`
 # stay surfaced because they represent open holds rather than completion.
 TERMINAL_STATUSES = frozenset({"done"})
-PACKAGE_SRC = (
-    Path(__file__).resolve().parents[1] / "packages" / "agent-handoff-mcp" / "src"
-)
-PACKAGE_ROOT = PACKAGE_SRC / "agent_handoff_mcp"
-
-if str(PACKAGE_SRC) not in sys.path:
-    sys.path.insert(0, str(PACKAGE_SRC))
 
 
 def _print_aligned(emoji: str, label: str, value: str) -> None:
     print(f"{emoji} {label:18s} {value}")
-
-
-def _ensure_lightweight_package() -> None:
-    package = sys.modules.get("agent_handoff_mcp")
-    if package is not None:
-        return
-    stub = types.ModuleType("agent_handoff_mcp")
-    stub.__path__ = [str(PACKAGE_ROOT)]  # type: ignore[attr-defined]
-    sys.modules["agent_handoff_mcp"] = stub
-
-
-def _import_handoff_attr(module_name: str, attr: str):
-    _ensure_lightweight_package()
-    module = importlib.import_module(f"agent_handoff_mcp.{module_name}")
-    return getattr(module, attr)
 
 
 def _detect_branch() -> str | None:
@@ -164,8 +140,7 @@ def _configure_runtime() -> bool:
     this divergence loop.
     """
     try:
-        RuntimeConfig = _import_handoff_attr("config", "RuntimeConfig")
-        configure_runtime = _import_handoff_attr("runtime", "configure_runtime")
+        from agent_handoff_mcp import RuntimeConfig, configure_runtime  # noqa: PLC0415
     except ImportError:
         return False
     runtime = RuntimeConfig.for_repo(Path.cwd())
@@ -246,7 +221,7 @@ def _load_active_state() -> tuple[dict | None, str | None]:
     for every other failure mode.
     """
     try:
-        get_handoff_state = _import_handoff_attr("handoff_state", "get_handoff_state")
+        from agent_handoff_mcp import get_handoff_state  # noqa: PLC0415
     except ImportError:
         print(
             "⚠ agent_handoff_mcp not importable from this Python; skipping context check.",
@@ -407,7 +382,7 @@ def _emit_integrity_warning_if_dirty() -> None:
     considered intentional drift; everything else is surfaced.
     """
     try:
-        RuntimeConfig = _import_handoff_attr("config", "RuntimeConfig")
+        from agent_handoff_mcp import RuntimeConfig  # noqa: PLC0415
     except ImportError:
         return
     runtime = RuntimeConfig.for_repo(Path.cwd())

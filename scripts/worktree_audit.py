@@ -6,31 +6,10 @@ from __future__ import annotations
 import subprocess
 import sys
 from dataclasses import dataclass
-import importlib
-from pathlib import Path
 import re
-import types
+from pathlib import Path
 
-PACKAGE_SRC = Path(__file__).resolve().parents[1] / "packages" / "agent-handoff-mcp" / "src"
-PACKAGE_ROOT = PACKAGE_SRC / "agent_handoff_mcp"
-if str(PACKAGE_SRC) not in sys.path:
-    sys.path.insert(0, str(PACKAGE_SRC))
-
-
-def _ensure_lightweight_package() -> None:
-    package = sys.modules.get("agent_handoff_mcp")
-    if package is not None:
-        return
-    stub = types.ModuleType("agent_handoff_mcp")
-    stub.__path__ = [str(PACKAGE_ROOT)]  # type: ignore[attr-defined]
-    sys.modules["agent_handoff_mcp"] = stub
-
-
-_ensure_lightweight_package()
-RuntimeConfig = importlib.import_module("agent_handoff_mcp.config").RuntimeConfig
-configure_runtime = importlib.import_module("agent_handoff_mcp.runtime").configure_runtime
-get_archived_task = importlib.import_module("agent_handoff_mcp.import_export").get_archived_task
-get_handoff_state = importlib.import_module("agent_handoff_mcp.handoff_state").get_handoff_state
+from agent_handoff_mcp import RuntimeConfig, configure_runtime, get_archived_task, get_handoff_state
 
 BRANCH_PREFIXES = ("feature/", "codex/")
 TASK_REF_RE = re.compile(r"^([a-z][a-z0-9]*(?:-[a-z0-9]+)*-\d+)", re.IGNORECASE)

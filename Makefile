@@ -34,16 +34,15 @@ MCP_PYENV_VERSION ?= description-service
 MCP_PYENV_BIN := $(shell command -v pyenv 2>/dev/null || true)
 MCP_PYTHON = $(if $(MCP_PYENV_BIN),env PYENV_VERSION="$(MCP_PYENV_VERSION)" "$(MCP_PYENV_BIN)" exec python3,env PYENV_VERSION="$(MCP_PYENV_VERSION)" python3)
 MCP_RUNTIME_ENV = env PYENV_VERSION="$(MCP_PYENV_VERSION)"
-ORCHESTRATION_DIR := $(ORCHESTRATOR_ROOT)/packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration
-WORKTREE_ORCHESTRATION_DIR := $(WORKTREE_ROOT_REAL)/packages/agent-orchestrator-mcp/src/agent_orchestrator_mcp/orchestration
-LANE_CONFIG_CMD = $(MCP_PYTHON) "$(ORCHESTRATION_DIR)/lane_config.py"
-MCP_PYTHONPATH := $(ORCHESTRATOR_ROOT)/packages/agent-orchestrator-mcp/src:$(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
-WORKTREE_MCP_PYTHONPATH := $(WORKTREE_ROOT_REAL)/packages/agent-orchestrator-mcp/src:$(WORKTREE_ROOT_REAL)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
+LANE_CONFIG_CMD = $(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.lane_config
+MCP_PYTHONPATH := $(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
+WORKTREE_MCP_PYTHONPATH := $(WORKTREE_ROOT_REAL)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
 MCP_CMD = $(MCP_RUNTIME_ENV) agent-handoff-mcp
 MCP_STATE_ARGS = --workspace-root "$(ORCHESTRATOR_ROOT)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.json" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports"
 PYTHON ?= $(MCP_PYTHON)
-ORCHESTRATOR_SRC := packages/agent-orchestrator-mcp/src
-ORCHESTRATOR_TESTS := packages/agent-orchestrator-mcp/tests
+EXTERNAL_MCP_VENV ?= /tmp/e17-13-external-mcp
+EXTERNAL_MCP_HANDOFF_REF := git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.2
+EXTERNAL_MCP_ORCHESTRATOR_REF := git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.3
 
 # --- Task / lane inference ---
 _ACTIVE_TASK_CMD = $(shell $(MCP_CMD) $(MCP_STATE_ARGS) state 2>/dev/null | python3 -c 'import sys,json; data=json.load(sys.stdin); print(data.get("task_ref",""))' 2>/dev/null)
@@ -269,14 +268,22 @@ check-all:
 			$(MAKE) check-agent-workflows; \
 			$(MAKE) worktree-audit; \
 			$(MAKE) task-plan-audit; \
-			$(MAKE) mypy-orchestrator; \
+			$(MAKE) check-mcp; \
 			$(MAKE) test-all; \
 			echo ""; \
 			echo "✅ All monorepo checks passed!"; \
 		fi
 
-check-mcp: check-handoff check-orchestrator
-	@echo "✅ MCP package checks passed!"
+check-mcp:
+	@set -eu; \
+	EXTERNAL_MCP_VENV="$(EXTERNAL_MCP_VENV)"; \
+	python3 -m venv "$$EXTERNAL_MCP_VENV"; \
+	"$$EXTERNAL_MCP_VENV/bin/pip" install --quiet \
+		"$(EXTERNAL_MCP_HANDOFF_REF)" \
+		"$(EXTERNAL_MCP_ORCHESTRATOR_REF)"; \
+	"$$EXTERNAL_MCP_VENV/bin/agent-handoff-mcp" --workspace-root "$(WORKTREE_ROOT_REAL)" doctor; \
+	"$$EXTERNAL_MCP_VENV/bin/agent-orchestrator-mcp" --workspace-root "$(WORKTREE_ROOT_REAL)" --help >/dev/null; \
+	echo "✅ External MCP package verification passed!"
 
 check-frontend:
 	@set -eu; \
@@ -301,12 +308,6 @@ lint-all:
 		else \
 			echo "=== Linting Python (backend) ==="; \
 			( cd apps/prototype-description-service && make lint ); \
-			echo ""; \
-			echo "=== Linting Agent Handoff MCP ==="; \
-			$(MAKE) lint-handoff; \
-			echo ""; \
-			echo "=== Linting Agent Orchestrator MCP ==="; \
-			$(MAKE) lint-orchestrator; \
 			echo ""; \
 			echo "=== Linting Codex Subagent Bridge ==="; \
 			$(MAKE) -C packages/codex-subagent-bridge lint-bridge PYTHON="$(PYTHON)"; \
@@ -333,48 +334,11 @@ test-all:
 			echo "=== Testing Python (backend) ==="; \
 			( cd apps/prototype-description-service && make test ); \
 			echo ""; \
-			echo "=== Testing Agent Handoff MCP ==="; \
-			$(MAKE) test-handoff; \
-			echo ""; \
-			echo "=== Testing Agent Orchestrator MCP ==="; \
-			$(MAKE) test-orchestrator; \
-			echo ""; \
 			echo "=== Testing TypeScript (frontend) ==="; \
 			( cd apps/prototype-wp-alt-context && make test ); \
 			echo ""; \
 			echo "✅ Tests complete"; \
 		fi
-
-# Test agent-handoff-mcp via the package Makefile (sets PYTHONPATH correctly).
-test-handoff:
-	@$(MAKE) -C packages/agent-handoff-mcp test-handoff
-
-test-orchestrator:
-	@set -eu; \
-	if [ "$(IN_LANE_WORKTREE)" = "1" ]; then \
-		echo "Lane worktree detected ($(LANE)); agent-orchestrator-mcp tests are orchestrator-root tooling tests, so they are skipped here."; \
-		exit 0; \
-	fi; \
-	PYTHONPATH="$(MCP_PYTHONPATH)" \
-	$(PYTHON) -m pytest $(ORCHESTRATOR_TESTS) -q
-
-lint-handoff:
-	@$(MAKE) -C packages/agent-handoff-mcp lint-handoff
-
-lint-orchestrator:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" \
-	$(PYTHON) -m ruff check $(ORCHESTRATOR_SRC) $(ORCHESTRATOR_TESTS)
-	@PYTHONPATH="$(MCP_PYTHONPATH)" \
-	$(PYTHON) -m ruff format --check $(ORCHESTRATOR_SRC) $(ORCHESTRATOR_TESTS)
-
-fix-lint-handoff:
-	@$(MAKE) -C packages/agent-handoff-mcp fix-lint-handoff
-
-fix-lint-orchestrator:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" \
-	$(PYTHON) -m ruff check --fix --unsafe-fixes $(ORCHESTRATOR_SRC) $(ORCHESTRATOR_TESTS)
-
-fix-lint-mcp: fix-lint-handoff fix-lint-orchestrator
 
 # Sweep every tracked task-plan / epic markdown for pasted review-finding
 # lists. Review findings live in agent-handoff-mcp; pasting them inline
@@ -426,15 +390,6 @@ install-git-hooks:
 	@echo "git core.hooksPath -> scripts/hooks/git"
 	@ls -1 scripts/hooks/git
 
-format-handoff:
-	@$(MAKE) -C packages/agent-handoff-mcp format-handoff
-
-format-orchestrator:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" \
-	$(PYTHON) -m ruff check --fix --unsafe-fixes $(ORCHESTRATOR_SRC) $(ORCHESTRATOR_TESTS)
-	@PYTHONPATH="$(MCP_PYTHONPATH)" \
-	$(PYTHON) -m ruff format $(ORCHESTRATOR_SRC) $(ORCHESTRATOR_TESTS)
-
 # Apply deterministic lint fixes and formatting across every app and package.
 # Run this before `make check-all` — many violations are auto-fixable and
 # resolving them first keeps the check output signal-to-noise clean.
@@ -442,10 +397,6 @@ format-orchestrator:
 # TypeScript/JS: npm run lint:fix + npm run format:fix
 # PHP: composer cs-fix
 format-all:
-	@echo "=== Formatting agent-handoff-mcp ==="
-	@$(MAKE) format-handoff
-	@echo "=== Formatting agent-orchestrator-mcp ==="
-	@$(MAKE) format-orchestrator
 	@echo "=== Formatting codex-subagent-bridge ==="
 	@$(MAKE) -C packages/codex-subagent-bridge format-bridge PYTHON="$(PYTHON)"
 	@echo "=== Formatting description-service ==="
@@ -457,21 +408,6 @@ format-all:
 		echo "⏭️  Skipping WordPress plugin format (run 'npm install' in apps/prototype-wp-alt-context first)"; \
 	fi
 	@echo "✅ All components formatted!"
-
-mypy-handoff:
-	@$(MAKE) -C packages/agent-handoff-mcp mypy-handoff
-
-mypy-orchestrator:
-	@MYPYPATH="$(ORCHESTRATOR_ROOT)/packages/agent-orchestrator-mcp/src:$(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src" \
-	PYTHONPATH="$(MCP_PYTHONPATH)" \
-	$(PYTHON) -m mypy --ignore-missing-imports $(ORCHESTRATOR_SRC)
-
-check-handoff: lint-handoff mypy-handoff test-handoff
-	@echo "✅ agent-handoff-mcp checks passed!"
-
-check-orchestrator: lint-orchestrator mypy-orchestrator test-orchestrator
-	@echo "✅ agent-orchestrator-mcp checks passed!"
-
 # Clean all cache files
 clean-all:
 	@echo "=== Cleaning Python caches ==="
@@ -528,11 +464,11 @@ mcp: mcp-start
 
 mcp-start:
 	@echo "Starting MCP Server manually..."
-	@./scripts/mcp/mcp-server.sh run
+	@agent-handoff-mcp --workspace-root "$(PWD)" serve-stdio
 
 gemini-cli-setup:
-	@echo "Registering agent-handoff-mcp (via mcp-server.sh) with gemini-cli..."
-	@gemini mcp add context-alt-text-handoff "$(shell pwd)/scripts/mcp/mcp-server.sh" run
+	@echo "Registering agent-handoff-mcp with gemini-cli..."
+	@gemini mcp add context-alt-text-handoff "agent-handoff-mcp" -- --workspace-root "$(PWD)" serve-stdio
 	@echo "✓ MCP server 'context-alt-text-handoff' registered with gemini-cli"
 	@echo "💡 Tip: Store your API key in a .env file at the monorepo root to keep it out of your .zshrc."
 
@@ -610,7 +546,7 @@ ace-trends:
 # error. Run at the start of every session before recording any handoff state.
 # Usage: make context
 context:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) scripts/check-task-context.py
+	@$(MCP_PYTHON) scripts/check-task-context.py
 
 # Generate DASHBOARD.txt — the human-scoped observatory view.
 # Renders Needs Attention, All Tasks, Open Findings, and Deferred sections.
@@ -618,16 +554,13 @@ context:
 # agent-orchestrator-mcp is loaded and has registered its extension callback.
 # Usage: make dashboard
 dashboard:
-	@PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src:$(MCP_PYTHONPATH)" \
-		$(MCP_CMD) $(MCP_STATE_ARGS) render-handoff --kind dashboard
+	@$(MCP_CMD) $(MCP_STATE_ARGS) render-handoff --kind dashboard
 
 worktree-audit:
-	@PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src:$(MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) scripts/worktree_audit.py
+	@$(MCP_PYTHON) scripts/worktree_audit.py
 
 worktree-prune:
-	@PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src:$(MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) scripts/worktree_prune.py $(WORKTREE_PRUNE_ARGS)
+	@$(MCP_PYTHON) scripts/worktree_prune.py $(WORKTREE_PRUNE_ARGS)
 
 # Archive stale MAINT-* handoff rows whose status is already `done` or
 # `review`. Stale MAINT rows sharing the repo-root target_worktree_path
@@ -636,8 +569,7 @@ worktree-prune:
 # archive every hit without prompting, or "--dry-run" to preview.
 # Usage: make maint-archive-stale [MAINT_ARCHIVE_ARGS="--yes"]
 maint-archive-stale:
-	@PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src:$(MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) scripts/maint_archive_stale.py $(MAINT_ARCHIVE_ARGS)
+	@$(MCP_PYTHON) scripts/maint_archive_stale.py $(MAINT_ARCHIVE_ARGS)
 
 task-plan-audit:
 	@$(MCP_PYTHON) scripts/task_plan_audit.py

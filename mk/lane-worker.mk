@@ -7,7 +7,7 @@
 lane-check: lane-worker-guard
 	@set -eu; \
 	echo "Ensuring lane dependencies are bootstrapped..."; \
-	PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) "$(ORCHESTRATION_DIR)/bootstrap_lane.py" \
+	PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.bootstrap_lane \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		--lane-id "$(LANE)" \
@@ -68,7 +68,7 @@ lane-run: lane-guard
 		fi; \
 	fi; \
 	PYTHONPATH="$(MCP_PYTHONPATH)" \
-		$(MCP_PYTHON) "$(ORCHESTRATION_DIR)/lane_prompt.py" \
+		$(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.lane_prompt \
 			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 			--task-ref "$(TASK)" \
 			--lane-id "$(LANE)" \
@@ -87,7 +87,7 @@ lane-run: lane-guard
 	fi; \
 	RESULT_FILE="$$(mktemp "$${TMPDIR:-/tmp}/lane-result-$(LANE)-XXXXXX.json")"; \
 	trap 'rm -f "$$RESULT_FILE"' EXIT INT TERM; \
-	set -- $(MCP_PYTHON) "$(ORCHESTRATION_DIR)/lane_exec.py" \
+	set -- $(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.lane_exec \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		--lane-id "$(LANE)" \
@@ -108,7 +108,7 @@ lane-run: lane-guard
 		set -- "$$@" --dry-run; \
 	fi; \
 	if PYTHONPATH="$(MCP_PYTHONPATH)" "$$@"; then \
-		$(MCP_PYTHON) "$(ORCHESTRATION_DIR)/lane_result.py" handoff \
+		$(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.lane_result handoff \
 			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 			--task-ref "$(TASK)" \
 			--lane-id "$(LANE)" \
@@ -216,7 +216,7 @@ lane-handoff: lane-worker-guard
 	$(MAKE) lane-report TASK="$(TASK)" LANE="$(LANE)" SESSION="$(SESSION)" SUMMARY="$(SUMMARY)" STATUS="$(STATUS)" MERGE_READY="$(MERGE_READY)" DRY_RUN="$(DRY_RUN)" MESSAGE="$(MESSAGE)"
 
 dashboard-live:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) "$(ORCHESTRATION_DIR)/dashboard_live.py" \
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.dashboard_live \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		$(if $(LANES),$(addprefix --lanes ,$(LANES)),) \
@@ -224,7 +224,7 @@ dashboard-live:
 		$(if $(filter 1,$(ONCE)),--once,)
 
 dashboard-tui:
-	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) "$(ORCHESTRATION_DIR)/dashboard_tui.py" \
+	@PYTHONPATH="$(MCP_PYTHONPATH)" $(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.dashboard_tui \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		$(if $(LANES),$(addprefix --lanes ,$(LANES)),) \

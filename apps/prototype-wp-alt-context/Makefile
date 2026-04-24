@@ -1,4 +1,4 @@
-.PHONY: help check fix format lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset localwp-link gate-package worker-daemon FORCE
+.PHONY: help check fix format lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset localwp-link gate-package worker-daemon _php-deps FORCE
 
 help:
 	@echo "Available commands:"
@@ -49,13 +49,22 @@ test-watch:
 check-php: php-cs phpstan
 	@echo "✓ PHP checks passed"
 
-php-cs:
+# Pre-flight installer: if the plugin's composer dev dependencies are missing,
+# install them once so PHPCS/PHPCBF/PHPUnit are on disk before the target runs.
+# Mirrors the existing phpstan guard at line 62 below.
+_php-deps:
+	@if [ ! -x vendor/bin/phpcbf ] || [ ! -x vendor/bin/phpcs ] || [ ! -x vendor/bin/phpunit ]; then \
+		echo "Plugin composer dev dependencies missing; installing..."; \
+		composer install --prefer-dist --no-interaction; \
+	fi
+
+php-cs: _php-deps
 	@composer cs-check
 
-php-cs-fix:
+php-cs-fix: _php-deps
 	@composer phpcbf
 
-php-test:
+php-test: _php-deps
 	@composer test
 
 phpstan:

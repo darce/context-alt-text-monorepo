@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "remote_clone_path": ".agentic/remote",
+  "remote_sha": "2a03e136bf3359485d4305c7562162bd45fa30df",
+  "surfaces": {
+    "skills": {
+      "shared_root": ".agentic/remote/.claude/skills",
+      "local_root": "local/.claude/skills"
+    },
+    "hooks": {
+      "shared_root": ".agentic/remote/.github/hooks",
+      "local_root": "local/.github/hooks"
+    },
+    "commands": {
+      "shared_root": ".agentic/remote/.claude/commands",
+      "local_root": "local/.claude/commands"
+    },
+    "prompts": {
+      "shared_root": ".agentic/remote/.github/prompts",
+      "local_root": "local/.github/prompts"
+    },
+    "contracts": {
+      "shared_root": ".agentic/remote/docs/agentic/contracts",
+      "local_root": "local/docs/agentic/contracts"
+    }
+  }
+}

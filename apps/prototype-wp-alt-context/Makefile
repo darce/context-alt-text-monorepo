@@ -27,7 +27,7 @@ check:
 format:
 	@npm run lint:fix
 	@npm run format:fix
-	@composer cs-fix
+	@$(MAKE) php-cs-fix
 
 fix: format check
 

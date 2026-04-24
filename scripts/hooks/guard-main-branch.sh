@@ -38,7 +38,7 @@ fi
 # If none is active, print a maintenance-task reminder but do not block the edit.
 # Only query (and warn) when the CLI is actually installed — a missing CLI must
 # not masquerade as "no active task" (E17-4 Slice 2 regression).
-if ! command -v agent-handoff-mcp >/dev/null 2>&1; then
+if ! command -v mcp-agent-handoff >/dev/null 2>&1; then
   exit 0
 fi
 
@@ -51,7 +51,7 @@ import sys
 repo_root = sys.argv[1]
 try:
     proc = subprocess.run(
-        ["agent-handoff-mcp", "--workspace-root", repo_root, "state", "--sections", "identity"],
+        ["mcp-agent-handoff", "--workspace-root", repo_root, "state", "--sections", "identity"],
         capture_output=True,
         text=True,
         timeout=5,

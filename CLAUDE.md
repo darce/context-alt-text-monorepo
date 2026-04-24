@@ -122,10 +122,10 @@ This project has NO production users and NO existing data to preserve.
 ```bash
 python3 -m venv /tmp/e17-13-external-mcp
 /tmp/e17-13-external-mcp/bin/pip install --quiet \
-    "git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.2" \
-    "git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.3"
-/tmp/e17-13-external-mcp/bin/agent-handoff-mcp --workspace-root . doctor
-/tmp/e17-13-external-mcp/bin/agent-orchestrator-mcp --workspace-root . --help
+    "git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.3" \
+    "git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.4"
+/tmp/e17-13-external-mcp/bin/mcp-agent-handoff --workspace-root . doctor
+/tmp/e17-13-external-mcp/bin/mcp-agent-orchestrator --workspace-root . --help
 ```
 
 This external-install verification path proves the monorepo can consume the packaged MCP surfaces without any editable install from this checkout. Use a scratch venv, not a worktree-local `PYTHONPATH` override, and keep the verification anchored to the published `git+ssh://` refs the task plan selected.

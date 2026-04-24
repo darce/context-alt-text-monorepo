@@ -35,10 +35,10 @@ jobs:
           cache: "pip"
 
       - name: Install agent-handoff-mcp
-        run: pip install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.2"
+        run: pip install "agent-handoff-mcp @ git+ssh://git@github.com/darce/mcp-agent-handoff.git@v0.4.3"
 
       - name: Install agent-orchestrator-mcp
-        run: pip install "agent-orchestrator-mcp @ git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.3"
+        run: pip install "agent-orchestrator-mcp @ git+ssh://git@github.com/darce/mcp-agent-orchestrator.git@v0.1.4"
 
       - name: Run handoff integrity guard
         run: python -m agent_orchestrator_mcp.orchestration.handoff_integrity_guard

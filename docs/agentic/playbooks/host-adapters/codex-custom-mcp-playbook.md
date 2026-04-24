@@ -29,7 +29,7 @@ make mcp-serve-http HOST=0.0.0.0 PORT=9000
 Or call the launcher directly:
 
 ```bash
-agent-handoff-mcp --workspace-root "$(pwd)" serve-http --host 127.0.0.1 --port 8741
+mcp-agent-handoff --workspace-root "$(pwd)" serve-http --host 127.0.0.1 --port 8741
 ```
 
 The server binds to localhost only by default. See **Security** below if you need remote access.
@@ -111,7 +111,7 @@ A first-class auth layer may be added in a future task.
 
 ## Difference: MCP server vs MCP attached
 
-"MCP server implemented" means `agent-handoff-mcp serve-http` runs and exposes tools over HTTP. "MCP attached to Codex" means the Codex host product has been configured to connect to that server. This playbook covers both steps, but the attachment step is a host-app configuration action outside the repo.
+"MCP server implemented" means `mcp-agent-handoff serve-http` runs and exposes tools over HTTP. "MCP attached to Codex" means the Codex host product has been configured to connect to that server. This playbook covers both steps, but the attachment step is a host-app configuration action outside the repo.
 
 ## Related
 

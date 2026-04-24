@@ -339,7 +339,7 @@ For every unit of work (feature slice, bug fix, refactor):
 External-install verification note:
 
 - For the E17-13 MCP cleanup path, verify `agent-handoff-mcp` and `agent-orchestrator-mcp` from pinned `pip install` commands against the standalone repos in a scratch venv, not the old package-local Makefile guard guidance.
-- The live verification contract is: pinned `pip install` from the standalone repos in a scratch venv, then `agent-handoff-mcp --workspace-root . doctor` plus `agent-orchestrator-mcp --workspace-root . --help` CLI/import smoke checks.
+- The live verification contract is: pinned `pip install` from the standalone repos in a scratch venv, then `mcp-agent-handoff --workspace-root . doctor` plus `mcp-agent-orchestrator --workspace-root . --help` CLI/import smoke checks.
 - Do not hardcode absolute filesystem paths; prefer `${PYENV_ROOT:-$HOME/.pyenv}` and `${REPO_ROOT:-$PWD}`.
 
 Commit SHA provenance discipline:

@@ -45,7 +45,7 @@ Preferred entrypoints:
 
 - MCP-capable hosts: use MCP tools such as `orchestrator_status`, `orchestrator_pause`, `orchestrator_resume`, `worker_status`, `worker_start`, `worker_stop`, and `worker_resume`
 - Shell operators in this repo: prefer the Make targets from `mk/handoff.mk`, including `make daemon-status`, `make daemon-pause`, `make daemon-resume`, `make worker-daemon-status`, `make worker-daemon-stop`, and `make worker-daemon-resume`
-- Direct CLI use: prefer the installed `agent-handoff-mcp --workspace-root <repo> ...` form over `python3 -m ...`
+- Direct CLI use: prefer the installed `mcp-agent-handoff --workspace-root <repo> ...` form over `python3 -m ...`
 
 ### Orchestrator daemon
 

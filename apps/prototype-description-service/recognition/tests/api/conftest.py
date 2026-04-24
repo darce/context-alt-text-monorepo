@@ -115,6 +115,38 @@ class FakeSession:
         """Provide a minimal nested-transaction seam for auth/savepoint tests."""
         return _FakeNestedTransaction(self)
 
+    def begin(self) -> _FakeOuterTransaction:
+        """Provide a minimal outer-transaction seam for route-owned txn tests.
+
+        E15-3a-BR-21 Slice 4: the clustering route uses
+        ``async with session.begin():`` to own the full unit-of-work.
+        FakeSession tracks begin/commit/rollback call counts so tests can
+        assert the route wrapped the statements in a single owned txn.
+        """
+        return _FakeOuterTransaction(self)
+
+
+class _FakeOuterTransaction:
+    """Async context manager for ``session.begin()`` on FakeSession.
+
+    Commits the session on clean exit, rolls back on exception, so that
+    route-level ``async with session.begin():`` blocks behave sensibly under
+    FakeSession without a real DB.
+    """
+
+    def __init__(self, session: FakeSession) -> None:
+        self._session = session
+
+    async def __aenter__(self) -> _FakeOuterTransaction:
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:  # noqa: ANN001
+        if exc_type is None:
+            self._session.commit_calls += 1
+        else:
+            self._session.rollback_calls += 1
+        return False
+
 
 class _FakeNestedTransaction:
     """Async context manager that records savepoint entry/rollback behavior."""
@@ -729,10 +761,17 @@ def api_client(
 
     app.dependency_overrides[dependencies.get_session] = _no_session
     app.dependency_overrides[dependencies.get_optional_session] = _no_session
+    # E15-3a-BR-21 Slice 4: clustering route binds to the clustering-pool deps.
+    # Point them at the same fake session so existing tests keep exercising a
+    # single shared FakeSession; the Slice 4 identity test asserts the real
+    # FastAPI DI cache hands one session to all three deps in production wiring.
+    app.dependency_overrides[dependencies.get_clustering_session] = _no_session
     app.dependency_overrides[dependencies.get_cluster_service_builder] = cluster_builder
+    app.dependency_overrides[dependencies.get_cluster_service_builder_clustering] = cluster_builder
     app.dependency_overrides[dependencies.get_cluster_repository] = cluster_repo_dep
     app.dependency_overrides[dependencies.get_job_service_dependency] = job_service_dep
     app.dependency_overrides[dependencies.get_persisted_cluster_job_service] = job_service_dep
+    app.dependency_overrides[dependencies.get_persisted_cluster_job_service_clustering] = job_service_dep
     app.dependency_overrides[dependencies.get_persisted_job_service] = job_service_dep
     app.dependency_overrides[dependencies.get_observability_repository] = _no_observability_repo
     app.dependency_overrides[dependencies.get_suggestion_service] = _fake_suggestion_service

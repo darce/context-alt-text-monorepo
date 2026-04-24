@@ -16,6 +16,7 @@
 #   LOCALWP_DB_NAME  — database name          (default: local)
 #   LOCALWP_DB_USER  — mysql user             (default: root)
 #   LOCALWP_DB_PASS  — mysql password         (default: root)
+#   LOCALWP_MYSQL_BIN — mysql client path     (default: auto-detect)
 #
 set -euo pipefail
 
@@ -26,54 +27,53 @@ LOCAL_RUN_DIR="${HOME}/Library/Application Support/Local/run"
 DB_NAME="${LOCALWP_DB_NAME:-local}"
 DB_USER="${LOCALWP_DB_USER:-root}"
 DB_PASS="${LOCALWP_DB_PASS:-root}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOCALWP_RUNTIME_HELPER="${SCRIPT_DIR}/localwp-runtime.sh"
 
-# ---------------------------------------------------------------------------
-# Socket discovery
-# ---------------------------------------------------------------------------
-discover_socket() {
-  if [[ -n "${LOCALWP_SOCKET:-}" ]]; then
-    if [[ -S "${LOCALWP_SOCKET}" ]]; then
-      echo "${LOCALWP_SOCKET}"
+resolve_mysql_bin() {
+  if [[ -n "${LOCALWP_MYSQL_BIN:-}" ]]; then
+    if [[ -x "${LOCALWP_MYSQL_BIN}" ]]; then
+      echo "${LOCALWP_MYSQL_BIN}"
       return 0
     fi
-    echo "Error: LOCALWP_SOCKET is set but '${LOCALWP_SOCKET}' is not a valid socket." >&2
+    echo "Error: LOCALWP_MYSQL_BIN is set but '${LOCALWP_MYSQL_BIN}' is not executable." >&2
     return 1
   fi
 
-  if [[ ! -d "${LOCAL_RUN_DIR}" ]]; then
-    echo "Error: LocalWP run directory not found at '${LOCAL_RUN_DIR}'." >&2
-    echo "       Is LocalWP installed?" >&2
-    return 1
+  if command -v mysql >/dev/null 2>&1; then
+    command -v mysql
+    return 0
   fi
 
-  local sockets=()
-  while IFS= read -r -d '' sock; do
-    sockets+=("${sock}")
-  done < <(find "${LOCAL_RUN_DIR}" -name "mysqld.sock" -print0 2>/dev/null)
+  local candidates=(
+    "/opt/homebrew/bin/mysql"
+    "/usr/local/bin/mysql"
+  )
+  local candidate=""
+  for candidate in "${candidates[@]}"; do
+    if [[ -x "${candidate}" ]]; then
+      echo "${candidate}"
+      return 0
+    fi
+  done
 
-  if [[ ${#sockets[@]} -eq 0 ]]; then
-    echo "Error: No mysqld.sock found under '${LOCAL_RUN_DIR}'." >&2
-    echo "       Is a LocalWP site running?" >&2
-    return 1
-  fi
-
-  if [[ ${#sockets[@]} -gt 1 ]]; then
-    echo "Warning: Multiple LocalWP MySQL sockets found. Using the first one." >&2
-    echo "         Set LOCALWP_SOCKET to choose a specific one:" >&2
-    for s in "${sockets[@]}"; do
-      echo "           ${s}" >&2
-    done
-  fi
-
-  echo "${sockets[0]}"
+  echo "Error: mysql client not found on PATH or common Homebrew locations." >&2
+  echo "       Install mysql client tools or set LOCALWP_MYSQL_BIN explicitly." >&2
+  return 1
 }
 
-SOCKET="$(discover_socket)"
+if [[ ! -x "${LOCALWP_RUNTIME_HELPER}" ]]; then
+  echo "Error: LocalWP runtime helper missing or not executable: ${LOCALWP_RUNTIME_HELPER}" >&2
+  exit 1
+fi
+
+SOCKET="$("${LOCALWP_RUNTIME_HELPER}" socket)"
+MYSQL_BIN="$(resolve_mysql_bin)"
 
 # ---------------------------------------------------------------------------
 # Connect
 # ---------------------------------------------------------------------------
-exec mysql \
+exec "${MYSQL_BIN}" \
   -u "${DB_USER}" \
   -p"${DB_PASS}" \
   -S "${SOCKET}" \

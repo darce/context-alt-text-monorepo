@@ -1,6 +1,14 @@
 # Multi-stage Dockerfile for prototype-description-service (ARM64, recognition-only)
-# Build: docker build --platform linux/arm64 -t iad.ocir.io/idu2kqqe2jxy/acx-backend:latest .
+# Build: docker build --platform linux/arm64 \
+#          --build-arg GIT_COMMIT_SHA=$(git rev-parse HEAD) \
+#          -t iad.ocir.io/idu2kqqe2jxy/acx-backend:latest .
 # No VLM/torch — InsightFace + onnxruntime CPU only.
+
+# Build-time provenance. Operators pass the current repo HEAD via
+# `--build-arg GIT_COMMIT_SHA=$(git rev-parse HEAD)`; see infra/oci/README.md.
+# The value is propagated through the runtime stage as APP_GIT_COMMIT_SHA so
+# api/main.py can surface it on /health and /version (E15-3a-BR-03).
+ARG GIT_COMMIT_SHA=unknown
 
 # ---------------------------------------------------------------------------
 # Stage 1: Builder — compile native dependencies (InsightFace, onnxruntime)
@@ -49,6 +57,11 @@ ENV PATH="/opt/venv/bin:$PATH"
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
+# Rebind the top-level ARG inside this stage so ENV can consume it.
+# Without this, GIT_COMMIT_SHA is out of scope in the runtime image.
+ARG GIT_COMMIT_SHA=unknown
+ENV APP_GIT_COMMIT_SHA=${GIT_COMMIT_SHA}
+
 WORKDIR /app
 
 # Copy application code
@@ -58,6 +71,7 @@ COPY recognition/ recognition/
 COPY roster/ roster/
 COPY scene/ scene/
 COPY shared/ shared/
+COPY scripts/ scripts/
 COPY pyproject.toml .
 
 # Install the app package itself (editable-style so imports resolve)
@@ -74,6 +88,6 @@ ENV MPLCONFIGDIR=/data/cache/matplotlib
 
 EXPOSE 8000
 
-# Entrypoint: run Alembic migrations then start uvicorn.
+# Entrypoint: run Alembic migrations, verify the schema footprint, then start uvicorn.
 # The POSTGRES_SYNC_DSN env var is used by Alembic (via db/migrations/env.py).
-CMD ["sh", "-c", "cd /app && alembic -c db/alembic.ini upgrade head && uvicorn api.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "cd /app && alembic -c db/alembic.ini upgrade head && python -m scripts.verify_identity_schema && uvicorn api.main:app --host 0.0.0.0 --port 8000"]

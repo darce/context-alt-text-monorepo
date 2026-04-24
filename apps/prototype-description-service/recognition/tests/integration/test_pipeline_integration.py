@@ -55,6 +55,7 @@ def _make_client(session, tenant: Tenant) -> TestClient:
 
     app.dependency_overrides[dependencies.get_session] = _session_override
     app.dependency_overrides[dependencies.get_optional_session] = _session_override
+    app.dependency_overrides[dependencies.get_clustering_session] = _session_override
     app.dependency_overrides[dependencies.get_scan_service_builder] = _scan_service_builder
     app.dependency_overrides[dependencies.get_scan_queue_service] = _scan_queue_service_override
     return TestClient(app)
@@ -131,6 +132,7 @@ async def test_clustering_job_creates_clusters_from_unclustered_identities(db_se
     client = _make_client(db_session, tenant)
     app = cast(FastAPI, client.app)
     app.dependency_overrides[dependencies.get_cluster_service_builder] = _cluster_service_builder_override
+    app.dependency_overrides[dependencies.get_cluster_service_builder_clustering] = _cluster_service_builder_override
     resp = client.post("/recognition/clustering/jobs", json={"tenant_id": str(tenant.id), "mode": "sync"})
 
     assert resp.status_code == 202

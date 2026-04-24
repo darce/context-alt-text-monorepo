@@ -70,8 +70,11 @@ def test_clusters_router_invokes_cluster_service_dependency(tenant_id) -> None:
     app.include_router(recognition_router, prefix="/recognition")
     app.dependency_overrides[dependencies.get_session] = _session_override
     app.dependency_overrides[dependencies.get_optional_session] = _session_override
+    app.dependency_overrides[dependencies.get_clustering_session] = _session_override
     app.dependency_overrides[dependencies.get_cluster_service_builder] = fake_cluster_service_builder
+    app.dependency_overrides[dependencies.get_cluster_service_builder_clustering] = fake_cluster_service_builder
     app.dependency_overrides[dependencies.get_persisted_cluster_job_service] = fake_job_service_dep
+    app.dependency_overrides[dependencies.get_persisted_cluster_job_service_clustering] = fake_job_service_dep
 
     client = TestClient(app)
     resp = client.post("/recognition/clustering/jobs", json={"tenant_id": tenant_id, "mode": "sync"})
@@ -122,8 +125,11 @@ def test_clusters_router_does_not_resolve_scan_service_for_clustering_jobs(tenan
     app.include_router(recognition_router, prefix="/recognition")
     app.dependency_overrides[dependencies.get_session] = _session_override
     app.dependency_overrides[dependencies.get_optional_session] = _session_override
+    app.dependency_overrides[dependencies.get_clustering_session] = _session_override
     app.dependency_overrides[dependencies.get_cluster_service_builder] = fake_cluster_service_builder
+    app.dependency_overrides[dependencies.get_cluster_service_builder_clustering] = fake_cluster_service_builder
     app.dependency_overrides[dependencies.get_persisted_cluster_job_service] = fake_job_service_dep
+    app.dependency_overrides[dependencies.get_persisted_cluster_job_service_clustering] = fake_job_service_dep
     app.dependency_overrides[dependencies.get_scan_service_builder] = should_not_run_scan_builder
 
     client = TestClient(app)
@@ -143,13 +149,14 @@ async def test_retention_policy_service_factory_uses_provided_optional_session()
 
 
 class _TrackingSession:
-    def __init__(self) -> None:
+    def __init__(self, *, pg_backend_pid: int | None = None) -> None:
         self.commit_calls = 0
         self.rollback_calls = 0
         self.close_calls = 0
         self.execute_calls = 0
         self.executed_statements: list[str] = []
         self.bind = type("Bind", (), {"dialect": type("Dialect", (), {"name": "postgresql"})()})()
+        self._pg_backend_pid = pg_backend_pid
 
     async def commit(self) -> None:
         self.commit_calls += 1
@@ -162,7 +169,16 @@ class _TrackingSession:
 
     async def execute(self, _statement, _params=None):  # noqa: ANN001
         self.execute_calls += 1
-        self.executed_statements.append(str(_statement))
+        rendered = str(_statement)
+        self.executed_statements.append(rendered)
+        if "pg_backend_pid()" in rendered and self._pg_backend_pid is not None:
+            pid = self._pg_backend_pid
+
+            class _PidResult:
+                def scalar(self_inner):  # noqa: N805
+                    return pid
+
+            return _PidResult()
         return None
 
     async def connection(self):
@@ -261,6 +277,30 @@ async def test_optional_session_applies_timeouts_and_logs_connection_identity(mo
         for statement in session.executed_statements
     )
     assert any("conn_id=" in message for message in caplog.messages)
+    # E15-3a-BR-21 Slice 1: pg_backend_pid must be emitted alongside the legacy
+    # conn_id so `pg_stat_activity` joins become unambiguous.
+    assert any("pg_backend_pid=" in message for message in caplog.messages)
+
+
+@pytest.mark.asyncio
+async def test_get_session_logs_pg_backend_pid_from_select(monkeypatch, caplog) -> None:
+    """E15-3a-BR-21 Slice 1: get_session records the Postgres backend PID."""
+    session = _TrackingSession(pg_backend_pid=424242)
+    events: list[str] = []
+
+    async def fake_set(_session, _tenant_id) -> None:
+        events.append("set")
+
+    monkeypatch.setattr(session_module, "async_session_factory", lambda: session)
+    monkeypatch.setattr(session_module, "set_tenant_context", fake_set)
+    request = _make_request()
+
+    with caplog.at_level("INFO"):
+        async for _ in session_module.get_session(request=request, tenant_id=str(uuid.uuid4())):
+            pass
+
+    assert any("SELECT pg_backend_pid()" in statement for statement in session.executed_statements)
+    assert any("pg_backend_pid=424242" in message for message in caplog.messages)
 
 
 @pytest.mark.asyncio

@@ -18,8 +18,8 @@ def test_pool_stats_returns_valid_metrics() -> None:
     """Pool stats should return all expected metrics."""
     stats = get_pool_stats()
 
-    assert set(stats) == {"business", "observability"}
-    for pool_name in ("business", "observability"):
+    assert set(stats) == {"business", "observability", "clustering"}
+    for pool_name in ("business", "observability", "clustering"):
         pool_stats = stats[pool_name]
         assert "size" in pool_stats
         assert "overflow" in pool_stats

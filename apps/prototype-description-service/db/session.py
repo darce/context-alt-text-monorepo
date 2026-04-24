@@ -58,6 +58,26 @@ observability_async_session_factory = async_sessionmaker(
     expire_on_commit=False,
 )
 
+# E15-3a-BR-21 Slice 4: dedicated clustering pool. Bulkheads the
+# SELECT ... FOR UPDATE clustering-admission path from business traffic and
+# from the observability /health/detailed probe. Pool is deliberately narrow
+# so saturation triggers the fast-fail path (503 Retry-After) long before a
+# thundering herd can starve the business pool.
+clustering_engine: AsyncEngine = create_async_engine(
+    _settings.postgres_dsn,
+    echo=False,
+    pool_pre_ping=True,
+    pool_size=_settings.clustering_pool_size,
+    max_overflow=_settings.clustering_max_overflow,
+    pool_timeout=_settings.clustering_pool_timeout,
+    pool_recycle=_settings.pool_recycle,
+)
+
+clustering_async_session_factory = async_sessionmaker(
+    bind=clustering_engine,
+    expire_on_commit=False,
+)
+
 
 async def get_session() -> AsyncIterator[AsyncSession]:
     """Provide a scoped async SQLAlchemy session.
@@ -125,14 +145,20 @@ def get_pool_stats() -> dict[str, dict[str, int | float]]:
             observability_engine,
             configured_max_overflow=_settings.observability_max_overflow,
         ),
+        "clustering": _pool_stats_from_engine(
+            clustering_engine,
+            configured_max_overflow=_settings.clustering_max_overflow,
+        ),
     }
 
 
 __all__ = [
     "engine",
     "observability_engine",
+    "clustering_engine",
     "get_session",
     "async_session_factory",
     "observability_async_session_factory",
+    "clustering_async_session_factory",
     "get_pool_stats",
 ]

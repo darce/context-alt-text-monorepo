@@ -1,7 +1,7 @@
 # =============================================================================
 # Orchestrator / Worker Daemon Lifecycle
 # =============================================================================
-# These targets require agent-orchestrator-mcp (packages/agent-orchestrator-mcp).
+# These targets require the installed agent-orchestrator-mcp package.
 # Core handoff targets (task, dashboard, state, handoff-close-check) remain in mk/handoff.mk.
 # =============================================================================
 

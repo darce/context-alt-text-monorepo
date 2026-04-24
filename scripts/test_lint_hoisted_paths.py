@@ -61,6 +61,29 @@ def test_lint_hoisted_paths_scans_overlay_resolved_local_entries(tmp_path: Path)
     assert any("repo-name-assumption" in finding for finding in findings)
 
 
+def test_lint_hoisted_paths_falls_back_to_live_shared_surface_when_remote_root_is_missing(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    manifest = {
+        "schema_version": 1,
+        "remote_clone_path": ".agentic/remote",
+        "remote_sha": "0123456789abcdef0123456789abcdef01234567",
+        "surfaces": {
+            "skills": {
+                "shared_root": ".agentic/remote/.claude/skills",
+                "local_root": "local/.claude/skills",
+            }
+        },
+    }
+    _write(repo / ".agentic-overlay.json", json.dumps(manifest))
+    _write(repo / ".claude" / "skills" / "demo" / "SKILL.md", "clean shared skill\n")
+    _write(repo / "local" / ".claude" / "skills" / "demo" / "SKILL.md", "Use the context-alt-text-monorepo lane copy.\n")
+
+    findings, exit_code = lint_hoisted_paths(repo_root=repo)
+
+    assert exit_code == 1
+    assert findings == ["local/.claude/skills/demo/SKILL.md:1: repo-name-assumption"]
+
+
 def test_lint_hoisted_paths_does_not_duplicate_hook_findings(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _write(repo / "scripts" / "hooks" / "bad.sh", "/Users/daniel/portable-break\n")

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import ast
 from collections import Counter
+import importlib.util
 import json
 import os
 import re
@@ -49,7 +50,7 @@ except ModuleNotFoundError:
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = REPO_ROOT / "docs" / "agentic" / "contracts" / "harness-protocol.yaml"
 VSCODE_SETTINGS_PATH = REPO_ROOT / ".vscode" / "settings.json"
-PYTHON_EXPORTS_PATH = REPO_ROOT / "packages" / "agent-handoff-mcp" / "src" / "agent_handoff_mcp" / "__init__.py"
+PYTHON_EXPORTS_RELATIVE = Path("packages/agent-handoff-mcp/src/agent_handoff_mcp/__init__.py")
 CONTRACT_RELATIVE = Path("docs/agentic/contracts/harness-protocol.yaml")
 FIXTURE_COPY_FILES = (
     Path(".vscode/settings.json"),
@@ -83,6 +84,49 @@ REQUIRED_PROTECTED_MAIN_PATTERNS = (
     "packages/*/docs/epics/**",
     "packages/*/docs/adrs/**",
 )
+
+
+def _resolve_package_file(local_path: Path, *, package_name: str, relative_name: str) -> Path:
+    if local_path.is_file():
+        return local_path
+
+    spec = importlib.util.find_spec(package_name)
+    if spec is None:
+        raise ValueError(f"unable to resolve `{package_name}` from local source or the import path")
+
+    candidate_dirs: list[Path] = []
+    if spec.submodule_search_locations:
+        candidate_dirs.extend(Path(path).resolve() for path in spec.submodule_search_locations)
+    if spec.origin:
+        candidate_dirs.append(Path(spec.origin).resolve().parent)
+
+    seen_dirs: set[Path] = set()
+    for package_dir in candidate_dirs:
+        if package_dir in seen_dirs:
+            continue
+        seen_dirs.add(package_dir)
+        candidate = package_dir / relative_name
+        if candidate.is_file():
+            return candidate
+
+    raise ValueError(f"unable to resolve `{package_name}/{relative_name}` from local source or the import path")
+
+
+def _resolve_package_source_root(local_root: Path, *, package_name: str) -> Path:
+    if local_root.is_dir():
+        return local_root
+
+    spec = importlib.util.find_spec(package_name)
+    if spec is None:
+        raise ValueError(f"unable to resolve `{package_name}` from local source or the import path")
+
+    if spec.submodule_search_locations:
+        package_dir = Path(next(iter(spec.submodule_search_locations))).resolve()
+        return package_dir.parent
+    if spec.origin:
+        return Path(spec.origin).resolve().parent.parent
+
+    raise ValueError(f"unable to resolve `{package_name}` from local source or the import path")
 
 
 def _load_contract(*, repo_root: Path = REPO_ROOT) -> dict:
@@ -171,8 +215,13 @@ def _load_hook_pairs(*, repo_root: Path = REPO_ROOT) -> tuple[set[tuple[str, str
     )
 
 
-def _load_python_exports() -> set[str]:
-    module = ast.parse(PYTHON_EXPORTS_PATH.read_text(), filename=str(PYTHON_EXPORTS_PATH))
+def _load_python_exports(*, repo_root: Path = REPO_ROOT) -> set[str]:
+    exports_path = _resolve_package_file(
+        repo_root / PYTHON_EXPORTS_RELATIVE,
+        package_name="agent_handoff_mcp",
+        relative_name="__init__.py",
+    )
+    module = ast.parse(exports_path.read_text(), filename=str(exports_path))
     for node in module.body:
         if isinstance(node, ast.Assign):
             for target in node.targets:
@@ -332,7 +381,10 @@ def _build_guard_fixture(contract: dict, *, repo_root: Path) -> tuple[tempfile.T
 
     package_src = repo / FIXTURE_PACKAGE_SRC
     package_src.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(REPO_ROOT / FIXTURE_PACKAGE_SRC, package_src)
+    shutil.copytree(
+        _resolve_package_source_root(repo_root / FIXTURE_PACKAGE_SRC, package_name="agent_handoff_mcp"),
+        package_src,
+    )
 
     contract_path = repo / CONTRACT_RELATIVE
     contract_path.parent.mkdir(parents=True, exist_ok=True)
@@ -946,8 +998,8 @@ def _check_dashboard_naming(*, repo_root: Path = REPO_ROOT) -> list[str]:
     return errors
 
 
-def _check_python_api_surface(contract: dict) -> list[str]:
-    exports = _load_python_exports()
+def _check_python_api_surface(contract: dict, *, repo_root: Path = REPO_ROOT) -> list[str]:
+    exports = _load_python_exports(repo_root=repo_root)
     required = set(contract.get("python_api_fallback", {}).get("required_exports", []))
     missing = sorted(required - exports)
     return [f"missing agent_handoff_mcp export `{name}`" for name in missing]
@@ -962,7 +1014,7 @@ def run_checks(contract: dict, *, check_api_surface: bool = False, repo_root: Pa
     errors.extend(_check_worktree_drift(contract, repo_root=repo_root))
     errors.extend(_check_dashboard_naming(repo_root=repo_root))
     if check_api_surface:
-        errors.extend(_check_python_api_surface(contract))
+        errors.extend(_check_python_api_surface(contract, repo_root=repo_root))
     return errors
 
 

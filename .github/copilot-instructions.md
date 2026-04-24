@@ -21,7 +21,7 @@ Is the task one of these exact four categories?
 - If a test run needs captured output, redirect once to `/tmp/<suite>.txt` with `> /tmp/<suite>.txt 2>&1`, then inspect it with `read_file`. Never `cat` the file in terminal.
 - Background terminals lack pyenv; only use the foreground terminal for Python tests.
 - Never hardcode user-local absolute filesystem paths such as `/Users/...` in commands, docs, or settings. Use environment variables such as `${env:HOME}`, `${workspaceFolder}`, `${PYENV_ROOT:-$HOME/.pyenv}`, and `${REPO_ROOT:-$PWD}` instead.
-- For `packages/agent-handoff-mcp` and `packages/agent-orchestrator-mcp`, do not invoke IDE Python environment-configuration tools. Use the foreground terminal with `PYENV_VERSION=description-service`, `pyenv exec python`, or `${PYENV_ROOT:-$HOME/.pyenv}/versions/description-service/bin/python`. If the harness stalls at `Configuring a Python Environment` or `Preparing`, stop retrying and ask the user to run the terminal command directly.
+- For external MCP package verification and runtime flows, do not invoke IDE Python environment-configuration tools. Use the foreground terminal with `PYENV_VERSION=description-service`, `pyenv exec python`, or `${PYENV_ROOT:-$HOME/.pyenv}/versions/description-service/bin/python`. If the harness stalls at `Configuring a Python Environment` or `Preparing`, stop retrying and ask the user to run the terminal command directly.
 
 **NO** — Stop. Use the native tool:
 
@@ -102,16 +102,18 @@ state = get_handoff_state(sections="identity")
 - `from agent_handoff_mcp.config import get_runtime_config` — `get_runtime_config` is re-exported from the package root
 - `import sqlite3; conn.execute("SELECT ...")` — never query `handoff.db` directly; the schema is internal
 
-**Running in monorepo without install:**
+**Running against the installed MCP package:**
 
 ```bash
-PYTHONPATH=packages/agent-handoff-mcp/src python3 -c "
+pyenv exec python -c "
 from pathlib import Path
 from agent_handoff_mcp import RuntimeConfig, configure_runtime, get_handoff_state
 configure_runtime(RuntimeConfig.for_repo(Path('.')))
 print(get_handoff_state(sections='identity'))
 "
 ```
+
+This fallback assumes the selected Python environment already has the standalone `agent-handoff-mcp` package installed from its external repo.
 
 ---
 

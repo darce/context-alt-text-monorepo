@@ -211,7 +211,6 @@ echo "→ Archiving MCP task state $TASK"
 # unrepresentable here. The lint guard at scripts/hooks/lint-no-inline-python-heredoc.py
 # prevents future heredocs from sneaking back in.
 REPO_ROOT="$REPO_ROOT" TASK="$TASK" \
-PYTHONPATH="${REPO_ROOT}/packages/agent-handoff-mcp/src:${REPO_ROOT}/packages/agent-orchestrator-mcp/src" \
   PYENV_VERSION="${PYENV_VERSION:-description-service}" \
   "${PYENV_ROOT:-$HOME/.pyenv}/versions/${PYENV_VERSION:-description-service}/bin/python" \
   "${REPO_ROOT}/scripts/_task_finish_inline.py" \

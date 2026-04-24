@@ -313,20 +313,20 @@ Handoff provenance discipline for remaining slices:
 
 ### Checklist for Slice 2: External MCP Runtime Cutover
 
-- [ ] Updated runtime/config/test flows to use installed external MCP packages from pinned refs.
-- [ ] Removed or replaced live dependence on `scripts/mcp/mcp-server.sh` for MCP startup tests.
-- [ ] Added installed-package smoke coverage for handoff and orchestrator.
-- [ ] Replaced package-local conftest/Makefile guard guidance with external-install verification guidance.
-- [ ] Proved no live runtime flow uses local package source.
-- [ ] Recorded verification evidence in handoff.
+- [x] Updated runtime/config/test flows to use installed external MCP packages from pinned refs.
+- [x] Removed or replaced live dependence on `scripts/mcp/mcp-server.sh` for MCP startup tests.
+- [x] Added installed-package smoke coverage for handoff and orchestrator.
+- [x] Replaced package-local conftest/Makefile guard guidance with external-install verification guidance.
+- [x] Proved no live runtime flow uses local package source.
+- [x] Recorded verification evidence in handoff.
 
 ### Checklist for Slice 3: Remove Duplicated MCP Package Sources
 
-- [ ] Removed duplicated local MCP package dirs only after Slice 2 proof.
-- [ ] Removed obsolete local package CI/Makefile/test paths.
-- [ ] Migrated only deletion-blocking package rule references (`rg-013`, `rg-014`, package-test invocation guidance) away from package-local paths.
-- [ ] Removed or explicitly justified `scripts/mcp/mcp-server.sh`.
-- [ ] Re-ran external MCP smoke and no-local-coupling grep audit.
+- [x] Removed duplicated local MCP package dirs only after Slice 2 proof.
+- [x] Removed obsolete local package CI/Makefile/test paths.
+- [x] Migrated only deletion-blocking package rule references (`rg-013`, `rg-014`, package-test invocation guidance) away from package-local paths.
+- [x] Removed or explicitly justified `scripts/mcp/mcp-server.sh`.
+- [x] Re-ran external MCP smoke and no-local-coupling grep audit.
 
 ### Checklist for Slice 4: Monorepo Shared-Surface Overlay Cutover
 

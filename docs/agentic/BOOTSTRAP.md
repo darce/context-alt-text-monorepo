@@ -84,7 +84,7 @@ Non-interactive harness rule: committed MCP configs use `PYENV_VERSION=descripti
 
 ### Core Ledger Server (`agent-handoff-mcp`)
 
-Handles task state, review findings, exports/imports, close checks, and artifacts (23 registered MCP tools).
+Handles task state, review findings, exports/imports, close checks, and artifacts. Run `doctor` to inspect the live registered tool list from the installed package.
 
 ```text
 .vscode/mcp.json  →  env { PYENV_VERSION=description-service, PYENV_ROOT, PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  agent-handoff-mcp --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --current-task-path ${workspaceFolder}/CURRENT_TASK.json --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
@@ -92,7 +92,7 @@ Handles task state, review findings, exports/imports, close checks, and artifact
 
 ### Orchestration Server (`agent-orchestrator-mcp`)
 
-Handles daemons, workers, lane management, plan cursors, and turn metrics (16 registered MCP tools).
+Handles daemons, workers, lane management, plan cursors, and turn metrics. Run `doctor` to inspect the live registered tool list from the installed package.
 
 ```text
 .vscode/mcp.json  →  env { PYENV_VERSION=description-service, PYENV_ROOT, PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  agent-orchestrator-mcp --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --current-task-path ${workspaceFolder}/CURRENT_TASK.json --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
@@ -130,15 +130,15 @@ uv tool install "agent-orchestrator-mcp @ git+ssh://git@github.com/darce/mcp-age
 Command Palette → `MCP: List Servers` → both "altcontext-mcp" and "altcontext-orchestrator-mcp" should appear.
 
 ```bash
-agent-handoff-mcp --workspace-root "$(pwd)" doctor       # 23 registered MCP tools
-agent-orchestrator-mcp --workspace-root "$(pwd)" doctor  # 16 registered MCP tools
+agent-handoff-mcp --workspace-root "$(pwd)" doctor       # prints the live registered tool list
+agent-orchestrator-mcp --workspace-root "$(pwd)" doctor  # prints the live registered tool list
 ```
 
 ### Available Tools
 
-**`agent-handoff-mcp`** (core ledger, 23 registered MCP tools): task state, decisions, findings, blockers, tests, actions, artifacts, export/import, close check, session loading, slice closure, and handoff search.
+**`agent-handoff-mcp`** (core ledger): task state, decisions, findings, blockers, tests, actions, artifacts, export/import, close check, session loading, slice closure, and handoff search.
 
-**`agent-orchestrator-mcp`** (16 registered MCP tools): daemon lifecycle, workers, lane management, plan cursors, turn metrics, dispatch, backends, cross-task tools (`switch_task`, `get_review_findings_summary`, `reconcile_review_findings`, `get_latest_slice_review_packet`).
+**`agent-orchestrator-mcp`**: daemon lifecycle, workers, lane management, plan cursors, turn metrics, dispatch, backends, cross-task tools (`switch_task`, `get_review_findings_summary`, `reconcile_review_findings`, `get_latest_slice_review_packet`).
 
 Example CLI equivalents:
 

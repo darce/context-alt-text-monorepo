@@ -6,7 +6,7 @@ boundary_owner: agentic-tooling
 
 ## Purpose
 
-`agent-orchestrator-mcp` is the MCP server for orchestration, daemon lifecycle, lane management, worker coordination, plan cursors, and turn metrics. It was extracted from `agent-handoff-mcp` in E12-5 and exposes **16 registered MCP tools**. It shares `handoff.db` and `mcp-artifacts.db` with `agent-handoff-mcp`; SQLite WAL mode makes concurrent readers safe.
+`agent-orchestrator-mcp` is the MCP server for orchestration, daemon lifecycle, lane management, worker coordination, plan cursors, and turn metrics. It was extracted from `agent-handoff-mcp` in E12-5 and shares `handoff.db` and `mcp-artifacts.db` with `agent-handoff-mcp`; SQLite WAL mode makes concurrent readers safe. Use `agent-orchestrator-mcp --workspace-root "$(pwd)" doctor` to inspect the live registered tool surface from the installed package.
 
 For task state, review findings, artifacts, and close checks see [`agent-handoff-mcp.md`](agent-handoff-mcp.md).
 
@@ -133,7 +133,7 @@ Behavioral constraints:
 
 - The `identity` token in `sections` is a special override that requests only the `active` and `limits` envelope fields; it cancels all other section tokens. To request data sections alongside identity, omit the `identity` token since identity fields are always included unconditionally.
 - `evaluate_review_ready` reads test evidence from `state["data"]["tests_recent"]` (the nested envelope path). Callers that mock the state for testing must place `tests_recent` under `data`.
-- Boundary-file detection uses root-owned orchestration and contract surfaces (`apps/`, `mk/`, `scripts/worktree-lane`, `config/lane-orchestration/`, `docs/agentic/contracts/`). External package implementation changes are reviewed in `darce/mcp-agent-orchestrator`.
+- Boundary-file detection covers the monorepo-owned orchestration and contract surfaces reviewed from this checkout, for example `apps/`, `mk/`, `config/lane-orchestration/`, and `docs/agentic/contracts/`. The installed orchestrator package remains the source of truth for the exact prefix constants; external package implementation changes are reviewed in `darce/mcp-agent-orchestrator`.
 
 ## `get_metrics_summary` Snapshot Shape
 

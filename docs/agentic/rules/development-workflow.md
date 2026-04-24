@@ -198,8 +198,8 @@ Escape hatch: `.task-state/dirty-allowlist` -- a newline-delimited list of repo-
 # Files I'm intentionally editing in parallel with task work:
 docs/agentic/instructions.md
 docs/agentic/rules/development-workflow.md
-# Pre-existing external package work that pre-dates the active task:
-external/mcp-agent-orchestrator/src/agent_orchestrator_mcp/api.py
+# Pre-existing repo-local work that pre-dates the active task:
+scripts/mcp/handoff_integrity_guard.py
 ```
 
 ---

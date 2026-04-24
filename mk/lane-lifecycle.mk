@@ -119,8 +119,8 @@ lane-dispatch: lane-guard lane-orchestrator-guard
 	@set -eu; \
 	DISPATCH_SESSION="$(TASK)-dispatch-$(LANE)-$$(date +%Y%m%d%H%M%S)"; \
 	if [ "$(DRY_RUN)" = "1" ]; then \
-		echo "[dry-run] agent-handoff-mcp lane-upsert --lane-id \"$(LANE)\" --worktree-path \"$(LANE_WORKTREE)\" --branch \"$(LANE_BRANCH)\" --status active"; \
-		echo "[dry-run] agent-handoff-mcp lane-message --lane-id \"$(LANE)\" --session \"$$DISPATCH_SESSION\" --direction orchestrator_to_worker --subject \"$(SUBJECT)\" --message \"$(MESSAGE)\" --status open"; \
+		echo "[dry-run] mcp-agent-handoff lane-upsert --lane-id \"$(LANE)\" --worktree-path \"$(LANE_WORKTREE)\" --branch \"$(LANE_BRANCH)\" --status active"; \
+		echo "[dry-run] mcp-agent-handoff lane-message --lane-id \"$(LANE)\" --session \"$$DISPATCH_SESSION\" --direction orchestrator_to_worker --subject \"$(SUBJECT)\" --message \"$(MESSAGE)\" --status open"; \
 		echo "[dry-run] $(MAKE) task"; \
 		echo "Dispatch preview ready for $(LANE)."; \
 		exit 0; \

@@ -87,7 +87,7 @@ Non-interactive harness rule: committed MCP configs use `PYENV_VERSION=descripti
 Handles task state, review findings, exports/imports, close checks, and artifacts. Run `doctor` to inspect the live registered tool list from the installed package.
 
 ```text
-.vscode/mcp.json  →  env { PYENV_VERSION=description-service, PYENV_ROOT, PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  agent-handoff-mcp --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --current-task-path ${workspaceFolder}/CURRENT_TASK.json --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
+.vscode/mcp.json  →  env { PYENV_VERSION=description-service, PYENV_ROOT, PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  mcp-agent-handoff --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --current-task-path ${workspaceFolder}/CURRENT_TASK.json --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
 ```
 
 ### Orchestration Server (`agent-orchestrator-mcp`)
@@ -95,7 +95,7 @@ Handles task state, review findings, exports/imports, close checks, and artifact
 Handles daemons, workers, lane management, plan cursors, and turn metrics. Run `doctor` to inspect the live registered tool list from the installed package.
 
 ```text
-.vscode/mcp.json  →  env { PYENV_VERSION=description-service, PYENV_ROOT, PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  agent-orchestrator-mcp --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --current-task-path ${workspaceFolder}/CURRENT_TASK.json --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
+.vscode/mcp.json  →  env { PYENV_VERSION=description-service, PYENV_ROOT, PATH, AGENT_HANDOFF_ENFORCE_BRANCH=1 }  →  mcp-agent-orchestrator --workspace-root ${workspaceFolder} --state-dir ${workspaceFolder}/.task-state --current-task-path ${workspaceFolder}/CURRENT_TASK.json --exports-dir ${workspaceFolder}/.task-state/exports serve-stdio
 ```
 
 Both servers share `handoff.db` and `mcp-artifacts.db` on disk; SQLite WAL mode makes concurrent readers safe. Install both:
@@ -130,8 +130,8 @@ uv tool install "agent-orchestrator-mcp @ git+ssh://git@github.com/darce/mcp-age
 Command Palette → `MCP: List Servers` → both "mcp-agent-handoff" and "mcp-agent-orchestrator" should appear.
 
 ```bash
-agent-handoff-mcp --workspace-root "$(pwd)" doctor       # prints the live registered tool list
-agent-orchestrator-mcp --workspace-root "$(pwd)" doctor  # prints the live registered tool list
+mcp-agent-handoff --workspace-root "$(pwd)" doctor       # prints the live registered tool list
+mcp-agent-orchestrator --workspace-root "$(pwd)" doctor  # prints the live registered tool list
 ```
 
 ### Available Tools
@@ -144,17 +144,17 @@ Example CLI equivalents:
 
 ```bash
 # Core ledger
-agent-handoff-mcp --workspace-root "$(pwd)" state
-agent-handoff-mcp --workspace-root "$(pwd)" dashboard
-agent-handoff-mcp --workspace-root "$(pwd)" handoff-close-check
+mcp-agent-handoff --workspace-root "$(pwd)" state
+mcp-agent-handoff --workspace-root "$(pwd)" dashboard
+mcp-agent-handoff --workspace-root "$(pwd)" handoff-close-check
 
 # Orchestration
-agent-orchestrator-mcp --workspace-root "$(pwd)" orchestrator-start --task-ref <task-ref> --backend codex-cli --model o3-mini
-agent-orchestrator-mcp --workspace-root "$(pwd)" orchestrator-status
-agent-orchestrator-mcp --workspace-root "$(pwd)" orchestrator-pause
-agent-orchestrator-mcp --workspace-root "$(pwd)" orchestrator-resume
-agent-orchestrator-mcp --workspace-root "$(pwd)" orchestrator-stop
-agent-orchestrator-mcp --workspace-root "$(pwd)" dispatch \
+mcp-agent-orchestrator --workspace-root "$(pwd)" orchestrator-start --task-ref <task-ref> --backend codex-cli --model o3-mini
+mcp-agent-orchestrator --workspace-root "$(pwd)" orchestrator-status
+mcp-agent-orchestrator --workspace-root "$(pwd)" orchestrator-pause
+mcp-agent-orchestrator --workspace-root "$(pwd)" orchestrator-resume
+mcp-agent-orchestrator --workspace-root "$(pwd)" orchestrator-stop
+mcp-agent-orchestrator --workspace-root "$(pwd)" dispatch \
   --lane-id <lane-id> \
   --task-ref <task-ref> \
   --backend codex-subagent \
@@ -179,7 +179,7 @@ make mcp-serve-http HOST=0.0.0.0 PORT=9000      # custom bind
 Or directly:
 
 ```bash
-agent-handoff-mcp --workspace-root "$(pwd)" serve-http --host 127.0.0.1 --port 8741
+mcp-agent-handoff --workspace-root "$(pwd)" serve-http --host 127.0.0.1 --port 8741
 ```
 
 Verify the endpoint is reachable:
@@ -198,7 +198,7 @@ If tools don't appear in VS Code:
 
 1. Check `MCP: List Servers` — server should be listed
 2. Ensure the selected Python environment has `fastmcp`
-3. Test manually: `agent-handoff-mcp --workspace-root "$(pwd)" serve-stdio` (should block on stdin)
+3. Test manually: `mcp-agent-handoff --workspace-root "$(pwd)" serve-stdio` (should block on stdin)
 4. Check VS Code Output panel → "MCP" for error messages
 
 Handoff guard commands:
@@ -212,7 +212,7 @@ Phase 5 (Verification & Handoff) follows implementation:
 
 1. **5.1 Cross-Lane Verification**: `make check-all` from the root.
 2. **5.2 Documentation Audit**: Verify `docs/`, `CURRENT_TASK.json`, and `CHANGELOG`.
-3. **5.3 Handoff Closure**: `agent-handoff-mcp handoff-close-check --task-ref <task>`.
+3. **5.3 Handoff Closure**: `mcp-agent-handoff handoff-close-check --task-ref <task>`.
 
 174: **BackendAdapter Protocol**: Handled in `scripts/mcp/backend_adapter.py`. All backends (Codex, Claude, Local) must implement this protocol for `execute()` and reasoning effort resolution. The `adapters/` directory contains specific implementations (e.g., `claude_code.py`).
 
@@ -246,11 +246,11 @@ over canonical handoff records without reading the full task snapshot.
 
 ```bash
 # CLI: search all record types for a keyword, scoped to a task
-agent-handoff-mcp --workspace-root "$(pwd)" handoff-search \
+mcp-agent-handoff --workspace-root "$(pwd)" handoff-search \
   --query "retry policy" --task-ref <task-ref>
 
 # CLI: narrow to decisions and blockers, multiple OR terms
-agent-handoff-mcp --workspace-root "$(pwd)" handoff-search \
+mcp-agent-handoff --workspace-root "$(pwd)" handoff-search \
   --query "retry" --query "timeout" \
   --record-types decision --record-types blocker \
   --task-ref <task-ref> --limit 10

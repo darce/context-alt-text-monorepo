@@ -36,7 +36,7 @@ MCP_RUNTIME_ENV = env PYENV_VERSION="$(MCP_PYENV_VERSION)"
 LANE_CONFIG_CMD = $(MCP_PYTHON) -m agent_orchestrator_mcp.orchestration.lane_config
 MCP_PYTHONPATH := $(ORCHESTRATOR_ROOT)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
 WORKTREE_MCP_PYTHONPATH := $(WORKTREE_ROOT_REAL)/packages/codex-subagent-bridge/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
-MCP_CMD = $(MCP_RUNTIME_ENV) agent-handoff-mcp
+MCP_CMD = $(MCP_RUNTIME_ENV) mcp-agent-handoff
 MCP_STATE_ARGS = --workspace-root "$(ORCHESTRATOR_ROOT)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.json" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports"
 PYTHON ?= $(MCP_PYTHON)
 
@@ -225,7 +225,7 @@ help:
 	@echo "  make lane-path TASK=<task-ref> LANE=<lane>"
 	@echo "  make lane-commits TASK=<task-ref> LANE=<lane>"
 	@echo "  make lane-intake TASK=<task-ref> LANE=<lane> [DRY_RUN=1] [SKIP_TESTS=1] [SKIP_POST_INTAKE=1] [POST_INTAKE_CHECK_CMD='...']"
-	@echo "    Prints the latest merge-ready lane report, cherry-picks into a scratch worktree, runs lane-local verification there, fast-forwards root if clean, verifies CURRENT_TASK.json sync with agent-handoff-mcp handoff-close-check, then runs cross-lane post-intake verification from the orchestrator root."
+	@echo "    Prints the latest merge-ready lane report, cherry-picks into a scratch worktree, runs lane-local verification there, fast-forwards root if clean, verifies CURRENT_TASK.json sync with mcp-agent-handoff handoff-close-check, then runs cross-lane post-intake verification from the orchestrator root."
 	@echo "    Use SKIP_TESTS=1 to bypass scratch-worktree test commands, SKIP_POST_INTAKE=1 to skip the cross-lane gate, or POST_INTAKE_CHECK_CMD to override the default post-intake check command."
 	@echo "  make orchestrator-daemon [TASK=<task-ref>] [BACKEND=codex-cli|codex-subagent]"
 	@echo "    Shared singleton orchestrator loop rooted at $(ORCHESTRATOR_ROOT). Start it from any worktree; pause/resume/status use the same shared root state."

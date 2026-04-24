@@ -69,17 +69,14 @@ const defaultSettings: SettingsResponse = {
 
 const saveMutate = vi.fn();
 const testMutate = vi.fn();
-let capturedSaveOptions: CapturedMutationOptions | undefined;
 let capturedTestOptions: CapturedMutationOptions | undefined;
 
 const installMutationMock = (): void => {
   let mutationCallIndex = 0;
-  capturedSaveOptions = undefined;
   capturedTestOptions = undefined;
   mockUseMutation.mockImplementation((options) => {
     mutationCallIndex++;
     if (mutationCallIndex % 2 === 1) {
-      capturedSaveOptions = options;
       return createMockMutation({ mutate: saveMutate });
     }
     capturedTestOptions = options;

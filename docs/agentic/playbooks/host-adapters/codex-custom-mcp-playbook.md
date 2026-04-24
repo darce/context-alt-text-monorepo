@@ -77,13 +77,13 @@ separately when orchestration control is needed.
 
 For same-machine development, prefer the checked-in project-scoped Codex config in
 [`../../../.codex/config.toml`](../../../.codex/config.toml).
-It registers the stdio adapter as `altcontext-mcp` and pins the launcher to the
+It registers the stdio adapter as `mcp-agent-handoff` and pins the launcher to the
 repo-local workspace state while exposing both the handoff MCP package and the
 Codex subagent bridge on `PYTHONPATH`.
 
 For the Codex / ChatGPT custom MCP settings UI over HTTP:
 
-- **Name**: `altcontext-mcp`
+- **Name**: `mcp-agent-handoff`
 - **Server URL**: `http://<host>:8741/mcp`
 - **Transport**: Streamable HTTP
 

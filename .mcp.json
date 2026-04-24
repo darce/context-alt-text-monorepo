@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "agent-handoff-mcp": {
+    "mcp-agent-handoff": {
       "type": "stdio",
       "command": "agent-handoff-mcp",
       "args": [
@@ -13,7 +13,7 @@
         "AGENT_HANDOFF_ENFORCE_BRANCH": "1"
       }
     },
-    "agent-orchestrator-mcp": {
+    "mcp-agent-orchestrator": {
       "type": "stdio",
       "command": "agent-orchestrator-mcp",
       "args": [

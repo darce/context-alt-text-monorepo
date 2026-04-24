@@ -5,7 +5,7 @@ codex_hooks = true
 command = "npx"
 args = ["-y", "@upstash/context7-mcp@2.1.4"]
 
-[mcp_servers."altcontext-mcp"]
+[mcp_servers."mcp-agent-handoff"]
 command = "agent-handoff-mcp"
 args = [
   "--workspace-root",
@@ -20,11 +20,11 @@ args = [
 ]
 cwd = "."
 
-[mcp_servers."altcontext-mcp".env]
+[mcp_servers."mcp-agent-handoff".env]
 PYENV_VERSION = "description-service"
 AGENT_HANDOFF_ENFORCE_BRANCH = "1"
 
-[mcp_servers."altcontext-orchestrator-mcp"]
+[mcp_servers."mcp-agent-orchestrator"]
 command = "agent-orchestrator-mcp"
 args = [
   "--workspace-root",
@@ -39,6 +39,6 @@ args = [
 ]
 cwd = "."
 
-[mcp_servers."altcontext-orchestrator-mcp".env]
+[mcp_servers."mcp-agent-orchestrator".env]
 PYENV_VERSION = "description-service"
 AGENT_HANDOFF_ENFORCE_BRANCH = "1"

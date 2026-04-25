@@ -11,6 +11,8 @@ spinning up the full FastAPI app.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from fastapi import Depends, HTTPException, status
 
 from recognition.application.storage import FilesystemObjectStore, ObjectStore
@@ -18,6 +20,8 @@ from recognition.config import get_settings as _get_recognition_settings
 from recognition.config.settings import RecognitionSettings
 from recognition.interface_adapters.http.dependencies import require_write_access
 from recognition.interface_adapters.http.deps.auth import AuthContext
+
+ObjectStoreFactory = Callable[[str], ObjectStore]
 
 
 def _settings_default() -> RecognitionSettings:
@@ -72,3 +76,36 @@ def get_object_store_for_request(
     ``app.dependency_overrides[_settings_default]``.
     """
     return get_object_store(auth=auth, settings=settings)
+
+
+def get_object_store_factory_for_request(
+    settings: RecognitionSettings = Depends(_settings_default),  # noqa: B008
+) -> ObjectStoreFactory:
+    """Return a Callable[[tenant_id], ObjectStore] bound to the configured
+    backend (E15-11 BR-14).
+
+    The multipart route's BackgroundTask runs after the request has
+    returned, so ``object_store`` from the request scope is no longer
+    safe to capture. The route used to read ``object_store.root`` and
+    rebuild a ``FilesystemObjectStore`` directly, which leaked the
+    filesystem implementation through the ``ObjectStore`` protocol and
+    blocked Slice B's OCI swap. This factory keeps the protocol clean:
+    the backend selection lives here (filesystem in Slice A, OCI in
+    Slice B by override), and the route just calls
+    ``factory(tenant_id)`` without poking at impl-private attributes.
+
+    Tests override via ``app.dependency_overrides[get_object_store_factory_for_request]``.
+    """
+    blob_root = settings.blob_root
+    blob_root.mkdir(parents=True, exist_ok=True)
+
+    def _factory(tenant_id: str) -> ObjectStore:
+        tenant_id = (tenant_id or "").strip()
+        if not tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="missing tenant claim; cannot construct ObjectStore",
+            )
+        return FilesystemObjectStore(root=blob_root, tenant_id=tenant_id)
+
+    return _factory

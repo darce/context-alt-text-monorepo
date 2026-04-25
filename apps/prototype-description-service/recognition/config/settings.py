@@ -68,6 +68,26 @@ class ClusteringLimitsSettings(BaseModel):
     max_cluster_size: int = Field(default=1000, description="Maximum members per cluster.")
 
 
+_DEFAULT_UPLOAD_MIME_TYPES: tuple[str, ...] = (
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+)
+
+
+def _parse_allowed_upload_mime_types(raw: str) -> list[str]:
+    """Parse RECOGNITION_ALLOWED_UPLOAD_MIME_TYPES into a list.
+
+    Comma-separated; per-item whitespace stripped; empty / whitespace-only
+    input returns the safe default (so a misconfigured env var cannot
+    silently disable every upload).
+    """
+    items = [chunk.strip() for chunk in raw.split(",") if chunk.strip()]
+    if not items:
+        return list(_DEFAULT_UPLOAD_MIME_TYPES)
+    return items
+
+
 class RecognitionSettings(BaseModel):
     """Top-level recognition settings container."""
 
@@ -105,7 +125,13 @@ class RecognitionSettings(BaseModel):
     )
 
     # E15-11: allowed image MIME types for multipart upload parts.
+    # Override via comma-separated env var, e.g.
+    # `RECOGNITION_ALLOWED_UPLOAD_MIME_TYPES=image/jpeg,image/heic,image/avif`.
+    # Whitespace-only or unset values fall back to the safe default to avoid
+    # accidentally rejecting every upload.
     allowed_upload_mime_types: list[str] = Field(
-        default_factory=lambda: ["image/jpeg", "image/png", "image/webp"],
+        default_factory=lambda: _parse_allowed_upload_mime_types(
+            os.environ.get("RECOGNITION_ALLOWED_UPLOAD_MIME_TYPES", "")
+        ),
         description="MIME allow-list for image_<media_id> parts on the multipart route.",
     )

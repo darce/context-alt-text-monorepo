@@ -16,6 +16,7 @@ from fastapi import Depends, HTTPException, status
 from recognition.application.storage import FilesystemObjectStore, ObjectStore
 from recognition.config import get_settings as _get_recognition_settings
 from recognition.config.settings import RecognitionSettings
+from recognition.interface_adapters.http.dependencies import require_write_access
 from recognition.interface_adapters.http.deps.auth import AuthContext
 
 
@@ -58,14 +59,16 @@ def get_object_store(
 
 
 def get_object_store_for_request(
-    auth: AuthContext = Depends(  # noqa: B008 - FastAPI DI pattern
-        lambda: (_ for _ in ()).throw(  # pragma: no cover - placeholder
-            RuntimeError(
-                "get_object_store_for_request must be wired with the route's "
-                "auth dependency; do not call directly outside a FastAPI route"
-            )
-        )
-    ),
-) -> ObjectStore:  # pragma: no cover - exercised via the multipart route
-    """FastAPI-wired wrapper, mounted in 1.4c with the route-specific auth."""
-    return get_object_store(auth=auth)
+    auth: AuthContext = Depends(require_write_access),  # noqa: B008 - FastAPI DI pattern
+    settings: RecognitionSettings = Depends(_settings_default),  # noqa: B008
+) -> ObjectStore:
+    """FastAPI dependency that returns a tenant-bound ObjectStore.
+
+    Bound to ``require_write_access`` because the multipart upload path is
+    a write operation; the route still keeps ``Depends(require_write_access)``
+    in its own signature so the auth gate runs even if a future refactor
+    drops this dependency. Settings comes from ``_settings_default`` (the
+    process-global RecognitionSettings) and is overridable in tests via
+    ``app.dependency_overrides[_settings_default]``.
+    """
+    return get_object_store(auth=auth, settings=settings)

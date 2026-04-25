@@ -24,6 +24,7 @@ use AltContext\Sovereign\Sync\SnapshotClient;
 use AltContext\Sovereign\Sync\SyncPullJobFactory;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
 use AltContext\Support\BatchLimits;
+use AltContext\Support\Telemetry;
 use Throwable;
 use WP_Error;
 use WP_REST_Request;
@@ -148,6 +149,9 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 		if ( 'multipart' !== $transport && 'url' !== $transport ) {
 			$transport = 'multipart';
 		}
+		// E15-11 Slice 3.2: log the resolved transport so operators can grep
+		// for installs that fell back to URL transport unintentionally.
+		Telemetry::log_line( sprintf( '[acx] acx_recognition_transport=%s', $transport ) );
 
 		if ( is_array( $media_items_param ) && count( $media_items_param ) > 0 ) {
 			$media_items = array_values(
@@ -180,7 +184,21 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 		}
 
 		if ( 'multipart' === $transport ) {
-			return $this->analyze_media_multipart( $media_items );
+			$multipart_result = $this->analyze_media_multipart( $media_items );
+			if ( is_wp_error( $multipart_result ) ) {
+				// E15-11 Slice 3.2: surface dispatch failures (cap exceeded,
+				// no readable files, proxy misconfig) in server logs so an
+				// operator can correlate a stuck WP scan with the underlying
+				// transport rejection.
+				Telemetry::log_line(
+					sprintf(
+						'[acx] multipart dispatch failed: %s %s',
+						$multipart_result->get_error_code(),
+						$multipart_result->get_error_message()
+					)
+				);
+			}
+			return $multipart_result;
 		}
 
 		$payload = array(
@@ -261,16 +279,12 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			}
 			$path = get_attached_file( $media_id, true );
 			if ( ! is_string( $path ) || '' === $path || ! is_readable( $path ) ) {
-				if ( function_exists( 'error_log' ) ) {
-					error_log( sprintf( '[acx] skipping media_id=%d for multipart upload: file not readable', $media_id ) );
-				}
+				Telemetry::log_line( sprintf( '[acx] skipping media_id=%d for multipart upload: file not readable', $media_id ) );
 				continue;
 			}
 			$bytes = @file_get_contents( $path );
 			if ( false === $bytes || '' === $bytes ) {
-				if ( function_exists( 'error_log' ) ) {
-					error_log( sprintf( '[acx] skipping media_id=%d for multipart upload: empty file', $media_id ) );
-				}
+				Telemetry::log_line( sprintf( '[acx] skipping media_id=%d for multipart upload: empty file', $media_id ) );
 				continue;
 			}
 

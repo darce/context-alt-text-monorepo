@@ -212,7 +212,36 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 	 *
 	 * @param array<int,array<string,mixed>> $media_items
 	 */
+	/**
+	 * E15-11 Slice 2.3: multipart batch caps.
+	 *
+	 * Per the scope intake (#2337) the multipart route is sized for small
+	 * predictable batches: ~5 images per submission and ~25 MiB total.
+	 * Tier-based batch limits (BatchLimits trait) still apply on top of
+	 * these caps; the smaller of (tier_limit, MULTIPART_MAX_IMAGES) wins
+	 * for the multipart path. The byte cap is enforced plugin-side so a
+	 * caller fails before the network round-trip; the recognition
+	 * service's UploadSizeLimitMiddleware enforces the same bound at the
+	 * server boundary as defense-in-depth.
+	 */
+	private const MULTIPART_MAX_IMAGES = 5;
+	private const MULTIPART_MAX_BYTES  = 25 * 1024 * 1024;
+
 	private function analyze_media_multipart( array $media_items ): WP_REST_Response|WP_Error {
+		$tier_limit          = $this->get_current_tier_batch_limit();
+		$effective_max_count = min( $tier_limit, self::MULTIPART_MAX_IMAGES );
+		if ( count( $media_items ) > $effective_max_count ) {
+			return new WP_Error(
+				'too_many_multipart_images',
+				sprintf(
+					'multipart upload supports at most %d images per request (received %d).',
+					$effective_max_count,
+					count( $media_items )
+				),
+				array( 'status' => 400 )
+			);
+		}
+
 		$multipart_body = array(
 			'request' => wp_json_encode(
 				array(
@@ -224,6 +253,7 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 		);
 
 		$dispatched_items = array();
+		$total_bytes      = 0;
 		foreach ( $media_items as $item ) {
 			$media_id = (int) ( $item['media_id'] ?? 0 );
 			if ( $media_id <= 0 ) {
@@ -242,6 +272,20 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 					error_log( sprintf( '[acx] skipping media_id=%d for multipart upload: empty file', $media_id ) );
 				}
 				continue;
+			}
+
+			$total_bytes += strlen( $bytes );
+			if ( $total_bytes > self::MULTIPART_MAX_BYTES ) {
+				return new WP_Error(
+					'multipart_payload_too_large',
+					sprintf(
+						'multipart upload exceeds %d-byte cap (currently %d bytes after media_id=%d).',
+						self::MULTIPART_MAX_BYTES,
+						$total_bytes,
+						$media_id
+					),
+					array( 'status' => 413 )
+				);
 			}
 
 			$multipart_body[ 'image_' . $media_id ] = array(

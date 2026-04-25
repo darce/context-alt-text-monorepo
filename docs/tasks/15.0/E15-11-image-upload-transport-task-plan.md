@@ -297,26 +297,26 @@ Remove the must-use plugin to restore default multipart behaviour.
 
 ## Context and Ownership
 
-- [ ] Loaded backend-python, backend-php, and development-workflow rules before editing
-- [ ] Confirmed `/recognition/analyze` contract surface in `docs/agentic/contracts/` (refresh in Slice 1 if a fixture exists)
-- [ ] Confirmed no `ctx7` fetch is needed for FastAPI multipart, Pydantic v2, or `wp_remote_post`
+- [x] Loaded backend-python, backend-php, and development-workflow rules before editing
+- [x] Confirmed `/recognition/analyze` contract surface in `docs/agentic/contracts/`: no fixture exists for `/recognition/analyze`, so no contract refresh required for Slice 1 (verified by `ls docs/agentic/contracts/` during S1.1 survey)
+- [x] Confirmed no `ctx7` fetch is needed for FastAPI multipart, Pydantic v2, or `wp_remote_post` (stable surfaces in the local toolchain)
 
 ### Checklist for Slice 1: Backend ObjectStore + multipart endpoint + worker cleanup
 
-- [ ] `ObjectStore` Protocol defined and filesystem impl lands with `put`/`open`/`cleanup`
-- [ ] `analyze.py::analyze_media` accepts multipart with body-size cap + MIME validation
-- [ ] `detector.py` resolves blob URIs through `ObjectStore.open` instead of HTTP GET
-- [ ] Worker invokes `ObjectStore.cleanup(job_id)` on both success and failure paths
-- [ ] New pytest suites cover happy path, 413, 415, 422, and tenant-binding invariant
-- [ ] Contract fixture for `/recognition/analyze` updated in the same slice if one exists
+- [x] `ObjectStore` Protocol defined and filesystem impl lands with `put`/`open`/`cleanup` (S1.1, decision `#2349`)
+- [x] `analyze.py::analyze_media` accepts multipart with body-size cap + MIME validation (S1.3 middleware decision `#2355` + S1.4a/b/c/d decisions `#2356`/`#2357`/`#2360`/`#2361`)
+- [x] `detector.py` resolves blob URIs through `ObjectStore.open` instead of HTTP GET (S1.5, decision `#2365`)
+- [x] Worker invokes `ObjectStore.cleanup(job_id)` on both success and failure paths (S1.6 decision `#2366`; deferred to async-worker path in BR-07/08 fix decision `#2368`; factory-survives-rebuild fix in BR-11 decision `#2374`)
+- [x] New pytest suites cover happy path, 413, 415, 422, and tenant-binding invariant (cumulative across S1.1–S1.6 + BR fixes)
+- [x] Contract fixture for `/recognition/analyze` updated in the same slice if one exists (no fixture exists; n/a)
 
 ### Checklist for Slice 2: Plugin transport switch + `acx_recognition_transport` filter + URL fallback
 
-- [ ] `class-abstract-recognition-proxy-controller.php::proxy_request` supports `body_kind='multipart'`
-- [ ] `class-analysis-jobs-controller.php::analyze_media` reads `acx_recognition_transport` and dispatches accordingly
-- [ ] Tier batch limit reconciled with the ~5-image / ~25 MB multipart cap (and noted in code)
-- [ ] PHPUnit covers both filter branches and the multipart body-array shape
-- [ ] `composer phpcs` + `composer phpstan` green
+- [x] `class-abstract-recognition-proxy-controller.php::proxy_request` supports `body_kind='multipart'` (S2.1 decision `#2369` + BR-09 manual multipart-body builder decision `#2371` + BR-12 serialized-cap enforcement decision `#2379`)
+- [x] `class-analysis-jobs-controller.php::analyze_media` reads `acx_recognition_transport` and dispatches accordingly (S2.2 decision `#2372`)
+- [x] Tier batch limit reconciled with the ~5-image / ~25 MB multipart cap (S2.3 decision `#2375`; constants `MULTIPART_MAX_IMAGES`/`MULTIPART_MAX_BYTES` documented in code)
+- [x] PHPUnit covers both filter branches and the multipart body-array shape (cumulative across S2.1–S2.3 + BR-09/BR-10/BR-12 fixes)
+- [x] `composer phpcs` + `composer phpstan` green (PHPStan upgraded to v2.x in decision `#2374` for memory budget; recorded as `verified_test` rows on every slice)
 
 ### Checklist for Slice 3: End-to-end smoke + telemetry
 
@@ -326,11 +326,11 @@ Remove the must-use plugin to restore default multipart behaviour.
 
 ## Review Readiness
 
-- [ ] Every slice ships behavior plus proof (no scaffold-only slices)
-- [ ] Contract fixture and route change land in the same slice
-- [ ] Per-blob tenant binding has a dedicated test (not just an inferred invariant)
-- [ ] Cleanup is wired into both success and failure paths, not just one
-- [ ] Handoff decision recorded for each slice with rationale, verification, and contract implications
+- [x] Every slice ships behavior plus proof (no scaffold-only slices) — every code commit has at least one `verified_test` row at the same HEAD
+- [x] Contract fixture and route change land in the same slice (no fixture exists; n/a)
+- [x] Per-blob tenant binding has a dedicated test (not just an inferred invariant): `test_object_store_filesystem.py::test_open_rejects_uri_outside_active_tenant_prefix` and `test_scan_service_blob_uri.py::test_process_media_item_refuses_cross_tenant_blob_uri`
+- [x] Cleanup is wired into both success and failure paths, not just one (route pre-commit cleanup on failed job creation, `chain_populate_and_process` cleanup on inline path success+failure, worker `_refresh_job_progress` cleanup on async-path job completion)
+- [x] Handoff decision recorded for each slice with rationale, verification, and contract implications (decisions `#2349` through `#2382`)
 
 ## Stretch Goals
 

@@ -324,7 +324,8 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			$multipart_body,
 			array(),
 			'auto',
-			'multipart'
+			'multipart',
+			self::MULTIPART_MAX_BYTES
 		);
 
 		if ( $response instanceof WP_REST_Response ) {

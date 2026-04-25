@@ -284,6 +284,74 @@ def test_multipart_cleans_up_blobs_when_create_scan_job_record_fails(tmp_path: P
 
 
 # ---------------------------------------------------------------------------
+# E15-11-BR-14: route must not reach through FilesystemObjectStore.root
+# ---------------------------------------------------------------------------
+
+
+def test_multipart_route_does_not_reach_through_filesystem_protocol(
+    tmp_path: Path, tenant_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The multipart route must construct background-task cleanup through
+    the ObjectStore protocol, not by reading FilesystemObjectStore.root.
+    Stub store implements only put/open/cleanup; route must still
+    complete 202 — proving any non-filesystem implementation can swap in
+    unchanged (e.g. Slice B's OCI store)."""
+    from recognition.application.storage import ObjectStore as _ObjectStore
+    from recognition.interface_adapters.http.deps.object_store import (
+        get_object_store_factory_for_request,
+    )
+
+    monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
+
+    class _ProtocolOnlyStore:
+        """Implements only put/open/cleanup; deliberately has NO .root attr."""
+
+        _shared: dict[str, bytes] = {}
+
+        def __init__(self, tenant_id: str) -> None:
+            self._tenant_id = tenant_id
+
+        def put(self, *, job_id: str, media_id: str, data: bytes) -> str:
+            uri = f"stub://{self._tenant_id}/{job_id}/{media_id}"
+            type(self)._shared[uri] = bytes(data)
+            return uri
+
+        def open(self, uri: str):
+            import io
+
+            return io.BytesIO(type(self)._shared[uri])
+
+        def cleanup(self, *, job_id: str) -> None:
+            type(self)._shared = {k: v for k, v in type(self)._shared.items() if f"/{job_id}/" not in k}
+
+    def _stub_factory_provider():
+        def _factory(tenant: str) -> _ObjectStore:
+            return _ProtocolOnlyStore(tenant_id=tenant)
+
+        return _factory
+
+    fake_queue = _FakeScanQueue()
+    fastapi_app = FastAPI()
+    fastapi_app.include_router(router, prefix="/recognition")
+    fastapi_app.dependency_overrides[require_write_access] = lambda: AuthContext(token="t", tenant_claim=tenant_id)
+    fastapi_app.dependency_overrides[get_optional_session] = lambda: None
+    fastapi_app.dependency_overrides[get_scan_queue_service_optional] = lambda: fake_queue
+    fastapi_app.dependency_overrides[get_object_store_for_request] = lambda: _ProtocolOnlyStore(tenant_id=tenant_id)
+    fastapi_app.dependency_overrides[get_object_store_factory_for_request] = _stub_factory_provider
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    async def _noop_chain(**_kwargs):
+        return None
+
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+
+    client = TestClient(fastapi_app)
+    response = client.post("/recognition/analyze/multipart", **_multipart_submission(tenant_id))
+    assert response.status_code == 202, response.text
+
+
+# ---------------------------------------------------------------------------
 # S3.1 — structured log fields on the multipart route
 # ---------------------------------------------------------------------------
 

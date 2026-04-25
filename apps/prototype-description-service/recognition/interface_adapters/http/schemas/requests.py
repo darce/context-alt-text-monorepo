@@ -15,10 +15,34 @@ _validate_uuid = validate_uuid_format
 
 
 class MediaItem(BaseModel):
-    """WordPress-compatible media item descriptor."""
+    """WordPress-compatible media item descriptor.
+
+    Each item carries exactly one of:
+
+    - ``media_url`` — public URL the recognition service ``GET``s (legacy
+      transport, retained behind ``acx_recognition_transport=url``).
+    - ``blob_uri`` — opaque URI returned by the backend ObjectStore for an
+      inline-uploaded multipart part (E15-11 default transport).
+
+    Mutual exclusion is enforced at the model level so neither transport
+    silently mis-routes when callers omit or double up the fields.
+    """
 
     media_id: int
-    media_url: str
+    media_url: str | None = None
+    blob_uri: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_exactly_one_source(self) -> MediaItem:
+        has_url = self.media_url is not None
+        has_blob = self.blob_uri is not None
+        if has_url == has_blob:
+            raise ValueError(
+                "MediaItem requires exactly one of {media_url, blob_uri}; "
+                f"got media_url={'set' if has_url else 'unset'}, "
+                f"blob_uri={'set' if has_blob else 'unset'}"
+            )
+        return self
 
 
 class AnalyzeRequest(BaseModel):

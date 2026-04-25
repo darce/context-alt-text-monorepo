@@ -15,7 +15,8 @@ from recognition.application.embedding.detector import FaceDetectorProtocol
 from recognition.application.embedding.generator import EmbeddingGeneratorProtocol
 from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.application.scan.scan_queue_service import ScanQueueService
-from recognition.application.scan.service import ScanService
+from recognition.application.scan.service import ObjectStoreFactory, ScanService
+from recognition.application.storage import ObjectStoreError
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 from recognition.interface_adapters.http.middleware.correlation import (
     _correlation_id_var,
@@ -36,12 +37,19 @@ class ScanItemHandler:
         generator: EmbeddingGeneratorProtocol,
         max_attempts: int,
         max_concurrency: int,
+        object_store_factory: ObjectStoreFactory | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._detector = detector
         self._generator = generator
         self._max_attempts = max_attempts
         self._max_concurrency = max_concurrency
+        # E15-11 BR-08: when configured, ScanService resolves file:// blob
+        # URIs through this factory's per-tenant ObjectStore (the same seam
+        # the multipart upload route writes through). Worker-side cleanup
+        # in _refresh_job_progress also goes through this factory once a
+        # job completes.
+        self._object_store_factory = object_store_factory
 
     async def process_items(self, *, claimed: list[ScanQueueItem]) -> None:
         if not claimed:
@@ -118,6 +126,7 @@ class ScanItemHandler:
         """Recompute progress for affected scan jobs."""
         if not job_ids:
             return
+        completed_jobs: list[tuple[uuid.UUID, uuid.UUID]] = []
         async with self._session_factory() as session:
             await enable_rls_bypass(session)
             repo = SqlAlchemyScanQueueRepository(session)
@@ -143,7 +152,24 @@ class ScanItemHandler:
                             payload={"scan_job_id": str(job_id)},
                         )
                         session.add(clustering_job)
+                        completed_jobs.append((job_id, tenant_id))
             await session.commit()
+
+        # E15-11 BR-07/BR-08: cleanup the per-job ObjectStore directory
+        # only after the worker has actually consumed every queued item
+        # for the job. Done outside the DB session so a slow filesystem
+        # cannot stall RLS-bypass connections.
+        if self._object_store_factory is not None:
+            for job_id, tenant_id in completed_jobs:
+                try:
+                    store = self._object_store_factory(str(tenant_id))
+                    store.cleanup(job_id=str(job_id))
+                except ObjectStoreError:
+                    logger.warning(
+                        "[worker] object_store cleanup failed for job_id=%s tenant_id=%s",
+                        job_id,
+                        tenant_id,
+                    )
 
     async def _handle_item_failure(
         self,
@@ -160,4 +186,9 @@ class ScanItemHandler:
 
     def _build_scan_service(self, session: AsyncSession) -> ScanService:
         """Create a ScanService bound to the provided session."""
-        return ScanService(session=session, detector=self._detector, generator=self._generator)
+        return ScanService(
+            session=session,
+            detector=self._detector,
+            generator=self._generator,
+            object_store_factory=self._object_store_factory,
+        )

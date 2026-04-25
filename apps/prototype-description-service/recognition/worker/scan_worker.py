@@ -82,12 +82,30 @@ class ScanWorker:
         # not for any unrelated pending work that might be claimed first
         # (finding 1169: same-job MV-refresh suppression).
         self._retry_suppressed_job_id: uuid.UUID | None = None
+
+        # E15-11 BR-08: build a tenant-scoped ObjectStore factory rooted at
+        # settings.blob_root so the worker can (a) read multipart-uploaded
+        # bytes through the same seam the route wrote into, and (b) clean
+        # up the per-job blob directory once every queued item finishes
+        # (deferred from the inline-only path in chain_populate_and_process).
+        # BR-11: store on self so _ensure_embedding_runtime can preserve it
+        # when it rebuilds the scan handler after adapter init.
+        from recognition.application.storage import FilesystemObjectStore
+
+        worker_blob_root = settings.blob_root
+
+        def _worker_object_store_factory(tenant_id: str):
+            return FilesystemObjectStore(root=worker_blob_root, tenant_id=tenant_id)
+
+        self._object_store_factory = _worker_object_store_factory
+
         self._scan_handler = ScanItemHandler(
             session_factory=self._session_factory,
             detector=self._detector,
             generator=self._generator,
             max_attempts=self._config.max_attempts,
             max_concurrency=self._config.max_concurrency,
+            object_store_factory=self._object_store_factory,
         )
         self._job_handlers = {
             "split": SplitJobHandler(),
@@ -175,12 +193,16 @@ class ScanWorker:
             self._generator = StubEmbeddingGenerator()
             self._embedding_retry_after = now + timedelta(seconds=30)
 
+        # BR-11: preserve the ObjectStore factory wired in __init__ so the
+        # production scan_handler keeps multipart-blob support after the
+        # InsightFace adapter loads (or after the stub fallback fires).
         self._scan_handler = ScanItemHandler(
             session_factory=self._session_factory,
             detector=self._detector,
             generator=self._generator,
             max_attempts=self._config.max_attempts,
             max_concurrency=self._config.max_concurrency,
+            object_store_factory=self._object_store_factory,
         )
 
     async def _process_pending_clustering_jobs(self, *, session: AsyncSession, now: datetime) -> bool:

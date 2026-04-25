@@ -1,0 +1,356 @@
+"""Multipart variant of POST /recognition/analyze (E15-11).
+
+Slice 1.4a only ships the pure ``multipart_to_media_items`` helper that
+parses a Starlette ``FormData`` into ``MediaItem`` instances with their
+``blob_uri`` populated via the request-scoped ``ObjectStore``. The route
+handler that wires the helper into FastAPI lands in Slice 1.4b.
+
+Form-key contract:
+
+- ``request`` (optional) — JSON-encoded request envelope (tenant_id +
+  metadata). Reserved here; consumed by the route handler in 1.4b.
+- ``image_<media_id>`` — one upload per image. ``<media_id>`` must parse
+  as an integer; the part's ``content-type`` must be one of the allowed
+  image MIME types.
+
+Anything that doesn't match the ``image_`` prefix is left to the route
+handler to interpret. The helper is deliberately ignorant of the JSON
+envelope so it can be tested in isolation.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import uuid
+from collections.abc import Iterable
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import async_sessionmaker
+from starlette.datastructures import FormData, UploadFile
+
+from recognition.application.scan.scan_queue_service import ScanQueueService
+from recognition.application.storage import ObjectStore, ObjectStoreError
+from recognition.application.tasks.scan import chain_populate_and_process
+from recognition.domain.job import JobType
+from recognition.interface_adapters.http.dependencies import (
+    get_optional_session,
+    get_scan_queue_service_factory,
+    get_scan_queue_service_optional,
+    require_write_access,
+)
+from recognition.interface_adapters.http.deps.object_store import (
+    ObjectStoreFactory,
+    get_object_store_factory_for_request,
+    get_object_store_for_request,
+)
+from recognition.interface_adapters.http.middleware.correlation import get_correlation_id
+from recognition.interface_adapters.http.schemas.requests import MediaItem
+from recognition.interface_adapters.http.schemas.responses import (
+    JobProgressResponse,
+    JobStatusResponse,
+)
+from recognition.shared.db.dialect import is_postgres
+
+logger = logging.getLogger(__name__)
+
+_DEFAULT_ALLOWED_MIME_TYPES: frozenset[str] = frozenset({"image/jpeg", "image/png", "image/webp"})
+_IMAGE_KEY_PREFIX = "image_"
+
+
+def multipart_to_media_items(
+    *,
+    form_data: FormData,
+    object_store: ObjectStore,
+    job_id: str,
+    allowed_mime_types: Iterable[str] | None = None,
+) -> list[MediaItem]:
+    """Convert image parts in ``form_data`` to ``MediaItem``s with blob_uri.
+
+    The helper iterates ``form_data`` in the order returned by Starlette's
+    parser, persists each image part through ``object_store.put`` under
+    ``job_id``, and returns one ``MediaItem`` per part. Non-image keys
+    (e.g. the ``request`` JSON envelope) are ignored so the route handler
+    can consume them separately.
+
+    Raises:
+        HTTPException: 415 for an unsupported MIME type, 422 for a
+            zero-byte image part, 400 for a key whose ``media_id``
+            suffix is not a valid integer, and 500 for an unexpected
+            ``ObjectStoreError`` (which generally indicates an
+            out-of-band misconfiguration since the helper validated the
+            inputs first).
+    """
+    allowed = frozenset(allowed_mime_types) if allowed_mime_types is not None else _DEFAULT_ALLOWED_MIME_TYPES
+
+    items: list[MediaItem] = []
+    for key, value in form_data.multi_items():
+        if not key.startswith(_IMAGE_KEY_PREFIX):
+            continue
+        if not isinstance(value, UploadFile):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"form key '{key}' must be a file upload, not a string",
+            )
+
+        media_id_str = key[len(_IMAGE_KEY_PREFIX) :]
+        try:
+            media_id = int(media_id_str)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(f"form key '{key}' has a non-integer media_id suffix '{media_id_str}'"),
+            ) from exc
+
+        content_type = value.content_type or ""
+        if content_type not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail=(
+                    f"image part '{key}' has unsupported content-type '{content_type}'; allowed: {sorted(allowed)}"
+                ),
+            )
+
+        data = value.file.read()
+        if not data:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"image part '{key}' is empty",
+            )
+
+        try:
+            blob_uri = object_store.put(job_id=job_id, media_id=str(media_id), data=data)
+        except ObjectStoreError as exc:
+            # The helper's validation should have prevented this; surface
+            # as 500 so it shows up in logs rather than masquerading as a
+            # client error.
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"failed to store image part '{key}': {exc}",
+            ) from exc
+
+        items.append(MediaItem(media_id=media_id, blob_uri=blob_uri))
+
+    return items
+
+
+# -----------------------------------------------------------------------------
+# Route handler (Slice 1.4d)
+# -----------------------------------------------------------------------------
+
+
+router = APIRouter(tags=["analyze"])
+
+
+def _extract_request_envelope(form_data: FormData) -> dict:
+    """Pull the JSON ``request`` part out of the multipart form."""
+    raw = form_data.get("request")
+    if raw is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "multipart submission must include a 'request' part with a "
+                "JSON envelope (at minimum {'tenant_id': '<uuid>'})"
+            ),
+        )
+    if isinstance(raw, UploadFile):
+        body = raw.file.read()
+    elif isinstance(raw, (bytes, bytearray)):
+        body = bytes(raw)
+    elif isinstance(raw, str):
+        body = raw.encode("utf-8")
+    else:  # pragma: no cover - Starlette never returns other types
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="unsupported 'request' part type",
+        )
+    try:
+        envelope = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"'request' part is not valid JSON: {exc}",
+        ) from exc
+    if not isinstance(envelope, dict):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="'request' part must decode to a JSON object",
+        )
+    return envelope
+
+
+@router.post(
+    "/analyze/multipart",
+    response_model=JobStatusResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def analyze_media_multipart(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    auth=Depends(require_write_access),
+    session=Depends(get_optional_session),
+    scan_queue=Depends(get_scan_queue_service_optional),
+    object_store=Depends(get_object_store_for_request),
+    object_store_factory: ObjectStoreFactory = Depends(get_object_store_factory_for_request),
+) -> JobStatusResponse:
+    """Multipart variant of /recognition/analyze for inline image upload.
+
+    Form contract:
+
+    - ``request`` part: JSON envelope, currently ``{"tenant_id": <uuid>}``.
+    - ``image_<media_id>`` parts: one upload per image.
+
+    Each image part is written through the request-scoped ``ObjectStore``
+    under ``<blob_root>/<auth.tenant_claim>/<job_id>/<media_id>.bin``;
+    the resulting ``blob_uri`` is attached to the queued ``MediaItem``s.
+    The job_id is pre-generated and persisted via
+    ``scan_queue.create_scan_job_record(job_id=...)`` so the on-disk
+    layout matches the DB row.
+
+    Failure path: blobs are written to ObjectStore BEFORE the scan job
+    row is committed, so any error during persistence is followed by
+    object_store.cleanup(job_id=...) to avoid leaking orphans the worker
+    could never reach (no DB row would exist for cleanup-by-job_id).
+
+    Dispatch: on success the route schedules
+    ``chain_populate_and_process`` as a BackgroundTask, mirroring the JSON
+    /recognition/analyze flow so the scan worker has queue items to claim.
+    """
+    pre_generated_job_id = uuid.uuid4()
+
+    form_data = await request.form()
+    envelope = _extract_request_envelope(form_data)
+
+    tenant_id_raw = envelope.get("tenant_id")
+    if not tenant_id_raw or not isinstance(tenant_id_raw, str):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="'request' JSON must include a non-empty 'tenant_id' string",
+        )
+    try:
+        tenant_uuid = uuid.UUID(tenant_id_raw)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"'tenant_id' must be a UUID: {exc}",
+        ) from exc
+
+    auth_tenant = (getattr(auth, "tenant_claim", None) or "").strip()
+    if auth_tenant and auth_tenant != tenant_id_raw:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="tenant mismatch between auth and request envelope",
+        )
+
+    media_items_list = multipart_to_media_items(
+        form_data=form_data,
+        object_store=object_store,
+        job_id=str(pre_generated_job_id),
+    )
+    if not media_items_list:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=("multipart submission must include at least one image_<media_id> part"),
+        )
+
+    if scan_queue is None:
+        if session is None:
+            # Blobs were just written for this pre_generated_job_id; roll them
+            # back so a misconfigured deployment does not leak orphans (BR-06).
+            object_store.cleanup(job_id=str(pre_generated_job_id))
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database unavailable",
+            )
+        scan_queue = get_scan_queue_service_factory(session)
+
+    # BR-06: blobs are already on disk under the pre_generated_job_id path.
+    # Any failure between here and the scheduled background task must roll
+    # them back, otherwise the worker can never discover the orphans (no DB
+    # row exists for cleanup-by-job_id to find later).
+    persistence_committed = False
+    try:
+        persisted_job_id = await scan_queue.create_scan_job_record(
+            tenant_id=tenant_uuid,
+            total=len(media_items_list),
+            job_id=pre_generated_job_id,
+            created_by_user_id=getattr(auth, "user_id", None),
+        )
+        if session is not None:
+            await session.commit()
+        persistence_committed = True
+    finally:
+        if not persistence_committed:
+            object_store.cleanup(job_id=str(pre_generated_job_id))
+
+    # BR-05: schedule the populate + process pipeline so the scan worker has
+    # queue items to claim. Mirror the JSON /analyze flow's dispatch shape.
+    media_sources = [item.blob_uri for item in media_items_list]
+    media_items_tuples: list[tuple[int, str]] = [(item.media_id, item.blob_uri) for item in media_items_list]
+    media_ids = [str(item.media_id) for item in media_items_list]
+
+    inline_processing = os.environ.get("RECOGNITION_ASYNC_ANALYZE_INLINE", "0") == "1"
+    session_factory = None
+    if session is not None and getattr(session, "bind", None) is not None and not is_postgres(session):
+        session_factory = async_sessionmaker(bind=session.bind, expire_on_commit=False)
+
+    # E15-11 S1.6 + BR-14: when the background task finishes (success or
+    # failure), cleanup goes through the injected ObjectStore factory so the
+    # route stays on the protocol surface — no FilesystemObjectStore-specific
+    # attribute access leaks here. Slice B (OCI) swaps the factory via
+    # app.dependency_overrides[get_object_store_factory_for_request] without
+    # touching this route.
+    background_tasks.add_task(
+        chain_populate_and_process,
+        tenant_id=str(tenant_uuid),
+        job_id=str(persisted_job_id),
+        media_items=media_items_tuples,
+        media_ids=media_ids,
+        media_sources=media_sources,
+        scan_queue=scan_queue if not isinstance(scan_queue, ScanQueueService) else None,
+        session_factory=session_factory,
+        inline_processing=inline_processing,
+        correlation_id=get_correlation_id(),
+        object_store_factory=object_store_factory,
+    )
+
+    # E15-11 S3.1: structured single-line telemetry for the multipart route so
+    # transport failures can be triaged without parsing FastAPI access logs.
+    # Fields are intentionally non-PII: tenant id is already a UUID claim,
+    # job id is freshly generated, parts_count + total_bytes describe shape
+    # only. Format mirrors analyze.py's analyze_media_timing convention.
+    # Read sizes back through ObjectStore.open since the helper has already
+    # consumed the original UploadFile streams.
+    total_bytes_dispatched = 0
+    for item in media_items_list:
+        try:
+            with object_store.open(item.blob_uri) as fh:  # type: ignore[arg-type]
+                total_bytes_dispatched += len(fh.read())
+        except Exception:  # pragma: no cover - telemetry must never raise
+            pass
+    logger.info(
+        "analyze_media_multipart_dispatch transport=multipart parts_count=%d total_bytes=%d tenant_id=%s job_id=%s",
+        len(media_items_list),
+        total_bytes_dispatched,
+        tenant_id_raw,
+        persisted_job_id,
+    )
+
+    progress = JobProgressResponse(
+        completed=0,
+        total=len(media_items_list),
+        phase="queued",
+        images_processed=0,
+        faces_found=0,
+    )
+    return JobStatusResponse(
+        id=str(persisted_job_id),
+        type=JobType.ANALYZE.value,
+        status="pending",
+        progress=progress,
+        started_at=datetime.now(tz=UTC),
+        finished_at=None,
+        message=f"Queueing 0/{len(media_items_list)} items",
+    )

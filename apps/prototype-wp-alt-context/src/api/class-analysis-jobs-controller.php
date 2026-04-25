@@ -24,6 +24,7 @@ use AltContext\Sovereign\Sync\SnapshotClient;
 use AltContext\Sovereign\Sync\SyncPullJobFactory;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
 use AltContext\Support\BatchLimits;
+use AltContext\Support\Telemetry;
 use Throwable;
 use WP_Error;
 use WP_REST_Request;
@@ -140,6 +141,18 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 		$media_ids         = $request->get_param( 'media_ids' );
 		$media_items       = array();
 
+		// E15-11 Slice 2.2: 'multipart' (default) ships image bytes inline so
+		// any WordPress install reaches the hosted recognition API without
+		// publicly exposing its media library; 'url' keeps the legacy URL
+		// path for managed-host installs whose media is publicly fetchable.
+		$transport = (string) apply_filters( 'acx_recognition_transport', 'multipart' );
+		if ( 'multipart' !== $transport && 'url' !== $transport ) {
+			$transport = 'multipart';
+		}
+		// E15-11 Slice 3.2: log the resolved transport so operators can grep
+		// for installs that fell back to URL transport unintentionally.
+		Telemetry::log_line( sprintf( '[acx] acx_recognition_transport=%s', $transport ) );
+
 		if ( is_array( $media_items_param ) && count( $media_items_param ) > 0 ) {
 			$media_items = array_values(
 				array_filter(
@@ -170,6 +183,24 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'no_media_items', 'At least one media item is required', array( 'status' => 400 ) );
 		}
 
+		if ( 'multipart' === $transport ) {
+			$multipart_result = $this->analyze_media_multipart( $media_items );
+			if ( is_wp_error( $multipart_result ) ) {
+				// E15-11 Slice 3.2: surface dispatch failures (cap exceeded,
+				// no readable files, proxy misconfig) in server logs so an
+				// operator can correlate a stuck WP scan with the underlying
+				// transport rejection.
+				Telemetry::log_line(
+					sprintf(
+						'[acx] multipart dispatch failed: %s %s',
+						$multipart_result->get_error_code(),
+						$multipart_result->get_error_message()
+					)
+				);
+			}
+			return $multipart_result;
+		}
+
 		$payload = array(
 			'tenant_id'   => $this->get_tenant_id(),
 			'site_url'    => get_site_url(),
@@ -186,6 +217,156 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 		}
 
 		return $response;
+	}
+
+	/**
+	 * Read each media item's bytes via get_attached_file and dispatch them
+	 * inline to /recognition/analyze/multipart through the body_kind=multipart
+	 * proxy path (E15-11 Slice 2.2).
+	 *
+	 * Items whose attachment file is missing on disk are skipped with an
+	 * error log entry rather than failing the whole batch — matches the
+	 * existing build_media_items policy of dropping unresolvable rows.
+	 *
+	 * @param array<int,array<string,mixed>> $media_items
+	 */
+	/**
+	 * E15-11 Slice 2.3: multipart batch caps.
+	 *
+	 * Per the scope intake (#2337) the multipart route is sized for small
+	 * predictable batches: ~5 images per submission and ~25 MiB total.
+	 * Tier-based batch limits (BatchLimits trait) still apply on top of
+	 * these caps; the smaller of (tier_limit, MULTIPART_MAX_IMAGES) wins
+	 * for the multipart path. The byte cap is enforced plugin-side so a
+	 * caller fails before the network round-trip; the recognition
+	 * service's UploadSizeLimitMiddleware enforces the same bound at the
+	 * server boundary as defense-in-depth.
+	 */
+	private const MULTIPART_MAX_IMAGES = 5;
+	private const MULTIPART_MAX_BYTES  = 25 * 1024 * 1024;
+
+	private function analyze_media_multipart( array $media_items ): WP_REST_Response|WP_Error {
+		$tier_limit          = $this->get_current_tier_batch_limit();
+		$effective_max_count = min( $tier_limit, self::MULTIPART_MAX_IMAGES );
+		if ( count( $media_items ) > $effective_max_count ) {
+			return new WP_Error(
+				'too_many_multipart_images',
+				sprintf(
+					'multipart upload supports at most %d images per request (received %d).',
+					$effective_max_count,
+					count( $media_items )
+				),
+				array( 'status' => 400 )
+			);
+		}
+
+		$multipart_body = array(
+			'request' => wp_json_encode(
+				array(
+					'tenant_id' => $this->get_tenant_id(),
+					'site_url'  => get_site_url(),
+					'user_id'   => get_current_user_id(),
+				)
+			),
+		);
+
+		$dispatched_items = array();
+		$total_bytes      = 0;
+		foreach ( $media_items as $item ) {
+			$media_id = (int) ( $item['media_id'] ?? 0 );
+			if ( $media_id <= 0 ) {
+				continue;
+			}
+			$path = get_attached_file( $media_id, true );
+			if ( ! is_string( $path ) || '' === $path || ! is_readable( $path ) ) {
+				Telemetry::log_line( sprintf( '[acx] skipping media_id=%d for multipart upload: file not readable', $media_id ) );
+				continue;
+			}
+			$bytes = @file_get_contents( $path );
+			if ( false === $bytes || '' === $bytes ) {
+				Telemetry::log_line( sprintf( '[acx] skipping media_id=%d for multipart upload: empty file', $media_id ) );
+				continue;
+			}
+
+			$total_bytes += strlen( $bytes );
+			if ( $total_bytes > self::MULTIPART_MAX_BYTES ) {
+				return new WP_Error(
+					'multipart_payload_too_large',
+					sprintf(
+						'multipart upload exceeds %d-byte cap (currently %d bytes after media_id=%d).',
+						self::MULTIPART_MAX_BYTES,
+						$total_bytes,
+						$media_id
+					),
+					array( 'status' => 413 )
+				);
+			}
+
+			$multipart_body[ 'image_' . $media_id ] = array(
+				'filename'     => basename( $path ),
+				'content'      => $bytes,
+				'content_type' => $this->resolve_image_mime_type( $path, $media_id ),
+			);
+			$dispatched_items[] = $item;
+		}
+
+		if ( empty( $dispatched_items ) ) {
+			return new WP_Error(
+				'no_media_items',
+				'No readable image files for any requested media_id; multipart upload aborted.',
+				array( 'status' => 400 )
+			);
+		}
+
+		$response = $this->proxy_request(
+			'POST',
+			'/recognition/analyze/multipart',
+			$multipart_body,
+			array(),
+			'auto',
+			'multipart',
+			self::MULTIPART_MAX_BYTES
+		);
+
+		if ( $response instanceof WP_REST_Response ) {
+			$data = $response->get_data();
+			if ( is_array( $data ) ) {
+				$this->store_job_media_ids(
+					(string) ( $data['id'] ?? '' ),
+					$this->extract_media_ids_from_analyze_payload( $dispatched_items )
+				);
+			}
+		}
+
+		return $response;
+	}
+
+	/**
+	 * Best-effort MIME detection for an attachment file. Falls back to
+	 * application/octet-stream if WordPress can't resolve it.
+	 */
+	private function resolve_image_mime_type( string $path, int $media_id ): string {
+		if ( function_exists( 'wp_check_filetype' ) ) {
+			$detected = wp_check_filetype( $path );
+			if ( is_array( $detected ) && ! empty( $detected['type'] ) ) {
+				return (string) $detected['type'];
+			}
+		}
+		if ( isset( $GLOBALS['__ac_attachment_mimes'][ $media_id ] ) ) {
+			return (string) $GLOBALS['__ac_attachment_mimes'][ $media_id ];
+		}
+		$extension = strtolower( pathinfo( $path, PATHINFO_EXTENSION ) );
+		switch ( $extension ) {
+			case 'jpg':
+			case 'jpeg':
+				return 'image/jpeg';
+			case 'png':
+				return 'image/png';
+			case 'webp':
+				return 'image/webp';
+			default:
+				return 'application/octet-stream';
+		}
 	}
 
 	public function get_job_status( WP_REST_Request $request ): WP_REST_Response|WP_Error {

@@ -54,18 +54,26 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         total: int,
         message: str | None,
         created_by_user_id: int | None = None,
+        job_id: uuid.UUID | None = None,
     ) -> uuid.UUID:
         logger.debug("create_job_with_message: creating job for tenant %s with total %d", tenant_id, total)
-        job = IdentityScanJob(
-            tenant_id=tenant_id,
-            status="pending",
-            media_ids=list(media_ids),
-            total_media=total,
-            processed_media=0,
-            identities_detected=0,
-            message=message,
-            created_by_user_id=created_by_user_id,
-        )
+        job_kwargs: dict = {
+            "tenant_id": tenant_id,
+            "status": "pending",
+            "media_ids": list(media_ids),
+            "total_media": total,
+            "processed_media": 0,
+            "identities_detected": 0,
+            "message": message,
+            "created_by_user_id": created_by_user_id,
+        }
+        if job_id is not None:
+            # E15-11: the multipart route pre-generates the UUID so it can
+            # write blobs under <tenant>/<job_id>/<media_id>.bin BEFORE the
+            # scan job record exists. Persist the caller-supplied UUID so
+            # the on-disk path matches the DB row.
+            job_kwargs["id"] = job_id
+        job = IdentityScanJob(**job_kwargs)
         self._session.add(job)
         await self._session.flush()
         logger.debug("create_job_with_message: created job id=%s", job.id)

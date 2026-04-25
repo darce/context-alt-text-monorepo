@@ -15,6 +15,9 @@ from db.tenant_context import clear_tenant_context, set_tenant_context
 from recognition.application.embedding.detector import FaceDetectorProtocol
 from recognition.application.embedding.generator import EmbeddingGeneratorProtocol
 from recognition.application.scan.scan_queue_service import ScanQueueService
+from recognition.application.storage import ObjectStore, ObjectStoreError
+
+ObjectStoreFactory = Callable[[str], ObjectStore]
 
 logger = logging.getLogger(__name__)
 
@@ -213,8 +216,22 @@ async def chain_populate_and_process(
     inline_processing: bool = False,
     adapter_provider: Callable[[], Awaitable[InsightFaceAdapter]] | None = None,
     correlation_id: str | None = None,
+    object_store_factory: ObjectStoreFactory | None = None,
 ) -> None:
-    """Chain populate and optional inline processing to ensure order."""
+    """Chain populate and optional inline processing to ensure order.
+
+    E15-11 S1.6 (revised by BR-07): when ``object_store_factory`` is
+    configured AND ``inline_processing`` is True, the per-job blob
+    directory is removed via ``factory(tenant_id).cleanup(job_id=job_id)``
+    after the inline processor returns OR raises (the bytes have just
+    been consumed in this call). For ``inline_processing=False`` the
+    external scan_worker has not yet claimed the queue items; cleanup
+    on that path is the worker's responsibility (see
+    ``ScanItemHandler._refresh_job_progress``). Pre-empting cleanup here
+    would leak every multipart job because the worker would find no
+    blobs by the time it ran. JSON / URL-transport callers leave the
+    factory as None and no cleanup is attempted on either path.
+    """
     await populate_scan_job_items_async(
         tenant_id=tenant_id,
         job_id=job_id,
@@ -223,7 +240,9 @@ async def chain_populate_and_process(
         session_factory=session_factory,
         correlation_id=correlation_id,
     )
-    if inline_processing:
+    if not inline_processing:
+        return
+    try:
         await process_scan_job_inline(
             tenant_id=tenant_id,
             job_id=job_id,
@@ -232,3 +251,14 @@ async def chain_populate_and_process(
             session_factory=session_factory,
             adapter_provider=adapter_provider,
         )
+    finally:
+        if object_store_factory is not None:
+            try:
+                store = object_store_factory(tenant_id)
+                store.cleanup(job_id=job_id)
+            except ObjectStoreError:
+                logger.warning(
+                    "object_store cleanup failed for job_id=%s tenant_id=%s",
+                    job_id,
+                    tenant_id,
+                )

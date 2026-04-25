@@ -341,6 +341,10 @@ PHP;
     {
         $GLOBALS['__ac_attachment_urls'][123] = 'http://example.test/media/123.jpg';
 
+        // E15-11 Slice 2.2: pin to legacy URL transport — this test asserts
+        // on the JSON envelope shape, not the new multipart path.
+        add_filter('acx_recognition_transport', static fn(string $current): string => 'url');
+
         $this->queueHttpResponse([
             'response' => ['code' => 202, 'message' => 'Accepted'],
             'body' => '{"status":"queued"}',
@@ -444,6 +448,11 @@ PHP;
     public function testProxyRequestReturnsErrorWhenApiKeyMissing(): void
     {
         $this->setOption('acx_recognition_api_key', '');
+
+        // E15-11 Slice 2.2: pin to legacy URL transport so the test reaches
+        // the api_key check inside proxy_request without first failing the
+        // multipart get_attached_file readability check.
+        add_filter('acx_recognition_transport', static fn(string $current): string => 'url');
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
         $request->set_body_params(['media_ids' => [1]]);

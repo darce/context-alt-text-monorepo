@@ -63,6 +63,11 @@ class AnalysisJobsControllerTest extends TestCase
         $GLOBALS['__ac_attachment_urls'][101] = 'http://example.test/media/101.jpg';
         $GLOBALS['__ac_attachment_urls'][202] = 'http://example.test/media/202.jpg';
 
+        // E15-11 Slice 2.2: default transport is now 'multipart' which would
+        // require attached files on disk; this test only cares about XMP
+        // refresh dispatch on the get_job_status path, so pin to 'url'.
+        add_filter('acx_recognition_transport', static fn(string $current): string => 'url');
+
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([

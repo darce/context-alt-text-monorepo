@@ -145,12 +145,26 @@ async def _build_projection_payload(
     )
 
 
+def _media_item_source(item) -> str:
+    """Return the per-item analyze source, preferring blob_uri (multipart
+    transport, E15-11) over media_url (legacy URL transport).
+
+    The MediaItem schema validator guarantees exactly one of the two fields
+    is set, so the fall-through ValueError is defensive only.
+    """
+    if item.blob_uri is not None:
+        return item.blob_uri
+    if item.media_url is not None:
+        return item.media_url
+    raise ValueError(f"MediaItem(media_id={item.media_id}) has neither blob_uri nor media_url")
+
+
 def _prepare_media_items(request: AnalyzeRequest) -> tuple[list[str], list[str], list[tuple[int, str]]]:
     """Validate and normalize analyze request media inputs."""
     media_ids = request.media_ids
     media_sources: list[str] = []
     if request.media_items:
-        media_sources = [item.media_url for item in request.media_items]
+        media_sources = [_media_item_source(item) for item in request.media_items]
         media_ids = [str(item.media_id) for item in request.media_items]
     elif media_ids:
         media_sources = list(media_ids)
@@ -160,7 +174,7 @@ def _prepare_media_items(request: AnalyzeRequest) -> tuple[list[str], list[str],
 
     validated_media_ids = [_validate_uuid(mid) for mid in media_ids]
     if request.media_items:
-        media_items = [(int(item.media_id), str(item.media_url)) for item in request.media_items]
+        media_items = [(int(item.media_id), _media_item_source(item)) for item in request.media_items]
     else:
         media_items = [(extract_media_id(mid), str(mid)) for mid in media_sources]
 

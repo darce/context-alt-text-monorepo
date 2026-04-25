@@ -23,6 +23,7 @@ import re
 import shlex
 from pathlib import Path
 
+from _branch_isolation_guard import resolve_path_branch
 from _harness_protocol import BranchIsolationPolicy, is_branch_isolation_protected_path
 
 
@@ -331,6 +332,11 @@ def scan_bash_command(
 
     candidate_paths.extend(_scan_python_inline(command))
 
+    # Match the hardcoded set used by guard-bash-main-branch.py and
+    # guard-main-branch.{sh,py} — the policy dataclass does not yet model
+    # protected_branches, so callers all carry the same {main, master} set.
+    protected_branches = frozenset({"main", "master"})
+
     blocked: list[str] = []
     seen: set[str] = set()
     for raw in candidate_paths:
@@ -338,7 +344,15 @@ def scan_bash_command(
         if not relative or relative in seen:
             continue
         seen.add(relative)
-        if is_branch_isolation_protected_path(relative, policy):
+        if not is_branch_isolation_protected_path(relative, policy):
+            continue
+        # Per-path worktree resolution (parity with check_file_edit): a path
+        # that physically lives inside a linked worktree on a feature branch
+        # is not a main-branch write even when the harness cwd reports main.
+        # Falls back to the harness branch when the path does not resolve to
+        # any git working tree (e.g. paths outside any repo).
+        per_path_branch = resolve_path_branch(raw)
+        if per_path_branch is None or per_path_branch in protected_branches:
             blocked.append(relative)
 
     # FU-01: a formatter invocation implicitly writes across every code_root in

@@ -20,6 +20,49 @@ _EDIT_TOOLS = {
 }
 
 
+def resolve_path_branch(abs_path: str) -> str | None:
+    """Return the git branch of the worktree containing ``abs_path``.
+
+    The harness cwd is always the project root, which by repo convention stays
+    on ``main`` even when active work happens in linked feature-branch
+    worktrees. Without per-path resolution, the guards misclassify edits to
+    files that physically live in a feature-branch worktree as main-branch
+    edits and block them.
+
+    Returns the branch reported by ``git branch --show-current`` when run
+    inside the worktree containing ``abs_path``. Returns ``None`` when the
+    path is not inside a git working tree (so the caller can fall back to
+    the harness branch and preserve the conservative default).
+    """
+    if not abs_path:
+        return None
+    try:
+        candidate = Path(abs_path).expanduser().resolve(strict=False)
+    except (OSError, RuntimeError):
+        return None
+    anchor = candidate if candidate.is_dir() else candidate.parent
+    # Walk upward until we find an existing directory; ``--show-current``
+    # needs a real cwd, and the candidate file may not exist yet.
+    while not anchor.exists():
+        parent = anchor.parent
+        if parent == anchor:
+            return None
+        anchor = parent
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(anchor), "branch", "--show-current"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
+
+
 def _payload_value(mapping: dict[str, Any], *keys: str) -> Any:
     for key in keys:
         value = mapping.get(key)
@@ -79,7 +122,15 @@ def check_file_edit(
     blocked_paths: list[str] = []
     for raw_path in extract_candidate_paths(tool_name, tool_input):
         relative_path = to_repo_relative(raw_path, repo_root)
-        if is_branch_isolation_protected_path(relative_path, policy):
+        if not is_branch_isolation_protected_path(relative_path, policy):
+            continue
+        # Per-path worktree resolution: a file living inside a linked
+        # worktree on a feature branch is not a main-branch edit even when
+        # the harness cwd reports ``main``. Fall back to the harness
+        # branch when the path is not inside any git working tree.
+        per_path_branch = resolve_path_branch(raw_path)
+        effective_branch = per_path_branch if per_path_branch else branch
+        if effective_branch in protected_branches:
             blocked_paths.append(relative_path)
 
     if not blocked_paths:

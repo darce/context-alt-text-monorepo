@@ -2,7 +2,7 @@
 # Handoff / Task State / Daemons
 # =============================================================================
 
-.PHONY: task state list-tasks lane-list mcp-serve-http handoff-close-check handoff-integrity-check handoff-inbox handoff-dispatch review-dispatch review-run review-ready plan-analyze plan-review slice-start slice-commit
+.PHONY: task state list-tasks lane-list mcp-serve-http handoff-close-check handoff-integrity-check handoff-inbox handoff-dispatch handoff-review-run review-dispatch review-run review-ready plan-analyze plan-review slice-start slice-commit
 
 # Generate CURRENT_TASK.json from handoff DB
 task:
@@ -30,6 +30,47 @@ list-tasks:
 # Validate that active handoff state is ready to close
 handoff-close-check:
 	@$(MCP_CMD) $(MCP_STATE_ARGS) handoff-close-check --enforce --current-commit-sha "$$(git rev-parse HEAD)"
+
+handoff-review-run:
+	@SUBJECT_PATH="$(or $(SUBJECT_PATH),$(SUBJECT))"; \
+	if [ -z "$(RUN_ID)" ]; then \
+		echo "RUN_ID is required."; \
+		echo "Example: make handoff-review-run TASK_REF=E15 MODE=planning SUBJECT=docs/tasks/15.0/example.md SUBJECT_KIND=task_plan VERDICT=pass DECISION=decision_id SESSION=session-id RUN_ID=planning-review-e15-example"; \
+		exit 1; \
+	fi; \
+	if [ -z "$(SESSION)" ]; then \
+		echo "SESSION is required."; \
+		exit 1; \
+	fi; \
+	if [ -z "$$SUBJECT_PATH" ]; then \
+		echo "SUBJECT or SUBJECT_PATH is required."; \
+		exit 1; \
+	fi; \
+	if [ -z "$(MODE)" ]; then \
+		echo "MODE is required (branch|planning|release_audit)."; \
+		exit 1; \
+	fi; \
+	if [ -z "$(VERDICT)" ]; then \
+		echo "VERDICT is required."; \
+		exit 1; \
+	fi; \
+	if [ -z "$(DECISION)" ]; then \
+		echo "DECISION is required."; \
+		exit 1; \
+	fi; \
+	bash ./scripts/handoff-review-run.sh \
+		--run-id "$(RUN_ID)" \
+		--session "$(SESSION)" \
+		--subject-path "$$SUBJECT_PATH" \
+		--subject-kind "$(or $(SUBJECT_KIND),other)" \
+		--review-mode "$(MODE)" \
+		--verdict "$(VERDICT)" \
+		--verdict-decision "$(DECISION)" \
+		$(if $(TASK_REF),--task-ref "$(TASK_REF)",$(if $(TASK),--task-ref "$(TASK)",)) \
+		$(if $(AGENT),--agent "$(AGENT)",) \
+		$(if $(MODEL),--model "$(MODEL)",) \
+		$(if $(MODEL_LABEL),--model-label "$(MODEL_LABEL)",) \
+		$(if $(REASONING_LEVEL),--reasoning-level "$(REASONING_LEVEL)",)
 
 plan-analyze:
 	@if [ -z "$(DOC)" ]; then \

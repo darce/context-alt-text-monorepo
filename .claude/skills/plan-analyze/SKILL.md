@@ -46,7 +46,7 @@ This skill owns triage only. It records planning-mode findings and a `review_run
 2. If the artifact is a task plan under `docs/tasks/`, validate its structure against `docs/agentic/templates/TASK_PLAN.template.md`, including the `## Consolidated Checklist` section and its supporting `Context and Ownership`, per-slice checklist, `Review Readiness`, and `Success Criteria` blocks.
 3. Run six analysis passes: duplication, ambiguity, underspecification, constitution alignment, coverage gaps, and terminology drift.
 4. Turn concrete problems into MCP findings with `review_findings(..., review_mode="planning")`.
-5. Record a planning-mode review run whose `session` starts with `plan-analyze-` so the downstream gate can distinguish triage from the formal review pass.
+5. Record a planning-mode review run whose `session` starts with `plan-analyze-` so the downstream gate can distinguish triage from the formal review pass. If `review_runs` is unavailable in the current harness, use `make handoff-review-run TASK_REF=<task-ref> MODE=planning SUBJECT=<doc-path> SUBJECT_KIND=<task_plan|epic|adr|roadmap|other> VERDICT=<verdict> DECISION=<decision-id> SESSION=<session> RUN_ID=<run-id>`.
 6. Summarize whether the artifact should proceed directly to `planning-review` or be revised first.
 
 ## Common Rationalizations

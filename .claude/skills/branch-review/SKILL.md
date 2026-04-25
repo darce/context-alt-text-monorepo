@@ -58,7 +58,7 @@ This skill owns branch-review execution order. The guide owns the detailed check
 5. Record every finding with `review_findings`. Use `batch_record` for multi-finding passes.
 6. Decide the verdict: `pass`, `pass_with_findings`, `conditional_pass`, or `fail`.
 7. Record the verdict decision with `record_event(event_kind="decision", ...)`.
-8. Record the review run with `review_runs(operation="record", review_mode="branch", ...)`.
+8. Record the review run with `review_runs(operation="record", review_mode="branch", ...)`. If `review_runs` is unavailable in the current harness, use `make handoff-review-run TASK_REF=<task-ref> MODE=branch SUBJECT=<branch-or-artifact-path> SUBJECT_KIND=branch VERDICT=<verdict> DECISION=<decision-id> SESSION=<session> RUN_ID=<run-id>`.
 9. Refresh `DASHBOARD.txt` with `render_handoff(kind='dashboard')` after the state-changing writes land.
 10. Re-check whether open findings remain. If none remain and the branch claims readiness, `handoff_close_check` should be able to pass.
 

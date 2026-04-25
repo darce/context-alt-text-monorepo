@@ -44,6 +44,8 @@ from agent_handoff_mcp import (
 configure_runtime(RuntimeConfig.for_repo(Path(".")))
 ```
 
+When the missing surface is specifically review-run writes, prefer the repo-local wrapper over ad-hoc snippets: `make handoff-review-run TASK_REF=<task-ref> MODE=<branch|planning|release_audit> SUBJECT=<path-or-.> SUBJECT_KIND=<task_plan|epic|branch|adr|roadmap|other> VERDICT=<pass|pass_with_findings|fail|conditional_pass> DECISION=<decision-id> SESSION=<session> RUN_ID=<run-id>`. The target records the review run through the Python API fallback and refreshes `DASHBOARD.txt` plus `CURRENT_TASK.json`.
+
 Never use raw `sqlite3` to query `handoff.db` directly; the schema is internal and will break. `DASHBOARD.txt` is a last-resort stale read only when the Python package itself is also unavailable. Record a blocker when Claude Code MCP tool access does not restore after session restart. **Stop implementation work until at least the Python API is available.**
 
 ---

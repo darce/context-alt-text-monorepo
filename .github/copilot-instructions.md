@@ -115,6 +115,8 @@ print(get_handoff_state(sections='identity'))
 
 This fallback assumes the selected Python environment already has the standalone `agent-handoff-mcp` package installed from its external repo.
 
+When the missing surface is specifically review-run writes, prefer the repo-local wrapper over ad-hoc snippets: `make handoff-review-run TASK_REF=<task-ref> MODE=<branch|planning|release_audit> SUBJECT=<path-or-.> SUBJECT_KIND=<task_plan|epic|branch|adr|roadmap|other> VERDICT=<pass|pass_with_findings|fail|conditional_pass> DECISION=<decision-id> SESSION=<session> RUN_ID=<run-id>`. The target records the review run through the Python API fallback and refreshes `DASHBOARD.txt` plus `CURRENT_TASK.json`.
+
 ---
 
 # Project Instructions

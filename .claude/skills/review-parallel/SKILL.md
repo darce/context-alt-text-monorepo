@@ -65,7 +65,7 @@ The coordinator must call the **in-process** subagent primitive the current harn
    - the diff or slice packet under review.
 4. Each reviewer records its findings via `review_findings(review={"operation":"batch_record", "task_ref":"<REV-X>", ...})` and returns a short summary to the coordinator. A reviewer must never write directly under the coordinator `task_ref` while another reviewer is still running.
 5. After every reviewer returns, the coordinator merges: `review_findings(review={"operation":"merge","source_task_refs":[<REV-A>, <REV-B>, …],"target_task_ref":"<coordinator>"})`. This re-records each reviewer's findings under the coordinator `task_ref` with `merged_from` provenance pointing back at the source. Reviewer source rows remain intact — the merge is additive, not destructive.
-6. Record the combined review run: `review_runs(operation="record", review_mode="branch", ...)` with `subject_path` pointing at the branch or slice artifact reviewed. Reviewer sub-runs remain under their own `task_ref`s as the audit trail.
+6. Record the combined review run: `review_runs(operation="record", review_mode="branch", ...)` with `subject_path` pointing at the branch or slice artifact reviewed. If `review_runs` is unavailable in the current harness, use `make handoff-review-run TASK_REF=<coordinator-task-ref> MODE=branch SUBJECT=<branch-or-artifact-path> SUBJECT_KIND=branch VERDICT=<verdict> DECISION=<decision-id> SESSION=<session> RUN_ID=<run-id>`. Reviewer sub-runs remain under their own `task_ref`s as the audit trail.
 7. Decide the combined verdict (`pass`, `pass_with_findings`, `conditional_pass`, `fail`) and record it as a decision tied to the coordinator `task_ref`.
 
 ## Common Rationalizations

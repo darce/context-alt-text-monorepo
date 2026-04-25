@@ -56,7 +56,7 @@ This skill owns planning-review execution order. The guide owns the detailed che
 5. Record every finding in MCP with `review_findings`.
 6. Decide the planning verdict.
 7. Record the verdict decision with `record_event(event_kind="decision", ...)`.
-8. Record the planning review run with `review_runs(operation="record", review_mode="planning", ...)`.
+8. Record the planning review run with `review_runs(operation="record", review_mode="planning", ...)`. If `review_runs` is unavailable in the current harness, use `make handoff-review-run TASK_REF=<task-ref> MODE=planning SUBJECT=<doc-path> SUBJECT_KIND=<task_plan|epic|adr|roadmap|other> VERDICT=<verdict> DECISION=<decision-id> SESSION=<session> RUN_ID=<run-id>`.
 9. Refresh `DASHBOARD.txt` with `render_handoff(kind='dashboard')` after the state-changing writes land.
 10. Confirm whether open findings remain before declaring the artifact ready, and cite the stable handoff gap ids (`finding_id`) when reporting them.
 

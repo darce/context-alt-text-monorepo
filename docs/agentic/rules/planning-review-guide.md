@@ -208,9 +208,10 @@ After the review:
 
 1. Confirm findings with `list_review_findings` or `get_review_findings_summary`.
 2. Record a verdict decision citing the decision number of the artifact under review (e.g., "review of decision #966") for bidirectional linking.
-3. If requested, patch the plan to resolve findings.
-4. Regenerate `CURRENT_TASK.json` with `render_handoff(kind='current_task', task_ref=<active-task-ref>)`. Always use the **active** task's ref, even if findings were recorded against a different task.
-5. Include `Handoff updated: yes` in the final response.
+3. Record the planning-mode review run with `review_runs(review={"operation":"record", "review_mode":"planning", ...})`. If `review_runs` is unavailable in the current harness, use the repo-local fallback: `make handoff-review-run TASK_REF=<task-ref> MODE=planning SUBJECT=<doc-path> SUBJECT_KIND=<task_plan|epic|adr|roadmap|other> VERDICT=<verdict> DECISION=<decision-id> SESSION=<session> RUN_ID=<run-id>`.
+4. If requested, patch the plan to resolve findings.
+5. Regenerate `CURRENT_TASK.json` with `render_handoff(kind='current_task', task_ref=<active-task-ref>)`. Always use the **active** task's ref, even if findings were recorded against a different task.
+6. Include `Handoff updated: yes` in the final response.
 
 ---
 

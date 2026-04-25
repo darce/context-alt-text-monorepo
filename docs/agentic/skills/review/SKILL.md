@@ -72,7 +72,7 @@ Produce a structured, MCP-recorded set of review findings with a durable verdict
    - `conditional_pass`
    - `fail`
 7. Record the verdict decision with `record_event(event={"event_kind":"decision", ...})`.
-8. Record the review run with `review_runs(review={"operation":"record", ...})`.
+8. Record the review run with `review_runs(review={"operation":"record", ...})`. If `review_runs` is unavailable in the current harness, use `make handoff-review-run TASK_REF=<task-ref> MODE=<branch|planning|release_audit> SUBJECT=<path-or-.> SUBJECT_KIND=<task_plan|epic|branch|adr|roadmap|other> VERDICT=<verdict> DECISION=<decision-id> SESSION=<session> RUN_ID=<run-id>`.
 9. Regenerate the operator view with `render_handoff(kind='dashboard')`.
 10. Respond with findings grouped by severity, then the verdict summary.
 

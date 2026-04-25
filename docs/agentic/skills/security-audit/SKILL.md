@@ -262,6 +262,8 @@ record_review_run(
 )
 ```
 
+If `review_runs` is unavailable in the current harness, use `make handoff-review-run TASK_REF=<task-ref> MODE=release_audit SUBJECT=. SUBJECT_KIND=other VERDICT=<pass|pass_with_findings|fail|conditional_pass> DECISION=security_audit_<date> SESSION=<session-id> RUN_ID=security-audit-<date>`.
+
 4. Regenerate task context if an active task exists.
 
 ## Response Format

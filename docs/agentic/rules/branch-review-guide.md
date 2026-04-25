@@ -347,7 +347,8 @@ Pattern:
 3. Record each finding with `review-record` before mentioning in chat.
 4. Verify with `review-list` or `review-summary`.
 5. Record final review decision with `decision`.
-6. Dispatch lane work with `make handoff-dispatch TASK=<task-ref>` from root.
+6. Record the branch-mode review run with `review_runs(review={"operation":"record", "review_mode":"branch", ...})`. If `review_runs` is unavailable in the current harness, use the repo-local fallback: `make handoff-review-run TASK_REF=<task-ref> MODE=branch SUBJECT=<branch-or-artifact-path> SUBJECT_KIND=branch VERDICT=<verdict> DECISION=<decision-id> SESSION=<session> RUN_ID=<run-id>`.
+7. Dispatch lane work with `make handoff-dispatch TASK=<task-ref>` from root.
 
 Example:
 

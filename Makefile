@@ -180,6 +180,8 @@ help:
 	@echo "    Agent-assisted planning triage entry point; prints the constitution + skill surfaces for the document."
 	@echo "  make plan-review DOC=<path>"
 	@echo "    Agent-assisted planning review entry point; prints the planning-review surfaces for the document."
+	@echo "  make handoff-review-run TASK_REF=<task-ref> MODE=<branch|planning|release_audit> SUBJECT=<path-or-.> SUBJECT_KIND=<kind> VERDICT=<verdict> DECISION=<decision-id> SESSION=<session> RUN_ID=<run-id>"
+	@echo "    Repo-local fallback for recording a review run via the Python API when the MCP review_runs tool is unavailable."
 	@echo "  make slice-start TASK=<task-ref> TEST_CMD='...'"
 	@echo "    Record the failing-test TDD gate before implementation begins."
 	@echo "  make slice-commit TASK=<task-ref> MSG='...'"

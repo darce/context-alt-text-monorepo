@@ -140,6 +140,15 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 		$media_ids         = $request->get_param( 'media_ids' );
 		$media_items       = array();
 
+		// E15-11 Slice 2.2: 'multipart' (default) ships image bytes inline so
+		// any WordPress install reaches the hosted recognition API without
+		// publicly exposing its media library; 'url' keeps the legacy URL
+		// path for managed-host installs whose media is publicly fetchable.
+		$transport = (string) apply_filters( 'acx_recognition_transport', 'multipart' );
+		if ( 'multipart' !== $transport && 'url' !== $transport ) {
+			$transport = 'multipart';
+		}
+
 		if ( is_array( $media_items_param ) && count( $media_items_param ) > 0 ) {
 			$media_items = array_values(
 				array_filter(
@@ -170,6 +179,10 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'no_media_items', 'At least one media item is required', array( 'status' => 400 ) );
 		}
 
+		if ( 'multipart' === $transport ) {
+			return $this->analyze_media_multipart( $media_items );
+		}
+
 		$payload = array(
 			'tenant_id'   => $this->get_tenant_id(),
 			'site_url'    => get_site_url(),
@@ -186,6 +199,115 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 		}
 
 		return $response;
+	}
+
+	/**
+	 * Read each media item's bytes via get_attached_file and dispatch them
+	 * inline to /recognition/analyze/multipart through the body_kind=multipart
+	 * proxy path (E15-11 Slice 2.2).
+	 *
+	 * Items whose attachment file is missing on disk are skipped with an
+	 * error log entry rather than failing the whole batch — matches the
+	 * existing build_media_items policy of dropping unresolvable rows.
+	 *
+	 * @param array<int,array<string,mixed>> $media_items
+	 */
+	private function analyze_media_multipart( array $media_items ): WP_REST_Response|WP_Error {
+		$multipart_body = array(
+			'request' => wp_json_encode(
+				array(
+					'tenant_id' => $this->get_tenant_id(),
+					'site_url'  => get_site_url(),
+					'user_id'   => get_current_user_id(),
+				)
+			),
+		);
+
+		$dispatched_items = array();
+		foreach ( $media_items as $item ) {
+			$media_id = (int) ( $item['media_id'] ?? 0 );
+			if ( $media_id <= 0 ) {
+				continue;
+			}
+			$path = get_attached_file( $media_id, true );
+			if ( ! is_string( $path ) || '' === $path || ! is_readable( $path ) ) {
+				if ( function_exists( 'error_log' ) ) {
+					error_log( sprintf( '[acx] skipping media_id=%d for multipart upload: file not readable', $media_id ) );
+				}
+				continue;
+			}
+			$bytes = @file_get_contents( $path );
+			if ( false === $bytes || '' === $bytes ) {
+				if ( function_exists( 'error_log' ) ) {
+					error_log( sprintf( '[acx] skipping media_id=%d for multipart upload: empty file', $media_id ) );
+				}
+				continue;
+			}
+
+			$multipart_body[ 'image_' . $media_id ] = array(
+				'filename'     => basename( $path ),
+				'content'      => $bytes,
+				'content_type' => $this->resolve_image_mime_type( $path, $media_id ),
+			);
+			$dispatched_items[] = $item;
+		}
+
+		if ( empty( $dispatched_items ) ) {
+			return new WP_Error(
+				'no_media_items',
+				'No readable image files for any requested media_id; multipart upload aborted.',
+				array( 'status' => 400 )
+			);
+		}
+
+		$response = $this->proxy_request(
+			'POST',
+			'/recognition/analyze/multipart',
+			$multipart_body,
+			array(),
+			'auto',
+			'multipart'
+		);
+
+		if ( $response instanceof WP_REST_Response ) {
+			$data = $response->get_data();
+			if ( is_array( $data ) ) {
+				$this->store_job_media_ids(
+					(string) ( $data['id'] ?? '' ),
+					$this->extract_media_ids_from_analyze_payload( $dispatched_items )
+				);
+			}
+		}
+
+		return $response;
+	}
+
+	/**
+	 * Best-effort MIME detection for an attachment file. Falls back to
+	 * application/octet-stream if WordPress can't resolve it.
+	 */
+	private function resolve_image_mime_type( string $path, int $media_id ): string {
+		if ( function_exists( 'wp_check_filetype' ) ) {
+			$detected = wp_check_filetype( $path );
+			if ( is_array( $detected ) && ! empty( $detected['type'] ) ) {
+				return (string) $detected['type'];
+			}
+		}
+		if ( isset( $GLOBALS['__ac_attachment_mimes'][ $media_id ] ) ) {
+			return (string) $GLOBALS['__ac_attachment_mimes'][ $media_id ];
+		}
+		$extension = strtolower( pathinfo( $path, PATHINFO_EXTENSION ) );
+		switch ( $extension ) {
+			case 'jpg':
+			case 'jpeg':
+				return 'image/jpeg';
+			case 'png':
+				return 'image/png';
+			case 'webp':
+				return 'image/webp';
+			default:
+				return 'application/octet-stream';
+		}
 	}
 
 	public function get_job_status( WP_REST_Request $request ): WP_REST_Response|WP_Error {

@@ -117,6 +117,11 @@ class RecognitionControllerTest extends TestCase
             'body' => '{"status": "queued"}',
         ]);
 
+        // E15-11 Slice 2.2: this test exercises the legacy URL transport
+        // (no attached files on disk); pin the filter so the multipart
+        // default does not skip every item.
+        add_filter('acx_recognition_transport', static fn(string $current): string => 'url');
+
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
         $request->set_param('media_ids', $mediaIds);
 

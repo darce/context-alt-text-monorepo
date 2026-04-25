@@ -46,7 +46,8 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		array $body = array(),
 		array $query = array(),
 		string $request_class = 'auto',
-		string $body_kind = 'json'
+		string $body_kind = 'json',
+		?int $max_body_bytes = null
 	): WP_REST_Response|WP_Error {
 		// E15-11 Slice 2: 'json' (default) JSON-encodes the body and declares
 		// Content-Type: application/json. 'multipart' passes the body array
@@ -108,10 +109,29 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			if ( empty( $body ) || 'GET' === $method ) {
 				$encoded_body = null;
 			} else {
-				$boundary                  = $this->generate_multipart_boundary();
-				$encoded_body              = $this->build_multipart_body( $body, $boundary );
+				$boundary     = $this->generate_multipart_boundary();
+				$encoded_body = $this->build_multipart_body( $body, $boundary );
+				// E15-11 BR-12: enforce the cap against the actual serialized
+				// outgoing body size — multipart framing + per-part headers +
+				// the JSON request envelope add bytes that the controller's
+				// raw-bytes preflight cannot see, and the recognition
+				// service's UploadSizeLimitMiddleware rejects on
+				// Content-Length. Without this check a payload right under
+				// the raw cap would still 413 server-side.
+				$serialized_size = strlen( $encoded_body );
+				if ( null !== $max_body_bytes && $serialized_size > $max_body_bytes ) {
+					return new WP_Error(
+						'multipart_payload_too_large',
+						sprintf(
+							'multipart upload serialized to %d bytes, exceeding the %d-byte cap (raw image bytes plus framing).',
+							$serialized_size,
+							$max_body_bytes
+						),
+						array( 'status' => 413 )
+					);
+				}
 				$headers['Content-Type']   = 'multipart/form-data; boundary=' . $boundary;
-				$headers['Content-Length'] = (string) strlen( $encoded_body );
+				$headers['Content-Length'] = (string) $serialized_size;
 			}
 		} else {
 			$encoded_body = ! empty( $body ) && 'GET' !== $method ? wp_json_encode( $body ) : null;

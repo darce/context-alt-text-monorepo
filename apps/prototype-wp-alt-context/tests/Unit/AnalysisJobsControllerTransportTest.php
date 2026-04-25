@@ -307,6 +307,32 @@ class AnalysisJobsControllerTransportTest extends TestCase
         $this->assertNotEmpty($matches, 'expected url-branch transport log');
     }
 
+    /**
+     * E15-11-BR-12: the raw-bytes preflight understates the actual outgoing
+     * Content-Length once multipart framing + the JSON request envelope
+     * are added. Backend rejects on Content-Length, so a payload that
+     * passes the raw cap but exceeds it after serialization would fail
+     * server-side with 413. The plugin must reject before the network
+     * round-trip on the actual serialized size.
+     */
+    public function testMultipartRejectsWhenSerializedBodyExceedsCap(): void
+    {
+        // 1 image, raw = 25 MiB - 100 bytes (passes the raw-only check)
+        // but serialized adds ~400 bytes of framing + JSON envelope, which
+        // pushes the body over the 25 MiB cap.
+        $cap = 25 * 1024 * 1024;
+        $bytes = str_repeat('A', $cap - 100);
+        $this->plantAttachment(1, $bytes, 'png');
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $req->set_param('media_ids', [1]);
+        $result = $this->controller->analyze_media($req);
+
+        $this->assertInstanceOf(\WP_Error::class, $result);
+        $this->assertSame('multipart_payload_too_large', $result->get_error_code());
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
     public function testMultipartDispatchFailureIsLogged(): void
     {
         // 6 images triggers too_many_multipart_images; the controller should

@@ -57,11 +57,21 @@ abstract class TestCase extends PHPUnitTestCase
         $GLOBALS['__ac_posts'] = [];
         $GLOBALS['__ac_json_response'] = null;
         $GLOBALS['__ac_dbdelta_queries'] = [];
+        $GLOBALS['__ac_error_log'] = [];
 
         // Reset wpdb stub
         if (isset($GLOBALS['wpdb']) && method_exists($GLOBALS['wpdb'], 'reset')) {
             $GLOBALS['wpdb']->reset();
         }
+    }
+
+    /**
+     * Returns the captured error_log calls made during the test.
+     * @return string[]
+     */
+    protected function getErrorLog(): array
+    {
+        return $GLOBALS['__ac_error_log'] ?? [];
     }
 
     /**

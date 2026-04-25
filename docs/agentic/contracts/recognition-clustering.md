@@ -23,7 +23,7 @@ Tenant identifiers must be UUID-formatted strings (32 hex or hyphenated UUID).
 
 ### POST /recognition/analyze
 
-Queue a face detection job.
+Queue a face detection job (legacy URL transport).
 
 Request body:
 
@@ -43,6 +43,84 @@ Notes:
 - `media_items` is preferred. `media_ids` is accepted for tests and stub detectors.
 - When `RECOGNITION_ASYNC_ANALYZE_INLINE=0`, Postgres requires a running scan
   worker or the service returns 503.
+- Each `media_items[]` carries exactly one of `media_url` (this route) or
+  `blob_uri` (multipart route below). Mutual exclusion enforced at the
+  schema layer (`MediaItem` validator).
+
+### POST /recognition/analyze/multipart
+
+E15-11. Multipart variant for callers that cannot expose media via public
+URL (LocalWP, intranet, behind a WAF). Image bytes ship inline; the
+service writes them through a per-tenant `ObjectStore` and queues the
+scan against the resulting blob URIs.
+
+Request: `multipart/form-data` with these parts:
+
+- `request` (required): JSON-encoded envelope, currently
+  `{ "tenant_id": "<uuid>" }`. Optional `site_url` and `user_id` fields are
+  accepted for plugin-side audit.
+- `image_<media_id>` (one or more): binary image bytes. Filename arbitrary;
+  `content-type` MUST be one of `image/jpeg`, `image/png`, `image/webp`
+  (override via `RECOGNITION_ALLOWED_UPLOAD_MIME_TYPES`).
+
+Headers (added by the proxy / required by the route):
+
+- `X-API-Key: <api-key>` (auth)
+- `X-Tenant-ID: <uuid>` (must equal `request.tenant_id`)
+- `Content-Type: multipart/form-data; boundary=<token>` (set by the client;
+  WP plugin builds this manually since `wp_remote_request` does not
+  auto-build multipart from an array body)
+- `Content-Length: <bytes>` (must be present; chunked-without-CL → 411)
+
+Response: `202 Accepted` with `JobStatusResponse` body.
+
+Status codes:
+
+- `202` — job queued (`status=pending`); blobs persisted under
+  `<RECOGNITION_BLOB_ROOT>/<tenant_id>/<job_id>/<media_id>.bin`
+- `400` — missing/malformed `request` part, non-integer `image_<id>` suffix
+- `403` — `X-Tenant-ID` / `auth.tenant_claim` differs from
+  `request.tenant_id`
+- `411` — body-bearing request without `Content-Length`
+- `413` — `Content-Length > RECOGNITION_MAX_UPLOAD_BYTES` (default 25 MiB)
+- `415` — image part with disallowed MIME type
+- `422` — no `image_<id>` parts, missing/invalid `tenant_id`, zero-byte part
+- `503` — `RECOGNITION_ASYNC_ANALYZE_INLINE=0` with no DB session/worker
+
+Cleanup contract:
+
+- Successful job: worker `ScanItemHandler._refresh_job_progress` calls
+  `ObjectStore.cleanup(job_id)` once the last queued item completes; the
+  per-job directory is removed.
+- Pre-commit failure (`scan_queue.create_scan_job_record` raises): route's
+  `try/finally` calls `ObjectStore.cleanup(job_id)` before propagating.
+- Inline-processing path (`RECOGNITION_ASYNC_ANALYZE_INLINE=1`):
+  `chain_populate_and_process` cleans up after `process_scan_job_inline`
+  returns or raises.
+
+Tenant binding:
+
+- Per-tenant `ObjectStore` is constructed from `auth.tenant_claim`.
+- `ObjectStore.open()` rejects URIs whose path does not fall under the
+  bound tenant prefix (`ObjectStoreError`).
+
+Settings:
+
+| env var | default | meaning |
+| --- | --- | --- |
+| `RECOGNITION_BLOB_ROOT` | `/tmp/acx-recognition-blobs` | Filesystem root for `FilesystemObjectStore` |
+| `RECOGNITION_MAX_UPLOAD_BYTES` | `26214400` (25 MiB) | Body-size cap for the multipart route |
+| `RECOGNITION_ALLOWED_UPLOAD_MIME_TYPES` | `image/jpeg,image/png,image/webp` | CSV; whitespace-only falls back to default |
+
+WordPress plugin contract:
+
+- Filter `acx_recognition_transport` (default `'multipart'`, opt-in `'url'`):
+  selects which transport `analyze_media` uses. Plugin-side caps:
+  ≤ 5 images per request (`MULTIPART_MAX_IMAGES`), ≤ 25 MiB serialized
+  body (`MULTIPART_MAX_BYTES`).
+- Telemetry: backend logs `analyze_media_multipart_dispatch ...`; plugin
+  logs `[acx] acx_recognition_transport=...` and
+  `[acx] multipart dispatch failed: ...` via `Telemetry::log_line`.
 
 ### GET /recognition/jobs/{job_id}
 

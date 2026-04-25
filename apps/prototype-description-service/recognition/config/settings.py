@@ -68,6 +68,26 @@ class ClusteringLimitsSettings(BaseModel):
     max_cluster_size: int = Field(default=1000, description="Maximum members per cluster.")
 
 
+_DEFAULT_UPLOAD_MIME_TYPES: tuple[str, ...] = (
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+)
+
+
+def _parse_allowed_upload_mime_types(raw: str) -> list[str]:
+    """Parse RECOGNITION_ALLOWED_UPLOAD_MIME_TYPES into a list.
+
+    Comma-separated; per-item whitespace stripped; empty / whitespace-only
+    input returns the safe default (so a misconfigured env var cannot
+    silently disable every upload).
+    """
+    items = [chunk.strip() for chunk in raw.split(",") if chunk.strip()]
+    if not items:
+        return list(_DEFAULT_UPLOAD_MIME_TYPES)
+    return items
+
+
 class RecognitionSettings(BaseModel):
     """Top-level recognition settings container."""
 
@@ -89,3 +109,29 @@ class RecognitionSettings(BaseModel):
 
     # Runtime mode: "production" uses real InsightFace, "test" uses stubs
     runtime_mode: str = Field(default_factory=lambda: os.environ.get("RECOGNITION_RUNTIME_MODE", "production"))
+
+    # E15-11: filesystem ObjectStore root. Multipart-uploaded image bytes are
+    # written under <blob_root>/<tenant_id>/<job_id>/<media_id>.bin and
+    # cleaned up by the worker after the scan completes or fails.
+    blob_root: Path = Field(
+        default_factory=lambda: Path(os.environ.get("RECOGNITION_BLOB_ROOT", "/tmp/acx-recognition-blobs")),
+        description="Filesystem root for the ObjectStore (multipart upload transport).",
+    )
+
+    # E15-11: per-request body cap on the multipart variant of /recognition/analyze.
+    max_upload_bytes: int = Field(
+        default_factory=lambda: int(os.environ.get("RECOGNITION_MAX_UPLOAD_BYTES", str(25 * 1024 * 1024))),
+        description="Reject multipart requests with Content-Length above this value.",
+    )
+
+    # E15-11: allowed image MIME types for multipart upload parts.
+    # Override via comma-separated env var, e.g.
+    # `RECOGNITION_ALLOWED_UPLOAD_MIME_TYPES=image/jpeg,image/heic,image/avif`.
+    # Whitespace-only or unset values fall back to the safe default to avoid
+    # accidentally rejecting every upload.
+    allowed_upload_mime_types: list[str] = Field(
+        default_factory=lambda: _parse_allowed_upload_mime_types(
+            os.environ.get("RECOGNITION_ALLOWED_UPLOAD_MIME_TYPES", "")
+        ),
+        description="MIME allow-list for image_<media_id> parts on the multipart route.",
+    )

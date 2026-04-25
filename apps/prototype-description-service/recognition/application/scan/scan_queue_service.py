@@ -49,6 +49,7 @@ class ScanQueueService:
         tenant_id: uuid.UUID,
         total: int,
         created_by_user_id: int | None = None,
+        job_id: uuid.UUID | None = None,
     ) -> uuid.UUID:
         """Create a scan job record without enqueueing items.
 
@@ -56,21 +57,27 @@ class ScanQueueService:
             tenant_id: Tenant UUID.
             total: Total number of items expected for the job.
             created_by_user_id: Optional WP user id for audit.
+            job_id: Optional pre-generated UUID. When provided the
+                repository persists it verbatim so on-disk paths
+                (e.g. ObjectStore blobs under <tenant>/<job_id>/) match
+                the DB row. Used by the multipart upload route, which
+                must know the job_id at upload time.
 
         Returns:
-            Newly created job UUID.
+            Newly created or echoed job UUID.
         """
         if total <= 0:
             raise ValueError("total must be positive")
         message = _format_queue_message(0, total)
-        job_id = await self._repository.create_job_with_message(
+        new_job_id = await self._repository.create_job_with_message(
             tenant_id=tenant_id,
             media_ids=[],
             total=total,
             message=message,
             created_by_user_id=created_by_user_id,
+            job_id=job_id,
         )
-        return job_id
+        return new_job_id
 
     async def populate_scan_job_items(
         self,

@@ -35,6 +35,7 @@ from recognition.interface_adapters.http.middleware.metrics import (
     MetricsMiddleware,
     get_default_metrics,
 )
+from recognition.interface_adapters.http.middleware.upload_size import UploadSizeLimitMiddleware
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
 from shared.health import HealthStatus
 
@@ -150,6 +151,15 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(CorrelationIdMiddleware)
     app.add_middleware(MetricsMiddleware)
+    # E15-11: enforce body-size cap on the multipart upload endpoint before
+    # FastAPI buffers the body. Path-scoped so the JSON variant on the same
+    # base path is unaffected.
+    recognition_settings = RecognitionSettings()
+    app.add_middleware(
+        UploadSizeLimitMiddleware,
+        max_bytes=recognition_settings.max_upload_bytes,
+        paths={"/recognition/analyze/multipart"},
+    )
 
     initialize_session_dependency_circuit_breaker(app)
     initialize_clustering_circuit_breaker(app)

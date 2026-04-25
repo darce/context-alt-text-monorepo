@@ -1,0 +1,361 @@
+<?php
+
+declare(strict_types=1);
+
+namespace AltContext\Tests\Unit;
+
+use AltContext\Api\AnalysisJobsController;
+use AltContext\Tests\TestCase;
+use WP_REST_Request;
+
+/**
+ * Tests for AnalysisJobsController::analyze_media transport switching
+ * (E15-11 Slice 2.2).
+ *
+ * Default (no filter set) is 'multipart' — the analyze controller reads
+ * image bytes via get_attached_file and ships them to
+ * /recognition/analyze/multipart through the body_kind=multipart proxy
+ * path. Setting the acx_recognition_transport filter to 'url' restores
+ * the legacy JSON path so managed-host installs that expose media
+ * publicly keep working.
+ *
+ * @covers \AltContext\Api\AnalysisJobsController
+ */
+class AnalysisJobsControllerTransportTest extends TestCase
+{
+    private AnalysisJobsController $controller;
+    private string $tempDir;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->setOption('acx_recognition_url', 'http://localhost:8000');
+        $this->setOption('acx_recognition_api_key', 'test-key');
+        $this->setOption('acx_tier', 'free');
+        $this->controller = new AnalysisJobsController();
+        $this->tempDir = sys_get_temp_dir() . '/acx-e15-11-' . uniqid();
+        mkdir($this->tempDir, 0o755, true);
+    }
+
+    protected function tearDown(): void
+    {
+        // Best-effort cleanup of temp fixture files.
+        if (is_dir($this->tempDir)) {
+            foreach (glob($this->tempDir . '/*') as $f) {
+                @unlink($f);
+            }
+            @rmdir($this->tempDir);
+        }
+        parent::tearDown();
+    }
+
+    private function plantAttachment(int $id, string $bytes, string $extension = 'png'): string
+    {
+        $path = $this->tempDir . "/{$id}.{$extension}";
+        file_put_contents($path, $bytes);
+        $GLOBALS['__ac_attached_file'][$id] = $path;
+        $GLOBALS['__ac_attachment_urls'][$id] = "http://example.test/media/{$id}.{$extension}";
+        return $path;
+    }
+
+    public function testDefaultTransportIsMultipartAndPostsToMultipartRoute(): void
+    {
+        $bytes101 = "\x89PNG\r\n\x1a\nfake-101";
+        $bytes202 = "\xff\xd8\xff\xe0fake-202";
+        $this->plantAttachment(101, $bytes101, 'png');
+        $this->plantAttachment(202, $bytes202, 'jpg');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'OK'],
+            'body' => '{"id":"job-1","status":"pending"}',
+        ]);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $req->set_param('media_ids', [101, 202]);
+        $result = $this->controller->analyze_media($req);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $result, var_export($result, true));
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $call = $calls[0];
+
+        $this->assertStringContainsString('/recognition/analyze/multipart', $call['url']);
+
+        $contentType = $call['args']['headers']['Content-Type'] ?? null;
+        $this->assertIsString($contentType);
+        $this->assertMatchesRegularExpression(
+            '#^multipart/form-data;\s*boundary=#',
+            $contentType
+        );
+
+        $body = $call['args']['body'];
+        $this->assertIsString($body);
+
+        // Each image part is present with its bytes embedded literally.
+        $this->assertStringContainsString(
+            "Content-Disposition: form-data; name=\"image_101\"; filename=",
+            $body
+        );
+        $this->assertStringContainsString($bytes101, $body);
+        $this->assertStringContainsString(
+            "Content-Disposition: form-data; name=\"image_202\"; filename=",
+            $body
+        );
+        $this->assertStringContainsString($bytes202, $body);
+
+        // The 'request' JSON envelope carries tenant_id only — the recognition
+        // service builds MediaItems from the image_<id> parts.
+        $this->assertStringContainsString(
+            "Content-Disposition: form-data; name=\"request\"\r\n",
+            $body
+        );
+    }
+
+    public function testUrlTransportFilterPreservesLegacyJsonPath(): void
+    {
+        // Tenant must still get attachments to derive URLs (legacy contract).
+        $this->plantAttachment(101, 'irrelevant', 'png');
+
+        add_filter(
+            'acx_recognition_transport',
+            static fn(string $current): string => 'url',
+        );
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'OK'],
+            'body' => '{"id":"job-2","status":"pending"}',
+        ]);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $req->set_param('media_ids', [101]);
+        $result = $this->controller->analyze_media($req);
+        $this->assertNotInstanceOf(\WP_Error::class, $result, var_export($result, true));
+
+        $call = $this->getHttpCalls()[0];
+        $this->assertStringContainsString('/recognition/analyze', $call['url']);
+        $this->assertStringNotContainsString('/multipart', $call['url']);
+
+        $this->assertSame(
+            'application/json',
+            $call['args']['headers']['Content-Type'] ?? null
+        );
+
+        $decoded = json_decode((string) $call['args']['body'], true);
+        $this->assertSame(101, $decoded['media_items'][0]['media_id'] ?? null);
+        $this->assertSame(
+            'http://example.test/media/101.png',
+            $decoded['media_items'][0]['media_url'] ?? null
+        );
+    }
+
+    public function testMultipartSkipsItemsWithMissingAttachedFile(): void
+    {
+        $bytes = "\x89PNGfake";
+        $this->plantAttachment(1, $bytes, 'png');
+        // 2 has no attached file — get_attached_file returns false; the
+        // controller must skip it but still dispatch the others.
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'OK'],
+            'body' => '{"id":"job-3","status":"pending"}',
+        ]);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $req->set_param('media_ids', [1, 2]);
+        $result = $this->controller->analyze_media($req);
+        $this->assertNotInstanceOf(\WP_Error::class, $result, var_export($result, true));
+
+        $body = $this->getHttpCalls()[0]['args']['body'];
+        $this->assertStringContainsString('name="image_1"', $body);
+        $this->assertStringNotContainsString('name="image_2"', $body);
+    }
+
+    public function testMultipartReturns400WhenAllAttachmentsMissing(): void
+    {
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $req->set_param('media_ids', [9001]);
+        $result = $this->controller->analyze_media($req);
+        $this->assertInstanceOf(\WP_Error::class, $result);
+        $this->assertSame('no_media_items', $result->get_error_code());
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testMultipartRejectsMoreThanFiveImageParts(): void
+    {
+        // E15-11 Slice 2.3: per scope #2337 the multipart route is sized for
+        // small predictable batches (~5 images). Cap is enforced plugin-side
+        // so callers fail before the network round-trip.
+        $bytes = "\x89PNGfake";
+        for ($id = 1; $id <= 6; $id++) {
+            $this->plantAttachment($id, $bytes, 'png');
+        }
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $req->set_param('media_ids', range(1, 6));
+        $result = $this->controller->analyze_media($req);
+
+        $this->assertInstanceOf(\WP_Error::class, $result);
+        $this->assertSame('too_many_multipart_images', $result->get_error_code());
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testMultipartAcceptsExactlyFiveImageParts(): void
+    {
+        $bytes = "\x89PNGfake";
+        for ($id = 1; $id <= 5; $id++) {
+            $this->plantAttachment($id, $bytes, 'png');
+        }
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'OK'],
+            'body' => '{"id":"job-5","status":"pending"}',
+        ]);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $req->set_param('media_ids', range(1, 5));
+        $result = $this->controller->analyze_media($req);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $result, var_export($result, true));
+        $this->assertCount(1, $this->getHttpCalls());
+    }
+
+    public function testMultipartRejectsTotalBytesAboveTwentyFiveMegabytes(): void
+    {
+        // 6 MB per file × 5 files = 30 MB > 25 MB cap.
+        $bigBytes = str_repeat('A', 6 * 1024 * 1024);
+        for ($id = 1; $id <= 5; $id++) {
+            $this->plantAttachment($id, $bigBytes, 'png');
+        }
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $req->set_param('media_ids', range(1, 5));
+        $result = $this->controller->analyze_media($req);
+
+        $this->assertInstanceOf(\WP_Error::class, $result);
+        $this->assertSame('multipart_payload_too_large', $result->get_error_code());
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testMultipartAcceptsTotalBytesUnderCap(): void
+    {
+        // 4 MB per file × 5 files = 20 MB < 25 MB cap.
+        $bytes = str_repeat('B', 4 * 1024 * 1024);
+        for ($id = 1; $id <= 5; $id++) {
+            $this->plantAttachment($id, $bytes, 'png');
+        }
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'OK'],
+            'body' => '{"id":"job-6","status":"pending"}',
+        ]);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $req->set_param('media_ids', range(1, 5));
+        $result = $this->controller->analyze_media($req);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $result, var_export($result, true));
+        $this->assertCount(1, $this->getHttpCalls());
+    }
+
+    /**
+     * E15-11 Slice 3.2: plugin-side telemetry for the transport selection.
+     * Operators need to see which transport a request used so they can
+     * triage installs that landed on the URL fallback unintentionally.
+     */
+    public function testTransportSelectionEmitsErrorLog(): void
+    {
+        $this->plantAttachment(1, "\x89PNGfake", 'png');
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'OK'],
+            'body' => '{"id":"job-7","status":"pending"}',
+        ]);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $req->set_param('media_ids', [1]);
+        $this->controller->analyze_media($req);
+
+        $logs = $this->getErrorLog();
+        $matches = array_values(array_filter(
+            $logs,
+            static fn(string $line): bool => str_contains($line, 'acx_recognition_transport=multipart')
+                && str_contains($line, '[acx]')
+        ));
+        $this->assertNotEmpty(
+            $matches,
+            'expected a [acx] transport-selection log line; got: ' . var_export($logs, true)
+        );
+    }
+
+    public function testTransportSelectionUrlBranchAlsoLogs(): void
+    {
+        $this->plantAttachment(1, "\x89PNGfake", 'png');
+        add_filter('acx_recognition_transport', static fn(string $current): string => 'url');
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'OK'],
+            'body' => '{"id":"job-8","status":"pending"}',
+        ]);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $req->set_param('media_ids', [1]);
+        $this->controller->analyze_media($req);
+
+        $logs = $this->getErrorLog();
+        $matches = array_values(array_filter(
+            $logs,
+            static fn(string $line): bool => str_contains($line, 'acx_recognition_transport=url')
+                && str_contains($line, '[acx]')
+        ));
+        $this->assertNotEmpty($matches, 'expected url-branch transport log');
+    }
+
+    /**
+     * E15-11-BR-12: the raw-bytes preflight understates the actual outgoing
+     * Content-Length once multipart framing + the JSON request envelope
+     * are added. Backend rejects on Content-Length, so a payload that
+     * passes the raw cap but exceeds it after serialization would fail
+     * server-side with 413. The plugin must reject before the network
+     * round-trip on the actual serialized size.
+     */
+    public function testMultipartRejectsWhenSerializedBodyExceedsCap(): void
+    {
+        // 1 image, raw = 25 MiB - 100 bytes (passes the raw-only check)
+        // but serialized adds ~400 bytes of framing + JSON envelope, which
+        // pushes the body over the 25 MiB cap.
+        $cap = 25 * 1024 * 1024;
+        $bytes = str_repeat('A', $cap - 100);
+        $this->plantAttachment(1, $bytes, 'png');
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $req->set_param('media_ids', [1]);
+        $result = $this->controller->analyze_media($req);
+
+        $this->assertInstanceOf(\WP_Error::class, $result);
+        $this->assertSame('multipart_payload_too_large', $result->get_error_code());
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testMultipartDispatchFailureIsLogged(): void
+    {
+        // 6 images triggers too_many_multipart_images; the controller should
+        // log the dispatch failure with the WP_Error code so an operator can
+        // grep server logs for transport regressions.
+        for ($id = 1; $id <= 6; $id++) {
+            $this->plantAttachment($id, 'x', 'png');
+        }
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $req->set_param('media_ids', range(1, 6));
+        $result = $this->controller->analyze_media($req);
+        $this->assertInstanceOf(\WP_Error::class, $result);
+
+        $logs = $this->getErrorLog();
+        $matches = array_values(array_filter(
+            $logs,
+            static fn(string $line): bool => str_contains($line, 'multipart dispatch failed')
+                && str_contains($line, 'too_many_multipart_images')
+        ));
+        $this->assertNotEmpty(
+            $matches,
+            'expected a multipart-dispatch-failure log line; got: ' . var_export($logs, true)
+        );
+    }
+}

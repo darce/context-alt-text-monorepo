@@ -114,10 +114,23 @@ def _multipart_submission(tenant_id: str) -> dict:
     }
 
 
-def test_multipart_happy_path_returns_202_and_stores_blob(app_with_overrides, tenant_id: str) -> None:
+def test_multipart_happy_path_returns_202_and_stores_blob(
+    app_with_overrides, tenant_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verifies the route's synchronous behaviour: blob written, scan job
+    record created with pre-generated id, 202 returned. The BackgroundTask
+    is monkeypatched out so the cleanup phase wired in S1.6 does not race
+    the assertions about on-disk state."""
     app, queue, settings = app_with_overrides
-    client = TestClient(app)
 
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    async def _noop_chain(**_kwargs):
+        return None
+
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+
+    client = TestClient(app)
     response = client.post("/recognition/analyze/multipart", **_multipart_submission(tenant_id))
     assert response.status_code == 202, response.text
     body = response.json()

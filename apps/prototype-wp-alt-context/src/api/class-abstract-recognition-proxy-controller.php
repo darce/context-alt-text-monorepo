@@ -78,9 +78,9 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		if ( 'json' === $body_kind ) {
 			$headers['Content-Type'] = 'application/json';
 		}
-		// For 'multipart', deliberately omit Content-Type: wp_remote_request
-		// (via WP_Http) sets multipart/form-data with the boundary itself when
-		// `body` is an array.
+		// For 'multipart' the Content-Type with boundary is set below
+		// alongside the serialized body — wp_remote_request does NOT
+		// auto-build multipart/form-data from a plain array (BR-09).
 
 		$api_key = $this->get_recognition_api_key();
 		if ( '' === $api_key ) {
@@ -105,7 +105,14 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		}
 
 		if ( 'multipart' === $body_kind ) {
-			$encoded_body = ! empty( $body ) && 'GET' !== $method ? $body : null;
+			if ( empty( $body ) || 'GET' === $method ) {
+				$encoded_body = null;
+			} else {
+				$boundary                  = $this->generate_multipart_boundary();
+				$encoded_body              = $this->build_multipart_body( $body, $boundary );
+				$headers['Content-Type']   = 'multipart/form-data; boundary=' . $boundary;
+				$headers['Content-Length'] = (string) strlen( $encoded_body );
+			}
 		} else {
 			$encoded_body = ! empty( $body ) && 'GET' !== $method ? wp_json_encode( $body ) : null;
 		}
@@ -434,5 +441,68 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 
 		delete_transient( $failure_key );
 		delete_transient( $circuit_key );
+	}
+
+	/**
+	 * Generate a unique boundary string for a multipart/form-data body
+	 * (E15-11 BR-09).
+	 *
+	 * Boundaries are restricted to RFC 2046 token characters; we use a
+	 * fixed prefix plus a random hex tail so the boundary is highly
+	 * unlikely to collide with body bytes.
+	 */
+	private function generate_multipart_boundary(): string {
+		// 32 hex chars (16 random bytes) is plenty of entropy.
+		try {
+			$random = bin2hex( random_bytes( 16 ) );
+		} catch ( \Exception $e ) {
+			// random_bytes can throw on extremely broken environments; fall
+			// back to a time + uniqid mix so we never block a request on
+			// crypto entropy issues.
+			$random = bin2hex( pack( 'NN', time(), random_int( 0, PHP_INT_MAX ) ) );
+		}
+		return 'AcxBoundary' . $random;
+	}
+
+	/**
+	 * Serialize an associative array of form fields and file uploads into a
+	 * multipart/form-data body string with the given boundary
+	 * (E15-11 BR-09).
+	 *
+	 * Each entry in $body may be:
+	 *   - a scalar (string|int|float|bool) -> emitted as a plain form field
+	 *   - an array with keys {filename, content, content_type} -> emitted
+	 *     as a file upload part with the given filename and Content-Type
+	 *
+	 * Other shapes (nested arrays without the file keys, objects) are
+	 * rejected by string-cast to avoid silently dropping caller data.
+	 *
+	 * @param array<string, mixed> $body     Form fields keyed by name.
+	 * @param string               $boundary Boundary token (no leading dashes).
+	 */
+	private function build_multipart_body( array $body, string $boundary ): string {
+		$crlf  = "\r\n";
+		$parts = '';
+		foreach ( $body as $name => $value ) {
+			$name_str = (string) $name;
+			$parts   .= '--' . $boundary . $crlf;
+
+			if ( is_array( $value ) && isset( $value['content'] ) ) {
+				$filename     = isset( $value['filename'] ) ? (string) $value['filename'] : $name_str;
+				$content_type = isset( $value['content_type'] ) ? (string) $value['content_type'] : 'application/octet-stream';
+				$content      = (string) $value['content'];
+				$parts       .= 'Content-Disposition: form-data; name="' . $name_str . '"; filename="' . $filename . '"' . $crlf;
+				$parts       .= 'Content-Type: ' . $content_type . $crlf;
+				$parts       .= $crlf;
+				$parts       .= $content . $crlf;
+				continue;
+			}
+
+			$parts .= 'Content-Disposition: form-data; name="' . $name_str . '"' . $crlf;
+			$parts .= $crlf;
+			$parts .= (string) $value . $crlf;
+		}
+		$parts .= '--' . $boundary . '--' . $crlf;
+		return $parts;
 	}
 }

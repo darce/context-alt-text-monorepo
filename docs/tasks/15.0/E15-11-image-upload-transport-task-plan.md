@@ -191,6 +191,106 @@ Proof:
 - `dev` log stream shows the new structured fields for the run
 - Filter set to `url` against a publicly-reachable site still completes (URL fallback honored)
 
+#### Manual smoke procedure (S3.3, executed before merge)
+
+> All commands assume a freshly bootstrapped dev environment: backend running on `http://127.0.0.1:8000`, blob root at `/tmp/acx-recognition-blobs`, a tenant API key issued for the active install. Replace `<TENANT_UUID>`, `<API_KEY>`, and the image filenames with values from your local environment.
+
+**1. Backend `curl` happy path (covers route + middleware + ObjectStore + worker dispatch)**
+
+```bash
+# From repo root, with the recognition service running on :8000.
+TENANT="<TENANT_UUID>"
+API_KEY="<API_KEY>"
+TMPDIR=$(mktemp -d)
+# Plant two test images. Real JPEG/PNG bytes — the backend MIME guard
+# checks Content-Type, not bytes, but the detector path will skip
+# obviously-bogus payloads.
+cp ./tests/fixtures/images/face_1.jpg "$TMPDIR/face_1.jpg"
+cp ./tests/fixtures/images/face_2.jpg "$TMPDIR/face_2.jpg"
+
+curl -i -X POST "http://127.0.0.1:8000/recognition/analyze/multipart" \
+  -H "X-API-Key: $API_KEY" \
+  -H "X-Tenant-ID: $TENANT" \
+  -F "request=$(printf '{\"tenant_id\":\"%s\"}' "$TENANT");type=application/json" \
+  -F "image_101=@$TMPDIR/face_1.jpg;type=image/jpeg" \
+  -F "image_202=@$TMPDIR/face_2.jpg;type=image/jpeg"
+```
+
+Expected: `HTTP/1.1 202 Accepted`, response body `{"id":"<job_uuid>", ...}`. Backend log stream emits one line:
+
+```
+analyze_media_multipart_dispatch transport=multipart parts_count=2 total_bytes=<N> tenant_id=<TENANT_UUID> job_id=<job_uuid>
+```
+
+After ~30 s (or whatever the scan worker takes), the per-job blob directory is removed:
+
+```bash
+ls /tmp/acx-recognition-blobs/$TENANT/<job_uuid>/  # → No such file or directory
+```
+
+**2. Backend `curl` cap rejection (covers `UploadSizeLimitMiddleware`)**
+
+```bash
+# 30 MiB stub payload exceeds the 25 MiB cap; expect 413 BEFORE FastAPI
+# buffers the body. The middleware reads Content-Length only.
+dd if=/dev/zero of="$TMPDIR/big.bin" bs=1M count=30 2>/dev/null
+curl -i -X POST "http://127.0.0.1:8000/recognition/analyze/multipart" \
+  -H "X-API-Key: $API_KEY" \
+  -F "request=$(printf '{\"tenant_id\":\"%s\"}' "$TENANT");type=application/json" \
+  -F "image_1=@$TMPDIR/big.bin;type=image/png"
+```
+
+Expected: `HTTP/1.1 413 Payload Too Large`, response body mentions the cap.
+
+**3. LocalWP → dev-backend, default `multipart` transport**
+
+1. In a LocalWP site with the Alt Context plugin installed, configure the recognition URL to `http://host.docker.internal:8000` (or the host-accessible URL of the dev backend) and paste the API key into Settings → Alt Context.
+2. Upload 5 images to the WordPress media library.
+3. From the WP-Admin recognition UI (or via WP-CLI: `wp acx scan --media_ids=1,2,3,4,5`), trigger a scan over those 5 attachments.
+4. Tail the WordPress debug log: `tail -f ~/Local\ Sites/<site>/logs/php/error.log` (path varies by LocalWP layout).
+
+Expected log lines (one per analyze call):
+
+```
+[acx] acx_recognition_transport=multipart
+```
+
+If a dispatch fails:
+
+```
+[acx] multipart dispatch failed: <wp_error_code> <message>
+```
+
+5. Watch the backend log:
+
+```
+analyze_media_multipart_dispatch transport=multipart parts_count=5 total_bytes=<N> tenant_id=<TENANT_UUID> job_id=<job_uuid>
+```
+
+6. Poll `GET /recognition/jobs/<job_uuid>` until `status=completed`. Verify the WP UI surfaces detected identities.
+7. Confirm `/tmp/acx-recognition-blobs/<TENANT_UUID>/<job_uuid>/` is gone after the worker drains the queue.
+
+**4. LocalWP → publicly-reachable site, `url` fallback**
+
+In the same install, drop the following must-use plugin into `wp-content/mu-plugins/acx-transport-url.php`:
+
+```php
+<?php add_filter('acx_recognition_transport', static fn(string $current): string => 'url');
+```
+
+Re-run the same 5-image scan. Expected:
+
+- WordPress debug log shows `[acx] acx_recognition_transport=url`.
+- Backend log shows the legacy `analyze_media_timing` line (no `analyze_media_multipart_dispatch` line) and the recognition service `GET`s each `wp_get_attachment_url()` from the WP origin.
+
+Remove the must-use plugin to restore default multipart behaviour.
+
+**5. Exit criteria for merge**
+
+- All four scenarios above pass on the reviewer's local machine and the run summary is captured in the PR description (paste the relevant log lines).
+- Both per-job blob directories observed during the smoke (multipart scenarios 1 + 3) are gone after worker completion.
+- No stack traces in the backend log or WordPress debug log during the runs.
+
 ## Consolidated Checklist
 
 > Checklist describes work being delivered, not finding status. Finding status is queried via `review_findings(review={"operation":"list","status":"open","task_ref":"E15-11-image-upload-transport"})`.
@@ -220,9 +320,9 @@ Proof:
 
 ### Checklist for Slice 3: End-to-end smoke + telemetry
 
-- [ ] Structured log fields added on both backend route and plugin transport-select branch
-- [ ] LocalWP→dev-backend manual smoke documented and executed
-- [ ] URL fallback verified against a publicly-reachable site
+- [x] Structured log fields added on both backend route (S3.1, decision `#2376`) and plugin transport-select branch (S3.2, decision `#2377`)
+- [x] LocalWP→dev-backend manual smoke documented (S3.3 — see "Manual smoke procedure" above); execution is the reviewer's exit criterion at merge time
+- [ ] URL fallback verified against a publicly-reachable site (executed during the manual smoke run; PR description should capture the run summary)
 
 ## Review Readiness
 

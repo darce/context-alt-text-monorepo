@@ -180,4 +180,79 @@ class AnalysisJobsControllerTransportTest extends TestCase
         $this->assertSame('no_media_items', $result->get_error_code());
         $this->assertSame([], $this->getHttpCalls());
     }
+
+    public function testMultipartRejectsMoreThanFiveImageParts(): void
+    {
+        // E15-11 Slice 2.3: per scope #2337 the multipart route is sized for
+        // small predictable batches (~5 images). Cap is enforced plugin-side
+        // so callers fail before the network round-trip.
+        $bytes = "\x89PNGfake";
+        for ($id = 1; $id <= 6; $id++) {
+            $this->plantAttachment($id, $bytes, 'png');
+        }
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $req->set_param('media_ids', range(1, 6));
+        $result = $this->controller->analyze_media($req);
+
+        $this->assertInstanceOf(\WP_Error::class, $result);
+        $this->assertSame('too_many_multipart_images', $result->get_error_code());
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testMultipartAcceptsExactlyFiveImageParts(): void
+    {
+        $bytes = "\x89PNGfake";
+        for ($id = 1; $id <= 5; $id++) {
+            $this->plantAttachment($id, $bytes, 'png');
+        }
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'OK'],
+            'body' => '{"id":"job-5","status":"pending"}',
+        ]);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $req->set_param('media_ids', range(1, 5));
+        $result = $this->controller->analyze_media($req);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $result, var_export($result, true));
+        $this->assertCount(1, $this->getHttpCalls());
+    }
+
+    public function testMultipartRejectsTotalBytesAboveTwentyFiveMegabytes(): void
+    {
+        // 6 MB per file × 5 files = 30 MB > 25 MB cap.
+        $bigBytes = str_repeat('A', 6 * 1024 * 1024);
+        for ($id = 1; $id <= 5; $id++) {
+            $this->plantAttachment($id, $bigBytes, 'png');
+        }
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $req->set_param('media_ids', range(1, 5));
+        $result = $this->controller->analyze_media($req);
+
+        $this->assertInstanceOf(\WP_Error::class, $result);
+        $this->assertSame('multipart_payload_too_large', $result->get_error_code());
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testMultipartAcceptsTotalBytesUnderCap(): void
+    {
+        // 4 MB per file × 5 files = 20 MB < 25 MB cap.
+        $bytes = str_repeat('B', 4 * 1024 * 1024);
+        for ($id = 1; $id <= 5; $id++) {
+            $this->plantAttachment($id, $bytes, 'png');
+        }
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'OK'],
+            'body' => '{"id":"job-6","status":"pending"}',
+        ]);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $req->set_param('media_ids', range(1, 5));
+        $result = $this->controller->analyze_media($req);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $result, var_export($result, true));
+        $this->assertCount(1, $this->getHttpCalls());
+    }
 }

@@ -89,3 +89,23 @@ class RecognitionSettings(BaseModel):
 
     # Runtime mode: "production" uses real InsightFace, "test" uses stubs
     runtime_mode: str = Field(default_factory=lambda: os.environ.get("RECOGNITION_RUNTIME_MODE", "production"))
+
+    # E15-11: filesystem ObjectStore root. Multipart-uploaded image bytes are
+    # written under <blob_root>/<tenant_id>/<job_id>/<media_id>.bin and
+    # cleaned up by the worker after the scan completes or fails.
+    blob_root: Path = Field(
+        default_factory=lambda: Path(os.environ.get("RECOGNITION_BLOB_ROOT", "/tmp/acx-recognition-blobs")),
+        description="Filesystem root for the ObjectStore (multipart upload transport).",
+    )
+
+    # E15-11: per-request body cap on the multipart variant of /recognition/analyze.
+    max_upload_bytes: int = Field(
+        default_factory=lambda: int(os.environ.get("RECOGNITION_MAX_UPLOAD_BYTES", str(25 * 1024 * 1024))),
+        description="Reject multipart requests with Content-Length above this value.",
+    )
+
+    # E15-11: allowed image MIME types for multipart upload parts.
+    allowed_upload_mime_types: list[str] = Field(
+        default_factory=lambda: ["image/jpeg", "image/png", "image/webp"],
+        description="MIME allow-list for image_<media_id> parts on the multipart route.",
+    )

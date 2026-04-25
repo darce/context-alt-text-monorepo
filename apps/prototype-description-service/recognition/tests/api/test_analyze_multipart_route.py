@@ -281,3 +281,48 @@ def test_multipart_cleans_up_blobs_when_create_scan_job_record_fails(tmp_path: P
     tenant_root = settings.blob_root / tenant_id
     if tenant_root.exists():
         assert list(tenant_root.iterdir()) == [], f"per-job subdirectory leaked: {list(tenant_root.iterdir())}"
+
+
+# ---------------------------------------------------------------------------
+# S3.1 — structured log fields on the multipart route
+# ---------------------------------------------------------------------------
+
+
+def test_multipart_route_emits_structured_telemetry_log_line(
+    app_with_overrides, tenant_id: str, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    """E15-11 S3.1: the multipart route must emit a single structured log
+    line with the diagnostic fields needed to triage transport failures
+    (transport, parts_count, total_bytes, tenant_id, job_id) — no PII."""
+    app, _queue, _settings = app_with_overrides
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    async def _noop_chain(**_kwargs):
+        return None
+
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+
+    import logging
+
+    caplog.set_level(logging.INFO, logger=mod.logger.name)
+
+    client = TestClient(app)
+    response = client.post("/recognition/analyze/multipart", **_multipart_submission(tenant_id))
+    assert response.status_code == 202, response.text
+    job_id = response.json()["id"]
+
+    matching = [
+        rec
+        for rec in caplog.records
+        if rec.name == mod.logger.name and "analyze_media_multipart_dispatch" in rec.getMessage()
+    ]
+    assert len(matching) == 1, f"expected exactly one telemetry log line, got {len(matching)}: " + str(
+        [r.getMessage() for r in caplog.records]
+    )
+    msg = matching[0].getMessage()
+    assert "transport=multipart" in msg
+    assert "parts_count=1" in msg
+    assert f"total_bytes={len(PNG_BYTES)}" in msg
+    assert f"tenant_id={tenant_id}" in msg
+    assert f"job_id={job_id}" in msg

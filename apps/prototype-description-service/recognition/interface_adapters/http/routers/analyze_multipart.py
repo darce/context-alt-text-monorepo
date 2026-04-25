@@ -320,6 +320,28 @@ async def analyze_media_multipart(
         object_store_factory=_cleanup_factory,
     )
 
+    # E15-11 S3.1: structured single-line telemetry for the multipart route so
+    # transport failures can be triaged without parsing FastAPI access logs.
+    # Fields are intentionally non-PII: tenant id is already a UUID claim,
+    # job id is freshly generated, parts_count + total_bytes describe shape
+    # only. Format mirrors analyze.py's analyze_media_timing convention.
+    # Read sizes back through ObjectStore.open since the helper has already
+    # consumed the original UploadFile streams.
+    total_bytes_dispatched = 0
+    for item in media_items_list:
+        try:
+            with object_store.open(item.blob_uri) as fh:  # type: ignore[arg-type]
+                total_bytes_dispatched += len(fh.read())
+        except Exception:  # pragma: no cover - telemetry must never raise
+            pass
+    logger.info(
+        "analyze_media_multipart_dispatch transport=multipart parts_count=%d total_bytes=%d tenant_id=%s job_id=%s",
+        len(media_items_list),
+        total_bytes_dispatched,
+        tenant_id_raw,
+        persisted_job_id,
+    )
+
     progress = JobProgressResponse(
         completed=0,
         total=len(media_items_list),

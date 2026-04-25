@@ -85,6 +85,14 @@ if (!is_readable($altContextAutoload)) {
 
 require_once $altContextAutoload;
 
+// E15-11 BR-13: Telemetry uses the WordPress-style filename convention
+// (src/support/class-telemetry.php); per the project's rg-016 rule, classes
+// in that scheme are not PSR-4 autoloadable and rely on a Composer classmap
+// that may be stale after `git pull` until `composer dump-autoload` runs.
+// Explicit require_once guarantees the class is available on every request
+// regardless of classmap staleness.
+require_once ACX_PLUGIN_DIR . 'src/support/class-telemetry.php';
+
 $dotenv = Dotenv::createImmutable(ACX_PLUGIN_DIR, ['.env', '.env.local']);
 $dotenv->safeLoad();
 

@@ -255,4 +255,81 @@ class AnalysisJobsControllerTransportTest extends TestCase
         $this->assertNotInstanceOf(\WP_Error::class, $result, var_export($result, true));
         $this->assertCount(1, $this->getHttpCalls());
     }
+
+    /**
+     * E15-11 Slice 3.2: plugin-side telemetry for the transport selection.
+     * Operators need to see which transport a request used so they can
+     * triage installs that landed on the URL fallback unintentionally.
+     */
+    public function testTransportSelectionEmitsErrorLog(): void
+    {
+        $this->plantAttachment(1, "\x89PNGfake", 'png');
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'OK'],
+            'body' => '{"id":"job-7","status":"pending"}',
+        ]);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $req->set_param('media_ids', [1]);
+        $this->controller->analyze_media($req);
+
+        $logs = $this->getErrorLog();
+        $matches = array_values(array_filter(
+            $logs,
+            static fn(string $line): bool => str_contains($line, 'acx_recognition_transport=multipart')
+                && str_contains($line, '[acx]')
+        ));
+        $this->assertNotEmpty(
+            $matches,
+            'expected a [acx] transport-selection log line; got: ' . var_export($logs, true)
+        );
+    }
+
+    public function testTransportSelectionUrlBranchAlsoLogs(): void
+    {
+        $this->plantAttachment(1, "\x89PNGfake", 'png');
+        add_filter('acx_recognition_transport', static fn(string $current): string => 'url');
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'OK'],
+            'body' => '{"id":"job-8","status":"pending"}',
+        ]);
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $req->set_param('media_ids', [1]);
+        $this->controller->analyze_media($req);
+
+        $logs = $this->getErrorLog();
+        $matches = array_values(array_filter(
+            $logs,
+            static fn(string $line): bool => str_contains($line, 'acx_recognition_transport=url')
+                && str_contains($line, '[acx]')
+        ));
+        $this->assertNotEmpty($matches, 'expected url-branch transport log');
+    }
+
+    public function testMultipartDispatchFailureIsLogged(): void
+    {
+        // 6 images triggers too_many_multipart_images; the controller should
+        // log the dispatch failure with the WP_Error code so an operator can
+        // grep server logs for transport regressions.
+        for ($id = 1; $id <= 6; $id++) {
+            $this->plantAttachment($id, 'x', 'png');
+        }
+
+        $req = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $req->set_param('media_ids', range(1, 6));
+        $result = $this->controller->analyze_media($req);
+        $this->assertInstanceOf(\WP_Error::class, $result);
+
+        $logs = $this->getErrorLog();
+        $matches = array_values(array_filter(
+            $logs,
+            static fn(string $line): bool => str_contains($line, 'multipart dispatch failed')
+                && str_contains($line, 'too_many_multipart_images')
+        ));
+        $this->assertNotEmpty(
+            $matches,
+            'expected a multipart-dispatch-failure log line; got: ' . var_export($logs, true)
+        );
+    }
 }

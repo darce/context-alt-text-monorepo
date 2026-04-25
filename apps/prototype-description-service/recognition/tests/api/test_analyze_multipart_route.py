@@ -36,10 +36,11 @@ PNG_BYTES = b"\x89PNG\r\n\x1a\nfake-png-bytes-for-tests"
 
 
 class _FakeScanQueue:
-    """Captures the create_scan_job_record call so the test can assert on it."""
+    """Captures route -> scan_queue calls so tests can assert on them."""
 
     def __init__(self) -> None:
         self.calls: list[dict] = []
+        self.populate_calls: list[dict] = []
 
     async def create_scan_job_record(
         self,
@@ -61,6 +62,14 @@ class _FakeScanQueue:
         assert job_id is not None, "multipart route must pre-generate job_id"
         return job_id
 
+    async def populate_scan_job_items(self, **kwargs) -> int:
+        # Reached via chain_populate_and_process scheduled by the route
+        # (BR-05). Recorded so tests can introspect dispatch shape; returns
+        # the number of items "enqueued" to satisfy the caller's contract.
+        self.populate_calls.append(kwargs)
+        media_items = kwargs.get("media_items") or []
+        return len(list(media_items))
+
 
 @pytest.fixture
 def tenant_id() -> str:
@@ -68,7 +77,14 @@ def tenant_id() -> str:
 
 
 @pytest.fixture
-def app_with_overrides(tmp_path: Path, tenant_id: str):
+def app_with_overrides(tmp_path: Path, tenant_id: str, monkeypatch: pytest.MonkeyPatch):
+    # The repo-wide conftest enables RECOGNITION_ASYNC_ANALYZE_INLINE so the
+    # JSON analyze flow exercises the inline-processor in tests; the multipart
+    # route's BackgroundTask would then try to hit a real DB through
+    # process_scan_job_inline. Force it off here so the route's dispatch can
+    # be exercised against the fake scan queue alone.
+    monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
+
     settings = RecognitionSettings()
     settings.blob_root = tmp_path / "blobs"
 
@@ -185,3 +201,70 @@ def test_multipart_rejects_unsupported_mime(app_with_overrides, tenant_id: str) 
         ],
     )
     assert response.status_code == 415
+
+
+# ---------------------------------------------------------------------------
+# BR-05 + BR-06 regression tests
+# ---------------------------------------------------------------------------
+
+
+def test_multipart_schedules_chain_populate_and_process(
+    app_with_overrides, tenant_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E15-11-BR-05: a successful multipart submission must enqueue
+    chain_populate_and_process via BackgroundTasks so the scan worker has
+    work to claim. Without this wiring the route would return 202 but no
+    queue items would ever exist for the worker to pick up."""
+    app, _queue, _settings = app_with_overrides
+    calls: list[dict] = []
+
+    async def _fake_chain(**kwargs):
+        calls.append(kwargs)
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    monkeypatch.setattr(mod, "chain_populate_and_process", _fake_chain)
+
+    client = TestClient(app)
+    response = client.post("/recognition/analyze/multipart", **_multipart_submission(tenant_id))
+    assert response.status_code == 202, response.text
+    job_id = response.json()["id"]
+
+    assert len(calls) == 1, "chain_populate_and_process must be scheduled exactly once"
+    kwargs = calls[0]
+    assert kwargs["job_id"] == job_id
+    assert kwargs["tenant_id"] == tenant_id
+    assert kwargs["media_items"] == [(42, kwargs["media_sources"][0])]
+    assert len(kwargs["media_sources"]) == 1
+    assert kwargs["media_sources"][0].startswith("file://")
+
+
+def test_multipart_cleans_up_blobs_when_create_scan_job_record_fails(tmp_path: Path, tenant_id: str) -> None:
+    """E15-11-BR-06: if create_scan_job_record raises after blobs have been
+    written, the route must call object_store.cleanup so the per-job
+    directory does not become an orphaned blob the worker can never find
+    (no DB row exists for it to discover)."""
+    settings = RecognitionSettings()
+    settings.blob_root = tmp_path / "blobs"
+
+    class _RaisingQueue:
+        async def create_scan_job_record(self, **kwargs):
+            raise RuntimeError("simulated DB outage during job creation")
+
+    app = FastAPI()
+    app.include_router(router, prefix="/recognition")
+    app.dependency_overrides[require_write_access] = lambda: AuthContext(token="t", tenant_claim=tenant_id)
+    app.dependency_overrides[get_optional_session] = lambda: None
+    app.dependency_overrides[get_scan_queue_service_optional] = lambda: _RaisingQueue()
+    app.dependency_overrides[_settings_default] = lambda: settings
+
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post("/recognition/analyze/multipart", **_multipart_submission(tenant_id))
+    assert response.status_code >= 500, response.text
+
+    # The per-tenant directory may or may not exist (cleanup removes the per-job
+    # subdir under it); but no per-job subdirectory must remain — the failed
+    # job's blobs were rolled back.
+    tenant_root = settings.blob_root / tenant_id
+    if tenant_root.exists():
+        assert list(tenant_root.iterdir()) == [], f"per-job subdirectory leaked: {list(tenant_root.iterdir())}"

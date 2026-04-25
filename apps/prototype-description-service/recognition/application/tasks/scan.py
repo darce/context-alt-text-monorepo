@@ -220,38 +220,43 @@ async def chain_populate_and_process(
 ) -> None:
     """Chain populate and optional inline processing to ensure order.
 
-    E15-11 S1.6: when ``object_store_factory`` is configured (multipart
-    upload path), the per-job blob directory is removed via
-    ``factory(tenant_id).cleanup(job_id=job_id)`` after the populate +
-    optional inline processing returns OR raises. JSON / URL-transport
-    callers leave it as ``None`` and no cleanup is attempted.
+    E15-11 S1.6 (revised by BR-07): when ``object_store_factory`` is
+    configured AND ``inline_processing`` is True, the per-job blob
+    directory is removed via ``factory(tenant_id).cleanup(job_id=job_id)``
+    after the inline processor returns OR raises (the bytes have just
+    been consumed in this call). For ``inline_processing=False`` the
+    external scan_worker has not yet claimed the queue items; cleanup
+    on that path is the worker's responsibility (see
+    ``ScanItemHandler._refresh_job_progress``). Pre-empting cleanup here
+    would leak every multipart job because the worker would find no
+    blobs by the time it ran. JSON / URL-transport callers leave the
+    factory as None and no cleanup is attempted on either path.
     """
+    await populate_scan_job_items_async(
+        tenant_id=tenant_id,
+        job_id=job_id,
+        media_items=media_items,
+        scan_queue=scan_queue,
+        session_factory=session_factory,
+        correlation_id=correlation_id,
+    )
+    if not inline_processing:
+        return
     try:
-        await populate_scan_job_items_async(
+        await process_scan_job_inline(
             tenant_id=tenant_id,
             job_id=job_id,
-            media_items=media_items,
-            scan_queue=scan_queue,
+            media_ids=media_ids,
+            media_sources=media_sources,
             session_factory=session_factory,
-            correlation_id=correlation_id,
+            adapter_provider=adapter_provider,
         )
-        if inline_processing:
-            await process_scan_job_inline(
-                tenant_id=tenant_id,
-                job_id=job_id,
-                media_ids=media_ids,
-                media_sources=media_sources,
-                session_factory=session_factory,
-                adapter_provider=adapter_provider,
-            )
     finally:
         if object_store_factory is not None:
             try:
                 store = object_store_factory(tenant_id)
                 store.cleanup(job_id=job_id)
             except ObjectStoreError:
-                # Cleanup is best-effort; a malformed tenant id or already-
-                # gone directory must not mask the real exception (if any).
                 logger.warning(
                     "object_store cleanup failed for job_id=%s tenant_id=%s",
                     job_id,

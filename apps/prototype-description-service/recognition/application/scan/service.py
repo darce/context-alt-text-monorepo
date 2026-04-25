@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -18,6 +18,9 @@ from recognition.application.embedding.generator import (
     EmbeddingResult,
     StubEmbeddingGenerator,
 )
+from recognition.application.storage import ObjectStore
+
+ObjectStoreFactory = Callable[[str], ObjectStore]
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +35,18 @@ class ScanService:
         session: AsyncSession,
         detector: FaceDetectorProtocol | None = None,
         generator: EmbeddingGeneratorProtocol | None = None,
+        object_store_factory: ObjectStoreFactory | None = None,
     ) -> None:
         self._session = session
         self._detector = detector or StubFaceDetector()
         self._generator = generator or StubEmbeddingGenerator(embedding_dim=_DB_SETTINGS.pgvector_dimension)
+        # E15-11: when configured, file:// blob URIs in process_media_item
+        # are resolved through this factory's ObjectStore (bound to the
+        # active tenant) so the worker reads bytes from disk via the same
+        # tenant-binding seam the multipart route writes through. Legacy
+        # callers (tests, scan_worker before S1.5) leave this None and
+        # the URL string is passed straight to the detector unchanged.
+        self._object_store_factory = object_store_factory
 
     async def analyze_media(
         self,
@@ -168,9 +179,21 @@ class ScanService:
 
         Uses 'Identity ID Recycling' to preserve existing UUIDs for the same faces,
         which ensures that cluster labels and memberships are not lost during re-scans.
+
+        E15-11: when ``media_url`` is a ``file://`` blob URI minted by the
+        multipart upload route's ObjectStore.put, resolve it to raw bytes
+        through the per-tenant ``object_store_factory`` (refusing
+        cross-tenant URIs at open() time) and pass the bytes to the
+        detector. Legacy URL transport (http://, https://) keeps passing
+        the URL string unchanged.
         """
         tenant_uuid = uuid.UUID(str(tenant_id))
-        detections: list[FaceDetection] = await self._detector.detect([media_url])
+        detector_source: bytes | str = media_url
+        if media_url.startswith("file://") and self._object_store_factory is not None:
+            store = self._object_store_factory(str(tenant_id))
+            with store.open(media_url) as fh:
+                detector_source = fh.read()
+        detections: list[FaceDetection] = await self._detector.detect([detector_source])
         return await self._persist_identities(
             tenant_uuid=tenant_uuid,
             media_id=media_id,

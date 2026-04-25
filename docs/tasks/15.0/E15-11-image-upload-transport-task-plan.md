@@ -62,7 +62,7 @@ The recognition service's detector pulls image bytes by HTTP `GET` against `medi
 
 ## Target Outcome
 
-A multipart variant of `/recognition/analyze` accepts image parts inline, writes them through an `ObjectStore` protocol whose default impl stores blobs under a per-tenant, per-job filesystem tempdir, and dispatches the existing analysis pipeline using blob URIs instead of public URLs. The plugin's proxy chooses transport via `acx_recognition_transport` (default `multipart`) and submits image bytes from `wp_get_attachment_path()` instead of URLs. Job failure or completion deterministically cleans up the per-job blob directory. The detector's URL fetch path remains in the codebase but is reached only when transport is `url`.
+A multipart variant of `/recognition/analyze` accepts image parts inline, writes them through an `ObjectStore` protocol whose default impl stores blobs under a per-tenant, per-job filesystem tempdir, and dispatches the existing analysis pipeline using blob URIs instead of public URLs. The plugin's proxy chooses transport via `acx_recognition_transport` (default `multipart`) and submits image bytes from `get_attached_file()` instead of URLs. Job failure or completion deterministically cleans up the per-job blob directory. The detector's URL fetch path remains in the codebase but is reached only when transport is `url`.
 
 ## Context Loading
 
@@ -88,28 +88,30 @@ A new ASGI-level multipart handler on the existing `POST /recognition/analyze` r
 
 The filesystem `ObjectStore` impl writes to `<settings.blob_root>/<tenant_id>/<job_id>/<media_id>.bin` and exposes a `cleanup(job_id)` method that the worker invokes from both the success path (`process_scan_job_inline`) and the failure path (`ScanWorker._scan_handler`'s exception branches). Per-blob tenant binding is enforced by the path layout: a request authenticated as tenant T can only write under `<blob_root>/T/...` and the detector resolves URIs scoped to the active job's tenant only.
 
-The plugin's `proxy_request` learns a `body_kind` parameter (`json` default, `multipart` opt-in). `class-analysis-jobs-controller.php::analyze_media` reads `apply_filters('acx_recognition_transport', 'multipart')`; on `multipart` it switches to `wp_get_attachment_path()` for each `media_id`, builds a multipart body with one part per image plus a JSON request part, and dispatches through `proxy_request(..., body_kind='multipart')`. On `url` it preserves the existing JSON-with-URLs payload.
+The plugin's `proxy_request` learns a `body_kind` parameter (`json` default, `multipart` opt-in). `class-analysis-jobs-controller.php::analyze_media` reads `apply_filters('acx_recognition_transport', 'multipart')`; on `multipart` it calls `get_attached_file($media_id, true)` for each `media_id` (matching the existing usage in `apps/prototype-wp-alt-context/src/media/class-attachment-xmp-metrics-persistor.php:64,99` — the `true` arg bypasses the `get_attached_file` filter chain), handles the `false` return for missing/orphaned attachments by skipping that media item with an error log entry, builds a multipart body with one part per image plus a JSON request part, and dispatches through `proxy_request(..., body_kind='multipart')`. On `url` it preserves the existing JSON-with-URLs payload.
 
 Hardening (per scope MVP bullet, line 23 of scope note):
 
-- Body-size cap enforced at the ASGI layer (Starlette `MAX_REQUEST_SIZE`-equivalent middleware) before the handler buffers anything; default 25 MB; configurable via `RECOGNITION_MAX_UPLOAD_BYTES`.
-- MIME validation: reject any image part whose `Content-Type` is not in `{image/jpeg, image/png, image/webp}` (configurable list); reject zero-byte parts.
-- Per-blob tenant binding: enforced by the path-layout invariant above and asserted in a dedicated test.
+- Body-size cap enforced by a custom ASGI middleware mounted on the multipart route: rejects requests whose `Content-Length` exceeds `RECOGNITION_MAX_UPLOAD_BYTES` with HTTP 413 *before* the handler buffers any body bytes; chunked-transfer requests with no `Content-Length` header are rejected outright with HTTP 411. Default cap 25 MB. Starlette ships no built-in `MAX_REQUEST_SIZE` setting, so this middleware is net-new.
+- MIME validation: reject any image part whose `Content-Type` is not in `{image/jpeg, image/png, image/webp}` (configurable via `RECOGNITION_ALLOWED_UPLOAD_MIME_TYPES`); reject zero-byte parts.
+- Per-blob tenant binding: enforced by the path-layout invariant above. Slice-1 tests must cover three threat surfaces independently: (a) multipart submission whose `media_id` references a blob written by a different tenant — handler rejects because the path layout is bound to `auth.tenant_claim`, not to the request body; (b) detector receives a `MediaItem.blob_uri` whose tenant prefix does not match the active job's tenant — resolver refuses; (c) hand-crafted `blob_uri` pointing at `<blob_root>/<other-tenant>/...` submitted by tenant A — URI parser rejects paths outside the active tenant prefix.
 
 ## Files and Surfaces to Change
 
 | Surface | File | Change |
 |---|---|---|
-| backend (route) | `apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py` | Add multipart variant of `analyze_media`; wire body-size cap and MIME validation |
+| backend (route) | `apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py` | Register the multipart sub-route; delegate the handler body to `analyze_multipart.py` (extraction below). Existing JSON `analyze_media` handler unchanged. |
+| backend (route) | `apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze_multipart.py` (new) | Extracted multipart handler: parses parts, validates MIME, calls `ObjectStore.put`, dispatches the analysis pipeline. Keeps `analyze.py` (currently 557 lines, already over the ~400-line god-object budget) from absorbing another ~150-line handler. |
 | backend (schema) | `apps/prototype-description-service/recognition/interface_adapters/http/schemas/requests.py` | Add `blob_uri: str | None` to `MediaItem`; mark `media_url` and `blob_uri` as mutually exclusive |
 | backend (storage seam) | `apps/prototype-description-service/recognition/application/storage/__init__.py` (new), `.../storage/object_store.py` (new), `.../storage/filesystem.py` (new) | Define `ObjectStore` Protocol + filesystem impl |
 | backend (detector) | `apps/prototype-description-service/recognition/application/embedding/detector.py` | Split `_fetch_image` into URL and blob branches; dispatch on URI scheme |
 | backend (worker cleanup) | `apps/prototype-description-service/recognition/worker/scan_worker.py`, `recognition/application/tasks/scan.py` | Invoke `ObjectStore.cleanup(job_id)` on both success and failure paths |
 | backend (config) | `apps/prototype-description-service/recognition/config/settings.py` | Add `blob_root: Path`, `max_upload_bytes: int`, `allowed_upload_mime_types: list[str]` settings |
-| backend (DI) | `apps/prototype-description-service/recognition/interface_adapters/http/deps/` | Provide `ObjectStore` via FastAPI dependency |
+| backend (DI) | `apps/prototype-description-service/recognition/interface_adapters/http/deps/object_store.py` (new) | Expose `get_object_store()` FastAPI dependency that returns a request-scoped `ObjectStore` instance bound to `auth.tenant_claim` |
+| backend (middleware) | `apps/prototype-description-service/recognition/interface_adapters/http/middleware/upload_size.py` (new) | Custom ASGI middleware enforcing `RECOGNITION_MAX_UPLOAD_BYTES` via `Content-Length` (413) + chunked-transfer rejection (411) |
 | backend (tests) | `apps/prototype-description-service/recognition/tests/api/test_analyze_multipart.py` (new), `.../tests/application/test_object_store_filesystem.py` (new) | Endpoint hardening + protocol invariant tests |
 | plugin (proxy) | `apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php` | Teach `proxy_request` to accept `body_kind='multipart'`; build multipart body via `wp_remote_post` `body` array |
-| plugin (controller) | `apps/prototype-wp-alt-context/src/api/class-analysis-jobs-controller.php` | Read `acx_recognition_transport` filter; on `multipart` switch to `wp_get_attachment_path()` and multipart dispatch |
+| plugin (controller) | `apps/prototype-wp-alt-context/src/api/class-analysis-jobs-controller.php` | Read `acx_recognition_transport` filter; on `multipart` switch to `get_attached_file()` and multipart dispatch |
 | plugin (tests) | `apps/prototype-wp-alt-context/tests/api/AnalysisJobsControllerTransportTest.php` (new) | Cover filter dispatch + multipart body assembly + URL fallback |
 | docs (contract) | `docs/agentic/contracts/` | Add or update the `/recognition/analyze` contract entry to describe both content-type variants |
 
@@ -135,6 +137,8 @@ Hardening (per scope MVP bullet, line 23 of scope note):
 
 ## Slice Delivery
 
+> **Slice naming**: this task plan covers the entire epic-level **Slice A** (filesystem ObjectStore + multipart endpoint + plugin transport switch). The numbered Slice 1/2/3 below are review-able internal increments within Slice A; Slice B (OCI Object Storage, separate task plan) is the follow-on backend swap and reuses the same `ObjectStore` protocol.
+
 ### Slice 1: Backend ObjectStore + multipart endpoint + worker cleanup
 
 **Goal**: Land the backend half end-to-end: the `ObjectStore` protocol, filesystem impl, multipart variant of `/recognition/analyze`, hardening (body-size cap + MIME validation + per-blob tenant binding), and deterministic cleanup wired into both success and failure worker paths.
@@ -142,10 +146,11 @@ Hardening (per scope MVP bullet, line 23 of scope note):
 Changes:
 
 - New `recognition/application/storage/object_store.py` (Protocol) and `filesystem.py` (impl) under `apps/prototype-description-service/`
-- Add multipart branch to `analyze.py::analyze_media`; add ASGI body-size middleware + MIME guard
+- New `recognition/interface_adapters/http/routers/analyze_multipart.py` containing the multipart handler; `analyze.py` registers the sub-route but does not absorb the handler body (analyze.py is already 557 lines, over the ~400-line god-object budget)
+- Add custom ASGI body-size middleware (new `recognition/interface_adapters/http/middleware/upload_size.py`) + MIME guard inside the multipart handler
 - Split `detector.py::_fetch_image` into URL and blob branches dispatched by URI scheme
 - Wire `ObjectStore.cleanup(job_id)` into `scan_worker.py::ScanWorker._scan_handler` (success + exception paths) and `tasks/scan.py::process_scan_job_inline`
-- Tests: `test_analyze_multipart.py` (happy path, oversize-body 413, bad-MIME 415, missing-image part 422, tenant-A cannot fetch tenant-B blob), `test_object_store_filesystem.py` (put/open/cleanup contract + tenant-path invariant)
+- Tests: `test_analyze_multipart.py` covers happy path, oversize-body 413, chunked-without-Content-Length 411, bad-MIME 415, missing-image part 422, plus three independent per-blob tenant-binding cases (multipart submission with cross-tenant `media_id` rejected; detector rejects cross-tenant `blob_uri`; hand-crafted `blob_uri` outside active tenant prefix rejected). `test_object_store_filesystem.py` covers the put/open/cleanup contract and the tenant-path invariant at the protocol level.
 - Update `docs/agentic/contracts/` entry (or add one) for the dual-content-type route
 
 Proof:
@@ -155,12 +160,12 @@ Proof:
 
 ### Slice 2: Plugin transport switch + `acx_recognition_transport` filter + URL fallback
 
-**Goal**: Land the plugin half: the filter, the multipart body assembly in the proxy, the `wp_get_attachment_path()` switch in the analysis-jobs controller, and the legacy URL path retained behind `acx_recognition_transport=url`.
+**Goal**: Land the plugin half: the filter, the multipart body assembly in the proxy, the `get_attached_file()` switch in the analysis-jobs controller, and the legacy URL path retained behind `acx_recognition_transport=url`.
 
 Changes:
 
 - Add `body_kind` parameter to `class-abstract-recognition-proxy-controller.php::proxy_request`; build multipart `body` array for `wp_remote_post` when `body_kind='multipart'`
-- Read `apply_filters('acx_recognition_transport', 'multipart')` in `class-analysis-jobs-controller.php::analyze_media`; on `multipart`, swap `media_url` for `wp_get_attachment_path()` reads and dispatch through the new multipart proxy path
+- Read `apply_filters('acx_recognition_transport', 'multipart')` in `class-analysis-jobs-controller.php::analyze_media`; on `multipart`, swap `media_url` for `get_attached_file()` reads and dispatch through the new multipart proxy path
 - Reconcile `get_current_tier_batch_limit()` with the ~5-image / ~25 MB multipart cap (smaller of the two wins; document the resolution in code comment)
 - New `tests/api/AnalysisJobsControllerTransportTest.php`: filter dispatch (multipart vs url), body-array shape, missing-attachment-path graceful-degrade
 
@@ -229,7 +234,7 @@ Proof:
 
 ## Stretch Goals
 
-- [ ] Compress `wp_get_attachment_path()` reads through `imagepalette` resize before upload (defer to v0.4.1; not in this slice)
+- [ ] Compress `get_attached_file()` reads through `imagepalette` resize before upload (defer to v0.4.1; not in this slice)
 - [ ] Per-tenant rate limit on the multipart endpoint (defer to security follow-on)
 
 ## Success Criteria

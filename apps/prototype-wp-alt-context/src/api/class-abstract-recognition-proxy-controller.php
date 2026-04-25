@@ -45,8 +45,21 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		string $path,
 		array $body = array(),
 		array $query = array(),
-		string $request_class = 'auto'
+		string $request_class = 'auto',
+		string $body_kind = 'json'
 	): WP_REST_Response|WP_Error {
+		// E15-11 Slice 2: 'json' (default) JSON-encodes the body and declares
+		// Content-Type: application/json. 'multipart' passes the body array
+		// verbatim to wp_remote_request so WordPress builds the
+		// multipart/form-data body and sets the boundary Content-Type itself.
+		if ( 'json' !== $body_kind && 'multipart' !== $body_kind ) {
+			return new WP_Error(
+				'recognition_invalid_body_kind',
+				sprintf( "Unsupported body_kind '%s'; expected 'json' or 'multipart'.", $body_kind ),
+				array( 'status' => 500 )
+			);
+		}
+
 		$recognition_base_url = $this->get_recognition_base_url();
 		if ( '' === $recognition_base_url ) {
 			return new WP_Error( 'recognition_not_configured', 'Recognition service URL is missing.', array( 'status' => 500 ) );
@@ -60,9 +73,14 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		}
 
 		$headers = array(
-			'Content-Type' => 'application/json',
-			'X-Tenant-ID'  => $this->get_tenant_id(),
+			'X-Tenant-ID' => $this->get_tenant_id(),
 		);
+		if ( 'json' === $body_kind ) {
+			$headers['Content-Type'] = 'application/json';
+		}
+		// For 'multipart', deliberately omit Content-Type: wp_remote_request
+		// (via WP_Http) sets multipart/form-data with the boundary itself when
+		// `body` is an array.
 
 		$api_key = $this->get_recognition_api_key();
 		if ( '' === $api_key ) {
@@ -86,10 +104,16 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			);
 		}
 
+		if ( 'multipart' === $body_kind ) {
+			$encoded_body = ! empty( $body ) && 'GET' !== $method ? $body : null;
+		} else {
+			$encoded_body = ! empty( $body ) && 'GET' !== $method ? wp_json_encode( $body ) : null;
+		}
+
 		$options = array(
 			'headers' => $headers,
 			'timeout' => $policy['timeout_seconds'],
-			'body'    => ! empty( $body ) && 'GET' !== $method ? wp_json_encode( $body ) : null,
+			'body'    => $encoded_body,
 		);
 
 		$max_retries   = $policy['max_retries'];

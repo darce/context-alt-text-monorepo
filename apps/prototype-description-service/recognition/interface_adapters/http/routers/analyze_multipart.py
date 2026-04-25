@@ -22,14 +22,18 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import async_sessionmaker
 from starlette.datastructures import FormData, UploadFile
 
+from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.storage import ObjectStore, ObjectStoreError
+from recognition.application.tasks.scan import chain_populate_and_process
 from recognition.domain.job import JobType
 from recognition.interface_adapters.http.dependencies import (
     get_optional_session,
@@ -40,11 +44,13 @@ from recognition.interface_adapters.http.dependencies import (
 from recognition.interface_adapters.http.deps.object_store import (
     get_object_store_for_request,
 )
+from recognition.interface_adapters.http.middleware.correlation import get_correlation_id
 from recognition.interface_adapters.http.schemas.requests import MediaItem
 from recognition.interface_adapters.http.schemas.responses import (
     JobProgressResponse,
     JobStatusResponse,
 )
+from recognition.shared.db.dialect import is_postgres
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +186,7 @@ def _extract_request_envelope(form_data: FormData) -> dict:
 )
 async def analyze_media_multipart(
     request: Request,
-    background_tasks: BackgroundTasks,  # noqa: ARG001 - reserved for S1.4e dispatch wiring
+    background_tasks: BackgroundTasks,
     auth=Depends(require_write_access),
     session=Depends(get_optional_session),
     scan_queue=Depends(get_scan_queue_service_optional),
@@ -200,9 +206,14 @@ async def analyze_media_multipart(
     ``scan_queue.create_scan_job_record(job_id=...)`` so the on-disk
     layout matches the DB row.
 
-    Background-task scheduling is wired in Slice 1.4e; this slice closes
-    the upload + job-record path so the route is callable end to end
-    without spinning up the worker.
+    Failure path: blobs are written to ObjectStore BEFORE the scan job
+    row is committed, so any error during persistence is followed by
+    object_store.cleanup(job_id=...) to avoid leaking orphans the worker
+    could never reach (no DB row would exist for cleanup-by-job_id).
+
+    Dispatch: on success the route schedules
+    ``chain_populate_and_process`` as a BackgroundTask, mirroring the JSON
+    /recognition/analyze flow so the scan worker has queue items to claim.
     """
     pre_generated_job_id = uuid.uuid4()
 
@@ -243,21 +254,57 @@ async def analyze_media_multipart(
 
     if scan_queue is None:
         if session is None:
+            # Blobs were just written for this pre_generated_job_id; roll them
+            # back so a misconfigured deployment does not leak orphans (BR-06).
+            object_store.cleanup(job_id=str(pre_generated_job_id))
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Database unavailable",
             )
         scan_queue = get_scan_queue_service_factory(session)
 
-    persisted_job_id = await scan_queue.create_scan_job_record(
-        tenant_id=tenant_uuid,
-        total=len(media_items_list),
-        job_id=pre_generated_job_id,
-        created_by_user_id=getattr(auth, "user_id", None),
-    )
+    # BR-06: blobs are already on disk under the pre_generated_job_id path.
+    # Any failure between here and the scheduled background task must roll
+    # them back, otherwise the worker can never discover the orphans (no DB
+    # row exists for cleanup-by-job_id to find later).
+    persistence_committed = False
+    try:
+        persisted_job_id = await scan_queue.create_scan_job_record(
+            tenant_id=tenant_uuid,
+            total=len(media_items_list),
+            job_id=pre_generated_job_id,
+            created_by_user_id=getattr(auth, "user_id", None),
+        )
+        if session is not None:
+            await session.commit()
+        persistence_committed = True
+    finally:
+        if not persistence_committed:
+            object_store.cleanup(job_id=str(pre_generated_job_id))
 
-    if session is not None:
-        await session.commit()
+    # BR-05: schedule the populate + process pipeline so the scan worker has
+    # queue items to claim. Mirror the JSON /analyze flow's dispatch shape.
+    media_sources = [item.blob_uri for item in media_items_list]
+    media_items_tuples: list[tuple[int, str]] = [(item.media_id, item.blob_uri) for item in media_items_list]
+    media_ids = [str(item.media_id) for item in media_items_list]
+
+    inline_processing = os.environ.get("RECOGNITION_ASYNC_ANALYZE_INLINE", "0") == "1"
+    session_factory = None
+    if session is not None and getattr(session, "bind", None) is not None and not is_postgres(session):
+        session_factory = async_sessionmaker(bind=session.bind, expire_on_commit=False)
+
+    background_tasks.add_task(
+        chain_populate_and_process,
+        tenant_id=str(tenant_uuid),
+        job_id=str(persisted_job_id),
+        media_items=media_items_tuples,
+        media_ids=media_ids,
+        media_sources=media_sources,
+        scan_queue=scan_queue if not isinstance(scan_queue, ScanQueueService) else None,
+        session_factory=session_factory,
+        inline_processing=inline_processing,
+        correlation_id=get_correlation_id(),
+    )
 
     progress = JobProgressResponse(
         completed=0,

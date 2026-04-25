@@ -293,6 +293,19 @@ async def analyze_media_multipart(
     if session is not None and getattr(session, "bind", None) is not None and not is_postgres(session):
         session_factory = async_sessionmaker(bind=session.bind, expire_on_commit=False)
 
+    # E15-11 S1.6: when the background task finishes (success or failure),
+    # remove the per-job blob directory via the same FilesystemObjectStore
+    # the route wrote into. The factory is constructed against the request's
+    # blob_root + active tenant so cleanup stays tenant-scoped even though
+    # it runs after the request has returned and `object_store` itself is
+    # out of scope.
+    blob_root = object_store.root  # type: ignore[attr-defined]
+
+    def _cleanup_factory(t: str) -> ObjectStore:
+        from recognition.application.storage import FilesystemObjectStore
+
+        return FilesystemObjectStore(root=blob_root, tenant_id=t)
+
     background_tasks.add_task(
         chain_populate_and_process,
         tenant_id=str(tenant_uuid),
@@ -304,6 +317,7 @@ async def analyze_media_multipart(
         session_factory=session_factory,
         inline_processing=inline_processing,
         correlation_id=get_correlation_id(),
+        object_store_factory=_cleanup_factory,
     )
 
     progress = JobProgressResponse(

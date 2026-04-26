@@ -28,7 +28,6 @@ from recognition.interface_adapters.http.dependencies import (
 from recognition.interface_adapters.http.deps.auth import AuthContext
 from recognition.interface_adapters.http.deps.object_store import (
     _settings_default,
-    get_object_store_for_request,
 )
 from recognition.interface_adapters.http.routers.analyze_multipart import router
 
@@ -145,6 +144,54 @@ def test_multipart_happy_path_returns_202_and_stores_blob(
     assert str(call["job_id"]) == job_id
 
     # Blob landed under <blob_root>/<tenant>/<job_id>/42.bin
+    expected = settings.blob_root / tenant_id / job_id / "42.bin"
+    assert expected.is_file()
+    assert expected.read_bytes() == PNG_BYTES
+
+
+def test_multipart_admin_key_with_envelope_tenant_succeeds(
+    tmp_path: Path, tenant_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Admin keys (auth.tenant_claim is None) must reach the multipart route
+    and have their ObjectStore built from the envelope's tenant_id.
+
+    Regression for MAINT-multipart-admin-tenant-20260426: the route used to
+    depend on get_object_store_for_request, which 401'd whenever
+    auth.tenant_claim was empty — making the route unreachable from any
+    deployment whose API key was an admin/dev key (the LocalWP -> remote
+    OCI VM scenario). Tenant binding is still enforced because the
+    factory pins the FilesystemObjectStore to the envelope tenant_id.
+    """
+    monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
+
+    settings = RecognitionSettings()
+    settings.blob_root = tmp_path / "blobs"
+
+    fake_queue = _FakeScanQueue()
+
+    fastapi_app = FastAPI()
+    fastapi_app.include_router(router, prefix="/recognition")
+
+    fastapi_app.dependency_overrides[require_write_access] = lambda: AuthContext(
+        token="admin-key", tenant_claim=None, is_admin=True, enabled=True
+    )
+    fastapi_app.dependency_overrides[get_optional_session] = lambda: None
+    fastapi_app.dependency_overrides[get_scan_queue_service_optional] = lambda: fake_queue
+    fastapi_app.dependency_overrides[_settings_default] = lambda: settings
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    async def _noop_chain(**_kwargs):
+        return None
+
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+
+    client = TestClient(fastapi_app)
+    response = client.post("/recognition/analyze/multipart", **_multipart_submission(tenant_id))
+    assert response.status_code == 202, response.text
+    job_id = response.json()["id"]
+
+    # Blob landed under the ENVELOPE tenant_id, not auth.tenant_claim.
     expected = settings.blob_root / tenant_id / job_id / "42.bin"
     assert expected.is_file()
     assert expected.read_bytes() == PNG_BYTES
@@ -336,7 +383,6 @@ def test_multipart_route_does_not_reach_through_filesystem_protocol(
     fastapi_app.dependency_overrides[require_write_access] = lambda: AuthContext(token="t", tenant_claim=tenant_id)
     fastapi_app.dependency_overrides[get_optional_session] = lambda: None
     fastapi_app.dependency_overrides[get_scan_queue_service_optional] = lambda: fake_queue
-    fastapi_app.dependency_overrides[get_object_store_for_request] = lambda: _ProtocolOnlyStore(tenant_id=tenant_id)
     fastapi_app.dependency_overrides[get_object_store_factory_for_request] = _stub_factory_provider
 
     from recognition.interface_adapters.http.routers import analyze_multipart as mod

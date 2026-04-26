@@ -44,7 +44,6 @@ from recognition.interface_adapters.http.dependencies import (
 from recognition.interface_adapters.http.deps.object_store import (
     ObjectStoreFactory,
     get_object_store_factory_for_request,
-    get_object_store_for_request,
 )
 from recognition.interface_adapters.http.middleware.correlation import get_correlation_id
 from recognition.interface_adapters.http.schemas.requests import MediaItem
@@ -192,7 +191,6 @@ async def analyze_media_multipart(
     auth=Depends(require_write_access),
     session=Depends(get_optional_session),
     scan_queue=Depends(get_scan_queue_service_optional),
-    object_store=Depends(get_object_store_for_request),
     object_store_factory: ObjectStoreFactory = Depends(get_object_store_factory_for_request),
 ) -> JobStatusResponse:
     """Multipart variant of /recognition/analyze for inline image upload.
@@ -202,8 +200,15 @@ async def analyze_media_multipart(
     - ``request`` part: JSON envelope, currently ``{"tenant_id": <uuid>}``.
     - ``image_<media_id>`` parts: one upload per image.
 
-    Each image part is written through the request-scoped ``ObjectStore``
-    under ``<blob_root>/<auth.tenant_claim>/<job_id>/<media_id>.bin``;
+    The ObjectStore is constructed from the request envelope's ``tenant_id``
+    via ``object_store_factory`` AFTER the auth/envelope tenant-mismatch
+    check has run. This lets admin keys (``auth.tenant_claim is None``)
+    target any tenant while tenant-scoped keys remain pinned to their own
+    tenant — a tenant-scoped key whose envelope claims a different tenant
+    is rejected with 403 before any blob is written.
+
+    Each image part is written through the resulting ``ObjectStore``
+    under ``<blob_root>/<envelope.tenant_id>/<job_id>/<media_id>.bin``;
     the resulting ``blob_uri`` is attached to the queued ``MediaItem``s.
     The job_id is pre-generated and persisted via
     ``scan_queue.create_scan_job_record(job_id=...)`` so the on-disk
@@ -243,6 +248,14 @@ async def analyze_media_multipart(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="tenant mismatch between auth and request envelope",
         )
+
+    # ObjectStore is built from the validated envelope tenant_id, not from
+    # auth.tenant_claim, so admin keys (tenant_claim=None) can target any
+    # tenant. Tenant-scoped keys are still pinned: the mismatch check above
+    # rejected envelope tenants that diverge from auth.tenant_claim before
+    # we got here. The factory enforces non-empty tenant_id as defense in
+    # depth even though we already validated it above.
+    object_store = object_store_factory(tenant_id_raw)
 
     media_items_list = multipart_to_media_items(
         form_data=form_data,

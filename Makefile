@@ -122,6 +122,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/lane-guards.mk
 include $(ROOT_MAKEFILE_DIR)/mk/lane-lifecycle.mk
 include $(ROOT_MAKEFILE_DIR)/mk/lane-worker.mk
 include $(ROOT_MAKEFILE_DIR)/mk/lane-maintenance.mk
+include $(ROOT_MAKEFILE_DIR)/mk/deploy.mk
 
 # =============================================================================
 # Root targets

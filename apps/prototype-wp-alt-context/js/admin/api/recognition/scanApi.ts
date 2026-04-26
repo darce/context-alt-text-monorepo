@@ -9,7 +9,17 @@ import { getEndpoint, getConfig } from '../config';
 import type { AnalyzeRequest, AnalyzeResponse, JobStatusResponse, ClusterResponse } from './types';
 import { createRecognitionTimeoutSignal } from './requestTimeout';
 
-const getMaxMediaPerBatch = (): number => getConfig().maxMediaPerBatch;
+// Hard cap enforced server-side at AnalysisJobsController::MULTIPART_MAX_IMAGES.
+// Sending more than this in one POST returns 400 too_many_multipart_images.
+const MULTIPART_MAX_IMAGES = 5;
+
+const getEffectiveBatchSize = (): number => {
+  const configured = getConfig().maxMediaPerBatch;
+  if (!Number.isFinite(configured) || configured <= 0) {
+    return MULTIPART_MAX_IMAGES;
+  }
+  return Math.min(configured, MULTIPART_MAX_IMAGES);
+};
 
 const chunkMediaIds = (mediaIds: number[], size: number): number[][] => {
   if (size <= 0) {
@@ -41,13 +51,13 @@ export const scanFaces = async (request: AnalyzeRequest): Promise<AnalyzeRespons
 };
 
 export const scanFacesBatched = async (request: AnalyzeRequest): Promise<AnalyzeResponse[]> => {
-  const maxMediaPerBatch = getMaxMediaPerBatch();
-  if (request.mediaIds.length <= maxMediaPerBatch) {
+  const batchSize = getEffectiveBatchSize();
+  if (request.mediaIds.length <= batchSize) {
     const result = await scanFaces(request);
     return [result];
   }
 
-  const batches = chunkMediaIds(request.mediaIds, maxMediaPerBatch);
+  const batches = chunkMediaIds(request.mediaIds, batchSize);
   const results: AnalyzeResponse[] = [];
   for (const batch of batches) {
     results.push(await scanFaces({ ...request, mediaIds: batch }));

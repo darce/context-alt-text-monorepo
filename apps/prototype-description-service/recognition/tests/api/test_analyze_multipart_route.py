@@ -28,7 +28,6 @@ from recognition.interface_adapters.http.dependencies import (
 from recognition.interface_adapters.http.deps.auth import AuthContext
 from recognition.interface_adapters.http.deps.object_store import (
     _settings_default,
-    get_object_store_for_request,
 )
 from recognition.interface_adapters.http.routers.analyze_multipart import router
 
@@ -148,6 +147,170 @@ def test_multipart_happy_path_returns_202_and_stores_blob(
     expected = settings.blob_root / tenant_id / job_id / "42.bin"
     assert expected.is_file()
     assert expected.read_bytes() == PNG_BYTES
+
+
+def test_multipart_admin_key_with_envelope_tenant_succeeds(
+    tmp_path: Path, tenant_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Admin keys (auth.tenant_claim is None) must reach the multipart route
+    and have their ObjectStore built from the envelope's tenant_id.
+
+    Regression for MAINT-multipart-admin-tenant-20260426: the route used to
+    depend on get_object_store_for_request, which 401'd whenever
+    auth.tenant_claim was empty — making the route unreachable from any
+    deployment whose API key was an admin/dev key (the LocalWP -> remote
+    OCI VM scenario). Tenant binding is still enforced because the
+    factory pins the FilesystemObjectStore to the envelope tenant_id.
+    """
+    monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
+
+    settings = RecognitionSettings()
+    settings.blob_root = tmp_path / "blobs"
+
+    fake_queue = _FakeScanQueue()
+
+    fastapi_app = FastAPI()
+    fastapi_app.include_router(router, prefix="/recognition")
+
+    fastapi_app.dependency_overrides[require_write_access] = lambda: AuthContext(
+        token="admin-key", tenant_claim=None, is_admin=True, enabled=True
+    )
+    fastapi_app.dependency_overrides[get_optional_session] = lambda: None
+    fastapi_app.dependency_overrides[get_scan_queue_service_optional] = lambda: fake_queue
+    fastapi_app.dependency_overrides[_settings_default] = lambda: settings
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    async def _noop_chain(**_kwargs):
+        return None
+
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+
+    client = TestClient(fastapi_app)
+    response = client.post("/recognition/analyze/multipart", **_multipart_submission(tenant_id))
+    assert response.status_code == 202, response.text
+    job_id = response.json()["id"]
+
+    # Blob landed under the ENVELOPE tenant_id, not auth.tenant_claim.
+    expected = settings.blob_root / tenant_id / job_id / "42.bin"
+    assert expected.is_file()
+    assert expected.read_bytes() == PNG_BYTES
+
+
+def test_multipart_canonicalizes_uppercase_envelope_tenant_uuid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An envelope tenant_id submitted in uppercase must be canonicalized to
+    the lowercase UUID form before binding the ObjectStore.
+
+    Regression for MAINT-multipart-admin-tenant-20260426-BR-01: uuid.UUID()
+    accepts uppercase but str() always returns lowercase canonical, which
+    is the form auth.tenant_claim carries (from the api_keys row) and the
+    form the BackgroundTask rebuilds the store with via str(tenant_uuid).
+    Binding the request-scoped store to the raw uppercase string would
+    write blobs under <root>/ABC.../<job>/<media>.bin while the lowercase-
+    bound store rebuilt in the BackgroundTask (Linux deployment, case-
+    sensitive FS) could neither open the blob_uri nor clean up the orphan.
+
+    The assertion targets the factory call argument directly rather than the
+    on-disk path because macOS APFS is case-insensitive and would mask the
+    bug — the production runtime (OCI VM, ext4) is case-sensitive.
+    """
+    from recognition.interface_adapters.http.deps.object_store import (
+        get_object_store_factory_for_request,
+    )
+
+    monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
+
+    canonical_tenant = str(uuid.uuid4())
+    upper_tenant = canonical_tenant.upper()
+    assert upper_tenant != canonical_tenant, "test premise: upper differs from lower"
+
+    settings = RecognitionSettings()
+    settings.blob_root = tmp_path / "blobs"
+
+    factory_calls: list[str] = []
+
+    def _spy_factory_provider():
+        def _factory(tenant_id: str):
+            factory_calls.append(tenant_id)
+            return FilesystemObjectStore(root=settings.blob_root, tenant_id=tenant_id)
+
+        return _factory
+
+    fake_queue = _FakeScanQueue()
+    fastapi_app = FastAPI()
+    fastapi_app.include_router(router, prefix="/recognition")
+    fastapi_app.dependency_overrides[require_write_access] = lambda: AuthContext(
+        token="admin-key", tenant_claim=None, is_admin=True, enabled=True
+    )
+    fastapi_app.dependency_overrides[get_optional_session] = lambda: None
+    fastapi_app.dependency_overrides[get_scan_queue_service_optional] = lambda: fake_queue
+    fastapi_app.dependency_overrides[_settings_default] = lambda: settings
+    fastapi_app.dependency_overrides[get_object_store_factory_for_request] = _spy_factory_provider
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    async def _noop_chain(**_kwargs):
+        return None
+
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+
+    client = TestClient(fastapi_app)
+    response = client.post("/recognition/analyze/multipart", **_multipart_submission(upper_tenant))
+    assert response.status_code == 202, response.text
+
+    # The factory must have been called with the canonical (lowercase) form,
+    # never the raw uppercase envelope. Multiple calls are fine; none may
+    # carry the raw casing.
+    assert factory_calls, "object_store_factory must be invoked at least once"
+    assert all(call == canonical_tenant for call in factory_calls), (
+        f"factory must receive canonical tenant id only; got: {factory_calls}"
+    )
+    assert upper_tenant not in factory_calls
+
+    # The scan_queue records the canonical tenant_id too (as a UUID object).
+    assert len(fake_queue.calls) == 1
+    assert str(fake_queue.calls[0]["tenant_id"]) == canonical_tenant
+
+
+def test_multipart_canonicalizes_uppercase_envelope_tenant_for_auth_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tenant-scoped key whose tenant_claim equals the envelope tenant_id
+    in canonical form must NOT be 403'd just because the envelope was
+    submitted in uppercase. Locks in canonical comparison at the auth /
+    envelope mismatch guard alongside the storage canonicalization above.
+    """
+    monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
+
+    canonical_tenant = str(uuid.uuid4())
+    upper_tenant = canonical_tenant.upper()
+
+    settings = RecognitionSettings()
+    settings.blob_root = tmp_path / "blobs"
+    fake_queue = _FakeScanQueue()
+
+    fastapi_app = FastAPI()
+    fastapi_app.include_router(router, prefix="/recognition")
+    # auth.tenant_claim carries the canonical (lowercase) form from the DB row.
+    fastapi_app.dependency_overrides[require_write_access] = lambda: AuthContext(
+        token="t", tenant_claim=canonical_tenant
+    )
+    fastapi_app.dependency_overrides[get_optional_session] = lambda: None
+    fastapi_app.dependency_overrides[get_scan_queue_service_optional] = lambda: fake_queue
+    fastapi_app.dependency_overrides[_settings_default] = lambda: settings
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    async def _noop_chain(**_kwargs):
+        return None
+
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+
+    client = TestClient(fastapi_app)
+    response = client.post("/recognition/analyze/multipart", **_multipart_submission(upper_tenant))
+    assert response.status_code == 202, response.text
 
 
 def test_multipart_rejects_when_request_part_missing(app_with_overrides, tenant_id: str) -> None:
@@ -336,7 +499,6 @@ def test_multipart_route_does_not_reach_through_filesystem_protocol(
     fastapi_app.dependency_overrides[require_write_access] = lambda: AuthContext(token="t", tenant_claim=tenant_id)
     fastapi_app.dependency_overrides[get_optional_session] = lambda: None
     fastapi_app.dependency_overrides[get_scan_queue_service_optional] = lambda: fake_queue
-    fastapi_app.dependency_overrides[get_object_store_for_request] = lambda: _ProtocolOnlyStore(tenant_id=tenant_id)
     fastapi_app.dependency_overrides[get_object_store_factory_for_request] = _stub_factory_provider
 
     from recognition.interface_adapters.http.routers import analyze_multipart as mod

@@ -44,7 +44,6 @@ from recognition.interface_adapters.http.dependencies import (
 from recognition.interface_adapters.http.deps.object_store import (
     ObjectStoreFactory,
     get_object_store_factory_for_request,
-    get_object_store_for_request,
 )
 from recognition.interface_adapters.http.middleware.correlation import get_correlation_id
 from recognition.interface_adapters.http.schemas.requests import MediaItem
@@ -192,7 +191,6 @@ async def analyze_media_multipart(
     auth=Depends(require_write_access),
     session=Depends(get_optional_session),
     scan_queue=Depends(get_scan_queue_service_optional),
-    object_store=Depends(get_object_store_for_request),
     object_store_factory: ObjectStoreFactory = Depends(get_object_store_factory_for_request),
 ) -> JobStatusResponse:
     """Multipart variant of /recognition/analyze for inline image upload.
@@ -202,8 +200,15 @@ async def analyze_media_multipart(
     - ``request`` part: JSON envelope, currently ``{"tenant_id": <uuid>}``.
     - ``image_<media_id>`` parts: one upload per image.
 
-    Each image part is written through the request-scoped ``ObjectStore``
-    under ``<blob_root>/<auth.tenant_claim>/<job_id>/<media_id>.bin``;
+    The ObjectStore is constructed from the request envelope's ``tenant_id``
+    via ``object_store_factory`` AFTER the auth/envelope tenant-mismatch
+    check has run. This lets admin keys (``auth.tenant_claim is None``)
+    target any tenant while tenant-scoped keys remain pinned to their own
+    tenant — a tenant-scoped key whose envelope claims a different tenant
+    is rejected with 403 before any blob is written.
+
+    Each image part is written through the resulting ``ObjectStore``
+    under ``<blob_root>/<envelope.tenant_id>/<job_id>/<media_id>.bin``;
     the resulting ``blob_uri`` is attached to the queued ``MediaItem``s.
     The job_id is pre-generated and persisted via
     ``scan_queue.create_scan_job_record(job_id=...)`` so the on-disk
@@ -237,12 +242,24 @@ async def analyze_media_multipart(
             detail=f"'tenant_id' must be a UUID: {exc}",
         ) from exc
 
+    # Normalize to the canonical UUID form once. uuid.UUID accepts uppercase /
+    # mixed-case input but str() always returns lowercase canonical, which is
+    # the form auth.tenant_claim carries (from the api_keys row) and the form
+    # the BackgroundTask rebuilds the store with. Comparing against, binding
+    # the store with, or logging the raw envelope string would cause off-by-
+    # case mismatches: a 403 against a same-but-uppercase tenant claim, blobs
+    # written under an uppercase prefix the rebuilt lowercase-bound store
+    # cannot open or clean up, and split telemetry across two casings.
+    canonical_tenant_id = str(tenant_uuid)
+
     auth_tenant = (getattr(auth, "tenant_claim", None) or "").strip()
-    if auth_tenant and auth_tenant != tenant_id_raw:
+    if auth_tenant and auth_tenant != canonical_tenant_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="tenant mismatch between auth and request envelope",
         )
+
+    object_store = object_store_factory(canonical_tenant_id)
 
     media_items_list = multipart_to_media_items(
         form_data=form_data,
@@ -334,7 +351,7 @@ async def analyze_media_multipart(
         "analyze_media_multipart_dispatch transport=multipart parts_count=%d total_bytes=%d tenant_id=%s job_id=%s",
         len(media_items_list),
         total_bytes_dispatched,
-        tenant_id_raw,
+        canonical_tenant_id,
         persisted_job_id,
     )
 

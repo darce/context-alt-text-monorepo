@@ -114,7 +114,7 @@ describe('SuggestionReviewPanel', () => {
         recognitionClusters: 'http://localhost/recognition/clusters',
       },
       tenant_id: 'test-tenant-id',
-    } as unknown as NonNullable<Window['AltContextAdmin']>;
+    };
 
     vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({ suggestions: [], total: 0, limit: 25, offset: 0 });
     fetchTopUnlabeledClustersMock.mockResolvedValue(topUnlabeledResponse([]));

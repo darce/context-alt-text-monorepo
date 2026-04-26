@@ -51,7 +51,7 @@ describe('useJobProgressStream', () => {
       endpoints: {
         recognitionJobs: 'http://localhost/recognition/jobs',
       },
-    } as unknown as NonNullable<Window['AltContextAdmin']>;
+    };
     resetConfigCache();
     useJobCoordinationMock.mockReturnValue({ isPrimary: true, channel: null });
     globalThis.EventSource = MockEventSource as unknown as typeof EventSource;

@@ -36,7 +36,7 @@ describe('useScrollRestoration', () => {
       } else {
         window.scrollY = typeof y === 'number' ? y : 0;
       }
-    }) as unknown as typeof window.scrollTo;
+    });
 
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => {
       cb(performance.now());

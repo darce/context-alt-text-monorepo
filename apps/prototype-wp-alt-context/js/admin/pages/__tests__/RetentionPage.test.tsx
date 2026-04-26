@@ -170,7 +170,7 @@ describe('RetentionPage', () => {
     URL.createObjectURL = vi.fn(() => 'blob:test');
     URL.revokeObjectURL = vi.fn();
     HTMLAnchorElement.prototype.click = vi.fn();
-    vi.stubGlobal('Blob', blobMock as unknown as typeof Blob);
+    vi.stubGlobal('Blob', blobMock);
   });
 
   it('renders policy state and audit history', () => {

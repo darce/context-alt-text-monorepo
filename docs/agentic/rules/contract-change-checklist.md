@@ -22,6 +22,7 @@
 2. Confirm the canonical owner. If multiple layers adapt the shape, collapse ownership first.
 3. Classify the change: payload shape, status/error semantics, enum vocabulary, pagination/provenance metadata, or runtime parity.
 4. Update the owning contract in the same slice. If unchanged, record a handoff decision explaining why.
+	For test-only cleanup on boundary-touching files, add a same-slice checklist or contract note that explicitly states the runtime contract is unchanged.
 5. Update shared schema/fixture in the same slice.
 6. Add deterministic proof: fixture/schema assertion, contract tests, runtime-parity proof.
 7. Record a handoff decision: boundary, owning contract, verification path, compatibility stance, valid downstream assumptions.

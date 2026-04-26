@@ -118,6 +118,18 @@ WordPress plugin contract:
   selects which transport `analyze_media` uses. Plugin-side caps:
   ≤ 5 images per request (`MULTIPART_MAX_IMAGES`), ≤ 25 MiB serialized
   body (`MULTIPART_MAX_BYTES`).
+- **Canonical owner of the per-request image cap**: the PHP constant
+  `AltContext\Api\AnalysisJobsController::MULTIPART_MAX_IMAGES` (currently
+  `5`) is the authoritative source. JS clients MUST chunk submissions to
+  match this cap rather than rely on the localized `max_media_per_batch`
+  knob alone — `max_media_per_batch` is a soft batching hint that may be
+  raised for ergonomic reasons, but the multipart cap is hard. The
+  workbench client honours this in
+  `apps/prototype-wp-alt-context/js/admin/api/recognition/scanApi.ts`
+  (`scanFacesBatched`/`getEffectiveBatchSize`), which clamps the
+  effective batch to `min(max_media_per_batch, 5)`. When the server cap
+  changes, update the constant **and** this contract in the same slice;
+  the JS mirror is allowed to lag the contract but never the constant.
 - Telemetry: backend logs `analyze_media_multipart_dispatch ...`; plugin
   logs `[acx] acx_recognition_transport=...` and
   `[acx] multipart dispatch failed: ...` via `Telemetry::log_line`.

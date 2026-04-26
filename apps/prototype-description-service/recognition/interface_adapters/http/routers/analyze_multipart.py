@@ -242,20 +242,24 @@ async def analyze_media_multipart(
             detail=f"'tenant_id' must be a UUID: {exc}",
         ) from exc
 
+    # Normalize to the canonical UUID form once. uuid.UUID accepts uppercase /
+    # mixed-case input but str() always returns lowercase canonical, which is
+    # the form auth.tenant_claim carries (from the api_keys row) and the form
+    # the BackgroundTask rebuilds the store with. Comparing against, binding
+    # the store with, or logging the raw envelope string would cause off-by-
+    # case mismatches: a 403 against a same-but-uppercase tenant claim, blobs
+    # written under an uppercase prefix the rebuilt lowercase-bound store
+    # cannot open or clean up, and split telemetry across two casings.
+    canonical_tenant_id = str(tenant_uuid)
+
     auth_tenant = (getattr(auth, "tenant_claim", None) or "").strip()
-    if auth_tenant and auth_tenant != tenant_id_raw:
+    if auth_tenant and auth_tenant != canonical_tenant_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="tenant mismatch between auth and request envelope",
         )
 
-    # ObjectStore is built from the validated envelope tenant_id, not from
-    # auth.tenant_claim, so admin keys (tenant_claim=None) can target any
-    # tenant. Tenant-scoped keys are still pinned: the mismatch check above
-    # rejected envelope tenants that diverge from auth.tenant_claim before
-    # we got here. The factory enforces non-empty tenant_id as defense in
-    # depth even though we already validated it above.
-    object_store = object_store_factory(tenant_id_raw)
+    object_store = object_store_factory(canonical_tenant_id)
 
     media_items_list = multipart_to_media_items(
         form_data=form_data,
@@ -347,7 +351,7 @@ async def analyze_media_multipart(
         "analyze_media_multipart_dispatch transport=multipart parts_count=%d total_bytes=%d tenant_id=%s job_id=%s",
         len(media_items_list),
         total_bytes_dispatched,
-        tenant_id_raw,
+        canonical_tenant_id,
         persisted_job_id,
     )
 

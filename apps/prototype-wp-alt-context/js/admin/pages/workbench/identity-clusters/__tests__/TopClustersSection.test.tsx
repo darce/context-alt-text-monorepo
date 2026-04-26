@@ -90,7 +90,7 @@ describe('TopClustersSection', () => {
       endpoints: {
         recognitionClusters: 'http://localhost/recognition/clusters',
       },
-    } as unknown as NonNullable<Window['AltContextAdmin']>;
+    };
     resetConfigCache();
   });
 

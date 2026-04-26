@@ -1,0 +1,78 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { scanFacesBatched } from '../scanApi';
+
+const mockConfig = {
+  nonce: 'nonce-123',
+  endpoints: { recognitionAnalyze: 'https://example.com/analyze' } as Record<string, string>,
+  maxMediaPerBatch: 10000,
+  devMode: false,
+};
+
+vi.mock('../../config', () => ({
+  getEndpoint: vi.fn((primary: string) => mockConfig.endpoints[primary] ?? `https://example.com/${primary}`),
+  getConfig: vi.fn(() => mockConfig),
+  isDevMode: vi.fn(() => false),
+}));
+
+const fetchMock = vi.fn();
+vi.mock('../../../utils/http', () => ({
+  fetchApi: (...args: unknown[]) => fetchMock(...args),
+  fetchRequiredApi: (...args: unknown[]) => fetchMock(...args),
+  stripTrailingSlash: (value: string) => (value.endsWith('/') ? value.slice(0, -1) : value),
+}));
+
+describe('scanFacesBatched chunk size', () => {
+  beforeEach(() => {
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async (_endpoint: string, options: { body: { media_ids: number[] } }) => ({
+      id: `job-${options.body.media_ids.join('-')}`,
+      type: 'analyze',
+      status: 'pending',
+      progress: { completed: 0, total: options.body.media_ids.length },
+      started_at: '2026-04-25T00:00:00Z',
+      finished_at: null,
+    }));
+    mockConfig.maxMediaPerBatch = 10000;
+  });
+
+  it('sends a single request when total <= server multipart cap of 5', async () => {
+    const result = await scanFacesBatched({ mediaIds: [1, 2, 3, 4, 5] });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result).toHaveLength(1);
+    expect(fetchMock.mock.calls[0][1].body).toEqual({ media_ids: [1, 2, 3, 4, 5] });
+  });
+
+  it('chunks into batches of 5 when total exceeds the cap', async () => {
+    const result = await scanFacesBatched({ mediaIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][1].body).toEqual({ media_ids: [1, 2, 3, 4, 5] });
+    expect(fetchMock.mock.calls[1][1].body).toEqual({ media_ids: [6, 7, 8, 9, 10] });
+    expect(result).toHaveLength(2);
+  });
+
+  it('chunks at 5 even when configured maxMediaPerBatch is higher', async () => {
+    mockConfig.maxMediaPerBatch = 100;
+    await scanFacesBatched({ mediaIds: Array.from({ length: 12 }, (_, i) => i + 1) });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect((fetchMock.mock.calls[0][1].body as { media_ids: number[] }).media_ids).toHaveLength(5);
+    expect((fetchMock.mock.calls[1][1].body as { media_ids: number[] }).media_ids).toHaveLength(5);
+    expect((fetchMock.mock.calls[2][1].body as { media_ids: number[] }).media_ids).toHaveLength(2);
+  });
+
+  it('falls back to multipart cap when configured size is non-positive', async () => {
+    mockConfig.maxMediaPerBatch = 0;
+    await scanFacesBatched({ mediaIds: [1, 2, 3, 4, 5, 6] });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect((fetchMock.mock.calls[0][1].body as { media_ids: number[] }).media_ids).toHaveLength(5);
+    expect((fetchMock.mock.calls[1][1].body as { media_ids: number[] }).media_ids).toEqual([6]);
+  });
+
+  it('respects a configured size below the multipart cap', async () => {
+    mockConfig.maxMediaPerBatch = 3;
+    await scanFacesBatched({ mediaIds: [1, 2, 3, 4, 5] });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect((fetchMock.mock.calls[0][1].body as { media_ids: number[] }).media_ids).toHaveLength(3);
+    expect((fetchMock.mock.calls[1][1].body as { media_ids: number[] }).media_ids).toHaveLength(2);
+  });
+});

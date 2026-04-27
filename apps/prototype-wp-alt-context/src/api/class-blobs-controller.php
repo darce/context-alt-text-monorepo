@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Api;
 
 require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
+require_once __DIR__ . '/class-blob-url-rewriter.php';
 
 use WP_Error;
 use WP_REST_Request;
@@ -12,6 +13,7 @@ use WP_REST_Response;
 
 use function add_action;
 use function esc_url_raw;
+use function hash_equals;
 use function header;
 use function is_wp_error;
 use function nocache_headers;
@@ -20,6 +22,7 @@ use function remove_filter;
 use function rest_get_server;
 use function sprintf;
 use function status_header;
+use function time;
 use function untrailingslashit;
 use function wp_remote_get;
 use function wp_remote_retrieve_body;
@@ -60,9 +63,54 @@ class BlobsController extends AbstractRecognitionProxyController {
 			array(
 				'methods'             => 'GET',
 				'callback'            => array( $this, 'serve_blob' ),
-				'permission_callback' => array( $this, 'can_manage_recognition' ),
+				'permission_callback' => array( $this, 'verify_blob_token' ),
 			)
 		);
+	}
+
+	/**
+	 * Permission gate for the blob proxy. Validates the HMAC capability
+	 * token minted by `BlobUrlRewriter::sign` against the request's
+	 * job_id, media_id, and expires query args.
+	 *
+	 * `<img src>` requests cannot carry the `X-WP-Nonce` header, so the
+	 * standard cookie+nonce REST permission check fails for thumbnails
+	 * embedded in admin pages. The signed URL is the capability that
+	 * authorizes this specific GET; no session check is required because
+	 * the token is unforgeable without `wp_salt('auth')`, which is server
+	 * side only.
+	 */
+	public function verify_blob_token( WP_REST_Request $request ): bool|WP_Error {
+		$job_id   = (string) $request->get_param( 'job_id' );
+		$media_id = (string) $request->get_param( 'media_id' );
+		$expires  = (int) $request->get_param( 'expires' );
+		$token    = (string) $request->get_param( 'token' );
+
+		if ( '' === $token || $expires <= 0 ) {
+			return new WP_Error(
+				'recognition_blob_token_missing',
+				'Missing or invalid blob token.',
+				array( 'status' => 401 )
+			);
+		}
+		if ( $expires < time() ) {
+			return new WP_Error(
+				'recognition_blob_token_expired',
+				'Blob token has expired.',
+				array( 'status' => 401 )
+			);
+		}
+
+		$expected = BlobUrlRewriter::sign( $job_id, $media_id, $expires );
+		if ( ! hash_equals( $expected, $token ) ) {
+			return new WP_Error(
+				'recognition_blob_token_invalid',
+				'Blob token signature does not match.',
+				array( 'status' => 401 )
+			);
+		}
+
+		return true;
 	}
 
 	public function serve_blob( WP_REST_Request $request ): WP_REST_Response|WP_Error {

@@ -127,10 +127,15 @@ sudo docker compose logs -f
 ### Accessing the VM
 
 ```bash
+# Recommended: Tailscale (works regardless of residential-IP changes).
+# See "Tailscale (recommended for dynamic-IP workstations)" below for one-time setup.
+ssh ubuntu@acx-backend.tail1a44b8.ts.net
+
+# Fallback: public IP (requires your workstation IP to be in the OCI security list).
 ssh ubuntu@129.213.40.111
 ```
 
-If SSH times out, your public IP has likely changed (residential ISP). Update the security list:
+If the public-IP path times out, your workstation's IP has likely changed (residential ISP). Update the security list:
 
 ```bash
 # Check your current IP
@@ -142,6 +147,179 @@ terraform apply -auto-approve -target=oci_core_security_list.acx_security_list
 ```
 
 See `docs/tasks/tech-debt/dynamic-ip-ssh-access.md` for permanent solutions (Tailscale recommended).
+
+#### Tailscale (recommended for dynamic-IP workstations)
+
+Residential ISPs rotate the workstation's public IP, which silently breaks
+the OCI security-list allowlist and every SSH-driven deploy step. Tailscale
+puts the workstation and the VM on a private mesh network with stable
+`100.x.x.x` addresses; you SSH via the tailnet IP and can close port 22 on
+the public internet entirely.
+
+Setup (one-time, ~10 minutes total).
+
+##### 1. Install on the workstation
+
+```bash
+brew install tailscale
+tailscale up                  # opens browser to sign in
+tailscale status              # confirm your Mac shows up (e.g. tomato 100.76.x.x)
+```
+
+##### 2. Install on the OCI VM
+
+The VM is headless, so use a pre-authenticated install via a one-shot
+**auth key** generated from the Tailscale admin console. This avoids
+the interactive browser-login dance over SSH.
+
+a. **Generate an auth key** (browser, on your workstation):
+   - Visit <https://login.tailscale.com/admin/settings/keys>.
+   - Click **Generate auth key**.
+   - Recommended toggles: **Reusable** off, **Ephemeral** off, **Pre-approved** on,
+     **Tags** = `tag:oci-vm` (define the tag in *Access controls* first if you
+     don't have one yet).
+   - Copy the `tskey-auth-...` string. It is shown once; treat it as a secret.
+
+b. **Install + bring up on the VM** (over the existing public-IP SSH path):
+   ```bash
+   # Connected via the existing public-IP SSH path:
+   ssh ubuntu@129.213.40.111
+
+   # On the VM (interactive shell — heredoc is unreliable here because the
+   # apt-daily timer often holds the lock; see "Troubleshooting" below):
+   curl -fsSL https://tailscale.com/install.sh | sh
+   sudo apt-get install -y tailscale     # rerun if `apt-get update` was wedged
+
+   # Generate-then-paste pattern keeps the key out of your shell history:
+   read -rs TS_KEY                       # paste tskey-auth-..., press Enter (silent)
+   sudo tailscale up \
+     --authkey="$TS_KEY" \
+     --hostname=acx-backend \
+     --ssh \
+     --advertise-tags=tag:oci-vm
+   unset TS_KEY
+
+   tailscale status
+   tailscale ip -4
+   ```
+   Flag notes:
+   - `--hostname=acx-backend` — gives a stable MagicDNS name
+     (`acx-backend.<tailnet>.ts.net`) that survives VM reinstalls.
+   - `--ssh` — lets Tailscale terminate SSH using your tailnet identity.
+     Optional; the script still uses your existing `~/.ssh/id_*` keys
+     either way.
+   - `--advertise-tags` — makes the node owner the tag, not your user, so
+     the auth key isn't tied to a single human identity.
+
+   **Don't paste the `tskey-auth-...` value into a committed file.**
+   For repeated use prefer `read -s TS_KEY` then `--authkey=$TS_KEY`,
+   or store it in a password manager.
+
+##### 3. Verify and wire up the deploy script
+
+```bash
+tailscale status              # workstation should now list the VM
+ssh ubuntu@acx-backend.tail1a44b8.ts.net 'hostname && uname -m'
+```
+
+(Replace `tail1a44b8.ts.net` with your own tailnet name from
+`tailscale status` output.)
+
+The deploy script's default `OCI_HOST` is already
+`acx-backend.tail1a44b8.ts.net`, so no further wiring is needed for
+the canonical tailnet — `make deploy-dev REMOTE_BUILD=1` will
+route over the tailnet automatically. To override (different tailnet,
+debugging via raw IP, etc.):
+
+```bash
+export OCI_HOST=<other-host-or-ip>
+# Add to ~/.zshrc to persist.
+```
+
+The deploy automation (`scripts/deploy/recognition-service.sh`) is fully
+SSH-routed in remote-build mode (rsync, ssh build, ssh push, ssh restart);
+all of it inherits the address automatically.
+
+##### 4. (Optional) Drop public port 22
+
+Once tailnet SSH is proven, tighten `infra/oci/terraform.tfvars` to drop the
+public-IP allowlist entry on TCP/22 and re-apply the security-list rule
+(`terraform apply -target=oci_core_security_list.acx_security_list`).
+Public HTTPS (443) on the load balancer stays open — only management SSH
+moves onto the tailnet.
+
+##### Troubleshooting
+
+**On the workstation: `failed to connect to local Tailscale service`.**
+On macOS the Homebrew formula installs only the CLI; the `tailscaled`
+daemon is provided by the GUI app (App Store or
+<https://tailscale.com/download/mac>). Launch Tailscale.app once and add
+it to *System Settings → General → Login Items* so the daemon survives
+reboots. Don't run `brew services start tailscale` alongside the app —
+two daemons race for the same network extension.
+
+**On the VM: `apt-get update` hangs forever (no timeout).**
+Symptom: `E: Could not get lock /var/lib/apt/lists/lock. It is held by
+process N (apt-get)` and the process has been alive for hours/days.
+Root cause on stock Ubuntu cloud images: the `apt.systemd.daily` timer
+hits an IPv6 mirror that stalls without timing out. The timer keeps
+re-firing and queuing more wedges behind the original. Unwedge:
+
+```bash
+# 1. Identify the holder + kill its process tree.
+sudo lsof /var/lib/apt/lists/lock        # note the PID
+ps -ef | grep -E "apt|dpkg" | grep -v grep
+sudo kill <PID>
+sleep 2 && sudo kill -9 <PID> 2>/dev/null || true
+
+# 2. Force IPv4 to fix the underlying stall.
+echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4
+
+# 3. Stop the timers so they don't re-wedge while you work.
+sudo systemctl stop apt-daily.timer apt-daily-upgrade.timer
+sudo systemctl disable apt-daily.timer apt-daily-upgrade.timer
+
+# 4. Resume.
+sudo apt-get update && sudo apt-get install -y tailscale
+```
+
+**On the VM: dpkg lock held by `unattended-upgrades`.**
+*Different* service from the apt-daily timer. If the log
+(`/var/log/unattended-upgrades/unattended-upgrades.log`) shows it
+actively installing packages, **wait it out** — killing dpkg
+mid-transaction corrupts package state. If it's wedged with no log
+progress for >5 min, kill the process and disable the service
+(`sudo systemctl disable --now unattended-upgrades.service`).
+
+**`tailnet policy does not permit you to SSH to this node`.**
+You enabled `--ssh` on the VM, which makes `tailscaled` intercept
+inbound port 22 *before* OpenSSH sees it. The default ACL only allows
+`autogroup:self`, which doesn't match a tag-owned device. Add an
+`ssh` rule at <https://login.tailscale.com/admin/acls> granting admins
+access to `tag:oci-vm` (and define the tag itself in `tagOwners`):
+
+```jsonc
+{
+  "tagOwners": {
+    "tag:oci-vm": ["autogroup:admin"],
+  },
+
+  "ssh": [
+    // existing autogroup:self rule stays...
+    {
+      "action": "accept",
+      "src":    ["autogroup:admin"],
+      "dst":    ["tag:oci-vm"],
+      "users":  ["ubuntu", "root"],
+    },
+  ],
+}
+```
+
+Save; ACL changes propagate in seconds, no VM restart needed. To skip
+Tailscale SSH entirely and rely on standard OpenSSH key auth instead,
+re-run `sudo tailscale up --hostname=acx-backend --advertise-tags=tag:oci-vm --reset`
+(the `--reset` is required to clear the previously-set `--ssh` preference).
 
 ### Environments
 
@@ -198,7 +376,72 @@ docker exec acx-dev-postgres-1 pg_isready -U acx_dev
 
 ### Deploying Updates
 
-Build and push a new image from `apps/prototype-description-service/`:
+**Recommended:** use the wrapper at `scripts/deploy/recognition-service.sh`
+(invoked via Makefile targets from the repo root). It runs the same
+build/push/restart/verify procedure documented below plus pre-flight checks
+(docker daemon, OCIR auth, SSH key, clean tree, branch sync) and a
+post-deploy `/health` SHA comparison so version skew is caught immediately.
+The wrapper double-tags every image with both `:ENV_TAG` and `:SHA` so
+rollback by SHA stays available.
+
+The wrapper supports two build modes:
+
+| Mode | Trigger | When to use |
+|---|---|---|
+| **Local build** (default) | `make deploy-dev` | Fast iteration on a workstation with a healthy local docker daemon. Mac users need colima or Docker Desktop. |
+| **Remote build** | `make deploy-dev REMOTE_BUILD=1` | Build runs on the OCI VM via SSH+rsync. Native arm64 (no cross-compile). No local docker required. Recommended path. |
+
+```bash
+# See every available deploy target:
+make deploy-help
+
+# Standard dev iteration (build + push :dev + :SHA + restart acx-dev + verify):
+make deploy-dev
+
+# Same, but build on the VM — no colima/Docker Desktop needed locally.
+# This is the friction-free path; pair with Tailscale for stable SSH.
+make deploy-dev REMOTE_BUILD=1
+
+# Build only, no push (sanity before paying for an OCIR push):
+make deploy-build                      # local
+make deploy-build-remote               # on the VM
+
+# Re-verify a deployed env without redeploying:
+make deploy-verify-dev                 # or: make deploy-verify ENV=dev
+
+# Snapshot all three envs at once:
+make deploy-status
+
+# Make remote-build the default (add to ~/.zshrc):
+export ACX_REMOTE_BUILD=1
+
+# Override defaults via env vars:
+OCI_HOST=<other-tailnet-or-ip> make deploy-dev REMOTE_BUILD=1
+ACX_ALLOW_DIRTY=1 make deploy-dev      # allow dirty tree (dev only)
+ACX_REMOTE_BUILD_DIR=/var/tmp/acx-build make deploy-dev REMOTE_BUILD=1
+```
+
+**Remote-build prerequisites** (one-time):
+
+- VM has docker installed and the `ubuntu` user is in the `docker` group
+  (already true for the standard cloud-init).
+- VM has cached OCIR auth: SSH in once and run
+  `docker login iad.ocir.io -u 'idu2kqqe2jxy/<email>'`. The token is stored
+  in `~ubuntu/.docker/config.json`.
+- Workstation has `rsync` (default on macOS).
+
+**Remote-build trade-offs:**
+
+- Build consumes VM CPU (3-5 min on Always Free A1 4-core). If `acx-prod` is
+  serving traffic on the same VM, expect a momentary CPU spike.
+- First build on the VM is slow (no warm cache); subsequent builds reuse the
+  BuildKit on-disk cache.
+- VM disk fills with build cache over time; run
+  `ssh ubuntu@<vm> 'docker buildx prune -f'` periodically.
+
+
+**Manual procedure** (the wrapper runs exactly this; documented for
+disaster-recovery scenarios where the script is unavailable):
 
 ```bash
 # Build on local Mac (Apple Silicon).
@@ -214,21 +457,38 @@ docker build --platform linux/arm64 \
 docker push iad.ocir.io/idu2kqqe2jxy/acx-backend:dev
 
 # Deploy to dev
-ssh ubuntu@129.213.40.111 'cd /opt/acx-backend/dev && docker compose -f docker-compose.env.yml pull && sudo systemctl restart acx-dev'
+ssh ubuntu@acx-backend.tail1a44b8.ts.net 'cd /opt/acx-backend/dev && docker compose -f docker-compose.env.yml pull && sudo systemctl restart acx-dev'
 ```
 
 ### Promoting Images
+
+**Recommended:** use the wrapper.
+
+```bash
+# Promote dev → staging (after dev testing).
+# Requires HEAD == origin/main and a clean working tree.
+make deploy-promote-staging
+
+# Promote staging → prod (after e2e verification on staging).
+# Requires CONFIRM=PROMOTE in addition to clean tree + synced HEAD.
+make deploy-promote-prod CONFIRM=PROMOTE
+
+# Rollback dev to whatever staging is currently running (skips rebuild):
+make deploy-rollback-dev
+```
+
+**Manual procedure** (for disaster recovery):
 
 ```bash
 # Promote dev → staging (after dev testing)
 docker tag iad.ocir.io/idu2kqqe2jxy/acx-backend:dev iad.ocir.io/idu2kqqe2jxy/acx-backend:staging
 docker push iad.ocir.io/idu2kqqe2jxy/acx-backend:staging
-ssh ubuntu@129.213.40.111 'cd /opt/acx-backend/staging && docker compose -f docker-compose.env.yml pull && sudo systemctl restart acx-staging'
+ssh ubuntu@acx-backend.tail1a44b8.ts.net 'cd /opt/acx-backend/staging && docker compose -f docker-compose.env.yml pull && sudo systemctl restart acx-staging'
 
 # Promote staging → prod (after e2e verification on staging)
 docker tag iad.ocir.io/idu2kqqe2jxy/acx-backend:staging iad.ocir.io/idu2kqqe2jxy/acx-backend:latest
 docker push iad.ocir.io/idu2kqqe2jxy/acx-backend:latest
-ssh ubuntu@129.213.40.111 'cd /opt/acx-backend/prod && docker compose -f docker-compose.env.yml pull && sudo systemctl restart acx-prod'
+ssh ubuntu@acx-backend.tail1a44b8.ts.net 'cd /opt/acx-backend/prod && docker compose -f docker-compose.env.yml pull && sudo systemctl restart acx-prod'
 ```
 
 ### VM Layout

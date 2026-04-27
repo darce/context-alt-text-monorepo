@@ -14,6 +14,7 @@ from db.models import IdentityClusteringJob
 from db.tenant_context import enable_rls_bypass
 from recognition.application.orchestration.curation_job import run_curation_job
 from recognition.application.orchestration.job_service import JobService
+from recognition.domain.job import JobStatus
 from recognition.infrastructure.repositories.job_repository import SqlAlchemyJobRepository
 from recognition.interface_adapters.http.dependencies import build_cluster_service
 from recognition.worker.handlers.base import JobHandler
@@ -40,7 +41,7 @@ class CurationJobHandler(JobHandler[IdentityClusteringJob]):
         cluster_ids = coerce_str_list(job.payload.get("cluster_ids") if job.payload else None)
         if not cluster_ids:
             await ensure_job_context(session=session, job=job)
-            job.status = "failed"
+            job.status = JobStatus.FAILED
             job.error_message = "missing cluster ids"
             job.completed_at = datetime.now(tz=UTC)
             await session.flush()
@@ -61,7 +62,7 @@ class CurationJobHandler(JobHandler[IdentityClusteringJob]):
         job.processed_identities = completed
         job.total_identities = total
         job.progress = compute_progress(completed, total)
-        job.status = "completed"
+        job.status = JobStatus.COMPLETED
         job.completed_at = datetime.now(tz=UTC)
         await session.flush()
 
@@ -150,7 +151,7 @@ class ClusteringJobHandler(JobHandler[IdentityClusteringJob]):
         job.processed_identities = result.completed
         job.total_identities = result.total
         job.progress = 1.0
-        job.status = "completed"
+        job.status = JobStatus.COMPLETED
         job.snapshot_version = snapshot_version
         job.source_job_id = job.id
         job.completed_at = datetime.now(tz=UTC)
@@ -204,7 +205,7 @@ class SplitJobHandler(JobHandler[IdentityClusteringJob]):
         job.processed_identities = total
         job.total_identities = total
         job.progress = compute_progress(total, total)
-        job.status = "completed"
+        job.status = JobStatus.COMPLETED
         job.message = f"Split complete: created {len(new_ids)} clusters"
         job.completed_at = datetime.now(tz=UTC)
         await session.flush()

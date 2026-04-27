@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import RecognitionEvent, RecognitionRun
 from db.tenant_context import enable_rls_bypass, set_tenant_context
+from recognition.domain.job import JobStatus
 from recognition.shared.ids import parse_optional_uuid
 
 if TYPE_CHECKING:
@@ -151,7 +152,7 @@ async def create_recognition_run(
     """
     run = RecognitionRun(
         tenant_id=tenant_id,
-        status="running",
+        status=JobStatus.RUNNING,
         source=source,
         scan_job_id=scan_job_id,
         clustering_job_id=clustering_job_id,

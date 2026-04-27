@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityScanJob, IdentityScanJobItem
 from recognition.application.scan.queue_repository import ScanQueueItem, ScanQueueRepository
+from recognition.domain.job import JobStatus
 from recognition.shared.db.dialect import is_postgres, timestamp_as_epoch
 from recognition.shared.db.helpers import execute_dml, get_rowcount
 
@@ -34,7 +35,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         logger.debug("create_job: creating job for tenant %s with %d media items", tenant_id, len(media_ids))
         job = IdentityScanJob(
             tenant_id=tenant_id,
-            status="pending",
+            status=JobStatus.PENDING,
             media_ids=list(media_ids),
             total_media=len(media_ids),
             processed_media=0,
@@ -59,7 +60,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         logger.debug("create_job_with_message: creating job for tenant %s with total %d", tenant_id, total)
         job_kwargs: dict = {
             "tenant_id": tenant_id,
-            "status": "pending",
+            "status": JobStatus.PENDING,
             "media_ids": list(media_ids),
             "total_media": total,
             "processed_media": 0,
@@ -98,7 +99,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
                 tenant_id=tenant_id,
                 media_id=media_id,
                 media_url=media_url,
-                status="pending",
+                status=JobStatus.PENDING,
                 attempts=0,
                 identities_detected=0,
                 created_at=now,
@@ -117,7 +118,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         await self._session.execute(
             update(IdentityScanJob)
             .where(IdentityScanJob.id == job_id)
-            .values(status="running", started_at=started_at, error_message=None)
+            .values(status=JobStatus.RUNNING, started_at=started_at, error_message=None)
         )
 
     async def update_job_progress(
@@ -155,14 +156,14 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         await self._session.execute(
             update(IdentityScanJob)
             .where(IdentityScanJob.id == job_id)
-            .values(status="completed", completed_at=completed_at)
+            .values(status=JobStatus.COMPLETED, completed_at=completed_at)
         )
 
     async def fail_job(self, *, job_id: uuid.UUID, completed_at: datetime, error_message: str) -> None:
         await self._session.execute(
             update(IdentityScanJob)
             .where(IdentityScanJob.id == job_id)
-            .values(status="failed", completed_at=completed_at, error_message=error_message)
+            .values(status=JobStatus.FAILED, completed_at=completed_at, error_message=error_message)
         )
 
     async def claim_pending_items(
@@ -226,7 +227,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
                 timestamp_as_epoch(IdentityScanJobItem.started_at, self._session) < int(stale_before_ts),
                 IdentityScanJobItem.attempts < max_attempts,
             )
-            .values(status="pending", started_at=None)
+            .values(status=JobStatus.PENDING, started_at=None)
         )
         result = await execute_dml(self._session, reclaim_stmt)
         return get_rowcount(result)
@@ -244,7 +245,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
             .where(
                 IdentityScanJobItem.tenant_id == tenant_id,
                 IdentityScanJobItem.job_id == job_id,
-                IdentityScanJobItem.status == "pending",
+                IdentityScanJobItem.status == JobStatus.PENDING.value,
             )
             .order_by(IdentityScanJobItem.created_at.asc())
             .limit(limit)
@@ -269,7 +270,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
     async def _claim_pending_items_any_generic(self, *, limit: int, now: datetime) -> list[ScanQueueItem]:
         stmt: Select[tuple[IdentityScanJobItem]] = (
             select(IdentityScanJobItem)
-            .where(IdentityScanJobItem.status == "pending")
+            .where(IdentityScanJobItem.status == JobStatus.PENDING.value)
             .order_by(IdentityScanJobItem.created_at.asc())
             .limit(limit)
         )
@@ -393,28 +394,28 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         await self._session.execute(
             update(IdentityScanJobItem)
             .where(IdentityScanJobItem.id == item_id)
-            .values(status="completed", completed_at=completed_at, identities_detected=identities_detected)
+            .values(status=JobStatus.COMPLETED, completed_at=completed_at, identities_detected=identities_detected)
         )
 
     async def mark_item_failed(self, *, item_id: uuid.UUID, completed_at: datetime, error_message: str) -> None:
         await self._session.execute(
             update(IdentityScanJobItem)
             .where(IdentityScanJobItem.id == item_id)
-            .values(status="failed", completed_at=completed_at, last_error=error_message)
+            .values(status=JobStatus.FAILED, completed_at=completed_at, last_error=error_message)
         )
 
     async def release_item_for_retry(self, *, item_id: uuid.UUID, error_message: str) -> None:
         await self._session.execute(
             update(IdentityScanJobItem)
             .where(IdentityScanJobItem.id == item_id)
-            .values(status="pending", started_at=None, last_error=error_message)
+            .values(status=JobStatus.PENDING, started_at=None, last_error=error_message)
         )
 
     async def cancel_pending_items(self, *, job_id: uuid.UUID, cancelled_at: datetime) -> int:
         result = await execute_dml(
             self._session,
             update(IdentityScanJobItem)
-            .where(IdentityScanJobItem.job_id == job_id, IdentityScanJobItem.status == "pending")
+            .where(IdentityScanJobItem.job_id == job_id, IdentityScanJobItem.status == JobStatus.PENDING.value)
             .values(status="cancelled", completed_at=cancelled_at),
         )
         return get_rowcount(result)
@@ -431,7 +432,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
 
     async def get_job_item_identities_detected(self, *, job_id: uuid.UUID) -> int:
         stmt = select(func.coalesce(func.sum(IdentityScanJobItem.identities_detected), 0)).where(
-            IdentityScanJobItem.job_id == job_id, IdentityScanJobItem.status == "completed"
+            IdentityScanJobItem.job_id == job_id, IdentityScanJobItem.status == JobStatus.COMPLETED.value
         )
         result = await self._session.execute(stmt)
         return int(result.scalar() or 0)

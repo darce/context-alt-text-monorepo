@@ -13,6 +13,7 @@ from db.models import IdentityClusteringJob
 from db.tenant_context import enable_rls_bypass
 from recognition.application.embedding.detector import FaceDetectorProtocol
 from recognition.application.embedding.generator import EmbeddingGeneratorProtocol
+from recognition.domain.job import JobStatus
 from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.scan.service import ObjectStoreFactory, ScanService
@@ -144,7 +145,7 @@ class ScanItemHandler:
                         clustering_job = IdentityClusteringJob(
                             tenant_id=tenant_id,
                             job_type="clustering",
-                            status="pending",
+                            status=JobStatus.PENDING,
                             progress=0.0,
                             total_identities=0,
                             processed_identities=0,

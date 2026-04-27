@@ -25,6 +25,7 @@ from recognition.application.embedding.generator import (
     StubEmbeddingGenerator,
 )
 from recognition.application.scan.queue_repository import ScanQueueItem
+from recognition.domain.job import JobStatus
 from recognition.config import get_settings as get_recognition_settings
 from recognition.infrastructure.embeddings import get_shared_insightface_adapter
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
@@ -208,7 +209,7 @@ class ScanWorker:
     async def _process_pending_clustering_jobs(self, *, session: AsyncSession, now: datetime) -> bool:
         stmt = (
             select(IdentityClusteringJob)
-            .where(IdentityClusteringJob.status == "pending")
+            .where(IdentityClusteringJob.status == JobStatus.PENDING.value)
             .where(IdentityClusteringJob.job_type.in_(["clustering", "curation", "split"]))
             .order_by(IdentityClusteringJob.created_at.asc())
             .with_for_update(skip_locked=True)
@@ -220,7 +221,7 @@ class ScanWorker:
             return False
 
         await ensure_job_context(session=session, job=job)
-        job.status = "running"
+        job.status = JobStatus.RUNNING
         job.started_at = now
         await session.flush()
         # Commit the "running" state before handing control to the handler.
@@ -238,7 +239,7 @@ class ScanWorker:
             handler = self._job_handlers.get(job.job_type)
             if handler is None:
                 await ensure_job_context(session=session, job=job)
-                job.status = "failed"
+                job.status = JobStatus.FAILED
                 job.error_message = f"unsupported job_type: {job.job_type}"
                 job.completed_at = datetime.now(tz=UTC)
                 await session.flush()
@@ -307,7 +308,7 @@ class ScanWorker:
                         is_transient = isinstance(exc, _transient_exceptions)
                         max_retries = self._config.max_attempts
                         if is_transient and new_retry_count < max_retries:
-                            failed_job.status = "pending"
+                            failed_job.status = JobStatus.PENDING
                             failed_job.started_at = None
                             failed_job.completed_at = None
                             self._retry_suppressed_job_id = failed_job.id
@@ -319,7 +320,7 @@ class ScanWorker:
                                 type(exc).__name__,
                             )
                         else:
-                            failed_job.status = "failed"
+                            failed_job.status = JobStatus.FAILED
                             failed_job.error_message = str(exc)
                             failed_job.completed_at = datetime.now(tz=UTC)
                             logger.error(
@@ -347,7 +348,7 @@ class ScanWorker:
         if self._retry_suppressed_job_id is not None:
             peek_stmt = (
                 select(IdentityClusteringJob.id)
-                .where(IdentityClusteringJob.status == "pending")
+                .where(IdentityClusteringJob.status == JobStatus.PENDING.value)
                 .where(IdentityClusteringJob.job_type.in_(["clustering", "curation", "split"]))
                 .order_by(IdentityClusteringJob.created_at.asc())
                 .limit(1)

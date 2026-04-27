@@ -6,6 +6,7 @@ namespace AltContext\Api;
 
 require_once __DIR__ . '/class-recognition-proxy-policy.php';
 require_once __DIR__ . '/class-tenant-identity.php';
+require_once __DIR__ . '/class-blob-url-rewriter.php';
 
 use Traversable;
 use WP_Error;
@@ -177,8 +178,10 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 				$this->record_proxy_success( $policy, $failure_key, $circuit_key );
 			}
 
-			$response_body = wp_remote_retrieve_body( $response );
-			return new WP_REST_Response( json_decode( $response_body, true ), $status, $this->normalize_response_headers( $response_headers ) );
+			$response_body    = wp_remote_retrieve_body( $response );
+			$decoded          = json_decode( $response_body, true );
+			$rewritten_body   = BlobUrlRewriter::rewrite( $decoded );
+			return new WP_REST_Response( $rewritten_body, $status, $this->normalize_response_headers( $response_headers ) );
 		}
 
 		return $last_error ?? new WP_Error( 'proxy_failed', 'Request failed after retries.', array( 'status' => 502 ) );

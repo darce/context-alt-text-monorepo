@@ -39,6 +39,16 @@ class BlobsControllerNonceBypassTest extends TestCase
         $this->assertSame($error, $result);
     }
 
+    public function testDoesNotBypassWhenBlobPrefixAppearsOnlyInQueryString(): void
+    {
+        $_SERVER['REQUEST_URI'] = '/wp-json/wp/v2/media?next=/wp-json/acx/v1/recognition/blobs/job-x/42';
+        $error = new WP_Error('rest_cookie_invalid_nonce', 'Cookie check failed', ['status' => 403]);
+
+        $result = BlobsController::maybe_bypass_nonce_for_blob_route($error);
+
+        $this->assertSame($error, $result);
+    }
+
     public function testReturnsErrorUntouchedForNonNonceErrorCodes(): void
     {
         $_SERVER['REQUEST_URI'] = '/wp-json/acx/v1/recognition/blobs/job-x/42';

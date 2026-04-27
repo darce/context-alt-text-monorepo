@@ -12,6 +12,7 @@ use WP_REST_Request;
 use WP_REST_Response;
 
 use function add_action;
+use function add_filter;
 use function esc_url_raw;
 use function hash_equals;
 use function header;
@@ -21,9 +22,12 @@ use function register_rest_route;
 use function remove_filter;
 use function rest_get_server;
 use function sprintf;
+use function sanitize_text_field;
 use function status_header;
+use function str_contains;
 use function time;
 use function untrailingslashit;
+use function wp_unslash;
 use function wp_remote_get;
 use function wp_remote_retrieve_body;
 use function wp_remote_retrieve_header;
@@ -56,6 +60,8 @@ class BlobsController extends AbstractRecognitionProxyController {
 		'application/octet-stream',
 	);
 
+	private const ROUTE_PREFIX = '/wp-json/acx/v1/recognition/blobs/';
+
 	public function register_routes(): void {
 		register_rest_route(
 			'acx/v1',
@@ -66,6 +72,44 @@ class BlobsController extends AbstractRecognitionProxyController {
 				'permission_callback' => array( $this, 'verify_blob_token' ),
 			)
 		);
+
+		// `<img>` requests can't carry an X-WP-Nonce header. WP REST's
+		// rest_cookie_check_errors fires on rest_authentication_errors
+		// before the route's permission_callback and rejects every
+		// cookie-authed request without a nonce as 403
+		// rest_cookie_invalid_nonce — short-circuiting our HMAC token
+		// check. Clear that error specifically for the blob route so
+		// verify_blob_token can run. Priority 200 runs after the cookie
+		// check (priority 100); the bypass is scoped to the blob route
+		// path so the rest of WP REST stays nonce-protected.
+		add_filter( 'rest_authentication_errors', array( self::class, 'maybe_bypass_nonce_for_blob_route' ), 200 );
+	}
+
+	/**
+	 * Replace a `rest_cookie_invalid_nonce` error with `null` (auth ok)
+	 * when the request URI targets the blob proxy route. Returns the
+	 * upstream value untouched in every other case.
+	 *
+	 * @param mixed $errors Prior auth result from upstream filters.
+	 * @return mixed
+	 */
+	public static function maybe_bypass_nonce_for_blob_route( $errors ) {
+		if ( ! ( $errors instanceof WP_Error ) ) {
+			return $errors;
+		}
+		if ( 'rest_cookie_invalid_nonce' !== $errors->get_error_code() ) {
+			return $errors;
+		}
+		$request_uri = isset( $_SERVER['REQUEST_URI'] )
+			? sanitize_text_field( wp_unslash( (string) $_SERVER['REQUEST_URI'] ) )
+			: '';
+		if ( '' === $request_uri ) {
+			return $errors;
+		}
+		if ( str_contains( $request_uri, self::ROUTE_PREFIX ) ) {
+			return null;
+		}
+		return $errors;
 	}
 
 	/**

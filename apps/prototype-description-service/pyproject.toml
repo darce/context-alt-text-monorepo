@@ -5,6 +5,10 @@ description = "Prototype rewrite of the description service with hexagonal archi
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.124.0,<0.130.0",
+    # Required by FastAPI for `request.form()` / multipart upload parsing
+    # (e.g. /recognition/analyze/multipart). Not pulled in transitively by
+    # FastAPI itself; the prod Docker image otherwise 500s on multipart POSTs.
+    "python-multipart>=0.0.20,<1.0.0",
     "uvicorn>=0.38.0,<0.40.0",
     "pydantic>=2.12.0,<3.0.0",
     "typing-extensions>=4.12.0,<5.0.0",

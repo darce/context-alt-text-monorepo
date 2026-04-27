@@ -32,11 +32,19 @@ export interface WorkbenchMediaResponse {
 
 export interface WorkbenchMediaDetailResponse {
   detailsByMedia: Record<string, WorkbenchMediaDetail>;
+  limit: number;
+  total: number;
+  truncated: boolean;
 }
 
 interface WorkbenchMediaDetailApiResponse {
   details_by_media: Record<string, WorkbenchMediaDetail>;
+  limit: number;
+  total: number;
+  truncated: boolean;
 }
+
+const DEFAULT_WORKBENCH_MEDIA_DETAIL_LIMIT = 100;
 
 export type WorkbenchMediaStatus = 'all' | 'missing';
 
@@ -61,7 +69,10 @@ const isWorkbenchMediaDetailResponse = (value: unknown): value is WorkbenchMedia
     value &&
     typeof value === 'object' &&
     'details_by_media' in value &&
-    typeof (value as { details_by_media?: unknown }).details_by_media === 'object',
+    typeof (value as { details_by_media?: unknown }).details_by_media === 'object' &&
+    typeof (value as { limit?: unknown }).limit === 'number' &&
+    typeof (value as { total?: unknown }).total === 'number' &&
+    typeof (value as { truncated?: unknown }).truncated === 'boolean',
   );
 
 export const fetchWorkbenchMedia = async ({
@@ -95,7 +106,12 @@ export const fetchWorkbenchMedia = async ({
 
 export const fetchWorkbenchMediaDetail = async (mediaIds: number[]): Promise<WorkbenchMediaDetailResponse> => {
   if (mediaIds.length === 0) {
-    return { detailsByMedia: {} };
+    return {
+      detailsByMedia: {},
+      limit: DEFAULT_WORKBENCH_MEDIA_DETAIL_LIMIT,
+      total: 0,
+      truncated: false,
+    };
   }
 
   const endpoint = getEndpoint('workbenchMediaDetail');
@@ -116,5 +132,8 @@ export const fetchWorkbenchMediaDetail = async (mediaIds: number[]): Promise<Wor
 
   return {
     detailsByMedia: payload.details_by_media,
+    limit: payload.limit,
+    total: payload.total,
+    truncated: payload.truncated,
   };
 };

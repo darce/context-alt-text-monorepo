@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace AltContext\Sovereign\Repositories;
 
 interface ClustersRepositoryInterface {
+	public const DEFAULT_LIST_LIMIT = 50;
+
 	/**
 	 * Merge a snapshot payload into tenant-scoped cluster projection rows.
 	 *
@@ -18,7 +20,7 @@ interface ClustersRepositoryInterface {
 	 * @param array<string,mixed> $filters
 	 * @return array<int,array<string,mixed>>
 	 */
-	public function list_for_tenant( string $tenant_id, int $limit = 50, int $offset = 0, array $filters = array() ): array;
+	public function list_for_tenant( string $tenant_id, int $limit = self::DEFAULT_LIST_LIMIT, int $offset = 0, array $filters = array() ): array;
 
 	/**
 	 * Return labels present in projected clusters for a tenant.

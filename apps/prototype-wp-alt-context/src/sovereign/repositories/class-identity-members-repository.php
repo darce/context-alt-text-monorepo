@@ -160,7 +160,7 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 	/**
 	 * @return array<int,array<string,mixed>>
 	 */
-	public function list_for_cluster( string $cluster_uuid, int $limit = 500, int $offset = 0, ?string $tenant_id = null ): array {
+	public function list_for_cluster( string $cluster_uuid, int $limit = IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT, int $offset = 0, ?string $tenant_id = null ): array {
 		global $wpdb;
 
 		$normalized_cluster_uuid = trim( $cluster_uuid );

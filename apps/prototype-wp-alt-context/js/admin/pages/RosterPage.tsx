@@ -37,7 +37,8 @@ export const RosterPage = (): React.JSX.Element => {
   const areAllVisibleClustersSelected = selection.isAllSelected;
 
   const clustersQuery = useRecognitionClusters({ limit: 20 });
-  const clusters = React.useMemo(() => clustersQuery.data ?? [], [clustersQuery.data]);
+  const clusterList = clustersQuery.data;
+  const clusters = React.useMemo(() => clusterList?.clusters ?? [], [clusterList]);
   const clusterIds = React.useMemo(() => clusters.map((cluster) => cluster.id), [clusters]);
 
   // Clear selection when switching tabs to avoid stale state
@@ -265,6 +266,15 @@ export const RosterPage = (): React.JSX.Element => {
               />
             )}
           </div>
+          {clusterList?.truncated && (
+            <p className="acx-roster-help-card" role="status">
+              {sprintf(
+                __('Showing %d of %d clusters. Refine the list to review the remaining matches.', 'alt-context'),
+                clusters.length,
+                clusterList.total,
+              )}
+            </p>
+          )}
           <ClusterGrid
             clusters={clusters}
             isLoading={clustersQuery.isLoading}

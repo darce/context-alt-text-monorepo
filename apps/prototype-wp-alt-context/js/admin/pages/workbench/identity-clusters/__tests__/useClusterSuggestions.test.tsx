@@ -48,10 +48,15 @@ describe('useClusterSuggestions', () => {
       sample_identities: [],
     };
 
-    listRecognitionClustersMock.mockResolvedValue([
-      { ...baseCluster, id: 'c2', label: 'Albert', identity_count: 10 },
-      { ...baseCluster, id: 'c4', label: 'Alana', identity_count: 5 },
-    ]);
+    listRecognitionClustersMock.mockResolvedValue({
+      clusters: [
+        { ...baseCluster, id: 'c2', label: 'Albert', identity_count: 10 },
+        { ...baseCluster, id: 'c4', label: 'Alana', identity_count: 5 },
+      ],
+      limit: 20,
+      total: 2,
+      truncated: false,
+    });
 
     const { result } = renderHook(
       () => useClusterSuggestions({ identityId: 'identity-1', enabled: true, labelInput: 'Al', debounceMs: 0 }),

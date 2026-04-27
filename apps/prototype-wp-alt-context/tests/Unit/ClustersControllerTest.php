@@ -268,6 +268,7 @@ class ClustersControllerTest extends TestCase
                         'cluster_uuid' => 'cluster-local',
                         'label' => 'Local',
                         'identity_count' => 1,
+                        'total_count' => 2,
                     ],
                 ];
             }
@@ -312,17 +313,18 @@ class ClustersControllerTest extends TestCase
         $controller = new ClustersController($clustersRepo, $membersRepo, $syncRepo, null, new ClusterResponseMapper(), new MemberResponseMapper());
 
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
+        $request->set_param('limit', 1);
         $response = $controller->list_clusters($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $data = $response->get_data();
         $this->assertIsArray($data);
-        $this->assertSame('cluster-local', $data[0]['id']);
+        $this->assertSame(1, $data['limit']);
+        $this->assertSame(2, $data['total']);
+        $this->assertTrue($data['truncated']);
+        $this->assertSame('cluster-local', $data['clusters'][0]['id']);
 
-        // Offline must return a bare array — no { clusters, tenant_id } envelope.
-        // The frontend calls fetchRequiredApi<ClusterSummary[]> and casts the raw
-        // JSON body directly, so an envelope would silently produce an empty UI.
-        $this->assertArrayNotHasKey('clusters', $data);
+        $this->assertArrayHasKey('clusters', $data);
         $this->assertArrayNotHasKey('tenant_id', $data);
     }
 
@@ -349,7 +351,10 @@ class ClustersControllerTest extends TestCase
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $data = $response->get_data();
-        $this->assertSame('cluster-proxy', $data[0]['id']);
+        $this->assertSame(50, $data['limit']);
+        $this->assertSame(1, $data['total']);
+        $this->assertFalse($data['truncated']);
+        $this->assertSame('cluster-proxy', $data['clusters'][0]['id']);
     }
 
     public function testListClustersTreatsZeroRowsAsAuthoritativeWhenSyncStateWasInitialized(): void
@@ -384,7 +389,15 @@ class ClustersControllerTest extends TestCase
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $data = $response->get_data();
-        $this->assertSame([], $data);
+        $this->assertSame(
+            [
+                'clusters' => [],
+                'limit' => 50,
+                'total' => 0,
+                'truncated' => false,
+            ],
+            $data
+        );
         $this->assertFalse($syncSpy->performedBypass);
         $this->assertCount(0, $this->getHttpCalls());
     }
@@ -571,7 +584,7 @@ class ClustersControllerTest extends TestCase
         // Even though sync was triggered, stale data is still served immediately
         $data = $response->get_data();
         $this->assertIsArray($data);
-        $this->assertSame('cluster-stale', $data[0]['id']);
+        $this->assertSame('cluster-stale', $data['clusters'][0]['id']);
     }
 
     public function testStaleProjectionServesStaleDataWhenSyncFails(): void
@@ -629,7 +642,7 @@ class ClustersControllerTest extends TestCase
 
         $data = $response->get_data();
         $this->assertIsArray($data);
-        $this->assertSame('cluster-resilient', $data[0]['id']);
+        $this->assertSame('cluster-resilient', $data['clusters'][0]['id']);
     }
 
     public function testNullSyncPullJobDoesNotCrashOnStaleProjection(): void
@@ -693,7 +706,7 @@ class ClustersControllerTest extends TestCase
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $data = $response->get_data();
         $this->assertIsArray($data);
-        $this->assertSame('cluster-no-sync', $data[0]['id']);
+        $this->assertSame('cluster-no-sync', $data['clusters'][0]['id']);
 
         $calls = $this->getHttpCalls();
         $this->assertCount(2, $calls);

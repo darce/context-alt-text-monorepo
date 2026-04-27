@@ -20,9 +20,13 @@ use function is_string;
 use function wp_get_attachment_metadata;
 
 class MediaDetailController {
+	private const MAX_MEDIA_IDS_PER_REQUEST = 100;
 
 	public function get_media_details( WP_REST_Request $request ): WP_REST_Response {
-		$ids = $this->resolve_media_ids( $request );
+		$requested_ids = $this->resolve_media_ids( $request );
+		$requested_count = \count( $requested_ids );
+		$truncated = $requested_count > self::MAX_MEDIA_IDS_PER_REQUEST;
+		$ids = $truncated ? \array_slice( $requested_ids, 0, self::MAX_MEDIA_IDS_PER_REQUEST ) : $requested_ids;
 		$details_by_media = array();
 
 		foreach ( $ids as $media_id ) {
@@ -44,6 +48,9 @@ class MediaDetailController {
 		return new WP_REST_Response(
 			array(
 				'details_by_media' => $details_by_media,
+				'limit'            => self::MAX_MEDIA_IDS_PER_REQUEST,
+				'total'            => $requested_count,
+				'truncated'        => $truncated,
 			),
 			200
 		);
@@ -54,7 +61,7 @@ class MediaDetailController {
 	 */
 	private function resolve_media_ids( WP_REST_Request $request ): array {
 		$raw_ids = $request->get_param( 'ids' );
-		if ( ! is_array( $raw_ids ) ) {
+		if ( null === $raw_ids ) {
 			$raw_ids = $request->get_param( 'ids[]' );
 		}
 

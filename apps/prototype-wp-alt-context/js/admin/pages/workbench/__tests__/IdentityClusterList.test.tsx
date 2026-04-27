@@ -211,7 +211,12 @@ describe('IdentityClusterList', () => {
       findClusterByLabel: defaultFindClusterByLabel,
     });
     vi.mocked(api.fetchIdentitySuggestions).mockResolvedValue({ matches: [] });
-    vi.mocked(api.listRecognitionClusters).mockResolvedValue([]);
+    vi.mocked(api.listRecognitionClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 0,
+      truncated: false,
+    });
   });
 
   afterEach(async () => {

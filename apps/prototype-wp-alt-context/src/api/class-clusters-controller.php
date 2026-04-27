@@ -34,14 +34,17 @@ use AltContext\Sovereign\Sync\SnapshotClient;
 use AltContext\Sovereign\Sync\SyncPullJobFactory;
 use AltContext\Sovereign\Sync\SyncPullJob;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
+use Throwable;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 
 use function add_action;
 use function absint;
+use function count;
 use function do_action;
 use function is_array;
+use function is_numeric;
 use function is_string;
 use function max;
 use function min;
@@ -59,6 +62,9 @@ class ClustersController extends AbstractRecognitionProxyController {
 	private const DATA_SOURCE_BACKEND_PROXY = 'backend_proxy';
 	private const DATA_SOURCE_LOCAL_PROJECTION = 'local_projection';
 	private const DATA_SOURCE_UNAVAILABLE = 'unavailable';
+	private const LIST_CLUSTERS_DEFAULT_LIMIT = 50;
+	private const LIST_CLUSTERS_MAX_LIMIT = 500;
+	private const PREVIEW_IDENTITIES_PER_CLUSTER = 4;
 	private const PROJECTION_STATUS_AVAILABLE = 'available';
 	private const PROJECTION_STATUS_BOOTSTRAPPING = 'bootstrapping';
 	private ClustersRepositoryInterface $clusters_repository;
@@ -145,8 +151,9 @@ class ClustersController extends AbstractRecognitionProxyController {
 
 	public function list_clusters( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$tenant_id = $this->get_tenant_id();
-		$limit  = absint( $request->get_param( 'limit' ) ?? 50 );
-		$limit  = min( $limit, 500 );
+		$limit  = absint( $request->get_param( 'limit' ) ?? self::LIST_CLUSTERS_DEFAULT_LIMIT );
+		$limit  = max( 1, min( $limit, self::LIST_CLUSTERS_MAX_LIMIT ) );
+		$offset = absint( $request->get_param( 'offset' ) ?? 0 );
 		$search = sanitize_text_field( (string) $request->get_param( 'search' ) );
 		$labeled_only = rest_sanitize_boolean( $request->get_param( 'labeled_only' ) );
 
@@ -154,23 +161,23 @@ class ClustersController extends AbstractRecognitionProxyController {
 			$rows = $this->clusters_repository->list_for_tenant(
 				$tenant_id,
 				$limit,
-				absint( $request->get_param( 'offset' ) ?? 0 ),
+				$offset,
 				array(
 					'search' => $search,
 					'labeled_only' => $labeled_only,
 				)
 			);
 
-			$members_by_cluster = $this->load_members_by_cluster( $rows, 4 );
+			$members_by_cluster = $this->load_members_by_cluster( $rows, self::PREVIEW_IDENTITIES_PER_CLUSTER );
 			$clusters = $this->cluster_mapper->map_cluster_list( $rows, $members_by_cluster );
 
-			return new WP_REST_Response( $clusters, 200 );
+			return new WP_REST_Response( $this->build_cluster_list_envelope( $rows, $clusters, $limit ), 200 );
 		}
 
 		$query = array(
 			'tenant_id' => $tenant_id,
 			'limit'     => $limit,
-			'offset'    => absint( $request->get_param( 'offset' ) ?? 0 ),
+			'offset'    => $offset,
 		);
 
 		if ( $labeled_only ) {
@@ -182,7 +189,8 @@ class ClustersController extends AbstractRecognitionProxyController {
 		}
 
 		$response = $this->proxy_request( 'GET', '/recognition/clusters', array(), $query );
-		return $this->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
+		$response = $this->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
+		return $this->normalize_cluster_list_response( $response, $limit );
 	}
 
 	public function list_top_unlabeled_clusters( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -381,7 +389,7 @@ class ClustersController extends AbstractRecognitionProxyController {
 		if ( $this->is_projection_stale( $updated_at ) && null !== $sync_pull_job ) {
 			try {
 				$sync_pull_job->perform( $tenant_id );
-			} catch ( \Throwable $e ) {
+			} catch ( Throwable $e ) {
 				do_action(
 					'acx_sync_pull_failed',
 					array(
@@ -421,6 +429,65 @@ class ClustersController extends AbstractRecognitionProxyController {
 		return $response;
 	}
 
+	/**
+	 * @param array<int,array<string,mixed>> $rows
+	 * @param array<int,array<string,mixed>> $clusters
+	 * @return array<string,mixed>
+	 */
+	private function build_cluster_list_envelope( array $rows, array $clusters, int $limit ): array {
+		$total = count( $clusters );
+
+		if ( isset( $rows[0]['total_count'] ) && is_numeric( $rows[0]['total_count'] ) ) {
+			$total = max( 0, (int) $rows[0]['total_count'] );
+		}
+
+		return array(
+			'clusters' => $clusters,
+			'limit' => $limit,
+			'total' => $total,
+			'truncated' => $total > count( $clusters ),
+		);
+	}
+
+	private function normalize_cluster_list_response( WP_REST_Response|WP_Error $response, int $requested_limit ): WP_REST_Response|WP_Error {
+		if ( ! ( $response instanceof WP_REST_Response ) ) {
+			return $response;
+		}
+
+		$data = $response->get_data();
+		if ( ! is_array( $data ) ) {
+			return $response;
+		}
+
+		if ( isset( $data['clusters'] ) && is_array( $data['clusters'] ) ) {
+			$clusters = $data['clusters'];
+			$total = isset( $data['total'] ) && is_numeric( $data['total'] ) ? max( 0, (int) $data['total'] ) : count( $clusters );
+			$limit = isset( $data['limit'] ) && is_numeric( $data['limit'] ) ? max( 1, (int) $data['limit'] ) : $requested_limit;
+			$truncated = isset( $data['truncated'] ) ? true === $data['truncated'] : $total > count( $clusters );
+
+			return new WP_REST_Response(
+				array(
+					'clusters' => $clusters,
+					'limit' => $limit,
+					'total' => $total,
+					'truncated' => $truncated,
+				),
+				$response->get_status()
+			);
+		}
+
+		$clusters = $data;
+		return new WP_REST_Response(
+			array(
+				'clusters' => $clusters,
+				'limit' => $requested_limit,
+				'total' => count( $clusters ),
+				'truncated' => false,
+			),
+			$response->get_status()
+		);
+	}
+
 	private function resolve_sync_pull_job(): ?SyncPullJobInterface {
 		if ( null !== $this->sync_pull_job ) {
 			return $this->sync_pull_job;
@@ -434,7 +501,7 @@ class ClustersController extends AbstractRecognitionProxyController {
 				new SnapshotClient()
 			);
 			$this->sync_pull_job = $factory->create();
-		} catch ( \Throwable $e ) {
+		} catch ( Throwable $e ) {
 			do_action(
 				'acx_recognition_composition_failed',
 				array(

@@ -551,9 +551,14 @@ describe('recognitionApi', () => {
   });
 
   it('builds cluster list query params through URLSearchParams', async () => {
-    fetchApiMock.mockResolvedValue([]);
+    fetchApiMock.mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 0,
+      truncated: false,
+    });
 
-    await listRecognitionClusters({
+    const result = await listRecognitionClusters({
       limit: 20,
       offset: 5,
       labeled_only: true,
@@ -569,6 +574,13 @@ describe('recognitionApi', () => {
     expect(url.searchParams.get('labeled_only')).toBe('true');
     expect(url.searchParams.get('search')).toBe('Alex Carter');
     expect(options).toMatchObject({ method: 'GET', restNonce: 'nonce-123' });
+    expect(result).toEqual({ clusters: [], limit: 20, total: 0, truncated: false });
+  });
+
+  it('rejects cluster list payloads that omit envelope metadata', async () => {
+    fetchApiMock.mockResolvedValue({});
+
+    await expect(listRecognitionClusters()).rejects.toThrow('Cluster list response must include a clusters array.');
   });
 
   it('requests a single cluster detail from the canonical cluster endpoint', async () => {

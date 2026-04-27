@@ -141,7 +141,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
         DUPLICATE_LOOKUP_TIMEOUT_MS,
         'duplicate lookup timed out',
       );
-      const match = results.find(
+      const match = results.clusters.find(
         (cluster) =>
           cluster.id !== clusterId &&
           typeof cluster.label === 'string' &&

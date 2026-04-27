@@ -81,6 +81,7 @@ interface WorkbenchContextValue {
   setPerPage: (perPage: number) => void;
   mediaQuery: ReturnType<typeof useWorkbenchMedia>;
   statusMessage: string;
+  detailTruncationNotice: string | null;
 
   // State Machine
   isScanRunning: boolean;
@@ -253,6 +254,19 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return sprintf(_n('Showing %d media item.', 'Showing %d media items.', totalCount, 'alt-context'), totalCount);
   }, [mediaQuery.isError, mediaQuery.isFetching, normalizedSearch, totalCount]);
 
+  const detailTruncationNotice = useMemo(() => {
+    const detailData = mediaQuery.detailQuery.data;
+    if (!detailData?.truncated) {
+      return null;
+    }
+
+    return sprintf(
+      __('Showing detail metadata for the first %1$d of %2$d requested media items. Narrow the page size to inspect the rest.', 'alt-context'),
+      detailData.limit,
+      detailData.total,
+    );
+  }, [mediaQuery.detailQuery.data]);
+
   const value = useMemo(
     () => ({
       activeSection,
@@ -281,6 +295,7 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setPerPage,
       mediaQuery,
       statusMessage,
+      detailTruncationNotice,
       isScanRunning,
       isCancellingScan,
       currentPhase,
@@ -334,6 +349,7 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setCurrentPage,
       mediaQuery,
       statusMessage,
+      detailTruncationNotice,
       isScanRunning,
       isCancellingScan,
       currentPhase,

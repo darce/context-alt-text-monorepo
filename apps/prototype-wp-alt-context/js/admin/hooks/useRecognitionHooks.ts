@@ -12,6 +12,7 @@ import {
   clusterFaces,
   fetchScanStatus,
   cancelScanJob,
+  type ClusterListResponse,
   getRecognitionCluster,
   listRecognitionClusters,
   scanFacesBatched,
@@ -119,7 +120,7 @@ export const useAcknowledgeProjection = (
   });
 
 export const useRecognitionClusters = (params: ClusterListParams = {}) =>
-  useQuery<ClusterSummary[]>({
+  useQuery<ClusterListResponse>({
     queryKey: queryKeys.clusters.list(params),
     queryFn: () => listRecognitionClusters(params),
     refetchInterval: 30_000,

@@ -15,8 +15,10 @@ use function add_filter;
 use function esc_url_raw;
 use function hash_equals;
 use function header;
+use function is_string;
 use function is_wp_error;
 use function nocache_headers;
+use function parse_url;
 use function register_rest_route;
 use function remove_filter;
 use function rest_get_server;
@@ -105,7 +107,11 @@ class BlobsController extends AbstractRecognitionProxyController {
 		if ( '' === $request_uri ) {
 			return $errors;
 		}
-		if ( str_contains( $request_uri, self::ROUTE_PREFIX ) ) {
+		$path = parse_url( $request_uri, PHP_URL_PATH );
+		if ( ! is_string( $path ) || '' === $path ) {
+			return $errors;
+		}
+		if ( str_contains( $path, self::ROUTE_PREFIX ) ) {
 			return null;
 		}
 		return $errors;

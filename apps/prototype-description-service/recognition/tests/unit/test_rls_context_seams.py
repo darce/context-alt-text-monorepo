@@ -423,6 +423,10 @@ class TestFinalizeJobPostCommitContext:
         """Build a minimal IncrementalClusteringRunner for direct method testing."""
         from unittest.mock import MagicMock
 
+        from recognition.application.orchestration.clustering.dependencies import (
+            ClusteringDependencies,
+            ClusteringRuntimeConfig,
+        )
         from recognition.application.orchestration.clustering.orchestrator import (
             IncrementalClusteringRunner,
         )
@@ -430,13 +434,15 @@ class TestFinalizeJobPostCommitContext:
         stub = MagicMock()
         runner = IncrementalClusteringRunner(
             session=session,
-            gate=stub,
-            representative_discovery=stub,
-            centroid_discovery=stub,
-            graph_discovery=stub,
-            assignment_writer=stub,
-            suggestion_service=stub,
-            commit=commit,
+            dependencies=ClusteringDependencies(
+                gate=stub,
+                representative_discovery=stub,
+                centroid_discovery=stub,
+                graph_discovery=stub,
+                assignment_writer=stub,
+                suggestion_service=stub,
+            ),
+            runtime_config=ClusteringRuntimeConfig(commit=commit),
         )
         return runner
 

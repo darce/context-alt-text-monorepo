@@ -20,6 +20,11 @@ from db.tenant_context import enable_rls_bypass, set_tenant_context
 from recognition.application.assignment import AssignmentGate, AssignmentOutcome
 from recognition.application.discovery import CentroidDiscovery, GraphDiscovery, RepresentativeDiscovery
 from recognition.application.orchestration.clustering.chunked_processor import ChunkedIdentityProcessor
+from recognition.application.orchestration.clustering.dependencies import (
+    ClusteringContext,
+    ClusteringDependencies,
+    ClusteringRuntimeConfig,
+)
 from recognition.application.orchestration.clustering.decision_handler import DecisionHandler
 from recognition.application.orchestration.clustering.discovery_pipeline import (
     prepare_cluster_caches,
@@ -53,41 +58,18 @@ logger = logging.getLogger(__name__)
 
 async def cluster_unclustered_identities(
     *,
-    tenant_id: str,
-    job_id: str | None,
     session: AsyncSession,
-    gate: AssignmentGate,
-    representative_discovery: RepresentativeDiscovery,
-    centroid_discovery: CentroidDiscovery,
-    graph_discovery: GraphDiscovery,
-    assignment_writer: AssignmentWriter,
-    suggestion_service: SuggestionServiceProtocol,
-    merge_suggestion_service: MergeSuggestionServiceProtocol | None = None,
-    clustering_logger: ClusteringLogger | None = None,
-    constrained_hac: ConstrainedHACProtocol | None = None,
-    hac_settings: HACSettings | None = None,
-    progress_callback: Callable[[int, int], Awaitable[None]] | None = None,
-    commit: bool = True,
-    session_factory: async_sessionmaker[AsyncSession] | None = None,
+    dependencies: ClusteringDependencies,
+    runtime_config: ClusteringRuntimeConfig,
+    context: ClusteringContext,
 ) -> ClusterJobResult:
     """Cluster any identities not yet assigned to a cluster."""
     runner = IncrementalClusteringRunner(
         session=session,
-        gate=gate,
-        representative_discovery=representative_discovery,
-        centroid_discovery=centroid_discovery,
-        graph_discovery=graph_discovery,
-        assignment_writer=assignment_writer,
-        suggestion_service=suggestion_service,
-        merge_suggestion_service=merge_suggestion_service,
-        clustering_logger=clustering_logger,
-        constrained_hac=constrained_hac,
-        hac_settings=hac_settings,
-        progress_callback=progress_callback,
-        commit=commit,
-        session_factory=session_factory,
+        dependencies=dependencies,
+        runtime_config=runtime_config,
     )
-    return await runner.run(tenant_id=tenant_id, job_id=job_id)
+    return await runner.run(context=context)
 
 
 class IncrementalClusteringRunner:
@@ -97,53 +79,42 @@ class IncrementalClusteringRunner:
         self,
         *,
         session: AsyncSession,
-        gate: AssignmentGate,
-        representative_discovery: RepresentativeDiscovery,
-        centroid_discovery: CentroidDiscovery,
-        graph_discovery: GraphDiscovery,
-        assignment_writer: AssignmentWriter,
-        suggestion_service: SuggestionServiceProtocol,
-        merge_suggestion_service: MergeSuggestionServiceProtocol | None = None,
-        clustering_logger: ClusteringLogger | None = None,
-        constrained_hac: ConstrainedHACProtocol | None = None,
-        hac_settings: HACSettings | None = None,
-        progress_callback: Callable[[int, int], Awaitable[None]] | None = None,
-        commit: bool = True,
-        session_factory: async_sessionmaker[AsyncSession] | None = None,
+        dependencies: ClusteringDependencies,
+        runtime_config: ClusteringRuntimeConfig,
     ) -> None:
         self._session = session
-        self._gate = gate
-        self._representative_discovery = representative_discovery
-        self._centroid_discovery = centroid_discovery
-        self._graph_discovery = graph_discovery
-        self._assignment_writer = assignment_writer
-        self._suggestion_service = suggestion_service
-        self._merge_suggestion_service = merge_suggestion_service
-        self._clustering_logger = clustering_logger
-        self._constrained_hac = constrained_hac
-        self._hac_settings = hac_settings
-        self._progress_callback = progress_callback
-        self._commit = commit
-        self._obs_session_factory = session_factory
+        self._gate = dependencies.gate
+        self._representative_discovery = dependencies.representative_discovery
+        self._centroid_discovery = dependencies.centroid_discovery
+        self._graph_discovery = dependencies.graph_discovery
+        self._assignment_writer = dependencies.assignment_writer
+        self._suggestion_service = dependencies.suggestion_service
+        self._merge_suggestion_service = dependencies.merge_suggestion_service
+        self._clustering_logger = dependencies.clustering_logger
+        self._constrained_hac = dependencies.constrained_hac
+        self._hac_settings = runtime_config.hac_settings
+        self._progress_callback = runtime_config.progress_callback
+        self._commit = runtime_config.commit
+        self._obs_session_factory = dependencies.session_factory
         self._decision_handler = DecisionHandler(
-            gate=gate,
-            assignment_writer=assignment_writer,
-            suggestion_service=suggestion_service,
-            clustering_logger=clustering_logger,
+            gate=dependencies.gate,
+            assignment_writer=dependencies.assignment_writer,
+            suggestion_service=dependencies.suggestion_service,
+            clustering_logger=dependencies.clustering_logger,
             logger_instance=logger,
         )
-        self._bind_writer_context = getattr(assignment_writer, "bind_run_context", None)
-        self._bind_graph_context = getattr(graph_discovery, "bind_run_context", None)
+        self._bind_writer_context = getattr(dependencies.assignment_writer, "bind_run_context", None)
+        self._bind_graph_context = getattr(dependencies.graph_discovery, "bind_run_context", None)
 
-    async def run(self, *, tenant_id: str, job_id: str | None) -> ClusterJobResult:
-        job_id_str, job_uuid, started_at = self._build_job_id(job_id)
+    async def run(self, *, context: ClusteringContext) -> ClusterJobResult:
+        job_id_str, job_uuid, started_at = self._build_job_id(context.job_id)
         logger.info(
             "[clustering] batch_start job_id=%s tenant_id=%s",
             job_id_str,
-            tenant_id,
+            context.tenant_id,
         )
 
-        tenant_uuid = self._coerce_tenant(tenant_id)
+        tenant_uuid = self._coerce_tenant(context.tenant_id)
         if tenant_uuid is None:
             return ClusterJobResult(
                 job_id=job_id_str,
@@ -157,7 +128,7 @@ class IncrementalClusteringRunner:
         clustering_job = await self._create_or_update_job(job_uuid, tenant_uuid, started_at)
         job_label = str(clustering_job.id)
 
-        await self._cleanup_orphaned_representatives(tenant_id)
+        await self._cleanup_orphaned_representatives(context.tenant_id)
 
         unclustered = await self._fetch_unclustered_identities(tenant_uuid)
         if not unclustered:
@@ -190,7 +161,7 @@ class IncrementalClusteringRunner:
         await self._session.flush()
 
         accept_count, suggest_count, reject_count, clusters_created, created_cluster_ids = await self._process_chunks(
-            tenant_id=tenant_id,
+            tenant_id=context.tenant_id,
             job_id=job_id_str,
             job_label=job_label,
             clustering_job=clustering_job,
@@ -201,7 +172,7 @@ class IncrementalClusteringRunner:
         await self._finalize_job(
             clustering_job=clustering_job,
             run_id=run_ctx.run_id,
-            tenant_id=tenant_id,
+            tenant_id=context.tenant_id,
             started_at=started_at,
             job_id=job_id_str,
             total_identities=total_identities,

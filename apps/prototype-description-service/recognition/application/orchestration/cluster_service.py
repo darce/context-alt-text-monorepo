@@ -23,6 +23,11 @@ if TYPE_CHECKING:
 from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.assignment import AssignmentGate
 from recognition.application.discovery import CentroidDiscovery, GraphDiscovery, RepresentativeDiscovery
+from recognition.application.orchestration.clustering.dependencies import (
+    ClusteringContext,
+    ClusteringDependencies,
+    ClusteringRuntimeConfig,
+)
 from recognition.application.orchestration.cluster_merge import (
     merge_cluster as merge_cluster_op,
 )
@@ -155,10 +160,7 @@ class ClusterService:
         session_factory: async_sessionmaker[AsyncSession] | None = None,
     ):
         """Cluster any identities not yet assigned to a cluster."""
-        result = await cluster_unclustered_identities_op(
-            tenant_id=tenant_id,
-            job_id=job_id,
-            session=self.session,  # Uses property with clear error
+        dependencies = ClusteringDependencies(
             gate=self.gate,
             representative_discovery=self.representative_discovery,
             centroid_discovery=self.centroid_discovery,
@@ -168,10 +170,19 @@ class ClusterService:
             merge_suggestion_service=self.merge_suggestion_service,
             clustering_logger=self.logger,
             constrained_hac=self.constrained_hac,
+            session_factory=session_factory,
+        )
+        runtime_config = ClusteringRuntimeConfig(
             hac_settings=self.hac_settings,
             progress_callback=progress_callback,
             commit=commit,
-            session_factory=session_factory,
+        )
+        context = ClusteringContext(tenant_id=tenant_id, job_id=job_id)
+        result = await cluster_unclustered_identities_op(
+            session=self.session,  # Uses property with clear error
+            dependencies=dependencies,
+            runtime_config=runtime_config,
+            context=context,
         )
 
         if self.suggestion_refresh_service and result.created_cluster_ids:

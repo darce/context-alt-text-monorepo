@@ -18,6 +18,11 @@ Tenant identity note:
 - The plugin's canonical tenant identifier is the deterministic UUID emitted by `TenantIdentity::derive_from_site_url()`, not the legacy md5(site_url) hash.
 - Maintenance slice `MAINT-scan-api-lint-20260427` updated boundary-touching tests and static-analysis fixes without changing any request or response payload shape on this REST surface.
 
+Blob auth note:
+
+- The blob proxy continues to use the same `/wp-json/acx/v1/recognition/blobs/...` route and response surface.
+- Hotfix slice `HOTFIX-blob-nonce-bypass-20260427` only tightened the nonce-bypass path check so query-string values that mention the blob route no longer bypass auth; no request or response payload changed.
+
 Base path: `/wp-json/acx/v1/recognition`
 
 ## POST /recognition/analyze

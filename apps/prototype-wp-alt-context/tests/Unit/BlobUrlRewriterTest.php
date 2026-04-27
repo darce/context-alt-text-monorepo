@@ -12,6 +12,75 @@ use AltContext\Tests\TestCase;
  */
 class BlobUrlRewriterTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $GLOBALS['__ac_attachment_urls'] = [];
+    }
+
+    protected function tearDown(): void
+    {
+        $GLOBALS['__ac_attachment_urls'] = [];
+        parent::tearDown();
+    }
+
+    public function testReturnsWpAttachmentUrlWhenMediaIdResolvesToAttachment(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][6717] = 'http://example.test/wp-content/uploads/2025/12/face-6717.jpg';
+
+        $rewritten = BlobUrlRewriter::rewrite_string('/recognition/blobs/job-x/6717');
+
+        $this->assertSame(
+            'http://example.test/wp-content/uploads/2025/12/face-6717.jpg',
+            $rewritten
+        );
+    }
+
+    public function testFallsBackToSignedUrlWhenMediaIdHasNoWpAttachment(): void
+    {
+        $rewritten = BlobUrlRewriter::rewrite_string('/recognition/blobs/job-x/9999');
+
+        $parts = parse_url($rewritten);
+        $this->assertSame('/wp-json/acx/v1/recognition/blobs/job-x/9999', $parts['path']);
+        parse_str($parts['query'] ?? '', $query);
+        $this->assertArrayHasKey('token', $query);
+    }
+
+    public function testFallsBackToSignedUrlWhenMediaIdNotNumeric(): void
+    {
+        $GLOBALS['__ac_attachment_urls']['abc'] = 'http://should-not-be-used.test/x.jpg';
+
+        $rewritten = BlobUrlRewriter::rewrite_string('/recognition/blobs/job-x/abc');
+
+        $parts = parse_url($rewritten);
+        $this->assertSame('/wp-json/acx/v1/recognition/blobs/job-x/abc', $parts['path']);
+        parse_str($parts['query'] ?? '', $query);
+        $this->assertArrayHasKey('token', $query);
+    }
+
+    public function testRecursiveRewriteMixesWpHitsAndSignedFallbacks(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][6717] = 'http://example.test/wp-content/uploads/2025/12/hit.jpg';
+
+        $payload = [
+            'suggestions' => [
+                [
+                    'cluster_a_representative_media_url' => '/recognition/blobs/job-a/6717',
+                    'cluster_b_representative_media_url' => '/recognition/blobs/job-a/9999',
+                ],
+            ],
+        ];
+
+        $rewritten = BlobUrlRewriter::rewrite($payload);
+
+        $this->assertSame(
+            'http://example.test/wp-content/uploads/2025/12/hit.jpg',
+            $rewritten['suggestions'][0]['cluster_a_representative_media_url']
+        );
+        $bParts = parse_url($rewritten['suggestions'][0]['cluster_b_representative_media_url']);
+        $this->assertSame('/wp-json/acx/v1/recognition/blobs/job-a/9999', $bParts['path']);
+    }
+
     public function testRewritesRecognitionBlobPathToSignedRestUrl(): void
     {
         $rewritten = BlobUrlRewriter::rewrite_string('/recognition/blobs/job-x/42');

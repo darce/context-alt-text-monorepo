@@ -66,7 +66,7 @@ Out-of-scope for this epic, even if relevant to the assessment:
 - **Asyncio adoption** in PHP/JS surfaces. The Hattingh book applies to the recognition service, which is out-of-repo per the Plugin Boundary Rule.
 - **Code-level micro-refactoring catalog** (Fowler/Beck). Belongs in per-task-plan slices, not as a standalone v0.5.0 deliverable.
 - **Net-new features.** No new admin pages, no new endpoints. Refactor only.
-- **Schema breaking changes.** All migrations must be additive (DDIA-SE: backward + forward compat).
+- **Backward-compat shims for schema reshapes.** Per the repo's Greenfield Policy there is no production data to preserve; clean rewrites are preferred over compat shims. Migrations may reshape tables directly. Document a compatibility constraint only when a specific surface needs it (e.g. the recognition service wire contract — see next item).
 - **Recognition service contract changes.** Any change to the wire contract is a separate cross-repo coordination, not v0.5.0 scope.
 - **Performance benchmarking infrastructure.** Phase B references p95/p99 (LAT-TL) but does not build telemetry; reuse existing `class-telemetry.php`.
 - **Multisite hardening.** Mentioned in `wp-plugin-literature-digest.md`; not v0.5.0.
@@ -90,8 +90,8 @@ Recorded explicitly (do not silently fill these):
 Pre-task-plan stubs. Each becomes a feature-branch task once the epic is opened.
 
 ### Phase A
-- **E16-1 — Bounded iteration caps across REST + repos**
-  Surface: `src/api/`, `src/sovereign/repositories/`. Acceptance: every controller listed in RX-3/RX-4/DB-1/DB-3/DB-5 has a typed cap and an envelope-surfaced `truncated` flag. Tests cover the cap boundary.
+- **E16-1 — Bounded iteration caps across REST + repos + lifecycle migration + contracts**
+  Surface: `apps/prototype-wp-alt-context/src/api/`, `apps/prototype-wp-alt-context/src/sovereign/repositories/`, `apps/prototype-wp-alt-context/src/support/class-life-cycle-manager.php` (owns DB-5: `migrate_legacy_roster_data`), and the owning contract surfaces under `docs/agentic/contracts/` (e.g. `cluster-snapshot-api.md`, `clustering-api.md`, `curation-sync-api.md`) and `packages/shared-contracts/`. Acceptance: every site listed in RX-3 / RX-4 / DB-1 / DB-3 / DB-5 has a typed `MAX_*` cap and surfaces the `limit` / `total` / `truncated` triple in its response envelope; the matching contract/schema documents are updated in the same slice (per the planning-review checklist's same-slice contract rule); tests cover the cap boundary, including DB-5's activation-time legacy migration.
 - **E16-2 — `maxMediaPerBatch` knob disambiguation**
   Surface: `js/admin/api/config.ts`, `js/admin/api/recognition/scanApi.ts`. Acceptance: knob removed or renamed; `MULTIPART_MAX_IMAGES=5` remains the single canonical owner.
 - **E16-3 — Composite indexes for hot UI queries**
@@ -121,7 +121,7 @@ Pre-task-plan stubs. Each becomes a feature-branch task once the epic is opened.
 
 Promotion criteria between phases:
 
-- **A → B**: Phase A merged; no new unbounded-iteration findings on a fresh `branch-review` of the touched surfaces; envelope-cap convention adopted in `docs/agentic/contracts/` so future controllers inherit it.
+- **A → B**: Phase A merged; no new unbounded-iteration findings on a fresh `branch-review` of the touched surfaces. (The envelope-cap contract update is required *inside* E16-1's acceptance, not deferred to this gate — see §6.)
 - **B → C**: Phase B merged; breaker-state unification verified by an integration test that wedges the backend and observes one breaker, not two; reset-projection runbook exercised at least once.
 - **C → done**: Phase C merged; the `"Unknown"` fallback wall is gone; canonical job-state reducer powers Dashboard + Workbench.
 
@@ -136,7 +136,7 @@ This scope note is the **pre-epic artifact**. The epic itself (proposed E16) sho
 - Allocate the 10 candidate tasks above as its task surface; do not invent new ones during epic drafting (changes go through a follow-on `/scope` pass).
 - Be linked from the active-epics list in `CLAUDE.md` once allocated.
 
-Until the epic is allocated, this scope note + the assessment together are sufficient to start Phase A's first task plan via `/incremental-implementation`.
+**Task-plan creation is gated on epic allocation.** Per the planning pipeline's traceability rule, `/incremental-implementation` for E16-1..E16-10 must not run until the E16 epic doc lands and links this scope note. The epic-allocation step is itself the first deliverable and should be sized as a small planning slice — epic doc draft, links to this scope and the assessment, and an `Active epics` update in `CLAUDE.md`. Skipping that step would leave the resulting task plans without the spec/epic traceability the planning-review checklist requires.
 
 ---
 

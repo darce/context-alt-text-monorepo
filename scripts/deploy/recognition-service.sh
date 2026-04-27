@@ -14,10 +14,12 @@
 #   build          [tag]              Build :SHA + :tag locally (no push). tag default = dev.
 #   build-remote   [tag]              Build :SHA + :tag on the OCI VM (no local docker).
 #   deploy <env>                      Build + push :SHA + :ENV_TAG + ssh restart + verify.
+#                                       'deploy prod' requires CONFIRM=PROMOTE.
 #   promote <from> <to>               Retag :FROM_TAG -> :TO_TAG on OCIR + restart + verify.
 #                                       e.g. promote dev staging, promote staging prod (CONFIRM=PROMOTE),
 #                                       promote staging dev (rollback path).
-#   verify         <env>              GET /health and compare commit_sha to local HEAD.
+#   verify         <env>              GET /health and compare commit_sha to GIT_REF (default HEAD).
+#                                       Retries up to ACX_VERIFY_ATTEMPTS times for warm-up. Fails closed.
 #   status                            Snapshot /health for dev, staging, prod.
 #
 # Set REMOTE_BUILD=1 (or env ACX_REMOTE_BUILD=1) to make 'deploy' / 'promote' build/retag
@@ -36,7 +38,10 @@
 #   ACX_REMOTE_BUILD         set to 1 to build on the VM instead of locally
 #   ACX_REMOTE_BUILD_DIR     default /tmp/acx-build  (rsync target on the VM)
 #   ACX_ALLOW_DIRTY          set to 1 to skip dirty-tree check (dev only)
-#   CONFIRM                  required for prod promotions: CONFIRM=PROMOTE
+#   ACX_VERIFY_ATTEMPTS      default 5  (post-deploy verify retry count for warm-up)
+#   ACX_VERIFY_SLEEP         default 5  (seconds between verify attempts)
+#   ACX_VERIFY_OPTIONAL      set to 1 to downgrade verify failure from fail to warn after deploy/promote
+#   CONFIRM                  required for prod actions: CONFIRM=PROMOTE (applies to deploy prod and promote * prod)
 set -euo pipefail
 
 OCI_HOST="${OCI_HOST:-acx-backend.tail1a44b8.ts.net}"
@@ -242,6 +247,10 @@ do_deploy() {
   local tag
   tag="$(env_to_tag "$env")"
 
+  if [[ "$env" == "prod" && "${CONFIRM:-}" != "PROMOTE" ]]; then
+    fail "Production deploy requires CONFIRM=PROMOTE. Re-run: CONFIRM=PROMOTE $0 deploy prod"
+  fi
+
   preflight_ssh
   preflight_git_clean "$env"
   preflight_branch_synced "$env"
@@ -258,7 +267,13 @@ do_deploy() {
 
   log "Deploy submitted. Verifying..."
   sleep 5
-  do_verify "$env" || warn "Verify failed (service may still be warming; re-run: $0 verify $env)"
+  if ! do_verify "$env"; then
+    if [[ "${ACX_VERIFY_OPTIONAL:-0}" == "1" ]]; then
+      warn "Verify failed but ACX_VERIFY_OPTIONAL=1; not failing the deploy."
+    else
+      fail "Deploy verification failed. Re-run '$0 verify $env' to retry, or set ACX_VERIFY_OPTIONAL=1 to downgrade to a warning."
+    fi
+  fi
 }
 
 #---------------------------------------------------------------- promote
@@ -299,35 +314,58 @@ do_promote() {
 
   log "Promotion submitted. Verifying..."
   sleep 5
-  do_verify "$to_env" || warn "Verify failed (service may still be warming; re-run: $0 verify $to_env)"
+  if ! do_verify "$to_env"; then
+    if [[ "${ACX_VERIFY_OPTIONAL:-0}" == "1" ]]; then
+      warn "Verify failed but ACX_VERIFY_OPTIONAL=1; not failing the promotion."
+    else
+      fail "Promotion verification failed. Re-run '$0 verify $to_env' to retry, or set ACX_VERIFY_OPTIONAL=1 to downgrade to a warning."
+    fi
+  fi
 }
 
 #---------------------------------------------------------------- verify
 do_verify() {
   local env="$1"
-  local url expected_sha actual_sha body
+  local url expected_sha actual_sha body attempt max_attempts sleep_s
   url="$(env_to_health_url "$env")"
-  expected_sha="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
+  # Use GIT_REF (defaults to HEAD) so verify after `GIT_REF=v0.4.1 deploy ...`
+  # checks against the same ref the build/push paths used.
+  expected_sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
 
-  log "GET ${url}"
-  body="$(curl --fail --silent --show-error --max-time 10 "$url")" || fail "Health check failed"
-  echo "$body"
+  # Bounded retry so post-restart warm-up (typically <30s) does not flap
+  # verification, while a genuinely missing/skewed SHA still fails closed.
+  max_attempts="${ACX_VERIFY_ATTEMPTS:-5}"
+  sleep_s="${ACX_VERIFY_SLEEP:-5}"
 
-  # /health surfaces commit SHA for E15-3a-BR-03 deploy-lag detection.
-  actual_sha="$(printf '%s' "$body" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("commit_sha") or d.get("git_commit_sha") or d.get("version") or "")' 2>/dev/null || true)"
+  for attempt in $(seq 1 "$max_attempts"); do
+    log "GET ${url} (attempt ${attempt}/${max_attempts})"
+    if ! body="$(curl --fail --silent --show-error --max-time 10 "$url" 2>&1)"; then
+      warn "Health check fetch failed: ${body}"
+      sleep "$sleep_s"
+      continue
+    fi
+    echo "$body"
 
-  if [[ -z "$actual_sha" || "$actual_sha" == "unknown" ]]; then
-    warn "Service did not report a commit SHA. Image may have been built without --build-arg GIT_COMMIT_SHA."
-    return 1
-  fi
+    # /health surfaces commit SHA for E15-3a-BR-03 deploy-lag detection.
+    actual_sha="$(printf '%s' "$body" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("commit_sha") or d.get("git_commit_sha") or d.get("version") or "")' 2>/dev/null || true)"
 
-  if [[ "${actual_sha:0:8}" == "${expected_sha:0:8}" ]]; then
-    log "Verified: ${env} runs ${actual_sha:0:8} (matches local HEAD)"
-    return 0
-  else
-    warn "SKEW: ${env} runs ${actual_sha:0:8}, local HEAD is ${expected_sha:0:8}"
-    return 1
-  fi
+    if [[ -z "$actual_sha" || "$actual_sha" == "unknown" ]]; then
+      warn "Service did not report a commit SHA (attempt ${attempt}/${max_attempts}). Image may have been built without --build-arg GIT_COMMIT_SHA."
+      sleep "$sleep_s"
+      continue
+    fi
+
+    if [[ "${actual_sha:0:8}" == "${expected_sha:0:8}" ]]; then
+      log "Verified: ${env} runs ${actual_sha:0:8} (matches GIT_REF=${GIT_REF})"
+      return 0
+    else
+      warn "SKEW: ${env} runs ${actual_sha:0:8}, expected ${expected_sha:0:8} (attempt ${attempt}/${max_attempts}; warm-up retry)"
+      sleep "$sleep_s"
+    fi
+  done
+
+  warn "SKEW: ${env} did not converge to ${expected_sha:0:8} after ${max_attempts} attempts."
+  return 1
 }
 
 #---------------------------------------------------------------- status

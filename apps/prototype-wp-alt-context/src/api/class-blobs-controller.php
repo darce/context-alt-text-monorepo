@@ -11,7 +11,6 @@ use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 
-use function add_action;
 use function add_filter;
 use function esc_url_raw;
 use function hash_equals;
@@ -215,7 +214,7 @@ class BlobsController extends AbstractRecognitionProxyController {
 
 		$safe_type = $this->normalize_content_type( $content_type );
 
-		add_action(
+		add_filter(
 			'rest_pre_serve_request',
 			static function ( bool $served ) use ( $body, $safe_type ): bool {
 				if ( $served ) {

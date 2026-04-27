@@ -25,7 +25,7 @@ class Phase4WorkflowIntegrationTest extends TestCase
 {
     public function testProjectionConflictCanBeQueriedAndResolvedThroughRestAndRefreshesMetrics(): void
     {
-        $tenantId = md5((string) \get_site_url());
+        $tenantId = self::currentTenantId();
         $conflict = [
             'id' => 41,
             'tenant_id' => $tenantId,
@@ -95,7 +95,7 @@ class Phase4WorkflowIntegrationTest extends TestCase
 
     public function testFailedOutboxOperationCanBeQueriedAndRetriedThroughRest(): void
     {
-        $tenantId = md5((string) \get_site_url());
+        $tenantId = self::currentTenantId();
         $operation = [
             'id' => 11,
             'tenant_id' => $tenantId,
@@ -146,7 +146,7 @@ class Phase4WorkflowIntegrationTest extends TestCase
 
     public function testFailedOutboxOperationCanBeDiscardedThroughRest(): void
     {
-        $tenantId = md5((string) \get_site_url());
+        $tenantId = self::currentTenantId();
         $operation = [
             'id' => 17,
             'tenant_id' => $tenantId,

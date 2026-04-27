@@ -17,6 +17,11 @@ class AdminTest extends TestCase
 {
     private Admin $admin;
 
+    private function buildManifestFixturePath(): string
+    {
+        return dirname(__DIR__) . '/fixtures/admin-manifest.json';
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -136,7 +141,9 @@ class AdminTest extends TestCase
     {
         unset($_ENV['WP_ENVIRONMENT_TYPE']);
 
-        $this->admin->enqueue_scripts('toplevel_page_alt-context-dashboard');
+        $admin = new Admin($this->buildManifestFixturePath());
+
+        $admin->enqueue_scripts('toplevel_page_alt-context-dashboard');
 
         $this->assertArrayHasKey('alt-context-admin', $GLOBALS['__ac_scripts']);
         $this->assertArrayHasKey('alt-context-admin', $GLOBALS['__ac_localized_scripts']);
@@ -189,8 +196,7 @@ class AdminTest extends TestCase
         $this->queueHttpResponse(new \WP_Error('http_request_failed', 'Connection refused'));
 
         // Use the real built manifest fixture path so build_assets path can resolve.
-        $manifestPath = dirname(__DIR__, 2) . '/public/assets/dist/.vite/manifest.json';
-        $admin = new Admin($manifestPath);
+        $admin = new Admin($this->buildManifestFixturePath());
         $admin->enqueue_scripts('toplevel_page_alt-context-dashboard');
 
         // Dev script handles MUST NOT be enqueued — fallback to built bundle path.
@@ -220,8 +226,7 @@ class AdminTest extends TestCase
             'body' => '',
         ]);
 
-        $manifestPath = dirname(__DIR__, 2) . '/public/assets/dist/.vite/manifest.json';
-        $admin = new Admin($manifestPath);
+        $admin = new Admin($this->buildManifestFixturePath());
         $admin->enqueue_scripts('toplevel_page_alt-context-dashboard');
 
         $this->assertArrayNotHasKey('alt-context-admin-dev', $GLOBALS['__ac_scripts']);

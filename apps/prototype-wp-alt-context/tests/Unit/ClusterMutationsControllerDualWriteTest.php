@@ -64,7 +64,7 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->assertSame('cluster-xyz', $this->repository->lastRepresentativeClusterId);
         $this->assertSame('identity-77', $this->repository->lastRepresentativeId);
         $this->assertTrue($this->repository->lastRepresentativePinned);
-        $this->assertSame(md5((string) get_site_url()), $this->syncStateRepository->lastTouchedTenantId);
+        $this->assertSame(self::currentTenantId(), $this->syncStateRepository->lastTouchedTenantId);
 
         $outboxInsert = $this->findQueryContaining($GLOBALS['wpdb']->queries, 'INSERT INTO wp_acx_sync_outbox');
         $this->assertStringContainsString("'representative_pin_updated'", $outboxInsert);
@@ -184,7 +184,7 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->assertSame(200, $response->get_status());
         $this->assertSame('identity-77', $this->membersRepository->lastReassignedIdentityId);
         $this->assertSame('cluster-target', $this->membersRepository->lastTargetClusterId);
-        $this->assertSame(md5((string) get_site_url()), $this->syncStateRepository->lastTouchedTenantId);
+        $this->assertSame(self::currentTenantId(), $this->syncStateRepository->lastTouchedTenantId);
         $this->assertContains('START TRANSACTION', $GLOBALS['wpdb']->queries);
         $this->assertContains('COMMIT', $GLOBALS['wpdb']->queries);
         $this->assertSame([], $this->getHttpCalls());

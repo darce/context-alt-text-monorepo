@@ -59,7 +59,7 @@ class ClusterResponseMapper {
 			}
 		}
 
-		return array_values( $normalized );
+		return $normalized;
 	}
 
 	/**

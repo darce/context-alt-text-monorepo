@@ -107,7 +107,7 @@ class SplitTopologyCommandDrain {
 
 			try {
 				$action_id = as_enqueue_async_action( self::DRAIN_HOOK, array(), $group );
-				if ( is_numeric( $action_id ) && (int) $action_id > 0 ) {
+				if ( (int) $action_id > 0 ) {
 					return;
 				}
 			} catch ( Throwable $exception ) {

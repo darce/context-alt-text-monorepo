@@ -392,7 +392,7 @@ class ConflictController extends AbstractRecognitionProxyController {
 			return array( 'accepted', 'dismissed' );
 		}
 
-		if ( is_string( $operation_type ) && '' !== $operation_type ) {
+		if ( '' !== $operation_type ) {
 			return array( 'dismissed' );
 		}
 

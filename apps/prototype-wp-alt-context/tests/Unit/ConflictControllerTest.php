@@ -22,7 +22,7 @@ class ConflictControllerTest extends TestCase
 {
     public function testListConflictsReturnsPaginatedEnvelope(): void
     {
-        $tenantId = md5((string) \get_site_url());
+        $tenantId = self::currentTenantId();
         $repository = new InMemoryConflictRepository([
             $this->buildConflictRecord([
                 'id' => 9,
@@ -81,7 +81,7 @@ class ConflictControllerTest extends TestCase
 
     public function testListConflictsReturnsDismissOnlyForUnsupportedOutboxOperations(): void
     {
-        $tenantId = md5((string) \get_site_url());
+        $tenantId = self::currentTenantId();
         $repository = new InMemoryConflictRepository([
             $this->buildConflictRecord([
                 'id' => 13,
@@ -125,7 +125,7 @@ class ConflictControllerTest extends TestCase
 
     public function testListConflictsReturnsAcceptedAndDismissedForRevertMergeCompoundOperation(): void
     {
-        $tenantId = md5((string) \get_site_url());
+        $tenantId = self::currentTenantId();
         $repository = new InMemoryConflictRepository([
             $this->buildConflictRecord([
                 'id' => 15,
@@ -164,7 +164,7 @@ class ConflictControllerTest extends TestCase
 
     public function testListConflictsReturnsAcceptBackendMergeAndDismissedForPersonNameConflict(): void
     {
-        $tenantId = md5((string) \get_site_url());
+        $tenantId = self::currentTenantId();
         $repository = new InMemoryConflictRepository([
             $this->buildConflictRecord([
                 'id' => 18,
@@ -192,7 +192,7 @@ class ConflictControllerTest extends TestCase
 
     public function testListConflictsReturnsAcceptBackendAndDismissedForDriftConflict(): void
     {
-        $tenantId = md5((string) \get_site_url());
+        $tenantId = self::currentTenantId();
         $repository = new InMemoryConflictRepository([
             $this->buildConflictRecord([
                 'id' => 19,
@@ -220,7 +220,7 @@ class ConflictControllerTest extends TestCase
 
     public function testListConflictsReturnsAcceptedAndDismissedForAssignOutlierWhenMachineClusterIsKnown(): void
     {
-        $tenantId = md5((string) \get_site_url());
+        $tenantId = self::currentTenantId();
         $repository = new InMemoryConflictRepository([
             $this->buildConflictRecord([
                 'id' => 16,
@@ -257,7 +257,7 @@ class ConflictControllerTest extends TestCase
 
     public function testListConflictsReturnsDismissOnlyForAssignOutlierWhenMachineClusterIsMissing(): void
     {
-        $tenantId = md5((string) \get_site_url());
+        $tenantId = self::currentTenantId();
         $repository = new InMemoryConflictRepository([
             $this->buildConflictRecord([
                 'id' => 17,
@@ -294,7 +294,7 @@ class ConflictControllerTest extends TestCase
 
     public function testListConflictsReturnsEmptyAllowedResolutionsWhenOutboxOperationIsMissing(): void
     {
-        $tenantId = md5((string) \get_site_url());
+        $tenantId = self::currentTenantId();
         $repository = new InMemoryConflictRepository([
             $this->buildConflictRecord([
                 'id' => 21,
@@ -402,7 +402,7 @@ class ConflictControllerTest extends TestCase
 
     public function testGetConflictDetailEnforcesTenantIsolation(): void
     {
-        $expectedTenant = md5((string) \get_site_url());
+        $expectedTenant = self::currentTenantId();
 
         $repository = new class($expectedTenant) extends ConflictRepository {
             public function __construct(private string $expectedTenant) {}
@@ -496,7 +496,7 @@ class ConflictControllerTest extends TestCase
 
     public function testListOutboxOperationsReturnsTimelineAcrossStatuses(): void
     {
-        $tenantId = md5((string) \get_site_url());
+        $tenantId = self::currentTenantId();
         $outboxDrain = new \AltContext\Tests\Stubs\InMemoryOutboxDrain([
             $this->buildOutboxOperation([
                 'id' => 19,
@@ -545,7 +545,7 @@ class ConflictControllerTest extends TestCase
 
     public function testResolveConflictEnforcesTenantIsolation(): void
     {
-        $expectedTenant = md5((string) \get_site_url());
+        $expectedTenant = self::currentTenantId();
 
         $repository = new class($expectedTenant) extends ConflictRepository {
             public function __construct(private string $expectedTenant) {}
@@ -775,7 +775,7 @@ class ConflictControllerTest extends TestCase
         $response = $controller->resolve_conflict($request);
 
         $this->assertSame(200, $response->get_status());
-        $this->assertSame([[55, 12, md5((string) \get_site_url()), 'Merged Name']], $outboxDrain->reenqueued);
+        $this->assertSame([[55, 12, self::currentTenantId(), 'Merged Name']], $outboxDrain->reenqueued);
         $this->assertSame([['cluster-person', 'Merged Name']], $clustersRepository->updatedLabels);
     }
 
@@ -916,8 +916,8 @@ class ConflictControllerTest extends TestCase
         $data = $response->get_data();
 
         $this->assertSame(200, $response->get_status());
-        $this->assertSame([[ 'member-1', md5((string) \get_site_url()) ]], $membersRepository->deletedMembers);
-        $this->assertSame([md5((string) \get_site_url())], $syncStateRepository->refreshed);
+        $this->assertSame([[ 'member-1', self::currentTenantId() ]], $membersRepository->deletedMembers);
+        $this->assertSame([self::currentTenantId()], $syncStateRepository->refreshed);
         $this->assertSame('accepted', $data['conflict']['resolution_status']);
         $this->assertContains('START TRANSACTION', $GLOBALS['wpdb']->queries);
         $this->assertContains('COMMIT', $GLOBALS['wpdb']->queries);
@@ -1016,7 +1016,7 @@ class ConflictControllerTest extends TestCase
 
     public function testRetryFailedOperationReturnsUpdatedOperation(): void
     {
-        $tenantId = md5((string) \get_site_url());
+        $tenantId = self::currentTenantId();
         $outboxDrain = new InMemoryOutboxDrain([
             $this->buildOutboxOperation([
                 'id' => 1,
@@ -1102,7 +1102,7 @@ class ConflictControllerTest extends TestCase
 
     public function testDiscardOperationReturnsUpdatedOperation(): void
     {
-        $tenantId = md5((string) \get_site_url());
+        $tenantId = self::currentTenantId();
         $outboxDrain = new InMemoryOutboxDrain([
             $this->buildOutboxOperation([
                 'id' => 8,
@@ -1191,7 +1191,7 @@ class ConflictControllerTest extends TestCase
     {
         return array_merge([
             'id' => 1,
-            'tenant_id' => md5((string) \get_site_url()),
+            'tenant_id' => self::currentTenantId(),
             'entity_type' => 'cluster',
             'entity_key' => 'cluster-1',
             'outbox_id' => 0,
@@ -1216,7 +1216,7 @@ class ConflictControllerTest extends TestCase
     {
         return array_merge([
             'id' => 1,
-            'tenant_id' => md5((string) \get_site_url()),
+            'tenant_id' => self::currentTenantId(),
             'operation_type' => 'cluster_label_updated',
             'entity_type' => 'cluster',
             'entity_key' => 'cluster-1',

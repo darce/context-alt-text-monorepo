@@ -65,7 +65,7 @@ class ClustersRepository implements ClustersRepositoryInterface {
 			array_filter(
 				$clusters,
 				static function ( $cluster ): bool {
-					return is_array( $cluster ) && '' !== trim( (string) ( $cluster['cluster_uuid'] ?? '' ) );
+					return '' !== trim( (string) ( $cluster['cluster_uuid'] ?? '' ) );
 				}
 			)
 		);

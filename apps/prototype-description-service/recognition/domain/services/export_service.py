@@ -23,6 +23,7 @@ from db.models import (
     Tenant,
 )
 from recognition.domain.services.audit_service import AuditService
+from recognition.domain.job import JobStatus
 from recognition.infrastructure.repositories._helpers import coerce_uuid
 
 EXPORT_SCHEMA_VERSION = 2
@@ -60,7 +61,7 @@ class TenantExportService:
             raise ValueError("invalid tenant_id")
         job = ExportJob(
             tenant_id=tenant_uuid,
-            status="pending",
+            status=JobStatus.PENDING,
             created_by_actor=actor,
         )
         self._session.add(job)
@@ -424,7 +425,7 @@ async def run_export_to_file(job_id: str, tenant_id: str, actor: str) -> None:
         await set_tenant_context(session, tenant_uuid)
         result = await session.execute(select(ExportJob).where(ExportJob.id == job_uuid))
         job = result.scalar_one()
-        job.status = "running"
+        job.status = JobStatus.RUNNING
         job.started_at = _dt.now(tz=UTC)
         await session.commit()
 
@@ -438,7 +439,7 @@ async def run_export_to_file(job_id: str, tenant_id: str, actor: str) -> None:
             job = result.scalar_one()
             job.data_json = payload
             job.file_size = len(data_bytes)
-            job.status = "completed"
+            job.status = JobStatus.COMPLETED
             job.completed_at = _dt.now(tz=UTC)
             await session.commit()
         except Exception as exc:
@@ -446,7 +447,7 @@ async def run_export_to_file(job_id: str, tenant_id: str, actor: str) -> None:
             err_result = await session.execute(select(ExportJob).where(ExportJob.id == job_uuid))
             failed_job = err_result.scalar_one_or_none()
             if failed_job is not None:
-                failed_job.status = "failed"
+                failed_job.status = JobStatus.FAILED
                 failed_job.error_message = str(exc)[:500]
                 failed_job.completed_at = _dt.now(tz=UTC)
                 await session.commit()

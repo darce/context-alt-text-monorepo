@@ -14,6 +14,7 @@ require_once __DIR__ . '/class-media-identities-controller.php';
 require_once __DIR__ . '/class-retention-controller.php';
 require_once __DIR__ . '/class-sync-status-controller.php';
 require_once __DIR__ . '/class-suggestions-controller.php';
+require_once __DIR__ . '/class-blobs-controller.php';
 require_once __DIR__ . '/../sovereign/class-cluster-facade.php';
 require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job-factory.php';
 
@@ -39,6 +40,7 @@ class RecognitionController {
 	private ?RetentionController $retentionController = null;
 	private ?SyncStatusController $syncStatusController = null;
 	private ?SuggestionsController $suggestionsController = null;
+	private ?BlobsController $blobsController = null;
 	private ?ClusterFacade $clusterFacade = null;
 
 	/**
@@ -95,6 +97,9 @@ class RecognitionController {
 		);
 		$this->register_routes_for(
 			static fn ( self $controller ): RecognitionRouteControllerInterface => $controller->getSuggestionsController()
+		);
+		$this->register_routes_for(
+			static fn ( self $controller ): RecognitionRouteControllerInterface => $controller->getBlobsController()
 		);
 	}
 
@@ -279,6 +284,14 @@ class RecognitionController {
 		}
 
 		return $this->suggestionsController;
+	}
+
+	private function getBlobsController(): BlobsController {
+		if ( null === $this->blobsController ) {
+			$this->blobsController = new BlobsController();
+		}
+
+		return $this->blobsController;
 	}
 
 	private function ensureProjectionControllers(): void {

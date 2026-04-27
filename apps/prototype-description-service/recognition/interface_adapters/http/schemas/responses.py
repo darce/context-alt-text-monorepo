@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from recognition.interface_adapters.http.blob_url import BlobUrl
 from recognition.interface_adapters.http.validation_utils import validate_uuid_format
 
 # Alias for backward compatibility with external usage
@@ -43,7 +44,7 @@ class ClusterMemberResponse(BaseModel):
     similarity: float
     confidence: float
     bbox: FaceBoxResponse
-    media_url: str | None = None
+    media_url: BlobUrl = None
 
 
 class IdentityResponse(BaseModel):
@@ -101,7 +102,7 @@ class RepresentativeResponse(BaseModel):
 
     id: str
     media_id: str | int
-    media_url: str | None = None
+    media_url: BlobUrl = None
     bbox: FaceBoxResponse | None = None
     is_pinned: bool = Field(False, alias="is_user_selected")
     debug_metrics: dict[str, Any] | None = None
@@ -167,10 +168,10 @@ class SuggestionResponse(BaseModel):
     cluster_label: str | None = None
     cluster_identity_count: int | None = None
     identity_media_id: int | None = None
-    identity_media_url: str | None = None
+    identity_media_url: BlobUrl = None
     identity_bbox: FaceBoxResponse | None = None
     representative_media_id: int | None = None
-    representative_media_url: str | None = None
+    representative_media_url: BlobUrl = None
     representative_bbox: FaceBoxResponse | None = None
     suggested_label: str | None = None
     suggested_label_source: Literal["identity", "roster", "similar_cluster", "none"] | None = None
@@ -205,10 +206,10 @@ class MergeSuggestionResponse(BaseModel):
     cluster_a_identity_count: int | None = None
     cluster_b_identity_count: int | None = None
     cluster_a_representative_media_id: int | None = None
-    cluster_a_representative_media_url: str | None = None
+    cluster_a_representative_media_url: BlobUrl = None
     cluster_a_representative_bbox: FaceBoxResponse | None = None
     cluster_b_representative_media_id: int | None = None
-    cluster_b_representative_media_url: str | None = None
+    cluster_b_representative_media_url: BlobUrl = None
     cluster_b_representative_bbox: FaceBoxResponse | None = None
     confidence_score: float | None = None
     expires_at: datetime | None = None

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Api;
 
 use function add_query_arg;
+use function ctype_digit;
 use function explode;
 use function function_exists;
 use function hash_hmac;
@@ -13,6 +14,7 @@ use function is_string;
 use function str_starts_with;
 use function rest_url;
 use function time;
+use function wp_get_attachment_url;
 use function wp_salt;
 
 /**
@@ -78,6 +80,17 @@ class BlobUrlRewriter {
 		[ $job_id, $media_id ] = explode( '/', $rest, 2 );
 		if ( '' === $job_id || '' === $media_id ) {
 			return $value;
+		}
+
+		// Prefer the direct WP media URL when the recognition `media_id` matches
+		// a real WP attachment. Bypasses the signed proxy entirely, so `<img>`
+		// loads hit the same uploads URL that cluster-card thumbnails use and
+		// avoid the recognition-service tenant-claim requirement on blob serve.
+		if ( ctype_digit( $media_id ) && function_exists( 'wp_get_attachment_url' ) ) {
+			$wp_url = wp_get_attachment_url( (int) $media_id );
+			if ( is_string( $wp_url ) && '' !== $wp_url ) {
+				return $wp_url;
+			}
 		}
 
 		$relative = 'acx/v1' . $value;

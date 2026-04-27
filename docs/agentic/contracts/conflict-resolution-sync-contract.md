@@ -58,3 +58,8 @@ This is an inferred runtime label, not a persisted source-of-truth field.
 - Prefer `accept_backend` and `merge` when rendering person-name conflict actions.
 - Keep `accepted` available for generic machine-accept flows where the backend still returns that spelling.
 - Treat `sync_mode` as informational UI metadata only.
+
+## Maintenance note
+
+- Maintenance slice `MAINT-scan-api-lint-20260427` touched the WordPress conflict/sync controllers, PHPUnit stubs, and local test fixtures to restore green checks.
+- That slice did not change the conflict REST payload shape, `allowed_resolutions` vocabulary, sync-status fields, or status-code semantics documented above.

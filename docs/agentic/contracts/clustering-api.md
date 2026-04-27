@@ -9,8 +9,14 @@ description: WordPress REST endpoints used by the admin UI. These proxy to /reco
 
 These endpoints are provided by the WordPress plugin (`apps/prototype-wp-alt-context`).
 They require a valid WP REST nonce header (`X-WP-Nonce`) and `manage_options`
-capability. The plugin injects `tenant_id` (md5 of the site URL) and forwards
-requests to the recognition service (`/recognition/*`).
+capability. The plugin injects the canonical tenant UUID derived by
+`TenantIdentity::derive_from_site_url()` and forwards requests to the
+recognition service (`/recognition/*`).
+
+Tenant identity note:
+
+- The plugin's canonical tenant identifier is the deterministic UUID emitted by `TenantIdentity::derive_from_site_url()`, not the legacy md5(site_url) hash.
+- Maintenance slice `MAINT-scan-api-lint-20260427` updated boundary-touching tests and static-analysis fixes without changing any request or response payload shape on this REST surface.
 
 Base path: `/wp-json/acx/v1/recognition`
 

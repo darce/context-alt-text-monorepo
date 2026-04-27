@@ -26,6 +26,7 @@ class DatabaseSettings:
     postgres_dsn: str
     postgres_sync_dsn: str
     pgvector_dimension: int
+    embedding_timeout_s: float
     pool_size: int
     max_overflow: int
     pool_timeout: int
@@ -136,6 +137,7 @@ def get_database_settings() -> DatabaseSettings:
     async_dsn = os.getenv("POSTGRES_DSN") or _render_default_async_dsn()
     sync_dsn = os.getenv("POSTGRES_SYNC_DSN") or _infer_sync_dsn(async_dsn)
     pgvector_dim = int(os.getenv("PGVECTOR_DIM", "512"))
+    embedding_timeout_s = float(os.getenv("DB_EMBEDDING_TIMEOUT_SECONDS", "30"))
     pool_size = int(os.getenv("DB_POOL_SIZE", "20"))
     max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "10"))
     pool_timeout = int(os.getenv("DB_POOL_TIMEOUT", "30"))
@@ -165,6 +167,7 @@ def get_database_settings() -> DatabaseSettings:
         postgres_dsn=async_dsn,
         postgres_sync_dsn=sync_dsn,
         pgvector_dimension=pgvector_dim,
+        embedding_timeout_s=embedding_timeout_s,
         pool_size=pool_size,
         max_overflow=max_overflow,
         pool_timeout=pool_timeout,

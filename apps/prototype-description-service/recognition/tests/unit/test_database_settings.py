@@ -91,6 +91,7 @@ def test_database_settings_expose_timeout_defaults(monkeypatch, tmp_path: Path) 
 
     assert settings.statement_timeout == "10s"
     assert settings.idle_in_txn_timeout == "30s"
+    assert settings.embedding_timeout_s == 30
     assert settings.observability_pool_size == 2
     assert settings.observability_max_overflow == 0
     assert settings.observability_pool_timeout == 5
@@ -157,6 +158,32 @@ def test_database_settings_can_override_breaker_values(monkeypatch, tmp_path: Pa
     assert settings.breaker_failure_threshold == 5
     assert settings.breaker_window_seconds == 45
     assert settings.breaker_half_open_after_seconds == 12
+
+
+def test_database_settings_can_override_embedding_timeout(monkeypatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+
+    for key in (
+        "PGUSER",
+        "PGPASSWORD",
+        "PGHOST",
+        "PGPORT",
+        "DB_NAME",
+        "POSTGRES_DSN",
+        "POSTGRES_SYNC_DSN",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("DB_EMBEDDING_TIMEOUT_SECONDS", "7.5")
+    monkeypatch.setattr(settings_module, "ENV_FILE", env_file)
+
+    settings_module.get_database_settings.cache_clear()
+    try:
+        settings = settings_module.get_database_settings()
+    finally:
+        settings_module.get_database_settings.cache_clear()
+        monkeypatch.delenv("DB_EMBEDDING_TIMEOUT_SECONDS", raising=False)
+
+    assert settings.embedding_timeout_s == 7.5
 
 
 def test_database_settings_can_override_observability_pool_values(monkeypatch, tmp_path: Path) -> None:

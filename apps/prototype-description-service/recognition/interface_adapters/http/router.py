@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from recognition.interface_adapters.http.routers import (
     analyze,
     analyze_multipart,
+    blobs,
     clusters,
     diagnostics,
     events,
@@ -23,6 +24,7 @@ router = APIRouter(tags=["recognition"])
 # Mount sub-routers
 router.include_router(analyze.router)
 router.include_router(analyze_multipart.router)
+router.include_router(blobs.router)
 router.include_router(clusters.router)
 router.include_router(events.router)
 router.include_router(suggestions.router)

@@ -12,17 +12,14 @@ On every session (cold start, mid-task re-entry, lane inherit):
 
 0. **Identify the task first.** Before `make context` or any MCP read that resolves the active task by cwd, decide which task owns this scope:
    - **Existing feature-branch task (resumption):** proceed to step 1 from inside the task's `target_worktree_path`.
-   - **Ad-hoc / new work on `main` (e.g. `/branch-review`, audits, patches):** run `set_handoff_state(task_ref="MAINT-<slug>-<YYYYMMDD>", objective="...", status="in_progress")` FIRST, then pass `task_ref="MAINT-<slug>-<YYYYMMDD>"` to subsequent reads. Do **not** rely on cwd-based resolution on `main` — two or more active main-branch tasks trigger `Ambiguous active task` errors.
+    - **Ad-hoc / new work on `main` (e.g. `/branch-review`, audits, patches):** run `make maint-start SLUG=<slug> OBJECTIVE="..."` FIRST. It registers the `MAINT-<slug>-<YYYYMMDD>` task against the repo root so later reads do not depend on cwd-only resolution.
    - **Ambiguous errors on startup** (`Ambiguous active task. Known task_refs: ...`) mean step 0 was skipped: either create/select the task_ref and pass it explicitly, or archive stale MAINT-* rows in one shot with `make maint-archive-stale` (add `MAINT_ARCHIVE_ARGS="--yes"` to skip the interactive prompt). `make context` also exits `2` (distinct from infra error `1`) on this ambiguity and prints the same hint.
-1. **Run `make context`** in a standalone shell call to verify your shell is in the right worktree on the right branch. Do not batch it with MCP loading or other startup commands. The script reads `target_worktree_path` and `target_branch` from the active task and emits a warning on drift. **Do not record any handoff state from a drifted shell.** If you see a drift warning, `cd` to the canonical path before continuing.
+1. **Run `make context`** in a standalone shell call. It verifies branch/worktree alignment and prints a small startup summary (active task identity, open findings count, role-routing reminder). Do not batch it with MCP loading or other startup commands. If you see a drift warning, `cd` to the canonical path before continuing.
 2. **Apply the [MCP Loading Protocol](docs/agentic/rules/mcp-loading-protocol.md)** before fetching state. Read [`docs/agentic/maps/mcp-tool-routing.yaml`](docs/agentic/maps/mcp-tool-routing.yaml) and surface only the MCP servers whose triggers match the current prompt / task scope. `agent-handoff-mcp` is always loaded; `agent-orchestrator-mcp`, `context7`, and `computer-use` are on-demand. Concretely on Claude Code: `ToolSearch select:mcp__<server>__*` to surface a deferred server when its triggers fire.
-3. Query MCP handoff state: `get_handoff_state(sections="identity")` for routine task checks; full `get_handoff_state(task_ref="<task>")` only for hot-state load.
-4. If in a lane, run `make lane-inbox` to pick up routed findings and dispatch messages.
-5. Load role routing below; read the linked context map, guidelines, and testing guide.
-6. Check open findings: `review_findings(review={"operation":"list","status":"open"})`.
-7. Verify contract surface before writing code ([contracts/](docs/agentic/contracts/)).
-8. Decide whether `ctx7` is needed (upstream library behavior; see ctx7 criteria in instructions.md).
-9. Ensure the work has an MCP task. **Planning artifacts now require branch isolation from the first file edit** — run `make task-start TASK=<id> OBJECTIVE="..."` before writing scope notes, assessments, specs, ADRs, or task plans so the branch + worktree + MCP target exist up front. Pure in-chat intake questions can happen before branch creation. Implementation continues on that same feature branch after the plan is approved. See [planning pipeline](docs/agentic/rules/planning-pipeline.md) for the full flow.
+3. **If in a lane, run `make lane-inbox`.** Pick up routed findings and dispatch messages before editing.
+4. **Load role routing below.** Use the Role Selection table that `make context` points you at.
+5. **Verify boundaries only when relevant.** Check contracts for schema/service/MCP boundary changes and decide whether `ctx7` is needed for upstream-library behavior.
+6. **Ensure the work has the right MCP task.** Planning artifacts still require branch isolation from the first file edit — run `make task-start TASK=<id> OBJECTIVE="..."` before writing scope notes, assessments, specs, ADRs, or task plans so the branch + worktree + MCP target exist up front.
 
 If MCP tool calls unavailable (ToolSearch returns nothing for `mcp__agent-handoff-mcp__*`), or if you need a query the MCP tools don't directly expose: **use the Python API via Bash as the primary fallback.**
 

@@ -41,8 +41,6 @@ def resolve_path_branch(abs_path: str) -> str | None:
     except (OSError, RuntimeError):
         return None
     anchor = candidate if candidate.is_dir() else candidate.parent
-    # Walk upward until we find an existing directory; ``--show-current``
-    # needs a real cwd, and the candidate file may not exist yet.
     while not anchor.exists():
         parent = anchor.parent
         if parent == anchor:
@@ -124,10 +122,6 @@ def check_file_edit(
         relative_path = to_repo_relative(raw_path, repo_root)
         if not is_branch_isolation_protected_path(relative_path, policy):
             continue
-        # Per-path worktree resolution: a file living inside a linked
-        # worktree on a feature branch is not a main-branch edit even when
-        # the harness cwd reports ``main``. Fall back to the harness
-        # branch when the path is not inside any git working tree.
         per_path_branch = resolve_path_branch(raw_path)
         effective_branch = per_path_branch if per_path_branch else branch
         if effective_branch in protected_branches:

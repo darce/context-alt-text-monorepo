@@ -34,7 +34,7 @@ docs/
 - **Research and comparison notes** -- `docs/research/`
 - **Historical retrospectives and superseded docs** -- `docs/archive/`
 - **Assessments and investigations** -- `docs/assessments/`
-- **Specs** -- `docs/specs/`
+- **Specs** -- `docs/specs/` (monorepo default; package-local only when the package owns the full planning surface)
 - **Architecture Decision Records** -- `docs/adrs/`
 - **Imported external materials** -- `literature/` (top-level, gitignored)
 - **Machine-readable schemas** -- `packages/shared-contracts/`

@@ -102,7 +102,7 @@ Findings that fail code verification must be corrected or removed before spec wo
 
 **Artifact:** `*-spec.md`
 **Template:** [SPEC.template.md](../templates/SPEC.template.md)
-**Location:** Package-local `docs/specs/`
+**Location:** Monorepo `docs/specs/` by default. Use package-local `packages/<pkg>/docs/specs/` or `apps/<app>/docs/specs/` only when that package already owns the surrounding planning surface and the spec is intentionally local to that package.
 **Entry:** `make plan-review DOC=<path>` · **Skill:** `planning-review` _(Phase 2, E17)_
 
 ### Purpose

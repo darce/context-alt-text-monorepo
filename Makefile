@@ -129,7 +129,11 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
+<<<<<<< HEAD
 .PHONY: help check-all check-frontend lint-all format-all test-all clean-all reset-local fix-php-style dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context dashboard worktree-audit worktree-prune task-plan-audit generate-agent-workflows check-agent-workflows check-skills check-harness-sync lint-hoisted-paths task-start task-finish check-main-clean install-git-hooks
+=======
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends context dashboard worktree-audit worktree-prune task-plan-audit generate-agent-workflows check-agent-workflows check-skills check-harness-sync lint-hoisted-paths maint-start task-start task-finish check-main-clean install-git-hooks
+>>>>>>> 06c524aa (docs(agentic): streamline maint startup workflow)
 
 # Default target
 help:
@@ -176,6 +180,8 @@ help:
 	@echo "    Route open handoff review findings, blockers, and next actions from the orchestrator root to the correct worker lanes."
 	@echo "  make handoff-inbox TASK=<task-ref> [LANE=<lane>]"
 	@echo "    Poll open worker-to-orchestrator handoff messages and the latest worker reports from root."
+	@echo "  make maint-start SLUG=<slug> OBJECTIVE=\"...\""
+	@echo "    Register a MAINT-* task on main/master for permitted ad-hoc docs/config work."
 	@echo "  make review-dispatch TASK=<task-ref> [DRY_RUN=1]"
 	@echo "    Backward-compatible alias for handoff-dispatch."
 	@echo "  make plan-analyze DOC=<path>"
@@ -533,6 +539,13 @@ worktree-prune:
 # Usage: make maint-archive-stale [MAINT_ARCHIVE_ARGS="--yes"]
 maint-archive-stale:
 	@$(MCP_PYTHON) scripts/maint_archive_stale.py $(MAINT_ARCHIVE_ARGS)
+
+# Convenience wrapper that registers a MAINT-* task on the root main/master
+# worktree for permitted docs/config maintenance without creating a feature
+# branch or linked worktree.
+# Usage: make maint-start SLUG=<slug> OBJECTIVE="..."
+maint-start:
+	@./scripts/maint-start.sh "$(SLUG)" "$(OBJECTIVE)"
 
 task-plan-audit:
 	@$(MCP_PYTHON) scripts/task_plan_audit.py

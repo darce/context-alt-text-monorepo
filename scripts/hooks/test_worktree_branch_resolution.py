@@ -68,20 +68,13 @@ def _make_repo_with_feature_worktree(tmp_path: Path) -> tuple[Path, Path]:
 def test_resolve_path_branch_returns_worktree_branch(tmp_path: Path) -> None:
     primary, feature_root = _make_repo_with_feature_worktree(tmp_path)
 
-    # File that exists in primary -> reports main.
     assert resolve_path_branch(str(primary / "README.md")) == "main"
-    # File that physically lives in the feature-branch worktree -> reports feature/x,
-    # even though its path is OUTSIDE the primary worktree.
     assert resolve_path_branch(str(feature_root / "README.md")) == "feature/x"
 
 
 def test_resolve_path_branch_handles_nonexistent_file_in_worktree(tmp_path: Path) -> None:
-    """A new file under an existing worktree directory still resolves to that
-    worktree's branch — important because Edit/Write often target paths that
-    do not yet exist on disk."""
     _, feature_root = _make_repo_with_feature_worktree(tmp_path)
     target = feature_root / "scripts" / "hooks" / "new_file.py"
-    # Parent directory does not exist; resolver walks upward to feature_root.
     assert resolve_path_branch(str(target)) == "feature/x"
 
 
@@ -93,8 +86,6 @@ def test_resolve_path_branch_returns_none_outside_git(tmp_path: Path) -> None:
 
 
 def test_check_file_edit_allows_feature_worktree_file_when_harness_on_main(tmp_path: Path) -> None:
-    """The original defect: harness reports ``main`` (project root), but the
-    file lives in a feature-branch worktree. The edit must be allowed."""
     primary, feature_root = _make_repo_with_feature_worktree(tmp_path)
     target = feature_root / "scripts" / "thing.py"
     result = check_file_edit(
@@ -109,8 +100,6 @@ def test_check_file_edit_allows_feature_worktree_file_when_harness_on_main(tmp_p
 
 
 def test_check_file_edit_still_blocks_main_worktree_file(tmp_path: Path) -> None:
-    """Regression: a protected-extension write to a file inside the primary
-    main-branch worktree must still be blocked."""
     primary, _ = _make_repo_with_feature_worktree(tmp_path)
     target = primary / "scripts" / "thing.py"
     result = check_file_edit(
@@ -128,21 +117,15 @@ def test_check_file_edit_still_blocks_main_worktree_file(tmp_path: Path) -> None
 
 
 def test_scan_bash_command_allows_write_to_feature_worktree(tmp_path: Path) -> None:
-    """Bash variant of the fix: ``cat > <feature-worktree-file>`` must not
-    be blocked when the file lives on a feature branch, even though the
-    harness cwd is on main."""
     primary, feature_root = _make_repo_with_feature_worktree(tmp_path)
     target = feature_root / "scripts" / "thing.py"
     command = f"cat > {target} <<EOF\nx\nEOF"
     blocked = scan_bash_command(command, primary, _policy())
-    # Only formatter-labelled entries (none expected here) or main-worktree
-    # paths should appear; the feature-worktree path must not be blocked.
     real_path_blocks = [b for b in blocked if not b.endswith("(formatter)")]
     assert not real_path_blocks, f"feature-worktree write was blocked: {real_path_blocks!r}"
 
 
 def test_scan_bash_command_still_blocks_main_worktree_write(tmp_path: Path) -> None:
-    """Regression: ``cat > <main-worktree-file>`` is still blocked."""
     primary, _ = _make_repo_with_feature_worktree(tmp_path)
     target = primary / "scripts" / "thing.py"
     command = f"cat > {target} <<EOF\nx\nEOF"
@@ -152,9 +135,6 @@ def test_scan_bash_command_still_blocks_main_worktree_write(tmp_path: Path) -> N
 
 
 def test_scan_bash_command_blocks_mixed_main_and_feature_paths(tmp_path: Path) -> None:
-    """A bash command that writes to BOTH a feature-worktree file and a
-    main-worktree file must still report the main path as blocked. The
-    safety contract is: any single touched main path blocks the command."""
     primary, feature_root = _make_repo_with_feature_worktree(tmp_path)
     feature_target = feature_root / "scripts" / "ok.py"
     main_target = primary / "scripts" / "bad.py"

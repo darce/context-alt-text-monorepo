@@ -130,7 +130,7 @@ Cold start vs. mid-task re-entry:
 
 If MCP handoff is unavailable:
 
-- `DASHBOARD.txt` = stale human-readable fallback; `CURRENT_TASK.json` = machine-readable state.
+- `DASHBOARD.txt` = stale human-readable fallback; `CURRENT_TASK.json` = optional task-scoped export only if an explicit render wrote it; do not assume it exists or is current.
 - Treat missing MCP as a blocker; record/report when access returns.
 
 ---
@@ -306,7 +306,7 @@ Multiple concurrent agents share state through MCP handoff tools.
 Tiered memory. Load only what the current slice needs.
 
 - **Hot** (always at startup): objective, open findings, open blockers, latest verification, latest 3 decisions.
-- `CURRENT_TASK.json` must expose the latest decision separately from the recent-decisions list.
+- When `CURRENT_TASK.json` is rendered explicitly, it should expose the latest decision separately from the recent-decisions list.
 - **Warm** (on demand): recent worker reports, lane activity, active artifacts, nearby plan-cursor history.
 - **Cold** (targeted search only): archived findings, superseded plan cursors, verbose logs, large artifacts.
 
@@ -315,7 +315,7 @@ Tiered memory. Load only what the current slice needs.
 - One `task_ref` per reviewable feature or task-plan stream — not per commit, not per epic.
 - Epic-level `task_ref` for planning/coordination only. Switch to implementation task when coding starts.
 - Stay on same `task_ref` while objective and review packet are "the same work."
-- Switch when the objective changes or `CURRENT_TASK.json` would show the wrong latest decision.
+- Switch when the objective changes or the active task would otherwise surface the wrong latest decision in task-scoped handoff state.
 - Do not create a new `task_ref` per micro-slice. Multiple `slice_complete_*` decisions under one task until done.
 
 Loading rules:
@@ -425,7 +425,7 @@ Task lifecycle:
 - `close_slice` keeps the task `in_progress` by design — it does not close the task.
 - `archive_task_state` snapshots the current task state into archive storage but preserves whatever status the task had at archive time. If you archive while still `in_progress`, the dashboard will permanently show `in_progress` for that task.
 - Correct close sequence: `update_task_status(task_ref=..., status="done")` then `archive_task_state(task_ref=...)`. The reverse order also works: archive first, then `update_task_status` updates the archived snapshot.
-- Non-archived, non-active tasks default to `active` in the CURRENT_TASK.json dashboard. This is a rendering fallback, not stored state. To clear orphaned tasks, archive them and set status to `done`.
+- Non-archived, non-active tasks default to `active` in task-scoped current-task renders. This is a rendering fallback, not stored state. To clear orphaned tasks, archive them and set status to `done`.
 
 ### Multi-Agent Worktree Orchestration (MANDATORY for delegated implementation)
 

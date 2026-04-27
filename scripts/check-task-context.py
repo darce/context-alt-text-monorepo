@@ -12,6 +12,7 @@ Run via `make context` at the start of every session.
 from __future__ import annotations
 
 import json
+import importlib
 import os
 import subprocess
 import sys
@@ -32,6 +33,11 @@ TERMINAL_STATUSES = frozenset({"done"})
 
 def _print_aligned(emoji: str, label: str, value: str) -> None:
     print(f"{emoji} {label:18s} {value}")
+
+
+def _import_handoff_attr(module_name: str, attr: str):
+    module = importlib.import_module(f"agent_handoff_mcp.{module_name}")
+    return getattr(module, attr)
 
 
 def _detect_branch() -> str | None:

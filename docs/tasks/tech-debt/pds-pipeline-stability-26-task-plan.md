@@ -21,12 +21,12 @@ Land five literature-backed fixes from [docs/assessments/clustering-pipeline-pos
 
 ## Problem Statement
 
-Current state has three concrete stability gaps and two readability gaps:
+Current state has three concrete stability gaps and two readability gaps. The single external adapter in scope is the InsightFace embedding/detector backend (`InsightFaceAdapter`). The auto-labeler under `recognition/application/labeling/auto_labeler.py` is a local DB allocator + pure helper, not a remote integration, and is **out of scope** for adapter-stability wrapping (see Not-Doing list below).
 
-1. External adapter calls (`InsightFaceEmbeddingGenerator.generate` and the auto-labeler entrypoint) have no per-call timeout and are caught by a bare `except Exception` that swallows failures with a log line. A hung upstream blocks an asyncio task indefinitely.
-2. The same calls run inside open `AsyncSession` scopes (e.g. [scan/service.py:100](../../../apps/prototype-description-service/recognition/application/scan/service.py#L100) inside the `save_job_results` flow), so a slow upstream also holds a Postgres transaction open until `idle_in_transaction_session_timeout` kills it.
-3. There is no application-boundary circuit breaker around external adapters. The only breaker (`clustering_circuit_breaker.py`) wraps the HTTP admission endpoint, so adapter saturation degrades latency silently rather than shedding load fast.
-4. Job-status assignments and comparisons in the clustering and scan paths use bare strings (`"running"`, `"completed"`, `"failed"`, `"pending"`) rather than the existing `JobStatus(StrEnum)` at [domain/job.py:12](../../../apps/prototype-description-service/recognition/domain/job.py#L12). Typos pass type-check; an exhaustive switch is impossible.
+1. The InsightFace adapter call (`InsightFaceEmbeddingGenerator.generate` at [generator.py:99](../../../apps/prototype-description-service/recognition/application/embedding/generator.py#L99)) has no per-call timeout and is caught by a bare `except Exception` that swallows failures with a log line. A hung upstream blocks an asyncio task indefinitely.
+2. The legacy/monolithic `ScanService.process_scan_job` wrapper at [scan/service.py:148](../../../apps/prototype-description-service/recognition/application/scan/service.py#L148) calls `mark_job_running` → `_detector.detect` → `save_job_results` in one method. The two `save_job_results` / `mark_job_running` commits do bracket the call, but the wrapper still hides the boundary and is the call shape used by `analyze_media` and tests. The newer `recognition/application/tasks/scan.py:process_scan_job_inline` already implements the explicit three-phase split (mark-running short tx → inference no DB → save-results short tx); this task formalizes that pattern as the canonical shape and deprecates the monolithic wrapper.
+3. There is no application-boundary circuit breaker around the InsightFace adapter. The only breaker (`clustering_circuit_breaker.py`) wraps the HTTP admission endpoint, so adapter saturation degrades latency silently rather than shedding load fast.
+4. Job-status assignments and comparisons in the clustering and scan paths use bare strings (`"running"`, `"completed"`, `"failed"`, `"pending"`) rather than the existing `JobStatus(StrEnum)` at [domain/job.py:12](../../../apps/prototype-description-service/recognition/domain/job.py#L12). Typos pass type-check; an exhaustive switch is impossible. Confirmed sites at slice-2 prep grep include `scan/service.py:89`, `routers/clusters.py:~361`, `deps/stores.py:40,55`, `routers/analyze.py:266`, `routers/analyze_multipart.py:368`.
 5. `cluster_unclustered_identities` and `IncrementalClusteringRunner.__init__` each take 14 keyword arguments and duplicate them ([orchestrator.py:54-113](../../../apps/prototype-description-service/recognition/application/orchestration/clustering/orchestrator.py#L54)). Adding any new dependency (timeout config, breaker) makes the parameter list worse before it gets better, violating sr-008.
 
 The literature crosswalk diagnoses these as Nygard's *Use Timeouts*, *Integration Points*, *Cascading Failures*, *Circuit Breaker* (chs. 4-5), Fowler's *Replace Magic Number with Symbolic Constant* (ch. 9), and *Introduce Parameter Object* (ch. 6).
@@ -37,7 +37,7 @@ The literature crosswalk diagnoses these as Nygard's *Use Timeouts*, *Integratio
 - **No new infra dependencies.** No Prometheus client, no OTel SDK, no Redis-backed breaker, no new sidecars. FastAPI + asyncpg + SQLAlchemy + stdlib only.
 - **No DB schema changes.** Status columns remain `text`. Any SQLAlchemy `Enum(JobStatus, native_enum=False)` wiring is opt-in per column we touch and does not change column type.
 - **No worker / admission-lock concurrency changes.** F-2's phase split touches `scan/service.py` boundaries only. `scan_worker` reclaim semantics, the `with_for_update()` admission lock, and clustering-pool sizing are out of scope.
-- **Idempotency must survive the phase split.** F-2 may break atomicity of "reserve + analyze + persist"; the post-split persistence step must use a deterministic idempotency key and `ON CONFLICT DO NOTHING` (rg-002 spirit: do not split an atomic write into multiple non-idempotent steps).
+- **Idempotency relies on existing constraints, not new schema.** The persist step is already idempotent via `MediaIdentity`'s `unique_media_identity` constraint on `(tenant_id, media_id, identity_type, bbox_x, bbox_y)` ([identity.py:83](../../../apps/prototype-description-service/db/models/identity.py#L83)) plus the Identity-ID-Recycling logic in `ScanService._persist_identities`. F-2 must preserve this property — no new `ON CONFLICT` clause keyed on `(job_id, media_id)` is added (which would require a schema change ruled out by the no-DB-schema-changes constraint), and the persist phase must remain replayable against the existing constraint (rg-002 spirit: do not split an atomic write into multiple non-idempotent steps).
 
 ## Workflow Principles
 
@@ -49,9 +49,9 @@ The literature crosswalk diagnoses these as Nygard's *Use Timeouts*, *Integratio
 
 ## Terminology
 
-- **Adapter** — concrete implementation of an external integration (`InsightFaceAdapter`, auto-labeler client). Lives under `recognition/application/embedding/` or `recognition/application/labeling/`.
+- **Adapter** — concrete implementation of a remote/external integration. In this task the only adapter is `InsightFaceAdapter` (under `recognition/application/embedding/` and `recognition/infrastructure/embeddings/`). The auto-labeler under `recognition/application/labeling/` is a local DB allocator + pure helper, not an adapter.
 - **AdapterCircuitBreaker** — new (or refactored-out) reusable breaker wrapping adapter calls at the application boundary. Distinct from the existing HTTP-admission `clustering_circuit_breaker`.
-- **Phase split** — refactoring `scan/service.py` so the external adapter call sits between two committed transactions, never inside one.
+- **Phase split** — making the explicit reserve-commit / detect / save-results-commit shape (already realized in `tasks/scan.py:process_scan_job_inline`) the canonical scan call pattern, replacing the legacy monolithic `ScanService.process_scan_job` wrapper.
 - **`JobStatus`** — the existing `StrEnum` at [domain/job.py:12](../../../apps/prototype-description-service/recognition/domain/job.py#L12) (`PENDING`/`RUNNING`/`COMPLETED`/`FAILED`).
 - **`JobPhase`** — the existing `StrEnum` at [domain/job.py:30](../../../apps/prototype-description-service/recognition/domain/job.py#L30) (`QUEUED`/`DETECTING`/`CLUSTERING`/`RETRYING`/`AWAITING_PROJECTION`/`FAILED`/`COMPLETE`).
 
@@ -59,7 +59,7 @@ The literature crosswalk diagnoses these as Nygard's *Use Timeouts*, *Integratio
 
 - **Works today:** chunked durable clustering, three-pool engine bulkhead, admission-side circuit breaker, adaptive chunk sizing (EWMA), per-tenant RLS via `SET LOCAL`, idempotent member writes via `ON CONFLICT DO NOTHING`. None of these regress in this task.
 - **Broken/drifting:** items 1-5 in Problem Statement above.
-- **Misleading:** the existence of `JobStatus(StrEnum)` plus the prevalence of bare-string assignments suggests a partial enum migration that stalled. Consumers (`job_utils.py`) already import the enum, but writers (`scan/service.py:89`, `routers/clusters.py:361`, `deps/stores.py:40,55`) still use string literals.
+- **Misleading:** the existence of `JobStatus(StrEnum)` plus the prevalence of bare-string assignments suggests a partial enum migration that stalled. Consumers (`job_utils.py`) already import the enum, but writers across the scan path (`scan/service.py:68,89,143`, `routers/clusters.py:~361`, `routers/analyze.py:266`, `routers/analyze_multipart.py:368`, `deps/stores.py:40,55`) still use string literals. Likewise, the `tasks/scan.py:process_scan_job_inline` worker entrypoint already implements the explicit `commit → call → commit` shape — the legacy `ScanService.process_scan_job` wrapper is what hides the boundary.
 
 ## Target Outcome
 
@@ -96,12 +96,11 @@ Five small refactors landed in dependency order, each its own slice with tests. 
 | --- | --- | --- |
 | backend | `recognition/application/orchestration/clustering/orchestrator.py` | Group 14 kwargs into 3 dataclasses; refactor `_persist_and_cache_new_clusters` (L374) signature similarly |
 | backend (new) | `recognition/application/orchestration/clustering/dependencies.py` (or sibling) | Define `ClusteringDependencies`, `ClusteringRuntimeConfig`, `ClusteringContext` frozen dataclasses |
-| backend | `recognition/interface_adapters/http/routers/clusters.py` (~L361), `recognition/interface_adapters/http/deps/stores.py` (L40, L55), `recognition/application/scan/service.py` (L89), other clustering/scan-path string-status sites | Replace bare-string status writes/comparisons with `JobStatus`/`JobPhase` members |
+| backend | Bare-string status sites confirmed at slice-2 prep grep: `recognition/interface_adapters/http/routers/clusters.py` (~L361), `recognition/interface_adapters/http/routers/analyze.py` (L266), `recognition/interface_adapters/http/routers/analyze_multipart.py` (L368), `recognition/interface_adapters/http/deps/stores.py` (L40, L55), `recognition/application/scan/service.py` (L68 `analyze_media`, L89 `mark_job_running`, L143 `save_job_results`). Slice-2 grep gate widens to all of these surfaces. | Replace bare-string status writes/comparisons with `JobStatus`/`JobPhase` members |
 | backend (new) | `recognition/application/integrations/timeouts.py` | `wait_for_adapter(coro, *, timeout, adapter_name)` helper raising typed `AdapterTimeoutError` (parity with `integrations/circuit_breaker.py`) |
 | backend (new) | `recognition/application/integrations/circuit_breaker.py` | `AdapterCircuitBreaker` (state machine extracted from / shared with `clustering_circuit_breaker.py`) |
-| backend | `recognition/application/embedding/generator.py` (~L99) | Wrap `await self._adapter.analyze(...)` in timeout + breaker; remove blanket `except Exception` swallowing |
-| backend | `recognition/application/labeling/` (call site TBD slice 3) | Same wrapping pattern at the auto-labeler entrypoint |
-| backend | `recognition/application/scan/service.py` (`save_job_results`, ~L94+) | Three explicit phases: reserve+commit, external call (no open tx), persist+commit with `ON CONFLICT DO NOTHING` keyed on `(job_id, media_id)` |
+| backend | `recognition/application/embedding/generator.py` (~L99) | Wrap `await self._adapter.analyze(...)` in timeout + breaker; remove blanket `except Exception` swallowing. Sole adapter wrapping site. |
+| backend | `recognition/application/scan/service.py` (`process_scan_job` L148, `analyze_media` L51) | Replace the monolithic `process_scan_job` wrapper with an explicit reserve-commit / detect / save-results-commit shape that mirrors `tasks/scan.py:process_scan_job_inline`. `analyze_media` either composes the same three phases or is deprecated in favor of the explicit caller. No new `ON CONFLICT` clause; idempotency is preserved by the existing `unique_media_identity` constraint and `_persist_identities` recycling logic. |
 | settings | `recognition/application/settings/adapters.py` (new, sibling to existing `adaptive.py`/`clustering.py`/`scan.py`) | Add per-adapter `timeout_s` and breaker config (validated at load time per rg-008) |
 | docs | `docs/adrs/ADR-008-external-adapter-stability-pattern.md` (new) | Codify `commit → call → commit`, `AdapterCircuitBreaker` reuse, per-adapter timeout convention, `JobStatus`/`JobPhase` location |
 
@@ -124,7 +123,7 @@ Five small refactors landed in dependency order, each its own slice with tests. 
 - **Runtime-parity / environment checks:**
   - `cd apps/prototype-description-service && python -m pytest recognition/tests/integration/test_clustering_pool_isolation.py -x` (confirms pool bulkhead still holds after orchestrator refactor)
 - **Contract/fixture verification:**
-  - Manual grep gate: `! grep -rn 'status\s*=\s*"\(running\|completed\|failed\|pending\)"' apps/prototype-description-service/recognition/application/scan apps/prototype-description-service/recognition/application/orchestration apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters.py apps/prototype-description-service/recognition/interface_adapters/http/deps/stores.py` returns no matches at slice 2 close.
+  - Manual grep gate: `! grep -rnE 'status\s*=\s*"(running|completed|failed|pending|processing|cancelled|skipped)"' apps/prototype-description-service/recognition/application/scan apps/prototype-description-service/recognition/application/orchestration apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters.py apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze_multipart.py apps/prototype-description-service/recognition/interface_adapters/http/deps/stores.py` returns no matches at slice 2 close. Retention/export router sites (`retention.py`, `analyze.py:266` is in scope but retention is not — see Not-Doing) remain bare strings until a follow-up task.
 - **Manual verification:**
   - None required — no UI surface changes. Document the absence in the slice-complete decision.
 
@@ -160,7 +159,7 @@ Proof:
 
 Changes:
 
-- Grep clustering + scan paths for bare-string status assignments and comparisons; replace with `JobStatus.<MEMBER>` / `JobPhase.<MEMBER>`.
+- Grep clustering + scan paths for bare-string status assignments and comparisons; replace with `JobStatus.<MEMBER>` / `JobPhase.<MEMBER>`. Surface includes `scan/service.py`, `orchestration/`, `routers/clusters.py`, `routers/analyze.py`, `routers/analyze_multipart.py`, `deps/stores.py` (including the in-memory fallback at L40, L55).
 - If grep finds a status value not in either enum, extend `JobStatus` (preferred) or `JobPhase` and call out the addition in the slice-complete decision.
 - Wire SQLAlchemy `Enum(JobStatus, native_enum=False)` only on columns this slice touches; do not change DB schema.
 - New test `recognition/tests/unit/test_job_status_enum_adoption.py` asserts the grep gate (no bare-string status literals in scan + clustering paths). Lives under the default pytest collection root, so `make check-all` (which runs the recognition suite without `-k` filters) enforces the gate on every CI run — no separate `make` target required.
@@ -173,7 +172,7 @@ Proof:
 
 ### Slice 3: Adapter timeout helper + `AdapterCircuitBreaker` (F-1, F-3)
 
-**Goal:** Bound every external adapter call with `asyncio.wait_for` and an `AdapterCircuitBreaker`. Wire both at `InsightFaceEmbeddingGenerator.generate` and the auto-labeler entrypoint at `recognition/application/labeling/auto_labeler.py` (confirmed present).
+**Goal:** Bound the InsightFace adapter call with `asyncio.wait_for` and an `AdapterCircuitBreaker`. Wired at `InsightFaceEmbeddingGenerator.generate` (the sole external adapter seam in the recognition pipeline). The auto-labeler is local DB + pure logic and is **explicitly out of scope** for adapter wrapping (it has no remote latency or failure mode to bound).
 
 **Breaker configuration surface** (frozen dataclass `AdapterBreakerConfig` in the new settings module, validated at load time per rg-008):
 
@@ -185,7 +184,7 @@ Proof:
 | `success_close_threshold` | 1 |
 | `open_state_cooldown_seconds` | 30 |
 
-Per-adapter timeout: `embedding_timeout_s` (default 10), `auto_labeler_timeout_s` (default 15). Defaults must be overridable via environment-driven settings.
+Per-adapter timeout: `embedding_timeout_s` (default 10). Sole adapter setting; overridable via environment-driven settings.
 
 **Failure handling at the application boundary** (resolves the gap left by removing the blanket `except`):
 
@@ -197,7 +196,7 @@ Changes:
 
 - New `wait_for_adapter(coro, *, timeout, adapter_name)` helper raising typed `AdapterTimeoutError`. Timeout sourced from `recognition/application/settings/adapters.py`.
 - New `AdapterCircuitBreaker` in `recognition/application/integrations/circuit_breaker.py`. Slice prep grep decides extract-vs-new against the existing `clustering_circuit_breaker.py` state machine; if extraction is invasive, ship a minimal new breaker and defer the existing-breaker refactor to a follow-up task (out of slice scope).
-- Wrap `embedding/generator.py:99` and `labeling/auto_labeler.py` adapter call sites.
+- Wrap the `embedding/generator.py:99` adapter call site only. Auto-labeler intentionally not wrapped (local DB + pure logic).
 - Remove blanket `except Exception` from generator; declare typed propagation contract above.
 - Update orchestrator/scan-service catch sites to apply the failure-handling mapping; cover with unit tests.
 - New unit tests: timeout fires; breaker opens after N failures; half-open probe; closed→open→half-open transitions; orchestrator/scan caller maps typed errors to expected `JobStatus`/`JobPhase`.
@@ -207,20 +206,27 @@ Proof:
 - `pytest recognition/tests/unit/test_wait_for_adapter.py recognition/tests/unit/test_adapter_circuit_breaker.py -x`
 - Existing embedding tests pass unchanged.
 
-### Slice 4: `commit → call → commit` phase split for scan jobs + ADR (F-2)
+### Slice 4: Canonicalize `commit → call → commit` for scan jobs + ADR (F-2)
 
-**Goal:** Refactor `scan/service.py:save_job_results` so the external adapter call sits between two committed transactions. Land the ADR codifying the pattern.
+**Goal:** Make the explicit three-phase shape from `tasks/scan.py:process_scan_job_inline` the canonical scan call pattern, and remove or formalize the legacy monolithic `ScanService.process_scan_job` wrapper. Land the ADR codifying the pattern.
+
+**Current-state baseline** (verified at plan time, commit `21d1a90e`):
+
+- `recognition/application/tasks/scan.py:process_scan_job_inline` already implements the explicit split: short tx for mark-running → no-DB inference → short tx for save-results.
+- `ScanService.mark_job_running` (L83-92) and `ScanService.save_job_results` (L94-146) each commit on exit, so the *individual* helpers respect the boundary.
+- The gap is the legacy wrapper `ScanService.process_scan_job` (L148-169) and `ScanService.analyze_media` (L51-81), which call the helpers in one method and obscure the boundary; tests and `analyze_media` still hit the wrapper. No transaction is currently held across the adapter call by the `tasks/scan.py` path; the risk is that a future caller adds a new code path that *does* hold one.
 
 Changes:
 
-- Phase 1: reserve job + commit. Phase 2: external adapter call (no open tx). Phase 3: persist results + commit, idempotent on `(job_id, media_id)` via `ON CONFLICT DO NOTHING`.
-- Audit other call sites for the same anti-pattern; if any found, document in the slice-complete decision with a follow-up task ref.
-- Land `docs/adrs/ADR-008-external-adapter-stability-pattern.md` documenting the three-phase shape, breaker reuse, timeout settings convention, and enum location.
+- Either (a) deprecate `ScanService.process_scan_job` and `ScanService.analyze_media` in favor of an explicit caller pattern documented in the ADR, or (b) inline them as thin pass-throughs to a shared helper (`run_scan_three_phase(...)`) that owns the reserve-commit / detect / save-results-commit shape. Decision recorded in slice-complete.
+- Idempotency: persist phase remains backed by the existing `unique_media_identity` constraint and Identity-ID-Recycling logic in `_persist_identities`. **No new `ON CONFLICT DO NOTHING` clause is added** (would require a schema change ruled out by constraints).
+- Audit any other adapter call sites under `recognition/application/` for the `_session.in_transaction() == True at adapter call` anti-pattern; if any are found beyond the known wrapper, document them in the slice-complete decision with a follow-up task ref.
+- Land `docs/adrs/ADR-008-external-adapter-stability-pattern.md` documenting (a) the three-phase shape, (b) `AdapterCircuitBreaker` reuse, (c) per-adapter timeout settings convention, (d) `JobStatus`/`JobPhase` enum location, (e) why idempotency relies on `unique_media_identity` rather than a new `(job_id, media_id)` constraint.
 
 Proof:
 
-- `pytest recognition/tests/unit/test_scan_service_phase_split.py -x` — asserts `session.in_transaction()` is False at the moment the adapter call is awaited.
-- `pytest recognition/tests/integration/test_assignment_writer.py recognition/tests/integration/test_end_to_end.py -x`
+- `pytest recognition/tests/unit/test_scan_service_phase_split.py -x` — asserts `session.in_transaction()` is False at the moment the adapter call is awaited (covering both the shared helper and `analyze_media`'s callers).
+- `pytest recognition/tests/integration/test_assignment_writer.py recognition/tests/integration/test_end_to_end.py -x` (regression: re-running detection on the same media yields the same `MediaIdentity` rows via the existing constraint).
 - ADR file exists and links back to this task plan.
 
 ## Consolidated Checklist
@@ -241,28 +247,29 @@ Proof:
 
 ### Checklist for Slice 2: Adopt existing `JobStatus`/`JobPhase`
 
-- [ ] Grep clustering + scan paths for bare-string status sites; produce a checklist of files to edit.
-- [ ] Replace assignments and comparisons with enum members.
-- [ ] Extend `JobStatus`/`JobPhase` only if grep finds a value not yet on either enum; record the extension in the slice decision.
-- [ ] Add `test_job_status_enum_adoption.py` enforcing the grep gate.
+- [ ] Grep clustering + scan paths for bare-string status sites; minimum surface = `scan/service.py`, `orchestration/`, `routers/clusters.py`, `routers/analyze.py`, `routers/analyze_multipart.py`, `deps/stores.py`.
+- [ ] Replace assignments and comparisons with enum members at every confirmed site (including the in-memory fallback service in `stores.py`).
+- [ ] Extend `JobStatus`/`JobPhase` only if grep finds a value not yet on either enum (e.g. `processing`, `cancelled`, `skipped` from `IdentityScanJobItem.valid_item_status`); record the extension in the slice decision.
+- [ ] Add `test_job_status_enum_adoption.py` enforcing the widened grep gate.
 - [ ] Run `pytest` + `mypy` + grep gate.
 
 ### Checklist for Slice 3: Adapter timeout + circuit breaker
 
 - [ ] Implement `wait_for_adapter` helper + `AdapterTimeoutError`.
-- [ ] Implement `AdapterCircuitBreaker` (extract or new minimal); decide via slice-1 prep grep whether the existing breaker can share core.
-- [ ] Wrap `embedding/generator.py:99` and the auto-labeler call site.
+- [ ] Implement `AdapterCircuitBreaker` (extract or new minimal); decide via slice-3 prep grep whether the existing breaker can share core.
+- [ ] Wrap `embedding/generator.py:99` only (auto-labeler intentionally not wrapped).
 - [ ] Remove blanket `except Exception` from `generator.py` (let typed errors propagate).
 - [ ] Add unit tests for timeout, breaker state transitions, and half-open behavior.
-- [ ] Add per-adapter timeout settings, validated at load time.
+- [ ] Add `embedding_timeout_s` + `AdapterBreakerConfig` settings to `recognition/application/settings/adapters.py`, validated at load time.
 
-### Checklist for Slice 4: Phase split + ADR
+### Checklist for Slice 4: Canonicalize phase split + ADR
 
-- [ ] Refactor `scan/service.py:save_job_results` into reserve-commit / call / persist-commit.
-- [ ] Add `ON CONFLICT DO NOTHING` keyed on `(job_id, media_id)` for the persist step.
-- [ ] Add `test_scan_service_phase_split.py` proving no open tx at adapter-call time.
-- [ ] Audit other call sites for the same anti-pattern; record findings or follow-up tasks.
-- [ ] Land ADR-008 documenting the integration-point pattern.
+- [ ] Decide between (a) deprecate `ScanService.process_scan_job`/`analyze_media` or (b) inline as pass-throughs to a shared `run_scan_three_phase` helper. Record decision.
+- [ ] Implement the chosen shape; preserve existing `_persist_identities` Identity-ID-Recycling + `unique_media_identity` constraint as the idempotency seam (no new `ON CONFLICT` clause, no schema change).
+- [ ] Add `test_scan_service_phase_split.py` proving no open tx at adapter-call time across both `tasks/scan.py:process_scan_job_inline` and the new shared helper.
+- [ ] Add a regression test that re-running detection on the same media yields the same `MediaIdentity` rows (validates idempotency via existing constraint).
+- [ ] Audit other adapter call sites under `recognition/application/` for the same anti-pattern; record findings or follow-up tasks.
+- [ ] Land ADR-008 documenting the integration-point pattern, including the idempotency rationale.
 - [ ] Run integration regression suite.
 
 ## Review Readiness

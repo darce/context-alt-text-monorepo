@@ -34,7 +34,7 @@ from starlette.datastructures import FormData, UploadFile
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.storage import ObjectStore, ObjectStoreError
 from recognition.application.tasks.scan import chain_populate_and_process
-from recognition.domain.job import JobType
+from recognition.domain.job import JobPhase, JobStatus, JobType
 from recognition.interface_adapters.http.dependencies import (
     get_optional_session,
     get_scan_queue_service_factory,
@@ -358,14 +358,14 @@ async def analyze_media_multipart(
     progress = JobProgressResponse(
         completed=0,
         total=len(media_items_list),
-        phase="queued",
+        phase=JobPhase.QUEUED,
         images_processed=0,
         faces_found=0,
     )
     return JobStatusResponse(
         id=str(persisted_job_id),
         type=JobType.ANALYZE.value,
-        status="pending",
+        status=JobStatus.PENDING,
         progress=progress,
         started_at=datetime.now(tz=UTC),
         finished_at=None,

@@ -27,7 +27,7 @@ from recognition.application.tasks.clustering import run_background_surface_sugg
 from recognition.config import get_settings as get_recognition_settings
 from recognition.config.security import get_security_settings
 from recognition.domain.constraints import ConstraintSource, ConstraintType
-from recognition.domain.job import JobType, SplitJobPayload
+from recognition.domain.job import JobStatus, JobType, SplitJobPayload
 from recognition.domain.repositories import ClusterRepository
 from recognition.domain.suggestion import SuggestionRefreshReason
 from recognition.infrastructure.repositories import (
@@ -358,7 +358,7 @@ async def create_clustering_job(
             return ClusteringJobStatusResponse(
                 id=str(job_id),
                 type=JobType.CLUSTERING.value,
-                status="completed",
+                status=JobStatus.COMPLETED,
                 progress=JobProgressResponse(completed=completed, total=total),
                 started_at=result.started_at if hasattr(result, "started_at") else datetime.now(tz=UTC),
                 finished_at=finished_at,

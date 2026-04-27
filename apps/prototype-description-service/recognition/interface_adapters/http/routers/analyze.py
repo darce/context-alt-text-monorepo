@@ -24,7 +24,7 @@ from recognition.application.tasks.scan import (
     extract_media_id,
     scan_worker_available,
 )
-from recognition.domain.job import Job, JobStatus, JobType
+from recognition.domain.job import Job, JobPhase, JobStatus, JobType
 from recognition.domain.repositories import JobRepository
 from recognition.interface_adapters.http.dependencies import (
     RetentionPolicyServiceProtocol,
@@ -101,11 +101,11 @@ async def _job_to_pipeline_response(
                 )
             if projection.snapshot_version == 0:
                 # No clusters produced; nothing to project. Skip the sync/ack cycle.
-                response.progress.phase = "complete"
+                response.progress.phase = JobPhase.COMPLETE
             elif projection.acknowledged_at is None:
-                response.progress.phase = "awaiting_projection"
+                response.progress.phase = JobPhase.AWAITING_PROJECTION
             else:
-                response.progress.phase = "complete"
+                response.progress.phase = JobPhase.COMPLETE
             response.snapshot_version = projection.snapshot_version
             response.source_job_id = projection.source_job_id
             response.projection_acknowledged_at = projection.acknowledged_at
@@ -259,11 +259,17 @@ async def _schedule_analysis(
     )
 
     total = len(media_items)
-    progress = JobProgressResponse(completed=0, total=total, phase="queued", images_processed=0, faces_found=0)
+    progress = JobProgressResponse(
+        completed=0,
+        total=total,
+        phase=JobPhase.QUEUED,
+        images_processed=0,
+        faces_found=0,
+    )
     return JobStatusResponse(
         id=str(job_id),
         type=JobType.ANALYZE.value,
-        status="pending",
+        status=JobStatus.PENDING,
         progress=progress,
         started_at=datetime.now(tz=UTC),
         finished_at=None,

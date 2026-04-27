@@ -36,6 +36,7 @@ from recognition.application.orchestration.clustering.discovery_pipeline import 
 from recognition.application.orchestration.clustering.job_result import ClusterJobResult
 from recognition.application.orchestration.protocols import MergeSuggestionServiceProtocol, SuggestionServiceProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
+from recognition.domain.job import JobStatus
 from recognition.domain.identity import MediaIdentity
 from recognition.observability import ClusteringLogger
 from recognition.observability.recognition_runs import (
@@ -225,7 +226,7 @@ class IncrementalClusteringRunner:
         clustering_job = IdentityClusteringJob(
             id=job_uuid,
             tenant_id=tenant_uuid,
-            status="running",
+            status=JobStatus.RUNNING,
             started_at=started_at,
             progress=0.0,
             total_identities=0,
@@ -233,7 +234,7 @@ class IncrementalClusteringRunner:
         )
         existing_job = await self._session.get(IdentityClusteringJob, job_uuid)
         if existing_job is not None:
-            existing_job.status = "running"
+            existing_job.status = JobStatus.RUNNING
             existing_job.started_at = started_at
             existing_job.progress = 0.0
             clustering_job = existing_job
@@ -268,7 +269,7 @@ class IncrementalClusteringRunner:
         started_at: datetime,
         job_label: str,
     ) -> ClusterJobResult:
-        clustering_job.status = "completed"
+        clustering_job.status = JobStatus.COMPLETED
         clustering_job.progress = 1.0
         clustering_job.completed_at = datetime.now(tz=UTC)
         finished_at = clustering_job.completed_at
@@ -687,7 +688,7 @@ class IncrementalClusteringRunner:
         clustering_job.total_identities = total_identities
         clustering_job.processed_identities = total_identities
         clustering_job.progress = 1.0
-        clustering_job.status = "completed"
+        clustering_job.status = JobStatus.COMPLETED
         clustering_job.completed_at = datetime.now(tz=UTC)
         clustering_job.payload = {
             **(clustering_job.payload or {}),
@@ -699,7 +700,7 @@ class IncrementalClusteringRunner:
         await complete_recognition_run(
             self._session,
             run_id=run_id,
-            status="completed",
+            status=JobStatus.COMPLETED,
             completed_at=clustering_job.completed_at,
         )
         if self._commit:

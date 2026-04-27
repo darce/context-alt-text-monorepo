@@ -40,9 +40,10 @@ class BlobUrlRewriterTest extends TestCase
     {
         $rewritten = BlobUrlRewriter::rewrite_string('/recognition/blobs/job-x/9999');
 
-        $parts = parse_url($rewritten);
+        $parts = \parse_url($rewritten);
         $this->assertSame('/wp-json/acx/v1/recognition/blobs/job-x/9999', $parts['path']);
-        parse_str($parts['query'] ?? '', $query);
+        $query = [];
+        \parse_str($parts['query'] ?? '', $query);
         $this->assertArrayHasKey('token', $query);
     }
 
@@ -52,9 +53,10 @@ class BlobUrlRewriterTest extends TestCase
 
         $rewritten = BlobUrlRewriter::rewrite_string('/recognition/blobs/job-x/abc');
 
-        $parts = parse_url($rewritten);
+        $parts = \parse_url($rewritten);
         $this->assertSame('/wp-json/acx/v1/recognition/blobs/job-x/abc', $parts['path']);
-        parse_str($parts['query'] ?? '', $query);
+        $query = [];
+        \parse_str($parts['query'] ?? '', $query);
         $this->assertArrayHasKey('token', $query);
     }
 
@@ -77,7 +79,7 @@ class BlobUrlRewriterTest extends TestCase
             'http://example.test/wp-content/uploads/2025/12/hit.jpg',
             $rewritten['suggestions'][0]['cluster_a_representative_media_url']
         );
-        $bParts = parse_url($rewritten['suggestions'][0]['cluster_b_representative_media_url']);
+        $bParts = \parse_url($rewritten['suggestions'][0]['cluster_b_representative_media_url']);
         $this->assertSame('/wp-json/acx/v1/recognition/blobs/job-a/9999', $bParts['path']);
     }
 
@@ -85,15 +87,16 @@ class BlobUrlRewriterTest extends TestCase
     {
         $rewritten = BlobUrlRewriter::rewrite_string('/recognition/blobs/job-x/42');
 
-        $parts = parse_url($rewritten);
+        $parts = \parse_url($rewritten);
         $this->assertSame('http', $parts['scheme']);
         $this->assertSame('example.test', $parts['host']);
         $this->assertSame('/wp-json/acx/v1/recognition/blobs/job-x/42', $parts['path']);
 
-        parse_str($parts['query'] ?? '', $query);
+        $query = [];
+        \parse_str($parts['query'] ?? '', $query);
         $this->assertArrayHasKey('expires', $query);
         $this->assertArrayHasKey('token', $query);
-        $this->assertGreaterThan(time(), (int) $query['expires']);
+        $this->assertGreaterThan(\time(), (int) $query['expires']);
 
         $expected = BlobUrlRewriter::sign('job-x', '42', (int) $query['expires']);
         $this->assertSame($expected, $query['token']);
@@ -137,9 +140,10 @@ class BlobUrlRewriterTest extends TestCase
             [$rewritten['suggestions'][1]['cluster_a_representative_media_url'], 'job-b', '77'],
         ];
         foreach ($cases as [$rewrittenUrl, $job, $media]) {
-            $parts = parse_url($rewrittenUrl);
+            $parts = \parse_url($rewrittenUrl);
             $this->assertSame("/wp-json/acx/v1/recognition/blobs/{$job}/{$media}", $parts['path']);
-            parse_str($parts['query'] ?? '', $query);
+            $query = [];
+            \parse_str($parts['query'] ?? '', $query);
             $this->assertSame(
                 BlobUrlRewriter::sign($job, $media, (int) $query['expires']),
                 $query['token']

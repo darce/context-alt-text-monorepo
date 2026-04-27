@@ -6,14 +6,8 @@ namespace AltContext\Api;
 
 use function add_query_arg;
 use function ctype_digit;
-use function explode;
-use function function_exists;
-use function hash_hmac;
-use function is_array;
-use function is_string;
 use function str_starts_with;
 use function rest_url;
-use function time;
 use function wp_get_attachment_url;
 use function wp_salt;
 
@@ -51,10 +45,10 @@ class BlobUrlRewriter {
 	 * @return mixed The same shape with blob paths rewritten in place.
 	 */
 	public static function rewrite( $value ) {
-		if ( is_string( $value ) ) {
+		if ( \is_string( $value ) ) {
 			return self::rewrite_string( $value );
 		}
-		if ( is_array( $value ) ) {
+		if ( \is_array( $value ) ) {
 			foreach ( $value as $k => $v ) {
 				$value[ $k ] = self::rewrite( $v );
 			}
@@ -73,11 +67,11 @@ class BlobUrlRewriter {
 		if ( ! str_starts_with( $value, self::RECOGNITION_BLOB_PREFIX ) ) {
 			return $value;
 		}
-		$rest = substr( $value, strlen( self::RECOGNITION_BLOB_PREFIX ) );
-		if ( false === strpos( $rest, '/' ) ) {
+		$rest = \substr( $value, \strlen( self::RECOGNITION_BLOB_PREFIX ) );
+		if ( false === \strpos( $rest, '/' ) ) {
 			return $value;
 		}
-		[ $job_id, $media_id ] = explode( '/', $rest, 2 );
+		[ $job_id, $media_id ] = \explode( '/', $rest, 2 );
 		if ( '' === $job_id || '' === $media_id ) {
 			return $value;
 		}
@@ -86,15 +80,15 @@ class BlobUrlRewriter {
 		// a real WP attachment. Bypasses the signed proxy entirely, so `<img>`
 		// loads hit the same uploads URL that cluster-card thumbnails use and
 		// avoid the recognition-service tenant-claim requirement on blob serve.
-		if ( ctype_digit( $media_id ) && function_exists( 'wp_get_attachment_url' ) ) {
+		if ( ctype_digit( $media_id ) && \function_exists( 'wp_get_attachment_url' ) ) {
 			$wp_url = wp_get_attachment_url( (int) $media_id );
-			if ( is_string( $wp_url ) && '' !== $wp_url ) {
+			if ( \is_string( $wp_url ) && '' !== $wp_url ) {
 				return $wp_url;
 			}
 		}
 
 		$relative = 'acx/v1' . $value;
-		$base_url = function_exists( 'rest_url' ) ? rest_url( $relative ) : '/' . $relative;
+		$base_url = \function_exists( 'rest_url' ) ? rest_url( $relative ) : '/' . $relative;
 
 		$expires = self::current_time() + self::TOKEN_TTL_SECONDS;
 		$token   = self::sign( $job_id, $media_id, $expires );
@@ -115,11 +109,11 @@ class BlobUrlRewriter {
 	 * signature and compare it in constant time.
 	 */
 	public static function sign( string $job_id, string $media_id, int $expires ): string {
-		return hash_hmac( 'sha256', $job_id . ':' . $media_id . ':' . $expires, self::secret() );
+		return \hash_hmac( 'sha256', $job_id . ':' . $media_id . ':' . $expires, self::secret() );
 	}
 
 	private static function secret(): string {
-		if ( function_exists( 'wp_salt' ) ) {
+		if ( \function_exists( 'wp_salt' ) ) {
 			return wp_salt( 'auth' );
 		}
 		// Test fallback: deterministic so unit tests can recompute signatures.
@@ -127,6 +121,6 @@ class BlobUrlRewriter {
 	}
 
 	private static function current_time(): int {
-		return time();
+		return \time();
 	}
 }

@@ -19,6 +19,7 @@ from recognition.application.embedding.generator import (
     StubEmbeddingGenerator,
 )
 from recognition.application.storage import ObjectStore
+from recognition.domain.job import JobStatus
 
 ObjectStoreFactory = Callable[[str], ObjectStore]
 
@@ -65,7 +66,7 @@ class ScanService:
         media_ids_list = list(media_ids)
         scan_job = IdentityScanJob(
             tenant_id=uuid.UUID(str(tenant_id)),
-            status="pending",
+            status=JobStatus.PENDING,
             media_ids=[_extract_media_id(mid) for mid in media_ids_list],
             total_media=len(media_ids_list),
             processed_media=0,
@@ -86,7 +87,7 @@ class ScanService:
         if scan_job is None:
             raise RuntimeError(f"scan job not found: {job_id}")
 
-        scan_job.status = "running"
+        scan_job.status = JobStatus.RUNNING
         scan_job.started_at = datetime.now(tz=UTC)
         await self._session.commit()
         return scan_job
@@ -140,7 +141,7 @@ class ScanService:
 
         scan_job.processed_media = len(media_ids_list)
         scan_job.identities_detected = total_persisted
-        scan_job.status = "completed"
+        scan_job.status = JobStatus.COMPLETED
         scan_job.completed_at = datetime.now(tz=UTC)
         await self._session.commit()
         return scan_job

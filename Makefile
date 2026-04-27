@@ -123,6 +123,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/lane-lifecycle.mk
 include $(ROOT_MAKEFILE_DIR)/mk/lane-worker.mk
 include $(ROOT_MAKEFILE_DIR)/mk/lane-maintenance.mk
 include $(ROOT_MAKEFILE_DIR)/mk/deploy.mk
+include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 
 # =============================================================================
 # Root targets

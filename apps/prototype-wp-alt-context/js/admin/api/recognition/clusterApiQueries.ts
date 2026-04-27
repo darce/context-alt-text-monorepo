@@ -2,6 +2,7 @@ import { fetchRequiredApi, stripTrailingSlash } from '../../utils/http';
 import { getEndpoint, getConfig } from '../config';
 import { parseDataSource, parseProjectionStatus } from './types/dataSource';
 import type {
+  ClusterListResponse,
   ClusterListParams,
   ClusterSummary,
   TopUnlabeledCluster,
@@ -24,9 +25,32 @@ interface TopUnlabeledClustersResponsePayload {
   projection_status?: string | null;
 }
 
+interface ClusterListResponsePayload {
+  clusters?: ClusterSummary[] | null;
+  limit?: number | null;
+  total?: number | null;
+  truncated?: boolean | null;
+}
+
 const requireTopUnlabeledNumber = (value: unknown, fieldName: string): number => {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     throw new Error(`Top-unlabeled clusters response must include a numeric ${fieldName}.`);
+  }
+
+  return value;
+};
+
+const requireClusterListNumber = (value: unknown, fieldName: string): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`Cluster list response must include a numeric ${fieldName}.`);
+  }
+
+  return value;
+};
+
+const requireClusterListBoolean = (value: unknown, fieldName: string): boolean => {
+  if (typeof value !== 'boolean') {
+    throw new Error(`Cluster list response must include a boolean ${fieldName}.`);
   }
 
   return value;
@@ -62,7 +86,7 @@ const normalizeTopUnlabeledCluster = (cluster: TopUnlabeledClusterPayload): TopU
 export const listRecognitionClusters = async (
   params: ClusterListParams = {},
   signal?: AbortSignal,
-): Promise<ClusterSummary[]> => {
+): Promise<ClusterListResponse> => {
   const base = getEndpoint('recognitionClusters');
   const url = new URL(base, window.location.origin);
   if (params.limit) {
@@ -78,11 +102,22 @@ export const listRecognitionClusters = async (
     url.searchParams.set('search', params.search);
   }
 
-  return fetchRequiredApi<ClusterSummary[]>(url.toString(), {
+  const payload = await fetchRequiredApi<ClusterListResponsePayload>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
     signal,
   });
+
+  if (!Array.isArray(payload.clusters)) {
+    throw new Error('Cluster list response must include a clusters array.');
+  }
+
+  return {
+    clusters: payload.clusters,
+    limit: requireClusterListNumber(payload.limit, 'limit'),
+    total: requireClusterListNumber(payload.total, 'total'),
+    truncated: requireClusterListBoolean(payload.truncated, 'truncated'),
+  };
 };
 
 export const getRecognitionCluster = async (clusterId: string): Promise<ClusterSummary> => {

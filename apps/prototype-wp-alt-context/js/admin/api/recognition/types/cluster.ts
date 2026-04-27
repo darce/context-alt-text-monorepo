@@ -17,6 +17,13 @@ export interface ClusterSummary {
   created_at?: string;
 }
 
+export interface ClusterListResponse {
+  clusters: ClusterSummary[];
+  limit: number;
+  total: number;
+  truncated: boolean;
+}
+
 export interface TopUnlabeledRepresentative {
   id: string;
   media_id: number;

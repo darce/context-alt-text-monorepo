@@ -148,7 +148,7 @@ class ClustersRepository implements ClustersRepositoryInterface {
 	 * @param array<string,mixed> $filters
 	 * @return array<int,array<string,mixed>>
 	 */
-	public function list_for_tenant( string $tenant_id, int $limit = 50, int $offset = 0, array $filters = array() ): array {
+	public function list_for_tenant( string $tenant_id, int $limit = ClustersRepositoryInterface::DEFAULT_LIST_LIMIT, int $offset = 0, array $filters = array() ): array {
 		global $wpdb;
 
 		$normalized_tenant_id = trim( $tenant_id );
@@ -182,7 +182,7 @@ class ClustersRepository implements ClustersRepositoryInterface {
 
 		$sql = $this->prepare_query(
 			sprintf(
-				'SELECT c.*, COALESCE(p.name, c.label) as label 
+				'SELECT COUNT(*) OVER() AS total_count, c.*, COALESCE(p.name, c.label) as label 
 				 FROM %%i c 
 				 LEFT JOIN %%i p ON c.person_id = p.id
 				 WHERE %s 

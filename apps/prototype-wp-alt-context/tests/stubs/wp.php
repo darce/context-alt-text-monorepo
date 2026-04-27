@@ -642,6 +642,14 @@ if (!function_exists('get_post_mime_type')) {
     }
 }
 
+if (!function_exists('get_post_modified_time')) {
+    function get_post_modified_time($format = 'U', $gmt = false, $post = null, $translate = false)
+    {
+        $postId = is_scalar($post) ? (int) $post : 0;
+        return $GLOBALS['__ac_post_modified_time'][$postId] ?? null;
+    }
+}
+
 if (!function_exists('wp_get_attachment_url')) {
     function wp_get_attachment_url($attachmentId)
     {

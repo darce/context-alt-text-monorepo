@@ -54,6 +54,7 @@ const WorkbenchPageContent = (): React.JSX.Element => {
     projectionSyncState,
     projectionError,
     retryProjectionSync,
+    detailTruncationNotice,
   } = useWorkbenchContext();
 
   const scanSection = WORKBENCH_SECTIONS[0];
@@ -115,6 +116,7 @@ const WorkbenchPageContent = (): React.JSX.Element => {
               {__('Network connection lost. Reconnecting…', 'alt-context')}
             </div>
           )}
+          {detailTruncationNotice && <div className="acx-notice acx-notice--info">{detailTruncationNotice}</div>}
           {!isPrimary && !!latestJobId && (
             <div className="acx-notice acx-notice--info">
               {__('This job is being processed in another tab.', 'alt-context')}

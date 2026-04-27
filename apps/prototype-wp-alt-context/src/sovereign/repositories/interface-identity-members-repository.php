@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace AltContext\Sovereign\Repositories;
 
 interface IdentityMembersRepositoryInterface {
+	public const DEFAULT_CLUSTER_MEMBER_LIMIT = 500;
+
 	/**
 	 * Merge identity-member rows from a snapshot payload.
 	 *
@@ -17,7 +19,7 @@ interface IdentityMembersRepositoryInterface {
 	 *
 	 * @return array<int,array<string,mixed>>
 	 */
-	public function list_for_cluster( string $cluster_uuid, int $limit = 500, int $offset = 0, ?string $tenant_id = null ): array;
+	public function list_for_cluster( string $cluster_uuid, int $limit = self::DEFAULT_CLUSTER_MEMBER_LIMIT, int $offset = 0, ?string $tenant_id = null ): array;
 
 	/**
 	 * Return member rows for multiple cluster UUIDs in a single query.

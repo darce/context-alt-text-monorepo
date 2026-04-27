@@ -67,6 +67,13 @@ const duplicateClusterMatch = {
   sample_identities: [],
 };
 
+const makeClusterListResponse = (clusters = [duplicateClusterMatch]) => ({
+  clusters,
+  limit: 10,
+  total: clusters.length,
+  truncated: false,
+});
+
 describe('ClusterLabelingPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -104,7 +111,7 @@ describe('ClusterLabelingPanel', () => {
     vi.mocked(updateClusterLabel).mockRejectedValueOnce(
       new Error('Request to /recognition/clusters/source-cluster-id failed (409): conflict'),
     );
-    listRecognitionClustersMock.mockResolvedValue([duplicateClusterMatch]);
+    listRecognitionClustersMock.mockResolvedValue(makeClusterListResponse());
 
     renderPanel(onLabel);
 
@@ -201,7 +208,7 @@ describe('ClusterLabelingPanel', () => {
     vi.mocked(updateClusterLabel).mockRejectedValueOnce(
       new Error('Request to /recognition/clusters/source-cluster-id failed (409): conflict'),
     );
-    vi.mocked(listRecognitionClusters).mockResolvedValue([duplicateClusterMatch]);
+    vi.mocked(listRecognitionClusters).mockResolvedValue(makeClusterListResponse());
 
     renderPanel();
 

@@ -73,6 +73,7 @@ export const useClusterSuggestionsLoader = ({
         labeled_only: true,
         search: debouncedValue,
       }),
+    select: (response) => response.clusters,
     enabled: Boolean(enabled && debouncedValue.length >= 2),
     staleTime: 30000,
   });
@@ -86,7 +87,7 @@ export const useClusterSuggestionsLoader = ({
 
       try {
         const results = await listRecognitionClusters({ search: label, limit: 10, labeled_only: true }, signal);
-        const match = results.find((cluster) => cluster.label.toLowerCase() === normalizedLabel);
+        const match = results.clusters.find((cluster) => cluster.label.toLowerCase() === normalizedLabel);
         if (match?.id && match.label) {
           return { id: match.id, label: match.label };
         }

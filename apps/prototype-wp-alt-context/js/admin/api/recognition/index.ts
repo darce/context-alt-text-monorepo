@@ -20,6 +20,7 @@ export type {
   DetectedIdentity,
   MediaIdentitiesResponse,
   ClusterSummary,
+  ClusterListResponse,
   ClusterListParams,
   ClusterSuggestion,
   IdentitySuggestionsResponse,

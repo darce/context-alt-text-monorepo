@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 
-import type { AnalyzeResponse, ClusterSummary } from '../../api/recognition';
+import type { AnalyzeResponse, ClusterListResponse, ClusterSummary } from '../../api/recognition';
 import { useRecognitionCluster, useRecognitionClusters } from '../../hooks/useRecognitionHooks';
 import { useCreatePerson, useDeletePerson, useRosterEntries, useUpdatePerson } from '../../hooks/useRosterHooks';
 import { useClusterSelection } from '../../hooks/useClusterSelection';
@@ -66,6 +66,14 @@ const makeCluster = (overrides: Partial<ClusterSummary> = {}): ClusterSummary =>
       bbox: { x: 0, y: 0, width: 10, height: 10 },
     },
   ],
+  ...overrides,
+});
+
+const makeClusterListResponse = (overrides: Partial<ClusterListResponse> = {}): ClusterListResponse => ({
+  clusters: [makeCluster()],
+  limit: 20,
+  total: 1,
+  truncated: false,
   ...overrides,
 });
 
@@ -144,7 +152,7 @@ describe('RosterPage route container', () => {
 
     mockedUseRecognitionClusters.mockReturnValue(
       createMockQuery({
-        data: [cluster],
+        data: makeClusterListResponse({ clusters: [cluster] }),
         isLoading: false,
         isError: false,
         refetch: vi.fn(),
@@ -252,6 +260,29 @@ describe('RosterPage route container', () => {
     expect(screen.queryByRole('combobox', { name: /Commit to roster entry/i })).not.toBeInTheDocument();
     expect(clusterActionState.resetAll).toHaveBeenCalledTimes(1);
     expect(dragDropState.resetDragState).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces a partial-state notice when the cluster list is truncated', async () => {
+    mockedUseRecognitionClusters.mockReturnValue(
+      createMockQuery({
+        data: makeClusterListResponse({
+          clusters: [makeCluster()],
+          total: 12,
+          truncated: true,
+        }),
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={['/?tab=clusters']}>
+        <RosterPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('Showing 1 of 12 clusters. Refine the list to review the remaining matches.')).toBeInTheDocument();
   });
 
   it('applies bulk merge action through confirm dialog', async () => {

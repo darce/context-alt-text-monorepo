@@ -223,7 +223,7 @@ describe('WorkbenchPage', () => {
       ...mediaQuery,
       itemsWithIdentities: [baseMediaItem],
       detailQuery: createMockQuery<WorkbenchMediaDetailResponse>({
-        data: { detailsByMedia: {} },
+        data: { detailsByMedia: {}, limit: 100, total: 1, truncated: false },
       }),
       identitiesQuery: createMockQuery<MediaIdentitiesResponse>({
         data: { identities_by_media: {} },
@@ -361,6 +361,33 @@ describe('WorkbenchPage', () => {
     ).toBeInTheDocument();
   });
 
+  it('shows a workbench notice when media detail responses are truncated', () => {
+    const mediaQuery = createMockQuery<WorkbenchMediaResponse>({
+      data: { items: [baseMediaItem], total: 1, totalPages: 1 },
+      isFetching: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+
+    mockUseWorkbenchMedia.mockReturnValue({
+      ...mediaQuery,
+      itemsWithIdentities: [baseMediaItem],
+      detailQuery: createMockQuery<WorkbenchMediaDetailResponse>({
+        data: { detailsByMedia: {}, limit: 100, total: 101, truncated: true },
+      }),
+      identitiesQuery: createMockQuery<MediaIdentitiesResponse>({
+        data: { identities_by_media: {} },
+        refetch: prefetchIdentities,
+      }),
+    });
+
+    renderWorkbench();
+
+    expect(
+      screen.getByText('Showing detail metadata for the first 100 of 101 requested media items. Narrow the page size to inspect the rest.'),
+    ).toBeInTheDocument();
+  });
+
   it('surfaces scan errors in the UI', async () => {
     setupScanMutation('error');
     const { queryClient } = renderWorkbench();
@@ -484,7 +511,7 @@ describe('WorkbenchPage', () => {
       }),
       itemsWithIdentities: [baseMediaItem],
       detailQuery: createMockQuery<WorkbenchMediaDetailResponse>({
-        data: { detailsByMedia: {} },
+        data: { detailsByMedia: {}, limit: 100, total: 1, truncated: false },
       }),
       identitiesQuery: createMockQuery<MediaIdentitiesResponse>({
         data: { identities_by_media: {} },

@@ -8,12 +8,14 @@ Tests cover:
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pytest
 
 from recognition.application.embedding.detector import (
+    DetectionTimeoutError,
     FaceDetection,
     FaceDetector,
     FaceDetectorProtocol,
@@ -231,6 +233,22 @@ class TestInsightFaceFaceDetector:
 
         # Should return empty list, not raise
         assert detections == []
+
+    @pytest.mark.asyncio
+    async def test_times_out_slow_adapter_calls(self) -> None:
+        """Should raise a typed timeout when adapter detection exceeds the deadline."""
+
+        async def slow_detect(_image_bytes: bytes) -> list[MagicMock]:
+            await asyncio.sleep(0.05)
+            return []
+
+        mock_adapter = MagicMock()
+        mock_adapter.detect_faces = AsyncMock(side_effect=slow_detect)
+
+        detector = InsightFaceFaceDetector(mock_adapter, timeout=0.01)
+
+        with pytest.raises(DetectionTimeoutError):
+            await detector.detect([b"slow-image"])
 
 
 # Backwards compatibility alias test

@@ -8,6 +8,7 @@ Tests cover:
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
@@ -16,9 +17,11 @@ import pytest
 from recognition.application.embedding.generator import (
     EmbeddingGenerator,
     EmbeddingGeneratorProtocol,
+    EmbeddingTimeoutError,
     InsightFaceEmbeddingGenerator,
     StubEmbeddingGenerator,
 )
+import recognition.application.embedding.generator as generator_module
 from recognition.infrastructure.embeddings import DetectedFace, InsightFaceAdapter
 
 
@@ -188,6 +191,34 @@ class TestInsightFaceEmbeddingGenerator:
 
         # Should return empty list, not raise
         assert results == []
+
+    @pytest.mark.asyncio
+    async def test_times_out_slow_adapter_calls(self) -> None:
+        """Should fail fast when the adapter analyze call exceeds the configured timeout."""
+
+        async def slow_analyze(_image_bytes: bytes) -> list[DetectedFace]:
+            await asyncio.sleep(0.05)
+            return []
+
+        slow_adapter = MagicMock(spec=InsightFaceAdapter)
+        slow_adapter.analyze = AsyncMock(side_effect=slow_analyze)
+
+        generator = InsightFaceEmbeddingGenerator(slow_adapter, timeout=0.01)
+
+        with pytest.raises(EmbeddingTimeoutError):
+            await generator.generate([b"slow-image"])
+
+    def test_reads_default_timeout_lazily(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Default timeout should come from get_database_settings() at construction time."""
+
+        class Settings:
+            embedding_timeout_s = 7.5
+
+        monkeypatch.setattr(generator_module, "get_database_settings", lambda: Settings())
+
+        generator = InsightFaceEmbeddingGenerator(MagicMock(spec=InsightFaceAdapter))
+
+        assert generator._timeout == 7.5
 
     @pytest.mark.asyncio
     async def test_processes_multiple_images(self, mock_adapter: MagicMock) -> None:

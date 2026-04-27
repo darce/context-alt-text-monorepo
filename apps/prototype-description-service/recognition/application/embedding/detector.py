@@ -10,6 +10,7 @@ The ScanService depends on this interface for face detection.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import logging
@@ -81,6 +82,15 @@ class FaceDetection:
     gender: int | None = None  # 0=female, 1=male
     image_phash: str | None = None
     landmark_quality: float | None = None
+
+
+class DetectionTimeoutError(TimeoutError):
+    """Raised when the face detector adapter exceeds the configured deadline."""
+
+    def __init__(self, media_id: str, timeout_s: float) -> None:
+        super().__init__(f"Face detection timed out for {media_id[:20]} after {timeout_s:.2f}s")
+        self.media_id = media_id
+        self.timeout_s = timeout_s
 
 
 class FaceDetectorProtocol(ABC):
@@ -194,7 +204,10 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
 
             # Detect faces and get embeddings in one pass
             try:
-                faces = await self._adapter.detect_faces(image_bytes)
+                faces = await asyncio.wait_for(
+                    self._adapter.detect_faces(image_bytes),
+                    timeout=self._timeout,
+                )
                 for face in faces:
                     # Extract pose angles
                     pose_pitch = face.pose[0] if face.pose else None
@@ -227,6 +240,9 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
                             landmark_quality=detection_quality,
                         )
                     )
+            except TimeoutError as exc:
+                logger.error("Face detection timed out for %s after %.2fs", media_id[:20], self._timeout)
+                raise DetectionTimeoutError(media_id=media_id, timeout_s=self._timeout) from exc
             except Exception as e:
                 logger.error("Face detection failed for %s: %s", media_id[:20], e)
 
@@ -238,6 +254,7 @@ FaceDetector = StubFaceDetector
 
 
 __all__ = [
+    "DetectionTimeoutError",
     "FaceDetectorProtocol",
     "StubFaceDetector",
     "InsightFaceFaceDetector",

@@ -9,6 +9,7 @@ This module provides the infrastructure seam between raw media and domain identi
 """
 
 from recognition.application.embedding.detector import (
+    DetectionTimeoutError,
     FaceDetection,
     FaceDetector,
     FaceDetectorProtocol,
@@ -19,6 +20,7 @@ from recognition.application.embedding.generator import (
     EmbeddingGenerator,
     EmbeddingGeneratorProtocol,
     EmbeddingResult,
+    EmbeddingTimeoutError,
     InsightFaceEmbeddingGenerator,
     StubEmbeddingGenerator,
 )
@@ -28,11 +30,13 @@ __all__ = [
     "FaceDetection",
     "EmbeddingResult",
     # Detection
+    "DetectionTimeoutError",
     "FaceDetectorProtocol",
     "StubFaceDetector",
     "InsightFaceFaceDetector",
     "FaceDetector",
     # Embedding generation
+    "EmbeddingTimeoutError",
     "EmbeddingGeneratorProtocol",
     "StubEmbeddingGenerator",
     "InsightFaceEmbeddingGenerator",

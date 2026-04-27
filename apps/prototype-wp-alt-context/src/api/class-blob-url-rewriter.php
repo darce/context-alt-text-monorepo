@@ -4,36 +4,46 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+use function add_query_arg;
+use function explode;
 use function function_exists;
+use function hash_hmac;
 use function is_array;
 use function is_string;
 use function str_starts_with;
 use function rest_url;
+use function time;
+use function wp_salt;
 
 /**
- * Rewrites recognition-service blob paths to the WP REST proxy URL so the
- * browser can load them as `<img src>`.
+ * Rewrites recognition-service blob paths to a signed WP REST proxy URL so
+ * the browser can load them as `<img src>`.
  *
  * The recognition service emits relative paths like
- * `/recognition/blobs/<job_id>/<media_id>` for multipart-uploaded media
- * (the bytes live only on the recognition VM's filesystem; there is no
- * `wp-content/uploads/...` URL the browser could hit). Same-origin
- * resolution would 404 against the WP origin, and an absolute URL to the
- * recognition service would also fail because `<img>` requests can't
- * carry the API key. This rewriter swaps every such path to
- * `<rest_url>acx/v1/recognition/blobs/<job_id>/<media_id>` — a same-origin
- * URL the WP plugin's BlobsController proxies through with the API key.
+ * `/recognition/blobs/<job_id>/<media_id>` for multipart-uploaded media.
+ * Same-origin resolution would 404 against the WP origin, and an absolute
+ * URL to the recognition service would also fail because `<img>` requests
+ * can't carry the API key.
+ *
+ * `<img>` requests also can't carry the WP REST `X-WP-Nonce` header, so we
+ * cannot guard the proxy route with the standard cookie+nonce permission
+ * callback. Instead, this rewriter mints a self-authenticating capability
+ * URL: the rewritten URL carries `expires` + `token` query args, where
+ * `token = HMAC-SHA256(wp_salt('auth'), "<job>:<media>:<expires>")`. The
+ * matching `BlobsController::verify_blob_token` permission callback
+ * recomputes the HMAC and compares it in constant time, only allowing the
+ * fetch when the signature matches and `expires` is in the future.
  *
  * Pure helper: kept as static methods so it is unit-testable without
- * spinning up WordPress (rest_url is the only WP dep, and absent tests
- * fall through to the literal prefix path).
+ * spinning up WordPress.
  */
 class BlobUrlRewriter {
 	private const RECOGNITION_BLOB_PREFIX = '/recognition/blobs/';
+	private const TOKEN_TTL_SECONDS       = 3600;
 
 	/**
 	 * Recursively rewrite `/recognition/blobs/<job>/<media>` strings inside
-	 * a decoded JSON structure to absolute WP REST proxy URLs.
+	 * a decoded JSON structure to absolute, signed WP REST proxy URLs.
 	 *
 	 * @param mixed $value Decoded JSON value (array, scalar, null).
 	 * @return mixed The same shape with blob paths rewritten in place.
@@ -61,10 +71,49 @@ class BlobUrlRewriter {
 		if ( ! str_starts_with( $value, self::RECOGNITION_BLOB_PREFIX ) ) {
 			return $value;
 		}
-		$relative = 'acx/v1' . $value;
-		if ( function_exists( 'rest_url' ) ) {
-			return rest_url( $relative );
+		$rest = substr( $value, strlen( self::RECOGNITION_BLOB_PREFIX ) );
+		if ( false === strpos( $rest, '/' ) ) {
+			return $value;
 		}
-		return '/' . $relative;
+		[ $job_id, $media_id ] = explode( '/', $rest, 2 );
+		if ( '' === $job_id || '' === $media_id ) {
+			return $value;
+		}
+
+		$relative = 'acx/v1' . $value;
+		$base_url = function_exists( 'rest_url' ) ? rest_url( $relative ) : '/' . $relative;
+
+		$expires = self::current_time() + self::TOKEN_TTL_SECONDS;
+		$token   = self::sign( $job_id, $media_id, $expires );
+
+		return add_query_arg(
+			array(
+				'expires' => $expires,
+				'token'   => $token,
+			),
+			$base_url
+		);
+	}
+
+	/**
+	 * Compute the HMAC for a (job, media, expires) capability tuple.
+	 *
+	 * Public so the controller permission callback can recompute the same
+	 * signature and compare it in constant time.
+	 */
+	public static function sign( string $job_id, string $media_id, int $expires ): string {
+		return hash_hmac( 'sha256', $job_id . ':' . $media_id . ':' . $expires, self::secret() );
+	}
+
+	private static function secret(): string {
+		if ( function_exists( 'wp_salt' ) ) {
+			return wp_salt( 'auth' );
+		}
+		// Test fallback: deterministic so unit tests can recompute signatures.
+		return 'acx-test-salt';
+	}
+
+	private static function current_time(): int {
+		return time();
 	}
 }

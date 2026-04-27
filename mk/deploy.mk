@@ -7,10 +7,12 @@
 # All targets honour OCI_HOST/OCI_USER/OCIR_REGISTRY/OCIR_NAMESPACE/IMAGE_NAME
 # overrides (see recognition-service.sh for defaults).
 
-DEPLOY_SCRIPT := $(ROOT_MAKEFILE_DIR)/scripts/deploy/recognition-service.sh
+DEPLOY_SCRIPT         := $(ROOT_MAKEFILE_DIR)/scripts/deploy/recognition-service.sh
+DEPLOY_COMPOSE_SCRIPT := $(ROOT_MAKEFILE_DIR)/scripts/deploy/sync-compose.sh
 
 .PHONY: deploy-help deploy-dev deploy-staging deploy-prod \
-        deploy-promote-staging deploy-promote-prod deploy-status
+        deploy-promote-staging deploy-promote-prod deploy-status \
+        deploy-compose-dev deploy-compose-staging deploy-compose-prod
 
 deploy-help:
 	@echo "Recognition service deploy targets:"
@@ -20,6 +22,11 @@ deploy-help:
 	@echo "  make deploy-promote-staging    Retag :dev -> :staging, restart acx-staging"
 	@echo "  make deploy-promote-prod CONFIRM=PROD  Retag :staging -> :latest, restart acx-prod"
 	@echo "  make deploy-status             Show current sha at each environment's /health"
+	@echo ""
+	@echo "Compose-file sync (run when docker-compose.env.yml itself changes):"
+	@echo "  make deploy-compose-dev                Sync compose to acx-dev VM and 'docker compose up -d'"
+	@echo "  make deploy-compose-staging            Sync compose to acx-staging VM and 'docker compose up -d'"
+	@echo "  make deploy-compose-prod CONFIRM=PROD  Sync compose to acx-prod VM and 'docker compose up -d'"
 	@echo ""
 	@echo "Optional overrides: OCI_HOST OCI_USER OCIR_REGISTRY OCIR_NAMESPACE IMAGE_NAME GIT_REF"
 
@@ -37,6 +44,15 @@ deploy-promote-staging:
 
 deploy-promote-prod:
 	@ENV=prod MODE=promote SOURCE_TAG=staging CONFIRM="$(CONFIRM)" "$(DEPLOY_SCRIPT)"
+
+deploy-compose-dev:
+	@ENV=dev "$(DEPLOY_COMPOSE_SCRIPT)"
+
+deploy-compose-staging:
+	@ENV=staging "$(DEPLOY_COMPOSE_SCRIPT)"
+
+deploy-compose-prod:
+	@ENV=prod CONFIRM="$(CONFIRM)" "$(DEPLOY_COMPOSE_SCRIPT)"
 
 deploy-status:
 	@for env in dev staging prod; do \

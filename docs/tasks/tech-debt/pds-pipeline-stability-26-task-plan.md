@@ -97,13 +97,13 @@ Five small refactors landed in dependency order, each its own slice with tests. 
 | backend | `recognition/application/orchestration/clustering/orchestrator.py` | Group 14 kwargs into 3 dataclasses; refactor `_persist_and_cache_new_clusters` (L374) signature similarly |
 | backend (new) | `recognition/application/orchestration/clustering/dependencies.py` (or sibling) | Define `ClusteringDependencies`, `ClusteringRuntimeConfig`, `ClusteringContext` frozen dataclasses |
 | backend | `recognition/interface_adapters/http/routers/clusters.py` (~L361), `recognition/interface_adapters/http/deps/stores.py` (L40, L55), `recognition/application/scan/service.py` (L89), other clustering/scan-path string-status sites | Replace bare-string status writes/comparisons with `JobStatus`/`JobPhase` members |
-| backend (new) | `recognition/application/integrations/timeouts.py` (or under `recognition/application/embedding/` if smaller) | Small `wait_for_adapter(coro, *, timeout, adapter_name)` helper raising typed `AdapterTimeoutError` |
+| backend (new) | `recognition/application/integrations/timeouts.py` | `wait_for_adapter(coro, *, timeout, adapter_name)` helper raising typed `AdapterTimeoutError` (parity with `integrations/circuit_breaker.py`) |
 | backend (new) | `recognition/application/integrations/circuit_breaker.py` | `AdapterCircuitBreaker` (state machine extracted from / shared with `clustering_circuit_breaker.py`) |
 | backend | `recognition/application/embedding/generator.py` (~L99) | Wrap `await self._adapter.analyze(...)` in timeout + breaker; remove blanket `except Exception` swallowing |
 | backend | `recognition/application/labeling/` (call site TBD slice 3) | Same wrapping pattern at the auto-labeler entrypoint |
 | backend | `recognition/application/scan/service.py` (`save_job_results`, ~L94+) | Three explicit phases: reserve+commit, external call (no open tx), persist+commit with `ON CONFLICT DO NOTHING` keyed on `(job_id, media_id)` |
-| settings | `db/settings.py` or new `recognition/application/settings/adapters.py` | Add per-adapter `timeout_s` settings (validated at load time per rg-008) |
-| docs | `docs/adrs/ADR-NNN-external-adapter-stability-pattern.md` (new) | Codify `commit → call → commit`, `AdapterCircuitBreaker` reuse, per-adapter timeout convention, `JobStatus`/`JobPhase` location |
+| settings | `recognition/application/settings/adapters.py` (new, sibling to existing `adaptive.py`/`clustering.py`/`scan.py`) | Add per-adapter `timeout_s` and breaker config (validated at load time per rg-008) |
+| docs | `docs/adrs/ADR-008-external-adapter-stability-pattern.md` (new) | Codify `commit → call → commit`, `AdapterCircuitBreaker` reuse, per-adapter timeout convention, `JobStatus`/`JobPhase` location |
 
 ## Related Files
 
@@ -134,9 +134,17 @@ Five small refactors landed in dependency order, each its own slice with tests. 
 
 **Goal:** Replace 14 kwargs at `cluster_unclustered_identities` and `IncrementalClusteringRunner.__init__` with three frozen dataclasses; apply the same shape to `_persist_and_cache_new_clusters` at orchestrator.py:374.
 
+**Proposed grouping** (cohesion = lifetime + mutability; finalize against the live signature in slice prep):
+
+| Dataclass | Holds | Lifetime |
+| --- | --- | --- |
+| `ClusteringDependencies` | injectable services: session factory, embedding adapter, similarity index, assignment writer, breaker, repositories | process / DI scope |
+| `ClusteringRuntimeConfig` | numeric knobs: chunk size, EWMA params, similarity thresholds, max iterations, adaptive-sizing limits | config-load scope |
+| `ClusteringContext` | per-call values: `tenant_id`, `job_id`, `snapshot_version`, optional run correlation id | per-invocation |
+
 Changes:
 
-- New module with `ClusteringDependencies`, `ClusteringRuntimeConfig`, `ClusteringContext` (all `@dataclass(frozen=True)`).
+- New module `recognition/application/orchestration/clustering/dependencies.py` with `ClusteringDependencies`, `ClusteringRuntimeConfig`, `ClusteringContext` (all `@dataclass(frozen=True)`).
 - Update `cluster_unclustered_identities`, `IncrementalClusteringRunner.__init__`, `_persist_and_cache_new_clusters`, and all internal callers in the same diff.
 - New unit test asserts the entrypoint takes ≤4 args and that mypy round-trips the new types.
 
@@ -155,7 +163,7 @@ Changes:
 - Grep clustering + scan paths for bare-string status assignments and comparisons; replace with `JobStatus.<MEMBER>` / `JobPhase.<MEMBER>`.
 - If grep finds a status value not in either enum, extend `JobStatus` (preferred) or `JobPhase` and call out the addition in the slice-complete decision.
 - Wire SQLAlchemy `Enum(JobStatus, native_enum=False)` only on columns this slice touches; do not change DB schema.
-- New test `test_job_status_enum_adoption.py` asserts the grep gate (no bare-string status literals in scan + clustering paths).
+- New test `recognition/tests/unit/test_job_status_enum_adoption.py` asserts the grep gate (no bare-string status literals in scan + clustering paths). Lives under the default pytest collection root, so `make check-all` (which runs the recognition suite without `-k` filters) enforces the gate on every CI run — no separate `make` target required.
 
 Proof:
 
@@ -165,15 +173,34 @@ Proof:
 
 ### Slice 3: Adapter timeout helper + `AdapterCircuitBreaker` (F-1, F-3)
 
-**Goal:** Bound every external adapter call with `asyncio.wait_for` and an `AdapterCircuitBreaker`. Wire both at `InsightFaceEmbeddingGenerator.generate` and the auto-labeler entrypoint.
+**Goal:** Bound every external adapter call with `asyncio.wait_for` and an `AdapterCircuitBreaker`. Wire both at `InsightFaceEmbeddingGenerator.generate` and the auto-labeler entrypoint at `recognition/application/labeling/auto_labeler.py` (confirmed present).
+
+**Breaker configuration surface** (frozen dataclass `AdapterBreakerConfig` in the new settings module, validated at load time per rg-008):
+
+| Field | Default (initial; tune against existing `clustering_circuit_breaker.py`) |
+| --- | --- |
+| `failure_count_threshold` | 5 |
+| `failure_window_seconds` | 60 |
+| `half_open_probe_count` | 1 |
+| `success_close_threshold` | 1 |
+| `open_state_cooldown_seconds` | 30 |
+
+Per-adapter timeout: `embedding_timeout_s` (default 10), `auto_labeler_timeout_s` (default 15). Defaults must be overridable via environment-driven settings.
+
+**Failure handling at the application boundary** (resolves the gap left by removing the blanket `except`):
+
+- `AdapterTimeoutError` and `BreakerOpenError` are caught at the orchestrator/scan-service boundary, not inside the generator.
+- Mapping: timeout or breaker-open → `JobStatus.FAILED` with `JobPhase.RETRYING` if the worker's retry budget remains; `JobStatus.FAILED` (terminal) once exhausted. Error message records adapter name and error class.
+- The clustering chunk loop treats a single chunk's adapter failure as a chunk-level failure (skip + record), not a job-level failure, preserving rg-007 (bounded stall detection).
 
 Changes:
 
-- New `wait_for_adapter(coro, *, timeout, adapter_name)` helper raising typed `AdapterTimeoutError`. Timeout sourced from settings (validated at load time).
-- New `AdapterCircuitBreaker` (extracted core or reuse of the existing breaker's state machine; if extraction is too invasive, ship a minimal new breaker and refactor the existing one in slice 4 cleanup).
-- Wrap `embedding/generator.py:99` and the auto-labeler call site (location confirmed in this slice; if not located, add an MCP finding before continuing).
-- Remove blanket `except Exception` from generator; let typed errors propagate to the orchestrator/scan caller, which decides retry/skip semantics.
-- New unit tests: timeout fires; breaker opens after N failures; half-open probe; closed→open→half-open transitions.
+- New `wait_for_adapter(coro, *, timeout, adapter_name)` helper raising typed `AdapterTimeoutError`. Timeout sourced from `recognition/application/settings/adapters.py`.
+- New `AdapterCircuitBreaker` in `recognition/application/integrations/circuit_breaker.py`. Slice prep grep decides extract-vs-new against the existing `clustering_circuit_breaker.py` state machine; if extraction is invasive, ship a minimal new breaker and defer the existing-breaker refactor to a follow-up task (out of slice scope).
+- Wrap `embedding/generator.py:99` and `labeling/auto_labeler.py` adapter call sites.
+- Remove blanket `except Exception` from generator; declare typed propagation contract above.
+- Update orchestrator/scan-service catch sites to apply the failure-handling mapping; cover with unit tests.
+- New unit tests: timeout fires; breaker opens after N failures; half-open probe; closed→open→half-open transitions; orchestrator/scan caller maps typed errors to expected `JobStatus`/`JobPhase`.
 
 Proof:
 
@@ -188,7 +215,7 @@ Changes:
 
 - Phase 1: reserve job + commit. Phase 2: external adapter call (no open tx). Phase 3: persist results + commit, idempotent on `(job_id, media_id)` via `ON CONFLICT DO NOTHING`.
 - Audit other call sites for the same anti-pattern; if any found, document in the slice-complete decision with a follow-up task ref.
-- Land `docs/adrs/ADR-NNN-external-adapter-stability-pattern.md` documenting the three-phase shape, breaker reuse, timeout settings convention, and enum location.
+- Land `docs/adrs/ADR-008-external-adapter-stability-pattern.md` documenting the three-phase shape, breaker reuse, timeout settings convention, and enum location.
 
 Proof:
 
@@ -235,7 +262,7 @@ Proof:
 - [ ] Add `ON CONFLICT DO NOTHING` keyed on `(job_id, media_id)` for the persist step.
 - [ ] Add `test_scan_service_phase_split.py` proving no open tx at adapter-call time.
 - [ ] Audit other call sites for the same anti-pattern; record findings or follow-up tasks.
-- [ ] Land ADR-NNN documenting the integration-point pattern.
+- [ ] Land ADR-008 documenting the integration-point pattern.
 - [ ] Run integration regression suite.
 
 ## Review Readiness
@@ -258,6 +285,6 @@ Proof:
 - [ ] Unit test proves `session.in_transaction()` is False at the moment the scan service awaits the adapter.
 - [ ] Grep gate proves zero bare-string status assignments in clustering + scan paths.
 - [ ] Orchestration entry takes ≤4 args (3 dataclasses + tenant/job context).
-- [ ] ADR `docs/adrs/ADR-NNN-external-adapter-stability-pattern.md` exists, links to this task plan, and codifies the timeout + breaker + phase-split shape.
+- [ ] ADR `docs/adrs/ADR-008-external-adapter-stability-pattern.md` exists, links to this task plan, and codifies the timeout + breaker + phase-split shape.
 - [ ] `handoff_close_check(enforce=True)` passes.
 - [ ] No new infra dependency in `pyproject.toml`.

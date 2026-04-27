@@ -8,6 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MCP_CONFIG_PATH = REPO_ROOT / ".vscode" / "mcp.json"
 INSTRUCTIONS_PATH = REPO_ROOT / "docs" / "agentic" / "instructions.md"
 CLAUDE_PATH = REPO_ROOT / "CLAUDE.md"
+HANDOFF_MK_PATH = REPO_ROOT / "mk" / "handoff.mk"
 
 
 def test_root_mcp_launchers_do_not_require_current_task_path() -> None:
@@ -40,3 +41,10 @@ def test_shared_docs_describe_current_task_as_on_demand_export() -> None:
     )
     for snippet in stale_instructions_snippets:
         assert snippet not in instructions_text
+
+
+def test_slice_start_refreshes_dashboard_instead_of_current_task() -> None:
+    handoff_mk_text = HANDOFF_MK_PATH.read_text(encoding="utf-8")
+
+    assert 'render-handoff --kind dashboard' in handoff_mk_text
+    assert 'render-handoff --kind current_task --task-ref "$(TASK)"' not in handoff_mk_text

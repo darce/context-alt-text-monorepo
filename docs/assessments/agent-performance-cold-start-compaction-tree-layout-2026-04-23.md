@@ -45,10 +45,10 @@ Defer to spec stage. No ADR required. S1-C can land as a standalone bug fix ahea
 
 ### Evidence
 
-- `close_slice` and `record_event(event_kind="decision")` both accept a rationale string with a 1500-char soft limit and required markdown sections (## Changes, ## Verification, ## Schema / Contract Changes, ## Open Threads) per templates/slice-complete-template.md.
-- `review_findings(operation="record")` bodies are prose paragraphs (evidence + impact).
-- Stable IDs exist for every entity the agent typically cites: finding_id (e.g. AOMCP-3-BR-04), decision id, test_result rows returned by get_verified_tests, blocker_id, action_id.
-- `get_handoff_state(detail="summary")` truncates rationale/fix/verification fields to 200 chars - compaction already exists on the read side. The write side still stores prose. The ~20KB oversize_response advisory fires precisely because verbose rationales cross that threshold.
+- `packages/agent-handoff-mcp/src/agent_handoff_mcp/shared_primitives.py:75-111` defines the current write-side rationale envelope: `RATIONALE_SOFT_LIMIT_CHARS = 1_500`, `RATIONALE_HARD_LIMIT_CHARS = 3_000`, and `MANDATORY_SLICE_DECISION_HEADINGS = ("## Changes", "## Verification", "## Schema / Contract Changes", "## Open Threads")`.
+- `packages/agent-handoff-mcp/src/agent_handoff_mcp/core.py:141,225-246` shows that summary compaction already exists on the read side via `_ARTIFACT_TEXT_SUMMARY_TRUNCATE = 200` and the summary-path truncation helpers.
+- `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py:26-44` exposes stable IDs and typed surfaces for the entities agents repeatedly cite (`list_review_findings`, `get_verified_tests`, `record_event`, `close_slice`, blockers/actions via the core API exports), but the write payloads still store prose narratives instead of structured cross-references.
+- `review_findings(operation="record")` bodies remain prose paragraphs (evidence + impact) even though the same surface already carries stable `finding_id` and structured `details` fields.
 - Current rationale shape repeats context already retrievable via stable ID: "Slice fixes the race in foo.py described in F-12 and adds regression test test_foo_race ...". Both F-12 and test_foo_race are queryable IDs.
 
 ### Impact
@@ -60,12 +60,12 @@ Defer to spec stage. No ADR required. S1-C can land as a standalone bug fix ahea
 ### Suggested direction
 
 - **S2-A**: "Thin rationale" template for decisions whose narrative is fully derivable: `changes: f1,f2; fixes: F-a,F-b; verified: cmd pass; followups: F-c`. Keep prose for novel narrative (design decisions, postmortems). Reject thin templates whose IDs don't resolve at write time.
-- **S2-B**: Additive structured-fields columns on decisions - `changed_files` already exists; extend to `fixes_findings[]`, `verifies_tests[]`, `opens_findings[]`. Prose stays; renderers rebuild Changes/Verification sections from structured fields and only emit prose for Open Threads.
+- **S2-B**: Additive structured-fields columns on decisions in `packages/agent-handoff-mcp/src/agent_handoff_mcp/shared_schema.py` and its versioned migration/test coverage - `changed_files` already exists; extend to `fixes_findings[]`, `verifies_tests[]`, `opens_findings[]`. Prose stays; renderers rebuild Changes/Verification sections from structured fields and only emit prose for Open Threads.
 - **S2-C**: On `get_handoff_state(detail="summary")`, render decisions as `D-id: slug -> fixes F-a,F-b; verified T-c` instead of the first 200 chars of markdown. Same token cost, much more signal.
 - **S2-D**: Teach `render_handoff(kind=dashboard)` to collapse runs of slice-complete decisions on the same task into a grouped row keyed by earliest+latest decision id. Narrative stays retrievable via `search_handoff`.
 - **S2-E**: Add `search_handoff(return_ids_only=true)` so agents can cheaply answer "did we see F-x recently?" without pulling prose.
 
-Defer to spec stage. Schema change is additive; per Greenfield Policy it goes directly in 001_identity_schema.py.
+Defer to a handoff-package spec stage. Schema change is additive, but the owning surface is the handoff package schema/migration layer, not the prototype-description-service Alembic baseline.
 
 ---
 
@@ -91,11 +91,11 @@ No change. Continue writing investigation/evaluation artifacts here unless the s
 
 ### Evidence
 
-- Monorepo scopes dir has 4 files: e17-12-codex-skill-discoverability-scope, e17-8-branch-isolation-edit-guard-scope, hoist-agentic-system-to-remote-scope, ahmcp-31-32-scope-note.
-- Monorepo specs dir has 2 files: auth-transaction-isolation-spec, session-lifecycle-resilience-spec.
-- docs/agentic/rules/planning-pipeline.md lines 37-65 define scopes as Stage 0 intake one-pagers (MVP scope, Not-Doing list, success criteria) before any assessment is written.
-- Observed drift: e17-8 scope opens with a Motivating Incident section that reads like assessment content. e17-12 scope links back to an assessment (packages/agent-handoff-mcp/docs/assessments/codex-harness-slash-tools-and-skill-discovery-investigation-2026-04-18.md) - inverting the normal scope-before-assessment order.
-- Both specs name their upstream assessment in frontmatter, and both live at monorepo root even though their subject is one app (apps/prototype-description-service).
+- `docs/scopes/` currently contains four files: `ahmcp-31-32-scope-note.md`, `e17-12-codex-skill-discoverability-scope.md`, `e17-8-branch-isolation-edit-guard-scope.md`, and `hoist-agentic-system-to-remote-scope.md`.
+- `docs/specs/` currently contains two files: `auth-transaction-isolation-spec.md` and `session-lifecycle-resilience-spec.md`.
+- `docs/agentic/rules/planning-pipeline.md:37-69` defines scopes as Stage 0 intake one-pagers (MVP scope, Not-Doing list, success criteria) before any assessment is written, while `docs/agentic/rules/planning-pipeline.md:101-118` assigns Stage 2 specs to a separate artifact class.
+- `docs/scopes/e17-8-branch-isolation-edit-guard-scope.md:7` opens with `## Motivating Incident`, and `docs/scopes/e17-12-codex-skill-discoverability-scope.md:5,12` explicitly point back to a backing assessment, showing that the scope surface is already doing some assessment-style work.
+- `docs/README.md:37` currently advertises `docs/specs/` as the monorepo spec home, while both root-level spec files target `apps/prototype-description-service` in their metadata/frontmatter.
 
 ### Impact
 
@@ -106,7 +106,7 @@ No change. Continue writing investigation/evaluation artifacts here unless the s
 
 - **S4-A** (keep tree, tighten policy): keep both monorepo-level directories. Clarify in planning-pipeline.md:
   - Scope notes are <=1 page. If a scope note needs a Motivating Incident or Current State section >1/2 page, it has outgrown Stage 0 and must migrate to the assessments directory.
-  - Package-local specs live under packages/<pkg>/docs/specs/ or apps/<app>/docs/specs/. The monorepo-level specs dir is for cross-package contracts only. The two current monorepo-level specs are app-local (apps/prototype-description-service) and should migrate - or policy picks the simpler rule "all specs live at monorepo root." Pick one, document it, enforce via `make lint-planning-docs`.
+  - Adopt one canonical rule for this repo. The smallest-change option is to keep `docs/specs/` as the monorepo default and reserve package-local `docs/specs/` for packages that already own a colocated planning surface.
 - **S4-B** (add index): expand docs/README.md with a table mapping assessments / scopes / specs / adrs / tasks / epics / roadmaps / operations to stage + canonical directory + owning README. Today a new contributor has to read planning-pipeline.md to learn the difference.
 - **S4-C** (do not do this): do not collapse scopes into assessments. Different questions, different gates.
 
@@ -145,4 +145,6 @@ Defer to spec stage only if S4-A is accepted - the migration is a one-shot `git 
 
 ## Suggested next stage
 
-Draft a single spec carrying F1 + F2 + F4 as numbered items (e.g. AGENT-ERGO-001..007). No ADR required - none of the items cross a design-uncertain gate. Implementation task plans follow the spec per planning-pipeline.md Stage 3. S1-C (cross-worktree branch-guard bug) can land ahead of the spec as a standalone fix.
+- F1 can land directly as workflow/tooling fixes: `make maint-start`, the `make context` startup summary, and the per-path branch-resolution guard bug do not need a combined spec first.
+- F2 needs its own handoff-package spec if the structured-reference work is still worth pursuing; its schema owner is `packages/agent-handoff-mcp`, not the prototype service DB.
+- F4 should be handled as a docs-policy cleanup after the repo chooses one canonical spec-location rule. Do not bundle that policy choice into the same implementation spec as F1/F2.

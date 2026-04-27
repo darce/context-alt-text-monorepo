@@ -255,6 +255,43 @@ def _load_active_state() -> tuple[dict | None, str | None]:
     return state, None
 
 
+def _load_open_findings_count(task_ref: str) -> int | None:
+    try:
+        list_review_findings = _import_handoff_attr("api", "list_review_findings")
+    except ImportError:
+        return None
+    try:
+        raw = list_review_findings(task_ref=task_ref, status="open", detail="summary", limit=1)
+    except Exception:
+        return None
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    data = parsed.get("data") if isinstance(parsed.get("data"), dict) else parsed
+    total_matching = data.get("total_matching") if isinstance(data, dict) else None
+    if isinstance(total_matching, int):
+        return total_matching
+    counts = data.get("counts") if isinstance(data, dict) else None
+    status_counts = counts.get("status") if isinstance(counts, dict) else None
+    open_count = status_counts.get("open") if isinstance(status_counts, dict) else None
+    return open_count if isinstance(open_count, int) else None
+
+
+def _emit_startup_summary(active: dict) -> None:
+    task_ref = active.get("task_ref") or ""
+    open_findings = _load_open_findings_count(task_ref) if task_ref else None
+    print("Startup summary:")
+    if open_findings is None:
+        print("  Open findings: unavailable")
+    else:
+        print(f"  Open findings: {open_findings}")
+    print("  Role routing: load docs/agentic/instructions.md -> Role Selection before editing.")
+    print('  Main-branch ad-hoc work: make maint-start SLUG=<slug> OBJECTIVE="..."')
+
+
 def main() -> int:
     state, failure_kind = _load_active_state()
     if state is None:
@@ -340,6 +377,8 @@ def main() -> int:
 
     print()
     print("Context aligned ✓")
+    print()
+    _emit_startup_summary(active)
 
     # AHMCP-16: surface a loud warning when the active task has already
     # reached a terminal status. Without this, agents who run `make context`
@@ -417,10 +456,7 @@ def _emit_maintenance_task_hint_if_needed(actual_branch: str | None) -> None:
         return
     print()
     print("  Register a maintenance task before continuing with main-branch edits:")
-    print(
-        "    set_handoff_state(task_ref='MAINT-<slug>', objective='Describe the main-branch patch', "
-        "status='in_progress', target_branch='main')"
-    )
+    print('    make maint-start SLUG=<slug> OBJECTIVE="Describe the main-branch patch"')
     print(
         "  (MAINT-* tasks on main/master default target_worktree_path to the current repo root.)"
     )

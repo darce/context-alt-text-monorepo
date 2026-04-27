@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from datetime import date
 from pathlib import Path
 
 
@@ -154,3 +155,38 @@ def test_is_root_worktree_returns_false_for_linked(tmp_path, monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     assert mod._is_root_worktree() is False
+
+
+def test_load_open_findings_count_reads_total_matching(monkeypatch):
+    mod = _load_module()
+
+    def fake_import(module_name, attr):
+        assert module_name == "api"
+        assert attr == "list_review_findings"
+        return lambda **kwargs: {"data": {"total_matching": 3}}
+
+    monkeypatch.setattr(mod, "_import_handoff_attr", fake_import)
+    assert mod._load_open_findings_count("TASK-1") == 3
+
+
+def test_emit_startup_summary_prints_findings_and_role_hint(monkeypatch, capsys):
+    mod = _load_module()
+    monkeypatch.setattr(mod, "_load_open_findings_count", lambda task_ref: 2)
+
+    mod._emit_startup_summary({"task_ref": "TASK-1"})
+
+    out = capsys.readouterr().out
+    assert "Open findings: 2" in out
+    assert "Role routing" in out
+    assert "make maint-start" in out
+
+
+def test_emit_maintenance_task_hint_prefers_make_maint_start(monkeypatch, capsys):
+    mod = _load_module()
+    monkeypatch.setattr(mod, "_git_dirty_paths", lambda: ["scripts/thing.py"])
+
+    mod._emit_maintenance_task_hint_if_needed("main")
+
+    out = capsys.readouterr().out
+    assert "make maint-start" in out
+    assert "set_handoff_state" not in out

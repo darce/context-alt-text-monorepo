@@ -10,7 +10,6 @@ The ScanService depends on this interface for embedding generation.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 from abc import ABC, abstractmethod
@@ -21,6 +20,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from db.settings import get_database_settings
+from recognition.application.integrations import AdapterTimeoutError, wait_for_adapter
 
 if TYPE_CHECKING:
     from recognition.infrastructure.embeddings import InsightFaceAdapter
@@ -116,9 +116,10 @@ class InsightFaceEmbeddingGenerator(EmbeddingGeneratorProtocol):
 
             try:
                 # Run detection and embedding in one pass
-                face_results = await asyncio.wait_for(
+                face_results = await wait_for_adapter(
                     self._adapter.analyze(image_bytes),
                     timeout=self._timeout,
+                    adapter_name="insightface.analyze",
                 )
 
                 for _face in face_results:
@@ -129,7 +130,7 @@ class InsightFaceEmbeddingGenerator(EmbeddingGeneratorProtocol):
                             confidence=_face.confidence,
                         )
                     )
-            except TimeoutError as exc:
+            except AdapterTimeoutError as exc:
                 logger.error(
                     "Embedding generation timed out for %s after %.2fs",
                     media_id[:20],

@@ -10,7 +10,6 @@ The ScanService depends on this interface for face detection.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import io
 import logging
@@ -23,6 +22,7 @@ import httpx
 import imagehash
 import numpy as np
 from PIL import Image
+from recognition.application.integrations import AdapterTimeoutError, wait_for_adapter
 
 if TYPE_CHECKING:
     from recognition.infrastructure.embeddings import InsightFaceAdapter
@@ -204,9 +204,10 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
 
             # Detect faces and get embeddings in one pass
             try:
-                faces = await asyncio.wait_for(
+                faces = await wait_for_adapter(
                     self._adapter.detect_faces(image_bytes),
                     timeout=self._timeout,
+                    adapter_name="insightface.detect_faces",
                 )
                 for face in faces:
                     # Extract pose angles
@@ -240,7 +241,7 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
                             landmark_quality=detection_quality,
                         )
                     )
-            except TimeoutError as exc:
+            except AdapterTimeoutError as exc:
                 logger.error("Face detection timed out for %s after %.2fs", media_id[:20], self._timeout)
                 raise DetectionTimeoutError(media_id=media_id, timeout_s=self._timeout) from exc
             except Exception as e:

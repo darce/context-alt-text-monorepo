@@ -70,8 +70,7 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 			array_filter(
 				$members,
 				static function ( $member ): bool {
-					return is_array( $member )
-						&& '' !== trim( (string) ( $member['identity_uuid'] ?? $member['identity_id'] ?? '' ) )
+					return '' !== trim( (string) ( $member['identity_uuid'] ?? $member['identity_id'] ?? '' ) )
 						&& '' !== trim( (string) ( $member['cluster_uuid'] ?? $member['cluster_id'] ?? '' ) );
 				}
 			)

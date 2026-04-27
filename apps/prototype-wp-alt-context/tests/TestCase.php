@@ -11,6 +11,11 @@ use PHPUnit\Framework\TestCase as PHPUnitTestCase;
  */
 abstract class TestCase extends PHPUnitTestCase
 {
+    protected static function currentTenantId(): string
+    {
+        return \AltContext\Api\TenantIdentity::derive_from_site_url();
+    }
+
     protected function setUp(): void
     {
         parent::setUp();

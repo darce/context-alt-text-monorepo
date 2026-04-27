@@ -4,7 +4,9 @@ import { scanFacesBatched } from '../scanApi';
 import type { AnalyzeResponse } from '../types';
 import type { HTTPOptions } from '../../../utils/http';
 
-type ScanRequestBody = { media_ids: number[] };
+interface ScanRequestBody {
+  media_ids: number[];
+}
 type FetchRequiredApiMock = (endpoint: string, options?: HTTPOptions) => Promise<AnalyzeResponse>;
 
 const hasMediaIds = (value: unknown): value is ScanRequestBody => {
@@ -48,8 +50,8 @@ const getRequestBody = (callIndex: number): ScanRequestBody => {
 };
 
 vi.mock('../../../utils/http', () => ({
-  fetchApi: (...args: unknown[]) => fetchMock(...args),
-  fetchRequiredApi: (...args: unknown[]) => fetchMock(...args),
+  fetchApi: (endpoint: string, options?: HTTPOptions) => fetchMock(endpoint, options),
+  fetchRequiredApi: (endpoint: string, options?: HTTPOptions) => fetchMock(endpoint, options),
   stripTrailingSlash: (value: string) => (value.endsWith('/') ? value.slice(0, -1) : value),
 }));
 

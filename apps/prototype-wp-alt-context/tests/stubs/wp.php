@@ -36,6 +36,17 @@ if (!class_exists('WP_Error')) {
         {
             return $this->data;
         }
+
+        /**
+         * WordPress callers sometimes use get_data() on WP_Error interchangeably
+         * with get_error_data(); keep the stub compatible with both call sites.
+         *
+         * @return mixed
+         */
+        public function get_data()
+        {
+            return $this->data;
+        }
     }
 }
 

@@ -1,0 +1,9 @@
+{
+  "js/admin/main.tsx": {
+    "file": "assets/admin-test.js",
+    "isEntry": true,
+    "css": [
+      "assets/admin-test.css"
+    ]
+  }
+}

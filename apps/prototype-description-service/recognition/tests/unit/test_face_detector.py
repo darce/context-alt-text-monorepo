@@ -22,6 +22,7 @@ from recognition.application.embedding.detector import (
     InsightFaceFaceDetector,
     StubFaceDetector,
 )
+from recognition.application.integrations import AdapterBreakerConfig, AdapterBreakerOpenError, AdapterCircuitBreaker
 
 
 class TestStubFaceDetector:
@@ -249,6 +250,32 @@ class TestInsightFaceFaceDetector:
 
         with pytest.raises(DetectionTimeoutError):
             await detector.detect([b"slow-image"])
+
+    @pytest.mark.asyncio
+    async def test_fast_fails_when_breaker_is_open(self) -> None:
+        """Breaker-open state should surface as a fast failure on the detector seam."""
+
+        breaker = AdapterCircuitBreaker(
+            adapter_name="insightface.detect_faces",
+            config=AdapterBreakerConfig(
+                failure_count_threshold=1,
+                failure_window_seconds=60.0,
+                half_open_probe_count=1,
+                success_close_threshold=1,
+                open_state_cooldown_seconds=30.0,
+            ),
+        )
+
+        failing_adapter = MagicMock()
+        failing_adapter.detect_faces = AsyncMock(side_effect=RuntimeError("Model failed"))
+        detector = InsightFaceFaceDetector(failing_adapter, breaker=breaker)
+
+        first_result = await detector.detect([b"first-image"])
+
+        assert first_result == []
+
+        with pytest.raises(AdapterBreakerOpenError):
+            await detector.detect([b"second-image"])
 
 
 # Backwards compatibility alias test

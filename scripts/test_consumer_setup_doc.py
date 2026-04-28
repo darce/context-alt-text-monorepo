@@ -32,6 +32,8 @@ REQUIRED_SNIPPETS = (
     "AGENT_HANDOFF_DASHBOARD_PATH",
     "AGENT_HANDOFF_CURRENT_TASK_PATH",
     "AGENT_HANDOFF_EXPORTS_DIR",
+    "optional explicit current-task export",
+    "do not assume it exists or is current",
     "core.hooksPath",
     "scripts/hooks/git",
     "AmbiguousWorkspaceContextError",
@@ -57,6 +59,8 @@ def test_consumer_setup_doc_exists_and_is_standalone() -> None:
 
     for snippet in REQUIRED_SNIPPETS:
         assert snippet in text, f"consumer-setup doc is missing required snippet: {snippet}"
+
+    assert "default current-task snapshot: CURRENT_TASK.json" not in text
 
     update_section = text.split("## Update Workflow", 1)[1].split("## Doctor and Repair", 1)[0]
     for snippet in REQUIRED_UPDATE_SNIPPETS:

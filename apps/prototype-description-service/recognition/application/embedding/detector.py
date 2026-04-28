@@ -255,6 +255,7 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
                 logger.error("Face detection timed out for %s after %.2fs", media_id[:20], self._timeout)
                 raise DetectionTimeoutError(media_id=media_id, timeout_s=self._timeout) from exc
             except AdapterBreakerOpenError:
+                logger.warning("Detection breaker open for %s", media_id[:20])
                 raise
             except Exception as e:
                 logger.error("Face detection failed for %s: %s", media_id[:20], e)

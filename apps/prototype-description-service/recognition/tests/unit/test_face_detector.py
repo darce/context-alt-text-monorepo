@@ -9,6 +9,7 @@ Tests cover:
 from __future__ import annotations
 
 import asyncio
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
@@ -276,6 +277,33 @@ class TestInsightFaceFaceDetector:
 
         with pytest.raises(AdapterBreakerOpenError):
             await detector.detect([b"second-image"])
+
+    @pytest.mark.asyncio
+    async def test_logs_warning_when_breaker_is_open(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Breaker-open state should emit a warning before re-raising."""
+
+        breaker = AdapterCircuitBreaker(
+            adapter_name="insightface.detect_faces",
+            config=AdapterBreakerConfig(
+                failure_count_threshold=1,
+                failure_window_seconds=60.0,
+                half_open_probe_count=1,
+                success_close_threshold=1,
+                open_state_cooldown_seconds=30.0,
+            ),
+        )
+
+        failing_adapter = MagicMock()
+        failing_adapter.detect_faces = AsyncMock(side_effect=RuntimeError("Model failed"))
+        detector = InsightFaceFaceDetector(failing_adapter, breaker=breaker)
+
+        await detector.detect([b"first-image"])
+
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(AdapterBreakerOpenError):
+                await detector.detect([b"second-image"])
+
+        assert "Detection breaker open for" in caplog.text
 
 
 # Backwards compatibility alias test

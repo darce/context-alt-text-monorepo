@@ -113,19 +113,19 @@ async def process_scan_job_inline(
             detector = StubFaceDetector()
             generator = StubEmbeddingGenerator()
 
-    # 1. Mark Running (Short transaction)
-    async with session_factory() as session:
-        tenant_uuid = uuid.UUID(str(tenant_id))
-        await set_tenant_context(session, tenant_uuid)
-
-        from recognition.application.scan.service import ScanService
-
-        scan_service = ScanService(session=session)
-        await scan_service.mark_job_running(uuid.UUID(str(job_id)))
-
-    # 2. Inference (No DB connection)
     sources_list = list(media_sources) if media_sources else (list(media_ids) if media_ids else [])
-    try:
+
+    async def mark_running_phase() -> None:
+        async with session_factory() as session:
+            tenant_uuid = uuid.UUID(str(tenant_id))
+            await set_tenant_context(session, tenant_uuid)
+
+            from recognition.application.scan.service import ScanService
+
+            scan_service = ScanService(session=session)
+            await scan_service.mark_job_running(uuid.UUID(str(job_id)))
+
+    async def detect_phase() -> list[FaceDetection]:
         detections = await detector.detect(sources_list)
 
         # Generate embeddings if specific detector didn't provide them (e.g. stub or some configs)
@@ -137,6 +137,39 @@ async def process_scan_job_inline(
             embeddings: list[EmbeddingResult] = await generator.generate(face_bytes)
             for det, result in zip(detections_needing_embeddings, embeddings, strict=False):
                 det.embedding = result.embedding
+
+        return detections
+
+    async def persist_phase(detections: list[FaceDetection]) -> object:
+        async with session_factory() as session:
+            tenant_uuid = uuid.UUID(str(tenant_id))
+            await set_tenant_context(session, tenant_uuid)
+
+            # We need generator instance here just to satisfy init, even if logic was done above
+            from recognition.application.scan.service import ScanService
+
+            scan_service = ScanService(
+                session=session,
+                detector=detector,
+                generator=generator,
+            )
+
+            return await scan_service.save_job_results(
+                job_id=uuid.UUID(str(job_id)),
+                tenant_id=str(tenant_id),
+                media_ids=media_ids or [],
+                media_sources=media_sources,
+                detections=detections,
+            )
+
+    try:
+        from recognition.application.scan.service import run_scan_three_phase
+
+        await run_scan_three_phase(
+            mark_running=mark_running_phase,
+            detect=detect_phase,
+            persist=persist_phase,
+        )
     except AdapterBreakerOpenError as exc:
         async with session_factory() as session:
             tenant_uuid = uuid.UUID(str(tenant_id))
@@ -147,28 +180,6 @@ async def process_scan_job_inline(
             scan_service = ScanService(session=session)
             await scan_service.mark_job_failed(uuid.UUID(str(job_id)), str(exc))
         raise
-
-    # 3. Save Results (Short transaction)
-    async with session_factory() as session:
-        tenant_uuid = uuid.UUID(str(tenant_id))
-        await set_tenant_context(session, tenant_uuid)
-
-        # We need generator instance here just to satisfy init, even if logic was done above
-        from recognition.application.scan.service import ScanService
-
-        scan_service = ScanService(
-            session=session,
-            detector=detector,
-            generator=generator,
-        )
-
-        await scan_service.save_job_results(
-            job_id=uuid.UUID(str(job_id)),
-            tenant_id=str(tenant_id),
-            media_ids=media_ids or [],
-            media_sources=media_sources,
-            detections=detections,
-        )
 
 
 async def populate_scan_job_items_async(

@@ -9,3 +9,4 @@ Decision records for durable architecture choices that both agents and humans ma
 - [ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md](ADR-005-agent-handoff-mcp-typed-tool-surface-consolidation.md)
 - [ADR-006-session-circuit-breaker-and-pool-bulkheading.md](ADR-006-session-circuit-breaker-and-pool-bulkheading.md)
 - [ADR-007-review-intake-handoff-fallback-boundary.md](ADR-007-review-intake-handoff-fallback-boundary.md)
+- [ADR-008-external-adapter-stability-pattern.md](ADR-008-external-adapter-stability-pattern.md)

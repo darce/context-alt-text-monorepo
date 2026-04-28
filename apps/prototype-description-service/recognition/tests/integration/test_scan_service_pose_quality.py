@@ -55,3 +55,36 @@ async def test_scan_service_persists_pose_and_landmark_quality(db_session, tenan
     assert row.pose_yaw == pytest.approx(-7.5)
     assert row.pose_roll == pytest.approx(1.5)
     assert row.quality_score == pytest.approx(0.42)
+
+
+@pytest.mark.asyncio
+async def test_scan_service_replay_reuses_existing_media_identity_row(db_session, tenant) -> None:
+    """Reprocessing the same media should preserve the existing MediaIdentity row."""
+    scan_service = ScanService(
+        session=db_session,
+        detector=PoseDetector(),
+        generator=StubEmbeddingGenerator(embedding_dim=512),
+    )
+
+    await scan_service.process_media_item(
+        tenant_id=str(tenant.id),
+        media_id=123,
+        media_url="http://example.test/image.jpg",
+    )
+
+    stmt = select(MediaIdentity).where(
+        MediaIdentity.tenant_id == tenant.id,
+        MediaIdentity.media_id == 123,
+    )
+    first_row = (await db_session.execute(stmt)).scalar_one()
+
+    await scan_service.process_media_item(
+        tenant_id=str(tenant.id),
+        media_id=123,
+        media_url="http://example.test/image.jpg",
+    )
+
+    rows = (await db_session.execute(stmt)).scalars().all()
+
+    assert len(rows) == 1
+    assert rows[0].id == first_row.id

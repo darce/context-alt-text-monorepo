@@ -42,8 +42,8 @@ The current handoff workflow stores `target_worktree_path` for active tasks, but
 
 - Active handoff state already carries `target_branch` and `target_worktree_path`, which is enough to locate a task worktree but not enough to render or open its plan deterministically.
 - The current plan path often survives only as prose inside `focus`, which is not a stable contract surface for renderers, close checks, or operator tooling.
-- `.vscode/mcp.json`, helper scripts, and several docs still pass or describe `CURRENT_TASK.json` as if it were a default always-on artifact.
-- Newer workflow guidance already says `DASHBOARD.txt` is the always-current operator view and `CURRENT_TASK.json` is on-demand, but the package contract and helper scripts have not fully converged on that model.
+- The root `.vscode/mcp.json` launcher and the consumer docs (`CLAUDE.md`, `docs/agentic/instructions.md`, `docs/agentic/consumer-setup.md`) were converged on on-demand `CURRENT_TASK.json` semantics in Slice 3 (merged 2026-04-27 in commit `3892997a`), so they are no longer remaining-scope surfaces.
+- The remaining `CURRENT_TASK.json` assumption that this plan still has authority over is the **external package contract** (out of scope for this repo). Inside this repo, the only pending convergence work is the Slice 2 verification gate that proves the on-demand model holds end-to-end through a packaged consumer install.
 
 ## Target Outcome
 
@@ -65,8 +65,7 @@ The root workspace exposes a durable operator surface listing every active task 
 | Handoff task state | `darce/mcp-agent-handoff` | active rows expose worktree metadata but no structured task-plan metadata | add structured `task_plan_path` plus resolved plan-path fields | yes; existing task-state reads must remain valid | external package tests + root consumer smoke |
 | Dashboard operator surface | `darce/mcp-agent-handoff` | `DASHBOARD.txt` shows active tasks but not a complete active-task-plan index | add active task-plan visibility section and/or columns | yes; ASCII operator view must remain stable | dashboard render tests + root manual smoke |
 | Current-task renderer | `darce/mcp-agent-handoff` | `CURRENT_TASK.json` still appears in default package contract and some helper flows | demote to on-demand-only render semantics | yes; explicit exports still work | external package tests + root verification |
-| Consumer runtime config | monorepo root | `.vscode/mcp.json` and helpers pass `--current-task-path` unconditionally | relax local assumptions once external package behavior lands | yes; root MCP startup must continue | root startup smoke + doctor |
-| Planning/workflow docs | monorepo root | live docs still mix on-demand and always-current guidance | converge docs on root-visible plans + on-demand `CURRENT_TASK.json` | yes; workflow instructions stay coherent | grep audit + planning review |
+| Planning/workflow docs (remaining-scope verification only) | monorepo root | docs were converged on on-demand `CURRENT_TASK.json` semantics in Slice 3 | confirm convergence end-to-end through a packaged consumer install in Slice 2 | n/a (no further doc edits planned) | scratch-consumer verification fixture (see Slice 2) |
 
 ## Proposed Solution
 
@@ -78,9 +77,8 @@ Introduce structured task-plan metadata in the external handoff package, resolve
 | --- | --- | --- |
 | Planning artifact | `docs/tasks/17.0/E17-14-root-visible-task-plans-and-current-task-demotion-task-plan.md` | Root reviewable plan for the full change |
 | External package | `darce/mcp-agent-handoff` runtime, renderers, and tests | Add task-plan metadata + dashboard visibility + current-task demotion |
-| Consumer config | `.vscode/mcp.json` | Update only if the new package surface makes `--current-task-path` optional or unnecessary |
-| Consumer docs | `docs/agentic/consumer-setup.md`, `docs/agentic/instructions.md`, `CLAUDE.md` | Align docs with on-demand current-task rendering and root-visible task plans |
-| Consumer helpers | `Makefile`, `mk/handoff.mk`, `scripts/_task_finish_inline.py`, related guards/review helpers | Remove stale `CURRENT_TASK.json` assumptions where safe |
+| Slice 2 verification artifact | `docs/tasks/17.0/E17-14-slice2-verification-proof.md` (new) | Captures the scratch-consumer setup, install command, observed root-visible plan output, and pass/fail conclusion |
+| Operator workflow doc | `docs/agentic/consumer-setup.md` | Append a short Slice 2 operator-workflow section that names the install/probe commands and links to the proof artifact |
 
 ## Related Files
 
@@ -90,8 +88,7 @@ Introduce structured task-plan metadata in the external handoff package, resolve
 | `docs/tasks/17.0/E17-11-multi-active-task-singleton-writes-hotfix-task-plan.md` | Captures multi-active-task implications for current-task rendering |
 | `docs/tasks/17.0/E17-13-hoisted-surface-cleanup-task-plan.md` | Defines the external repo ownership boundary |
 | `docs/agentic/contracts/agent-handoff-mcp.md` | Current package contract that still treats `CURRENT_TASK.json` as a default artifact |
-| `docs/agentic/consumer-setup.md` | Consumer update and doctor workflow |
-| `.vscode/mcp.json` | Root MCP launcher config |
+| `docs/agentic/consumer-setup.md` | Consumer update and doctor workflow (already converged in Slice 3; referenced for Slice 2 verification only) |
 
 ## Verification Strategy
 
@@ -116,17 +113,35 @@ Introduce structured task-plan metadata in the external handoff package, resolve
 
 **Goal**: Prove the root workspace can consume the new external package behavior without switching the root worktree.
 
+**Verification fixture (mandatory; gates this slice):**
+
+1. **Scratch consumer location**: `/tmp/e17-14-scratch-consumer/` — created fresh from `git init` (not a clone of this monorepo) so the target is a minimal initialized repo before the bootstrap installer touches it. Tear down at slice end.
+2. **Reviewed external ref**: the tagged `mcp-agent-handoff` release that ships task-plan metadata + on-demand `CURRENT_TASK.json` semantics. Pin the exact tag in the proof artifact (placeholder `<reviewed-ref>` resolved at run time; recorded as a 40-char SHA in the proof file).
+3. **Install command** (run after step 1): `agentic-bootstrap install --target /tmp/e17-14-scratch-consumer --remote-ref <reviewed-ref>` from a clean shell with no `PYTHONPATH` overrides. The installer is the only writer that provisions consumer-side handoff scaffolding into the `git init`'d target.
+4. **Seeded handoff state**: from the scratch consumer root, register two active tasks via `set_handoff_state` with distinct `task_ref`, `target_branch`, `target_worktree_path`, and `task_plan_path` values. Create empty placeholder task-plan files at the resolved absolute paths (under sibling worktree dirs `/tmp/e17-14-scratch-consumer-task-a/` and `-task-b/`) so existence checks pass.
+5. **Probe**: from the scratch consumer root (still on `main`), run `make context` and read `DASHBOARD.txt` plus a single `render_handoff(kind='current_task', task_ref=<task-a>)` call. Capture stdout for both.
+
+**Pass criteria (each must be true; any failure blocks merge):**
+
+- `agentic-bootstrap install` exits 0 and produces an MCP launcher config that does not pass `--current-task-path`.
+- MCP server starts cleanly (handoff doctor exits 0).
+- `DASHBOARD.txt` lists both seeded task refs with their `task_plan_path` values resolved to existing files.
+- The on-demand `render_handoff(kind='current_task', task_ref=<task-a>)` call returns a parseable snapshot for that task only, without regenerating a default `CURRENT_TASK.json` for the other task.
+- No `CURRENT_TASK.json` file is auto-written by `make context` or any state-changing handoff write during the probe.
+
+**Proof artifact (durable, committed to this repo):**
+
+- `docs/tasks/17.0/E17-14-slice2-verification-proof.md` — records the resolved 40-char `<reviewed-ref>`, the exact install/probe commands, the captured `DASHBOARD.txt` excerpt, the captured `render_handoff` output excerpt, the absence-of-auto-write check, and a final pass/fail line. Linked from the slice-complete decision.
+
 Changes:
 
-- Create a fresh scratch consumer repo and install the reviewed packaged consumer surface there, using `agentic-bootstrap install --target . --remote-ref <reviewed-ref>` so the verification path matches the shipped bootstrap workflow.
-- Verify the consumer MCP server starts cleanly after bootstrap install and exposes active task plans from the consumer root.
-- Treat any shared `description-service` environment upgrade as optional local smoke only, not as the canonical consumer-proof path.
-- Capture the root-side proof path and operator workflow in this monorepo's consumer-facing docs or task notes.
+- Author the proof artifact above against the fixture; commit it on `feature/e17-14`.
+- Capture the operator workflow (install + probe + dashboard read) in `docs/agentic/consumer-setup.md` or an adjacent doc, linking back to the proof artifact.
 
 Proof:
 
-- Scratch-consumer bootstrap verification succeeds against the reviewed ref and proves the packaged install path end to end.
-- Manual/operator smoke confirms a root-visible active task-plan surface and successful open/read flow from the consumer root.
+- The committed `E17-14-slice2-verification-proof.md` shows all five pass-criteria lines marked PASS with command output excerpts.
+- Operator workflow doc references the artifact and the install command as the canonical verification path.
 
 ### Slice 3: Cleanup of CURRENT_TASK Assumptions in Local Docs and Helpers — **MERGED 2026-04-27 in commit `3892997a`**
 
@@ -153,9 +168,11 @@ Proof:
 
 ### Checklist for Slice 2: Consumer Root Verification from This Monorepo
 
-- [ ] Root repo installs or references the reviewed external package version.
-- [ ] Root MCP startup and operator flow are verified against the new task-plan visibility surface.
-- [ ] Consumer-facing verification steps are captured in the monorepo artifact or adjacent docs.
+- [ ] Scratch consumer at `/tmp/e17-14-scratch-consumer/` provisioned via `agentic-bootstrap install --remote-ref <reviewed-ref>` against the tagged external ref.
+- [ ] Two seeded handoff tasks with distinct `task_plan_path` values render correctly in `DASHBOARD.txt` from the consumer root.
+- [ ] On-demand `render_handoff(kind='current_task', task_ref=...)` returns a parseable snapshot and no auto-write of `CURRENT_TASK.json` is observed during the probe.
+- [ ] `docs/tasks/17.0/E17-14-slice2-verification-proof.md` is committed with all five pass-criteria lines marked PASS and a 40-char ref recorded.
+- [ ] Operator workflow doc references the proof artifact as the canonical consumer-verification path.
 
 ### Checklist for Slice 3: Cleanup of CURRENT_TASK Assumptions in Local Docs and Helpers — **MERGED 2026-04-27**
 

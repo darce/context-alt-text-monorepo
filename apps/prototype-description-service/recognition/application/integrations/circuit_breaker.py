@@ -51,6 +51,15 @@ class AdapterBreakerOpenError(RuntimeError):
         self.adapter_name = adapter_name
 
 
+DEFAULT_ADAPTER_BREAKER_CONFIG = AdapterBreakerConfig(
+    failure_count_threshold=5,
+    failure_window_seconds=60.0,
+    half_open_probe_count=1,
+    success_close_threshold=1,
+    open_state_cooldown_seconds=30.0,
+)
+
+
 @dataclass(slots=True)
 class AdapterCircuitBreaker:
     """Guard external adapter calls with an in-process state machine."""
@@ -147,10 +156,27 @@ class AdapterCircuitBreaker:
             self._failure_timestamps.popleft()
 
 
+def create_adapter_circuit_breaker(
+    adapter_name: str,
+    *,
+    config: AdapterBreakerConfig | None = None,
+    time_source: TimeSource | None = None,
+) -> AdapterCircuitBreaker:
+    """Create a breaker with the default adapter thresholds unless overridden."""
+
+    return AdapterCircuitBreaker(
+        adapter_name=adapter_name,
+        config=config or DEFAULT_ADAPTER_BREAKER_CONFIG,
+        time_source=time_source or _time.monotonic,
+    )
+
+
 __all__ = [
     "AdapterBreakerConfig",
     "AdapterBreakerOpenError",
     "AdapterBreakerSnapshot",
     "AdapterBreakerState",
     "AdapterCircuitBreaker",
+    "DEFAULT_ADAPTER_BREAKER_CONFIG",
+    "create_adapter_circuit_breaker",
 ]

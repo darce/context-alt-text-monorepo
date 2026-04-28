@@ -20,7 +20,13 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from db.settings import get_database_settings
-from recognition.application.integrations import AdapterTimeoutError, wait_for_adapter
+from recognition.application.integrations import (
+    AdapterBreakerOpenError,
+    AdapterCircuitBreaker,
+    AdapterTimeoutError,
+    create_adapter_circuit_breaker,
+    wait_for_adapter,
+)
 
 if TYPE_CHECKING:
     from recognition.infrastructure.embeddings import InsightFaceAdapter
@@ -97,10 +103,12 @@ class InsightFaceEmbeddingGenerator(EmbeddingGeneratorProtocol):
         adapter: InsightFaceAdapter,
         embedding_dim: int = 512,
         timeout: float | None = None,
+        breaker: AdapterCircuitBreaker | None = None,
     ) -> None:
         self._adapter = adapter
         self.embedding_dim = embedding_dim
         self._timeout = timeout if timeout is not None else get_database_settings().embedding_timeout_s
+        self._breaker = breaker or create_adapter_circuit_breaker("insightface.analyze")
 
     async def generate(self, face_images: Iterable[bytes]) -> list[EmbeddingResult]:
         """Generate real embeddings using InsightFace.
@@ -116,10 +124,12 @@ class InsightFaceEmbeddingGenerator(EmbeddingGeneratorProtocol):
 
             try:
                 # Run detection and embedding in one pass
-                face_results = await wait_for_adapter(
-                    self._adapter.analyze(image_bytes),
-                    timeout=self._timeout,
-                    adapter_name="insightface.analyze",
+                face_results = await self._breaker.call(
+                    lambda: wait_for_adapter(
+                        self._adapter.analyze(image_bytes),
+                        timeout=self._timeout,
+                        adapter_name="insightface.analyze",
+                    )
                 )
 
                 for _face in face_results:
@@ -137,6 +147,9 @@ class InsightFaceEmbeddingGenerator(EmbeddingGeneratorProtocol):
                     self._timeout,
                 )
                 raise EmbeddingTimeoutError(media_id=media_id, timeout_s=self._timeout) from exc
+            except AdapterBreakerOpenError:
+                logger.warning("Embedding breaker open for %s", media_id[:20])
+                raise
             except Exception as e:
                 logger.error("Embedding generation failed for %s: %s", media_id[:20], e)
 

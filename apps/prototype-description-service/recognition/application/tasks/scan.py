@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from db.tenant_context import clear_tenant_context, set_tenant_context
 from recognition.application.embedding.detector import FaceDetectorProtocol
 from recognition.application.embedding.generator import EmbeddingGeneratorProtocol
+from recognition.application.integrations import AdapterBreakerOpenError
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.storage import ObjectStore, ObjectStoreError
 
@@ -124,17 +125,28 @@ async def process_scan_job_inline(
 
     # 2. Inference (No DB connection)
     sources_list = list(media_sources) if media_sources else (list(media_ids) if media_ids else [])
-    detections = await detector.detect(sources_list)
+    try:
+        detections = await detector.detect(sources_list)
 
-    # Generate embeddings if specific detector didn't provide them (e.g. stub or some configs)
-    from recognition.application.embedding.generator import EmbeddingResult
+        # Generate embeddings if specific detector didn't provide them (e.g. stub or some configs)
+        from recognition.application.embedding.generator import EmbeddingResult
 
-    detections_needing_embeddings = [d for d in detections if d.embedding is None]
-    if detections_needing_embeddings:
-        face_bytes = [str(det.media_id).encode() for det in detections_needing_embeddings]
-        embeddings: list[EmbeddingResult] = await generator.generate(face_bytes)
-        for det, result in zip(detections_needing_embeddings, embeddings, strict=False):
-            det.embedding = result.embedding
+        detections_needing_embeddings = [d for d in detections if d.embedding is None]
+        if detections_needing_embeddings:
+            face_bytes = [str(det.media_id).encode() for det in detections_needing_embeddings]
+            embeddings: list[EmbeddingResult] = await generator.generate(face_bytes)
+            for det, result in zip(detections_needing_embeddings, embeddings, strict=False):
+                det.embedding = result.embedding
+    except AdapterBreakerOpenError as exc:
+        async with session_factory() as session:
+            tenant_uuid = uuid.UUID(str(tenant_id))
+            await set_tenant_context(session, tenant_uuid)
+
+            from recognition.application.scan.service import ScanService
+
+            scan_service = ScanService(session=session)
+            await scan_service.mark_job_failed(uuid.UUID(str(job_id)), str(exc))
+        raise
 
     # 3. Save Results (Short transaction)
     async with session_factory() as session:

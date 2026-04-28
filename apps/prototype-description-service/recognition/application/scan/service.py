@@ -92,6 +92,18 @@ class ScanService:
         await self._session.commit()
         return scan_job
 
+    async def mark_job_failed(self, job_id: uuid.UUID, error_message: str) -> IdentityScanJob:
+        """Mark a scan job as failed with a boundary-level error message."""
+        scan_job = await self._session.get(IdentityScanJob, job_id)
+        if scan_job is None:
+            raise RuntimeError(f"scan job not found: {job_id}")
+
+        scan_job.status = JobStatus.FAILED
+        scan_job.error_message = error_message
+        scan_job.completed_at = datetime.now(tz=UTC)
+        await self._session.commit()
+        return scan_job
+
     async def save_job_results(
         self,
         *,

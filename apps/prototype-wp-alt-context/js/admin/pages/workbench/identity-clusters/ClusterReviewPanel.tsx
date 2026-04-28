@@ -30,7 +30,7 @@ export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelPro
   const [pendingRemovalIdentityId, setPendingRemovalIdentityId] = React.useState<string | null>(null);
 
   const {
-    data: members,
+    data: membersResponse,
     isLoading,
     isError,
   } = useQuery({
@@ -38,6 +38,7 @@ export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelPro
     queryFn: () => fetchClusterMembers(clusterId),
     enabled: Boolean(clusterId),
   });
+  const members = membersResponse?.members ?? [];
 
   const removeMutation = useMutation({
     mutationFn: (identityId: string) => removeClusterMember(identityId, true),
@@ -81,7 +82,7 @@ export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelPro
           <p>{__('Loading members...', 'alt-context')}</p>
         ) : isError ? (
           <p>{__('Unable to load cluster members.', 'alt-context')}</p>
-        ) : members && members.length > 0 ? (
+        ) : members.length > 0 ? (
           <div className="acx-cluster-review-panel__grid">
             {members.map((member) => (
               <div key={member.identity_id} className="acx-cluster-member-card">

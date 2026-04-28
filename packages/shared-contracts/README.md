@@ -4,13 +4,15 @@ Machine-readable JSON schemas and shared golden fixtures for cross-service contr
 
 ## Structure
 
-```
+```text
 packages/shared-contracts/
 ├── recognition/
+│   ├── cluster-members-response.golden.json # Sample cluster-members envelope payload
 │   ├── roster-roundtrip.sample.json   # Sample roster sync payload
 │   └── *.golden.json                  # Cross-boundary fixture payloads
 └── schemas/
     ├── coverage-stats.schema.json
+    ├── recognition-cluster-members-response.schema.json
     ├── recognition-cluster-snapshot.schema.json
     ├── recognition-job.schema.json
     ├── recognition-observation.schema.json

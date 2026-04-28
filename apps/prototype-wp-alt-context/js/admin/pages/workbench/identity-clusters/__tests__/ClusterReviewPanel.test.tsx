@@ -54,10 +54,46 @@ const renderPanel = (clusterId = 'cluster-123', onClose: () => void = () => unde
   return { queryClient, ...utils };
 };
 
+const makeClusterMembersResponse = (members = []) => ({
+  members,
+  limit: 500,
+  total: members.length,
+  truncated: false,
+});
+
 describe('ClusterReviewPanel', () => {
   afterEach(() => {
     reactQueryState.useQueryOverride = null;
     vi.resetAllMocks();
+  });
+
+  it('renders members from the cluster-members envelope', async () => {
+    const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
+
+    fetchClusterMembersMock.mockResolvedValue(
+      makeClusterMembersResponse([
+        {
+          identity_id: 'identity-envelope-1',
+          media_id: 11,
+          similarity: 0.95,
+          confidence: 0.99,
+          bbox: { x: 0, y: 0, width: 10, height: 10 },
+          thumb_url: 'http://example.test/thumb-envelope.jpg',
+        },
+      ]),
+    );
+
+    renderPanel('cluster-envelope');
+
+    await waitFor(() => {
+      expect(fetchClusterMembersMock).toHaveBeenCalledWith('cluster-envelope');
+    });
+
+    expect(screen.getByRole('img', { name: 'Cluster member' })).toHaveAttribute(
+      'src',
+      'http://example.test/thumb-envelope.jpg',
+    );
+    expect(screen.queryByText('No members found.')).not.toBeInTheDocument();
   });
 
   it('removes a cluster member and invalidates related queries', async () => {
@@ -65,16 +101,18 @@ describe('ClusterReviewPanel', () => {
     const removeClusterMemberMock = vi.mocked(removeClusterMember);
     const clusterId = 'cluster-123';
 
-    fetchClusterMembersMock.mockResolvedValue([
-      {
-        identity_id: 'identity-1',
-        media_id: 1,
-        similarity: 0.95,
-        confidence: 0.99,
-        bbox: { x: 0, y: 0, width: 10, height: 10 },
-        thumb_url: 'http://example.test/thumb.jpg',
-      },
-    ]);
+    fetchClusterMembersMock.mockResolvedValue(
+      makeClusterMembersResponse([
+        {
+          identity_id: 'identity-1',
+          media_id: 1,
+          similarity: 0.95,
+          confidence: 0.99,
+          bbox: { x: 0, y: 0, width: 10, height: 10 },
+          thumb_url: 'http://example.test/thumb.jpg',
+        },
+      ]),
+    );
     removeClusterMemberMock.mockResolvedValue(undefined);
 
     const { queryClient } = renderPanel(clusterId);
@@ -104,17 +142,19 @@ describe('ClusterReviewPanel', () => {
   it('renders cropped face fallback when thumbnail URL is missing', async () => {
     const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
 
-    fetchClusterMembersMock.mockResolvedValue([
-      {
-        identity_id: 'identity-2',
-        media_id: 2,
-        similarity: 0.91,
-        confidence: 0.98,
-        bbox: { x: 12, y: 24, width: 48, height: 48 },
-        thumb_url: null,
-        media_url: 'http://example.test/media/member-2.jpg',
-      },
-    ]);
+    fetchClusterMembersMock.mockResolvedValue(
+      makeClusterMembersResponse([
+        {
+          identity_id: 'identity-2',
+          media_id: 2,
+          similarity: 0.91,
+          confidence: 0.98,
+          bbox: { x: 12, y: 24, width: 48, height: 48 },
+          thumb_url: null,
+          media_url: 'http://example.test/media/member-2.jpg',
+        },
+      ]),
+    );
 
     renderPanel('cluster-456');
 
@@ -140,7 +180,7 @@ describe('ClusterReviewPanel', () => {
 
   it('shows error message when members cannot be loaded', () => {
     const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
-    fetchClusterMembersMock.mockResolvedValue([]);
+    fetchClusterMembersMock.mockResolvedValue(makeClusterMembersResponse());
     reactQueryState.useQueryOverride = {
       data: undefined,
       isLoading: false,
@@ -155,16 +195,18 @@ describe('ClusterReviewPanel', () => {
   it('does not remove member when user cancels confirmation dialog', async () => {
     const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
     const removeClusterMemberMock = vi.mocked(removeClusterMember);
-    fetchClusterMembersMock.mockResolvedValue([
-      {
-        identity_id: 'identity-3',
-        media_id: 3,
-        similarity: 0.88,
-        confidence: 0.92,
-        bbox: { x: 2, y: 2, width: 20, height: 20 },
-        thumb_url: 'http://example.test/thumb-3.jpg',
-      },
-    ]);
+    fetchClusterMembersMock.mockResolvedValue(
+      makeClusterMembersResponse([
+        {
+          identity_id: 'identity-3',
+          media_id: 3,
+          similarity: 0.88,
+          confidence: 0.92,
+          bbox: { x: 2, y: 2, width: 20, height: 20 },
+          thumb_url: 'http://example.test/thumb-3.jpg',
+        },
+      ]),
+    );
 
     renderPanel('cluster-cancel');
     const user = userEvent.setup();
@@ -181,7 +223,7 @@ describe('ClusterReviewPanel', () => {
   it('calls onClose when close button is clicked', async () => {
     const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
     const onClose = vi.fn();
-    fetchClusterMembersMock.mockResolvedValue([]);
+    fetchClusterMembersMock.mockResolvedValue(makeClusterMembersResponse());
 
     renderPanel('cluster-close', onClose);
     const user = userEvent.setup();

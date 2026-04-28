@@ -97,11 +97,12 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     onLabel(label);
   };
 
-  const { data: members, isLoading } = useQuery({
+  const { data: membersResponse, isLoading } = useQuery({
     queryKey: queryKeys.clusters.memberList(clusterId),
     queryFn: () => fetchClusterMembers(clusterId),
     enabled: Boolean(clusterId),
   });
+  const members = membersResponse?.members ?? [];
   const { data: persons = [] } = useRosterEntries();
   const personOptions = persons.map((person) => ({
     value: String(person.id),
@@ -212,7 +213,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
         <div className="acx-cluster-labeling-panel__grid">
           {isLoading ? (
             <p>{__('Loading faces...', 'alt-context')}</p>
-          ) : members && members.length > 0 ? (
+          ) : members.length > 0 ? (
             members.map((member) => (
               <div key={member.identity_id} className="acx-cluster-labeling-panel__face">
                 {member.media_url && member.bbox ? (

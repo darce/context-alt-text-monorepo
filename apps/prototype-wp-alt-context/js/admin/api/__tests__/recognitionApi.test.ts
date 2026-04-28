@@ -7,6 +7,7 @@ import {
   fetchPendingSuggestions,
   fetchMediaIdentities,
   fetchIdentitySuggestions,
+  fetchClusterMembers,
   fetchRetentionStatus,
   fetchSyncStatus,
   fetchTopUnlabeledClusters,
@@ -152,6 +153,32 @@ describe('recognitionApi', () => {
     expect(result.data_source).toBe(DATA_SOURCE.BACKEND_PROXY);
     expect(result.singleton_count).toBeUndefined();
     expect(result.projection_status).toBeUndefined();
+  });
+
+  it('normalizes cluster-members response metadata', async () => {
+    fetchApiMock.mockResolvedValue({
+      members: [],
+      limit: 500,
+      total: 0,
+      truncated: false,
+    });
+
+    const result = await fetchClusterMembers('cluster-1');
+
+    expect(result).toEqual({
+      members: [],
+      limit: 500,
+      total: 0,
+      truncated: false,
+    });
+  });
+
+  it('rejects cluster-members payloads without canonical envelope metadata', async () => {
+    fetchApiMock.mockResolvedValue({ members: [] });
+
+    await expect(fetchClusterMembers('cluster-1')).rejects.toThrow(
+      'Cluster members response must include a numeric limit.',
+    );
   });
 
   it('normalizes pending suggestion data_source metadata', async () => {

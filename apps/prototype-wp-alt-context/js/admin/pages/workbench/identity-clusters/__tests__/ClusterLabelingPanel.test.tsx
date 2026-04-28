@@ -74,10 +74,17 @@ const makeClusterListResponse = (clusters = [duplicateClusterMatch]) => ({
   truncated: false,
 });
 
+const makeClusterMembersResponse = (members = []) => ({
+  members,
+  limit: 500,
+  total: members.length,
+  truncated: false,
+});
+
 describe('ClusterLabelingPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(fetchClusterMembers).mockResolvedValue([]);
+    vi.mocked(fetchClusterMembers).mockResolvedValue(makeClusterMembersResponse());
     vi.mocked(updateClusterLabel).mockResolvedValue(undefined);
     vi.mocked(mergeCluster).mockResolvedValue({
       source_id: 'source-cluster-id',

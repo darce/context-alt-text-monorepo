@@ -231,6 +231,51 @@ Query params:
 - `search` (optional substring filter)
 - `limit` (default 50)
 
+## GET /recognition/clusters/{cluster_id}/members
+
+Return cluster members for one cluster.
+
+Path params:
+
+- `cluster_id` (required)
+
+Response (envelope):
+
+```json
+{
+  "members": [
+    {
+      "identity_id": "0a7b8331-bb7f-40c1-8f24-8c7e2b2d7c4f",
+      "media_id": 101,
+      "similarity": 0.98,
+      "confidence": 0.98,
+      "clustering_pending": false,
+      "bbox": { "x": 45, "y": 60, "width": 120, "height": 120 },
+      "thumb_url": "https://example.test/uploads/101-thumb.jpg",
+      "media_url": "https://example.test/uploads/101.jpg",
+      "cluster_id": "b43c2ab2-8d4f-42a8-9b2d-7f1d2e5a9b7a",
+      "cluster_label": "Alice",
+      "is_auto_label": false,
+      "is_pinned": true,
+      "detected_at": null,
+      "representative_id": "0a7b8331-bb7f-40c1-8f24-8c7e2b2d7c4f",
+      "debug_metrics": null
+    }
+  ],
+  "limit": 500,
+  "total": 501,
+  "truncated": true
+}
+```
+
+Notes:
+
+- The WordPress proxy owns the response envelope for this route.
+- `limit` is fixed at 500 on the WordPress surface; callers do not control it via query params.
+- Local projection computes `total` from `IdentityMembersRepositoryInterface::count_for_cluster()` and sets `truncated=true` when the cluster has more members than the capped response includes.
+- When the backend proxy returns a bare member array, WordPress wraps it into the same envelope with `limit=500`, `total=<array length>`, and `truncated=false`.
+- The matching machine-readable schema is [recognition-cluster-members-response.schema.json](../../../packages/shared-contracts/schemas/recognition-cluster-members-response.schema.json).
+
 ## GET /recognition/media-identities
 
 Return identities grouped by `media_id`.

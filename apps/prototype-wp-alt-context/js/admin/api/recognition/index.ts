@@ -21,6 +21,7 @@ export type {
   MediaIdentitiesResponse,
   ClusterSummary,
   ClusterListResponse,
+  ClusterMembersResponse,
   ClusterListParams,
   ClusterSuggestion,
   IdentitySuggestionsResponse,

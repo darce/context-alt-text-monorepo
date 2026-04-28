@@ -266,6 +266,69 @@ class LifecycleManagerTest extends TestCase
         $this->assertFalse(get_option('acx_roster_assignments'));
     }
 
+    public function testActivateChunksLegacyRosterMigrationUntilSubsequentActivationCompletes(): void
+    {
+        global $wpdb;
+
+        $chunkSize = (new \ReflectionClass(LifecycleManager::class))->getConstant('MAX_LEGACY_MIGRATION_CHUNK');
+        $this->assertIsInt($chunkSize, 'LifecycleManager should declare a typed MAX_LEGACY_MIGRATION_CHUNK cap.');
+        $legacyEntries = [];
+
+        for ($index = 1; $index <= $chunkSize + 1; $index++) {
+            $legacyEntries[] = [
+                'id' => $index,
+                'name' => 'Legacy Person ' . $index,
+                'tags' => ['tag-' . $index],
+            ];
+        }
+
+        $this->setOption('acx_roster_entries', $legacyEntries);
+        $this->setOption('acx_roster_assignments', [
+            'cluster-overflow' => [
+                'roster_entry_id' => $chunkSize + 1,
+            ],
+        ]);
+
+        $this->manager->activate();
+
+        $personInsertQueries = \array_values(\array_filter(
+            $wpdb->queries,
+            static fn(string $query): bool => str_starts_with($query, 'INSERT INTO wp_acx_persons')
+        ));
+        $assignmentUpdateQueries = \array_values(\array_filter(
+            $wpdb->queries,
+            static fn(string $query): bool => str_starts_with($query, 'UPDATE wp_acx_clusters SET person_id =')
+        ));
+
+        $this->assertCount($chunkSize, $personInsertQueries);
+        $this->assertCount(0, $assignmentUpdateQueries);
+        $this->assertSame($legacyEntries, get_option('acx_roster_entries'));
+        $this->assertSame(
+            [
+                'entry_offset' => $chunkSize,
+                'assignment_offset' => 0,
+            ],
+            get_option('acx_legacy_roster_migration_cursor')
+        );
+
+        $this->manager->activate();
+
+        $personInsertQueries = \array_values(\array_filter(
+            $wpdb->queries,
+            static fn(string $query): bool => str_starts_with($query, 'INSERT INTO wp_acx_persons')
+        ));
+        $assignmentUpdateQueries = \array_values(\array_filter(
+            $wpdb->queries,
+            static fn(string $query): bool => str_starts_with($query, 'UPDATE wp_acx_clusters SET person_id =')
+        ));
+
+        $this->assertCount($chunkSize + 1, $personInsertQueries);
+        $this->assertCount(1, $assignmentUpdateQueries);
+        $this->assertFalse(get_option('acx_roster_entries'));
+        $this->assertFalse(get_option('acx_roster_assignments'));
+        $this->assertFalse(get_option('acx_legacy_roster_migration_cursor'));
+    }
+
     /**
      * Test uninstall removes version option.
      */

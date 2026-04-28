@@ -22,6 +22,7 @@ from recognition.application.embedding.generator import (
     StubEmbeddingGenerator,
 )
 import recognition.application.embedding.generator as generator_module
+from recognition.application.integrations import AdapterBreakerConfig, AdapterBreakerOpenError, AdapterCircuitBreaker
 from recognition.infrastructure.embeddings import DetectedFace, InsightFaceAdapter
 
 
@@ -207,6 +208,32 @@ class TestInsightFaceEmbeddingGenerator:
 
         with pytest.raises(EmbeddingTimeoutError):
             await generator.generate([b"slow-image"])
+
+    @pytest.mark.asyncio
+    async def test_fast_fails_when_breaker_is_open(self) -> None:
+        """Breaker-open state should surface as a fast failure on the generator seam."""
+
+        breaker = AdapterCircuitBreaker(
+            adapter_name="insightface.analyze",
+            config=AdapterBreakerConfig(
+                failure_count_threshold=1,
+                failure_window_seconds=60.0,
+                half_open_probe_count=1,
+                success_close_threshold=1,
+                open_state_cooldown_seconds=30.0,
+            ),
+        )
+
+        failing_adapter = MagicMock(spec=InsightFaceAdapter)
+        failing_adapter.analyze = AsyncMock(side_effect=RuntimeError("Model failed"))
+        generator = InsightFaceEmbeddingGenerator(failing_adapter, breaker=breaker)
+
+        first_result = await generator.generate([b"first-image"])
+
+        assert first_result == []
+
+        with pytest.raises(AdapterBreakerOpenError):
+            await generator.generate([b"second-image"])
 
     def test_reads_default_timeout_lazily(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Default timeout should come from get_database_settings() at construction time."""

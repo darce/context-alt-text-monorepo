@@ -6,6 +6,7 @@ from recognition.application.integrations.circuit_breaker import (
 	AdapterBreakerSnapshot,
 	AdapterBreakerState,
 	AdapterCircuitBreaker,
+	create_adapter_circuit_breaker,
 )
 from recognition.application.integrations.timeouts import AdapterTimeoutError, wait_for_adapter
 
@@ -15,6 +16,7 @@ __all__ = [
 	"AdapterBreakerSnapshot",
 	"AdapterBreakerState",
 	"AdapterCircuitBreaker",
+	"create_adapter_circuit_breaker",
 	"AdapterTimeoutError",
 	"wait_for_adapter",
 ]

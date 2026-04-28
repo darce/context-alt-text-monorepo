@@ -18,6 +18,8 @@ class LifecycleManager {
 
 	private const OPTION_VERSION      = 'acx_version';
 	private const OPTION_INSTALLED_AT = 'acx_installed';
+	private const OPTION_LEGACY_ROSTER_MIGRATION_CURSOR = 'acx_legacy_roster_migration_cursor';
+	private const MAX_LEGACY_MIGRATION_CHUNK = 100;
 	private const SNAPSHOT_SYNC_HOOK  = 'acx_sync_pull_snapshot';
 	private const CURATION_OUTBOX_DRAIN_HOOK = 'acx_sync_drain_curation_outbox';
 	private const SPLIT_TOPOLOGY_DRAIN_HOOK = 'acx_sync_drain_split_topology_commands';
@@ -66,33 +68,67 @@ class LifecycleManager {
 		$legacy_assignments = get_option( 'acx_roster_assignments', array() );
 
 		if ( empty( $legacy_entries ) && empty( $legacy_assignments ) ) {
+			delete_option( self::OPTION_LEGACY_ROSTER_MIGRATION_CURSOR );
 			return;
 		}
 
 		global $wpdb;
 		$table_persons  = $wpdb->prefix . 'acx_persons';
 		$table_clusters = $wpdb->prefix . 'acx_clusters';
+		$cursor         = $this->normalize_legacy_roster_migration_cursor( get_option( self::OPTION_LEGACY_ROSTER_MIGRATION_CURSOR, array() ) );
+		$entry_offset   = $cursor['entry_offset'];
+		$assignment_offset = $cursor['assignment_offset'];
+		$entries_count     = \count( (array) $legacy_entries );
+		$assignments_count = \count( (array) $legacy_assignments );
+		$remaining         = self::MAX_LEGACY_MIGRATION_CHUNK;
 		$id_map         = array();
 		$migration_complete = true;
 
-		foreach ( (array) $legacy_entries as $entry ) {
+		foreach ( \array_slice( (array) $legacy_entries, $entry_offset, $remaining ) as $entry ) {
 			if ( ! $this->import_legacy_roster_entry( $entry, $table_persons, $wpdb, $id_map ) ) {
 				$migration_complete = false;
+				break;
 			}
-		}
 
-		foreach ( (array) $legacy_assignments as $cluster_id => $data ) {
-			if ( ! $this->import_legacy_roster_assignment( $cluster_id, $data, $id_map, $table_persons, $table_clusters, $wpdb ) ) {
-				$migration_complete = false;
-			}
+			++$entry_offset;
+			--$remaining;
 		}
 
 		if ( ! $migration_complete ) {
+			$this->persist_legacy_roster_migration_cursor( $entry_offset, $assignment_offset );
+			return;
+		}
+
+		if ( $entry_offset < $entries_count ) {
+			$this->persist_legacy_roster_migration_cursor( $entry_offset, $assignment_offset );
+			return;
+		}
+
+		$legacy_entry_names_by_id = $this->index_legacy_entry_names_by_id( (array) $legacy_entries );
+
+		foreach ( \array_slice( (array) $legacy_assignments, $assignment_offset, $remaining, true ) as $cluster_id => $data ) {
+			if ( ! $this->import_legacy_roster_assignment( $cluster_id, $data, $id_map, $legacy_entry_names_by_id, $table_persons, $table_clusters, $wpdb ) ) {
+				$migration_complete = false;
+				break;
+			}
+
+			++$assignment_offset;
+			--$remaining;
+		}
+
+		if ( ! $migration_complete ) {
+			$this->persist_legacy_roster_migration_cursor( $entry_offset, $assignment_offset );
+			return;
+		}
+
+		if ( $assignment_offset < $assignments_count ) {
+			$this->persist_legacy_roster_migration_cursor( $entry_offset, $assignment_offset );
 			return;
 		}
 
 		delete_option( 'acx_roster_entries' );
 		delete_option( 'acx_roster_assignments' );
+		delete_option( self::OPTION_LEGACY_ROSTER_MIGRATION_CURSOR );
 	}
 
 	private function import_legacy_roster_entry( mixed $entry, string $table_persons, object $wpdb, array &$id_map ): bool {
@@ -138,13 +174,13 @@ class LifecycleManager {
 		return true;
 	}
 
-	private function import_legacy_roster_assignment( mixed $legacy_cluster_id, mixed $data, array $id_map, string $table_persons, string $table_clusters, object $wpdb ): bool {
-		if ( ! is_array( $data ) ) {
+	private function import_legacy_roster_assignment( mixed $legacy_cluster_id, mixed $data, array $id_map, array $legacy_entry_names_by_id, string $table_persons, string $table_clusters, object $wpdb ): bool {
+		if ( ! \is_array( $data ) ) {
 			return true;
 		}
 
 		$cluster_id = sanitize_text_field( (string) $legacy_cluster_id );
-		if ( '' === trim( $cluster_id ) ) {
+		if ( '' === \trim( $cluster_id ) ) {
 			return true;
 		}
 
@@ -154,7 +190,14 @@ class LifecycleManager {
 
 		if ( $legacy_entry_id && isset( $id_map[ $legacy_entry_id ] ) ) {
 			$final_person_id = $id_map[ $legacy_entry_id ];
-		} elseif ( '' !== trim( $new_name ) ) {
+		} elseif ( $legacy_entry_id && isset( $legacy_entry_names_by_id[ $legacy_entry_id ] ) ) {
+			$existing_id = $wpdb->get_var(
+				$wpdb->prepare( 'SELECT id FROM %i WHERE name = %s', $table_persons, $legacy_entry_names_by_id[ $legacy_entry_id ] )
+			);
+			if ( $existing_id ) {
+				$final_person_id = (int) $existing_id;
+			}
+		} elseif ( '' !== \trim( $new_name ) ) {
 			$existing_id = $wpdb->get_var(
 				$wpdb->prepare( 'SELECT id FROM %i WHERE name = %s', $table_persons, $new_name )
 			);
@@ -205,6 +248,58 @@ class LifecycleManager {
 		}
 
 		return true;
+	}
+
+	/**
+	 * @param array<int,mixed> $legacy_entries
+	 * @return array<int,string>
+	 */
+	private function index_legacy_entry_names_by_id( array $legacy_entries ): array {
+		$names_by_id = array();
+
+		foreach ( $legacy_entries as $entry ) {
+			if ( ! \is_array( $entry ) || ! isset( $entry['id'], $entry['name'] ) ) {
+				continue;
+			}
+
+			$legacy_id = (int) $entry['id'];
+			$name      = sanitize_text_field( (string) $entry['name'] );
+			if ( $legacy_id <= 0 || '' === \trim( $name ) ) {
+				continue;
+			}
+
+			$names_by_id[ $legacy_id ] = $name;
+		}
+
+		return $names_by_id;
+	}
+
+	/**
+	 * @param mixed $cursor
+	 * @return array{entry_offset:int,assignment_offset:int}
+	 */
+	private function normalize_legacy_roster_migration_cursor( mixed $cursor ): array {
+		if ( ! \is_array( $cursor ) ) {
+			return array(
+				'entry_offset'      => 0,
+				'assignment_offset' => 0,
+			);
+		}
+
+		return array(
+			'entry_offset'      => \max( 0, absint( $cursor['entry_offset'] ?? 0 ) ),
+			'assignment_offset' => \max( 0, absint( $cursor['assignment_offset'] ?? 0 ) ),
+		);
+	}
+
+	private function persist_legacy_roster_migration_cursor( int $entry_offset, int $assignment_offset ): void {
+		update_option(
+			self::OPTION_LEGACY_ROSTER_MIGRATION_CURSOR,
+			array(
+				'entry_offset'      => $entry_offset,
+				'assignment_offset' => $assignment_offset,
+			)
+		);
 	}
 
 	private function legacy_assignment_already_imported( string $cluster_id, int $final_person_id, string $table_clusters, object $wpdb ): bool {

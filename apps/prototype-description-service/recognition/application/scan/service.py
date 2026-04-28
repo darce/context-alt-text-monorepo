@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, datetime
+from typing import TypeVar
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +27,25 @@ ObjectStoreFactory = Callable[[str], ObjectStore]
 logger = logging.getLogger(__name__)
 
 _DB_SETTINGS = get_database_settings()
+_PersistResult = TypeVar("_PersistResult")
+
+
+async def run_scan_three_phase(
+    *,
+    mark_running: Callable[[], Awaitable[object]],
+    detect: Callable[[], Awaitable[list[FaceDetection]]],
+    persist: Callable[[list[FaceDetection]], Awaitable[_PersistResult]],
+) -> _PersistResult:
+    """Execute the canonical scan-job shape used by both sync and inline callers.
+
+    The helper intentionally stays narrow: it centralizes the ordered phase
+    contract that review and tests assert, while the caller retains ownership
+    of session scope, tenant context, and failure mapping for each phase.
+    """
+
+    await mark_running()
+    detections = await detect()
+    return await persist(detections)
 
 
 class ScanService:
@@ -168,17 +188,22 @@ class ScanService:
     ) -> IdentityScanJob:
         """Process an existing scan job id and persist embeddings.
 
-        Optimized to release connection during inference if called granularly,
-        but backward compatible for synchronous calls.
+        This method preserves the legacy single-session path while routing the
+        ordered phase contract through ``run_scan_three_phase``. Callers that
+        need the explicit no-DB gap around adapter inference should use
+        ``tasks.scan.process_scan_job_inline``.
         """
-        # Legacy/Monolithic wrapper
-        await self.mark_job_running(job_id)
-
         sources_list = list(media_sources) if media_sources else list(media_ids)
-        detections = await self._detector.detect(sources_list)
-
-        return await self.save_job_results(
-            job_id=job_id, tenant_id=tenant_id, media_ids=media_ids, media_sources=media_sources, detections=detections
+        return await run_scan_three_phase(
+            mark_running=lambda: self.mark_job_running(job_id),
+            detect=lambda: self._detector.detect(sources_list),
+            persist=lambda detections: self.save_job_results(
+                job_id=job_id,
+                tenant_id=tenant_id,
+                media_ids=media_ids,
+                media_sources=media_sources,
+                detections=detections,
+            ),
         )
 
     async def process_media_item(
@@ -352,4 +377,4 @@ def _compute_iou(bbox1: tuple[float, float, float, float], bbox2: tuple[float, f
     return intersection_area / union_area
 
 
-__all__ = ["ScanService"]
+__all__ = ["ScanService", "run_scan_three_phase"]

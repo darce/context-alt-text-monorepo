@@ -38,7 +38,7 @@ Default handoff state lives under the consumer repo, not the source monorepo:
 - default database: `.task-state/handoff.db`
 - default exports directory: `.task-state/exports`
 - default dashboard: `DASHBOARD.txt`
-- default current-task snapshot: `CURRENT_TASK.json`
+- optional explicit current-task export: `CURRENT_TASK.json`
 
 The supported path override surface is:
 
@@ -47,6 +47,8 @@ The supported path override surface is:
 - `AGENT_HANDOFF_DASHBOARD_PATH`
 - `AGENT_HANDOFF_CURRENT_TASK_PATH`
 - `AGENT_HANDOFF_EXPORTS_DIR`
+
+`CURRENT_TASK.json` is task-scoped and on-demand. An explicit render or helper may write it, but do not assume it exists or is current.
 
 If you set explicit relative paths, they resolve from `AGENT_HANDOFF_WORKSPACE_ROOT`, not from the process cwd.
 

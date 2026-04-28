@@ -25,6 +25,8 @@ use function count;
 use function max;
 
 class SnapshotProjector implements SnapshotProjectorInterface {
+	private const MAX_SNAPSHOT_BATCH_SIZE = 100;
+
 	private ClustersRepositoryInterface $clusters_repository;
 	private IdentityMembersRepositoryInterface $members_repository;
 	private SyncStateRepositoryInterface $sync_state_repository;
@@ -60,56 +62,132 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 			throw new RuntimeException( 'Snapshot projection requires $wpdb query support.' );
 		}
 
+		$snapshot_version = (int) ( $snapshot['snapshot_version'] ?? 0 );
+		$clusters         = is_array( $snapshot['clusters'] ?? null ) ? $snapshot['clusters'] : array();
+		$members          = is_array( $snapshot['members'] ?? null ) ? $snapshot['members'] : array();
+		$is_empty_snapshot = ( true === ( $snapshot['empty'] ?? false ) )
+			|| ( empty( $clusters ) && 0 === $snapshot_version );
+
+		if ( $is_empty_snapshot ) {
+			$this->run_projection_transaction(
+				function () use ( $normalized_tenant_id ): void {
+					$this->sync_state_repository->upsert_snapshot_version( $normalized_tenant_id, 0 );
+					$this->sync_state_repository->refresh_curation_metrics( $normalized_tenant_id );
+				}
+			);
+			return;
+		}
+
+		$pre_projection_conflict_count = $this->sync_state_repository->get_conflict_count( $normalized_tenant_id );
+
+		if ( $this->should_batch_cluster_only_snapshot( $clusters, $members ) ) {
+			$conflicts_generated = $this->project_cluster_only_snapshot_in_batches( $normalized_tenant_id, $clusters, $snapshot_version, $pre_projection_conflict_count );
+		} else {
+			$conflicts_generated = $this->project_snapshot_in_single_transaction( $normalized_tenant_id, $clusters, $members, $snapshot_version, $pre_projection_conflict_count );
+		}
+
+		if ( function_exists( 'do_action' ) ) {
+			$non_singleton_count = count(
+				array_filter(
+					$clusters,
+					static function ( $cluster ): bool {
+						return is_array( $cluster ) && (int) ( $cluster['identity_count'] ?? 0 ) > 1;
+					}
+				)
+			);
+			do_action( 'acx_snapshot_projected', $normalized_tenant_id, count( $clusters ), $non_singleton_count, $snapshot_version );
+		}
+
+		if ( $conflicts_generated > 0 && function_exists( 'do_action' ) ) {
+			do_action( 'acx_projection_conflicts_detected', $conflicts_generated, $normalized_tenant_id );
+		}
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $clusters
+	 * @param array<int,array<string,mixed>> $members
+	 */
+	private function should_batch_cluster_only_snapshot( array $clusters, array $members ): bool {
+		return empty( $members ) && count( $clusters ) > self::MAX_SNAPSHOT_BATCH_SIZE;
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $clusters
+	 * @param array<int,array<string,mixed>> $members
+	 */
+	private function project_snapshot_in_single_transaction( string $tenant_id, array $clusters, array $members, int $snapshot_version, int $pre_projection_conflict_count ): int {
+		$this->run_projection_transaction(
+			function () use ( $tenant_id, $clusters, $members, $snapshot_version ): void {
+				$this->record_person_name_conflicts( $tenant_id, $clusters, $snapshot_version );
+				$this->record_curated_cluster_deletion_conflicts( $tenant_id, $clusters, $snapshot_version );
+				$this->clusters_repository->merge_snapshot_for_tenant( $tenant_id, $clusters, $snapshot_version );
+				$this->members_repository->merge_snapshot_for_tenant( $tenant_id, $members, $snapshot_version );
+				$this->sync_state_repository->upsert_snapshot_version( $tenant_id, $snapshot_version );
+				$this->sync_state_repository->refresh_curation_metrics( $tenant_id );
+			}
+		);
+
+		$post_projection_conflict_count = $this->sync_state_repository->get_conflict_count( $tenant_id );
+		return max( 0, $post_projection_conflict_count - $pre_projection_conflict_count );
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $clusters
+	 */
+	private function project_cluster_only_snapshot_in_batches( string $tenant_id, array $clusters, int $snapshot_version, int $pre_projection_conflict_count ): int {
+		$cluster_batches      = array_values( array_chunk( $clusters, self::MAX_SNAPSHOT_BATCH_SIZE ) );
+		$total_batches        = count( $cluster_batches );
+		$incoming_cluster_ids = array_values(
+			array_filter(
+				array_map(
+					static function ( $cluster ): string {
+						return trim( (string) ( is_array( $cluster ) ? ( $cluster['cluster_uuid'] ?? '' ) : '' ) );
+					},
+					$clusters
+				)
+			)
+		);
+
+		foreach ( $cluster_batches as $index => $cluster_batch ) {
+			$is_first_batch = 0 === $index;
+			$is_last_batch  = ( $total_batches - 1 ) === $index;
+
+			$this->run_projection_transaction(
+				function () use ( $tenant_id, $incoming_cluster_ids, $cluster_batch, $clusters, $snapshot_version, $is_first_batch, $is_last_batch ): void {
+					if ( $is_first_batch ) {
+						$this->clusters_repository->prepare_snapshot_merge_for_tenant( $tenant_id, $incoming_cluster_ids );
+						$this->record_person_name_conflicts( $tenant_id, $clusters, $snapshot_version );
+						$this->record_curated_cluster_deletion_conflicts( $tenant_id, $clusters, $snapshot_version );
+					}
+
+					$this->clusters_repository->merge_snapshot_batch_for_tenant( $tenant_id, $cluster_batch, $snapshot_version );
+
+					if ( $is_last_batch ) {
+						$this->sync_state_repository->upsert_snapshot_version( $tenant_id, $snapshot_version );
+						$this->sync_state_repository->refresh_curation_metrics( $tenant_id );
+					}
+				}
+			);
+		}
+
+		$post_projection_conflict_count = $this->sync_state_repository->get_conflict_count( $tenant_id );
+		return max( 0, $post_projection_conflict_count - $pre_projection_conflict_count );
+	}
+
+	/**
+	 * @throws RuntimeException When transaction support is unavailable or commit fails.
+	 * @throws Throwable Re-throws projection errors after rollback.
+	 */
+	private function run_projection_transaction( callable $callback ): void {
+		global $wpdb;
+
 		$started = false !== $wpdb->query( 'START TRANSACTION' );
 		if ( ! $started ) {
 			throw new RuntimeException( 'Snapshot projection requires transaction support.' );
 		}
 
 		try {
-			$snapshot_version = (int) ( $snapshot['snapshot_version'] ?? 0 );
-			$clusters         = is_array( $snapshot['clusters'] ?? null ) ? $snapshot['clusters'] : array();
-			$members          = is_array( $snapshot['members'] ?? null ) ? $snapshot['members'] : array();
-			$is_empty_snapshot = ( true === ( $snapshot['empty'] ?? false ) )
-				|| ( empty( $clusters ) && 0 === $snapshot_version );
-
-			if ( $is_empty_snapshot ) {
-				$this->sync_state_repository->upsert_snapshot_version( $normalized_tenant_id, 0 );
-				$this->sync_state_repository->refresh_curation_metrics( $normalized_tenant_id );
-				$committed = false !== $wpdb->query( 'COMMIT' );
-				if ( ! $committed ) {
-					throw new RuntimeException( 'Snapshot projection failed to commit transaction.' );
-				}
-				return;
-			}
-
-			$pre_projection_conflict_count = $this->sync_state_repository->get_conflict_count( $normalized_tenant_id );
-
-			$this->record_person_name_conflicts( $normalized_tenant_id, $clusters, $snapshot_version );
-			$this->record_curated_cluster_deletion_conflicts( $normalized_tenant_id, $clusters, $snapshot_version );
-
-			$this->clusters_repository->merge_snapshot_for_tenant( $normalized_tenant_id, $clusters, $snapshot_version );
-			$this->members_repository->merge_snapshot_for_tenant( $normalized_tenant_id, $members, $snapshot_version );
-			$this->sync_state_repository->upsert_snapshot_version( $normalized_tenant_id, $snapshot_version );
-			$this->sync_state_repository->refresh_curation_metrics( $normalized_tenant_id );
-			$post_projection_conflict_count = $this->sync_state_repository->get_conflict_count( $normalized_tenant_id );
-			$conflicts_generated            = max( 0, $post_projection_conflict_count - $pre_projection_conflict_count );
-
-			if ( function_exists( 'do_action' ) ) {
-				$non_singleton_count = count(
-					array_filter(
-						$clusters,
-						static function ( $cluster ): bool {
-							return is_array( $cluster ) && (int) ( $cluster['identity_count'] ?? 0 ) > 1;
-						}
-					)
-				);
-				do_action( 'acx_snapshot_projected', $normalized_tenant_id, count( $clusters ), $non_singleton_count, $snapshot_version );
-			}
-
-			if ( $conflicts_generated > 0 && function_exists( 'do_action' ) ) {
-				do_action( 'acx_projection_conflicts_detected', $conflicts_generated, $normalized_tenant_id );
-			}
-
+			$callback();
 			$committed = false !== $wpdb->query( 'COMMIT' );
 			if ( ! $committed ) {
 				throw new RuntimeException( 'Snapshot projection failed to commit transaction.' );

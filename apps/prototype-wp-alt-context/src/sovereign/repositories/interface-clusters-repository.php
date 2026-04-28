@@ -15,6 +15,20 @@ interface ClustersRepositoryInterface {
 	public function merge_snapshot_for_tenant( string $tenant_id, array $clusters, int $snapshot_version ): void;
 
 	/**
+	 * Prune stale non-curated rows before one or more batch upserts for the same snapshot payload.
+	 *
+	 * @param string[] $incoming_cluster_ids
+	 */
+	public function prepare_snapshot_merge_for_tenant( string $tenant_id, array $incoming_cluster_ids ): void;
+
+	/**
+	 * Upsert one bounded batch of snapshot cluster rows after stale-row pruning has already run.
+	 *
+	 * @param array<int,array<string,mixed>> $clusters
+	 */
+	public function merge_snapshot_batch_for_tenant( string $tenant_id, array $clusters, int $snapshot_version ): void;
+
+	/**
 	 * Return tenant-scoped projected clusters.
 	 *
 	 * @param array<string,mixed> $filters

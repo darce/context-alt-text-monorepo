@@ -49,6 +49,17 @@ class ClustersRepository implements ClustersRepositoryInterface {
 	 * @param array<int,array<string,mixed>> $clusters
 	 */
 	public function merge_snapshot_for_tenant( string $tenant_id, array $clusters, int $snapshot_version ): void {
+		$normalized_clusters = $this->normalize_snapshot_clusters( $clusters );
+		$incoming_ids        = $this->extract_snapshot_cluster_ids( $normalized_clusters );
+
+		$this->prepare_snapshot_merge_for_tenant( $tenant_id, $incoming_ids );
+		$this->merge_snapshot_batch_for_tenant( $tenant_id, $normalized_clusters, $snapshot_version );
+	}
+
+	/**
+	 * @param string[] $incoming_cluster_ids
+	 */
+	public function prepare_snapshot_merge_for_tenant( string $tenant_id, array $incoming_cluster_ids ): void {
 		global $wpdb;
 
 		$normalized_tenant_id = trim( $tenant_id );
@@ -61,27 +72,26 @@ class ClustersRepository implements ClustersRepositoryInterface {
 			return;
 		}
 
-		$normalized_clusters = array_values(
-			array_filter(
-				$clusters,
-				static function ( $cluster ): bool {
-					return '' !== trim( (string) ( $cluster['cluster_uuid'] ?? '' ) );
-				}
-			)
-		);
+		$this->delete_stale_non_curated_rows( $normalized_tenant_id, $incoming_cluster_ids );
+	}
 
-		$incoming_ids = array_values(
-			array_filter(
-				array_map(
-					static function ( array $cluster ): string {
-						return trim( (string) ( $cluster['cluster_uuid'] ?? '' ) );
-					},
-					$normalized_clusters
-				)
-			)
-		);
+	/**
+	 * @param array<int,array<string,mixed>> $clusters
+	 */
+	public function merge_snapshot_batch_for_tenant( string $tenant_id, array $clusters, int $snapshot_version ): void {
+		global $wpdb;
 
-		$this->delete_stale_non_curated_rows( $normalized_tenant_id, $incoming_ids );
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+			return;
+		}
+
+		$normalized_clusters = $this->normalize_snapshot_clusters( $clusters );
 
 		$now_utc = gmdate( 'Y-m-d H:i:s' );
 		foreach ( $normalized_clusters as $cluster ) {
@@ -142,6 +152,38 @@ class ClustersRepository implements ClustersRepositoryInterface {
 				$wpdb->query( $sql );
 			}
 		}
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $clusters
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function normalize_snapshot_clusters( array $clusters ): array {
+		return array_values(
+			array_filter(
+				$clusters,
+				static function ( $cluster ): bool {
+					return '' !== trim( (string) ( $cluster['cluster_uuid'] ?? '' ) );
+				}
+			)
+		);
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $clusters
+	 * @return string[]
+	 */
+	private function extract_snapshot_cluster_ids( array $clusters ): array {
+		return array_values(
+			array_filter(
+				array_map(
+					static function ( array $cluster ): string {
+						return trim( (string) ( $cluster['cluster_uuid'] ?? '' ) );
+					},
+					$clusters
+				)
+			)
+		);
 	}
 
 	/**

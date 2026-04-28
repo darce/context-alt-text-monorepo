@@ -78,6 +78,7 @@ Introduce structured task-plan metadata in the external handoff package, resolve
 | Planning artifact | `docs/tasks/17.0/E17-14-root-visible-task-plans-and-current-task-demotion-task-plan.md` | Root reviewable plan for the full change |
 | External package | `darce/mcp-agent-handoff` runtime, renderers, and tests | Add task-plan metadata + dashboard visibility + current-task demotion |
 | Slice 2 verification artifact | `docs/tasks/17.0/E17-14-slice2-verification-proof.md` (new) | Captures the scratch-consumer setup, install command, observed root-visible plan output, and pass/fail conclusion |
+| Operator workflow doc | `docs/agentic/consumer-setup.md` | Append a short Slice 2 operator-workflow section that names the install/probe commands and links to the proof artifact |
 
 ## Related Files
 
@@ -114,9 +115,9 @@ Introduce structured task-plan metadata in the external handoff package, resolve
 
 **Verification fixture (mandatory; gates this slice):**
 
-1. **Scratch consumer location**: `/tmp/e17-14-scratch-consumer/` — created fresh from `git init` (not a clone of this monorepo). Tear down at slice end.
+1. **Scratch consumer location**: `/tmp/e17-14-scratch-consumer/` — created fresh from `git init` (not a clone of this monorepo) so the target is a minimal initialized repo before the bootstrap installer touches it. Tear down at slice end.
 2. **Reviewed external ref**: the tagged `mcp-agent-handoff` release that ships task-plan metadata + on-demand `CURRENT_TASK.json` semantics. Pin the exact tag in the proof artifact (placeholder `<reviewed-ref>` resolved at run time; recorded as a 40-char SHA in the proof file).
-3. **Install command**: `agentic-bootstrap install --target /tmp/e17-14-scratch-consumer --remote-ref <reviewed-ref>` from a clean shell with no `PYTHONPATH` overrides.
+3. **Install command** (run after step 1): `agentic-bootstrap install --target /tmp/e17-14-scratch-consumer --remote-ref <reviewed-ref>` from a clean shell with no `PYTHONPATH` overrides. The installer is the only writer that provisions consumer-side handoff scaffolding into the `git init`'d target.
 4. **Seeded handoff state**: from the scratch consumer root, register two active tasks via `set_handoff_state` with distinct `task_ref`, `target_branch`, `target_worktree_path`, and `task_plan_path` values. Create empty placeholder task-plan files at the resolved absolute paths (under sibling worktree dirs `/tmp/e17-14-scratch-consumer-task-a/` and `-task-b/`) so existence checks pass.
 5. **Probe**: from the scratch consumer root (still on `main`), run `make context` and read `DASHBOARD.txt` plus a single `render_handoff(kind='current_task', task_ref=<task-a>)` call. Capture stdout for both.
 

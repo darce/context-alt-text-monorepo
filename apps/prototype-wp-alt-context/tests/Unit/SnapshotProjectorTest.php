@@ -90,6 +90,124 @@ class SnapshotProjectorTest extends TestCase
         }
     }
 
+    public function testProjectRecordsSingleTransactionConflictsInsideRollbackBoundary(): void
+    {
+        global $wpdb;
+
+        $clustersRepo = new SnapshotProjectorClustersSpy([
+            'cluster-missing' => [
+                'cluster_uuid' => 'cluster-missing',
+                'label' => 'Curated',
+                'person_id' => 22,
+                'curation_state' => 'dismissed',
+                'snapshot_version' => 12,
+                'local_revision' => 5,
+            ],
+        ]);
+        $clustersRepo->shouldThrow = true;
+
+        $projector = new SnapshotProjector(
+            $clustersRepo,
+            new SnapshotProjectorMembersSpy(),
+            new SnapshotProjectorSyncStateSpy(),
+            new ConflictRepository()
+        );
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('clusters-failure');
+
+        try {
+            $projector->project(
+                'tenant-conflict-rollback',
+                [
+                    'snapshot_version' => 19,
+                    'clusters' => [],
+                    'members' => [],
+                ]
+            );
+        } finally {
+            $startIndex = array_search('START TRANSACTION', $wpdb->queries, true);
+            $rollbackIndex = array_search('ROLLBACK', $wpdb->queries, true);
+            $conflictIndexes = array_keys(
+                array_filter(
+                    $wpdb->queries,
+                    static fn(string $query): bool => str_contains($query, 'INSERT INTO `wp_acx_sync_conflicts`')
+                )
+            );
+
+            $this->assertIsInt($startIndex);
+            $this->assertIsInt($rollbackIndex);
+            $this->assertCount(1, $conflictIndexes);
+            $this->assertGreaterThan($startIndex, $conflictIndexes[0]);
+            $this->assertLessThan($rollbackIndex, $conflictIndexes[0]);
+        }
+    }
+
+    public function testProjectRecordsBatchedConflictsInsideFirstRollbackBoundary(): void
+    {
+        global $wpdb;
+
+        $chunkSize = (new \ReflectionClass(SnapshotProjector::class))->getConstant('MAX_SNAPSHOT_BATCH_SIZE');
+        $this->assertIsInt($chunkSize);
+
+        $clustersRepo = new SnapshotProjectorClustersSpy([
+            'cluster-1' => [
+                'cluster_uuid' => 'cluster-1',
+                'label' => 'Local Name',
+                'person_id' => 31,
+                'curation_state' => 'confirmed',
+                'snapshot_version' => 12,
+                'local_revision' => 5,
+            ],
+        ]);
+        $clustersRepo->shouldThrow = true;
+
+        $clusters = [];
+        for ($index = 1; $index <= $chunkSize + 1; $index++) {
+            $clusters[] = [
+                'cluster_uuid' => 'cluster-' . $index,
+                'label' => 1 === $index ? 'Backend Name' : '',
+                'identity_count' => 1,
+            ];
+        }
+
+        $projector = new SnapshotProjector(
+            $clustersRepo,
+            new SnapshotProjectorMembersSpy(),
+            new SnapshotProjectorSyncStateSpy(),
+            new ConflictRepository()
+        );
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('clusters-failure');
+
+        try {
+            $projector->project(
+                'tenant-batch-conflict-rollback',
+                [
+                    'snapshot_version' => 20,
+                    'clusters' => $clusters,
+                    'members' => [],
+                ]
+            );
+        } finally {
+            $startIndex = array_search('START TRANSACTION', $wpdb->queries, true);
+            $rollbackIndex = array_search('ROLLBACK', $wpdb->queries, true);
+            $conflictIndexes = array_keys(
+                array_filter(
+                    $wpdb->queries,
+                    static fn(string $query): bool => str_contains($query, 'INSERT INTO `wp_acx_sync_conflicts`')
+                )
+            );
+
+            $this->assertIsInt($startIndex);
+            $this->assertIsInt($rollbackIndex);
+            $this->assertCount(1, $conflictIndexes);
+            $this->assertGreaterThan($startIndex, $conflictIndexes[0]);
+            $this->assertLessThan($rollbackIndex, $conflictIndexes[0]);
+        }
+    }
+
     public function testProjectFailsClosedWhenTransactionCannotStart(): void
     {
         global $wpdb;
@@ -105,6 +223,44 @@ class SnapshotProjectorTest extends TestCase
         $this->expectExceptionMessage('transaction support');
 
         $projector->project('tenant-c', ['snapshot_version' => 3, 'clusters' => [], 'members' => []]);
+    }
+
+    public function testProjectChunksLargeClusterOnlySnapshotsAcrossMultipleTransactions(): void
+    {
+        global $wpdb;
+
+        $chunkSize = (new \ReflectionClass(SnapshotProjector::class))->getConstant('MAX_SNAPSHOT_BATCH_SIZE');
+        $this->assertIsInt($chunkSize, 'SnapshotProjector should declare a typed MAX_SNAPSHOT_BATCH_SIZE cap.');
+
+        $clustersRepo = new SnapshotProjectorClustersSpy();
+        $membersRepo = new SnapshotProjectorMembersSpy();
+        $syncRepo = new SnapshotProjectorSyncStateSpy();
+        $projector = new SnapshotProjector($clustersRepo, $membersRepo, $syncRepo);
+
+        $clusters = [];
+        for ($index = 1; $index <= $chunkSize + 1; $index++) {
+            $clusters[] = [
+                'cluster_uuid' => 'cluster-' . $index,
+                'identity_count' => 1,
+            ];
+        }
+
+        $projector->project(
+            'tenant-batch',
+            [
+                'snapshot_version' => 55,
+                'clusters' => $clusters,
+                'members' => [],
+            ]
+        );
+
+        $this->assertCount(2, $clustersRepo->mergedClusterBatches);
+        $this->assertCount($chunkSize, $clustersRepo->mergedClusterBatches[0]);
+        $this->assertCount(1, $clustersRepo->mergedClusterBatches[1]);
+        $this->assertCount(0, $membersRepo->mergedMemberBatches);
+        $this->assertCount(2, array_values(array_filter($wpdb->queries, static fn(string $query): bool => 'START TRANSACTION' === $query)));
+        $this->assertCount(2, array_values(array_filter($wpdb->queries, static fn(string $query): bool => 'COMMIT' === $query)));
+        $this->assertSame(55, $syncRepo->snapshotVersion);
     }
 
     public function testProjectWithEmptyTenantIdDispatchesWarningAndSkipsDatabaseWork(): void
@@ -621,6 +777,7 @@ class SnapshotProjectorClustersSpy extends NullClustersRepository
     public int $snapshotVersion = 0;
     public array $clusters = [];
     public array $mergedClusters = [];
+    public array $mergedClusterBatches = [];
     public bool $shouldThrow = false;
     public int $tenantPageSize = 0;
     /** @var array<int,array<string,mixed>> */
@@ -645,6 +802,7 @@ class SnapshotProjectorClustersSpy extends NullClustersRepository
         $this->tenantId = $tenant_id;
         $this->clusters = $clusters;
         $this->mergedClusters = $clusters;
+        $this->mergedClusterBatches[] = $clusters;
         $this->snapshotVersion = $snapshot_version;
         $this->topUnlabeledRows = array_values(
             array_filter(
@@ -673,6 +831,16 @@ class SnapshotProjectorClustersSpy extends NullClustersRepository
         );
     }
 
+    public function prepare_snapshot_merge_for_tenant(string $tenant_id, array $incoming_cluster_ids): void
+    {
+        $this->tenantId = $tenant_id;
+    }
+
+    public function merge_snapshot_batch_for_tenant(string $tenant_id, array $clusters, int $snapshot_version): void
+    {
+        $this->merge_snapshot_for_tenant($tenant_id, $clusters, $snapshot_version);
+    }
+
     public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
     {
         return array_slice($this->topUnlabeledRows, 0, max(1, $limit));
@@ -698,6 +866,7 @@ class SnapshotProjectorMembersSpy extends NullIdentityMembersRepository
 {
     public array $members = [];
     public array $mergedMembers = [];
+    public array $mergedMemberBatches = [];
     public int $memberPageSize = 0;
     /** @var array<string,array<int,array<string,mixed>>> */
     private array $membersByCluster;
@@ -714,6 +883,7 @@ class SnapshotProjectorMembersSpy extends NullIdentityMembersRepository
     {
         $this->members = $members;
         $this->mergedMembers = $members;
+        $this->mergedMemberBatches[] = $members;
         $groupedMembers = [];
         foreach ($members as $member) {
             if (!is_array($member)) {

@@ -15,6 +15,10 @@ use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 class NullClustersRepository implements ClustersRepositoryInterface {
 	public function merge_snapshot_for_tenant( string $tenant_id, array $clusters, int $snapshot_version ): void {}
 
+	public function prepare_snapshot_merge_for_tenant( string $tenant_id, array $incoming_cluster_ids ): void {}
+
+	public function merge_snapshot_batch_for_tenant( string $tenant_id, array $clusters, int $snapshot_version ): void {}
+
 	public function list_for_tenant( string $tenant_id, int $limit = 50, int $offset = 0, array $filters = array() ): array {
 		return array();
 	}

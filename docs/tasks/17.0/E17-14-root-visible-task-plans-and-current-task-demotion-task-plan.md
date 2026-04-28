@@ -97,13 +97,14 @@ Introduce structured task-plan metadata in the external handoff package, resolve
   - external `mcp-agent-handoff` unit/integration coverage for task-state metadata, dashboard rendering, and current-task render-on-demand behavior
   - root-repo targeted checks for updated helper/docs expectations once consumer changes land
 - Runtime-parity / environment checks:
-  - install the reviewed external `mcp-agent-handoff` ref into the `description-service` environment
-  - restart/reload the root MCP server and verify root discovery of active task plans
+  - create a fresh scratch consumer repo, install the reviewed packaged consumer toolchain, and run `agentic-bootstrap install --target . --remote-ref <reviewed-ref>` so the proof exercises the published install path rather than a mutable shared environment
+  - restart/reload MCP in that scratch consumer and verify root discovery of active task plans from the consumer root after bootstrap install
+  - optional local smoke only: upgrade the shared `description-service` environment if needed to compare local behavior, but do not treat that path as release proof
 - Contract/fixture verification:
   - verify `get_handoff_state` and dashboard output expose the new task-plan metadata without breaking existing fields
   - verify explicit `render_handoff(kind='current_task')` still returns a parseable task snapshot when requested
 - Manual verification:
-  - from the monorepo root workspace, inspect the operator surface and open an active task plan living in a sibling worktree without switching the root checkout
+  - from the scratch consumer root, inspect the operator surface and open an active task plan without switching the consumer checkout
 
 ## Slice Delivery
 
@@ -129,14 +130,15 @@ Proof:
 
 Changes:
 
-- Upgrade the root repo's `description-service` environment to the reviewed external `mcp-agent-handoff` ref.
-- Verify the root MCP server starts cleanly and exposes active task plans from sibling worktrees.
+- Create a fresh scratch consumer repo and install the reviewed packaged consumer surface there, using `agentic-bootstrap install --target . --remote-ref <reviewed-ref>` so the verification path matches the shipped bootstrap workflow.
+- Verify the consumer MCP server starts cleanly after bootstrap install and exposes active task plans from the consumer root.
+- Treat any shared `description-service` environment upgrade as optional local smoke only, not as the canonical consumer-proof path.
 - Capture the root-side proof path and operator workflow in this monorepo's consumer-facing docs or task notes.
 
 Proof:
 
-- Root-level external-package verification succeeds against the reviewed external ref.
-- Manual/operator smoke confirms a root-visible active task-plan surface and successful open/read flow.
+- Scratch-consumer bootstrap verification succeeds against the reviewed ref and proves the packaged install path end to end.
+- Manual/operator smoke confirms a root-visible active task-plan surface and successful open/read flow from the consumer root.
 
 ### Slice 3: Cleanup of CURRENT_TASK Assumptions in Local Docs and Helpers
 

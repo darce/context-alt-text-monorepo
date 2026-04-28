@@ -22,7 +22,13 @@ import httpx
 import imagehash
 import numpy as np
 from PIL import Image
-from recognition.application.integrations import AdapterTimeoutError, wait_for_adapter
+from recognition.application.integrations import (
+    AdapterBreakerOpenError,
+    AdapterCircuitBreaker,
+    AdapterTimeoutError,
+    create_adapter_circuit_breaker,
+    wait_for_adapter,
+)
 
 if TYPE_CHECKING:
     from recognition.infrastructure.embeddings import InsightFaceAdapter
@@ -146,10 +152,12 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
         adapter: InsightFaceAdapter,
         timeout: float = 30.0,
         client: httpx.AsyncClient | None = None,
+        breaker: AdapterCircuitBreaker | None = None,
     ) -> None:
         self._adapter = adapter
         self._timeout = timeout
         self._client = client
+        self._breaker = breaker or create_adapter_circuit_breaker("insightface.detect_faces")
 
     async def _fetch_image(self, url: str) -> bytes | None:
         """Fetch image bytes from a URL."""
@@ -204,10 +212,12 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
 
             # Detect faces and get embeddings in one pass
             try:
-                faces = await wait_for_adapter(
-                    self._adapter.detect_faces(image_bytes),
-                    timeout=self._timeout,
-                    adapter_name="insightface.detect_faces",
+                faces = await self._breaker.call(
+                    lambda: wait_for_adapter(
+                        self._adapter.detect_faces(image_bytes),
+                        timeout=self._timeout,
+                        adapter_name="insightface.detect_faces",
+                    )
                 )
                 for face in faces:
                     # Extract pose angles
@@ -244,6 +254,8 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
             except AdapterTimeoutError as exc:
                 logger.error("Face detection timed out for %s after %.2fs", media_id[:20], self._timeout)
                 raise DetectionTimeoutError(media_id=media_id, timeout_s=self._timeout) from exc
+            except AdapterBreakerOpenError:
+                raise
             except Exception as e:
                 logger.error("Face detection failed for %s: %s", media_id[:20], e)
 

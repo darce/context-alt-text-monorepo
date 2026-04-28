@@ -1,0 +1,125 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/recognition-cluster-members-response.schema.json",
+  "title": "Recognition Cluster Members Response",
+  "description": "WordPress recognition proxy envelope for one cluster's member list.",
+  "type": "object",
+  "required": ["members", "limit", "total", "truncated"],
+  "properties": {
+    "members": {
+      "type": "array",
+      "description": "Cluster member entries returned for the requested cluster.",
+      "items": {
+        "type": "object",
+        "required": [
+          "identity_id",
+          "media_id",
+          "similarity",
+          "confidence",
+          "clustering_pending",
+          "bbox",
+          "thumb_url",
+          "media_url",
+          "cluster_id",
+          "cluster_label",
+          "is_auto_label",
+          "is_pinned",
+          "detected_at",
+          "representative_id",
+          "debug_metrics"
+        ],
+        "properties": {
+          "identity_id": {
+            "type": "string",
+            "description": "Stable identity UUID." 
+          },
+          "media_id": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "WordPress attachment ID for the member image."
+          },
+          "similarity": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Similarity score when available."
+          },
+          "confidence": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Confidence score when available."
+          },
+          "clustering_pending": {
+            "type": "boolean",
+            "description": "Whether the member is still awaiting clustering."
+          },
+          "bbox": {
+            "type": ["object", "null"],
+            "description": "Pixel-space face bounding box.",
+            "required": ["x", "y", "width", "height"],
+            "properties": {
+              "x": { "type": "integer", "minimum": 0 },
+              "y": { "type": "integer", "minimum": 0 },
+              "width": { "type": "integer", "minimum": 0 },
+              "height": { "type": "integer", "minimum": 0 }
+            }
+          },
+          "thumb_url": {
+            "type": ["string", "null"],
+            "format": "uri",
+            "description": "Thumbnail URL when available."
+          },
+          "media_url": {
+            "type": ["string", "null"],
+            "format": "uri",
+            "description": "Full media URL when available."
+          },
+          "cluster_id": {
+            "type": ["string", "null"],
+            "description": "Owning cluster UUID."
+          },
+          "cluster_label": {
+            "type": ["string", "null"],
+            "description": "Resolved cluster label when available."
+          },
+          "is_auto_label": {
+            "type": "boolean",
+            "description": "Whether the cluster label is system-derived."
+          },
+          "is_pinned": {
+            "type": "boolean",
+            "description": "Whether this identity is the pinned representative."
+          },
+          "detected_at": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "Detection timestamp when available."
+          },
+          "representative_id": {
+            "type": ["string", "null"],
+            "description": "Representative identity UUID for the cluster when available."
+          },
+          "debug_metrics": {
+            "type": ["object", "null"],
+            "description": "Optional debug metrics payload."
+          }
+        }
+      }
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Maximum number of members returned in one response."
+    },
+    "total": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of members available for the cluster."
+    },
+    "truncated": {
+      "type": "boolean",
+      "description": "Whether additional members exist beyond this response."
+    }
+  }
+}

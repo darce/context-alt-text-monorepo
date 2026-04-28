@@ -62,6 +62,7 @@ class ClustersController extends AbstractRecognitionProxyController {
 	private const DATA_SOURCE_BACKEND_PROXY = 'backend_proxy';
 	private const DATA_SOURCE_LOCAL_PROJECTION = 'local_projection';
 	private const DATA_SOURCE_UNAVAILABLE = 'unavailable';
+	private const GET_CLUSTER_MEMBERS_MAX_LIMIT = IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT;
 	private const LIST_CLUSTERS_DEFAULT_LIMIT = 50;
 	private const LIST_CLUSTERS_MAX_LIMIT = 500;
 	private const PREVIEW_IDENTITIES_PER_CLUSTER = 4;
@@ -321,9 +322,10 @@ class ClustersController extends AbstractRecognitionProxyController {
 				);
 			}
 
-			$members = $this->members_repository->list_for_cluster( $cluster_id, 500, 0, $tenant_id );
-			$payload = $this->member_mapper->map_cluster_members( $members );
-			return new WP_REST_Response( $payload, 200 );
+			$member_rows = $this->members_repository->list_for_cluster( $cluster_id, self::GET_CLUSTER_MEMBERS_MAX_LIMIT, 0, $tenant_id );
+			$members = $this->member_mapper->map_cluster_members( $member_rows );
+			$total = max( count( $members ), $this->members_repository->count_for_cluster( $cluster_id ) );
+			return new WP_REST_Response( $this->build_cluster_members_envelope( $members, self::GET_CLUSTER_MEMBERS_MAX_LIMIT, $total ), 200 );
 		}
 
 		$response = $this->proxy_request(
@@ -332,7 +334,8 @@ class ClustersController extends AbstractRecognitionProxyController {
 			array(),
 			array( 'tenant_id' => $tenant_id )
 		);
-		return $this->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
+		$response = $this->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
+		return $this->normalize_cluster_members_response( $response, self::GET_CLUSTER_MEMBERS_MAX_LIMIT );
 	}
 
 	public function perform_bootstrap_sync( string $tenant_id ): void {
@@ -449,6 +452,19 @@ class ClustersController extends AbstractRecognitionProxyController {
 		);
 	}
 
+	/**
+	 * @param array<int,array<string,mixed>> $members
+	 * @return array<string,mixed>
+	 */
+	private function build_cluster_members_envelope( array $members, int $limit, int $total ): array {
+		return array(
+			'members' => $members,
+			'limit' => $limit,
+			'total' => $total,
+			'truncated' => $total > count( $members ),
+		);
+	}
+
 	private function normalize_cluster_list_response( WP_REST_Response|WP_Error $response, int $requested_limit ): WP_REST_Response|WP_Error {
 		if ( ! ( $response instanceof WP_REST_Response ) ) {
 			return $response;
@@ -484,6 +500,39 @@ class ClustersController extends AbstractRecognitionProxyController {
 				'total' => count( $clusters ),
 				'truncated' => false,
 			),
+			$response->get_status()
+		);
+	}
+
+	private function normalize_cluster_members_response( WP_REST_Response|WP_Error $response, int $requested_limit ): WP_REST_Response|WP_Error {
+		if ( ! ( $response instanceof WP_REST_Response ) ) {
+			return $response;
+		}
+
+		$data = $response->get_data();
+		if ( ! is_array( $data ) ) {
+			return $response;
+		}
+
+		if ( isset( $data['members'] ) && is_array( $data['members'] ) ) {
+			if ( ! isset( $data['limit'], $data['total'], $data['truncated'] ) || ! is_numeric( $data['limit'] ) || ! is_numeric( $data['total'] ) ) {
+				return $response;
+			}
+
+			$members = $data['members'];
+			$total = max( 0, (int) $data['total'] );
+			$limit = max( 1, (int) $data['limit'] );
+			$truncated = true === $data['truncated'];
+
+			return new WP_REST_Response(
+				$this->build_cluster_members_envelope( $members, $limit, $total ),
+				$response->get_status()
+			);
+		}
+
+		$members = $data;
+		return new WP_REST_Response(
+			$this->build_cluster_members_envelope( $members, $requested_limit, count( $members ) ),
 			$response->get_status()
 		);
 	}

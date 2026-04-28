@@ -502,6 +502,62 @@ class ClustersControllerTest extends TestCase
         $this->assertSame('tenant-cron', $syncSpy->tenantIdBypass);
     }
 
+    public function testGetClusterMembersUsesEnvelopeForLocalProjection(): void
+    {
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function find_by_uuid(string $cluster_uuid): ?array
+            {
+                return [
+                    'cluster_uuid' => $cluster_uuid,
+                    'label' => 'Cluster Local',
+                ];
+            }
+        };
+
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_cluster(string $cluster_uuid, int $limit = 500, int $offset = 0, ?string $tenant_id = null): array
+            {
+                return [
+                    [
+                        'identity_uuid' => 'identity-local-1',
+                        'cluster_uuid' => $cluster_uuid,
+                        'attachment_id' => 101,
+                        'similarity' => 0.98,
+                    ],
+                ];
+            }
+
+            public function count_for_cluster(string $cluster_uuid): int
+            {
+                return IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT + 1;
+            }
+        };
+
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int {
+                return 1;
+            }
+        };
+
+        $controller = new ClustersController($clustersRepo, $membersRepo, $syncRepo, null, new ClusterResponseMapper(), new MemberResponseMapper());
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cluster-local/members');
+        $request->set_param('cluster_id', 'cluster-local');
+        $response = $controller->get_cluster_members($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame(IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT, $data['limit']);
+        $this->assertSame(IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT + 1, $data['total']);
+        $this->assertTrue($data['truncated']);
+        $this->assertSame('identity-local-1', $data['members'][0]['identity_id']);
+    }
+
     public function testGetClusterMembersProxiesWhenNoLocalProjection(): void
     {
         $clustersRepo = new NullClustersRepository();
@@ -526,7 +582,10 @@ class ClustersControllerTest extends TestCase
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $data = $response->get_data();
-        $this->assertSame('id-1', $data[0]['identity_uuid']);
+        $this->assertSame(IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT, $data['limit']);
+        $this->assertSame(1, $data['total']);
+        $this->assertFalse($data['truncated']);
+        $this->assertSame('id-1', $data['members'][0]['identity_uuid']);
     }
 
     public function testStaleProjectionTriggersSyncPullBeforeServing(): void

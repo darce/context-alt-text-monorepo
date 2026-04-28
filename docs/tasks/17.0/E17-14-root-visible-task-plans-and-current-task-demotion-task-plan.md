@@ -1,11 +1,13 @@
 # E17-14. Root-Visible Task Plans and CURRENT_TASK Demotion
 
-- **Date**: 2026-04-25
+- **Date**: 2026-04-25 (re-scoped 2026-04-27)
 - **Author**: GitHub Copilot (GPT-5.4)
 - **Owning Epic**: [docs/epics/v0.4.0/skill-formalization-and-process-automation-epic.md](../../epics/v0.4.0/skill-formalization-and-process-automation-epic.md)
 - **Epic Short ID**: E17
 - **Target Branch**: `feature/e17-14`
 - **Review Coverage Target**: 2
+
+> **Scope note (2026-04-27 re-scope):** The external handoff-package work originally drafted as Slice 1 will not be implemented in this repo and has been removed from this plan; it lives in a separate external work stream. **Slice 3 has been merged** to `main` in commit `3892997a` (2026-04-27) and is retained below as a record of work shipped under this task ref. **Slice 2** — scratch-consumer verification — remains the only in-repo work still in scope, and is gated on the external Slice 1 landing and being tagged.
 
 ## Objective
 
@@ -108,21 +110,7 @@ Introduce structured task-plan metadata in the external handoff package, resolve
 
 ## Slice Delivery
 
-### Slice 1: External Handoff Metadata and Renderer Changes
-
-**Goal**: Make active task plans first-class, root-visible state in the external `mcp-agent-handoff` package.
-
-Changes:
-
-- Add structured task-plan metadata to active handoff state, including repo-relative `task_plan_path` and resolved path fields derived from `target_worktree_path`.
-- Define one canonical write path for `task_plan_path` so it is set intentionally during task start or the first planning-artifact registration step, rather than inferred later from freeform `focus` text.
-- Extend the dashboard/query surfaces to expose all active task plans from the consumer root without requiring mirrored copies of plan files.
-- Demote `CURRENT_TASK.json` from implicit always-current regeneration to explicit on-demand rendering, preserving it only as an optional task-scoped export surface.
-
-Proof:
-
-- External package tests cover task-plan metadata reads/writes, dashboard rendering of active task plans, and successful on-demand current-task rendering.
-- External package changelog/contract updates document the new behavior.
+> Slice 1 (external handoff-package metadata and renderer changes) is **out of scope for this repo** and has been removed. That work lives in the external work stream and is tracked there. This task ref consumes the resulting tagged ref via Slice 2.
 
 ### Slice 2: Consumer Root Verification from This Monorepo
 
@@ -140,7 +128,7 @@ Proof:
 - Scratch-consumer bootstrap verification succeeds against the reviewed ref and proves the packaged install path end to end.
 - Manual/operator smoke confirms a root-visible active task-plan surface and successful open/read flow from the consumer root.
 
-### Slice 3: Cleanup of CURRENT_TASK Assumptions in Local Docs and Helpers
+### Slice 3: Cleanup of CURRENT_TASK Assumptions in Local Docs and Helpers — **MERGED 2026-04-27 in commit `3892997a`**
 
 **Goal**: Remove stale root-repo assumptions that `CURRENT_TASK.json` must always be present, current, or part of every close/verification path.
 
@@ -163,24 +151,17 @@ Proof:
 - [ ] Confirmed external runtime changes belong in `darce/mcp-agent-handoff`, while this monorepo owns consumer-facing planning, adoption, and verification.
 - [ ] Recorded boundary ownership and compatibility expectations for the external package, dashboard surface, and local helper/docs cleanup.
 
-### Checklist for Slice 1: External Handoff Metadata and Renderer Changes
-
-- [ ] `darce/mcp-agent-handoff` persists structured `task_plan_path` metadata rather than relying on freeform `focus` text.
-- [ ] Dashboard/query surfaces expose all active task plans from the consumer root.
-- [ ] `CURRENT_TASK.json` is demoted to explicit on-demand rendering without breaking explicit export use cases.
-- [ ] External package tests and contracts cover the new behavior.
-
 ### Checklist for Slice 2: Consumer Root Verification from This Monorepo
 
 - [ ] Root repo installs or references the reviewed external package version.
 - [ ] Root MCP startup and operator flow are verified against the new task-plan visibility surface.
 - [ ] Consumer-facing verification steps are captured in the monorepo artifact or adjacent docs.
 
-### Checklist for Slice 3: Cleanup of CURRENT_TASK Assumptions in Local Docs and Helpers
+### Checklist for Slice 3: Cleanup of CURRENT_TASK Assumptions in Local Docs and Helpers — **MERGED 2026-04-27**
 
-- [ ] Local docs and prompts no longer describe `CURRENT_TASK.json` as always-current by default.
-- [ ] Local helper scripts/configs no longer require constant `CURRENT_TASK.json` regeneration where it is not needed.
-- [ ] Remaining explicit current-task render paths are intentional and documented.
+- [x] Local docs and prompts no longer describe `CURRENT_TASK.json` as always-current by default.
+- [x] Local helper scripts/configs no longer require constant `CURRENT_TASK.json` regeneration where it is not needed.
+- [x] Remaining explicit current-task render paths are intentional and documented.
 
 ## Review Readiness
 
@@ -194,7 +175,7 @@ Proof:
 
 ## Success Criteria
 
-- [ ] The root workspace can discover every active task plan without checking the root worktree out to the task branch.
-- [ ] The operator can open or inspect an active task plan from the root workspace with no mirrored plan files.
-- [ ] The external handoff package no longer treats `CURRENT_TASK.json` as an always-current required artifact.
-- [ ] This monorepo's docs and helpers no longer depend on continuous `CURRENT_TASK.json` regeneration.
+- [ ] The root workspace can discover every active task plan without checking the root worktree out to the task branch. *(Depends on external Slice 1 + verified by Slice 2.)*
+- [ ] The operator can open or inspect an active task plan from the root workspace with no mirrored plan files. *(Depends on external Slice 1 + verified by Slice 2.)*
+- [ ] The external handoff package no longer treats `CURRENT_TASK.json` as an always-current required artifact. *(Out of scope for this repo; tracked externally.)*
+- [x] This monorepo's docs and helpers no longer depend on continuous `CURRENT_TASK.json` regeneration. *(Slice 3, merged 2026-04-27 in commit `3892997a`.)*

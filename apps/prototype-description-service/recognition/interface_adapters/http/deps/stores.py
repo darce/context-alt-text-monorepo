@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import IdentityCluster, IdentityClusterRepresentative, IdentityMember, MediaIdentity
 from recognition.application.assignment.quality import compute_identity_quality
 from recognition.application.settings.clustering import ClusteringSettings
-from recognition.domain.job import Job, JobStatus
+from recognition.domain.job import Job, JobStatus, JobType
 from recognition.interface_adapters.http.schemas.responses import JobProgressResponse, JobStatusResponse
 from recognition.shared.ids import generate_id
 
@@ -36,7 +36,7 @@ class InMemoryJobService:
         started_at = datetime.now(tz=UTC)
         job = JobStatusResponse(
             id=job_id,
-            type="analyze",
+            type=JobType.ANALYZE,
             status=JobStatus.RUNNING,
             progress=JobProgressResponse(completed=0, total=len(media_ids_list)),
             started_at=started_at,
@@ -51,7 +51,7 @@ class InMemoryJobService:
         started_at = datetime.now(tz=UTC)
         self.jobs[job_id] = JobStatusResponse(
             id=job_id,
-            type="clustering",
+            type=JobType.CLUSTERING,
             status=JobStatus.RUNNING,
             progress=JobProgressResponse(completed=0, total=0),
             started_at=started_at,

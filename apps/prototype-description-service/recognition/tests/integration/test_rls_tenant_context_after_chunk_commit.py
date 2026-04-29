@@ -280,6 +280,7 @@ def test_resolve_postgres_test_dsn_returns_empty_when_no_real_postgres_config(mo
             postgres_dsn=DEFAULT_POSTGRES_TEST_DSN,
             postgres_sync_dsn="postgresql+psycopg://context:context@localhost:5432/alt_context_service",
             pgvector_dimension=512,
+            embedding_timeout_s=30.0,
             pool_size=20,
             max_overflow=10,
             pool_timeout=30,

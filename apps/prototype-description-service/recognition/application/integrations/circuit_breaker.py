@@ -77,44 +77,41 @@ class AdapterCircuitBreaker:
     async def call(self, operation: Callable[[], Awaitable[ResultT]]) -> ResultT:
         """Execute an adapter operation if the breaker currently allows it."""
 
-        self._enter_call()
+        if not self.allow_call():
+            raise AdapterBreakerOpenError(self.adapter_name)
         try:
             result = await operation()
         except Exception:
-            self._record_failure()
+            self.record_failure()
             raise
         else:
-            self._record_success()
+            self.record_success()
             return result
 
-    def snapshot(self) -> AdapterBreakerSnapshot:
-        with self._lock:
-            now = self.time_source()
-            self._prune_failures(now)
-            return AdapterBreakerSnapshot(
-                state=self.state,
-                failure_count=len(self._failure_timestamps),
-                is_open=self.state is AdapterBreakerState.OPEN,
-            )
+    def allow_call(self) -> bool:
+        """Attempt to admit one call without executing it."""
 
-    def _enter_call(self) -> None:
         with self._lock:
             now = self.time_source()
             self._prune_failures(now)
 
             if self.state is AdapterBreakerState.OPEN:
                 if self._opened_at is None or (now - self._opened_at) < self.config.open_state_cooldown_seconds:
-                    raise AdapterBreakerOpenError(self.adapter_name)
+                    return False
                 self.state = AdapterBreakerState.HALF_OPEN
                 self._half_open_in_flight = 0
                 self._half_open_successes = 0
 
             if self.state is AdapterBreakerState.HALF_OPEN:
                 if self._half_open_in_flight >= self.config.half_open_probe_count:
-                    raise AdapterBreakerOpenError(self.adapter_name)
+                    return False
                 self._half_open_in_flight += 1
 
-    def _record_success(self) -> None:
+            return True
+
+    def record_success(self) -> None:
+        """Record a successful admitted call."""
+
         with self._lock:
             if self.state is AdapterBreakerState.HALF_OPEN:
                 self._half_open_in_flight = max(0, self._half_open_in_flight - 1)
@@ -131,7 +128,9 @@ class AdapterCircuitBreaker:
             self._opened_at = None
             self._failure_timestamps.clear()
 
-    def _record_failure(self) -> None:
+    def record_failure(self) -> None:
+        """Record a failed admitted call."""
+
         with self._lock:
             now = self.time_source()
             self._prune_failures(now)
@@ -149,6 +148,28 @@ class AdapterCircuitBreaker:
             if len(self._failure_timestamps) >= self.config.failure_count_threshold:
                 self.state = AdapterBreakerState.OPEN
                 self._opened_at = now
+
+    def force_open(self) -> None:
+        """Test helper: drive the breaker into the open state."""
+
+        with self._lock:
+            now = self.time_source()
+            self.state = AdapterBreakerState.OPEN
+            self._opened_at = now
+            self._half_open_in_flight = 0
+            self._half_open_successes = 0
+            self._failure_timestamps.clear()
+            self._failure_timestamps.extend([now] * self.config.failure_count_threshold)
+
+    def snapshot(self) -> AdapterBreakerSnapshot:
+        with self._lock:
+            now = self.time_source()
+            self._prune_failures(now)
+            return AdapterBreakerSnapshot(
+                state=self.state,
+                failure_count=len(self._failure_timestamps),
+                is_open=self.state is AdapterBreakerState.OPEN,
+            )
 
     def _prune_failures(self, now: float) -> None:
         cutoff = now - self.config.failure_window_seconds

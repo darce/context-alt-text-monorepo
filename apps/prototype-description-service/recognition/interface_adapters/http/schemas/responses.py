@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from recognition.domain.job import JobPhase, JobStatus, JobType
 from recognition.interface_adapters.http.blob_url import BlobUrl
 from recognition.interface_adapters.http.validation_utils import validate_uuid_format
 
@@ -362,9 +363,7 @@ class JobProgressResponse(BaseModel):
 
     completed: int
     total: int
-    phase: (
-        Literal["queued", "detecting", "clustering", "retrying", "awaiting_projection", "failed", "complete"] | None
-    ) = None
+    phase: JobPhase | None = None
     images_processed: int | None = None
     faces_found: int | None = None
     clusters_created: int | None = None
@@ -379,8 +378,8 @@ class JobStatusResponse(BaseModel):
     """Job status payload."""
 
     id: str
-    type: Literal["analyze", "clustering", "curation", "split"]
-    status: Literal["pending", "running", "completed", "failed"]
+    type: JobType
+    status: JobStatus
     progress: JobProgressResponse | None
     started_at: datetime
     finished_at: datetime | None

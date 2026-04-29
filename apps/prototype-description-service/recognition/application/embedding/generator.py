@@ -52,6 +52,15 @@ class EmbeddingTimeoutError(TimeoutError):
         self.timeout_s = timeout_s
 
 
+class EmbeddingAdapterError(RuntimeError):
+    """Raised when the embedding adapter fails for a non-timeout reason."""
+
+    def __init__(self, media_id: str, error_message: str) -> None:
+        super().__init__(f"Embedding generation failed for {media_id[:20]}: {error_message}")
+        self.media_id = media_id
+        self.error_message = error_message
+
+
 class EmbeddingGeneratorProtocol(ABC):
     """Protocol for embedding generation adapters."""
 
@@ -152,6 +161,7 @@ class InsightFaceEmbeddingGenerator(EmbeddingGeneratorProtocol):
                 raise
             except Exception as e:
                 logger.error("Embedding generation failed for %s: %s", media_id[:20], e)
+                raise EmbeddingAdapterError(media_id=media_id, error_message=str(e)) from e
 
         return results
 
@@ -164,6 +174,7 @@ class EmbeddingGenerator(StubEmbeddingGenerator):
 
 
 __all__ = [
+    "EmbeddingAdapterError",
     "EmbeddingTimeoutError",
     "EmbeddingGeneratorProtocol",
     "StubEmbeddingGenerator",

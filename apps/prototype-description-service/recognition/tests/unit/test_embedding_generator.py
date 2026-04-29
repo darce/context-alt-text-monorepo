@@ -16,6 +16,7 @@ import pytest
 
 from recognition.application.embedding.generator import (
     EmbeddingGenerator,
+    EmbeddingAdapterError,
     EmbeddingGeneratorProtocol,
     EmbeddingTimeoutError,
     InsightFaceEmbeddingGenerator,
@@ -183,15 +184,14 @@ class TestInsightFaceEmbeddingGenerator:
         np.testing.assert_array_equal(results[1].embedding, mock_face2.embedding_512)
 
     @pytest.mark.asyncio
-    async def test_handles_adapter_exception_gracefully(self, mock_adapter: MagicMock) -> None:
-        """Should log error and continue if adapter raises exception."""
+    async def test_raises_typed_error_for_adapter_exception(self, mock_adapter: MagicMock) -> None:
+        """Generic adapter failures should propagate as typed embedding errors."""
         mock_adapter.analyze = AsyncMock(side_effect=RuntimeError("Model failed"))
 
         generator = InsightFaceEmbeddingGenerator(mock_adapter)
-        results = await generator.generate([b"bad-image"])
 
-        # Should return empty list, not raise
-        assert results == []
+        with pytest.raises(EmbeddingAdapterError, match="Model failed"):
+            await generator.generate([b"bad-image"])
 
     @pytest.mark.asyncio
     async def test_times_out_slow_adapter_calls(self) -> None:
@@ -228,9 +228,8 @@ class TestInsightFaceEmbeddingGenerator:
         failing_adapter.analyze = AsyncMock(side_effect=RuntimeError("Model failed"))
         generator = InsightFaceEmbeddingGenerator(failing_adapter, breaker=breaker)
 
-        first_result = await generator.generate([b"first-image"])
-
-        assert first_result == []
+        with pytest.raises(EmbeddingAdapterError):
+            await generator.generate([b"first-image"])
 
         with pytest.raises(AdapterBreakerOpenError):
             await generator.generate([b"second-image"])

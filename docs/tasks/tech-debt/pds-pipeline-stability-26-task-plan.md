@@ -231,67 +231,69 @@ Proof:
 
 ## Consolidated Checklist
 
+> **Status note (2026-04-29):** Remaining unchecked items are either blocked by repo-wide baseline failures outside this slice (`mypy recognition/`, `ruff check recognition/`) or require a clean committed branch and pre-merge review evidence (`make review-run`, `handoff_close_check(enforce=True)`).
+
 ## Context and Ownership
 
-- [ ] Loaded constitution rules sr-007, sr-008, rg-002, rg-008.
-- [ ] Loaded the source assessment and scope before each slice.
-- [ ] Confirmed `ctx7` is not required (asyncio + SQLAlchemy stable surfaces).
-- [ ] Recorded ownership: backend Python only; no PHP/frontend/contract surface.
+- [x] Loaded constitution rules sr-007, sr-008, rg-002, rg-008.
+- [x] Loaded the source assessment and scope before each slice.
+- [x] Confirmed `ctx7` is not required (asyncio + SQLAlchemy stable surfaces).
+- [x] Recorded ownership: backend Python only; no PHP/frontend/contract surface.
 
 ### Checklist for Slice 1: Parameter-object groupings
 
-- [ ] Implement `ClusteringDependencies`, `ClusteringRuntimeConfig`, `ClusteringContext` as frozen dataclasses.
-- [ ] Refactor `cluster_unclustered_identities`, `IncrementalClusteringRunner.__init__`, `_persist_and_cache_new_clusters` and all internal callers.
-- [ ] Add `test_orchestrator_dependencies.py` covering arity and mypy round-trip.
+- [x] Implement `ClusteringDependencies`, `ClusteringRuntimeConfig`, `ClusteringContext` as frozen dataclasses.
+- [x] Refactor `cluster_unclustered_identities`, `IncrementalClusteringRunner.__init__`, `_persist_and_cache_new_clusters` and all internal callers.
+- [x] Add `test_orchestrator_dependencies.py` covering arity and mypy round-trip.
 - [ ] Run `pytest` + `mypy` + `ruff` for the recognition package.
 
 ### Checklist for Slice 2: Adopt existing `JobStatus`/`JobPhase`
 
-- [ ] Grep clustering + scan paths for bare-string status sites; minimum surface = `scan/service.py`, `orchestration/`, `routers/clusters.py`, `routers/analyze.py`, `routers/analyze_multipart.py`, `deps/stores.py`.
-- [ ] Replace assignments and comparisons with enum members at every confirmed site (including the in-memory fallback service in `stores.py`).
-- [ ] Extend `JobStatus`/`JobPhase` only if grep finds a value not yet on either enum (e.g. `processing`, `cancelled`, `skipped` from `IdentityScanJobItem.valid_item_status`); record the extension in the slice decision.
-- [ ] Add `test_job_status_enum_adoption.py` enforcing the widened grep gate.
+- [x] Grep clustering + scan paths for bare-string status sites; minimum surface = `scan/service.py`, `orchestration/`, `routers/clusters.py`, `routers/analyze.py`, `routers/analyze_multipart.py`, `deps/stores.py`.
+- [x] Replace assignments and comparisons with enum members at every confirmed site (including the in-memory fallback service in `stores.py`).
+- [x] Extend `JobStatus`/`JobPhase` only if grep finds a value not yet on either enum (e.g. `processing`, `cancelled`, `skipped` from `IdentityScanJobItem.valid_item_status`); record the extension in the slice decision.
+- [x] Add `test_job_status_enum_adoption.py` enforcing the widened grep gate.
 - [ ] Run `pytest` + `mypy` + grep gate.
 
 ### Checklist for Slice 3: Adapter timeout + circuit breaker
 
-- [ ] Implement `wait_for_adapter` helper + `AdapterTimeoutError`.
-- [ ] Implement `AdapterCircuitBreaker` (extract or new minimal); decide via slice-3 prep grep whether the existing breaker can share core.
-- [ ] Wrap `embedding/generator.py:99` only (auto-labeler intentionally not wrapped).
-- [ ] Remove blanket `except Exception` from `generator.py` (let typed errors propagate).
-- [ ] Add unit tests for timeout, breaker state transitions, and half-open behavior.
-- [ ] Add `embedding_timeout_s` + `AdapterBreakerConfig` settings to `recognition/application/settings/adapters.py`, validated at load time.
+- [x] Implement `wait_for_adapter` helper + `AdapterTimeoutError`.
+- [x] Implement `AdapterCircuitBreaker` (extract or new minimal); decide via slice-3 prep grep whether the existing breaker can share core.
+- [x] Wrap `embedding/generator.py:99` only (auto-labeler intentionally not wrapped).
+- [x] Remove blanket `except Exception` from `generator.py` (let typed errors propagate).
+- [x] Add unit tests for timeout, breaker state transitions, and half-open behavior.
+- [x] Add `embedding_timeout_s` + `AdapterBreakerConfig` settings to `recognition/application/settings/adapters.py`, validated at load time.
 
 ### Checklist for Slice 4: Canonicalize phase split + ADR
 
-- [ ] Decide between (a) deprecate `ScanService.process_scan_job`/`analyze_media` or (b) inline as pass-throughs to a shared `run_scan_three_phase` helper. Record decision.
-- [ ] Implement the chosen shape; preserve existing `_persist_identities` Identity-ID-Recycling + `unique_media_identity` constraint as the idempotency seam (no new `ON CONFLICT` clause, no schema change).
-- [ ] Add `test_scan_service_phase_split.py` proving no open tx at adapter-call time across both `tasks/scan.py:process_scan_job_inline` and the new shared helper.
-- [ ] Add a regression test that re-running detection on the same media yields the same `MediaIdentity` rows (validates idempotency via existing constraint).
-- [ ] Audit other adapter call sites under `recognition/application/` for the same anti-pattern; record findings or follow-up tasks.
-- [ ] Land ADR-008 documenting the integration-point pattern, including the idempotency rationale.
-- [ ] Run integration regression suite.
+- [x] Decide between (a) deprecate `ScanService.process_scan_job`/`analyze_media` or (b) inline as pass-throughs to a shared `run_scan_three_phase` helper. Record decision.
+- [x] Implement the chosen shape; preserve existing `_persist_identities` Identity-ID-Recycling + `unique_media_identity` constraint as the idempotency seam (no new `ON CONFLICT` clause, no schema change).
+- [x] Add `test_scan_service_phase_split.py` proving no open tx at adapter-call time across both `tasks/scan.py:process_scan_job_inline` and the new shared helper.
+- [x] Add a regression test that re-running detection on the same media yields the same `MediaIdentity` rows (validates idempotency via existing constraint).
+- [x] Audit other adapter call sites under `recognition/application/` for the same anti-pattern; record findings or follow-up tasks.
+- [x] Land ADR-008 documenting the integration-point pattern, including the idempotency rationale.
+- [x] Run integration regression suite.
 
 ## Review Readiness
 
-- [ ] No boundary-touching implementation is left without matching test or ADR evidence.
-- [ ] Runtime-parity check (`test_clustering_pool_isolation.py`) passes — bulkhead is intact after the orchestrator refactor.
-- [ ] Handoff decision per slice records the change, the verification commands run, and any contract/ADR implications.
+- [x] No boundary-touching implementation is left without matching test or ADR evidence.
+- [x] Runtime-parity check (`test_clustering_pool_isolation.py`) passes — bulkhead is intact after the orchestrator refactor.
+- [x] Handoff decision per slice records the change, the verification commands run, and any contract/ADR implications.
 - [ ] `make review-run` lands a `pass` or `pass_with_findings` verdict before merge.
-- [ ] All open findings on the task ref are `fixed` or explicitly `deferred`/`wontfix` with rationale.
+- [x] All open findings on the task ref are `fixed` or explicitly `deferred`/`wontfix` with rationale.
 - [ ] `handoff_close_check(enforce=True)` passes against the merge SHA.
 
 ## Stretch Goals
 
-- [ ] If `AdapterCircuitBreaker` extraction goes cleanly, refactor `clustering_circuit_breaker.py` to reuse the new core. If it requires touching the HTTP admission contract, defer to a follow-up task.
+- [x] If `AdapterCircuitBreaker` extraction goes cleanly, refactor `clustering_circuit_breaker.py` to reuse the new core. If it requires touching the HTTP admission contract, defer to a follow-up task.
 - [ ] If grep finds duplicated breaker-state logic outside the two known sites, fold them into the new helper and note in the slice-complete decision.
 
 ## Success Criteria
 
 - [ ] Unit tests prove timeout + breaker behavior for the embedding adapter and the auto-labeler entrypoint.
-- [ ] Unit test proves `session.in_transaction()` is False at the moment the scan service awaits the adapter.
-- [ ] Grep gate proves zero bare-string status assignments in clustering + scan paths.
-- [ ] Orchestration entry takes ≤4 args (3 dataclasses + tenant/job context).
-- [ ] ADR `docs/adrs/ADR-008-external-adapter-stability-pattern.md` exists, links to this task plan, and codifies the timeout + breaker + phase-split shape.
+- [x] Unit test proves `session.in_transaction()` is False at the moment the scan service awaits the adapter.
+- [x] Grep gate proves zero bare-string status assignments in clustering + scan paths.
+- [x] Orchestration entry takes ≤4 args (3 dataclasses + tenant/job context).
+- [x] ADR `docs/adrs/ADR-008-external-adapter-stability-pattern.md` exists, links to this task plan, and codifies the timeout + breaker + phase-split shape.
 - [ ] `handoff_close_check(enforce=True)` passes.
-- [ ] No new infra dependency in `pyproject.toml`.
+- [x] No new infra dependency in `pyproject.toml`.

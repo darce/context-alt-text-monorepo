@@ -12,8 +12,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from db.tenant_context import clear_tenant_context, set_tenant_context
-from recognition.application.embedding.detector import FaceDetectorProtocol
-from recognition.application.embedding.generator import EmbeddingGeneratorProtocol
+from recognition.application.embedding.detector import DetectionAdapterError, DetectionTimeoutError, FaceDetectorProtocol
+from recognition.application.embedding.generator import EmbeddingAdapterError, EmbeddingGeneratorProtocol, EmbeddingTimeoutError
 from recognition.application.integrations import AdapterBreakerOpenError
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.storage import ObjectStore, ObjectStoreError
@@ -170,7 +170,13 @@ async def process_scan_job_inline(
             detect=detect_phase,
             persist=persist_phase,
         )
-    except AdapterBreakerOpenError as exc:
+    except (
+        AdapterBreakerOpenError,
+        DetectionTimeoutError,
+        EmbeddingTimeoutError,
+        DetectionAdapterError,
+        EmbeddingAdapterError,
+    ) as exc:
         async with session_factory() as session:
             tenant_uuid = uuid.UUID(str(tenant_id))
             await set_tenant_context(session, tenant_uuid)

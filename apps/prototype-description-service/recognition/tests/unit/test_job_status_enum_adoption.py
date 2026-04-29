@@ -3,12 +3,19 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from recognition.domain.job import JobPhase, JobStatus, JobType
+from recognition.interface_adapters.http.schemas.responses import JobProgressResponse, JobStatusResponse
+
 
 _STATUS_VALUES = "pending|running|completed|failed"
 _PHASE_VALUES = "queued|detecting|clustering|retrying|awaiting_projection|failed|complete"
+_SCAN_ITEM_STATUS_VALUES = "pending|processing|completed|failed|cancelled|skipped"
 _FORBIDDEN_PATTERNS = (
     re.compile(rf"(?:^|\W)(?:status|\.status)\s*(?:=|==|!=)\s*\"({_STATUS_VALUES})\""),
     re.compile(rf"(?:^|\W)(?:phase|\.phase)\s*(?:=|==|!=)\s*\"({_PHASE_VALUES})\""),
+    re.compile(rf"(?:job_status|status)\s+in\s+\([^\)]*\"({_STATUS_VALUES})\""),
+    re.compile(rf"(?:^|\W)(?:status|\.status)\s*(?:=|==|!=)\s*\"({_SCAN_ITEM_STATUS_VALUES})\""),
+    re.compile(rf"(?:^|\W)(?:type|\.type)\s*=\s*\"(analyze|clustering|curation|split)\""),
 )
 _TARGETS = (
     "recognition/application/orchestration/clustering/orchestrator.py",
@@ -37,3 +44,9 @@ def test_clustering_and_scan_paths_use_job_enums() -> None:
                 violations.append(f"{relative_path}:{line_number}: {line.strip()}")
 
     assert not violations, "\n".join(violations)
+
+
+def test_job_response_models_use_enum_types() -> None:
+    assert JobStatusResponse.model_fields["type"].annotation is JobType
+    assert JobStatusResponse.model_fields["status"].annotation is JobStatus
+    assert JobProgressResponse.model_fields["phase"].annotation == JobPhase | None

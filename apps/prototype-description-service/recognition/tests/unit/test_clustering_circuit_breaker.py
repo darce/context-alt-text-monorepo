@@ -97,6 +97,18 @@ def test_open_breaker_half_opens_after_cooldown_and_closes_on_success() -> None:
     assert breaker.allow_request() is True
 
 
+def test_half_open_allows_only_one_trial_request() -> None:
+    clock = _FakeClock()
+    breaker = _build_breaker(clock)
+    breaker.force_open()
+
+    clock.advance(31.0)
+
+    assert breaker.allow_request() is True
+    assert breaker.snapshot().state is ClusteringBreakerState.HALF_OPEN
+    assert breaker.allow_request() is False
+
+
 def test_half_open_trial_failure_reopens_breaker() -> None:
     clock = _FakeClock()
     breaker = _build_breaker(clock)

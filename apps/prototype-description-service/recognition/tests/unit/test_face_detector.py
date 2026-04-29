@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from recognition.application.embedding.detector import (
+    DetectionAdapterError,
     DetectionTimeoutError,
     FaceDetection,
     FaceDetector,
@@ -225,16 +226,15 @@ class TestInsightFaceFaceDetector:
         assert detections[1].confidence == 0.85
 
     @pytest.mark.asyncio
-    async def test_handles_adapter_exception_gracefully(self) -> None:
-        """Should log error and continue if adapter raises exception."""
+    async def test_raises_typed_error_for_adapter_exception(self) -> None:
+        """Generic adapter failures should propagate as typed detection errors."""
         mock_adapter = MagicMock()
         mock_adapter.detect_faces = AsyncMock(side_effect=RuntimeError("Model failed"))
 
         detector = InsightFaceFaceDetector(mock_adapter)
-        detections = await detector.detect([b"bad-image"])
 
-        # Should return empty list, not raise
-        assert detections == []
+        with pytest.raises(DetectionAdapterError, match="Model failed"):
+            await detector.detect([b"bad-image"])
 
     @pytest.mark.asyncio
     async def test_times_out_slow_adapter_calls(self) -> None:
@@ -271,9 +271,8 @@ class TestInsightFaceFaceDetector:
         failing_adapter.detect_faces = AsyncMock(side_effect=RuntimeError("Model failed"))
         detector = InsightFaceFaceDetector(failing_adapter, breaker=breaker)
 
-        first_result = await detector.detect([b"first-image"])
-
-        assert first_result == []
+        with pytest.raises(DetectionAdapterError):
+            await detector.detect([b"first-image"])
 
         with pytest.raises(AdapterBreakerOpenError):
             await detector.detect([b"second-image"])
@@ -297,7 +296,8 @@ class TestInsightFaceFaceDetector:
         failing_adapter.detect_faces = AsyncMock(side_effect=RuntimeError("Model failed"))
         detector = InsightFaceFaceDetector(failing_adapter, breaker=breaker)
 
-        await detector.detect([b"first-image"])
+        with pytest.raises(DetectionAdapterError):
+            await detector.detect([b"first-image"])
 
         with caplog.at_level(logging.WARNING):
             with pytest.raises(AdapterBreakerOpenError):

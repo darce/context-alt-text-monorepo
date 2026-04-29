@@ -512,7 +512,7 @@ async def stream_job_progress(
                     last_heartbeat = now
                     last_phase = phase
 
-                if job_status in ("completed", "failed"):
+                if job_status in (JobStatus.COMPLETED, JobStatus.FAILED):
                     yield {
                         "event": "done",
                         "data": json.dumps(

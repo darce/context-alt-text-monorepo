@@ -99,6 +99,15 @@ class DetectionTimeoutError(TimeoutError):
         self.timeout_s = timeout_s
 
 
+class DetectionAdapterError(RuntimeError):
+    """Raised when the face detector adapter fails for a non-timeout reason."""
+
+    def __init__(self, media_id: str, error_message: str) -> None:
+        super().__init__(f"Face detection failed for {media_id[:20]}: {error_message}")
+        self.media_id = media_id
+        self.error_message = error_message
+
+
 class FaceDetectorProtocol(ABC):
     """Protocol for face detection adapters."""
 
@@ -259,6 +268,7 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
                 raise
             except Exception as e:
                 logger.error("Face detection failed for %s: %s", media_id[:20], e)
+                raise DetectionAdapterError(media_id=media_id, error_message=str(e)) from e
 
         return detections
 
@@ -268,6 +278,7 @@ FaceDetector = StubFaceDetector
 
 
 __all__ = [
+    "DetectionAdapterError",
     "DetectionTimeoutError",
     "FaceDetectorProtocol",
     "StubFaceDetector",

@@ -15,35 +15,24 @@ See task plan PLAN-09 for the composition rationale.
 from __future__ import annotations
 
 import time as _time
-from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import StrEnum
-from threading import Lock
 
 from fastapi import FastAPI
 
 from db.settings import DatabaseSettings, get_database_settings
+from recognition.application.integrations.circuit_breaker import (
+    AdapterBreakerConfig,
+    AdapterBreakerSnapshot,
+    AdapterBreakerState,
+    AdapterCircuitBreaker,
+)
 
 type TimeSource = Callable[[], float]
 CLUSTERING_BREAKER_STATE_KEY = "clustering_circuit_breaker"
 
-
-class ClusteringBreakerState(StrEnum):
-    """Stable public state names for the clustering circuit breaker."""
-
-    CLOSED = "closed"
-    OPEN = "open"
-    HALF_OPEN = "half_open"
-
-
-@dataclass(frozen=True, slots=True)
-class ClusteringBreakerSnapshot:
-    """Serializable view of current breaker state for logging/metrics."""
-
-    state: ClusteringBreakerState
-    failure_count: int
-    is_open: bool
+ClusteringBreakerState = AdapterBreakerState
+ClusteringBreakerSnapshot = AdapterBreakerSnapshot
 
 
 @dataclass(slots=True)
@@ -54,66 +43,39 @@ class ClusteringCircuitBreaker:
     window_seconds: float
     cooldown_seconds: float
     time_source: TimeSource = _time.monotonic
-    state: ClusteringBreakerState = ClusteringBreakerState.CLOSED
-    _failure_timestamps: deque[float] = field(default_factory=deque, init=False, repr=False)
-    _opened_at: float | None = field(default=None, init=False, repr=False)
-    _lock: Lock = field(default_factory=Lock, init=False, repr=False)
+    _breaker: AdapterCircuitBreaker = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._breaker = AdapterCircuitBreaker(
+            adapter_name="clustering_admission",
+            config=AdapterBreakerConfig(
+                failure_count_threshold=self.failure_threshold,
+                failure_window_seconds=self.window_seconds,
+                half_open_probe_count=1,
+                success_close_threshold=1,
+                open_state_cooldown_seconds=self.cooldown_seconds,
+            ),
+            time_source=self.time_source,
+        )
 
     def allow_request(self) -> bool:
         """Return True when the caller may attempt the clustering write path."""
-        with self._lock:
-            now = self.time_source()
-            self._prune_failures(now)
-            if self.state is ClusteringBreakerState.OPEN:
-                if self._opened_at is None or (now - self._opened_at) < self.cooldown_seconds:
-                    return False
-                self.state = ClusteringBreakerState.HALF_OPEN
-                return True
-            return self.state is not ClusteringBreakerState.OPEN
+        return self._breaker.allow_call()
 
     def record_success(self) -> None:
         """Reset after a successful admission (202) or half-open trial."""
-        with self._lock:
-            self.state = ClusteringBreakerState.CLOSED
-            self._opened_at = None
-            self._failure_timestamps.clear()
+        self._breaker.record_success()
 
     def record_failure(self) -> None:
         """Track a ``QueryCanceledError`` on the clustering write path."""
-        with self._lock:
-            now = self.time_source()
-            self._prune_failures(now)
-            self._failure_timestamps.append(now)
-            if (
-                self.state is ClusteringBreakerState.HALF_OPEN
-                or len(self._failure_timestamps) >= self.failure_threshold
-            ):
-                self.state = ClusteringBreakerState.OPEN
-                self._opened_at = now
+        self._breaker.record_failure()
 
     def snapshot(self) -> ClusteringBreakerSnapshot:
-        with self._lock:
-            now = self.time_source()
-            self._prune_failures(now)
-            return ClusteringBreakerSnapshot(
-                state=self.state,
-                failure_count=len(self._failure_timestamps),
-                is_open=self.state is ClusteringBreakerState.OPEN,
-            )
+        return self._breaker.snapshot()
 
     def force_open(self) -> None:
         """Test helper: drive the breaker into the open state."""
-        with self._lock:
-            now = self.time_source()
-            self.state = ClusteringBreakerState.OPEN
-            self._opened_at = now
-            self._failure_timestamps.clear()
-            self._failure_timestamps.extend([now] * self.failure_threshold)
-
-    def _prune_failures(self, now: float) -> None:
-        cutoff = now - self.window_seconds
-        while self._failure_timestamps and self._failure_timestamps[0] < cutoff:
-            self._failure_timestamps.popleft()
+        self._breaker.force_open()
 
 
 def create_clustering_circuit_breaker(

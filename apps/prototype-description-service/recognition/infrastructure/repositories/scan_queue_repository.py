@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityScanJob, IdentityScanJobItem
 from recognition.application.scan.queue_repository import ScanQueueItem, ScanQueueRepository
-from recognition.domain.job import JobStatus
+from recognition.domain.job import JobStatus, ScanItemStatus
 from recognition.shared.db.dialect import is_postgres, timestamp_as_epoch
 from recognition.shared.db.helpers import execute_dml, get_rowcount
 
@@ -222,7 +222,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         reclaim_stmt = (
             update(IdentityScanJobItem)
             .where(
-                IdentityScanJobItem.status == "processing",
+                IdentityScanJobItem.status == ScanItemStatus.PROCESSING.value,
                 IdentityScanJobItem.started_at.is_not(None),
                 timestamp_as_epoch(IdentityScanJobItem.started_at, self._session) < int(stale_before_ts),
                 IdentityScanJobItem.attempts < max_attempts,
@@ -259,7 +259,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
             update(IdentityScanJobItem)
             .where(IdentityScanJobItem.id.in_(ids))
             .values(
-                status="processing",
+                status=ScanItemStatus.PROCESSING.value,
                 started_at=now,
                 attempts=IdentityScanJobItem.attempts + 1,
                 last_error=None,
@@ -283,7 +283,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
             update(IdentityScanJobItem)
             .where(IdentityScanJobItem.id.in_(ids))
             .values(
-                status="processing",
+                status=ScanItemStatus.PROCESSING.value,
                 started_at=now,
                 attempts=IdentityScanJobItem.attempts + 1,
                 last_error=None,
@@ -416,7 +416,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
             self._session,
             update(IdentityScanJobItem)
             .where(IdentityScanJobItem.job_id == job_id, IdentityScanJobItem.status == JobStatus.PENDING.value)
-            .values(status="cancelled", completed_at=cancelled_at),
+            .values(status=ScanItemStatus.CANCELLED.value, completed_at=cancelled_at),
         )
         return get_rowcount(result)
 

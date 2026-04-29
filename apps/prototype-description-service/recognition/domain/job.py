@@ -27,6 +27,17 @@ class JobType(StrEnum):
     SPLIT = "split"
 
 
+class ScanItemStatus(StrEnum):
+    """Lifecycle states for queued scan items."""
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    SKIPPED = "skipped"
+
+
 class JobPhase(StrEnum):
     """High-level phase markers for progress reporting."""
 

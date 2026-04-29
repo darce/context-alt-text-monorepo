@@ -86,6 +86,15 @@ External integrations follow `commit → wait_for(adapter call, timeout) within 
 | Auto-labeler call surface | backend | `recognition/application/labeling/` (location verify in slice 3) | callers wrap in `wait_for` and breaker | no | new wrapper tests |
 | `cluster_unclustered_identities` keyword surface | backend | `recognition/application/orchestration/clustering/orchestrator.py:54` | takes 3 dataclasses + 2 positional context fields instead of 14 kwargs | **yes — internal callers updated in same slice** | mypy + existing orchestrator tests pass |
 
+### 2026-04-29 Env Template No-Change Rationale
+
+The `codex_slice_complete_pds_pipeline_stability_26_env_example_fixture_durable_fix` slice changes branch tracking for `apps/prototype-description-service/.env.example` and refreshes the example fixture, but it does **not** change the runtime environment contract, variable vocabulary, default semantics, or downstream assumptions. The owning boundary remains the local environment contract documented by the checked-in `.env.example` template plus the existing operator/docs surfaces. This slice is fixture durability and review-readiness hygiene only: `.gitignore` now preserves `.env*.example` files in normal git flow so the canonical example template stays reviewable and mergeable without force-add workarounds.
+
+Verification for this no-change rationale:
+
+- `pyenv exec python -m pytest recognition/tests/unit -q` on commit `9234b8b21a23c179371472ef3852747defc11eaa`
+- `make review-ready TASK=pds-pipeline-stability-26` should treat the env-example slice as checklist-backed no-contract-change work once this note lands
+
 ## Proposed Solution
 
 Five small refactors landed in dependency order, each its own slice with tests. The ADR is drafted alongside slice 4 (the phase split) and references the timeout helper (slice 2) and breaker (slice 3) it builds on.

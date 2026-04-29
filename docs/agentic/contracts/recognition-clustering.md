@@ -5,8 +5,6 @@ boundary_owner: backend
 description: FastAPI endpoints backing recognition analysis, clustering, and suggestions.
 ---
 
-# Recognition Service HTTP API
-
 Base path: `/recognition`
 
 ## Authentication and tenant scoping
@@ -18,6 +16,30 @@ Base path: `/recognition`
   against the API key tenant claim when auth is enabled.
 
 Tenant identifiers must be UUID-formatted strings (32 hex or hyphenated UUID).
+
+## Stability and wire-compatibility notes
+
+PDS-26 (`pds-pipeline-stability-26`) hardens the recognition pipeline with
+application-boundary adapter timeouts, shared circuit-breaker behavior, and an
+explicit DB -> adapter -> DB phase split documented in
+`docs/adrs/ADR-008-external-adapter-stability-pattern.md`.
+
+Contract impact:
+
+- No HTTP request or response envelope changed for `/recognition/analyze`,
+  `/recognition/analyze/multipart`, `/recognition/jobs/{job_id}`, or the
+  clustering routes covered by this document.
+- `JobStatusResponse.status` continues to serialize as the same lowercase wire
+  vocabulary (`pending`, `running`, `completed`, `failed`) even though the
+  implementation now uses the canonical `JobStatus` enum internally.
+- `JobStatusResponse.phase` continues to serialize the existing lowercase
+  `JobPhase` vocabulary when present; the enum adoption is an internal
+  correctness change, not a wire-shape change.
+- The checked-in local env template
+  `apps/prototype-description-service/.env.example` remains the canonical dev
+  fixture for runtime knobs consumed by `db.settings`, including
+  `DB_EMBEDDING_TIMEOUT_SECONDS`; tracking hygiene for `.env*.example` files
+  does not change environment variable names or defaults.
 
 ## Analyze jobs
 

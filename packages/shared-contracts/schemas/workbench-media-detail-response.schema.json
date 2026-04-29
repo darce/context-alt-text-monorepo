@@ -16,7 +16,7 @@
     "limit": {
       "type": "integer",
       "minimum": 1,
-      "description": "Maximum number of attachment IDs accepted per request."
+      "description": "Maximum number of attachment IDs enriched before the response is truncated."
     },
     "total": {
       "type": "integer",

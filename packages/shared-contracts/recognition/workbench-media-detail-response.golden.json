@@ -3,20 +3,20 @@
     "11": {
       "id": 11,
       "mimeType": "image/jpeg",
-      "updatedAt": "2026-04-29T00:00:00Z",
+      "updatedAt": "2026-04-29T00:00:00+00:00",
       "dimensions": {
         "width": 1200,
         "height": 800
       },
       "xmpPersistence": {
         "status": "persisted",
-        "updated_at": "2026-04-29T00:00:00Z"
+        "updated_at": "2026-04-29T00:00:00+00:00"
       }
     },
     "12": {
       "id": 12,
       "mimeType": "image/png",
-      "updatedAt": "2026-04-29T00:05:00Z",
+      "updatedAt": "2026-04-29T00:05:00+00:00",
       "dimensions": {
         "width": 640,
         "height": 480

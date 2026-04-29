@@ -69,6 +69,7 @@ const isWorkbenchMediaDetailResponse = (value: unknown): value is WorkbenchMedia
     value &&
     typeof value === 'object' &&
     'details_by_media' in value &&
+    (value as { details_by_media?: unknown }).details_by_media !== null &&
     typeof (value as { details_by_media?: unknown }).details_by_media === 'object' &&
     typeof (value as { limit?: unknown }).limit === 'number' &&
     typeof (value as { total?: unknown }).total === 'number' &&

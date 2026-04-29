@@ -12,6 +12,7 @@ use function array_filter;
 use function array_map;
 use function array_values;
 use function explode;
+use function get_post;
 use function get_post_meta;
 use function get_post_mime_type;
 use function get_post_modified_time;
@@ -36,7 +37,7 @@ class MediaDetailController {
 			$details_by_media[ (string) $media_id ] = array(
 				'id'             => $media_id,
 				'mimeType'       => get_post_mime_type( $media_id ),
-				'updatedAt'      => get_post_modified_time( 'c', true, $media_id ),
+				'updatedAt'      => $this->resolve_updated_at( $media_id ),
 				'dimensions'     => array(
 					'width'  => is_array( $meta ) && isset( $meta['width'] ) ? (int) $meta['width'] : null,
 					'height' => is_array( $meta ) && isset( $meta['height'] ) ? (int) $meta['height'] : null,
@@ -79,5 +80,35 @@ class MediaDetailController {
 				static fn ( int $value ): bool => $value > 0
 			)
 		);
+	}
+
+	private function resolve_updated_at( int $media_id ): ?string {
+		$modified_time = get_post_modified_time( 'c', true, $media_id );
+
+		if ( \is_string( $modified_time ) && '' !== $modified_time ) {
+			return $modified_time;
+		}
+
+		$post = get_post( $media_id );
+		if ( ! \is_object( $post ) ) {
+			return null;
+		}
+
+		$modified_gmt = '';
+		if ( isset( $post->post_modified_gmt ) && \is_string( $post->post_modified_gmt ) ) {
+			$modified_gmt = $post->post_modified_gmt;
+		} elseif ( isset( $post->post_modified ) && \is_string( $post->post_modified ) ) {
+			$modified_gmt = $post->post_modified;
+		}
+
+		if ( '' === $modified_gmt || '0000-00-00 00:00:00' === $modified_gmt ) {
+			return null;
+		}
+
+		try {
+			return ( new \DateTimeImmutable( \sprintf( '%s UTC', $modified_gmt ) ) )->format( 'c' );
+		} catch ( \Exception ) {
+			return null;
+		}
 	}
 }

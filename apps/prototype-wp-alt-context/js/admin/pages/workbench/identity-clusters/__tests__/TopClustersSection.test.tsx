@@ -78,7 +78,11 @@ const clusterWithSuggestion = (): TopUnlabeledCluster => ({
 
 const topUnlabeledResponse = (clusters: TopUnlabeledCluster[], singletonCount = 0): TopUnlabeledClustersResponse => ({
   clusters,
+  limit: 20,
+  total: clusters.length,
+  truncated: false,
   singleton_count: singletonCount,
+  data_source: DATA_SOURCE.LOCAL_PROJECTION,
 });
 
 describe('TopClustersSection', () => {

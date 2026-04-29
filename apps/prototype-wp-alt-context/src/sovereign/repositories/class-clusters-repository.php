@@ -343,7 +343,7 @@ class ClustersRepository implements ClustersRepositoryInterface {
 		$normalized_limit = max( 1, $limit );
 		$persons_table    = $this->resolve_persons_table_name();
 		$sql = $this->prepare_query(
-				"SELECT c.*, COALESCE(p.name, c.label) as label 
+				"SELECT COUNT(*) OVER() AS total_count, c.*, COALESCE(p.name, c.label) as label 
 				FROM %i c
 				LEFT JOIN %i p ON c.person_id = p.id
 				WHERE c.tenant_id = %s

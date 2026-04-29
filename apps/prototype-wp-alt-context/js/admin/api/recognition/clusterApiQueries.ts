@@ -20,6 +20,9 @@ type TopUnlabeledClusterPayload = Omit<TopUnlabeledCluster, 'representatives'> &
 
 interface TopUnlabeledClustersResponsePayload {
   clusters?: TopUnlabeledClusterPayload[] | null;
+  limit?: number | null;
+  total?: number | null;
+  truncated?: boolean | null;
   singleton_count?: number | null;
   data_source?: string | null;
   projection_status?: string | null;
@@ -35,6 +38,14 @@ interface ClusterListResponsePayload {
 const requireTopUnlabeledNumber = (value: unknown, fieldName: string): number => {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     throw new Error(`Top-unlabeled clusters response must include a numeric ${fieldName}.`);
+  }
+
+  return value;
+};
+
+const requireTopUnlabeledBoolean = (value: unknown, fieldName: string): boolean => {
+  if (typeof value !== 'boolean') {
+    throw new Error(`Top-unlabeled clusters response must include a boolean ${fieldName}.`);
   }
 
   return value;
@@ -165,6 +176,9 @@ export const fetchTopUnlabeledClusters = async (
 
   return {
     clusters: payload.clusters.map(normalizeTopUnlabeledCluster),
+    limit: requireTopUnlabeledNumber(payload.limit, 'limit'),
+    total: requireTopUnlabeledNumber(payload.total, 'total'),
+    truncated: requireTopUnlabeledBoolean(payload.truncated, 'truncated'),
     singleton_count: singletonCount,
     data_source: dataSource,
     projection_status: projectionStatus ?? undefined,

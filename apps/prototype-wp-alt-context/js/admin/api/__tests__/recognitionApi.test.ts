@@ -121,6 +121,9 @@ describe('recognitionApi', () => {
   it('normalizes top-unlabeled response metadata', async () => {
     fetchApiMock.mockResolvedValue({
       clusters: [],
+      limit: 20,
+      total: 0,
+      truncated: false,
       singleton_count: 0,
       data_source: 'unavailable',
       projection_status: 'bootstrapping',
@@ -128,28 +131,38 @@ describe('recognitionApi', () => {
 
     const result = await fetchTopUnlabeledClusters('tenant-1', 20);
 
+    expect(result.limit).toBe(20);
+    expect(result.total).toBe(0);
+    expect(result.truncated).toBe(false);
     expect(result.data_source).toBe(DATA_SOURCE.UNAVAILABLE);
     expect(result.projection_status).toBe(PROJECTION_STATUS.BOOTSTRAPPING);
   });
 
-  it('rejects top-unlabeled payloads without canonical metadata', async () => {
+  it('rejects top-unlabeled payloads without canonical envelope metadata', async () => {
     fetchApiMock.mockResolvedValue({
       clusters: [],
+      data_source: 'backend_proxy',
     });
 
     await expect(fetchTopUnlabeledClusters('tenant-1', 20)).rejects.toThrow(
-      'Top-unlabeled clusters response must include a valid data_source.',
+      'Top-unlabeled clusters response must include a numeric limit.',
     );
   });
 
   it('accepts backend-proxy top-unlabeled payloads without projection metadata', async () => {
     fetchApiMock.mockResolvedValue({
       clusters: [],
+      limit: 20,
+      total: 0,
+      truncated: false,
       data_source: 'backend_proxy',
     });
 
     const result = await fetchTopUnlabeledClusters('tenant-1', 20);
 
+    expect(result.limit).toBe(20);
+    expect(result.total).toBe(0);
+    expect(result.truncated).toBe(false);
     expect(result.data_source).toBe(DATA_SOURCE.BACKEND_PROXY);
     expect(result.singleton_count).toBeUndefined();
     expect(result.projection_status).toBeUndefined();
@@ -659,6 +672,9 @@ describe('recognitionApi', () => {
           ],
         },
       ],
+      limit: 3,
+      total: 5,
+      truncated: true,
       singleton_count: 4,
       data_source: 'local_projection',
       projection_status: 'available',
@@ -667,6 +683,9 @@ describe('recognitionApi', () => {
     const result = await fetchTopUnlabeledClusters('tenant-1', 3);
 
     expect(result.singleton_count).toBe(4);
+    expect(result.limit).toBe(3);
+    expect(result.total).toBe(5);
+    expect(result.truncated).toBe(true);
     expect(result.clusters[0]?.representatives[0]).toMatchObject({
       thumb_url: 'http://example.test/thumb-101.jpg',
       media_url: null,

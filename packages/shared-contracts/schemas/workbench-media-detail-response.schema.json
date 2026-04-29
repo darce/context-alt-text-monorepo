@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/workbench-media-detail-response.schema.json",
+  "title": "Workbench Media Detail Response",
+  "description": "WordPress workbench media detail envelope for deferred attachment enrichment.",
+  "type": "object",
+  "required": ["details_by_media", "limit", "total", "truncated"],
+  "properties": {
+    "details_by_media": {
+      "type": "object",
+      "description": "Per-attachment detail payloads keyed by attachment ID string.",
+      "additionalProperties": {
+        "$ref": "./workbench-media-detail.schema.json"
+      }
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Maximum number of attachment IDs accepted per request."
+    },
+    "total": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total count of valid requested attachment IDs before truncation."
+    },
+    "truncated": {
+      "type": "boolean",
+      "description": "Whether the request exceeded the accepted attachment ID cap."
+    }
+  }
+}

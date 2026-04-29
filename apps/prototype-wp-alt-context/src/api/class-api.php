@@ -318,6 +318,7 @@ class Api {
 				'description' => 'Attachment IDs to enrich after the initial shell paint.',
 				'type'        => 'array',
 				'required'    => false,
+				'maxItems'    => MediaDetailController::MAX_MEDIA_IDS_PER_REQUEST,
 				'items'       => array(
 					'type'    => 'integer',
 					'minimum' => 1,

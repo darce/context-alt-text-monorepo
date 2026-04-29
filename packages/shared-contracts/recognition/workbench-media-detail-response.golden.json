@@ -1,0 +1,30 @@
+{
+  "details_by_media": {
+    "11": {
+      "id": 11,
+      "mimeType": "image/jpeg",
+      "updatedAt": "2026-04-29T00:00:00Z",
+      "dimensions": {
+        "width": 1200,
+        "height": 800
+      },
+      "xmpPersistence": {
+        "status": "persisted",
+        "updated_at": "2026-04-29T00:00:00Z"
+      }
+    },
+    "12": {
+      "id": 12,
+      "mimeType": "image/png",
+      "updatedAt": "2026-04-29T00:05:00Z",
+      "dimensions": {
+        "width": 640,
+        "height": 480
+      },
+      "xmpPersistence": null
+    }
+  },
+  "limit": 100,
+  "total": 2,
+  "truncated": false
+}

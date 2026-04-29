@@ -10,6 +10,7 @@ packages/shared-contracts/
 │   ├── cluster-list-response.golden.json # Sample cluster-list envelope payload
 │   ├── cluster-members-response.golden.json # Sample cluster-members envelope payload
 │   ├── roster-roundtrip.sample.json   # Sample roster sync payload
+│   ├── workbench-media-detail-response.golden.json
 │   └── *.golden.json                  # Cross-boundary fixture payloads
 └── schemas/
     ├── coverage-stats.schema.json
@@ -19,6 +20,8 @@ packages/shared-contracts/
     ├── recognition-job.schema.json
     ├── recognition-observation.schema.json
     ├── roster-entry.schema.json
+    ├── workbench-media-detail-response.schema.json
+    ├── workbench-media-detail.schema.json
     └── workbench-media-item.schema.json
 ```
 

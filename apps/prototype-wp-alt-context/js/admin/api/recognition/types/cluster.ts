@@ -31,6 +31,13 @@ export interface ClusterMembersResponse {
   truncated: boolean;
 }
 
+export interface ClusterLabelsResponse {
+  labels: string[];
+  limit: number;
+  total: number;
+  truncated: boolean;
+}
+
 export interface TopUnlabeledRepresentative {
   id: string;
   media_id: number;

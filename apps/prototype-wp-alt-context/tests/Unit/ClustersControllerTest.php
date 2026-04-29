@@ -627,6 +627,77 @@ class ClustersControllerTest extends TestCase
         $this->assertSame('tenant-cron', $syncSpy->tenantIdBypass);
     }
 
+    public function testListClusterLabelsUsesEnvelopeForLocalProjection(): void
+    {
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_labels(string $tenant_id): array
+            {
+                return ['Alice', 'Alicia', 'Bob'];
+            }
+        };
+
+        $controller = new ClustersController(
+            $clustersRepo,
+            new NullIdentityMembersRepository(),
+            new class() extends NullSyncStateRepository {
+                public function get_snapshot_version(string $tenant_id): int
+                {
+                    return 1;
+                }
+            },
+            null,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/labels');
+        $request->set_param('search', 'ali');
+        $request->set_param('limit', 1);
+        $response = $controller->list_cluster_labels($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(
+            [
+                'labels' => ['Alice'],
+                'limit' => 1,
+                'total' => 2,
+                'truncated' => true,
+            ],
+            $response->get_data()
+        );
+    }
+
+    public function testListClusterLabelsRejectsPartialProxyEnvelope(): void
+    {
+        $controller = new ClustersController(
+            new NullClustersRepository(),
+            new NullIdentityMembersRepository(),
+            new NullSyncStateRepository(),
+            null,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'labels' => ['Alice', 'Alicia'],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/labels');
+        $response = $controller->list_cluster_labels($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_cluster_labels_envelope', $response->get_error_code());
+        $this->assertSame(502, $response->get_error_data()['status'] ?? null);
+    }
+
     public function testGetClusterMembersUsesEnvelopeForLocalProjection(): void
     {
         $clustersRepo = new class() extends NullClustersRepository {

@@ -6,7 +6,6 @@ from pathlib import Path
 from recognition.domain.job import JobPhase, JobStatus, JobType
 from recognition.interface_adapters.http.schemas.responses import JobProgressResponse, JobStatusResponse
 
-
 _STATUS_VALUES = "pending|running|completed|failed"
 _PHASE_VALUES = "queued|detecting|clustering|retrying|awaiting_projection|failed|complete"
 _SCAN_ITEM_STATUS_VALUES = "pending|processing|completed|failed|cancelled|skipped"
@@ -15,7 +14,7 @@ _FORBIDDEN_PATTERNS = (
     re.compile(rf"(?:^|\W)(?:phase|\.phase)\s*(?:=|==|!=)\s*\"({_PHASE_VALUES})\""),
     re.compile(rf"(?:job_status|status)\s+in\s+\([^\)]*\"({_STATUS_VALUES})\""),
     re.compile(rf"(?:^|\W)(?:status|\.status)\s*(?:=|==|!=)\s*\"({_SCAN_ITEM_STATUS_VALUES})\""),
-    re.compile(rf"(?:^|\W)(?:type|\.type)\s*=\s*\"(analyze|clustering|curation|split)\""),
+    re.compile(r"(?:^|\W)(?:type|\.type)\s*=\s*\"(analyze|clustering|curation|split)\""),
 )
 _TARGETS = (
     "recognition/application/orchestration/clustering/orchestrator.py",

@@ -12,8 +12,17 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from db.tenant_context import clear_tenant_context, set_tenant_context
-from recognition.application.embedding.detector import DetectionAdapterError, DetectionTimeoutError, FaceDetectorProtocol
-from recognition.application.embedding.generator import EmbeddingAdapterError, EmbeddingGeneratorProtocol, EmbeddingTimeoutError
+from recognition.application.embedding.detector import (
+    DetectionAdapterError,
+    DetectionTimeoutError,
+    FaceDetection,
+    FaceDetectorProtocol,
+)
+from recognition.application.embedding.generator import (
+    EmbeddingAdapterError,
+    EmbeddingGeneratorProtocol,
+    EmbeddingTimeoutError,
+)
 from recognition.application.integrations import AdapterBreakerOpenError
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.storage import ObjectStore, ObjectStoreError

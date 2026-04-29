@@ -14,15 +14,15 @@ from unittest.mock import AsyncMock, MagicMock
 import numpy as np
 import pytest
 
+import recognition.application.embedding.generator as generator_module
 from recognition.application.embedding.generator import (
-    EmbeddingGenerator,
     EmbeddingAdapterError,
+    EmbeddingGenerator,
     EmbeddingGeneratorProtocol,
     EmbeddingTimeoutError,
     InsightFaceEmbeddingGenerator,
     StubEmbeddingGenerator,
 )
-import recognition.application.embedding.generator as generator_module
 from recognition.application.integrations import AdapterBreakerConfig, AdapterBreakerOpenError, AdapterCircuitBreaker
 from recognition.infrastructure.embeddings import DetectedFace, InsightFaceAdapter
 

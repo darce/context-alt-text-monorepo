@@ -8,9 +8,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from recognition.application.embedding.detector import DetectionAdapterError, DetectionTimeoutError
+from recognition.application.embedding.detector import DetectionAdapterError, DetectionTimeoutError, FaceDetection
 from recognition.application.embedding.generator import EmbeddingAdapterError, EmbeddingTimeoutError
-from recognition.application.embedding.detector import FaceDetection
 from recognition.application.integrations import AdapterBreakerOpenError
 from recognition.application.tasks import scan as scan_tasks
 
@@ -70,9 +69,9 @@ async def test_process_scan_job_inline_marks_job_failed_on_generator_breaker_ope
     monkeypatch.setattr(recognition_config, "get_settings", lambda: SimpleNamespace(runtime_mode="prod"))
     monkeypatch.setattr(scan_tasks, "set_tenant_context", AsyncMock())
 
-    import recognition.application.scan.service as scan_service_module
     import recognition.application.embedding.detector as detector_module
     import recognition.application.embedding.generator as generator_module
+    import recognition.application.scan.service as scan_service_module
 
     monkeypatch.setattr(scan_service_module, "ScanService", FakeScanService)
     monkeypatch.setattr(detector_module, "InsightFaceFaceDetector", lambda adapter: FakeDetector())
@@ -140,9 +139,9 @@ async def test_process_scan_job_inline_marks_job_failed_on_detector_breaker_open
     monkeypatch.setattr(recognition_config, "get_settings", lambda: SimpleNamespace(runtime_mode="prod"))
     monkeypatch.setattr(scan_tasks, "set_tenant_context", AsyncMock())
 
-    import recognition.application.scan.service as scan_service_module
     import recognition.application.embedding.detector as detector_module
     import recognition.application.embedding.generator as generator_module
+    import recognition.application.scan.service as scan_service_module
 
     monkeypatch.setattr(scan_service_module, "ScanService", FakeScanService)
     monkeypatch.setattr(detector_module, "InsightFaceFaceDetector", FakeDetector)
@@ -233,9 +232,9 @@ async def test_process_scan_job_inline_marks_job_failed_on_typed_adapter_failure
     monkeypatch.setattr(recognition_config, "get_settings", lambda: SimpleNamespace(runtime_mode="prod"))
     monkeypatch.setattr(scan_tasks, "set_tenant_context", AsyncMock())
 
-    import recognition.application.scan.service as scan_service_module
     import recognition.application.embedding.detector as detector_module
     import recognition.application.embedding.generator as generator_module
+    import recognition.application.scan.service as scan_service_module
 
     monkeypatch.setattr(scan_service_module, "ScanService", FakeScanService)
     monkeypatch.setattr(detector_module, "InsightFaceFaceDetector", FakeDetector)

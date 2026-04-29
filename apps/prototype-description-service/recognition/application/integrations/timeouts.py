@@ -17,18 +17,18 @@ class AdapterTimeoutError(TimeoutError):
         self.timeout_s = timeout_s
 
 
-async def wait_for_adapter(
+async def wait_for_adapter[ResultT](
     coro: asyncio.Future[ResultT] | asyncio.Task[ResultT] | object,
     *,
-    timeout: float,
+    timeout_s: float,
     adapter_name: str,
 ) -> ResultT:
     """Await an adapter coroutine under a fixed deadline."""
 
     try:
-        return await asyncio.wait_for(coro, timeout=timeout)
+        return await asyncio.wait_for(coro, timeout=timeout_s)
     except TimeoutError as exc:
-        raise AdapterTimeoutError(adapter_name=adapter_name, timeout_s=timeout) from exc
+        raise AdapterTimeoutError(adapter_name=adapter_name, timeout_s=timeout_s) from exc
 
 
 __all__ = ["AdapterTimeoutError", "wait_for_adapter"]

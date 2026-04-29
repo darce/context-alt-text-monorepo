@@ -25,8 +25,8 @@ from recognition.application.embedding.generator import (
     StubEmbeddingGenerator,
 )
 from recognition.application.scan.queue_repository import ScanQueueItem
-from recognition.domain.job import JobStatus
 from recognition.config import get_settings as get_recognition_settings
+from recognition.domain.job import JobStatus
 from recognition.infrastructure.embeddings import get_shared_insightface_adapter
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 from recognition.worker.handlers.clustering import ClusteringJobHandler, CurationJobHandler, SplitJobHandler

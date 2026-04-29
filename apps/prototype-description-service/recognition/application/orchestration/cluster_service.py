@@ -23,16 +23,16 @@ if TYPE_CHECKING:
 from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.assignment import AssignmentGate
 from recognition.application.discovery import CentroidDiscovery, GraphDiscovery, RepresentativeDiscovery
-from recognition.application.orchestration.clustering.dependencies import (
-    ClusteringContext,
-    ClusteringDependencies,
-    ClusteringRuntimeConfig,
-)
 from recognition.application.orchestration.cluster_merge import (
     merge_cluster as merge_cluster_op,
 )
 from recognition.application.orchestration.cluster_merge import (
     post_merge_retry_matching as post_merge_retry_matching_op,
+)
+from recognition.application.orchestration.clustering.dependencies import (
+    ClusteringContext,
+    ClusteringDependencies,
+    ClusteringRuntimeConfig,
 )
 from recognition.application.orchestration.curation import (
     assign_outlier_to_cluster as assign_outlier_to_cluster_op,

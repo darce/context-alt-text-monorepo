@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from recognition.application.scan import service as scan_service_module
 from recognition.application.embedding.detector import DetectionAdapterError, DetectionTimeoutError
 from recognition.application.embedding.generator import EmbeddingAdapterError, EmbeddingTimeoutError
+from recognition.application.scan import service as scan_service_module
 from recognition.application.scan.service import ScanService
 from recognition.application.tasks import scan as scan_tasks
 from recognition.domain.job import JobStatus
@@ -130,9 +130,9 @@ async def test_process_scan_job_inline_uses_shared_three_phase_helper(
         detections = await detect()
         return await persist(detections)
 
-    import recognition.config as recognition_config
     import recognition.application.embedding.detector as detector_module
     import recognition.application.embedding.generator as generator_module
+    import recognition.config as recognition_config
 
     monkeypatch.setattr(recognition_config, "get_settings", lambda: SimpleNamespace(runtime_mode="prod"))
     monkeypatch.setattr(scan_tasks, "set_tenant_context", AsyncMock())

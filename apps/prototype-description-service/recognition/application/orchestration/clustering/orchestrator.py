@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -17,15 +16,14 @@ from db.models import IdentityClusteringJob
 from db.models import IdentityMember as MemberModel
 from db.models import MediaIdentity as MediaIdentityModel
 from db.tenant_context import enable_rls_bypass, set_tenant_context
-from recognition.application.assignment import AssignmentGate, AssignmentOutcome
-from recognition.application.discovery import CentroidDiscovery, GraphDiscovery, RepresentativeDiscovery
+from recognition.application.assignment import AssignmentOutcome
 from recognition.application.orchestration.clustering.chunked_processor import ChunkedIdentityProcessor
+from recognition.application.orchestration.clustering.decision_handler import DecisionHandler
 from recognition.application.orchestration.clustering.dependencies import (
     ClusteringContext,
     ClusteringDependencies,
     ClusteringRuntimeConfig,
 )
-from recognition.application.orchestration.clustering.decision_handler import DecisionHandler
 from recognition.application.orchestration.clustering.discovery_pipeline import (
     prepare_cluster_caches,
     run_discovery_pipeline,
@@ -34,11 +32,8 @@ from recognition.application.orchestration.clustering.discovery_pipeline import 
     update_cluster_caches_from_new_cluster,
 )
 from recognition.application.orchestration.clustering.job_result import ClusterJobResult
-from recognition.application.orchestration.protocols import MergeSuggestionServiceProtocol, SuggestionServiceProtocol
-from recognition.application.persistence.assignment_writer import AssignmentWriter
-from recognition.domain.job import JobStatus
 from recognition.domain.identity import MediaIdentity
-from recognition.observability import ClusteringLogger
+from recognition.domain.job import JobStatus
 from recognition.observability.recognition_runs import (
     RecognitionRunContext,
     complete_recognition_run,
@@ -49,10 +44,8 @@ from recognition.shared.ids import generate_id
 from recognition.shared.tenant import coerce_tenant_uuid
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import async_sessionmaker
 
-    from recognition.application.settings import HACSettings
-    from recognition.domain.repositories import ConstrainedHACProtocol
+    pass
 
 logger = logging.getLogger(__name__)
 

@@ -299,9 +299,8 @@ class TestInsightFaceFaceDetector:
         with pytest.raises(DetectionAdapterError):
             await detector.detect([b"first-image"])
 
-        with caplog.at_level(logging.WARNING):
-            with pytest.raises(AdapterBreakerOpenError):
-                await detector.detect([b"second-image"])
+        with caplog.at_level(logging.WARNING), pytest.raises(AdapterBreakerOpenError):
+            await detector.detect([b"second-image"])
 
         assert "Detection breaker open for" in caplog.text
 

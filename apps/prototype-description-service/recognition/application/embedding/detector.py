@@ -22,6 +22,7 @@ import httpx
 import imagehash
 import numpy as np
 from PIL import Image
+
 from recognition.application.integrations import (
     AdapterBreakerOpenError,
     AdapterCircuitBreaker,
@@ -222,9 +223,9 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
             # Detect faces and get embeddings in one pass
             try:
                 faces = await self._breaker.call(
-                    lambda: wait_for_adapter(
+                    lambda image_bytes=image_bytes: wait_for_adapter(
                         self._adapter.detect_faces(image_bytes),
-                        timeout=self._timeout,
+                        timeout_s=self._timeout,
                         adapter_name="insightface.detect_faces",
                     )
                 )

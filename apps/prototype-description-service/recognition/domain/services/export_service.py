@@ -22,8 +22,8 @@ from db.models import (
     NameSuggestion,
     Tenant,
 )
-from recognition.domain.services.audit_service import AuditService
 from recognition.domain.job import JobStatus
+from recognition.domain.services.audit_service import AuditService
 from recognition.infrastructure.repositories._helpers import coerce_uuid
 
 EXPORT_SCHEMA_VERSION = 2

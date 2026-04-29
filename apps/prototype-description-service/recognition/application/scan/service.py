@@ -39,7 +39,7 @@ _DB_SETTINGS = get_database_settings()
 _PersistResult = TypeVar("_PersistResult")
 
 
-async def run_scan_three_phase(
+async def run_scan_three_phase[PersistResult](
     *,
     mark_running: Callable[[], Awaitable[object]],
     detect: Callable[[], Awaitable[list[FaceDetection]]],

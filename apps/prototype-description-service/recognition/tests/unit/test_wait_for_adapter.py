@@ -15,7 +15,7 @@ async def test_wait_for_adapter_returns_result_before_timeout() -> None:
         await asyncio.sleep(0)
         return "ok"
 
-    result = await wait_for_adapter(fast_call(), timeout=0.1, adapter_name="insightface")
+    result = await wait_for_adapter(fast_call(), timeout_s=0.1, adapter_name="insightface")
 
     assert result == "ok"
 
@@ -27,7 +27,7 @@ async def test_wait_for_adapter_raises_typed_timeout() -> None:
         return "late"
 
     with pytest.raises(AdapterTimeoutError) as exc_info:
-        await wait_for_adapter(slow_call(), timeout=0.01, adapter_name="insightface")
+        await wait_for_adapter(slow_call(), timeout_s=0.01, adapter_name="insightface")
 
     assert exc_info.value.adapter_name == "insightface"
     assert exc_info.value.timeout_s == 0.01

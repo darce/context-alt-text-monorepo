@@ -4,7 +4,6 @@ import ast
 from collections.abc import Iterable
 from pathlib import Path
 
-
 # These are the only application-layer files that should mention InsightFaceAdapter.
 # tasks/scan.py belongs here because it wires adapter providers, even though it
 # must not invoke the remote adapter surface directly.

@@ -134,9 +134,9 @@ class InsightFaceEmbeddingGenerator(EmbeddingGeneratorProtocol):
             try:
                 # Run detection and embedding in one pass
                 face_results = await self._breaker.call(
-                    lambda: wait_for_adapter(
+                    lambda image_bytes=image_bytes: wait_for_adapter(
                         self._adapter.analyze(image_bytes),
-                        timeout=self._timeout,
+                        timeout_s=self._timeout,
                         adapter_name="insightface.analyze",
                     )
                 )

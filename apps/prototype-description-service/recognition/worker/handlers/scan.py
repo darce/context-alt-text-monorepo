@@ -13,11 +13,11 @@ from db.models import IdentityClusteringJob
 from db.tenant_context import enable_rls_bypass
 from recognition.application.embedding.detector import FaceDetectorProtocol
 from recognition.application.embedding.generator import EmbeddingGeneratorProtocol
-from recognition.domain.job import JobStatus
 from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.scan.service import ObjectStoreFactory, ScanService
 from recognition.application.storage import ObjectStoreError
+from recognition.domain.job import JobStatus
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 from recognition.interface_adapters.http.middleware.correlation import (
     _correlation_id_var,

@@ -312,7 +312,7 @@ Notes:
 
 - The WordPress proxy owns the response envelope for this route.
 - `limit` is fixed at 500 on the WordPress surface; callers do not control it via query params.
-- Local projection computes `total` from `IdentityMembersRepositoryInterface::count_for_cluster()` and sets `truncated=true` when the cluster has more members than the capped response includes.
+- Local projection reads `total` from the `COUNT(*) OVER() AS total_count` metadata returned by `IdentityMembersRepositoryInterface::list_for_cluster()`, and falls back to `count_for_cluster()` only when that metadata is unavailable. `truncated=true` when the cluster has more members than the capped response includes.
 - When the backend proxy returns a bare member array, WordPress wraps it into the same envelope with `limit=500`, `total=<array length>`, and `truncated=false`.
 - The matching machine-readable schema is [recognition-cluster-members-response.schema.json](../../../packages/shared-contracts/schemas/recognition-cluster-members-response.schema.json).
 

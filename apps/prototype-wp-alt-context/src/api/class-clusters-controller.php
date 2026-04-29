@@ -199,6 +199,7 @@ class ClustersController extends AbstractRecognitionProxyController {
 	public function list_top_unlabeled_clusters( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$tenant_id = $this->get_tenant_id();
 		$limit     = absint( $request->get_param( 'limit' ) ?? 10 );
+		$limit     = max( 1, $limit );
 
 		if ( ! $this->should_use_local_projection( $tenant_id ) ) {
 			$response = $this->proxy_request(
@@ -215,9 +216,33 @@ class ClustersController extends AbstractRecognitionProxyController {
 			if ( $response instanceof WP_REST_Response && $response->get_status() >= 200 && $response->get_status() < 300 ) {
 				$data = $response->get_data();
 				if ( is_array( $data ) ) {
+					if ( isset( $data['clusters'] ) && is_array( $data['clusters'] ) ) {
+						if ( ! isset( $data['limit'], $data['total'], $data['truncated'] ) || ! is_numeric( $data['limit'] ) || ! is_numeric( $data['total'] ) || ! is_bool( $data['truncated'] ) ) {
+							return new WP_Error(
+								'invalid_top_unlabeled_envelope',
+								'Top-unlabeled clusters response must include limit, total, and truncated when clusters is present.',
+								array( 'status' => 502 )
+							);
+						}
+
+						return new WP_REST_Response(
+							array(
+								'clusters' => $data['clusters'],
+								'limit' => max( 1, (int) $data['limit'] ),
+								'total' => max( 0, (int) $data['total'] ),
+								'truncated' => $data['truncated'],
+								'data_source' => self::DATA_SOURCE_BACKEND_PROXY,
+							),
+							200
+						);
+					}
+
 					return new WP_REST_Response(
 						array(
-							'clusters'    => $data,
+							'clusters' => $data,
+							'limit' => $limit,
+							'total' => count( $data ),
+							'truncated' => false,
 							'data_source' => self::DATA_SOURCE_BACKEND_PROXY,
 						),
 						200
@@ -232,6 +257,9 @@ class ClustersController extends AbstractRecognitionProxyController {
 			return new WP_REST_Response(
 				array(
 					'clusters'          => array(),
+					'limit' => $limit,
+					'total' => 0,
+					'truncated' => false,
 					'singleton_count'   => 0,
 					'data_source'       => self::DATA_SOURCE_UNAVAILABLE,
 					'projection_status' => self::PROJECTION_STATUS_BOOTSTRAPPING,
@@ -246,10 +274,17 @@ class ClustersController extends AbstractRecognitionProxyController {
 			$sovereign_data['members'],
 			$tenant_id
 		);
+		$total = count( $unlabeled_items );
+		if ( isset( $sovereign_data['clusters'][0]['total_count'] ) && is_numeric( $sovereign_data['clusters'][0]['total_count'] ) ) {
+			$total = max( 0, (int) $sovereign_data['clusters'][0]['total_count'] );
+		}
 
 		return new WP_REST_Response(
 			array(
 				'clusters' => $unlabeled_items,
+				'limit' => $limit,
+				'total' => $total,
+				'truncated' => $total > count( $unlabeled_items ),
 				'singleton_count' => max( 0, (int) ( $sovereign_data['singleton_count'] ?? 0 ) ),
 				'data_source' => self::DATA_SOURCE_LOCAL_PROJECTION,
 				'projection_status' => self::PROJECTION_STATUS_AVAILABLE,

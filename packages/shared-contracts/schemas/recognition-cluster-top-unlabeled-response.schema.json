@@ -1,0 +1,129 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/recognition-cluster-top-unlabeled-response.schema.json",
+  "title": "Recognition Cluster Top Unlabeled Response",
+  "description": "WordPress recognition proxy envelope for the top-unlabeled naming queue.",
+  "type": "object",
+  "required": ["clusters", "limit", "total", "truncated", "data_source"],
+  "properties": {
+    "clusters": {
+      "type": "array",
+      "description": "Top unlabeled clusters returned by GET /recognition/clusters/top-unlabeled.",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "tenant_id",
+          "label",
+          "is_labeled",
+          "is_auto_label",
+          "identity_count",
+          "user_confirmed",
+          "representatives"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "type": "string"
+          },
+          "label": {
+            "type": ["string", "null"]
+          },
+          "is_labeled": {
+            "type": "boolean"
+          },
+          "is_auto_label": {
+            "type": "boolean"
+          },
+          "identity_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "user_confirmed": {
+            "type": "boolean"
+          },
+          "suggested_label": {
+            "type": ["string", "null"]
+          },
+          "suggested_label_source": {
+            "type": ["string", "null"]
+          },
+          "suggested_label_confidence": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "maximum": 1
+          },
+          "suggested_target_cluster_id": {
+            "type": ["string", "null"]
+          },
+          "representatives": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "media_id", "is_pinned"],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "media_id": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "thumb_url": {
+                  "type": ["string", "null"],
+                  "format": "uri"
+                },
+                "media_url": {
+                  "type": ["string", "null"],
+                  "format": "uri"
+                },
+                "bbox": {
+                  "type": ["object", "null"],
+                  "required": ["x", "y", "width", "height"],
+                  "properties": {
+                    "x": { "type": "integer", "minimum": 0 },
+                    "y": { "type": "integer", "minimum": 0 },
+                    "width": { "type": "integer", "minimum": 0 },
+                    "height": { "type": "integer", "minimum": 0 }
+                  }
+                },
+                "is_pinned": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Maximum number of clusters requested for the naming queue response."
+    },
+    "total": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of qualifying unlabeled clusters available for the current request."
+    },
+    "truncated": {
+      "type": "boolean",
+      "description": "Whether additional unlabeled clusters exist beyond this response."
+    },
+    "singleton_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Count of singleton clusters omitted from the naming queue when projection data is available."
+    },
+    "data_source": {
+      "type": "string",
+      "description": "Source of the naming queue response envelope."
+    },
+    "projection_status": {
+      "type": "string",
+      "description": "Projection bootstrap state when the response depends on local sync status."
+    }
+  }
+}

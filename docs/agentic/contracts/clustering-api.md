@@ -186,6 +186,8 @@ Notes:
 
 List the largest unlabeled clusters for the naming queue.
 
+Machine-readable schema: [recognition-cluster-top-unlabeled-response.schema.json](../../../packages/shared-contracts/schemas/recognition-cluster-top-unlabeled-response.schema.json)
+
 Query params:
 
 - `limit` (default 10)
@@ -219,6 +221,9 @@ Response (envelope):
       ]
     }
   ],
+  "limit": 10,
+  "total": 24,
+  "truncated": true,
   "singleton_count": 3,
   "data_source": "local_projection",
   "projection_status": "available"
@@ -227,12 +232,14 @@ Response (envelope):
 
 Notes:
 
+- The WordPress proxy always returns the canonical envelope `{ clusters, limit, total, truncated, data_source }` on this route.
 - Returns clusters from **sovereign local projection** when available.
-- When projection is still bootstrapping but the backend queue is reachable, the plugin may return a read-only backend envelope with `{ "clusters": [...], "data_source": "backend_proxy" }`. That proxy envelope intentionally omits `singleton_count` and `projection_status`; the plugin must not invent those fields on behalf of the backend.
-- When local projection is missing and the backend queue is also unavailable, the plugin schedules a bootstrap sync and returns an empty envelope with `data_source: "unavailable"` and `projection_status: "bootstrapping"`.
+- When projection is still bootstrapping but the backend queue is reachable, the plugin may return a read-only backend envelope. If the upstream backend still emits a legacy bare array, the proxy normalizes `limit` from the effective request limit, `total` from the returned row count, and `truncated=false` before tagging the response with `data_source: "backend_proxy"`. That fallback is best-effort only: without canonical upstream envelope metadata the proxy cannot detect hidden truncation, so bare-array fallback responses never report `truncated=true`.
+- A partial envelope such as `{ "clusters": [...], "limit": 10 }` without `total` or `truncated` is a contract violation. The proxy surfaces that upstream failure as `502 invalid_top_unlabeled_envelope` instead of inventing the missing metadata.
+- When local projection is missing and the backend queue is also unavailable, the plugin schedules a bootstrap sync and returns an empty envelope with `limit`, `total: 0`, `truncated: false`, `data_source: "unavailable"`, and `projection_status: "bootstrapping"`.
 - `singleton_count` reports the number of single-identity clusters excluded from the naming queue, but only on local-projection / unavailable envelopes where the plugin can source that value honestly.
 - `projection_status` is `available` when local projection is readable, `bootstrapping` while the controller has scheduled bootstrap sync, and `unavailable` if a future controller path needs to surface a non-bootstrap projection failure. It is omitted on `backend_proxy` envelopes because those responses did not come from the projection.
-- WordPress and TypeScript consumers now treat `clusters`, `singleton_count`, `data_source`, and `projection_status` as canonical envelope metadata. Missing or malformed values are contract errors, not fields to infer locally.
+- WordPress and TypeScript consumers now treat `clusters`, `limit`, `total`, `truncated`, and `data_source` as canonical envelope metadata. Missing or malformed values are contract errors, not fields to infer locally.
 - Clusters with `identity_count < 2`, `is_user_confirmed = true`, or `dismissed_at` set are excluded.
 
 ## GET /recognition/clusters/labels

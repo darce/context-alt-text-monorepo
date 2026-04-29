@@ -1,0 +1,38 @@
+{
+  "clusters": [
+    {
+      "id": "cluster-top-1",
+      "tenant_id": "tenant-1",
+      "label": null,
+      "is_labeled": false,
+      "is_auto_label": true,
+      "identity_count": 4,
+      "user_confirmed": false,
+      "suggested_label": "Alice Example",
+      "suggested_label_source": "identity",
+      "suggested_label_confidence": 0.91,
+      "suggested_target_cluster_id": null,
+      "representatives": [
+        {
+          "id": "rep-top-1",
+          "media_id": 101,
+          "thumb_url": "https://example.test/uploads/101-thumb.jpg",
+          "media_url": "https://example.test/uploads/101.jpg",
+          "bbox": {
+            "x": 45,
+            "y": 60,
+            "width": 120,
+            "height": 120
+          },
+          "is_pinned": false
+        }
+      ]
+    }
+  ],
+  "limit": 10,
+  "total": 24,
+  "truncated": true,
+  "singleton_count": 3,
+  "data_source": "local_projection",
+  "projection_status": "available"
+}

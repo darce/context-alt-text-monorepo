@@ -103,6 +103,9 @@ class ClustersControllerTest extends TestCase
         $this->assertSame(200, $response->get_status());
 
         $data = $response->get_data();
+        $this->assertSame(10, $data['limit']);
+        $this->assertSame(1, $data['total']);
+        $this->assertFalse($data['truncated']);
         $this->assertSame(0, $data['singleton_count']);
         $this->assertSame('local_projection', $data['data_source']);
         $this->assertSame('available', $data['projection_status']);
@@ -157,6 +160,9 @@ class ClustersControllerTest extends TestCase
                         'representatives' => [],
                     ],
                 ],
+                'limit' => 10,
+                'total' => 1,
+                'truncated' => false,
                 'data_source' => 'backend_proxy',
             ],
             $response->get_data()
@@ -168,6 +174,43 @@ class ClustersControllerTest extends TestCase
         $this->assertStringContainsString('/clusters/delta', $calls[1]['url']);
         $this->assertStringContainsString('since_version=0', $calls[1]['url']);
         $this->assertCount(0, $GLOBALS['__ac_scheduled']);
+    }
+
+    public function testTopUnlabeledClustersRejectPartialProxyEnvelope(): void
+    {
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int {
+                return 0;
+            }
+            public function get_last_updated(string $tenant_id): ?string {
+                return null;
+            }
+        };
+        $controller = new ClustersController(null, null, $syncRepo, null, new ClusterResponseMapper(), new MemberResponseMapper());
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'clusters' => [],
+                'limit' => 10,
+            ]),
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'snapshot_version' => 0,
+                'clusters' => [],
+                'members' => [],
+                'empty' => true,
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
+        $response = $controller->list_top_unlabeled_clusters($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_top_unlabeled_envelope', $response->get_error_code());
+        $this->assertSame(502, $response->get_error_data()['status']);
     }
 
     public function testTopUnlabeledClustersSchedulesBootstrapWhenProxyAndProjectionAreUnavailable(): void
@@ -193,6 +236,9 @@ class ClustersControllerTest extends TestCase
         $this->assertSame(
             [
                 'clusters' => [],
+                'limit' => 10,
+                'total' => 0,
+                'truncated' => false,
                 'singleton_count' => 0,
                 'data_source' => 'unavailable',
                 'projection_status' => 'bootstrapping',

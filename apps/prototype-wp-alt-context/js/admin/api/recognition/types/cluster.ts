@@ -68,8 +68,11 @@ export interface TopUnlabeledCluster {
 
 export interface TopUnlabeledClustersResponse {
   clusters: TopUnlabeledCluster[];
+  limit: number;
+  total: number;
+  truncated: boolean;
   singleton_count?: number;
-  data_source?: DataSource;
+  data_source: DataSource;
   projection_status?: ProjectionStatus;
 }
 

@@ -239,10 +239,30 @@ Notes:
 
 List distinct cluster labels for autocomplete / label search.
 
+Machine-readable schema: [recognition-cluster-labels-response.schema.json](../../../packages/shared-contracts/schemas/recognition-cluster-labels-response.schema.json)
+
 Query params:
 
 - `search` (optional substring filter)
 - `limit` (default 50)
+
+Response (envelope):
+
+```json
+{
+  "labels": ["Alice Example", "Alicia Example"],
+  "limit": 2,
+  "total": 3,
+  "truncated": true
+}
+```
+
+Notes:
+
+- The WordPress proxy always returns the envelope `{ labels, limit, total, truncated }` on this route.
+- When local projection is available, the plugin filters labels by the local `search` substring and clamps the response to the effective `limit` before computing `total` and `truncated`.
+- A legacy bare-array upstream response is normalized to the same envelope using the effective request limit, the returned row count as `total`, and `truncated=false`.
+- A partial envelope such as `{ "labels": ["Alice"] }` without `limit`, `total`, or `truncated` is a contract violation. The proxy surfaces that upstream failure as a `502 invalid_cluster_labels_envelope` response rather than inventing the missing metadata.
 
 ## GET /recognition/clusters/{cluster_id}/members
 

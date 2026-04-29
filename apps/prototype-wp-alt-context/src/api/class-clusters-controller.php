@@ -63,6 +63,8 @@ class ClustersController extends AbstractRecognitionProxyController {
 	private const DATA_SOURCE_LOCAL_PROJECTION = 'local_projection';
 	private const DATA_SOURCE_UNAVAILABLE = 'unavailable';
 	private const GET_CLUSTER_MEMBERS_MAX_LIMIT = IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT;
+	private const LIST_CLUSTER_LABELS_DEFAULT_LIMIT = 50;
+	private const LIST_CLUSTER_LABELS_MAX_LIMIT = 500;
 	private const LIST_CLUSTERS_DEFAULT_LIMIT = 50;
 	private const LIST_CLUSTERS_MAX_LIMIT = 500;
 	private const PREVIEW_IDENTITIES_PER_CLUSTER = 4;
@@ -258,18 +260,31 @@ class ClustersController extends AbstractRecognitionProxyController {
 
 	public function list_cluster_labels( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$tenant_id = $this->get_tenant_id();
+		$limit = absint( $request->get_param( 'limit' ) ?? self::LIST_CLUSTER_LABELS_DEFAULT_LIMIT );
+		$limit = max( 1, min( $limit, self::LIST_CLUSTER_LABELS_MAX_LIMIT ) );
+		$search = sanitize_text_field( (string) $request->get_param( 'search' ) );
+
 		if ( $this->should_use_local_projection( $tenant_id ) ) {
 			$labels = $this->clusters_repository->list_labels( $tenant_id );
-			$payload = $this->cluster_mapper->map_labels_list( $labels );
-			return new WP_REST_Response( $payload, 200 );
+			$labels = $this->cluster_mapper->map_labels_list( $labels );
+			$labels = $this->filter_cluster_labels( $labels, $search );
+			$total = count( $labels );
+			$labels = array_slice( $labels, 0, $limit );
+			return new WP_REST_Response( $this->build_cluster_labels_envelope( $labels, $limit, $total ), 200 );
 		}
 
 		$query = array(
 			'tenant_id' => $tenant_id,
+			'limit' => $limit,
 		);
 
+		if ( '' !== $search ) {
+			$query['search'] = $search;
+		}
+
 		$response = $this->proxy_request( 'GET', '/recognition/clusters/labels', array(), $query );
-		return $this->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
+		$response = $this->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
+		return $this->normalize_cluster_labels_response( $response, $limit );
 	}
 
 	public function get_cluster_detail( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -465,6 +480,19 @@ class ClustersController extends AbstractRecognitionProxyController {
 		);
 	}
 
+	/**
+	 * @param array<int,string> $labels
+	 * @return array<string,mixed>
+	 */
+	private function build_cluster_labels_envelope( array $labels, int $limit, int $total ): array {
+		return array(
+			'labels' => $labels,
+			'limit' => $limit,
+			'total' => $total,
+			'truncated' => $total > count( $labels ),
+		);
+	}
+
 	private function normalize_cluster_list_response( WP_REST_Response|WP_Error $response, int $requested_limit ): WP_REST_Response|WP_Error {
 		if ( ! ( $response instanceof WP_REST_Response ) ) {
 			return $response;
@@ -541,6 +569,67 @@ class ClustersController extends AbstractRecognitionProxyController {
 		$members = $data;
 		return new WP_REST_Response(
 			$this->build_cluster_members_envelope( $members, $requested_limit, count( $members ) ),
+			$response->get_status()
+		);
+	}
+
+	/**
+	 * @param array<int,string> $labels
+	 * @return array<int,string>
+	 */
+	private function filter_cluster_labels( array $labels, string $search ): array {
+		if ( '' === $search ) {
+			return $labels;
+		}
+
+		$filtered = array();
+		foreach ( $labels as $label ) {
+			if ( false !== stripos( $label, $search ) ) {
+				$filtered[] = $label;
+			}
+		}
+
+		return $filtered;
+	}
+
+	private function normalize_cluster_labels_response( WP_REST_Response|WP_Error $response, int $requested_limit ): WP_REST_Response|WP_Error {
+		if ( ! ( $response instanceof WP_REST_Response ) ) {
+			return $response;
+		}
+
+		$data = $response->get_data();
+		if ( ! is_array( $data ) ) {
+			return $response;
+		}
+
+		if ( isset( $data['labels'] ) && is_array( $data['labels'] ) ) {
+			if ( ! isset( $data['limit'], $data['total'], $data['truncated'] ) || ! is_numeric( $data['limit'] ) || ! is_numeric( $data['total'] ) || ! is_bool( $data['truncated'] ) ) {
+				return new WP_Error(
+					'invalid_cluster_labels_envelope',
+					'Cluster labels response must include limit, total, and truncated when labels is present.',
+					array( 'status' => 502 )
+				);
+			}
+
+			$labels = $this->cluster_mapper->map_labels_list( $data['labels'] );
+			$total = max( 0, (int) $data['total'] );
+			$limit = max( 1, (int) $data['limit'] );
+			$truncated = $data['truncated'];
+
+			return new WP_REST_Response(
+				array(
+					'labels' => $labels,
+					'limit' => $limit,
+					'total' => $total,
+					'truncated' => $truncated,
+				),
+				$response->get_status()
+			);
+		}
+
+		$labels = $this->cluster_mapper->map_labels_list( $data );
+		return new WP_REST_Response(
+			$this->build_cluster_labels_envelope( $labels, $requested_limit, count( $labels ) ),
 			$response->get_status()
 		);
 	}

@@ -56,6 +56,9 @@ Those seams are reached from the scan-task boundary in
 mark-running -> detect -> persist shape for the inline path. The legacy
 `ScanService.process_scan_job` remains a single-session caller, but it now
 shares the same ordered phase contract through `run_scan_three_phase`.
+`recognition/tests/unit/test_adapter_surface_inventory.py` now serves as an
+executable inventory guard so new application-layer adapter seams do not land
+silently.
 
 ### Constraints from prior review
 

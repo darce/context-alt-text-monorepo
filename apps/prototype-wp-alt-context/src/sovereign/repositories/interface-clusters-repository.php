@@ -6,6 +6,7 @@ namespace AltContext\Sovereign\Repositories;
 
 interface ClustersRepositoryInterface {
 	public const DEFAULT_LIST_LIMIT = 50;
+	public const MAX_SNAPSHOT_MERGE_BATCH = 500;
 
 	/**
 	 * Merge a snapshot payload into tenant-scoped cluster projection rows.

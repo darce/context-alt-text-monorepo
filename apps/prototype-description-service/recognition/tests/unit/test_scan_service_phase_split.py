@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from recognition.application.scan import service as scan_service_module
+from recognition.application.embedding.detector import DetectionAdapterError, DetectionTimeoutError
+from recognition.application.embedding.generator import EmbeddingAdapterError, EmbeddingTimeoutError
 from recognition.application.scan.service import ScanService
 from recognition.application.tasks import scan as scan_tasks
 from recognition.domain.job import JobStatus
@@ -153,3 +155,65 @@ async def test_process_scan_job_inline_uses_shared_three_phase_helper(
 
     assert helper_state["called"] is True
     assert events == [f"running:{job_id}", "detect", f"saved:{job_id}"]
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected_text", "phase"),
+    [
+        (DetectionTimeoutError(media_id="media-1", timeout_s=0.5), "timed out", "detect"),
+        (DetectionAdapterError(media_id="media-1", error_message="detector boom"), "detector boom", "detect"),
+        (EmbeddingTimeoutError(media_id="media-1", timeout_s=0.5), "timed out", "persist"),
+        (EmbeddingAdapterError(media_id="media-1", error_message="generator boom"), "generator boom", "persist"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_process_scan_job_marks_job_failed_on_typed_adapter_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    exc: Exception,
+    expected_text: str,
+    phase: str,
+) -> None:
+    session = _PhaseSession()
+    job_id = uuid.uuid4()
+    events: list[tuple[str, str | None]] = []
+
+    class FakeDetector:
+        async def detect(self, sources):
+            events.append(("detect", None))
+            if phase == "detect":
+                raise exc
+            return []
+
+    service = ScanService(
+        session=session,
+        detector=FakeDetector(),
+        generator=MagicMock(),
+    )
+
+    original_mark_running = service.mark_job_running
+
+    async def tracking_mark_running(received_job_id):
+        events.append(("running", str(received_job_id)))
+        return await original_mark_running(received_job_id)
+
+    async def failing_save_job_results(**kwargs):
+        events.append(("persist", None))
+        if phase == "persist":
+            raise exc
+        return SimpleNamespace(id=kwargs["job_id"])
+
+    monkeypatch.setattr(service, "mark_job_running", tracking_mark_running)
+    monkeypatch.setattr(service, "save_job_results", failing_save_job_results)
+
+    with pytest.raises(type(exc)):
+        await service.process_scan_job(
+            tenant_id=str(uuid.uuid4()),
+            job_id=job_id,
+            media_ids=["1"],
+            media_sources=["http://example.test/1.jpg"],
+        )
+
+    assert events[0] == ("running", str(job_id))
+    assert session.job.status is JobStatus.FAILED
+    assert expected_text in (session.job.error_message or "")
+    assert session.job.completed_at is not None

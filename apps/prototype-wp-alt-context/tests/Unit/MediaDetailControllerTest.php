@@ -39,6 +39,10 @@ class MediaDetailControllerTest extends TestCase
 
     public function testGetMediaDetailsReportsUntruncatedRequestsWithinCap(): void
     {
+        $GLOBALS['__ac_posts'][7] = (object) array(
+            'ID'                => 7,
+            'post_modified_gmt' => '2026-04-29 00:00:00',
+        );
         $GLOBALS['__ac_attachment_metadata'][7] = array(
             'width' => 640,
             'height' => 480,
@@ -60,6 +64,7 @@ class MediaDetailControllerTest extends TestCase
         $this->assertSame(1, $data['total']);
         $this->assertFalse($data['truncated']);
         $this->assertSame(100, $data['limit']);
+        $this->assertStringEndsWith('+00:00', (string) ($data['details_by_media']['7']['updatedAt'] ?? ''));
         $this->assertSame(640, $data['details_by_media']['7']['dimensions']['width']);
         $this->assertSame('image/jpeg', $data['details_by_media']['7']['mimeType']);
         $this->assertSame(array('status' => 'persisted'), $data['details_by_media']['7']['xmpPersistence']);

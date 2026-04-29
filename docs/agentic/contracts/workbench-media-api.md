@@ -11,7 +11,7 @@ Deferred attachment enrichment for the workbench page. The client uses this endp
 Query parameters:
 
 - `ids[]` or `ids`: array of attachment IDs.
-- Maximum accepted IDs per request: `100`.
+- Maximum IDs enriched per request: `100`. Additional valid IDs are counted in `total` and omitted from `details_by_media` when `truncated` is `true`.
 
 Response (envelope):
 
@@ -21,14 +21,14 @@ Response (envelope):
     "11": {
       "id": 11,
       "mimeType": "image/jpeg",
-      "updatedAt": "2026-04-29T00:00:00Z",
+      "updatedAt": "2026-04-29T00:00:00+00:00",
       "dimensions": {
         "width": 1200,
         "height": 800
       },
       "xmpPersistence": {
         "status": "persisted",
-        "updated_at": "2026-04-29T00:00:00Z"
+        "updated_at": "2026-04-29T00:00:00+00:00"
       }
     }
   },

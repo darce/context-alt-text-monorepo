@@ -55,6 +55,7 @@ class ClustersRepository implements ClustersRepositoryInterface {
 
 		$this->prepare_snapshot_merge_for_tenant( $tenant_id, $incoming_ids );
 
+		// Stale-row pruning is still payload-wide; only the upsert phase is chunked.
 		foreach ( array_chunk( $normalized_clusters, ClustersRepositoryInterface::MAX_SNAPSHOT_MERGE_BATCH ) as $cluster_batch ) {
 			$this->merge_snapshot_batch_for_tenant( $tenant_id, $cluster_batch, $snapshot_version );
 		}

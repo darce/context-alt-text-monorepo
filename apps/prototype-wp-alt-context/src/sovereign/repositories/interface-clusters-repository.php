@@ -11,6 +11,9 @@ interface ClustersRepositoryInterface {
 	/**
 	 * Merge a snapshot payload into tenant-scoped cluster projection rows.
 	 *
+	 * Stale-row pruning still runs once per payload, but row upserts are issued in
+	 * MAX_SNAPSHOT_MERGE_BATCH-sized chunks rather than one monolithic statement.
+	 *
 	 * @param array<int,array<string,mixed>> $clusters
 	 */
 	public function merge_snapshot_for_tenant( string $tenant_id, array $clusters, int $snapshot_version ): void;

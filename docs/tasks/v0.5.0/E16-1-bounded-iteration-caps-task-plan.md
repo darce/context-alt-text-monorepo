@@ -9,7 +9,7 @@
 > - **Target Branch**: `feature/e16-1-bounded-iteration-caps`
 > - **Review Coverage Target**: 2
 >
-> **Status**: Draft — gated on E16 epic allocation. Per [`docs/scopes/v05-cross-cutting-refactor-scope.md`](../../scopes/v05-cross-cutting-refactor-scope.md) §8, `/incremental-implementation` for E16-1..E16-10 must not run until the E16 epic doc lands. This plan is generated as the structural draft so the epic allocation step has a concrete first slice to point at, but it must not be promoted to implementation until the epic is opened and links this plan back as part of its task surface.
+> **Status**: In Progress — Slice 1 is now complete on the `GET /recognition/clusters` canary path, DB-5 chunked legacy migration is landed, and the partial DB-1 cluster-only snapshot batching seam is in place. Remaining REST/repository propagation work in Slices 2-3 and the manual Slice 4 runtime-parity check are still open.
 
 ## E16-1. Bounded iteration caps across REST + repos + lifecycle migration + contracts
 
@@ -153,21 +153,24 @@ Land the work in four bounded slices: (1) declare the cap-owner pattern and appl
 
 ### Slice 1: Canary endpoint — pattern proof on one controller end-to-end
 
-**Goal**: Pick one controller (proposed: cluster-snapshot list) and apply the full pattern: cap constant, envelope triple, contract update, shared-schema update, SPA consumer update, boundary tests.
+**Goal**: Use `GET /recognition/clusters` as the canary controller path and apply the full pattern: cap constant, envelope triple, contract update, shared-schema update, SPA consumer update, and boundary tests.
+
+**Status note**: Slice 1 is complete on `ClustersController::list_clusters()`. The canary path uses the existing `LIST_CLUSTERS_MAX_LIMIT` cap owner, returns the canonical `{ clusters, limit, total, truncated }` envelope, documents that shape in `clustering-api.md`, and now has a matching shared schema plus golden fixture under `packages/shared-contracts/`.
 
 Changes:
 
-- Declare `MAX_CLUSTER_SNAPSHOT_LIST` constant on the controller.
-- Update controller to surface `limit` / `total` / `truncated` in the response envelope.
-- Update `docs/agentic/contracts/cluster-snapshot-api.md` to document the triple.
-- Update the matching schema in `packages/shared-contracts/`.
-- Update SPA consumer to read `truncated` (same slice; no new components).
-- Add PHPUnit boundary tests (cap-equals-limit, cap-plus-one, malformed `limit`).
+- Confirm `LIST_CLUSTERS_MAX_LIMIT` on `ClustersController` is the canary cap owner for `GET /recognition/clusters`.
+- Surface `limit` / `total` / `truncated` in the `GET /recognition/clusters` response envelope for local and proxied reads.
+- Update `docs/agentic/contracts/clustering-api.md` to document the canonical cluster-list envelope.
+- Add `recognition-cluster-list-response.schema.json` and `cluster-list-response.golden.json` under `packages/shared-contracts/`.
+- Keep the SPA consumer (`listRecognitionClusters`) aligned to the envelope contract.
+- Cover the canary path with PHPUnit and Vitest boundary/contract tests.
 
 Proof:
 
-- PHPUnit: `cd apps/prototype-wp-alt-context && composer test -- --filter=ClusterSnapshotListTest` passes.
-- Contract diff: the same triple appears in the markdown contract, the shared schema, and the runtime fixture.
+- PHPUnit: `cd apps/prototype-wp-alt-context && vendor/bin/phpunit tests/Unit/ClustersControllerTest.php` passes.
+- Vitest: `cd apps/prototype-wp-alt-context && npx vitest run js/admin/api/__tests__/recognitionApi.test.ts js/admin/api/__tests__/clusterListContract.test.ts` passes.
+- Contract diff: the same triple appears in `clustering-api.md`, `recognition-cluster-list-response.schema.json`, and `cluster-list-response.golden.json`.
 
 ### Slice 2: Propagate envelope triple across remaining REST controllers (RX-3, RX-4)
 
@@ -224,19 +227,19 @@ Proof:
 
 ## Context and Ownership
 
-- [ ] Loaded scope note, source assessment, planning-review-guide, and the canary controller's current contract.
-- [ ] Confirmed `ctx7` is not required (or recorded the specific dependency reason if it becomes required mid-slice).
-- [ ] Recorded boundary ownership (backend owns envelope; shared-contracts mirrors; SPA consumes) with the canonical cap owner per surface.
+- [x] Loaded scope note, source assessment, planning-review-guide, and the canary controller's current contract.
+- [x] Confirmed `ctx7` is not required (or recorded the specific dependency reason if it becomes required mid-slice).
+- [x] Recorded boundary ownership (backend owns envelope; shared-contracts mirrors; SPA consumes) with the canonical cap owner per surface.
 
 ### Checklist for Slice 1: Canary endpoint
 
-- [ ] Declare `MAX_CLUSTER_SNAPSHOT_LIST` constant on the canary controller.
-- [ ] Surface `limit` / `total` / `truncated` in the canary controller's envelope.
-- [ ] Update `docs/agentic/contracts/cluster-snapshot-api.md` to document the triple.
-- [ ] Update the matching shared schema in `packages/shared-contracts/`.
-- [ ] Update the SPA consumer to read `truncated`.
-- [ ] Add PHPUnit boundary tests (cap-equals-limit, cap-plus-one, malformed `limit`).
-- [ ] Capture a fixture round-trip showing the triple in the runtime response.
+- [x] Confirm `LIST_CLUSTERS_MAX_LIMIT` on `ClustersController` as the canary cap owner.
+- [x] Surface `limit` / `total` / `truncated` in the `GET /recognition/clusters` envelope.
+- [x] Update `docs/agentic/contracts/clustering-api.md` to document the triple.
+- [x] Add the matching shared schema and golden fixture in `packages/shared-contracts/`.
+- [x] Keep the SPA consumer `listRecognitionClusters` aligned to the envelope metadata.
+- [x] Add PHPUnit/Vitest boundary coverage for the cluster-list envelope.
+- [x] Add a shared golden fixture showing the triple and cluster-summary payload shape.
 
 ### Checklist for Slice 2: Remaining REST controllers (RX-3, RX-4)
 
@@ -253,9 +256,9 @@ Proof:
 
 ### Checklist for Slice 4: Chunked legacy migration (DB-5)
 
-- [ ] Introduce `MAX_LEGACY_MIGRATION_CHUNK` constant.
-- [ ] Refactor `migrate_legacy_roster_data` to iterate in chunks with the `(legacy_id, legacy_updated_at)` resume token.
-- [ ] Add lifecycle round-trip PHPUnit test.
+- [x] Introduce `MAX_LEGACY_MIGRATION_CHUNK` constant.
+- [x] Refactor `migrate_legacy_roster_data` to iterate in chunks with the `(legacy_id, legacy_updated_at)` resume token.
+- [x] Add lifecycle round-trip PHPUnit test.
 - [ ] Manually verify activation completes within budget against a seeded legacy fixture.
 
 ## Review Readiness
@@ -275,4 +278,4 @@ Proof:
 - [ ] Each touched contract document and shared schema declares the triple in the same slice as the runtime change.
 - [ ] `MULTIPART_MAX_IMAGES` remains the single canonical owner for the multipart cap (verified-not-touched here; E16-2 owns the `maxMediaPerBatch` resolution).
 - [ ] Boundary tests pass on every touched endpoint and repository method.
-- [ ] `migrate_legacy_roster_data` iterates in bounded chunks with a working resume token.
+- [x] `migrate_legacy_roster_data` iterates in bounded chunks with a working resume token.

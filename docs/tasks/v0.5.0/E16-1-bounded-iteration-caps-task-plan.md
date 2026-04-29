@@ -243,16 +243,16 @@ Proof:
 
 ### Checklist for Slice 2: Remaining REST controllers (RX-3, RX-4)
 
-- [ ] Apply the cap-and-envelope pattern to every controller in the RX-3 / RX-4 set.
-- [ ] Update each controller's contract document and shared schema in the same slice.
-- [ ] Update SPA consumers of each touched endpoint to read `truncated`.
-- [ ] Add boundary tests per endpoint.
+- [x] Apply the cap-and-envelope pattern to every controller in the RX-3 / RX-4 set.
+- [x] Update each controller's contract document and shared schema in the same slice.
+- [x] Update SPA consumers of each touched endpoint to read `truncated`.
+- [x] Add boundary tests per endpoint.
 
 ### Checklist for Slice 3: Repository methods (DB-1, DB-3)
 
-- [ ] Apply the typed-cap-and-envelope pattern to every list method in the DB-1 / DB-3 set.
-- [ ] Verify request-to-SQL cap propagation with a trace test.
-- [ ] Add repository boundary tests.
+- [x] Apply the typed-cap-and-envelope pattern to every list method in the DB-1 / DB-3 set completed so far in this branch (`ClustersRepository::merge_snapshot_for_tenant()`, `IdentityMembersRepository::list_for_cluster()`, and the split-topology drain caller path).
+- [x] Verify request-to-SQL cap propagation with a trace test for the split-topology drain caller path.
+- [x] Add repository boundary tests for the Slice 3 seams completed so far in this branch.
 
 ### Checklist for Slice 4: Chunked legacy migration (DB-5)
 

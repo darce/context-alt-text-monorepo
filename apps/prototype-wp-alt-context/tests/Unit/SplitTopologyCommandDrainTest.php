@@ -11,6 +11,7 @@ use AltContext\Sovereign\Sync\SnapshotClientTransport;
 use AltContext\Sovereign\Sync\SnapshotProjectorInterface;
 use AltContext\Sovereign\Sync\SplitTopologyCommandDrain;
 use AltContext\Sovereign\Sync\TopologyCommandRepositoryInterface;
+use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Tests\Stubs\NullClustersRepository;
 use AltContext\Tests\Stubs\NullIdentityMembersRepository;
 use AltContext\Tests\Stubs\NullSyncStateRepository;
@@ -164,6 +165,149 @@ class SplitTopologyCommandDrainTest extends TestCase
         $this->assertSame([], $projector->projectCalls);
         $this->assertSame([], $snapshotClient->fetchCalls);
         $this->assertSame([['tenant-test', ['cluster-new-1', 'cluster-source']]], $snapshotClient->targetedFetchCalls);
+    }
+
+    public function testDrainPagesSourceMembersWhenDirectMemberDeltaExceedsRepositoryCap(): void
+    {
+        $repository = new SplitTopologyCommandRepositoryFake([
+            $this->pendingSplitCommand(),
+        ]);
+        global $wpdb;
+        $wpdb->mockResults = [];
+
+        $allSourceMembers = [];
+        for ($index = 1; $index <= 501; $index++) {
+            $allSourceMembers[] = [
+                'identity_uuid' => sprintf('identity-%03d', $index),
+                'cluster_uuid' => 'cluster-source',
+                'thumb_path' => sprintf('thumb-%03d.jpg', $index),
+            ];
+        }
+
+        $transport = new SplitTransportFake([
+            new WP_REST_Response([
+                'command_id' => 'remote-command-paged',
+                'status' => 'applied',
+                'original_cluster_id' => 'cluster-source',
+                'new_cluster_ids' => ['cluster-new-1'],
+                'member_delta' => [
+                    'source_cluster_id' => 'cluster-source',
+                    'remaining_identity_ids' => ['identity-001'],
+                    'created_clusters' => [
+                        [
+                            'cluster_id' => 'cluster-new-1',
+                            'identity_ids' => array_map(
+                                static fn (int $memberIndex): string => sprintf('identity-%03d', $memberIndex),
+                                range(2, 501)
+                            ),
+                        ],
+                    ],
+                ],
+                'moved_counts' => [500],
+                'affected_cluster_ids' => ['cluster-source', 'cluster-new-1'],
+                'result_snapshot_version' => 77,
+            ], 200),
+        ]);
+
+        $snapshotClient = new SnapshotClientFake([]);
+        $projector = new SnapshotProjectorFake();
+        $clustersRepository = new SplitClustersRepositoryFake();
+        $membersRepository = new SplitMembersRepositoryFake($allSourceMembers, true);
+        $syncStateRepository = new SplitSyncStateRepositoryFake();
+
+        $drain = new SplitTopologyCommandDrain(
+            $repository,
+            $transport,
+            $snapshotClient,
+            $projector,
+            $clustersRepository,
+            $membersRepository,
+            $syncStateRepository
+        );
+        $drain->drain();
+
+        $this->assertCount(1, $repository->dispatchResults);
+        $this->assertCount(1, $repository->reconciled);
+        $this->assertSame([
+            ['cluster-source', IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT, 0, 'tenant-test'],
+            ['cluster-source', IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT, IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT, 'tenant-test'],
+            ['cluster-source', IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT, 0, 'tenant-test'],
+            ['cluster-source', IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT, IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT, 'tenant-test'],
+        ], $membersRepository->listCalls);
+        $this->assertSame([], $snapshotClient->targetedFetchCalls);
+        $this->assertSame([], $snapshotClient->fetchCalls);
+        $this->assertSame([], $projector->projectCalls);
+    }
+
+    public function testDrainLogsWarningAndFallsBackWhenPagedReadHitsOuterCeiling(): void
+    {
+        $repository = new SplitTopologyCommandRepositoryFake([
+            $this->pendingSplitCommand(),
+        ]);
+        global $wpdb;
+        $wpdb->mockResults = [];
+        $GLOBALS['__ac_error_log'] = [];
+
+        $allSourceMembers = [];
+        for ($index = 1; $index <= 10050; $index++) {
+            $allSourceMembers[] = [
+                'identity_uuid' => sprintf('identity-%05d', $index),
+                'cluster_uuid' => 'cluster-source',
+                'thumb_path' => sprintf('thumb-%05d.jpg', $index),
+                'total_count' => 10050,
+            ];
+        }
+
+        $transport = new SplitTransportFake([
+            new WP_REST_Response([
+                'command_id' => 'remote-command-over-ceiling',
+                'status' => 'applied',
+                'original_cluster_id' => 'cluster-source',
+                'new_cluster_ids' => ['cluster-new-1'],
+                'member_delta' => [
+                    'source_cluster_id' => 'cluster-source',
+                    'remaining_identity_ids' => ['identity-00001'],
+                    'created_clusters' => [
+                        [
+                            'cluster_id' => 'cluster-new-1',
+                            'identity_ids' => array_map(
+                                static fn (int $memberIndex): string => sprintf('identity-%05d', $memberIndex),
+                                range(2, 10050)
+                            ),
+                        ],
+                    ],
+                ],
+                'moved_counts' => [10049],
+                'affected_cluster_ids' => ['cluster-source', 'cluster-new-1'],
+                'result_snapshot_version' => 88,
+            ], 200),
+        ]);
+
+        $snapshotClient = new SnapshotClientFake(
+            ['tenant-test' => ['snapshot_version' => 88, 'clusters' => [], 'members' => []]],
+            ['tenant-test::cluster-new-1|cluster-source' => new \WP_Error('targeted-missing', 'targeted missing')]
+        );
+        $projector = new SnapshotProjectorFake();
+        $clustersRepository = new SplitClustersRepositoryFake();
+        $membersRepository = new SplitMembersRepositoryFake($allSourceMembers, true);
+        $syncStateRepository = new SplitSyncStateRepositoryFake();
+
+        $drain = new SplitTopologyCommandDrain(
+            $repository,
+            $transport,
+            $snapshotClient,
+            $projector,
+            $clustersRepository,
+            $membersRepository,
+            $syncStateRepository
+        );
+        $drain->drain();
+
+        $this->assertCount(1, $repository->dispatchResults);
+        $this->assertCount(1, $projector->projectCalls);
+        $this->assertStringContainsString('capped member pagination for cluster cluster-source tenant tenant-test after 20 pages', $GLOBALS['__ac_error_log'][0] ?? '');
+
+        unset($GLOBALS['__ac_error_log']);
     }
 
     public function testDrainProjectsLatestSnapshotWhenBackendReportsConflict(): void
@@ -915,22 +1059,53 @@ class SplitClustersRepositoryFake extends NullClustersRepository
 class SplitMembersRepositoryFake extends NullIdentityMembersRepository
 {
     /** @var array<int,array<string,mixed>> */
-    private array $sourceMembers = [
-        ['identity_uuid' => 'identity-1', 'cluster_uuid' => 'cluster-source', 'thumb_path' => 'thumb-1.jpg'],
-        ['identity_uuid' => 'identity-2', 'cluster_uuid' => 'cluster-source', 'thumb_path' => 'thumb-2.jpg'],
-        ['identity_uuid' => 'identity-3', 'cluster_uuid' => 'cluster-source', 'thumb_path' => 'thumb-3.jpg'],
-    ];
+    private array $sourceMembers;
+
+    private bool $enforceRepositoryCap;
+
+    /** @var array<int,array{0:string,1:int,2:int,3:?string}> */
+    public array $listCalls = [];
 
     /** @var array<int,array{0:string,1:string,2:int}> */
     public array $projectionAssignments = [];
 
-    public function list_for_cluster(string $cluster_uuid, int $limit = 500, int $offset = 0, ?string $tenant_id = null): array
+    /**
+     * @param array<int,array<string,mixed>>|null $sourceMembers
+     */
+    public function __construct(?array $sourceMembers = null, bool $enforceRepositoryCap = false)
     {
+        $this->sourceMembers = $sourceMembers ?? [
+            ['identity_uuid' => 'identity-1', 'cluster_uuid' => 'cluster-source', 'thumb_path' => 'thumb-1.jpg'],
+            ['identity_uuid' => 'identity-2', 'cluster_uuid' => 'cluster-source', 'thumb_path' => 'thumb-2.jpg'],
+            ['identity_uuid' => 'identity-3', 'cluster_uuid' => 'cluster-source', 'thumb_path' => 'thumb-3.jpg'],
+        ];
+        $this->enforceRepositoryCap = $enforceRepositoryCap;
+    }
+
+    public function list_for_cluster(string $cluster_uuid, int $limit = IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT, int $offset = 0, ?string $tenant_id = null): array
+    {
+        $this->listCalls[] = [$cluster_uuid, $limit, $offset, $tenant_id];
+
         if ('cluster-source' !== $cluster_uuid) {
             return [];
         }
 
-        return $this->sourceMembers;
+        $effectiveLimit = $limit;
+        if ($this->enforceRepositoryCap) {
+            $effectiveLimit = min($effectiveLimit, IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT);
+        }
+
+        $page = array_slice($this->sourceMembers, $offset, $effectiveLimit);
+        if ($this->enforceRepositoryCap) {
+            foreach ($page as &$member) {
+                if (!array_key_exists('total_count', $member)) {
+                    $member['total_count'] = count($this->sourceMembers);
+                }
+            }
+            unset($member);
+        }
+
+        return $page;
     }
 
     public function assign_to_cluster_for_projection(string $identity_uuid, string $target_cluster_uuid, int $projection_version): int

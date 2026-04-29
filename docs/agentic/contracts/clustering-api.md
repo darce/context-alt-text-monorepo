@@ -176,7 +176,8 @@ Response (envelope):
 
 Notes:
 
-- The WordPress proxy always returns the envelope `{ clusters, limit, total, truncated }` on this route, even when the upstream backend still replies with a bare array. In that legacy proxy case the plugin normalizes `limit` from the effective request limit, `total` from the returned row count, and `truncated=false`.
+- The WordPress proxy always returns the envelope `{ clusters, limit, total, truncated }` on this route. The only compatibility carve-out is a legacy bare-array upstream response; in that case the plugin normalizes `limit` from the effective request limit, `total` from the returned row count, and `truncated=false`.
+- A partial envelope such as `{ "clusters": [...] }` without `limit`, `total`, or `truncated` is a contract violation. The proxy surfaces that upstream failure as a `502 invalid_cluster_list_envelope` response rather than inventing the missing metadata.
 - For unlabeled clusters, `label` may be a synthetic `cluster-*` prefix and `is_auto_label` is `true`.
 - `suggested_label*` fields may be populated for unlabeled clusters.
 - `user_confirmed` distinguishes user-curated labels from auto-generated ones.

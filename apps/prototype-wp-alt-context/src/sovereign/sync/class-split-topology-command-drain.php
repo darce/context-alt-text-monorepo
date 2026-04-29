@@ -10,6 +10,7 @@ require_once __DIR__ . '/../repositories/interface-sync-state-repository.php';
 require_once __DIR__ . '/../repositories/class-clusters-repository.php';
 require_once __DIR__ . '/../repositories/class-identity-members-repository.php';
 require_once __DIR__ . '/../repositories/class-sync-state-repository.php';
+require_once __DIR__ . '/../../support/class-telemetry.php';
 require_once __DIR__ . '/class-snapshot-client.php';
 require_once __DIR__ . '/class-snapshot-projector.php';
 require_once __DIR__ . '/class-snapshot-client-transport.php';
@@ -23,6 +24,7 @@ use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
+use AltContext\Support\Telemetry;
 use Throwable;
 use WP_Error;
 
@@ -52,6 +54,7 @@ class SplitTopologyCommandDrain {
 	private const DRAIN_HOOK = 'acx_sync_drain_split_topology_commands';
 	private const ACTION_SCHEDULER_GROUP = 'acx-sync';
 	private const DEFAULT_BATCH_SIZE = 10;
+	private const MAX_MEMBER_LOAD_PAGES = 20;
 	private const DEFAULT_MAX_ATTEMPTS = 5;
 
 	private TopologyCommandRepositoryInterface $repository;
@@ -521,7 +524,7 @@ class SplitTopologyCommandDrain {
 			return false;
 		}
 
-		$local_members = $this->members_repository->list_for_cluster( $source_cluster_id, 5000, 0, $tenant_id );
+		$local_members = $this->load_all_members_for_cluster( $tenant_id, $source_cluster_id );
 		if ( empty( $local_members ) ) {
 			return false;
 		}
@@ -573,7 +576,7 @@ class SplitTopologyCommandDrain {
 			return false;
 		}
 
-		$local_members = $this->members_repository->list_for_cluster( $source_cluster_id, 5000, 0, $tenant_id );
+		$local_members = $this->load_all_members_for_cluster( $tenant_id, $source_cluster_id );
 		if ( empty( $local_members ) ) {
 			return false;
 		}
@@ -679,6 +682,57 @@ class SplitTopologyCommandDrain {
 		}
 
 		return true;
+	}
+
+	/**
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function load_all_members_for_cluster( string $tenant_id, string $cluster_id ): array {
+		$limit = IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT;
+		$offset = 0;
+		$members = array();
+		$total_count = null;
+		$page_count = 0;
+
+		// Split-topology drain runs under the tenant-scoped sequencing barrier; mid-drain member
+		// mutations are out of scope for this paged read helper.
+		while ( $page_count < self::MAX_MEMBER_LOAD_PAGES ) {
+			$page = $this->members_repository->list_for_cluster( $cluster_id, $limit, $offset, $tenant_id );
+			if ( empty( $page ) ) {
+				break;
+			}
+
+			array_push( $members, ...$page );
+			$offset += count( $page );
+			++$page_count;
+
+			if ( null === $total_count && isset( $page[0]['total_count'] ) && is_numeric( $page[0]['total_count'] ) ) {
+				$total_count = max( 0, (int) $page[0]['total_count'] );
+			}
+
+			if ( null !== $total_count && $offset >= $total_count ) {
+				break;
+			}
+
+			if ( count( $page ) < $limit ) {
+				break;
+			}
+		}
+
+		if ( $page_count >= self::MAX_MEMBER_LOAD_PAGES && ( null === $total_count || $offset < $total_count ) ) {
+			Telemetry::log_line(
+				sprintf(
+					'[acx] SplitTopologyCommandDrain capped member pagination for cluster %s tenant %s after %d pages (%d loaded of %s).',
+					$cluster_id,
+					$tenant_id,
+					$page_count,
+					$offset,
+					null === $total_count ? 'unknown total' : (string) $total_count
+				)
+			);
+		}
+
+		return $members;
 	}
 
 	/**

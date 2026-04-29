@@ -20,7 +20,7 @@ use function is_string;
 use function wp_get_attachment_metadata;
 
 class MediaDetailController {
-	private const MAX_MEDIA_IDS_PER_REQUEST = 100;
+	public const MAX_MEDIA_IDS_PER_REQUEST = 100;
 
 	public function get_media_details( WP_REST_Request $request ): WP_REST_Response {
 		$requested_ids = $this->resolve_media_ids( $request );

@@ -5,10 +5,16 @@ import { fetchWorkbenchMediaDetail } from '../workbenchMediaApi';
 
 const mockConfig = {
   nonce: 'nonce-123',
+  endpoints: {
+    workbenchMediaDetail: 'https://example.com/workbench/media/detail',
+  } as Record<string, string>,
 };
 
 vi.mock('../config', () => ({
-  getEndpoint: vi.fn((key: string) => `https://example.com/${key}`),
+  getEndpoint: vi.fn((...keys: string[]) => {
+    const configuredKey = keys.find((key) => mockConfig.endpoints[key]);
+    return configuredKey ? mockConfig.endpoints[configuredKey] : `https://example.com/${keys[0] ?? 'default'}`;
+  }),
   getConfig: vi.fn(() => mockConfig),
 }));
 
@@ -30,27 +36,53 @@ describe('workbenchMediaApi', () => {
     vi.clearAllMocks();
   });
 
-  it('normalizes media-detail truncation metadata', async () => {
+  it('rejects workbench media detail payloads without envelope metadata', async () => {
     fetchApiMock.mockResolvedValue({
-      details_by_media: { '11': { id: 11 } },
-      limit: 100,
-      total: 101,
-      truncated: true,
+      details_by_media: {
+        '11': {
+          id: 11,
+          mimeType: 'image/jpeg',
+          updatedAt: '2026-04-29T00:00:00Z',
+          dimensions: { width: 1200, height: 800 },
+          xmpPersistence: null,
+        },
+      },
     });
-
-    const result = await fetchWorkbenchMediaDetail([11, 12]);
-
-    expect(result.limit).toBe(100);
-    expect(result.total).toBe(101);
-    expect(result.truncated).toBe(true);
-    expect(result.detailsByMedia).toEqual({ '11': { id: 11 } });
-  });
-
-  it('rejects media-detail payloads that omit truncation metadata', async () => {
-    fetchApiMock.mockResolvedValue({ details_by_media: {} });
 
     await expect(fetchWorkbenchMediaDetail([11])).rejects.toThrow(
       'Workbench media detail response was malformed.',
     );
+  });
+
+  it('returns envelope metadata for valid workbench media detail payloads', async () => {
+    fetchApiMock.mockResolvedValue({
+      details_by_media: {
+        '11': {
+          id: 11,
+          mimeType: 'image/jpeg',
+          updatedAt: '2026-04-29T00:00:00Z',
+          dimensions: { width: 1200, height: 800 },
+          xmpPersistence: null,
+        },
+      },
+      limit: 100,
+      total: 1,
+      truncated: false,
+    });
+
+    await expect(fetchWorkbenchMediaDetail([11])).resolves.toEqual({
+      detailsByMedia: {
+        '11': {
+          id: 11,
+          mimeType: 'image/jpeg',
+          updatedAt: '2026-04-29T00:00:00Z',
+          dimensions: { width: 1200, height: 800 },
+          xmpPersistence: null,
+        },
+      },
+      limit: 100,
+      total: 1,
+      truncated: false,
+    });
   });
 });

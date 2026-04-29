@@ -175,7 +175,7 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 		// When tenant_id is provided, JOIN to clusters table for defense-in-depth
 		if ( null !== $tenant_id && '' !== trim( $tenant_id ) ) {
 			$sql = $this->prepare_query(
-				'SELECT m.*, COALESCE(p.name, c.label) AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
+				'SELECT COUNT(*) OVER() AS total_count, m.*, COALESCE(p.name, c.label) AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
 				FROM %i m
 				INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 				LEFT JOIN %i p ON p.id = c.person_id
@@ -194,7 +194,7 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 		} else {
 			// Legacy path: UUID-only filtering (relies on UUID uniqueness)
 			$sql = $this->prepare_query(
-				'SELECT m.*, COALESCE(p.name, c.label) AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
+				'SELECT COUNT(*) OVER() AS total_count, m.*, COALESCE(p.name, c.label) AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
 				FROM %i m
 				LEFT JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 				LEFT JOIN %i p ON p.id = c.person_id

@@ -14,7 +14,7 @@ use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 class NullIdentityMembersRepository implements IdentityMembersRepositoryInterface {
 	public function merge_snapshot_for_tenant( string $tenant_id, array $members, int $snapshot_version ): void {}
 
-	public function list_for_cluster( string $cluster_uuid, int $limit = 500, int $offset = 0, ?string $tenant_id = null ): array {
+	public function list_for_cluster( string $cluster_uuid, int $limit = IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT, int $offset = 0, ?string $tenant_id = null ): array {
 		return array();
 	}
 

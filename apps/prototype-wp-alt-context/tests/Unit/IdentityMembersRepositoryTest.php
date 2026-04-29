@@ -152,6 +152,7 @@ class IdentityMembersRepositoryTest extends TestCase
                 'identity_uuid' => 'id-list',
                 'cluster_uuid' => 'cluster-list',
                 'attachment_id' => 33,
+                'total_count' => 501,
             ],
         ];
 
@@ -159,7 +160,9 @@ class IdentityMembersRepositoryTest extends TestCase
 
         $this->assertCount(1, $rows);
         $this->assertSame('id-list', $rows[0]['identity_uuid']);
+        $this->assertSame(501, $rows[0]['total_count']);
         $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('COUNT(*) OVER() AS total_count', $sql);
         $this->assertStringContainsString('LEFT JOIN `wp_acx_persons` p', $sql);
         $this->assertStringContainsString('COALESCE(p.name, c.label) AS cluster_label', $sql);
     }

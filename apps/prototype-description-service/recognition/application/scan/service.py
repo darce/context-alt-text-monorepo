@@ -13,12 +13,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityScanJob, MediaIdentity
 from db.settings import get_database_settings
-from recognition.application.embedding.detector import FaceDetection, FaceDetectorProtocol, StubFaceDetector
+from recognition.application.embedding.detector import (
+    DetectionAdapterError,
+    DetectionTimeoutError,
+    FaceDetection,
+    FaceDetectorProtocol,
+    StubFaceDetector,
+)
 from recognition.application.embedding.generator import (
+    EmbeddingAdapterError,
     EmbeddingGeneratorProtocol,
     EmbeddingResult,
+    EmbeddingTimeoutError,
     StubEmbeddingGenerator,
 )
+from recognition.application.integrations import AdapterBreakerOpenError
 from recognition.application.storage import ObjectStore
 from recognition.domain.job import JobStatus
 
@@ -194,17 +203,27 @@ class ScanService:
         ``tasks.scan.process_scan_job_inline``.
         """
         sources_list = list(media_sources) if media_sources else list(media_ids)
-        return await run_scan_three_phase(
-            mark_running=lambda: self.mark_job_running(job_id),
-            detect=lambda: self._detector.detect(sources_list),
-            persist=lambda detections: self.save_job_results(
-                job_id=job_id,
-                tenant_id=tenant_id,
-                media_ids=media_ids,
-                media_sources=media_sources,
-                detections=detections,
-            ),
-        )
+        try:
+            return await run_scan_three_phase(
+                mark_running=lambda: self.mark_job_running(job_id),
+                detect=lambda: self._detector.detect(sources_list),
+                persist=lambda detections: self.save_job_results(
+                    job_id=job_id,
+                    tenant_id=tenant_id,
+                    media_ids=media_ids,
+                    media_sources=media_sources,
+                    detections=detections,
+                ),
+            )
+        except (
+            AdapterBreakerOpenError,
+            DetectionTimeoutError,
+            EmbeddingTimeoutError,
+            DetectionAdapterError,
+            EmbeddingAdapterError,
+        ) as exc:
+            await self.mark_job_failed(job_id, str(exc))
+            raise
 
     async def process_media_item(
         self,

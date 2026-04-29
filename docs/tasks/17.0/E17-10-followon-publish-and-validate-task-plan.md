@@ -524,15 +524,15 @@ All three sections MUST be present (use the explicit "none" / "clean for both" p
 
 ## Review Readiness
 
-- [ ] Every published-artifact slice (1–4) has both a `git ls-remote` proof AND a fresh-venv install proof recorded as `test_result` (where SHIP was chosen).
-- [ ] Every consumer slice (5–6) has a `load_session` round-trip proof recorded as `test_result`.
-- [ ] Per-consumer DB isolation evidence is captured in MCP rationale or `test_result.result`.
-- [ ] No source files in `packages/agent-{handoff,orchestrator}-mcp/src/` modified beyond Slice 1's `run_doctor` patch (constitution `rg-013`, `rg-014` preserved).
+- [x] Every published-artifact slice (1–4) has both a `git ls-remote` proof AND a fresh-venv install proof recorded as `test_result` (where SHIP was chosen).
+- [x] Every consumer slice (5–6) has a `load_session` round-trip proof recorded as `test_result`.
+- [x] Per-consumer DB isolation evidence is captured in MCP rationale or `test_result.result`.
+- [x] No source files in `packages/agent-{handoff,orchestrator}-mcp/src/` modified beyond Slice 1's `run_doctor` patch (constitution `rg-013`, `rg-014` preserved).
 - [ ] All `commit_sha` fields in handoff writes are full 40-char SHAs from `git rev-parse` (per Commit SHA Provenance Discipline rule).
 - [ ] Handoff decision records the slice, verification, and contract impact at each `close_slice` boundary.
-- [ ] INV-02 finding (handoff `run_doctor` defect) closed by Slice 1.
-- [ ] INV-03 finding (orchestrator drift) resolved by Slice 2 disposition.
-- [ ] INV-04 finding (agentic-system drift) closed by Slice 3.
+- [x] INV-02 finding (handoff `run_doctor` defect) closed by Slice 1.
+- [x] INV-03 finding (orchestrator drift) resolved by Slice 2 disposition.
+- [x] INV-04 finding (agentic-system drift) closed by Slice 3.
 
 ## Stretch Goals
 
@@ -542,11 +542,11 @@ All three sections MUST be present (use the explicit "none" / "clean for both" p
 
 ## Success Criteria
 
-- [x] `darce/mcp-agent-handoff` carries `v0.4.1` resolving to `18f681ca`. (Slice 1 ✅)
-- [ ] `darce/mcp-agent-orchestrator` either carries the Slice 2 disposition tag with retargeted dep, or `v0.1.0` is documented as accepted-with-deviation.
-- [ ] `darce/agentic-system` carries `v0.2.0` with the contract split (exactly 7 agentic-only contracts shipped) and the full skill catalog.
-- [ ] Standalone repos no longer ship monorepo-internal `docs/tech-debt/*` files (Slice 4).
-- [ ] Scratch consumer at `~/Development/hoist-mvp-consumer/` runs the full documented install + first `load_session` end-to-end with no manual intervention.
-- [ ] BOTH real consumers (`darce.github.io` AND `altcontext-marketing-monorepo`) run the same flow successfully, each writing to their own per-consumer handoff DB with no leakage.
+- [x] `darce/mcp-agent-handoff` carries the reconciled handoff surface: Slice 1 shipped `v0.4.1` resolving to `18f681ca`, and Slice 4 advanced the latest consumer tag to `v0.4.2`.
+- [x] `darce/mcp-agent-orchestrator` carries the Slice 2 SHIP disposition tag with the retargeted handoff dep, later advanced through the cleanup/compat tags to `v0.1.3`.
+- [x] `darce/agentic-system` carries the Slice 3 contract-split cut (`v0.2.0`) plus the Slice 4 cleanup tag (`v0.2.1`); the historical `v0.2.0` release shipped the 7 agentic-only contracts and the full skill catalog.
+- [x] Standalone repos no longer ship monorepo-internal `docs/tech-debt/*` files (Slice 4).
+- [x] Scratch consumer at `~/Development/hoist-mvp-consumer/` runs the full documented install + first `load_session` end-to-end with no manual intervention.
+- [x] BOTH real consumers (`darce.github.io` AND `altcontext-marketing-monorepo`) run the same flow successfully, each writing to their own per-consumer handoff DB with no leakage.
 - [ ] `handoff_close_check(enforce=True, require_fresh_tests=True)` returns `ready_to_close: true` on the task branch HEAD.
-- [ ] `## Lessons Learned` section in `docs/agentic/consumer-setup.md` reflects real-consumer experience (or asserts "no lessons").
+- [x] `## Lessons Learned` section in `docs/agentic/consumer-setup.md` reflects real-consumer experience (or asserts "no lessons").

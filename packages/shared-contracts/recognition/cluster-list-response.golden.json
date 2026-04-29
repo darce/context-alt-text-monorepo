@@ -1,0 +1,88 @@
+{
+  "clusters": [
+    {
+      "id": "cluster-local-1",
+      "label": "Alice Example",
+      "is_auto_label": false,
+      "identity_count": 3,
+      "member_ids": ["identity-local-1", "identity-local-2", "identity-local-3"],
+      "representative_identity": {
+        "media_id": 11,
+        "bbox": {
+          "x": 45,
+          "y": 60,
+          "width": 120,
+          "height": 120
+        }
+      },
+      "sample_identities": [
+        {
+          "identity_id": "identity-local-1",
+          "media_id": 11,
+          "similarity": 0.98,
+          "confidence": 0.98,
+          "clustering_pending": false,
+          "bbox": {
+            "x": 45,
+            "y": 60,
+            "width": 120,
+            "height": 120
+          },
+          "thumb_url": "https://example.test/uploads/11-thumb.jpg",
+          "media_url": "https://example.test/uploads/11.jpg"
+        },
+        {
+          "identity_id": "identity-local-2",
+          "media_id": 12,
+          "similarity": 0.95,
+          "confidence": 0.95,
+          "clustering_pending": false,
+          "bbox": {
+            "x": 152,
+            "y": 84,
+            "width": 96,
+            "height": 104
+          },
+          "thumb_url": "https://example.test/uploads/12-thumb.jpg",
+          "media_url": "https://example.test/uploads/12.jpg"
+        }
+      ]
+    },
+    {
+      "id": "cluster-local-2",
+      "label": "Bob Example",
+      "is_auto_label": false,
+      "identity_count": 2,
+      "member_ids": ["identity-local-4", "identity-local-5"],
+      "representative_identity": {
+        "media_id": 22,
+        "bbox": {
+          "x": 18,
+          "y": 22,
+          "width": 140,
+          "height": 140
+        }
+      },
+      "sample_identities": [
+        {
+          "identity_id": "identity-local-4",
+          "media_id": 22,
+          "similarity": 0.92,
+          "confidence": 0.92,
+          "clustering_pending": false,
+          "bbox": {
+            "x": 18,
+            "y": 22,
+            "width": 140,
+            "height": 140
+          },
+          "thumb_url": "https://example.test/uploads/22-thumb.jpg",
+          "media_url": "https://example.test/uploads/22.jpg"
+        }
+      ]
+    }
+  ],
+  "limit": 2,
+  "total": 3,
+  "truncated": true
+}

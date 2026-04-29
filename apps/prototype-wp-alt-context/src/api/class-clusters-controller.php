@@ -476,10 +476,14 @@ class ClustersController extends AbstractRecognitionProxyController {
 		}
 
 		if ( isset( $data['clusters'] ) && is_array( $data['clusters'] ) ) {
+			if ( ! isset( $data['limit'], $data['total'], $data['truncated'] ) || ! is_numeric( $data['limit'] ) || ! is_numeric( $data['total'] ) || ! is_bool( $data['truncated'] ) ) {
+				return $response;
+			}
+
 			$clusters = $data['clusters'];
-			$total = isset( $data['total'] ) && is_numeric( $data['total'] ) ? max( 0, (int) $data['total'] ) : count( $clusters );
-			$limit = isset( $data['limit'] ) && is_numeric( $data['limit'] ) ? max( 1, (int) $data['limit'] ) : $requested_limit;
-			$truncated = isset( $data['truncated'] ) ? true === $data['truncated'] : $total > count( $clusters );
+			$total = max( 0, (int) $data['total'] );
+			$limit = max( 1, (int) $data['limit'] );
+			$truncated = $data['truncated'];
 
 			return new WP_REST_Response(
 				array(

@@ -357,6 +357,102 @@ class ClustersControllerTest extends TestCase
         $this->assertSame('cluster-proxy', $data['clusters'][0]['id']);
     }
 
+    public function testListClustersClampsProxyLimitToConfiguredMaximum(): void
+    {
+        $controller = new ClustersController(
+            new NullClustersRepository(),
+            new NullIdentityMembersRepository(),
+            new NullSyncStateRepository(),
+            null,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                ['id' => 'cluster-proxy', 'label' => 'Proxied', 'identity_count' => 5],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
+        $request->set_param('limit', 10000);
+        $response = $controller->list_clusters($request);
+
+        $this->assertInstanceOf(
+            \WP_REST_Response::class,
+            $response
+        );
+        $data = $response->get_data();
+        $this->assertSame(500, $data['limit']);
+        $this->assertSame(1, $data['total']);
+        $this->assertFalse($data['truncated']);
+    }
+
+    public function testListClustersClampsProxyLimitToConfiguredMinimum(): void
+    {
+        $controller = new ClustersController(
+            new NullClustersRepository(),
+            new NullIdentityMembersRepository(),
+            new NullSyncStateRepository(),
+            null,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                ['id' => 'cluster-proxy', 'label' => 'Proxied', 'identity_count' => 5],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
+        $request->set_param('limit', 0);
+        $response = $controller->list_clusters($request);
+
+        $this->assertInstanceOf(
+            \WP_REST_Response::class,
+            $response
+        );
+        $data = $response->get_data();
+        $this->assertSame(1, $data['limit']);
+        $this->assertSame(1, $data['total']);
+        $this->assertFalse($data['truncated']);
+    }
+
+    public function testListClustersLeavesPartialProxyEnvelopeUntouched(): void
+    {
+        $controller = new ClustersController(
+            new NullClustersRepository(),
+            new NullIdentityMembersRepository(),
+            new NullSyncStateRepository(),
+            null,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        $partialEnvelope = [
+            'clusters' => [
+                ['id' => 'cluster-proxy', 'label' => 'Proxied', 'identity_count' => 5],
+            ],
+        ];
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode($partialEnvelope),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
+        $response = $controller->list_clusters($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame($partialEnvelope, $response->get_data());
+        $this->assertArrayNotHasKey('limit', $response->get_data());
+        $this->assertArrayNotHasKey('total', $response->get_data());
+        $this->assertArrayNotHasKey('truncated', $response->get_data());
+    }
+
     public function testListClustersTreatsZeroRowsAsAuthoritativeWhenSyncStateWasInitialized(): void
     {
         $clustersRepo = new class() extends NullClustersRepository {

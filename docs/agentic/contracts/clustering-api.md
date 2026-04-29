@@ -127,6 +127,8 @@ Response:
 
 List clusters (local-first via sovereign projection).
 
+Machine-readable schema: [recognition-cluster-list-response.schema.json](../../../packages/shared-contracts/schemas/recognition-cluster-list-response.schema.json)
+
 Query params:
 
 - `limit` (default 50, max 500)
@@ -134,37 +136,47 @@ Query params:
 - `labeled_only` (`true` or omitted)
 - `search` (optional substring filter for labels)
 
-Response (array of clusters):
+Response (envelope):
 
 ```json
-[
-  {
-    "id": "b43c2ab2-8d4f-42a8-9b2d-7f1d2e5a9b7a",
-    "tenant_id": "a9c2c2c0f6ef4a1f8d6d7a3f6c9b8e12",
-    "label": "Alice",
-    "is_labeled": true,
-    "is_auto_label": false,
-    "identity_count": 5,
-    "user_confirmed": true,
-    "suggested_label": null,
-    "suggested_label_source": null,
-    "suggested_label_confidence": null,
-    "representatives": [
-      {
-        "id": "8f91f4e7-3ad9-4c31-9a12-9c86e8790e6a",
+{
+  "clusters": [
+    {
+      "id": "b43c2ab2-8d4f-42a8-9b2d-7f1d2e5a9b7a",
+      "label": "Alice",
+      "is_auto_label": false,
+      "identity_count": 5,
+      "member_ids": [
+        "0a7b8331-bb7f-40c1-8f24-8c7e2b2d7c4f",
+        "0db4d66d-2d7b-4454-8ad4-954e469c0a33"
+      ],
+      "representative_identity": {
         "media_id": 101,
-        "thumb_url": "https://example.test/uploads/101-thumb.jpg",
-        "media_url": "https://example.test/uploads/101.jpg",
-        "bbox": { "x": 45, "y": 60, "width": 120, "height": 120 },
-        "is_pinned": false
-      }
-    ]
-  }
-]
+        "bbox": { "x": 45, "y": 60, "width": 120, "height": 120 }
+      },
+      "sample_identities": [
+        {
+          "identity_id": "0a7b8331-bb7f-40c1-8f24-8c7e2b2d7c4f",
+          "media_id": 101,
+          "similarity": 0.98,
+          "confidence": 0.98,
+          "clustering_pending": false,
+          "bbox": { "x": 45, "y": 60, "width": 120, "height": 120 },
+          "thumb_url": "https://example.test/uploads/101-thumb.jpg",
+          "media_url": "https://example.test/uploads/101.jpg"
+        }
+      ]
+    }
+  ],
+  "limit": 50,
+  "total": 123,
+  "truncated": true
+}
 ```
 
 Notes:
 
+- The WordPress proxy always returns the envelope `{ clusters, limit, total, truncated }` on this route, even when the upstream backend still replies with a bare array. In that legacy proxy case the plugin normalizes `limit` from the effective request limit, `total` from the returned row count, and `truncated=false`.
 - For unlabeled clusters, `label` may be a synthetic `cluster-*` prefix and `is_auto_label` is `true`.
 - `suggested_label*` fields may be populated for unlabeled clusters.
 - `user_confirmed` distinguishes user-curated labels from auto-generated ones.

@@ -1,0 +1,143 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/recognition-cluster-list-response.schema.json",
+  "title": "Recognition Cluster List Response",
+  "description": "WordPress recognition proxy envelope for cluster list responses.",
+  "type": "object",
+  "required": ["clusters", "limit", "total", "truncated"],
+  "properties": {
+    "clusters": {
+      "type": "array",
+      "description": "Cluster summaries returned by GET /recognition/clusters.",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "identity_count",
+          "member_ids",
+          "representative_identity",
+          "sample_identities"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable cluster UUID."
+          },
+          "label": {
+            "type": "string",
+            "description": "Resolved cluster label presented by the admin UI."
+          },
+          "is_auto_label": {
+            "type": "boolean",
+            "description": "Whether the label is system-derived."
+          },
+          "identity_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total number of identities currently assigned to the cluster."
+          },
+          "member_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Identity UUIDs already present in the local projection for this cluster."
+          },
+          "representative_identity": {
+            "type": "object",
+            "required": ["media_id", "bbox"],
+            "properties": {
+              "media_id": {
+                "type": ["integer", "null"],
+                "minimum": 1,
+                "description": "Attachment ID for the current representative image when available."
+              },
+              "bbox": {
+                "type": "object",
+                "required": ["x", "y", "width", "height"],
+                "properties": {
+                  "x": { "type": "integer", "minimum": 0 },
+                  "y": { "type": "integer", "minimum": 0 },
+                  "width": { "type": "integer", "minimum": 0 },
+                  "height": { "type": "integer", "minimum": 0 }
+                }
+              }
+            }
+          },
+          "sample_identities": {
+            "type": "array",
+            "description": "Preview identities included with the cluster summary for UI rendering.",
+            "items": {
+              "type": "object",
+              "required": ["identity_id", "media_id", "similarity", "confidence", "bbox"],
+              "properties": {
+                "identity_id": {
+                  "type": "string"
+                },
+                "media_id": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "similarity": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "clustering_pending": {
+                  "type": "boolean"
+                },
+                "bbox": {
+                  "type": "object",
+                  "required": ["x", "y", "width", "height"],
+                  "properties": {
+                    "x": { "type": "integer", "minimum": 0 },
+                    "y": { "type": "integer", "minimum": 0 },
+                    "width": { "type": "integer", "minimum": 0 },
+                    "height": { "type": "integer", "minimum": 0 }
+                  }
+                },
+                "thumb_url": {
+                  "type": ["string", "null"],
+                  "format": "uri"
+                },
+                "media_url": {
+                  "type": ["string", "null"],
+                  "format": "uri"
+                }
+              }
+            }
+          },
+          "confidence_score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Maximum number of cluster summaries returned in this response."
+    },
+    "total": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of matching clusters available for the request."
+    },
+    "truncated": {
+      "type": "boolean",
+      "description": "Whether additional matching clusters exist beyond this page."
+    }
+  }
+}

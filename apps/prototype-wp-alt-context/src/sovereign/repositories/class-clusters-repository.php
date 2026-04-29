@@ -12,6 +12,7 @@ use function array_fill;
 use function array_filter;
 use function array_merge;
 use function array_map;
+use function array_chunk;
 use function array_unique;
 use function array_values;
 use function count;
@@ -53,7 +54,10 @@ class ClustersRepository implements ClustersRepositoryInterface {
 		$incoming_ids        = $this->extract_snapshot_cluster_ids( $normalized_clusters );
 
 		$this->prepare_snapshot_merge_for_tenant( $tenant_id, $incoming_ids );
-		$this->merge_snapshot_batch_for_tenant( $tenant_id, $normalized_clusters, $snapshot_version );
+
+		foreach ( array_chunk( $normalized_clusters, ClustersRepositoryInterface::MAX_SNAPSHOT_MERGE_BATCH ) as $cluster_batch ) {
+			$this->merge_snapshot_batch_for_tenant( $tenant_id, $cluster_batch, $snapshot_version );
+		}
 	}
 
 	/**

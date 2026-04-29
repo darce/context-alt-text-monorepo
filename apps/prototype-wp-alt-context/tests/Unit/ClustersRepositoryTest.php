@@ -97,6 +97,50 @@ class ClustersRepositoryTest extends TestCase
         $this->assertStringContainsString('is_user_confirmed = 0', $mergedSql);
     }
 
+    public function testMergeSnapshotForTenantChunksLargePayloadsIntoBoundedBatches(): void
+    {
+        $repository = new class() extends ClustersRepository {
+            public array $preparedCalls = [];
+            public array $batchCalls = [];
+
+            public function prepare_snapshot_merge_for_tenant(string $tenant_id, array $incoming_cluster_ids): void
+            {
+                $this->preparedCalls[] = [
+                    'tenant_id' => $tenant_id,
+                    'incoming_cluster_ids' => $incoming_cluster_ids,
+                ];
+            }
+
+            public function merge_snapshot_batch_for_tenant(string $tenant_id, array $clusters, int $snapshot_version): void
+            {
+                $this->batchCalls[] = [
+                    'tenant_id' => $tenant_id,
+                    'clusters' => $clusters,
+                    'snapshot_version' => $snapshot_version,
+                ];
+            }
+        };
+
+        $clusters = [];
+        for ($index = 1; $index <= 501; $index++) {
+            $clusters[] = [
+                'cluster_uuid' => sprintf('cluster-%03d', $index),
+                'identity_count' => 1,
+            ];
+        }
+
+        $repository->merge_snapshot_for_tenant('tenant-batched', $clusters, 8);
+
+        $this->assertCount(1, $repository->preparedCalls);
+        $this->assertSame('tenant-batched', $repository->preparedCalls[0]['tenant_id']);
+        $this->assertCount(501, $repository->preparedCalls[0]['incoming_cluster_ids']);
+        $this->assertCount(2, $repository->batchCalls);
+        $this->assertCount(500, $repository->batchCalls[0]['clusters']);
+        $this->assertCount(1, $repository->batchCalls[1]['clusters']);
+        $this->assertSame(8, $repository->batchCalls[0]['snapshot_version']);
+        $this->assertSame(8, $repository->batchCalls[1]['snapshot_version']);
+    }
+
     public function testListForTenantReturnsRowsFromDatabaseLayer(): void
     {
         global $wpdb;

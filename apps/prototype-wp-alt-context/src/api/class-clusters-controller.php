@@ -477,7 +477,11 @@ class ClustersController extends AbstractRecognitionProxyController {
 
 		if ( isset( $data['clusters'] ) && is_array( $data['clusters'] ) ) {
 			if ( ! isset( $data['limit'], $data['total'], $data['truncated'] ) || ! is_numeric( $data['limit'] ) || ! is_numeric( $data['total'] ) || ! is_bool( $data['truncated'] ) ) {
-				return $response;
+				return new WP_Error(
+					'invalid_cluster_list_envelope',
+					'Cluster list response must include limit, total, and truncated when clusters is present.',
+					array( 'status' => 502 )
+				);
 			}
 
 			$clusters = $data['clusters'];

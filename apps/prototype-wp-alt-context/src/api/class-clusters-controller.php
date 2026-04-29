@@ -374,11 +374,10 @@ class ClustersController extends AbstractRecognitionProxyController {
 
 			$member_rows = $this->members_repository->list_for_cluster( $cluster_id, self::GET_CLUSTER_MEMBERS_MAX_LIMIT, 0, $tenant_id );
 			$members = $this->member_mapper->map_cluster_members( $member_rows );
-			$total = count( $members );
 			if ( isset( $member_rows[0]['total_count'] ) && is_numeric( $member_rows[0]['total_count'] ) ) {
 				$total = max( 0, (int) $member_rows[0]['total_count'] );
 			} else {
-				$total = max( $total, $this->members_repository->count_for_cluster( $cluster_id ) );
+				$total = $this->members_repository->count_for_cluster( $cluster_id );
 			}
 			return new WP_REST_Response( $this->build_cluster_members_envelope( $members, self::GET_CLUSTER_MEMBERS_MAX_LIMIT, $total ), 200 );
 		}

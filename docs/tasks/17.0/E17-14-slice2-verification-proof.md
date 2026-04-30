@@ -1,6 +1,6 @@
 # E17-14 Slice 2 Verification Proof
 
-> Status: `PENDING RUNTIME CAPTURE` - scaffold complete; the actual scratch-consumer transcripts and output excerpts still need to be captured.
+> Status: `FAIL - PUBLISHED PACKAGE BLOCKER` - the actual scratch-consumer probe was run, and the latest published package set still cannot satisfy the Slice 2 task-plan visibility criteria.
 
 This artifact records the rebased inputs, the actual scratch-consumer probe executed on 2026-04-30, and the published-package blockers that currently prevent the Slice 2 pass criteria from succeeding end to end. It is intentionally explicit about what was observed versus what remains deferred to an external package follow-up.
 

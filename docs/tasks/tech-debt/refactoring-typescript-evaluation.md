@@ -503,3 +503,15 @@ Convert nested if/else chains to early returns in `useClusterSaveAction`. Extrac
 **Targets:** H4
 
 Split `jobStateMachineUtils.ts` into `jobSelectors.ts`, `statusFormatters.ts`, `pipelineDerivation.ts`. Update imports. This is a pure restructuring pass with no behavioral change.
+
+## Consolidated Triage Checklist (2026-04-30)
+
+**Disposition:** Partially implemented; keep open until the remaining frontend refactors are owned by follow-on tasks.
+**Evaluation basis:** Current `main` app code under `apps/prototype-wp-alt-context/js/admin`.
+
+- [x] Retention page work has partially landed: `RetentionPage.tsx` now delegates state, query, mutation, dialog, and audit concerns to `pages/retention/*` modules.
+- [ ] H1 remains open: `SyncStatusIndicator` still mixes API calls, presentation derivation, and rendering in one component.
+- [ ] H3/L4 remain open: `useClusterSaveAction` still accepts a large destructured option object and should be grouped into cohesive state/action/mutation objects.
+- [ ] H4/M4 remain open: status strings are still compared directly across job state hooks and utility modules; centralize as `as const` status objects and helper predicates.
+- [ ] M1/L3 remain open: flatten `useClusterSaveAction` conditionals and extract a reusable `isAbortError` type guard.
+- [ ] Create a sliced frontend refactor task plan for status constants, hook parameter grouping, and `SyncStatusIndicator` extraction; archive this assessment once that plan owns the active checklist.

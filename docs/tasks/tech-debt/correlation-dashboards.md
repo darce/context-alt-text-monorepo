@@ -78,3 +78,15 @@ Pending. Recommend solution 1 (Grafana + Prometheus) once both E15-2 Slice 3 and
 2. Dashboard JSON: committed under `infra/grafana/` or managed via Grafana's own provisioning? Committed is more reviewable.
 3. Is there a cost to running Prometheus continuously on the OCI A1 instance (storage, CPU) worth measuring before committing to the container? Expected footprint: <500MB disk over 15d, <5% CPU.
 4. Should the correlation-lookup panel also surface E15-1 Slice 3 auth-audit events for the same `correlation_id` (requires auth-audit events to include `correlation_id`)?
+
+## Consolidated Triage Checklist (2026-04-30)
+
+**Disposition:** Still needs implementation; do not archive yet.
+**Evaluation basis:** Current `main` app code under `apps/prototype-description-service`.
+
+- [x] Prerequisite metrics surface exists: `prometheus-client` is installed and `/metrics` is covered by API tests.
+- [x] Prerequisite correlation surface exists: scan queue rows persist `correlation_id` and worker handling binds it into log context.
+- [ ] Add the dashboard runtime surface: Grafana/Prometheus service definitions, datasource provisioning, and dashboard JSON under `infra/` or an explicit operations path.
+- [ ] Build the three operator dashboards from this plan: request overview, tenant breakdown, and correlation lookup.
+- [ ] Document dashboard deployment, auth, retention, and tenant-isolation assumptions in `docs/operations/`.
+- [ ] Archive this doc only after the dashboard assets and operator runbook are committed or after a newer task plan supersedes it.

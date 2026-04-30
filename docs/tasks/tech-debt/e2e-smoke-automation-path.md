@@ -68,3 +68,16 @@ Define a stable, repeatable E2E/smoke testing path that validates WordPress plug
 - [ ] CI can run smoke tests without LocalWP private APIs.
 - [ ] Backend outage/recovery behavior is validated deterministically.
 - [ ] New contributors can run the smoke suite with one documented setup path.
+
+## Consolidated Triage Checklist (2026-04-30)
+
+**Disposition:** Still needs implementation; do not archive yet.
+**Evaluation basis:** Current `main` app code under `apps/prototype-wp-alt-context`.
+
+- [x] WP-CLI command infrastructure exists for plugin operations (`acx xmp-backfill`, `acx reset-projection`) and can be reused by future seed/reset helpers.
+- [ ] Add `@playwright/test` and a Playwright config for WordPress plugin E2E flows.
+- [ ] Create `apps/prototype-wp-alt-context/tests/e2e/` with auth-state and fixture helpers.
+- [ ] Add deterministic WP-CLI seed/reset scripts for media, plugin options, and projection tables.
+- [ ] Add backend outage control through Docker Compose, `wp-env`, Toxiproxy, or an equivalent explicit helper.
+- [ ] Implement the three minimum smoke specs: offline label persistence, full-cycle local-read resilience, and sync-status integrity.
+- [ ] Archive only after a CI-capable smoke path exists or after a newer E2E task plan supersedes this one.

@@ -611,3 +611,17 @@ The TypeScript evaluation has significant overlap with this document's frontend 
 - [ ] Phase 5: Add behavior to MediaIdentity
 - [ ] Phase 5: Extract media resolution helpers in analyze.py
 - [ ] Phase 5: Consolidate TypeScript type guards
+
+## Consolidated Triage Checklist (2026-04-30)
+
+**Disposition:** Still needed as a source assessment; archive only after follow-on task plans own the remaining implementation work.
+**Evaluation basis:** Current `main` app code under all three app stacks.
+
+- [x] Some related app-health work has landed since this assessment, including PDS adapter timeout/breaker/phase-split work and a concrete `TenantIdentity` PHP value object.
+- [x] Proxy policy composition is partially solved: `AbstractRecognitionProxyController` now delegates retry/timeout policy to `RecognitionProxyPolicy`, though the inheritance-based controller shape remains.
+- [x] Suggestion extension scaffolding has moved beyond an empty scaffold; current code includes an infrastructure service and tests.
+- [ ] H1 remains open: split `SqlAlchemyClusterRepository` into focused repository classes.
+- [ ] H2/H4 remain open: `ClusterMutationsController` still contains repeated inline `START TRANSACTION` / `COMMIT` / `ROLLBACK` blocks and needs `run_transactional(callable)` or a service-layer extraction.
+- [ ] H3 remains partially open: `TenantIdentity` exists in PHP and `BoundingBox` exists as TypeScript API shape, but canonical PHP/Python `CurationState`, `OperationType`, `BoundingBox`, `TenantId`, and `SnapshotVersion` value objects/enums are not complete across the relevant boundaries.
+- [ ] H5/M4 remain open: replace raw tenant/version/bounding-box field clumps with cohesive parameter/value objects at boundaries.
+- [ ] Create or link follow-on task plans for repository split, PHP transaction/service-layer work, and cross-stack value objects; archive this assessment after those plans become the active tracking surfaces.

@@ -33,3 +33,14 @@ Then force-push all affected branches.
 ## Rule
 
 **No commit in this repository may contain a `Co-Authored-By` trailer or any AI/model attribution.** This is a mandatory, permanent rule — not a preference.
+
+## Consolidated Triage Checklist (2026-04-30)
+
+**Disposition:** Policy implemented; historical cleanup still needs explicit verification before archive.
+**Evaluation basis:** Current repository instruction surfaces and searchable file contents.
+
+- [x] The no-`Co-Authored-By` rule is codified in `CLAUDE.md` as a mandatory commit-message rule.
+- [x] Current file-content search finds policy/example references, but that is not the same as commit-history verification.
+- [ ] Run `git log --all --grep="Co-Authored-By" --oneline` in an approved maintenance context and record whether any commit trailers remain.
+- [ ] If trailers remain, coordinate collaborators, back up refs, and run the history rewrite from this plan.
+- [ ] Archive only after commit history is verified clean or after the rewrite is complete and pushed.

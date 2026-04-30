@@ -306,3 +306,16 @@ Proof:
 - [x] ADR `docs/adrs/ADR-008-external-adapter-stability-pattern.md` exists, links to this task plan, and codifies the timeout + breaker + phase-split shape.
 - [ ] `handoff_close_check(enforce=True)` passes.
 - [x] No new infra dependency in `pyproject.toml`.
+
+## Consolidated Triage Checklist (2026-04-30)
+
+**Disposition:** Archive candidate; app implementation is present and only lifecycle evidence needs final confirmation.
+**Evaluation basis:** Current `main` app code under `apps/prototype-description-service`.
+
+- [x] Parameter-object refactor exists via `recognition/application/orchestration/clustering/dependencies.py`.
+- [x] Adapter timeout and circuit-breaker integration files exist under `recognition/application/integrations/`.
+- [x] Scan queue status/correlation/attempt tracking exists in the current job models and repository implementation.
+- [x] ADR-008 exists and documents the external-adapter stability pattern.
+- [ ] Resolve the remaining checklist mismatch: this doc still asks for auto-labeler timeout coverage, while the task scope later says the auto-labeler is local DB/pure logic and out of scope.
+- [ ] Confirm review-run and `handoff_close_check(enforce=True)` evidence for `pds-pipeline-stability-26` before archiving.
+- [ ] Move to archive after lifecycle evidence is confirmed or add a short closure note explaining why the remaining unchecked boxes are no longer required.

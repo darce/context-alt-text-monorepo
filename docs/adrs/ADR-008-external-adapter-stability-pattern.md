@@ -35,7 +35,7 @@ stability gaps:
   no-DB remote inference step
 
 The task plan at
-`docs/tasks/tech-debt/pds-pipeline-stability-26-task-plan.md` decomposed the
+`docs/tasks/tech-debt/archive-or-transfer-candidates/pds-pipeline-stability-26-task-plan.md` decomposed the
 fix into bounded slices:
 
 - Slice 3 introduced `wait_for_adapter`, typed timeout failures, and
@@ -180,7 +180,7 @@ stable write seam for replay through `_persist_identities` and
 
 ## References
 
-- Task plan: `docs/tasks/tech-debt/pds-pipeline-stability-26-task-plan.md`
+- Task plan: `docs/tasks/tech-debt/archive-or-transfer-candidates/pds-pipeline-stability-26-task-plan.md`
 - Scope: `docs/scopes/pds-pipeline-stability-26.md`
 - Assessment: `docs/assessments/clustering-pipeline-postgres-refactor-literature-2026-04-26.md`
 - Implementation surfaces:

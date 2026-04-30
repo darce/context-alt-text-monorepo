@@ -45,7 +45,7 @@ The local reset flow currently drifts across multiple operator surfaces. The ope
 - `apps/prototype-description-service/.env.example` is the checked-in local template and is the first surface a clean checkout relies on.
 - `make reset` in `apps/prototype-description-service/Makefile` and the repo-root `make reset-local` both route operators into `reset_dev_db.sh`, so drift in the script/template boundary breaks both workflows.
 - The open handoff finding records the original mismatch between the reset script and the env template. Even if a partial code fix exists, the task remains incomplete until the full reset contract is verified and the finding is closed with evidence.
-- [dynamic-ip-ssh-access.md](../tech-debt/dynamic-ip-ssh-access.md) documents OCI SSH ingress drift, but that remote access issue is explicitly unrelated to the local reset/bootstrap failure and is out of scope for this task.
+- [dynamic-ip-ssh-access.md](../tech-debt/archive-or-transfer-candidates/dynamic-ip-ssh-access.md) documents OCI SSH ingress drift, but that remote access issue is explicitly unrelated to the local reset/bootstrap failure and is out of scope for this task.
 
 ## Target Outcome
 
@@ -88,7 +88,7 @@ Harden the local reset contract around one canonical env shape. The script shoul
 | `apps/prototype-description-service/docker-compose.db.yml` | Consumes the same DB env variables as the local reset path                                  |
 | `apps/prototype-description-service/db/settings.py`        | Expands env-driven DSNs and is the narrowest stable regression seam for template validation |
 | `Makefile`                                                 | Repo-root `reset-local` delegates into the app-local `make reset` path                      |
-| `docs/tasks/tech-debt/dynamic-ip-ssh-access.md`            | Explicitly unrelated remote access issue; keep out of scope                                 |
+| `docs/tasks/tech-debt/archive-or-transfer-candidates/dynamic-ip-ssh-access.md` | Explicitly unrelated remote access issue; keep out of scope                                 |
 
 ## Verification Strategy
 

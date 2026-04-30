@@ -35,3 +35,13 @@ Replace `pip` with `uv pip` in the Makefile's `install` and `setup` targets. uv 
 ## Prerequisites
 
 - `uv` installed: `pipx install uv`
+
+## Consolidated Triage Checklist (2026-04-30)
+
+**Disposition:** Ownership decision needed; transfer/archive candidate until scope is clarified.
+**Evaluation basis:** Current `main` install commands and agentic/tooling package split.
+
+- [ ] Decide whether `uv` is a required developer prerequisite or an optional fast path with pip fallback.
+- [ ] If the target is `apps/prototype-description-service`, create a new app-scoped task that names the affected Makefile/scripts/docs explicitly and move it back to active tech debt.
+- [ ] If the target is shared agentic/MCP/bootstrap install speed, move this to `/Users/daniel/Development/agentic-protocol-monorepo/docs` or the owning external package repo.
+- [ ] If no current install pain remains, archive this note as a stale quality-of-life proposal.

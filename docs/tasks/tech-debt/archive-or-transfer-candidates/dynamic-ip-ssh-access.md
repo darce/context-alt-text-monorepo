@@ -63,3 +63,14 @@ ssh_allowed_cidrs = ["99.237.0.0/16"]
 ## Decision
 
 Pending. Implement solution 2 (alias) immediately as a stopgap, then evaluate Tailscale for permanent fix.
+
+## Consolidated Triage Checklist (2026-04-30)
+
+**Disposition:** Archive candidate; Tailscale path is implemented/documented.
+**Evaluation basis:** Current `main` infrastructure/deploy surfaces.
+
+- [x] Canonical access path is documented in `infra/oci/README.md`: SSH via `ubuntu@acx-backend.tail1a44b8.ts.net`.
+- [x] Tailscale setup, MagicDNS verification, troubleshooting, and deploy-script wiring are documented in `infra/oci/README.md`.
+- [x] `scripts/deploy/recognition-service.sh` defaults `OCI_HOST` to `acx-backend.tail1a44b8.ts.net`.
+- [x] Public-IP SSH remains documented as fallback only.
+- [ ] Before final archive, update or remove stale cross-links that still describe this as pending E15/E14 work.

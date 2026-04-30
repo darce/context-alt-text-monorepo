@@ -74,3 +74,15 @@ done
 ## Decision
 
 **Executed 2026-04-24** on `MAINT-db-rename-context-alt-text-to-alt-context-20260424`. Active-file rename complete (see branch `feature/maint-db-rename-context-alt-text-to-alt-context-20260424`). Archive files intentionally not updated -- they are historical references and should remain accurate to the names in use at the time they were written. VM env-file updates and dev pgdata wipe follow in a separate operator step; see the VM restart procedure above.
+
+## Consolidated Triage Checklist (2026-04-30)
+
+**Disposition:** Partially complete; archive after local/operator environment drift is resolved or explicitly accepted.
+**Evaluation basis:** Current `main` app code under `apps/prototype-description-service`.
+
+- [x] Runtime defaults and checked-in examples now use `alt_context_service` (`db/settings.py`, `.env.example`, `.env.prod.example`, `db/alembic.ini`, and DB docs).
+- [x] Historical archive references are intentionally left unchanged.
+- [ ] Resolve or document the remaining local `.env` drift: `apps/prototype-description-service/.env` still sets `DB_NAME=context_alt_text_service`.
+- [ ] Confirm VM `prod`, `staging`, and `dev` env files use the new DB names or record that those updates are an operator-only step outside the repo.
+- [ ] Confirm old local pgdata has been wiped or is no longer referenced by active local startup flows.
+- [ ] Archive after the local/operator drift checklist is complete.

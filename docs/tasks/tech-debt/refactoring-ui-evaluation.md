@@ -463,3 +463,16 @@ Add `--acx-color-text-tertiary` token. Consolidate focus ring styles into `--acx
 **Targets:** H4, L1, L2
 
 Add status icons alongside color borders in toasts and badges. Add a button tertiary variant. Apply `.acx-empty-state` pattern consistently to all zero-content states. Conduct a WCAG contrast audit against the finalized token palette.
+
+## Consolidated Triage Checklist (2026-04-30)
+
+**Disposition:** Still needs implementation; keep open or promote to a design-system task plan.
+**Evaluation basis:** Current `main` styles under `apps/prototype-wp-alt-context/js/admin/styles`.
+
+- [x] Existing spacing and semantic color foundations remain in place and should be preserved.
+- [ ] Add foundation token scales: `--acx-gray-*`, `--acx-radius-*`, and `--acx-font-weight-*`.
+- [ ] Add a full type scale (`--acx-text-*`) and replace ad-hoc `font-size` literals across component SCSS.
+- [ ] Add an elevation/shadow scale and replace hardcoded `box-shadow` literals.
+- [ ] Consolidate focus ring tokens and add `--acx-color-text-tertiary`.
+- [ ] Pair status color with icons for toasts, badges, and other status indicators.
+- [ ] Archive only after a design-system implementation task lands or after this assessment is superseded by a narrower task plan.

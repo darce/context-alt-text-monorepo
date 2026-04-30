@@ -146,7 +146,7 @@ cd infra/oci
 terraform apply -auto-approve -target=oci_core_security_list.acx_security_list
 ```
 
-See `docs/tasks/tech-debt/dynamic-ip-ssh-access.md` for permanent solutions (Tailscale recommended).
+See `docs/tasks/tech-debt/archive-or-transfer-candidates/dynamic-ip-ssh-access.md` for the original drift note; Tailscale is now the canonical path.
 
 #### Tailscale (recommended for dynamic-IP workstations)
 

@@ -1,27 +1,54 @@
 {
   "schema_version": 1,
-  "remote_clone_path": ".agentic/remote",
-  "remote_sha": "2a03e136bf3359485d4305c7562162bd45fa30df",
-  "surfaces": {
-    "skills": {
-      "shared_root": ".agentic/remote/.claude/skills",
-      "local_root": "local/.claude/skills"
+  "remote_url": "git@github.com:darce/agentic-protocol-monorepo.git",
+  "remote_ref": "main",
+  "remote_sha": "e057c18254190dd36c20fb8b793e25d4c5cb8493",
+  "surfaces": [
+    {
+      "path": ".github/hooks",
+      "source": "local"
     },
-    "hooks": {
-      "shared_root": ".agentic/remote/.github/hooks",
-      "local_root": "local/.github/hooks"
+    {
+      "path": "scripts/hooks",
+      "source": "local"
     },
-    "commands": {
-      "shared_root": ".agentic/remote/.claude/commands",
-      "local_root": "local/.claude/commands"
+    {
+      "path": "docs/agentic/contracts",
+      "source": "local"
     },
-    "prompts": {
-      "shared_root": ".agentic/remote/.github/prompts",
-      "local_root": "local/.github/prompts"
+    {
+      "path": ".claude/commands",
+      "source": "generated"
     },
-    "contracts": {
-      "shared_root": ".agentic/remote/docs/agentic/contracts",
-      "local_root": "local/docs/agentic/contracts"
+    {
+      "path": ".claude/skills",
+      "source": "generated"
+    },
+    {
+      "path": ".github/prompts",
+      "source": "generated"
+    },
+    {
+      "path": ".codex/skills",
+      "source": "generated"
     }
-  }
+  ],
+  "configs": [
+    {
+      "path": ".mcp.json",
+      "action": "merged"
+    },
+    {
+      "path": ".vscode/mcp.json",
+      "action": "merged"
+    },
+    {
+      "path": ".codex/config.toml",
+      "action": "merged"
+    },
+    {
+      "path": "core.hooksPath",
+      "action": "set"
+    }
+  ]
 }

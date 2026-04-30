@@ -1,1 +1,0 @@
-../../../docs/agentic/skills/document-sync/SKILL.md

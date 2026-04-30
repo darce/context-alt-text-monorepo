@@ -45,6 +45,9 @@ def test_vscode_registers_handoff_provenance_guard() -> None:
 
     assert any("scripts/hooks/guard-handoff-provenance.py" in command for command in commands)
 
+    bash_entries = [entry for entry in entries if entry.get("matcher") == "Bash"]
+    assert any("scripts/hooks/guard-handoff-provenance.py" in entry.get("command", "") for entry in bash_entries)
+
 
 def test_claude_registers_handoff_provenance_guard() -> None:
     payload = _read_json(REPO_ROOT / ".claude" / "settings.json")
@@ -53,6 +56,10 @@ def test_claude_registers_handoff_provenance_guard() -> None:
 
     assert any("scripts/hooks/guard-handoff-provenance.py" in command for command in commands)
 
+    bash_entries = [entry for entry in entries if entry.get("matcher") == "Bash"]
+    bash_commands = [hook.get("command", "") for entry in bash_entries for hook in entry.get("hooks", [])]
+    assert any("scripts/hooks/guard-handoff-provenance.py" in command for command in bash_commands)
+
 
 def test_codex_registers_handoff_provenance_guard() -> None:
     payload = _read_json(REPO_ROOT / ".codex" / "hooks.json")
@@ -60,6 +67,10 @@ def test_codex_registers_handoff_provenance_guard() -> None:
     commands = [hook.get("command", "") for entry in entries for hook in entry.get("hooks", [])]
 
     assert any("scripts/hooks/guard-handoff-provenance.py" in command for command in commands)
+
+    bash_entries = [entry for entry in entries if entry.get("matcher") == "Bash"]
+    bash_commands = [hook.get("command", "") for entry in bash_entries for hook in entry.get("hooks", [])]
+    assert any("scripts/hooks/guard-handoff-provenance.py" in command for command in bash_commands)
 
 
 def test_codex_project_config_enables_hooks() -> None:

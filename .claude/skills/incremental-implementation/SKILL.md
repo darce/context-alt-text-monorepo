@@ -1,14 +1,17 @@
 ---
 name: incremental-implementation
-description: "Use when turning a reviewed task plan into implementation slices. Triggers when starting feature work from an approved plan or choosing the next slice under an active task."
+scope: harness
+description: Use when turning a reviewed task plan into implementation slices. Triggers
+  when starting feature work from an approved plan or choosing the next slice under
+  an active task.
 mode: execution
 context_budget: 100
 makefile_target: slice-commit
 mcp_tools:
-  - record_event
-  - search_handoff
-  - render_handoff
-  - plan_cursor
+- record_event
+- search_handoff
+- render_handoff
+- plan_cursor
 tdd_gate: true
 disable-model-invocation: false
 ---

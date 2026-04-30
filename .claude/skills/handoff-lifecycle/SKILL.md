@@ -1,16 +1,18 @@
 ---
 name: handoff-lifecycle
-description: "Use when entering, resuming, switching, or ending a task session. Triggers on `make context`, `load_session`, and task-to-task transitions."
+scope: harness
+description: Use when entering, resuming, switching, or ending a task session. Triggers
+  on `make context`, `load_session`, and task-to-task transitions.
 mode: execution
 context_budget: 100
 makefile_target: null
 mcp_tools:
-  - load_session
-  - get_handoff_state
-  - record_event
-  - update_task_status
-  - render_handoff
-  - switch_task
+- load_session
+- get_handoff_state
+- record_event
+- update_task_status
+- render_handoff
+- switch_task
 tdd_gate: false
 disable-model-invocation: false
 ---
@@ -53,6 +55,7 @@ This skill owns hot-state loading, safe task switching, and the rule that genera
 5. When changing task focus mid-session, use `switch_task` as the safe transition path so the outgoing task is archived before the new task becomes active.
 6. Only archive completed work after `update_task_status(done)`. Never archive a task that is still `in_progress`.
 7. End the session with task state aligned to reality: active task correct, blockers explicit, generated task view current.
+8. In the user-facing close-out, print a compact MCP write receipt with row ids from the tool responses. Use this shape: `MCP writes: <summary>; test_result id <id>; decision id <id> (<decision_key>); review_run id <id>. DASHBOARD.txt refreshed. Handoff updated: decision <decision_key> recorded.` Omit clauses that do not apply, but do not replace ids with a prose-only "recorded" claim.
 
 ## Common Rationalizations
 
@@ -84,6 +87,7 @@ Each flag is a re-entry trigger. Stop and re-enter at the step shown.
 
 - Session started from aligned task, branch, and worktree context.
 - Relevant MCP writes are recorded for work performed in the session.
+- The response names the MCP row ids written during the session.
 - `render_handoff(kind='dashboard')` was run after non-atomic state-changing writes, with `render_handoff(kind='current_task')` reserved for on-demand task snapshots.
 - Task switches happened through `switch_task`, not by overwriting the active row ad hoc.
 - Archive operations only happened after `update_task_status(done)`.

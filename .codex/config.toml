@@ -42,3 +42,11 @@ cwd = "."
 [mcp_servers."mcp-agent-orchestrator".env]
 PYENV_VERSION = "description-service"
 AGENT_HANDOFF_ENFORCE_BRANCH = "1"
+
+[mcp_servers.agent-handoff-mcp]
+command = "uvx"
+args = ["mcp-agent-handoff", "--workspace-root", ".", "serve-stdio"]
+
+[mcp_servers.agent-orchestrator-mcp]
+command = "uvx"
+args = ["mcp-agent-orchestrator", "--workspace-root", ".", "serve-stdio"]

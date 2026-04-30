@@ -22,7 +22,7 @@
 2. Confirm the canonical owner. If multiple layers adapt the shape, collapse ownership first.
 3. Classify the change: payload shape, status/error semantics, enum vocabulary, pagination/provenance metadata, or runtime parity.
 4. Update the owning contract in the same slice. If unchanged, record a handoff decision explaining why.
-	For test-only cleanup on boundary-touching files, add a same-slice checklist or contract note that explicitly states the runtime contract is unchanged.
+   For test-only cleanup on boundary-touching files, add a same-slice checklist or contract note that explicitly states the runtime contract is unchanged.
 5. Update shared schema/fixture in the same slice.
 6. Add deterministic proof: fixture/schema assertion, contract tests, runtime-parity proof.
 7. Record a handoff decision: boundary, owning contract, verification path, compatibility stance, valid downstream assumptions.
@@ -86,6 +86,10 @@ Rules:
 ## E15-2b Scan-Queue Correlation Propagation
 
 No external HTTP contract shape changed for E15-2b. The `/recognition/analyze` request/response payloads are byte-identical. Internal persistence added two nullable columns on `identity_scan_job_items` (`correlation_id`, `correlation_source`) so the async worker can log against the same id as the enqueueing request. The `CorrelationSource` StrEnum is the canonical vocabulary and lives in `recognition/interface_adapters/http/middleware/correlation.py`. Handoff decisions: `claude_slice_complete_E15-2b_correlation_persistence`, `claude_slice_complete_E15-2b_worker_correlation_binding`.
+
+## MAINT-PDS-LINT-CLEANUP-20260429 Adapter Lint Cleanup
+
+No external HTTP, worker, or persistence contract shape changed for MAINT-PDS-LINT-CLEANUP-20260429. The branch only fixes internal lint regressions in adapter timeout helpers, scan-task type imports, and formatter-altered import/whitespace surfaces under `apps/prototype-description-service/recognition/`. Downstream consumers may continue to assume byte-identical request/response payloads, unchanged job-status vocabulary, and unchanged worker/runtime semantics. Verification stays local to unit coverage plus lint/diagnostic checks; no shared schema or contract fixture changes are required for this maintenance slice.
 
 ## Remediation-Plan Finding IDs
 

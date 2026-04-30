@@ -23,7 +23,7 @@ class NullClustersRepository implements ClustersRepositoryInterface {
 		return array();
 	}
 
-	public function list_labels( string $tenant_id ): array {
+	public function list_labels( string $tenant_id, string $search = '', int $limit = self::DEFAULT_LIST_LIMIT ): array {
 		return array();
 	}
 

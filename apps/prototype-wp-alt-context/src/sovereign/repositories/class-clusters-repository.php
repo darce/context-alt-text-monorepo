@@ -256,9 +256,9 @@ class ClustersRepository implements ClustersRepositoryInterface {
 	}
 
 	/**
-	 * @return string[]
+	 * @return array<int,array<string,mixed>>
 	 */
-	public function list_labels( string $tenant_id ): array {
+	public function list_labels( string $tenant_id, string $search = '', int $limit = self::DEFAULT_LIST_LIMIT ): array {
 		global $wpdb;
 
 		$normalized_tenant_id = trim( $tenant_id );
@@ -271,11 +271,31 @@ class ClustersRepository implements ClustersRepositoryInterface {
 			return array();
 		}
 
+		$normalized_search = trim( $search );
+		$normalized_limit  = max( 1, $limit );
+		$conditions        = array(
+			'tenant_id = %s',
+			"label IS NOT NULL",
+			"label != ''",
+		);
+		$args = array(
+			$this->table_name,
+			$normalized_tenant_id,
+		);
+
+		if ( '' !== $normalized_search && method_exists( $wpdb, 'esc_like' ) ) {
+			$conditions[] = 'label LIKE %s';
+			$args[]       = '%' . $wpdb->esc_like( $normalized_search ) . '%';
+		}
+
 		$sql = $this->prepare_query(
-			"SELECT DISTINCT label FROM %i WHERE tenant_id = %s AND label IS NOT NULL AND label != '' ORDER BY label ASC",
-			array(
-				$this->table_name,
-				$normalized_tenant_id,
+			sprintf(
+				'SELECT COUNT(*) OVER() AS total_count, filtered.label FROM (SELECT DISTINCT label FROM %%i WHERE %s ORDER BY label ASC) filtered LIMIT %%d',
+				implode( ' AND ', $conditions )
+			),
+			array_merge(
+				$args,
+				array( $normalized_limit )
 			)
 		);
 
@@ -293,11 +313,14 @@ class ClustersRepository implements ClustersRepositoryInterface {
 		foreach ( $rows as $row ) {
 			$label = trim( (string) ( $row['label'] ?? '' ) );
 			if ( '' !== $label ) {
-				$labels[] = $label;
+				$labels[] = array(
+					'label' => $label,
+					'total_count' => max( 0, (int) ( $row['total_count'] ?? 0 ) ),
+				);
 			}
 		}
 
-		return array_values( array_unique( $labels ) );
+		return $labels;
 	}
 
 	public function has_projection_rows_for_tenant( string $tenant_id ): bool {

@@ -266,7 +266,7 @@ class LifecycleManagerTest extends TestCase
         $this->assertFalse(get_option('acx_roster_assignments'));
     }
 
-    public function testActivateChunksLegacyRosterMigrationUntilSubsequentActivationCompletes(): void
+    public function testActivateSchedulesLegacyRosterMigrationContinuationUntilChunkedMigrationCompletes(): void
     {
         global $wpdb;
 
@@ -310,8 +310,9 @@ class LifecycleManagerTest extends TestCase
             ],
             get_option('acx_legacy_roster_migration_cursor')
         );
+        $this->assertNotFalse(as_next_scheduled_action('acx_continue_legacy_roster_migration', [], 'acx-sync'));
 
-        $this->manager->activate();
+        do_action('acx_continue_legacy_roster_migration');
 
         $personInsertQueries = \array_values(\array_filter(
             $wpdb->queries,
@@ -327,6 +328,7 @@ class LifecycleManagerTest extends TestCase
         $this->assertFalse(get_option('acx_roster_entries'));
         $this->assertFalse(get_option('acx_roster_assignments'));
         $this->assertFalse(get_option('acx_legacy_roster_migration_cursor'));
+        $this->assertFalse(as_next_scheduled_action('acx_continue_legacy_roster_migration', [], 'acx-sync'));
     }
 
     /**

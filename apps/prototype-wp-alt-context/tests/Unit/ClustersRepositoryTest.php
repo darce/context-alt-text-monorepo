@@ -173,17 +173,36 @@ class ClustersRepositoryTest extends TestCase
         $this->assertStringContainsString("label LIKE", $sql);
     }
 
-    public function testListLabelsReturnsDistinctLabels(): void
+    public function testListLabelsReturnsBoundedRowsWithTotalCountMetadata(): void
     {
         global $wpdb;
         $wpdb->mockResults = [
-            ['label' => 'Alice'],
-            ['label' => 'Bob'],
+            ['label' => 'Alice', 'total_count' => 2],
+            ['label' => 'Bob', 'total_count' => 2],
         ];
 
-        $labels = $this->repository->list_labels('tenant-labels');
+        $labels = $this->repository->list_labels('tenant-labels', '', 25);
 
-        $this->assertSame(['Alice', 'Bob'], $labels);
+        $this->assertSame(
+            [
+                ['label' => 'Alice', 'total_count' => 2],
+                ['label' => 'Bob', 'total_count' => 2],
+            ],
+            $labels
+        );
+    }
+
+    public function testListLabelsAddsSearchAndLimitFilters(): void
+    {
+        global $wpdb;
+        $wpdb->mockResults = [];
+
+        $this->repository->list_labels('tenant-search', 'Alice', 25);
+
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString("label IS NOT NULL", $sql);
+        $this->assertStringContainsString("label LIKE", $sql);
+        $this->assertStringContainsString("LIMIT 25", $sql);
     }
 
     public function testListTopUnlabeledQueriesByIdentityCount(): void

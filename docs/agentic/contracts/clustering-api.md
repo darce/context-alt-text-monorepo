@@ -190,7 +190,7 @@ Machine-readable schema: [recognition-cluster-top-unlabeled-response.schema.json
 
 Query params:
 
-- `limit` (default 10)
+- `limit` (default 10, max 500)
 
 Response (envelope):
 
@@ -240,6 +240,7 @@ Notes:
 - `singleton_count` reports the number of single-identity clusters excluded from the naming queue, but only on local-projection / unavailable envelopes where the plugin can source that value honestly.
 - `projection_status` is `available` when local projection is readable, `bootstrapping` while the controller has scheduled bootstrap sync, and `unavailable` if a future controller path needs to surface a non-bootstrap projection failure. It is omitted on `backend_proxy` envelopes because those responses did not come from the projection.
 - WordPress and TypeScript consumers now treat `clusters`, `limit`, `total`, `truncated`, and `data_source` as canonical envelope metadata. Missing or malformed values are contract errors, not fields to infer locally.
+- The controller clamps excessive `limit` requests to the canonical `LIST_TOP_UNLABELED_CLUSTERS_MAX_LIMIT=500` before local or proxied reads, and the response `limit` field reports that effective capped value.
 - Clusters with `identity_count < 2`, `is_user_confirmed = true`, or `dismissed_at` set are excluded.
 
 ## GET /recognition/clusters/labels

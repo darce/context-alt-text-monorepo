@@ -42,7 +42,7 @@ Exit: three alerts configured + one verified test delivery.
 
 ### Slice 2 -- Tailscale SSH drift fix
 
-- Reference: [tech-debt/dynamic-ip-ssh-access.md](../tech-debt/dynamic-ip-ssh-access.md).
+- Reference: [tech-debt/dynamic-ip-ssh-access.md](../tech-debt/archive-or-transfer-candidates/dynamic-ip-ssh-access.md).
 - Install Tailscale on the OCI VM (single-machine tailnet acceptable for a solo operator).
 - Before tightening the OCI security list, capture and verify a break-glass recovery path: (a) OCI console serial-console access for this VM, and (b) the cloud-init / host-level procedure that would restore an IP-based SSH allowlist if Tailscale becomes unavailable. Document both in `infra/oci/README.md` alongside the Tailscale flow.
 - Open SSH (22) on the Tailscale interface only; tighten the OCI security list to remove the prior home-IP CIDR allowlist.

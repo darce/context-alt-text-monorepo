@@ -38,3 +38,14 @@ Establish a deterministic agent-side test execution path for trivial suites so f
 - Reproduce the hang with a minimal focused test command.
 - Identify whether the failure is caused by terminal capture, shell state, redirection, or the harness integration.
 - Document one reliable validation command pattern for narrow suites and update agent instructions if needed.
+
+## Consolidated Triage Checklist (2026-04-30)
+
+**Disposition:** Still needs investigation; keep open.
+**Evaluation basis:** Current test-run policy and current frontend verification surfaces.
+
+- [ ] Reproduce the focused Vitest hang with a minimal command under the agent terminal flow.
+- [ ] Compare foreground terminal output, redirected output, and any harness cancellation/timeout behavior.
+- [ ] Identify whether the failure is caused by terminal capture, shell state, redirection, Vitest process behavior, or harness integration.
+- [ ] Document a reliable narrow-suite command pattern in the agent instructions or testing guide.
+- [ ] Archive only after the root cause and fallback convention are documented.

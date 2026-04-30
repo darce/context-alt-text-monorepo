@@ -161,3 +161,14 @@ in `git worktree list`.
 - Worktree dev path proposal: see decision `cdx_slice_complete_INVEST-LOCAL-SYNC_merge_train_to_main_db95a4e8`
 - Branch isolation rule: [CLAUDE.md § Branch Isolation Rule](../../../CLAUDE.md#branch-isolation-rule)
 - Pre-merge gate: [development-workflow.md § Pre-Merge Gate](../../agentic/rules/development-workflow.md#pre-merge-gate-mandatory)
+
+## Consolidated Triage Checklist (2026-04-30)
+
+**Disposition:** Transfer/archive candidate; this is agentic workflow/MCP process debt, not app tech debt.
+**Evaluation basis:** Current `main` agentic workflow surfaces and external MCP package ownership.
+
+- [ ] Inspect the historical session-bleed stash and either recover unique work or drop obsolete content.
+- [ ] Verify whether the three stale feature branches still exist; archive them as `archive/*` tags before deleting live branch refs if they do.
+- [ ] Re-check the v2 envelope mirroring failure against the current external MCP package scope; move it to the owning external repo or `/Users/daniel/Development/agentic-protocol-monorepo/docs` if still relevant.
+- [x] Placeholder worktrees named in this document were not present in the current `git worktree list` output; treat that item as resolved unless they reappear.
+- [ ] Archive this monorepo copy once the stash/branch cleanup is resolved and any MCP-envelope item is transferred to the agentic protocol surface.

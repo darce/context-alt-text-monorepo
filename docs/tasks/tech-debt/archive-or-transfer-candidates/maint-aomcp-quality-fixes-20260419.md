@@ -92,3 +92,14 @@ A → B → C → D → E → F → G → H → I. Smallest/safest first so the 
 - Per slice: targeted `pytest` on the affected file / module.
 - Post-last-slice: full `make test-orchestrator` + `make test-handoff` green.
 - `handoff_close_check(enforce=True, require_fresh_tests=True)` passes before merge.
+
+## Consolidated Triage Checklist (2026-04-30)
+
+**Disposition:** Ephemeral/superseded; transfer or archive.
+**Evaluation basis:** Current `main` repository layout.
+
+- [x] The in-monorepo `packages/agent-handoff-mcp/` and `packages/agent-orchestrator-mcp/` implementation directories are absent from current `main`.
+- [x] Current agent instructions route MCP package verification to standalone external package refs rather than package-local monorepo tests.
+- [ ] Query or review the external MCP package task/finding state for `MAINT-AOMCP-QUALITY-20260417` before declaring every slice closed.
+- [ ] If any AOMCP quality finding remains open, move it to the external repo's task system instead of keeping this monorepo doc active.
+- [ ] Archive this doc once the external-package status is confirmed or the residual work is transferred.

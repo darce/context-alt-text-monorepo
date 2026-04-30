@@ -22,7 +22,7 @@
 | WordPress demo provisioning                                                        | **Pending**                     | **E15-3**                                                                                        |
 | OCI budget alerts ($1/$5/$10)                                                      | **Pending**                     | **E15-5**                                                                                        |
 | ARM compatibility verification artifact                                            | **Pending**                     | **E15-5** (de facto verified by running A1 instance)                                             |
-| Dynamic IP SSH drift (Tailscale)                                                   | **Pending**                     | **E15-5** + [tech-debt/dynamic-ip-ssh-access.md](../../tasks/tech-debt/dynamic-ip-ssh-access.md) |
+| Dynamic IP SSH drift (Tailscale)                                                   | **Resolved**                    | [archived tech-debt note](../../tasks/tech-debt/archive-or-transfer-candidates/dynamic-ip-ssh-access.md) |
 | End-to-end WP → backend → recognition smoke test                                   | **Pending**                     | **E15-5**                                                                                        |
 | Hetzner CX22 fallback plan documented                                              | **Pending**                     | **E15-5**                                                                                        |
 

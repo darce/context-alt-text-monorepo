@@ -18,3 +18,14 @@
 - [ ] **#9** Add `typeof` guards at `wp.hooks` usage sites, not just warn-and-continue (`main.tsx` + downstream consumers) — _Defer: keep rendering, guard at usage sites only; not a regression_
 - [ ] **#10** Map `quality_score` from ORM model into domain `MediaIdentity` (pre-existing gap, not a regression) — _Defer: fix belongs in the detection pipeline, not the mapping layer_
 - [ ] **#11** Optimize sovereign orphan-member cleanup cadence (`delete_orphan_rows()` in `IdentityMembersRepository`) for high-member tenants — _Defer: v0.1.0 runs cleanup every sync; revisit with profiling in roadmap Phase 2 to avoid repeated full-scan LEFT JOIN cost_
+
+## Consolidated Triage Checklist (2026-04-30)
+
+**Disposition:** Keep active as a registry; not an implementation task and not an archive candidate by itself.
+**Evaluation basis:** Current `main` app code under `apps/` plus the current tech-debt doc set.
+
+- [x] Registry still points at live follow-up docs for correlation dashboards, retry observability, and E2E smoke automation.
+- [x] Registry still includes cross-cutting process debt that is outside the app code but relevant to repository maintenance.
+- [ ] During the next quarterly pass, remove entries whose implementation has landed on `main` and whose source docs have been archived.
+- [ ] Promote any still-open high-priority registry item into a dated task plan before implementation starts.
+- [ ] Keep this file in `docs/tasks/tech-debt/`; archive only if the registry role moves to another maintained source of truth.

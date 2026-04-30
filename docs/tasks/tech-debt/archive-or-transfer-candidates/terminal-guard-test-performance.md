@@ -62,3 +62,13 @@ def test_allowlisted_make():
 - `sys.path.insert(0, str(Path(__file__).parent))` at the top of the test file, then `from terminal_guard import _check_command, _strip_env_prefix, _base_command`
 - The `terminal-guard.py` filename with a hyphen requires either renaming the file or using `importlib`. Renaming to `terminal_guard.py` is cleaner but changes the hook path in settings.
 - Alternative: add `terminal_guard.py` as a symlink, or use `importlib.util.spec_from_file_location`.
+
+## Consolidated Triage Checklist (2026-04-30)
+
+**Disposition:** Archive candidate.
+**Evaluation basis:** Current `.github/hooks/test_terminal_guard.py` plus a narrow test run.
+
+- [x] Direct in-process `_check_command` import is implemented with `importlib.util.spec_from_file_location`.
+- [x] Classification tests now call `_check_command()` directly while subprocess coverage remains for hook I/O contract paths.
+- [x] Verification passed: `PYENV_VERSION=description-service pyenv exec python -m pytest .github/hooks/test_terminal_guard.py -q` reported `111 passed in 0.89s`.
+- [x] No active implementation remains in this repo; this file is now retained only as historical investigation context.

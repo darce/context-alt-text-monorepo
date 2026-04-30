@@ -276,7 +276,7 @@ Exit criteria:
 | WP shared hosting provisioning + domain | @daniel | Not started | Phase 3 |
 | API key / origin policy decisions       | @daniel | Not started | Phase 1 |
 | OCI budget alert verification           | @daniel | Not started | Phase 4 |
-| Tailscale installation on OCI VM        | @daniel | Not started | Phase 4 |
+| Tailscale installation on OCI VM        | @daniel | Implemented/documented | Phase 4 |
 | CI secret provisioning for smoke tests  | @daniel | Not started | Phase 5 |
 
 ## Code Anchors
@@ -293,7 +293,7 @@ Exit criteria:
 | Plugin API         | `apps/prototype-wp-alt-context/src/api/class-sync-status-controller.php`   | Sync status for E2E verification            |
 | Frontend workbench | `apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx`           | Demo UX surface                             |
 | QA automation      | `apps/prototype-wp-alt-context/tests/e2e/`                                 | Proposed smoke gate location                |
-| Tech debt          | `docs/tasks/tech-debt/dynamic-ip-ssh-access.md`                            | SSH drift resolution                        |
+| Tech debt          | `docs/tasks/tech-debt/archive-or-transfer-candidates/dynamic-ip-ssh-access.md` | SSH drift resolution                        |
 
 ## Risks and Mitigations
 
@@ -349,11 +349,11 @@ Exit criteria:
 
 ## Phase 4: End-to-End Verification -- IN PROGRESS → [E15-4](../../tasks/15.0/E15-4-local-reset-bootstrap-hardening-task-plan.md) + [E15-5](../../tasks/15.0/E15-5-manual-remote-e2e-task-plan.md)
 
-> Source: Production Readiness Phase 6 exit criteria + [tech-debt/dynamic-ip-ssh-access.md](../../tasks/tech-debt/dynamic-ip-ssh-access.md)
+> Source: Production Readiness Phase 6 exit criteria + [tech-debt/dynamic-ip-ssh-access.md](../../tasks/tech-debt/archive-or-transfer-candidates/dynamic-ip-ssh-access.md)
 
 - [ ] Complete local reset bootstrap hardening (E15-4, in progress) ← _finding INVEST-reset-env-contract-mismatch_
 - [ ] Verify OCI budget alerts ($1/$5/$10 thresholds) ← _Prod Readiness P6 + E14 (E15-5)_
-- [ ] Resolve dynamic IP SSH access drift (Tailscale) ← _[tech-debt/dynamic-ip-ssh-access.md](../../tasks/tech-debt/dynamic-ip-ssh-access.md) (E15-5)_
+- [x] Resolve dynamic IP SSH access drift (Tailscale) ← _[tech-debt/dynamic-ip-ssh-access.md](../../tasks/tech-debt/archive-or-transfer-candidates/dynamic-ip-ssh-access.md) (implemented/documented)_
 - [ ] Run end-to-end WP → backend → recognition → response smoke test ← _Prod Readiness P6 + E14 (E15-5)_
 - [ ] Document Hetzner CX22 fallback plan ← _Prod Readiness P6 + E14 (E15-5)_
 - [ ] Capture ARM compatibility verification evidence ← _E14 (E15-5; de facto verified by running A1 instance, but missing recorded artifact)_

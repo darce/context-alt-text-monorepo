@@ -26,3 +26,14 @@ Low. Greenfield project, single developer. No CI currently consumes these files.
 
 - `.github/hooks/test_terminal_guard.py` has 7 hardcoded paths but these are test fixture strings (parsed, not resolved) and are functionally correct.
 - ~377 instances in `docs/` are prose examples in task plans and playbooks -- not actionable.
+
+## Consolidated Triage Checklist (2026-04-30)
+
+**Disposition:** Archive candidate.
+**Evaluation basis:** Current tracked `.codex/config.toml`, `.mcp.json`, and `.vscode/settings.json` on `main`.
+
+- [x] `.codex/config.toml` uses `cwd = "."`, relative MCP state paths, and environment variables instead of `/Users/daniel/...` paths.
+- [x] `.mcp.json` uses `--workspace-root .` and environment variables instead of absolute local paths.
+- [x] `.vscode/settings.json` uses `${env:HOME}` and `${workspaceFolder}`-style substitutions instead of hardcoded user-local paths.
+- [x] IDE search found no `/Users/daniel` matches in `.codex`, `.mcp.json`, or `.vscode`.
+- [x] No active implementation remains in this repo; keep here until final deletion/archive pass.

@@ -60,3 +60,16 @@ Pending. Recommend solution 1 (`attempt` column + log field) once E15-2b has mer
 1. Does the claim path already atomically increment an `attempts`-like field for lease reclamation? If so, this task is mostly a logging wiring change, not a schema change.
 2. Should `attempt=1` be logged, or should the log field only appear when `attempt > 1`? Always-logging is simpler; conditional-logging cuts noise on the happy path.
 3. Are there workers outside the scan/clustering/retention set that should be in scope (e.g. ad-hoc scripts in `apps/prototype-description-service/scripts/` that claim jobs)?
+
+## Consolidated Triage Checklist (2026-04-30)
+
+**Disposition:** Partially implemented; still needs logging/context completion.
+**Evaluation basis:** Current `main` app code under `apps/prototype-description-service`.
+
+- [x] Correlation prerequisite has landed for scan queue items: `correlation_id` and `correlation_source` are persisted on `identity_scan_job_items`.
+- [x] Attempt tracking already exists as `attempts` on scan queue items and the claim paths atomically increment it.
+- [ ] Decide whether to keep the existing `attempts` column name or add/rename to the singular `attempt` field described here.
+- [ ] Add attempt/attempts to the worker logging context so log lines can be grouped by correlation id plus attempt number.
+- [ ] Add tests proving worker logs include both `correlation_id` and the current attempt count.
+- [ ] Decide whether clustering, retention, export, or other job tables need the same persisted attempt semantics.
+- [ ] Archive only after the logging/query surface exists or after a newer retry-observability task supersedes this one.

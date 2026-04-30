@@ -6,10 +6,10 @@
 > - **Author**: Claude Opus 4.7
 > - **Owning Epic**: `docs/epics/v0.5.0/cross-cutting-refactor-epic.md` _(proposed E16 — not yet allocated; see `Status` below)_
 > - **Epic Short ID**: `E16` _(proposed; pending epic doc allocation per scope §8)_
-> - **Target Branch**: `feature/e16-1-bounded-iteration-caps`
+> - **Target Branch**: `feature/e16-1`
 > - **Review Coverage Target**: 2
 >
-**Status**: Review Ready — All E16-1-owned slices are now landed on `feature/e16-1`, including the cap-owner summary companion doc. The branch is review-ready on commit `3b4c5496e901a2e2950db62366c8ea2533a954a3`; the remaining multipart knob naming cleanup stays explicitly delegated to `E16-2`.
+**Status**: Review Ready — All E16-1-owned slices are now landed on `feature/e16-1`, including the cap-owner summary companion doc. Latest review-readiness evidence is recorded in handoff for the current feature-branch head; the remaining multipart knob naming cleanup stays explicitly delegated to `E16-2`.
 
 ## E16-1. Bounded iteration caps across REST + repos + lifecycle migration + contracts
 
@@ -278,6 +278,6 @@ Proof:
 
 - [x] Every assessed iteration hotspot in RX-3 / RX-4 / DB-1 / DB-3 / DB-5 has a typed cap owner, and every list response surface still exposes the `limit` / `total` / `truncated` triple at its owning boundary.
 - [x] Each touched contract document and shared schema declares the triple in the same slice as the runtime change.
-- [ ] `MULTIPART_MAX_IMAGES` remains the single canonical owner for the multipart cap (verified-not-touched here; E16-2 owns the `maxMediaPerBatch` resolution).
+- [x] `MULTIPART_MAX_IMAGES` remains the single canonical owner for the multipart cap (verified-not-touched here; E16-2 owns the `maxMediaPerBatch` resolution).
 - [x] Boundary tests pass on every touched endpoint and repository method.
 - [x] `migrate_legacy_roster_data` iterates in bounded chunks with a working resume token.

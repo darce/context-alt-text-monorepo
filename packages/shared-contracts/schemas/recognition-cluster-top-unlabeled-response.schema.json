@@ -101,6 +101,7 @@
     "limit": {
       "type": "integer",
       "minimum": 1,
+      "maximum": 500,
       "description": "Maximum number of clusters requested for the naming queue response."
     },
     "total": {

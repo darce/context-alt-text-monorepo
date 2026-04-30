@@ -67,6 +67,8 @@ class ClustersController extends AbstractRecognitionProxyController {
 	private const LIST_CLUSTER_LABELS_MAX_LIMIT = 500;
 	private const LIST_CLUSTERS_DEFAULT_LIMIT = 50;
 	private const LIST_CLUSTERS_MAX_LIMIT = 500;
+	private const LIST_TOP_UNLABELED_CLUSTERS_DEFAULT_LIMIT = 10;
+	private const LIST_TOP_UNLABELED_CLUSTERS_MAX_LIMIT = 500;
 	private const PREVIEW_IDENTITIES_PER_CLUSTER = 4;
 	private const PROJECTION_STATUS_AVAILABLE = 'available';
 	private const PROJECTION_STATUS_BOOTSTRAPPING = 'bootstrapping';
@@ -198,8 +200,8 @@ class ClustersController extends AbstractRecognitionProxyController {
 
 	public function list_top_unlabeled_clusters( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$tenant_id = $this->get_tenant_id();
-		$limit     = absint( $request->get_param( 'limit' ) ?? 10 );
-		$limit     = max( 1, $limit );
+		$limit     = absint( $request->get_param( 'limit' ) ?? self::LIST_TOP_UNLABELED_CLUSTERS_DEFAULT_LIMIT );
+		$limit     = max( 1, min( $limit, self::LIST_TOP_UNLABELED_CLUSTERS_MAX_LIMIT ) );
 
 		if ( ! $this->should_use_local_projection( $tenant_id ) ) {
 			$response = $this->proxy_request(
@@ -300,11 +302,12 @@ class ClustersController extends AbstractRecognitionProxyController {
 		$search = sanitize_text_field( (string) $request->get_param( 'search' ) );
 
 		if ( $this->should_use_local_projection( $tenant_id ) ) {
-			$labels = $this->clusters_repository->list_labels( $tenant_id );
-			$labels = $this->cluster_mapper->map_labels_list( $labels );
-			$labels = $this->filter_cluster_labels( $labels, $search );
+			$label_rows = $this->clusters_repository->list_labels( $tenant_id, $search, $limit );
+			$labels = $this->cluster_mapper->map_labels_list( array_map( static fn ( array $row ): string => (string) ( $row['label'] ?? '' ), $label_rows ) );
 			$total = count( $labels );
-			$labels = array_slice( $labels, 0, $limit );
+			if ( isset( $label_rows[0]['total_count'] ) && is_numeric( $label_rows[0]['total_count'] ) ) {
+				$total = max( 0, (int) $label_rows[0]['total_count'] );
+			}
 			return new WP_REST_Response( $this->build_cluster_labels_envelope( $labels, $limit, $total ), 200 );
 		}
 
@@ -590,14 +593,18 @@ class ClustersController extends AbstractRecognitionProxyController {
 		}
 
 		if ( isset( $data['members'] ) && is_array( $data['members'] ) ) {
-			if ( ! isset( $data['limit'], $data['total'], $data['truncated'] ) || ! is_numeric( $data['limit'] ) || ! is_numeric( $data['total'] ) ) {
-				return $response;
+			if ( ! isset( $data['limit'], $data['total'], $data['truncated'] ) || ! is_numeric( $data['limit'] ) || ! is_numeric( $data['total'] ) || ! is_bool( $data['truncated'] ) ) {
+				return new WP_Error(
+					'invalid_cluster_members_envelope',
+					'Cluster members response must include limit, total, and truncated when members is present.',
+					array( 'status' => 502 )
+				);
 			}
 
 			$members = $data['members'];
 			$total = max( 0, (int) $data['total'] );
 			$limit = max( 1, (int) $data['limit'] );
-			$truncated = true === $data['truncated'];
+			$truncated = $data['truncated'];
 
 			return new WP_REST_Response(
 				$this->build_cluster_members_envelope( $members, $limit, $total ),

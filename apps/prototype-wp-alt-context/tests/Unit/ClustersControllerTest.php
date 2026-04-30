@@ -112,6 +112,55 @@ class ClustersControllerTest extends TestCase
         $this->assertSame('http://example.test/media/101.jpg', $data['clusters'][0]['representatives'][0]['thumb_url']);
     }
 
+    public function testTopUnlabeledClustersClampExcessiveRequestLimit(): void
+    {
+        $capture = new \stdClass();
+        $capture->limit = null;
+
+        $clustersRepo = new class($capture) extends NullClustersRepository {
+            private \stdClass $capture;
+
+            public function __construct(\stdClass $capture)
+            {
+				$this->capture = $capture;
+            }
+
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+            {
+				$this->capture->limit = $limit;
+
+                return [];
+            }
+        };
+
+        $controller = new ClustersController(
+            $clustersRepo,
+            new NullIdentityMembersRepository(),
+            new class() extends NullSyncStateRepository {
+                public function get_snapshot_version(string $tenant_id): int
+                {
+                    return 1;
+                }
+            },
+            null,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
+        $request->set_param('limit', 9999);
+        $response = $controller->list_top_unlabeled_clusters($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(500, $capture->limit);
+        $this->assertSame(500, $response->get_data()['limit']);
+    }
+
     public function testTopUnlabeledClustersFallsBackToBackendProxyWhileProjectionBootstraps(): void
     {
         $syncRepo = new class() extends NullSyncStateRepository {
@@ -318,7 +367,7 @@ class ClustersControllerTest extends TestCase
                     ],
                 ];
             }
-            public function list_labels(string $tenant_id): array {
+            public function list_labels(string $tenant_id, string $search = '', int $limit = self::DEFAULT_LIST_LIMIT): array {
 				return ['Local']; }
         };
 
@@ -675,15 +724,26 @@ class ClustersControllerTest extends TestCase
 
     public function testListClusterLabelsUsesEnvelopeForLocalProjection(): void
     {
+        $capturedSearch = null;
+        $capturedLimit = null;
+
         $clustersRepo = new class() extends NullClustersRepository {
+            public ?string $capturedSearch = null;
+            public ?int $capturedLimit = null;
+
             public function has_projection_rows_for_tenant(string $tenant_id): bool
             {
                 return true;
             }
 
-            public function list_labels(string $tenant_id): array
+            public function list_labels(string $tenant_id, string $search = '', int $limit = self::DEFAULT_LIST_LIMIT): array
             {
-                return ['Alice', 'Alicia', 'Bob'];
+                $this->capturedSearch = $search;
+                $this->capturedLimit = $limit;
+
+                return [
+                    ['label' => 'Alice', 'total_count' => 2],
+                ];
             }
         };
 
@@ -716,6 +776,8 @@ class ClustersControllerTest extends TestCase
             ],
             $response->get_data()
         );
+        $this->assertSame('ali', $clustersRepo->capturedSearch);
+        $this->assertSame(1, $clustersRepo->capturedLimit);
     }
 
     public function testListClusterLabelsRejectsPartialProxyEnvelope(): void
@@ -885,6 +947,36 @@ class ClustersControllerTest extends TestCase
         $this->assertSame(1, $data['total']);
         $this->assertFalse($data['truncated']);
         $this->assertSame('id-1', $data['members'][0]['identity_uuid']);
+    }
+
+    public function testGetClusterMembersRejectsPartialProxyEnvelope(): void
+    {
+        $controller = new ClustersController(
+            new NullClustersRepository(),
+            new NullIdentityMembersRepository(),
+            new NullSyncStateRepository(),
+            null,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'members' => [
+                    ['identity_uuid' => 'id-1', 'media_id' => 10],
+                ],
+                'limit' => IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_LIMIT,
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cluster-123/members');
+        $request->set_param('cluster_id', 'cluster-123');
+        $response = $controller->get_cluster_members($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_cluster_members_envelope', $response->get_error_code());
+        $this->assertSame(502, $response->get_error_data()['status'] ?? null);
     }
 
     public function testStaleProjectionTriggersSyncPullBeforeServing(): void

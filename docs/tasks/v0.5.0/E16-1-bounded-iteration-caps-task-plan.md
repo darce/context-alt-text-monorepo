@@ -9,7 +9,7 @@
 > - **Target Branch**: `feature/e16-1-bounded-iteration-caps`
 > - **Review Coverage Target**: 2
 >
-> **Status**: In Progress — Slice 1 is now complete on the `GET /recognition/clusters` canary path, DB-5 chunked legacy migration is landed, and the assessment-listed DB-1 / DB-3 repository seams now cover snapshot batching, cluster-member total metadata, and the split-topology drain caller path. Remaining work is the manual Slice 4 runtime-parity check plus provenance cleanup for older review rows.
+**Status**: In Progress — Slice 1 is complete on the `GET /recognition/clusters` canary path, DB-5 chunked legacy migration is landed, and the assessment-listed DB-1 / DB-3 repository seams now cover snapshot batching, cluster-member total metadata, and the split-topology drain caller path. Slice 4 runtime parity is now verified via the LocalWP activation check, and the feature-branch slice-complete handoff was backfilled onto the canonical `feature/e16-1` commit after the stale main-branch provenance rows were superseded.
 
 ## E16-1. Bounded iteration caps across REST + repos + lifecycle migration + contracts
 
@@ -264,9 +264,9 @@ Proof:
 
 ## Review Readiness
 
-- [ ] No controller change has merged without its matching contract document and shared-schema update in the same slice.
+- [x] No controller change has merged without its matching contract document and shared-schema update in the same slice.
 - [x] Runtime-parity check (LocalWP activation) was exercised for Slice 4 and the result captured as a handoff note.
-- [ ] Handoff decision per slice records the change, the verification, and any contract implications.
+- [x] Handoff decision per slice records the change, the verification, and any contract implications.
 
 ## Stretch Goals
 

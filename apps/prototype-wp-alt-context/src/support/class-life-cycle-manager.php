@@ -19,6 +19,7 @@ class LifecycleManager {
 	private const OPTION_VERSION      = 'acx_version';
 	private const OPTION_INSTALLED_AT = 'acx_installed';
 	private const OPTION_LEGACY_ROSTER_MIGRATION_CURSOR = 'acx_legacy_roster_migration_cursor';
+	private const LEGACY_ROSTER_MIGRATION_HOOK = 'acx_continue_legacy_roster_migration';
 	private const MAX_LEGACY_MIGRATION_CHUNK = 100;
 	private const SNAPSHOT_SYNC_HOOK  = 'acx_sync_pull_snapshot';
 	private const CURATION_OUTBOX_DRAIN_HOOK = 'acx_sync_drain_curation_outbox';
@@ -38,6 +39,12 @@ class LifecycleManager {
 		'acx_topology_commands',
 		'acx_sync_conflicts',
 	);
+
+	public function __construct() {
+		if ( function_exists( 'add_action' ) ) {
+			add_action( self::LEGACY_ROSTER_MIGRATION_HOOK, array( $this, 'continue_legacy_roster_migration' ) );
+		}
+	}
 
 	/**
 	 * Run when the plugin is activated.
@@ -68,6 +75,7 @@ class LifecycleManager {
 		$legacy_assignments = get_option( 'acx_roster_assignments', array() );
 
 		if ( empty( $legacy_entries ) && empty( $legacy_assignments ) ) {
+			$this->clear_legacy_roster_migration_schedule();
 			delete_option( self::OPTION_LEGACY_ROSTER_MIGRATION_CURSOR );
 			return;
 		}
@@ -126,9 +134,15 @@ class LifecycleManager {
 			return;
 		}
 
+		$this->clear_legacy_roster_migration_schedule();
 		delete_option( 'acx_roster_entries' );
 		delete_option( 'acx_roster_assignments' );
 		delete_option( self::OPTION_LEGACY_ROSTER_MIGRATION_CURSOR );
+	}
+
+	public function continue_legacy_roster_migration(): void {
+		$this->clear_legacy_roster_migration_schedule();
+		$this->migrate_legacy_roster_data();
 	}
 
 	private function import_legacy_roster_entry( mixed $entry, string $table_persons, object $wpdb, array &$id_map ): bool {
@@ -300,6 +314,30 @@ class LifecycleManager {
 				'assignment_offset' => $assignment_offset,
 			)
 		);
+
+		$this->schedule_legacy_roster_migration_continuation();
+	}
+
+	private function schedule_legacy_roster_migration_continuation(): void {
+		if ( function_exists( 'as_enqueue_async_action' ) ) {
+			if ( false === as_next_scheduled_action( self::LEGACY_ROSTER_MIGRATION_HOOK, array(), self::ACTION_SCHEDULER_GROUP ) ) {
+				as_enqueue_async_action( self::LEGACY_ROSTER_MIGRATION_HOOK, array(), self::ACTION_SCHEDULER_GROUP );
+			}
+
+			return;
+		}
+
+		if ( false === wp_next_scheduled( self::LEGACY_ROSTER_MIGRATION_HOOK, array() ) ) {
+			wp_schedule_single_event( time(), self::LEGACY_ROSTER_MIGRATION_HOOK, array() );
+		}
+	}
+
+	private function clear_legacy_roster_migration_schedule(): void {
+		wp_clear_scheduled_hook( self::LEGACY_ROSTER_MIGRATION_HOOK, array() );
+
+		if ( function_exists( 'as_unschedule_all_actions' ) ) {
+			as_unschedule_all_actions( self::LEGACY_ROSTER_MIGRATION_HOOK, array(), self::ACTION_SCHEDULER_GROUP );
+		}
 	}
 
 	private function legacy_assignment_already_imported( string $cluster_id, int $final_person_id, string $table_clusters, object $wpdb ): bool {
@@ -317,6 +355,7 @@ class LifecycleManager {
 	 */
 	public function deactivate(): void {
 		wp_clear_scheduled_hook( self::SNAPSHOT_SYNC_HOOK );
+		$this->clear_legacy_roster_migration_schedule();
 		$this->clear_curation_outbox_drain_schedule();
 		$this->clear_split_topology_drain_schedule();
 		flush_rewrite_rules( false );
@@ -335,6 +374,7 @@ class LifecycleManager {
 		delete_option( self::OPTION_VERSION );
 		delete_option( self::OPTION_INSTALLED_AT );
 		wp_clear_scheduled_hook( self::SNAPSHOT_SYNC_HOOK );
+		$this->clear_legacy_roster_migration_schedule();
 		$this->clear_curation_outbox_drain_schedule();
 		$this->clear_split_topology_drain_schedule();
 		$this->drop_tables();

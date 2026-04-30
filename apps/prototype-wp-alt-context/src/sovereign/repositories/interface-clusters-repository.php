@@ -41,11 +41,11 @@ interface ClustersRepositoryInterface {
 	public function list_for_tenant( string $tenant_id, int $limit = self::DEFAULT_LIST_LIMIT, int $offset = 0, array $filters = array() ): array;
 
 	/**
-	 * Return labels present in projected clusters for a tenant.
+	 * Return bounded label rows present in projected clusters for a tenant.
 	 *
-	 * @return string[]
+	 * @return array<int,array<string,mixed>>
 	 */
-	public function list_labels( string $tenant_id ): array;
+	public function list_labels( string $tenant_id, string $search = '', int $limit = self::DEFAULT_LIST_LIMIT ): array;
 
 	/**
 	 * Return whether any projected cluster rows exist for a tenant.

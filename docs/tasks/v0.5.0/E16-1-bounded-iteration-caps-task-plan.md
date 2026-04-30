@@ -9,7 +9,7 @@
 > - **Target Branch**: `feature/e16-1-bounded-iteration-caps`
 > - **Review Coverage Target**: 2
 >
-**Status**: In Progress — Slice 1 is complete on the `GET /recognition/clusters` canary path, DB-5 chunked legacy migration is landed, and the assessment-listed DB-1 / DB-3 repository seams now cover snapshot batching, cluster-member total metadata, and the split-topology drain caller path. Slice 4 runtime parity is now verified via the LocalWP activation check, and the feature-branch slice-complete handoff was backfilled onto the canonical `feature/e16-1` commit after the stale main-branch provenance rows were superseded.
+**Status**: Review Ready — All E16-1-owned slices are now landed on `feature/e16-1`, including the cap-owner summary companion doc. The branch is review-ready on commit `3b4c5496e901a2e2950db62366c8ea2533a954a3`; the remaining multipart knob naming cleanup stays explicitly delegated to `E16-2`.
 
 ## E16-1. Bounded iteration caps across REST + repos + lifecycle migration + contracts
 
@@ -132,6 +132,7 @@ Related files:
 
 - `apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php`: already uses `MULTIPART_MAX_IMAGES`; keep it as the pattern reference.
 - `apps/prototype-wp-alt-context/js/admin/api/config.ts`: still holds `maxMediaPerBatch`; flagged here but not removed because `E16-2` owns that change.
+- `docs/tasks/v0.5.0/E16-1-cap-owner-summary.md`: single-page summary of the landed cap owners and the multipart follow-up boundary.
 - `docs/scopes/v05-cross-cutting-refactor-scope.md`: carries the §3 success criteria, §6 candidate stub, and §8 epic-allocation gate.
 
 ## Verification Strategy
@@ -271,12 +272,12 @@ Proof:
 ## Stretch Goals
 
 - [x] Generate a contract-fixture diff helper that asserts every list endpoint's runtime envelope matches its declared schema.
-- [ ] Capture a single-page summary of cap-owners per surface for the eventual E16 epic doc.
+- [x] Capture a single-page summary of cap-owners per surface for the eventual E16 epic doc.
 
 ## Success Criteria
 
-- [ ] Every assessed iteration hotspot in RX-3 / RX-4 / DB-1 / DB-3 / DB-5 has a typed cap owner, and every list response surface still exposes the `limit` / `total` / `truncated` triple at its owning boundary.
-- [ ] Each touched contract document and shared schema declares the triple in the same slice as the runtime change.
+- [x] Every assessed iteration hotspot in RX-3 / RX-4 / DB-1 / DB-3 / DB-5 has a typed cap owner, and every list response surface still exposes the `limit` / `total` / `truncated` triple at its owning boundary.
+- [x] Each touched contract document and shared schema declares the triple in the same slice as the runtime change.
 - [ ] `MULTIPART_MAX_IMAGES` remains the single canonical owner for the multipart cap (verified-not-touched here; E16-2 owns the `maxMediaPerBatch` resolution).
-- [ ] Boundary tests pass on every touched endpoint and repository method.
+- [x] Boundary tests pass on every touched endpoint and repository method.
 - [x] `migrate_legacy_roster_data` iterates in bounded chunks with a working resume token.

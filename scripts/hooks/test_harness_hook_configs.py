@@ -38,6 +38,30 @@ def test_vscode_matchers_cover_current_altcontext_tool_names() -> None:
     assert any("mcp_altcontext-mc_review_findings" in matcher for matcher in matchers)
 
 
+def test_vscode_registers_handoff_provenance_guard() -> None:
+    payload = _read_json(REPO_ROOT / ".github" / "hooks" / "terminal-guard.json")
+    entries = payload["hooks"]["PreToolUse"]
+    commands = [entry.get("command", "") for entry in entries]
+
+    assert any("scripts/hooks/guard-handoff-provenance.py" in command for command in commands)
+
+
+def test_claude_registers_handoff_provenance_guard() -> None:
+    payload = _read_json(REPO_ROOT / ".claude" / "settings.json")
+    entries = payload["hooks"]["PreToolUse"]
+    commands = [hook.get("command", "") for entry in entries for hook in entry.get("hooks", [])]
+
+    assert any("scripts/hooks/guard-handoff-provenance.py" in command for command in commands)
+
+
+def test_codex_registers_handoff_provenance_guard() -> None:
+    payload = _read_json(REPO_ROOT / ".codex" / "hooks.json")
+    entries = payload["hooks"]["PreToolUse"]
+    commands = [hook.get("command", "") for entry in entries for hook in entry.get("hooks", [])]
+
+    assert any("scripts/hooks/guard-handoff-provenance.py" in command for command in commands)
+
+
 def test_codex_project_config_enables_hooks() -> None:
     payload = _read_toml(REPO_ROOT / ".codex" / "config.toml")
 

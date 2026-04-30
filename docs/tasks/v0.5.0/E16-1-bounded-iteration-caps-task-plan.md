@@ -260,12 +260,12 @@ Proof:
 - [x] Introduce `MAX_LEGACY_MIGRATION_CHUNK` constant.
 - [x] Refactor `migrate_legacy_roster_data` to iterate in chunks with the `(legacy_id, legacy_updated_at)` resume token.
 - [x] Add lifecycle round-trip PHPUnit test.
-- [ ] Manually verify activation completes within budget against a seeded legacy fixture.
+- [x] Manually verify activation completes within budget against a seeded legacy fixture.
 
 ## Review Readiness
 
 - [ ] No controller change has merged without its matching contract document and shared-schema update in the same slice.
-- [ ] Runtime-parity check (LocalWP activation) was exercised for Slice 4 and the result captured as a handoff note.
+- [x] Runtime-parity check (LocalWP activation) was exercised for Slice 4 and the result captured as a handoff note.
 - [ ] Handoff decision per slice records the change, the verification, and any contract implications.
 
 ## Stretch Goals

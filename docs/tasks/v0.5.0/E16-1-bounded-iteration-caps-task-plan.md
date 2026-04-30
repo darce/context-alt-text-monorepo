@@ -9,13 +9,13 @@
 > - **Target Branch**: `feature/e16-1-bounded-iteration-caps`
 > - **Review Coverage Target**: 2
 >
-> **Status**: In Progress — Slice 1 is now complete on the `GET /recognition/clusters` canary path, DB-5 chunked legacy migration is landed, and the partial DB-1 cluster-only snapshot batching seam is in place. Remaining REST/repository propagation work in Slices 2-3 and the manual Slice 4 runtime-parity check are still open.
+> **Status**: In Progress — Slice 1 is now complete on the `GET /recognition/clusters` canary path, DB-5 chunked legacy migration is landed, and the assessment-listed DB-1 / DB-3 repository seams now cover snapshot batching, cluster-member total metadata, and the split-topology drain caller path. Remaining work is the manual Slice 4 runtime-parity check plus provenance cleanup for older review rows.
 
 ## E16-1. Bounded iteration caps across REST + repos + lifecycle migration + contracts
 
 ## Objective
 
-Every REST controller, repository, and lifecycle-migration site listed under §3.1 (RX-3, RX-4) and §3.2 (DB-1, DB-3, DB-5) of the cross-cutting assessment gains a typed `MAX_*` cap and surfaces a `limit` / `total` / `truncated` triple in its response envelope. The matching contract surfaces under `docs/agentic/contracts/` and `packages/shared-contracts/` are updated in the same slice. The result is bounded iteration across the plugin's hottest read paths and a verified single canonical owner for the multipart cap.
+Every REST controller and lifecycle-migration site listed under §3.1 (RX-3, RX-4) and §3.2 (DB-5) of the cross-cutting assessment gains a typed `MAX_*` cap and surfaces a `limit` / `total` / `truncated` triple in its response envelope. The assessment-listed repository seams under §3.2 (`DB-1` snapshot batching and `DB-3` cluster-member pagination/count metadata) gain the typed cap owner or count metadata their owning callers need to keep iteration bounded without widening repository return contracts beyond the assessed hotspots. The matching contract surfaces under `docs/agentic/contracts/` and `packages/shared-contracts/` are updated in the same slice. The result is bounded iteration across the plugin's hottest read paths and a verified single canonical owner for the multipart cap.
 
 ## Intake
 
@@ -30,8 +30,8 @@ The assessment identifies five iteration sites that are unbounded or weakly boun
 
 - **RX-3** REST controllers that return list responses without an explicit `MAX_*` ceiling on the request side or a `limit`/`total`/`truncated` triple on the response side. Callers (the React SPA, MCP tooling, future cron consumers) cannot detect when results were silently capped, and a malformed query can scan an entire table.
 - **RX-4** REST controllers whose pagination contract is partial: a cap exists but is not surfaced in the envelope, or `total` is computed but `truncated` is not, leaving consumers unable to drive a "load more" affordance correctly.
-- **DB-1** Repository methods that return all rows for a tenant or status without a hard ceiling.
-- **DB-3** Repository methods that paginate but leak the underlying count strategy (e.g. unbounded `COUNT(*)` on hot paths).
+- **DB-1** `ClustersRepository::merge_snapshot_for_tenant()` ingesting a whole cluster snapshot without a bounded batch seam.
+- **DB-3** `IdentityMembersRepository::list_for_cluster()` paginating cluster members without a typed cap owner on the repository boundary or a surfaced total-count signal for callers.
 - **DB-5** `class-life-cycle-manager.php`'s `migrate_legacy_roster_data()` that iterates legacy rows during activation without a bounded chunk strategy or an idempotent resume token.
 
 Without bounded iteration the v0.5.0 stability work in Phase B (circuit breaker unification, async retry) cannot rest on a known-bounded request shape, and the contract surfaces in `packages/shared-contracts/` will continue to drift from runtime behaviour.
@@ -102,37 +102,37 @@ After this task lands, every list-returning REST controller and repository metho
 
 ## Contract and Boundary Impact
 
-| Boundary                        | Owner   | Current Contract                                                | Expected Change                                                              | Compatibility Needed?                       | Verification                                                          |
-| ------------------------------- | ------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------- |
-| `acx/v1/*` (list endpoints)     | backend | `docs/agentic/contracts/cluster-snapshot-api.md` and siblings   | Every list endpoint declares `limit` / `total` / `truncated` in its envelope | No (greenfield; SPA updates in same slice)  | PHPUnit boundary tests + contract diff on each endpoint               |
-| Repository read methods         | backend | `apps/prototype-wp-alt-context/src/sovereign/repositories/*`    | Each list method takes a typed cap and returns the envelope triple           | No (in-process; callers updated together)   | PHPUnit repository tests asserting cap-equals-limit and cap-plus-one  |
-| Activation-time legacy migration | backend | `class-life-cycle-manager.php::migrate_legacy_roster_data`      | Chunked iteration with `MAX_LEGACY_MIGRATION_CHUNK` and resume token         | No (greenfield; activation can re-run safely) | PHPUnit lifecycle test + manual activation observation                |
-| Shared contracts (TS/JS)        | shared  | `packages/shared-contracts/`                                    | Schema declares the envelope triple as required                              | No (consumers updated in same slice)        | TS type check + contract-fixture diff                                 |
+Boundary map:
+
+- `acx/v1/*` list endpoints, owner `backend`: current contract lives in `docs/agentic/contracts/cluster-snapshot-api.md` and siblings; expected change is the `limit` / `total` / `truncated` envelope; compatibility need is none because SPA updates land in the same slice; verification is PHPUnit boundary coverage plus contract diffs.
+- Repository read methods, owner `backend`: current contract lives under `apps/prototype-wp-alt-context/src/sovereign/repositories/*`; expected change is to keep the assessed hotspot's typed cap/count contract at the owning boundary; compatibility need is none because callers update in the same slice; verification is focused repository tests around cap-equals-limit and cap-plus-one boundaries.
+- Activation-time legacy migration, owner `backend`: current contract is `class-life-cycle-manager.php::migrate_legacy_roster_data`; expected change is chunked iteration with `MAX_LEGACY_MIGRATION_CHUNK` and a resume token; compatibility need is none because greenfield activation can re-run safely; verification is lifecycle PHPUnit coverage plus manual activation observation.
+- Shared contracts, owner `shared`: current contract lives under `packages/shared-contracts/`; expected change is schema support for the envelope triple; compatibility need is none because consumers update in the same slice; verification is type checks plus contract-fixture diffs.
 
 ## Proposed Solution
 
-Land the work in four bounded slices: (1) declare the cap-owner pattern and apply it to one canary controller end-to-end (REST + repo + contract + SPA consumer + tests), (2) propagate the same pattern across the remaining REST controllers (RX-3, RX-4), (3) propagate it across the remaining repository methods (DB-1, DB-3), (4) introduce the chunked-migration pattern for DB-5 with its resume token. Each slice closes with executable proof.
+Land the work in four bounded slices: (1) declare the cap-owner pattern and apply it to one canary controller end-to-end (REST + repo + contract + SPA consumer + tests), (2) propagate the same pattern across the remaining REST controllers (RX-3, RX-4), (3) close the assessment-listed repository seams (DB-1, DB-3) without widening unrelated repository contracts, (4) introduce the chunked-migration pattern for DB-5 with its resume token. Each slice closes with executable proof.
 
 ## Files and Surfaces to Change
 
-| Surface  | File                                                                                          | Change                                                                                                            |
-| -------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| backend  | `apps/prototype-wp-alt-context/src/api/` (RX-3, RX-4 controllers identified by assessment)    | Add `MAX_*` constants; surface `limit` / `total` / `truncated` in envelopes                                        |
-| backend  | `apps/prototype-wp-alt-context/src/sovereign/repositories/` (DB-1, DB-3 list methods)         | Accept typed cap parameter; return envelope triple                                                                 |
-| backend  | `apps/prototype-wp-alt-context/src/support/class-life-cycle-manager.php`                      | Introduce chunked `migrate_legacy_roster_data` with `MAX_LEGACY_MIGRATION_CHUNK` and `(legacy_id, updated_at)` resume token |
-| docs     | `docs/agentic/contracts/cluster-snapshot-api.md`, `clustering-api.md`, `curation-sync-api.md` | Document envelope triple per endpoint                                                                              |
-| shared   | `packages/shared-contracts/`                                                                  | Update schemas to require `limit` / `total` / `truncated` on list responses                                       |
-| frontend | `apps/prototype-wp-alt-context/js/` (SPA consumers of list endpoints)                         | Read `truncated` to drive empty-state vs partial-state UI; no new components                                       |
-| tests    | PHPUnit suites for each touched controller and repository method                              | Boundary cases: cap-equals-limit, cap-plus-one, malformed `limit` query                                            |
-| tests    | Lifecycle PHPUnit test                                                                         | Resume-token round-trip; chunk-size respected                                                                      |
+Files and surfaces to change:
+
+- `backend`: `apps/prototype-wp-alt-context/src/api/` for the assessment-listed RX-3 / RX-4 controllers. Change: add `MAX_*` constants and surface `limit` / `total` / `truncated` in envelopes.
+- `backend`: `apps/prototype-wp-alt-context/src/sovereign/repositories/` for the assessment-listed DB-1 / DB-3 seams. Change: add the typed cap owner or count metadata the owning caller needs, without widening unrelated repository contracts.
+- `backend`: `apps/prototype-wp-alt-context/src/support/class-life-cycle-manager.php`. Change: introduce chunked `migrate_legacy_roster_data` with `MAX_LEGACY_MIGRATION_CHUNK` and the `(legacy_id, updated_at)` resume token.
+- `docs`: `docs/agentic/contracts/cluster-snapshot-api.md`, `clustering-api.md`, `curation-sync-api.md`. Change: document the envelope triple per endpoint.
+- `shared`: `packages/shared-contracts/`. Change: require `limit` / `total` / `truncated` on list-response schemas.
+- `frontend`: `apps/prototype-wp-alt-context/js/` SPA consumers of list endpoints. Change: read `truncated` to drive empty-state vs partial-state UI without adding new components.
+- `tests`: PHPUnit suites for touched controllers and repository methods. Change: cover cap-equals-limit, cap-plus-one, and malformed `limit` queries.
+- `tests`: lifecycle PHPUnit coverage. Change: exercise the resume-token round trip and chunk-size respect.
 
 ## Related Files
 
-| File                                                                          | Note                                                                                              |
-| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php` | Already uses `MULTIPART_MAX_IMAGES`; pattern reference                                            |
-| `apps/prototype-wp-alt-context/js/admin/api/config.ts`                         | Holds `maxMediaPerBatch`; flagged but not removed here (E16-2 owns)                               |
-| `docs/scopes/v05-cross-cutting-refactor-scope.md`                              | §3 success criteria; §6 candidate stub; §8 epic-allocation gate                                   |
+Related files:
+
+- `apps/prototype-wp-alt-context/src/api/class-abstract-recognition-proxy-controller.php`: already uses `MULTIPART_MAX_IMAGES`; keep it as the pattern reference.
+- `apps/prototype-wp-alt-context/js/admin/api/config.ts`: still holds `maxMediaPerBatch`; flagged here but not removed because `E16-2` owns that change.
+- `docs/scopes/v05-cross-cutting-refactor-scope.md`: carries the §3 success criteria, §6 candidate stub, and §8 epic-allocation gate.
 
 ## Verification Strategy
 
@@ -188,20 +188,21 @@ Proof:
 - PHPUnit api suite passes.
 - Contract diff per endpoint: triple present in markdown, schema, fixture.
 
-### Slice 3: Propagate envelope triple across repository methods (DB-1, DB-3)
+### Slice 3: Close the assessment-listed repository seams (DB-1, DB-3)
 
-**Goal**: Apply the same pattern at the repository layer so callers cannot bypass the cap by going around the controller.
+**Goal**: Close the two repository hotspots called out by the assessment without forcing every repository helper to adopt a new envelope shape.
 
 Changes:
 
-- For each list method in the DB-1 / DB-3 set, accept a typed cap parameter and return the envelope triple.
-- Update PHPUnit repository tests with boundary cases.
-- Verify all REST callers pass through the cap from request to repository (no silent re-capping).
+- Add the typed batch cap owner for `ClustersRepository::merge_snapshot_for_tenant()` and document the chunked upsert contract.
+- Keep `IdentityMembersRepository::list_for_cluster()` on its typed member-limit boundary while surfacing `total_count` metadata to the owning controller/drain callers.
+- Update PHPUnit repository or caller-boundary tests for the assessment-listed DB-1 / DB-3 seams.
+- Verify the owning REST/drain callers pass through the bounded cap/count contract without silent caller-side bypasses.
 
 Proof:
 
-- PHPUnit repositories suite passes.
-- A trace test demonstrates the cap value propagates from request to SQL.
+- Focused repository and caller-boundary PHPUnit coverage passes for the DB-1 / DB-3 seams.
+- A trace test demonstrates the bounded cap/count contract propagates from the owner to SQL or to the owning caller.
 
 ### Slice 4: Chunked legacy migration (DB-5) with resume token
 
@@ -250,9 +251,9 @@ Proof:
 
 ### Checklist for Slice 3: Repository methods (DB-1, DB-3)
 
-- [x] Apply the typed-cap-and-envelope pattern to every list method in the DB-1 / DB-3 set completed so far in this branch (`ClustersRepository::merge_snapshot_for_tenant()`, `IdentityMembersRepository::list_for_cluster()`, and the split-topology drain caller path).
-- [x] Verify request-to-SQL cap propagation with a trace test for the split-topology drain caller path.
-- [x] Add repository boundary tests for the Slice 3 seams completed so far in this branch.
+- [x] Close the assessment-listed DB-1 / DB-3 seams completed so far in this branch (`ClustersRepository::merge_snapshot_for_tenant()`, `IdentityMembersRepository::list_for_cluster()`, and the split-topology drain caller path) without widening unrelated repository contracts.
+- [x] Verify request-to-SQL or caller-to-repository cap propagation with a trace test for the split-topology drain caller path.
+- [x] Add repository or caller-boundary tests for the Slice 3 seams completed so far in this branch.
 
 ### Checklist for Slice 4: Chunked legacy migration (DB-5)
 
@@ -274,7 +275,7 @@ Proof:
 
 ## Success Criteria
 
-- [ ] Every site listed in RX-3 / RX-4 / DB-1 / DB-3 / DB-5 has a typed `MAX_*` cap and surfaces the `limit` / `total` / `truncated` triple.
+- [ ] Every assessed iteration hotspot in RX-3 / RX-4 / DB-1 / DB-3 / DB-5 has a typed cap owner, and every list response surface still exposes the `limit` / `total` / `truncated` triple at its owning boundary.
 - [ ] Each touched contract document and shared schema declares the triple in the same slice as the runtime change.
 - [ ] `MULTIPART_MAX_IMAGES` remains the single canonical owner for the multipart cap (verified-not-touched here; E16-2 owns the `maxMediaPerBatch` resolution).
 - [ ] Boundary tests pass on every touched endpoint and repository method.

@@ -62,7 +62,7 @@ ssh_allowed_cidrs = ["99.237.0.0/16"]
 
 ## Decision
 
-Pending. Implement solution 2 (alias) immediately as a stopgap, then evaluate Tailscale for permanent fix.
+Implemented. Tailscale is now the canonical OCI SSH path; the public-IP Terraform allowlist is retained only as a break-glass fallback.
 
 ## Consolidated Triage Checklist (2026-04-30)
 
@@ -73,4 +73,4 @@ Pending. Implement solution 2 (alias) immediately as a stopgap, then evaluate Ta
 - [x] Tailscale setup, MagicDNS verification, troubleshooting, and deploy-script wiring are documented in `infra/oci/README.md`.
 - [x] `scripts/deploy/recognition-service.sh` defaults `OCI_HOST` to `acx-backend.tail1a44b8.ts.net`.
 - [x] Public-IP SSH remains documented as fallback only.
-- [ ] Before final archive, update or remove stale cross-links that still describe this as pending E15/E14 work.
+- [x] Stale E15/E14 cross-links were updated to point at this archive-or-transfer candidate and no longer describe the item as pending work.

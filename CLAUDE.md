@@ -23,6 +23,8 @@ On every session (cold start, mid-task re-entry, lane inherit):
 
 If MCP tool calls unavailable (ToolSearch returns nothing for `mcp__agent-handoff-mcp__*`), or if you need a query the MCP tools don't directly expose: **use the Python API via Bash as the primary fallback.**
 
+For Python-API fallback writes (`record_event`, `review_findings`, `set_handoff_state`, `update_task_status`, `close_slice`), always run them from the owning worktree with an explicit `cd <target_worktree_path> && ...` prefix and pass `task_ref='<task-ref>'` in the write call. The provenance guard rejects fallback writes that omit the explicit worktree `cd` or the explicit task ref because the Bash tool path otherwise cannot validate branch/SHA attribution before the write lands.
+
 > **Canonical source:** [`docs/agentic/contracts/harness-protocol.yaml`](docs/agentic/contracts/harness-protocol.yaml) `python_api_fallback.required_exports` is the authoritative list of package-root symbols every harness must keep importable. The example below is a practical superset used in this repo; the contract defines the minimum surface. If the two drift, fix the contract first, then re-sync both harness docs (CLAUDE.md and `.github/copilot-instructions.md`).
 
 Always import from the package root — never from submodules (`.config`, `.decisions`, `.core` are internal):
@@ -186,6 +188,7 @@ See the installed `agent-handoff-mcp` package documentation for the full set of 
 - Slice completion format (enforced at write time): [docs/agentic/templates/slice-complete-template.md](docs/agentic/templates/slice-complete-template.md).
 - After every state-changing handoff operation (`record_event`, `review_findings(operation="update")`, `review_findings(operation="batch_record")`, `review_runs(operation="record")`, `set_handoff_state`, `update_task_status`), call `render_handoff(kind='dashboard')`. DASHBOARD.txt is the operator-facing cross-task view and must stay current. Call `render_handoff(kind='current_task', task_ref=<ref>)` only on-demand for task-specific agent handoffs; agents with live MCP access should use `get_handoff_state`/`load_session` instead.
 - When logging **3 or more review findings** in a single review pass, use `review_findings(review={"operation":"batch_record", ...})` instead of repeated `review_findings(review={"operation":"record", ...})` calls — one atomic write, one DB flush, per-item results returned.
+- If a write is blocked with `handoff provenance drift`, switch to the task's `target_worktree_path` and retry there. For Bash Python-API fallback writes, the command must begin with `cd <target_worktree_path> &&` and include `task_ref='<task-ref>'` so the guard can validate the target worktree.
 - Full handoff protocol: [docs/agentic/instructions.md](docs/agentic/instructions.md#mcp-handoff-contract-mandatory).
 
 ### Git Commit Rules

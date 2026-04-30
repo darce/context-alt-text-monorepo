@@ -643,6 +643,20 @@ Source-of-truth policy:
 8. Regenerate DASHBOARD.txt after merge/archive (mandatory): `render_handoff(kind='dashboard')`. If a completed task still appears in NEEDS ATTENTION, close or defer its remaining findings first.
 9. Use template fallback only when MCP is unavailable.
 
+### Provenance Drift Recovery
+
+The handoff provenance guard blocks two classes of writes before they land in MCP:
+
+- MCP tool writes whose explicit `actor.branch` matches the active task `target_branch` but whose `actor.commit_sha` does not resolve to the task worktree HEAD.
+- Bash Python-API fallback writes (`from agent_handoff_mcp import ...`) that do not start with an explicit `cd <target_worktree_path> &&` or do not pass an explicit `task_ref=...`.
+
+When the guard fires with `handoff provenance drift`, recover by switching to the owning worktree and retrying there:
+
+- `cd <target_worktree_path>`
+- rerun the MCP write, or for the Bash fallback rerun it as `cd <target_worktree_path> && pyenv exec python -c "... task_ref='<task-ref>' ..."`
+
+The guard is fail-open when it cannot resolve task identity or git metadata; validation failures should not become write outages. There is no bypass marker for normal implementation work. If a legitimate cross-worktree write is required, stop and route that operation through the owning task worktree instead of forcing it from the wrong cwd.
+
 **Template location:** [templates/CURRENT_TASK.template.md](../templates/CURRENT_TASK.template.md)
 
 > [!TIP]

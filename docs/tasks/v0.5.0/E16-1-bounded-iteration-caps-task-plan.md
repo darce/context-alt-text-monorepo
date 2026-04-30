@@ -270,7 +270,7 @@ Proof:
 
 ## Stretch Goals
 
-- [ ] Generate a contract-fixture diff helper that asserts every list endpoint's runtime envelope matches its declared schema.
+- [x] Generate a contract-fixture diff helper that asserts every list endpoint's runtime envelope matches its declared schema.
 - [ ] Capture a single-page summary of cap-owners per surface for the eventual E16 epic doc.
 
 ## Success Criteria

@@ -1,0 +1,42 @@
+DASHBOARD
+================================================================================
+DO NOT EDIT: generated from .task-state/handoff.db at 2026-05-01 23:04 UTC
+================================================================================
+
+NEEDS ATTENTION
+---------------
+  (all clear)
+
+ALL TASKS
+---------
+
+  Task                                          Status         Find  Block  Act  Last            
+  ────────────────────────────────────────────  ─────────────  ────  ─────  ───  ────────────────
+  E17-14-B                                      in_progress       0      0    0  23:04           
+  E17-14-A                                      in_progress       0      0    0  23:04           
+
+ACTIVE TASK PLANS
+-----------------
+  [E17-14-A] branch=feature/a
+      plan: docs/tasks/task-a.md
+      abs:  ✓ /tmp/e17-14-scratch-consumer-task-a/docs/tasks/task-a.md
+  [E17-14-B] branch=feature/b
+      plan: docs/tasks/task-b.md
+      abs:  ✓ /tmp/e17-14-scratch-consumer-task-b/docs/tasks/task-b.md
+
+RECENT DECISIONS (E17)
+----------------------
+  (none)
+
+OPEN FINDINGS
+-------------
+  (none)
+
+WORKFLOW INTEGRITY
+------------------
+  ! [E17-14-A] missing branch: feature/a does not exist
+  ! [E17-14-B] missing branch: feature/b does not exist
+
+TEST STATUS
+-----------
+  (no verified tests recorded)

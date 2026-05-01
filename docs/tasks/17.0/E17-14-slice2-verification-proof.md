@@ -1,8 +1,8 @@
 # E17-14 Slice 2 Verification Proof
 
-> Status: `FAIL - PUBLISHED PACKAGE BLOCKER` - the actual scratch-consumer probe was run, and the latest published package set still cannot satisfy the Slice 2 task-plan visibility criteria.
+> Status: `PASS` (rerun 2026-05-01) - the scratch-consumer probe was rerun against the now-published `agentic-bootstrap-v0.3.0` and `mcp-agent-handoff-v0.5.1` packages from `agentic-protocol-monorepo` tag `v0.1.4`, and all four root-visible-plan pass criteria are satisfied end to end.
 
-This artifact records the rebased inputs, the actual scratch-consumer probe executed on 2026-04-30, and the published-package blockers that currently prevent the Slice 2 pass criteria from succeeding end to end. It is intentionally explicit about what was observed versus what remains deferred to an external package follow-up.
+This artifact records the rebased inputs, the actual scratch-consumer probe executed on 2026-05-01 against the upstream-fixed package set, and the previous 2026-04-30 failure run that surfaced the upstream blockers. The 2026-04-30 history is preserved because the fix lives in `agentic-protocol-monorepo` Plan 0004 + bootstrap 0.3.x, which were already merged to that repo's `main` and tagged before the rerun.
 
 ## Recorded Inputs
 
@@ -67,19 +67,27 @@ Read `DASHBOARD.txt` from the consumer root and capture the rows for both active
 
 The proof must also verify that `CURRENT_TASK.json` must not be auto-written by `make context` or by the state-changing writes used during the probe.
 
-## Pass-Criteria Checklist
+## Pass-Criteria Checklist (2026-05-01 rerun)
 
-- [x] `agentic-bootstrap install` exited `0` against `/tmp/e17-14-scratch-consumer/` when run with the explicit `--remote-url git@github.com:darce/agentic-protocol-monorepo.git` override required by published `agentic-bootstrap@v0.2.0`.
-- [x] Handoff doctor exited `0` from the scratch consumer root.
-- [ ] `DASHBOARD.txt` lists both seeded task refs but does not expose `task_plan_path` or resolved task-plan files; the published package only renders task refs, status, and workflow-integrity warnings.
-- [ ] `render_handoff(kind='current_task', task_ref='E17-14-A')` returns a parseable snapshot for task A only, but the published output contains no `task_plan_path` metadata.
-- [x] `CURRENT_TASK.json` was not auto-written during the probe; the explicit `render_handoff(..., --no-write)` response reported `written: false`, and `ls /tmp/e17-14-scratch-consumer/CURRENT_TASK.json` returned `No such file or directory`.
+- [x] `agentic-bootstrap install --target /tmp/e17-14-scratch-consumer --remote-ref v0.1.4` exited `0` **without** any `--remote-url` override; published `agentic-bootstrap-v0.3.0` defaults to `git@github.com:darce/agentic-protocol-monorepo.git`.
+- [x] Handoff doctor exited `0` from the scratch consumer root (`agentic-bootstrap doctor --target /tmp/e17-14-scratch-consumer` → `doctor: no drift detected.`).
+- [x] `DASHBOARD.txt` exposes the `ACTIVE TASK PLANS` operator section with both seeded task refs, their relative `task_plan_path`, the resolved `task_plan_abs_path`, and `✓` existence markers (see captured output below).
+- [x] `render_handoff(kind='current_task', task_ref='E17-14-A')` returns a parseable snapshot for task A only, and the snapshot's `active.task_plan_path` is `docs/tasks/task-a.md`.
+- [x] `CURRENT_TASK.json` is not auto-written by `set_handoff_state` writes; explicit `render_handoff(kind='current_task', write_file=False)` returned `data.written = false` with the file absent on disk; explicit `render_handoff(kind='current_task', write_file=True)` then materialized the file on demand.
 
-## Captured Outputs
+## Captured Outputs (2026-05-01 rerun)
 
-Install output:
+Verification venv pins (proof venv `/tmp/e17-14-proof-venv`):
 
 ```text
+agentic-bootstrap   0.3.0   (git+ssh://git@github.com/darce/agentic-protocol-monorepo.git@agentic-bootstrap-v0.3.0)
+mcp-agent-handoff   0.5.1   (git+ssh://git@github.com/darce/agentic-protocol-monorepo.git@mcp-agent-handoff-v0.5.1)
+```
+
+Install output (no `--remote-url` override):
+
+```text
+✓ agent-workflows: wrote 41 adapter files.
 installed agentic-system overlay: git@github.com:darce/agentic-protocol-monorepo.git@e057c18254190dd36c20fb8b793e25d4c5cb8493 -> /tmp/e17-14-scratch-consumer
 ```
 
@@ -89,37 +97,29 @@ Doctor output:
 doctor: no drift detected.
 ```
 
-`make context` output from the scratch consumer root:
+`DASHBOARD.txt` `ACTIVE TASK PLANS` section (full file: `proof-2026-05-01/dashboard-excerpt.txt`):
 
 ```text
-make: *** No rule to make target `context'.  Stop.
+ACTIVE TASK PLANS
+-----------------
+  [E17-14-A] branch=feature/a
+      plan: docs/tasks/task-a.md
+      abs:  ✓ /tmp/e17-14-scratch-consumer-task-a/docs/tasks/task-a.md
+  [E17-14-B] branch=feature/b
+      plan: docs/tasks/task-b.md
+      abs:  ✓ /tmp/e17-14-scratch-consumer-task-b/docs/tasks/task-b.md
 ```
 
-`DASHBOARD.txt` excerpt:
-
-```text
-ALL TASKS
-
-  Task                                          Status         Find  Block  Act  Last
-  ────────────────────────────────────────────  ─────────────  ────  ─────  ───  ────────────────
-  E17-14-B                                      in_progress       0      0    0  21:48
-  E17-14-A                                      in_progress       0      0    0  21:48
-
-WORKFLOW INTEGRITY
-------------------
-  ! [E17-14-A] missing branch: feature/a does not exist
-  ! [E17-14-B] missing branch: feature/b does not exist
-```
-
-`render_handoff(kind='current_task', task_ref='E17-14-A')` excerpt:
+`render_handoff(kind='current_task', task_ref='E17-14-A', write_file=False)` excerpt (full snapshot: `proof-2026-05-01/CURRENT_TASK.E17-14-A.json`):
 
 ```json
 {
   "active": {
-    "objective": "Scratch proof task A",
+    "objective": "Probe task A",
     "status": "in_progress",
     "target_branch": "feature/a",
     "target_worktree_path": "/tmp/e17-14-scratch-consumer-task-a",
+    "task_plan_path": "docs/tasks/task-a.md",
     "task_ref": "E17-14-A"
   },
   "surface": "current_task",
@@ -127,25 +127,38 @@ WORKFLOW INTEGRITY
 }
 ```
 
-No-auto-write check:
+On-demand `CURRENT_TASK.json` semantics:
 
 ```text
-ls: /tmp/e17-14-scratch-consumer/CURRENT_TASK.json: No such file or directory
+# After set_handoff_state writes, before any explicit render:
+$ ls /tmp/e17-14-scratch-consumer/CURRENT_TASK.json
+ls: ... No such file or directory
+
+# After render_handoff(kind='current_task', write_file=False):
+data.written = false; file still absent
+
+# After render_handoff(kind='current_task', write_file=True):
+file materialized at /tmp/e17-14-scratch-consumer/CURRENT_TASK.json
 ```
 
 ## Current Status
 
-Current status is `FAIL - PUBLISHED PACKAGE BLOCKER`.
+Current status is `PASS` as of the 2026-05-01 rerun.
 
-What is already verified in this repo:
+What is verified end to end against the published packages:
 
-- The local consumer overlay was refreshed from the reviewed external tag and rebased cleanly onto `origin/main`.
-- The generated surfaces now present the v0.1.4-era launcher and skill layout that Slice 2 must verify from a scratch consumer.
-- A real scratch-consumer run proved that the published `agentic-bootstrap@v0.2.0` path only succeeds when the remote URL is overridden to `git@github.com:darce/agentic-protocol-monorepo.git`.
-- A real scratch-consumer run proved that the published `mcp-agent-handoff@v0.4.3` current-task/dashboard surfaces still do not expose `task_plan_path` metadata.
+- `agentic-bootstrap-v0.3.0` defaults the install remote to `agentic-protocol-monorepo`; no `--remote-url` override is needed for the documented Slice 2 install command.
+- `mcp-agent-handoff-v0.5.1` accepts `task_plan_path` on `set_handoff_state`, persists it as a first-class column, and enriches reads with `task_plan_abs_path`, `task_plan_exists`, and `task_plan_resolution`.
+- `DASHBOARD.txt` renders the `ACTIVE TASK PLANS` operator section with task ref, branch, declared plan, resolved abs path, and existence markers — the contract the consumer relies on.
+- `CURRENT_TASK.json` is on-demand only: routine `set_handoff_state` writes do not materialize it, explicit `render_handoff(kind='current_task', write_file=False)` returns the snapshot without writing, and `write_file=True` writes on demand.
 
-What blocks Slice 2 closure today:
+## Historical Run (2026-04-30, FAIL)
 
-- Published `agentic-bootstrap@v0.2.0` still defaults to the old `darce/agentic-system.git` remote, so the documented `agentic-bootstrap install --target /tmp/e17-14-scratch-consumer --remote-ref v0.1.4` command does not succeed without an explicit `--remote-url` override.
-- Published `mcp-agent-handoff@v0.4.3` still lacks a `task_plan_path` input on `set_handoff_state`, and its rendered dashboard/current-task outputs therefore cannot satisfy the root-visible-plan pass criteria.
-- The scratch consumer does not provide a working `make context` target after install, so the exact operator flow promised by the plan is not yet delivered by the published package set.
+The original probe ran against `agentic-bootstrap@v0.2.0` and `mcp-agent-handoff@v0.4.3` and recorded these blockers, all subsequently resolved upstream and reverified above:
+
+- `agentic-bootstrap@v0.2.0` defaulted to `darce/agentic-system.git`; install required `--remote-url` override.
+- `mcp-agent-handoff@v0.4.3` `set_handoff_state` did not accept `task_plan_path`.
+- The published dashboard had no `ACTIVE TASK PLANS` section.
+- The current-task snapshot omitted `task_plan_path`.
+
+The fix lives upstream in `agentic-protocol-monorepo` Plan 0004 (`docs/plans/0004-task-plan-metadata-and-current-task-demotion.md`) plus the bootstrap default-remote change shipped in `agentic-bootstrap-v0.3.0`. Both are merged to that repo's `main` and tagged.

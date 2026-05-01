@@ -49,6 +49,8 @@ class SettingsControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame('', $data['url']);
         $this->assertSame('default', $data['url_source']);
+        $this->assertSame('local', $data['recognition_source']);
+        $this->assertSame('default', $data['recognition_source_source']);
         $this->assertFalse($data['api_key_set']);
         $this->assertSame('', $data['api_key_last4']);
         $this->assertSame('default', $data['key_source']);
@@ -130,6 +132,7 @@ class SettingsControllerTest extends TestCase
 
         $request = new WP_REST_Request('POST', '/acx/v1/settings');
         $request->set_body_params([
+            'recognition_source' => 'local',
             'url' => 'https://new-api.example.com',
             'api_key' => 'new-key-12345678',
         ]);
@@ -139,9 +142,11 @@ class SettingsControllerTest extends TestCase
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $data = $response->get_data();
         $this->assertSame('ok', $data['result']);
+        $this->assertContains('recognition_source', $data['saved']);
         $this->assertContains('url', $data['saved']);
         $this->assertContains('api_key', $data['saved']);
 
+        $this->assertSame('local', get_option('acx_recognition_source'));
         $this->assertSame('https://new-api.example.com', get_option('acx_recognition_url'));
         $this->assertSame('new-key-12345678', get_option('acx_recognition_api_key'));
     }

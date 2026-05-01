@@ -4,13 +4,23 @@ import { getEndpoint, getConfig } from './config';
 export interface SettingsResponse {
   url: string;
   url_source: 'constant' | 'option' | 'filter' | 'default';
+  recognition_source: 'service' | 'local';
+  recognition_source_source: 'constant' | 'option' | 'filter' | 'default';
   api_key_set: boolean;
   api_key_last4: string;
   key_source: 'constant' | 'option' | 'filter' | 'default';
 }
 
+export const RecognitionSource = {
+  SERVICE: 'service',
+  LOCAL: 'local',
+} as const;
+
+export type RecognitionSourceValue = (typeof RecognitionSource)[keyof typeof RecognitionSource];
+
 export interface SaveSettingsPayload {
   url?: string;
+  recognition_source?: RecognitionSourceValue;
   api_key?: string;
 }
 

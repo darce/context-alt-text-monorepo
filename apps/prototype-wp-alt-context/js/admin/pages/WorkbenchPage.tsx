@@ -44,7 +44,7 @@ const WorkbenchPageContent = (): React.JSX.Element => {
   const {
     activeSection,
     setActiveSection,
-    recognitionUrlFallback,
+    recognitionSource,
     activeOverlay,
     setActiveOverlay,
     isOnline,
@@ -103,12 +103,12 @@ const WorkbenchPageContent = (): React.JSX.Element => {
               {activeOverlay === 'conflicts' ? <ConflictInbox /> : <DeadLetterPanel />}
             </section>
           ) : null}
-          {recognitionUrlFallback && (
-            <div className="acx-notice acx-notice--warning">
-              {__(
-                'Alt Context is using the local recognition URL fallback (http://localhost:8000). Configure acx_recognition_url or ACX_RECOGNITION_URL for this environment.',
-                'alt-context',
-              )}
+          {recognitionSource === 'local' && (
+            <div className="acx-notice acx-notice--info">
+              <p>
+                {__('Alt Context is targeting the local recognition service at http://localhost:8000.', 'alt-context')}
+              </p>
+              <p>{__('Use Settings to switch back to the hosted recognition service.', 'alt-context')}</p>
             </div>
           )}
           {!isOnline && (

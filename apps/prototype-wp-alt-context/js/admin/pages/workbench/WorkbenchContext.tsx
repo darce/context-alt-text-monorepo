@@ -113,7 +113,7 @@ interface WorkbenchContextValue {
   hasIdentities: boolean;
 
   // Config/Env
-  recognitionUrlFallback: boolean;
+  recognitionSource: 'service' | 'local';
 }
 
 const WorkbenchContext = createContext<WorkbenchContextValue | null>(null);
@@ -130,7 +130,7 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [clusterMessage, setClusterMessage] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [knownTotalPages, setKnownTotalPages] = useState<number | null>(null);
-  const { recognitionUrlFallback } = getConfig();
+  const { recognitionSource } = getConfig();
   const [clusterPanel, dispatchClusterPanel] = useReducer(clusterPanelReducer, {
     mode: 'none',
     clusterId: null,
@@ -324,7 +324,7 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       scanError,
       setScanError,
       hasIdentities: mediaItems.length > 0,
-      recognitionUrlFallback: !!recognitionUrlFallback,
+      recognitionSource,
     }),
     [
       activeSection,
@@ -375,7 +375,7 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       clusterMessage,
       scanError,
       mediaItems.length,
-      recognitionUrlFallback,
+      recognitionSource,
       setPerPage,
     ],
   );

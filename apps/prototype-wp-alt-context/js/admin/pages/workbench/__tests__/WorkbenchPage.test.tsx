@@ -58,6 +58,7 @@ window.HTMLElement.prototype.scrollIntoView = vi.fn();
     recognitionClusters: 'http://localhost:8000/clusters',
   },
   tenant_id: 'test-tenant',
+  recognitionSource: 'service',
 };
 
 // Mock EventSource for SSE
@@ -339,7 +340,7 @@ describe('WorkbenchPage', () => {
     );
   });
 
-  it('shows a warning when recognition URL fallback is active', () => {
+  it('shows a local-mode notice when recognition source is local', () => {
     setupScanMutation('success');
     window.AltContextAdmin = {
       nonce: 'test-nonce',
@@ -348,17 +349,17 @@ describe('WorkbenchPage', () => {
         recognitionClusters: 'http://localhost:8000/clusters',
       },
       tenant_id: 'test-tenant',
-      recognitionUrlFallback: true,
+      recognitionSource: 'local',
     };
     resetConfigCache();
 
     renderWorkbench();
 
     expect(
-      screen.getByText(
-        'Alt Context is using the local recognition URL fallback (http://localhost:8000). Configure acx_recognition_url or ACX_RECOGNITION_URL for this environment.',
-      ),
+      screen.getByText('Alt Context is targeting the local recognition service at http://localhost:8000.'),
     ).toBeInTheDocument();
+    expect(screen.getByText('Use Settings to switch back to the hosted recognition service.')).toBeInTheDocument();
+    expect(screen.queryByText(/local recognition URL fallback/i)).not.toBeInTheDocument();
   });
 
   it('shows a workbench notice when media detail responses are truncated', () => {

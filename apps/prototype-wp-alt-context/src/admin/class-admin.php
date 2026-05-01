@@ -279,7 +279,7 @@ class Admin {
 			return;
 		}
 
-		if ( ! $this->should_render_recognition_fallback_notice() ) {
+		if ( 'local' !== $this->get_recognition_source() ) {
 			return;
 		}
 
@@ -287,7 +287,7 @@ class Admin {
 		echo '<div class="notice notice-warning"><p>';
 		printf(
 			/* translators: %s: URL to the settings page */
-			esc_html__( 'Alt Context is using the local recognition URL fallback (http://localhost:8000). %s to configure the Recognition API URL.', 'alt-context' ),
+			esc_html__( 'Alt Context is in local recognition mode and will send requests to http://localhost:8000. %s to switch to the hosted recognition service.', 'alt-context' ),
 			'<a href="' . esc_url( $settings_url ) . '">' . esc_html__( 'Go to Settings', 'alt-context' ) . '</a>'
 		);
 		echo '</p></div>';
@@ -301,14 +301,14 @@ class Admin {
 		wp_localize_script(
 			$handle,
 			'AltContextAdmin',
-			array(
-				'nonce'     => wp_create_nonce( 'wp_rest' ),
-				'devMode'   => $is_dev_mode,
-				'tier'      => $tier,
-				'tenant_id' => md5( (string) get_site_url() ), // v4.12.0: Keep query keys tenant-scoped
-				'recognitionUrlFallback' => $this->should_render_recognition_fallback_notice(),
-				'max_media_per_batch' => $this->get_tier_batch_limit_for( $tier ),
-				'adminUrls' => array(
+				array(
+					'nonce'     => wp_create_nonce( 'wp_rest' ),
+					'devMode'   => $is_dev_mode,
+					'tier'      => $tier,
+					'tenant_id' => md5( (string) get_site_url() ), // v4.12.0: Keep query keys tenant-scoped
+					'recognitionSource' => $this->get_recognition_source(),
+					'max_media_per_batch' => $this->get_tier_batch_limit_for( $tier ),
+					'adminUrls' => array(
 					'mediaEditBase' => admin_url( 'post.php' ),
 					'rosterClusters' => admin_url( 'admin.php?page=alt-context-roster&tab=clusters' ),
 				),
@@ -360,29 +360,54 @@ class Admin {
 		return $tier;
 	}
 
-	private function should_render_recognition_fallback_notice(): bool {
-		return ! $this->has_valid_recognition_url_configuration();
-	}
-
-	private function has_valid_recognition_url_configuration(): bool {
-		$candidates = array(
-			$this->get_recognition_url_from_constant(),
-			trim( (string) get_option( 'acx_recognition_url', '' ) ),
-			trim( (string) apply_filters( 'acx_recognition_base_url', '' ) ),
-		);
-
-		foreach ( $candidates as $candidate ) {
-			if ( $this->is_valid_recognition_base_url( $candidate ) ) {
-				return true;
-			}
+	private function get_recognition_source(): string {
+		$constant_source = $this->get_recognition_source_from_constant();
+		if ( '' !== $constant_source ) {
+			return $constant_source;
 		}
 
-		return false;
+		$constant_url = $this->get_recognition_url_from_constant();
+		if ( $this->is_valid_recognition_base_url( $constant_url ) ) {
+			return 'service';
+		}
+
+		$option_source = trim( (string) get_option( 'acx_recognition_source', '' ) );
+		if ( $this->is_valid_recognition_source( $option_source ) ) {
+			return $option_source;
+		}
+
+		$filter_url = trim( (string) apply_filters( 'acx_recognition_base_url', '' ) );
+		if ( $this->is_valid_recognition_base_url( $filter_url ) ) {
+			return 'service';
+		}
+
+		$filter_source = trim( (string) apply_filters( 'acx_recognition_source', '' ) );
+		if ( $this->is_valid_recognition_source( $filter_source ) ) {
+			return $filter_source;
+		}
+
+		$option_url = trim( (string) get_option( 'acx_recognition_url', '' ) );
+		if ( $this->is_valid_recognition_base_url( $option_url ) ) {
+			return 'service';
+		}
+
+		return 'local';
 	}
 
 	private function get_recognition_url_from_constant(): string {
 		if ( defined( 'ACX_RECOGNITION_URL' ) && is_string( ACX_RECOGNITION_URL ) ) {
 			return trim( ACX_RECOGNITION_URL );
+		}
+
+		return '';
+	}
+
+	private function get_recognition_source_from_constant(): string {
+		if ( defined( 'ACX_RECOGNITION_SOURCE' ) && is_string( ACX_RECOGNITION_SOURCE ) ) {
+			$source = trim( ACX_RECOGNITION_SOURCE );
+			if ( $this->is_valid_recognition_source( $source ) ) {
+				return $source;
+			}
 		}
 
 		return '';
@@ -406,5 +431,9 @@ class Admin {
 		}
 
 		return '' !== $host;
+	}
+
+	private function is_valid_recognition_source( string $source ): bool {
+		return in_array( $source, array( 'service', 'local' ), true );
 	}
 }

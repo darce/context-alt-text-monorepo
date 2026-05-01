@@ -134,6 +134,19 @@ class AdminTest extends TestCase
         $this->assertSame('http://example.test/wp-json/acx/v1/retention/purge', $localized['endpoints']['retentionPurge'] ?? null);
     }
 
+    public function testLocalizeSpaConfigIncludesRecognitionSource(): void
+    {
+        $this->setOption('acx_recognition_url', 'https://recognition.example');
+        $this->setOption('acx_recognition_source', 'local');
+
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertSame('local', $localized['recognitionSource'] ?? null);
+    }
+
     /**
      * Test enqueue_scripts enqueues and localizes build assets in production.
      */
@@ -260,21 +273,24 @@ class AdminTest extends TestCase
         $this->assertStringContainsString('Alt Context admin assets could not be loaded.', $output);
     }
 
-    public function testRenderRecognitionConfigNoticeAppearsOnPluginScreensWithFallback(): void
+    public function testRenderRecognitionConfigNoticeAppearsWhenLocalModeIsActive(): void
     {
         $_GET['page'] = 'alt-context-dashboard';
+        $this->setOption('acx_recognition_url', 'https://recognition.example');
+        $this->setOption('acx_recognition_source', 'local');
 
         ob_start();
         $this->admin->render_recognition_config_notice();
         $output = (string) ob_get_clean();
 
-        $this->assertStringContainsString('Alt Context is using the local recognition URL fallback', $output);
+        $this->assertStringContainsString('Alt Context is in local recognition mode and will send requests to http://localhost:8000.', $output);
     }
 
-    public function testRenderRecognitionConfigNoticeDoesNotAppearWhenUrlConfigured(): void
+    public function testRenderRecognitionConfigNoticeDoesNotAppearWhenServiceModeIsConfigured(): void
     {
         $_GET['page'] = 'alt-context-dashboard';
         $this->setOption('acx_recognition_url', 'https://recognition.example');
+        $this->setOption('acx_recognition_source', 'service');
 
         ob_start();
         $this->admin->render_recognition_config_notice();

@@ -58,6 +58,8 @@ vi.mock('@tanstack/react-query', async () => {
 const defaultSettings: SettingsResponse = {
   url: 'https://api.example.com',
   url_source: 'option',
+  recognition_source: 'service',
+  recognition_source_source: 'option',
   api_key_set: true,
   api_key_last4: '****abcd',
   key_source: 'option',
@@ -103,9 +105,20 @@ describe('SettingsPage', () => {
     render(<SettingsPage />);
 
     expect(screen.getByLabelText('API URL')).toHaveValue('https://api.example.com');
-    expect(screen.getAllByText('Saved in database')).toHaveLength(2);
+    expect(screen.getByLabelText('Service')).toBeChecked();
+    expect(screen.getAllByText('Saved in database')).toHaveLength(3);
     expect(screen.getByRole('button', { name: 'Save Settings' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Test Connection' })).toBeEnabled();
+  });
+
+  it('saves the recognition source when the operator switches to local mode', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    fireEvent.click(screen.getByLabelText('Local'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
+
+    expect(saveMutate).toHaveBeenCalledWith({ recognition_source: 'local' });
   });
 
   it('saves settings when the form is submitted with changes', () => {
@@ -142,7 +155,12 @@ describe('SettingsPage', () => {
   it('renders read-only fields when source is constant', () => {
     mockUseQuery.mockReturnValue(
       createMockQuery({
-        data: { ...defaultSettings, url_source: 'constant' as const, key_source: 'constant' as const },
+        data: {
+          ...defaultSettings,
+          recognition_source_source: 'constant' as const,
+          url_source: 'constant' as const,
+          key_source: 'constant' as const,
+        },
       }),
     );
     render(<SettingsPage />);

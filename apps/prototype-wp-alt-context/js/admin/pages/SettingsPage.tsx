@@ -5,9 +5,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   fetchSettings,
   isTestConnectionOutcome,
+  RecognitionSource,
   saveSettings,
   testConnection,
   TestConnectionOutcome,
+  type RecognitionSourceValue,
   type SettingsResponse,
   type TestConnectionOutcomeValue,
   type TestConnectionResponse,
@@ -170,6 +172,7 @@ export const SettingsPage = (): React.JSX.Element => {
   });
 
   const [url, setUrl] = useState('');
+  const [recognitionSource, setRecognitionSource] = useState<RecognitionSourceValue>(RecognitionSource.LOCAL);
   const [apiKey, setApiKey] = useState('');
   const [saveMessage, setSaveMessage] = useState('');
   const [testResult, setTestResult] = useState<TestConnectionResponse | null>(null);
@@ -177,6 +180,7 @@ export const SettingsPage = (): React.JSX.Element => {
   useEffect(() => {
     if (settingsQuery.data) {
       setUrl(settingsQuery.data.url);
+      setRecognitionSource(settingsQuery.data.recognition_source);
       setApiKey('');
     }
   }, [settingsQuery.data]);
@@ -209,6 +213,9 @@ export const SettingsPage = (): React.JSX.Element => {
     setTestResult(null);
 
     const payload: Record<string, string> = {};
+    if (recognitionSource !== (settingsQuery.data?.recognition_source ?? RecognitionSource.LOCAL)) {
+      payload.recognition_source = recognitionSource;
+    }
     if (url !== (settingsQuery.data?.url ?? '')) {
       payload.url = url;
     }
@@ -248,6 +255,7 @@ export const SettingsPage = (): React.JSX.Element => {
   }
 
   const data = settingsQuery.data!;
+  const sourceReadOnly = isReadOnly(data.recognition_source_source);
   const urlReadOnly = isReadOnly(data.url_source);
   const keyReadOnly = isReadOnly(data.key_source);
 
@@ -261,6 +269,42 @@ export const SettingsPage = (): React.JSX.Element => {
       <form onSubmit={handleSave} className="acx-settings__form">
         <table className="form-table" role="presentation">
           <tbody>
+            <tr>
+              <th scope="row">{__('Recognition Source', 'alt-context')}</th>
+              <td>
+                <fieldset>
+                  <legend className="screen-reader-text">{__('Recognition Source', 'alt-context')}</legend>
+                  <label htmlFor="acx-settings-source-service" style={{ marginRight: '16px' }}>
+                    <input
+                      id="acx-settings-source-service"
+                      type="radio"
+                      name="acx-recognition-source"
+                      value={RecognitionSource.SERVICE}
+                      checked={recognitionSource === RecognitionSource.SERVICE}
+                      onChange={() => setRecognitionSource(RecognitionSource.SERVICE)}
+                      disabled={sourceReadOnly}
+                    />{' '}
+                    {__('Service', 'alt-context')}
+                  </label>
+                  <label htmlFor="acx-settings-source-local">
+                    <input
+                      id="acx-settings-source-local"
+                      type="radio"
+                      name="acx-recognition-source"
+                      value={RecognitionSource.LOCAL}
+                      checked={recognitionSource === RecognitionSource.LOCAL}
+                      onChange={() => setRecognitionSource(RecognitionSource.LOCAL)}
+                      disabled={sourceReadOnly}
+                    />{' '}
+                    {__('Local', 'alt-context')}
+                  </label>
+                </fieldset>
+                <p className="description">
+                  {SOURCE_LABELS[data.recognition_source_source] ?? data.recognition_source_source}
+                  {sourceReadOnly && <> &mdash; {__('read-only (override active)', 'alt-context')}</>}
+                </p>
+              </td>
+            </tr>
             <tr>
               <th scope="row">
                 <label htmlFor="acx-settings-url">{__('API URL', 'alt-context')}</label>
@@ -308,7 +352,7 @@ export const SettingsPage = (): React.JSX.Element => {
           <button
             type="submit"
             className="button button-primary"
-            disabled={saveMutation.isPending || (urlReadOnly && keyReadOnly)}
+            disabled={saveMutation.isPending || (sourceReadOnly && urlReadOnly && keyReadOnly)}
           >
             {saveMutation.isPending ? __('Saving\u2026', 'alt-context') : __('Save Settings', 'alt-context')}
           </button>

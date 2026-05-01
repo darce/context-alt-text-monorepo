@@ -77,14 +77,17 @@ class SettingsController {
 	public function get_settings( WP_REST_Request $request ): WP_REST_Response {
 		$url_resolution = $this->resolve_url_source();
 		$key_resolution = $this->resolve_key_source();
+		$source_resolution = $this->resolve_recognition_source( $url_resolution );
 
 		return new WP_REST_Response(
 			array(
-				'url'          => $url_resolution['value'],
-				'url_source'   => $url_resolution['source'],
-				'api_key_set'  => '' !== $key_resolution['value'],
-				'api_key_last4' => $this->mask_key( $key_resolution['value'] ),
-				'key_source'   => $key_resolution['source'],
+				'url'                       => $url_resolution['value'],
+				'url_source'                => $url_resolution['source'],
+				'recognition_source'        => $source_resolution['value'],
+				'recognition_source_source' => $source_resolution['source'],
+				'api_key_set'               => '' !== $key_resolution['value'],
+				'api_key_last4'             => $this->mask_key( $key_resolution['value'] ),
+				'key_source'                => $key_resolution['source'],
 			),
 			200
 		);
@@ -105,6 +108,19 @@ class SettingsController {
 			}
 			update_option( 'acx_recognition_url', $url );
 			$saved[] = 'url';
+		}
+
+		if ( isset( $body['recognition_source'] ) && is_string( $body['recognition_source'] ) ) {
+			$recognition_source = trim( $body['recognition_source'] );
+			if ( ! $this->is_valid_recognition_source( $recognition_source ) ) {
+				return new WP_Error(
+					'invalid_recognition_source',
+					'Recognition source must be either service or local.',
+					array( 'status' => 400 )
+				);
+			}
+			update_option( 'acx_recognition_source', $recognition_source );
+			$saved[] = 'recognition_source';
 		}
 
 		if ( isset( $body['api_key'] ) && is_string( $body['api_key'] ) ) {
@@ -335,6 +351,37 @@ class SettingsController {
 		return array( 'value' => '', 'source' => 'default' );
 	}
 
+	/**
+	 * @param array{value: string, source: string} $url_resolution
+	 * @return array{value: string, source: string}
+	 */
+	private function resolve_recognition_source( array $url_resolution ): array {
+		$constant = trim( $this->get_constant_value( 'ACX_RECOGNITION_SOURCE' ) );
+		if ( $this->is_valid_recognition_source( $constant ) ) {
+			return array( 'value' => $constant, 'source' => 'constant' );
+		}
+
+		if ( '' !== $url_resolution['value'] && in_array( $url_resolution['source'], array( 'constant', 'filter' ), true ) ) {
+			return array( 'value' => 'service', 'source' => $url_resolution['source'] );
+		}
+
+		$option = trim( (string) get_option( 'acx_recognition_source', '' ) );
+		if ( $this->is_valid_recognition_source( $option ) ) {
+			return array( 'value' => $option, 'source' => 'option' );
+		}
+
+		$filter = trim( (string) apply_filters( 'acx_recognition_source', '' ) );
+		if ( $this->is_valid_recognition_source( $filter ) ) {
+			return array( 'value' => $filter, 'source' => 'filter' );
+		}
+
+		if ( '' !== $url_resolution['value'] ) {
+			return array( 'value' => 'service', 'source' => 'option' === $url_resolution['source'] ? 'option' : 'default' );
+		}
+
+		return array( 'value' => 'local', 'source' => 'default' );
+	}
+
 	private function get_constant_value( string $name ): string {
 		if ( defined( $name ) && is_string( constant( $name ) ) ) {
 			return trim( constant( $name ) );
@@ -355,5 +402,9 @@ class SettingsController {
 			return false;
 		}
 		return isset( $parts['scheme'], $parts['host'] ) && in_array( $parts['scheme'], array( 'http', 'https' ), true );
+	}
+
+	private function is_valid_recognition_source( string $source ): bool {
+		return in_array( $source, array( 'service', 'local' ), true );
 	}
 }

@@ -192,6 +192,10 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 	}
 
 	protected function get_recognition_base_url(): string {
+		if ( 'local' === $this->get_recognition_source() ) {
+			return 'http://localhost:8000';
+		}
+
 		$candidates = array(
 			$this->get_recognition_base_url_from_constant(),
 			trim( (string) get_option( 'acx_recognition_url', '' ) ),
@@ -205,6 +209,40 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		}
 
 		return 'http://localhost:8000';
+	}
+
+	protected function get_recognition_source(): string {
+		$constant_source = $this->get_recognition_source_from_constant();
+		if ( '' !== $constant_source ) {
+			return $constant_source;
+		}
+
+		$constant_url = $this->get_recognition_base_url_from_constant();
+		if ( $this->is_valid_recognition_base_url( $constant_url ) ) {
+			return 'service';
+		}
+
+		$option_source = trim( (string) get_option( 'acx_recognition_source', '' ) );
+		if ( $this->is_valid_recognition_source( $option_source ) ) {
+			return $option_source;
+		}
+
+		$filter_url = trim( (string) apply_filters( 'acx_recognition_base_url', '' ) );
+		if ( $this->is_valid_recognition_base_url( $filter_url ) ) {
+			return 'service';
+		}
+
+		$filter_source = trim( (string) apply_filters( 'acx_recognition_source', '' ) );
+		if ( $this->is_valid_recognition_source( $filter_source ) ) {
+			return $filter_source;
+		}
+
+		$option_url = trim( (string) get_option( 'acx_recognition_url', '' ) );
+		if ( $this->is_valid_recognition_base_url( $option_url ) ) {
+			return 'service';
+		}
+
+		return 'local';
 	}
 
 	protected function get_recognition_api_key(): string {
@@ -237,6 +275,17 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		return '';
 	}
 
+	private function get_recognition_source_from_constant(): string {
+		if ( defined( 'ACX_RECOGNITION_SOURCE' ) && is_string( ACX_RECOGNITION_SOURCE ) ) {
+			$source = trim( ACX_RECOGNITION_SOURCE );
+			if ( $this->is_valid_recognition_source( $source ) ) {
+				return $source;
+			}
+		}
+
+		return '';
+	}
+
 	private function is_valid_recognition_base_url( string $candidate ): bool {
 		if ( '' === $candidate ) {
 			return false;
@@ -251,6 +300,10 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 		$host   = (string) ( $parts['host'] ?? '' );
 
 		return in_array( $scheme, array( 'http', 'https' ), true ) && '' !== $host;
+	}
+
+	private function is_valid_recognition_source( string $source ): bool {
+		return in_array( $source, array( 'service', 'local' ), true );
 	}
 
 	/**

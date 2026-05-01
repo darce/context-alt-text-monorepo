@@ -50,6 +50,28 @@ class ProxyRequestTest extends TestCase
         $this->assertStringContainsString('http://localhost:8000/recognition/jobs/test-job-id', $calls[0]['url']);
     }
 
+    public function testProxyUsesLocalhostWhenRecognitionSourceIsLocal(): void
+    {
+        $this->setOption('acx_recognition_url', 'https://service.example');
+        $this->setOption('acx_recognition_source', 'local');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"status":"completed"}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
+        $request->set_param('job_id', 'test-job-id');
+
+        $result = $this->controller->get_job_status($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $result);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('http://localhost:8000/recognition/jobs/test-job-id', $calls[0]['url']);
+    }
+
     /**
      * Test successful proxy request returns response.
      */
